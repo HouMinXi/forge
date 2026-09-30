@@ -147,45 +147,6 @@ def test_empty_context_text_adds_no_section():
         assert "## Context Sources" not in p
 
 
-def test_sampling_variant_carries_the_section():
-    """build_sampling_l1_provider is not covered by the digest oracle.
-    Run its coroutine on a real loop in a thread so invoke_sampling is
-    actually reached, and assert the section on the captured prompts."""
-    import asyncio
-    import threading
-    from unittest.mock import MagicMock
-
-    captured: list[str] = []
-
-    async def fake_invoke_sampling(session, prompt, **kw):
-        captured.append(prompt)
-        return LLMResult(content={"findings": []}, usage=Usage())
-
-    loop = asyncio.new_event_loop()
-    t = threading.Thread(target=loop.run_forever, daemon=True)
-    t.start()
-    try:
-        resolved = ResolvedReview(
-            source_files=[Path("f.py")],
-            baseline_content=None,
-            git_diff=DIFF,
-            mode_hint="git",
-        )
-        with patch("code_forge.llm_invoke.invoke_sampling", side_effect=fake_invoke_sampling):
-            factories.build_sampling_l1_provider(
-                MagicMock(),
-                loop,
-                resolved,
-                context_sources_text="CTX-MARK",
-            )()
-    finally:
-        loop.call_soon_threadsafe(loop.stop)
-        t.join(timeout=5)
-        loop.close()
-    assert len(captured) == 3
-    assert all("\n## Context Sources\nCTX-MARK\n" in p for p in captured)
-
-
 def test_cli_wires_every_provider_construction_site():
     """The three build_*_l1_provider calls in cli._run must all pass
     context_sources_text, and the old inline blast-radius block must be

@@ -131,7 +131,7 @@ if ($LASTEXITCODE -eq 0) {
 
 # ---------------------------------------------------------------------
 Banner "S3: virtualenv + install (forge + test dependencies)"
-# pytest-asyncio: the mcp/lock/sampling tests are async (@pytest.mark.asyncio).
+# pytest-asyncio: the mcp/lock tests are async (@pytest.mark.asyncio).
 # code-review-graph: pulls tree-sitter-language-pack; without it the
 #   cross-repo-impact and dead-code tests fail instead of skipping.
 & $PyBin[0] $PyBin[1..($PyBin.Count-1)] -m venv $Venv

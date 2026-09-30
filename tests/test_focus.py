@@ -233,27 +233,3 @@ class TestBuilderFocusInjection:
         )
         # The provider is a callable -- just verify it was built without error
         assert callable(provider)
-
-    def test_sampling_build_l1_provider(self):
-        from code_forge.factories import build_sampling_l1_provider
-        from code_forge.baseline import ResolvedReview
-        import asyncio
-
-        resolved = ResolvedReview(
-            mode_hint="git",
-            git_diff="--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-old\n+new\n",
-            source_files=[],
-            baseline_content=None,
-        )
-        mock_session = MagicMock()
-        loop = asyncio.new_event_loop()
-        try:
-            provider = build_sampling_l1_provider(
-                session=mock_session,
-                loop=loop,
-                resolved=resolved,
-                focus_spec="sampling focus",
-            )
-            assert callable(provider)
-        finally:
-            loop.close()

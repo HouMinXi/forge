@@ -100,4 +100,4 @@ If `code-forge init` was run before v2.7, the generated gate.yaml may
 have `outlet: subprocess` active with no backends configured. The
 server now rejects this at startup with an actionable error and
 remediation steps. Follow the instructions in the error message to
-add a backend. `outlet: sampling` is deprecated and is not a fix.
+add a backend. The `sampling` outlet has been removed; it is not an option.

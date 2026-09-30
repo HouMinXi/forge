@@ -160,7 +160,7 @@ async def _do_shutdown(signum: int) -> None:
 
 # -- workspace resolution (ADR-0006) --
 
-from code_forge.workspace import SAMPLING_REMEDIATION, resolve_workspace  # noqa: E402
+from code_forge.workspace import resolve_workspace  # noqa: E402
 
 
 def _resolve_workspace() -> Path:
@@ -172,7 +172,6 @@ def _resolve_workspace() -> Path:
 from code_forge.user_config import load_user_backends, merge_backends  # noqa: E402
 
 if TYPE_CHECKING:
-    from code_forge.baseline import ResolvedReview
     from code_forge.state import Verdict
 
 
@@ -488,26 +487,6 @@ mcp._tool_manager.call_tool = _null_coerce_call_tool
 # -- pre-flight helper --
 
 
-def _reject_kernel_sampling(workspace: Path) -> None:
-    """Check the same trusted configuration as the command-line entry."""
-    from code_forge import cli
-    from code_forge.errors import CliError
-    from code_forge.kernel_context import validate_kernel_context
-
-    try:
-        _, data = cli._load_gate_backends(workspace / ".code-forge" / "gate.yaml")
-        config = validate_kernel_context(data.get("kernel_context", {}))
-    except CliError as exc:
-        message = str(exc) + ("\n" + exc.remediation if exc.remediation else "")
-        raise ToolError(message) from exc
-    except (ValueError, OSError) as exc:
-        raise ToolError(str(exc)) from exc
-    if config.enabled:
-        raise ToolError(
-            "kernel-context: MCP sampling path is not supported; run the CLI subprocess path"
-        )
-
-
 def _check_backend(workspace: Path) -> None:
     """Verify a trusted review backend is configured.
 
@@ -528,8 +507,7 @@ def _check_backend(workspace: Path) -> None:
             raise ToolError(
                 "No review backends configured in %s. Add backends to "
                 "user-level config (~/.config/code-forge/config.yaml) "
-                "or project gate.yaml, or set 'outlet: sampling' to "
-                "review with the IDE's own model. "
+                "or project gate.yaml. "
                 "(workspace: %s -- wrong project? set "
                 "FORGE_PROJECT_DIR in the MCP server env)" % (gate_yaml_path, workspace)
             )
@@ -709,24 +687,11 @@ def _make_result(
     )
 
 
-SAMPLING_DEPRECATION = (
-    "sampling outlet is deprecated: the Model Context Protocol marked "
-    "Sampling deprecated on 2026-07-28. Configure an API backend instead. "
-    "This outlet stays until 2027-07-28 at the earliest."
+SAMPLING_REMOVED = (
+    "sampling outlet was removed: the Model Context Protocol deprecated "
+    "Sampling on 2026-07-28. Configure an API backend in gate.yaml, or "
+    "set FORGE_OUTLET=inline."
 )
-
-
-def _note_sampling(result):
-    """Append the deprecation note to a sampling result and to stderr."""
-    import sys
-
-    sys.stderr.write("code-forge: " + SAMPLING_DEPRECATION + "\n")
-    content = getattr(result, "content", None)
-    text = getattr(content[0], "text", None) if content else None
-    if not isinstance(text, str):
-        return result
-    text = text + "\n" + SAMPLING_DEPRECATION
-    return _make_simple_result(text, result.structuredContent.get("exit_code", 0))
 
 
 def _make_simple_result(
@@ -888,82 +853,6 @@ def _normalize_whole_file(
     return normalized
 
 
-def _build_review_context(
-    cwd: Path,
-    committed: bool,
-    staged: bool = False,
-    baseline: str = "",
-    head: str = "",
-    whole_files: list[str] | None = None,
-) -> tuple[ResolvedReview, str, str]:
-    """Build review context for in-process sampling path.
-
-    Returns (resolved, source_hash, baseline_repr).
-    Equivalent to cli._build_baseline_specs but without an argparse args
-    object. Named rather than cited by line: the CLI shifts under this
-    file constantly and a line number here goes stale silently.
-    """
-    from code_forge.baseline import (
-        EmptyBaseline,
-        GitRefBaseline,
-        SnapshotBaseline,
-        resolve_baseline,
-        serialize_baseline_spec,
-    )
-    from code_forge.errors import BaselineResolutionError
-    from code_forge.git import is_git_repo
-    from code_forge.source import compute_source_hash
-
-    if whole_files:
-        baseline_spec = EmptyBaseline()
-        head_spec = GitRefBaseline("WORKING") if is_git_repo(cwd) else None
-        paths = [Path(p) for p in whole_files]
-    elif committed:
-        if baseline:
-            raise ToolError("--committed cannot be combined with --baseline")
-        if head:
-            raise ToolError("--committed cannot be combined with --head")
-        baseline_spec = GitRefBaseline("HEAD~1")
-        head_spec = GitRefBaseline("HEAD")
-        paths = []
-    else:
-        if baseline:
-            if baseline == "empty":
-                baseline_spec = EmptyBaseline()
-            elif baseline.startswith(".code-forge/snapshots/") or (
-                baseline.endswith(".json") and "snapshots" in baseline
-            ):
-                baseline_spec = SnapshotBaseline(path=Path(baseline))
-            else:
-                baseline_spec = GitRefBaseline(baseline)
-        else:
-            baseline_spec = GitRefBaseline("HEAD")
-
-        if head:
-            head_spec = GitRefBaseline(head)
-        elif staged:
-            # INDEX = staged changes only (forge_gate_check path)
-            head_spec = GitRefBaseline("INDEX")
-        else:
-            # WORKING = unstaged working tree changes (forge_review default)
-            # The CLI's --head help text declares the same default; kept in
-            # sync by name, not by line number.
-            head_spec = GitRefBaseline("WORKING")
-        paths = []
-
-    try:
-        resolved = resolve_baseline(baseline_spec, head_spec, paths, cwd)
-    except BaselineResolutionError as exc:
-        raise ToolError("baseline resolution failed: %s" % exc) from exc
-    # Note: cli.py:1716-1723 branches on mode_hint (git vs non-git).
-    # MCP sampling always uses committed/staged (git context), so git_diff
-    # path is correct here. Non-git workspaces would need files= path.
-    if resolved.mode_hint == "git":
-        source_hash = compute_source_hash(git_diff=resolved.git_diff or "")
-    else:
-        source_hash = compute_source_hash(files=resolved.source_files)
-    baseline_repr = serialize_baseline_spec(baseline_spec)
-    return resolved, source_hash, baseline_repr
 
 
 _MAX_FINDINGS_IN_RESULT = 20
@@ -1027,234 +916,6 @@ def _make_inprocess_result(
     )
 
 
-async def _dispatch_sampling(
-    session,  # ServerSession
-    committed: bool,
-    workspace: Path,
-    backend_name: str | None = None,
-    staged: bool = False,  # True for gate-check (INDEX), False for review (WORKING)
-    contract_spec: str = "",
-    focus_spec: str = "",
-    baseline: str = "",
-    head: str = "",
-    whole_files: list[str] | None = None,
-) -> CallToolResult:
-    """Run forge review in-process via MCP sampling transport.
-
-    Builds review context, constructs StateMachine with sampling l1_provider,
-    runs machine.run() in a worker thread. On a recoverable sampling
-    failure (LLMInvokeError.kind in truncated/empty/stub_model/no_json),
-    falls back to CLI subprocess if a backend is available.
-    """
-    from code_forge.factories import (
-        build_autofixer,
-        build_e2e_checker,
-        build_falsifier,
-        build_l2_runner,
-        build_revert_fn,
-        build_sampling_l1_provider,
-    )
-    from code_forge.llm_invoke import LLMInvokeError
-    from code_forge.machine import Mode, StateMachine
-
-    resolved, source_hash, baseline_repr = _build_review_context(
-        workspace,
-        committed,
-        staged=staged,
-        baseline=baseline,
-        head=head,
-        whole_files=whole_files,
-    )
-
-    # Lazy import per file convention (see _backend_names_for at line 237).
-    from code_forge import cli
-
-    # Save raw MCP value before merge -- fallback writes raw, not merged
-    raw_contract = contract_spec
-    raw_focus = focus_spec
-
-    # Load contracts.yaml digest -- review path only (not gate-check).
-    # CLI gate-check does NOT load contracts.yaml; unconditional loading
-    # would create outlet divergence (D2).
-    contracts_yaml = workspace / ".code-forge" / "contracts.yaml"
-    yaml_digest = ""
-    if not staged and contracts_yaml.is_file():
-        yaml_digest = cli._safe_load_contract_digest(contracts_yaml, workspace, backend=None)
-
-    if contract_spec or yaml_digest:
-        contract_spec = cli._merge_contract_spec(
-            yaml_digest,
-            contract_spec,
-            backend=None,
-            warn_fn=lambda msg: (sys.stderr.write(msg + "\n"), sys.stderr.flush()),
-        )
-
-    # Load trusted yaml focus -- review path only (not gate-check).
-    gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
-    yaml_focus = ""
-    if not staged and gate_yaml_path.is_file():
-        yaml_focus = cli._load_trusted_yaml_focus(
-            gate_yaml_path,
-            lambda msg: (sys.stderr.write(msg + "\n"), sys.stderr.flush()),
-        )
-
-    if yaml_focus or focus_spec:
-        focus_spec = cli._merge_focus_spec(
-            yaml_focus,
-            focus_spec,
-            warn_fn=lambda msg: (sys.stderr.write(msg + "\n"), sys.stderr.flush()),
-        )
-
-    # capture event loop BEFORE dispatching to worker thread
-    loop = asyncio.get_running_loop()
-
-    from code_forge.gate_check import validate_retry_config
-    from code_forge.user_config import load_user_retry, merge_retry
-
-    retry_cfg: dict = {}
-    if gate_yaml_path.is_file():
-        try:
-            import yaml as _y
-
-            data = _y.safe_load(gate_yaml_path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and isinstance(data.get("retry"), dict):
-                retry_cfg = data["retry"]
-        except Exception:
-            retry_cfg = {}
-    retry_cfg = merge_retry(retry_cfg, load_user_retry())
-    try:
-        validate_retry_config(retry_cfg)
-    except ValueError:
-        retry_cfg = {}
-
-    l1_provider = build_sampling_l1_provider(
-        session=session,
-        loop=loop,
-        resolved=resolved,
-        contract_spec=contract_spec,
-        focus_spec=focus_spec,
-        max_attempts=retry_cfg.get("max_attempts", 5),
-        initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
-    )
-
-    # ponytail: sampling path uses stubs -- stub falsifier (not "auto",
-    # which would silently call claude -p), empty registry (no L0 tools),
-    # empty source_files. Full wiring deferred until sampling needs it.
-    machine = StateMachine(
-        mode=Mode.CI,
-        falsifier=build_falsifier("stub"),
-        autofixer=build_autofixer(resolved),
-        revert_fn=build_revert_fn(resolved, workspace),
-        resolved_review=resolved,
-        source_hash=source_hash,
-        baseline_spec_repr=baseline_repr,
-        ctx_whole_file=bool(whole_files),
-        cwd=workspace,
-        registry={},
-        l1_provider=l1_provider,
-        l2_runner=build_l2_runner(),
-        e2e_runner=build_e2e_checker(),
-    )
-
-    from code_forge.lock import ForgeLock
-
-    lock_path = workspace / ".code-forge" / "code-forge.lock"  # must match cli._run
-
-    # Lock acquisition + machine.run both inside worker thread to avoid
-    # blocking the MCP server event loop on lock contention.
-    def _run_locked():
-        with ForgeLock(lock_path):
-            return machine.run()
-
-    t0 = time.monotonic()
-    try:
-        verdict = await asyncio.to_thread(_run_locked)
-    except LLMInvokeError as exc:
-        # kind is set by invoke_sampling for the recoverable failure
-        # classes; anything else (unknown kind) is not fallback-eligible.
-        _can_fallback = exc.kind in (
-            "truncated",
-            "empty",
-            "stub_model",
-            "no_json",
-        )
-        backend_names = _backend_names_for(workspace)
-        if _can_fallback and (backend_name or backend_names):
-            # sampling failed -- fall back to CLI subprocess backend
-            # MUST force --outlet subprocess to prevent infinite loop when
-            # gate.yaml has outlet: sampling (subprocess reads gate.yaml too)
-            fallback_backend = backend_name or backend_names[0]
-            # Fallback only supports "review" command (gate-check parser
-            # doesn't accept --backend/--outlet). If staged (gate-check),
-            # raise clear error instead of broken CLI call.
-            if staged:
-                raise ToolError(
-                    "Sampling failed during gate-check (%s). "
-                    "Run gate-check via the CLI with a configured "
-                    "backend instead." % (exc.kind or exc)
-                ) from exc
-            cli_args = ["review", "--no-color", "--backend", fallback_backend, "--outlet", "subprocess"]
-            if committed:
-                cli_args.append("--committed")
-            if baseline:
-                cli_args.extend(["--baseline", baseline])
-            if head:
-                cli_args.extend(["--head", head])
-            if whole_files:
-                cli_args.append("--whole-file")
-                cli_args.extend(whole_files)
-
-            cap = _job_cap_s(workspace, backend_name or "")
-            return await _dispatch_cli(
-                cli_args,
-                workspace,
-                cap,
-                contract=raw_contract,
-                focus=raw_focus,
-            )
-        elif _can_fallback:
-            raise ToolError(
-                "Sampling failed: %s. Configure an API backend in "
-                "gate.yaml for automatic fallback." % exc
-            ) from exc
-        else:
-            raise ToolError("Sampling failed: %s" % exc) from exc
-
-    elapsed = time.monotonic() - t0
-
-    # Extract non-dismissed findings from the machine for the MCP result.
-    active = machine.active_findings
-    compact = [
-        {
-            "file": f.file,
-            "line_range": f.line_range,
-            "source": f.source,
-            "disposition": f.disposition.value,
-            "description": _truncate(f.description or "", 200),
-        }
-        for f in active[:_MAX_FINDINGS_IN_RESULT]
-    ]
-    if len(active) > _MAX_FINDINGS_IN_RESULT:
-        # Synthetic entry -- disposition is not a Disposition enum member
-        # on purpose; consumers should treat source=OVERFLOW as metadata.
-        compact.append(
-            {
-                "file": "",
-                "line_range": [],
-                "source": "OVERFLOW",
-                "disposition": "info",
-                "description": "+%d more, see state.json" % (len(active) - _MAX_FINDINGS_IN_RESULT),
-            }
-        )
-    from .state import _finding_to_dict
-
-    return _make_inprocess_result(
-        verdict,
-        findings_count=len(active),
-        elapsed=elapsed,
-        findings=compact if compact else None,
-        receipt_audit=[_finding_to_dict(f) for f in machine.receipt_audit] or None,
-    )
 
 
 # -- tool handlers --
@@ -1300,21 +961,7 @@ async def forge_review(
             outlet = load_outlet_from_gate(gate_yaml_path)
 
     if outlet == "sampling":
-        if ctx is None or ctx.session.client_params.capabilities.sampling is None:
-            raise ToolError("Client does not support sampling capability. " + SAMPLING_REMEDIATION)
-        _reject_kernel_sampling(workspace)
-        return _note_sampling(await _dispatch_sampling(
-            session=ctx.session,
-            committed=committed,
-            workspace=workspace,
-            backend_name=backend,
-            staged=False,
-            contract_spec=contract,
-            focus_spec=focus,
-            baseline=baseline,
-            head=head,
-            whole_files=whole_files,
-        ))
+        raise ToolError(SAMPLING_REMOVED)
 
     _check_backend(workspace)
     _validate_backend(backend, workspace)
@@ -1370,20 +1017,7 @@ async def forge_gate_check(
             outlet = load_outlet_from_gate(gate_yaml_path)
 
     if outlet == "sampling":
-        if ctx is None or ctx.session.client_params.capabilities.sampling is None:
-            raise ToolError("Client does not support sampling capability. " + SAMPLING_REMEDIATION)
-        _reject_kernel_sampling(workspace)
-        # gate-check has no contract concept -- contract_spec stays empty.
-        # Asserted by test_gate_check_no_contract.
-        return _note_sampling(await _dispatch_sampling(
-            session=ctx.session,
-            committed=False,
-            workspace=workspace,
-            backend_name=backend,
-            staged=True,
-            baseline=baseline,
-            # contract_spec intentionally omitted
-        ))
+        raise ToolError(SAMPLING_REMOVED)
 
     _check_backend(workspace)
     _validate_backend(backend, workspace)
@@ -1477,18 +1111,12 @@ async def forge_resolve_outlet(project_dir: str = "", ctx: Context = None) -> Ca
 
         if not outlet and gate_yaml_path.exists():
             outlet = load_outlet_from_gate(gate_yaml_path)
-        if outlet == "sampling" and caps.sampling is None:
-            context += (
-                "MISCONFIG: outlet is 'sampling' but client lacks "
-                "sampling capability. %s\n" % SAMPLING_REMEDIATION
-            )
+        if outlet == "sampling":
+            context += "REMOVED: %s\n" % SAMPLING_REMOVED
     else:
         context += "client capabilities: unknown (no MCP session)\n"
 
-    result = _make_simple_result(stdout.rstrip("\n") + "\n" + context, exit_code, stderr)
-    if outlet == "sampling":
-        return _note_sampling(result)
-    return result
+    return _make_simple_result(stdout.rstrip("\n") + "\n" + context, exit_code, stderr)
 
 
 @mcp.tool(

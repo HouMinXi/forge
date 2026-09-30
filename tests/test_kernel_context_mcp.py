@@ -1,4 +1,4 @@
-"""Sampling rejects enabled kernel context without changing capability priority."""
+"""Selecting sampling is a config error; kernel-context checks never run."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -7,8 +7,7 @@ import pytest
 import yaml
 from mcp.server.fastmcp.exceptions import ToolError
 
-from code_forge import cli, mcp_server, trust
-from code_forge.errors import CliError
+from code_forge import mcp_server, trust
 
 
 @pytest.fixture
@@ -36,55 +35,18 @@ def context(sampling=True):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name", ["forge_review", "forge_gate_check"])
-async def test_sampling_enabled_rejected(workspace, monkeypatch, name):
-    dispatch = AsyncMock(side_effect=AssertionError("must reject before dispatch"))
-    monkeypatch.setattr(mcp_server, "_dispatch_sampling", dispatch)
-    with pytest.raises(ToolError) as caught:
+async def test_sampling_rejected_before_any_kernel_check(workspace, monkeypatch, name):
+    """The outlet refusal fires regardless of kernel-context config."""
+    load = AsyncMock(side_effect=AssertionError("must not load gate backends"))
+    monkeypatch.setattr(mcp_server, "_check_backend", load)
+    with pytest.raises(ToolError, match="sampling outlet was removed"):
         await getattr(mcp_server, name)(ctx=context())
-    assert (
-        str(caught.value)
-        == "kernel-context: MCP sampling path is not supported; run the CLI subprocess path"
-    )
-    dispatch.assert_not_called()
+    load.assert_not_called()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name", ["forge_review", "forge_gate_check"])
-async def test_sampling_capability_error_first(workspace, name):
-    with pytest.raises(ToolError, match="Client does not support sampling capability"):
+async def test_sampling_rejected_without_client_capability(workspace, name):
+    """Capability no longer matters; the outlet itself is gone."""
+    with pytest.raises(ToolError, match="sampling outlet was removed"):
         await getattr(mcp_server, name)(ctx=context(False))
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("name", ["forge_review", "forge_gate_check"])
-async def test_untrusted_kernel_section_filtered(workspace, monkeypatch, name):
-    trust.revoke_trust(workspace)
-    dispatch = AsyncMock(return_value="existing sampling")
-    monkeypatch.setattr(mcp_server, "_dispatch_sampling", dispatch)
-    assert await getattr(mcp_server, name)(ctx=context()) == "existing sampling"
-    dispatch.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("name", ["forge_review", "forge_gate_check"])
-@pytest.mark.parametrize("remediation", [None, "", "repair yaml"])
-async def test_loader_error_preserves_remediation(workspace, monkeypatch, name, remediation):
-    def fail(*args):
-        raise CliError("parse failed", remediation=remediation)
-
-    monkeypatch.setattr(cli, "_load_gate_backends", fail)
-    with pytest.raises(ToolError) as caught:
-        await getattr(mcp_server, name)(ctx=context())
-    assert str(caught.value) == "parse failed" + ("\nrepair yaml" if remediation else "")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("name", ["forge_review", "forge_gate_check"])
-async def test_real_invalid_yaml_preserves_loader_error(workspace, name):
-    workspace.write_text("broken: [\n")
-    with pytest.raises(CliError) as expected:
-        cli._load_gate_backends(workspace)
-    with pytest.raises(ToolError) as caught:
-        await getattr(mcp_server, name)(ctx=context())
-    exc = expected.value
-    assert str(caught.value) == str(exc) + ("\n" + exc.remediation if exc.remediation else "")

@@ -531,14 +531,19 @@ def test_invalid_presubmit_missing_required(entry: dict, _missing_field: str) ->
 # ===========================================================================
 
 
-def test_outlet_sampling_accepted_by_schema() -> None:
-    """'sampling' is a canonical outlet value (MCP only) -- schema and
-    resolver must both accept it, or the documented gate.yaml config
-    (outlet: sampling) shows editor validation errors."""
-    _schema_validate({"outlet": "sampling"})
+def test_outlet_sampling_rejected_by_schema() -> None:
+    """'sampling' was removed -- schema rejects it so editors flag stale
+    gate.yaml files instead of silently validating."""
+    import pytest
+    from jsonschema import ValidationError
 
-    result = resolve_outlet(env={}, cli_value="sampling")
-    assert result == "sampling"
+    from code_forge.errors import CliError
+
+    with pytest.raises(ValidationError, match="is not one of"):
+        _schema_validate({"outlet": "sampling"})
+
+    with pytest.raises(CliError):
+        resolve_outlet(env={}, cli_value="sampling")
 
 
 def test_loader_only_outlet_cli_alias() -> None:

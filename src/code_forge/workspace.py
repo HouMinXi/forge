@@ -10,12 +10,6 @@ from pathlib import Path
 from typing import Mapping, Optional
 
 
-SAMPLING_REMEDIATION = (
-    "Switch outlet to 'subprocess' in .code-forge/gate.yaml, "
-    "or use a client that advertises MCP sampling."
-)
-
-
 def resolve_workspace(
     cwd: Path,
     env: Mapping[str, str],

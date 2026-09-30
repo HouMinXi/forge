@@ -495,7 +495,7 @@ kernel_context:
 ```
 
 Only single-repository CLI subprocess review supports this source. Enabled
-requests reject non-empty `siblings`, inline/subagent outlets, and MCP sampling.
+requests reject non-empty `siblings` and inline/subagent outlets.
 MCP subprocess delegates to the CLI. Disabled requests keep existing dispatch.
 
 Run `code-forge trust` after enabling the source or changing its path. File-read
@@ -532,7 +532,7 @@ backend's data policy before authorizing a request.
 
 ## Retry
 
-API backends and MCP sampling retry transient failures. Omit the block
+API backends retry transient failures. Omit the block
 to keep the built-in defaults (5 attempts, 2 s initial delay, socket
 timeouts not retried).
 
@@ -570,9 +570,6 @@ is not JSON; an SSE stream where a JSON body was expected; empty or
 non-JSON model content. Vendor body codes that the gateway maps as
 retryable (rate-limit / overload) also retry.
 
-MCP sampling (`code-forge-mcp` `createMessage`): empty text, and a
-reply with no parseable JSON.
-
 Not retried: HTTP 4xx other than 429; missing credentials; truncated
 output (`stopReason=maxTokens`); Copilot CLI stub models
 (`copilotcli/...`); `type: cli` backends (they are not HTTP). Socket
@@ -580,7 +577,7 @@ timeouts stay unretriable unless `retry_timeout: true`.
 
 ### Malformed model JSON
 
-API backends and Model Context Protocol (MCP) sampling can request one fresh
+API backends can request one fresh
 answer after a model JSON syntax error. The original decoder and extraction
 rules run first. Correction is eligible only when the stripped body starts
 with `{` or `[`, is at most 1,048,576 Python characters, and the existing
@@ -597,8 +594,7 @@ A correction failure ends the current invocation, including an empty reply,
 network error, timeout, or truncation. It cannot start another correction,
 continuation, or output-budget expansion. Initial truncation recovery and
 caller-level backend fallback keep their existing behavior. On success, the
-API result includes the known usage from both responses; sampling usage stays
-unknown. A valid correction still needs the usual schema and evidence checks.
+API result includes the known usage from both responses. A valid correction still needs the usual schema and evidence checks.
 Command-line (`type: cli`) backends do not launch a second process for this
 correction.
 
@@ -612,7 +608,7 @@ and CI logs see it while the wait is still in progress:
 [forge] t+45.0s retry failed review-default after 5 attempts: <cause>
 ```
 
-The name is the backend name, or `sampling` on the MCP sampling path.
+The name is the backend name.
 `<cause>` is the exception text, collapsed to one line and capped at
 400 characters. The delay is printed *before* the sleep: the gap
 between two lines is the sleep plus the next attempt, not the duration
@@ -778,4 +774,4 @@ default `n=5` and `threshold_ratio=0.6`, without requiring a gate.yaml
 - [Cursor setup](setup-cursor.md) -- setting env vars in Cursor terminal
 - [PyCharm setup](setup-pycharm.md) -- setting env vars in PyCharm
 - [README Backend configuration](../README.md#backend-configuration) -- quick reference
-- [Retry](#retry) -- HTTP and MCP sampling retry block
+- [Retry](#retry) -- HTTP retry block

@@ -359,10 +359,10 @@ def _dedup_by_fingerprint(
     pass the same set across passes) so the dedup holds across an entire
     fold, not just within one batch.
 
-    Shared by every L1 fold site -- build_l1_provider,
-    build_grouped_l1_provider and build_sampling_l1_provider in
-    factories.py, plus the L1 chunk fold in outlet_c.py -- so the
-    "first-in-wins" claim is true on every path, not just one.
+    Shared by every L1 fold site -- build_l1_provider and
+    build_grouped_l1_provider in factories.py, plus the L1 chunk fold
+    in outlet_c.py -- so the "first-in-wins" claim is true on every
+    path, not just one.
     """
     if seen is None:
         seen = set()

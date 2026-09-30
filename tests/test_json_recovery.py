@@ -5,8 +5,7 @@ import importlib
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 
@@ -72,49 +71,6 @@ def test_api_corrects_complete_syntax_error(monkeypatch, caplog):
     ]
 
 
-@pytest.mark.asyncio
-async def test_sampling_corrects_with_one_fresh_message(caplog):
-    caplog.set_level("INFO", logger="code_forge.llm_invoke")
-    from mcp.types import TextContent
-
-    session = SimpleNamespace(
-        create_message=AsyncMock(
-            side_effect=[
-                SimpleNamespace(
-                    content=TextContent(type="text", text=BAD), model="test", stopReason="endTurn"
-                ),
-                SimpleNamespace(
-                    content=TextContent(type="text", text=json.dumps(GOOD)),
-                    model="test",
-                    stopReason="endTurn",
-                ),
-            ]
-        )
-    )
-    result = await invoke.invoke_sampling(
-        session,
-        "original",
-        system_prompt="system",
-        model_hint="test",
-        max_attempts=2,
-    )
-    assert result.content == GOOD
-    assert result.usage == invoke.Usage()
-    first, second = session.create_message.call_args_list
-    assert first.kwargs == second.kwargs
-    assert len(second.args[0]) == 1
-    assert second.args[0][0].role == "user"
-    text = second.args[0][0].content.text
-    assert text.startswith("original")
-    assert text != first.args[0][0].content.text
-    assert BAD not in text
-    records = [record for record in caplog.records if record.levelname == "INFO"]
-    assert [(record.name, record.getMessage()) for record in records] == [
-        (
-            "code_forge.llm_invoke",
-            "JSON correction at sampling attempt 2/2 after error at line 1 column 23",
-        ),
-    ]
 
 
 def parse_error(text):
@@ -293,29 +249,6 @@ def test_existing_nonstandard_compatibility(monkeypatch, text):
     assert request.call_count == 1
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["bad", "empty", "cut", "network"])
-async def test_sampling_correction_failure_is_terminal(failure):
-    from mcp.types import TextContent
-
-    def response(text, stop="endTurn"):
-        return SimpleNamespace(
-            content=TextContent(type="text", text=text), model="test", stopReason=stop
-        )
-
-    failures = {
-        "bad": response(BAD),
-        "empty": response(""),
-        "cut": response('{"a":', "maxTokens"),
-        "network": invoke.LLMInvokeError("network", kind="conn"),
-    }
-    session = SimpleNamespace(
-        create_message=AsyncMock(side_effect=[response(BAD), failures[failure], response("{}")])
-    )
-    with pytest.raises(invoke.LLMInvokeError) as caught:
-        await invoke.invoke_sampling(session, "task", max_attempts=5)
-    assert caught.value.retryable is False
-    assert session.create_message.call_count == 2
 
 
 @pytest.mark.parametrize("fmt", ["anthropic", "vertex"])
@@ -344,25 +277,6 @@ def test_other_api_formats_sum_usage(monkeypatch, fmt):
     assert request.call_args_list[0].args[1:] == request.call_args_list[1].args[1:]
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("attempts,prefix", [(1, 0), (2, 1), (3, 1)])
-async def test_sampling_uses_remaining_budget(monkeypatch, attempts, prefix):
-    from mcp.types import TextContent
-
-    monkeypatch.setattr(invoke.asyncio, "sleep", AsyncMock())
-    responses = [invoke.LLMInvokeError("connection", kind="conn")] * prefix
-    responses += [
-        SimpleNamespace(content=TextContent(type="text", text=text), model="test", stopReason="endTurn")
-        for text in (BAD, json.dumps(GOOD))
-    ]
-    session = SimpleNamespace(create_message=AsyncMock(side_effect=responses))
-    if attempts > prefix + 1:
-        result = await invoke.invoke_sampling(session, "task", max_attempts=attempts)
-        assert result.content == GOOD
-    else:
-        with pytest.raises(invoke.LLMInvokeError):
-            await invoke.invoke_sampling(session, "task", max_attempts=attempts)
-    assert session.create_message.call_count == attempts
 
 
 @pytest.mark.parametrize("status", [429, 503])
