@@ -402,7 +402,80 @@ mcp = FastMCP(
 _original_tc = mcp._tool_manager.call_tool
 
 
+def _package_dir() -> Path:
+    """Directory the running code was imported from.
+
+    An editable install points this at the git checkout, so a pull changes
+    the files under it while this process keeps the old modules loaded.
+    """
+    import code_forge
+
+    return Path(code_forge.__file__).resolve().parent
+
+
+def _source_digest() -> str:
+    """Digest of every Python file shipped in the package.
+
+    Covers the modules a tool call imports lazily, not just this one, so a
+    symbol added in any of them shows up as a drift.
+    """
+    import hashlib
+
+    digest = hashlib.blake2b(digest_size=16)
+    root = _package_dir()
+    for path in sorted(root.rglob("*.py")):
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+_loaded_digest = _source_digest()
+class _SourceWatch:
+    """Remembers the newest mtime it has already digested.
+
+    A dict would also avoid `global`, but a named field says what the
+    number is for.
+    """
+
+    def __init__(self) -> None:
+        self.seen_mtime_ns = 0
+
+
+_watch = _SourceWatch()
+
+
+def _newest_mtime_ns() -> int:
+    import os
+
+    newest = 0
+    stack = [str(_package_dir())]
+    while stack:
+        with os.scandir(stack.pop()) as it:
+            for entry in it:
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(entry.path)
+                elif entry.name.endswith(".py"):
+                    newest = max(newest, entry.stat(follow_symlinks=False).st_mtime_ns)
+    return newest
+
+
+def _refuse_if_source_moved() -> None:
+    newest = _newest_mtime_ns()
+    if newest == _watch.seen_mtime_ns:
+        return
+    _watch.seen_mtime_ns = newest
+    if _source_digest() == _loaded_digest:
+        return
+    raise ToolError(
+        "code_forge source changed on disk after this server started. "
+        "The loaded modules are stale and the next lazy import can raise "
+        "ImportError. Reload the MCP server in this session."
+    )
+
+
 async def _null_coerce_call_tool(name, arguments, **kw):
+    _refuse_if_source_moved()
     for k, v in list(arguments.items()):
         if v is None:
             arguments[k] = ""
