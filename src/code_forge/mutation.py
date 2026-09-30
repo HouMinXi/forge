@@ -731,21 +731,35 @@ def run_mutation(
     if not diff_files:
         return ([], [])
 
-    # Filter to .py files only (Python MVP)
-    py_files = [f for f in diff_files if f.endswith(".py")]
+    from .mutation_dispatch import group_by_adapter, review_gate_summary
+
+    grouped = group_by_adapter(diff_files)
+    py_files = grouped.get("python-mutmut", [])
+    other = [key for key in grouped if key and key != "python-mutmut"]
     if not py_files:
+        if other:
+            description = (
+                "mutation adapters: " + review_gate_summary(diff_files) + "; python mutmut not applicable"
+            )
+            fingerprint = "mutation-other-adapter"
+            infra = "diff has no Python files; other adapters are registered but not invoked here"
+        else:
+            description = "no registered mutation adapter for this diff"
+            fingerprint = "mutation-no-adapter"
+            infra = ""
         findings.append(
             StateFinding(
                 id="MUTATION_SKIPPED",
-                fingerprint="mutation-no-python",
+                fingerprint=fingerprint,
                 source="MUTANT",
                 disposition=Disposition.DISMISSED,
                 file="",
                 line_range=[],
-                description="no Python files in the diff (mutation is Python-only MVP)",
+                description=description,
             )
         )
-        infra_errors.append("no Python files in the diff")
+        if infra:
+            infra_errors.append(infra)
         return (findings, infra_errors)
 
     roots = _source_roots(

@@ -4615,9 +4615,12 @@ def _run_mutation_check(args, cwd: Path) -> int:
     )
 
     skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
-    no_python = any(f.fingerprint == "mutation-no-python" for f in skipped)
-    # The runner also reports this inapplicable-diff notice as infrastructure text.
-    errors = [err for err in infra_errors if not (no_python and err == "no Python files in the diff")]
+    quiet = {"mutation-tests-only", "mutation-no-adapter"}
+    for item in skipped:
+        print("code-forge: mutation-check: SKIP: %s" % item.description, file=sys.stderr)
+    quiet_skip = bool(skipped) and all(item.fingerprint in quiet for item in skipped)
+    echoed = {item.description for item in skipped}
+    errors = [err for err in infra_errors if not (quiet_skip and err in echoed)]
     for err in errors:
         print("code-forge: mutation-check: %s" % err, file=sys.stderr)
     if errors:
@@ -4629,9 +4632,7 @@ def _run_mutation_check(args, cwd: Path) -> int:
             print(f"code-forge: mutation-check: {error.description}", file=sys.stderr)
         return EXIT_UNRELIABLE
 
-    for item in skipped:
-        print(f"code-forge: mutation-check: SKIP: {item.description}", file=sys.stderr)
-    if any(f.fingerprint not in {"mutation-tests-only", "mutation-no-python"} for f in skipped):
+    if any(f.fingerprint not in quiet for f in skipped):
         return EXIT_CLI_ERROR
 
     # Translate findings to exit code.
