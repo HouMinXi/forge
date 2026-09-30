@@ -76,6 +76,22 @@ def test_prompt_excludes_other_files_hunks():
     assert "SECRET_OTHER_FILE_LINE" not in p
 
 
+def test_prompt_names_the_other_files_changed_in_the_same_diff():
+    # A defect that spans files is invisible when the judge is told only
+    # about the anchored file and given no hint that anything else moved.
+    # The other files are named, not quoted: their hunks stay out.
+    p = _capture(RealFalsifier(backend=None, diff_text=DIFF), _finding())
+    assert "other/file.py" in p
+    assert "SECRET_OTHER_FILE_LINE" not in p
+
+
+def test_other_files_are_named_when_the_diff_uses_crlf():
+    crlf = DIFF.replace("\n", "\r\n")
+    p = _capture(RealFalsifier(backend=None, diff_text=crlf), _finding())
+    assert "other/file.py" in p
+    assert "SECRET_OTHER_FILE_LINE" not in p
+
+
 def test_prompt_tells_the_judge_which_direction_the_change_went():
     """The rubric line that turns 'the behaviour changed' into a question
     about THIS diff's direction. Without it the judge confirms a correct
