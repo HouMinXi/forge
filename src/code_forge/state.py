@@ -359,6 +359,7 @@ def _finding_to_dict(f: StateFinding) -> dict:
         "evidence_files": f.evidence_files,
         "is_timeout": f.is_timeout,
         "backend": f.backend,
+        "severity": f.severity,
         "excerpt": f.excerpt,
         "falsify_reasoning": f.falsify_reasoning,
     }
