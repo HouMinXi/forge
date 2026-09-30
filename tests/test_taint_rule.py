@@ -177,17 +177,73 @@ def test_forge_taint_focus_metavariable():
     shutil.which("semgrep") is None,
     reason="semgrep not installed",
 )
-def test_semgrep_validate():
-    """semgrep --validate passes on forge-taint.yaml."""
-    # semgrep spends most of this on its own start-up, which stretches
-    # well past 30s when the box is running a full suite in parallel.
+def test_semgrep_validate(tmp_path):
+    """The local rule runs on a clean file without contacting a registry.
+
+    ``semgrep --validate`` fetches ``p/semgrep-rule-lints`` from semgrep.dev
+    before it reads the file, so a reset connection fails the run even
+    though the rule never changed. ``scan --error`` reads only the config
+    it was given and returns non-zero when the rule matches, so a clean
+    file must come back zero. The outage test below keeps the
+    ``--validate`` failure pinned.
+    """
+    target = tmp_path / "clean.py"
+    target.write_text("x = 1\n")
     result = subprocess.run(
-        ["semgrep", "--validate", "--config", str(_RULES_PATH)],
+        ["semgrep", "scan", "--metrics=off", "--error", "--config", str(_RULES_PATH), "--quiet", str(target)],
         capture_output=True,
         text=True,
         timeout=120,
     )
-    assert result.returncode == 0, "semgrep --validate failed: %s" % result.stderr
+    assert result.returncode == 0, "semgrep scan failed: %s" % result.stderr
+
+
+@pytest.mark.skipif(
+    shutil.which("semgrep") is None,
+    reason="semgrep not installed",
+)
+def test_semgrep_validate_fails_when_the_registry_is_unreachable():
+    """``--validate`` fetches a rule pack from semgrep.dev before it reads
+    the local file. A proxy that refuses every tunnel must make the
+    command fail, so a later change cannot swallow the outage.
+    """
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+
+    class _Refuse(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_CONNECT(self):
+            host, _sep, _port = self.path.partition(":")
+            self.close_connection = True
+            if host == "semgrep.dev":
+                self.wfile.write(b"HTTP/1.1 502 semgrep.dev refused\r\n\r\n")
+                return
+            self.wfile.write(b"HTTP/1.1 502 not forwarded\r\n\r\n")
+
+        def log_message(self, format, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Refuse)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    env = dict(os.environ)
+    env["https_proxy"] = "http://127.0.0.1:%d" % port
+    env["http_proxy"] = env["https_proxy"]
+    env["HTTPS_PROXY"] = env["https_proxy"]
+    env["HTTP_PROXY"] = env["https_proxy"]
+    try:
+        result = subprocess.run(
+            ["semgrep", "--validate", "--config", str(_RULES_PATH)],
+            capture_output=True,
+            text=True,
+            timeout=150,
+            env=env,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert result.returncode != 0
 
 
 @pytest.mark.skipif(
