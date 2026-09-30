@@ -229,12 +229,13 @@ def test_outlet_subprocess(tmp_path):
     assert msg == "subprocess"
 
 
-def test_outlet_sampling_fails():
-    with patch("code_forge.outlet_resolver.resolve_outlet", return_value="sampling"):
-        ok, msg = _check_outlet(Path("/ws"), {}, {}, [])
+def test_outlet_sampling_fails(tmp_path):
+    gate_dir = tmp_path / ".code-forge"
+    gate_dir.mkdir()
+    (gate_dir / "gate.yaml").write_text("outlet: sampling\n")
+    ok, msg = _check_outlet(tmp_path, {"outlet": "sampling"}, {}, [])
     assert not ok
     assert "sampling" in msg
-    assert "Switch outlet" in msg
 
 
 # -- _check_handshake --

@@ -245,7 +245,7 @@ backends:
 ```
 
 Full reference: [docs/configuration.md](docs/configuration.md).
-Retry on 429/5xx and empty MCP sampling replies:
+Retry on 429/5xx:
 [Retry](docs/configuration.md#retry).
 
 Editor setup guides:

@@ -62,7 +62,7 @@ def test_authorization_before_contract_and_outlet(setup, monkeypatch):
     load.assert_not_called()
 
 
-@pytest.mark.parametrize("outlet", ["inline", "sampling", "subagent"])
+@pytest.mark.parametrize("outlet", ["inline", "subagent"])
 def test_supported_path_guard_after_authorization(setup, monkeypatch, outlet):
     root, gate, data, args = setup
     trust.record_kernel_context_trust(gate, root, validate_kernel_context(data["kernel_context"]))

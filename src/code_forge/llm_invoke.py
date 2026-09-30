@@ -11,7 +11,6 @@ Public types: Usage, LLMResult, LLMInvokeError
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import http.client
 import json
@@ -80,7 +79,7 @@ class LLMInvokeError(Exception):
         self.retryable = retryable
         self.retry_after = retry_after
         # Machine-readable failure class for dispatch decisions.
-        # invoke_sampling and the api dispatch set one of: "truncated",
+        # The api dispatch sets one of: "truncated",
         # "empty", "stub_model", "no_json", "conn", "credentials",
         # "sse_body", "bad_body". Note "empty" covers a response
         # that carried no usable text, whatever the wording of the message.
@@ -2397,8 +2396,8 @@ def _invoke_openai(
     # Truncation detection: openai format uses finish_reason == "length"
     # when the response hit max_tokens / max_completion_tokens.  Same
     # pattern as the anthropic path (stop_reason == "max_tokens") and
-    # the sampling path (stopReason == "maxTokens") -- all three now
-    # raise kind="truncated" so _dispatch_sampling routes them uniformly.
+    # the sampling path (stopReason == "maxTokens") -- all three raise
+    # kind="truncated" so callers route them uniformly.
     finish = choice.get("finish_reason", "")
     if finish == "error":
         # Stream ended on finish_reason=error without any error payload:
@@ -2806,157 +2805,3 @@ def _invoke_vertex(
     usage_data = raw_usage if isinstance(raw_usage, dict) else {}
 
     return (content, usage_data)
-
-
-async def invoke_sampling(
-    session,
-    prompt: str,
-    system_prompt: str | None = None,
-    max_tokens: int = 16384,
-    temperature: float = 0.0,
-    model_hint: str | None = None,
-    max_attempts: int = 5,
-    initial_delay_s: float = 2.0,
-) -> LLMResult:
-    from mcp.types import (
-        SamplingMessage,
-        TextContent as MCPTextContent,
-        ModelPreferences,
-        ModelHint,
-    )
-
-    if max_attempts < 1:
-        raise ValueError("max_attempts must be >= 1, got %d" % max_attempts)
-    t0 = time.time()
-    kwargs = {
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-    }
-    if system_prompt:
-        kwargs["system_prompt"] = system_prompt
-    if model_hint:
-        kwargs["model_preferences"] = ModelPreferences(
-            hints=[ModelHint(name=model_hint)],
-            intelligencePriority=0.8,
-        )
-    messages = [
-        SamplingMessage(
-            role="user",
-            content=MCPTextContent(type="text", text=prompt),
-        )
-    ]
-    last_exc: LLMInvokeError | None = None
-    correction_active = False
-    for attempt in range(max_attempts):
-        try:
-            result = await session.create_message(messages, **kwargs)
-            elapsed = time.time() - t0
-
-            # content is Union[TextContent, ImageContent, AudioContent]
-            if isinstance(result.content, MCPTextContent):
-                raw_text = result.content.text
-            else:
-                raw_text = str(result.content)
-
-            # Empty response: some MCP clients (e.g. Copilot free tier)
-            # advertise sampling capability but return empty text. That
-            # is a flake on free models, so it is retryable.
-            result_model = getattr(result, "model", "") or ""
-            if not raw_text.strip():
-                raise LLMInvokeError(
-                    "sampling response is empty (model=%s, stopReason=%s). "
-                    "The MCP client may not fully implement createMessage. "
-                    "Set outlet: subprocess in gate.yaml and configure an API backend."
-                    % (result_model or "?", getattr(result, "stopReason", "?")),
-                    duration_s=elapsed,
-                    kind="empty",
-                    retryable=True,
-                )
-
-            # copilotcli/auto and similar stub models return syntactically
-            # valid but useless responses. Detect early before wasting
-            # JSON parse effort. Not retryable: the stub never improves.
-            if result_model.startswith("copilotcli/"):
-                raise LLMInvokeError(
-                    "sampling model '%s' is a Copilot CLI stub that cannot "
-                    "generate review content. Upgrade to Copilot Pro or set "
-                    "outlet: subprocess with an API backend." % result_model,
-                    duration_s=elapsed,
-                    kind="stub_model",
-                    retryable=False,
-                )
-
-            # Only maxTokens is true truncation. stopSequence/toolUse
-            # are normal completions. Check truncation BEFORE JSON
-            # parse: truncated output is almost always invalid JSON,
-            # and kind="truncated" (not "no_json") tells
-            # _dispatch_sampling the real failure class.
-            if result.stopReason == "maxTokens":
-                raise LLMInvokeError(
-                    "sampling response truncated (stopReason == maxTokens)",
-                    duration_s=elapsed,
-                    kind="truncated",
-                    retryable=False,
-                )
-
-            # Parse JSON same as _invoke_api path
-            text = _strip_fences(raw_text)
-            try:
-                parsed = _loads_model_json(text)
-            except (json.JSONDecodeError, TypeError) as exc:
-                parsed = _extract_json_from_text(raw_text)
-                if parsed is None:
-                    if (
-                        not correction_active
-                        and attempt + 1 < max_attempts
-                        and isinstance(exc, json.JSONDecodeError)
-                    ):
-                        corrected_prompt = _json_correction_prompt(prompt, text, exc)
-                        if corrected_prompt is not None:
-                            messages = [
-                                SamplingMessage(
-                                    role="user",
-                                    content=MCPTextContent(
-                                        type="text",
-                                        text=corrected_prompt,
-                                    ),
-                                )
-                            ]
-                            correction_active = True
-                            logging.getLogger(__name__).info(
-                                "JSON correction at sampling attempt %d/%d "
-                                "after error at line %d column %d",
-                                attempt + 2,
-                                max_attempts,
-                                exc.lineno,
-                                exc.colno,
-                            )
-                            continue
-                    raise LLMInvokeError(
-                        "sampling response contains no valid JSON "
-                        "(first 120 chars: %r)" % raw_text[:120],
-                        duration_s=elapsed,
-                        kind="no_json",
-                        retryable=_no_json_retryable(getattr(result, "stopReason", "") or ""),
-                    ) from exc
-
-            return LLMResult(
-                content=parsed,
-                usage=Usage(0, 0),
-                duration_s=elapsed,
-            )
-        except LLMInvokeError as exc:
-            if correction_active:
-                exc.retryable = False
-                raise
-            last_exc = exc
-            cause = _retry_cause(exc)
-            if not exc.retryable or attempt == max_attempts - 1:
-                if attempt > 0 or (exc.retryable and max_attempts == 1):
-                    _emit_retry_failed("sampling", max_attempts, cause)
-                raise
-            delay = _retry_delay_s(attempt, initial_delay_s, exc.retry_after)
-            _emit_retrying("sampling", attempt, max_attempts, delay, cause)
-            await asyncio.sleep(delay)
-    assert last_exc is not None
-    raise last_exc

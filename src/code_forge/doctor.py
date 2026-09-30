@@ -18,7 +18,7 @@ from typing import Mapping, Optional
 
 import yaml
 
-from code_forge.workspace import SAMPLING_REMEDIATION, resolve_workspace
+from code_forge.workspace import resolve_workspace
 
 
 # -- Registry map ---------------------------------------------------------
@@ -229,12 +229,6 @@ def _check_outlet(
         )
     except Exception as exc:  # noqa: BLE001  outlet resolution failure is reported as a failed check
         return (False, str(exc))
-    if outlet == "sampling":
-        return (
-            False,
-            "sampling (cannot verify client capability from CLI; "
-            "the MCP-side forge_resolve_outlet can). " + SAMPLING_REMEDIATION,
-        )
     return (True, outlet)
 
 

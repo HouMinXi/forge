@@ -6,9 +6,8 @@ local file read or an unexpected protocol dial. The chaining pins keep
 diagnostic causality attached to raised errors.
 """
 
-import json
 import os
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -127,22 +126,3 @@ class TestExceptionChaining:
             with pytest.raises(LLMInvokeError, match="exhausted") as excinfo:
                 llm_invoke("p", backend=backend, max_attempts=5)
         assert excinfo.value.__suppress_context__ is True
-
-    @pytest.mark.asyncio
-    async def test_sampling_no_json_chains_parse_error(self):
-        """The no-json sampling error chains the underlying parse failure so
-        the traceback names the real cause (raise-from)."""
-        from code_forge.llm_invoke import invoke_sampling
-        from mcp.types import CreateMessageResult, TextContent
-
-        session = MagicMock()
-        session.create_message = AsyncMock()
-        session.create_message.return_value = CreateMessageResult(
-            role="assistant",
-            content=TextContent(type="text", text="not json at all"),
-            model="test-model",
-            stopReason="endTurn",
-        )
-        with pytest.raises(LLMInvokeError, match="no valid JSON") as excinfo:
-            await invoke_sampling(session, prompt="p", max_attempts=1)
-        assert isinstance(excinfo.value.__cause__, json.JSONDecodeError)

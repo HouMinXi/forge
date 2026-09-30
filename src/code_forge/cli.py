@@ -432,7 +432,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     review_parser.add_argument(
         "--outlet",
-        choices=["subprocess", "cli", "inline", "subagent", "sampling"],
+        choices=["subprocess", "cli", "inline", "subagent"],
         default=None,
         help="review outlet (default: auto-detect via backend reachability)",
     )
@@ -3215,7 +3215,11 @@ def _dispatch_inline_canary(
     Returns None for other outlets (caller continues to subprocess path).
     """
     if outlet == "sampling":
-        raise CliError("outlet 'sampling' is only available within the MCP server context")
+        raise CliError(
+            "sampling outlet was removed: the Model Context Protocol "
+            "deprecated Sampling on 2026-07-28. Configure an API backend "
+            "in gate.yaml, or set FORGE_OUTLET=inline."
+        )
     if outlet != "inline":
         return None
     canary_config = _load_canary_config(args, gate_data)

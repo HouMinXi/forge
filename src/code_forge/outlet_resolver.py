@@ -9,13 +9,15 @@ Resolves which review outlet to use:
   - "subprocess" -> Outlet A (fresh subprocess per pass)
   - "inline"     -> Outlet B (inline merged skill, in-process)
   - "subagent"   -> Outlet C (fresh Agent per pass, no CLI overhead)
-  - "sampling"   -> Outlet D (MCP client's own model, no API key)
+
+Removed: "sampling" (MCP client's own model) is rejected everywhere;
+the Model Context Protocol deprecated Sampling on 2026-07-28.
 
 Deprecated: "cli" is accepted as an alias for "subprocess" with a
   stderr DeprecationWarning. Will be removed in a future release.
 
 Key invariants:
-  - Outlet B (inline), Outlet C (subagent), and Outlet D (sampling)
+  - Outlet B (inline) and Outlet C (subagent)
     NEVER trigger the reachability probe.
   - Backend unreachable with no explicit override raises CliError
     (FAIL CLOSED) -- never silently degrades to inline.
@@ -49,7 +51,6 @@ VALID_OUTLET_STRINGS = {
     "subprocess": "subprocess",
     "inline": "inline",
     "subagent": "subagent",
-    "sampling": "sampling",
 }
 
 # Deprecated aliases: old_value -> (canonical_value, deprecation_message)
@@ -78,8 +79,8 @@ def _require_backend_for_subprocess(
 ) -> str:
     """Explicit 'subprocess' still requires a configured backend.
 
-    inline and subagent run in-session and sampling is MCP-only, so
-    only subprocess depends on a backend. Without this check an
+    inline and subagent run in-session, so only subprocess depends on a
+    backend. Without this check an
     explicit outlet value short-circuits past the zero-config guard
     and the review falls through to the implicit `claude -p` path
     the guard exists to block (init templates used to ship an active
@@ -183,9 +184,9 @@ def resolve_outlet(
     Reachable -> "subprocess" (fail-safe Outlet A).
     Unreachable -> CliError (FAIL CLOSED).
 
-    An explicit "inline", "subagent", or "sampling" (from cli_value, env,
+    An explicit "inline" or "subagent" (from cli_value, env,
     or gate.yaml) short-circuits BEFORE any reachability probe -- Outlets
-    B, C, and D NEVER probe.
+    B and C NEVER probe.
 
     Nowhere in this function is model capability
     inspected.  The only signals are the explicit override and the
@@ -204,7 +205,7 @@ def resolve_outlet(
             the configured backend)
 
     Returns:
-        "subprocess", "inline", "subagent", or "sampling"
+        "subprocess", "inline", or "subagent"
 
     Raises:
         ValueError: invalid outlet string from cli_value, env, or gate.yaml

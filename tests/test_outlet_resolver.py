@@ -689,16 +689,17 @@ class TestDeprecatedOutletAlias:
 
 
 class TestSamplingOutlet:
-    def test_parse_outlet_string_sampling(self):
+    def test_parse_outlet_string_sampling_is_rejected(self):
+        from code_forge.errors import CliError
         from code_forge.outlet_resolver import _parse_outlet_string
 
-        result = _parse_outlet_string("sampling", "test")
-        assert result == "sampling"
+        with pytest.raises(CliError, match="invalid outlet 'sampling'"):
+            _parse_outlet_string("sampling", "test")
 
-    def test_sampling_in_valid_outlets(self):
+    def test_sampling_not_in_valid_outlets(self):
         from code_forge.outlet_resolver import VALID_OUTLET_STRINGS
 
-        assert "sampling" in VALID_OUTLET_STRINGS
+        assert "sampling" not in VALID_OUTLET_STRINGS
 
 
 class TestSubprocessRequiresBackend:
@@ -776,21 +777,13 @@ class TestSubprocessRequiresBackend:
 
         args = _build_parser().parse_args(["review"])
 
-        with pytest.raises(CliError, match="only available within the MCP server context"):
+        with pytest.raises(CliError, match="invalid outlet 'sampling'"):
             _run(args, env=os.environ, cwd=tmp_path)
 
     def test_cli_guard_sampling_raises_via_flag(self, tmp_path, monkeypatch):
-        import os
-        from code_forge.cli import _run, _build_parser
-        from code_forge.errors import CliError
-
-        gate_dir = tmp_path / ".code-forge"
-        gate_dir.mkdir()
-        (gate_dir / "gate.yaml").write_text("backends: {}")
+        from code_forge.cli import _build_parser
 
         monkeypatch.chdir(tmp_path)
 
-        args = _build_parser().parse_args(["review", "--outlet", "sampling"])
-
-        with pytest.raises(CliError, match="only available within the MCP server context"):
-            _run(args, env=os.environ, cwd=tmp_path)
+        with pytest.raises(SystemExit, match="2"):
+            _build_parser().parse_args(["review", "--outlet", "sampling"])
