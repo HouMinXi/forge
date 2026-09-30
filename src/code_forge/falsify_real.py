@@ -206,11 +206,11 @@ class RealFalsifier(Falsifier):
             )
         try:
             disposition = Disposition(verdict_str)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as err:
             raise FalsifyProtocolError(
                 "falsifier verdict %r not in Disposition for %s" % (verdict_str, finding.fingerprint),
                 raw=response,
-            )
+            ) from err
 
         # A verdict that turns on library behaviour needs an execution
         # receipt. Without one the model is reasoning about behaviour it
