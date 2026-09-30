@@ -709,6 +709,26 @@ def _make_result(
     )
 
 
+SAMPLING_DEPRECATION = (
+    "sampling outlet is deprecated: the Model Context Protocol marked "
+    "Sampling deprecated on 2026-07-28. Configure an API backend instead. "
+    "This outlet stays until 2027-07-28 at the earliest."
+)
+
+
+def _note_sampling(result):
+    """Append the deprecation note to a sampling result and to stderr."""
+    import sys
+
+    sys.stderr.write("code-forge: " + SAMPLING_DEPRECATION + "\n")
+    content = getattr(result, "content", None)
+    text = getattr(content[0], "text", None) if content else None
+    if not isinstance(text, str):
+        return result
+    text = text + "\n" + SAMPLING_DEPRECATION
+    return _make_simple_result(text, result.structuredContent.get("exit_code", 0))
+
+
 def _make_simple_result(
     stdout: str,
     exit_code: int,
@@ -1283,7 +1303,7 @@ async def forge_review(
         if ctx is None or ctx.session.client_params.capabilities.sampling is None:
             raise ToolError("Client does not support sampling capability. " + SAMPLING_REMEDIATION)
         _reject_kernel_sampling(workspace)
-        return await _dispatch_sampling(
+        return _note_sampling(await _dispatch_sampling(
             session=ctx.session,
             committed=committed,
             workspace=workspace,
@@ -1294,7 +1314,7 @@ async def forge_review(
             baseline=baseline,
             head=head,
             whole_files=whole_files,
-        )
+        ))
 
     _check_backend(workspace)
     _validate_backend(backend, workspace)
@@ -1355,7 +1375,7 @@ async def forge_gate_check(
         _reject_kernel_sampling(workspace)
         # gate-check has no contract concept -- contract_spec stays empty.
         # Asserted by test_gate_check_no_contract.
-        return await _dispatch_sampling(
+        return _note_sampling(await _dispatch_sampling(
             session=ctx.session,
             committed=False,
             workspace=workspace,
@@ -1363,7 +1383,7 @@ async def forge_gate_check(
             staged=True,
             baseline=baseline,
             # contract_spec intentionally omitted
-        )
+        ))
 
     _check_backend(workspace)
     _validate_backend(backend, workspace)
@@ -1444,6 +1464,7 @@ async def forge_resolve_outlet(project_dir: str = "", ctx: Context = None) -> Ca
     )
 
     # -- T1: capability diagnostics --
+    outlet = os.environ.get("FORGE_OUTLET")
     if ctx is not None:
         caps = ctx.session.client_params.capabilities
         context += "client sampling: %s\n" % ("yes" if caps.sampling else "NO")
@@ -1454,7 +1475,6 @@ async def forge_resolve_outlet(project_dir: str = "", ctx: Context = None) -> Ca
         # second) so the diagnostic condition is identical to the guard.
         from code_forge.outlet_resolver import load_outlet_from_gate
 
-        outlet = os.environ.get("FORGE_OUTLET")
         if not outlet and gate_yaml_path.exists():
             outlet = load_outlet_from_gate(gate_yaml_path)
         if outlet == "sampling" and caps.sampling is None:
@@ -1465,7 +1485,10 @@ async def forge_resolve_outlet(project_dir: str = "", ctx: Context = None) -> Ca
     else:
         context += "client capabilities: unknown (no MCP session)\n"
 
-    return _make_simple_result(stdout.rstrip("\n") + "\n" + context, exit_code, stderr)
+    result = _make_simple_result(stdout.rstrip("\n") + "\n" + context, exit_code, stderr)
+    if outlet == "sampling":
+        return _note_sampling(result)
+    return result
 
 
 @mcp.tool(
