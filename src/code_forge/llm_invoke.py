@@ -1437,7 +1437,7 @@ def _invoke_cli(
         cmd = [
             "sh",
             "-c",
-            '%s -p "$(<%s)"%s --output-format json'
+            '%s -p "$(cat %s)"%s --output-format json'
             % (shlex.quote(binary), shlex.quote(prompt_file), model_part),
         ]
     else:
