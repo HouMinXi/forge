@@ -962,13 +962,16 @@ def cmd_sync(args):
 
     stamp = dt.datetime.now().strftime(BACKUP_FMT)
     dry = args.dry_run
+    # The five passes below only edit files, they never add or remove a
+    # gate.yaml, so the directory walk happens once.
+    configs = find_configs()
     touched = []
 
     renamed = []
     for old in args.from_name or []:
         if old == args.name:
             continue
-        for path in find_configs():
+        for path in configs:
             if not find_backend(read_config(path), old):
                 continue
             did, why = rename_backend(path, old, args.name, stamp, dry)
@@ -983,7 +986,7 @@ def cmd_sync(args):
             print(f"  {verb} '{old}' -> '{args.name}' in {path}")
 
     added = []
-    for path in find_configs():
+    for path in configs:
         did, why = insert_backend(path, spec, stamp, dry)
         if did:
             added.append(path)
@@ -1002,7 +1005,7 @@ def cmd_sync(args):
     edits = [("base_url", args.base_url), ("model", args.model),
              ("format", args.format), ("api_key_env", key_env),
              ("max_tokens", args.max_tokens), ("timeout_s", args.timeout_s)]
-    for path in find_configs():
+    for path in configs:
         if path in added or not find_backend(read_config(path), args.name):
             continue
         changed_fields = []
@@ -1020,7 +1023,7 @@ def cmd_sync(args):
         print(f"  {verb} {path}: {', '.join(fields)}")
 
     if headers:
-        for path in find_configs():
+        for path in configs:
             if path in added or not find_backend(read_config(path), args.name):
                 continue
             did, _ = write_headers(path, args.name, headers, stamp, dry)
@@ -1031,7 +1034,7 @@ def cmd_sync(args):
                 print(f"  {verb} {path}: headers")
 
     defaulted = []
-    for path in find_configs():
+    for path in configs:
         did, _ = set_default(path, args.name, stamp, dry)
         if did:
             defaulted.append(path)
