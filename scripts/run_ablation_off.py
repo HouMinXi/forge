@@ -49,7 +49,7 @@ def main():
     print(f"Entry: {ENTRY_NAME}")
     print(f"Diff: {DIFF_FILE}")
     print(f"Backend: {BACKEND_NAME}")
-    print(f"Engine: stub (ablation OFF)")
+    print("Engine: stub (ablation OFF)")
     print()
 
     try:
@@ -137,8 +137,8 @@ def main():
         env["FORGE_FALSIFICATION_ENGINE"] = "stub"
         env["FORGE_MAX_TOTAL_ROUNDS"] = "3"
 
-        print(f"FORGE_FALSIFICATION_ENGINE=stub")
-        print(f"FORGE_MAX_TOTAL_ROUNDS=6")
+        print("FORGE_FALSIFICATION_ENGINE=stub")
+        print("FORGE_MAX_TOTAL_ROUNDS=%s" % env["FORGE_MAX_TOTAL_ROUNDS"])
         print()
 
         # Run the review

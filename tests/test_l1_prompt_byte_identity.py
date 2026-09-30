@@ -92,7 +92,7 @@ def _prompts(graph_ctx: str, context_sources_text: str = "") -> list[str]:
 
 
 def _digests(prompts: list[str]) -> dict[str, str]:
-    return {n: hashlib.sha256(p.encode()).hexdigest() for n, p in zip(PASSES, prompts)}
+    return {n: hashlib.sha256(p.encode()).hexdigest() for n, p in zip(PASSES, prompts, strict=True)}
 
 
 def test_case_a_two_rows_unchanged():
@@ -230,3 +230,16 @@ def test_cli_context_block_degrades_not_aborts(tmp_path, monkeypatch):
     assert "render_blast_radius(" in src[i_try:i_exc]
     assert "render_context_sources(" in src[i_try:i_exc]
     assert 'warn("context sources unavailable' in src[i_exc : i_exc + 400]
+
+
+def test_digest_pairing_rejects_a_short_prompt_list():
+    """Three pass names must pair with three prompts.
+
+    zip() without strict drops the unmatched names and returns a partial
+    dict, so a capture that produced two prompts would still look like a
+    result. The mismatch has to raise.
+    """
+    import pytest
+
+    with pytest.raises(ValueError):
+        _digests(["only-one"])

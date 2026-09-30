@@ -2314,7 +2314,7 @@ def show_stats(json_format=False, include_shadow=False):
         bar_width = 12
         print()
         print("Confidence Distribution:")
-        for label, count in zip(bucket_labels, buckets):
+        for label, count in zip(bucket_labels, buckets, strict=True):
             if max_count > 0:
                 bar_len = int(count / max_count * bar_width)
             else:
