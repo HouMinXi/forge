@@ -854,3 +854,137 @@ def render_context_sources(result: GatherResult) -> str:
             )
         )
     return "\n".join(lines)
+
+
+class GitHistorySource:
+    """Recent commit subjects for the files a diff adds lines to.
+
+    The patch itself is already in the prompt, so this carries subjects
+    only. `get_changed_files` drops files that only lost lines, and an
+    empty pathspec would make `git log` print the whole repository, so
+    an empty file list returns nothing and does not run git.
+    """
+
+    name = "git-history"
+
+    def __init__(self, root: Path, runner=None, timeout: float = 10):
+        self.root = root
+        self.runner = runner
+        self.timeout = timeout
+
+    def snapshot_sha(self):
+        return None
+
+    def facts(self, changed_files, diff_text):
+        if not changed_files:
+            return []
+        cmd = ["git", "log", "-n", "5", "--format=%h %s", "--", *changed_files]
+        if self.runner is not None:
+            out = self.runner(cmd, self.timeout)
+        else:
+            proc = subprocess.run(
+                cmd, cwd=self.root, capture_output=True, text=True,
+                timeout=self.timeout, check=False,
+            )
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    proc.returncode, cmd, proc.stdout, proc.stderr)
+            out = proc.stdout
+        rows = []
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            short, _, subject = line.partition(" ")
+            rows.append(FactRow(
+                entity=subject, file="", downstream="",
+                dependents=short, source=self.name,
+            ))
+        return rows
+
+
+_IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\b")
+
+
+def query_terms(changed_files, diff_text, limit=10):
+    """File names plus up to `limit` identifiers from added lines.
+
+    A token longer than 40 characters is dropped: that is the shape of a
+    hash or a secret, and the query leaves the machine. All-digit tokens
+    never match the pattern.
+    """
+    names = [Path(f).name for f in changed_files]
+    seen = set(names)
+    idents = []
+    for line in diff_text.splitlines():
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        for tok in _IDENT.findall(line):
+            if len(tok) > 40 or tok in seen:
+                continue
+            seen.add(tok)
+            idents.append(tok)
+            if len(idents) == limit:
+                return " ".join(names + idents)
+    return " ".join(names + idents)
+
+
+class KnowledgeSource:
+    """One document passage from the knowledge base, or nothing.
+
+    Off unless `enabled` is set. `client` takes the query text and the
+    timeout and returns a parsed dict. A parsed response with no sources
+    is a miss, not an error. Any other failure raises, and `gather`
+    records it.
+    """
+
+    name = "knowledge"
+
+    def __init__(self, client=None, enabled=False, timeout=60):
+        self.client = client
+        self.enabled = enabled
+        self.timeout = timeout
+
+    def snapshot_sha(self):
+        return None
+
+    def facts(self, changed_files, diff_text):
+        if not self.enabled:
+            return []
+        payload = self.client(query_terms(changed_files, diff_text), self.timeout)
+        sources = payload.get("sources") or []
+        if not sources:
+            return []
+        src = sources[0]
+        passage = (payload.get("answer") or "")[:400]
+        note = ("%s %s" % (src.get("chunk_id") or "", passage)).strip()
+        return [FactRow(
+            entity=src.get("doc_title") or "",
+            file=src.get("source_url") or "",
+            downstream="",
+            dependents=note,
+            source=self.name,
+        )]
+
+
+def knowledge_client(query, timeout):
+    """POST one question to the knowledge service. Address from the environment.
+
+    YINHE_RAG_BASE_URL names the service. Nothing is hardcoded: a machine
+    without the variable raises, and `gather` records it instead of
+    sending the query somewhere unintended.
+    """
+    import json
+    import os
+    import urllib.request
+
+    base = os.environ.get("YINHE_RAG_BASE_URL", "").strip().rstrip("/")
+    url = base + "/api/query"
+    if not url.startswith(("http:", "https:")):
+        raise RuntimeError("YINHE_RAG_BASE_URL must be http or https")
+    body = json.dumps({"query": query, "top_k": 1, "mode": "kb"}).encode()
+    req = urllib.request.Request(  # noqa: S310 - scheme checked on the line above
+        url, data=body,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        return json.loads(resp.read().decode())
