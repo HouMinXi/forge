@@ -264,3 +264,156 @@ def test_findings_cache_is_replaced_not_accumulated(tmp_path, monkeypatch):
     src.facts(["f.py"], "d")
     assert len(src.findings_cache) == 1
     assert src.findings_cache[0].description.startswith("f2")
+
+
+def _repo(path, commits):
+    """commits is a list of (file, subject). Each writes that one file."""
+    import subprocess
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=path, check=True)
+    for name, subject in commits:
+        (path / name).write_text(subject + "\n")
+        subprocess.run(["git", "add", name], cwd=path, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", subject], cwd=path, check=True)
+
+
+def test_git_history_returns_subjects_for_changed_files_only(tmp_path):
+    from code_forge.context_sources import GitHistorySource
+
+    _repo(tmp_path, [("a.py", "touch a"), ("b.py", "touch b"), ("c.py", "touch c")])
+    rows = GitHistorySource(tmp_path).facts(["a.py", "b.py"], "diff")
+    subjects = {r.entity for r in rows}
+    assert subjects == {"touch a", "touch b"}
+    assert all(r.dependents and r.source == "git-history" for r in rows)
+
+
+def test_git_history_failure_is_recorded_and_isolated(tmp_path):
+    from subprocess import CalledProcessError
+
+    from code_forge.context_sources import GitHistorySource
+
+    def boom(cmd, timeout):
+        raise CalledProcessError(128, cmd, "", "fatal: not a repository")
+
+    other = FactRow("e", "f.py", "", "", "other")
+
+    class _Other:
+        name = "other"
+
+        def snapshot_sha(self):
+            return None
+
+        def facts(self, files, diff):
+            return [other]
+
+    res = gather(
+        [GitHistorySource(tmp_path, runner=boom), _Other()],
+        ["a.py"], "diff", head_sha=None,
+    )
+    assert any("git-history" in e and "128" in e for e in res.errors)
+    assert res.rows == [other]
+
+
+def test_git_history_timeout_uses_the_given_bound(tmp_path):
+    from subprocess import TimeoutExpired
+
+    from code_forge.context_sources import GitHistorySource
+
+    def block(cmd, timeout):
+        raise TimeoutExpired(cmd, timeout)
+
+    res = gather(
+        [GitHistorySource(tmp_path, runner=block, timeout=0.01)],
+        ["a.py"], "diff", head_sha=None,
+    )
+    assert any("TimeoutExpired" in e for e in res.errors)
+
+
+def test_git_history_skips_git_when_no_file_gained_a_line(tmp_path):
+    from code_forge.context_sources import GitHistorySource
+
+    calls = {"n": 0}
+
+    def runner(cmd, timeout):
+        calls["n"] += 1
+        return ""
+
+    rows = GitHistorySource(tmp_path, runner=runner).facts([], "diff of a deletion")
+    assert rows == []
+    assert calls["n"] == 0
+
+
+_DIFF = "+".join(["\n", "def alpha():\n", "    beta = 12345\n"])
+
+
+def test_knowledge_is_off_unless_enabled(tmp_path):
+    from code_forge.context_sources import KnowledgeSource
+
+    calls = {"n": 0}
+
+    def client(query, timeout):
+        calls["n"] += 1
+        return {"sources": [{"doc_title": "d"}]}
+
+    assert KnowledgeSource(client=client).facts(["a.py"], _DIFF) == []
+    assert calls["n"] == 0
+    KnowledgeSource(client=client, enabled=True).facts(["a.py"], _DIFF)
+    assert calls["n"] == 1
+
+
+def test_query_drops_long_tokens_and_caps_identifiers():
+    from code_forge.context_sources import query_terms
+
+    long = "k" * 41
+    added = "\n".join("+%s" % w for w in ["alpha", "12345", long, "beta"] + ["nn%d" % i for i in range(12)])
+    text = query_terms(["src/mod.py"], added)
+    assert "mod.py" in text
+    assert "12345" not in text
+    assert long not in text
+    assert text.split().count("alpha") == 1
+    assert len(text.split()) == 11
+
+
+def test_knowledge_keeps_the_first_source_only():
+    from code_forge.context_sources import KnowledgeSource
+
+    def client(query, timeout):
+        return {
+            "answer": "x" * 500,
+            "sources": [
+                {"doc_title": "first", "chunk_id": "c1", "source_url": "/a"},
+                {"doc_title": "second", "chunk_id": "c2", "source_url": "/b"},
+            ],
+        }
+
+    rows = KnowledgeSource(client=client, enabled=True).facts(["a.py"], _DIFF)
+    assert len(rows) == 1
+    assert rows[0].entity == "first"
+    assert rows[0].dependents.startswith("c1 ")
+    assert len(rows[0].dependents) <= 404
+
+
+def test_knowledge_timeout_is_recorded(tmp_path):
+    from subprocess import TimeoutExpired
+
+    from code_forge.context_sources import KnowledgeSource
+
+    def client(query, timeout):
+        raise TimeoutExpired("kb", timeout)
+
+    res = gather(
+        [KnowledgeSource(client=client, enabled=True, timeout=0.01)],
+        ["a.py"], _DIFF, head_sha=None,
+    )
+    assert res.rows == []
+    assert any("TimeoutExpired" in e for e in res.errors)
+
+
+def test_knowledge_empty_sources_is_not_an_error():
+    from code_forge.context_sources import KnowledgeSource
+
+    rows = KnowledgeSource(
+        client=lambda q, t: {"answer": "", "sources": []}, enabled=True,
+    ).facts(["a.py"], _DIFF)
+    assert rows == []
