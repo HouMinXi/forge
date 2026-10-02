@@ -966,6 +966,27 @@ class KnowledgeSource:
         )]
 
 
+def knowledge_enabled(repo_root):
+    """True only when gate.yaml sets knowledge.enabled.
+
+    Reads the file directly. load_gate_config demands a test section,
+    which a review config does not have, so the switch would never be
+    seen. A missing or unreadable file is off, not an error: the source
+    is opt-in.
+    """
+    import yaml
+
+    path = Path(repo_root) / ".code-forge" / "gate.yaml"
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    kb = data.get("knowledge")
+    return bool(isinstance(kb, dict) and kb.get("enabled") is True)
+
+
 def knowledge_client(query, timeout):
     """POST one question to the knowledge service. Address from the environment.
 
