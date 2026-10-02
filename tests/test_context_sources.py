@@ -417,3 +417,22 @@ def test_knowledge_empty_sources_is_not_an_error():
         client=lambda q, t: {"answer": "", "sources": []}, enabled=True,
     ).facts(["a.py"], _DIFF)
     assert rows == []
+
+
+def test_knowledge_enabled_reads_a_config_without_a_test_section(tmp_path):
+    from code_forge.context_sources import knowledge_enabled
+
+    gate = tmp_path / ".code-forge"
+    gate.mkdir()
+    (gate / "gate.yaml").write_text("outlet: subprocess\nknowledge:\n  enabled: true\n")
+    assert knowledge_enabled(tmp_path) is True
+
+
+def test_knowledge_enabled_is_false_without_the_switch(tmp_path):
+    from code_forge.context_sources import knowledge_enabled
+
+    gate = tmp_path / ".code-forge"
+    gate.mkdir()
+    (gate / "gate.yaml").write_text("outlet: subprocess\n")
+    assert knowledge_enabled(tmp_path) is False
+    assert knowledge_enabled(tmp_path / "missing") is False

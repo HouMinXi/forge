@@ -3992,9 +3992,9 @@ def _run(args, env, cwd: Path) -> Verdict:
         GraphTriageSource,
         KnowledgeSource,
         RemovedSymbolReaders,
-        _gate_cfg,
         gather,
         knowledge_client,
+        knowledge_enabled,
         render_blast_radius,
         render_context_sources,
     )
@@ -4007,8 +4007,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     _context_rows: list = []
     _kernel_source = KernelContextSource(kernel_root, kernel_cfg) if kernel_cfg.enabled else None
     _sources = [_graph_source, RemovedSymbolReaders(cwd), GitHistorySource(cwd)]
-    _kb_cfg = _gate_cfg(cwd).get("knowledge") or {}
-    if _kb_cfg.get("enabled"):
+    if knowledge_enabled(cwd):
         _sources.append(KnowledgeSource(client=knowledge_client, enabled=True))
     if _kernel_source is not None:
         _sources.append(_kernel_source)
