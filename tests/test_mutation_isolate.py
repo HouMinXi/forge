@@ -12,6 +12,9 @@ import sys
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -87,6 +90,102 @@ def test_missing_bwrap_maps_unavailable(monkeypatch):
     with pytest.raises(IsolationUnavailable) as exc:
         verify_isolation_support(DELEGATED_ROOT)
     assert exc.value.reason == "isolation_unavailable"
+
+
+@pytest.fixture
+def probe_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(isolate.shutil, "which", lambda name: "/usr/bin/bwrap")
+
+    def stat_cgroup_root(command, **kwargs):
+        assert command == ["stat", "-fc", "%T", str(tmp_path)]
+        assert kwargs == {
+            "capture_output": True,
+            "text": True,
+            "encoding": "utf-8",
+            "timeout": 10,
+        }
+        return subprocess.CompletedProcess(command, 0, "cgroup2fs\n")
+
+    monkeypatch.setattr(isolate.subprocess, "run", stat_cgroup_root)
+    exists = os.path.exists
+
+    def controller_exists(path):
+        if Path(path).parent.name.startswith(".forge-probe-"):
+            return Path(path).name in ("memory.max", "pids.max", "memory.swap.max", "cgroup.procs")
+        return exists(path)
+
+    monkeypatch.setattr(isolate.os.path, "exists", controller_exists)
+    return tmp_path
+
+
+@pytest.mark.parametrize("missing", [None, "memory.max", "pids.max", "memory.swap.max", "cgroup.procs"])
+def test_probe_removes_only_its_owned_directory(probe_root, monkeypatch, missing):
+    foreign = probe_root / ".forge-probe-foreign"
+    foreign.mkdir()
+    (foreign / "sentinel").write_text("foreign", encoding="utf-8")
+    exists = os.path.exists
+    created = []
+    mkdir = isolate.tempfile.mkdtemp
+
+    def create(*args, **kwargs):
+        path = mkdir(*args, **kwargs)
+        created.append(path)
+        return path
+
+    def controller_exists(path):
+        return False if missing is not None and Path(path).name == missing else exists(path)
+
+    monkeypatch.setattr(isolate.tempfile, "mkdtemp", create)
+    monkeypatch.setattr(isolate.os.path, "exists", controller_exists)
+    if missing is None:
+        assert verify_isolation_support(str(probe_root)) is None
+    else:
+        with pytest.raises(IsolationUnavailable, match="delegated cgroup lacks " + missing):
+            verify_isolation_support(str(probe_root))
+    assert len(created) == 1
+    assert not Path(created[0]).exists()
+    assert list(probe_root.iterdir()) == [foreign]
+    assert (foreign / "sentinel").read_text(encoding="utf-8") == "foreign"
+
+
+def test_failed_probe_creation_leaves_foreign_directory(probe_root, monkeypatch):
+    foreign = probe_root / ".forge-probe-foreign"
+    foreign.mkdir()
+    remove = Mock(side_effect=AssertionError("failed creation must not remove a directory"))
+
+    def fail_create(*args, **kwargs):
+        raise PermissionError("no delegated write permission")
+
+    monkeypatch.setattr(isolate.tempfile, "mkdtemp", fail_create)
+    monkeypatch.setattr(isolate.os, "rmdir", remove)
+    with pytest.raises(IsolationUnavailable, match="cannot create child cgroup"):
+        verify_isolation_support(str(probe_root))
+    assert foreign.is_dir()
+    remove.assert_not_called()
+
+
+@requires_isolation
+def test_real_concurrent_probes_have_distinct_ownership(monkeypatch):
+    barrier = threading.Barrier(2, timeout=5)
+    exists = os.path.exists
+    observed = []
+    lock = threading.Lock()
+
+    def controller_exists(path):
+        parent = Path(path).parent
+        if parent.parent == Path(DELEGATED_ROOT) and parent.name.startswith(".forge-probe-"):
+            if Path(path).name == "memory.max":
+                with lock:
+                    observed.append(parent)
+                barrier.wait()
+        return exists(path)
+
+    monkeypatch.setattr(isolate.os.path, "exists", controller_exists)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(verify_isolation_support, DELEGATED_ROOT) for _ in range(2)]
+        assert [future.result(timeout=15) for future in futures] == [None, None]
+    assert len(observed) == 2 and observed[0] != observed[1]
+    assert all(not path.exists() for path in observed)
 
 
 def test_supervisor_refuses_non_supervisor_thread(tmp_path):

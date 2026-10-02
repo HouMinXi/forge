@@ -133,6 +133,70 @@ def test_short_and_common_tokens_are_ignored(tmp_path: Path):
     assert rows == []
 
 
+def test_removal_and_query_keep_their_distinct_length_floors():
+    from code_forge.context_sources import query_terms
+
+    diff = "--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-abc = abcd\n+pass\n"
+    assert _removed_identifiers_by_file(diff) == {"a.py": {"abcd"}}
+    assert query_terms([], "+a ab abc abcd") == "abc abcd"
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    ["delta\u03c0", "\u03c0delta", "\u03b4delta\u03c0", "delta\u0661", "deltax", "delta_delta"],
+)
+def test_removed_name_is_not_retained_by_a_larger_word(replacement):
+    from code_forge.context_sources import query_terms
+
+    diff = f"--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-delta = 1\n+{replacement} = 1\n"
+    assert _removed_identifiers_by_file(diff) == {"a.py": {"delta"}}
+    assert "delta" not in query_terms([], f"+{replacement} = 1").split()
+
+
+@pytest.mark.parametrize("replacement", ["delta", "(delta)", "delta + 1"])
+def test_whole_removed_name_is_retained_on_added_lines(replacement):
+    diff = f"--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-delta = 1\n+value = {replacement}\n"
+    assert _removed_identifiers_by_file(diff) == {}
+
+
+@pytest.mark.parametrize("removed", ["delta\u03c0", "\u03c0delta", "\u03b4delta\u03c0", "delta\u0661"])
+def test_removed_unicode_word_does_not_supply_ascii_fragments(removed):
+    diff = f"--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-{removed} = 1\n+pass\n"
+    assert _removed_identifiers_by_file(diff) == {}
+
+
+@pytest.mark.parametrize("replacement", ["delta\u03c0", "\u03c0delta"])
+def test_unicode_rename_keeps_broken_import_context(tmp_path, monkeypatch, replacement):
+    for key in (
+        "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR",
+        "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    (tmp_path / "a.py").write_text("delta = 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("from a import delta\nvalue = delta\n", encoding="utf-8")
+    for command in (
+        ["git", "init", "-q"],
+        ["git", "add", "a.py", "b.py"],
+        ["git", "-c", "user.name=T", "-c", "user.email=t@t", "commit", "-q", "-m", "base"],
+    ):
+        subprocess.run(command, cwd=tmp_path, check=True, capture_output=True, timeout=10)
+    post_image = f"{replacement} = 1\n"
+    ast.parse(post_image)
+    (tmp_path / "a.py").write_text(post_image, encoding="utf-8")
+    subprocess.run(["git", "add", "a.py"], cwd=tmp_path, check=True, capture_output=True, timeout=10)
+    diff = subprocess.run(
+        ["git", "diff", "--cached", "--no-ext-diff", "--no-color"],
+        cwd=tmp_path, check=True, capture_output=True, timeout=10, text=True, encoding="utf-8",
+    ).stdout
+    assert f"+{replacement} = 1" in diff
+    rows = RemovedSymbolReaders(tmp_path).facts(["a.py"], diff)
+    assert [(row.file, row.entity) for row in rows] == [("a.py", "delta")]
+    assert {"b.py:1", "b.py:2"} <= set(rows[0].dependents.split(", "))
+    assert rows[0].snippets["b.py:1"] == "from a import delta"
+
+
 def test_source_has_no_snapshot(tree: Path):
     src = RemovedSymbolReaders(tree)
     assert src.snapshot_sha() is None

@@ -1,23 +1,31 @@
-"""Dockerfile fixture on a host that cannot map identities.
+"""The builder guard preserves mapping failures and permits qualified hosts."""
 
-The qualified builder needs a user namespace. This session has
-NoNewPrivs set, so the fixture must refuse with a reason. A skip or a
-pass would hide that the image was never built.
-"""
+import pytest
 
 from code_forge.mutation_engines.adapters.builder_support import (
     BuilderUnavailable,
-    identity_mapping_error,
     require_identity_mapping,
 )
 
 
-def test_this_session_refuses_instead_of_passing():
-    reason = identity_mapping_error()
-    assert reason is not None
-    try:
-        require_identity_mapping()
-    except BuilderUnavailable as exc:
-        assert str(exc)
+@pytest.mark.parametrize(
+    "reason",
+    [None, "NoNewPrivs is set", "no subordinate uid range", "user namespace mapping failed"],
+)
+def test_mapping_guard_preserves_the_probe_result(monkeypatch, reason):
+    calls = []
+
+    def probe():
+        calls.append(True)
+        return reason
+
+    monkeypatch.setattr(
+        "code_forge.mutation_engines.adapters.builder_support.identity_mapping_error", probe
+    )
+    if reason is None:
+        assert require_identity_mapping() is None
     else:
-        raise AssertionError("a host that cannot map identities was allowed to build")
+        with pytest.raises(BuilderUnavailable) as error:
+            require_identity_mapping()
+        assert str(error.value) == reason
+    assert calls == [True]

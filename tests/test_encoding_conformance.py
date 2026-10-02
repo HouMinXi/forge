@@ -11,6 +11,7 @@ will be caught here.
 from __future__ import annotations
 
 import ast
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,38 @@ class TestTextTrueEncoding:
         assert calls, "no text=True call found -- the scan is not reading the source"
         if violations:
             pytest.fail("text=True without encoding= found:\n" + "\n".join(violations))
+
+    @pytest.mark.parametrize(
+        ("output_encoding", "subject"),
+        [("utf-8", "subject \u7532"), ("ISO-8859-1", "subject caf\u00e9")],
+    )
+    def test_git_history_decodes_utf8_subjects(self, tmp_path, monkeypatch, output_encoding, subject):
+        from code_forge.context_sources import GitHistorySource
+
+        config = tmp_path / "global.gitconfig"
+        config.write_text(f"[i18n]\nlogOutputEncoding = {output_encoding}\n", encoding="utf-8")
+        for key in (
+            "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR",
+            "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+        monkeypatch.setenv("LC_ALL", "C")
+        (tmp_path / "a.py").write_text("value = 1\n", encoding="utf-8")
+        for command in (
+            ["git", "init", "-q"],
+            ["git", "add", "a.py"],
+            ["git", "-c", "user.name=T", "-c", "user.email=t@t", "commit", "-q", "-m", subject],
+        ):
+            subprocess.run(command, cwd=tmp_path, check=True)
+        native = subprocess.run(
+            ["git", "log", "--format=%s", "--", "a.py"],
+            cwd=tmp_path, capture_output=True, check=True,
+        )
+        assert native.stdout == subject.encode(output_encoding) + b"\n"
+        rows = GitHistorySource(tmp_path).facts(["a.py"], "")
+        assert [row.entity for row in rows] == [subject]
 
 
 class TestTextModeFileIO:
