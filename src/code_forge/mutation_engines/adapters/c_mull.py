@@ -66,7 +66,9 @@ class MullAdapter:
 
         root = Path(root)
         binaries = [p for p in root.rglob("*_test") if p.is_file() and p.stat().st_mode & 0o111]
-        return invoke_tool([RUNNER, "--version"], "no c test binary" if not binaries else "ran")
+        return invoke_tool(
+            [RUNNER, "--version"], "no c test binary" if not binaries else "ran", cwd=root
+        )
 
     def run(
         self,

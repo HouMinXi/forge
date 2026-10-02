@@ -342,7 +342,9 @@ class GremlinsAdapter:
 
         root = Path(root)
         tests = list(root.rglob("*_test.go"))
-        return invoke_tool(["gremlins", "unleash", "--dry-run"], "no go test" if not tests else "ran")
+        return invoke_tool(
+            ["gremlins", "unleash", "--dry-run"], "no go test" if not tests else "ran", cwd=root
+        )
 
     def run(
         self,

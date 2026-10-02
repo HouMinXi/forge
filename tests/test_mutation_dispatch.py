@@ -115,7 +115,7 @@ def test_c_invoke_names_mull(tmp_path, monkeypatch):
     assert result.reason == "no c test binary"
 
 
-def test_invoke_says_ran_when_the_test_file_exists(tmp_path, monkeypatch):
+def test_invoke_reports_diagnostic_completion_when_the_test_file_exists(tmp_path, monkeypatch):
     """A test file changes the reason. It still does not invent a score.
 
     The needle is the opposite of the empty-tree case: if the scan
@@ -137,9 +137,9 @@ def test_invoke_says_ran_when_the_test_file_exists(tmp_path, monkeypatch):
     go = GremlinsAdapter().invoke(tmp_path)
     js = StrykerAdapter().invoke(tmp_path)
     ps = PSMutantAdapter().invoke(tmp_path)
-    assert go.reason == "ran", go.reason
-    assert js.reason == "ran", js.reason
-    assert ps.reason == "ran", ps.reason
+    assert go.reason == "diagnostic complete", go.reason
+    assert js.reason == "diagnostic complete", js.reason
+    assert ps.reason == "diagnostic complete", ps.reason
     assert go.outcomes == () and js.outcomes == () and ps.outcomes == ()
     (tmp_path / "lib_test.rs").write_text("fn t() {}\n")
     binary = tmp_path / "math_test"
@@ -150,17 +150,29 @@ def test_invoke_says_ran_when_the_test_file_exists(tmp_path, monkeypatch):
 
     rust = CargoMutantsAdapter().invoke(tmp_path)
     c = MullAdapter().invoke(tmp_path)
-    assert rust.reason == "ran", rust.reason
-    assert c.reason == "ran", c.reason
+    assert rust.reason == "diagnostic complete", rust.reason
+    assert c.reason == "diagnostic complete", c.reason
     assert rust.outcomes == () and c.outcomes == ()
 
 
-def test_run_uses_the_same_probe_as_the_note(tmp_path):
+def test_run_uses_the_same_probe_as_the_note(tmp_path, monkeypatch):
+    import subprocess
+
     from code_forge.mutation_dispatch import run_note
 
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout="gremlins version 0.6.0\n", stderr="")
+
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     note = run_note(["pkg/a.go"], tmp_path)
     assert "go-gremlins" in note
-    assert "no go test" in note or "ran" in note
+    assert "no go test" in note
+    assert calls[0][0] == ["/usr/bin/gremlins", "--version"]
+    assert calls[1][1]["cwd"] == str(tmp_path.resolve())
 
 
 def test_powershell_selects_psmutant():
@@ -285,4 +297,3 @@ def test_gate_probes_each_selected_adapter(monkeypatch):
     note = probe_note(["src/main.c"])
     assert seen == [("c-mull", "c-mull")]
     assert "c-mull available" in note
-

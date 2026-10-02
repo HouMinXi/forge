@@ -8,6 +8,9 @@ the whole run is a Python-only MVP.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+
 # Suffixes are lowercase, no leading dot. Adapter ids match the registry
 # in mutation_engines.adapters, plus ps-mutant (PSMutant + Pester).
 _BY_SUFFIX: dict[str, str] = {
@@ -205,23 +208,94 @@ def probe_note(paths: list[str]) -> str:
             parts.append("%s %s" % (adapter.id, report.state.value))
             continue
         expected = _EXPECTED_VERSION.get(adapter.id)
-        state = "available" if version == expected else "unsupported_version"
+        state = (
+            "probe_failed"
+            if version == "probe_failed"
+            else "available"
+            if version == expected
+            else "unsupported_version"
+        )
         parts.append("%s %s" % (adapter.id, state))
     return "mutation probe: " + ", ".join(parts)
 
 
-def invoke_tool(argv: list[str], reason: str):
-    """Run one tool and return an empty score. The reason says why."""
+@dataclass(frozen=True)
+class InvokeResult:
+    """Native diagnostic receipt; an inventory command is never a score."""
+
+    outcomes: tuple
+    reason: str
+    argv: tuple[str, ...]
+    cwd: str
+    exit_code: int | None
+    stdout: str
+    stderr: str
+    timeout: bool
+    error: str | None
+
+
+def _diagnostic_text(output: str | bytes | None) -> str:
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return output or ""
+
+
+def invoke_tool(argv: list[str], reason: str, *, cwd: str | Path, timeout: float = 60) -> InvokeResult:
+    """Run a diagnostic in its target tree and preserve the actual outcome."""
     import subprocess
-    from dataclasses import dataclass
 
-    @dataclass(frozen=True)
-    class InvokeResult:
-        outcomes: tuple
-        reason: str
-
-    subprocess.run(argv, check=False, capture_output=True, text=True, encoding="utf-8", timeout=60)
-    return InvokeResult((), reason)
+    target_cwd = str(Path(cwd).resolve())
+    command = tuple(argv)
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=target_cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return InvokeResult(
+            (),
+            "diagnostic timed out",
+            command,
+            target_cwd,
+            None,
+            _diagnostic_text(exc.stdout),
+            _diagnostic_text(exc.stderr),
+            True,
+            "%s: %s" % (type(exc).__name__, exc),
+        )
+    except OSError as exc:
+        return InvokeResult(
+            (),
+            "diagnostic unavailable",
+            command,
+            target_cwd,
+            None,
+            "",
+            "",
+            False,
+            "%s: %s" % (type(exc).__name__, exc),
+        )
+    if result.returncode != 0:
+        disposition = "diagnostic failed (exit %d)" % result.returncode
+    else:
+        disposition = "diagnostic complete" if reason == "ran" else reason
+    return InvokeResult(
+        (),
+        disposition,
+        command,
+        target_cwd,
+        result.returncode,
+        _diagnostic_text(result.stdout),
+        _diagnostic_text(result.stderr),
+        False,
+        None,
+    )
 
 
 def run_note(paths: list[str], root) -> str:
@@ -260,8 +334,10 @@ _EXPECTED_VERSION = {
 
 
 def _tool_version(adapter_id: str, run) -> str | None:
-    """Read a version from the tool's own output. None when this adapter
-    has no PATH probe yet, so the caller falls back to adapter.probe.
+    """Read successful native version output, refusing launch and exit failures.
+
+    None means no PATH probe exists, so callers fall back to adapter.probe.
+    probe_failed is a refusal, never a supported version or fallback request.
     """
     argv = _VERSION_ARGV.get(adapter_id)
     if argv is None:
@@ -271,7 +347,22 @@ def _tool_version(adapter_id: str, run) -> str | None:
     binary = shutil.which(argv[0])
     if binary is None:
         return None
-    out = run([binary, *argv[1:]], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    import subprocess
+
+    try:
+        out = run(
+            [binary, *argv[1:]],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "probe_failed"
+    if out.returncode != 0:
+        return "probe_failed"
     text = (out.stdout or "") + (out.stderr or "")
     words = text.split()
     for token in words:

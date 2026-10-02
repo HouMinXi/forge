@@ -230,7 +230,7 @@ class StrykerAdapter:
 
         root = Path(root)
         configs = list(root.rglob("vitest.config.*"))
-        return invoke_tool(["stryker", "--version"], "no vitest" if not configs else "ran")
+        return invoke_tool(["stryker", "--version"], "no vitest" if not configs else "ran", cwd=root)
 
     def run(
         self,
