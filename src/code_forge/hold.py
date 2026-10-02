@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable
 
 from .disposition import Disposition, MAX_FIX_ATTEMPTS_PER_FINGERPRINT
-from .state import State, StateFinding, save_state
+from .state import State, StateFinding, is_receipt_audit, save_state
 
 
 VALID_INPUTS = {"c": Disposition.CONFIRMED, "d": Disposition.DISMISSED}
@@ -55,7 +55,9 @@ def run_hold_ui(
     over; UNCERTAIN dispositions stay UNCERTAIN. Unattended LOCAL reviews
     otherwise die on EOF.
     """
-    uncertain = [f for f in state.findings if f.disposition == Disposition.UNCERTAIN]
+    uncertain = [
+        f for f in state.findings if f.disposition == Disposition.UNCERTAIN and not is_receipt_audit(f)
+    ]
     if os.environ.get("FORGE_HOLD_NONINTERACTIVE") == "1":
         if uncertain:
             output_fn(
@@ -86,6 +88,8 @@ def _prompt_one(
     output_fn: Callable[[str], None],
 ) -> None:
     """Inner per-finding prompt loop (reprompts on invalid input)."""
+    if is_receipt_audit(finding):
+        return
     lr = finding.line_range
     start = lr[0] if len(lr) >= 1 else 0
     end = lr[1] if len(lr) >= 2 else start
