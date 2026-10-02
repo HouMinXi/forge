@@ -71,6 +71,163 @@ def test_source_proven_single_tail_survives_real_receipt_writer(tmp_path, tail):
         assert (actual["start_line"], actual["end_line"], actual["content"]) == (1, 3, exc["content"])
 
 
+@pytest.mark.parametrize("tail", ["    return answer", "", "    beta = 2"])
+@pytest.mark.parametrize("as_list", [False, True])
+def test_short_indent_damaged_quote_preserves_raw_evidence(tmp_path, tail, as_list):
+    from code_forge.verify import ExcerptStatus
+
+    diff = _diff(["    alpha = 1", "    beta = 2", tail])
+    content = ["alpha = 1", "beta = 2"]
+    exc = _exc(1, 3, content if as_list else "\n".join(content))
+    original = copy.deepcopy(exc)
+
+    assessment = _assess(diff, exc)
+    assert assessment.status is ExcerptStatus.UNTRUSTED
+    assert assessment.proven_lines == frozenset({1, 2})
+    assert assessment.diagnostic
+    assert exc == original
+    assert validate_excerpts_against_diff(diff, [exc]) == []
+
+    result, receipts = _verify(tmp_path, diff, [exc])
+    assert result.passed, result.reason
+    assert len(receipts) == 3
+    assert exc == original
+    for receipt in receipts:
+        actual = receipt["code_excerpts"][0]
+        assert actual["content"] == "\n".join(content)
+        assert (actual["start_line"], actual["end_line"]) == (1, 3)
+
+
+@pytest.mark.parametrize("missing", [2, 3])
+@pytest.mark.parametrize("as_list", [False, True])
+def test_indent_damaged_interior_gap_has_only_carried_witnesses(tmp_path, missing, as_list):
+    from code_forge.verify import ExcerptStatus
+
+    source = [f"    value_{i} = {i}" for i in range(1, 6)]
+    carried = [line.strip() for i, line in enumerate(source, 1) if i != missing]
+    exc = _exc(1, 5, carried if as_list else "\n".join(carried))
+    original = copy.deepcopy(exc)
+    diff = _diff(source)
+
+    assessment = _assess(diff, exc)
+    assert assessment.status is ExcerptStatus.UNTRUSTED
+    assert assessment.proven_lines == frozenset(set(range(1, 6)) - {missing})
+    assert assessment.diagnostic == f"excerpt mod.py:1-5 is missing source line {missing}"
+    assert exc == original
+    assert validate_excerpts_against_diff(diff, [exc]) == []
+    result, receipts = _verify(tmp_path, diff, [exc])
+    assert result.passed, result.reason
+    assert exc == original
+    assert len(receipts) == 3
+    for receipt in receipts:
+        stored = receipt["code_excerpts"][0]
+        assert (stored["start_line"], stored["end_line"], stored["content"]) == (
+            1,
+            5,
+            "\n".join(carried),
+        )
+
+
+@pytest.mark.parametrize("delta", [-2, 2])
+@pytest.mark.parametrize("as_list", [False, True])
+def test_indent_damaged_shift_keeps_original_coordinates(tmp_path, delta, as_list):
+    from code_forge.verify import ExcerptStatus
+
+    source = [f"    value_{i} = {i}" for i in range(1, 9)]
+    carried = [line.strip() for line in source[2:]]
+    exc = _exc(3 - delta, 8 - delta, carried if as_list else "\n".join(carried))
+    original = copy.deepcopy(exc)
+    diff = _diff(source)
+
+    assessment = _assess(diff, exc)
+    assert assessment.status is ExcerptStatus.UNTRUSTED
+    assert assessment.proven_lines == frozenset(range(3, 9))
+    assert assessment.diagnostic
+    assert exc == original
+    result, receipts = _verify(tmp_path, diff, [exc])
+    assert result.passed, result.reason
+    assert exc == original
+    assert len(receipts) == 3
+    for receipt in receipts:
+        stored = receipt["code_excerpts"][0]
+        assert (stored["start_line"], stored["end_line"], stored["content"]) == (
+            3 - delta,
+            8 - delta,
+            "\n".join(carried),
+        )
+
+
+def test_indent_only_damage_keeps_declared_copy_of_repeated_content(tmp_path):
+    from code_forge.verify import ExcerptStatus
+
+    source = ["    alpha", "    beta", "    gamma"] * 2
+    exc = _exc(1, 3, "alpha\nbeta\ngamma")
+    original = copy.deepcopy(exc)
+    diff = _diff(source)
+    assessment = _assess(diff, exc)
+    assert assessment.status is ExcerptStatus.UNTRUSTED
+    assert assessment.proven_lines == frozenset({1, 2, 3})
+    assert assessment.diagnostic == "excerpt indent-stripped at mod.py:1-3"
+    assert exc == original
+    result, _ = _verify(tmp_path, diff, [exc])
+    assert result.passed, result.reason
+    assert exc == original
+
+
+@pytest.mark.parametrize("delta", [-1, 1])
+def test_indent_damaged_blank_boundary_shift_stays_untrusted(tmp_path, delta):
+    from code_forge.verify import ExcerptStatus
+
+    source = ["", "    alpha", "    beta", "    gamma", "    delta", ""]
+    exc = _exc(2 - delta, 5 - delta, "alpha\nbeta\ngamma\ndelta")
+    diff = _diff(source)
+    original = copy.deepcopy(exc)
+    assessment = _assess(diff, exc)
+    assert assessment.status is ExcerptStatus.UNTRUSTED
+    assert assessment.proven_lines == frozenset(range(2, 6))
+    assert assessment.diagnostic
+    result, receipts = _verify(tmp_path, diff, [exc])
+    assert result.passed, result.reason
+    assert exc == original
+    assert all(r["code_excerpts"][0]["content"] == original["content"] for r in receipts)
+
+
+@pytest.mark.parametrize("shape", ["prefix", "gap", "shift"])
+@pytest.mark.parametrize("changed", ['renamed = "a b"', 'alpha == "a b"', 'alpha="a b"', 'alpha = "ab"'])
+def test_indent_alignment_rejects_changes_inside_the_line(tmp_path, shape, changed):
+    from code_forge.verify import ExcerptStatus
+
+    source = ['    alpha = "a b"', "    beta = 2", "    gamma = 3", "    delta = 4"]
+    if shape == "prefix":
+        exc = _exc(1, 4, "\n".join([changed, "beta = 2", "gamma = 3"]))
+    elif shape == "gap":
+        exc = _exc(1, 4, "\n".join([changed, "gamma = 3", "delta = 4"]))
+    else:
+        exc = _exc(2, 5, "\n".join([changed, "beta = 2", "gamma = 3", "delta = 4"]))
+    original = copy.deepcopy(exc)
+    diff = _diff(source)
+    assert _assess(diff, exc).status is ExcerptStatus.INVALID
+    assert exc == original
+    assert validate_excerpts_against_diff(diff, [exc])
+    result, _ = _verify(tmp_path, diff, [exc])
+    assert not result.passed, result.reason
+    assert exc == original
+
+
+def test_indent_normalization_cannot_choose_an_ambiguous_gap(tmp_path):
+    from code_forge.verify import ExcerptStatus
+
+    source = ["    alpha", "    beta", "        beta", "    gamma"]
+    exc = _exc(1, 4, "alpha\nbeta\ngamma")
+    diff = _diff(source)
+    original = copy.deepcopy(exc)
+    assert _assess(diff, exc).status is ExcerptStatus.INVALID
+    assert exc == original
+    result, _ = _verify(tmp_path, diff, [exc])
+    assert not result.passed, result.reason
+    assert exc == original
+
+
 @pytest.mark.parametrize("delta", [-2, 2])
 def test_constant_offset_is_audited_but_not_a_hard_error(tmp_path, delta):
     lines = [f"v{i} = {i}" for i in range(1, 9)]
