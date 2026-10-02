@@ -95,6 +95,5 @@ class PSMutantAdapter:
         return invoke_tool(
             ["pwsh", "-NoProfile", "-Command", "Get-Command Invoke-PSMutation"],
             "no pester" if not tests else "ran",
+            cwd=root,
         )
-
-

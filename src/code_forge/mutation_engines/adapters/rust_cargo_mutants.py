@@ -226,10 +226,15 @@ class CargoMutantsAdapter:
         from code_forge.mutation_dispatch import invoke_tool
 
         root = Path(root)
-        tests = [p for p in root.rglob("*.rs") if p.name.endswith("_test.rs") or "mod tests" in p.read_text(errors="replace")]
+        tests = [
+            p
+            for p in root.rglob("*.rs")
+            if p.name.endswith("_test.rs") or "mod tests" in p.read_text(errors="replace")
+        ]
         return invoke_tool(
             ["cargo", "mutants", "--list"],
             "no cargo test" if not tests else "ran",
+            cwd=root,
         )
 
     def run(
