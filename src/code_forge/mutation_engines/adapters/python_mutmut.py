@@ -29,6 +29,7 @@ from code_forge.mutation_engines.adapters.base import (
     CapabilityReport,
     CapabilityState,
     ExecutionContext,
+    InputEntry,
     InputSnapshot,
     MutationAdapter,
 )
@@ -83,6 +84,27 @@ def _sha256_file(path: Path) -> str:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _copy_snapshot_file(snapshot: InputSnapshot, entry: InputEntry, destination: Path) -> None:
+    """Publish only manifest-checked bytes from one bounded source read."""
+    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as copied:
+        temporary = Path(copied.name)
+    try:
+        digest = hashlib.sha256()
+        with (Path(snapshot.root) / entry.path).open("rb") as source, temporary.open("wb") as copied:
+            for chunk in iter(lambda: source.read(65536), b""):
+                digest.update(chunk)
+                copied.write(chunk)
+        actual_digest = digest.hexdigest()
+        if actual_digest != entry.digest:
+            raise AdapterError(
+                "snapshot digest mismatch for %r: manifest %s, file %s"
+                % (entry.path, entry.digest, actual_digest)
+            )
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _artifact(run_directory: Path, name: str, payload: bytes) -> ArtifactReference:
@@ -494,14 +516,7 @@ class MutmutAdapter:
                     )
                 os.symlink(entry.symlink_target, destination)
                 continue
-            source = Path(snapshot.root) / entry.path
-            digest = _sha256_file(source)
-            if digest != entry.digest:
-                raise AdapterError(
-                    "snapshot digest mismatch for %r: manifest %s, file %s"
-                    % (entry.path, entry.digest, digest)
-                )
-            shutil.copyfile(source, destination)
+            _copy_snapshot_file(snapshot, entry, destination)
             os.chmod(destination, entry.mode & 0o777)
 
     def _selected_sources(

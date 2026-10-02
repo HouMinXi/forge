@@ -34,6 +34,7 @@ from code_forge.mutation_engines.adapters.python_mutmut import (
     _harness_errors,
     _load_event,
     _safe_component,
+    _copy_snapshot_file,
 )
 from code_forge.mutation_engines.corpus import (
     Corpus,
@@ -384,15 +385,12 @@ class PatchCorpusAdapter:
 
     @staticmethod
     def _materialize(snapshot: InputSnapshot, workspace: Path) -> None:
-        root = Path(snapshot.root)
         for entry in snapshot.files:
             destination = workspace / entry.path
             destination.parent.mkdir(parents=True, exist_ok=True)
-            source = root / entry.path
             if entry.symlink_target is not None:
                 continue
-            data = source.read_bytes()
-            destination.write_bytes(data)
+            _copy_snapshot_file(snapshot, entry, destination)
             os.chmod(destination, entry.mode & 0o777)
 
 
