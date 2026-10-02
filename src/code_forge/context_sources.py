@@ -878,12 +878,13 @@ class GitHistorySource:
     def facts(self, changed_files, diff_text):
         if not changed_files:
             return []
-        cmd = ["git", "log", "-n", "5", "--format=%h %s", "--", *changed_files]
+        cmd = ["git", "log", "--encoding=utf-8", "-n", "5", "--format=%h %s", "--", *changed_files]
         if self.runner is not None:
             out = self.runner(cmd, self.timeout)
         else:
             proc = subprocess.run(
                 cmd, cwd=self.root, capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
                 timeout=self.timeout, check=False,
             )
             if proc.returncode != 0:
@@ -902,7 +903,7 @@ class GitHistorySource:
         return rows
 
 
-_IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\b")
+_QUERY_IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\b")
 
 
 def query_terms(changed_files, diff_text, limit=10):
@@ -918,7 +919,7 @@ def query_terms(changed_files, diff_text, limit=10):
     for line in diff_text.splitlines():
         if not line.startswith("+") or line.startswith("+++"):
             continue
-        for tok in _IDENT.findall(line):
+        for tok in _QUERY_IDENT.findall(line):
             if len(tok) > 40 or tok in seen:
                 continue
             seen.add(tok)
