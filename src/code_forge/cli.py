@@ -108,7 +108,7 @@ def _emit_ci_output(
     final_state = _load_state(state_path)
     if final_state is None:
         return
-    tool_versions = {name: capture_tool_version(tc.command) for name, tc in registry.items()}
+    tool_versions = {name: capture_tool_version(tc.command, tc.args) for name, tc in registry.items()}
     advisories = _load_advisories(state_path.parent / "advisory-findings.json")
     log_dict = build_sarif_log(
         final_state,

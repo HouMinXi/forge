@@ -181,7 +181,7 @@ class TestToolVersionsCaptured:
 
         stdout = StringIO()
 
-        def mock_version(cmd):
+        def mock_version(cmd, args=None):
             return {"shellcheck": "0.10.0", "ruff": "0.4.2"}.get(cmd, "unknown")
 
         with (

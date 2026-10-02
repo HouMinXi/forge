@@ -514,7 +514,7 @@ def _audit_tools(
                 if tc.working_dir == "cargo_root":
                     results.append((None, "%s: cargo_root" % tc.name))
                     continue
-                version = capture_tool_version(tc.command)
+                version = capture_tool_version(tc.command, tc.args)
                 if version == "not_installed":
                     results.append((False, "%s: not_installed" % tc.name))
                 else:

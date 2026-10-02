@@ -21,6 +21,7 @@ the command but does NOT change the working directory.
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 
@@ -67,7 +68,7 @@ def _resolve_command(command: str) -> str | None:
     return None
 
 
-def capture_tool_version(command: str) -> str:
+def capture_tool_version(command: str, args: list[str] | None = None) -> str:
     """Capture a tool's version string for GATE-02 reproducibility.
 
     Runs "<resolved_cmd> --version" and returns the first line of
@@ -75,6 +76,7 @@ def capture_tool_version(command: str) -> str:
 
     Args:
         command: tool command string (will be resolved via PATH)
+        args: configured arguments that may complete a module invocation
 
     Returns:
         Version string (first line of stdout), "not_installed" if
@@ -85,8 +87,11 @@ def capture_tool_version(command: str) -> str:
         return "not_installed"
 
     try:
+        parts = [resolved] + command.split()[1:] + list(args or [])
+        prefix = _ruff_prefix_length(parts)
+        version_command = parts[:prefix] + ["--version"] if prefix else [resolved, "--version"]
         result = subprocess.run(
-            [resolved, "--version"],
+            version_command,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -98,6 +103,88 @@ def capture_tool_version(command: str) -> str:
         return first_line if first_line else "unknown"
     except (subprocess.TimeoutExpired, OSError):
         return "unknown"
+
+
+def _ruff_prefix_length(parts: list[str]) -> int:
+    """Length of the known executable/module invocation, excluding subcommands."""
+    binary = os.path.basename(os.path.realpath(parts[0]))
+    if binary in ("ruff", "ruff.exe") or os.path.basename(parts[0]) in ("ruff", "ruff.exe"):
+        return 1
+    if not re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", binary):
+        return 0
+    index = 1
+    while index < len(parts):
+        token = parts[index]
+        if token == "--check-hash-based-pycs":
+            if parts[index + 1 : index + 2] not in (["always"], ["default"], ["never"]):
+                return 0
+            index += 2
+            continue
+        if not token.startswith("-") or token in ("-", "--"):
+            return 0
+        switches = token[1:]
+        for offset, option in enumerate(switches):
+            if option in "bBdEIOPqRsStuvx":
+                continue
+            if option not in "mWX":
+                return 0
+            # Argument-bearing switches consume the rest of this token or the
+            # next argument. Their values are never more interpreter switches.
+            value = switches[offset + 1 :]
+            if not value:
+                index += 1
+                if index >= len(parts):
+                    return 0
+                value = parts[index]
+            if option == "m":
+                return index + 1 if value in ("ruff", "ruff.__main__") else 0
+            break
+        index += 1
+    return 0
+
+
+def _ruff_subcommand(parts: list[str], prefix: int) -> str | None:
+    """Read the first subcommand without treating global option values as commands."""
+    index = prefix
+    while index < len(parts):
+        token = parts[index]
+        if token in ("--config", "--color"):
+            index += 2
+            continue
+        if token.split("=", 1)[0] in ("--config", "--color") or token in (
+            "--isolated",
+            "--verbose",
+            "--quiet",
+            "--silent",
+            "--help",
+            "--version",
+            "-v",
+            "-q",
+            "-s",
+            "-h",
+            "-V",
+        ):
+            index += 1
+            continue
+        return token
+    return None
+
+
+def sarif_producer_profile(command: str, args: list[str] | None = None) -> str | None:
+    """Identify known Ruff check invocations independently of registry names.
+
+    Opaque wrappers are not identifiable from their declared command alone.
+    A symlink to the Ruff executable and Python's module invocation are known.
+    """
+    parts = command.split() + list(args or [])
+    if not parts:
+        return None
+    parts[0] = _resolve_command(command) or parts[0]
+    prefix = _ruff_prefix_length(parts)
+    if not prefix:
+        return None
+    # File arguments are appended later and cannot choose the producer policy.
+    return "ruff" if _ruff_subcommand(parts, prefix) == "check" else None
 
 
 def run_tool(
@@ -138,6 +225,18 @@ def run_tool(
     # the original command string.
     cmd_parts = tool_config.command.split()
     cmd = [resolved] + cmd_parts[1:] + tool_config.args
+    if sarif_producer_profile(tool_config.command, tool_config.args) == "ruff":
+        mutating = {"--fix", "--fix-only", "--unsafe-fixes", "--diff", "--add-noqa", "--add-ignore"}
+        prefix = _ruff_prefix_length(cmd)
+        ruff_args = cmd[prefix:]
+        separator = prefix + (ruff_args.index("--") if "--" in ruff_args else len(ruff_args))
+        before_separator = cmd[prefix:separator]
+        if any(arg.split("=", 1)[0] in mutating for arg in before_separator):
+            return ("", 2, "Forge detection refuses Ruff mutating flags")
+        for flag in ("--no-fix", "--no-fix-only"):
+            if flag not in before_separator:
+                cmd.insert(separator, flag)
+                separator += 1
     if tool_config.working_dir != "cargo_root":
         cmd = cmd + files
 
@@ -208,7 +307,7 @@ def run_tools(
         tool_config = registry[tool_name]
 
         # Capture version (Consensus #3)
-        tool_versions[tool_name] = capture_tool_version(tool_config.command)
+        tool_versions[tool_name] = capture_tool_version(tool_config.command, tool_config.args)
 
         # Check for matching files
         matching_files = matched.get(tool_name, [])
