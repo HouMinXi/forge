@@ -3,11 +3,15 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Phase 3 automated tests -- D4 classification, dedup, migration, Sashiko replay (LEARN-09)."""
 
+import copy
 import hashlib
 import json
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 
 def _repo_root() -> str:
@@ -578,6 +582,143 @@ class TestStorageResilience(unittest.TestCase):
 class TestCrossSourceIndex(unittest.TestCase):
     """process_learn only hands the matching bucket to the scan."""
 
+    def setUp(self):
+        import file_utils
+        import forge_cli
+
+        self.source_config = Path(forge_cli.CONFIG_FILE)
+        self.source_bytes = self.source_config.read_bytes()
+        self.initial_config = json.loads(self.source_bytes)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.private_root = Path(temporary.name).resolve()
+        self.config_path = self.private_root / "config.json"
+        self.config_path.write_bytes(self.source_bytes)
+        previous_cwd = os.getcwd()
+        self.addCleanup(os.chdir, previous_cwd)
+        os.chdir(self.private_root)
+        self.config_writes = []
+        real_write = file_utils.atomic_write
+
+        def private_write(filepath, data):
+            destination = Path(filepath).resolve()
+            self.assertIn(self.private_root, destination.parents)
+            if destination == self.config_path:
+                self.config_writes.append(copy.deepcopy(data))
+            return real_write(filepath, data)
+
+        for target, value in (
+            ("forge_cli.CONFIG_FILE", str(self.config_path)),
+            ("forge_cli._config_cache", None),
+            ("file_utils.atomic_write", private_write),
+            ("gap_detector.atomic_write", private_write),
+        ):
+            override = patch(target, value)
+            override.start()
+            self.addCleanup(override.stop)
+        self.addCleanup(lambda: self.assertEqual(self.source_config.read_bytes(), self.source_bytes))
+
+    def test_migration_survives_cached_reload_and_final_write(self):
+        import forge_cli
+        import gap_detector
+
+        legacy_cached = forge_cli.load_config()
+        gap_detector.process_learn([])
+        current = forge_cli.load_config()
+        stored = json.loads(self.config_path.read_text())
+        dimensions = set(self.initial_config["keyword_dictionaries"])
+        self.assertEqual(
+            [len(c.get("dimension_states", {})) for c in self.config_writes],
+            [len(dimensions), len(dimensions)],
+        )
+        self.assertIsNot(current, legacy_cached)
+        self.assertEqual(set(stored["dimension_states"]), dimensions)
+        self.assertEqual(current, stored)
+        for key, value in self.initial_config.items():
+            self.assertEqual(stored[key], value)
+
+    def test_new_finding_preserves_migrated_counts_and_other_dimensions(self):
+        import forge_cli
+        import gap_detector
+        from adapters.base import CanonicalFinding, ExtractedFinding
+
+        findings_path = self.private_root / ".forge" / "findings.json"
+        findings_path.parent.mkdir()
+        findings_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "findings": [{"dimension": "security"}, {"dimension": "input_validation"}],
+                    "runs": [],
+                }
+            )
+        )
+        canonical = CanonicalFinding(
+            source="git_log",
+            source_tool="git",
+            source_id="new-security",
+            timestamp="2026-05-12T10:00:00+00:00",
+            raw_source="SQL injection",
+            context={},
+        )
+        extracted = ExtractedFinding(
+            dimension_raw="security",
+            confidence=0.9,
+            suggested_keywords=["injection"],
+            text="SQL injection",
+            file="src/security.py",
+            line=1,
+        )
+        gap_detector.process_learn([(canonical, extracted)])
+        stored = json.loads(self.config_path.read_text())
+        self.assertEqual(
+            set(stored["dimension_states"]), set(self.initial_config["keyword_dictionaries"])
+        )
+        self.assertEqual(stored["dimension_states"]["security"]["finding_count"], 2)
+        self.assertEqual(stored["dimension_states"]["edge_cases"]["finding_count"], 1)
+        self.assertEqual(forge_cli.load_config(), stored)
+        self.assertEqual(json.loads(findings_path.read_text())["findings"][1]["dimension"], "edge_cases")
+        learned = json.loads((self.private_root / ".forge" / "external_findings.json").read_text())
+        self.assertEqual(learned["findings"][0]["validated_dimension"], "security")
+        for key, value in self.initial_config.items():
+            self.assertEqual(stored[key], value)
+
+    def test_existing_state_and_unrelated_values_survive_empty_learn(self):
+        import forge_cli
+        import gap_detector
+
+        configured = copy.deepcopy(self.initial_config)
+        configured["custom_preserved"] = {"values": [1, False, "literal"]}
+        configured["dimension_states"] = {
+            "security": {
+                "status": "active",
+                "finding_count": 7,
+                "last_seen": "unchanged",
+                "seed_test_status": "PASS",
+                "custom_state": {"keep": True},
+            },
+            "retired_custom": {"status": "archived", "finding_count": 3},
+        }
+        self.config_path.write_text(json.dumps(configured))
+        cached = forge_cli.load_config()
+        gap_detector.process_learn([])
+        self.assertIs(forge_cli.load_config(), cached)
+        self.assertEqual(json.loads(self.config_path.read_text()), configured)
+
+    def test_rejects_writes_outside_private_root(self):
+        import file_utils
+        import gap_detector
+
+        with tempfile.TemporaryDirectory() as outside:
+            destination = Path(outside) / "config.json"
+            sentinel = b"owned outside sentinel\n"
+            destination.write_bytes(sentinel)
+            for namespace in (file_utils, gap_detector):
+                with self.subTest(writer=namespace.__name__):
+                    with self.assertRaises(AssertionError):
+                        namespace.atomic_write(str(destination), {"escaped": True})
+                    self.assertEqual(destination.read_bytes(), sentinel)
+
     def test_scan_sees_the_matching_bucket_only(self):
         import gap_detector
         from adapters.base import CanonicalFinding, ExtractedFinding
@@ -596,15 +737,17 @@ class TestCrossSourceIndex(unittest.TestCase):
             }
             for i in range(500)
         ]
-        existing.append({
-            "id": "ext-match",
-            "file": "src/a.py",
-            "line": 1,
-            "text_hash": text_hash,
-            "timestamp": stamp,
-            "source": "github_pr",
-            "source_id": "old-match",
-        })
+        existing.append(
+            {
+                "id": "ext-match",
+                "file": "src/a.py",
+                "line": 1,
+                "text_hash": text_hash,
+                "timestamp": stamp,
+                "source": "github_pr",
+                "source_id": "old-match",
+            }
+        )
 
         seen = []
 
@@ -636,21 +779,22 @@ class TestCrossSourceIndex(unittest.TestCase):
                 "load_external_findings",
                 "load_gap_candidates",
                 "load_keyword_expansion_queue",
-                "atomic_write",
                 "classify_finding",
             )
         }
         gap_detector.find_cross_source_dup = recording
         gap_detector.load_external_findings = lambda: {
-            "version": 1, "findings": list(existing),
+            "version": 1,
+            "findings": list(existing),
         }
         gap_detector.load_gap_candidates = lambda: {"candidates": []}
         gap_detector.load_keyword_expansion_queue = lambda: {"queue": []}
-        gap_detector.atomic_write = lambda *a, **k: None
+
         # classify_finding would read keyword dicts off the real config.
         # The duplicate branch returns before that, so it must not run.
         def boom(*a, **k):
             raise AssertionError("classification ran on a duplicate")
+
         gap_detector.classify_finding = boom
         try:
             gap_detector.process_learn([(canonical, extracted)])
@@ -660,6 +804,42 @@ class TestCrossSourceIndex(unittest.TestCase):
 
         # The stored match plus the finding just appended. Not all 501.
         self.assertEqual(seen, [2])
+        stored = json.loads(self.config_path.read_text())
+        self.assertEqual(
+            set(stored["dimension_states"]), set(self.initial_config["keyword_dictionaries"])
+        )
+
+
+class TestPrivateTemporaryRoot(unittest.TestCase):
+    def test_learning_persists_with_symlinked_tempdir(self):
+        import forge_cli
+
+        previous_config = forge_cli.CONFIG_FILE
+        previous_cache = forge_cli._config_cache
+        previous_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary).resolve()
+            storage = parent / "storage"
+            storage.mkdir()
+            alias = parent / "alias"
+            alias.symlink_to(storage, target_is_directory=True)
+            self.assertTrue(alias.is_symlink())
+            cases = [
+                "test_migration_survives_cached_reload_and_final_write",
+                "test_new_finding_preserves_migrated_counts_and_other_dimensions",
+                "test_existing_state_and_unrelated_values_survive_empty_learn",
+                "test_scan_sees_the_matching_bucket_only",
+            ]
+            suite = unittest.TestSuite(TestCrossSourceIndex(name) for name in cases)
+            result = unittest.TestResult()
+            with patch.object(tempfile, "tempdir", str(alias)):
+                suite.run(result)
+            self.assertEqual(result.testsRun, len(cases))
+            self.assertEqual(result.skipped, [])
+            self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+        self.assertEqual(forge_cli.CONFIG_FILE, previous_config)
+        self.assertIs(forge_cli._config_cache, previous_cache)
+        self.assertEqual(os.getcwd(), previous_cwd)
 
 
 if __name__ == "__main__":
