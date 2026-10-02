@@ -425,7 +425,8 @@ def _constant_offset(
     hi: int,
 ) -> int | None:
     """Return the shift that makes every excerpt line match the file,
-    or None when no single offset explains the mismatch.
+    or None when no single offset explains the mismatch. Leading whitespace
+    may differ, but the caller must keep that recovery untrusted.
 
     A misnumbered excerpt (the reviewer ignored the annotated column)
     matches the post-image at a constant delta; a fabricated one matches
@@ -441,9 +442,6 @@ def _constant_offset(
     if len(excerpt_line_map) < 2:
         return None
 
-    def norm(s):
-        return s.rstrip()
-
     for delta in sorted(
         # Ties go to the negative side: a quote that sits one line above
         # and one line below equally well is far more often a reviewer
@@ -458,7 +456,7 @@ def _constant_offset(
             if actual is None:
                 continue
             compared += 1
-            if norm(content) == norm(actual):
+            if _line_content_matches(content, actual, allow_indent=True):
                 matches += 1
         # Every claimed line must match at this delta, and every one
         # must be comparable: a line whose shifted position falls
@@ -472,16 +470,22 @@ def _constant_offset(
     return None
 
 
-def _only_leading_ws_differs(quoted: str, actual: str) -> bool:
-    """True when the lines match after strip() but not after rstrip().
+def _line_content_matches(quoted: str, actual: str, *, allow_indent: bool = False) -> bool:
+    """Compare line content without changing either line.
 
-    That is the indent-stripped quote: tokens are intact, only the
-    leading spaces (or tabs) were dropped or added. A punctuation or
-    identifier change fails strip() and stays a content mismatch.
+    Trailing whitespace is already ignored by excerpt validation. Leading
+    whitespace may differ only in an explicitly untrusted alignment.
     """
-    if quoted.rstrip() == actual.rstrip():
-        return False
-    return quoted.strip() == actual.strip()
+    if allow_indent:
+        return quoted.strip() == actual.strip()
+    return quoted.rstrip() == actual.rstrip()
+
+
+def _only_leading_ws_differs(quoted: str, actual: str) -> bool:
+    """Tokens match, but leading spaces or tabs differ."""
+    return not _line_content_matches(quoted, actual) and _line_content_matches(
+        quoted, actual, allow_indent=True
+    )
 
 
 def _blank_boundary_slip(
@@ -545,28 +549,27 @@ def _single_gap_line(start, end, carried, file_lines):
     """The one source line whose removal aligns carried with the range.
 
     Linear prefix/suffix scan: p leading and s trailing carried lines
-    match the range ends verbatim. p + s == len(carried) means exactly
-    one dropped line, at start + p. p + s greater means duplicate
-    neighbour lines make the gap ambiguous; smaller means no single-
-    gap alignment. Ambiguous and absent alignments stay invalid.
+    match the range ends by content, ignoring leading whitespace. The
+    caller always marks recovered gaps untrusted. p + s == len(carried)
+    means exactly one dropped line, at start + p. A larger sum means
+    duplicate neighbour lines make the gap ambiguous; a smaller sum means
+    no single-gap alignment. Ambiguous and absent alignments stay invalid.
     """
     if end - start != len(carried):
         return None
 
-    def _text(n):
-        line = file_lines.get(n)
-        return None if line is None else line.rstrip()
-
     p = 0
     while p < len(carried):
-        src = _text(start + p)
-        if src is None or carried[p].rstrip() != src:
+        src = file_lines.get(start + p)
+        if src is None or not _line_content_matches(carried[p], src, allow_indent=True):
             break
         p += 1
     s = 0
     while s < len(carried):
-        src = _text(end - s)
-        if src is None or carried[len(carried) - 1 - s].rstrip() != src:
+        src = file_lines.get(end - s)
+        if src is None or not _line_content_matches(
+            carried[len(carried) - 1 - s], src, allow_indent=True
+        ):
             break
         s += 1
     if p + s != len(carried):
@@ -665,14 +668,19 @@ def assess_excerpt_evidence(
         head_blank = head is not None and not head.strip()
         prefix = {exc_start + i: line for i, line in enumerate(actual_lines)}
         exact_prefix = all(
-            n in file_lines and line.rstrip() == file_lines[n].rstrip() for n, line in prefix.items()
+            n in file_lines and _line_content_matches(line, file_lines[n]) for n, line in prefix.items()
         )
-        # Try the declared prefix first, including a carried leading blank.
-        # Moving it before comparison would spend the blank twice.
-        if exact_prefix and tail is not None:
+        indent_prefix = not exact_prefix and all(
+            n in file_lines and _line_content_matches(line, file_lines[n], allow_indent=True)
+            for n, line in prefix.items()
+        )
+        # Keep carried blanks at their declared coordinates. Only a known
+        # omitted tail can explain the count; indentation stays untrusted.
+        if (exact_prefix or indent_prefix) and tail is not None:
+            trusted_blank = tail_blank and exact_prefix
             return _anchored_assessment(
-                valid if tail_blank else untrusted,
-                None if tail_blank else count_error,
+                valid if trusted_blank else untrusted,
+                None if trusted_blank else count_error,
                 prefix,
                 hunks,
                 location,
@@ -694,16 +702,29 @@ def assess_excerpt_evidence(
 
     quoted = {body_start + i: line for i, line in enumerate(actual_lines)}
     overlap = quoted.keys() & file_lines.keys()
-    mismatches = sorted(n for n in overlap if quoted[n].rstrip() != file_lines[n].rstrip())
+    mismatches = sorted(n for n in overlap if not _line_content_matches(quoted[n], file_lines[n]))
     unknown = quoted.keys() - file_lines.keys()
     if mismatches or unknown or not overlap:
-        offset = _constant_offset(quoted, file_lines, -64, 65)
+        # Resolve indentation at the claimed position before searching for
+        # a repeated block elsewhere. A shift needs a content mismatch.
+        offset = None
+        if unknown or any(
+            not _line_content_matches(quoted[n], file_lines[n], allow_indent=True) for n in overlap
+        ):
+            offset = _constant_offset(quoted, file_lines, -64, 65)
         if offset is not None:
-            blank_slip = not blank_spent and _blank_boundary_slip(
-                exc_start,
-                exc_end,
-                offset,
-                file_lines,
+            exact_offset = all(
+                _line_content_matches(content, file_lines[n + offset]) for n, content in quoted.items()
+            )
+            blank_slip = (
+                exact_offset
+                and not blank_spent
+                and _blank_boundary_slip(
+                    exc_start,
+                    exc_end,
+                    offset,
+                    file_lines,
+                )
             )
             n = mismatches[0] if mismatches else min(quoted)
             diagnostic = (
