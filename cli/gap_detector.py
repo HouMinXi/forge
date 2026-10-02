@@ -268,7 +268,7 @@ def process_learn(adapter_findings, model=None):
         model: Unused (reserved for future LLM-based classification).
     """
     # Lazy imports to avoid circular dependencies
-    from forge_cli import load_config, CONFIG_FILE
+    from forge_cli import load_config, reload_config, CONFIG_FILE
     from llm_parser import compute_text_hash
     from migration import ensure_dimension_state, run_migration_if_needed
 
@@ -290,6 +290,7 @@ def process_learn(adapter_findings, model=None):
             skill_md,
         )
         # Reload config after migration
+        reload_config()
         config = load_config()
 
     keyword_dicts = config.get('keyword_dictionaries', {})
