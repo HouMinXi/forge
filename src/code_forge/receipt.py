@@ -20,6 +20,7 @@ from .state import (
     StateFinding,
     PassOutcome,
     derive_pass_outcomes,
+    is_receipt_audit,
     _PASS_NAMES,
 )
 
@@ -199,10 +200,9 @@ def write_receipts(
             effective_tier = extract_manifest(cwd).tier
 
     by_pass = _split_by_pass(l1_findings)
-    # UNTRUSTED findings are audit data carried in state, not attested
-    # review findings: their evidence failed validation, so they must
-    # not appear in receipts (derive_basis would also reject the source).
-    by_pass = {p: [f for f in fs if f.source != "UNTRUSTED"] for p, fs in by_pass.items()}
+    # Metadata diagnostics are separate from product candidates. A
+    # candidate with unverified evidence keeps its unverified basis.
+    by_pass = {p: [f for f in fs if not is_receipt_audit(f)] for p, fs in by_pass.items()}
     cycle = round_index + 1
     # One write time for the whole round. A per-pass offset is not ordered
     # against the next round, and rounds finish faster than it spans, so it

@@ -699,7 +699,10 @@ class StateMachine:
                 "findings" % coverage_gaps
             )
         self._state.verdict = verdict
-        self._state.converged = verdict == Verdict.PASS
+        self._state.converged = verdict == Verdict.PASS and not any(
+            f.source == "UNTRUSTED" and f.disposition == Disposition.UNCERTAIN
+            for f in self.active_findings
+        )
         self._persist_state()
         self._write_ci_ledger_rows()
         return verdict
@@ -872,7 +875,7 @@ class StateMachine:
                 return self._state.verdict
             if self._should_enter_hold():
                 uncertain_count = sum(
-                    1 for f in self._state.findings if f.disposition == Disposition.UNCERTAIN
+                    1 for f in self.active_findings if f.disposition == Disposition.UNCERTAIN
                 )
                 self._state.hold_reason = (
                     "%d UNCERTAIN finding(s) awaiting human disposition" % uncertain_count
@@ -996,9 +999,9 @@ class StateMachine:
             i, f = item
             if f.source in ("INFRA", "UNTRUSTED"):
                 # INFRA: an infra failure, not a code defect to falsify.
-                # UNTRUSTED: a candidate carried as audit data from a
-                # response whose evidence failed validation; never sent
-                # through semantic falsification as a code defect.
+                # UNTRUSTED candidates still need disposition, but their
+                # evidence failed validation and cannot support semantic
+                # falsification. Receipt metadata shares this source.
                 return f
             progress.emit("falsify %d/%d: %s:%s (%s)" % (i, total, f.file, f.line_range, f.fingerprint))
             t_falsify = time.monotonic()
@@ -1360,6 +1363,7 @@ class StateMachine:
             cycles=window,
             respect_floor=False,
             reviewed_repositories=self.reviewed_repositories,
+            require_convergence=self.mode != Mode.CI,
         )
         if not vr.passed:
             errors.append(f"receipt acceptance: {vr.reason}")
@@ -1443,6 +1447,7 @@ class StateMachine:
           LOCAL: L0 detect -> L0 autofix loop -> L1 -> L2 -> E2E
           CI:    L0 detect -> L1 -> L2 -> E2E (no autofix loop per STATE-03)
         """
+        self._state.converged = False
         self._state.round = round_index
         progress.emit("round %d start" % round_index)
         l0_findings = self._run_l0_phase()
@@ -1479,6 +1484,11 @@ class StateMachine:
         self._state.findings = merged
         if self.exec_falsify:
             self._run_exec_falsifier()
+        # State keeps one finding per fingerprint; receipts retain each
+        # candidate, including repeats. They must share its disposition.
+        dispositions = {f.fingerprint: f.disposition for f in self._state.findings}
+        for finding in l1_findings:
+            finding.disposition = dispositions[finding.fingerprint]
         self._append_round_snapshot(
             round_index,
             l0_findings,
@@ -1655,8 +1665,7 @@ class StateMachine:
 
         # (d) zero UNCERTAIN remain (unchanged from binary version)
         for f in self._state.findings:
-            if f.source == "UNTRUSTED":
-                # Audit data from rejected evidence, not a live finding.
+            if is_receipt_audit(f):
                 continue
             if f.disposition == Disposition.UNCERTAIN:
                 return _FixpointResult.RESET
@@ -1720,10 +1729,7 @@ class StateMachine:
         """
         if self.mode == Mode.CI:
             return False
-        has_uncertain = any(
-            f.disposition == Disposition.UNCERTAIN and f.source != "UNTRUSTED"
-            for f in self._state.findings
-        )
+        has_uncertain = any(f.disposition == Disposition.UNCERTAIN for f in self.active_findings)
         has_unfixed_confirmed = any(f.disposition == Disposition.CONFIRMED for f in self._state.findings)
         return has_uncertain and not has_unfixed_confirmed
 
@@ -2606,8 +2612,6 @@ class StateMachine:
         override is respected -- the earlier DISMISSED does not leak
         through a deliberate re-confirmation.
         """
-        if not self._state.round_history:
-            return findings
         # Build a map: fingerprint -> most recent disposition across all
         # round_history entries.  Iterate forward so later entries
         # overwrite earlier ones; the final value is the most recent.
@@ -2616,6 +2620,9 @@ class StateMachine:
             for snapshot in self._state.round_history
             for fp, disp in snapshot.get("dispositions", {}).items()
         }
+        # HOLD decisions are persisted after the last review snapshot.
+        # The current findings carry those newer human dispositions.
+        latest_disps.update((f.fingerprint, f.disposition.value) for f in self._state.findings)
         for f in findings:
             prior = latest_disps.get(f.fingerprint)
             if prior in self._STICKY_TERMINAL_DISPOSITIONS:

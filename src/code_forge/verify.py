@@ -1063,8 +1063,11 @@ def run_verify(
     cycles: list[int] | None = None,
     respect_floor: bool = True,
     reviewed_repositories: dict[str, str] | None = None,
+    require_convergence: bool = True,
 ) -> VerifyResult:
     cp = 0
+    if not isinstance(require_convergence, bool):
+        return VerifyResult(False, "require_convergence must be a boolean", 1, cp)
     repository_manifest = None
     if reviewed_repositories is not None:
         from .receipt_scope import repository_scope
@@ -1168,6 +1171,8 @@ def run_verify(
         if last_n[i + 1] - last_n[i] != 1:
             return VerifyResult(False, f"last {required_cycles} cycles not consecutive: {last_n}", 1, cp)
     attested = [r for r in receipts if r["cycle"] in last_n]
+    if not require_convergence and len(last_n) != 1:
+        return VerifyResult(False, "evidence-only attestation requires one cycle", 1, cp)
     if any(r.get("reviewed_repositories") != repository_manifest for r in attested):
         return VerifyResult(False, "INFRA: reviewed repository/source identity mismatch", 1, cp)
 
@@ -1456,6 +1461,23 @@ def run_verify(
                 8,
                 cp,
             )
+        # CI checks evidence for one invocation without claiming clean
+        # convergence. External acceptance also needs unresolved product
+        # candidates to have usable evidence, in either verifier mode.
+        if require_convergence:
+            for finding in r["findings"]:
+                basis = finding.get("basis")
+                if (
+                    finding.get("disposition") in ("CONFIRMED", "UNCERTAIN")
+                    and isinstance(basis, dict)
+                    and basis.get("authority") == "infra-unavailable"
+                ):
+                    return VerifyResult(
+                        False,
+                        f"unresolved unverified product finding c{r['cycle']}p{r['pass']} -- convergence not established",
+                        8,
+                        cp,
+                    )
     cp += 1
 
     return VerifyResult(True, "all 8 checks passed", 8, 8)
