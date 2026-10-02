@@ -120,6 +120,7 @@ ignore = [
 "tests/*" = ["S108", "S110", "ASYNC230"]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 markers = [
     "real_api: opt-in tests that call real backends (skipped by default)",
     "integration: marks tests requiring real infrastructure",

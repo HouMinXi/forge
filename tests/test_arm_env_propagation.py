@@ -16,6 +16,7 @@ This measures the propagation rather than assuming it.
 """
 
 import os
+import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -69,6 +70,18 @@ def _apply_and_read(env_overrides):
     if env_overrides:
         os.environ.update({k: str(v) for k, v in env_overrides.items()})
     return os.environ.get("FORGE_CLEAN_ROUND_THRESHOLD")
+
+
+def _preserves_environment_without_overrides(expected):
+    from code_forge.eval.pool import _apply_env_overrides
+
+    before = dict(os.environ)
+    saved = _apply_env_overrides(None)
+    return (
+        before.get("FORGE_CLEAN_ROUND_THRESHOLD") == expected,
+        dict(os.environ) == before,
+        saved == {},
+    )
 
 
 def _apply_and_resolve(env_overrides):
@@ -143,12 +156,15 @@ class TestEnvReachesPoolChild:
             got = ex.submit(_apply_and_resolve, {"FORGE_CLEAN_ROUND_THRESHOLD": "3"}).result()
         assert got == 3, "forge resolved %r in the child despite the arm setting 3" % (got,)
 
-    def test_worker_without_overrides_changes_nothing(self):
-        # The control. If a child reports a value with no overrides passed,
-        # the tests above are measuring inheritance rather than the argument.
-        with ProcessPoolExecutor(max_workers=1) as ex:
-            got = ex.submit(_apply_and_read, None).result()
-        assert got is None
+    @pytest.mark.parametrize("inherited", [None, "7"])
+    def test_worker_without_overrides_changes_nothing(self, monkeypatch, inherited):
+        if inherited is None:
+            monkeypatch.delenv("FORGE_CLEAN_ROUND_THRESHOLD", raising=False)
+        else:
+            monkeypatch.setenv("FORGE_CLEAN_ROUND_THRESHOLD", inherited)
+        with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn")) as ex:
+            got = ex.submit(_preserves_environment_without_overrides, inherited).result(timeout=15)
+        assert got == (True, True, True)
 
 
 class TestResolutionPathStaysReal:

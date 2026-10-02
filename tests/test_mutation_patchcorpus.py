@@ -11,6 +11,9 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -77,19 +80,32 @@ def _target() -> TargetDeclaration:
 
 
 def _context(tmp_path: Path) -> ExecutionContext:
+    python = "/usr/bin/python3"
+    paths = subprocess.run(
+        [
+            python,
+            "-c",
+            "import json,site; print(json.dumps(site.getsitepackages() + [site.getusersitepackages()]))",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        timeout=10,
+    )
     return ExecutionContext(
-        run_id="run-corpus1",
+        run_id="corpus-" + uuid.uuid4().hex,
         config_digest="c" * 64,
         execution_policy_digest="e" * 64,
         toolchain_fingerprint="py-test",
         cgroup_root=CGROUP_ROOT,
         state_root=str(tmp_path / "state"),
-        approved_python="/usr/bin/python3",
+        approved_python=python,
         memory_mb=256,
         pids=64,
         workspace_mb=64,
         process_headroom_mb=32,
-        extra_python_paths=("/home/houminxi/.local/lib/python3.12/site-packages",),
+        extra_python_paths=tuple(path for path in json.loads(paths.stdout) if Path(path).is_dir()),
     )
 
 
@@ -176,9 +192,10 @@ def test_real_corpus_kills_guard_removal(tmp_path):
     # that source, so both are in selection. Add a third file-scoped run
     # that excludes the second by selecting a path neither uses? Both share
     # SCRIPT. Outside-selection is covered by a second selection below.
-    result = PatchCorpusAdapter().run(_target(), selection, _snapshot(root), _context(tmp_path))
+    context = _context(tmp_path)
+    result = PatchCorpusAdapter().run(_target(), selection, _snapshot(root), context)
+    assert result.baseline.state is BaselineState.PASSED, result.baseline.command_receipt
     assert result.run_state is RunState.COMPLETE, result.reason_code
-    assert result.baseline.state is BaselineState.PASSED
     assert result.reason_code == "corpus-limited"
     by_id = {item.mutant_id: item.normalized_status for item in result.outcomes}
     assert by_id["drop-empty-guard"] is NormalizedStatus.KILLED
@@ -200,7 +217,9 @@ def test_real_corpus_lists_entries_outside_selection(tmp_path):
         line_ranges={},
         reasons=("unrelated",),
     )
-    result = PatchCorpusAdapter().run(_target(), selection, _snapshot(root), _context(tmp_path))
+    context = _context(tmp_path)
+    result = PatchCorpusAdapter().run(_target(), selection, _snapshot(root), context)
+    assert result.baseline.state is BaselineState.PASSED, result.baseline.command_receipt
     assert result.outcomes == ()
     coverage = [
         item
@@ -209,11 +228,55 @@ def test_real_corpus_lists_entries_outside_selection(tmp_path):
     ]
     assert coverage, "coverage statement missing"
     payload = json.loads(
-        (tmp_path / "state" / "runs" / "run-corpus1" / coverage[0].relative_run_path).read_text()
+        (Path(context.state_root) / "runs" / context.run_id / coverage[0].relative_run_path).read_text()
     )
     assert payload["coverage"] == "corpus-limited"
     assert "drop-empty-guard" in payload["outside_selection"]
     assert "other-source" in payload["outside_selection"]
+
+
+@requires_isolation
+def test_real_corpus_concurrent_runs_keep_distinct_ownership(tmp_path):
+    import shutil
+
+    contexts = [_context(tmp_path), _context(tmp_path)]
+    assert contexts[0].run_id != contexts[1].run_id
+    roots = [tmp_path / "first", tmp_path / "second"]
+    snapshots = []
+    for root in roots:
+        shutil.copytree(FIXTURE, root, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        _write_corpus(root)
+        snapshots.append(_snapshot(root))
+    selection = TargetSelection(
+        target_id="shell-config",
+        granularity="file",
+        files=(SCRIPT,),
+        line_ranges={},
+        reasons=("source-change",),
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(PatchCorpusAdapter().run, _target(), selection, snapshot, context)
+            for snapshot, context in zip(snapshots, contexts, strict=True)
+        ]
+        results = [future.result(timeout=120) for future in futures]
+    for root, context, result in zip(roots, contexts, results, strict=True):
+        assert result.identity.run_id == context.run_id
+        assert result.run_state is RunState.COMPLETE, result.reason_code
+        assert result.baseline.state is BaselineState.PASSED, result.baseline.command_receipt
+        assert result.baseline.test_count == 2
+        assert {item.mutant_id: item.normalized_status for item in result.outcomes} == {
+            "drop-empty-guard": NormalizedStatus.KILLED,
+            "other-source": NormalizedStatus.KILLED,
+        }
+        assert all(receipt.run_id == context.run_id for receipt in result.command_receipts)
+        assert result.cleanup.owned_group_empty and result.cleanup.owned_mounts_removed
+        assert result.cleanup.errors == ()
+        assert GUARD in (root / SCRIPT).read_text(encoding="utf-8")
+        for artifact in result.native_artifacts:
+            data = (Path(context.state_root) / "runs" / context.run_id / artifact.relative_run_path).read_bytes()
+            assert hashlib.sha256(data).hexdigest() == artifact.digest
+        assert not list(Path(CGROUP_ROOT).glob("forge-" + context.run_id + "-*"))
 
 
 def test_apply_rejects_repeated_old_text():

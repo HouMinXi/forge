@@ -23,6 +23,7 @@ import os
 import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -66,9 +67,8 @@ def verify_isolation_support(cgroup_root: str) -> None:
         )
     if not os.path.isdir(cgroup_root):
         raise IsolationUnavailable("cgroup root %r is not a directory" % cgroup_root)
-    probe = os.path.join(cgroup_root, ".forge-probe-%d" % os.getpid())
     try:
-        os.mkdir(probe)
+        probe = tempfile.mkdtemp(prefix=".forge-probe-", dir=cgroup_root)
     except OSError as exc:
         raise IsolationUnavailable(
             "cannot create child cgroup under %r: %s" % (cgroup_root, exc)
