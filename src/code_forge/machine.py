@@ -121,7 +121,7 @@ def _default_l0_runner(registry: dict, files: list[Path]) -> tuple[list[StateFin
     R3 LOW1+LOW2+LOW6 fixes: StateFinding.line_range is list[int].
     """
     from .parsers import parse_output
-    from .runner import run_tools
+    from .runner import run_tools, sarif_producer_profile
 
     file_strs = [str(f) for f in files]
     tool_results, _versions, _skipped, l0_infra = run_tools(registry, file_strs)
@@ -130,7 +130,13 @@ def _default_l0_runner(registry: dict, files: list[Path]) -> tuple[list[StateFin
 
     for tool, (stdout, returncode, stderr) in tool_results.items():
         tc = registry[tool]
-        items = parse_output(stdout, tc.output_format, tool, returncode)
+        items = parse_output(
+            stdout,
+            tc.output_format,
+            tool,
+            returncode,
+            producer_profile=sarif_producer_profile(tc.command, tc.args),
+        )
         # Nonzero exit with empty stdout is a tool crash, not a clean
         # run. Every real tool that exits nonzero WITH findings produces
         # non-empty stdout, so this guard cannot eat real findings.

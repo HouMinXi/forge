@@ -6,7 +6,8 @@ Covers all eight parsers (shellcheck, ruff, semgrep, clippy, checkpatch,
 non_ascii, flake8, pylint) plus the PARSER_DISPATCH system.  Each parser
 is tested for:
   - valid output -> correct Finding fields
-  - empty string -> [] (clean run)
+  - missing SARIF transport -> ToolError; valid empty results -> clean
+  - other text parsers retain their documented empty string contract
   - malformed/corrupt input -> [ToolError]
 """
 
@@ -96,7 +97,7 @@ class TestParseRuff:
         assert f1.line == 42
 
     def test_empty_input(self):
-        assert parse_ruff("") == []
+        assert isinstance(parse_ruff("")[0], ToolError)
 
     def test_malformed_json(self):
         result = parse_ruff("corrupt garbage", exit_code=1)
@@ -126,7 +127,7 @@ class TestParseSemgrep:
         assert f0.tool_name == "semgrep"
 
     def test_empty_input(self):
-        assert parse_semgrep("") == []
+        assert isinstance(parse_semgrep("")[0], ToolError)
 
     def test_malformed_json(self):
         result = parse_semgrep("random noise", exit_code=3)
@@ -335,9 +336,9 @@ class TestParserDispatch:
         assert len(findings) == 1
         assert findings[0].tool_name == "semgrep"
 
-    def test_dispatch_empty_clean(self):
+    def test_dispatch_missing_sarif_refused(self):
         result = parse_output("", "sarif", "ruff")
-        assert result == []
+        assert len(result) == 1 and isinstance(result[0], ToolError)
 
     def test_dispatch_corrupt(self):
         result = parse_output("corrupt garbage", "sarif", "ruff")

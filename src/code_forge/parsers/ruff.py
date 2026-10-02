@@ -15,4 +15,4 @@ def parse_ruff(
 
     Thin wrapper around shared SARIF parser with tool_name="ruff".
     """
-    return _parse_sarif(output, tool_name=tool_name, exit_code=exit_code)
+    return _parse_sarif(output, tool_name=tool_name, exit_code=exit_code, producer_profile="ruff")

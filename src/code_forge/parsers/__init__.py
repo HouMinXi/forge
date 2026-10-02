@@ -38,6 +38,8 @@ def parse_output(
     output_format: str,
     tool_name: str,
     exit_code: int = 0,
+    *,
+    producer_profile: str | None = None,
 ) -> list[Finding | ToolError]:
     """Dispatch to the correct parser by output_format.
 
@@ -50,6 +52,8 @@ def parse_output(
             "unknown output_format '%s' (valid: %s)"
             % (output_format, ", ".join(sorted(PARSER_DISPATCH)))
         )
+    if output_format == "sarif":
+        return parser_fn(output, tool_name, exit_code, producer_profile=producer_profile)
     return parser_fn(output, tool_name, exit_code)
 
 

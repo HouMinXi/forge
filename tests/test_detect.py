@@ -35,7 +35,7 @@ from code_forge.detect import (
 )
 from code_forge.errors import CliError
 from code_forge.parsers._sarif import _parse_sarif
-from code_forge.parsers.base import Finding
+from code_forge.parsers.base import Finding, ToolError
 from code_forge.registry import ToolConfig, load_registry
 
 
@@ -783,17 +783,43 @@ class TestGoSarifTrailingNoise:
     """golangci-lint appends a text summary after SARIF JSON.
     raw_decode must parse the first JSON value and ignore the rest."""
 
-    def test_real_fixture_parses_ineffassign_finding(self):
-        """The PM spike fixture (go_real.sarif) contains trailing noise.
-        _parse_sarif must extract the ineffassign finding."""
+    def test_real_fixture_refuses_dangling_artifact_reference(self):
+        """The native fixture's index requires an artifacts table it lacks."""
         fixture = (_FIXTURES_DIR / "go_real.sarif").read_text()
+        packet, _end = json.JSONDecoder().raw_decode(fixture)
+        run = packet["runs"][0]
+        assert "artifacts" not in run
+        assert run["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"] == {
+            "uri": "main.go",
+            "index": 0,
+        }
         results = _parse_sarif(fixture, tool_name="golangci-lint")
+        assert len(results) == 1 and isinstance(results[0], ToolError)
+        assert results[0].tool_name == "golangci-lint"
+        assert "malformed diagnostic location or fields" in results[0].message
+
+    def test_valid_artifact_reference_preserves_ineffassign_and_trailing_noise(self):
+        """A distinct valid packet retains the diagnostic and text summary."""
+        fixture = (_FIXTURES_DIR / "go_real.sarif").read_text()
+        packet, end = json.JSONDecoder().raw_decode(fixture)
+        packet["runs"][0]["artifacts"] = [{"location": {"uri": "main.go"}}]
+        trailing = fixture[end:]
+        assert trailing.strip() == "1 issues:\n* ineffassign: 1"
+        results = _parse_sarif(json.dumps(packet) + trailing, tool_name="golangci-lint")
         assert len(results) == 1
         f = results[0]
         assert isinstance(f, Finding)
         assert f.file == "main.go"
         assert f.line == 6
         assert "ineffassign" in f.rule_id
+        assert f.message == "ineffectual assignment to x"
+
+    def test_valid_clean_packet_with_trailing_noise_is_clean(self):
+        fixture = (_FIXTURES_DIR / "go_real.sarif").read_text()
+        packet, _end = json.JSONDecoder().raw_decode(fixture)
+        packet["runs"][0]["artifacts"] = [{"location": {"uri": "main.go"}}]
+        packet["runs"][0]["results"] = []
+        assert _parse_sarif(json.dumps(packet) + "\n0 issues", tool_name="golangci-lint") == []
 
     def test_json_loads_fails_on_trailing_noise(self):
         """Bug-inject: json.loads raises on trailing noise.
