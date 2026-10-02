@@ -61,6 +61,7 @@ from .hold import HoldAborted, run_hold_ui
 from .lock import ForgeLock, ForgeLockBusy
 from .machine import StateMachine, TimeoutBreaker
 from .mode_resolver import resolve_mode
+from .mutation_findings import is_mutation_diagnostic, is_mutation_survivor
 from .registry import load_registry
 from .source import compute_source_hash
 from .state import Mode, Verdict, load_state as _load_state
@@ -4645,20 +4646,16 @@ def _run_mutation_check(args, cwd: Path) -> int:
     if any(f.fingerprint not in quiet for f in skipped):
         return EXIT_CLI_ERROR
 
-    # Translate findings to exit code.
-    # CONFIRMED findings with source=MUTANT and id starting "mutant-" are
-    # survivors. Only skips with no applicable production code are allowed.
-    from .disposition import Disposition
+    diagnostics = [f for f in findings if f.id != "MUTATION_SKIPPED" and is_mutation_diagnostic(f)]
+    if diagnostics:
+        for diagnostic in diagnostics:
+            print(
+                "code-forge: mutation-check: unresolved mutation result: %s" % diagnostic.description,
+                file=sys.stderr,
+            )
+        return EXIT_CLI_ERROR
 
-    survivors = [
-        f
-        for f in findings
-        if (
-            f.disposition == Disposition.CONFIRMED
-            and f.source == "MUTANT"
-            and f.id.startswith("mutant-")
-        )
-    ]
+    survivors = [f for f in findings if is_mutation_survivor(f)]
     if survivors:
         print(
             "code-forge: mutation-check: %d survivor(s) found" % len(survivors),

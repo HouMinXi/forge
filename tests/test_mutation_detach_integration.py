@@ -55,7 +55,7 @@ def _fake_run_mutation(**kwargs):
     }
     _RECORD.write_text(json.dumps(payload), encoding="utf-8")
     survivor = StateFinding(
-        id="MUTANT_1",
+        id="mutant-1",
         fingerprint="mutant-1",
         source="MUTANT",
         disposition=Disposition.CONFIRMED,
@@ -148,7 +148,7 @@ def test_detached_run_reparents_and_reports(tmp_path, detach_env):
 
     data = _wait_for(result_path)
     assert data["status"] == "done"
-    assert data["survivors"] == ["MUTANT_1"]
+    assert data["survivors"] == ["mutant-1"]
 
     record = json.loads(detach_env.read_text(encoding="utf-8"))
     # The middle process exits immediately, so the run is an orphan by the

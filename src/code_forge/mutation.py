@@ -1046,14 +1046,14 @@ from pathlib import Path
 sys.path.insert(0, {forge_src!r})
 try:
     from code_forge.mutation import run_mutation
-    from code_forge.disposition import Disposition
+    from code_forge.mutation_findings import is_mutation_diagnostic, is_mutation_survivor
 except ImportError:
     # Installed package layout: the cwd itself may be the package root
     import os as _os
     _os.chdir(str(Path({str(cwd)!r})))
     sys.path.insert(0, str(Path({str(cwd)!r})))
     from code_forge.mutation import run_mutation
-    from code_forge.disposition import Disposition
+    from code_forge.mutation_findings import is_mutation_diagnostic, is_mutation_survivor
 
 result_path = Path({str(result_path)!r})
 cwd_ref = Path({str(cwd)!r})
@@ -1088,14 +1088,11 @@ try:
         mutation_skip_globs=mutation_skip_globs,
         mutation_include_globs=mutation_include_globs,
     )
-    survivor_list = [
-        f.id
-        for f in mm_findings
-        if f.source == "MUTANT"
-        and f.disposition == Disposition.CONFIRMED
-        and f.id != "MUTATION_ERROR"
+    survivor_list = [f.id for f in mm_findings if is_mutation_survivor(f)]
+    errors = [
+        f.description for f in mm_findings
+        if f.id == "MUTATION_ERROR" or is_mutation_diagnostic(f)
     ]
-    errors = [f.description for f in mm_findings if f.id == "MUTATION_ERROR"]
     data["status"] = "error" if errors else "done"
     if errors:
         data["message"] = "\\n".join(errors)
