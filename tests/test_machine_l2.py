@@ -233,7 +233,7 @@ class TestThreeConsecutiveSurvivorRounds:
         verdict = machine.run()
         assert verdict == Verdict.FAIL
         assert machine._state.consecutive_survivor_rounds == 3
-        assert any("demonstrably weak" in e for e in machine._state.infra_errors)
+        assert any("surviving mutants reported" in e for e in machine._state.infra_errors)
 
 
 class TestL2RunnerException:
@@ -735,7 +735,7 @@ class TestBugInjectTeeth:
         verdict = machine.run()
         assert verdict == Verdict.FAIL
         assert machine._state.consecutive_survivor_rounds == 3
-        assert any("demonstrably weak" in e for e in machine._state.infra_errors)
+        assert any("surviving mutants reported" in e for e in machine._state.infra_errors)
 
     def test_remove_toothless_clears(self, tmp_path):
         """Remove the survivor (l2_runner returns clean) -> Verdict.PASS."""

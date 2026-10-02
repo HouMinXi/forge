@@ -56,6 +56,7 @@ from .ledger import (
 )
 from .llm_invoke import FalsifyProtocolError, LLMInvokeError, Usage
 from .mutation import launch_detached_mutation
+from .mutation_findings import is_mutation_survivor
 from .parsers.base import Finding, ToolError
 from .state import (
     Mode,
@@ -272,7 +273,9 @@ class StateMachine:
       l0_runner: callable (registry, files) -> (findings, infra_errors)
       l1_provider: callable returning L1 candidates (default: no L1)
       l2_runner: callable (diff_files, baseline_cmd, *, baseline_timeout)
-        -> (findings, infra_errors)
+        -> (findings, infra_errors). Surviving mutants use source MUTANT,
+        disposition CONFIRMED and a reserved mutant- ID with a nonempty suffix.
+        Other IDs remain findings, not measured surviving mutants.
       e2e_runner: callable (diff_text, repo_root) -> (findings, infra_errors)
       post_round_hook: optional callable for test observability (R1 H6)
       max_total_rounds: STATE-04 LOCAL bound (default 20)
@@ -798,6 +801,11 @@ class StateMachine:
                 )
                 self._persist_state()
                 return Verdict.ESCALATED
+            previous_survivor_rounds = self._state.consecutive_survivor_rounds
+            self._state.consecutive_survivor_rounds = 0
+            self._state.verdict = Verdict.PENDING
+            self._state.converged = False
+            self._persist_state()
             self._execute_round(round_index)
 
             # Receipt acceptance gate: invalid evidence for the round just
@@ -812,14 +820,9 @@ class StateMachine:
                 self._persist_state()
                 return Verdict.FAIL
 
-            # Check consecutive_survivor_rounds
-            mutant_survivors = sum(
-                1
-                for f in self._state.findings
-                if f.source == "MUTANT" and f.disposition == Disposition.CONFIRMED
-            )
+            mutant_survivors = sum(is_mutation_survivor(f) for f in self._state.findings)
             if mutant_survivors > 0:
-                self._state.consecutive_survivor_rounds += 1
+                self._state.consecutive_survivor_rounds = previous_survivor_rounds + 1
             else:
                 self._state.consecutive_survivor_rounds = 0
 
@@ -827,7 +830,7 @@ class StateMachine:
                 self._state.verdict = Verdict.FAIL
                 self._state.converged = False
                 self._state.infra_errors.append(
-                    "mutation: 3 consecutive rounds with survivors -- tests are demonstrably weak"
+                    "mutation: surviving mutants reported in 3 consecutive rounds"
                 )
                 self._persist_state()
                 return Verdict.FAIL

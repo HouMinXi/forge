@@ -8,7 +8,10 @@ no remove). Bump SCHEMA_VERSION on breaking change.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import stat
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -18,6 +21,7 @@ from .disposition import DISPOSITION_PROTOCOL_VERSION, Disposition
 from .errors import CorruptedStateError, SchemaVersionMismatchError
 
 SCHEMA_VERSION: int = 1
+MUTATION_SURVIVOR_COUNTER_VERSION: int = 1
 
 # Canonical pass names (shared by receipt.py, outlet_c.py, sarif.py).
 _PASS_NAMES = ("qodo", "expert", "adversarial")
@@ -212,6 +216,9 @@ class State:
     promoted_fingerprints: set[str] = field(default_factory=set)
     # Mutation survivor round counter (LOCAL mode):
     consecutive_survivor_rounds: int = 0  # LOCAL mode only
+    mutation_survivor_counter_version: int = MUTATION_SURVIVOR_COUNTER_VERSION
+    survivor_counter_migration: dict[str, Any] | None = None
+    _legacy_survivor_state: bytes | None = field(default=None, repr=False, compare=False)
     consecutive_clean_rounds: int = 0  # LOCAL mode only
     # Rounds ending with a pass that did not complete. Persisted for the
     # same reason the two above are: a run that stops before its third
@@ -271,8 +278,9 @@ def load_state(path: Path) -> State | None:
     """
     if not path.exists():
         return None
+    original = path.read_bytes()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(original.decode("utf-8"))
     except json.JSONDecodeError as e:
         raise CorruptedStateError(f"cannot parse {path}: {e}") from e
 
@@ -321,7 +329,24 @@ def load_state(path: Path) -> State | None:
     state.promoted_fingerprints = set(data.get("promoted_fingerprints", []))
 
     # 02-02 additions: backward-compat defaults for pre-02-02 state.json.
-    state.consecutive_survivor_rounds = data.get("consecutive_survivor_rounds", 0)
+    counter = data.get("consecutive_survivor_rounds", 0)
+    if type(counter) is not int or counter < 0:
+        raise CorruptedStateError(f"invalid mutation survivor counter in {path}")
+    version = data.get("mutation_survivor_counter_version")
+    if "mutation_survivor_counter_version" in data and (
+        type(version) is not int or version != MUTATION_SURVIVOR_COUNTER_VERSION
+    ):
+        raise CorruptedStateError(f"unsupported mutation survivor counter version in {path}")
+    state.survivor_counter_migration = data.get("survivor_counter_migration")
+    if version == MUTATION_SURVIVOR_COUNTER_VERSION:
+        state.consecutive_survivor_rounds = counter
+    elif counter:
+        state.survivor_counter_migration = {
+            "previous_count": counter,
+            "reason": "legacy counter lacks surviving-mutant accounting provenance",
+            "source_sha256": hashlib.sha256(original).hexdigest(),
+        }
+        state._legacy_survivor_state = original
     state.consecutive_clean_rounds = data.get("consecutive_clean_rounds", 0)
     state.rounds_with_failed_pass = data.get("rounds_with_failed_pass", 0)
     state.rounds_with_falsify_infra = data.get("rounds_with_falsify_infra", 0)
@@ -366,6 +391,34 @@ def _finding_to_dict(f: StateFinding) -> dict:
     return d
 
 
+def _archive_legacy_survivor_state(state: State, path: Path) -> None:
+    """Preserve a reset legacy count before its state file is replaced."""
+    original = state._legacy_survivor_state
+    if original is None:
+        return
+    digest = hashlib.sha256(original).hexdigest()
+    archive = path.with_name(f"{path.name}.legacy-survivors-{digest}.json")
+    try:
+        fd = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        if not hasattr(os, "O_NOFOLLOW"):
+            raise OSError(
+                "cannot verify an existing legacy state archive without no-follow support"
+            ) from None
+        fd = os.open(archive, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as preserved:
+            if not stat.S_ISREG(os.fstat(preserved.fileno()).st_mode):
+                raise CorruptedStateError(
+                    f"legacy state archive is not a regular file: {archive}"
+                ) from None
+            if preserved.read() != original:
+                raise CorruptedStateError(f"legacy state archive content differs: {archive}") from None
+    else:
+        with os.fdopen(fd, "wb") as preserved:
+            preserved.write(original)
+    state._legacy_survivor_state = None
+
+
 def save_state(state: State, path: Path) -> None:
     """Atomic write of state.json. Rebuilds dispositions cache first.
 
@@ -390,6 +443,8 @@ def save_state(state: State, path: Path) -> None:
         "hold_reason": state.hold_reason,
         "promoted_fingerprints": sorted(state.promoted_fingerprints),
         "consecutive_survivor_rounds": state.consecutive_survivor_rounds,
+        "mutation_survivor_counter_version": state.mutation_survivor_counter_version,
+        "survivor_counter_migration": state.survivor_counter_migration,
         "consecutive_clean_rounds": state.consecutive_clean_rounds,
         "rounds_with_failed_pass": state.rounds_with_failed_pass,
         "rounds_with_falsify_infra": state.rounds_with_falsify_infra,
@@ -405,6 +460,7 @@ def save_state(state: State, path: Path) -> None:
         "exec_evidence": state.exec_evidence,
     }
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+    _archive_legacy_survivor_state(state, path)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     tmp.replace(path)
