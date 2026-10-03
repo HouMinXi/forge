@@ -14,7 +14,9 @@ import code_forge.llm_invoke as invoke
 
 
 def test_failed_wider_retry_logs_the_error_and_returns_none(monkeypatch, caplog):
-    backend = BackendConfig(name="test", type="api", model="m", format="openai", max_tokens=10)
+    backend = BackendConfig(
+        name="test", type="api", model="m", format="openai", max_tokens=10, output_token_limit=20
+    )
 
     def fail(*args, **kwargs):
         raise invoke.LLMInvokeError("backend down")

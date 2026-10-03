@@ -1,3 +1,4 @@
+import dataclasses
 import http.client
 import json
 import re
@@ -2371,6 +2372,7 @@ class TestTruncationRecover:
         exhausted, both truncated again), then one wider retry that is
         truncated as well = 4 total _invoke_openai calls."""
         backend = _make_api_backend(name="ds", fmt="openai")
+        backend = dataclasses.replace(backend, output_token_limit=32768)
         side_effect = [
             _truncated_response(),
             _truncated_response('{"findings": [{"file": "b.c",'),
@@ -2405,6 +2407,7 @@ class TestTruncationRecover:
         the continuation budget is gone, re-ask for the whole answer with a
         larger output cap instead of giving up on the pass."""
         backend = _make_api_backend(name="ds", fmt="openai")
+        backend = dataclasses.replace(backend, output_token_limit=32768)
         seen_caps = []
         outcomes = [
             _truncated_response('{"findings": [{"file": "a.c",'),
@@ -2436,6 +2439,7 @@ class TestTruncationRecover:
     def test_wider_retry_keeps_the_backend_untouched(self):
         """The widened cap belongs to one call, not to the shared config."""
         backend = _make_api_backend(name="ds", fmt="openai")
+        backend = dataclasses.replace(backend, output_token_limit=32768)
         original = backend.max_tokens
         side_effect = [
             _truncated_response('{"findings": [{"file": "a.c",'),
@@ -2455,6 +2459,7 @@ class TestTruncationRecover:
     def test_wider_retry_runs_once_then_exhausts(self):
         """One widened attempt, not an unbounded escalation loop."""
         backend = _make_api_backend(name="ds", fmt="openai")
+        backend = dataclasses.replace(backend, output_token_limit=32768)
         side_effect = [
             _truncated_response('{"findings": [{"file": "a.c",'),
             _truncated_response('{"findings": [{"file": "b.c",'),
@@ -2505,6 +2510,7 @@ class TestTruncationRecover:
         output never parses (budget=2 exhausted), then one wider retry
         that is truncated as well = 4 total _invoke_openai calls."""
         backend = _make_api_backend(name="ds", fmt="openai")
+        backend = dataclasses.replace(backend, output_token_limit=32768)
         usage_c = {"prompt_tokens": 5, "completion_tokens": 20}
         side_effect = [
             _truncated_response(),
@@ -2774,6 +2780,7 @@ class TestTruncationRecover:
         dict is a failed attempt, never a result: initial truncation +
         2 failed continuations + 1 wider retry = 4 total calls."""
         backend = _make_api_backend(name="ds", fmt="openai")
+        backend = dataclasses.replace(backend, output_token_limit=32768)
         usage_c = {"prompt_tokens": 5, "completion_tokens": 20}
         side_effect = [
             _truncated_response(partial='{"wrong": [{"file": "a.c",'),
@@ -2861,6 +2868,7 @@ class TestTruncationRecover:
         import logging
 
         backend = _make_api_backend(name="ds", fmt="openai")
+        backend = dataclasses.replace(backend, output_token_limit=32768)
         state = {"calls": 0}
 
         def _dispatch(*args, **kwargs):
@@ -2959,6 +2967,7 @@ class TestTruncationRecover:
         and the continuation attempts (which cannot complete it)
         exhaust the budget."""
         backend = _make_api_backend(name="ds", fmt="openai")
+        backend = dataclasses.replace(backend, output_token_limit=32768)
         usage_c = {"prompt_tokens": 5, "completion_tokens": 20}
         side_effect = [
             _truncated_response(partial='{"findings": []}'),
@@ -2984,6 +2993,7 @@ class TestTruncationRecover:
         is a failed attempt: a forge envelope carries both findings
         and code_excerpts."""
         backend = _make_api_backend(name="ds", fmt="openai")
+        backend = dataclasses.replace(backend, output_token_limit=32768)
         usage_c = {"prompt_tokens": 5, "completion_tokens": 20}
         tail1 = '"line": 1, "severity": "LOW"}]}'
         side_effect = [

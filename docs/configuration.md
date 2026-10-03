@@ -219,7 +219,20 @@ session-default backend is used.
 | `credentials_path` | no (vertex) | Path to service account JSON key file |
 | `model` | no | Model ID (leave empty to use API default) |
 | `max_tokens` | no | Output token cap (default: 16384) |
+| `max_completion_tokens` | no | Output token cap that takes precedence over `max_tokens` (default: 0, use `max_tokens`) |
+| `output_ceiling` | no | Fixed override of the selected output cap (default: 0, no override) |
+| `output_token_limit` | no | Known maximum output budget, including retries (default: 0, unknown) |
 | `default` | no | If `true`, use this backend when no override is set |
+
+Initial requests keep the selected output cap. Set `output_token_limit` only
+when you know the backend/model allows that budget; it must be at least the
+selected initial cap. After bounded continuation attempts are exhausted,
+forge can re-ask once with up to twice the initial budget, capped at that
+known limit. With the default unknown limit, no automatic budget widening
+occurs. A positive `output_ceiling` remains a fixed request override and
+disables wider retries, which would otherwise resend the same budget.
+Continuation requests retain their initial budget. This replaces the older
+unconditional doubling behavior; no provider limit is inferred or discovered.
 
 **Security note**: Never put an API key directly in `gate.yaml`. Use
 `api_key_env` to specify the name of an environment variable, and set

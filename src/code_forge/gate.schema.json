@@ -351,7 +351,12 @@
         "output_ceiling": {
           "type": "integer",
           "minimum": 0,
-          "description": "Hard upper bound on the requested output cap. For type=api only. 0 means use max_tokens unchanged."
+          "description": "Fixed override of the output token cap. For type=api only. 0 uses max_completion_tokens or max_tokens unchanged. A positive override disables automatic wider retries."
+        },
+        "output_token_limit": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Known maximum output token budget, including retries. For type=api only. Default 0 means unknown and disables automatic budget widening. A positive value must cover the selected initial cap and permits one wider retry only up to this limit."
         },
         "outcap_key": {
           "type": "string",
@@ -387,7 +392,7 @@
         },
         "params": {
           "type": "object",
-          "description": "Extra provider parameters merged into the request body. For type=api only. Keys owned by typed fields above (model, messages, stream, temperature, thinking, reasoning_effort, max_tokens, max_completion_tokens, output_ceiling, anthropic_version) are rejected by the loader.",
+          "description": "Extra provider parameters merged into the request body. For type=api only. Keys owned by typed fields above (model, messages, stream, temperature, thinking, reasoning_effort, max_tokens, max_completion_tokens, output_ceiling, output_token_limit, anthropic_version) are rejected by the loader.",
           "additionalProperties": true
         },
         "headers": {

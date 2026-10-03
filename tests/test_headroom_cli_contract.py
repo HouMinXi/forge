@@ -26,6 +26,7 @@ def test_wider_retry_cap_selection(monkeypatch, max_tokens, completion_tokens, e
         format="openai",
         max_tokens=max_tokens,
         max_completion_tokens=completion_tokens,
+        output_token_limit=20,
     )
     before = dataclasses.asdict(backend)
     calls = []
@@ -73,7 +74,12 @@ def test_wider_retry_usage(monkeypatch, format_name, provider_name, expected, us
         usage = {} if usage_kind == "empty" else None
         expected = Usage(0, 0, 0)
     backend = BackendConfig(
-        name="test", type="api", model="test-model", format=format_name, max_tokens=10
+        name="test",
+        type="api",
+        model="test-model",
+        format=format_name,
+        max_tokens=10,
+        output_token_limit=20,
     )
     calls = []
 
@@ -108,7 +114,14 @@ def test_wider_retry_keeps_requested_envelope(monkeypatch, content, expected):
         return content, {}
 
     monkeypatch.setattr(invoke, "_invoke_openai", provider)
-    backend = BackendConfig(name="test", type="api", model="test-model", format="openai", max_tokens=10)
+    backend = BackendConfig(
+        name="test",
+        type="api",
+        model="test-model",
+        format="openai",
+        max_tokens=10,
+        output_token_limit=20,
+    )
     result = invoke._retry_with_more_headroom(
         "prompt",
         backend,
