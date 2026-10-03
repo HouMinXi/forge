@@ -84,3 +84,95 @@ async def test_tool_call_proceeds_when_source_is_unchanged(tmp_path, monkeypatch
 
     assert await _null_coerce_call_tool("forge_review", {}) == "ok"
     assert called["name"] == "forge_review"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "newest-content",
+        "same-time-content",
+        "delete-older",
+        "add-older",
+        "rename",
+        "nested",
+        "delete-all",
+    ],
+)
+@pytest.mark.asyncio
+async def test_every_tool_call_refuses_changed_package_identity(tmp_path, monkeypatch, change):
+    import os
+
+    pkg = tmp_path / "code_forge"
+    pkg.mkdir()
+    older, newest = pkg / "a.py", pkg / "b.py"
+    older.write_text("x = 1\n")
+    newest.write_text("y = 1\n")
+    os.utime(older, ns=(100, 100))
+    os.utime(newest, ns=(200, 200))
+    monkeypatch.setattr(srv, "_package_dir", lambda: pkg)
+    monkeypatch.setattr(srv, "_loaded_digest", srv._source_digest())
+    dispatched = []
+
+    async def downstream(name, arguments, **kw):
+        dispatched.append((name, dict(arguments), kw))
+        return "unchanged"
+
+    monkeypatch.setattr(srv, "_original_tc", downstream)
+    assert await _null_coerce_call_tool("test_tool", {}) == "unchanged"
+    if change == "newest-content":
+        newest.write_text("y = 2\n")
+        os.utime(newest, ns=(201, 201))
+    elif change == "same-time-content":
+        newest.write_text("y = 2\n")
+        os.utime(newest, ns=(200, 200))
+    elif change == "delete-older":
+        older.unlink()
+    elif change == "add-older":
+        added = pkg / "c.py"
+        added.write_text("z = 1\n")
+        os.utime(added, ns=(150, 150))
+    elif change == "rename":
+        older.rename(pkg / "renamed.py")
+    elif change == "nested":
+        nested = pkg / "rules" / "r.py"
+        nested.parent.mkdir()
+        nested.write_text("r = 1\n")
+        os.utime(nested, ns=(150, 150))
+    else:
+        older.unlink()
+        newest.unlink()
+    for _ in range(3):
+        arguments = {"project_dir": None}
+        with pytest.raises(ToolError, match="[Rr]eload"):
+            await _null_coerce_call_tool("test_tool", arguments)
+        assert arguments == {"project_dir": None}
+    assert dispatched == [("test_tool", {}, {})]
+
+
+@pytest.mark.asyncio
+async def test_unchanged_identity_preserves_dispatch_and_null_coercion(tmp_path, monkeypatch):
+    pkg = tmp_path / "code_forge"
+    pkg.mkdir()
+    (pkg / "a.py").write_text("x = 1\n")
+    monkeypatch.setattr(srv, "_package_dir", lambda: pkg)
+    monkeypatch.setattr(srv, "_loaded_digest", srv._source_digest())
+    dispatched = []
+
+    async def downstream(name, arguments, **kw):
+        dispatched.append((name, dict(arguments), kw))
+        return "unchanged"
+
+    monkeypatch.setattr(srv, "_original_tc", downstream)
+    (tmp_path / "notes.py").write_text("unrelated = 1\n")
+    (pkg / "notes.txt").write_text("not a package module\n")
+    for _ in range(3):
+        assert (
+            await _null_coerce_call_tool(
+                "test_tool", {"project_dir": None, "flag": False, "count": 0}, context="kept"
+            )
+            == "unchanged"
+        )
+    assert (
+        dispatched
+        == [("test_tool", {"project_dir": "", "flag": False, "count": 0}, {"context": "kept"})] * 3
+    )

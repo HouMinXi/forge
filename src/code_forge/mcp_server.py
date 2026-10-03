@@ -430,40 +430,9 @@ def _source_digest() -> str:
 
 
 _loaded_digest = _source_digest()
-class _SourceWatch:
-    """Remembers the newest mtime it has already digested.
-
-    A dict would also avoid `global`, but a named field says what the
-    number is for.
-    """
-
-    def __init__(self) -> None:
-        self.seen_mtime_ns = 0
-
-
-_watch = _SourceWatch()
-
-
-def _newest_mtime_ns() -> int:
-    import os
-
-    newest = 0
-    stack = [str(_package_dir())]
-    while stack:
-        with os.scandir(stack.pop()) as it:
-            for entry in it:
-                if entry.is_dir(follow_symlinks=False):
-                    stack.append(entry.path)
-                elif entry.name.endswith(".py"):
-                    newest = max(newest, entry.stat(follow_symlinks=False).st_mtime_ns)
-    return newest
 
 
 def _refuse_if_source_moved() -> None:
-    newest = _newest_mtime_ns()
-    if newest == _watch.seen_mtime_ns:
-        return
-    _watch.seen_mtime_ns = newest
     if _source_digest() == _loaded_digest:
         return
     raise ToolError(
