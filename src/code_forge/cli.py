@@ -4054,7 +4054,12 @@ def _run(args, env, cwd: Path) -> Verdict:
             for message in _kernel_source.warnings:
                 warn(message)
         _context_sources_text = "\n\n".join(s for s in (_non_kernel_text, _kernel_text) if s)
-        _pre_graph_findings = list(_graph_source.findings_cache or [])
+        if _graph_source.name in _ctx.skipped_sources or _graph_source.name in _ctx.refused_sources:
+            _pre_graph_findings = []
+        else:
+            _pre_graph_findings = (
+                list(_graph_source.findings_cache) if _graph_source.findings_cache is not None else None
+            )
         _context_rows = list(_ctx.rows)
     except Exception as exc:  # noqa: BLE001 - advisory path, named
         warn("context sources unavailable: " + type(exc).__name__)
@@ -4130,7 +4135,8 @@ def _run(args, env, cwd: Path) -> Verdict:
         from .graph_triage import _run_sem
         from .diff import split_diff_for_files
 
-        _changes = _run_sem(resolved.git_diff or "", cwd)
+        _sem_outcome = _run_sem(resolved.git_diff or "", cwd)
+        _changes = _sem_outcome.entities if _sem_outcome.completed else []
         _grouping = group_diff(
             _changes,
             cwd,
@@ -4141,9 +4147,15 @@ def _run(args, env, cwd: Path) -> Verdict:
             # sem produced nothing usable -- degrade to the single-diff
             # path loudly rather than reviewing nothing.
             warn(
-                "grouping: estimated %d tokens over budget %d but sem "
-                "returned no entities; falling back to single-pass review "
-                "(truncation risk stands)" % (_l1_est_tokens, _group_budget)
+                "grouping: estimated %d tokens over budget %d but %s; "
+                "falling back to single-pass review (truncation risk stands)"
+                % (
+                    _l1_est_tokens,
+                    _group_budget,
+                    "sem returned no entities"
+                    if _sem_outcome.completed
+                    else "semantic acquisition %s: %s" % (_sem_outcome.status, _sem_outcome.diagnostic),
+                )
             )
             l1_provider = build_l1_provider(
                 engine_choice,
@@ -4337,6 +4349,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 clean_round_threshold=_clean_threshold,
                 backend=backend,
                 pre_graph_findings=_pre_graph_findings,
+                allow_unsnapshotted_context=bool(getattr(args, "allow_unsnapshotted_context", False)),
                 wall_t0=_wall_t0,
                 ctx_graph_triage=bool(_graph_impact_context),
                 ctx_contract=bool(_contract_spec_a),
@@ -4385,6 +4398,7 @@ def _run_hold_loop(
     clean_round_threshold=3,
     backend=None,
     pre_graph_findings=None,
+    allow_unsnapshotted_context=False,
     input_fn=input,
     output_fn=print,
     wall_t0=None,
@@ -4403,13 +4417,15 @@ def _run_hold_loop(
         from .taint import TaintRunner
         from .runtime import RuntimeRunner
         from .legacy import LegacyRunner
-        from .graph_triage import GraphTriageRunner
+        from .context_sources import GraphTriageSource
         from .daemon_state import DaemonStateRunner
         from .rulepack import RulepackRunner
 
         _taint_runner = TaintRunner()
         _runtime_runner = RuntimeRunner(backend=backend)
-        _graph_triage_runner = GraphTriageRunner()
+        _graph_triage_runner = GraphTriageSource(cwd).advisory_runner(
+            getattr(resolved, "head_sha", None), allow_unsnapshotted_context
+        )
         _graph_triage_runner._cached_findings = pre_graph_findings
         _daemon_state_runner = DaemonStateRunner(backend=backend)
         _legacy_runner = LegacyRunner()

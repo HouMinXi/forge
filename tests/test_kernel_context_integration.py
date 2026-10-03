@@ -9,6 +9,7 @@ from code_forge import cli, factories, trust
 from code_forge.backend import BackendConfig
 from code_forge.baseline import ResolvedReview
 from code_forge.context_sources import FactRow, GraphTriageSource, RemovedSymbolReaders
+from code_forge.graph_triage import SemAcquisition
 from code_forge.kernel_context import KernelContextSource, validate_kernel_context
 from code_forge.state import Verdict
 from tests.test_kernel_context_source import diff
@@ -160,7 +161,7 @@ def test_grouped_and_fallback_reuse_one_snapshot(pipeline, monkeypatch, grouped)
 
     root, _, _, args, captured = pipeline
     monkeypatch.setattr("code_forge.diff_grouping.max_prompt_tokens_from_gate_config", lambda data: 1)
-    monkeypatch.setattr("code_forge.graph_triage._run_sem", lambda *a: [])
+    monkeypatch.setattr("code_forge.graph_triage._run_sem", lambda *a: SemAcquisition("completed_empty"))
     groups = (
         [
             SimpleNamespace(name="one", passes=3, members=["driver.c"]),
@@ -228,7 +229,7 @@ def test_context_cost_flips_grouping_only_when_enabled(pipeline, monkeypatch, en
     )
     grouping = Mock(return_value=SimpleNamespace(groups=[], cross_group_edges=[]))
     monkeypatch.setattr("code_forge.diff_grouping.group_diff", grouping)
-    monkeypatch.setattr("code_forge.graph_triage._run_sem", lambda *a: [])
+    monkeypatch.setattr("code_forge.graph_triage._run_sem", lambda *a: SemAcquisition("completed_empty"))
     monkeypatch.setattr(
         GraphTriageSource, "facts", lambda *a: [FactRow("other", "x", "", "kept", "other")]
     )

@@ -116,24 +116,28 @@ def test_stale_snapshot_is_skipped_and_recorded():
     assert res.rows == []
     assert len(res.skipped) == 1 and res.skipped[0].startswith("g: index at aaaaaaaaaaaa")
     assert res.snapshot_shas == {"g": "a" * 40}
+    assert res.skipped_sources == ["g"]
 
 
 def test_matching_snapshot_runs():
     src = _Src("g", snap="a" * 40, rows=[_row()])
     res = gather([src], ["f.py"], "diff", head_sha="a" * 40)
     assert len(res.rows) == 1 and res.skipped == []
+    assert res.skipped_sources == []
 
 
 def test_unknown_head_skips_snapshotted_source():
     src = _Src("g", snap="a" * 40, rows=[_row()])
     res = gather([src], ["f.py"], "diff", head_sha=None)
     assert res.rows == [] and len(res.skipped) == 1
+    assert res.skipped_sources == ["g"]
 
 
 def test_allow_unsnapshotted_overrides_gate():
     src = _Src("g", snap="a" * 40, rows=[_row()])
     res = gather([src], ["f.py"], "diff", head_sha="b" * 40, allow_unsnapshotted=True)
     assert len(res.rows) == 1 and res.skipped == []
+    assert res.skipped_sources == []
 
 
 def test_on_demand_source_ignores_gate():
