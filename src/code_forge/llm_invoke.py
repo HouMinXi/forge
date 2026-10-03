@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import progress
-from .backend import BackendConfig, check_headers, check_params
+from .backend import BackendConfig, check_headers, check_output_token_limit, check_params
 from .errors import CliError
 from .json_cut import json_cut_at_eof, json_cut_inside_string
 
@@ -313,6 +313,12 @@ def _apply_params(
     cap = backend.max_completion_tokens or backend.max_tokens
     if backend.output_ceiling > 0:
         cap = backend.output_ceiling
+    check_output_token_limit(
+        backend.output_token_limit,
+        cap,
+        backend.name,
+        lambda msg: LLMInvokeError(msg, retryable=False),
+    )
     if backend.outcap_key:
         resolved_key = backend.outcap_key
     elif field_selects_key and backend.max_completion_tokens > 0:
@@ -1350,6 +1356,11 @@ def llm_invoke(
     timeout_s = effective_invoke_timeout_s(backend, timeout_s)
 
     if backend.type == "cli":
+        if type(backend.output_token_limit) is not int or backend.output_token_limit != 0:
+            raise LLMInvokeError(
+                "backend %r: output_token_limit is only valid on api backends" % backend.name,
+                retryable=False,
+            )
         # The mirror of the checks _request_headers and _apply_params
         # run for api backends. Config load refuses these fields on a
         # cli backend by name; a backend built in code reaches neither
@@ -1889,16 +1900,24 @@ def _retry_with_more_headroom(
     means the model either opens a second object or never closes the first
     one; concatenating the pieces then fails to parse. Asking again with
     more room keeps the reply in one piece, and the widened cap lives on a
-    throwaway copy so the shared config is untouched.
+    throwaway copy so the shared config is untouched. An explicit known
+    output_token_limit must authorize the larger budget; an unknown maximum
+    or a fixed output_ceiling never starts an ineffective or unbounded retry.
 
     Returns (parsed, usage) on success, or None when the wider attempt is
     truncated again or comes back unusable -- the caller then raises the
     exhaustion error it already holds.
     """
     current = backend.max_completion_tokens or backend.max_tokens
-    if current <= 0:
+    if backend.output_ceiling > 0:
+        current = backend.output_ceiling
+    limit = backend.output_token_limit
+    check_output_token_limit(
+        limit, current, backend.name, lambda msg: LLMInvokeError(msg, retryable=False)
+    )
+    if backend.output_ceiling > 0 or limit == 0 or current <= 0 or current >= limit:
         return None
-    wider = current * _WIDER_RETRY_FACTOR
+    wider = min(current * _WIDER_RETRY_FACTOR, limit)
     if backend.max_completion_tokens:
         widened = dataclasses.replace(backend, max_completion_tokens=wider)
     else:
@@ -2643,6 +2662,15 @@ def _invoke_vertex(
             "backend %r: streaming not supported for %s format; "
             "use format: openai" % (backend.name, backend.format)
         )
+    # Refuse incompatible budgets before OAuth can load or refresh credentials.
+    check_output_token_limit(
+        backend.output_token_limit,
+        backend.output_ceiling
+        if backend.output_ceiling > 0
+        else backend.max_completion_tokens or backend.max_tokens,
+        backend.name,
+        lambda msg: LLMInvokeError(msg, retryable=False),
+    )
     try:
         from google.oauth2 import service_account
         import google.auth

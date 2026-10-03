@@ -61,6 +61,7 @@ PROTECTED_PARAM_KEYS = frozenset(
         "max_completion_tokens",
         "max_tokens",
         "output_ceiling",
+        "output_token_limit",
         # The wire key reasoning_effort takes on the formats that nest it:
         # _apply_params writes body["output_config"]["effort"], and the
         # generic params copy that follows replaces the whole dict. Without
@@ -163,6 +164,7 @@ _API_ONLY_FIELDS = (
     "stream",
     "outcap_key",
     "output_ceiling",
+    "output_token_limit",
     "params",
     "headers",
 )
@@ -239,6 +241,7 @@ class BackendConfig:
     # CLI backend child-process env overrides
     env_unset: Tuple[str, ...] = ()  # var names to remove from child env
     env_set: Tuple[Tuple[str, str], ...] = ()  # (name, value) pairs to set
+    output_token_limit: int = 0  # 0 = unknown; >0 = known maximum, including retries
 
 
 # -- DEFAULT_BACKEND -------------------------------------------------
@@ -442,6 +445,14 @@ def _parse_headers(entry: dict, name: str) -> Optional[dict]:
     return headers
 
 
+def check_output_token_limit(limit: int, cap: int, name: str, fail: Callable) -> None:
+    """Validate a known output maximum without changing the selected cap."""
+    if type(limit) is not int or limit < 0:
+        raise fail("backend %r: output_token_limit must be a nonnegative integer" % name)
+    if limit and cap > limit:
+        raise fail("backend %r: output token cap %s exceeds output_token_limit %s" % (name, cap, limit))
+
+
 def _parse_provider_fields(entry: dict, name: str) -> dict:
     """Extract and validate provider-aware fields from an api entry.
 
@@ -452,6 +463,7 @@ def _parse_provider_fields(entry: dict, name: str) -> dict:
     # Typed sampling/reasoning fields
     kw["temperature"] = entry.get("temperature", -1.0)
     kw["max_completion_tokens"] = entry.get("max_completion_tokens", 0)
+    kw["output_token_limit"] = entry.get("output_token_limit", 0)
     kw["thinking_budget"] = entry.get("thinking_budget", 0)
     kw["reasoning_effort"] = entry.get("reasoning_effort", "")
     kw["stream"] = bool(entry.get("stream", False))
@@ -483,6 +495,8 @@ def _parse_provider_fields(entry: dict, name: str) -> dict:
             "backend %r: output token cap must be positive "
             "(max_completion_tokens and max_tokens are both zero)" % name
         )
+    cap = max(0, entry.get("output_ceiling", 0)) or mct or max_tokens
+    check_output_token_limit(kw["output_token_limit"], cap, name, CliError)
 
     # params: reject protected keys
     params = entry.get("params")
@@ -1039,7 +1053,7 @@ def _classify_live_failure(exc: "LLMInvokeError") -> Tuple[str, str]:
     if exc.kind == "truncated":
         return (
             "truncated-output",
-            "The backend could not finish even a 32-token reply; check its output limits.",
+            "The backend could not finish a bounded probe reply; check its output limits.",
         )
     if exc.exit_code >= 400 and not exc.kind:
         return (
@@ -1064,7 +1078,7 @@ def probe_backend_live(cfg: BackendConfig) -> LiveProbeResult:
     that budget. Deliberately NOT routed through probe_backend: its
     5-minute success cache would suppress the network call this
     exists to make. Thinking and reasoning-effort fields are zeroed
-    so model-side reasoning cannot burn the 32-token cap before the
+    so model-side reasoning cannot burn the at-most-32-token cap before the
     JSON key arrives. stream stays as configured -- the probe is a
     snapshot of what a real review experiences.
     """
@@ -1075,7 +1089,7 @@ def probe_backend_live(cfg: BackendConfig) -> LiveProbeResult:
     probe_cfg = replace(
         cfg,
         timeout_s=60,
-        max_tokens=32,
+        max_tokens=min(32, cfg.output_token_limit) if cfg.output_token_limit > 0 else 32,
         max_completion_tokens=0,
         output_ceiling=0,
         thinking_type="",
