@@ -430,16 +430,25 @@ differs. The full tables, the corpus construction, and the caveats are in
 
 ## Honest limitations
 
-- **No cross-repo impact.** code-forge reviews a single repository.
-  Multi-repo dependency analysis requires CodeRabbit-style tooling or
-  Chromium's `Cq-Depend`.
+- **Cross-repo impact stops at one direct call.** When a sibling
+  repository is registered with code-review-graph and has its own
+  graph, code-forge reports that sibling's direct callers of a changed
+  symbol. The finding is advisory and never blocks. It follows the call
+  one hop and stops, so a caller of that caller is invisible. A repository
+  that was never registered yields an empty result, not an error. Cross-repo
+  commit dependencies such as Chromium's `Cq-Depend` are outside what it
+  models.
 - **No feedback learning.** code-forge does not adapt to dismissed
   findings or developer preferences. Each review is independent.
+  `code-forge trust` only records a hash of `gate.yaml`; it says
+  nothing about which findings were rejected.
 - **No long-term maintainability scoring.** code-forge does not assess
   technical debt accumulation. SonarQube's tech-debt tracking is the
-  closest automated approximation.
+  closest automated approximation, and its number is that tool's own
+  estimate, not a measurable property of the code.
 - **No performance regression suite.** No benchmark harness equivalent to
-  Rust's `perf.rust-lang.org`.
+  Rust's `perf.rust-lang.org`. code-forge can tell you a test started
+  failing; it cannot tell you a change made a hot path slower.
 - **R3 is artifact-presence, not coverage proof.** The cross-component
   check confirms an integration test file exists under the expected path;
   it does not verify that the test exercises the specific code that
