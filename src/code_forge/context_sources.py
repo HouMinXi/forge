@@ -23,10 +23,13 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import sys
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional, Protocol
+
+from .graph_triage import SemAcquisition
 
 if TYPE_CHECKING:
     from .advisory import AdvisoryFinding
@@ -88,6 +91,8 @@ class GatherResult:
     errors: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     snapshot_shas: dict[str, Optional[str]] = field(default_factory=dict)
+    skipped_sources: list[str] = field(default_factory=list)
+    refused_sources: list[str] = field(default_factory=list)
 
 
 class ContextSource(Protocol):
@@ -115,11 +120,18 @@ class GraphTriageSource:
     # each hold-cycle's GraphTriageRunner._cached_findings from this so
     # sem/graph.db is queried once per review, not once per round.
     findings_cache: Optional[list] = None
+    acquisition_outcome: Optional[SemAcquisition] = field(default=None, init=False)
+    _backend_selection: Optional[tuple[Optional[tuple[str, str]], dict]] = field(
+        default=None, init=False, repr=False
+    )
 
     def snapshot_sha(self) -> Optional[str]:
         from .graph_triage import _detect_backend
 
-        backend = _detect_backend(self.repo_root, _gate_cfg(self.repo_root))
+        self._backend_selection = None
+        gate_config = _gate_cfg(self.repo_root)
+        backend = _detect_backend(self.repo_root, gate_config)
+        self._backend_selection = (backend, gate_config)
         if backend is None or backend[0] != "graphdb":
             return None
         return _graphdb_head_sha(Path(backend[1]))
@@ -127,12 +139,45 @@ class GraphTriageSource:
     def facts(self, changed_files: list[str], diff_text: str) -> list[FactRow]:
         from .graph_triage import GraphTriageRunner
 
+        self.findings_cache = None
+        self.acquisition_outcome = None
         runner = GraphTriageRunner()
+        runner._backend_selection = self._backend_selection
         findings = runner.run(diff_text, self.repo_root)
+        self.acquisition_outcome = getattr(runner, "acquisition_outcome", None)
         if runner.infra_errors:
             raise RuntimeError("; ".join(runner.infra_errors))
         self.findings_cache = list(findings)
         return [_adapt_advisory(f, self.name) for f in findings]
+
+    def advisory_runner(self, head_sha: Optional[str], allow_unsnapshotted: bool = False):
+        """Apply this source's authority to each uncached advisory acquisition."""
+        from .diff import get_changed_files
+        from .graph_triage import GraphTriageRunner
+
+        source_name = self.name
+
+        class SourceRunner(GraphTriageRunner):
+            def run(runner, diff_text: str, repo_root: Path):
+                runner.infra_errors.clear()
+                if runner._cached_findings is not None:
+                    return runner._cached_findings
+                source = GraphTriageSource(repo_root, name=source_name)
+                result = gather(
+                    [source],
+                    get_changed_files(diff_text),
+                    diff_text,
+                    head_sha=head_sha,
+                    allow_unsnapshotted=allow_unsnapshotted,
+                )
+                runner.acquisition_outcome = source.acquisition_outcome
+                runner.infra_errors.extend(result.errors)
+                for skipped in result.skipped:
+                    print("GraphTriageRunner: context source skipped: " + skipped, file=sys.stderr)
+                runner._cached_findings = source.findings_cache
+                return list(runner._cached_findings or [])
+
+        return SourceRunner()
 
 
 def _gate_cfg(repo_root: Path) -> dict:
@@ -787,6 +832,7 @@ def gather(
     result = GatherResult()
     for src in sources:
         name = getattr(src, "name", type(src).__name__)
+        acquisition_started = False
         try:
             snap = src.snapshot_sha()
             result.snapshot_shas[name] = snap
@@ -796,10 +842,14 @@ def gather(
                         "%s: index at %s, review head %s"
                         % (name, (snap or "?")[:12], (head_sha or "unknown")[:12])
                     )
+                    result.skipped_sources.append(name)
                     continue
+            acquisition_started = True
             rows = src.facts(changed_files, diff_text)
             result.rows.extend(rows)
         except Exception as exc:  # noqa: BLE001 - attribute, do not swallow
+            if not acquisition_started:
+                result.refused_sources.append(name)
             msg = "%s: %s: %s" % (name, type(exc).__name__, exc)
             result.errors.append(msg)
             if on_error is not None:

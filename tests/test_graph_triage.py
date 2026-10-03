@@ -19,6 +19,7 @@ from code_forge.graph_triage import (
     GraphTriageRunner,
     _detect_backend,
     _run_sem,
+    SemAcquisition,
     _sem_has_index,
     find_entity_dependents,
 )
@@ -283,14 +284,21 @@ class TestSemBackend:
     @patch("code_forge.graph_triage.subprocess.run")
     def test_sem_diff_invocation(self, mock_run):
         """sem diff called with correct list args and --patch flag."""
-        mock_run.return_value = subprocess.CompletedProcess(
+        diff_result = subprocess.CompletedProcess(
             args=[],
             returncode=0,
             stdout=_sem_diff_json([_make_entity("foo", "src/foo.py")]),
             stderr="",
         )
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=["sem", "--version"], returncode=0, stdout="sem 0.21.0", stderr=""
+            ),
+            diff_result,
+        ]
         diff = _make_diff(["src/foo.py"])
-        _run_sem(diff, Path("/repo"))
+        with patch("code_forge.graph_triage.shutil.which", return_value="/usr/bin/sem"):
+            _run_sem(diff, Path("/repo"))
         # Verify the call
         call_args = mock_run.call_args
         cmd = call_args[0][0] if call_args[0] else call_args[1].get("args", [])
@@ -327,7 +335,7 @@ class TestSemBackend:
     def test_sem_ranking_top10(self, mock_detect, mock_sem, mock_impact):
         """Given 15 entities, run() returns exactly 10 sorted descending."""
         entities = [_make_entity("func_%d" % i, "src/f%d.py" % i) for i in range(15)]
-        mock_sem.return_value = entities
+        mock_sem.return_value = SemAcquisition("completed", entities)
         # Each entity has impact = 100 - i
         mock_impact.side_effect = [
             {
@@ -356,7 +364,7 @@ class TestSemBackend:
             _make_entity("lines 1-5", "src/foo.py"),
             _make_entity("real_func", "src/foo.py"),
         ]
-        mock_sem.return_value = entities
+        mock_sem.return_value = SemAcquisition("completed", entities)
         mock_impact.return_value = {
             "impact": {"total": 10},
             "dependents": [{"entityId": "d1", "entityName": "d1"}],
@@ -382,7 +390,7 @@ class TestSemBackend:
             _make_entity("module-level", "src/foo.py"),
             _make_entity("lines 10-20", "src/bar.py"),
         ]
-        mock_sem.return_value = entities
+        mock_sem.return_value = SemAcquisition("completed", entities)
         runner = GraphTriageRunner()
         diff = _make_diff(["src/foo.py"])
         result = runner.run(diff, Path("/tmp"))
@@ -398,7 +406,7 @@ class TestSemBackend:
             _make_entity("slow_func", "src/a.py"),
             _make_entity("fast_func", "src/b.py"),
         ]
-        mock_sem.return_value = entities
+        mock_sem.return_value = SemAcquisition("completed", entities)
 
         def impact_side_effect(name, fpath, root):
             if name == "slow_func":
@@ -427,7 +435,7 @@ class TestSemBackend:
     def test_sem_finding_format(self, mock_detect, mock_sem, mock_impact):
         """AdvisoryFinding fields match axis='GRAPH-TRIAGE' etc."""
         entities = [_make_entity("my_func", "src/my.py", 10, 20)]
-        mock_sem.return_value = entities
+        mock_sem.return_value = SemAcquisition("completed", entities)
         mock_impact.return_value = {
             "impact": {"total": 42},
             "dependents": [

@@ -22,8 +22,10 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+from contextlib import closing
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from .advisory import AdvisoryFinding
 from .dead_code import _live_callers
@@ -78,53 +80,87 @@ def _parse_diff_files(diff_text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _sem_has_index(repo_root: Path) -> bool:
-    """Check whether sem has built an index for this repo.
+@dataclass(frozen=True)
+class SemCapability:
+    available: bool
+    applicable: bool
+    status: str
+    version: Optional[str] = None
+    diagnostic: str = ""
 
-    sem stores its index at <repo_root>/.semcode.db.  The artifact is
-    a DIRECTORY of lance tables on sem 0.10.x (verified on Linux);
-    other versions may use a single file, so existence -- not
-    file-ness -- is the signal.  Absence means sem would hang or
-    error on every impact query.  A present-but-corrupt index is
-    tolerated here: _run_sem and _get_sem_impact degrade gracefully
-    on non-zero exit.
 
-    Previous implementation ran `sem diff --patch --json` with empty
-    stdin and checked the exit code, but exit code tracks payload
-    validity (empty stdin always returns non-zero) -- not index
-    presence.  The probe was dead on every platform.
-    """
-    # .semcode.db was dropped in sem v0.21.0. Modern sem is fast enough
-    # on misses that we do not need to prevent invocation when unindexed.
-    # Older versions (0.10.x) would hang for 15s without an index.
+@dataclass(frozen=True)
+class SemAcquisition:
+    status: Literal[
+        "completed",
+        "completed_empty",
+        "disabled",
+        "unavailable",
+        "inapplicable",
+        "execution_error",
+        "timeout",
+        "parse_error",
+        "schema_error",
+        "impact_incomplete",
+        "configuration_error",
+    ]
+    entities: list[dict] = field(default_factory=list)
+    diagnostic: str = ""
+    capability: Optional[SemCapability] = None
+    impact_complete: Optional[bool] = None
+
+    @property
+    def completed(self) -> bool:
+        return self.status in {"completed", "completed_empty", "disabled"}
+
+
+def _sem_capability(repo_root: Path) -> SemCapability:
+    """Retain version/index facts using the existing applicability policy."""
+    available = shutil.which("sem") is not None
+    indexed = (repo_root / ".semcode.db").exists()
+    if not available:
+        return SemCapability(False, indexed, "unavailable", diagnostic="sem executable not found")
+    version = None
     try:
-        r = subprocess.run(
+        result = subprocess.run(
             ["sem", "--version"],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
+            cwd=str(repo_root),
             timeout=2,
             check=False,
         )
-        if r.returncode == 0:
-            version_str = r.stdout.strip()
-            # expecting "sem 0.21.0" or similar
-            parts = version_str.split()
+        status = "version_error"
+        diagnostic = "sem version exited with code %d" % result.returncode
+        if result.returncode == 0:
+            parts = result.stdout.strip().split()
+            status = "version_invalid"
+            diagnostic = "sem version response is not a recognized version"
             if len(parts) >= 2:
-                v = parts[1].lstrip("v")
-                major_minor = v.split(".")[:2]
-                if len(major_minor) >= 2:
+                version = parts[1].lstrip("v")
+                pieces = version.split(".")[:2]
+                if len(pieces) >= 2:
                     try:
-                        major, minor = int(major_minor[0]), int(major_minor[1].split("-")[0])
-                        if major > 0 or minor >= 21:
-                            return True
+                        major, minor = int(pieces[0]), int(pieces[1].split("-")[0])
                     except ValueError:
                         pass
-    except (OSError, subprocess.TimeoutExpired) as e:
-        logger.debug("sem version check failed: %s", e)
+                    else:
+                        if major > 0 or minor >= 21:
+                            return SemCapability(True, True, "modern", version)
+                        status = "legacy"
+                        diagnostic = "legacy sem requires an existing repository index"
+    except subprocess.TimeoutExpired:
+        status, diagnostic = "version_timeout", "sem version timed out"
+    except OSError as exc:
+        status, diagnostic = "version_error", "sem version could not execute: %s" % exc
+    return SemCapability(available, indexed, status, version, diagnostic)
 
-    return (repo_root / ".semcode.db").exists()
+
+def _sem_has_index(repo_root: Path) -> bool:
+    """Preserve modern-version or legacy-index applicability."""
+    return _sem_capability(repo_root).applicable
 
 
 def _detect_backend(
@@ -193,19 +229,15 @@ def _is_unnamed(entity_name: str) -> bool:
     return False
 
 
-def _run_sem(diff_text: str, repo_root: Path) -> list[dict]:
-    """Run sem diff --patch to get changed entities from diff text.
-
-    Writes diff_text to a tempfile, then pipes it to sem diff via stdin.
-
-    Args:
-        diff_text: unified diff string.
-        repo_root: path to repo root (cwd for sem).
-
-    Returns:
-        List of entity change dicts from sem output.
-        Empty list on error.
-    """
+def _run_sem(diff_text: str, repo_root: Path) -> SemAcquisition:
+    """Acquire and validate semantic entities without erasing failed execution."""
+    capability = _sem_capability(repo_root)
+    if not capability.available or not capability.applicable:
+        return SemAcquisition(
+            "unavailable" if not capability.available else "inapplicable",
+            diagnostic=capability.diagnostic,
+            capability=capability,
+        )
     tmp_fd = None
     tmp_path = None
     try:
@@ -227,13 +259,60 @@ def _run_sem(diff_text: str, repo_root: Path) -> list[dict]:
             )
 
         if result.returncode != 0:
-            return []
-
+            return SemAcquisition(
+                "execution_error",
+                diagnostic="sem diff exited with code %d: %s"
+                % (result.returncode, result.stderr.strip()),
+                capability=capability,
+            )
         data = json.loads(result.stdout)
-        return data.get("changes", [])
-
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
-        return []
+        if not isinstance(data, dict) or not isinstance(data.get("changes"), list):
+            return SemAcquisition(
+                "schema_error",
+                diagnostic="sem diff requires an object with a changes list",
+                capability=capability,
+            )
+        entities = data["changes"]
+        for index, entity in enumerate(entities):
+            if (
+                not isinstance(entity, dict)
+                or not isinstance(entity.get("filePath"), str)
+                or not entity["filePath"]
+            ):
+                return SemAcquisition(
+                    "schema_error",
+                    diagnostic="sem entity %d requires a nonempty filePath" % index,
+                    capability=capability,
+                )
+            for key in ("entityName", "entityType", "changeType"):
+                value = entity.get(key)
+                if key in entity and not isinstance(value, str):
+                    return SemAcquisition(
+                        "schema_error",
+                        diagnostic="sem entity %d has invalid %s" % (index, key),
+                        capability=capability,
+                    )
+            for key in ("startLine", "endLine"):
+                value = entity.get(key)
+                if value is not None and (type(value) is not int or value < 0):
+                    return SemAcquisition(
+                        "schema_error",
+                        diagnostic="sem entity %d has invalid %s" % (index, key),
+                        capability=capability,
+                    )
+        return SemAcquisition(
+            "completed" if entities else "completed_empty", entities, capability=capability
+        )
+    except subprocess.TimeoutExpired:
+        return SemAcquisition("timeout", diagnostic="sem diff timed out", capability=capability)
+    except json.JSONDecodeError as exc:
+        return SemAcquisition(
+            "parse_error", diagnostic="sem diff JSON parse failed: %s" % exc, capability=capability
+        )
+    except OSError as exc:
+        return SemAcquisition(
+            "execution_error", diagnostic="sem diff could not execute: %s" % exc, capability=capability
+        )
     finally:
         if tmp_fd is not None:
             os.close(tmp_fd)
@@ -268,14 +347,44 @@ def _get_sem_impact(
             timeout=_SEM_TIMEOUT_S,
         )
         if result.returncode != 0:
-            return fallback
-        return json.loads(result.stdout)
+            return {
+                **fallback,
+                "_status": "execution_error",
+                "_error": "sem impact exited with code %d" % result.returncode,
+            }
+        data = json.loads(result.stdout)
+        if not isinstance(data, dict) or not isinstance(data.get("impact"), dict):
+            return {
+                **fallback,
+                "_status": "schema_error",
+                "_error": "sem impact requires an impact object",
+            }
+        total = data["impact"].get("total")
+        dependents = data.get("dependents")
+        if (
+            type(total) is not int
+            or total < 0
+            or not isinstance(dependents, list)
+            or any(not isinstance(item, dict) for item in dependents)
+        ):
+            return {
+                **fallback,
+                "_status": "schema_error",
+                "_error": "sem impact has invalid total or dependents",
+            }
+        return data
     except subprocess.TimeoutExpired:
         # Distinguishable from "indexed but zero impact": the caller
         # uses _timed_out to trip the circuit breaker.
-        return {**fallback, "_timed_out": True}
-    except (json.JSONDecodeError, OSError):
-        return fallback
+        return {**fallback, "_timed_out": True, "_status": "timeout", "_error": "sem impact timed out"}
+    except json.JSONDecodeError as exc:
+        return {**fallback, "_status": "parse_error", "_error": "sem impact JSON parse failed: %s" % exc}
+    except OSError as exc:
+        return {
+            **fallback,
+            "_status": "execution_error",
+            "_error": "sem impact could not execute: %s" % exc,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +392,7 @@ def _get_sem_impact(
 # ---------------------------------------------------------------------------
 
 
-def _run_graphdb(db_path: str, diff_files: list[str]) -> list[dict]:
+def _run_graphdb(db_path: str, diff_files: list[str]) -> SemAcquisition:
     """Query graph.db for changed entities and their dependents.
 
     Uses IMPORTS_FROM disambiguation to reduce false positives from
@@ -294,54 +403,52 @@ def _run_graphdb(db_path: str, diff_files: list[str]) -> list[dict]:
         diff_files: list of file paths from the diff.
 
     Returns:
-        List of entity dicts with name, file, qualified_name,
-        dependent_count, top_dependents.
+        Complete entity acquisition, or a failure with no partial entities.
     """
     results: list[dict] = []
-    conn = None
     try:
-        conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)
-        cursor = conn.cursor()
+        with closing(sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)) as conn:
+            cursor = conn.cursor()
 
-        for file_path in diff_files:
-            # Query nodes by file_path.
-            cursor.execute(
-                "SELECT id, kind, name, qualified_name, file_path, "
-                "line_start, line_end FROM nodes "
-                "WHERE file_path LIKE ?",
-                ("%%%s" % file_path,),
-            )
-            nodes = cursor.fetchall()
-
-            for node in nodes:
-                node_id, kind, name, qualified_name, nfile, start, end = node
-                if _is_unnamed(name):
-                    continue
-
-                # Module name for IMPORTS_FROM disambiguation.
-                module_name = Path(file_path).stem
-
-                live = _live_callers(cursor, name, module_name)
-                dep_names = [lc.qualified for lc in live[:5]]
-
-                results.append(
-                    {
-                        "name": name,
-                        "file": file_path,
-                        "qualified_name": qualified_name,
-                        "dependent_count": len(live),
-                        "top_dependents": dep_names,
-                        "start_line": start,
-                        "end_line": end,
-                    }
+            for file_path in diff_files:
+                # Query nodes by file_path.
+                cursor.execute(
+                    "SELECT id, kind, name, qualified_name, file_path, "
+                    "line_start, line_end FROM nodes "
+                    "WHERE file_path LIKE ?",
+                    ("%%%s" % file_path,),
                 )
+                nodes = cursor.fetchall()
+
+                for node in nodes:
+                    node_id, kind, name, qualified_name, nfile, start, end = node
+                    if _is_unnamed(name):
+                        continue
+
+                    # Module name for IMPORTS_FROM disambiguation.
+                    module_name = Path(file_path).stem
+
+                    live = _live_callers(cursor, name, module_name)
+                    dep_names = [lc.qualified for lc in live[:5]]
+
+                    results.append(
+                        {
+                            "name": name,
+                            "file": file_path,
+                            "qualified_name": qualified_name,
+                            "dependent_count": len(live),
+                            "top_dependents": dep_names,
+                            "start_line": start,
+                            "end_line": end,
+                        }
+                    )
     except (sqlite3.Error, OSError) as exc:
         logger.warning("graph.db read error: %s", exc)
-    finally:
-        if conn is not None:
-            conn.close()
+        return SemAcquisition("execution_error", diagnostic=str(exc), impact_complete=False)
 
-    return results
+    return SemAcquisition(
+        "completed" if results else "completed_empty", entities=results, impact_complete=True
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +577,8 @@ class GraphTriageRunner:
         self.source_files: Optional[list[Path]] = None
         self.infra_errors: list[str] = []
         self._cached_findings: Optional[list[AdvisoryFinding]] = None
+        self.acquisition_outcome: Optional[SemAcquisition] = None
+        self._backend_selection: Optional[tuple[Optional[tuple[str, str]], dict]] = None
 
     @property
     def is_advisory(self) -> bool:
@@ -497,8 +606,13 @@ class GraphTriageRunner:
         if self._cached_findings is not None:
             return self._cached_findings
 
+        self.acquisition_outcome = None
+
         # Guard: empty/whitespace diff.
         if not diff_text or not diff_text.strip():
+            self.acquisition_outcome = SemAcquisition(
+                "completed_empty", diagnostic="no diff to analyze", impact_complete=True
+            )
             return []
 
         # Load gate config.  Errors must not be silently swallowed --
@@ -507,23 +621,35 @@ class GraphTriageRunner:
         # graph_triage.enabled: false, causing the backend auto-detect
         # to re-enable a subsystem the user explicitly disabled.
         gate_config: dict = {}
-        gate_path = repo_root / ".code-forge" / "gate.yaml"
-        try:
-            from .gate_check import load_gate_config
+        if self._backend_selection is not None:
+            gate_config = self._backend_selection[1]
+        else:
+            gate_path = repo_root / ".code-forge" / "gate.yaml"
+            try:
+                from .gate_check import load_gate_config
 
-            gate_config = load_gate_config(gate_path)
-        except FileNotFoundError:
-            gate_config = {}
-        except (ValueError, OSError):
-            gate_config = {}
+                gate_config = load_gate_config(gate_path)
+            except FileNotFoundError:
+                gate_config = {}
+            except (ValueError, OSError) as exc:
+                msg = "GraphTriageRunner: configuration_error: %s" % exc
+                self.acquisition_outcome = SemAcquisition("configuration_error", diagnostic=str(exc))
+                self.infra_errors.append(msg)
+                print(msg, file=sys.stderr)
+                return []
 
         # Detect backend.
-        backend = _detect_backend(repo_root, gate_config)
+        backend = (
+            _detect_backend(repo_root, gate_config)
+            if self._backend_selection is None
+            else self._backend_selection[0]
+        )
 
         if backend is None:
             gt_section = gate_config.get("graph_triage", {})
             if isinstance(gt_section, dict) and gt_section.get("enabled") is False:
                 # Explicit disable: silent return.
+                self.acquisition_outcome = SemAcquisition("disabled", impact_complete=True)
                 return []
             # Both absent: loud-fail.
             msg = (
@@ -531,8 +657,14 @@ class GraphTriageRunner:
                 "install sem (https://github.com/Ataraxy-Labs/sem) "
                 "or build code-review-graph"
             )
-            self.infra_errors.append(msg)
-            print(msg, file=sys.stderr)
+            capability = _sem_capability(repo_root)
+            self.acquisition_outcome = SemAcquisition(
+                "unavailable" if not capability.available else "inapplicable",
+                diagnostic=capability.diagnostic or msg,
+                capability=capability,
+            )
+            self.infra_errors.append(msg + ": " + self.acquisition_outcome.diagnostic)
+            print(self.infra_errors[-1], file=sys.stderr)
             return []
 
         backend_name, backend_path = backend
@@ -548,14 +680,32 @@ class GraphTriageRunner:
 
         return []
 
+    def _accept_acquisition(self, outcome: SemAcquisition, backend: str) -> bool:
+        self.acquisition_outcome = outcome
+        if not outcome.completed:
+            message = "GraphTriageRunner: %s acquisition %s: %s" % (
+                backend,
+                outcome.status,
+                outcome.diagnostic,
+            )
+            self.infra_errors.append(message)
+            print(message, file=sys.stderr)
+            return False
+        return True
+
     def _run_with_sem(
         self,
         diff_text: str,
         repo_root: Path,
     ) -> list[AdvisoryFinding]:
         """Run analysis using sem CLI backend."""
-        entities = _run_sem(diff_text, repo_root)
+        outcome = _run_sem(diff_text, repo_root)
+        if not self._accept_acquisition(outcome, "semantic"):
+            return []
+        entities = outcome.entities
         if not entities:
+            self.acquisition_outcome = replace(outcome, impact_complete=True)
+            self._cached_findings = []
             return []
 
         # Filter unnamed entities + collect impact.
@@ -572,13 +722,14 @@ class GraphTriageRunner:
             file_path = entity.get("filePath", "")
             impact = _get_sem_impact(name, file_path, repo_root)
 
-            if impact.get("_timed_out"):
-                print(
-                    "GraphTriageRunner: sem impact timed out for %r "
-                    "-- disabling for this run (repo may not be indexed)" % name,
-                    file=sys.stderr,
+            if impact.get("_status") or impact.get("_timed_out"):
+                detail = impact.get("_error", "sem impact timed out")
+                message = "GraphTriageRunner: incomplete impact for %r: %s" % (name, detail)
+                self.acquisition_outcome = replace(
+                    outcome, status="impact_incomplete", diagnostic=message, impact_complete=False
                 )
-                self._cached_findings = []
+                self.infra_errors.append(message)
+                print(message, file=sys.stderr)
                 return []
 
             total = impact.get("impact", {}).get("total", 0)
@@ -600,6 +751,7 @@ class GraphTriageRunner:
         # Sort descending by impact total.
         ranked.sort(key=lambda e: e.get("total", 0), reverse=True)
         findings = _build_findings(ranked, "sem")
+        self.acquisition_outcome = replace(outcome, impact_complete=True)
         self._cached_findings = findings
         return findings
 
@@ -610,12 +762,14 @@ class GraphTriageRunner:
     ) -> list[AdvisoryFinding]:
         """Run analysis using graph.db SQLite backend."""
         diff_files = _parse_diff_files(diff_text)
-        if not diff_files:
+        outcome = (
+            _run_graphdb(db_path, diff_files)
+            if diff_files
+            else SemAcquisition("completed_empty", impact_complete=True)
+        )
+        if not self._accept_acquisition(outcome, "graph.db"):
             return []
-
-        entities = _run_graphdb(db_path, diff_files)
-        if not entities:
-            return []
+        entities = outcome.entities
 
         # Sort descending by dependent count.
         entities.sort(
