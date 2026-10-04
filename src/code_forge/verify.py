@@ -26,7 +26,7 @@ from pathlib import Path
 from .diff import parse_diff_hunks, path_from_plus_header
 from .disposition import Disposition
 from .errors import CorruptedReceiptError, UnreadableGateError
-from .reviewer_json import excerpt_line_count_matches, excerpt_lines
+from .reviewer_json import _requires_l1_excerpts, excerpt_line_count_matches, excerpt_lines
 
 logger = logging.getLogger(__name__)
 
@@ -1233,7 +1233,7 @@ def run_verify(
         hunk_map, exempt_files = parse_diff_hunks(diff_text)
         post_image, _, _ = _diff_validation_context(diff_text, cwd=cwd)
 
-        if diff_text.strip() and not hunk_map and not exempt_files:
+        if diff_text.strip() and not hunk_map and not exempt_files and _requires_l1_excerpts(diff_text):
             return VerifyResult(False, "diff parse failed -- cannot verify excerpts", 5, cp)
 
         # Only the attested window may vouch. Excerpts from a cycle

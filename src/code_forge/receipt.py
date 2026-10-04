@@ -16,6 +16,7 @@ from typing import Any, Optional
 from .basis import derive_basis
 from .diff import describe_fabricated_lines, parse_diff_hunks
 from .manifest import EnvManifest, ManifestTier
+from .reviewer_json import GroupedReviewAttempt
 from .state import (
     StateFinding,
     PassOutcome,
@@ -349,6 +350,13 @@ def write_receipts(
                 "pass_name": pname,
                 "payload": attempted,
             }
+            if isinstance(attempted, GroupedReviewAttempt):
+                scope = attempted.group_scope
+                art["group_scope"] = {
+                    "name": scope.name,
+                    "diff_sha256": scope.diff_sha256,
+                    "source_files": list(scope.source_files),
+                }
             pass_num = _PASS_NAMES.index(pname) + 1 if pname in _PASS_NAMES else 0
             fname = "attempted-c%dp%d-%d.json" % (cycle, pass_num, idx)
             (attempted_dir / fname).write_text(json.dumps(art, indent=2), encoding="utf-8")

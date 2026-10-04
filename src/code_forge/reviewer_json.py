@@ -17,6 +17,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,377 @@ class ExcerptEvidenceError(ValueError):
     reviewer with a coordinate habit indistinguishable from a dead backend
     and blocks the clean-round counter forever.
     """
+
+
+class MissingExcerptEvidenceError(ExcerptEvidenceError):
+    """A response did not provide required root excerpt evidence."""
+
+
+@dataclass(frozen=True)
+class ReviewGroupScope:
+    """Producer-owned group attribution, separate from model payload fields."""
+
+    name: str
+    diff_sha256: str
+    source_files: tuple[str, ...]
+
+
+class GroupedReviewAttempt(dict):
+    """An unchanged attempted payload with an out-of-band trusted scope."""
+
+    def __init__(self, payload: dict, scope: ReviewGroupScope):
+        super().__init__(payload)
+        self.group_scope = scope
+
+
+_GIT_PREFIX_PAIRS = (
+    ("a/", "b/"),
+    ("b/", "a/"),
+    ("1/", "2/"),
+    ("2/", "1/"),
+    ("", ""),
+    ("i/", "w/"),
+    ("w/", "i/"),
+    ("c/", "w/"),
+    ("w/", "c/"),
+    ("c/", "i/"),
+    ("i/", "c/"),
+    ("o/", "w/"),
+    ("w/", "o/"),
+)
+
+
+def _prefixed_git_path(prefix: str, raw: str) -> str:
+    return '"' + prefix + raw[1:] if raw.startswith('"') else prefix + raw
+
+
+def _same_git_header_paths(header: str) -> tuple[str, str, str]:
+    """Bind one repeated literal path without splitting on embedded spaces."""
+    from .diff import normalize_diff_path
+
+    if not header.startswith("diff --git "):
+        return "", "", ""
+    body = header[len("diff --git ") :]
+    middle = len(body) // 2
+    if len(body) % 2 != 1 or body[middle] != " ":
+        return "", "", ""
+    source, target = body[:middle], body[middle + 1 :]
+    quoted = source.startswith('"')
+    if quoted and not source.endswith('"'):
+        return "", "", ""
+    inner = source[1:-1] if quoted else source
+    for old, new in _GIT_PREFIX_PAIRS:
+        if not inner.startswith(old):
+            continue
+        raw = inner[len(old) :]
+        raw = '"' + raw + '"' if quoted else raw
+        if target == _prefixed_git_path(new, raw):
+            path = normalize_diff_path(_prefixed_git_path("a/", raw), strip_git_prefix=True)
+            if path not in ("", "/dev/null"):
+                return source, target, path
+    return "", "", ""
+
+
+def _normalize_review_diff(diff_text: str) -> str:
+    """Use the hunk verifier transport form for parsing and consumption."""
+    return diff_text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _parse_review_patches(diff_text: str):
+    """Retain explicit quoted headers when unidiff duplicates their metadata."""
+    from unidiff import PatchSet
+
+    diff_text = _normalize_review_diff(diff_text)
+    patches = PatchSet(diff_text)
+    for index in range(len(patches) - 1, 0, -1):
+        previous, current = patches[index - 1 : index + 1]
+        if (
+            current
+            and not previous
+            and not previous.is_binary_file
+            and current.patch_info is not None
+            and previous.patch_info is current.patch_info
+            and (
+                str(current.patch_info).partition("\n")[0]
+                == f"diff --git {current.source_file} {current.target_file}"
+                or current.target_file == "/dev/null"
+                and _same_git_header_paths(str(current.patch_info).partition("\n")[0])[0]
+                == current.source_file
+            )
+        ):
+            # A shared metadata object and complete literal header identify
+            # one file, not a second metadata-only operation.
+            del patches[index - 1]
+    return patches
+
+
+def _diff_literal_complete(diff_text: str, patches) -> bool:
+    """Check text consumption while retaining opaque binary sections."""
+    diff_text = _normalize_review_diff(diff_text)
+    normalized = re.sub(
+        r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@",
+        lambda m: "@@ -%s,%s +%s,%s @@" % (m[1], m[2] or "1", m[3], m[4] or "1"),
+        diff_text,
+        flags=re.MULTILINE,
+    )
+    literal_lines = re.findall(r"[^\n]*\n|[^\n]+$", normalized)
+    for pf in patches:
+        for hunk in pf:
+            for line in hunk:
+                if line.line_type == "":
+                    return False
+                if (
+                    line.is_context
+                    and line.value == "\n"
+                    and line.diff_line_no is not None
+                    and 0 < line.diff_line_no <= len(literal_lines)
+                    and literal_lines[line.diff_line_no - 1] == "\n"
+                ):
+                    literal_lines[line.diff_line_no - 1] = " \n"
+    normalized = "".join(literal_lines)
+    if str(patches).splitlines() == normalized.splitlines():
+        return True
+    rendered = []
+    for section in re.split(r"(?m)(?=^diff --git )", normalized):
+        if not section:
+            continue
+        entries = _parse_review_patches(section)
+        if not entries:
+            return False
+        pf = entries[0]
+        if pf.is_binary_file:
+            if entries[1:]:
+                return False
+            header, marker, payload = section.partition("\nGIT binary patch\n")
+            if not section.startswith("diff --git ") or not marker or not payload.strip():
+                return False
+            if str(pf.patch_info).splitlines() != header.splitlines():
+                return False
+            index_lines = [line for line in header.splitlines() if line.startswith("index ")]
+            if len(index_lines) != 1 or not re.fullmatch(
+                r"index [0-9a-f]{7,64}\.\.[0-9a-f]{7,64}(?: [0-7]{6})?", index_lines[0]
+            ):
+                return False
+            # unidiff drops encoded binary payloads when rendering. The
+            # existing binary policy treats them as opaque, not text.
+            rendered.append(section)
+        else:
+            consumed = 0
+            for pf in entries:
+                text = str(pf)
+                prefix = str(pf.patch_info) if pf.patch_info is not None else ""
+                literal = section[consumed:]
+                if pf and literal.startswith(prefix):
+                    literal_headers = literal[len(prefix) :].split("\n", 2)
+                    rendered_headers = text[len(prefix) :].split("\n", 2)
+                    if len(literal_headers) < 2 or len(rendered_headers) < 2:
+                        return False
+                    for index in range(2):
+                        # Restore only the two parsed file-header positions.
+                        if literal_headers[index] == rendered_headers[index] + "\t":
+                            rendered_headers[index] = literal_headers[index]
+                    text = prefix + "\n".join(rendered_headers)
+                consumed += len(text)
+                rendered.append(text)
+    return "".join(rendered).splitlines() == normalized.splitlines()
+
+
+def _metadata_paths(header: str, raw_paths, *, hunk_paths=None) -> tuple[str, ...]:
+    """Bind metadata names to the complete Git header before decoding."""
+    from .diff import normalize_diff_path
+
+    paths = []
+    for prefix, raw in zip(("a/", "b/"), raw_paths, strict=True):
+        if raw.startswith('"') and not raw.endswith('"'):
+            return ()
+        # Metadata has no a/b prefix; retain real directories named a/b.
+        paths.append(normalize_diff_path(_prefixed_git_path(prefix, raw), strip_git_prefix=True))
+    if all(path not in ("", "/dev/null") for path in paths):
+        for prefixes in _GIT_PREFIX_PAIRS:
+            pair = tuple(
+                _prefixed_git_path(prefix, raw) for prefix, raw in zip(prefixes, raw_paths, strict=True)
+            )
+            if header == "diff --git " + " ".join(pair) and (hunk_paths is None or pair == hunk_paths):
+                return tuple(paths)
+    return ()
+
+
+def _metadata_operation_paths(header: str, metadata, *, hunk_paths=None) -> tuple[str, ...]:
+    """Bind a paired rename/copy operation to its complete literal header."""
+    operation = "rename" if metadata[1].startswith("rename from ") else "copy"
+    prefixes = (operation + " from ", operation + " to ")
+    if not all(line.startswith(prefix) for line, prefix in zip(metadata[1:], prefixes, strict=True)):
+        return ()
+    raw_paths = [line[len(prefix) :] for line, prefix in zip(metadata[1:], prefixes, strict=True)]
+    return _metadata_paths(header, raw_paths, hunk_paths=hunk_paths)
+
+
+def _requires_l1_excerpts(
+    diff_text: str, *, reviewed_repositories: dict[str, str] | None = None
+) -> bool:
+    """Prove narrow post-image exemptions; ambiguous diffs require evidence.
+
+    This is an applicability decision, not a general diff validator. Text
+    must be consumed completely; binary payloads retain their existing
+    opaque acceptance policy independently of text rendering.
+    """
+    from unidiff import UnidiffParseError
+
+    from .diff import normalize_diff_path
+
+    if reviewed_repositories is not None:
+        from .receipt_scope import repository_scope
+
+        try:
+            repository_scope(reviewed_repositories)
+        except ValueError:
+            return True
+        return any(_requires_l1_excerpts(diff) for diff in reviewed_repositories.values())
+    if not diff_text.strip():
+        return False
+    try:
+        patches = _parse_review_patches(diff_text)
+        if not patches or not _diff_literal_complete(diff_text, patches):
+            return True
+    except (UnidiffParseError, AttributeError, UnboundLocalError):
+        return True
+    for pf in patches:
+        if pf.is_binary_file:
+            continue
+        if pf and (
+            not all(h.removed > 0 and h.added == 0 for h in pf)
+            or normalize_diff_path(pf.target_file, strip_git_prefix=True) == "/dev/null"
+            and any(h.target_length != 0 for h in pf)
+        ):
+            return True
+        if pf:
+            source_path = normalize_diff_path(pf.source_file, strip_git_prefix=True)
+            if source_path in ("", "/dev/null"):
+                return True
+        if pf and not pf.patch_info:
+            # Traditional unified hunks still require a real source identity.
+            continue
+        header, *info = excerpt_lines(str(pf.patch_info))
+        modes = info[:2] if len(info) >= 2 else []
+        mode_change = bool(
+            modes
+            and re.fullmatch(r"old mode (?:100644|100755|120000|160000|040000)", modes[0])
+            and re.fullmatch(r"new mode (?:100644|100755|120000|160000|040000)", modes[1])
+            and modes[0][9:] != modes[1][9:]
+        )
+        rename = info[2:] if mode_change else info
+        if (
+            not pf
+            and (len(info) == 3 or mode_change)
+            and len(rename) == 3
+            and rename[0] == "similarity index 100%"
+        ):
+            # unidiff's greedy header split is not an identity witness for
+            # paths containing " b/". Bind the complete literal instead.
+            paths = _metadata_operation_paths(header, rename)
+            if paths and paths[0] != paths[1]:
+                continue
+        source, target, header_path = _same_git_header_paths(header)
+        same_path_header = bool(header_path)
+        if pf:
+            # unidiff retains unknown metadata verbatim. A round trip proves
+            # consumption, so prove the narrow Git metadata shape as well.
+            same_hunk_paths = bool(
+                same_path_header
+                and pf.source_file == source
+                and (pf.target_file == target or pf.target_file == "/dev/null")
+            )
+            if not info and same_hunk_paths:
+                # Retain synthetic unified packets with only a Git header.
+                continue
+            index = (
+                re.fullmatch(
+                    r"index ([0-9a-f]{4,64})\.\.([0-9a-f]{4,64})(?: (100644|100755|120000|160000|040000))?",
+                    info[-1],
+                )
+                if info
+                else None
+            )
+            if not index or not index[1].strip("0"):
+                return True
+            metadata = info[:-1]
+            if (
+                same_hunk_paths
+                and pf.target_file == "/dev/null"
+                and not index[2].strip("0")
+                and not index[3]
+                and len(metadata) == 1
+                and re.fullmatch(
+                    r"deleted file mode (?:100644|100755|120000|160000|040000)", metadata[0]
+                )
+            ):
+                continue
+            if not index[2].strip("0") or pf.target_file == "/dev/null":
+                return True
+            if mode_change:
+                if index[3]:
+                    return True
+                metadata = metadata[2:]
+            if same_hunk_paths and (
+                not metadata
+                or len(metadata) == 1
+                and re.fullmatch(r"dissimilarity index (?:100|[1-9]?[0-9])%", metadata[0])
+            ):
+                continue
+            if len(metadata) == 3 and re.fullmatch(
+                r"similarity index (?:100|[1-9]?[0-9])%", metadata[0]
+            ):
+                paths = _metadata_operation_paths(
+                    header, metadata, hunk_paths=(pf.source_file, pf.target_file)
+                )
+                if paths and paths[0] != paths[1]:
+                    continue
+            return True
+        if len(info) == 2 and mode_change and same_path_header:
+            continue
+        empty_index = None
+        if (
+            pf.is_added_file
+            and len(info) == 2
+            and same_path_header
+            and re.fullmatch(r"new file mode (?:100644|100755)", info[0])
+        ):
+            empty_index = info[1]
+        elif (
+            pf.is_removed_file
+            and len(info) == 2
+            and same_path_header
+            and re.fullmatch(r"deleted file mode (?:100644|100755)", info[0])
+        ):
+            deleted_index = re.fullmatch(r"index ([0-9a-f]{4,64})\.\.(0{4,64})", info[1])
+            if deleted_index:
+                empty_index = f"index {deleted_index[2]}..{deleted_index[1]}"
+        if empty_index:
+            index = re.fullmatch(r"index (0{4,64})\.\.([0-9a-f]{4,64})", empty_index)
+            empty_blobs = (
+                "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+                hashlib.sha256(b"blob 0\0").hexdigest(),
+            )
+            if index and any(
+                len(index[1]) <= len(blob) and blob.startswith(index[2]) for blob in empty_blobs
+            ):
+                continue
+        return True
+    return False
+
+
+def require_l1_excerpt_evidence(
+    data: dict, diff_text: str, *, reviewed_repositories: dict[str, str] | None = None
+) -> None:
+    """Trusted L1 publishers require root evidence independently of findings.
+
+    Generic JSON validation and non-receipt advisory consumers retain their
+    existing acceptance contract. This guard uses only the publisher scope.
+    """
+    if not data["code_excerpts"] and _requires_l1_excerpts(
+        diff_text, reviewed_repositories=reviewed_repositories
+    ):
+        raise MissingExcerptEvidenceError("required L1 pass has no root code_excerpts")
 
 
 def _strip_fence(raw: str) -> str:
@@ -274,7 +647,7 @@ def validate_reviewer_json(raw: str | dict) -> dict:
 
     data["code_excerpts"] = kept
     if len(data["findings"]) == 0 and len(kept) == 0:
-        raise ExcerptEvidenceError(
+        raise MissingExcerptEvidenceError(
             "findings=0 but code_excerpts empty -- reviewer must provide "
             "per-hunk excerpts even for clean passes"
         )
