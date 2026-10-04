@@ -225,6 +225,11 @@ def _validate_receipt_schema(obj: dict, name: str) -> None:
     for field in _INT_FIELDS:
         if not _is_type(obj.get(field), int):
             raise CorruptedReceiptError(f"{name}: {field} must be {_TYPE_LABEL[int]}")
+    # Optional audit data; it does not contribute review evidence.
+    if "excerpt_validation_errors" in obj:
+        errors = obj["excerpt_validation_errors"]
+        if not isinstance(errors, list) or not all(isinstance(error, str) for error in errors):
+            raise CorruptedReceiptError(f"{name}: excerpt_validation_errors must be a list of strings")
     for field in _LIST_OF_DICT_FIELDS:
         v = obj.get(field)
         if not isinstance(v, list) or not all(isinstance(item, dict) for item in v):
