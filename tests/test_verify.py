@@ -244,6 +244,34 @@ class TestReceiptSchema:
     covered_line_ranges used the string shape.
     """
 
+    @pytest.mark.parametrize("value", [None, "error", {}, [None], [1], [True], ["error", 1]])
+    def test_malformed_excerpt_diagnostics_reports_the_file(self, tmp_path, value):
+        sha = _nine_with_one_field_set(tmp_path, "excerpt_validation_errors", value)
+        result = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not result.passed
+        assert result.reason.startswith("corrupt receipt: ")
+        assert "receipt-c2p1.json" in result.reason
+        assert "excerpt_validation_errors must be a list of strings" in result.reason
+
+    @pytest.mark.parametrize("errors", [[], ["first", "first", 'quote " slash \\ $(true)', "last"]])
+    @pytest.mark.parametrize("status", ["completed", "schema_fail"])
+    def test_excerpt_diagnostics_survive_loading_without_changing_verdict(self, tmp_path, errors, status):
+        from code_forge.verify import _load_receipts
+
+        sha = _nine_with_one_field_set(tmp_path, "pass_status", status)
+        rd = tmp_path / ".code-forge" / "receipts"
+        diff_files = {"src/f.py": list(range(1, 51))}
+        before = run_verify(tmp_path, sha, diff_files)
+        assert before.passed is (status == "completed"), before.reason
+        assert all("excerpt_validation_errors" not in r for r in _load_receipts(rd))
+        path = rd / "receipt-c2p1.json"
+        obj = json.loads(path.read_text())
+        obj["excerpt_validation_errors"] = errors
+        path.write_text(json.dumps(obj))
+        loaded = next(r for r in _load_receipts(rd) if (r["cycle"], r["pass"]) == (2, 1))
+        assert loaded == obj
+        assert run_verify(tmp_path, sha, diff_files) == before
+
     @pytest.mark.parametrize(
         "field,value,expected",
         [

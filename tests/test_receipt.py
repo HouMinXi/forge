@@ -5,6 +5,8 @@ import logging
 import types
 from pathlib import Path
 
+import pytest
+
 from code_forge import receipt as receipt_module
 from code_forge.disposition import Disposition
 from code_forge.manifest import ManifestTier
@@ -26,6 +28,129 @@ def _finding(pass_name, fp, file="src/foo.py", line=42, desc="test"):
 
 
 class TestWriteReceipts:
+    @pytest.mark.parametrize("rejected_pass", ["qodo", "expert", "adversarial"])
+    def test_source_rejections_retain_exact_pass_diagnostics(self, tmp_path, monkeypatch, rejected_pass):
+        from code_forge import verify
+
+        content = "const first = 1;\nconst second = 2;\n"
+        (tmp_path / "control.ts").write_text(content)
+        diff = (
+            "diff --git a/control.ts b/control.ts\n--- a/control.ts\n+++ b/control.ts\n"
+            "@@ -0,0 +1,2 @@\n+const first = 1;\n+const second = 2;\n"
+        )
+        sha = hashlib.sha256(diff.encode()).hexdigest()
+        names = ("qodo", "expert", "adversarial")
+        excerpts = [
+            {"pass_name": name, "file": "control.ts", "start_line": line, "end_line": line,
+             "content": text + (" wrong" if name == rejected_pass else "")}
+            for name in names for line, text in enumerate(content.splitlines(), 1)
+        ]
+        calls = []
+        validator = verify.validate_excerpts_against_diff
+
+        def capture(diff_text, offered, *, cwd=None):
+            errors = validator(diff_text, offered, cwd=cwd)
+            calls.append((diff_text, offered, cwd, list(errors)))
+            return errors
+
+        monkeypatch.setattr(verify, "validate_excerpts_against_diff", capture)
+        paths = write_receipts(
+            tmp_path / "receipts", 4,
+            [_finding(name, name, file="control.ts", line=1) for name in names],
+            sha, [Path("control.ts")], tmp_path, diff_text=diff, reviewer_excerpts=excerpts,
+            manifest_tier=ManifestTier.DECLARED,
+        )
+        assert len(calls) == 3
+        for name, path, call in zip(names, paths, calls, strict=True):
+            obj = json.loads(path.read_text())
+            assert call[:3] == (diff, obj["code_excerpts"], tmp_path)
+            assert obj["pass"] == names.index(name) + 1
+            assert obj["cycle"] == 5
+            assert obj["diff_sha256"] == sha
+            assert obj["code_excerpts"] == [
+                {k: v for k, v in exc.items() if k != "pass_name"} | {"rationale": "reviewer-provided"}
+                for exc in excerpts if exc["pass_name"] == name
+            ]
+            assert obj["findings_count"] == 1
+            assert [f["description"] for f in obj["findings"]] == [f"[{name}] test"]
+            if name == rejected_pass:
+                assert len(call[3]) == 2
+                assert obj["excerpt_validation_errors"] == call[3]
+                assert obj["pass_status"] == "schema_fail"
+            else:
+                assert call[3] == []
+                assert "excerpt_validation_errors" not in obj
+                assert obj["pass_status"] == "completed"
+
+    def test_excerpt_diagnostics_preserve_order_duplicates_and_string_data(self, tmp_path, monkeypatch):
+        from code_forge import verify
+
+        errors = ['quote " and slash \\ and $(touch never)', "duplicate", "duplicate", "last"]
+        returned = iter([errors, [], []])
+        monkeypatch.setattr(verify, "validate_excerpts_against_diff", lambda *a, **k: next(returned))
+        paths = write_receipts(tmp_path / "receipts", 0, [], "hash", [], tmp_path,
+                               diff_text="diff", manifest_tier=ManifestTier.DECLARED)
+        assert json.loads(paths[0].read_text())["excerpt_validation_errors"] == errors
+        assert all("excerpt_validation_errors" not in json.loads(p.read_text()) for p in paths[1:])
+        assert not (tmp_path / "never").exists()
+
+    @pytest.mark.parametrize("diff_text", [None, "", "diff"])
+    def test_empty_evidence_omits_excerpt_diagnostics(self, tmp_path, diff_text):
+        paths = write_receipts(tmp_path / "receipts", 0, [], "hash", [], tmp_path,
+                               diff_text=diff_text, manifest_tier=ManifestTier.DECLARED)
+        for path in paths:
+            obj = json.loads(path.read_text())
+            assert obj["pass_status"] == "completed"
+            assert "excerpt_validation_errors" not in obj
+
+    @pytest.mark.parametrize("diff_text", [None, ""])
+    def test_missing_diff_keeps_offered_excerpts_without_diagnostics(self, tmp_path, monkeypatch, diff_text):
+        from code_forge import verify
+        from unittest.mock import Mock
+
+        validator = Mock(wraps=verify.validate_excerpts_against_diff)
+        monkeypatch.setattr(verify, "validate_excerpts_against_diff", validator)
+        excerpt = {"pass_name": "qodo", "file": "control.ts", "start_line": 1,
+                   "end_line": 1, "content": "wrong literal"}
+        paths = write_receipts(tmp_path / "receipts", 0, [], "hash", [], tmp_path,
+                               diff_text=diff_text, reviewer_excerpts=[excerpt],
+                               manifest_tier=ManifestTier.DECLARED)
+        assert validator.call_count == 0
+        obj = json.loads(paths[0].read_text())
+        assert obj["code_excerpts"][0]["content"] == excerpt["content"]
+        for path in paths:
+            obj = json.loads(path.read_text())
+            assert obj["pass_status"] == "completed"
+            assert "excerpt_validation_errors" not in obj
+
+    @pytest.mark.parametrize("kind,status", [
+        ("spawn-fail", "timeout"), ("invoke-fail", "error"),
+        ("incomplete-coverage", "incomplete"), ("schema-fail", "schema_fail"),
+    ])
+    def test_skipped_pass_has_no_invented_excerpt_diagnostics(self, tmp_path, monkeypatch, kind, status):
+        from code_forge import verify
+
+        calls = []
+        validator = verify.validate_excerpts_against_diff
+
+        def capture(diff_text, offered, *, cwd=None):
+            calls.append(offered)
+            return validator(diff_text, offered, cwd=cwd)
+
+        monkeypatch.setattr(verify, "validate_excerpts_against_diff", capture)
+        finding = _finding("qodo", kind, file="<infra>", line=0)
+        finding.source = "INFRA"
+        diff = ("diff --git a/control.ts b/control.ts\n--- a/control.ts\n+++ b/control.ts\n"
+                "@@ -0,0 +1 @@\n+const value = 1;\n")
+        excerpt = {"pass_name": "qodo", "file": "control.ts", "start_line": 1,
+                   "end_line": 1, "content": "wrong literal"}
+        paths = write_receipts(tmp_path / "receipts", 0, [finding], "hash", [], tmp_path,
+                               diff_text=diff, reviewer_excerpts=[excerpt],
+                               manifest_tier=ManifestTier.DECLARED)
+        assert len(calls) == 2
+        assert json.loads(paths[0].read_text())["pass_status"] == status
+        assert all("excerpt_validation_errors" not in json.loads(p.read_text()) for p in paths)
+
     def test_writes_3_receipt_files_per_round(self, tmp_path):
         findings = [
             _finding("qodo", "fp1"),

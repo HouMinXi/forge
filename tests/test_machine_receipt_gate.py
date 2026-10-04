@@ -440,16 +440,35 @@ def test_indent_stripped_plus_token_change_still_fails(mode, tmp_path):
     assert not any("indent-stripped" in f["description"] for f in res["findings"]), res["findings"]
 
 
-def test_wrong_literal_receipts_not_completed(tmp_path):
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_wrong_literal_receipts_not_completed(mode, tmp_path, monkeypatch):
     """Correct pass status before write: invalid evidence is not COMPLETED."""
-    res = _run(Mode.CI, "wrong_literal", tmp_path)
+    from code_forge import verify
+
+    original = verify.validate_excerpts_against_diff
+    captured = []
+
+    def capture(diff_text, excerpts, *, cwd=None):
+        errors = original(diff_text, excerpts, cwd=cwd)
+        captured.append((diff_text, copy.deepcopy(excerpts), cwd, list(errors)))
+        return errors
+
+    monkeypatch.setattr(verify, "validate_excerpts_against_diff", capture)
+    res = _run(mode, "wrong_literal", tmp_path)
     assert res["returned"] == Verdict.FAIL.value
     receipts_dir = tmp_path / ".code-forge" / "receipts"
-    statuses = {
-        r.get("pass_status")
-        for r in (json.loads(p.read_text()) for p in receipts_dir.glob("receipt-*.json"))
-    }
-    assert statuses == {"schema_fail"}
+    receipts = verify._load_receipts(receipts_dir)
+    assert receipts
+    writer_calls = [call for call in captured if call[1] == receipts[0]["code_excerpts"]]
+    assert len(writer_calls) == len(receipts)
+    assert writer_calls[0][3]
+    for receipt in receipts:
+        assert receipt["pass_status"] == "schema_fail"
+        matching = [call for call in writer_calls if call[:3] == (DIFF, receipt["code_excerpts"], tmp_path)]
+        assert matching
+        assert receipt["excerpt_validation_errors"] == matching[0][3]
+        assert receipt["diff_sha256"] == compute_source_hash(git_diff=DIFF)
+        assert receipt["code_excerpts"][0]["content"] == _payload("wrong_literal")["code_excerpts"][0]["content"]
 
 
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])

@@ -239,6 +239,7 @@ def write_receipts(
     # response passed schema validation (a schema-valid excerpt can still
     # carry a wrong literal). Mark it FAILED so the receipt itself tells
     # the truth instead of run_verify being the only place that can tell.
+    excerpt_validation_errors: dict[str, list[str]] = {}
     if diff_text:
         from .verify import validate_excerpts_against_diff
 
@@ -247,6 +248,7 @@ def write_receipts(
                 continue
             errs = validate_excerpts_against_diff(diff_text, assembled_by_pass[pname], cwd=cwd)
             if errs:
+                excerpt_validation_errors[pname] = errs
                 pass_outcomes[pname] = PassOutcome.SCHEMA_FAIL
 
     exec_status: Optional[str] = None
@@ -324,6 +326,8 @@ def write_receipts(
             ),
         }
 
+        if pass_name in excerpt_validation_errors:
+            receipt["excerpt_validation_errors"] = excerpt_validation_errors[pass_name]
         if repository_manifest is not None:
             receipt["reviewed_repositories"] = repository_manifest
         if exec_evidence_dict is not None:
