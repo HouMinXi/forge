@@ -1718,8 +1718,7 @@ class TestRootUriToPath:
         ctx.session.client_params.capabilities = caps
         ctx.session.list_roots = AsyncMock(return_value=result)
 
-        mod._cached_session_ref = None
-        mod._cached_workspace = None
+        mod._workspace_cache.value = None
 
         with patch.object(
             mod,
@@ -1772,8 +1771,7 @@ class TestWorkspaceFor:
         ctx = self._make_ctx(roots_capable=True, roots_result=result)
 
         # Clear cache from prior tests
-        mod._cached_session_ref = None
-        mod._cached_workspace = None
+        mod._workspace_cache.value = None
 
         ws = await mod._workspace_for(ctx)
         assert ws == project
@@ -1794,8 +1792,7 @@ class TestWorkspaceFor:
 
         ctx = self._make_ctx(roots_capable=False)
 
-        mod._cached_session_ref = None
-        mod._cached_workspace = None
+        mod._workspace_cache.value = None
 
         with patch.object(mod, "_resolve_workspace", return_value=Path("/fallback")):
             ws = await mod._workspace_for(ctx)
@@ -1810,8 +1807,7 @@ class TestWorkspaceFor:
 
         ctx = self._make_ctx(roots_capable=False)
 
-        mod._cached_session_ref = None
-        mod._cached_workspace = None
+        mod._workspace_cache.value = None
 
         fallback = Path("/some/project")
         with patch.object(mod, "_resolve_workspace", return_value=fallback):
@@ -1836,8 +1832,7 @@ class TestWorkspaceFor:
         ctx = self._make_ctx(roots_capable=True)
         cached_ws = Path("/cached/project")
 
-        mod._cached_session_ref = ctx.session
-        mod._cached_workspace = cached_ws
+        mod._workspace_cache.value = (ctx.session, cached_ws)
 
         ws = await mod._workspace_for(ctx)
         assert ws == cached_ws
@@ -1851,15 +1846,14 @@ class TestWorkspaceFor:
 
         ctx = self._make_ctx(roots_capable=True, list_roots_exc=RuntimeError("gone"))
 
-        mod._cached_session_ref = None
-        mod._cached_workspace = None
+        mod._workspace_cache.value = None
 
         fallback = Path("/rpc-fail-fallback")
         with patch.object(mod, "_resolve_workspace", return_value=fallback):
             ws = await mod._workspace_for(ctx)
         assert ws == fallback
         # Cache must NOT be set after RPC failure
-        assert mod._cached_session_ref is None
+        assert mod._workspace_cache.value is None
 
     @pytest.mark.asyncio
     async def test_first_root_without_gate_yaml(self, tmp_path):
@@ -1877,8 +1871,7 @@ class TestWorkspaceFor:
 
         ctx = self._make_ctx(roots_capable=True, roots_result=result)
 
-        mod._cached_session_ref = None
-        mod._cached_workspace = None
+        mod._workspace_cache.value = None
 
         ws = await mod._workspace_for(ctx)
         assert ws == project
@@ -1895,18 +1888,15 @@ class TestWorkspaceFor:
 
         ctx = self._make_ctx(roots_capable=False)
 
-        saved_ref = mod._cached_session_ref
-        saved_ws = mod._cached_workspace
-        mod._cached_session_ref = None
-        mod._cached_workspace = None
+        saved_cache = mod._workspace_cache.value
+        mod._workspace_cache.value = None
         try:
             with patch.object(mod, "_resolve_workspace", return_value=Path("/fallback")):
                 ws = await mod._workspace_for(ctx, project_dir="")
             assert ws == Path("/fallback")
             assert ws != Path.cwd().resolve()
         finally:
-            mod._cached_session_ref = saved_ref
-            mod._cached_workspace = saved_ws
+            mod._workspace_cache.value = saved_cache
 
     @pytest.mark.asyncio
     async def test_explicit_project_dir_honored(self):
@@ -1915,16 +1905,13 @@ class TestWorkspaceFor:
 
         ctx = self._make_ctx(roots_capable=False)
 
-        saved_ref = mod._cached_session_ref
-        saved_ws = mod._cached_workspace
-        mod._cached_session_ref = None
-        mod._cached_workspace = None
+        saved_cache = mod._workspace_cache.value
+        mod._workspace_cache.value = None
         try:
             ws = await mod._workspace_for(ctx, project_dir="/explicit/path")
             assert ws == Path("/explicit/path").expanduser().resolve()  # noqa: ASYNC240 - test asserts a real path after the async body
         finally:
-            mod._cached_session_ref = saved_ref
-            mod._cached_workspace = saved_ws
+            mod._workspace_cache.value = saved_cache
 
 
 class TestProjectDirOverride:
@@ -1944,8 +1931,7 @@ class TestProjectDirOverride:
         project = tmp_path / "real-repo"
         project.mkdir()
 
-        mod._cached_session_ref = None
-        mod._cached_workspace = None
+        mod._workspace_cache.value = None
 
         ctx = self._make_ctx()
         ws = await mod._workspace_for(ctx, project_dir=str(project))
@@ -1958,13 +1944,11 @@ class TestProjectDirOverride:
         project = tmp_path / "override"
         project.mkdir()
 
-        mod._cached_session_ref = None
-        mod._cached_workspace = None
+        mod._workspace_cache.value = None
 
         ctx = self._make_ctx()
         await mod._workspace_for(ctx, project_dir=str(project))
-        assert mod._cached_session_ref is None, "project_dir must not set the session cache"
-        assert mod._cached_workspace is None, "project_dir must not set the workspace cache"
+        assert mod._workspace_cache.value is None, "project_dir must not set the session cache"
 
 
 class TestInprocessResultFindings:
