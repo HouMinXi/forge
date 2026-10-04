@@ -1501,6 +1501,42 @@ class StateMachine:
         )
         self._state.infra_errors.append(f"receipt: {error}")
 
+    def _publish_l1_receipts(
+        self,
+        round_index: int,
+        l1_findings: list[StateFinding],
+        l1_excerpts: list[dict],
+        *,
+        exec_evidence: dict | str | None,
+    ) -> None:
+        """Publish acquired evidence without advancing the round."""
+        from .receipt import write_receipts
+        from .verify import parse_diff_files
+
+        diff_text = self._receipt_diff()
+        diff_files = parse_diff_files(diff_text) if diff_text else None
+        try:
+            write_receipts(
+                receipts_dir=self.cwd / ".code-forge" / "receipts",
+                round_index=round_index,
+                l1_findings=l1_findings,
+                diff_sha256=self.source_hash,
+                source_files=list(self._source_files()),
+                cwd=self.cwd,
+                diff_files=diff_files,
+                diff_text=diff_text,
+                reviewer_excerpts=l1_excerpts,
+                manifest=self._state.env_manifest,
+                exec_evidence=exec_evidence,
+                attempted_excerpts=self._attempted_last_round,
+                reviewed_repositories=self.reviewed_repositories,
+            )
+            self._written_cycles.append(round_index + 1)
+        except OSError as exc:
+            # A receipt-write failure must persist non-PASS state instead
+            # of crashing and leaving a stale PASS (or no) state.json.
+            self._last_receipt_write_errors = [f"receipt write failed: {exc}"]
+
     def _execute_round(self, round_index: int) -> None:
         """STATE-08: both modes run L0 + L1 + L2 + E2E each round.
 
@@ -1528,7 +1564,24 @@ class StateMachine:
         # Attempted (schema-failed) payloads the producer retained for
         # audit: written by the receipt writer as failure artifacts.
         self._attempted_last_round = list(getattr(self.l1_provider, "attempted_excerpts", None) or [])
-        self._check_l1_can_still_converge(l1_findings)
+        try:
+            self._check_l1_can_still_converge(l1_findings)
+        except TimeoutBreaker:
+            try:
+                l1_findings = self._apply_promotion_stickiness(l1_findings)
+                l1_findings = self._apply_dismissed_stickiness(l1_findings)
+                self._publish_l1_receipts(round_index, l1_findings, l1_excerpts, exec_evidence=None)
+            except OSError as exc:
+                self._last_receipt_write_errors = [f"receipt write failed: {exc}"]
+            if self._last_receipt_write_errors:
+                self._state.infra_errors.extend(self._last_receipt_write_errors)
+                try:
+                    self._persist_state()
+                except OSError as exc:
+                    error = f"receipt diagnostic state save failed: {exc}"
+                    self._state.infra_errors.append(error)
+                    logging.getLogger("code_forge").warning(error)
+            raise
         l2_findings = self._run_l2_phase()
         e2e_findings = self._run_e2e_phase()
         coverage_findings = self._run_coverage_phase()
@@ -1583,32 +1636,9 @@ class StateMachine:
         self._round_output_tokens = 0
         self._round_cached_tokens = 0
         self._round_duration = 0.0
-        from .receipt import write_receipts
-        from .verify import parse_diff_files
-
-        diff_text = self._receipt_diff()
-        diff_files = parse_diff_files(diff_text) if diff_text else None
-        try:
-            write_receipts(
-                receipts_dir=self.cwd / ".code-forge" / "receipts",
-                round_index=round_index,
-                l1_findings=l1_findings,
-                diff_sha256=self.source_hash,
-                source_files=list(self._source_files()),
-                cwd=self.cwd,
-                diff_files=diff_files,
-                diff_text=diff_text,
-                reviewer_excerpts=l1_excerpts,
-                manifest=self._state.env_manifest,
-                exec_evidence=self._state.exec_evidence,
-                attempted_excerpts=self._attempted_last_round,
-                reviewed_repositories=self.reviewed_repositories,
-            )
-            self._written_cycles.append(round_index + 1)
-        except OSError as exc:
-            # A receipt-write failure must persist non-PASS state instead
-            # of crashing and leaving a stale PASS (or no) state.json.
-            self._last_receipt_write_errors = [f"receipt write failed: {exc}"]
+        self._publish_l1_receipts(
+            round_index, l1_findings, l1_excerpts, exec_evidence=self._state.exec_evidence
+        )
         self._persist_state()
         if self.post_round_hook is not None:
             self.post_round_hook(round_index)
