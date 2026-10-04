@@ -60,8 +60,11 @@ eval-corpus = [
 ]
 
 [project.scripts]
-code-forge = "code_forge.cli:main"
-code-forge-mcp = "code_forge.mcp_server:main"
+code-forge = "code_forge_launcher:cli_main"
+code-forge-mcp = "code_forge_launcher:stdio_main"
+
+[tool.setuptools]
+py-modules = ["code_forge_launcher"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
