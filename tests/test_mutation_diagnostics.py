@@ -11,6 +11,7 @@ import pytest
 from code_forge.disposition import Disposition
 from code_forge.mutation import launch_detached_mutation, run_mutation
 from code_forge.state import StateFinding
+from tests.mutation_result_fixture import write_inventory
 
 
 @pytest.mark.parametrize("phase", ["run", "results"])
@@ -28,6 +29,8 @@ def test_process_failure_keeps_both_stream_tails(tmp_path, phase, stdout, stderr
         # The mutmut subcommand is a token of the argv, not the last
         # element: run_mutation appends "--max-children <n>" after "run".
         failed = phase in args
+        if "run" in args:
+            write_inventory(tmp_path, "source.py")
         return subprocess.CompletedProcess(
             args,
             7 if failed else 0,
@@ -38,7 +41,7 @@ def test_process_failure_keeps_both_stream_tails(tmp_path, phase, stdout, stderr
     with (
         patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut"),
         patch("code_forge.mutation._resolve_mutmut_invocation", return_value=["mutmut"]),
-        patch("code_forge.mutation.subprocess.run", side_effect=command),
+        patch("code_forge.mutation.run_owned_command", side_effect=command),
     ):
         findings, errors = run_mutation(["source.py"], ["pytest"], cwd=tmp_path)
     assert len(findings) == 1
@@ -90,7 +93,12 @@ def test_detached_script_preserves_outcome(tmp_path, outcome, run_detached_paylo
         if outcome == "exception":
             run.side_effect = RuntimeError("runner exploded")
         else:
-            run.return_value = ([finding] if outcome != "clean" else [], [])
+
+            def measured(**kwargs):
+                kwargs["_evidence"]["baseline_passed"] = outcome in ("clean", "survivor")
+                return ([finding] if outcome != "clean" else [], [])
+
+            run.side_effect = measured
         # Only the script generated above by our launcher is executed.
         run_detached_payload(captured["script"])
     data = json.loads(result_path.read_text())

@@ -84,8 +84,12 @@ def _run_baseline_guard(
     *,
     allow_strip_retry: bool,
     timeout: int = 120,
+    run_command=None,
 ) -> tuple[str, list[StateFinding], list[str]]:
     """Run the 3x flaky baseline guard and report the outcome.
+
+    run_command optionally supplies invocation ownership. The default resolves
+    subprocess.run at call time so existing callers and their probes are unchanged.
 
     Returns (status, findings, infra_errors) where status is one of:
       "passed"            -- all 3 runs succeeded under run_env
@@ -104,9 +108,11 @@ def _run_baseline_guard(
     if not allow_strip_retry:
         suffix = " (after env retry)"
 
+    execute = subprocess.run if run_command is None else run_command
+
     for run_num in range(1, 4):
         try:
-            result = subprocess.run(
+            result = execute(
                 baseline_cmd,
                 env=run_env,
                 capture_output=True,

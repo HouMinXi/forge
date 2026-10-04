@@ -77,3 +77,32 @@ def test_a_failed_run_keeps_the_return_code_and_node(monkeypatch):
     text = errors[0]
     assert "returncode 1" in text
     assert "tests/test_sample.py::test_one" in text
+
+
+def test_supplied_executor_is_used_at_the_physical_guard_site(monkeypatch):
+    import subprocess
+    from code_forge.baseline_guard import _run_baseline_guard
+
+    calls = []
+
+    def owned(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    def forbidden(*_a, **_k):
+        raise AssertionError("guard bypassed supplied owner")
+
+    monkeypatch.setattr("code_forge.baseline_guard.subprocess.run", forbidden)
+    status, findings, infra = _run_baseline_guard(
+        ["fixture"],
+        {"MEASURED": "yes"},
+        "/source",
+        allow_strip_retry=False,
+        timeout=7,
+        run_command=owned,
+    )
+    assert status == "passed" and not findings and not infra and len(calls) == 3
+    assert all(
+        call[1]["cwd"] == "/source" and call[1]["timeout"] == 7 and call[1]["env"] == {"MEASURED": "yes"}
+        for call in calls
+    )

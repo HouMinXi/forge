@@ -425,7 +425,12 @@ def test_owned_detached_payload_retains_diagnostics(
         return Child()
 
     monkeypatch.setattr("subprocess.Popen", capture)
-    monkeypatch.setattr("code_forge.mutation.run_mutation", lambda **kw: ([finding(identity)], []))
+
+    def measured_mutation(**kwargs):
+        kwargs["_evidence"]["baseline_passed"] = True
+        return [finding(identity)], []
+
+    monkeypatch.setattr("code_forge.mutation.run_mutation", measured_mutation)
     assert launch_detached_mutation(["sample.py"], ["pytest"], tmp_path, result)
     data = json.loads(result.read_text())
     assert data["status"] == status

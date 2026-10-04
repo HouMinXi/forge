@@ -25,7 +25,7 @@ class TestMutationCheckParser:
         parser = _build_parser()
         args = parser.parse_args(["mutation-check"])
         assert args.diff is None
-        assert args.timeout == 600
+        assert args.timeout is None  # resolved from gate.yaml or 600 at execution
         assert args.paths is None
 
     def test_diff_flag(self):

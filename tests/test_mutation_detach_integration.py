@@ -147,7 +147,9 @@ def test_detached_run_reparents_and_reports(tmp_path, detach_env):
     assert started is True, "launcher reported the detached run failed to start"
 
     data = _wait_for(result_path)
-    assert data["status"] == "done"
+    assert data["status"] == "error"
+    assert data["baseline_passed"] is False
+    assert "did not prove its baseline" in data["message"]
     assert data["survivors"] == ["mutant-1"]
 
     record = json.loads(detach_env.read_text(encoding="utf-8"))

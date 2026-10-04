@@ -22,6 +22,8 @@ def make_machine(tmp_path, command, timeout=None):
     gate = tmp_path / ".code-forge" / "gate.yaml"
     gate.parent.mkdir(exist_ok=True)
     gate.write_text(yaml.safe_dump({"test": test}))
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src" / "sample.py").write_text("def sample():\n    return 1\n")
     return StateMachine(
         mode=Mode.LOCAL,
         falsifier=StubFalsifier(),
@@ -44,16 +46,19 @@ def make_machine(tmp_path, command, timeout=None):
 @pytest.mark.parametrize("mode", [Mode.LOCAL, Mode.CI])
 @pytest.mark.parametrize("configured, expected", [(900, 900), (1, 1), (None, 120)])
 def test_deadline_reaches_baseline_subprocess(tmp_path, monkeypatch, configured, expected, mode):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(factories.shutil, "which", lambda command: "/tools/mutmut")
     seen = []
 
     def baseline(command, **kwargs):
+        assert Path(kwargs["cwd"]) == tmp_path
+        assert (Path(kwargs["cwd"]) / "src" / "sample.py").is_file()
         seen.append(kwargs["timeout"])
         return subprocess.CompletedProcess(command, 1, "baseline stopped", "")
 
     machine = make_machine(tmp_path, [sys.executable, "-m", "pytest"], configured)
     machine.mode = mode
-    monkeypatch.setattr(mutation.subprocess, "run", baseline)
+    monkeypatch.setattr(mutation, "run_owned_command", baseline)
     findings = machine._run_l2_phase()
     assert seen == [expected]
     assert len(findings) == 1
@@ -114,11 +119,13 @@ def test_ci_deadline_reaches_detached_child(
         *,
         cwd,
         baseline_timeout=120,
+        timeout=600,
         also_copy=None,
         max_children=None,
         memory_limit_bytes=None,
         mutation_skip_globs=None,
         mutation_include_globs=None,
+        _evidence=None,
     ):
         seen.append(baseline_timeout)
         return [], []
@@ -130,6 +137,7 @@ def test_ci_deadline_reaches_detached_child(
 
 @pytest.mark.parametrize("mode", [Mode.LOCAL, Mode.CI])
 def test_env_retry_keeps_configured_deadline(tmp_path, monkeypatch, mode):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(factories.shutil, "which", lambda command: "/tools/mutmut")
     monkeypatch.setenv("VIRTUAL_ENV", "/missing/test-venv")
     machine = make_machine(tmp_path, [sys.executable, "-m", "pytest"], 900)
@@ -137,12 +145,14 @@ def test_env_retry_keeps_configured_deadline(tmp_path, monkeypatch, mode):
     seen = []
 
     def baseline(command, **kwargs):
+        assert Path(kwargs["cwd"]) == tmp_path
+        assert (Path(kwargs["cwd"]) / "src" / "sample.py").is_file()
         seen.append((kwargs["timeout"], "VIRTUAL_ENV" in kwargs["env"]))
         if len(seen) == 1:
             raise FileNotFoundError("test runner absent")
         return subprocess.CompletedProcess(command, 1, "baseline stopped", "")
 
-    monkeypatch.setattr(mutation.subprocess, "run", baseline)
+    monkeypatch.setattr(mutation, "run_owned_command", baseline)
     findings = machine._run_l2_phase()
     assert seen == [(900, True), (900, False)]
     assert findings[0].fingerprint == "mutation-flaky"
