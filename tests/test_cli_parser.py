@@ -184,8 +184,44 @@ class TestSubcommands:
         args = parser.parse_args(["mutation-check"])
         assert args.subcommand == "mutation-check"
         assert args.diff is None
-        assert args.timeout == 600
+        assert args.timeout is None
         assert args.paths is None
+
+    def test_mutation_check_timeout_inherits_config_and_cli_override(self, tmp_path, monkeypatch):
+        """The CLI defers defaults to config while an explicit value wins."""
+        from code_forge.cli import _run_mutation_check
+
+        diff_path = tmp_path / "empty.diff"
+        diff_path.write_text("", encoding="utf-8")
+        seen_timeouts = []
+
+        def capture_mutation(**kwargs):
+            seen_timeouts.append(kwargs["timeout"])
+            return [], []
+
+        monkeypatch.setattr("code_forge.mutation.run_mutation", capture_mutation)
+
+        # With no project config, the command wrapper inherits the shared 600s default.
+        no_config = _build_parser().parse_args(["mutation-check", "--diff", str(diff_path)])
+        assert no_config.timeout is None
+        assert _run_mutation_check(no_config, cwd=tmp_path) == 0
+
+        config_dir = tmp_path / ".code-forge"
+        config_dir.mkdir()
+        (config_dir / "gate.yaml").write_text(
+            "test:\n  command: [pytest, -q]\n  mutation_timeout_seconds: 73\n",
+            encoding="utf-8",
+        )
+        inherited = _build_parser().parse_args(["mutation-check", "--diff", str(diff_path)])
+        assert inherited.timeout is None
+        assert _run_mutation_check(inherited, cwd=tmp_path) == 0
+
+        explicit = _build_parser().parse_args(
+            ["mutation-check", "--diff", str(diff_path), "--timeout", "91"]
+        )
+        assert explicit.timeout == 91
+        assert _run_mutation_check(explicit, cwd=tmp_path) == 0
+        assert seen_timeouts == [600, 73, 91]
 
     def test_e2e_check_subcommand(self):
         """e2e-check subcommand parses correctly."""
