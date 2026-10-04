@@ -52,11 +52,11 @@ class _Identity:
 
 def _identity(pid: int) -> _Identity | None:
     try:
-        text = Path(f"/proc/{pid}/stat").read_text()
+        raw = Path(f"/proc/{pid}/stat").read_bytes()
     except (FileNotFoundError, ProcessLookupError):
         return None
-    fields = text[text.rfind(")") + 2 :].split()
-    return _Identity(pid, int(fields[1]), int(fields[19]), fields[0])
+    fields = raw[raw.rfind(b")") + 2 :].split()
+    return _Identity(pid, int(fields[1]), int(fields[19]), fields[0].decode("ascii"))
 
 
 def _children(identity: _Identity) -> list[int]:
@@ -67,7 +67,7 @@ def _children(identity: _Identity) -> list[int]:
     try:
         for task in Path(f"/proc/{identity.pid}/task").iterdir():
             try:
-                children.update(int(pid) for pid in (task / "children").read_text().split())
+                children.update(int(pid) for pid in (task / "children").read_bytes().split())
             except FileNotFoundError:
                 continue
     except FileNotFoundError:

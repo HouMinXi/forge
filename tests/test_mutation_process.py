@@ -3,6 +3,8 @@
 import io
 import json
 import fcntl
+import ctypes
+from contextlib import ExitStack
 import os
 import select
 import signal
@@ -12,6 +14,193 @@ import time
 from pathlib import Path
 import pytest
 from code_forge import _mutation_process as process
+
+
+@pytest.mark.parametrize("name", [b"\xffprobe", b"a ) b\nc", b"\xc2\xb5probe"])
+def test_identity_preserves_fields_with_opaque_comm(name):
+    libc = ctypes.CDLL(None, use_errno=True)
+    original = ctypes.create_string_buffer(16)
+    assert libc.prctl(16, original, 0, 0, 0) == 0
+    before = process._identity(os.getpid())
+    try:
+        assert libc.prctl(15, ctypes.create_string_buffer(name), 0, 0, 0) == 0
+        assert Path(f"/proc/{before.pid}/comm").read_bytes() == name + b"\n"
+        assert process._identity(before.pid) == before
+        assert isinstance(process._identity(before.pid).state, str)
+    finally:
+        assert libc.prctl(15, original, 0, 0, 0) == 0
+    assert process._identity(before.pid) == before
+
+
+@pytest.mark.parametrize("children, expected", [(b"", []), (b"111 55 111 \n", [55, 111])])
+def test_children_read_numeric_bytes_without_default_text_decoding(monkeypatch, children, expected):
+    parent = process._Identity(999, 1, 100, "S")
+    monkeypatch.setattr(process, "_identity", lambda _: parent)
+    monkeypatch.setattr(Path, "iterdir", lambda _: iter([Path("/proc/999/task/1000")]))
+    seen = []
+
+    def read_bytes(path):
+        seen.append(path)
+        return children
+
+    def read_text(*args, **kwargs):
+        raise AssertionError("numeric procfs data must not use default text decoding")
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(Path, "read_text", read_text)
+    assert process._children(parent) == expected
+    assert seen == [Path("/proc/999/task/1000/children")]
+
+
+def _kernel_identity(pid):
+    """Rescue observes kernel bytes independently of the reader under test."""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_bytes().rsplit(b") ", 1)[1].split()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    return {"pid": pid, "parent": int(fields[1]), "start_ticks": int(fields[19]),
+            "state": fields[0].decode("ascii")}
+
+
+def _rescue_kernel_identity(record):
+    current = _kernel_identity(record["pid"])
+    if current is None or current["start_ticks"] != record["start_ticks"]:
+        return
+    try:
+        fd = os.pidfd_open(record["pid"])
+    except ProcessLookupError:
+        return
+    try:
+        current = _kernel_identity(record["pid"])
+        if current is not None and current["start_ticks"] == record["start_ticks"]:
+            signal.pidfd_send_signal(fd, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.parametrize("finish", ["normal", "timeout"])
+def test_opaque_descendant_is_cleaned_and_unrelated_child_is_untouched(tmp_path, finish):
+    marker = tmp_path / "opaque.json"
+    ready = tmp_path / "opaque.ready"
+    script = f"""
+import ctypes, json, os, time
+from pathlib import Path
+def identity(pid):
+    fields = Path('/proc/' + str(pid) + '/stat').read_bytes().rsplit(b') ', 1)[1].split()
+    return {{'pid': pid, 'start_ticks': int(fields[19])}}
+driver = identity(os.getpid())
+owner = identity(os.getppid())
+if os.fork() == 0:
+    libc = ctypes.CDLL(None, use_errno=True)
+    original = ctypes.create_string_buffer(16)
+    assert libc.prctl(16, original, 0, 0, 0) == 0
+    try:
+        pending = Path({str(marker)!r}).with_suffix('.tmp')
+        pending.write_text(json.dumps({{'child': identity(os.getpid()),
+            'driver': driver, 'owner': owner}}), encoding='utf-8')
+        pending.replace({str(marker)!r})
+        assert libc.prctl(15, ctypes.create_string_buffer(b'\\xffprobe'), 0, 0, 0) == 0
+        Path({str(ready)!r}).touch()
+        time.sleep(10)
+    finally:
+        assert libc.prctl(15, original, 0, 0, 0) == 0
+else:
+    deadline = time.monotonic() + 2
+    while not Path({str(ready)!r}).exists() and time.monotonic() < deadline:
+        time.sleep(.005)
+    assert Path({str(ready)!r}).exists()
+    {"time.sleep(10)" if finish == "timeout" else "pass"}
+"""
+    unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
+    before = None
+    try:
+        before = _kernel_identity(unrelated.pid)
+        if finish == "timeout":
+            with pytest.raises(subprocess.TimeoutExpired) as failure:
+                process.run_owned_command([sys.executable, "-c", script], timeout=0.3)
+            report = failure.value.ownership
+        else:
+            result = process.run_owned_command([sys.executable, "-c", script], timeout=3)
+            assert result.returncode == 0
+            report = result.ownership
+        recorded = _wait_json(marker)
+        child = recorded["child"]
+        owned = {item["pid"]: item for item in report["owned"]}
+        assert report["cleanup_complete"]
+        assert owned[child["pid"]]["start_ticks"] == child["start_ticks"]
+        assert owned[child["pid"]]["reaped_status"] is not None
+        assert all(not item["remaining"] for item in report["owned"])
+        assert _kernel_identity(child["pid"]) is None
+        assert _kernel_identity(unrelated.pid)["start_ticks"] == before["start_ticks"]
+        assert unrelated.poll() is None
+    finally:
+        with ExitStack() as cleanup:
+            cleanup.callback(unrelated.wait, timeout=3)
+            if before is None:
+                cleanup.callback(unrelated.kill)
+            else:
+                cleanup.callback(_rescue_kernel_identity, before)
+            if marker.exists():
+                recorded = _wait_json(marker)
+                for role in ("owner", "driver", "child"):
+                    cleanup.callback(_rescue_kernel_identity, recorded[role])
+
+
+@pytest.mark.parametrize("failure", ["marker", "rescue"])
+def test_opaque_lifecycle_failure_cannot_skip_other_rescue(tmp_path, monkeypatch, failure):
+    real_popen = subprocess.Popen
+    real_wait_json = _wait_json
+    real_rescue = _rescue_kernel_identity
+    children = []
+    records = []
+    attempted = []
+
+    def launch(*args, **kwargs):
+        child = real_popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    def completed(*args, **kwargs):
+        marker = tmp_path / "opaque.json"
+        if failure == "marker":
+            marker.write_bytes(b"")
+        else:
+            for _ in range(3):
+                child = launch([sys.executable, "-c", "import time; time.sleep(10)"])
+                records.append(_kernel_identity(child.pid))
+            marker.write_text(json.dumps(dict(zip(("child", "driver", "owner"), records, strict=True))),
+                              encoding="utf-8")
+        result = subprocess.CompletedProcess([], 0)
+        result.ownership = {"cleanup_complete": True, "owned": []}
+        return result
+
+    def rescue(record):
+        attempted.append(record["pid"])
+        if records and record["pid"] == records[0]["pid"]:
+            raise RuntimeError("injected rescue failure")
+        real_rescue(record)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(subprocess, "Popen", launch)
+            patch.setattr(process, "run_owned_command", completed)
+            patch.setitem(globals(), "_wait_json", lambda path: real_wait_json(path, timeout=.05))
+            patch.setitem(globals(), "_rescue_kernel_identity", rescue)
+            with pytest.raises(AssertionError if failure == "marker" else RuntimeError):
+                test_opaque_descendant_is_cleaned_and_unrelated_child_is_untouched(tmp_path, "normal")
+        assert children[0].poll() == -signal.SIGKILL
+        assert children[0].pid in attempted
+        if records:
+            assert {record["pid"] for record in records} <= set(attempted)
+            for child in children[2:]:
+                assert child.wait(timeout=2) == -signal.SIGKILL
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=2)
 
 
 def test_ordinary_isolated_owner_never_resolves_optional_dependencies(tmp_path, monkeypatch):
@@ -964,9 +1153,9 @@ def test_child_discovery_refuses_unstable_parent_and_tolerates_exit(monkeypatch,
     def read(_):
         if case == "thread-gone":
             raise FileNotFoundError()
-        return "111"
+        return b"111"
 
-    monkeypatch.setattr(process.Path, "read_text", read)
+    monkeypatch.setattr(process.Path, "read_bytes", read)
     assert process._children(parent) == []
 
 
@@ -1115,7 +1304,7 @@ def test_absent_stat_ready_owned_pidfd_is_reaped_exactly(monkeypatch):
 
 def test_stat_permission_failure_stays_infrastructure(monkeypatch):
     monkeypatch.setattr(
-        Path, "read_text", lambda *_: (_ for _ in ()).throw(PermissionError(13, "denied"))
+        Path, "read_bytes", lambda *_: (_ for _ in ()).throw(PermissionError(13, "denied"))
     )
     with pytest.raises(PermissionError):
         process._identity(os.getpid())
