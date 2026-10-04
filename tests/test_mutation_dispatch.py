@@ -6,6 +6,8 @@ ps-mutant) never ran. These tests pin the suffix-to-adapter map and
 the skip text the gate shows when no adapter owns the file.
 """
 
+import pytest
+
 from code_forge.mutation_dispatch import adapter_for_path, dispatch_label
 
 
@@ -169,10 +171,68 @@ def test_run_uses_the_same_probe_as_the_note(tmp_path, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/" + name)
     monkeypatch.setattr(subprocess, "run", fake_run)
     note = run_note(["pkg/a.go"], tmp_path)
-    assert "go-gremlins" in note
-    assert "no go test" in note
-    assert calls[0][0] == ["/usr/bin/gremlins", "--version"]
+    assert note == "mutation run: go-gremlins no go test"
+    assert len(calls) == 2
+    assert [argv for argv, _kwargs in calls] == [
+        ["/usr/bin/gremlins", "--version"],
+        ["gremlins", "unleash", "--dry-run"],
+    ]
     assert calls[1][1]["cwd"] == str(tmp_path.resolve())
+
+
+def test_run_refuses_a_successful_unsupported_version(tmp_path, monkeypatch):
+    import subprocess
+
+    from code_forge.mutation_dispatch import run_note
+    from code_forge.mutation_engines.adapters.go_gremlins import GremlinsAdapter
+
+    calls = []
+
+    def unsupported(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="gremlins version dev\n", stderr="")
+
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(subprocess, "run", unsupported)
+    monkeypatch.setattr(
+        GremlinsAdapter, "probe", lambda *_args: pytest.fail("unsupported version probed adapter")
+    )
+    monkeypatch.setattr(
+        GremlinsAdapter, "invoke", lambda *_args: pytest.fail("unsupported version invoked tool")
+    )
+    assert run_note(["pkg/a.go"], tmp_path) == "mutation run: "
+    assert calls == [["/usr/bin/gremlins", "--version"]]
+
+
+def test_run_refuses_a_missing_binary_with_unavailable_probe(tmp_path, monkeypatch):
+    import subprocess
+
+    from code_forge.mutation_dispatch import run_note
+    from code_forge.mutation_engines.adapters.base import CapabilityReport, CapabilityState
+    from code_forge.mutation_engines.adapters.go_gremlins import GremlinsAdapter
+
+    lookups = []
+    probes = []
+
+    def missing(name):
+        lookups.append(name)
+        return None
+
+    def unavailable(self, target, context):
+        probes.append((target.adapter, context.run_id))
+        return CapabilityReport(CapabilityState.MISSING_DEPENDENCY, None, ("gremlins missing",), ())
+
+    monkeypatch.setattr("shutil.which", missing)
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: pytest.fail("missing binary command launched")
+    )
+    monkeypatch.setattr(GremlinsAdapter, "probe", unavailable)
+    monkeypatch.setattr(
+        GremlinsAdapter, "invoke", lambda *_args: pytest.fail("unavailable probe invoked tool")
+    )
+    assert run_note(["pkg/a.go"], tmp_path) == "mutation run: "
+    assert lookups == ["gremlins"]
+    assert probes == [("go-gremlins", "review-gate")]
 
 
 def test_powershell_selects_psmutant():
