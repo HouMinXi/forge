@@ -5,6 +5,9 @@ than with the size of the change.
 """
 
 import re
+import subprocess
+
+import pytest
 
 from code_forge.cli import _assemble_post_image, _window_file_text
 
@@ -267,21 +270,44 @@ class TestAssemblePostImage:
         assert "... [truncated at 50KB]" in out.splitlines()
         assert not re.findall(r"^\d+: ", out, re.M)
 
-    def test_rename_only_never_reaches_the_post_image(self, tmp_path):
-        """Not a windowing decision -- it was already true.
+    @pytest.mark.parametrize("change", ["rename", "copy"])
+    def test_metadata_destination_reaches_the_post_image(self, tmp_path, change):
+        """A real metadata-only destination contributes its full contents."""
 
-        get_changed_files lists only files with an added line, and a pure
-        rename has none, so it is absent from the post-image with or
-        without narrowing. Pinned because the windowing docstring first
-        claimed the opposite.
-        """
-        (tmp_path / "new.py").write_text("kept line\n" * 50)
-        diff = (
-            "diff --git a/old.py b/new.py\nsimilarity index 100%\nrename from old.py\nrename to new.py\n"
-        )
-        for ctx in (5, 10**6):
+        def git(*args):
+            return subprocess.run(
+                ["git", "-C", str(tmp_path), *args],
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            ).stdout
+
+        git("init", "-b", "main")
+        git("config", "user.name", "Test")
+        git("config", "user.email", "test@test.com")
+        content = "kept line\n" * 50
+        (tmp_path / "old.py").write_text(content, encoding="utf-8")
+        (tmp_path / "deleted.py").write_text("removed = 1\n", encoding="utf-8")
+        (tmp_path / "image.bin").write_bytes(b"\x00before")
+        git("add", "--all")
+        git("commit", "-m", "base")
+        (tmp_path / "new.py").write_text(content, encoding="utf-8")
+        if change == "rename":
+            (tmp_path / "old.py").unlink()
+        (tmp_path / "deleted.py").unlink()
+        (tmp_path / "image.bin").write_bytes(b"\x00after")
+        git("add", "--all")
+        diff = git("diff", "--cached", "-M", "-C", "--find-copies-harder")
+        assert f"{change} to new.py" in diff
+        assert "deleted file mode" in diff
+        assert "Binary files" in diff
+        expected = "## File: new.py\n```\n%s\n```" % content
+        for ctx in (0, 5, 10**6):
             out, _ = _assemble_post_image(tmp_path, diff, context_lines=ctx)
-            assert out == "", "context_lines=%s produced %r" % (ctx, out[:80])
+            assert out == expected
+            assert "deleted.py" not in out
+            assert "image.bin" not in out
 
     def test_missing_file_is_skipped_not_fatal(self, tmp_path):
         out, _ = _assemble_post_image(tmp_path, self._diff(), context_lines=20)

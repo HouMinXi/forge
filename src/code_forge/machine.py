@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import threading
 import time
@@ -112,7 +113,12 @@ class TimeoutCircuitBreaker:
         return self._consecutive
 
 
-def _default_l0_runner(registry: dict, files: list[Path]) -> tuple[list[StateFinding], list[str]]:
+def _default_l0_runner(
+    registry: dict,
+    files: list[Path],
+    *,
+    cwd: Path | None = None,
+) -> tuple[list[StateFinding], list[str]]:
     """Phase 1 Finding -> 02-01 StateFinding adapter.
 
     R2-1 fix: returns tuple (state_findings, infra_errors).
@@ -124,7 +130,7 @@ def _default_l0_runner(registry: dict, files: list[Path]) -> tuple[list[StateFin
     from .runner import run_tools, sarif_producer_profile
 
     file_strs = [str(f) for f in files]
-    tool_results, _versions, _skipped, l0_infra = run_tools(registry, file_strs)
+    tool_results, _versions, _skipped, l0_infra = run_tools(registry, file_strs, cwd=cwd)
     state_findings: list[StateFinding] = []
     infra_errors: list[str] = list(l0_infra)
 
@@ -135,7 +141,7 @@ def _default_l0_runner(registry: dict, files: list[Path]) -> tuple[list[StateFin
             tc.output_format,
             tool,
             returncode,
-            producer_profile=sarif_producer_profile(tc.command, tc.args),
+            producer_profile=sarif_producer_profile(tc.command, tc.args, cwd=cwd),
         )
         # Nonzero exit with empty stdout is a tool crash, not a clean
         # run. Every real tool that exits nonzero WITH findings produces
@@ -323,6 +329,8 @@ class StateMachine:
     ctx_contract: bool = False
     ctx_whole_file: bool = False
     ctx_canary: bool = False
+    source_root: Path | None = field(default=None, kw_only=True)
+    recovery_parent: Path | None = field(default=None, kw_only=True)
     _state: State = field(default_factory=State, init=False)
 
     @property
@@ -577,7 +585,7 @@ class StateMachine:
         # Launch new async mutation via run_mutation (single invocation point)
         import shutil
 
-        diff_files = [str(f) for f in self._source_files()]
+        diff_files = [str(f) for f in self._executable_source_files()]
         from .mutation_dispatch import group_by_adapter, other_adapter_note
 
         grouped = group_by_adapter(diff_files)
@@ -638,7 +646,7 @@ class StateMachine:
                     started = launch_detached_mutation(
                         diff_files,
                         baseline_cmd,
-                        self.cwd,
+                        self._source_root(),
                         result_path,
                         baseline_timeout,
                         also_copy,
@@ -674,7 +682,7 @@ class StateMachine:
                     disposition=Disposition.DISMISSED,
                     file="",
                     line_range=[],
-                    description=other_adapter_note(diff_files, root=self.cwd),
+                    description=other_adapter_note(diff_files, root=self._source_root()),
                 )
             )
         else:
@@ -925,7 +933,15 @@ class StateMachine:
         No file mutations here -- L0 detect only; autofix is separate.
         """
         try:
-            l0_findings, l0_infra = self.l0_runner(self.registry, self._source_files())
+            source_files = self._executable_source_files()
+            if self.l0_runner is _default_l0_runner:
+                l0_findings, l0_infra = self.l0_runner(
+                    self.registry,
+                    source_files,
+                    cwd=self._source_root(),
+                )
+            else:
+                l0_findings, l0_infra = self.l0_runner(self.registry, source_files)
             self._state.infra_errors.extend(l0_infra)
         except Exception as exc:  # noqa: BLE001
             self._state.infra_errors.append(f"L0 runner failed: {exc}")
@@ -940,7 +956,10 @@ class StateMachine:
             from .delta import lines_intersect
             from .diff import extract_changed_lines
 
-            changed = extract_changed_lines(self.resolved_review.git_diff, repo_root=self.cwd)
+            changed = extract_changed_lines(
+                self.resolved_review.git_diff,
+                repo_root=self._source_root(),
+            )
             delta: list = []
             for f in l0_findings:
                 file_lines = changed.get(f.file)
@@ -1191,7 +1210,10 @@ class StateMachine:
         Calls l2_runner with diff-scoped files and baseline test command.
         Returns MUTANT findings (survivors or MUTATION_SKIPPED).
         """
-        diff_files = [str(f) for f in self._source_files()]
+        diff_files = [str(f) for f in self._executable_source_files()]
+
+        if not diff_files:
+            return []
 
         # A language with a registered adapter needs the baseline command.
         # Unmapped suffixes still skip without a gate.yaml.
@@ -1261,8 +1283,10 @@ class StateMachine:
     def _run_coverage_phase(self) -> list[StateFinding]:
         """Per-file review coverage gate. Runs after E2E.
 
-        Flags in-scope files that no review layer examined: no matching
-        L0 tool AND L1 inactive (non-git review or stub engine). Prevents
+        Flags in-scope files that no review layer examined: no eligible
+        L0 input/tool match AND L1 inactive (non-git or stub engine). Git
+        deletions require semantic coverage even when a tool pattern matches.
+        Prevents
         a silent clean PASS over an effectively unreviewed file. A failing
         coverage computation degrades to no findings, never crashes the
         pipeline (mirrors L2/E2E graceful degradation).
@@ -1273,13 +1297,35 @@ class StateMachine:
                 compute_uncovered_files,
             )
 
+            removed_files: list[str] = []
             uncovered = compute_uncovered_files(
                 [str(f) for f in self._source_files()],
                 self.registry,
                 self.coverage_l1_active,
                 self.coverage_exempt_patterns,
             )
-            return build_coverage_findings(uncovered)
+            if not self.coverage_l1_active:
+                l0_files = set(self._executable_source_files())
+                removed_files = [str(f) for f in self._source_files() if f not in l0_files]
+                # A matching tool cannot cover an entry excluded from its inputs.
+                removed_uncovered = compute_uncovered_files(
+                    removed_files,
+                    {},
+                    False,
+                    self.coverage_exempt_patterns,
+                )
+                gaps = set(uncovered) | set(removed_uncovered)
+                uncovered = list(dict.fromkeys(str(f) for f in self._source_files() if str(f) in gaps))
+            findings = build_coverage_findings(uncovered)
+            for finding in findings:
+                if finding.file in removed_files:
+                    finding.description = (
+                        "This Git-deleted entry has no post-image for L0; L1 "
+                        "semantic review did not run. Review the diff with a "
+                        "semantic engine or explicitly exempt this path in "
+                        ".code-forge/coverage.yaml."
+                    )
+            return findings
         except Exception as exc:  # noqa: BLE001
             self._state.infra_errors.append(f"coverage runner failed: {exc}")
             return []
@@ -1806,6 +1852,7 @@ class StateMachine:
             return
 
         from .fixval import (
+            FixvalCandidate,
             FixvalSkip,
             FixvalStatus,
             classify_fixval_candidate,
@@ -1814,7 +1861,8 @@ class StateMachine:
         )
 
         changed_files = [str(f) for f in self._source_files()]
-        candidate = classify_fixval_candidate(changed_files)
+        executable_files = {str(f) for f in self._executable_source_files()}
+        candidate = classify_fixval_candidate(changed_files, executable_files=executable_files)
 
         if isinstance(candidate, FixvalSkip):
             # Record SKIPPED with reason (never silent)
@@ -1855,12 +1903,16 @@ class StateMachine:
         commit_message = self._get_commit_message()
         diff_text = self.resolved_review.git_diff
 
+        preservation = (
+            {"recovery_parent": self.recovery_parent} if self.recovery_parent is not None else {}
+        )
         result = run_fixval(
             candidate,
             test_cmd,
-            self.cwd,
+            self._source_root(),
             commit_message,
             diff_text,
+            **preservation,
         )
 
         # Extend findings and advisories
@@ -1882,9 +1934,12 @@ class StateMachine:
         if result.status == FixvalStatus.PASS:
             # Non-hollow: run overfit guard (advisory only)
             overfit_advisories = run_overfit_guard(
-                candidate,
+                FixvalCandidate(
+                    test_files=candidate.test_files,
+                    non_test_files=[f for f in candidate.non_test_files if f in executable_files],
+                ),
                 test_cmd,
-                self.cwd,
+                self._source_root(),
             )
             self._advisories.extend(overfit_advisories)
 
@@ -2256,6 +2311,7 @@ class StateMachine:
         import subprocess as _sp
 
         logger = logging.getLogger("code_forge")
+        source_root = self._source_root()
 
         try:
             result = _sp.run(
@@ -2265,12 +2321,12 @@ class StateMachine:
                 encoding="utf-8",
                 errors="replace",
                 check=False,
-                cwd=str(self.cwd),
+                cwd=str(source_root),
             )
             if result.returncode == 0:
                 path = Path(result.stdout.strip())
                 if not path.is_absolute():
-                    path = self.cwd / path
+                    path = source_root / path
                 if path.exists():
                     return path.read_text(encoding="utf-8").strip()
         except Exception as exc:  # noqa: BLE001
@@ -2285,7 +2341,7 @@ class StateMachine:
                 encoding="utf-8",
                 errors="replace",
                 check=False,
-                cwd=str(self.cwd),
+                cwd=str(source_root),
             )
             if result.returncode == 0:
                 return result.stdout.strip()
@@ -2365,8 +2421,15 @@ class StateMachine:
             return []
 
         runner = RulepackRunner()
-        runner.source_files = list(self._source_files())
-        advisories = runner.run(self.resolved_review.git_diff or "", self.cwd)
+        runner.source_files = list(self._executable_source_files())
+        if self.source_root is None:
+            advisories = runner.run(self.resolved_review.git_diff or "", self.cwd)
+        else:
+            advisories = runner.run(
+                self.resolved_review.git_diff or "",
+                self.cwd,
+                execution_root=self._source_root(),
+            )
         self._state.infra_errors.extend(runner.infra_errors)
 
         findings: list[StateFinding] = []
@@ -2411,10 +2474,11 @@ class StateMachine:
         separate from self._state.findings (list[StateFinding]).
         """
         diff_text = self.resolved_review.git_diff or ""
+        executable_files = self._executable_source_files()
         # Inject source_files for runners that support it (no git dependency).
         for runner in self.advisory_runners:
             if hasattr(runner, "source_files"):
-                runner.source_files = list(self.resolved_review.source_files)
+                runner.source_files = list(executable_files)
             if hasattr(runner, "registry"):
                 runner.registry = self.registry
             if hasattr(runner, "_runtime_runner"):
@@ -2704,3 +2768,26 @@ class StateMachine:
     def _source_files(self) -> list[Path]:
         """Return source files from resolved review."""
         return self.resolved_review.source_files
+
+    def _source_root(self) -> Path:
+        """Return the source repository separately from private state storage."""
+        return self.source_root if self.source_root is not None else self.cwd
+
+    def _executable_source_files(self) -> list[Path]:
+        """Project semantic scope onto entries with a reviewed post-image."""
+        source_files = self._source_files()
+        if self.resolved_review.git_diff is None:
+            return source_files
+        from .diff import get_removed_files
+
+        removed_paths = {
+            os.path.abspath(self._source_root() / path)
+            for path in get_removed_files(self.resolved_review.git_diff)
+        }
+        # Match lexically without following removed symlinks or testing file
+        # existence, so positive-path missing and permission errors survive.
+        return [
+            path
+            for path in source_files
+            if os.path.abspath(self._source_root() / path) not in removed_paths
+        ]

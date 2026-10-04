@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
@@ -1234,19 +1235,22 @@ def _assemble_post_image(
     narrowing here cannot weaken excerpt checking.
 
     context_lines=0 keeps only the hunk lines. A file with no hunks in the
-    diff is returned whole, since there is nothing to window around --
-    though in practice such a file rarely gets here at all, because
-    get_changed_files lists only files carrying an added line and a
-    binary, rename, or mode-change entry has none.
+    diff is returned whole, since there is nothing to window around.
+    Metadata-only changes use the existing destination file. Git-deleted
+    entries are excluded even if local contents remain on disk. Missing
+    positive paths and binary contents are skipped by the reader below.
     """
-    from .diff import get_changed_files, parse_diff_hunks
+    from .diff import get_changed_files, get_removed_files, parse_diff_hunks
     from .conventions import get_digest
 
     changed_files = get_changed_files(diff_text or "")
+    removed_files = set(get_removed_files(diff_text or ""))
     hunk_map, _exempt = parse_diff_hunks(diff_text or "")
     cap = 50 * 1024
     parts: list[str] = []
     for cf in changed_files:
+        if cf in removed_files:
+            continue
         fp = cwd / cf
         try:
             st = fp.stat()
@@ -3887,7 +3891,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     if not initial_paths:
         effective_paths = _paths(args, cwd, resolved=resolved)
         if effective_paths:
-            resolved = resolve_baseline(baseline_spec, head_spec, effective_paths, cwd)
+            resolved = replace(resolved, source_files=effective_paths)
 
     # Empty-diff guard: nothing to review, tell the user explicitly.
     if not resolved.git_diff and not resolved.source_files:
@@ -4451,7 +4455,7 @@ def _run_hold_loop(
             # that found no survivors -- the CLI reported a gate it never
             # ran. build_l2_runner degrades to MUTATION_SKIPPED when mutmut
             # is absent, so this costs nothing where it cannot measure.
-            l2_runner=build_l2_runner(),
+            l2_runner=build_l2_runner(cwd=cwd),
             e2e_runner=build_e2e_checker(),
             advisory_runners=[
                 _taint_runner,
@@ -4579,16 +4583,14 @@ def _run_mutation_check(args, cwd: Path) -> int:
                 file=sys.stderr,
             )
             return EXIT_CLI_ERROR
-        from .diff import get_changed_files
-
-        diff_files = get_changed_files(diff_text)
     else:
         # Uncommitted changes via git diff.
         import subprocess
+        from .git import _MACHINE_DIFF_OPTIONS
 
         try:
             result = subprocess.run(
-                ["git", "diff", "--name-only", "HEAD"],
+                ["git", "diff", *_MACHINE_DIFF_OPTIONS, "HEAD"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -4602,13 +4604,19 @@ def _run_mutation_check(args, cwd: Path) -> int:
                     file=sys.stderr,
                 )
                 return EXIT_CLI_ERROR
-            diff_files = [f for f in result.stdout.splitlines() if f.strip()]
+            diff_text = result.stdout
         except FileNotFoundError:
             print(
                 "code-forge: mutation-check: git not found",
                 file=sys.stderr,
             )
             return EXIT_CLI_ERROR
+
+    from .diff import get_changed_files, get_removed_files
+
+    # Semantic deletions have no reviewed post-image even if local bytes remain.
+    removed_files = set(get_removed_files(diff_text))
+    diff_files = [path for path in get_changed_files(diff_text) if path not in removed_files]
 
     # Apply --paths glob filter if requested.
     if getattr(args, "paths", None):

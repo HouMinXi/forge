@@ -125,7 +125,7 @@ class ForgeLock:
       with ForgeLock(Path(".code-forge/forge.lock")) as lock:
           ... do forge work ...
       # released on normal exit OR on exception in body OR on
-      # SIGINT/SIGTERM.
+      # propagated SIGINT/SIGTERM.
     """
 
     def __init__(self, path: Path):
@@ -174,10 +174,6 @@ class ForgeLock:
 
         def _make_chained_handler(prev):
             def _handler(signum, frame):
-                try:
-                    self.release()
-                except Exception:  # noqa: BLE001
-                    pass
                 if callable(prev):
                     prev(signum, frame)
                     return

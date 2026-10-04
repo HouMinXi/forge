@@ -23,6 +23,18 @@ ENTITY = {
 }
 
 
+def _record_l2_root(monkeypatch, cli, root):
+    calls = []
+
+    def build(*, cwd):
+        assert cwd == root
+        calls.append(cwd)
+        return lambda *args: ([], [])
+
+    monkeypatch.setattr(cli, "build_l2_runner", build)
+    return calls
+
+
 @pytest.fixture
 def sem_controls(tmp_path, monkeypatch):
     """Replace only Popen, leaving actual run/stdin/timeout interpretation active."""
@@ -801,9 +813,10 @@ def test_actual_cli_uncached_hold_retry_preserves_source_authority(
 
     monkeypatch.setattr(cli, "_run_hold_loop", hold)
     monkeypatch.setattr(cli.StateMachine, "run", advisory_boundary)
-    monkeypatch.setattr(cli, "build_l2_runner", lambda: lambda *a: ([], []))
+    l2_roots = _record_l2_root(monkeypatch, cli, root)
     monkeypatch.setattr(cli, "build_e2e_checker", lambda: lambda *a: ([], []))
     assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PASS
+    assert l2_roots == [root]
     assert len(snapshots) == 1 and len(snapshots[0][0]) == expected
     if retry == "sql" and expected == 0:
         assert "GraphTriageRunner: context source skipped: graph_triage:" in capsys.readouterr().err
@@ -1113,9 +1126,10 @@ def test_actual_cli_graphdb_failure_retries_with_source_authority(
 
     monkeypatch.setattr(cli, "_run_hold_loop", hold)
     monkeypatch.setattr(cli.StateMachine, "run", advisory_boundary)
-    monkeypatch.setattr(cli, "build_l2_runner", lambda: lambda *a: ([], []))
+    l2_roots = _record_l2_root(monkeypatch, cli, root)
     monkeypatch.setattr(cli, "build_e2e_checker", lambda: lambda *a: ([], []))
     assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PASS
+    assert l2_roots == [root]
     assert len(dispatched) == 1 and len(dispatched[0][0]) == expected
     runner, state = dispatched[0][1:]
     assert not runner.infra_errors and not state.infra_errors
@@ -1179,7 +1193,8 @@ def test_actual_cli_graphdb_empty_success_seeds_once(graphdb_controls, cli_pipel
 
     monkeypatch.setattr(cli, "_run_hold_loop", hold)
     monkeypatch.setattr(cli.StateMachine, "run", advisory_boundary)
-    monkeypatch.setattr(cli, "build_l2_runner", lambda: lambda *a: ([], []))
+    l2_roots = _record_l2_root(monkeypatch, cli, root)
     monkeypatch.setattr(cli, "build_e2e_checker", lambda: lambda *a: ([], []))
     assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PASS
+    assert l2_roots == [root]
     assert observations == [[]]

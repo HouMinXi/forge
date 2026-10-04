@@ -46,6 +46,7 @@ def isolated_execution(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: pytest.fail("Real process forbidden"))
     monkeypatch.setattr(socket.socket, "connect", lambda *a, **kw: pytest.fail("Network forbidden"))
+    monkeypatch.setattr("code_forge.git.read_diff_blob", lambda *a, **kw: None)
     monkeypatch.setattr("code_forge.mutation.run_mutation", lambda *a, **kw: ([], []))
     monkeypatch.setattr(
         "code_forge.mutation_dispatch.other_adapter_note", lambda *a, **kw: "controlled L2 note"

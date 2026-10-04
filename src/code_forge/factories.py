@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from copy import deepcopy
+from functools import partial
 from pathlib import Path
 from typing import Callable
 
@@ -203,7 +204,7 @@ def _make_snapshot_restore(cwd: Path, resolved: ResolvedReview) -> Callable[[Sta
     return _revert
 
 
-def build_l2_runner() -> Callable:
+def build_l2_runner(*, cwd: Path | None = None) -> Callable:
     """Build l2_runner (mutation testing) callable.
 
     Returns a callable with signature:
@@ -239,7 +240,7 @@ def build_l2_runner() -> Callable:
                             disposition=Disposition.DISMISSED,
                             file=diff_files[0] if diff_files else "",
                             line_range=[],
-                            description=other_adapter_note(diff_files, root=Path.cwd()),
+                            description=other_adapter_note(diff_files, root=cwd or Path.cwd()),
                         )
                     ],
                     [],
@@ -261,7 +262,7 @@ def build_l2_runner() -> Callable:
         return _no_mutation
 
     # mutmut is available, delegate to run_mutation
-    return run_mutation
+    return run_mutation if cwd is None else partial(run_mutation, cwd=cwd)
 
 
 def build_e2e_checker() -> Callable:

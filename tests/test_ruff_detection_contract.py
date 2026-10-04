@@ -844,9 +844,13 @@ def test_reference_forms_survive_adapters_dispatch_and_l0(monkeypatch, parser, r
     _assert_reference_finding(packet)
     assert len(parser(payload)) == 2
     tool = ToolConfig("alias", "opaque-wrapper", [], "sarif", ["*.py"])
-    monkeypatch.setattr(
-        "code_forge.runner.run_tools", lambda *a: ({"alias": (payload, 0, "")}, {}, [], [])
-    )
+
+    def supplied_tools(registry, files, *, cwd):
+        assert registry == {"alias": tool} and files == ["sample.py"]
+        assert cwd is None
+        return {"alias": (payload, 0, "")}, {}, [], []
+
+    monkeypatch.setattr("code_forge.runner.run_tools", supplied_tools)
     findings, infra = _default_l0_runner({"alias": tool}, [Path("sample.py")])
     assert len(findings) == 2 and not infra
     assert findings[1].description == "undefined name"

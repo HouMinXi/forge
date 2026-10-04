@@ -334,6 +334,8 @@ class RulepackRunner:
         self,
         diff_text: str,
         repo_root: Path,
+        *,
+        execution_root: Path | None = None,
     ) -> list[AdvisoryFinding]:
         """Run active rule packs and return advisory findings.
 
@@ -415,6 +417,7 @@ class RulepackRunner:
                 repo_root=repo_root,
                 timeout=timeout,
                 jobs=jobs,
+                execution_root=execution_root,
             )
             all_statuses[pack.name] = pack_statuses
             all_reasons[pack.name] = pack_reasons
@@ -431,6 +434,8 @@ class RulepackRunner:
         repo_root: Path,
         timeout: int,
         jobs: int,
+        *,
+        execution_root: Path | None = None,
     ) -> tuple[dict[str, str], dict[str, Optional[str]], list[AdvisoryFinding]]:
         """Execute one pack, returning statuses, reasons, and advisory findings."""
         statuses: dict[str, str] = {}
@@ -453,7 +458,8 @@ class RulepackRunner:
         # Determine files eligible for this pack's languages.
         pack_languages = [lang for rule in pack.rules for lang in rule.languages]
         files = _files_for_languages(self.source_files or [], pack_languages)
-        files = [f for f in files if (repo_root / f).exists()]
+        execution_root = repo_root if execution_root is None else Path(execution_root)
+        files = [f for f in files if (execution_root / f).exists()]
 
         if not files:
             # NOT_APPLICABLE already set for non-missing rules.
@@ -479,7 +485,7 @@ class RulepackRunner:
                 encoding="utf-8",
                 errors="replace",
                 timeout=timeout + 10,
-                cwd=str(repo_root),
+                cwd=str(execution_root),
             )
         except subprocess.TimeoutExpired:
             msg = "rulepack %s: semgrep scan timed out (%ss)" % (pack.name, timeout)
