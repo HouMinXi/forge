@@ -630,6 +630,7 @@ def test_results_timeout_restores_workspace_without_proving_clean_result(tmp_pat
 
 
 def test_missing_baseline_runner_retains_default_guard_skip_and_false_proof(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     def missing(*_args, **_kwargs):
         raise FileNotFoundError("MEASURED_MISSING_RUNNER")
 
@@ -638,7 +639,10 @@ def test_missing_baseline_runner_retains_default_guard_skip_and_false_proof(tmp_
     findings, infra = mutation.run_mutation(
         ["src/calc.py"], ["missing-runner"], cwd=tmp_path, _evidence=evidence
     )
-    assert findings[0].fingerprint == "mutation-flaky" and "runner not found" in infra[0]
+    assert findings[0].fingerprint == "mutation-flaky"
+    assert infra == [findings[0].description]
+    assert infra[0] == "run 1: runner could not start; stderr: MEASURED_MISSING_RUNNER"
+    assert "flaky" not in infra[0]
     assert not evidence["baseline_passed"]
     assert not list((tmp_path / ".code-forge").glob("mutation-config-*"))
 
