@@ -892,8 +892,8 @@ def render_context_sources(result: GatherResult) -> str:
         "| Source | Entity | File | Line | Note |",
         "|--------|--------|------|------|------|",
     ]
-    for r in extra:
-        lines.append(
+    lines.extend(
+        [
             "| %s | %s | %s | %s | %s |"
             % (
                 r.source,
@@ -902,7 +902,9 @@ def render_context_sources(result: GatherResult) -> str:
                 r.origin_line if r.origin_line is not None else "",
                 r.dependents,
             )
-        )
+            for r in extra
+        ]
+    )
     return "\n".join(lines)
 
 
