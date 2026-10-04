@@ -168,8 +168,12 @@ def test_removed_unicode_word_does_not_supply_ascii_fragments(removed):
 @pytest.mark.parametrize("replacement", ["delta\u03c0", "\u03c0delta"])
 def test_unicode_rename_keeps_broken_import_context(tmp_path, monkeypatch, replacement):
     for key in (
-        "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR",
-        "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -188,7 +192,12 @@ def test_unicode_rename_keeps_broken_import_context(tmp_path, monkeypatch, repla
     subprocess.run(["git", "add", "a.py"], cwd=tmp_path, check=True, capture_output=True, timeout=10)
     diff = subprocess.run(
         ["git", "diff", "--cached", "--no-ext-diff", "--no-color"],
-        cwd=tmp_path, check=True, capture_output=True, timeout=10, text=True, encoding="utf-8",
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        timeout=10,
+        text=True,
+        encoding="utf-8",
     ).stdout
     assert f"+{replacement} = 1" in diff
     rows = RemovedSymbolReaders(tmp_path).facts(["a.py"], diff)
@@ -896,11 +905,9 @@ def _init_git(root: Path) -> None:
     )
 
 
-def test_readers_keep_deleted_file_when_changed_files_is_additions_only(tmp_path: Path):
-    """get_changed_files lists only files with an added line. A mixed
-    diff that edits a.py and deletes b.py therefore hands facts()
-    ['a.py']. The deleted file's identifiers still have live readers
-    and must not be dropped by that secondary filter."""
+def test_readers_keep_deleted_file_in_complete_changed_file_scope(tmp_path: Path):
+    """A mixed edit/deletion includes both files in the review scope.
+    The deleted file's identifiers must still resolve to live readers."""
     from code_forge.diff import get_changed_files
 
     (tmp_path / "a.py").write_text("def keep():\n    return 1\n")
@@ -924,7 +931,7 @@ def test_readers_keep_deleted_file_when_changed_files_is_additions_only(tmp_path
         "-    return 1\n"
     )
     changed = get_changed_files(diff)
-    assert changed == ["a.py"]
+    assert changed == ["a.py", "b.py"]
     rows = RemovedSymbolReaders(tmp_path).facts(changed, diff)
     by_entity = {r.entity: r for r in rows}
     assert "deleted_fn" in by_entity
@@ -933,9 +940,8 @@ def test_readers_keep_deleted_file_when_changed_files_is_additions_only(tmp_path
 
 
 def test_readers_keep_pure_deletion_file_in_mixed_diff(tmp_path: Path):
-    """A file that only loses lines (no + line) is also absent from
-    get_changed_files. Mixed with an addition elsewhere, its removed
-    identifiers must still become facts."""
+    """A file that only loses lines remains in the complete file scope.
+    Mixed with an addition elsewhere, its removed identifiers become facts."""
     from code_forge.diff import get_changed_files
 
     (tmp_path / "a.py").write_text("def keep():\n    return 1\n")
@@ -961,7 +967,7 @@ def test_readers_keep_pure_deletion_file_in_mixed_diff(tmp_path: Path):
         "-    return 1\n"
     )
     changed = get_changed_files(diff)
-    assert changed == ["a.py"]
+    assert changed == ["a.py", "c.py"]
     rows = RemovedSymbolReaders(tmp_path).facts(changed, diff)
     by_entity = {r.entity: r for r in rows}
     assert "dropped_helper" in by_entity

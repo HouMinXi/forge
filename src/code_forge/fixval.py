@@ -19,15 +19,20 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import tempfile
+from collections.abc import Collection
 from dataclasses import dataclass
 from enum import Enum
+from io import StringIO
 from pathlib import Path
 
 import unidiff
 
 from .advisory import AdvisoryFinding
+from ._fixval_transaction import FixvalTransaction, TransactionError
 from .disposition import Disposition
+from .diff import iter_diff_sections, patched_file_path
 from code_forge.baseline_guard import _run_baseline_guard, _strip_venv_from_env
 from .state import StateFinding
 
@@ -97,21 +102,26 @@ def _is_test_file(path: str) -> bool:
 
 def classify_fixval_candidate(
     changed_files: list[str],
+    *,
+    executable_files: Collection[str] | None = None,
 ) -> FixvalCandidate | FixvalSkip:
     """Classify a diff as FIXVAL candidate or skip.
 
-    A diff is a candidate if and only if it has BOTH test and non-test
-    files. When only one kind is present, return FixvalSkip with reason.
+    A diff needs both executable tests and semantic non-test changes.
+    An optional execution projection excludes removed tests while keeping
+    deleted production files as revert facts. Omission keeps all files.
     """
     if not changed_files:
         return FixvalSkip(reason="no files in diff")
 
     test_files: list[str] = []
     non_test_files: list[str] = []
+    executable = None if executable_files is None else set(executable_files)
 
     for f in changed_files:
         if _is_test_file(f):
-            test_files.append(f)
+            if executable is None or f in executable:
+                test_files.append(f)
         else:
             non_test_files.append(f)
 
@@ -121,6 +131,8 @@ def classify_fixval_candidate(
             non_test_files=non_test_files,
         )
     if not test_files:
+        if executable is not None:
+            return FixvalSkip(reason="no executable test file in diff")
         return FixvalSkip(reason="no test file in diff")
     return FixvalSkip(reason="no non-test file in diff")
 
@@ -186,18 +198,105 @@ def _make_skipped_result(reason: str) -> FixvalResult:
 
 
 def _filter_non_test_patch(diff_text: str) -> str:
-    """Parse diff_text via unidiff, keep only non-test file hunks."""
-    patch_set = unidiff.PatchSet(diff_text)
+    """Project production file blocks without reserializing Git binary bodies."""
+
+    def is_production(patched_file):
+        src_clean = patched_file_path(patched_file, source=True) or ""
+        tgt_clean = patched_file_path(patched_file) or ""
+        return not _is_test_file(src_clean) and not _is_test_file(tgt_clean)
+
+    if any(line.startswith("diff --git ") for line in StringIO(diff_text)):
+        blocks = [(unidiff.PatchSet(block), block) for _path, block in iter_diff_sections(diff_text)]
+    else:
+        blocks = [([entry], str(entry)) for entry in unidiff.PatchSet(diff_text)]
     filtered = []
-    for patched_file in patch_set:
-        src = patched_file.source_file
-        tgt = patched_file.target_file
-        # Strip a/ b/ prefixes for test detection
-        src_clean = re.sub(r"^[ab]/", "", src) if src else ""
-        tgt_clean = re.sub(r"^[ab]/", "", tgt) if tgt else ""
-        if not _is_test_file(src_clean) and not _is_test_file(tgt_clean):
-            filtered.append(str(patched_file))
+    production_paths: set[str] = set()
+    test_paths: set[str] = set()
+    for entries, block in blocks:
+        paths = {
+            path
+            for entry in entries
+            for path in (patched_file_path(entry, source=True), patched_file_path(entry))
+            if path
+        }
+        if entries and all(is_production(entry) for entry in entries):
+            filtered.append(block)
+            production_paths.update(paths)
+        else:
+            test_paths.update(paths)
+    overlap = production_paths & test_paths
+    if overlap:
+        raise TransactionError(
+            "production reversal overlaps excluded test paths: %s" % ", ".join(sorted(overlap))
+        )
     return "".join(filtered)
+
+
+def _transaction_block(message: str, recovery: str) -> FixvalResult:
+    detail = "FIXVAL transaction failed: %s. Recovery: %s" % (message, recovery)
+    return FixvalResult(
+        status=FixvalStatus.BLOCK,
+        findings=[
+            StateFinding(
+                id="FIXVAL_TRANSACTION",
+                fingerprint="fixval-transaction",
+                source="FIXVAL",
+                disposition=Disposition.UNCERTAIN,
+                file="",
+                line_range=[],
+                description=detail,
+                error=detail,
+            )
+        ],
+        advisories=[],
+        block_message=detail,
+    )
+
+
+def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root) -> FixvalResult:
+    result = subprocess.run(
+        scoped_cmd,
+        env=run_env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=600,
+        check=False,
+        cwd=repo_root,
+    )
+    if result.returncode != 0:
+        return FixvalResult(status=FixvalStatus.PASS, findings=[], advisories=[])
+    block_msg = "FIXVAL: Test(s) did not fail when the fix was reverted.\n\n  Reverted files:\n"
+    for filename in candidate.non_test_files:
+        block_msg += "    %s\n" % filename
+    block_msg += "\n  Tests that should have failed but passed:\n"
+    for filename in candidate.test_files:
+        block_msg += "    %s\n" % filename
+    block_msg += (
+        "\n  This means the test passes on both the fixed and unfixed code -- it does\n"
+        "  not actually verify the fix.\n\n"
+        "  To waive (nondeterministic bug), at pre-commit time use the env var:\n"
+        '    FIXVAL_WAIVER="<reason>" git commit ...\n'
+        "  and also add the trailer for the permanent git-log record:\n"
+        "    Fixval-Waiver: <reason>\n"
+    )
+    return FixvalResult(
+        status=FixvalStatus.BLOCK,
+        findings=[
+            StateFinding(
+                id="FIXVAL_HOLLOW",
+                fingerprint="fixval-hollow",
+                source="FIXVAL",
+                disposition=Disposition.DISMISSED,
+                file=candidate.test_files[0] if candidate.test_files else "",
+                line_range=[],
+                description="hollow test: test passes on both fixed and reverted code",
+            )
+        ],
+        advisories=[],
+        block_message=block_msg,
+    )
 
 
 def run_fixval(
@@ -206,6 +305,8 @@ def run_fixval(
     cwd: Path,
     commit_message: str,
     diff_text: str | None,
+    *,
+    recovery_parent: Path | None = None,
 ) -> FixvalResult:
     """Run FIXVAL gate on a candidate diff.
 
@@ -223,6 +324,7 @@ def run_fixval(
         cwd: repository root.
         commit_message: for waiver trailer parsing.
         diff_text: unified diff text (same source as classify).
+        recovery_parent: optional preservation parent outside participating source roots.
 
     Returns:
         FixvalResult with status, findings, advisories, block_message.
@@ -265,7 +367,15 @@ def run_fixval(
             ],
         )
 
-    # (c) Baseline guard
+    # Qualify the production reversal before executing tests or allocating recovery.
+    try:
+        non_test_patch = _filter_non_test_patch(diff_text)
+    except (unidiff.errors.UnidiffParseError, TransactionError) as exc:
+        return _transaction_block("invalid production patch: %s" % exc, repo_root)
+    if not non_test_patch.strip():
+        return _make_skipped_result("no non-test changes to revert")
+
+    # Baseline guard
     scoped_cmd = test_cmd + candidate.test_files
 
     run_env = os.environ.copy()
@@ -294,127 +404,110 @@ def run_fixval(
             advisories=[],
         )
 
-    # (d) Revert non-test hunks
-    non_test_patch = _filter_non_test_patch(diff_text)
-    if not non_test_patch.strip():
-        return _make_skipped_result("no non-test changes to revert")
-
     # Write patch to temp file
-    fd, patch_path = tempfile.mkstemp(
-        prefix=".fixval-revert-",
-        suffix=".patch",
-    )
-    restore_ok = False
+    try:
+        fd, patch_path = tempfile.mkstemp(prefix=".fixval-revert-", suffix=".patch")
+    except OSError as exc:
+        return _transaction_block("cannot allocate revert patch: %s" % exc, repo_root)
+    transaction = None
+    forward_applied = False
+    errors = []
+    interrupted = None
+    outcome = None
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(non_test_patch)
-
-        # Apply reverse patch (revert non-test changes)
-        revert_result = subprocess.run(
-            ["git", "apply", "-R", patch_path],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            cwd=repo_root,
-        )
+        preservation = {"recovery_parent": recovery_parent} if recovery_parent is not None else {}
+        transaction = FixvalTransaction(cwd, non_test_patch, **preservation)
+        transaction.prepare()
+        revert_result = transaction.reverse(patch_path)
         if revert_result.returncode != 0:
-            return _make_skipped_result("revert patch failed: %s" % revert_result.stderr[:200])
-
-        try:
-            # (e) Run scoped tests on reverted code
-            try:
-                test_result = subprocess.run(
-                    scoped_cmd,
-                    env=run_env,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=600,
-                    check=False,
-                    cwd=repo_root,
-                )
-                test_passed = test_result.returncode == 0
-            except subprocess.TimeoutExpired:
-                return _make_skipped_result("test timed out during FIXVAL revert check")
-
-            if not test_passed:
-                # Test failed on revert -> PASS (not hollow)
-                return FixvalResult(
-                    status=FixvalStatus.PASS,
-                    findings=[],
-                    advisories=[],
-                )
-
-            # Test passed on revert -> BLOCK (hollow test)
-            block_msg = "FIXVAL: Test(s) did not fail when the fix was reverted.\n\n  Reverted files:\n"
-            for f in candidate.non_test_files:
-                block_msg += "    %s\n" % f
-            block_msg += "\n  Tests that should have failed but passed:\n"
-            for f in candidate.test_files:
-                block_msg += "    %s\n" % f
-            block_msg += (
-                "\n"
-                "  This means the test passes on both the fixed and "
-                "unfixed code -- it does\n"
-                "  not actually verify the fix.\n"
-                "\n"
-                "  To waive (nondeterministic bug), at pre-commit "
-                "time use the env var:\n"
-                '    FIXVAL_WAIVER="<reason>" git commit ...\n'
-                "  and also add the trailer for the permanent "
-                "git-log record:\n"
-                "    Fixval-Waiver: <reason>\n"
-            )
-
-            return FixvalResult(
-                status=FixvalStatus.BLOCK,
-                findings=[
-                    StateFinding(
-                        id="FIXVAL_HOLLOW",
-                        fingerprint="fixval-hollow",
-                        source="FIXVAL",
-                        disposition=Disposition.DISMISSED,
-                        file=candidate.test_files[0] if candidate.test_files else "",
-                        line_range=[],
-                        description=("hollow test: test passes on both fixed and reverted code"),
-                    ),
-                ],
-                advisories=[],
-                block_message=block_msg,
-            )
-
-        finally:
-            # (f) Restore: forward re-apply (never git checkout --)
-            _restore = subprocess.run(
-                ["git", "apply", patch_path],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-                cwd=repo_root,
-            )
-            if _restore.returncode != 0:
-                _logger.error(
-                    "FIXVAL: restore failed -- working tree may be "
-                    "left in reverted state. Run 'git apply %s' to "
-                    "restore manually. stderr: %s",
-                    patch_path,
-                    _restore.stderr[:200],
-                )
-            else:
-                restore_ok = True
-
+            errors.append("revert patch failed: %s" % revert_result.stderr[:200])
+        else:
+            transaction.mark_reverted()
+            outcome = _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root)
+    except (OSError, ValueError, TransactionError, subprocess.SubprocessError) as exc:
+        errors.append(str(exc))
+    except (KeyboardInterrupt, SystemExit) as exc:
+        interrupted = exc
     finally:
-        # Clean up temp patch file only if restore succeeded
-        if restore_ok:
+        if transaction is not None:
+            try:
+                if transaction.reverted:
+                    if transaction.can_apply_forward():
+                        restored = subprocess.run(
+                            ["git", "apply", "--check", patch_path],
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            check=False,
+                            cwd=repo_root,
+                            env=transaction.git_environment(),
+                        )
+                        forward_validated = restored.returncode == 0
+                        if not forward_validated:
+                            errors.append("forward patch failed: %s" % restored.stderr[:200])
+                    else:
+                        errors.append("source entries changed during reverted tests")
+            except (OSError, TransactionError, subprocess.SubprocessError) as exc:
+                errors.append(str(exc))
+            except (KeyboardInterrupt, SystemExit) as exc:
+                interrupted = interrupted or exc
+                errors.append("forward restoration interrupted: %s" % type(exc).__name__)
+            try:
+                try:
+                    errors.extend(transaction.restore(forward_applied))
+                except (OSError, TransactionError) as exc:
+                    errors.append("entry restoration failed: %s" % exc)
+                except (KeyboardInterrupt, SystemExit) as exc:
+                    interrupted = interrupted or exc
+                    errors.append("entry restoration interrupted: %s" % type(exc).__name__)
+                    # One bounded retry finishes known entries after cancellation;
+                    # repeated cancellation retains recovery and remains visible.
+                    try:
+                        errors.extend(transaction.restore(forward_applied))
+                    except (OSError, TransactionError) as retry:
+                        errors.append("entry restoration retry failed: %s" % retry)
+                    except (KeyboardInterrupt, SystemExit) as retry:
+                        errors.append("entry restoration retry interrupted: %s" % type(retry).__name__)
+            finally:
+                if sys.exception() is not None:
+                    errors.append("entry restoration escaped: %s" % type(sys.exception()).__name__)
+                errors.extend(transaction.image_errors)
+                transaction.recovery_needed = transaction.recovery_needed or bool(errors)
+                try:
+                    transaction.close()
+                except (OSError, TransactionError) as exc:
+                    errors.append("transaction cleanup failed: %s" % exc)
+                except (KeyboardInterrupt, SystemExit) as exc:
+                    interrupted = interrupted or exc
+                    errors.append("transaction cleanup interrupted: %s" % type(exc).__name__)
+        if not errors:
             try:
                 os.unlink(patch_path)
-            except OSError:
-                pass
+            except OSError as exc:
+                errors.append("patch cleanup failed: %s" % exc)
+    recovery = (
+        transaction.recovery_location
+        if transaction is not None
+        and transaction.recovery_location
+        and (
+            transaction.recovery_needed
+            or transaction.directory is not None
+            and transaction.directory.exists()
+        )
+        else patch_path
+    )
+    if errors:
+        _logger.error("FIXVAL: restore failed: %s; recovery: %s", "; ".join(errors), recovery)
+    if interrupted is not None:
+        if errors:
+            interrupted.add_note("FIXVAL recovery: %s (%s)" % (recovery, "; ".join(errors)))
+        raise interrupted
+    if errors:
+        return _transaction_block("; ".join(errors), recovery)
+    return outcome
 
 
 class _VariableRenamer(ast.NodeTransformer):

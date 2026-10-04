@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import signal
 import shutil
 import tempfile
 import threading
@@ -20,6 +21,75 @@ import yaml
 from .diff import get_changed_files
 from .git import git_diff, resolve_git_ref
 from .verify import _load_receipts
+
+
+@contextlib.contextmanager
+def _defer_worker_signals():
+    """Replay cancellation after every owned worker has finished source cleanup."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    signals = (signal.SIGINT, signal.SIGTERM)
+    previous = {signum: signal.getsignal(signum) for signum in signals}
+    pending = []
+
+    def defer(signum, frame):
+        pending.append((signum, frame))
+
+    try:
+        for signum in signals:
+            signal.signal(signum, defer)
+        yield
+    finally:
+        first_error = None
+
+        def remember(signum, exc):
+            nonlocal first_error
+            if first_error is None:
+                first_error = exc
+            else:
+                first_error.add_note("Additional signal %s raised %s" % (signum, type(exc).__name__))
+
+        next_pending = 0
+
+        def replay_pending():
+            nonlocal next_pending
+            while next_pending < len(pending):
+                signum, frame = pending[next_pending]
+                next_pending += 1
+                try:
+                    handler = previous[signum]
+                    if callable(handler):
+                        handler(signum, frame)
+                    elif handler != signal.SIG_IGN:
+                        raise KeyboardInterrupt
+                except BaseException as exc:  # noqa: BLE001 - replay every queued signal handler
+                    remember(signum, exc)
+
+        try:
+            replay_pending()
+        finally:
+            for signum, handler in previous.items():
+                try:
+                    signal.signal(signum, handler)
+                except BaseException as exc:  # noqa: BLE001 - finish restoration before propagating cancellation
+                    remember(signum, exc)
+            replay_pending()
+        if first_error is not None:
+            raise first_error
+
+
+def _recovery_parents(source_roots: set[Path]) -> dict[Path, Path]:
+    """Keep preservation namespaces outside every participating source root."""
+    parents = {}
+    for source_root in source_roots:
+        parent = source_root.parent
+        while any(parent.is_relative_to(root) for root in source_roots):
+            if parent.parent == parent:
+                raise ValueError("cannot place FIXVAL recovery outside participating source roots")
+            parent = parent.parent
+        parents[source_root] = parent
+    return parents
 
 
 class RepositoryFalsifier:
@@ -151,7 +221,7 @@ def derive_source_files(
     repo_path: Path,
     per_repo_diff: str,
 ) -> list[Path]:
-    """Derive changed-file list from a per-repo diff as absolute paths.
+    """Derive changed-file list as lexical absolute paths without following symlinks.
 
     Args:
         repo_path: absolute path to the repo root.
@@ -164,7 +234,7 @@ def derive_source_files(
     if not per_repo_diff:
         return []
     rel_files = get_changed_files(per_repo_diff)
-    return [Path(repo_path / f).resolve() for f in rel_files]
+    return [Path(os.path.abspath(repo_path / f)) for f in rel_files]
 
 
 def run_cross_repo(
@@ -190,9 +260,9 @@ def run_cross_repo(
     cwd), collects verdicts, and merges them per the primary-authoritative
     rule.  Per-repo tmp cwds are cleaned up on exit.
 
-    Does NOT acquire ForgeLock.  Cross-repo mode is dispatched before the
-    lock site in cli.py.  Threads write to distinct per-repo cwds created
-    by make_per_repo_cwd(), so no lock contention is possible.
+    Canonical source locks cover diff capture, live-source LOCAL transactions,
+    thread completion and receipt collection. Per-repo temporary cwds isolate
+    review state while source transactions remain serialized.
 
     Returns the joint Verdict (primary-authoritative).
     """
@@ -218,271 +288,297 @@ def run_cross_repo(
         primary_language=primary_lang,
     )
 
-    # -- Step 2: acquire diffs (fail-closed on bad ref) --
-    repo_entries = []
-    primary_diff = get_sibling_diff(primary_path, primary_ref)
-    repo_entries.append(
-        {
-            "label": primary_label,
-            "repo_path": primary_path,
-            "ref": primary_ref,
-            "diff": primary_diff,
-        }
-    )
-    for sib in siblings:
-        sib_path = Path(sib["repo"]).resolve()
-        sib_ref = sib["ref"]
-        sib_label = sib.get("label") or os.path.basename(sib["repo"].rstrip("/"))
-        sib_diff = get_sibling_diff(sib_path, sib_ref)
+    from .lock import ForgeLock
+
+    primary_path = primary_path.resolve()
+    source_roots = {primary_path, *(Path(sib["repo"]).resolve() for sib in siblings)}
+    with contextlib.ExitStack() as source_locks:
+        for source_root in sorted(source_roots, key=str):
+            source_locks.enter_context(ForgeLock(source_root / ".code-forge" / "code-forge.lock"))
+        recovery_parents = _recovery_parents(source_roots)
+        # -- Step 2: acquire diffs (fail-closed on bad ref) --
+        repo_entries = []
+        primary_diff = get_sibling_diff(primary_path, primary_ref)
         repo_entries.append(
             {
-                "label": sib_label,
-                "repo_path": sib_path,
-                "ref": sib_ref,
-                "diff": sib_diff,
+                "label": primary_label,
+                "repo_path": primary_path,
+                "ref": primary_ref,
+                "diff": primary_diff,
             }
         )
+        for sib in siblings:
+            sib_path = Path(sib["repo"]).resolve()
+            sib_ref = sib["ref"]
+            sib_label = sib.get("label") or os.path.basename(sib["repo"].rstrip("/"))
+            sib_diff = get_sibling_diff(sib_path, sib_ref)
+            repo_entries.append(
+                {
+                    "label": sib_label,
+                    "repo_path": sib_path,
+                    "ref": sib_ref,
+                    "diff": sib_diff,
+                }
+            )
 
-    # -- Step 3: assemble joint context --
-    from .receipt_scope import repository_scope
+        # -- Step 3: assemble joint context --
+        from .receipt_scope import repository_scope
 
-    labels = [e["label"] for e in repo_entries]
-    paths = [e["repo_path"].resolve() for e in repo_entries]
-    if len(set(labels)) != len(labels) or len(set(paths)) != len(paths):
-        raise ValueError("INFRA: ambiguous reviewed repository identity")
-    reviewed_repositories = {e["label"]: e["diff"] for e in repo_entries}
-    _, repository_manifest = repository_scope(reviewed_repositories)
-    joint_diff = build_cross_repo_context(
-        [
-            {"label": e["label"], "ref": e["ref"], "diff": repository_scope({e["label"]: e["diff"]})[0]}
-            for e in repo_entries
-        ]
-    ) + (
-        "Cross-repo evidence: use exact qualified file paths in the diff "
-        "in BOTH findings and code_excerpts. Each path pins repository and "
-        "reviewed source version. Never strip the label@hash/ prefix.\n"
-    )
-
-    # -- Step 3b: load contract spec for primary repo --
-    _contract_spec = ""
-    _contracts_yaml = primary_path / ".code-forge" / "contracts.yaml"
-    if _contracts_yaml.is_file():
-        from .contract_loader import load_contract_digest
-
-        _contract_spec = load_contract_digest(
-            _contracts_yaml,
-            primary_path,
-            backend=backend,
+        labels = [e["label"] for e in repo_entries]
+        paths = [e["repo_path"].resolve() for e in repo_entries]
+        if len(set(labels)) != len(labels) or len(set(paths)) != len(paths):
+            raise ValueError("INFRA: ambiguous reviewed repository identity")
+        reviewed_repositories = {e["label"]: e["diff"] for e in repo_entries}
+        _, repository_manifest = repository_scope(reviewed_repositories)
+        joint_diff = build_cross_repo_context(
+            [
+                {
+                    "label": e["label"],
+                    "ref": e["ref"],
+                    "diff": repository_scope({e["label"]: e["diff"]})[0],
+                }
+                for e in repo_entries
+            ]
+        ) + (
+            "Cross-repo evidence: use exact qualified file paths in the diff "
+            "in BOTH findings and code_excerpts. Each path pins repository and "
+            "reviewed source version. Never strip the label@hash/ prefix.\n"
         )
 
-    # -- Step 4: build per-repo cwds (cleanup via ExitStack) --
-    # -- Step 5: launch threads --
-    # -- Step 6-9: collect, merge, return --
-    results: dict[str, Verdict] = {}
-    errors: dict[str, Exception] = {}
-    per_repo_findings: dict[str, list[dict]] = {}
+        # -- Step 3b: load contract spec for primary repo --
+        _contract_spec = ""
+        _contracts_yaml = primary_path / ".code-forge" / "contracts.yaml"
+        if _contracts_yaml.is_file():
+            from .contract_loader import load_contract_digest
 
-    # Reuse one falsifier per repository across the joint and local paths.
-    repo_falsifiers = {
-        e["label"]: build_falsifier(engine_choice, diff_text=e["diff"], backend=backend)
-        for e in repo_entries
-    }
-    with contextlib.ExitStack() as stack:
-        thread_args = []
-        for entry in repo_entries:
-            label = entry["label"]
-            is_primary = label == primary_label
-            cwd = make_per_repo_cwd(
-                label,
-                gate_config=gate_config if is_primary else None,
+            _contract_spec = load_contract_digest(
+                _contracts_yaml,
+                primary_path,
+                backend=backend,
             )
-            stack.callback(shutil.rmtree, cwd, True)
-            thread_args.append(
-                (
+
+        # -- Step 4: build per-repo cwds (cleanup via ExitStack) --
+        # -- Step 5: launch threads --
+        # -- Step 6-9: collect, merge, return --
+        results: dict[str, Verdict] = {}
+        errors: dict[str, Exception] = {}
+        per_repo_findings: dict[str, list[dict]] = {}
+
+        # Reuse one falsifier per repository across the joint and local paths.
+        repo_falsifiers = {
+            e["label"]: build_falsifier(engine_choice, diff_text=e["diff"], backend=backend)
+            for e in repo_entries
+        }
+        with contextlib.ExitStack() as stack:
+            thread_args = []
+            for entry in repo_entries:
+                label = entry["label"]
+                is_primary = label == primary_label
+                cwd = make_per_repo_cwd(
                     label,
-                    entry["repo_path"],
-                    entry["diff"],
-                    cwd,
-                    is_primary,
+                    gate_config=gate_config if is_primary else None,
                 )
-            )
-
-        def _thread_fn(label, repo_path, diff_text, per_cwd, is_primary):
-            try:
-                source_files = derive_source_files(repo_path, diff_text)
-
-                # StateMachine gets per-repo raw diff (not joint context)
-                resolved_for_sm = ResolvedReview(
-                    source_files=source_files,
-                    baseline_content=None,
-                    git_diff=diff_text,
-                    mode_hint="git",
+                stack.callback(shutil.rmtree, cwd, True)
+                thread_args.append(
+                    (
+                        label,
+                        entry["repo_path"],
+                        entry["diff"],
+                        cwd,
+                        is_primary,
+                    )
                 )
-                source_hash = compute_source_hash(git_diff=diff_text)
 
-                if is_primary:
-                    # L1 sees the joint cross-repo context
-                    resolved_for_l1 = ResolvedReview(
+            completed = {entry["label"]: threading.Event() for entry in repo_entries}
+
+            def _thread_fn(label, repo_path, diff_text, per_cwd, is_primary):
+                try:
+                    source_files = derive_source_files(repo_path, diff_text)
+
+                    # StateMachine gets per-repo raw diff (not joint context)
+                    resolved_for_sm = ResolvedReview(
                         source_files=source_files,
                         baseline_content=None,
-                        git_diff=joint_diff,
+                        git_diff=diff_text,
                         mode_hint="git",
                     )
-                    from .machine import TimeoutCircuitBreaker
+                    source_hash = compute_source_hash(git_diff=diff_text)
 
-                    breaker = TimeoutCircuitBreaker(threshold=5)
+                    if is_primary:
+                        # L1 sees the joint cross-repo context
+                        resolved_for_l1 = ResolvedReview(
+                            source_files=source_files,
+                            baseline_content=None,
+                            git_diff=joint_diff,
+                            mode_hint="git",
+                        )
+                        from .machine import TimeoutCircuitBreaker
 
-                    l1_provider = build_l1_provider(
-                        engine_choice,
-                        resolved_for_l1,
-                        backend=backend,
-                        breaker=breaker,
-                        contract_spec=_contract_spec,
-                        reviewed_repositories=reviewed_repositories,
-                        focus_spec=focus_spec,
-                    )
-                    from .cross_repo_impact import CrossRepoImpactRunner
-                    from .daemon_state import DaemonStateRunner
-                    from .graph_triage import GraphTriageRunner
-                    from .legacy import LegacyRunner
-                    from .runtime import RuntimeRunner
-                    from .rulepack import RulepackRunner
-                    from .taint import TaintRunner
+                        breaker = TimeoutCircuitBreaker(threshold=5)
 
-                    advisory_runners = [
-                        TaintRunner(),
-                        RuntimeRunner(backend=backend),
-                        GraphTriageRunner(),
-                        DaemonStateRunner(backend=backend),
-                        LegacyRunner(),
-                        RulepackRunner(),
-                        CrossRepoImpactRunner(),
-                    ]
-                else:
-                    # Siblings: no L1 cost, no advisory runners
-                    l1_provider = lambda: ([], [], Usage(), 0.0)  # noqa: E731
-                    advisory_runners = []
+                        l1_provider = build_l1_provider(
+                            engine_choice,
+                            resolved_for_l1,
+                            backend=backend,
+                            breaker=breaker,
+                            contract_spec=_contract_spec,
+                            reviewed_repositories=reviewed_repositories,
+                            focus_spec=focus_spec,
+                        )
+                        from .cross_repo_impact import CrossRepoImpactRunner
+                        from .daemon_state import DaemonStateRunner
+                        from .graph_triage import GraphTriageRunner
+                        from .legacy import LegacyRunner
+                        from .runtime import RuntimeRunner
+                        from .rulepack import RulepackRunner
+                        from .taint import TaintRunner
 
-                # Only the primary runs L1; siblings have no coverage obligation.
-                coverage_l1_active = bool(
-                    is_primary and any(e["diff"] for e in repo_entries) and engine_choice != "stub"
-                )
+                        advisory_runners = [
+                            TaintRunner(),
+                            RuntimeRunner(backend=backend),
+                            GraphTriageRunner(),
+                            DaemonStateRunner(backend=backend),
+                            LegacyRunner(),
+                            RulepackRunner(),
+                            CrossRepoImpactRunner(),
+                        ]
+                    else:
+                        # Siblings: no L1 cost, no advisory runners
+                        l1_provider = lambda: ([], [], Usage(), 0.0)  # noqa: E731
+                        advisory_runners = []
 
-                # Each falsifier judges its own repository, not the joint L1 diff.
-                falsifier = repo_falsifiers[label]
-
-                if is_primary:
-                    falsifier = RepositoryFalsifier(
-                        falsifier,
-                        {
-                            "%s@%s" % (e["label"], repository_manifest[e["label"]]): repo_falsifiers[
-                                e["label"]
-                            ]
-                            for e in repo_entries
-                        },
+                    # Only the primary runs L1; siblings have no coverage obligation.
+                    coverage_l1_active = bool(
+                        is_primary and any(e["diff"] for e in repo_entries) and engine_choice != "stub"
                     )
 
-                from .machine import StateMachine
+                    # Each falsifier judges its own repository, not the joint L1 diff.
+                    falsifier = repo_falsifiers[label]
 
-                sm = StateMachine(
-                    mode=mode,
-                    falsifier=falsifier,
-                    autofixer=NoChangeAutoFixer(),
-                    revert_fn=lambda f: None,
-                    resolved_review=resolved_for_sm,
-                    source_hash=source_hash,
-                    baseline_spec_repr=label,
-                    cwd=per_cwd,
-                    registry={},
-                    l1_provider=l1_provider,
-                    advisory_runners=advisory_runners,
-                    max_total_rounds=max_rounds,
-                    max_fix_attempts=max_fix_attempts,
-                    clean_round_threshold=clean_round_threshold,
-                    coverage_l1_active=coverage_l1_active,
-                    reviewed_repositories=(reviewed_repositories if is_primary else None),
+                    if is_primary:
+                        falsifier = RepositoryFalsifier(
+                            falsifier,
+                            {
+                                "%s@%s" % (e["label"], repository_manifest[e["label"]]): repo_falsifiers[
+                                    e["label"]
+                                ]
+                                for e in repo_entries
+                            },
+                        )
+
+                    from .machine import StateMachine
+
+                    sm = StateMachine(
+                        mode=mode,
+                        falsifier=falsifier,
+                        autofixer=NoChangeAutoFixer(),
+                        revert_fn=lambda f: None,
+                        resolved_review=resolved_for_sm,
+                        source_hash=source_hash,
+                        baseline_spec_repr=label,
+                        cwd=per_cwd,
+                        source_root=repo_path,
+                        recovery_parent=recovery_parents[repo_path],
+                        registry={},
+                        l1_provider=l1_provider,
+                        advisory_runners=advisory_runners,
+                        max_total_rounds=max_rounds,
+                        max_fix_attempts=max_fix_attempts,
+                        clean_round_threshold=clean_round_threshold,
+                        coverage_l1_active=coverage_l1_active,
+                        reviewed_repositories=(reviewed_repositories if is_primary else None),
+                    )
+                    verdict = sm.run()
+                    results[label] = verdict
+                except Exception as exc:
+                    errors[label] = exc
+                finally:
+                    completed[label].set()
+
+            threads = [
+                threading.Thread(
+                    target=_thread_fn,
+                    args=args,
+                    daemon=True,
                 )
-                verdict = sm.run()
-                results[label] = verdict
-            except Exception as exc:
-                errors[label] = exc
+                for args in thread_args
+            ]
+            with _defer_worker_signals():
+                started = []
+                try:
+                    for thread, args in zip(threads, thread_args, strict=True):
+                        thread.start()
+                        started.append((thread, completed[args[0]]))
+                finally:
+                    for thread, finished in started:
+                        finished.wait()
+                        thread.join()
 
-        threads = [
-            threading.Thread(
-                target=_thread_fn,
-                args=args,
-                daemon=True,
-            )
-            for args in thread_args
+            # -- Step 6: fail-closed on PRIMARY error; sibling errors are advisory --
+            if primary_label in errors:
+                raise errors[primary_label]
+            for label, exc in errors.items():
+                # Sibling crash -> treat as FAIL verdict with warning, not
+                # a hard abort.  Sibling failures are advisory (primary
+                # is authoritative for the joint verdict).
+                results[label] = Verdict.FAIL
+                output_fn("[cross-repo] WARNING: sibling %r crashed: %s" % (label, exc))
+
+            # -- Step 7: verdict merge + PENDING guard --
+            primary_verdict = results[primary_label]
+            if primary_verdict == Verdict.PENDING:
+                output_fn(
+                    "[cross-repo] primary returned PENDING (HOLD); "
+                    "cross-repo does not support interactive HOLD "
+                    "-- treating as FAIL"
+                )
+                primary_verdict = Verdict.FAIL
+
+            sibling_fails = [
+                label
+                for label, v in results.items()
+                if label != primary_label and v in (Verdict.FAIL, Verdict.ESCALATED)
+            ]
+            if sibling_fails:
+                output_fn(
+                    "[cross-repo] WARNING: sibling(s) %s have findings "
+                    "-- see per-repo receipts" % sibling_fails
+                )
+
+            # -- Step 8: collect per-repo receipts --
+            primary_receipts_dest = primary_path / ".code-forge"
+            primary_receipts_dest.mkdir(parents=True, exist_ok=True)
+            for label, _repo_path, _diff, per_cwd, _is_primary in thread_args:
+                receipts_dir = per_cwd / ".code-forge" / "receipts"
+                if not receipts_dir.is_dir():
+                    per_repo_findings[label] = []
+                    continue
+                all_receipts = _load_receipts(receipts_dir)
+                findings = []
+                for r in all_receipts:
+                    findings.extend(r.get("findings", []))
+                per_repo_findings[label] = findings
+                for r in receipts_dir.glob("receipt-*.json"):
+                    dst = primary_receipts_dest / ("%s-%s" % (label, r.name))
+                    shutil.copy2(r, dst)
+
+        # -- Step 9: grouped output (after receipts are fully collected) --
+        ordered_labels = [primary_label] + [
+            s.get("label") or os.path.basename(s["repo"].rstrip("/")) for s in siblings
         ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        scoped_labels = {
+            "%s@%s" % (label, version): label for label, version in repository_manifest.items()
+        }
+        grouped_findings = {label: [] for label in ordered_labels}
+        for origin, findings in per_repo_findings.items():
+            for finding in findings:
+                identity = finding["file"].partition("/")[0]
+                label = scoped_labels.get(identity, origin)
+                grouped_findings[label].append(finding)
+        format_cross_repo_output(grouped_findings, ordered_labels, output_fn)
 
-        # -- Step 6: fail-closed on PRIMARY error; sibling errors are advisory --
-        if primary_label in errors:
-            raise errors[primary_label]
-        for label, exc in errors.items():
-            # Sibling crash -> treat as FAIL verdict with warning, not
-            # a hard abort.  Sibling failures are advisory (primary
-            # is authoritative for the joint verdict).
-            results[label] = Verdict.FAIL
-            output_fn("[cross-repo] WARNING: sibling %r crashed: %s" % (label, exc))
-
-        # -- Step 7: verdict merge + PENDING guard --
-        primary_verdict = results[primary_label]
-        if primary_verdict == Verdict.PENDING:
-            output_fn(
-                "[cross-repo] primary returned PENDING (HOLD); "
-                "cross-repo does not support interactive HOLD "
-                "-- treating as FAIL"
-            )
-            primary_verdict = Verdict.FAIL
-
-        sibling_fails = [
-            label
-            for label, v in results.items()
-            if label != primary_label and v in (Verdict.FAIL, Verdict.ESCALATED)
-        ]
-        if sibling_fails:
-            output_fn(
-                "[cross-repo] WARNING: sibling(s) %s have findings "
-                "-- see per-repo receipts" % sibling_fails
-            )
-
-        # -- Step 8: collect per-repo receipts --
-        primary_receipts_dest = primary_path / ".code-forge"
-        primary_receipts_dest.mkdir(parents=True, exist_ok=True)
-        for label, _repo_path, _diff, per_cwd, _is_primary in thread_args:
-            receipts_dir = per_cwd / ".code-forge" / "receipts"
-            if not receipts_dir.is_dir():
-                per_repo_findings[label] = []
-                continue
-            all_receipts = _load_receipts(receipts_dir)
-            findings = []
-            for r in all_receipts:
-                findings.extend(r.get("findings", []))
-            per_repo_findings[label] = findings
-            for r in receipts_dir.glob("receipt-*.json"):
-                dst = primary_receipts_dest / ("%s-%s" % (label, r.name))
-                shutil.copy2(r, dst)
-
-    # -- Step 9: grouped output (after receipts are fully collected) --
-    ordered_labels = [primary_label] + [
-        s.get("label") or os.path.basename(s["repo"].rstrip("/")) for s in siblings
-    ]
-    scoped_labels = {"%s@%s" % (label, version): label for label, version in repository_manifest.items()}
-    grouped_findings = {label: [] for label in ordered_labels}
-    for origin, findings in per_repo_findings.items():
-        for finding in findings:
-            identity = finding["file"].partition("/")[0]
-            label = scoped_labels.get(identity, origin)
-            grouped_findings[label].append(finding)
-    format_cross_repo_output(grouped_findings, ordered_labels, output_fn)
-
-    # -- Step 10: return joint verdict --
-    return primary_verdict
+        # -- Step 10: return joint verdict --
+        return primary_verdict
 
 
 def format_cross_repo_output(

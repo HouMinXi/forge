@@ -11,9 +11,11 @@ the same working tree file state. Tools run on the actual files
 same files. Addresses LAYER0-03 and review Consensus #2.
 """
 
+from collections.abc import Iterator
+from io import StringIO
 import logging
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import unidiff
 
@@ -64,6 +66,11 @@ def unquote_git_path(inner: str) -> str:
     return out.decode("utf-8", "surrogateescape")
 
 
+def _lexical_diff_path(path: str) -> str:
+    """Unify repository path spelling without filesystem or parent resolution."""
+    return str(PurePosixPath(path)) if path else path
+
+
 def normalize_diff_path(raw: str, *, strip_git_prefix: bool = False) -> str:
     """Map a git +++ / unidiff path token to the working-tree relative path.
 
@@ -80,7 +87,7 @@ def normalize_diff_path(raw: str, *, strip_git_prefix: bool = False) -> str:
         strip_git_prefix = True
     if strip_git_prefix and path.startswith(("a/", "b/")):
         path = path[2:]
-    return path
+    return _lexical_diff_path(path)
 
 
 def path_from_file_header(line: str, *, plus: bool) -> str | None:
@@ -102,8 +109,8 @@ def path_from_plus_header(line: str) -> str | None:
     return path_from_file_header(line, plus=True)
 
 
-def path_from_git_header(line: str) -> str | None:
-    """Working-tree path from a diff --git line, preferring the b/ side."""
+def path_from_git_header(line: str, *, plus: bool = True) -> str | None:
+    """Working-tree path from an intact diff --git line."""
     raw = line.split("\t")[0].rstrip("\r\n")
     if not raw.startswith("diff --git "):
         return None
@@ -112,8 +119,8 @@ def path_from_git_header(line: str) -> str | None:
     if rest.startswith('"'):
         parts = rest.split('" "')
         if len(parts) >= 2:
-            b_side = parts[-1].rstrip('"')
-            return normalize_diff_path('"' + b_side + '"', strip_git_prefix=True)
+            side = parts[-1].rstrip('"') if plus else parts[0].lstrip('"')
+            return normalize_diff_path('"' + side + '"', strip_git_prefix=True)
         return None
     # Unquoted: git emits a/<path> b/<path>. The path may itself contain
     # " b/" (directory "foo b"), so the first " b/" is not the separator.
@@ -128,29 +135,45 @@ def path_from_git_header(line: str) -> str | None:
             left = body[:found]
             right = body[found + 3 :]
             if left == right:
-                return left
+                return _lexical_diff_path(left)
             start = found + 1
     if rest.startswith("b/"):
         return normalize_diff_path(rest, strip_git_prefix=True)
     return None
 
 
-def patched_file_path(pf) -> str:
+def patched_file_path(pf, *, source: bool = False) -> str | None:
     """Working-tree path for a unidiff PatchedFile.
 
     Unidiff splits C-quoted names with spaces on the timestamp tab, so
     .path / source_file / target_file are not trustworthy. Prefer the
-    intact diff --git line in patch_info when present.
+    intact diff --git line in patch_info when present. source=True selects the
+    pre-image identity, or None for additions, without changing the default.
     """
     info = getattr(pf, "patch_info", None)
+    if source and (
+        getattr(pf, "source_file", "") == "/dev/null"
+        or info
+        and any(line.startswith("new file mode ") for line in info)
+    ):
+        return None
     if info:
+        # Metadata preserves the complete path even when only one
+        # side of the diff --git header is C-quoted.
+        prefixes = ("rename from ", "copy from ") if source else ("rename to ", "copy to ")
+        for line in info:
+            if line.startswith(prefixes):
+                path = line.split(" ", 2)[2].rstrip("\r\n")
+                if path.startswith('"') and path.endswith('"'):
+                    return _lexical_diff_path(unquote_git_path(path[1:-1]))
+                return _lexical_diff_path(path)
         first = next(iter(info), "")
-        git_path = path_from_git_header(first)
+        git_path = path_from_git_header(first, plus=not source)
         if git_path:
             return git_path
     target = getattr(pf, "target_file", "") or ""
-    source = getattr(pf, "source_file", "") or ""
-    raw = target if target and "/dev/null" not in target else source
+    source_file = getattr(pf, "source_file", "") or ""
+    raw = source_file if source else target if target and "/dev/null" not in target else source_file
     if raw.startswith(("b/", "a/", '"b/', '"a/')):
         plus = path_from_plus_header("+++ " + raw)
         if plus is not None:
@@ -158,7 +181,7 @@ def patched_file_path(pf) -> str:
         minus = path_from_file_header("--- " + raw, plus=False)
         if minus is not None:
             return minus
-    return normalize_diff_path(pf.path)
+    return normalize_diff_path(raw or pf.path)
 
 
 def count_diff_lines(diff_text: str | None) -> int:
@@ -291,20 +314,89 @@ def extract_changed_lines(
     return result
 
 
-def get_changed_files(diff_text: str) -> list[str]:
-    """Return sorted list of files with additions/modifications.
+def _diff_files(diff_text: str) -> list[unidiff.PatchedFile]:
+    """Parse file entries for the shared path identity readers."""
+    if not diff_text or not diff_text.strip():
+        return []
+    try:
+        return list(unidiff.PatchSet(diff_text))
+    except unidiff.errors.UnidiffParseError:
+        logger.warning("Failed to parse diff text, returning empty list")
+        return []
 
-    Uses extract_changed_lines internally. Only files with at least
-    one added line are included.
+
+def get_removed_files(diff_text: str) -> list[str]:
+    """Return paths with an explicitly absent target in the captured diff.
+
+    Git normalizes text, empty and binary deletions to /dev/null. A file
+    emptied by a zero-line target hunk still has a real target and remains
+    executable input, even when unidiff's is_removed_file heuristic is true.
+    A locally retained file from git rm --cached has no reviewed post-image.
+    Type replacements may have both deletion and addition sections for the
+    same path; any positive target keeps that path executable.
+    """
+    removed: set[str] = set()
+    targets: set[str] = set()
+    for patched_file in _diff_files(diff_text):
+        path = patched_file_path(patched_file)
+        if patched_file.target_file == "/dev/null":
+            removed.add(path)
+        else:
+            targets.add(path)
+    return sorted(removed - targets)
+
+
+def get_changed_files(diff_text: str) -> list[str]:
+    """Return sorted, unique paths for every file in the diff.
+
+    Include deletions, binary and mode changes, and metadata-only entries.
+    Renames and copies use the destination path; deletions use the old path.
+    Added-line extraction has a separate contract in extract_changed_lines.
 
     Args:
         diff_text: raw unified diff text
 
     Returns:
-        Sorted list of file paths with additions.
+        Sorted file paths, or an empty list for empty or unparseable diffs.
     """
-    changed = extract_changed_lines(diff_text)
-    return sorted(changed.keys())
+    return sorted({patched_file_path(patched_file) for patched_file in _diff_files(diff_text)})
+
+
+def iter_diff_sections(diff_text: str) -> Iterator[tuple[str | None, str]]:
+    """Yield raw file frames; traditional sections have no Git path identity."""
+    lines = list(StringIO(diff_text))
+    body_lines = {
+        line.diff_line_no for entry in _diff_files(diff_text) for hunk in entry for line in hunk
+    }
+    current: list[str] = []
+    git_section = False
+    has_file_headers = False
+    for number, line in enumerate(lines, 1):
+        starts_git = line.startswith("diff --git ")
+        starts_plain = (
+            number not in body_lines
+            and line.startswith("--- ")
+            and number < len(lines)
+            and lines[number].startswith("+++ ")
+        )
+        different_file = (
+            starts_plain
+            and git_section
+            and not has_file_headers
+            and _section_entry(current)[0]
+            != (path_from_plus_header(lines[number]) or path_from_file_header(line, plus=False))
+        )
+        if starts_git or starts_plain and (has_file_headers or different_file):
+            if current:
+                yield _section_entry(current) if git_section else (None, "".join(current))
+            current = []
+            git_section = starts_git
+            has_file_headers = False
+        current.append(line)
+        if starts_plain or line.startswith(("GIT binary patch", "Binary files ")):
+            has_file_headers = True
+    if current:
+        yield _section_entry(current) if git_section else (None, "".join(current))
 
 
 def split_diff_for_files(diff_text: str, members: list[str]) -> str:
@@ -316,26 +408,13 @@ def split_diff_for_files(diff_text: str, members: list[str]) -> str:
     paths containing spaces survive (the `diff --git` line itself is
     ambiguous for those).
 
-    A member with no section (binary or pure-rename entries carry no hunks,
-    and a path listing tool may still report the file) is skipped rather
-    than treated as an error: nothing about such a file can be reviewed as
-    text anyway.
+    Binary, rename, copy and mode metadata blocks retain their original
+    text. A member absent from the captured diff is skipped.
     """
     if not diff_text:
         return ""
     wanted = set(members)
-    sections: list[tuple[str | None, str]] = []
-    current: list[str] = []
-    for line in diff_text.splitlines(keepends=True):
-        if line.startswith("diff --git "):
-            if current:
-                sections.append(_section_entry(current))
-            current = [line]
-        elif current:
-            current.append(line)
-    if current:
-        sections.append(_section_entry(current))
-    return "".join(text for path, text in sections if path in wanted)
+    return "".join(text for path, text in iter_diff_sections(diff_text) if path in wanted)
 
 
 def changed_files_in_order(diff_text: str) -> list[str]:
@@ -349,7 +428,7 @@ def changed_files_in_order(diff_text: str) -> list[str]:
         return []
     seen: list[str] = []
     current: list[str] = []
-    for line in diff_text.splitlines(keepends=True):
+    for line in StringIO(diff_text):
         if line.startswith("diff --git "):
             if current:
                 path, _text = _section_entry(current)
@@ -368,6 +447,7 @@ def changed_files_in_order(diff_text: str) -> list[str]:
 def _section_entry(lines: list[str]) -> tuple[str | None, str]:
     """(post-change path, verbatim section text) for one diff section."""
     old_path: str | None = None
+    metadata_path: str | None = None
     for line in lines:
         if line.startswith("@@"):
             break
@@ -377,7 +457,14 @@ def _section_entry(lines: list[str]) -> tuple[str | None, str]:
         minus = path_from_file_header(line, plus=False)
         if minus is not None:
             old_path = minus
-    return old_path, "".join(lines)
+        if line.startswith("diff --git "):
+            metadata_path = path_from_git_header(line)
+        elif line.startswith(("rename to ", "copy to ")):
+            raw = line.split(" to ", 1)[1].rstrip("\r\n")
+            metadata_path = (
+                unquote_git_path(raw[1:-1]) if raw.startswith('"') and raw.endswith('"') else raw
+            )
+    return old_path or metadata_path, "".join(lines)
 
 
 def parse_diff_hunks(
@@ -596,7 +683,8 @@ def _annotation_walk(diff_text: str) -> tuple[str, bool] | None:
     src_left = 0
     tgt_left = 0
     wrote_bracket = False
-    for line in diff_text.splitlines():
+    for raw_line in StringIO(diff_text):
+        line = raw_line.removesuffix("\n")
         m = _HUNK_HEADER.match(line)
         if line_no is not None and src_left <= 0 and tgt_left <= 0 and not line.startswith("\\"):
             line_no = None

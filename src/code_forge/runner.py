@@ -24,13 +24,14 @@ import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
 
 from code_forge.registry import ToolConfig, match_tools
 
 logger = logging.getLogger(__name__)
 
 
-def _resolve_command(command: str) -> str | None:
+def _resolve_command(command: str, *, cwd: Path | None = None) -> str | None:
     """Resolve a tool command to an executable path.
 
     First tries shutil.which on the binary name (first word of command).
@@ -40,6 +41,7 @@ def _resolve_command(command: str) -> str | None:
 
     This addresses DeepSeek's finding: checkpatch.pl is a relative
     path, not on PATH.  shutil.which alone misses it.
+    Relative PATH entries resolve against cwd when provided.
 
     Args:
         command: tool command string from ToolConfig.command
@@ -56,9 +58,14 @@ def _resolve_command(command: str) -> str | None:
     # Extract binary name (first word) for PATH resolution.
     # "cppcheck -q --output-format=sarif" -> "cppcheck"
     binary = command.split()[0]
-    resolved = shutil.which(binary)
+    if cwd is not None and os.sep in binary and not os.path.isabs(binary):
+        binary = os.path.abspath(cwd / binary)
+    search_path = None
+    if cwd is not None:
+        search_path = os.pathsep.join(os.path.abspath(cwd / entry) for entry in os.get_exec_path())
+    resolved = shutil.which(binary) if search_path is None else shutil.which(binary, path=search_path)
     if resolved is not None:
-        return resolved
+        return os.path.abspath(resolved) if cwd is not None else resolved
 
     # Try relative path resolution (e.g. scripts/checkpatch.pl)
     if os.sep in binary:
@@ -68,7 +75,7 @@ def _resolve_command(command: str) -> str | None:
     return None
 
 
-def capture_tool_version(command: str, args: list[str] | None = None) -> str:
+def capture_tool_version(command: str, args: list[str] | None = None, *, cwd: Path | None = None) -> str:
     """Capture a tool's version string for GATE-02 reproducibility.
 
     Runs "<resolved_cmd> --version" and returns the first line of
@@ -82,7 +89,7 @@ def capture_tool_version(command: str, args: list[str] | None = None) -> str:
         Version string (first line of stdout), "not_installed" if
         the command cannot be found, or "unknown" on any error.
     """
-    resolved = _resolve_command(command)
+    resolved = _resolve_command(command, cwd=cwd)
     if resolved is None:
         return "not_installed"
 
@@ -98,6 +105,7 @@ def capture_tool_version(command: str, args: list[str] | None = None) -> str:
             errors="replace",
             timeout=5,
             check=False,
+            cwd=cwd,
         )
         first_line = result.stdout.strip().split("\n")[0]
         return first_line if first_line else "unknown"
@@ -170,7 +178,9 @@ def _ruff_subcommand(parts: list[str], prefix: int) -> str | None:
     return None
 
 
-def sarif_producer_profile(command: str, args: list[str] | None = None) -> str | None:
+def sarif_producer_profile(
+    command: str, args: list[str] | None = None, *, cwd: Path | None = None
+) -> str | None:
     """Identify known Ruff check invocations independently of registry names.
 
     Opaque wrappers are not identifiable from their declared command alone.
@@ -179,7 +189,7 @@ def sarif_producer_profile(command: str, args: list[str] | None = None) -> str |
     parts = command.split() + list(args or [])
     if not parts:
         return None
-    parts[0] = _resolve_command(command) or parts[0]
+    parts[0] = _resolve_command(command, cwd=cwd) or parts[0]
     prefix = _ruff_prefix_length(parts)
     if not prefix:
         return None
@@ -190,6 +200,8 @@ def sarif_producer_profile(command: str, args: list[str] | None = None) -> str |
 def run_tool(
     tool_config: ToolConfig,
     files: list[str],
+    *,
+    cwd: Path | None = None,
 ) -> tuple[str, int, str] | None:
     """Execute a single tool via subprocess.
 
@@ -211,7 +223,7 @@ def run_tool(
     Raises:
         RuntimeError: if tool is required but not found
     """
-    resolved = _resolve_command(tool_config.command)
+    resolved = _resolve_command(tool_config.command, cwd=cwd)
 
     if resolved is None:
         if tool_config.required:
@@ -225,7 +237,7 @@ def run_tool(
     # the original command string.
     cmd_parts = tool_config.command.split()
     cmd = [resolved] + cmd_parts[1:] + tool_config.args
-    if sarif_producer_profile(tool_config.command, tool_config.args) == "ruff":
+    if sarif_producer_profile(tool_config.command, tool_config.args, cwd=cwd) == "ruff":
         mutating = {"--fix", "--fix-only", "--unsafe-fixes", "--diff", "--add-noqa", "--add-ignore"}
         prefix = _ruff_prefix_length(cmd)
         ruff_args = cmd[prefix:]
@@ -249,6 +261,7 @@ def run_tool(
             errors="replace",
             timeout=tool_config.timeout,
             check=False,
+            cwd=cwd,
         )
         # Some tools (e.g. cppcheck) emit SARIF on stderr.
         # output_stream="stderr" swaps the streams so the parser
@@ -275,6 +288,8 @@ def run_tool(
 def run_tools(
     registry: dict[str, ToolConfig],
     files: list[str],
+    *,
+    cwd: Path | None = None,
 ) -> tuple[dict[str, tuple[str, int, str]], dict[str, str], list[str], list[str]]:
     """Execute all matching tools from the registry.
 
@@ -307,7 +322,7 @@ def run_tools(
         tool_config = registry[tool_name]
 
         # Capture version (Consensus #3)
-        tool_versions[tool_name] = capture_tool_version(tool_config.command, tool_config.args)
+        tool_versions[tool_name] = capture_tool_version(tool_config.command, tool_config.args, cwd=cwd)
 
         # Check for matching files
         matching_files = matched.get(tool_name, [])
@@ -315,7 +330,7 @@ def run_tools(
             tools_skipped.append(tool_name)
             continue
 
-        result = run_tool(tool_config, matching_files)
+        result = run_tool(tool_config, matching_files, cwd=cwd)
         if result is None:
             tools_skipped.append(tool_name)
             infra_errors.append("tool %s: timed out or OS error (see log)" % tool_name)

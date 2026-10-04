@@ -2,15 +2,37 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for forge.diff -- git diff parser with changed-line extraction."""
 
+import os
+from pathlib import Path
+import subprocess
+
 import pytest
+
 
 from code_forge.diff import (
     annotate_diff_lines,
     count_diff_lines,
     extract_changed_lines,
     get_changed_files,
+    get_removed_files,
     tier_threshold,
 )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("./src//./helper.py", "src/helper.py"),
+        ("src/../helper.py", "src/../helper.py"),
+        ('"a/folder\\tpart/file.py"', "folder\tpart/file.py"),
+        ('"a/folder\\npart/file.py"', "folder\npart/file.py"),
+        ("", ""),
+    ],
+)
+def test_diff_identity_normalization_is_lexical(raw, expected):
+    from code_forge.diff import normalize_diff_path
+
+    assert normalize_diff_path(raw) == expected
 
 
 # -- Test fixtures: actual unified diff format --
@@ -165,10 +187,10 @@ class TestGetChangedFiles:
         result = get_changed_files(MULTI_FILE_DIFF)
         assert result == ["main.py", "util.py"]
 
-    def test_excludes_deleted(self):
-        """Deleted files not in output."""
+    def test_includes_deleted(self):
+        """Deleted files remain part of the reviewed file scope."""
         result = get_changed_files(DELETE_DIFF)
-        assert result == []
+        assert result == ["removed.py"]
 
     def test_empty_diff_returns_empty(self):
         """Empty diff returns empty list."""
@@ -179,6 +201,156 @@ class TestGetChangedFiles:
         """Single file add returns that file."""
         result = get_changed_files(SINGLE_FILE_ADD)
         assert result == ["hello.py"]
+
+    @pytest.mark.parametrize("diff_text", [" \n\t", "@@ -1 +1 @@\n-old\n+new\n"])
+    def test_blank_or_unparseable_diff_returns_empty(self, diff_text):
+        assert get_changed_files(diff_text) == []
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout
+
+
+@pytest.fixture
+def scope_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Use Git's own quoted filenames and metadata in every scope contract."""
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@test.com")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "config", "core.quotePath", "true")
+    _git(repo, "config", "core.fileMode", "true")
+    source = repo / 'a/source b/name "\\\t\n\u96ea.py'
+    source.parent.mkdir(parents=True)
+    source.write_text("keep = 1\nremove = 2\n", encoding="utf-8")
+    source.chmod(0o644)
+    (repo / "removed.py").write_text("deleted = 1\n", encoding="utf-8")
+    (repo / "edited.py").write_text("value = 1\n", encoding="utf-8")
+    (repo / "image.bin").write_bytes(b"\x00before")
+    _git(repo, "add", "--all")
+    _git(repo, "commit", "-m", "base")
+    return repo
+
+
+@pytest.mark.parametrize("snapshot", ["staged", "committed"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "line_deletion",
+        "file_deletion",
+        "addition",
+        "mixed",
+        "rename",
+        "copy",
+        "mode",
+        "binary",
+        "binary_patch",
+    ],
+)
+def test_git_changed_file_scope(scope_repo: Path, change: str, snapshot: str):
+    repo = scope_repo
+    source_name = 'a/source b/name "\\\t\n\u96ea.py'
+    source = repo / source_name
+    expected_lines = {}
+    flags = ["-M", "-C", "--find-copies-harder"]
+    if change == "line_deletion":
+        source.write_text("keep = 1\n", encoding="utf-8")
+        expected_files = [source_name]
+    elif change == "file_deletion":
+        source.unlink()
+        expected_files = [source_name]
+    elif change in ("addition", "mixed"):
+        (repo / "new.py").write_text("new = 1\n", encoding="utf-8")
+        expected_files = ["new.py"]
+        expected_lines = {"new.py": {1}}
+        if change == "mixed":
+            source.write_text("keep = 1\n", encoding="utf-8")
+            (repo / "removed.py").unlink()
+            (repo / "edited.py").write_text("value = 2\n", encoding="utf-8")
+            expected_files += [source_name, "removed.py", "edited.py"]
+            expected_lines["edited.py"] = {1}
+    elif change in ("rename", "copy"):
+        target = "plain destination.py" if change == "rename" else 'b/destination "\u96ea.py'
+        destination = repo / target
+        destination.parent.mkdir(exist_ok=True)
+        destination.write_bytes(source.read_bytes())
+        if change == "rename":
+            source.unlink()
+        expected_files = [target]
+    elif change == "mode":
+        source.chmod(0o755)
+        expected_files = [source_name]
+    else:
+        (repo / "image.bin").write_bytes(b"\x00after")
+        expected_files = ["image.bin"]
+        if change == "binary_patch":
+            flags.append("--binary")
+    _git(repo, "add", "--all")
+    refs = ["--cached"]
+    if snapshot == "committed":
+        _git(repo, "commit", "-m", "change")
+        refs = ["HEAD^", "HEAD"]
+    diff_text = _git(repo, "diff", *refs, *flags)
+    if change in ("rename", "copy"):
+        assert f"{change} to " in diff_text
+    if change == "mode":
+        assert "new mode 100755" in diff_text
+    if change == "binary_patch":
+        assert "GIT binary patch" in diff_text
+    assert get_changed_files(diff_text) == sorted(expected_files)
+    expected_removed = [source_name] if change == "file_deletion" else []
+    if change == "mixed":
+        expected_removed = ["removed.py"]
+    assert get_removed_files(diff_text) == expected_removed
+    assert extract_changed_lines(diff_text) == expected_lines
+    git_names = _git(repo, "diff", *refs, *flags, "--name-only", "-z").split("\x00")[:-1]
+    assert get_changed_files(diff_text) == sorted(git_names)
+
+
+@pytest.mark.parametrize("change", ["rename", "copy"])
+@pytest.mark.parametrize(
+    "target",
+    ["a/plain destination.py", 'b/destination "\u96ea.py', "-name;$(touch should-not-exist).py"],
+)
+def test_git_destination_identity(scope_repo: Path, change: str, target: str):
+    """Metadata paths are literal repository paths, including a/ and b/."""
+    repo = scope_repo
+    source = repo / "edited.py"
+    destination = repo / target
+    destination.parent.mkdir(exist_ok=True)
+    destination.write_bytes(source.read_bytes())
+    if change == "rename":
+        source.unlink()
+    _git(repo, "add", "--all")
+    diff_text = _git(repo, "diff", "--cached", "-M", "-C", "--find-copies-harder")
+    assert f"{change} to " in diff_text
+    assert get_changed_files(diff_text) == [target]
+    assert get_removed_files(diff_text) == []
+    assert extract_changed_lines(diff_text) == {}
+    assert not (repo / "should-not-exist").exists()
+
+
+def test_git_rename_with_edits_keeps_added_line_contract(scope_repo: Path):
+    repo = scope_repo
+    source = repo / 'a/source b/name "\\\t\n\u96ea.py'
+    target = 'b/renamed "\u96ea.py'
+    destination = repo / target
+    destination.parent.mkdir()
+    source.rename(destination)
+    destination.write_text("keep = 1\nadded = 3\n", encoding="utf-8")
+    _git(repo, "add", "--all")
+    diff_text = _git(repo, "diff", "--cached", "-M1%")
+    assert "rename to " in diff_text
+    assert get_changed_files(diff_text) == [target]
+    assert extract_changed_lines(diff_text) == {target: {2}}
 
 
 # -- Fixtures for count_diff_lines tests --
@@ -729,8 +901,8 @@ class TestSplitDiffForFiles:
     """Split a unified diff into the sections belonging to given files.
 
     Grouped review needs each group's share of the diff as standalone text.
-    A member with no section (a binary or pure rename entry has no hunks and
-    sem can still report it) is skipped, not an error.
+    Metadata blocks remain captured diff facts even without text hunks.
+    An absent member is skipped, not an error.
     """
 
     DIFF = (
@@ -870,3 +1042,72 @@ class TestDescribeFabricatedLines:
 
         assert describe_fabricated_lines({}, 7, 7) == "7"
         assert describe_fabricated_lines({7: "x"}, 7, 7) == ""
+
+
+@pytest.mark.parametrize("change", ["binary_edit", "binary_delete", "rename", "mode"])
+def test_split_diff_retains_git_metadata_blocks_verbatim(scope_repo, change):
+    from code_forge.diff import split_diff_for_files
+
+    data = scope_repo / "image.bin"
+    if change == "binary_edit":
+        data.write_bytes(b"\x00updated\xff")
+    elif change == "binary_delete":
+        data.unlink()
+    elif change == "rename":
+        data.rename(scope_repo / 'quoted "\u96ea destination.bin')
+    else:
+        data.chmod(0o755)
+    _git(scope_repo, "add", "--all")
+    raw = _git(scope_repo, "diff", "--cached", "--binary", "--find-renames")
+    assert raw
+    assert split_diff_for_files(raw, get_changed_files(raw)) == raw
+    assert split_diff_for_files(raw, ["absent"]) == ""
+
+
+@pytest.mark.parametrize("operation", ["rename", "copy"])
+def test_source_side_path_uses_intact_quoted_metadata(operation):
+    import unidiff
+
+    from code_forge.diff import patched_file_path
+
+    diff = (
+        'diff --git "a/src/old \\tname.py" "b/src/new \\tname.py"\n'
+        "similarity index 100%\n"
+        f'{operation} from "src/old \\tname.py"\n'
+        f'{operation} to "src/new \\tname.py"\n'
+    )
+    entry = unidiff.PatchSet(diff)[0]
+    assert patched_file_path(entry) == "src/new \tname.py"
+    assert patched_file_path(entry, source=True) == "src/old \tname.py"
+
+
+@pytest.mark.parametrize("headers", [True, False])
+def test_source_side_path_for_new_empty_file_is_absent(headers):
+    import unidiff
+
+    from code_forge.diff import patched_file_path
+
+    diff = "diff --git a/new.py b/new.py\nnew file mode 100644\nindex 0000000..e69de29\n"
+    if headers:
+        diff = (
+            "diff --git a/new.py b/new.py\nnew file mode 100644\n"
+            "--- /dev/null\n+++ b/new.py\n@@ -0,0 +1 @@\n+new\n"
+        )
+    entry = unidiff.PatchSet(diff)[0]
+    assert patched_file_path(entry) == "new.py"
+    assert patched_file_path(entry, source=True) is None
+
+
+@pytest.mark.parametrize("git_header", [False, True])
+def test_source_side_path_for_edits_keeps_default_target(git_header):
+    import unidiff
+
+    from code_forge.diff import patched_file_path, path_from_git_header
+
+    header = 'diff --git "a/src/file \\tname.py" "b/src/file \\tname.py"\n'
+    diff = header if git_header else ""
+    diff += '--- "a/src/file \\tname.py"\n+++ "b/src/file \\tname.py"\n@@ -1 +1 @@\n-old\n+new\n'
+    entry = unidiff.PatchSet(diff)[0]
+    assert patched_file_path(entry) == "src/file \tname.py"
+    assert patched_file_path(entry, source=True) == "src/file \tname.py"
+    assert path_from_git_header(header, plus=False) == "src/file \tname.py"

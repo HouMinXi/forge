@@ -531,7 +531,7 @@ class TestEperm:
 
 
 class TestSignalChainSigIgn:
-    """(i) prev handler = SIG_IGN -> release happens, no exception."""
+    """An ignored signal keeps the context lock held without raising."""
 
     def test_sig_ign_preserved(self, tmp_path):
         lock_path = tmp_path / "code-forge.lock"
@@ -543,14 +543,14 @@ class TestSignalChainSigIgn:
                 # Simulate signal delivery via the installed handler
                 handler = signal.getsignal(signal.SIGINT)
                 handler(signal.SIGINT, None)
-                # Lock should be released, no exception
-                assert not lock_path.exists()
+                assert lock_path.exists()
+            assert not lock_path.exists()
         finally:
             signal.signal(signal.SIGINT, old)
 
 
 class TestSignalChainCallable:
-    """(j) prev handler = callable -> release then prev called."""
+    """A callable previous handler runs while the context lock remains held."""
 
     def test_callable_chain_order(self, tmp_path):
         lock_path = tmp_path / "code-forge.lock"
@@ -566,10 +566,8 @@ class TestSignalChainCallable:
                 assert lock_path.exists()
                 handler = signal.getsignal(signal.SIGINT)
                 handler(signal.SIGINT, None)
-            # prev_handler was called; lock was already released when
-            # prev was invoked
             assert len(call_log) == 1
-            assert call_log[0] == ("prev", False)
+            assert call_log[0] == ("prev", True)
         finally:
             signal.signal(signal.SIGINT, old)
 
@@ -774,3 +772,19 @@ class TestPidAliveWindowsBranch:
         """CloseHandle called exactly once when a handle was returned."""
         _, fake = self._run_with_stub(monkeypatch, 42, 0, 0)
         assert fake._dll._close_calls == [42]
+
+
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_signal_exception_keeps_lock_until_context_exit(tmp_path, signum):
+    lock_path = tmp_path / "code-forge.lock"
+    previous = signal.getsignal(signum)
+    signal.signal(signum, signal.SIG_DFL)
+    try:
+        with ForgeLock(lock_path):
+            with pytest.raises(KeyboardInterrupt):
+                signal.getsignal(signum)(signum, None)
+            assert lock_path.exists()
+        assert not lock_path.exists()
+        assert signal.getsignal(signum) == signal.SIG_DFL
+    finally:
+        signal.signal(signum, previous)

@@ -1062,6 +1062,70 @@ def test_l0_runs_on_each_repo(
             assert f.is_absolute(), "%s: %s is not absolute" % (label, f)
 
 
+def test_deletion_scope_reaches_each_repo_machine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleted semantic scope stays complete; delegated L0 only receives live inputs."""
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.machine import StateMachine
+    from code_forge.state import Mode, Verdict
+
+    primary = _make_repo(
+        tmp_path, monkeypatch, "primary", content_v1="x = 1\ny = 2\n", content_v2="x = 1\n"
+    )
+    sibling = _make_repo(tmp_path, monkeypatch, "sibling", filename="deleted.py")
+    subprocess.run(["git", "checkout", "feature"], cwd=sibling, check=True, capture_output=True)
+    (sibling / "deleted.py").unlink()
+    subprocess.run(["git", "add", "--all"], cwd=sibling, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "--amend", "--no-edit"], cwd=sibling, check=True, capture_output=True
+    )
+    # Keep project detection valid after deleting the last module. This
+    # working-tree marker is outside the reviewed ref range.
+    (sibling / "setup.cfg").write_text("[metadata]\nname = sibling\n", encoding="utf-8")
+    scopes = {}
+    l0_inputs = {}
+
+    class ScopeMachine(StateMachine):
+        def run(self):
+            """Execute delegated scope through the real L0 phase."""
+            assert self._run_l0_phase() == []
+            assert self._state.infra_errors == []
+            return Verdict.PASS
+
+    def make_machine(**kwargs):
+        label = kwargs["baseline_spec_repr"]
+        scopes[label] = kwargs["resolved_review"].source_files
+
+        def capture_l0(_registry, files):
+            l0_inputs[label] = list(files)
+            return [], []
+
+        return ScopeMachine(**kwargs, l0_runner=capture_l0)
+
+    monkeypatch.setattr("code_forge.machine.StateMachine", make_machine)
+    result = run_cross_repo(
+        primary_path=primary,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{"repo": str(sibling), "ref": "main..feature", "label": "sibling"}],
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+    )
+    expected = {"primary": [primary / "main.py"], "sibling": [sibling / "deleted.py"]}
+    assert result == Verdict.PASS
+    assert scopes == expected
+    assert l0_inputs == {"primary": [primary / "main.py"], "sibling": []}
+    assert (primary / "main.py").exists()
+    assert not (sibling / "deleted.py").exists()
+
+
 def test_receipt_naming_primary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1660,3 +1724,664 @@ def test_cross_repo_unreviewed_file_without_l0_or_l1_fails_with_coverage(
     coverage_findings = [f for f in primary_sm._state.findings if f.source == "COVERAGE"]
     assert len(coverage_findings) > 0, "Expected COVERAGE finding on unreviewed primary file"
     assert any("no review layer examined this file" in f.description for f in coverage_findings)
+
+
+@pytest.mark.parametrize("snapshot", ["staged", "committed"])
+def test_derive_source_files_preserves_removed_symlink_identity(tmp_path, snapshot):
+    def git(*args):
+        return subprocess.check_output(
+            [
+                "git",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgSign=false",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-C",
+                str(tmp_path),
+                *args,
+            ],
+            text=True,
+            timeout=10,
+        )
+
+    git("init", "-q", "-b", "main")
+    (tmp_path / "live.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "alias.py").symlink_to("live.py")
+    git("add", "--all")
+    git("commit", "-q", "-m", "base")
+    git("rm", "--cached", "alias.py")
+    (tmp_path / "live.py").write_text("value = 2\n", encoding="utf-8")
+    git("add", "live.py")
+    refs = ["--cached"]
+    if snapshot == "committed":
+        git("commit", "-q", "-m", "remove alias")
+        refs = ["HEAD^", "HEAD"]
+    diff = git("diff", *refs)
+    files = derive_source_files(tmp_path, diff)
+    assert files == [tmp_path / "alias.py", tmp_path / "live.py"]
+    assert (tmp_path / "alias.py").is_symlink()
+
+
+def test_delegated_retained_alias_keeps_semantic_identity_and_live_l0(tmp_path, monkeypatch):
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.disposition import Disposition
+    from code_forge.machine import StateMachine
+    from code_forge.state import Mode, StateFinding, Verdict
+
+    repos = {}
+    for label in ["primary", "sibling"]:
+        repo = tmp_path / label
+        repo.mkdir()
+        repos[label] = repo
+
+        def git(*args, repo=repo):
+            return subprocess.check_output(
+                [
+                    "git",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-c",
+                    "commit.gpgSign=false",
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "-C",
+                    str(repo),
+                    *args,
+                ],
+                text=True,
+                timeout=10,
+            )
+
+        git("init", "-q", "-b", "main")
+        (repo / "live.py").write_text("value = 1\n", encoding="utf-8")
+        (repo / "alias.py").symlink_to("live.py")
+        git("add", "--all")
+        git("commit", "-q", "-m", "base")
+        git("checkout", "-q", "-b", "feature")
+        git("rm", "--cached", "alias.py")
+        (repo / "live.py").write_text("value = 2\n", encoding="utf-8")
+        git("add", "live.py")
+        git("commit", "-q", "-m", "change")
+    observed = {}
+
+    class ScopeMachine(StateMachine):
+        def run(self):
+            label = self.baseline_spec_repr
+            live = repos[label] / "live.py"
+            findings = self._run_l0_phase()
+            observed[label] = {
+                "semantic": self._source_files(),
+                "executable": self._executable_source_files(),
+                "root": self._source_root(),
+                "state_root": self.cwd,
+                "findings": [f.file for f in findings],
+                "preexisting": self._preexisting_buf,
+            }
+            assert self._state.infra_errors == []
+            assert [f.file for f in findings] == [str(live)]
+            return Verdict.PASS
+
+    def make_machine(**kwargs):
+        live = repos[kwargs["baseline_spec_repr"]] / "live.py"
+
+        def l0(_registry, files):
+            assert files == [live]
+            return [
+                StateFinding(
+                    id="live",
+                    fingerprint="live",
+                    source="L0",
+                    disposition=Disposition.CONFIRMED,
+                    file=str(live),
+                    line_range=[1, 1],
+                    description="live control",
+                )
+            ], []
+
+        return ScopeMachine(**kwargs, l0_runner=l0)
+
+    monkeypatch.setattr("code_forge.machine.StateMachine", make_machine)
+    result = run_cross_repo(
+        primary_path=repos["primary"],
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{"repo": str(repos["sibling"]), "ref": "main..feature", "label": "sibling"}],
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+    )
+    assert result == Verdict.PASS
+    for label, repo in repos.items():
+        assert observed[label]["semantic"] == [repo / "alias.py", repo / "live.py"]
+        assert observed[label]["executable"] == [repo / "live.py"]
+        assert observed[label]["root"] == repo
+        assert observed[label]["state_root"] != repo
+        assert not observed[label]["state_root"].exists()
+        assert observed[label]["preexisting"] == []
+        assert (repo / "alias.py").is_symlink()
+
+
+@pytest.mark.parametrize("locked", ["primary", "sibling"])
+def test_cross_repo_live_source_lock_blocks_diff_capture(tmp_path, monkeypatch, locked):
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.lock import ForgeLock, ForgeLockBusy
+    from code_forge.state import Mode
+
+    primary = tmp_path / "primary"
+    sibling = primary / "sibling"
+    sibling.mkdir(parents=True)
+    (primary / "main.py").write_text("pass\n")
+    (sibling / "main.py").write_text("pass\n")
+    lock_path = {"primary": primary, "sibling": sibling}[locked] / ".code-forge/code-forge.lock"
+    captured = []
+
+    def capture(*args):
+        captured.append(args)
+        raise AssertionError("diff capture ran despite an owned live source lock")
+
+    monkeypatch.setattr("code_forge.cross_repo.get_sibling_diff", capture)
+    with ForgeLock(lock_path):
+        identity = lock_path.read_bytes()
+        with pytest.raises(ForgeLockBusy) as busy:
+            run_cross_repo(
+                primary_path=primary,
+                primary_ref="HEAD..INDEX",
+                primary_label="primary",
+                siblings=[{"repo": str(sibling), "ref": "HEAD..INDEX", "label": "sibling"}],
+                gate_config={},
+                mode=Mode.LOCAL,
+                engine_choice="stub",
+                backend=None,
+                max_rounds=1,
+                max_fix_attempts=1,
+                clean_round_threshold=1,
+            )
+        assert busy.value.path == lock_path
+        assert lock_path.read_bytes() == identity
+        assert not captured
+    assert not lock_path.exists()
+    assert not (primary / ".code-forge/code-forge.lock").exists()
+    assert not (sibling / ".code-forge/code-forge.lock").exists()
+
+
+@pytest.mark.parametrize("arriving_signal", ["int", "term"])
+def test_deferred_signals_replay_queue_before_restoring_raising_handlers(monkeypatch, arriving_signal):
+    import json
+    import signal
+
+    from code_forge.cross_repo import _defer_worker_signals
+
+    signals = (signal.SIGINT, signal.SIGTERM)
+    arriving = signal.SIGINT if arriving_signal == "int" else signal.SIGTERM
+    previous = {signum: signal.getsignal(signum) for signum in signals}
+    native_signal = signal.signal
+    pid = os.getpid()
+    process = Path("/proc/self/stat").read_text()
+    start = process[process.rfind(") ") + 2 :].split()[19]
+    calls = []
+    deliveries = []
+    cleanup_complete = False
+    final_delivery = False
+
+    def callback(signum, frame):
+        assert cleanup_complete
+        calls.append(signum)
+        raise KeyboardInterrupt("owned cancellation delivery")
+
+    def deliver(signum):
+        deliveries.append({"pid": pid, "start": start, "signal": int(signum)})
+        os.kill(pid, signum)
+
+    def restore_and_cancel(signum, handler):
+        nonlocal final_delivery
+        result = native_signal(signum, handler)
+        if signum == signal.SIGINT and handler is callback and not final_delivery:
+            final_delivery = True
+            deliver(arriving)
+        return result
+
+    try:
+        for signum in signals:
+            native_signal(signum, callback)
+        monkeypatch.setattr(signal, "signal", restore_and_cancel)
+        with pytest.raises(KeyboardInterrupt) as cancelled:
+            with _defer_worker_signals():
+                for signum in signals:
+                    deliver(signum)
+                assert not calls
+                cleanup_complete = True
+        restored = [signal.getsignal(signum) is callback for signum in signals]
+        print(
+            json.dumps(
+                {"owned_native_signals": deliveries, "callbacks": calls, "handlers_restored": restored}
+            )
+        )
+        assert calls == [signal.SIGINT, signal.SIGTERM, arriving]
+        assert all(restored)
+        assert len(cancelled.value.__notes__) == 2
+    finally:
+        for signum, handler in previous.items():
+            native_signal(signum, handler)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_recovery_parent_selection_excludes_every_participating_root(tmp_path, nested):
+    from code_forge.cross_repo import _recovery_parents
+
+    primary = (tmp_path / "primary").resolve()
+    sibling = primary / "sibling" if nested else (tmp_path / "sibling").resolve()
+    inner = sibling / "inner"
+    roots = {primary, sibling, inner}
+    parents = _recovery_parents(roots)
+    assert parents == {root: tmp_path for root in roots}
+    assert all(not parent.is_relative_to(root) for parent in parents.values() for root in roots)
+
+
+def test_recovery_parent_selection_refuses_impossible_filesystem_root():
+    from code_forge.cross_repo import _recovery_parents
+
+    with pytest.raises(ValueError, match="outside participating source roots"):
+        _recovery_parents({Path("/")})
+
+
+@pytest.mark.parametrize("identity", ["label", "path"])
+def test_cross_repo_refuses_ambiguous_repository_identity(tmp_path, monkeypatch, identity):
+    from unittest.mock import Mock
+
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode, Verdict
+
+    primary = tmp_path / "app"
+    sibling = primary / "sibling"
+    sibling.mkdir(parents=True)
+    for root in (primary, sibling):
+        (root / "main.py").write_text("pass\n")
+    sibling_path = primary if identity == "path" else sibling
+    sibling_label = "app" if identity == "label" else "sibling"
+    machine = Mock()
+    machine.return_value.run.return_value = Verdict.PASS
+
+    monkeypatch.setattr("code_forge.cross_repo.get_sibling_diff", lambda *args: "")
+    monkeypatch.setattr("code_forge.machine.StateMachine", machine)
+    with pytest.raises(ValueError, match="ambiguous reviewed repository identity"):
+        run_cross_repo(
+            primary_path=primary,
+            primary_ref="HEAD..INDEX",
+            primary_label="app",
+            siblings=[{"repo": str(sibling_path), "ref": "HEAD..INDEX", "label": sibling_label}],
+            gate_config={},
+            mode=Mode.LOCAL,
+            engine_choice="stub",
+            backend=None,
+            max_rounds=1,
+            max_fix_attempts=1,
+            clean_round_threshold=1,
+            output_fn=lambda *args: None,
+        )
+    assert not machine.called
+    assert all(not (root / ".code-forge/code-forge.lock").exists() for root in (primary, sibling))
+
+
+def test_cross_repo_contract_and_qualified_findings_keep_repository_identity(tmp_path, monkeypatch):
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.receipt_scope import repository_scope
+    from code_forge.state import Mode, Verdict
+
+    primary = tmp_path / "app"
+    sibling = primary / "sibling"
+    sibling.mkdir(parents=True)
+    for root in (primary, sibling):
+        (root / "main.py").write_text("pass\n")
+    contracts = primary / ".code-forge/contracts.yaml"
+    contracts.parent.mkdir()
+    contracts.write_text("contracts: []\n")
+    backend = object()
+    loaded = []
+    provider_specs = []
+    grouped = []
+    _, manifest = repository_scope({"app": "", "sibling": ""})
+    sibling_finding = {
+        "file": "sibling@%s/main.py" % manifest["sibling"],
+        "line": 1,
+        "description": "sibling evidence from the primary receipt",
+    }
+
+    def load(path, root, **kwargs):
+        assert (root / ".code-forge/code-forge.lock").read_text().strip() == str(os.getpid())
+        loaded.append((path, root, kwargs["backend"]))
+        return "BOUND CONTRACT"
+
+    def provider(*args, **kwargs):
+        provider_specs.append(kwargs["contract_spec"])
+        return lambda: None
+
+    def per_cwd(label, **kwargs):
+        cwd = tmp_path / (label + "-state")
+        (cwd / ".code-forge/receipts").mkdir(parents=True)
+        return cwd
+
+    class PassMachine:
+        def __init__(self, **kwargs):
+            self.root = kwargs["source_root"]
+
+        def run(self):
+            assert (self.root / ".code-forge/code-forge.lock").read_text().strip() == str(os.getpid())
+            return Verdict.PASS
+
+    def receipts(path):
+        return [{"findings": [sibling_finding]}] if path.parent.parent.name == "app-state" else []
+
+    def output(findings, labels, output_fn):
+        grouped.append((findings, labels))
+
+    monkeypatch.setattr("code_forge.cross_repo.get_sibling_diff", lambda *args: "")
+    monkeypatch.setattr("code_forge.cross_repo.make_per_repo_cwd", per_cwd)
+    monkeypatch.setattr("code_forge.contract_loader.load_contract_digest", load)
+    monkeypatch.setattr("code_forge.factories.build_l1_provider", provider)
+    monkeypatch.setattr("code_forge.machine.StateMachine", PassMachine)
+    monkeypatch.setattr("code_forge.cross_repo._load_receipts", receipts)
+    monkeypatch.setattr("code_forge.cross_repo.format_cross_repo_output", output)
+    result = run_cross_repo(
+        primary_path=primary,
+        primary_ref="HEAD..INDEX",
+        primary_label="app",
+        siblings=[{"repo": str(sibling), "ref": "HEAD..INDEX", "label": "sibling"}],
+        gate_config={},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=backend,
+        max_rounds=1,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+        output_fn=lambda *args: None,
+    )
+    assert result == Verdict.PASS
+    assert loaded == [(contracts, primary, backend)]
+    assert provider_specs == ["BOUND CONTRACT"]
+    assert grouped == [({"app": [], "sibling": [sibling_finding]}, ["app", "sibling"])]
+    assert all(not (root / ".code-forge/code-forge.lock").exists() for root in (primary, sibling))
+
+
+def test_cross_repo_source_locks_cover_capture_threads_and_receipts(tmp_path, monkeypatch):
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.lock import ForgeLock
+    from code_forge.state import Mode, Verdict
+
+    primary = tmp_path / "primary"
+    sibling = primary / "sibling"
+    sibling.mkdir(parents=True)
+    (primary / "main.py").write_text("pass\n")
+    (sibling / "main.py").write_text("pass\n")
+    roots = [primary.resolve(), sibling.resolve()]
+    acquired = []
+    checkpoints = []
+    native_enter = ForgeLock.__enter__
+
+    def enter(lock):
+        result = native_enter(lock)
+        acquired.append(lock.path.parent.parent)
+        return result
+
+    def check(phase):
+        assert all(
+            (root / ".code-forge/code-forge.lock").read_text().strip() == str(os.getpid())
+            for root in roots
+        )
+        checkpoints.append(phase)
+
+    def capture(*args):
+        check("capture")
+        return ""
+
+    class PassMachine:
+        def __init__(self, **kwargs):
+            assert kwargs["source_root"] in roots
+
+        def run(self):
+            check("machine")
+            return Verdict.PASS
+
+    def load(*args):
+        check("receipts")
+        return []
+
+    def output(*args):
+        check("output")
+
+    def per_cwd(label, **kwargs):
+        cwd = tmp_path / (label + "-state")
+        (cwd / ".code-forge/receipts").mkdir(parents=True)
+        return cwd
+
+    monkeypatch.setattr(ForgeLock, "__enter__", enter)
+    monkeypatch.setattr("code_forge.cross_repo.get_sibling_diff", capture)
+    monkeypatch.setattr("code_forge.cross_repo.make_per_repo_cwd", per_cwd)
+    monkeypatch.setattr("code_forge.cross_repo._load_receipts", load)
+    monkeypatch.setattr("code_forge.machine.StateMachine", PassMachine)
+    verdict = run_cross_repo(
+        primary_path=primary / ".",
+        primary_ref="HEAD..INDEX",
+        primary_label="primary",
+        siblings=[{"repo": str(sibling), "ref": "HEAD..INDEX", "label": "sibling"}],
+        gate_config={},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=1,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+        output_fn=output,
+    )
+    assert verdict == Verdict.PASS
+    assert acquired == sorted(roots, key=str)
+    assert (
+        checkpoints.count("capture")
+        == checkpoints.count("machine")
+        == checkpoints.count("receipts")
+        == 2
+    )
+    assert "output" in checkpoints
+    assert all(not (root / ".code-forge/code-forge.lock").exists() for root in roots)
+
+
+def test_cross_repo_partial_start_joins_owned_workers_before_unlock(tmp_path, monkeypatch):
+    import threading
+
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode, Verdict
+
+    primary = tmp_path / "primary"
+    sibling = primary / "sibling"
+    sibling.mkdir(parents=True)
+    for root in (primary, sibling):
+        (root / "main.py").write_text("pass\n")
+    release = threading.Event()
+    joined = []
+    workers = []
+    native_start = threading.Thread.start
+    native_join = threading.Thread.join
+
+    class PassMachine:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self):
+            assert release.wait(2)
+            assert (primary / ".code-forge/code-forge.lock").is_file()
+            assert (sibling / ".code-forge/code-forge.lock").is_file()
+            return Verdict.PASS
+
+    def start(thread):
+        if workers:
+            release.set()
+            raise RuntimeError("second owned worker could not start")
+        native_start(thread)
+        workers.append(thread)
+
+    def join(thread):
+        assert (primary / ".code-forge/code-forge.lock").is_file()
+        assert (sibling / ".code-forge/code-forge.lock").is_file()
+        native_join(thread)
+        joined.append(thread)
+
+    monkeypatch.setattr("code_forge.cross_repo.get_sibling_diff", lambda *args: "")
+    monkeypatch.setattr("code_forge.machine.StateMachine", PassMachine)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(threading.Thread, "join", join)
+    with pytest.raises(RuntimeError, match="second owned worker"):
+        run_cross_repo(
+            primary_path=primary,
+            primary_ref="HEAD..INDEX",
+            primary_label="primary",
+            siblings=[{"repo": str(sibling), "ref": "HEAD..INDEX", "label": "sibling"}],
+            gate_config={},
+            mode=Mode.LOCAL,
+            engine_choice="stub",
+            backend=None,
+            max_rounds=1,
+            max_fix_attempts=1,
+            clean_round_threshold=1,
+        )
+    assert joined == workers and len(workers) == 1
+    assert not workers[0].is_alive()
+    assert all(not (root / ".code-forge/code-forge.lock").exists() for root in (primary, sibling))
+
+
+@pytest.mark.parametrize("previous", ["ignored", "callable", "default"])
+def test_deferred_worker_signals_preserve_each_previous_handler(tmp_path, previous):
+    import signal
+
+    from code_forge.cross_repo import _defer_worker_signals
+
+    signals = (signal.SIGINT, signal.SIGTERM)
+    original = {signum: signal.getsignal(signum) for signum in signals}
+    calls = []
+    cleanup = False
+
+    def callback(signum, frame):
+        assert cleanup
+        calls.append((signum, frame))
+        raise KeyboardInterrupt("queued owned cancellation")
+
+    handler = {"ignored": signal.SIG_IGN, "callable": callback, "default": signal.SIG_DFL}[previous]
+    try:
+        for signum in signals:
+            signal.signal(signum, handler)
+        if previous == "ignored":
+            with _defer_worker_signals():
+                for signum in signals:
+                    signal.getsignal(signum)(signum, None)
+                cleanup = True
+        else:
+            with pytest.raises(KeyboardInterrupt) as cancelled:
+                with _defer_worker_signals():
+                    for signum in signals:
+                        signal.getsignal(signum)(signum, None)
+                    assert not calls
+                    cleanup = True
+            assert len(cancelled.value.__notes__) == 1
+        if previous == "callable":
+            assert calls == [(signal.SIGINT, None), (signal.SIGTERM, None)]
+        assert all(signal.getsignal(signum) == handler for signum in signals)
+    finally:
+        for signum, old in original.items():
+            signal.signal(signum, old)
+
+
+def test_deferred_worker_signals_leave_nonmain_handlers_unchanged():
+    import signal
+    import threading
+
+    from code_forge.cross_repo import _defer_worker_signals
+
+    before = [signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)]
+    observed = []
+
+    def worker():
+        with _defer_worker_signals():
+            observed.append([signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)])
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+    assert observed == [before]
+    assert [signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)] == before
+
+
+def test_cross_repo_waits_for_completion_even_if_join_returns_early(tmp_path, monkeypatch):
+    import threading
+
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode, Verdict
+
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    (primary / "main.py").write_text("pass\n")
+    markers = []
+    native_event = threading.Event
+    native_join = threading.Thread.join
+    workers = []
+    release = native_event()
+
+    class Completion(native_event):
+        def __init__(self):
+            super().__init__()
+            markers.append(self)
+
+        def wait(self, timeout=None):
+            if self is markers[0]:
+                release.set()
+            result = super().wait(2)
+            assert result, "owned worker completion marker was not published"
+            return result
+
+    class PassMachine:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self):
+            assert release.wait(2)
+            assert (primary / ".code-forge/code-forge.lock").is_file()
+            return Verdict.PASS
+
+    def inaccurate_join(thread):
+        workers.append(thread)
+        assert markers[0].is_set()
+
+    monkeypatch.setattr(threading, "Event", Completion)
+    monkeypatch.setattr(threading.Thread, "join", inaccurate_join)
+    monkeypatch.setattr("code_forge.cross_repo.get_sibling_diff", lambda *args: "")
+    monkeypatch.setattr("code_forge.machine.StateMachine", PassMachine)
+    try:
+        verdict = run_cross_repo(
+            primary_path=primary,
+            primary_ref="HEAD..INDEX",
+            primary_label="primary",
+            siblings=[],
+            gate_config={},
+            mode=Mode.LOCAL,
+            engine_choice="stub",
+            backend=None,
+            max_rounds=1,
+            max_fix_attempts=1,
+            clean_round_threshold=1,
+            output_fn=lambda *args: None,
+        )
+    finally:
+        release.set()
+        for worker in workers:
+            native_join(worker)
+    assert verdict == Verdict.PASS
+    assert markers[0].is_set() and len(workers) == 1
+    assert not workers[0].is_alive()
+    assert not (primary / ".code-forge/code-forge.lock").exists()

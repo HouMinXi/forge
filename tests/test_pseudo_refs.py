@@ -274,7 +274,19 @@ class TestWorkingTreeDiff:
         out = working_tree_diff("HEAD", [Path(".")], tmp_path)
         assert out == "diff --git a/f b/f\n"
         assert mock_run.call_args_list[0] == call(
-            ["git", "diff", "HEAD", "--", "."],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "--binary",
+                "HEAD",
+                "--",
+                ".",
+            ],
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -283,7 +295,7 @@ class TestWorkingTreeDiff:
             check=False,
         )
         assert mock_run.call_args_list[1] == call(
-            ["git", "ls-files", "--others", "--exclude-standard", "--", "."],
+            ["git", "ls-files", "-z", "--others", "--exclude-standard", "--", "."],
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -295,18 +307,29 @@ class TestWorkingTreeDiff:
     @patch("code_forge.git._is_likely_binary", return_value=False)
     @patch("code_forge.git.subprocess.run")
     def test_untracked_uses_no_index_and_newline_join(self, mock_run, _mock_binary, tmp_path):
-        first = tmp_path / "a.py"
-        second = tmp_path / "b.py"
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="tracked\n", stderr=""),
-            MagicMock(returncode=0, stdout="a.py\nb.py\n", stderr=""),
+            MagicMock(returncode=0, stdout="a.py\0b.py\0", stderr=""),
             MagicMock(returncode=1, stdout="U1", stderr=""),
             MagicMock(returncode=1, stdout="U2", stderr=""),
         ]
         out = working_tree_diff("HEAD", [Path(".")], tmp_path)
         assert out == "tracked\nU1\nU2"
         assert mock_run.call_args_list[2] == call(
-            ["git", "diff", "--no-index", "/dev/null", str(first)],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "--binary",
+                "--no-index",
+                "--",
+                "/dev/null",
+                "a.py",
+            ],
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -315,7 +338,20 @@ class TestWorkingTreeDiff:
             check=False,
         )
         assert mock_run.call_args_list[3] == call(
-            ["git", "diff", "--no-index", "/dev/null", str(second)],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "--binary",
+                "--no-index",
+                "--",
+                "/dev/null",
+                "b.py",
+            ],
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -329,7 +365,7 @@ class TestWorkingTreeDiff:
     def test_untracked_no_index_exit_zero_is_kept(self, mock_run, _mock_binary, tmp_path):
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=0, stdout="a.py\n", stderr=""),
+            MagicMock(returncode=0, stdout="a.py\0", stderr=""),
             MagicMock(returncode=0, stdout="U0", stderr=""),
         ]
         out = working_tree_diff("HEAD", [Path(".")], tmp_path)
@@ -339,7 +375,7 @@ class TestWorkingTreeDiff:
     def test_untracked_no_index_failure_raises(self, mock_run, tmp_path):
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=0, stdout="keep.py\n", stderr=""),
+            MagicMock(returncode=0, stdout="keep.py\0", stderr=""),
             MagicMock(returncode=2, stdout="", stderr="fatal: no-index"),
         ]
         (tmp_path / "keep.py").write_text("x\n")
@@ -392,7 +428,20 @@ class TestCachedDiff:
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         cached_diff("HEAD", [Path(".")], tmp_path)
         mock_run.assert_called_once_with(
-            ["git", "diff", "--cached", "HEAD", "--", "."],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "--binary",
+                "--cached",
+                "HEAD",
+                "--",
+                ".",
+            ],
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -452,7 +501,20 @@ class TestGitDiff:
         out = git_diff("HEAD~1", "HEAD", [Path(".")], tmp_path)
         assert out == "d\n"
         mock_run.assert_called_once_with(
-            ["git", "diff", "HEAD~1", "HEAD", "--", "."],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "--binary",
+                "HEAD~1",
+                "HEAD",
+                "--",
+                ".",
+            ],
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -467,3 +529,82 @@ class TestGitDiff:
         with pytest.raises(BaselineResolutionError) as caught:
             git_diff("HEAD", "HEAD", [Path(".")], tmp_path)
         assert "exit 2" in str(caught.value)
+
+
+@pytest.mark.parametrize("producer", ["refs", "index", "working"])
+@pytest.mark.parametrize("presentation", [None, "color.ui", "diff.mnemonicPrefix", "diff.noprefix"])
+def test_machine_diff_is_reversible_with_presentation_settings(git_repo, producer, presentation):
+    from code_forge.diff import get_changed_files
+    from code_forge.fixval import FixvalCandidate, classify_fixval_candidate
+
+    def git(*argv, input=None):
+        return subprocess.run(
+            ["git", *argv], cwd=git_repo, input=input, capture_output=True, check=True
+        ).stdout
+
+    binary = git_repo / "data.bin"
+    test = git_repo / "tests/test_value.py"
+    test.parent.mkdir()
+    original = b"\x00original\xff\n"
+    updated = b"\x00updated\xfe\n"
+    binary.write_bytes(original)
+    test.write_bytes(b"def test_value(): assert 1 == 1\n")
+    git("add", "--all")
+    git("commit", "-m", "tracked binary and test")
+    baseline = git("rev-parse", "HEAD").decode().strip()
+    binary.write_bytes(updated)
+    test.write_bytes(b"def test_value(): assert 2 == 2\n")
+    if producer in {"refs", "index"}:
+        git("add", "--all")
+    if producer == "refs":
+        git("commit", "-m", "binary and test change")
+    if presentation:
+        git("config", presentation, "always" if presentation == "color.ui" else "true")
+    protected = {name: (git_repo / ".git" / name).read_bytes() for name in ("index", "HEAD", "config")}
+    refs = git("show-ref")
+    if producer == "refs":
+        packet = git_diff(baseline, "HEAD", [Path(".")], git_repo)
+    elif producer == "index":
+        packet = cached_diff(baseline, [Path(".")], git_repo)
+    else:
+        packet = working_tree_diff(baseline, [Path(".")], git_repo)
+    (git_repo / ".git/machine-output.patch").write_text(packet, encoding="utf-8")
+    assert "\x1b" not in packet, "machine diff contains presentation color"
+    files = get_changed_files(packet)
+    assert files == ["data.bin", "tests/test_value.py"], "machine diff changed source paths"
+    candidate = classify_fixval_candidate(files)
+    assert isinstance(candidate, FixvalCandidate)
+    assert candidate.non_test_files == ["data.bin"]
+    assert "GIT binary patch" in packet, "tracked binary diff is not reversible"
+    assert "diff --git a/data.bin b/data.bin\n" in packet
+    git("apply", "-R", "--check", "-", input=packet.encode())
+    git("apply", "-R", "-", input=packet.encode())
+    try:
+        assert binary.read_bytes() == original
+        assert test.read_bytes() == b"def test_value(): assert 1 == 1\n"
+    finally:
+        git("apply", "-", input=packet.encode())
+    assert binary.read_bytes() == updated
+    assert test.read_bytes() == b"def test_value(): assert 2 == 2\n"
+    assert {name: (git_repo / ".git" / name).read_bytes() for name in protected} == protected
+    assert git("show-ref") == refs
+
+
+@pytest.mark.parametrize("presentation", [None, "color.ui", "diff.mnemonicPrefix"])
+def test_untracked_text_diff_is_plain_and_binary_stays_skipped(git_repo, presentation):
+    if presentation:
+        subprocess.run(
+            ["git", "config", presentation, "always" if presentation == "color.ui" else "true"],
+            cwd=git_repo,
+            check=True,
+        )
+    (git_repo / "new_file.py").write_text("print('untracked')\n")
+    binary = git_repo / "new.bin"
+    binary.write_bytes(b"\x00private-untracked\xff")
+    with pytest.warns(UserWarning, match="skipped 1 binary untracked"):
+        packet = working_tree_diff("HEAD", [Path(".")], git_repo)
+    (git_repo / ".git/machine-output.patch").write_text(packet, encoding="utf-8")
+    assert "\x1b" not in packet, "untracked machine diff contains presentation color"
+    assert "+++ b/" in packet and "+print('untracked')\n" in packet
+    assert "new.bin" not in packet
+    assert binary.read_bytes() == b"\x00private-untracked\xff"

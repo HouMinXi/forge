@@ -28,6 +28,14 @@ from types import MappingProxyType
 _SAFE_FLAGS = frozenset({"--staged", "--cached"})
 _UNKNOWN_BLAME = MappingProxyType({"author": "unknown", "subject": "", "date": ""})
 _BLOB_TEXT_ENCODING = "utf-8"
+_MACHINE_DIFF_OPTIONS = (
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+    "--binary",
+)
 
 # Allowlist regex for diff-spec values.
 # Permits: branch names (feature/foo), tags (v1.2.3), commit hashes
@@ -205,7 +213,7 @@ def git_diff(
     """
     from .errors import BaselineResolutionError
 
-    cmd = ["git", "diff", baseline_ref, head_ref, "--"] + [str(p) for p in paths]
+    cmd = ["git", "diff", *_MACHINE_DIFF_OPTIONS, baseline_ref, head_ref, "--"] + [str(p) for p in paths]
     result = subprocess.run(
         cmd,
         cwd=repo_root,
@@ -266,7 +274,9 @@ def cached_diff(
     """
     from .errors import BaselineResolutionError
 
-    cmd = ["git", "diff", "--cached", baseline_ref, "--"] + [str(p) for p in paths]
+    cmd = ["git", "diff", *_MACHINE_DIFF_OPTIONS, "--cached", baseline_ref, "--"] + [
+        str(p) for p in paths
+    ]
     result = subprocess.run(
         cmd,
         cwd=repo_root,
@@ -302,7 +312,7 @@ def working_tree_diff(
     from .errors import BaselineResolutionError
 
     # Tracked diff (R3-1: must NOT use check=True)
-    tracked_cmd = ["git", "diff", baseline_ref, "--"] + [str(p) for p in paths]
+    tracked_cmd = ["git", "diff", *_MACHINE_DIFF_OPTIONS, baseline_ref, "--"] + [str(p) for p in paths]
     tracked_result = subprocess.run(
         tracked_cmd,
         cwd=repo_root,
@@ -319,7 +329,7 @@ def working_tree_diff(
     tracked = tracked_result.stdout
 
     # Untracked files (ls-files has no exit-1-normal semantics)
-    ls_cmd = ["git", "ls-files", "--others", "--exclude-standard", "--"] + [str(p) for p in paths]
+    ls_cmd = ["git", "ls-files", "-z", "--others", "--exclude-standard", "--"] + [str(p) for p in paths]
     untracked_paths = [
         line
         for line in subprocess.run(
@@ -330,8 +340,8 @@ def working_tree_diff(
             encoding="utf-8",
             errors="replace",
             check=True,
-        ).stdout.splitlines()
-        if line.strip()
+        ).stdout.split("\0")
+        if line
     ]
 
     untracked_diffs: list[str] = []
@@ -345,7 +355,7 @@ def working_tree_diff(
         #   0 = files identical (impossible vs /dev/null with content)
         #   1 = files differ (THE expected case)
         #   2+ = real error
-        cmd = ["git", "diff", "--no-index", "/dev/null", str(full)]
+        cmd = ["git", "diff", *_MACHINE_DIFF_OPTIONS, "--no-index", "--", "/dev/null", rel_path]
         result = subprocess.run(
             cmd,
             cwd=repo_root,
