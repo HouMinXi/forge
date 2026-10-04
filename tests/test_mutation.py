@@ -139,7 +139,8 @@ class TestRunMutation:
         findings, _infra = run_mutation(["src/app.py", "src/app.ts"], ["pytest"])
         text = " ".join(f.description for f in findings)
         assert "js-stryker" in text
-        assert any("flaky" in f.description for f in findings)
+        assert any("run 1: baseline failed (returncode 1); stderr: FAIL" == f.description for f in findings)
+        assert all("flaky" not in f.description for f in findings)
 
     @patch("code_forge.mutation.run_owned_command")
     def test_flaky_guard_baseline_fails_on_run_2(self, mock_run):
@@ -153,9 +154,10 @@ class TestRunMutation:
         assert findings[0].id == "MUTATION_SKIPPED"
         assert findings[0].source == "MUTANT"
         assert findings[0].disposition == Disposition.DISMISSED
-        assert "flaky" in findings[0].description
+        assert findings[0].description == "run 2: baseline failed (returncode 1); stderr: FAIL"
         assert len(infra) == 1
-        assert "flaky guard" in infra[0]
+        assert infra == [findings[0].description]
+        assert "flaky" not in infra[0]
 
     @patch("code_forge.mutation.run_owned_command")
     @patch("code_forge.mutation.shutil.which", return_value=None)

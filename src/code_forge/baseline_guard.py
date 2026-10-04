@@ -5,6 +5,7 @@ both retry once after dropping a virtualenv that shadows the runner.
 """
 
 import os
+import re
 import subprocess
 
 from code_forge.disposition import Disposition
@@ -66,6 +67,15 @@ def _strip_venv_from_env(env: dict[str, str]) -> dict[str, str]:
     return stripped
 
 
+def _is_runner_startup_failure(baseline_cmd: list[str], result: subprocess.CompletedProcess) -> bool:
+    """Require a standalone missing-module diagnostic without test output."""
+    if not _is_runner_missing(baseline_cmd, result, None) or (result.stdout or "").strip():
+        return False
+    module = re.escape(baseline_cmd[baseline_cmd.index("-m") + 1])
+    diagnostic = rf"(?:[^\r\n]+: )?No module named (?:{module}|'{module}')"
+    return re.fullmatch(diagnostic, (result.stderr or "").strip()) is not None
+
+
 def _failed_nodes(output: str) -> list[str]:
     """Pull pytest FAILED node ids out of a baseline run's stdout."""
     nodes = []
@@ -77,6 +87,18 @@ def _failed_nodes(output: str) -> list[str]:
     return nodes
 
 
+def _output_detail(stderr: str | bytes | None, stdout: str | bytes | None) -> str:
+    """Keep normalized stderr then stdout, capped at 200 characters per stream."""
+    streams = []
+    for label, value in (("stderr", stderr), ("stdout", stdout)):
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        excerpt = " ".join((value or "").split())[:200]
+        if excerpt:
+            streams.append(f"{label}: {excerpt}")
+    return ("; " + "; ".join(streams)) if streams else ""
+
+
 def _run_baseline_guard(
     baseline_cmd: list[str],
     run_env: dict[str, str],
@@ -86,15 +108,15 @@ def _run_baseline_guard(
     timeout: int = 120,
     run_command=None,
 ) -> tuple[str, list[StateFinding], list[str]]:
-    """Run the 3x flaky baseline guard and report the outcome.
+    """Run the baseline three times and report the observed failure cause.
 
     run_command optionally supplies invocation ownership. The default resolves
     subprocess.run at call time so existing callers and their probes are unchanged.
 
     Returns (status, findings, infra_errors) where status is one of:
       "passed"            -- all 3 runs succeeded under run_env
-      "skip"              -- a run failed and it is NOT a runner-missing
-                             problem (genuine test failure, timeout, etc.)
+      "skip"              -- a run failed, timed out, or its runner is
+                             unavailable and an env retry is ineligible
       "needs_strip_retry" -- only when allow_strip_retry is True and the
                              first failing run is a runner-missing error
 
@@ -130,7 +152,7 @@ def _run_baseline_guard(
                 and _is_runner_missing(baseline_cmd, None, exc)
             ):
                 return ("needs_strip_retry", [], [])
-            desc = "run %d: runner not found%s" % (run_num, suffix)
+            desc = f"run {run_num}: runner could not start{suffix}" + _output_detail(str(exc), None)
             finding = StateFinding(
                 id="MUTATION_SKIPPED",
                 fingerprint="mutation-flaky",
@@ -140,13 +162,11 @@ def _run_baseline_guard(
                 line_range=[],
                 description=desc,
             )
-            infra = "flaky guard: runner not found on run %d%s" % (
-                run_num,
-                suffix,
+            return ("skip", [finding], [desc])
+        except subprocess.TimeoutExpired as exc:
+            desc = f"run {run_num}: baseline tests timed out after {timeout}s{suffix}" + _output_detail(
+                exc.stderr, exc.output
             )
-            return ("skip", [finding], [infra])
-        except subprocess.TimeoutExpired:
-            desc = f"baseline tests timed out (flaky guard){suffix}"
             finding = StateFinding(
                 id="MUTATION_SKIPPED",
                 fingerprint="mutation-baseline-timeout",
@@ -156,19 +176,23 @@ def _run_baseline_guard(
                 line_range=[],
                 description=desc,
             )
-            infra = "flaky guard: baseline timeout on run %d%s" % (run_num, suffix)
-            return ("skip", [finding], [infra])
+            return ("skip", [finding], [desc])
         else:
             if result.returncode != 0:
+                runner_missing = _is_runner_missing(baseline_cmd, result, None)
                 if (
                     allow_strip_retry
                     and "VIRTUAL_ENV" in run_env
-                    and _is_runner_missing(baseline_cmd, result, None)
+                    and runner_missing
                 ):
                     return ("needs_strip_retry", [], [])
-                desc = "run %d: tests flaky, mutation unreliable (3x baseline check%s)" % (
-                    run_num,
-                    ", after env retry" if suffix else "",
+                unavailable = _is_runner_startup_failure(baseline_cmd, result)
+                reason = "baseline runner unavailable" if unavailable else "baseline failed"
+                nodes = _failed_nodes(result.stdout)
+                node_text = (": " + ", ".join(nodes[:5])) if nodes else ""
+                desc = (
+                    f"run {run_num}: {reason}{suffix} (returncode {result.returncode}{node_text})"
+                    + _output_detail(result.stderr, result.stdout)
                 )
                 finding = StateFinding(
                     id="MUTATION_SKIPPED",
@@ -179,14 +203,6 @@ def _run_baseline_guard(
                     line_range=[],
                     description=desc,
                 )
-                nodes = _failed_nodes(result.stdout)
-                node_text = (": " + ", ".join(nodes[:5])) if nodes else ""
-                infra = "flaky guard: baseline failed on run %d%s (returncode %d%s)" % (
-                    run_num,
-                    suffix,
-                    result.returncode,
-                    node_text,
-                )
-                return ("skip", [finding], [infra])
+                return ("skip", [finding], [desc])
 
     return ("passed", [], [])

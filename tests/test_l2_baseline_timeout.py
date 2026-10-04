@@ -72,7 +72,9 @@ def test_configured_deadline_stops_a_real_baseline(tmp_path, monkeypatch):
     findings = machine._run_l2_phase()
     assert len(findings) == 1
     assert findings[0].fingerprint == "mutation-baseline-timeout"
-    assert machine._state.infra_errors == ["flaky guard: baseline timeout on run 1"]
+    assert machine._state.infra_errors == ["run 1: baseline tests timed out after 1s"]
+    assert findings[0].description == machine._state.infra_errors[0]
+    assert "flaky" not in findings[0].description
 
 
 @pytest.mark.parametrize("runner", ["missing", "default"])
