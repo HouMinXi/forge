@@ -40,6 +40,12 @@
           "minimum": 1,
           "description": "Timeout in seconds for the test run. Default: 120."
         },
+        "mutation_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 600,
+          "description": "Timeout for mutmut run, separate from the baseline test deadline. An explicit mutation-check --timeout overrides this value."
+        },
         "env": {
           "type": "object",
           "description": "Extra environment variables to set when running the test command."

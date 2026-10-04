@@ -179,6 +179,8 @@ outlet: subprocess
 # test:
 #   command: [pytest, -q]         # required: list form, first element must be a known runner
 #   timeout_seconds: 120          # optional: integer > 0 (default: 120)
+#   mutation_timeout_seconds: 600 # optional: mutmut run deadline, separate from test timeout
+#                                 # mutation-check --timeout takes precedence when supplied
 #   env: {}                       # optional: extra env vars dict (omit = inherit shell env)
 #   cwd: .                        # optional: working directory string (omit = repo root)
 #   source_patterns: ["*.py"]  # optional: list of globs; gate skips if no staged file matches

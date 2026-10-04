@@ -396,7 +396,7 @@ def test_launch_leaves_no_child_to_reap(tmp_path):
     result_path = tmp_path / ".code-forge" / "mutation-result.json"
 
     started = mutation_module.launch_detached_mutation(
-        diff_files=["test.py"],
+        diff_files=["README.md"],
         baseline_cmd=[sys.executable, "-c", "pass"],
         cwd=tmp_path,
         result_path=result_path,
@@ -452,7 +452,7 @@ def test_the_run_is_reparented_away_from_us(tmp_path):
     result_path = tmp_path / "result.json"
     started = mutation_module.launch_detached_mutation(
         diff_files=["test.py"],
-        baseline_cmd=[sys.executable, "-c", "import time; time.sleep(3)"],
+        baseline_cmd=[sys.executable, "-c", "import time; time.sleep(3); raise SystemExit(1)"],
         cwd=tmp_path,
         result_path=result_path,
     )

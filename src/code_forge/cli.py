@@ -589,8 +589,8 @@ def _build_parser() -> argparse.ArgumentParser:
     mutation_parser.add_argument(
         "--timeout",
         type=int,
-        default=600,
-        help="mutmut run timeout in seconds (default: 600)",
+        default=None,
+        help="mutmut run timeout in seconds (default: gate.yaml test.mutation_timeout_seconds or 600)",
     )
     mutation_parser.add_argument(
         "--paths",
@@ -4629,11 +4629,24 @@ def _run_mutation_check(args, cwd: Path) -> int:
         print(f"code-forge: mutation-check: {exc}", file=sys.stderr)
         return EXIT_CLI_ERROR
 
+    from .mutation_config import DEFAULT_MUTATION_TIMEOUT, validate_mutation_timeout
+
+    timeout = (
+        args.timeout
+        if args.timeout is not None
+        else test_config.get("mutation_timeout_seconds", DEFAULT_MUTATION_TIMEOUT)
+    )
+    try:
+        validate_mutation_timeout(timeout, "--timeout")
+    except ValueError as exc:
+        print(f"code-forge: mutation-check: {exc}", file=sys.stderr)
+        return EXIT_CLI_ERROR
+
     memory_mb = test_config.get("mutation_memory_limit_mb")
     findings, infra_errors = run_mutation(
         diff_files=diff_files,
         baseline_cmd=test_config.get("command", ["pytest", "--tb=no", "-q"]),
-        timeout=args.timeout,
+        timeout=timeout,
         cwd=cwd,
         baseline_timeout=test_config.get("timeout_seconds", 120),
         also_copy=test_config.get("also_copy"),

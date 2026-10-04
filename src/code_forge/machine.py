@@ -301,7 +301,7 @@ class StateMachine:
     l0_runner: Callable = field(default=_default_l0_runner)
     l1_provider: L1Provider = field(default=lambda: ([], [], Usage(), 0.0))
     l2_runner: Callable = field(
-        default=lambda diff_files, baseline_cmd, *, baseline_timeout=120: ([], [])
+        default=lambda diff_files, baseline_cmd, *, baseline_timeout=120, timeout=600: ([], [])
     )
     e2e_runner: Callable = field(default=lambda diff_text, repo_root: ([], []))
     coverage_l1_active: bool = True
@@ -585,6 +585,7 @@ class StateMachine:
         other_adapters = [key for key in grouped if key and key != "python-mutmut"]
 
         if py_files and shutil.which("mutmut") is not None:
+            mutation_timeout = None
             try:
                 from .gate_check import load_gate_config
 
@@ -603,6 +604,7 @@ class StateMachine:
                 mutation_memory_limit = int(mem_mb) * 1024**2 if mem_mb is not None else None
                 mutation_skip_globs = test_config.get("mutation_skip_globs")
                 mutation_include_globs = test_config.get("mutation_include_globs")
+                mutation_timeout = test_config.get("mutation_timeout_seconds")
             except FileNotFoundError as exc:
                 baseline_cmd = None
                 baseline_timeout = 120
@@ -644,6 +646,7 @@ class StateMachine:
                         memory_limit_bytes=mutation_memory_limit,
                         mutation_skip_globs=mutation_skip_globs,
                         mutation_include_globs=mutation_include_globs,
+                        **({"timeout": mutation_timeout} if mutation_timeout is not None else {}),
                     )
                 except Exception as exc:  # noqa: BLE001
                     started = False
@@ -1204,6 +1207,7 @@ class StateMachine:
                 config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
                 baseline_cmd = config["test"]["command"]
                 baseline_timeout = config["test"].get("timeout_seconds", 120)
+                mutation_timeout = config["test"].get("mutation_timeout_seconds")
             except Exception as exc:  # noqa: BLE001
                 self._state.infra_errors.append(
                     f"L2: gate.yaml missing or test.command not configured: {exc}"
@@ -1211,6 +1215,7 @@ class StateMachine:
                 return []
         else:
             baseline_timeout = 120
+            mutation_timeout = None
 
         if needs_baseline:
             progress.emit("mutation: running baseline")
@@ -1221,6 +1226,7 @@ class StateMachine:
                 diff_files,
                 baseline_cmd,
                 baseline_timeout=baseline_timeout,
+                **({"timeout": mutation_timeout} if mutation_timeout is not None else {}),
             )
             self._state.infra_errors.extend(l2_infra)
             return l2_findings

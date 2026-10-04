@@ -24,6 +24,7 @@ from typing import IO, Mapping, Optional
 import yaml
 
 from .exit_codes import EXIT_FAIL, EXIT_PASS
+from .mutation_config import validate_mutation_timeout
 
 
 # Known test runners for command safety validation
@@ -138,6 +139,9 @@ def load_gate_config(
         mem_mb = test["mutation_memory_limit_mb"]
         if not isinstance(mem_mb, int) or isinstance(mem_mb, bool) or mem_mb < 1:
             raise ValueError("'test.mutation_memory_limit_mb' must be a positive integer (MiB)")
+
+    if "mutation_timeout_seconds" in test:
+        validate_mutation_timeout(test["mutation_timeout_seconds"], "test.mutation_timeout_seconds")
 
     # Validate optional non_ascii field (top-level)
     if "non_ascii" in data:

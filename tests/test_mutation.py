@@ -18,6 +18,7 @@ import pytest
 
 from code_forge.disposition import Disposition
 from code_forge.mutation import parse_mutmut_results, run_mutation
+from tests.mutation_result_fixture import write_inventory
 
 
 class TestParseMutmutResults:
@@ -129,16 +130,18 @@ class TestRunMutation:
         assert "ps-mutant available" in findings[0].description
         assert "mutation run:" in findings[0].description
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_mixed_diff_names_the_non_python_adapter(self, mock_run):
         """Python runs. The TypeScript file beside it must still be named."""
-        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="FAIL")
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="FAIL"
+        )
         findings, _infra = run_mutation(["src/app.py", "src/app.ts"], ["pytest"])
         text = " ".join(f.description for f in findings)
         assert "js-stryker" in text
         assert any("flaky" in f.description for f in findings)
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_flaky_guard_baseline_fails_on_run_2(self, mock_run):
         """Test 11: flaky guard -- baseline fails on run 2 of 3"""
         mock_run.side_effect = [
@@ -154,7 +157,7 @@ class TestRunMutation:
         assert len(infra) == 1
         assert "flaky guard" in infra[0]
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     @patch("code_forge.mutation.shutil.which", return_value=None)
     def test_mutmut_not_installed(self, mock_which, mock_run):
         """Test 12: mutmut not installed returns MUTATION_SKIPPED"""
@@ -167,7 +170,7 @@ class TestRunMutation:
         assert "not installed" in findings[0].description
         assert len(infra) == 0
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     def test_mutmut_timeout_returns_mutation_skipped(self, mock_which, mock_run):
         """Test 13: mutmut timeout returns MUTATION_SKIPPED"""
@@ -189,20 +192,22 @@ class TestRunMutation:
         assert findings[0].disposition == Disposition.DISMISSED
         assert "timed out" in findings[0].description
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
-    def test_successful_run_with_survivors(self, mock_which, mock_run):
+    def test_successful_run_with_survivors(self, mock_which, mock_run, tmp_path):
         """Test 14: successful run with survivors returns CONFIRMED findings.
 
         Uses mutmut 3.x results format: module.fn__mutmut_N: status
         """
         # mutmut 3.x results: module.fn__mutmut_N: survived
-        mutmut_results_stdout = (
-            "    test.x_foo__mutmut_1: survived\n    test.x_foo__mutmut_2: survived\n"
-        )
+        mutmut_results_stdout = "test.x_foo__mutmut_1: survived\ntest.x_foo__mutmut_2: survived"
 
         def side_effect(*args, **kwargs):
             cmd = args[0]
+            if "run" in cmd:
+                write_inventory(
+                    tmp_path, "test.py", {"x_foo__mutmut_1": "survived", "x_foo__mutmut_2": "survived"}
+                )
             if isinstance(cmd, list) and "mutmut" in cmd and "results" in cmd:
                 return subprocess.CompletedProcess(
                     args=[], returncode=0, stdout=mutmut_results_stdout, stderr=""
@@ -219,22 +224,28 @@ class TestRunMutation:
         assert "test.x_foo__mutmut_1" in findings[0].description
         assert "test.x_foo__mutmut_2" in findings[1].description
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
-    def test_successful_run_zero_survivors(self, mock_which, mock_run):
+    def test_successful_run_zero_survivors(self, mock_which, mock_run, tmp_path):
         """Test 15: successful run with zero survivors returns empty findings"""
+
+        native_results = "test.x_example__mutmut_1: killed"
 
         def side_effect(*args, **kwargs):
             cmd = args[0]
+            if "run" in cmd:
+                write_inventory(tmp_path, "test.py")
             if isinstance(cmd, list) and "mutmut" in cmd and "results" in cmd:
-                return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout=native_results, stderr=""
+                )
             return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
         findings, infra = run_mutation(["test.py"], ["pytest"])
         assert len(findings) == 0
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     def test_mutmut_non_zero_exit_returns_mutation_error(self, mock_which, mock_run):
         """Test 16: any non-zero exit from mutmut run produces MUTATION_ERROR.
@@ -269,9 +280,12 @@ class TestRunMutation:
             assert f.disposition == Disposition.DISMISSED
 
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_existing_setup_cfg_runs_and_restores_bytes(
-        self, mock_run, _which, tmp_path,
+        self,
+        mock_run,
+        _which,
+        tmp_path,
     ):
         """User setup.cfg must not skip mutation, and must come back byte-identical.
 
@@ -280,11 +294,7 @@ class TestRunMutation:
         never ran. mutmut 3.x has no --config flag, so the scoped config
         is installed for the run and the original file is restored after.
         """
-        user_cfg = (
-            "[mutmut]\n"
-            "source_paths = tools\n"
-            "only_mutate = tools/language_inventory.py\n"
-        )
+        user_cfg = "[mutmut]\nsource_paths = tools\nonly_mutate = tools/language_inventory.py\n"
         (tmp_path / "setup.cfg").write_text(user_cfg, encoding="utf-8")
         src_dir = tmp_path / "src"
         src_dir.mkdir()
@@ -292,32 +302,24 @@ class TestRunMutation:
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_add.py").write_text(
-            "from add import add\n"
-            "def test_add():\n"
-            "    assert add(1, 2) == 3\n"
+            "from add import add\ndef test_add():\n    assert add(1, 2) == 3\n"
         )
         seen = {}
 
         def side_effect(*args, **kwargs):
             cmd = args[0]
             if isinstance(cmd, list) and "mutmut" in cmd and "run" in cmd:
-                seen["during"] = (tmp_path / "setup.cfg").read_text(
-                    encoding="utf-8"
-                )
-                return subprocess.CompletedProcess(
-                    args=cmd, returncode=0, stdout="", stderr=""
-                )
+                seen["during"] = (tmp_path / "setup.cfg").read_text(encoding="utf-8")
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
             if isinstance(cmd, list) and "mutmut" in cmd and "results" in cmd:
-                return subprocess.CompletedProcess(
-                    args=cmd, returncode=0, stdout="", stderr=""
-                )
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
         findings, infra = run_mutation(
-            ["src/add.py"], ["pytest"], cwd=tmp_path,
+            ["src/add.py"],
+            ["pytest"],
+            cwd=tmp_path,
         )
         assert not any("config conflict" in e for e in infra), infra
         assert all(f.fingerprint != "mutation-config-conflict" for f in findings)
@@ -327,18 +329,21 @@ class TestRunMutation:
         assert (tmp_path / "setup.cfg").read_text(encoding="utf-8") == user_cfg
 
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_pyproject_tool_mutmut_is_hidden_then_restored(
-        self, mock_run, _which, tmp_path,
+        self,
+        mock_run,
+        _which,
+        tmp_path,
     ):
         """mutmut prefers [tool.mutmut] over setup.cfg; hide it for the run."""
         original = (
             "[project]\n"
-            "name = \"demo\"\n"
+            'name = "demo"\n'
             "[tool.mutmut]\n"
-            "source_paths = [\"legacy\"]\n"
+            'source_paths = ["legacy"]\n'
             "[tool.pytest.ini_options]\n"
-            "testpaths = [\"tests\"]\n"
+            'testpaths = ["tests"]\n'
         )
         (tmp_path / "pyproject.toml").write_text(original, encoding="utf-8")
         src_dir = tmp_path / "src"
@@ -347,35 +352,25 @@ class TestRunMutation:
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_add.py").write_text(
-            "from add import add\n"
-            "def test_add():\n"
-            "    assert add(1, 2) == 3\n"
+            "from add import add\ndef test_add():\n    assert add(1, 2) == 3\n"
         )
         seen = {}
 
         def side_effect(*args, **kwargs):
             cmd = args[0]
             if isinstance(cmd, list) and "mutmut" in cmd and "run" in cmd:
-                seen["pyproject"] = (tmp_path / "pyproject.toml").read_text(
-                    encoding="utf-8"
-                )
-                seen["setup"] = (tmp_path / "setup.cfg").read_text(
-                    encoding="utf-8"
-                )
-                return subprocess.CompletedProcess(
-                    args=cmd, returncode=0, stdout="", stderr=""
-                )
+                seen["pyproject"] = (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
+                seen["setup"] = (tmp_path / "setup.cfg").read_text(encoding="utf-8")
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
             if isinstance(cmd, list) and "mutmut" in cmd and "results" in cmd:
-                return subprocess.CompletedProcess(
-                    args=cmd, returncode=0, stdout="", stderr=""
-                )
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
         _findings, infra = run_mutation(
-            ["src/add.py"], ["pytest"], cwd=tmp_path,
+            ["src/add.py"],
+            ["pytest"],
+            cwd=tmp_path,
         )
         assert not any("config conflict" in e for e in infra), infra
         assert "[tool.mutmut]" not in seen.get("pyproject", "")
@@ -385,9 +380,12 @@ class TestRunMutation:
         assert not (tmp_path / "setup.cfg").exists()
 
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_user_setup_cfg_restored_when_mutmut_run_raises(
-        self, mock_run, _which, tmp_path,
+        self,
+        mock_run,
+        _which,
+        tmp_path,
     ):
         user_cfg = "[mutmut]\nsource_paths = tools\n"
         (tmp_path / "setup.cfg").write_text(user_cfg, encoding="utf-8")
@@ -397,18 +395,14 @@ class TestRunMutation:
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_add.py").write_text(
-            "from add import add\n"
-            "def test_add():\n"
-            "    assert add(1, 2) == 3\n"
+            "from add import add\ndef test_add():\n    assert add(1, 2) == 3\n"
         )
 
         def side_effect(*args, **kwargs):
             cmd = args[0]
             if isinstance(cmd, list) and "mutmut" in cmd and "run" in cmd:
                 raise RuntimeError("boom")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
         with pytest.raises(RuntimeError, match="boom"):
@@ -426,7 +420,7 @@ class TestVenvFallback:
     runner-missing error), no stripping should occur.
     """
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     @patch.dict(
         "os.environ",
         {
@@ -459,7 +453,7 @@ class TestVenvFallback:
             assert env["VIRTUAL_ENV"] == "/fake/venv"
 
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     @patch.dict(
         "os.environ",
         {
@@ -518,7 +512,7 @@ class TestVenvFallback:
         skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
         assert skipped == [], "mutation was skipped despite successful retry: %s" % skipped
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     @patch.dict(
         "os.environ",
         {
@@ -561,7 +555,7 @@ class TestVenvFallback:
         assert len(skipped) == 1
         assert "flaky" in skipped[0].description or "baseline" in infra[0]
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     @patch.dict(
         "os.environ",
         {
@@ -599,7 +593,7 @@ class TestVenvFallback:
         skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
         assert len(skipped) == 1
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     @patch.dict(
         "os.environ",
         {
@@ -638,7 +632,7 @@ class TestVenvFallback:
         assert len(retry_envs) > 0, "no strip-retry on FileNotFoundError"
 
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     @patch.dict(
         "os.environ",
         {
@@ -693,7 +687,7 @@ class TestVenvFallback:
         ]
         assert skipped == [], "mutation skipped despite successful retry with flags: %s" % skipped
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     @patch.dict(
         "os.environ",
         {
@@ -965,7 +959,7 @@ class TestSetupCfgKey:
                 return_value="/usr/bin/mutmut",
             ),
             patch(
-                "code_forge.mutation.subprocess.run",
+                "code_forge.mutation.run_owned_command",
                 side_effect=_capture,
             ),
         ):

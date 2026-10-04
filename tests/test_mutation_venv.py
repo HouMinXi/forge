@@ -234,7 +234,7 @@ class TestBaselineTestSelection:
 class TestResolveMutmutInvocation:
     """The interpreter that owns baseline_cmd must own the mutmut subprocess."""
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_venv_baseline_uses_sibling_python(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         cmd = _resolve_mutmut_invocation(["/proj/.venv/bin/pytest", "tests/", "-q"])
@@ -242,7 +242,7 @@ class TestResolveMutmutInvocation:
         probe = mock_run.call_args_list[0][0][0]
         assert probe[:2] == ["/proj/.venv/bin/python", "-c"]
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_venv_without_mutmut_returns_none(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(
             args=[], returncode=1, stdout="", stderr="No module named mutmut"
@@ -250,7 +250,7 @@ class TestResolveMutmutInvocation:
         cmd = _resolve_mutmut_invocation(["/proj/.venv/bin/pytest", "tests/"])
         assert cmd is None
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_venv_probe_timeout_raises(self, mock_run):
         mock_run.side_effect = subprocess.TimeoutExpired(cmd=["python", "-c"], timeout=30)
         try:
@@ -259,19 +259,19 @@ class TestResolveMutmutInvocation:
             return
         raise AssertionError("probe timeout must not look like mutmut missing")
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_windows_pytest_exe_uses_python_exe(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         cmd = _resolve_mutmut_invocation(["/proj/.venv/Scripts/pytest.exe", "tests/"])
         assert cmd == ["/proj/.venv/Scripts/python.exe", "-m", "mutmut"]
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_trailing_separator_keeps_dirpart(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         cmd = _resolve_mutmut_invocation(["/proj/.venv/bin/", "tests/"])
         assert cmd == ["/proj/.venv/bin/python", "-m", "mutmut"]
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_windows_python3_exe_keeps_python3_exe(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         cmd = _resolve_mutmut_invocation(
@@ -292,8 +292,12 @@ class TestResolveMutmutInvocation:
 class TestRunMutationVenvBaseline:
     """End-to-end: venv baseline drives the interpreter, config, and env."""
 
-    @patch("code_forge.mutation.subprocess.run")
-    def test_venv_probe_timeout_skips_as_timeout_not_missing(self, mock_run):
+    @patch("code_forge.mutation.run_owned_command")
+    def test_venv_probe_timeout_skips_as_timeout_not_missing(self, mock_run, tmp_path):
+        source = tmp_path / "src/pkg/mod.py"
+        source.parent.mkdir(parents=True)
+        source.write_text("value = 1\n")
+
         def side_effect(*args, **kwargs):
             cmd = args[0]
             if isinstance(cmd, list) and cmd[1:2] == ["-c"]:
@@ -301,15 +305,21 @@ class TestRunMutationVenvBaseline:
             return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
-        findings, _infra = run_mutation(["src/pkg/mod.py"], ["/proj/.venv/bin/pytest", "tests/", "-q"])
+        findings, _infra = run_mutation(
+            ["src/pkg/mod.py"], ["/proj/.venv/bin/pytest", "tests/", "-q"], cwd=tmp_path
+        )
         assert len(findings) == 1
         assert findings[0].id == "MUTATION_SKIPPED"
         assert findings[0].fingerprint == "mutation-probe-timeout"
         assert "timed out" in findings[0].description
         assert findings[0].fingerprint != "mutation-unavailable"
 
-    @patch("code_forge.mutation.subprocess.run")
-    def test_venv_without_mutmut_skips_dismissed_not_confirmed(self, mock_run):
+    @patch("code_forge.mutation.run_owned_command")
+    def test_venv_without_mutmut_skips_dismissed_not_confirmed(self, mock_run, tmp_path):
+        source = tmp_path / "src/pkg/mod.py"
+        source.parent.mkdir(parents=True)
+        source.write_text("value = 1\n")
+
         def side_effect(*args, **kwargs):
             cmd = args[0]
             if isinstance(cmd, list) and cmd[1:2] == ["-c"]:
@@ -319,7 +329,9 @@ class TestRunMutationVenvBaseline:
             return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
-        findings, _infra = run_mutation(["src/pkg/mod.py"], ["/proj/.venv/bin/pytest", "tests/", "-q"])
+        findings, _infra = run_mutation(
+            ["src/pkg/mod.py"], ["/proj/.venv/bin/pytest", "tests/", "-q"], cwd=tmp_path
+        )
         assert len(findings) == 1
         assert findings[0].id == "MUTATION_SKIPPED"
         assert findings[0].disposition == Disposition.DISMISSED
@@ -328,7 +340,7 @@ class TestRunMutationVenvBaseline:
             cmd = call[0][0]
             assert not (isinstance(cmd, list) and "-m" in cmd and "mutmut" in cmd)
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_mutmut_run_inherits_baseline_pythonpath(self, mock_run, tmp_path):
         # mutmut 3.x rewrites sys.path after it has built mutants/;
         # forging PYTHONPATH=mutants/src races a directory that
@@ -360,7 +372,7 @@ class TestRunMutationVenvBaseline:
         assert posix == str(tmp_path / "src").replace("\\", "/")
         assert "mutants/" not in posix
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_runner_dir_leads_path(self, mock_run, tmp_path):
         # mutmut runs pytest in its own process and inherits this env.
         # A path-form baseline runner means the project toolchain lives
@@ -387,7 +399,7 @@ class TestRunMutationVenvBaseline:
         path = mutmut_calls[0][1]["env"]["PATH"]
         assert path.split(os.pathsep)[0] == str(runner.parent)
 
-    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.run_owned_command")
     def test_missing_runner_dir_leaves_path_alone(self, mock_run, tmp_path, monkeypatch):
         # A runner whose directory does not exist gives nothing to prepend.
         monkeypatch.setenv("PATH", "/usr/bin")
@@ -767,7 +779,7 @@ class TestMutationSkipIncludeGlobs:
         from io import StringIO
 
         from code_forge.cli import _run_mutation_check
-        from code_forge.mutation import Survivor
+        from tests.mutation_result_fixture import write_inventory
 
         diff_content = (
             "diff --git a/framework/test/select_package.py b/framework/test/select_package.py\n"
@@ -790,14 +802,24 @@ class TestMutationSkipIncludeGlobs:
         with (
             patch("code_forge.mutation._run_baseline_guard") as mock_guard,
             patch("code_forge.mutation._resolve_mutmut_invocation") as mock_inv,
-            patch("subprocess.run") as mock_sub,
-            patch("code_forge.mutation.parse_mutmut_results") as mock_parse,
+            patch("code_forge.mutation.run_owned_command") as mock_sub,
         ):
-            mock_guard.return_value = ("ok", [], [])
+            mock_guard.return_value = ("passed", [], [])
             mock_inv.return_value = ["mutmut"]
-            mock_sub.return_value.returncode = 0
-            mock_sub.return_value.stdout = "mod.fn__mutmut_1: survived\n"
-            mock_parse.return_value = ([Survivor("mod.fn__mutmut_1", "")], [])
+
+            def execute(argv, **kwargs):
+                if "run" in argv:
+                    write_inventory(
+                        tmp_path, "framework/test/select_package.py", {"x_example__mutmut_1": "survived"}
+                    )
+                output = (
+                    "framework.test.select_package.x_example__mutmut_1: survived"
+                    if "results" in argv
+                    else ""
+                )
+                return subprocess.CompletedProcess(argv, 0, output, "")
+
+            mock_sub.side_effect = execute
 
             captured_err = StringIO()
             old_stderr = sys.stderr

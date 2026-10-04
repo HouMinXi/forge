@@ -13,12 +13,12 @@ import json
 import os
 import pathlib
 import subprocess
-import sys
 from unittest.mock import patch
 
 import pytest
 
 from code_forge.disposition import Disposition
+from tests.mutation_result_fixture import write_inventory
 from code_forge.mutation import (
     _DEFAULT_MAX_CHILDREN_CAP,
     _build_mutmut_config,
@@ -42,7 +42,13 @@ def _run_calls(mock_run):
 
 
 def _run_mutation_guarded(tmp_path, mock_run, **kwargs):
-    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    def execute(argv, **kwargs):
+        if "run" in argv:
+            write_inventory(tmp_path, "src/pkg/mod.py")
+        output = "pkg.mod.x_example__mutmut_1: killed" if "results" in argv else ""
+        return subprocess.CompletedProcess(argv, 0, output, "")
+
+    mock_run.side_effect = execute
     with (
         patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut"),
         patch("code_forge.mutation._resolve_mutmut_invocation", return_value=["mutmut"]),
@@ -54,7 +60,7 @@ def _run_mutation_guarded(tmp_path, mock_run, **kwargs):
 
 
 def test_run_mutation_caps_max_children_by_default(tmp_path):
-    with patch("code_forge.mutation.subprocess.run") as mock_run:
+    with patch("code_forge.mutation.run_owned_command") as mock_run:
         argv = _run_mutation_guarded(tmp_path, mock_run)
     idx = argv.index("--max-children")
     value = int(argv[idx + 1])
@@ -63,7 +69,7 @@ def test_run_mutation_caps_max_children_by_default(tmp_path):
 
 
 def test_explicit_max_children_wins(tmp_path):
-    with patch("code_forge.mutation.subprocess.run") as mock_run:
+    with patch("code_forge.mutation.run_owned_command") as mock_run:
         argv = _run_mutation_guarded(tmp_path, mock_run, max_children=7)
     assert int(argv[argv.index("--max-children") + 1]) == 7
 
@@ -71,16 +77,14 @@ def test_explicit_max_children_wins(tmp_path):
 def test_env_overrides_default_children_cap(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_MUTATION_MAX_CHILDREN", "2")
     assert _effective_max_children(None) == 2
-    with patch("code_forge.mutation.subprocess.run") as mock_run:
+    with patch("code_forge.mutation.run_owned_command") as mock_run:
         argv = _run_mutation_guarded(tmp_path, mock_run)
     assert int(argv[argv.index("--max-children") + 1]) == 2
 
 
 def test_run_mutation_sets_rlimit_as_backstop(tmp_path):
-    import resource
-
     limit = 256 * 1024**2
-    with patch("code_forge.mutation.subprocess.run") as mock_run:
+    with patch("code_forge.mutation.run_owned_command") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         with (
             patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut"),
@@ -98,24 +102,7 @@ def test_run_mutation_sets_rlimit_as_backstop(tmp_path):
         for call in mock_run.call_args_list
         if isinstance(call[0][0], list) and call[0][0][1:2] == ["run"]
     )
-    preexec = run_call[1]["preexec_fn"]
-    if sys.platform == "win32":
-        assert preexec is None
-        return
-    assert preexec is not None
-    # Execute the limiter in a forked child: setrlimit is process-wide and
-    # irreversible for the hard limit, so it must never run in the pytest
-    # process itself.
-    pid = os.fork()
-    if pid == 0:  # pragma: no cover - child
-        try:
-            preexec()
-            soft, _hard = resource.getrlimit(resource.RLIMIT_AS)
-            os._exit(0 if soft == limit else 1)
-        except (OSError, ValueError):
-            os._exit(2)
-    _, status = os.waitpid(pid, 0)
-    assert os.waitstatus_to_exitcode(status) == 0
+    assert run_call[1]["memory_limit_bytes"] == limit
 
 
 def test_memory_limit_param_beats_default():
@@ -193,7 +180,12 @@ def test_detached_script_forwards_resource_guards(tmp_path, run_detached_payload
             "disposition": Disposition.CONFIRMED,
         },
     )()
-    with patch("code_forge.mutation.run_mutation", return_value=([finding], [])) as run:
+
+    def measured(**kwargs):
+        kwargs["_evidence"]["baseline_passed"] = True
+        return [finding], []
+
+    with patch("code_forge.mutation.run_mutation", side_effect=measured) as run:
         run_detached_payload(captured["script"])
     _, kwargs = run.call_args
     assert kwargs["max_children"] == 3
@@ -253,3 +245,12 @@ def test_review_forwards_skip_globs_from_gate_config():
         assert "%s=%s" % (key, key) in region, (
             "%s is read but not passed to launch_detached_mutation" % key
         )
+
+
+def test_address_space_adapter_forwards_to_the_shared_limiter(monkeypatch):
+    from code_forge import mutation as mutation_module
+
+    recorded = []
+    monkeypatch.setattr(mutation_module, "limit_address_space", recorded.append)
+    mutation_module._limit_address_space(1048576)
+    assert recorded == [1048576]

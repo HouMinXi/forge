@@ -17,23 +17,31 @@ mutmut integration notes (>=3.4, where source_paths replaced the old key):
 - mutmut 3.x has no --config flag: it reads pyproject.toml [tool.mutmut]
   first, else setup.cfg [mutmut]. A project that already has either
   (gxcicd's language_inventory job) used to skip the whole gate.
-- For the run, user files are snapshotted, a scoped setup.cfg is
-  installed, and [tool.mutmut] is hidden. finally restores the original
-  bytes (or deletes a setup.cfg we created). mutants/ is removed too.
+- A leased workspace preserves original configuration nodes and cache,
+  publishes scoped setup.cfg and hides [tool.mutmut]. Complete owned
+  teardown permits restoration; incomplete or foreign states retain
+  recovery artifacts and produce infrastructure evidence.
 """
 
 from __future__ import annotations
 
+import ast
+import hashlib
+import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 from code_forge.baseline_guard import _run_baseline_guard, _strip_venv_from_env
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, TypedDict
 
+from ._mutation_process import MutationProcessError, limit_address_space, run_owned_command
+from ._mutation_workspace import MutationWorkspace, MutationWorkspaceError
 from .disposition import Disposition
+from .mutation_config import DEFAULT_MUTATION_TIMEOUT, validate_mutation_timeout
 from .state import StateFinding
 
 # Marker in the scoped setup.cfg. User files without it are snapshotted
@@ -47,6 +55,40 @@ class Survivor:
 
     mutant_name: str  # mutmut 3.x identifier e.g. "code_forge.mutation.x_run__mutmut_1"
     file: str  # source file (empty; mutmut 3.x results omit file paths)
+
+
+class MutationOutcome(TypedDict):
+    """Terminal evidence for the supported Python measurement and sibling notes."""
+
+    status: Literal["done", "error"]
+    baseline_passed: bool
+    survivors: list[str]
+    skipped: list[str]
+    infra_errors: list[str]
+    inventory: dict[str, str]
+    message: str
+
+
+def _mutation_outcome(findings: list[StateFinding], infra: list[str], evidence: dict) -> MutationOutcome:
+    from .mutation_findings import is_mutation_diagnostic, is_mutation_survivor
+
+    errors = [f.description for f in findings if f.id == "MUTATION_ERROR" or is_mutation_diagnostic(f)]
+    skipped = [f.description for f in findings if f.id == "MUTATION_SKIPPED"]
+    errors.extend(infra)
+    completed = evidence.get("completed_measurement", evidence.get("baseline_passed")) is True
+    if not completed:
+        errors.extend(skipped)
+        if not errors:
+            errors.append("mutation did not prove its baseline and completed measurement")
+    return {
+        "status": "error" if errors else "done",
+        "baseline_passed": completed and not errors,
+        "survivors": [f.id for f in findings if is_mutation_survivor(f)],
+        "skipped": skipped,
+        "infra_errors": list(infra),
+        "inventory": evidence.get("inventory", {}),
+        "message": "\n".join(errors),
+    }
 
 
 _DEFAULT_MUTATION_SKIP_GLOBS = [
@@ -261,12 +303,7 @@ def _limit_address_space(memory_limit_bytes: int) -> None:
     The hard ceiling cannot be raised. An outer prlimit already below the
     requested cap must be kept, not treated as a launch failure.
     """
-    import resource
-
-    _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-    if hard != resource.RLIM_INFINITY:
-        memory_limit_bytes = min(memory_limit_bytes, hard)
-    resource.setrlimit(resource.RLIMIT_AS, (memory_limit_bytes, memory_limit_bytes))
+    limit_address_space(memory_limit_bytes)
 
 
 _MUTATION_STAGE_EXCLUSION = "not integration and not source_scan"
@@ -462,99 +499,23 @@ def _hide_tool_mutmut(text: str) -> str:
     return "".join(out)
 
 
-def _atomic_write_bytes(path: str, data: bytes) -> None:
-    directory = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(
-        prefix=".code-forge-mutation-cfg-",
-        dir=directory,
-        suffix=".tmp",
-    )
+def _scoped_pyproject(data: bytes) -> bytes | None:
+    """Return only the measured mutmut-table transformation, if needed."""
     try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-        os.rename(tmp, path)
-    except OSError:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+        content = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if not _pyproject_has_tool_mutmut(content):
+        return None
+    return _hide_tool_mutmut(content).encode("utf-8")
 
 
-def _install_mutmut_config(
-    repo_root: str,
-    config_content: str,
-) -> tuple[bytes | None, bool, bytes | None]:
-    """Install scoped mutmut config. Returns stashes for finally.
-
-    setup_stash: original setup.cfg bytes, or None if the file was
-    absent / already ours. setup_existed_as_user says restore those
-    bytes instead of deleting. pyproject_stash: original pyproject
-    bytes when [tool.mutmut] was hidden, else None.
-    """
-    setup_cfg_path = os.path.join(repo_root, "setup.cfg")
-    pyproject_path = os.path.join(repo_root, "pyproject.toml")
-    setup_stash: bytes | None = None
-    setup_existed_as_user = False
-    pyproject_stash: bytes | None = None
-
-    if os.path.exists(setup_cfg_path):
-        with open(setup_cfg_path, "rb") as handle:
-            setup_bytes = handle.read()
-        try:
-            setup_text = setup_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            setup_text = ""
-        if _CODE_FORGE_CFG_MARKER not in setup_text:
-            setup_stash = setup_bytes
-            setup_existed_as_user = True
-
-    if os.path.exists(pyproject_path):
-        with open(pyproject_path, "rb") as handle:
-            py_bytes = handle.read()
-        try:
-            py_text = py_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            py_text = ""
-        if _pyproject_has_tool_mutmut(py_text):
-            pyproject_stash = py_bytes
-            _atomic_write_bytes(pyproject_path, _hide_tool_mutmut(py_text).encode("utf-8"))
-
-    try:
-        _atomic_write_bytes(setup_cfg_path, config_content.encode("utf-8"))
-    except OSError:
-        if pyproject_stash is not None:
-            _atomic_write_bytes(pyproject_path, pyproject_stash)
-        raise
-    return setup_stash, setup_existed_as_user, pyproject_stash
-
-
-def _restore_mutmut_config(
-    repo_root: str,
-    setup_stash: bytes | None,
-    setup_existed_as_user: bool,
-    pyproject_stash: bytes | None,
-) -> None:
-    setup_cfg_path = os.path.join(repo_root, "setup.cfg")
-    pyproject_path = os.path.join(repo_root, "pyproject.toml")
-    if setup_existed_as_user and setup_stash is not None:
-        try:
-            _atomic_write_bytes(setup_cfg_path, setup_stash)
-        except OSError:
-            pass
-    else:
-        try:
-            os.unlink(setup_cfg_path)
-        except OSError:
-            pass
-    if pyproject_stash is not None:
-        try:
-            _atomic_write_bytes(pyproject_path, pyproject_stash)
-        except OSError:
-            pass
-
-
-def _resolve_mutmut_invocation(baseline_cmd: list[str]) -> list[str] | None:
+def _resolve_mutmut_invocation(
+    baseline_cmd: list[str],
+    *,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+) -> list[str] | None:
     """Resolve the mutmut invocation from the baseline test command.
 
     mutmut 3.x runs pytest in its OWN interpreter (pytest.main in-process),
@@ -583,11 +544,13 @@ def _resolve_mutmut_invocation(baseline_cmd: list[str]) -> list[str] | None:
         else:
             python = dirpart + "python" + ext
         try:
-            probe = subprocess.run(
+            probe = run_owned_command(
                 [python, "-c", "import mutmut"],
                 capture_output=True,
                 timeout=30,
                 check=False,
+                cwd=cwd,
+                env=env,
             )
         except subprocess.TimeoutExpired:
             raise
@@ -599,6 +562,124 @@ def _resolve_mutmut_invocation(baseline_cmd: list[str]) -> list[str] | None:
     if shutil.which("mutmut") is None:
         return None
     return ["mutmut"]
+
+
+_NATIVE_STATUS = {
+    0: "survived",
+    1: "killed",
+    3: "killed",
+    5: "no tests",
+    2: "check was interrupted by user",
+    33: "no tests",
+    34: "skipped",
+    35: "suspicious",
+    36: "timeout",
+    37: "caught by type check",
+    -24: "timeout",
+    24: "timeout",
+    152: "timeout",
+    255: "timeout",
+    -11: "segfault",
+    -9: "segfault",
+}
+_MUTANT_NAME = re.compile(r"[^:\r\n]+__mutmut_[0-9]+$")
+
+
+def _result_records(stdout: str) -> tuple[dict[str, str], list[str]]:
+    records: dict[str, str] = {}
+    warnings = []
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        name, separator, status = line.strip().partition(": ")
+        if not separator or not _MUTANT_NAME.fullmatch(name):
+            warnings.append(f"unparseable mutmut result: {line.strip()}")
+        elif status not in set(_NATIVE_STATUS.values()) | {"not checked"}:
+            warnings.append(f"unknown mutmut status: {name}: {status}")
+        elif name in records:
+            warnings.append(f"duplicate mutmut result: {name}")
+        else:
+            records[name] = status
+    return records, warnings
+
+
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate mutation metadata key: {key}")
+        result[key] = value
+    return result
+
+
+def _read_inventory_file(path: Path) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError("mutation inventory must use regular files")
+        chunks = []
+        while block := os.read(descriptor, 1024 * 1024):
+            chunks.append(block)
+        final = os.fstat(descriptor)
+        named = path.lstat()
+
+        def identity(info):
+            return (
+                info.st_dev,
+                info.st_ino,
+                info.st_mode,
+                info.st_size,
+                info.st_mtime_ns,
+                info.st_ctime_ns,
+            )
+
+        if identity(opened) != identity(final) or identity(final) != identity(named):
+            raise ValueError("mutation inventory changed while reading")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _mutation_inventory(repo_root: str, py_files: list[str]) -> tuple[dict[str, str], dict[str, str]]:
+    inventory: dict[str, str] = {}
+    digests = {}
+    root = Path(repo_root)
+    for name in py_files:
+        relative = Path(name)
+        if relative.is_absolute():
+            relative = relative.relative_to(root)
+        if ".." in relative.parts:
+            raise ValueError("mutation source is outside the project root")
+        mirror = root / "mutants" / relative
+        meta_path = mirror.with_name(mirror.name + ".meta")
+        mirror_components = [root / "mutants" / component for component in (relative, *relative.parents)]
+        if meta_path.is_symlink() or any(path.is_symlink() for path in mirror_components):
+            raise ValueError("mutation inventory must use regular files")
+        generated = ast.parse(_read_inventory_file(mirror).decode("utf-8"))
+        module = relative.with_suffix("").as_posix().replace("/", ".").removeprefix("src.")
+        keys = {
+            f"{module}.{node.name}".replace(".__init__.", ".")
+            for node in ast.walk(generated)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and re.search(r"__mutmut_[0-9]+$", node.name)
+        }
+        raw = _read_inventory_file(meta_path)
+        meta = json.loads(raw, object_pairs_hook=_unique_object)
+        if not isinstance(meta, dict) or not isinstance(meta.get("exit_code_by_key"), dict):
+            raise TypeError(f"invalid mutation metadata: {relative}")
+        exits = meta["exit_code_by_key"]
+        if set(exits) != keys:
+            raise ValueError(f"generated and recorded mutant identities disagree: {relative}")
+        for key, code in exits.items():
+            if key in inventory or type(code) is not int or code not in _NATIVE_STATUS:
+                raise ValueError(f"incomplete or unknown mutation result: {key}: {code}")
+            status = _NATIVE_STATUS[code]
+            if status not in {"survived", "killed", "caught by type check"}:
+                raise ValueError(f"mutation measurement is incomplete: {key}: {status}")
+            inventory[key] = status
+        digests[str(relative)] = hashlib.sha256(raw).hexdigest()
+    return inventory, digests
 
 
 def parse_mutmut_results(stdout: str) -> tuple[list[Survivor], list[str]]:
@@ -623,29 +704,103 @@ def parse_mutmut_results(stdout: str) -> tuple[list[Survivor], list[str]]:
         tuple[list[Survivor], list[str]] where second element is warnings
         about unparseable lines. Never raises.
     """
-    survivors = []
-    warnings = []
+    records, warnings = _result_records(stdout)
+    return [
+        Survivor(mutant_name=name, file="") for name, status in records.items() if status == "survived"
+    ], warnings
 
-    for line in stdout.split("\n"):
-        stripped = line.strip()
-        if not stripped:
-            continue
 
-        # Format: "module.fn__mutmut_N: status"
-        if ": " not in stripped:
-            continue
+def _process_error(message: str) -> StateFinding:
+    return StateFinding(
+        id="MUTATION_ERROR",
+        fingerprint="mutation-evidence-error",
+        source="MUTANT",
+        disposition=Disposition.CONFIRMED,
+        file="",
+        line_range=[],
+        description=message,
+    )
 
-        mutant_name, _, status = stripped.partition(": ")
-        mutant_name = mutant_name.strip()
-        status = status.strip()
 
-        if not mutant_name:
-            continue
+def _lexical_source(name: str, root: Path) -> Path:
+    path = Path(name.replace("\\", "/"))
+    if ".." in path.parts:
+        raise ValueError(f"mutation source is outside the project root: {name}")
+    if path.is_absolute():
+        try:
+            path = path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"mutation source is outside the project root: {name}") from exc
+    return path
 
-        if status == "survived":
-            survivors.append(Survivor(mutant_name=mutant_name, file=""))
 
-    return survivors, warnings
+def _relative_sources(py_files: list[str], cwd: Path) -> list[str]:
+    root = Path(os.path.abspath(cwd))
+    relative = []
+    seen = set()
+    for name in py_files:
+        path = _lexical_source(name, root)
+        if any((root / component).is_symlink() for component in [path, *path.parents]):
+            raise ValueError(f"mutation source links are not supported: {name}")
+        mirror = root / "mutants" / path
+        mirror_components = [root / "mutants" / component for component in (path, *path.parents)]
+        if mirror.with_name(mirror.name + ".meta").is_symlink() or any(
+            component.is_symlink() for component in mirror_components
+        ):
+            raise ValueError(f"mutation mirror links are not supported: {name}")
+        canonical = path.as_posix()
+        if canonical not in seen:
+            seen.add(canonical)
+            relative.append(canonical)
+    return relative
+
+
+def _source_is_absent(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return True
+    return False
+
+
+def _without_deleted_sources(py_files: list[str], cwd: Path) -> list[str]:
+    missing = {name for name in py_files if _source_is_absent(cwd / name)}
+    if not missing or not (cwd / ".git").exists():
+        return py_files
+    try:
+        result = run_owned_command(
+            [
+                "git",
+                "--no-optional-locks",
+                "diff",
+                "--relative",
+                "--no-renames",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-only",
+                "-z",
+                "--diff-filter=D",
+                "HEAD",
+                "--",
+            ],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="surrogateescape",
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return py_files
+    if result.returncode != 0 or (result.stdout and not result.stdout.endswith("\0")):
+        return py_files
+    deleted = set(result.stdout.split("\0"))
+    return [
+        name
+        for name in py_files
+        if name not in missing or name not in deleted or not _source_is_absent(cwd / name)
+    ]
 
 
 def _mutation_command_error(phase: str, result: subprocess.CompletedProcess) -> StateFinding:
@@ -669,7 +824,7 @@ def _mutation_command_error(phase: str, result: subprocess.CompletedProcess) -> 
 def run_mutation(
     diff_files: list[str],
     baseline_cmd: list[str],
-    timeout: int = 600,
+    timeout: int = DEFAULT_MUTATION_TIMEOUT,
     cwd: Path | None = None,
     baseline_timeout: int = 120,
     also_copy: list[str] | None = None,
@@ -677,6 +832,73 @@ def run_mutation(
     memory_limit_bytes: int | None = None,
     mutation_skip_globs: list[str] | None = None,
     mutation_include_globs: list[str] | None = None,
+    *,
+    _evidence: dict | None = None,
+) -> tuple[list[StateFinding], list[str]]:
+    """Measure the selected source with owned processes and an exclusive fresh mirror.
+
+    Return the existing (findings, infra_errors) pair. The optional private
+    evidence dictionary retains measured proof for the detached producer.
+    """
+    validate_mutation_timeout(timeout)
+    evidence = {} if _evidence is None else _evidence
+    root = Path.cwd() if cwd is None else cwd
+    workspace = MutationWorkspace(os.path.abspath(root))
+    outcome: tuple[list[StateFinding], list[str]] = ([], [])
+
+    def failed(exc):
+        nonlocal outcome
+        message = str(exc)
+        findings = outcome[0] + [_process_error(message)]
+        infra = outcome[1] + [message]
+        evidence["baseline_passed"] = False
+        evidence["completed_measurement"] = False
+        evidence["infra_errors"] = infra
+        outcome = findings, infra
+
+    try:
+        outcome = _run_mutation(
+            diff_files,
+            baseline_cmd,
+            timeout,
+            root,
+            baseline_timeout,
+            also_copy,
+            max_children,
+            memory_limit_bytes,
+            mutation_skip_globs,
+            mutation_include_globs,
+            _evidence=evidence,
+            _workspace=workspace,
+        )
+    except MutationProcessError as exc:
+        workspace.cleanup_complete &= exc.cleanup_complete
+        evidence["process_failure"] = exc.report
+        failed(exc)
+    except (MutationWorkspaceError, OSError) as exc:
+        failed(exc)
+    finally:
+        try:
+            workspace.release()
+        except (MutationWorkspaceError, OSError) as exc:
+            failed(exc)
+    return outcome
+
+
+def _run_mutation(
+    diff_files: list[str],
+    baseline_cmd: list[str],
+    timeout: int,
+    cwd: Path,
+    baseline_timeout: int,
+    also_copy: list[str] | None,
+    max_children: int | None,
+    memory_limit_bytes: int | None,
+    mutation_skip_globs: list[str] | None,
+    mutation_include_globs: list[str] | None,
+    *,
+    _evidence: dict,
+    _workspace: MutationWorkspace,
 ) -> tuple[list[StateFinding], list[str]]:
     """Run mutation testing on diff-scoped files.
 
@@ -701,6 +923,7 @@ def run_mutation(
         mutation_skip_globs: glob patterns for files to exclude from mutation.
         mutation_include_globs: glob patterns for files to include in mutation,
             taking precedence over skip globs.
+        _evidence: optional per-call internal proof used by the detached producer.
 
     Implementation note:
         mutmut 3.x requires cwd to be the project root. User setup.cfg
@@ -713,12 +936,17 @@ def run_mutation(
         - CONFIRMED MUTANT findings for survivors
         - DISMISSED MUTATION_SKIPPED findings for skip conditions
     """
+    validate_mutation_timeout(timeout)
+    evidence = {} if _evidence is None else _evidence
+    evidence.clear()
+    evidence.update(
+        baseline_passed=False, completed_measurement=False, skipped=[], infra_errors=[], inventory={}
+    )
+    baseline_proven = False
     findings: list[StateFinding] = []
     infra_errors: list[str] = []
 
-    if cwd is None:
-        cwd = Path.cwd()
-    repo_root = str(cwd.resolve())
+    repo_root = os.path.abspath(cwd)
 
     if mutation_skip_globs is None or mutation_include_globs is None:
         file_skip, file_include = _globs_from_gate_yaml(cwd)
@@ -758,21 +986,57 @@ def run_mutation(
         )
         if infra:
             infra_errors.append(infra)
+        evidence["skipped"] = [description]
+        evidence["infra_errors"] = list(infra_errors)
         return (findings, infra_errors)
 
+    try:
+        py_files = [_lexical_source(name, Path(repo_root)).as_posix() for name in py_files]
+        py_files = [
+            name
+            for name in py_files
+            if not _is_test_path(name, mutation_skip_globs, mutation_include_globs, cwd)
+        ]
+        py_files = _relative_sources(py_files, cwd)
+        py_files = _without_deleted_sources(py_files, cwd)
+    except ValueError as exc:
+        error = _process_error(str(exc))
+        evidence["infra_errors"] = [error.description]
+        return [error], [error.description]
+
     def _with_other(out_findings: list[StateFinding], out_infra: list[str]):
-        if not other:
-            return (out_findings, out_infra)
-        out_findings.append(
-            StateFinding(
-                id="MUTATION_SKIPPED",
-                fingerprint="mutation-other-adapter",
-                source="MUTANT",
-                disposition=Disposition.DISMISSED,
-                file="",
-                line_range=[],
-                description=other_adapter_note(diff_files),
+        # Applicability notes for a sibling must not erase a completed
+        # supported measurement. Keep the aggregate baseline flag below
+        # separate from this proof established before sibling decoration.
+        from .mutation_findings import is_mutation_diagnostic
+
+        evidence["completed_measurement"] = (
+            baseline_proven
+            and not out_infra
+            and not any(
+                f.id in ("MUTATION_SKIPPED", "MUTATION_ERROR") or is_mutation_diagnostic(f)
+                for f in out_findings
             )
+        )
+        if other:
+            out_findings.append(
+                StateFinding(
+                    id="MUTATION_SKIPPED",
+                    fingerprint="mutation-other-adapter",
+                    source="MUTANT",
+                    disposition=Disposition.DISMISSED,
+                    file="",
+                    line_range=[],
+                    description=other_adapter_note(diff_files),
+                )
+            )
+        evidence["skipped"] = [f.description for f in out_findings if f.id == "MUTATION_SKIPPED"]
+        evidence["infra_errors"] = list(out_infra)
+        evidence["baseline_passed"] = (
+            baseline_proven
+            and not out_infra
+            and not evidence["skipped"]
+            and not any(f.id == "MUTATION_ERROR" for f in out_findings)
         )
         return (out_findings, out_infra)
 
@@ -796,6 +1060,8 @@ def run_mutation(
         )
         return _with_other(findings, [])
 
+    _workspace.acquire()
+
     # Flaky guard: run the baseline 3x at the repo root.
     #
     # Start with the inherited environment (including VIRTUAL_ENV if
@@ -817,24 +1083,49 @@ def run_mutation(
         if os.path.isdir(project_bin):
             run_env["PATH"] = project_bin + os.pathsep + run_env.get("PATH", "")
 
-    status, guard_findings, guard_infra = _run_baseline_guard(
-        baseline_cmd, run_env, repo_root, allow_strip_retry=True, timeout=baseline_timeout
-    )
-    if status == "needs_strip_retry":
-        run_env = _strip_venv_from_env(run_env)
-        run_env["PYTHONPATH"] = pythonpath
+    try:
         status, guard_findings, guard_infra = _run_baseline_guard(
-            baseline_cmd, run_env, repo_root, allow_strip_retry=False, timeout=baseline_timeout
+            baseline_cmd,
+            run_env,
+            repo_root,
+            allow_strip_retry=True,
+            timeout=baseline_timeout,
+            run_command=run_owned_command,
         )
+        if status == "needs_strip_retry":
+            run_env = _strip_venv_from_env(run_env)
+            run_env["PYTHONPATH"] = pythonpath
+            status, guard_findings, guard_infra = _run_baseline_guard(
+                baseline_cmd,
+                run_env,
+                repo_root,
+                allow_strip_retry=False,
+                timeout=baseline_timeout,
+                run_command=run_owned_command,
+            )
+    except MutationProcessError as exc:
+        _workspace.cleanup_complete = exc.cleanup_complete
+        evidence["process_failure"] = exc.report
+        error = _process_error(str(exc))
+        return _with_other([error], [error.description])
     if status == "skip":
         return _with_other(guard_findings, guard_infra)
+    if status != "passed":
+        error = _process_error(f"baseline guard returned an unknown status: {status}")
+        return _with_other([error], [error.description])
+    baseline_proven = status == "passed"
 
     # Resolve the mutmut invocation from the baseline environment. mutmut
     # must share the interpreter with the project test deps (it drives
     # pytest.main in-process); a foreign PATH mutmut only produces
     # collection errors, so its absence is a clean skip, not an error.
     try:
-        invocation = _resolve_mutmut_invocation(baseline_cmd)
+        invocation = _resolve_mutmut_invocation(baseline_cmd, cwd=repo_root, env=run_env)
+    except MutationProcessError as exc:
+        _workspace.cleanup_complete = exc.cleanup_complete
+        evidence["process_failure"] = exc.report
+        error = _process_error(str(exc))
+        return _with_other([error], [error.description])
     except subprocess.TimeoutExpired:
         findings.append(
             StateFinding(
@@ -869,13 +1160,11 @@ def run_mutation(
         )
         return _with_other(findings, [])
 
-    # mutmut 3.x has no --config flag. Snapshot user files, install a
-    # scoped setup.cfg, hide [tool.mutmut], restore in finally.
-    setup_stash: bytes | None = None
-    setup_existed_as_user = False
-    pyproject_stash: bytes | None = None
-    installed = False
+    # The leased workspace owns configuration recovery as well as the
+    # fresh native mirror; originals are never overwritten by name alone.
+    cleanup_complete = True
     try:
+        _workspace.prepare()
         # mutmut renamed the key in 3.4: source_paths replaced paths_to_mutate.
         # 3.3 does not recognise the new name and falls back to guessing the
         # source tree, which silently widens the run past the diff scope, so
@@ -888,10 +1177,7 @@ def run_mutation(
             include_globs=mutation_include_globs,
             cwd=cwd,
         )
-        setup_stash, setup_existed_as_user, pyproject_stash = _install_mutmut_config(
-            repo_root, config_content
-        )
-        installed = True
+        _workspace.install_configs(config_content.encode("utf-8"), _scoped_pyproject)
 
         # mutmut 3.x rewrites sys.path itself (inserts mutants/src, then
         # chdir into mutants/ before pytest.main). Pointing PYTHONPATH at
@@ -900,9 +1186,8 @@ def run_mutation(
         # original src entry after it has built the mirror.
         children = _effective_max_children(max_children)
         address_space = _memory_limit_bytes(memory_limit_bytes)
-        preexec = (lambda: _limit_address_space(address_space)) if os.name == "posix" else None
         try:
-            result = subprocess.run(
+            result = run_owned_command(
                 invocation + ["run", "--max-children", str(children)],
                 capture_output=True,
                 text=True,
@@ -912,13 +1197,13 @@ def run_mutation(
                 check=False,
                 env=run_env,
                 cwd=repo_root,
-                preexec_fn=preexec,
+                memory_limit_bytes=address_space,
             )
 
             # Any non-zero exit is an error (attempt 2 bug: only caught ==2)
             if result.returncode != 0:
                 error = _mutation_command_error("run", result)
-                return ([error], [error.description])
+                return _with_other([error], [error.description])
 
         except subprocess.TimeoutExpired:
             findings.append(
@@ -936,8 +1221,18 @@ def run_mutation(
 
         # Parse results from repo_root
         try:
-            results_proc = subprocess.run(
-                invocation + ["results"],
+            inventory, metadata_digests = _mutation_inventory(
+                repo_root,
+                [
+                    f
+                    for f in py_files
+                    if not _is_test_path(f, mutation_skip_globs, mutation_include_globs, cwd)
+                ],
+            )
+            evidence["inventory"] = inventory
+            evidence["metadata_sha256"] = metadata_digests
+            results_proc = run_owned_command(
+                invocation + ["results", "--all", "true"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -949,7 +1244,27 @@ def run_mutation(
             )
             if results_proc.returncode != 0:
                 error = _mutation_command_error("results", results_proc)
-                return ([error], [error.description])
+                return _with_other([error], [error.description])
+            records, parse_warnings = _result_records(results_proc.stdout)
+            if parse_warnings or records != inventory:
+                raise ValueError(
+                    "mutmut result transport disagrees with generated inventory: "
+                    + "; ".join(parse_warnings)
+                )
+            evidence["results_sha256"] = hashlib.sha256(results_proc.stdout.encode("utf-8")).hexdigest()
+            if not inventory:
+                findings.append(
+                    StateFinding(
+                        id="MUTATION_SKIPPED",
+                        fingerprint="mutation-no-mutants",
+                        source="MUTANT",
+                        disposition=Disposition.DISMISSED,
+                        file="",
+                        line_range=[],
+                        description="mutmut generated no mutants; no mutation measurement was made",
+                    )
+                )
+                return _with_other(findings, [])
             survivors, parse_warnings = parse_mutmut_results(results_proc.stdout)
             infra_errors.extend(parse_warnings)
         except subprocess.TimeoutExpired:
@@ -965,6 +1280,9 @@ def run_mutation(
                 )
             )
             return _with_other(findings, [])
+        except (TypeError, ValueError, OSError, SyntaxError) as exc:
+            error = _process_error(f"mutmut result evidence failed: {exc}")
+            return _with_other([error], [error.description])
 
         findings.extend(
             StateFinding(
@@ -979,11 +1297,13 @@ def run_mutation(
             for survivor in survivors
         )
 
+    except MutationProcessError as exc:
+        cleanup_complete = exc.cleanup_complete
+        evidence["process_failure"] = exc.report
+        error = _process_error(str(exc))
+        return _with_other([error], [error.description])
     finally:
-        if installed:
-            _restore_mutmut_config(repo_root, setup_stash, setup_existed_as_user, pyproject_stash)
-        mutants_dir = os.path.join(repo_root, "mutants")
-        shutil.rmtree(mutants_dir, ignore_errors=True)
+        _workspace.cleanup_complete = _workspace.cleanup_complete and cleanup_complete
 
     return _with_other(findings, infra_errors)
 
@@ -999,6 +1319,7 @@ def launch_detached_mutation(
     memory_limit_bytes: int | None = None,
     mutation_skip_globs: list[str] | None = None,
     mutation_include_globs: list[str] | None = None,
+    timeout: int = DEFAULT_MUTATION_TIMEOUT,
 ) -> bool:
     """Launch the mutation run detached, reporting whether it started.
 
@@ -1013,7 +1334,9 @@ def launch_detached_mutation(
     max_children and memory_limit_bytes are forwarded to run_mutation; see
     its docstring for the resource-guard semantics (mutmut defaults to
     cpu_count() children, which OOM'd the review service on a 16-core host).
+    timeout limits mutmut run independently of the baseline test deadline.
     """
+    validate_mutation_timeout(timeout)
     import json
     import os
     import subprocess
@@ -1029,6 +1352,10 @@ def launch_detached_mutation(
         "started_at": time.time(),
         "status": "running",
         "survivors": [],
+        "baseline_passed": False,
+        "skipped": [],
+        "infra_errors": [],
+        "inventory": {},
     }
     with open(result_path, "w", encoding="utf-8") as f:
         json.dump(initial_data, f)
@@ -1045,15 +1372,13 @@ from pathlib import Path
 # Add src to path so code_forge is importable if run from source
 sys.path.insert(0, {forge_src!r})
 try:
-    from code_forge.mutation import run_mutation
-    from code_forge.mutation_findings import is_mutation_diagnostic, is_mutation_survivor
+    from code_forge.mutation import run_mutation, _mutation_outcome
 except ImportError:
     # Installed package layout: the cwd itself may be the package root
     import os as _os
     _os.chdir(str(Path({str(cwd)!r})))
     sys.path.insert(0, str(Path({str(cwd)!r})))
-    from code_forge.mutation import run_mutation
-    from code_forge.mutation_findings import is_mutation_diagnostic, is_mutation_survivor
+    from code_forge.mutation import run_mutation, _mutation_outcome
 
 result_path = Path({str(result_path)!r})
 cwd_ref = Path({str(cwd)!r})
@@ -1077,31 +1402,30 @@ except Exception:
     pass
 
 try:
+    evidence = {{}}
     mm_findings, _infra = run_mutation(
         diff_files=diff_files,
         baseline_cmd=baseline_cmd,
         cwd=cwd_ref,
+        timeout={timeout!r},
         baseline_timeout=int({baseline_timeout}),
         also_copy=also_copy,
         max_children={max_children!r},
         memory_limit_bytes={memory_limit_bytes!r},
         mutation_skip_globs=mutation_skip_globs,
         mutation_include_globs=mutation_include_globs,
+        _evidence=evidence,
     )
-    survivor_list = [f.id for f in mm_findings if is_mutation_survivor(f)]
-    errors = [
-        f.description for f in mm_findings
-        if f.id == "MUTATION_ERROR" or is_mutation_diagnostic(f)
-    ]
-    data["status"] = "error" if errors else "done"
-    if errors:
-        data["message"] = "\\n".join(errors)
-    data["survivors"] = survivor_list
+    data.update(_mutation_outcome(mm_findings, _infra, evidence))
     with open(result_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
 except Exception as e:
     data["status"] = "error"
+    data["baseline_passed"] = False
     data["message"] = str(e)
+    data["skipped"] = []
+    data["infra_errors"] = [str(e)]
+    data["inventory"] = evidence.get("inventory", {{}})
     try:
         with open(result_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
