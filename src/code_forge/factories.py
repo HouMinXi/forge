@@ -8,12 +8,14 @@ declarative and Phase 4 can swap impls without touching the CLI.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
 import time
+from copy import deepcopy
 from pathlib import Path
 from typing import Callable
 
@@ -24,8 +26,20 @@ from .falsify import Falsifier, StubFalsifier
 from . import progress
 from .e2e_check import run_e2e_check
 from .mutation import run_mutation
-from .reviewer_json import _json_to_state_findings, _strip_fence
+from .reviewer_json import (
+    GroupedReviewAttempt,
+    ReviewGroupScope,
+    _requires_l1_excerpts,
+    require_l1_excerpt_evidence,
+    _json_to_state_findings,
+    _strip_fence,
+)
 from .state import StateFinding
+
+
+def _snapshot_raw_response(response):
+    """Keep parsed transport data independent of validator mutation."""
+    return deepcopy(response) if isinstance(response, dict) else response
 
 
 def _raw_response_data(response) -> dict | None:
@@ -268,7 +282,6 @@ def build_e2e_checker() -> Callable:
     return run_e2e_check
 
 
-
 class _L1Call:
     """A review pass that is called like a function and keeps its own audit.
 
@@ -338,6 +351,7 @@ def build_l1_provider(
     from .reviewer_json import (
         REVIEW_JSON_CONTRACT,
         ExcerptEvidenceError,
+        MissingExcerptEvidenceError,
         _collect_excerpts,
         _dedup_by_fingerprint,
         validate_reviewer_json,
@@ -528,8 +542,12 @@ def build_l1_provider(
             total_cached += result.usage.cached_input_tokens
             total_duration += result.duration_s
 
+            raw_snapshot = _snapshot_raw_response(response)
             try:
                 validated = validate_reviewer_json(response)
+                require_l1_excerpt_evidence(
+                    validated, diff_text, reviewed_repositories=reviewed_repositories
+                )
                 if reviewed_repositories is not None:
                     from .receipt_scope import validate_scoped_paths
 
@@ -560,11 +578,17 @@ def build_l1_provider(
                 # loop-owned pass attribution -- never as accepted
                 # evidence, never repaired. The writer stores it in a
                 # dedicated artifact so the raw excerpt text survives.
-                raw_data = _raw_response_data(response)
+                raw_data = _raw_response_data(raw_snapshot)
                 # An excerpt that fails to check out is audit data, kept
-                # below as UNTRUSTED. Only a response that is not even
-                # valid evidence rejects the round.
-                if raw_data is not None and not isinstance(exc, ExcerptEvidenceError):
+                # below as UNTRUSTED. A missing applicable pass is also
+                # incomplete evidence, independently of other passes'
+                # accepted excerpts. It requires no invented code finding.
+                missing_required = isinstance(
+                    exc, MissingExcerptEvidenceError
+                ) and _requires_l1_excerpts(diff_text, reviewed_repositories=reviewed_repositories)
+                if raw_data is not None and (
+                    not isinstance(exc, ExcerptEvidenceError) or missing_required
+                ):
                     attempted = dict(raw_data)
                     attempted["pass_name"] = pass_name
                     all_attempted.append(attempted)
@@ -703,7 +727,11 @@ def build_grouped_l1_provider(
     """
     providers = [
         (
-            spec["name"],
+            ReviewGroupScope(
+                name=spec["name"],
+                diff_sha256=hashlib.sha256((spec["resolved"].git_diff or "").encode()).hexdigest(),
+                source_files=tuple(str(f) for f in spec["resolved"].source_files),
+            ),
             build_l1_provider(
                 engine,
                 spec["resolved"],
@@ -716,21 +744,25 @@ def build_grouped_l1_provider(
         for spec in group_specs
     ]
 
-    def _composite():
+    def _composite(call):
         from .llm_invoke import Usage  # lazy, same as _provider
         from .reviewer_json import _dedup_by_fingerprint  # lazy, same as _provider
 
         all_findings = []
         all_excerpts = []
+        call.attempted_excerpts = []
         seen = set()
         total_input = 0
         total_output = 0
         total_cached = 0
         total_duration = 0.0
-        for _name, provider in providers:
+        for scope, provider in providers:
             findings, excerpts, usage, duration = provider()
             all_findings.extend(_dedup_by_fingerprint(findings, seen))
             all_excerpts.extend(excerpts)
+            call.attempted_excerpts.extend(
+                GroupedReviewAttempt(attempted, scope) for attempted in provider.attempted_excerpts
+            )
             total_input += usage.input_tokens
             total_output += usage.output_tokens
             total_cached += usage.cached_input_tokens
@@ -742,4 +774,6 @@ def build_grouped_l1_provider(
             total_duration,
         )
 
-    return _composite
+    composite = _L1Call(_composite)
+    composite.is_stub_l1 = engine == "stub"
+    return composite

@@ -19,12 +19,15 @@ from typing import Callable
 from .autofix import StubAutoFixer
 from .baseline import ResolvedReview
 from .disposition import Disposition
-from .factories import _L1Call
+from .factories import _L1Call, _snapshot_raw_response
 from .falsify import Falsifier
 from .llm_invoke import Usage
 from .machine import StateMachine
 from .reviewer_json import (
     ExcerptEvidenceError,
+    MissingExcerptEvidenceError,
+    _requires_l1_excerpts,
+    require_l1_excerpt_evidence,
     validate_reviewer_json,
     _collect_excerpts,
     _dedup_by_fingerprint,
@@ -124,8 +127,10 @@ def _run_chunk(
                 )
             )
             continue
+        raw_snapshot = _snapshot_raw_response(raw)
         try:
             validated = validate_reviewer_json(raw)
+            require_l1_excerpt_evidence(validated, chunk_diff)
             findings.extend(
                 # Outlet C spawns a subprocess per pass and never holds a
                 # BackendConfig, so it names the outlet rather than
@@ -152,9 +157,12 @@ def _run_chunk(
                 )
             from .factories import _raw_response_data
 
-            raw_data = _raw_response_data(raw)
+            raw_data = _raw_response_data(raw_snapshot)
             if raw_data is not None:
-                if attempted is not None:
+                missing_exempt = isinstance(
+                    e, MissingExcerptEvidenceError
+                ) and not _requires_l1_excerpts(chunk_diff)
+                if attempted is not None and not missing_exempt:
                     attempted_item = dict(raw_data)
                     attempted_item["pass_name"] = pass_name
                     attempted.append(attempted_item)
