@@ -164,7 +164,7 @@ async def _terminate_and_reap(
             "process did not exit after SIGTERM (%.1fs); sending SIGKILL",
             grace,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- failed waits still require the kill/reap fallback
         log.warning(
             "proc.wait after SIGTERM raised; sending SIGKILL",
             exc_info=True,
@@ -173,7 +173,7 @@ async def _terminate_and_reap(
         kill_group_or_child(proc, pgid)
         try:
             await asyncio.wait_for(proc.wait(), timeout=5.0)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- teardown records any failed reap
             log.warning("proc reap timed out after SIGKILL")
 
 
@@ -207,6 +207,41 @@ async def cleanup_all() -> None:
 # -- internal helpers --
 
 
+async def _record_job_failure(entry: dict[str, Any], exc: BaseException) -> None:
+    """Retain the waiter's failure result and reap-before-cleanup semantics."""
+    elapsed = time.monotonic() - entry["created_at"]
+    # A comm_task failure must not strand a live child: reap it the
+    # same way the timeout branch does, or the orphan keeps holding
+    # the worktree lock with no job left on the books.
+    proc = entry.get("proc")
+    if proc is not None:
+        try:
+            await _terminate_and_reap(proc)
+        except Exception:  # noqa: BLE001 -- retain the original failure diagnostic
+            log.warning(
+                "reap after job failure raised",
+                exc_info=True,
+            )
+    entry["status"] = "failed"
+    entry["result"] = {
+        "stdout": "",
+        "stderr": str(exc),
+        "exit_code": -1,
+        "verdict": "UNKNOWN(-1)",
+        "duration_s": elapsed,
+    }
+
+
+def _read_stderr_log(log_path: str | None) -> str:
+    """Read completed stderr in full, tolerating an unavailable log."""
+    if not log_path:
+        return ""
+    try:
+        return Path(log_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 async def _wait_for_job(job_id: str) -> None:
     """Await the comm_task and update job state on completion.
 
@@ -234,10 +269,7 @@ async def _wait_for_job(job_id: str) -> None:
         if stderr_bytes is None:
             log_path = entry.get("stderr_log_path")
             if log_path:
-                try:
-                    stderr_text = Path(log_path).read_text(encoding="utf-8", errors="replace")
-                except OSError:
-                    stderr_text = ""
+                stderr_text = await asyncio.to_thread(_read_stderr_log, log_path)
             else:
                 stderr_text = ""
         else:
@@ -259,7 +291,13 @@ async def _wait_for_job(job_id: str) -> None:
         # cancelled by asyncio.wait_for on timeout, so we cannot await it;
         # read stderr from the log file instead.
         if proc.returncode is not None:
-            stderr_tail = _read_stderr_tail(entry)
+            try:
+                stderr_tail = await asyncio.to_thread(
+                    _read_stderr_tail, {"stderr_log_path": entry.get("stderr_log_path")}
+                )
+            except asyncio.CancelledError as exc:
+                await _record_job_failure(entry, exc)
+                return
             entry["status"] = "completed"
             entry["result"] = {
                 "stdout": "",
@@ -270,7 +308,13 @@ async def _wait_for_job(job_id: str) -> None:
             }
             return
         # Read stderr log BEFORE the finally-block unlink
-        stderr_tail = _read_stderr_tail(entry)
+        try:
+            stderr_tail = await asyncio.to_thread(
+                _read_stderr_tail, {"stderr_log_path": entry.get("stderr_log_path")}
+            )
+        except asyncio.CancelledError as exc:
+            await _record_job_failure(entry, exc)
+            return
         await _terminate_and_reap(proc)
         # D-state children survive SIGKILL; proc.returncode stays None.
         entry["status"] = "failed"
@@ -281,28 +325,8 @@ async def _wait_for_job(job_id: str) -> None:
             "verdict": "TIMEOUT",
             "duration_s": elapsed,
         }
-    except BaseException as exc:
-        elapsed = time.monotonic() - entry["created_at"]
-        # A comm_task failure must not strand a live child: reap it the
-        # same way the timeout branch does, or the orphan keeps holding
-        # the worktree lock with no job left on the books.
-        proc = entry.get("proc")
-        if proc is not None:
-            try:
-                await _terminate_and_reap(proc)
-            except Exception:
-                log.warning(
-                    "reap after job failure raised",
-                    exc_info=True,
-                )
-        entry["status"] = "failed"
-        entry["result"] = {
-            "stdout": "",
-            "stderr": str(exc),
-            "exit_code": -1,
-            "verdict": "UNKNOWN(-1)",
-            "duration_s": elapsed,
-        }
+    except BaseException as exc:  # noqa: BLE001 -- cancellation also owns child teardown
+        await _record_job_failure(entry, exc)
     finally:
         for key in ("tempfile_path", "focus_tempfile_path", "stderr_log_path"):
             p = entry.get(key)
