@@ -1987,6 +1987,7 @@ class TestParseCliEnvFields:
             "stream": True,
             "outcap_key": "max_tokens",
             "output_ceiling": 65536,
+            "output_token_limit": 65536,
             "params": {"a": 1},
             "headers": {"x-note": "v"},
         }
@@ -1999,6 +2000,11 @@ class TestParseCliEnvFields:
         for field_name in _API_ONLY_FIELDS:
             with pytest.raises(CliError, match=field_name):
                 _parse_backend_entry(self._cli_entry(**{field_name: sample[field_name]}))
+
+    def test_output_token_limit_on_cli_rejected(self):
+        """A CLI backend cannot silently ignore the API-only token limit."""
+        with pytest.raises(CliError, match="output_token_limit"):
+            _parse_backend_entry(self._cli_entry(output_token_limit=65536))
 
     def test_headers_on_a_cli_backend_rejected(self):
         """Named on purpose, because the loop above cannot cover this.
