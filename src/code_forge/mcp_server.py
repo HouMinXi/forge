@@ -25,8 +25,13 @@ import sys
 import tempfile
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator
+
+from anyio import BrokenResourceError, ClosedResourceError, EndOfStream
+from mcp.shared.exceptions import McpError
+from pydantic import ValidationError
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp import server as _fastmcp_server
@@ -37,6 +42,7 @@ from code_forge.llm_invoke import effective_invoke_timeout_s
 from code_forge.mcp_jobs import (
     ForgeJobRef,
     ForgeResult,
+    _read_stderr_tail,
     _terminate_and_reap,
     cleanup_all,
     exit_to_verdict,
@@ -176,8 +182,12 @@ if TYPE_CHECKING:
 
 
 # -- per-session workspace cache (single-slot, one session per stdio) --
-_cached_session_ref = None  # session object, identity-compared
-_cached_workspace = None  # resolved Path
+@dataclass
+class _WorkspaceCache:
+    value: tuple[object, Path] | None = None
+
+
+_workspace_cache = _WorkspaceCache()
 
 
 def _root_uri_to_path(uri: str) -> Path:
@@ -204,58 +214,62 @@ def _root_uri_to_path(uri: str) -> Path:
     return Path(raw)
 
 
+def _explicit_workspace(project_dir: str) -> Path:
+    return Path(project_dir).expanduser().resolve()
+
+
+def _workspace_from_roots(uris: tuple[str, ...]) -> Path | None:
+    candidates = []
+    for uri in uris:
+        path = _root_uri_to_path(uri)
+        if (path / ".code-forge" / "gate.yaml").is_file():
+            return path
+        candidates.append(path)
+    return candidates[0] if candidates else None
+
+
 async def _workspace_for(ctx, project_dir: str = "") -> Path:
-    """Resolve workspace from MCP roots, env, or walk-up.
+    """Resolve explicit path, cached session, roots, then env/walk-up/cwd.
 
-    Priority: project_dir (explicit per-call) > cached > MCP roots
-    (prefer root with gate.yaml) > FORGE_PROJECT_DIR > walk-up > cwd.
-
-    project_dir default is "" (not None) for MCP schema compatibility:
-    Pydantic's str|None generates anyOf without a top-level "type",
-    causing Claude Code's tool inspector to show "unknown". Empty string
-    is falsy, so the truthy guard below is branch-neutral with the old
-    `is not None` check for all callers.
+    Empty project_dir preserves the MCP string schema and falls through.
+    Workers only resolve paths; cache publication stays on the event loop.
     """
-    global _cached_session_ref, _cached_workspace
-
     if project_dir:
-        return Path(project_dir).expanduser().resolve()
+        return await asyncio.to_thread(_explicit_workspace, project_dir)
 
     if ctx is None:
-        return _resolve_workspace()
+        return await asyncio.to_thread(_resolve_workspace)
 
-    if _cached_session_ref is ctx.session:
-        return _cached_workspace
+    session = ctx.session
+    cached = _workspace_cache.value
+    if cached is not None and cached[0] is session:
+        return cached[1]
 
-    # Try MCP roots when the client advertises the capability.
-    if ctx.session.client_params.capabilities.roots:
+    if session.client_params.capabilities.roots:
         try:
-            result = await ctx.session.list_roots()
-        except Exception as exc:
+            result = await session.list_roots()
+        except (
+            McpError,
+            BrokenResourceError,
+            ClosedResourceError,
+            EndOfStream,
+            ValidationError,
+            RuntimeError,
+        ) as exc:
             sys.stderr.write("code-forge: list_roots failed: %s\n" % exc)
-            # Do not cache after RPC failure -- let the next call
-            # retry instead of pinning a wrong workspace.
-            return _resolve_workspace()
+            # Retry the RPC on the next call instead of caching fallback.
+            return await asyncio.to_thread(_resolve_workspace)
 
-        if result.roots:
-            candidates = []
-            for root in result.roots:
-                p = _root_uri_to_path(str(root.uri))
-                if (p / ".code-forge" / "gate.yaml").is_file():
-                    _cached_session_ref = ctx.session
-                    _cached_workspace = p
-                    return p
-                candidates.append(p)
-            if candidates:
-                _cached_session_ref = ctx.session
-                _cached_workspace = candidates[0]
-                return candidates[0]
+        workspace = await asyncio.to_thread(
+            _workspace_from_roots, tuple(str(root.uri) for root in result.roots)
+        )
+        if workspace is not None:
+            _workspace_cache.value = (session, workspace)
+            return workspace
 
-    # No roots capability or empty roots -- cache the static result.
-    ws = _resolve_workspace()
-    _cached_session_ref = ctx.session
-    _cached_workspace = ws
-    return ws
+    workspace = await asyncio.to_thread(_resolve_workspace)
+    _workspace_cache.value = (session, workspace)
+    return workspace
 
 
 def _backend_names_for(workspace: Path) -> list[str]:
@@ -537,6 +551,15 @@ async def _kill_and_reap(
     await _terminate_and_reap(proc)
 
 
+def _read_and_unlink_stderr(path: str) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    finally:
+        _unlink(path)
+
+
 async def _run_cli_budgeted(
     *args: str,
     workspace: Path,
@@ -600,14 +623,7 @@ async def _run_cli_budgeted(
     try:
         stdout_bytes, _stderr_none = await asyncio.wait_for(asyncio.shield(inner_task), timeout=budget)
         elapsed = time.monotonic() - start
-        try:
-            stderr_text = Path(stderr_log_path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            stderr_text = ""
-        try:
-            os.unlink(stderr_log_path)
-        except OSError:
-            pass
+        stderr_text = await asyncio.to_thread(_read_and_unlink_stderr, stderr_log_path)
         return (
             stdout_bytes.decode(errors="replace"),
             proc.returncode or 0,
@@ -822,8 +838,6 @@ def _normalize_whole_file(
     return normalized
 
 
-
-
 _MAX_FINDINGS_IN_RESULT = 20
 
 
@@ -883,8 +897,6 @@ def _make_inprocess_result(
         content=[TextContent(type="text", text=summary)],
         structuredContent=structured.model_dump(),
     )
-
-
 
 
 # -- tool handlers --
@@ -1125,17 +1137,10 @@ async def forge_job_status(job_id: str) -> CallToolResult:
     elapsed_text = ""
     if status == "running":
         elapsed = time.monotonic() - entry["created_at"]
-        # Read stderr tail for live progress
-        stderr_tail = ""
-        log_path = entry.get("stderr_log_path")
-        if log_path:
-            try:
-                sz = os.path.getsize(log_path)
-                with open(log_path, "rb") as fh:
-                    fh.seek(max(0, sz - 2048))
-                    stderr_tail = fh.read().decode("utf-8", errors="replace")
-            except OSError:
-                pass
+        # Snapshot the path so the worker never observes mutable job state.
+        stderr_tail = await asyncio.to_thread(
+            _read_stderr_tail, {"stderr_log_path": entry.get("stderr_log_path")}
+        )
         elapsed_text = " (%.0fs)" % elapsed
         if stderr_tail.strip():
             elapsed_text += "\n--- progress ---\n" + stderr_tail.strip()
