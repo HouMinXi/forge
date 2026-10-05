@@ -245,7 +245,8 @@ def build_l2_runner(*, cwd: Path | None = None) -> Callable:
     """Build l2_runner (mutation testing) callable.
 
     Returns a callable with signature:
-        (diff_files: list[str], baseline_cmd: list[str], *, baseline_timeout=120, timeout=600)
+        (diff_files: list[str], baseline_cmd: list[str], *, baseline_timeout=120,
+         timeout=600, also_copy=None)
         -> tuple[list[StateFinding], list[str]]
 
     If mutmut is not on PATH, returns a no-op callable that produces
@@ -263,6 +264,7 @@ def build_l2_runner(*, cwd: Path | None = None) -> Callable:
             *,
             baseline_timeout: int = 120,
             timeout: int = 600,
+            also_copy: list[str] | None = None,
         ) -> tuple[list[StateFinding], list[str]]:
             grouped = group_by_adapter(diff_files)
             py_files = grouped.get("python-mutmut", [])
