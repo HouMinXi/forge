@@ -296,7 +296,7 @@ def test_explicit_stub_setup_does_not_request_evidence(tmp_path, grouped):
         assert provider.attempted_excerpts == []
 
 
-def test_grouped_keeps_receipt_audit_damage_separate_from_schema_failure(tmp_path):
+def test_grouped_retains_malformed_excerpt_with_pass_and_group_scope(tmp_path):
     specs = grouped_specs()
     damage = good("left.ts")
     damage["code_excerpts"][0].update(end_line=9)
@@ -313,7 +313,12 @@ def test_grouped_keeps_receipt_audit_damage_separate_from_schema_failure(tmp_pat
     ):
         provider = build_grouped_l1_provider("auto", specs)
         findings, excerpts, _, _ = provider()
-    assert provider.attempted_excerpts == []
+    assert len(provider.attempted_excerpts) == 1
+    attempted = provider.attempted_excerpts[0]
+    assert attempted == damage | {"pass_name": "expert"}
+    assert attempted.group_scope.name == "left"
+    assert attempted.group_scope.source_files == ("left.ts",)
+    assert attempted.group_scope.diff_sha256 == hashlib.sha256(diff_for("left.ts").encode()).hexdigest()
     assert findings == []
     assert len(excerpts) == 5
 

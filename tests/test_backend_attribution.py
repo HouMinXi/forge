@@ -164,9 +164,10 @@ def test_invoke_failure_names_the_backend():
     assert "backend.name" in head
 
 
-def test_an_excerpt_count_miss_does_not_reject_the_round(monkeypatch):
-    """A quote whose line count does not match is evidence, not a dead pass. It must not land
-    in attempted_excerpts, which the machine reads as a rejected round."""
+def test_an_excerpt_count_miss_retains_attempts_without_schema_failure(monkeypatch):
+    """Invalid excerpt coordinates reject evidence without inventing a dead backend."""
+    import json
+
     from code_forge.factories import build_l1_provider
     from code_forge.baseline import ResolvedReview
     from code_forge import llm_invoke as llm
@@ -184,8 +185,11 @@ def test_an_excerpt_count_miss_does_not_reject_the_round(monkeypatch):
         mode_hint="git",
     )
     provider = build_l1_provider("real", resolved)
-    provider()
-    assert provider.attempted_excerpts == []
+    findings, excerpts, _, _ = provider()
+    assert findings == excerpts == []
+    assert provider.attempted_excerpts == [
+        json.loads(_Result.content) | {"pass_name": name} for name in ("qodo", "expert", "adversarial")
+    ]
 
 
 def test_a_response_missing_findings_is_recorded(monkeypatch):

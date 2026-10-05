@@ -634,11 +634,10 @@ def build_l1_provider(
                 # below as UNTRUSTED. A missing applicable pass is also
                 # incomplete evidence, independently of other passes'
                 # accepted excerpts. It requires no invented code finding.
-                missing_required = isinstance(
+                missing_exempt = isinstance(
                     exc, MissingExcerptEvidenceError
-                ) and _requires_l1_excerpts(diff_text, reviewed_repositories=reviewed_repositories)
-                eligible_rejection = not isinstance(exc, ExcerptEvidenceError) or missing_required
-                if eligible_rejection:
+                ) and not _requires_l1_excerpts(diff_text, reviewed_repositories=reviewed_repositories)
+                if not missing_exempt:
                     if raw_data is not None:
                         attempted = dict(raw_data)
                         attempted["pass_name"] = pass_name

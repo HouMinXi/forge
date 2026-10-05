@@ -1158,7 +1158,6 @@ def test_refused_pass_publication_and_verify(
         machines.append(machine)
         return machine
 
-    nonblocking_shape = kind == "shape" and producer in ("ordinary", "grouped")
     active[0] = True
     try:
         if producer.startswith("c-"):
@@ -1215,9 +1214,7 @@ def test_refused_pass_publication_and_verify(
         failed = next(
             r for r in receipts if r["cycle"] == 1 and r["pass"] == NAMES.index(failed_pass) + 1
         )
-        expected = (
-            "completed" if nonblocking_shape else "schema_fail" if kind == "schema" else "incomplete"
-        )
+        expected = "schema_fail" if kind == "schema" else "incomplete"
         assert failed["pass_status"] == expected, "refused raw must preserve the rejected pass status"
         for convergence in (True, False):
             result = run_verify(
@@ -1230,14 +1227,13 @@ def test_refused_pass_publication_and_verify(
                 respect_floor=False,
                 require_convergence=convergence,
             )
-            assert result.passed is nonblocking_shape
-            if not nonblocking_shape:
-                assert result.checks_run == 8 and result.checks_passed == 6
-                assert f"status={expected}" in result.reason
+            assert not result.passed
+            assert result.checks_run == 8 and result.checks_passed == 6
+            assert f"status={expected}" in result.reason
     finally:
         active[0] = False
-    assert outcome == (Verdict.PASS if nonblocking_shape else Verdict.FAIL)
-    rounds = 3 if nonblocking_shape else 1
+    assert outcome == Verdict.FAIL
+    rounds = 1
     assert machine._written_cycles == list(range(1, rounds + 1))
     assert len(receipts) == 3 * rounds and len(events) == 3 * rounds * len(files)
     assert all(calls[(name, file)] == rounds for file in files for name in NAMES)
@@ -1246,7 +1242,7 @@ def test_refused_pass_publication_and_verify(
     )
     artifacts = [json.loads(p.read_text()) for p in (receipts_dir / "attempted").glob("*.json")]
     if raw_text:
-        assert len(artifacts) == 1, "diagnostic text must persist once without changing status"
+        assert len(artifacts) == 1, "original parsed text must persist independently of rejection status"
         artifact = artifacts[0]
         assert artifact["cycle"] == 1 and artifact["pass_name"] == failed_pass
         assert artifact["payload"] == {"raw_response": json.dumps(rejected), "pass_name": failed_pass}
@@ -1260,7 +1256,7 @@ def test_refused_pass_publication_and_verify(
             assert "group_scope" not in artifact
     else:
         assert artifacts == []
-    expected_set = set() if nonblocking_shape else {failed_pass}
+    expected_set = {failed_pass}
     assert getattr(machine.l1_provider, "unavailable_rejected_passes", set()) == expected_set
     assert getattr(machine, "_unavailable_rejected_passes_last_round", set()) == expected_set
     assert counts["forbidden"] == 0
@@ -1268,7 +1264,7 @@ def test_refused_pass_publication_and_verify(
 
 @pytest.mark.parametrize("producer", ["ordinary", "grouped"])
 @pytest.mark.parametrize("failed_pass", NAMES)
-def test_diagnostic_text_status_and_verify_parity(
+def test_parsed_shape_text_rejection_status_and_verify_parity(
     tmp_path, monkeypatch, external_guard, producer, failed_pass
 ):
     original_publish = StateMachine._publish_l1_receipts
@@ -1284,7 +1280,7 @@ def test_diagnostic_text_status_and_verify_parity(
     test_refused_pass_publication_and_verify(
         tmp_path, monkeypatch, external_guard, producer, "shape", failed_pass, raw_text=True
     )
-    assert authority == [([], set())] * 3, "diagnostic persistence cannot create rejection authority"
+    assert authority == [([], {failed_pass})], "parsed shape rejection keeps host-owned pass authority"
 
 
 @pytest.mark.parametrize(
