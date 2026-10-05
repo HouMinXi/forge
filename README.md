@@ -511,7 +511,7 @@ For running this gate in CI rather than as a local hook, see
 
    ```yaml
    test:
-     command: [pytest, -q]
+     command: [python3, -m, pytest, -q]
      timeout_seconds: 900
    ```
 
@@ -543,6 +543,68 @@ metadata such as `.md`, `.yaml`, `.toml`, `LICENSE`, `README`) are detected by
 the hook and skip the gate automatically -- no receipts and no `--no-verify`
 needed. Any staged file outside that set, including unknown extensions, re-arms
 the gate for the whole commit.
+
+Known-failure waivers require complete structured pytest outcomes from one
+direct `python -m pytest` or `python3 -m pytest` invocation (also supported
+with `-B` before `-m`). The gate inserts a unique first `-p` bootstrap and
+preserves the original arguments, selection, `PYTEST_ADDOPTS` and
+`PYTEST_PLUGINS`. Runtime qualification currently covers exact pytest 8.4.2
+on CPython 3.9, 9.1.0 on CPython 3.14 and 9.1.1 on CPython 3.12, with optimization disabled and
+the default bytecode cache location (or `-B`). The former qualifies only
+the standalone reporter, while Forge itself still requires Python 3.12
+or later. Node identities that cannot be encoded as UTF-8, including POSIX
+filenames containing undecodable bytes, run normally but cannot receive a
+known-failure waiver. Other runtime shapes execute normally
+but cannot waive exit 1. Plugins imported earlier through environment or
+configuration `-p` options, replaced cleanup methods, multiple sessions,
+xdist, forked execution and reruns also make a waiver unavailable.
+The gate observes complete configure, session-start, collection, test-loop,
+keyboard-interrupt, session-finish and internal-error dispatches, including
+plugin wrappers, historical configure replay and caught `pytest.exit`
+calls. An aborted test loop cannot receive a waiver, even after all phase
+reports. Reaching `--maxfail` or `-x` therefore blocks a waiver; a completed
+known-failure run below that limit can still waive. Passing exit-0 runs retain
+success. Replaced dispatch
+boundaries refuse evidence. A nonempty merged `PYTHONPYCACHEPREFIX` declines
+capture before allocating a bootstrap; the original command and environment
+still run, with exit-0 success preserved and no exit-1 waiver. An empty prefix
+retains normal capture. The gate never deletes caller-owned external caches.
+
+Reporter source may be system-owned or hard-linked; its regular-file,
+byte-limit, identity and digest checks still apply. Invocation bindings,
+bootstrap files and receipts must remain user-owned with a single link.
+Cleanup recognizes only this unique bootstrap's ordinary or optimized
+`.pyc` and pytest rewrite `.pyc`/`.pyo` filenames, independently of waiver
+qualification. Cache tags and pytest versions use bounded ASCII forms
+of at most 64 characters, optimization names at most 16 alphanumeric
+characters, and at most 16 cache entries are removed. Unknown or unrelated
+files are preserved and reported.
+Capture descriptor-close errors revoke waiver authority and are reported
+without overriding the pytest command's successful exit status.
+
+The invocation binding travels in an owned file capped at 8 MiB, with a
+small envelope in the child environment. Both processes check the file's
+identity and digest. Reporter file I/O failures make a waiver unavailable
+while preserving pytest execution. If adding the bootstrap exceeds the
+operating system's argument limit, the gate runs the original command once
+without waiver authority. Other process launch errors retain their normal
+failure behavior.
+
+A waiver requires at least one failed call, all selected tests to close,
+zero collection/setup/teardown/internal errors, and each exact failed node
+to have baseline status `failed`. Terminal stdout/stderr never authorize
+it. Missing or invalid evidence blocks exit 1, even with
+`FORGE_ALLOW_NO_BASELINE=1`; that opt-in applies only to valid evidence when
+no baseline exists. Early stopping with `-x` or `--maxfail` can leave selected
+tests unobserved and therefore block a known-failure waiver. Evidence is
+bounded to 50,000 selected items, 64 KiB per UTF-8 node identity and 8 MiB
+per record; overflow refuses instead of truncating identities.
+
+Bare `pytest`, generic wrappers and other runners still execute and retain
+exit-0 success, but their exit-1 failures cannot be waived by a baseline.
+Use a supported direct invocation to retain known-failure waivers. The
+existing exit-2 interrupt and exit-3 warn/allow policies are separate
+compatibility debt and are unchanged by structured exit-1 evidence.
 
 ## Hooks (reference implementations)
 

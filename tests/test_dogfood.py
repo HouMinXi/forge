@@ -16,6 +16,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
 
 from code_forge.install_hooks import (
     _build_planning_leak_guard,
@@ -35,7 +36,7 @@ def _git(args: list[str], cwd: Path, **kwargs) -> subprocess.CompletedProcess:
         cwd=str(cwd),
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=30 if args and args[0] == "commit" else 2,
         check=False,
         **kwargs,
     )
@@ -80,6 +81,61 @@ def _write_file(path: Path, content: str) -> None:
 
 class TestDogfood:
     """ADOPT-05: forge gates its own commits via the real pipeline."""
+
+    @pytest.mark.parametrize("case", ["known", "unknown", "missing_pytest", "mixed_error"])
+    def test_unrecognized_failure_blocks_real_commit(self, tmp_path, monkeypatch, case):
+        clean_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        for env in (dict(os.environ), clean_env):
+            outside = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=tmp_path,
+                env=env,
+                capture_output=True,
+                timeout=2,
+                check=False,
+            )
+            assert outside.returncode != 0, outside.stdout
+        _init_scratch_repo(tmp_path)
+        _write_file(tmp_path / "initial.txt", "base\n")
+        assert _git(["add", "initial.txt"], tmp_path).returncode == 0
+        assert _git(["commit", "-m", "base"], tmp_path).returncode == 0
+        original = _git(["rev-parse", "HEAD"], tmp_path).stdout.strip()
+        source = "def test_known():\n    assert False\n"
+        if case == "unknown":
+            source += "def test_unknown():\n    assert False\n"
+        elif case == "mixed_error":
+            source += "import pytest\n@pytest.fixture\ndef broken():\n    assert False\ndef test_error(broken):\n    pass\n"
+        _write_file(tmp_path / "test_sample.py", source)
+        command = ["python3", "-m", "pytest", "-q", "test_sample.py"]
+        if case == "missing_pytest":
+            command = ["python3", "-S", "-m", "pytest"]
+        test_config = {"command": command, "timeout_seconds": 30}
+        if case == "missing_pytest":
+            test_config["env"] = {"PYTHONPATH": ""}
+        _write_file(tmp_path / ".code-forge" / "gate.yaml", json.dumps({"test": test_config}))
+        _write_file(
+            tmp_path / ".code-forge" / "test_baseline.json",
+            json.dumps({"schema_version": 1, "test_results": {"test_sample.py::test_known": "failed"}}),
+        )
+        src = Path(__file__).resolve().parents[1] / "src"
+        import_path = str(src) + os.pathsep + os.environ.get("PYTHONPATH", "")
+        hook = tmp_path / ".git" / "hooks" / "pre-commit"
+        hook.write_text(
+            "#!/bin/sh\nPATH=%s:$PATH PYTHONPATH=%s exec %s -m code_forge gate-check\n"
+            % (Path(sys.executable).parent, import_path, sys.executable)
+        )
+        hook.chmod(0o700)
+        assert _git(["add", "test_sample.py"], tmp_path).returncode == 0
+        commit = _git(["commit", "-m", "candidate"], tmp_path)
+        final = _git(["rev-parse", "HEAD"], tmp_path).stdout.strip()
+        if case == "known":
+            assert commit.returncode == 0, commit.stderr
+            assert final != original
+        else:
+            assert commit.returncode != 0, commit.stderr
+            assert final == original
+            if case == "missing_pytest":
+                assert "No module named pytest" in commit.stderr
 
     def test_injected_failure_blocks_commit(self, tmp_path, monkeypatch):
         """A staged file with a new test failure is blocked by the hook.
@@ -158,11 +214,12 @@ class TestDogfood:
         # the gate-check path specifically (the end-to-end mechanism that
         # blocks new test failures).
         src_dir = Path(__file__).resolve().parent.parent / "src"
+        import_path = str(src_dir) + os.pathsep + os.environ.get("PYTHONPATH", "")
         hook_script = textwrap.dedent("""\
             #!/bin/sh
             # dogfood test hook: gate-check only
             PATH=%s:$PATH PYTHONPATH=%s exec %s -m code_forge gate-check
-        """) % (os.path.dirname(sys.executable), src_dir, sys.executable)
+        """) % (os.path.dirname(sys.executable), import_path, sys.executable)
 
         # Step 6: write hook and make executable
         hook_path = tmp_path / ".git" / "hooks" / "pre-commit"

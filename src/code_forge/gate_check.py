@@ -24,6 +24,12 @@ from typing import IO, Mapping, Optional
 import yaml
 
 from .exit_codes import EXIT_FAIL, EXIT_PASS
+from ._gate_pytest import (
+    compare_failed_nodes,
+    prepare_pytest_capture,
+    read_pytest_evidence,
+    run_captured_pytest,
+)
 from .mutation_config import validate_mutation_timeout
 
 
@@ -877,34 +883,17 @@ def compute_baseline_delta(
     if baseline is None:
         return (False, [])  # No baseline, allow (bootstrap)
 
-    # Parse pytest -q output (simplified: look for FAILED lines)
-    # Real implementation would parse pytest's output format
-    # For now, stub: extract test names from "FAILED test_name" lines
-    new_failures = []
-    baseline_results = baseline.get("test_results", {})
-
-    # Limitation: this parser only handles pytest -q output format
-    # ("FAILED test_name" lines). Non-pytest runners (cargo test, go test,
-    # npm test) are not parsed and their failures pass through baseline
-    # delta unchecked. A format field in test config is needed to support
-    # other runners -- deferred to a future phase.
+    # Preserve the legacy diagnostic helper. Public waivers use the receipt.
+    failed_nodes = []
     for line in test_output.split("\n"):
         if line.startswith("FAILED "):
             test_name = line.split()[1] if len(line.split()) > 1 else ""
             if not test_name:
                 continue
 
-            # Check against baseline
-            if test_name not in baseline_results:
-                # New test that fails -> BLOCK
-                new_failures.append(test_name)
-            elif baseline_results[test_name] == "passed":
-                # Was passing, now fails -> regression -> BLOCK
-                new_failures.append(test_name)
-            # else: was already failing in baseline -> known, not new
+            failed_nodes.append(test_name)
 
-    should_block = len(new_failures) > 0
-    return (should_block, new_failures)
+    return compare_failed_nodes(failed_nodes, baseline)
 
 
 def translate_exit_code(test_returncode: int) -> int:
@@ -1064,18 +1053,42 @@ def run_gate_check(
             parts.append(existing)
         test_env["PYTHONPATH"] = os.pathsep.join(parts)
 
+    evidence = None
+    capture = prepare_pytest_capture(
+        command,
+        test_cwd=test_cwd,
+        test_env=test_env,
+        reporter_path=Path(__file__).resolve().with_name("_gate_pytest.py"),
+    )
+    if capture is not None and repo_src.is_dir():
+        capture.source_root = str(repo_src)
     try:
-        test_result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=test_env,
-            cwd=str(test_cwd),
-            timeout=timeout,
-            check=False,
-        )
+        if capture is not None:
+            test_result = run_captured_pytest(
+                command,
+                capture=capture,
+                test_cwd=test_cwd,
+                test_env=test_env,
+                timeout_seconds=timeout,
+            )
+            if test_result.returncode == 1:
+                evidence = read_pytest_evidence(
+                    capture,
+                    child_pid=test_result.pid,
+                    returncode=test_result.returncode,
+                )
+        else:
+            test_result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=test_env,
+                cwd=str(test_cwd),
+                timeout=timeout,
+                check=False,
+            )
         test_returncode = test_result.returncode
         test_stdout = test_result.stdout
     except subprocess.TimeoutExpired:
@@ -1084,6 +1097,15 @@ def run_gate_check(
     except FileNotFoundError:
         print("forge: error: test runner not found: %s" % command[0], file=stderr)
         return EXIT_FAIL
+    except (OSError, ValueError) as exc:
+        print("forge: error: test invocation failed: %s" % exc, file=stderr)
+        return EXIT_FAIL
+    finally:
+        if capture is not None and not capture.close():
+            warn("forge: warning: capture cleanup failed: " + capture.cleanup_error)
+            if evidence is not None:
+                evidence.valid = False
+                evidence.reason = "capture cleanup failed: " + capture.cleanup_error
 
     # Translate exit code
     translated = translate_exit_code(test_returncode)
@@ -1114,8 +1136,13 @@ def run_gate_check(
     # Exit 4 (usage error), exit 5 (no tests collected), and timeout BLOCK
     # directly -- vacuous delta would otherwise downgrade them to PASS.
     if translated == EXIT_FAIL and test_returncode == 1:
-        # Real test failure -> check baseline delta
-        should_block, new_failures = compute_baseline_delta(test_stdout, baseline)
+        if evidence is None or not evidence.valid:
+            reason = (
+                evidence.reason if evidence is not None else "unsupported command or capture unavailable"
+            )
+            print("forge: insufficient structured pytest evidence: %s" % reason, file=stderr)
+            return EXIT_FAIL
+        should_block, new_failures = compare_failed_nodes(evidence.failed_nodes, baseline)
         if not should_block:
             if baseline is None:
                 if env.get("FORGE_ALLOW_NO_BASELINE") == "1":

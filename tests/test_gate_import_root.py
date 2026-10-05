@@ -3,7 +3,9 @@ import subprocess
 import sys
 import textwrap
 from io import StringIO
+from pathlib import Path
 
+import pytest
 import yaml
 
 from code_forge import gate_check as gate_check_module
@@ -74,7 +76,7 @@ def test_test_gate_imports_the_repo_under_check(tmp_path, monkeypatch):
     # The stale copy wins on PYTHONPATH unless the gate pins its own.
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join([os.path.dirname(sys.executable), env.get("PATH", "")])
-    env["PYTHONPATH"] = str(stale / "src")
+    env["PYTHONPATH"] = os.pathsep.join([str(stale / "src"), str(Path(pytest.__file__).parents[1])])
     env["FORGE_ALLOW_MAIN"] = "1"
 
     rc = run_gate_check(args=None, env=env, cwd=repo, stdout=StringIO(), stderr=StringIO())
@@ -128,14 +130,14 @@ def test_staged_files_come_from_the_repo_under_check(tmp_path, monkeypatch):
     # The gate must actually invoke the runner. A skipped run also
     # returns PASS, so the return code alone cannot tell them apart.
     seen = []
-    real_run = subprocess.run
+    real_popen = subprocess.Popen
 
     def record(cmd, **kwargs):
         if "pytest" in " ".join(str(c) for c in cmd):
             seen.append(cmd)
-        return real_run(cmd, **kwargs)
+        return real_popen(cmd, **kwargs)
 
-    monkeypatch.setattr(gate_check_module.subprocess, "run", record)
+    monkeypatch.setattr(gate_check_module.subprocess, "Popen", record)
 
     rc = run_gate_check(args=None, env=env, cwd=repo, stdout=StringIO(), stderr=StringIO())
     assert rc == EXIT_PASS
@@ -196,7 +198,9 @@ def test_existing_pythonpath_is_kept_behind_the_repo_source(tmp_path, monkeypatc
 
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join([os.path.dirname(sys.executable), env.get("PATH", "")])
-    env["PYTHONPATH"] = os.pathsep.join([str(extra), str(stale / "src")])
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(extra), str(stale / "src"), str(Path(pytest.__file__).parents[1])]
+    )
     env["FORGE_ALLOW_MAIN"] = "1"
 
     rc = run_gate_check(args=None, env=env, cwd=repo, stdout=StringIO(), stderr=StringIO())
