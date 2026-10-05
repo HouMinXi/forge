@@ -735,7 +735,14 @@ async def _run_cli_budgeted(
             os.unlink(stderr_log_path)
         except OSError:
             pass
-        await _kill_and_reap(proc, inner_task)
+        cleanup = asyncio.create_task(_kill_and_reap(proc, inner_task))
+        try:
+            await _wait_for_shielded_task(cleanup)
+        except BaseException as cleanup_error:
+            if not (isinstance(cleanup_error, asyncio.CancelledError) and not cleanup.cancelled()):
+                log.exception("failed to terminate and reap budgeted CLI child")
+        if proc.returncode is None:
+            log.error("budgeted CLI child is still live after cleanup attempt")
         raise
 
 
