@@ -3,7 +3,10 @@
 """Tests for the gate-check subcommand."""
 
 import json
+import os
+import sys
 import tempfile
+from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
@@ -25,6 +28,1020 @@ from code_forge.gate_check import (
     validate_presubmit_command,
     validate_retry_config,
 )
+
+
+class TestFailureWaiverEvidence:
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            "ordinary",
+            "exit",
+            "failed",
+            "maxfail_reached",
+            "maxfail_below",
+            "passing",
+            "collection_failed",
+            "sessionstart_failed",
+            "configure_failed",
+        ],
+    )
+    def test_caught_runner_abort_refuses_complete_phase_reports(self, tmp_path, shape):
+        passing = shape == "passing"
+        source = "from pathlib import Path\ndef test_known():\n    Path('executed').write_text('once')\n"
+        source += "    pass\n" if passing else "    assert False\n"
+        args = ["--maxfail=1"] if shape in ("maxfail_reached", "passing") else []
+        if shape == "maxfail_below":
+            args = ["--maxfail=2"]
+        self.public(tmp_path, source, {"test_sample.py::test_known": "failed"}, args=args)
+        plugin = ""
+        if shape in ("exit", "failed"):
+            plugin = "import pytest\nfrom _pytest.main import Failed\nfrom pathlib import Path\n"
+            plugin += (
+                "def pytest_runtest_logfinish(nodeid, location):\n"
+                "    Path('aborted').write_text('after reports')\n"
+            )
+            plugin += (
+                "    pytest.exit('abort after reports', returncode=1)\n"
+                if shape == "exit"
+                else "    raise Failed('abort after reports')\n"
+            )
+        elif shape in ("collection_failed", "sessionstart_failed", "configure_failed"):
+            plugin = "import pytest\nfrom _pytest.main import Failed\nfrom pathlib import Path\n"
+            if shape == "configure_failed":
+                plugin += (
+                    "@pytest.hookimpl(trylast=True)\ndef pytest_configure(config):\n"
+                    "    session = config.pluginmanager.getplugin('session')\n"
+                    "    config.hook.pytest_sessionstart(session=session)\n"
+                )
+            else:
+                name = "pytest_collection" if shape == "collection_failed" else "pytest_sessionstart"
+                plugin += (
+                    f"@pytest.hookimpl(wrapper=True, trylast=True)\ndef {name}(session):\n    yield\n"
+                )
+            if shape != "collection_failed":
+                plugin += "    session.config.hook.pytest_collection(session=session)\n"
+            plugin += "    session.config.hook.pytest_runtestloop(session=session)\n"
+            if shape != "collection_failed":
+                plugin += "    session.config.hook.pytest_sessionfinish(session=session, exitstatus=1)\n"
+            plugin += (
+                "    Path('aborted').write_text('after reports')\n"
+                "    raise Failed('outer dispatch aborted')\n"
+            )
+        (tmp_path / "conftest.py").write_text(plugin)
+        env = dict(os.environ)
+        env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+        command = ["python3", "-B", "-m", "pytest", "-q", *args, "test_sample.py"]
+        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=15)
+        assert original.returncode == (0 if passing else 1), original.stderr
+        assert (tmp_path / "executed").read_text() == "once"
+        expected = EXIT_PASS if shape in ("ordinary", "maxfail_below", "passing") else EXIT_FAIL
+        (tmp_path / "executed").unlink()
+        error = StringIO()
+        result = run_gate_check(env=env, cwd=tmp_path, stdout=StringIO(), stderr=error)
+        assert result == expected, error.getvalue()
+        assert (tmp_path / "executed").read_text() == "once"
+        (tmp_path / "executed").unlink()
+        public = self.cli(tmp_path)
+        assert public.returncode == expected, public.stderr
+        assert (tmp_path / "executed").read_text() == "once"
+        if expected == EXIT_FAIL:
+            assert "insufficient structured pytest evidence" in public.stderr
+        elif not passing:
+            assert "all failures are known" in public.stderr
+        if plugin:
+            assert (tmp_path / "aborted").read_text() == "after reports"
+
+    def test_empty_cache_prefix_keeps_public_known_failure_waiver(self, tmp_path):
+        source = "from pathlib import Path\ndef test_known():\n    Path('executed').write_text('once')\n    assert False\n"
+        result, error = self.public(
+            tmp_path,
+            source,
+            {"test_sample.py::test_known": "failed"},
+            extra_env={"PYTHONPYCACHEPREFIX": ""},
+        )
+        assert result == EXIT_PASS, error
+        (tmp_path / "executed").unlink()
+        public = self.cli(tmp_path, {"PYTHONPYCACHEPREFIX": ""})
+        assert public.returncode == EXIT_PASS, public.stderr
+        assert "all failures are known" in public.stderr
+        assert (tmp_path / "executed").read_text() == "once"
+
+    @pytest.mark.parametrize("relative", [False, True])
+    @pytest.mark.parametrize("bytecode", [False, True])
+    @pytest.mark.parametrize("passing", [False, True])
+    def test_external_prefix_avoids_unsupported_bootstrap_cache(
+        self, tmp_path, relative, bytecode, passing
+    ):
+        source = (
+            "from pathlib import Path\nimport sys\ndef test_known():\n"
+            "    Path('executed').write_text('once')\n"
+            "    Path('runtime-prefix').write_text(str(sys.pycache_prefix))\n"
+        )
+        source += "    pass\n" if passing else "    assert False\n"
+        command = ["python3", *([] if bytecode else ["-B"]), "-m", "pytest", "-q", "test_sample.py"]
+        self.public(tmp_path, source, {"test_sample.py::test_known": "failed"}, command=command)
+        cache = tmp_path / "caller-cache"
+        cache.mkdir()
+        sentinel = cache / "caller-file"
+        sentinel.write_text("retain caller state")
+        prefix = cache.name if relative else str(cache)
+        (tmp_path / "executed").unlink()
+        with tempfile.TemporaryDirectory(prefix="capture-", dir=tmp_path.parent) as temp:
+            public = self.cli(
+                tmp_path,
+                {"PYTHONPYCACHEPREFIX": prefix, "PYTHONDONTWRITEBYTECODE": "", "TMPDIR": temp},
+            )
+            assert public.returncode == (EXIT_PASS if passing else EXIT_FAIL), public.stderr
+            assert (tmp_path / "executed").read_text() == "once"
+            assert (tmp_path / "runtime-prefix").read_text() == prefix
+            if not passing:
+                assert "insufficient structured pytest evidence" in public.stderr
+            assert "capture cleanup failed" not in public.stderr
+            assert sentinel.read_text() == "retain caller state"
+            assert not list(Path(temp).iterdir())
+            assert not cache.joinpath(*Path(temp).parts[1:]).exists()
+            assert not [path for path in cache.rglob("*") if path.name.startswith("_forge_gate_")]
+
+    @pytest.mark.parametrize(
+        "shape",
+        ["ordinary", "session_exit", "internal_exit"]
+        + [
+            kind + "_wrapper_" + order + "_" + position
+            for kind in ("session", "internal")
+            for order in ("first", "last")
+            for position in ("before", "after")
+        ],
+    )
+    def test_caught_lifecycle_exit_cannot_waive_known_failure(self, tmp_path, shape):
+        source = "from pathlib import Path\ndef test_known():\n    Path('executed').write_text('once')\n    assert False\n"
+        self.public(tmp_path, source, {"test_sample.py::test_known": "failed"})
+        plugin = ""
+        if shape == "session_exit":
+            plugin = (
+                "import pytest\nfrom pathlib import Path\n"
+                "@pytest.hookimpl(trylast=True)\ndef pytest_sessionfinish(session, exitstatus):\n"
+                "    Path('aborted').write_text('session')\n"
+                "    pytest.exit('aborted session', returncode=1)\n"
+            )
+        elif shape == "internal_exit":
+            plugin = (
+                "import pytest\nfrom pathlib import Path\n"
+                "def pytest_runtest_logfinish(nodeid, location):\n"
+                "    raise RuntimeError('actual harness failure')\n"
+                "@pytest.hookimpl(tryfirst=True)\ndef pytest_internalerror(excrepr, excinfo):\n"
+                "    Path('aborted').write_text('internal')\n"
+                "    pytest.exit('caught internal', returncode=1)\n"
+            )
+        elif "_wrapper_" in shape:
+            kind, _, order, position = shape.split("_")
+            name = "pytest_sessionfinish" if kind == "session" else "pytest_internalerror"
+            arguments = "session, exitstatus" if kind == "session" else "excrepr, excinfo"
+            plugin = "import pytest\nfrom pathlib import Path\n"
+            if kind == "internal":
+                plugin += (
+                    "def pytest_runtest_logfinish(nodeid, location):\n"
+                    "    raise RuntimeError('actual wrapper harness failure')\n"
+                )
+            plugin += f"@pytest.hookimpl(wrapper=True, try{order}=True)\ndef {name}({arguments}):\n"
+            abort = "    Path('aborted').write_text('wrapper')\n    pytest.exit('aborted wrapper', returncode=1)\n"
+            if position == "before":
+                plugin += abort + "    yield\n"
+            else:
+                plugin += "    result = yield\n" + abort + "    return result\n"
+        (tmp_path / "conftest.py").write_text(plugin)
+        env = dict(os.environ)
+        env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+        command = ["python3", "-B", "-m", "pytest", "-q", "test_sample.py"]
+        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=15)
+        assert original.returncode == 1, original.stderr
+        assert (tmp_path / "executed").read_text() == "once"
+        if shape != "ordinary":
+            assert (tmp_path / "aborted").is_file()
+            (tmp_path / "aborted").unlink()
+        (tmp_path / "executed").unlink()
+        public = self.cli(tmp_path)
+        assert (tmp_path / "executed").read_text() == "once"
+        assert public.returncode == (EXIT_PASS if shape == "ordinary" else EXIT_FAIL), public.stderr
+        if shape == "ordinary":
+            assert "all failures are known" in public.stderr
+        else:
+            assert (tmp_path / "aborted").is_file()
+            assert "insufficient structured pytest evidence" in public.stderr
+
+    @pytest.mark.parametrize("hook", ["pytest_sessionfinish", "pytest_internalerror"])
+    @pytest.mark.parametrize("passing", [False, True])
+    def test_replaced_dispatch_identity_preserves_execution(self, tmp_path, hook, passing):
+        source = "from pathlib import Path\ndef test_known():\n    Path('executed').write_text('once')\n"
+        source += "    pass\n" if passing else "    assert False\n"
+        self.public(tmp_path, source, {"test_sample.py::test_known": "failed"})
+        (tmp_path / "conftest.py").write_text(
+            "def pytest_configure(config):\n"
+            f"    config.hook.{hook}._hookexec = config.pluginmanager._hookexec\n"
+        )
+        (tmp_path / "executed").unlink()
+        error = StringIO()
+        env = dict(os.environ)
+        env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+        result = run_gate_check(env=env, cwd=tmp_path, stdout=StringIO(), stderr=error)
+        assert result == (EXIT_PASS if passing else EXIT_FAIL), error.getvalue()
+        assert (tmp_path / "executed").read_text() == "once"
+        (tmp_path / "executed").unlink()
+        public = self.cli(tmp_path)
+        assert (tmp_path / "executed").read_text() == "once"
+        assert public.returncode == (EXIT_PASS if passing else EXIT_FAIL), public.stderr
+        if not passing:
+            assert "insufficient structured pytest evidence" in public.stderr
+
+    @pytest.mark.parametrize("passing", [False, True])
+    def test_final_capture_close_error_preserves_runner_outcome(self, tmp_path, monkeypatch, passing):
+        import errno
+        from code_forge import gate_check, _gate_pytest
+
+        original_prepare = gate_check.prepare_pytest_capture
+        original_close = os.close
+        owned = {}
+
+        def prepare(*args, **kwargs):
+            capture = original_prepare(*args, **kwargs)
+            owned["capture"] = capture
+            owned["fd"] = capture.fd
+            return capture
+
+        def close_then_error(fd):
+            original_close(fd)
+            if fd == owned.get("fd"):
+                owned["fault"] = True
+                raise OSError(errno.EIO, "measured final capture close error")
+
+        monkeypatch.setattr(gate_check, "prepare_pytest_capture", prepare)
+        monkeypatch.setattr(_gate_pytest.os, "close", close_then_error)
+        source = "def test_known():\n    " + ("pass\n" if passing else "assert False\n")
+        result, error = self.public(tmp_path, source, {"test_sample.py::test_known": "failed"})
+        assert result == (EXIT_PASS if passing else EXIT_FAIL), error
+        assert "capture cleanup failed" in error
+        assert owned["fault"] and owned["capture"].fd is None
+        assert owned["capture"].authority is False
+        assert not owned["capture"].directory.exists()
+        with pytest.raises(OSError) as closed:
+            os.fstat(owned["fd"])
+        assert closed.value.errno == errno.EBADF
+
+    def cli(self, tmp_path, extra_env=None):
+        env = dict(os.environ)
+        env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(Path(__file__).resolve().parents[1] / "src"), env.get("PYTHONPATH", "")]
+        )
+        if extra_env:
+            env.update(extra_env)
+        return subprocess.run(
+            ["python3", "-B", "-m", "code_forge", "gate-check", "--no-color"],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+
+    def test_hardlinked_reporter_keeps_public_known_failure_waiver(self, tmp_path):
+        from code_forge import _gate_pytest
+
+        source = "from pathlib import Path\ndef test_known():\n    Path('executed').write_text('once')\n    raise AssertionError('known')\n"
+        self.public(tmp_path, source, {"test_sample.py::test_known": "failed"})
+        original = Path(__file__).resolve().parents[1] / "src" / "code_forge"
+        package = tmp_path / "package" / "code_forge"
+        for path in original.rglob("*.py"):
+            target = package / path.relative_to(original)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(path.read_bytes())
+        reporter = package / "_gate_pytest.py"
+        reporter.unlink()
+        copy = tmp_path / "reporter-source.py"
+        copy.write_bytes(Path(_gate_pytest.__file__).read_bytes())
+        os.link(copy, reporter)
+        assert reporter.stat().st_nlink == 2
+        (tmp_path / "conftest.py").write_text(
+            "import json\nfrom pathlib import Path\nfrom code_forge import _gate_pytest\n"
+            "def pytest_sessionstart(session):\n"
+            "    p=Path(_gate_pytest.__file__).resolve()\n"
+            "    Path('source-origin.json').write_text(json.dumps({'path':str(p),'links':p.stat().st_nlink}))\n"
+        )
+        (tmp_path / "executed").unlink()
+        public = self.cli(
+            tmp_path,
+            {"PYTHONPATH": os.pathsep.join([str(package.parent), os.environ.get("PYTHONPATH", "")])},
+        )
+        assert public.returncode == EXIT_PASS, public.stderr
+        assert "all failures are known" in public.stderr
+        assert (tmp_path / "executed").read_text() == "once"
+        assert json.loads((tmp_path / "source-origin.json").read_text()) == {
+            "path": str(reporter.resolve()),
+            "links": 2,
+        }
+
+    @pytest.mark.parametrize("passing", [False, True])
+    def test_optimized_pytest_preserves_outcome_and_closes_owned_capture(self, tmp_path, passing):
+        source = "from pathlib import Path\ndef test_known():\n    Path('executed').write_text('once')\n"
+        if not passing:
+            source += "    raise AssertionError('known')\n"
+        self.public(tmp_path, source, {"test_sample.py::test_known": "failed"})
+        owned = tmp_path / "gate-tmp"
+        owned.mkdir()
+        (tmp_path / "executed").unlink()
+        public = self.cli(
+            tmp_path, {"PYTHONOPTIMIZE": "1", "PYTHONDONTWRITEBYTECODE": "", "TMPDIR": str(owned)}
+        )
+        assert public.returncode == (EXIT_PASS if passing else EXIT_FAIL), public.stderr
+        assert (tmp_path / "executed").read_text() == "once"
+        if not passing:
+            assert "insufficient structured pytest evidence" in public.stderr
+        assert "capture cleanup failed" not in public.stderr
+        assert not list(owned.iterdir())
+
+    @pytest.mark.parametrize("filename", ["-n_test.py", "--dist=x.py"])
+    @pytest.mark.parametrize("bytecode", [False, True])
+    def test_dash_filename_after_terminator_keeps_known_failure_waiver(
+        self, tmp_path, filename, bytecode
+    ):
+        source = "from pathlib import Path\ndef test_known():\n    Path('executed').write_text('once')\n    assert False\n"
+        (tmp_path / filename).write_text(source)
+        command = ["python3", *([] if bytecode else ["-B"]), "-m", "pytest", "-q", "--", filename]
+        env = dict(os.environ)
+        env.pop("PYTHONDONTWRITEBYTECODE", None)
+        env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=15)
+        bare_rejected = original.returncode == 4
+        if bare_rejected:
+            assert (sys.implementation.cache_tag, pytest.__version__) == ("cpython-312", "9.1.1")
+            assert b"unrecognized arguments" in original.stderr
+            assert not (tmp_path / "executed").exists()
+        else:
+            assert original.returncode == 1, original.stderr
+            assert (tmp_path / "executed").read_text() == "once"
+        self.public(
+            tmp_path,
+            "def test_placeholder(): pass\n",
+            {filename + "::test_known": "failed"},
+            command=command,
+        )
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(Path(__file__).resolve().parents[1] / "src"), env.get("PYTHONPATH", "")]
+        )
+        if not bare_rejected:
+            (tmp_path / "executed").unlink()
+        public = subprocess.run(
+            ["python3", "-B", "-m", "code_forge", "gate-check", "--no-color"],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if bare_rejected:
+            assert public.returncode == EXIT_FAIL, public.stderr
+            assert "unrecognized arguments" in public.stderr
+            assert not (tmp_path / "executed").exists()
+            command[-1] = "./" + filename
+            original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=15)
+            assert original.returncode == 1, original.stderr
+            assert (filename + "::test_known").encode() in original.stdout
+            assert (tmp_path / "executed").read_text() == "once"
+            config = tmp_path / ".code-forge" / "gate.yaml"
+            data = yaml.safe_load(config.read_text())
+            data["test"]["command"] = command
+            config.write_text(yaml.safe_dump(data))
+            (tmp_path / "executed").unlink()
+            public = self.cli(tmp_path)
+        assert public.returncode == EXIT_PASS, public.stderr
+        assert (tmp_path / "executed").read_text() == "once"
+        assert "all failures are known" in public.stderr
+
+    def test_runner_option_before_terminator_still_refuses(self, tmp_path):
+        (tmp_path / "runner_option.py").write_text(
+            "def pytest_addoption(parser):\n    parser.addoption('--dist')\n"
+        )
+        source = "from pathlib import Path\ndef test_known():\n    Path('executed-before').write_text('once')\n    assert False\n"
+        (tmp_path / "test_sample.py").write_text(source)
+        command = [
+            "python3",
+            "-B",
+            "-m",
+            "pytest",
+            "-p",
+            "runner_option",
+            "--dist=load",
+            "-q",
+            "--",
+            "test_sample.py",
+        ]
+        plugin_path = os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")])
+        env = {**os.environ, "PYTHONPATH": plugin_path}
+        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=15)
+        assert original.returncode == 1, original.stderr
+        assert (tmp_path / "executed-before").read_text() == "once"
+        result, error = self.public(
+            tmp_path,
+            source,
+            {"test_sample.py::test_known": "failed"},
+            command=command,
+            extra_env={"PYTHONPATH": plugin_path},
+        )
+        assert result == EXIT_FAIL
+        assert "insufficient structured pytest evidence" in error
+
+    def test_importing_plugin_after_terminator_cannot_hide_nested_pytest(self, tmp_path):
+        package = tmp_path / "earlier"
+        package.mkdir()
+        (package / "__init__.py").write_text("")
+        (package / "py.py").write_text(
+            "from pathlib import Path\nimport pytest\n"
+            "Path('plugin-imported').write_text('yes')\n"
+            "pytest.main(['--collect-only', '-q', 'nested.py'])\n"
+        )
+        (tmp_path / "nested.py").write_text("def test_nested(): pass\n")
+        filename = "-pearlier.py"
+        (tmp_path / filename).write_text("def test_known():\n    assert False\n")
+        command = ["python3", "-B", "-m", "pytest", "-q", "--", filename]
+        result, error = self.public(
+            tmp_path,
+            "def test_placeholder():\n    assert False\n",
+            {filename + "::test_known": "failed"},
+            command=command,
+            extra_env={"PYTHONPATH": os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")])},
+        )
+        assert (tmp_path / "plugin-imported").read_text() == "yes"
+        assert result == EXIT_FAIL, error
+        assert "insufficient structured pytest evidence" in error
+
+    @pytest.mark.parametrize("passing", [False, True])
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            "ordinary",
+            "instance",
+            "instance_identity",
+            "bound",
+            "class",
+            "class_shadow",
+            "other",
+            "pretend",
+            "subclass",
+        ],
+    )
+    def test_early_cleanup_identity_preserves_execution(self, tmp_path, monkeypatch, shape, passing):
+        from code_forge import gate_check, _gate_pytest
+
+        plugin = """from pathlib import Path
+from types import MethodType
+import copy
+import pytest
+@pytest.hookimpl(tryfirst=True)
+def pytest_load_initial_conftests(early_config, parser, args):
+    original = early_config._ensure_unconfigure
+    def noop(*args, **kwargs):
+        assert shape != 'instance_identity' or early_config._ensure_unconfigure is noop
+        path = Path('replacement-calls')
+        path.write_text((path.read_text() if path.exists() else '') + 'x')
+    shape = SHAPE
+    if shape in ('instance', 'instance_identity'):
+        early_config._ensure_unconfigure = noop
+    elif shape == 'bound':
+        early_config._ensure_unconfigure = MethodType(noop, early_config)
+    elif shape in ('class', 'class_shadow'):
+        type(early_config)._ensure_unconfigure = noop
+        if shape == 'class_shadow':
+            early_config._ensure_unconfigure = original
+    elif shape == 'other':
+        early_config._ensure_unconfigure = MethodType(original.__func__, copy.copy(early_config))
+    elif shape == 'pretend':
+        class Pretend:
+            __func__ = staticmethod(original.__func__)
+            __self__ = early_config
+            __call__ = staticmethod(noop)
+        early_config._ensure_unconfigure = Pretend()
+    elif shape == 'subclass':
+        early_config.__class__ = type('DerivedConfig', (type(early_config),), {})
+def pytest_unconfigure(config):
+    Path('real-unconfigure-ran').write_text('ran')
+"""
+        (tmp_path / "earlycleanup.py").write_text(plugin.replace("SHAPE", repr(shape)))
+        source = "from pathlib import Path\ndef test_known():\n    Path('executed').write_text('once')\n"
+        source += "    assert " + repr(passing) + "\n"
+        (tmp_path / "test_sample.py").write_text(source)
+        command = ["python3", "-B", "-m", "pytest", "-q", "test_sample.py"]
+        env = dict(os.environ)
+        extra = {
+            "PYTEST_PLUGINS": "earlycleanup",
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "PYTHONPATH": os.pathsep.join([str(tmp_path), str(Path(pytest.__file__).parents[1])]),
+        }
+        env.update(extra)
+        env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=30)
+        assert original.returncode == (0 if passing else 1), original.stderr
+        assert (tmp_path / "executed").read_text() == "once"
+        for name in ("executed", "replacement-calls", "real-unconfigure-ran"):
+            (tmp_path / name).unlink(missing_ok=True)
+        measured = []
+        run = gate_check.run_captured_pytest
+
+        def observe(*args, **kwargs):
+            result = run(*args, **kwargs)
+            verdict = _gate_pytest.read_pytest_evidence(
+                kwargs["capture"], child_pid=result.pid, returncode=result.returncode
+            )
+            capture = kwargs["capture"]
+            violation = capture.directory / "violation"
+            measured.append(
+                (result, verdict, capture, violation.read_text() if violation.exists() else "")
+            )
+            return result
+
+        monkeypatch.setattr(gate_check, "run_captured_pytest", observe)
+        result, diagnostic = self.public(
+            tmp_path,
+            source,
+            {"test_sample.py::test_known": "failed"},
+            command=command,
+            extra_env=extra,
+        )
+        assert len(measured) == 1
+        child, verdict, capture, refusal = measured[0]
+        assert child.returncode == original.returncode, (child.stdout, child.stderr)
+        assert child.reaped and child.pipes_closed and capture.fd is None
+        assert not capture.directory.exists() and not capture.cleanup_error
+        assert (tmp_path / "executed").read_text() == "once"
+        if shape in ("instance", "instance_identity", "bound", "class", "pretend"):
+            assert (tmp_path / "replacement-calls").is_file(), (child.stdout, child.stderr)
+            assert (tmp_path / "replacement-calls").read_text() == "xx"
+        assert (tmp_path / "real-unconfigure-ran").exists() == (
+            shape in ("ordinary", "class_shadow", "subclass")
+        )
+        expected = EXIT_PASS if passing or shape == "ordinary" else EXIT_FAIL
+        assert result == expected, diagnostic
+        if not passing:
+            assert verdict.valid == (shape == "ordinary"), verdict.reason
+        assert refusal == ("" if shape == "ordinary" else "replaced incoming cleanup boundary")
+
+    @pytest.mark.parametrize(
+        "damage", ["missing", "json", "fifo", "symlink", "reporter", "reporter-read"]
+    )
+    def test_bootstrap_io_refuses_without_changing_pytest(self, tmp_path, monkeypatch, damage):
+        from code_forge import gate_check
+
+        marker = tmp_path / "executed"
+        sentinel = tmp_path / "sentinel"
+        sentinel.write_bytes(b"preserved")
+        captures = []
+        prepare = gate_check.prepare_pytest_capture
+        run = gate_check.run_captured_pytest
+        observed = []
+
+        def changed(*args, **kwargs):
+            if damage in ("reporter", "reporter-read"):
+                reporter = tmp_path / "reporter.py"
+                reporter.write_bytes(kwargs["reporter_path"].read_bytes())
+                if damage == "reporter-read":
+                    with reporter.open("a") as stream:
+                        stream.write(
+                            "\n_saved_digest=_digest\ndef _digest(path,**kwargs):\n    if str(path)==__file__: raise OSError(5,'owned origin unavailable')\n    return _saved_digest(path,**kwargs)\n"
+                        )
+                kwargs["reporter_path"] = reporter
+            capture = prepare(*args, **kwargs)
+            captures.append(capture)
+            binding = capture.directory / "binding.json"
+            if damage == "reporter":
+                reporter.unlink()
+            elif damage == "reporter-read":
+                pass
+            else:
+                binding.unlink()
+                if damage == "json":
+                    binding.write_bytes(b"{")
+                elif damage == "fifo":
+                    os.mkfifo(binding)
+                elif damage == "symlink":
+                    binding.symlink_to(sentinel)
+            return capture
+
+        def measured(*args, **kwargs):
+            result = run(*args, **kwargs)
+            observed.append(result)
+            return result
+
+        monkeypatch.setattr(gate_check, "prepare_pytest_capture", changed)
+        monkeypatch.setattr(gate_check, "run_captured_pytest", measured)
+        source = (
+            "from pathlib import Path\ndef test_known():\n    Path("
+            + repr(str(marker))
+            + ").write_text('once')\n    assert False\n"
+        )
+        result, error = self.public(
+            tmp_path,
+            source,
+            {"test_sample.py::test_known": "failed"},
+            command=["python3", "-B", "-m", "pytest", "-q", "test_sample.py"],
+        )
+        assert observed[0].returncode == 1, error
+        assert observed[0].reaped and observed[0].pipes_closed
+        assert marker.is_file(), error
+        assert marker.read_text() == "once"
+        assert result == EXIT_FAIL, error
+        assert sentinel.read_bytes() == b"preserved"
+        capture = captures[0]
+        if capture.directory.exists():
+            # Remove only this fixture's substituted entry, then retry the owned manifest.
+            (capture.directory / "binding.json").unlink()
+            capture.fd = os.open(capture.directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            assert capture.close()
+
+    @pytest.mark.parametrize("success", [False, True])
+    def test_public_e2big_fallback_preserves_original_result(self, tmp_path, monkeypatch, success):
+        import errno
+        from code_forge import _gate_pytest
+
+        original = _gate_pytest.subprocess.Popen
+        attempted = []
+
+        def spawn(command, *args, **kwargs):
+            if isinstance(command, list) and any(arg.startswith("_forge_gate_") for arg in command):
+                attempted.append(command)
+                raise OSError(errno.E2BIG, "instrumentation overhead")
+            return original(command, *args, **kwargs)
+
+        monkeypatch.setattr(_gate_pytest.subprocess, "Popen", spawn)
+        marker = tmp_path / "executed"
+        source = (
+            "from pathlib import Path\ndef test_known():\n    Path("
+            + repr(str(marker))
+            + ").write_text('once')\n    assert "
+            + str(success)
+            + "\n"
+        )
+        result, error = self.public(tmp_path, source, {"test_sample.py::test_known": "failed"})
+        assert len(attempted) == 1
+        assert marker.is_file(), error
+        assert marker.read_text() == "once"
+        assert result == (EXIT_PASS if success else EXIT_FAIL), error
+
+    @pytest.mark.parametrize(
+        "target,success",
+        [
+            ("violation", False),
+            ("begin.json", False),
+            ("final.json", False),
+            ("begin.json", True),
+            ("final.json", True),
+        ],
+    )
+    def test_producer_owned_io_preserves_execution(self, tmp_path, monkeypatch, target, success):
+        from code_forge import gate_check
+
+        if not Path("/dev/full").exists():
+            pytest.skip("real ENOSPC device unavailable")
+        marker = tmp_path / "executed"
+        filename = os.fsdecode(b"test_non_utf8_\x80.py") if target == "violation" else "test_sample.py"
+        source = (
+            "from pathlib import Path\ndef test_known():\n    Path("
+            + repr(str(marker))
+            + ").write_text('executed')\n    assert "
+            + str(success)
+            + "\n"
+        )
+        (tmp_path / filename).write_text(source)
+        plugin = (
+            "import json, os\nfrom pathlib import Path\noriginal=Path.open\n"
+            "transport=json.loads(os.environ['FORGE_GATE_BINDING']) if 'FORGE_GATE_BINDING' in os.environ else None\n"
+            "binding=json.loads(Path(transport['path']).read_text()) if transport is not None else None\n"
+            "def owned_open(path,*args,**kwargs):\n    stream=original(path,*args,**kwargs)\n"
+            "    if binding is not None and str(path)==str(Path(binding['directory'])/"
+            + repr(target)
+            + "):\n"
+            "        full=os.open('/dev/full',os.O_WRONLY|os.O_CLOEXEC)\n"
+            "        try: os.dup2(full,stream.fileno())\n        finally: os.close(full)\n"
+            "    return stream\nPath.open=owned_open\n"
+        )
+        (tmp_path / "owned_full.py").write_text(plugin)
+        extra = {
+            "PYTEST_PLUGINS": "owned_full",
+            "PYTHONPATH": str(tmp_path) + os.pathsep + str(Path(pytest.__file__).parents[1]),
+        }
+        command = [
+            "python3",
+            "-B",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "-s",
+            "--tb=line",
+            ".",
+        ]
+        original = subprocess.run(
+            command,
+            cwd=tmp_path,
+            env=dict(os.environ, **extra),
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        assert original.returncode == (0 if success else 1)
+        assert marker.read_text() == "executed"
+        marker.unlink()
+        observed = []
+        run = gate_check.run_captured_pytest
+
+        def capture(*args, **kwargs):
+            result = run(*args, **kwargs)
+            observed.append(result)
+            return result
+
+        monkeypatch.setattr(gate_check, "run_captured_pytest", capture)
+        baseline = {filename + "::test_known": "failed"}
+        result, error = self.public(
+            tmp_path,
+            source if filename == "test_sample.py" else "def test_placeholder(): pass\n",
+            baseline,
+            command=command,
+            extra_env=extra,
+        )
+        assert observed[0].returncode == original.returncode, error
+        assert observed[0].reaped and observed[0].pipes_closed
+        assert marker.is_file(), error
+        assert marker.read_text() == "executed"
+        assert result == (EXIT_PASS if success else EXIT_FAIL), error
+
+    def test_large_executable_argv_preserves_success(self, tmp_path):
+        command = ["python3", "-B", "-m", "pytest", "--version"] + [
+            "test_example.py::test_known[" + str(i) + ":" + "x" * 45 + "]" for i in range(1400)
+        ]
+        original = subprocess.run(command, cwd=tmp_path, capture_output=True, timeout=10, check=False)
+        assert original.returncode == 0
+        result, error = self.public(tmp_path, "def test_known(): pass\n", {}, command=command)
+        assert result == EXIT_PASS, error
+
+    def test_large_executable_argv_known_failure(self, tmp_path):
+        source = "def test_known():\n    assert False\n"
+        (tmp_path / "test_sample.py").write_text(source)
+        command = ["python3", "-B", "-m", "pytest", "-q", *(["--color=no"] * 10000), "test_sample.py"]
+        original = subprocess.run(command, cwd=tmp_path, capture_output=True, timeout=10, check=False)
+        assert original.returncode == 1
+        result, error = self.public(
+            tmp_path, source, {"test_sample.py::test_known": "failed"}, command=command
+        )
+        assert result == EXIT_PASS, error
+
+    def test_default_helper_keeps_passing_and_bootstrap_behavior(self):
+        assert compute_baseline_delta("FAILED test.py::x", None) == (False, [])
+        assert compute_baseline_delta("3 passed", {}) == (False, [])
+        assert compute_baseline_delta("ERROR test.py::x", {"test_results": {}}) == (False, [])
+
+    def public(
+        self,
+        tmp_path,
+        source,
+        baseline,
+        *,
+        command=None,
+        extra_env=None,
+        args=(),
+        write_null_baseline=False,
+    ):
+        def git(*args):
+            return subprocess.run(
+                ["git", *args], cwd=tmp_path, capture_output=True, text=True, timeout=2, check=True
+            )
+
+        inherited = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        for env in (dict(os.environ), inherited):
+            outside = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=tmp_path,
+                env=env,
+                capture_output=True,
+                timeout=2,
+                check=False,
+            )
+            assert outside.returncode != 0, outside.stdout
+        git("init", "-q")
+        git("-c", "user.name=t", "-c", "user.email=t@e", "commit", "--allow-empty", "-qm", "base")
+        (tmp_path / "test_sample.py").write_text(source)
+        directory = tmp_path / ".code-forge"
+        directory.mkdir()
+        if command is None:
+            command = ["python3", "-m", "pytest", "-q", *args, "test_sample.py"]
+        (directory / "gate.yaml").write_text(
+            yaml.safe_dump({"test": {"command": command, "timeout_seconds": 30}})
+        )
+        if baseline is not None or write_null_baseline:
+            (directory / "test_baseline.json").write_text(
+                json.dumps({"schema_version": 1, "test_results": baseline})
+            )
+        git("add", "test_sample.py")
+        env = dict(inherited)
+        env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+        if extra_env:
+            env.update(extra_env)
+        error = StringIO()
+        result = run_gate_check(env=env, cwd=tmp_path, stdout=StringIO(), stderr=error)
+        return result, error.getvalue()
+
+    def test_generic_stdout_cannot_waive(self, tmp_path):
+        (tmp_path / "runner.py").write_text(
+            "print('FAILED test_sample.py::test_known')\nraise SystemExit(1)\n"
+        )
+        result, error = self.public(
+            tmp_path,
+            "def test_known(): pass\n",
+            {"test_sample.py::test_known": "failed"},
+            command=["python3", "runner.py"],
+        )
+        assert result == EXIT_FAIL, error
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX byte filename")
+    def test_non_utf8_filename_runs_and_refuses_waiver(self, tmp_path):
+        filename = os.fsdecode(b"test_non_utf8_\x80.py")
+        marker = tmp_path / "executed"
+        source = (
+            "from pathlib import Path\ndef test_unknown():\n    Path("
+            + repr(str(marker))
+            + ").write_text('executed')\n    assert False\n"
+        )
+        (tmp_path / filename).write_text(source)
+        command = [
+            "python3",
+            "-B",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "-s",
+            "--tb=line",
+            ".",
+        ]
+        env = dict(os.environ)
+        env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+        original = subprocess.run(
+            command,
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+        assert original.returncode == 1, original.stderr
+        assert marker.read_text() == "executed"
+        marker.unlink()
+        result, error = self.public(
+            tmp_path,
+            "def test_placeholder(): pass\n",
+            {filename + "::test_unknown": "failed"},
+            command=command,
+        )
+        assert result == EXIT_FAIL, error
+        assert marker.exists(), error
+        assert marker.read_text() == "executed"
+        assert "internal error" not in error
+
+    @pytest.mark.parametrize("status", ["passed", "skipped", "unknown", None, 1, {}, []])
+    def test_only_exact_failed_status_is_known(self, status):
+        block, nodes = compute_baseline_delta(
+            "FAILED test.py::test_x\n", {"test_results": {"test.py::test_x": status}}
+        )
+        assert block and nodes == ["test.py::test_x"]
+
+    @pytest.mark.parametrize(
+        "args", [["-qq", "-s", "--tb=line"], ["-q"], ["-vv"], ["--force-short-summary"]]
+    )
+    def test_actual_known_failure_and_logs(self, tmp_path, args):
+        result, error = self.public(
+            tmp_path,
+            "import sys\ndef test_known():\n    print('ERROR fabricated')\n    print('FAILED unknown', file=sys.stderr)\n    assert False\n",
+            {"test_sample.py::test_known": "failed"},
+            args=args,
+            extra_env={"CI": "1", "BUILD_NUMBER": "42"},
+        )
+        assert result == EXIT_PASS, error
+
+    @pytest.mark.parametrize(
+        "baseline,opt_in,expected",
+        [
+            (None, "0", EXIT_FAIL),
+            (None, "1", EXIT_PASS),
+            ({}, "0", EXIT_FAIL),
+            ({"test_sample.py::test_known": "failed"}, "0", EXIT_PASS),
+        ],
+    )
+    def test_public_exit_one_policy(self, tmp_path, baseline, opt_in, expected):
+        result, error = self.public(
+            tmp_path,
+            "def test_known():\n    assert False\n",
+            baseline,
+            extra_env={"FORGE_ALLOW_NO_BASELINE": opt_in},
+        )
+        assert result == expected, error
+
+    @pytest.mark.parametrize(
+        "source,args",
+        [
+            ("def test_known():\n    assert False\ndef test_unknown():\n    assert False\n", []),
+            (
+                "import pytest\n@pytest.fixture\ndef broken():\n    assert False\ndef test_known():\n    assert False\ndef test_error(broken):\n    pass\n",
+                [],
+            ),
+            ("def test_known():\n    assert False\ndef test_later():\n    pass\n", ["-x"]),
+        ],
+    )
+    def test_new_error_and_partial_block(self, tmp_path, source, args):
+        result, error = self.public(
+            tmp_path, source, {"test_sample.py::test_known": "failed"}, args=args
+        )
+        assert result == EXIT_FAIL, error
+
+    def test_invalid_receipt_never_waives(self, tmp_path, monkeypatch):
+        from code_forge import _gate_pytest, gate_check
+
+        monkeypatch.setattr(
+            gate_check,
+            "read_pytest_evidence",
+            lambda *a, **kw: _gate_pytest.EvidenceResult(
+                False, "malformed receipt", ["test_sample.py::test_known"]
+            ),
+        )
+        result, error = self.public(
+            tmp_path, "def test_known():\n    assert False\n", {"test_sample.py::test_known": "failed"}
+        )
+        assert result == EXIT_FAIL, error
+
+    @pytest.mark.parametrize("results", [[], None, "invalid"])
+    def test_malformed_baseline_results_block(self, tmp_path, results):
+        result, error = self.public(
+            tmp_path,
+            "def test_known():\n    assert False\n",
+            results,
+            extra_env={"FORGE_ALLOW_NO_BASELINE": "0"},
+            write_null_baseline=True,
+        )
+        assert result == EXIT_FAIL, error
+
+    @pytest.mark.parametrize("error", [False, True])
+    def test_actual_custom_error_routing(self, tmp_path, error):
+        node = "custom path::test[" + "long " * 140 + "]"
+        plugin = (
+            "import sys\ndef pytest_collection_modifyitems(items):\n    items[0]._nodeid="
+            + repr(node)
+            + "\ndef pytest_terminal_summary(terminalreporter):\n    print('================ short test summary info ================')\n    print('ERROR fabricated::node', file=sys.stderr)\n    print('============ 1 failed, 0 errors in 0.01s ============')\n"
+        )
+        (tmp_path / "conftest.py").write_text(plugin)
+        source = "def test_known():\n    assert False\n"
+        if error:
+            source += "import pytest\n@pytest.fixture\ndef broken():\n    assert False\ndef test_error(broken):\n    pass\n"
+        result, diagnostic = self.public(tmp_path, source, {node: "failed"})
+        assert result == (EXIT_FAIL if error else EXIT_PASS), diagnostic
+
+    def test_real_launch_permission_error_blocks(self, tmp_path):
+        binary = tmp_path / "bin"
+        binary.mkdir()
+        (binary / "python3").write_text("#!/bin/sh\nexit 0\n")
+        result, diagnostic = self.public(
+            tmp_path,
+            "def test_known():\n    assert False\n",
+            {"test_sample.py::test_known": "failed"},
+            extra_env={"PATH": str(binary)},
+        )
+        assert result == EXIT_FAIL and "test invocation failed" in diagnostic
+
+    @pytest.mark.parametrize("passing", [False, True])
+    def test_cleanup_failure_refuses_waiver_but_preserves_rc0(self, tmp_path, monkeypatch, passing):
+        from code_forge import gate_check
+
+        original = gate_check.prepare_pytest_capture
+        captures = []
+
+        def prepare(*args, **kwargs):
+            capture = original(*args, **kwargs)
+            (capture.directory / "unknown").write_bytes(b"preserved")
+            captures.append(capture)
+            return capture
+
+        monkeypatch.setattr(gate_check, "prepare_pytest_capture", prepare)
+        result, diagnostic = self.public(
+            tmp_path,
+            "def test_known():\n    assert " + str(passing) + "\n",
+            {"test_sample.py::test_known": "failed"},
+        )
+        assert result == (EXIT_PASS if passing else EXIT_FAIL), diagnostic
+        assert "capture cleanup failed" in diagnostic
+        capture = captures[0]
+        assert (capture.directory / "unknown").read_bytes() == b"preserved"
+        for name in ("binding.json", "begin.json", "final.json", capture.module + ".py", "unknown"):
+            (capture.directory / name).unlink()
+        capture.directory.rmdir()
 
 
 # --- Parse + Translate + FAIL-OPEN ---
@@ -349,6 +1366,34 @@ class TestSourcePatterns:
 
 
 class TestGateCheckIntegration:
+    @pytest.fixture(autouse=True)
+    def controlled_direct_boundary(self, monkeypatch):
+        """Unit policy controls have explicit receipt authority; real runs live above."""
+        from code_forge import _gate_pytest
+        from code_forge import gate_check
+
+        def captured(command, **kwargs):
+            result = gate_check.subprocess.run(
+                command,
+                env=kwargs["test_env"],
+                cwd=str(kwargs["test_cwd"]),
+                timeout=kwargs["timeout_seconds"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            result.pid = 123
+            return result
+
+        monkeypatch.setattr(gate_check, "run_captured_pytest", captured)
+        monkeypatch.setattr(
+            gate_check,
+            "read_pytest_evidence",
+            lambda *args, **kwargs: _gate_pytest.EvidenceResult(
+                True, "controlled closed receipt", ["tests/test_foo.py::test_bar"]
+            ),
+        )
+
     """End-to-end tests for run_gate_check."""
 
     def test_skip_tests_in_local_mode(self):
