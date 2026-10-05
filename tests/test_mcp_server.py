@@ -13,10 +13,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from code_forge import mcp_server
 from code_forge.user_config import (
     load_user_backends,
     user_config_path,
 )
+
+
 from code_forge.mcp_server import (
     _check_backend,
     _job_cap_s,
@@ -35,6 +38,24 @@ from code_forge.mcp_server import (
 )
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent
+
+
+@pytest.fixture(autouse=True)
+def reset_mcp_shutdown_state():
+    old_shutting_down = mcp_server._shutting_down
+    old_calls_closing = mcp_server._simple_calls_closing
+    old_cleanup_task = mcp_server._mcp_cleanup_task
+    old_active_calls = mcp_server._active_simple_calls
+    mcp_server._shutting_down = False
+    mcp_server._simple_calls_closing = False
+    mcp_server._mcp_cleanup_task = None
+    mcp_server._active_simple_calls = set()
+    yield
+    assert not mcp_server._active_simple_calls
+    mcp_server._shutting_down = old_shutting_down
+    mcp_server._simple_calls_closing = old_calls_closing
+    mcp_server._mcp_cleanup_task = old_cleanup_task
+    mcp_server._active_simple_calls = old_active_calls
 
 
 @pytest.fixture(autouse=True)
@@ -278,6 +299,7 @@ async def test_run_cli_simple_assembles_args():
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(_resolve_workspace()),
+            start_new_session=True,
         )
         assert stdout == "ok\n"
         assert code == 0
@@ -1399,6 +1421,33 @@ class TestShutdownInfrastructure:
             mod._shutting_down = orig
 
     @pytest.mark.asyncio
+    async def test_shutdown_logs_cleanup_failure_before_hard_exit(self, caplog):
+        import logging
+        import signal
+
+        import code_forge.mcp_server as mod
+
+        cleanup = AsyncMock(side_effect=RuntimeError("controlled shutdown cleanup failure"))
+        with (
+            patch.object(mod, "snapshot_tempfile_paths", return_value=[]),
+            patch.object(mod, "_await_mcp_cleanup", new=cleanup),
+            patch.object(mod.os, "_exit") as hard_exit,
+            caplog.at_level(logging.ERROR, logger=mod.__name__),
+        ):
+            await mod._do_shutdown(signal.SIGTERM)
+
+        cleanup.assert_awaited_once()
+        hard_exit.assert_called_once_with(128 + signal.SIGTERM)
+        record = next(
+            record
+            for record in caplog.records
+            if record.getMessage() == "MCP process cleanup failed during shutdown"
+        )
+        assert record.exc_info is not None
+        assert record.exc_info[0] is RuntimeError
+        assert str(record.exc_info[1]) == "controlled shutdown cleanup failure"
+
+    @pytest.mark.asyncio
     async def test_lifespan_installs_signal_handlers(self):
         import code_forge.mcp_server as mod
 
@@ -1430,7 +1479,7 @@ class TestShutdownInfrastructure:
         has no add_signal_handler, and the unguarded call killed the
         server (and everything downstream of it) at lifespan setup.
         The lifespan must reach its yield anyway and still run
-        cleanup_all on exit.
+        the shared cleanup path on exit.
         """
         import code_forge.mcp_server as mod
 
@@ -1441,7 +1490,7 @@ class TestShutdownInfrastructure:
                 return_value=([], {"backends": {}}),
             ),
             patch("asyncio.get_running_loop") as mock_get_loop,
-            patch("code_forge.mcp_server.cleanup_all") as mock_cleanup,
+            patch("code_forge.mcp_server._await_mcp_cleanup") as mock_cleanup,
         ):
             mock_loop = MagicMock()
             mock_loop.add_signal_handler.side_effect = NotImplementedError
@@ -1450,6 +1499,30 @@ class TestShutdownInfrastructure:
             async with mod.lifespan(mod.mcp):
                 reached_body = True
             assert reached_body
+            mock_cleanup.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_preserves_body_error_if_cleanup_fails(self):
+        import code_forge.mcp_server as mod
+
+        with (
+            patch.object(mod, "_install_pdeathsig"),
+            patch.object(mod, "_resolve_workspace", return_value=Path.cwd()),
+            patch("code_forge.mcp_server.load_user_backends", return_value={}),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                return_value=([], {"backends": {}}),
+            ),
+            patch("asyncio.get_running_loop") as mock_get_loop,
+            patch(
+                "code_forge.mcp_server._await_mcp_cleanup",
+                new=AsyncMock(side_effect=OSError("controlled cleanup failure")),
+            ) as mock_cleanup,
+        ):
+            mock_get_loop.return_value = MagicMock()
+            with pytest.raises(ValueError, match="original lifespan failure"):
+                async with mod.lifespan(mod.mcp):
+                    raise ValueError("original lifespan failure")
             mock_cleanup.assert_awaited_once()
 
     @pytest.mark.asyncio

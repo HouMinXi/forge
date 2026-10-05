@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
+import anyio
 from anyio import BrokenResourceError, ClosedResourceError, EndOfStream
 from mcp.shared.exceptions import McpError
 from pydantic import ValidationError
@@ -60,6 +61,69 @@ log = logging.getLogger(__name__)
 # (last-install-wins), giving it a real exit path through cleanup_all.
 
 _shutting_down = False
+_simple_calls_closing = False
+_active_simple_calls: set[asyncio.Task[Any]] = set()
+_mcp_cleanup_task: asyncio.Task[None] | None = None
+
+
+async def _wait_for_shielded_task(task: asyncio.Future[Any]) -> Any:
+    """Wait for owned cleanup despite AnyIO or repeated task cancellation."""
+    interruption: BaseException | None = None
+    current = asyncio.current_task()
+    with anyio.CancelScope(shield=True):
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except BaseException as exc:  # noqa: BLE001 -- finish teardown before propagating
+                caller_cancelled = current is not None and current.cancelling() > 0
+                if not task.done() or (isinstance(exc, asyncio.CancelledError) and caller_cancelled):
+                    if interruption is None:
+                        interruption = exc
+        if interruption is not None:
+            try:
+                task.result()
+            except BaseException as cleanup_error:
+                log.error(
+                    "owned cleanup failed while caller cancellation was pending",
+                    exc_info=(type(cleanup_error), cleanup_error, cleanup_error.__traceback__),
+                )
+            raise interruption
+        return task.result()
+
+
+async def _cleanup_mcp_processes() -> None:
+    """Stop request-owned simple CLIs before cleaning registered background jobs."""
+    global _simple_calls_closing  # noqa: PLW0603
+    _simple_calls_closing = True
+    current = asyncio.current_task()
+    active = [task for task in tuple(_active_simple_calls) if task is not current and not task.done()]
+    for task in active:
+        task.cancel()
+    if active:
+        results = await asyncio.gather(*active, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                log.error(
+                    "simple MCP request failed during shutdown",
+                    exc_info=(type(result), result, result.__traceback__),
+                )
+    await cleanup_all()
+
+
+async def _await_mcp_cleanup() -> None:
+    """Run one shared server cleanup task despite caller cancellation."""
+    global _mcp_cleanup_task  # noqa: PLW0603
+    if _mcp_cleanup_task is None:
+        _mcp_cleanup_task = asyncio.create_task(_cleanup_mcp_processes())
+    await _wait_for_shielded_task(_mcp_cleanup_task)
+
+
+async def _cleanup_after_lifespan_error() -> None:
+    """Keep an active request's failure primary if shutdown cleanup also fails."""
+    try:
+        await _await_mcp_cleanup()
+    except BaseException:
+        log.exception("MCP cleanup failed while preserving lifespan error")
 
 
 def _install_pdeathsig() -> None:
@@ -138,7 +202,7 @@ def _schedule_shutdown(signum: int, loop: asyncio.AbstractEventLoop) -> None:
 
 
 async def _do_shutdown(signum: int) -> None:
-    """Run cleanup, unlink tempfiles, then hard-exit.
+    """Run shared process cleanup, unlink tempfiles, then hard-exit.
 
     Tempfile paths are snapshotted BEFORE cleanup_all() because it
     clears _jobs, orphaning entries before _wait_for_job can fire
@@ -147,9 +211,9 @@ async def _do_shutdown(signum: int) -> None:
     """
     paths = snapshot_tempfile_paths()
     try:
-        await cleanup_all()
+        await _await_mcp_cleanup()
     except Exception:
-        log.exception("cleanup_all failed during shutdown")
+        log.exception("MCP process cleanup failed during shutdown")
     finally:
         for p in paths:
             try:
@@ -355,6 +419,10 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     backend.  Only backend names are tracked here; the actual
     BackendConfig loading happens per-review in _check_backend.
     """
+    global _mcp_cleanup_task, _simple_calls_closing  # noqa: PLW0603
+    if not _shutting_down:
+        _mcp_cleanup_task = None
+        _simple_calls_closing = False
     _install_pdeathsig()
 
     startup_ws = _resolve_workspace()
@@ -364,7 +432,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     # Windows event loops raise NotImplementedError here: SIGTERM on
     # Windows is TerminateProcess (no handler can run), and Ctrl+C
     # reaches asyncio.run as KeyboardInterrupt without our help.
-    # stdio EOF still exits the lifespan, so cleanup_all() runs on
+    # stdio EOF still exits the lifespan, so server cleanup runs on
     # every orderly shutdown; only the kill-without-EOF path loses
     # cleanup, same gap _install_pdeathsig documents for non-Linux.
     loop = asyncio.get_running_loop()
@@ -376,9 +444,13 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
             "loop.add_signal_handler unsupported on this platform; relying on stdio EOF for shutdown"
         )
 
-    yield {}
-
-    await cleanup_all()
+    try:
+        yield {}
+    except BaseException:
+        await _cleanup_after_lifespan_error()
+        raise
+    else:
+        await _await_mcp_cleanup()
 
 
 # The SDK defines Settings before FastMCP. Resolve its forward references
@@ -527,19 +599,45 @@ def _check_backend(workspace: Path) -> None:
 
 async def _run_cli_simple(*args: str, workspace: Path) -> tuple[str, str, int]:
     """Run a CLI command and return (stdout, stderr, exit_code)."""
-    proc = await asyncio.create_subprocess_exec(
-        "code-forge",
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(workspace),
-    )
-    stdout_bytes, stderr_bytes = await proc.communicate()
-    return (
-        stdout_bytes.decode(errors="replace"),
-        stderr_bytes.decode(errors="replace"),
-        proc.returncode or 0,
-    )
+    if _shutting_down or _simple_calls_closing:
+        raise asyncio.CancelledError
+    current_task = asyncio.current_task()
+    if current_task is not None:
+        _active_simple_calls.add(current_task)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "code-forge",
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(workspace),
+            start_new_session=True,
+        )
+        comm_task = asyncio.create_task(proc.communicate())
+        try:
+            stdout_bytes, stderr_bytes = await comm_task
+        except BaseException:
+            # This request owns the process until communicate completes. Do not let
+            # cancellation abandon the child or interrupt its shared teardown.
+            cleanup = asyncio.create_task(_kill_and_reap(proc, comm_task))
+            try:
+                await _wait_for_shielded_task(cleanup)
+            except BaseException as cleanup_error:
+                # Preserve the exception that entered this handler; make a
+                # failed cleanup visible without replacing that cause.
+                if not (isinstance(cleanup_error, asyncio.CancelledError) and not cleanup.cancelled()):
+                    log.exception("failed to terminate and reap simple CLI child")
+            if proc.returncode is None:
+                log.error("simple CLI child is still live after cleanup attempt")
+            raise
+        return (
+            stdout_bytes.decode(errors="replace"),
+            stderr_bytes.decode(errors="replace"),
+            proc.returncode or 0,
+        )
+    finally:
+        if current_task is not None:
+            _active_simple_calls.discard(current_task)
 
 
 async def _kill_and_reap(
