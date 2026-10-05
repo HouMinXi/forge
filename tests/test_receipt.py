@@ -27,6 +27,63 @@ def _finding(pass_name, fp, file="src/foo.py", line=42, desc="test"):
     )
 
 
+class TestPhysicalSourceAnchors:
+    @pytest.mark.parametrize("separator", ["\u2028", "\u0085", "\x0b", "\r"])
+    def test_writer_keeps_physical_source_coordinates(self, tmp_path, separator):
+        content = "int" + separator + "value;\nsecond_line;\n"
+        (tmp_path / "control.ts").write_bytes(content.encode("utf-8"))
+        findings = [
+            _finding("qodo", "first", file="control.ts", line=1),
+            _finding("qodo", "second", file="control.ts", line=2),
+        ]
+        paths = write_receipts(
+            tmp_path / "receipts",
+            0,
+            findings,
+            "fixed-diff",
+            [Path("control.ts")],
+            tmp_path,
+            manifest_tier=ManifestTier.DECLARED,
+        )
+        assert json.loads(paths[0].read_text())["anchors"] == [
+            {"file": "control.ts", "line": 1, "text": "int" + separator + "value;"},
+            {"file": "control.ts", "line": 2, "text": "second_line;"},
+        ]
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            (b"", []),
+            (b"\n", [""]),
+            (b"first", ["first"]),
+            (b"first\n", ["first"]),
+            (b"first\n\n", ["first", ""]),
+            (b"first\r\nsecond\r\n", ["first", "second"]),
+            (b"first\rinside\nsecond\r", ["first\rinside", "second\r"]),
+        ],
+    )
+    def test_source_line_endings(self, tmp_path, raw, expected):
+        from code_forge.reviewer_json import read_source_lines
+
+        path = tmp_path / "source.txt"
+        path.write_bytes(raw)
+        assert read_source_lines(path) == expected
+
+    def test_anchor_keeps_strip_limit_and_absent_line_behavior(self, tmp_path):
+        content = "  " + "x" * 90 + "  \r\nlast"
+        (tmp_path / "source.txt").write_bytes(content.encode())
+        assert receipt_module._read_line(tmp_path, "source.txt", 1) == "x" * 80
+        assert receipt_module._read_line(tmp_path, "source.txt", 2) == "last"
+        for line in (0, -1, 3):
+            assert receipt_module._read_line(tmp_path, "source.txt", line) == ""
+        assert receipt_module._read_line(tmp_path, "missing.txt", 1) == ""
+
+    def test_invalid_utf8_is_not_silently_accepted(self, tmp_path):
+        (tmp_path / "source.txt").write_bytes(b"\xff\n")
+        with pytest.raises(UnicodeDecodeError):
+            receipt_module._read_line(tmp_path, "source.txt", 1)
+
+
 class TestWriteReceipts:
     @pytest.mark.parametrize("rejected_pass", ["qodo", "expert", "adversarial"])
     def test_source_rejections_retain_exact_pass_diagnostics(self, tmp_path, monkeypatch, rejected_pass):
