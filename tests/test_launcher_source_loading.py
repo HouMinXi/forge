@@ -12,11 +12,12 @@ from importlib.machinery import ExtensionFileLoader, EXTENSION_SUFFIXES
 import json
 import marshal
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import subprocess
 import sys
 import struct
 from types import ModuleType, SimpleNamespace
+from unittest.mock import Mock
 import runpy
 import signal
 import stat
@@ -2981,3 +2982,227 @@ def test_explicit_invalid_environment_keeps_public_boundary(
     entry = launcher.select_source if operation == "select" else launcher.prepare_cli
     with pytest.raises(ValueError):
         entry(tmp_path, env=env)
+
+
+def containment_ownership_fixture(tmp_path, *, claims=1):
+    standard_site = tmp_path / "site"
+    root = standard_site / "code_forge"
+    package(root)
+    selected_launcher = standard_site / "code_forge_launcher.py"
+    write(selected_launcher, "selected launcher bytes\n")
+    info = record(standard_site, "code_review_forge", "2.9.0", [])
+    paths = []
+    for number in range(claims):
+        path = standard_site / "unrelated" / f"claim{number}.py"
+        write(path, "unrelated source bytes\n")
+        paths.append(path)
+    foreign = record(
+        standard_site, "foreign_owner", "1.0", [str(p.relative_to(standard_site)) for p in paths]
+    )
+    distributions = [
+        (metadata.PathDistribution(info), standard_site),
+        (metadata.PathDistribution(foreign), standard_site),
+    ]
+    return root, selected_launcher, info, distributions, paths
+
+
+@pytest.mark.skipif(os.name != "posix", reason="native POSIX containment optimization")
+def test_ownership_containment_avoids_ancestors_without_snapshot(launcher, tmp_path, monkeypatch):
+    root, selected_launcher, info, distributions, claims = containment_ownership_fixture(
+        tmp_path, claims=20
+    )
+    original_parents = Path.parents.fget
+    original_parts = Path.parts.fget
+    original_resolve, original_stat, original_samefile = Path.resolve, Path.stat, Path.samefile
+    counts = {path: {"resolve": 0, "stat": 0, "samefile": 0} for path in claims}
+    ancestor_reads, package_parts = [], []
+
+    def ancestors(path):
+        if path in counts:
+            ancestor_reads.append(str(path))
+        return original_parents(path)
+
+    def parts(path):
+        if path == root and sys._getframe(1).f_code is launcher._competing_ownership.__code__:
+            package_parts.append(str(path))
+        return original_parts(path)
+
+    def resolved(path, *args, **kwargs):
+        if path in counts and sys._getframe(1).f_code is launcher._competing_ownership.__code__:
+            assert kwargs == {"strict": True}
+            counts[path]["resolve"] += 1
+        return original_resolve(path, *args, **kwargs)
+
+    def inspected(path, *args, **kwargs):
+        if path in counts and sys._getframe(1).f_code in (
+            launcher._competing_ownership.__code__,
+            original_samefile.__code__,
+        ):
+            counts[path]["stat"] += 1
+        return original_stat(path, *args, **kwargs)
+
+    def compared(path, other):
+        if path in counts and sys._getframe(1).f_code is launcher._competing_ownership.__code__:
+            assert other == selected_launcher
+            counts[path]["samefile"] += 1
+        return original_samefile(path, other)
+
+    monkeypatch.setattr(Path, "parents", property(ancestors))
+    monkeypatch.setattr(Path, "parts", property(parts))
+    monkeypatch.setattr(Path, "resolve", resolved)
+    monkeypatch.setattr(Path, "stat", inspected)
+    monkeypatch.setattr(Path, "samefile", compared)
+    # Calibrate the allocation observer against the real pathlib property.
+    assert tuple(claims[0].parents) == tuple(original_parents(claims[0]))
+    assert ancestor_reads == [str(claims[0])]
+    ancestor_reads.clear()
+    launcher._competing_ownership(root, selected_launcher, info, distributions)
+    assert all(count == {"resolve": 1, "stat": 2, "samefile": 1} for count in counts.values())
+    assert ancestor_reads == []
+    assert package_parts == [str(root)]
+
+
+@pytest.mark.parametrize("changed_path", ["launcher", "claimant"])
+@pytest.mark.parametrize("interrupt", [False, True])
+def test_ownership_transient_alias_is_still_refused(
+    launcher, tmp_path, monkeypatch, changed_path, interrupt
+):
+    root, selected_launcher, info, distributions, claims = containment_ownership_fixture(tmp_path)
+    selected = selected_launcher if changed_path == "launcher" else claims[0]
+    target = claims[0] if changed_path == "launcher" else selected_launcher
+    saved = tmp_path / "original-object"
+    os.link(selected, saved)
+    identity = selected.stat()
+    original_files = launcher._distribution_files
+    original_stat, original_samefile = Path.stat, Path.samefile
+    state = {"armed": False, "changed": False, "restored": False, "compared": False}
+
+    def restore():
+        replacement = selected.with_name("restore-object")
+        os.link(saved, replacement)
+        os.replace(replacement, selected)
+        state["restored"] = True
+
+    def files(dist, **kwargs):
+        result = original_files(dist, **kwargs)
+        if dist._path == distributions[1][0]._path:
+            state["armed"] = True
+        return result
+
+    def inspected(path, *args, **kwargs):
+        result = original_stat(path, *args, **kwargs)
+        if state["armed"] and path == claims[0] and not state["changed"]:
+            replacement = selected.with_name("transient-object")
+            os.link(target, replacement)
+            os.replace(replacement, selected)
+            state["changed"] = True
+            if interrupt:
+                raise OSError("owned alias witness interrupted")
+        return result
+
+    def compared(path, other):
+        try:
+            state["compared"] = True
+            return original_samefile(path, other)
+        finally:
+            if state["changed"] and not state["restored"]:
+                restore()
+
+    monkeypatch.setattr(launcher, "_distribution_files", files)
+    monkeypatch.setattr(Path, "stat", inspected)
+    monkeypatch.setattr(Path, "samefile", compared)
+    try:
+        expected = "installed file ownership" if interrupt else "another distribution claims"
+        with pytest.raises(launcher.SourceError, match=expected) as raised:
+            launcher._competing_ownership(root, selected_launcher, info, distributions)
+    finally:
+        if state["changed"] and not state["restored"]:
+            restore()
+    assert state == {"armed": True, "changed": True, "restored": True, "compared": not interrupt}
+    if interrupt:
+        assert isinstance(raised.value.__cause__, OSError)
+        assert str(raised.value.__cause__) == "owned alias witness interrupted"
+    assert selected.samefile(saved)
+    current = selected.stat()
+    assert (identity.st_dev, identity.st_ino) == (current.st_dev, current.st_ino)
+
+
+@pytest.mark.parametrize(
+    ("claimed", "owner", "precomputed", "fallback"),
+    [
+        (Path("/pkg"), Path("/pkg"), True, False),
+        (Path("/pkg/a"), Path("/pkg"), True, False),
+        (Path("/pkg2/a"), Path("/pkg"), True, False),
+        (Path("/pkg-long/a"), Path("/pkg"), True, False),
+        (Path("/Pkg/a"), Path("/pkg"), True, False),
+        (Path("/pkg/a"), Path("/"), True, False),
+        (Path("//pkg/a"), Path("/pkg"), True, False),
+        (Path("//pkg/a"), Path("//pkg"), True, False),
+        (Path("/pkg/../a"), Path("/pkg"), True, False),
+        (Path("pkg/a"), Path("/pkg"), True, True),
+        (Path("pkg/a"), Path("pkg"), False, True),
+        (Path("/pkg/a"), Path("."), False, True),
+        (PurePosixPath("/pkg/a"), Path("/pkg"), True, True),
+        (PureWindowsPath("C:/PKG/a"), PureWindowsPath("c:/pkg"), False, True),
+        (PureWindowsPath("D:/pkg/a"), PureWindowsPath("C:/pkg"), False, True),
+        (PureWindowsPath("//HOST/share/pkg/a"), PureWindowsPath("//host/SHARE/pkg"), False, True),
+        (Path("/pkg/a"), "/pkg", False, True),
+        (Path("/pkg/a"), None, False, True),
+        (Path("/pkg/a"), 7, False, True),
+        (Path("/pkg/a"), b"/pkg", False, True),
+    ],
+)
+def test_claimed_containment_preserves_values_errors_and_fallbacks(
+    launcher, monkeypatch, claimed, owner, precomputed, fallback
+):
+    components = owner.parts if precomputed else None
+    fallback = fallback or os.name == "nt"
+    try:
+        expected = claimed.is_relative_to(owner)
+    except TypeError as exc:
+        expected = type(exc), str(exc)
+    original = Mock(wraps=claimed.is_relative_to)
+    monkeypatch.setattr(type(claimed), "is_relative_to", original)
+    if isinstance(expected, tuple):
+        error, message = expected
+        with pytest.raises(error) as raised:
+            launcher._claimed_within_package(claimed, owner, components)
+        assert str(raised.value) == message
+    else:
+        assert launcher._claimed_within_package(claimed, owner, components) is expected
+    if fallback:
+        original.assert_called_once_with(owner)
+    else:
+        original.assert_not_called()
+
+
+def test_claimed_containment_keeps_custom_path_failure(launcher):
+    class CustomPath(type(Path())):
+        def is_relative_to(self, other):
+            raise RuntimeError("custom path comparison")
+
+    claimed = CustomPath("/pkg/a")
+    with pytest.raises(RuntimeError, match="custom path comparison"):
+        launcher._claimed_within_package(claimed, Path("/pkg"), Path("/pkg").parts)
+
+
+def test_ownership_keeps_custom_package_parts_unobserved(launcher, tmp_path):
+    root, selected_launcher, info, distributions, _claims = containment_ownership_fixture(tmp_path)
+
+    class OwnerPath(type(root)):
+        @property
+        def parts(self):
+            raise RuntimeError("custom components must remain unobserved")
+
+    custom = OwnerPath(root)
+    with pytest.raises(RuntimeError, match="custom components must remain unobserved"):
+        _ = custom.parts
+    launcher._competing_ownership(custom, selected_launcher, info, distributions)
+
+
+def test_ownership_relative_empty_package_keeps_original_containment(launcher, tmp_path, monkeypatch):
+    _root, selected_launcher, info, distributions, _claims = containment_ownership_fixture(tmp_path)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.chdir(empty)
+    launcher._competing_ownership(Path("."), selected_launcher, info, distributions)
