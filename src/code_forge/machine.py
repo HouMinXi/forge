@@ -367,6 +367,8 @@ class StateMachine:
         self._last_receipt_write_errors: list[str] = []
         self._excerpts_last_round: list[dict] = []
         self._attempted_last_round: list[dict] = []
+        self._raw_observations_last_round: list[dict] = []
+        self._unavailable_rejected_passes_last_round: set[str] = set()
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
@@ -1349,6 +1351,8 @@ class StateMachine:
         errors: list[str] = list(self._last_receipt_write_errors)
         if self._attempted_last_round:
             errors.append("review evidence rejected in current round; see receipts/attempted")
+        if self._unavailable_rejected_passes_last_round:
+            errors.append("review evidence rejected in current round; audit payload unavailable")
         diff_text = self._receipt_diff()
         excerpts = self._excerpts_last_round
         if diff_text and excerpts:
@@ -1529,7 +1533,9 @@ class StateMachine:
                 manifest=self._state.env_manifest,
                 exec_evidence=exec_evidence,
                 attempted_excerpts=self._attempted_last_round,
+                raw_observations=self._raw_observations_last_round,
                 reviewed_repositories=self.reviewed_repositories,
+                unavailable_rejected_passes=self._unavailable_rejected_passes_last_round,
             )
             self._written_cycles.append(round_index + 1)
         except OSError as exc:
@@ -1553,7 +1559,16 @@ class StateMachine:
         # Pre-convergence promotion bridge: configured rulepack rules become
         # genuine StateFindings so they block and reset cycle counters.
         rulepack_findings = self._run_rulepack_blocking_phase()
+        self._raw_observations_last_round = []
+        self._unavailable_rejected_passes_last_round = set()
         l1_findings, l1_excerpts = self._run_l1_phase()
+        self._raw_observations_last_round = list(
+            getattr(self.l1_provider, "raw_observations", None) or []
+        )
+        unavailable_passes = getattr(self.l1_provider, "unavailable_rejected_passes", set())
+        if type(unavailable_passes) is not set:
+            raise ValueError("unavailable rejected passes must be a host-owned set")
+        self._unavailable_rejected_passes_last_round = unavailable_passes.copy()
         self._excerpts_last_round = l1_excerpts
         l1_findings, l1_excerpts = self._downgrade_one_line_slips(
             l1_findings,

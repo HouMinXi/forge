@@ -89,6 +89,14 @@ class LLMInvokeError(Exception):
         self.kind = kind
 
 
+class InvalidJSONResponseError(LLMInvokeError):
+    """A final parse rejection that retains the acquired response text."""
+
+    def __init__(self, message: str, *, raw_response: str, **kw):
+        super().__init__(message, **kw)
+        self.raw_response = raw_response
+
+
 class _TruncatedResponse(LLMInvokeError):
     """A truncation raise that carries the partial payload.
 
@@ -2121,6 +2129,7 @@ def _invoke_api(
                 # (finish_reason=stop / end_turn) that is still not JSON
                 # is the model's complete output; replaying it five times
                 # produced the same delimiter error on live agnes-cn.
+                raw_content = content
                 content = _strip_fences(content)
                 try:
                     parsed_content = _loads_model_json(content)
@@ -2164,8 +2173,9 @@ def _invoke_api(
                                 )
                                 continue
                         diag = _no_json_diagnostic(exc, content, finish_reason)
-                        raise LLMInvokeError(
+                        raise InvalidJSONResponseError(
                             "API response content is not valid JSON -- %s" % diag,
+                            raw_response=raw_content,
                             exit_code=0,
                             stderr=diag,
                             duration_s=time.monotonic() - start,

@@ -165,8 +165,17 @@ def write_receipts(
     exec_evidence: Optional[dict[str, Any] | str] = None,
     attempted_excerpts: list[dict] | None = None,
     reviewed_repositories: dict[str, str] | None = None,
+    unavailable_rejected_passes: set[str] | None = None,
+    raw_observations: list[dict] | None = None,
 ) -> list[Path]:
     """Write 3 receipt files (one per pass) for a round."""
+    unavailable_passes: set[str] = set()
+    if unavailable_rejected_passes is not None:
+        if type(unavailable_rejected_passes) is not set:
+            raise ValueError("unavailable rejected passes must be a host-owned set")
+        if any(type(name) is not str or name not in _PASS_NAMES for name in unavailable_rejected_passes):
+            raise ValueError("unavailable rejected passes contain an invalid host pass")
+        unavailable_passes = unavailable_rejected_passes.copy()
     repository_manifest = None
     if reviewed_repositories is not None:
         from .receipt_scope import repository_scope
@@ -232,6 +241,10 @@ def write_receipts(
             continue
         pname = attempted.get("pass_name")
         if pname in _PASS_NAMES and pass_outcomes[pname] == PassOutcome.COMPLETED:
+            pass_outcomes[pname] = PassOutcome.INCOMPLETE
+
+    for pname in unavailable_passes:
+        if pass_outcomes[pname] == PassOutcome.COMPLETED:
             pass_outcomes[pname] = PassOutcome.INCOMPLETE
 
     # Correct pass status BEFORE write: a pass whose excerpts do not match
@@ -341,10 +354,12 @@ def write_receipts(
     # reviewer payloads whose excerpts failed validation, tagged with the
     # loop-owned pass name. Stored under attempted/ so run_verify never
     # reads them as accepted code_excerpts; never repaired.
-    if attempted_excerpts:
+    # Diagnostics share artifact storage without supplying completion authority.
+    artifact_payloads = [*(attempted_excerpts or []), *(raw_observations or [])]
+    if artifact_payloads:
         attempted_dir = receipts_dir / "attempted"
         attempted_dir.mkdir(parents=True, exist_ok=True)
-        for idx, attempted in enumerate(attempted_excerpts):
+        for idx, attempted in enumerate(artifact_payloads):
             if not isinstance(attempted, dict):
                 continue
             pname = attempted.get("pass_name", "unknown")

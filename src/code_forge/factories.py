@@ -38,26 +38,63 @@ from .reviewer_json import (
 from .state import StateFinding
 
 
+_RAW_RESPONSE_REFUSED = object()
+
+
+def _admissible_raw_value(value: object) -> bool:
+    """Admit only bounded built-in data the existing audit writer can encode."""
+    active: set[int] = set()
+
+    def visit(item, depth):
+        if depth > 128:
+            return False
+        kind = type(item)
+        if kind is int:
+            try:
+                json.dumps(item)
+            except ValueError:
+                return False
+            return True
+        if kind is str or kind is float or kind is bool or kind is type(None):
+            return True
+        if (kind is not list and kind is not dict) or id(item) in active:
+            return False
+        active.add(id(item))
+        try:
+            if kind is dict:
+                return all(type(key) is str and visit(child, depth + 1) for key, child in item.items())
+            return all(visit(child, depth + 1) for child in item)
+        finally:
+            active.remove(id(item))
+
+    return visit(value, 0)
+
+
 def _snapshot_raw_response(response):
     """Keep parsed transport data independent of validator mutation."""
+    if not _admissible_raw_value(response):
+        return _RAW_RESPONSE_REFUSED
     return deepcopy(response) if isinstance(response, dict) else response
 
 
-def _raw_response_data(response) -> dict | None:
-    """Parse a raw reviewer response to a dict, tolerantly.
-
-    The transport may return a dict (probe fixtures) or a JSON string
-    (real backends, possibly fenced). None when it is not parseable as a
-    dict -- attempted evidence that cannot even be read back is still
-    recorded by the caller as an infra failure, just without payload.
-    """
-    if isinstance(response, dict):
-        return response
+def _assess_raw_response(response) -> tuple[dict | None, bool]:
+    """Separate safe audit data from whether a rejected dict was acquired."""
+    if response is _RAW_RESPONSE_REFUSED:
+        return None, False
+    if type(response) is dict:
+        return (response if _admissible_raw_value(response) else None), True
     try:
         data = json.loads(_strip_fence(response))
-    except (json.JSONDecodeError, TypeError):
-        return None
-    return data if isinstance(data, dict) else None
+    except (ValueError, TypeError):
+        return None, False
+    if type(data) is not dict:
+        return None, False
+    return (data if _admissible_raw_value(data) else None), True
+
+
+def _raw_response_data(response) -> dict | None:
+    """Return safely encodable dict audit data, tolerating optional decode failure."""
+    return _assess_raw_response(response)[0]
 
 
 def _pass_token_line(backend_name: str, pass_name: str, usage) -> str:
@@ -287,17 +324,24 @@ def build_e2e_checker() -> Callable:
 class _L1Call:
     """A review pass that is called like a function and keeps its own audit.
 
-    The attempted excerpts live on the instance, so a type checker can see
-    them. A bare function with an attribute attached after the fact cannot
-    say so in its type.
+    Rejected evidence and diagnostic observations live in separate host
+    attributes. Retaining a response does not by itself reject a round.
     """
 
     def __init__(self, body):
         self._body = body
         self.attempted_excerpts: list[dict] = []
+        self.raw_observations: list[dict] = []
+        self.unavailable_rejected_passes: set[str] = set()
         self.is_stub_l1 = False
 
+    @property
+    def unavailable_rejected_evidence(self) -> bool:
+        return bool(self.unavailable_rejected_passes)
+
     def __call__(self) -> tuple:
+        self.raw_observations = []
+        self.unavailable_rejected_passes = set()
         return self._body(self)
 
 
@@ -349,7 +393,7 @@ def build_l1_provider(
         stub.is_stub_l1 = True
         return stub
 
-    from .llm_invoke import LLMInvokeError, llm_invoke
+    from .llm_invoke import InvalidJSONResponseError, LLMInvokeError, llm_invoke
     from .reviewer_json import (
         REVIEW_JSON_CONTRACT,
         ExcerptEvidenceError,
@@ -485,6 +529,10 @@ def build_l1_provider(
             pr = pass_results[i]
 
             if isinstance(pr, LLMInvokeError):
+                if isinstance(pr, InvalidJSONResponseError):
+                    call.raw_observations.append(
+                        {"raw_response": pr.raw_response, "pass_name": pass_name}
+                    )
                 print(
                     "code-forge: L1 pass '%s' failed: %s" % (pass_name, pr),
                     file=sys.stderr,
@@ -544,6 +592,7 @@ def build_l1_provider(
             total_cached += result.usage.cached_input_tokens
             total_duration += result.duration_s
 
+            original_exact_dict = type(response) is dict
             raw_snapshot = _snapshot_raw_response(response)
             try:
                 validated = validate_reviewer_json(response)
@@ -580,7 +629,7 @@ def build_l1_provider(
                 # loop-owned pass attribution -- never as accepted
                 # evidence, never repaired. The writer stores it in a
                 # dedicated artifact so the raw excerpt text survives.
-                raw_data = _raw_response_data(raw_snapshot)
+                raw_data, parsed_dict_seen = _assess_raw_response(raw_snapshot)
                 # An excerpt that fails to check out is audit data, kept
                 # below as UNTRUSTED. A missing applicable pass is also
                 # incomplete evidence, independently of other passes'
@@ -588,12 +637,19 @@ def build_l1_provider(
                 missing_required = isinstance(
                     exc, MissingExcerptEvidenceError
                 ) and _requires_l1_excerpts(diff_text, reviewed_repositories=reviewed_repositories)
-                if raw_data is not None and (
-                    not isinstance(exc, ExcerptEvidenceError) or missing_required
-                ):
-                    attempted = dict(raw_data)
-                    attempted["pass_name"] = pass_name
-                    all_attempted.append(attempted)
+                eligible_rejection = not isinstance(exc, ExcerptEvidenceError) or missing_required
+                if eligible_rejection:
+                    if raw_data is not None:
+                        attempted = dict(raw_data)
+                        attempted["pass_name"] = pass_name
+                        all_attempted.append(attempted)
+                    elif original_exact_dict or parsed_dict_seen:
+                        call.unavailable_rejected_passes.add(pass_name)
+                if raw_data is None and raw_snapshot is not _RAW_RESPONSE_REFUSED:
+                    if _admissible_raw_value(raw_snapshot):
+                        call.raw_observations.append(
+                            {"raw_response": deepcopy(raw_snapshot), "pass_name": pass_name}
+                        )
                 # Retain valid-shaped findings from a response whose
                 # excerpts failed validation as UNTRUSTED audit data: the
                 # candidate may still point at a real defect, and dropping
@@ -765,6 +821,10 @@ def build_grouped_l1_provider(
             call.attempted_excerpts.extend(
                 GroupedReviewAttempt(attempted, scope) for attempted in provider.attempted_excerpts
             )
+            call.raw_observations.extend(
+                GroupedReviewAttempt(observation, scope) for observation in provider.raw_observations
+            )
+            call.unavailable_rejected_passes.update(provider.unavailable_rejected_passes)
             total_input += usage.input_tokens
             total_output += usage.output_tokens
             total_cached += usage.cached_input_tokens
