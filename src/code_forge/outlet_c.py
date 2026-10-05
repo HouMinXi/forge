@@ -97,6 +97,7 @@ def _run_chunk(
     pass_names: tuple[str, ...],
     *,
     attempted: list[dict] | None = None,
+    rejection_state: _L1Call | None = None,
 ) -> tuple[list[StateFinding], list[dict], Usage, float]:
     """Run all passes on one diff chunk.
 
@@ -127,6 +128,7 @@ def _run_chunk(
                 )
             )
             continue
+        original_exact_dict = type(raw) is dict
         raw_snapshot = _snapshot_raw_response(raw)
         try:
             validated = validate_reviewer_json(raw)
@@ -155,13 +157,21 @@ def _run_chunk(
                         description=f"schema validation failed: {e}",
                     )
                 )
-            from .factories import _raw_response_data
+            from .factories import _assess_raw_response
 
-            raw_data = _raw_response_data(raw_snapshot)
+            raw_data, parsed_dict_seen = _assess_raw_response(raw_snapshot)
+            missing_exempt = isinstance(e, MissingExcerptEvidenceError) and not _requires_l1_excerpts(
+                chunk_diff
+            )
+            if (
+                attempted is not None
+                and rejection_state is not None
+                and not missing_exempt
+                and raw_data is None
+                and (original_exact_dict or parsed_dict_seen)
+            ):
+                rejection_state.unavailable_rejected_passes.add(pass_name)
             if raw_data is not None:
-                missing_exempt = isinstance(
-                    e, MissingExcerptEvidenceError
-                ) and not _requires_l1_excerpts(chunk_diff)
                 if attempted is not None and not missing_exempt:
                     attempted_item = dict(raw_data)
                     attempted_item["pass_name"] = pass_name
@@ -233,6 +243,7 @@ def run_outlet_c(
                 spawn_fn,
                 _PASS_NAMES,
                 attempted=attempted,
+                rejection_state=call,
             )
             return result
 
@@ -250,6 +261,7 @@ def run_outlet_c(
                 spawn_fn,
                 _PASS_NAMES,
                 attempted=attempted,
+                rejection_state=call,
             )
             return result
 
@@ -263,6 +275,7 @@ def run_outlet_c(
                 spawn_fn,
                 _PASS_NAMES,
                 attempted=attempted,
+                rejection_state=call,
             )
             all_findings.extend(c_findings)
             all_excerpts.extend(c_excerpts)
