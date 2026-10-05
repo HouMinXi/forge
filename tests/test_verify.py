@@ -44,6 +44,53 @@ def _receipt(cycle, pass_n, diff_sha, covered_start=1, covered_end=50):
     }
 
 
+class TestLegacyPhysicalSourceLines:
+    @pytest.mark.parametrize(
+        "raw, claimed",
+        [
+            ("int\u2028value;\nsecond;\n", "int\u2028value;\nsecond;\n"),
+            ("int\u0085value;\nsecond;\n", "int\u0085value;\nsecond;\n"),
+            ("int\x0bvalue;\nsecond;\n", "int\x0bvalue;\nsecond;\n"),
+            ("int\rvalue;\nsecond;\n", "int\rvalue;\nsecond;\n"),
+            ("first\r\nsecond\r\n", "first\nsecond\n"),
+            ("first\nsecond", "first\nsecond"),
+            ("first\nsecond\r", "first\nsecond\r"),
+            ("\nsecond\n", "\nsecond\n"),
+        ],
+    )
+    def test_real_source_excerpt_and_corruption(self, tmp_path, raw, claimed):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src/f.py").write_bytes(raw.encode("utf-8"))
+        directory = tmp_path / ".code-forge/receipts"
+        directory.mkdir(parents=True)
+        sha = _sha("physical-source-control")
+        paths = []
+        for pass_n in (1, 2, 3):
+            obj = _receipt(1, pass_n, sha)
+            obj["code_excerpts"][0]["content"] = claimed
+            path = directory / f"receipt-c1p{pass_n}.json"
+            path.write_text(json.dumps(obj), encoding="utf-8")
+            paths.append(path)
+        options = dict(
+            cwd=tmp_path,
+            diff_sha256=sha,
+            diff_files={"src/f.py": [1, 2]},
+            hardened=False,
+            required_cycles=1,
+            respect_floor=False,
+            require_convergence=False,
+        )
+        healthy = run_verify(**options)
+        assert healthy.passed, healthy.reason
+        assert healthy.checks_passed == 8
+        broken = json.loads(paths[0].read_text())
+        broken["code_excerpts"][0]["content"] = "wrong_literal\nsecond;\n"
+        paths[0].write_text(json.dumps(broken), encoding="utf-8")
+        corrupt = run_verify(**options)
+        assert not corrupt.passed and corrupt.checks_run == 5
+        assert "excerpt mismatch" in corrupt.reason
+
+
 def _write_all(rd, diff_sha, vary=True):
     for c in range(1, 4):
         off = (c - 1) * 10 if vary else 0
@@ -3647,6 +3694,39 @@ class TestTruncatedLastLinePrefix:
         from code_forge.verify import _diff_validation_context
 
         return _diff_validation_context(self._DIFF)
+
+    @pytest.mark.parametrize("separator", ["", "\u2028", "\u0085", "\x0b", "\r"])
+    @pytest.mark.parametrize("as_list", [False, True])
+    def test_repaired_tail_preserves_physical_prefix_and_is_idempotent(self, separator, as_list):
+        from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
+
+        first = "int" + separator + "value;"
+        post, hunk_map, exempt = self._ctx()
+        post["src/a.py"][1] = first
+        full = post["src/a.py"][3]
+        offered = [first, post["src/a.py"][2], full[:12]]
+        exc = {
+            "file": "src/a.py",
+            "start_line": 1,
+            "end_line": 3,
+            "content": offered if as_list else "\n".join(offered),
+        }
+        assessment = assess_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert assessment.status is ExcerptStatus.VALID, assessment.diagnostic
+        assert assessment.repaired_tail
+        expected = [first, post["src/a.py"][2], full]
+        assert exc["content"] == (expected if as_list else "\n".join(expected))
+        second = assess_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert second.status is ExcerptStatus.VALID, second.diagnostic
+        assert not second.repaired_tail
+        assert exc["content"] == (expected if as_list else "\n".join(expected))
+        corrupt = {
+            **exc,
+            "content": expected[:-1] + ["WRONG"] if as_list else "\n".join(expected[:-1] + ["WRONG"]),
+        }
+        refused = assess_excerpt_evidence(corrupt, hunk_map, post, exempt)
+        assert refused.status is ExcerptStatus.INVALID
+        assert "content mismatch" in refused.diagnostic
 
     def test_strict_prefix_on_last_line_is_repaired(self):
         from code_forge.verify import ExcerptStatus, assess_excerpt_evidence

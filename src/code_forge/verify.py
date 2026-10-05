@@ -26,7 +26,12 @@ from pathlib import Path
 from .diff import parse_diff_hunks, path_from_plus_header
 from .disposition import Disposition
 from .errors import CorruptedReceiptError, UnreadableGateError
-from .reviewer_json import _requires_l1_excerpts, excerpt_line_count_matches, excerpt_lines
+from .reviewer_json import (
+    _requires_l1_excerpts,
+    excerpt_line_count_matches,
+    excerpt_lines,
+    read_source_lines,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -792,7 +797,7 @@ def assess_excerpt_evidence(
                         repaired[-1] = source
                         exc["content"] = repaired
                     else:
-                        lines = list(stored.splitlines())
+                        lines = excerpt_lines(stored)
                         if lines:
                             lines[-1] = source
                             exc["content"] = "\n".join(lines)
@@ -1366,7 +1371,7 @@ def run_verify(
                         False, f"excerpt file missing: {exc['file']} (c{r['cycle']}p{r['pass']})", 5, cp
                     )
                 try:
-                    lines = fp.read_text(encoding="utf-8").splitlines()
+                    lines = read_source_lines(fp)
                     actual = "\n".join(lines[exc["start_line"] - 1 : exc["end_line"]]) + "\n"
                     claimed = exc["content"]
                     if not claimed.endswith("\n"):

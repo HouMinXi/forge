@@ -19,6 +19,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +497,12 @@ def excerpt_lines(text: str) -> list[str]:
     than introducing an empty one, which is the common case.
     """
     return text.removesuffix("\n").split("\n")
+
+
+def read_source_lines(path: Path) -> list[str]:
+    """Read physical LF source lines, accepting CRLF without splitting content CR."""
+    text = path.read_bytes().decode("utf-8").replace("\r\n", "\n")
+    return excerpt_lines(text) if text else []
 
 
 def _hoist_nested_excerpts(data: dict) -> None:

@@ -16,7 +16,7 @@ from typing import Any, Optional
 from .basis import derive_basis
 from .diff import describe_fabricated_lines, parse_diff_hunks
 from .manifest import EnvManifest, ManifestTier
-from .reviewer_json import GroupedReviewAttempt
+from .reviewer_json import GroupedReviewAttempt, read_source_lines
 from .state import (
     StateFinding,
     PassOutcome,
@@ -30,7 +30,7 @@ _SKILL_NAMES = ["qodo-review", "code-review-expert", "adversarial-qe"]
 
 def _read_line(cwd: Path, file: str, line: int) -> str:
     try:
-        lines = (cwd / file).read_text(encoding="utf-8").splitlines()
+        lines = read_source_lines(cwd / file)
         if 0 < line <= len(lines):
             return lines[line - 1].strip()[:80]
     except OSError:
