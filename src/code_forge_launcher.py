@@ -28,7 +28,7 @@ from importlib.util import spec_from_file_location
 import io
 import json
 import locale
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PosixPath, PurePosixPath
 import re
 import site
 import stat
@@ -516,6 +516,12 @@ def _installed_distributions() -> list[tuple[metadata.Distribution, Path]]:
     return distributions
 
 
+def _claimed_within_package(claimed: Path, package: Path, package_parts: tuple[str, ...] | None) -> bool:
+    if package_parts is not None and type(claimed) is PosixPath and claimed.is_absolute():
+        return claimed.parts[: len(package_parts)] == package_parts
+    return claimed.is_relative_to(package)
+
+
 def _competing_ownership(
     package: Path,
     launcher: Path,
@@ -523,6 +529,7 @@ def _competing_ownership(
     distributions: list[tuple[metadata.Distribution, Path]],
 ) -> None:
     _, package_identities = _package_entries(package)
+    package_parts = package.parts if type(package) is PosixPath and package.is_absolute() else None
     for other, _root in distributions:
         try:
             if other._path.resolve(strict=True) == metadata_root:
@@ -537,7 +544,7 @@ def _competing_ownership(
                 physical = claimed.stat()
                 if (
                     claimed == launcher
-                    or claimed.is_relative_to(package)
+                    or _claimed_within_package(claimed, package, package_parts)
                     or (physical.st_dev, physical.st_ino) in package_identities
                     or claimed.samefile(launcher)
                 ):
