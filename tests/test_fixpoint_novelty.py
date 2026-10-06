@@ -62,6 +62,11 @@ def _sm_with_sequence(tmp_path, seq, threshold=3, cap=12):
     # density threshold (0.15/line); _make_sm's one-line diff would turn
     # any two P3s into a CYCLE_RESTART and hide the clause under test.
     sm = _make_sm(tmp_path, git_diff=_BIG_DIFF)
+    # This fixture supplies findings, not acquisition evidence. Keep the
+    # pure fixpoint/density loop outside receipt-active earned policy;
+    # real receipt-active RESET is covered in test_resume_receipt_provenance.
+    sm.coverage_l1_active = False
+    sm.coverage_exempt_patterns = ["f.py"]
     sm.falsifier = _Keep()
     i = {"n": 0}
 

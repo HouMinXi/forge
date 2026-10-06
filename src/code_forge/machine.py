@@ -44,6 +44,7 @@ from .disposition import (
     MAX_FIX_ATTEMPTS_PER_FINGERPRINT,
     Disposition,
 )
+from .errors import CorruptedStateError
 from .falsify import Falsifier
 from .flow_contract import DEFAULT_CLEAN_ROUND_THRESHOLD
 from .hold import check_escalated_frozen
@@ -61,12 +62,17 @@ from .mutation_findings import is_mutation_survivor
 from .parsers.base import Finding, ToolError
 from .state import (
     Mode,
+    ROUND_PHASES,
     State,
     StateFinding,
     Verdict,
+    derive_pass_outcomes,
+    is_host_round,
     is_receipt_audit,
     load_state,
+    product_round_history,
     save_state,
+    validate_round_history,
 )
 
 # L1 candidate provider type alias.
@@ -373,6 +379,13 @@ class StateMachine:
         self._attempted_last_round: list[dict] = []
         self._raw_observations_last_round: list[dict] = []
         self._unavailable_rejected_passes_last_round: set[str] = set()
+        self._host_attempt_round: int | None = None
+        self._phase_status = {name: "not_run" for name in ROUND_PHASES}
+        self._phase_findings: dict[str, list[StateFinding]] = {}
+        self._acquisition_markers: list[StateFinding] = []
+        self._attempt_snapshot: dict | None = None
+        self._attempt_findings: list[StateFinding] | None = None
+        self._other_source_state: State | None = None
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
@@ -387,7 +400,11 @@ class StateMachine:
 
             self._state.env_manifest = extract_manifest(self.cwd).to_dict()
         if self.mode == Mode.LOCAL:
-            verdict = self._run_local()
+            try:
+                verdict = self._run_local()
+            except BaseException as primary:  # noqa: BLE001 - save observations, then propagate
+                self._finish_failed_host_attempt(primary)
+                raise
         elif self.mode == Mode.CI:
             verdict = self._run_ci()
         else:
@@ -442,6 +459,7 @@ class StateMachine:
                         loaded.source_hash[:12] if loaded.source_hash else "none",
                         self.source_hash[:12] if self.source_hash else "none",
                     )
+                    self._other_source_state = loaded
                     return
                 self._state = loaded
 
@@ -757,9 +775,16 @@ class StateMachine:
         earlier diff already wrote.
         """
         receipts_dir = self.cwd / ".code-forge" / "receipts"
-        if not receipts_dir.is_dir():
-            return 0
         max_cycle_any_diff = 0
+        if self._host_receipt_active():
+            for state in (self._state, self._other_source_state):
+                if state is None:
+                    continue
+                validate_round_history(state.round_history, state.round)
+                if state.round_history:
+                    max_cycle_any_diff = max(max_cycle_any_diff, state.round_history[-1]["round"] + 1)
+        if not receipts_dir.is_dir():
+            return max_cycle_any_diff
         for f in receipts_dir.glob("receipt-*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
@@ -786,6 +811,208 @@ class StateMachine:
         # only value whose next cycle collides with nothing.
         return max_cycle_any_diff
 
+    def _host_receipt_active(self) -> bool:
+        return self.mode == Mode.LOCAL and self.coverage_l1_active and bool(self._receipt_diff())
+
+    def _product_history(self, *, prior: bool = False) -> list[dict]:
+        history = self._state.round_history
+        if any(is_host_round(row) for row in history):
+            return product_round_history(history, before_round=self._state.round if prior else None)
+        projected = product_round_history(history)
+        return projected[:-1] if prior else projected
+
+    def _product_findings(self) -> list[StateFinding]:
+        markers = {id(finding) for finding in self._acquisition_markers}
+        return [finding for finding in self._state.findings if id(finding) not in markers]
+
+    def _capture_acquisition_markers(self, candidates: list[StateFinding]) -> None:
+        """Only fresh producer objects with the exact host marker structure qualify."""
+        self._acquisition_markers = []
+        for finding in candidates:
+            if finding.source != "INFRA" or finding.disposition != Disposition.CONFIRMED:
+                continue
+            for name in ("qodo", "expert", "adversarial"):
+                for kind, file in (("invoke", "<llm-invoke>"), ("spawn", "<spawn>")):
+                    if (
+                        finding.id == f"l1-{name}-{kind}-fail"
+                        and finding.fingerprint == f"{kind}-fail-{name}"
+                        and finding.file == file
+                        and finding.line_range == [0, 0]
+                    ):
+                        self._acquisition_markers.append(finding)
+
+    def _begin_host_attempt(self, round_index: int) -> None:
+        if not self._host_receipt_active():
+            return
+        if any(row["round"] == round_index for row in self._state.round_history):
+            raise CorruptedStateError("host attempt ID is already reserved")
+        self._attempt_findings = None
+        self._host_attempt_round = round_index
+        self._state.round = round_index
+        self._state.verdict = Verdict.PENDING
+        self._state.converged = False
+        self._phase_status = {name: "not_run" for name in ROUND_PHASES}
+        self._phase_findings = {}
+        self._acquisition_markers = []
+        self._attempt_snapshot = None
+        self._state.round_history.append(
+            {
+                "round": round_index,
+                "source_hash": self.source_hash,
+                "reviewed_repositories": self._state.earned_clean_window["reviewed_repositories"],
+                "clean_credit_action": "pending",
+                "phase_status": dict(self._phase_status),
+                "acquisition_failures": [],
+                "reset_observed": False,
+                "clean_rounds_after": self._state.consecutive_clean_rounds,
+            }
+        )
+        self._persist_state()
+
+    def _start_host_execution(self) -> None:
+        """Durably distinguish an unused reservation from potentially observed work."""
+        if self._host_attempt_round is None:
+            return
+        row = self._state.round_history[-1]
+        if row["round"] != self._host_attempt_round or row["clean_credit_action"] != "pending":
+            raise CorruptedStateError("host execution lacks a pending reservation")
+        row["clean_credit_action"] = "unavailable"
+        self._persist_state()
+
+    def _finish_host_attempt(self, action: str, fixpoint: _FixpointResult | None) -> None:
+        if self._host_attempt_round is None:
+            return
+        rows = [row for row in self._state.round_history if row["round"] == self._host_attempt_round]
+        if len(rows) != 1 or rows[0]["clean_credit_action"] not in ("pending", "unavailable"):
+            raise CorruptedStateError("host attempt cannot be finalized twice or by an ambiguous ID")
+        row = rows[0]
+        if self._attempt_snapshot is not None:
+            row.update(self._attempt_snapshot)
+        outcomes = derive_pass_outcomes(self._acquisition_markers)
+        failures = []
+        for finding in self._acquisition_markers:
+            name = next(name for name in outcomes if finding.id.startswith(f"l1-{name}-"))
+            failures.append(
+                {
+                    "id": finding.id,
+                    "fingerprint": finding.fingerprint,
+                    "pass_name": name,
+                    "outcome": outcomes[name].value,
+                }
+            )
+        row.update(
+            clean_credit_action=action,
+            phase_status=dict(self._phase_status),
+            acquisition_failures=failures,
+            reset_observed=fixpoint in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART),
+            clean_rounds_after=self._state.consecutive_clean_rounds,
+        )
+        if fixpoint is not None:
+            row["fixpoint"] = fixpoint.name
+        self._host_attempt_round = None
+
+    def _reset_clean_credit(self) -> None:
+        self._state.consecutive_clean_rounds = 0
+        self._clean_window_cycles.clear()
+        if self._host_attempt_round is not None:
+            self._state.earned_clean_window = {
+                "version": 1,
+                "source_hash": self.source_hash,
+                "reviewed_repositories": self._state.earned_clean_window["reviewed_repositories"],
+                "cycles": [],
+            }
+            self._state._earned_window_present = True
+
+    def _finish_failed_host_attempt(self, primary: BaseException) -> None:
+        """Retain the original error while recording only phases actually observed."""
+        try:
+            for name in self._phase_findings:
+                self._phase_status[name] = "returned"
+            if "l1" in self._phase_findings:
+                self._capture_acquisition_markers(self._phase_findings["l1"])
+            observed = any(value == "returned" for value in self._phase_status.values())
+            rows = [
+                row
+                for row in self._state.round_history
+                if is_host_round(row) and row["round"] == self._state.round
+            ]
+            if not rows or (self._host_attempt_round is None and not observed):
+                return
+            row = rows[0]
+            if self._host_attempt_round is None or row["clean_credit_action"] not in (
+                "pending",
+                "unavailable",
+            ):
+                self._host_attempt_round = None
+                self._state.verdict = Verdict.FAIL
+                self._state.converged = False
+                self._persist_state()
+                return
+            if (
+                not observed
+                and row["clean_credit_action"] == "pending"
+                and not isinstance(primary, Exception)
+            ):
+                row["clean_credit_action"] = "pending"
+                self._host_attempt_round = None
+                self._state.verdict = Verdict.PENDING
+                self._state.converged = False
+                self._persist_state()
+                return
+            self._state.consecutive_clean_rounds = row["clean_rounds_after"]
+            unfinished_cycle = self._host_attempt_round + 1
+            self._clean_window_cycles = [
+                cycle for cycle in self._clean_window_cycles if cycle != unfinished_cycle
+            ]
+            self._state.earned_clean_window["cycles"] = [
+                entry
+                for entry in self._state.earned_clean_window["cycles"]
+                if entry["cycle"] != unfinished_cycle
+            ]
+            fixpoint = None
+            action = "unavailable"
+            if observed:
+                findings = self._phase_findings
+                if self._attempt_findings is None:
+                    merged = self._merge_findings(
+                        findings.get("l0", []),
+                        findings.get("l1", []),
+                        findings.get("l2", []),
+                        findings.get("e2e", []),
+                        findings.get("coverage", []),
+                        findings.get("rulepack", []),
+                    )
+                    self._state.findings = self._apply_dismissed_stickiness(
+                        self._apply_promotion_stickiness(merged)
+                    )
+                else:
+                    self._state.findings = self._attempt_findings
+                self._append_round_snapshot(
+                    self._state.round,
+                    findings.get("l0", []),
+                    findings.get("l1", []),
+                    findings.get("l2", []),
+                    findings.get("e2e", []),
+                    findings.get("rulepack", []),
+                )
+                fixpoint = self._fixpoint_reached()
+                if fixpoint != _FixpointResult.CLEAN:
+                    self._reset_clean_credit()
+                    action = "reset"
+                elif self._acquisition_markers:
+                    action = "interrupted"
+            self._state.verdict = Verdict.FAIL
+            self._state.converged = False
+            self._finish_host_attempt(action, fixpoint)
+            self._persist_state()
+        except BaseException as secondary:  # noqa: BLE001 - never replace the primary failure
+            try:
+                error = f"host attempt save failed after {type(primary).__name__}: {secondary}"
+                self._state.infra_errors.append(error)
+                logging.getLogger("code_forge").warning(error)
+            except BaseException:  # noqa: BLE001 - reporting must preserve the primary too
+                return
+
     def _run_local(self) -> Verdict:
         """LOCAL: loop until fixpoint / HOLD / MAX_TOTAL_ROUNDS.
 
@@ -798,8 +1025,36 @@ class StateMachine:
         # earlier run) must not make this run's new receipts collide
         # with, or be masked by, the old ones. Round 0 of this run is
         # the continuation cycle.
+        active = self._host_receipt_active()
+        if active:
+            from .verify import _restore_earned_window, parse_diff_files, read_required_cycles
+
+            diff_text = self._receipt_diff()
+            restored = _restore_earned_window(
+                self._state,
+                self.cwd,
+                self.source_hash,
+                parse_diff_files(diff_text),
+                diff_text=diff_text,
+                reviewed_repositories=self.reviewed_repositories,
+            )
+            if not restored.passed:
+                self._state.verdict = Verdict.FAIL
+                self._state.converged = False
+                error = (
+                    f"clean proof unavailable: {restored.reason}; restore the original proof "
+                    "and retry, or explicitly archive state and all receipts under ForgeLock "
+                    "before a fresh ordinary LOCAL review"
+                )
+                self._state.infra_errors.append(error)
+                logging.getLogger("code_forge").warning(error)
+                return Verdict.FAIL
+            self._clean_window_cycles = [
+                entry["cycle"] for entry in self._state.earned_clean_window["cycles"]
+            ]
         start = self._continuation_round_index()
         for round_index in range(start, start + self.max_total_rounds):
+            self._begin_host_attempt(round_index)
             if check_escalated_frozen(self._state):
                 self._append_round_snapshot(
                     round_index,
@@ -809,6 +1064,7 @@ class StateMachine:
                 )
                 self._state.verdict = Verdict.ESCALATED
                 self._state.converged = False
+                self._finish_host_attempt("unavailable", None)
                 frozen_fps = [
                     f.fingerprint
                     for f in self._state.findings
@@ -829,13 +1085,43 @@ class StateMachine:
             self._state.verdict = Verdict.PENDING
             self._state.converged = False
             self._persist_state()
+            self._start_host_execution()
             self._execute_round(round_index)
+
+            _fp = self._fixpoint_reached()
+            if _fp == _FixpointResult.CYCLE_RESTART:
+                self._reset_clean_credit()
+                self._state.infra_errors.append(
+                    "tiered-reset: P2/P3-density -- restarting cycle %d" % round_index
+                )
+            elif _fp == _FixpointResult.RESET:
+                self._reset_clean_credit()
 
             # Receipt acceptance gate: invalid evidence for the round just
             # written fails fast with persisted non-PASS state instead of
             # accumulating clean rounds toward a false PASS.
             gate_errors = self._receipt_gate_round_errors()
+            earned_entry = None
+            if active and _fp == _FixpointResult.CLEAN and not gate_errors:
+                from .verify import _capture_earned_cycle
+
+                earned_entry, captured = _capture_earned_cycle(
+                    self.cwd,
+                    self.source_hash,
+                    parse_diff_files(diff_text),
+                    cycle=round_index + 1,
+                    diff_text=diff_text,
+                    reviewed_repositories=self.reviewed_repositories,
+                )
+                if not captured.passed:
+                    gate_errors.append(f"receipt acceptance: {captured.reason}")
             if gate_errors:
+                self._finish_host_attempt(
+                    ("interrupted" if self._acquisition_markers else "unavailable")
+                    if _fp == _FixpointResult.CLEAN
+                    else "reset",
+                    _fp,
+                )
                 for err in gate_errors:
                     self._record_receipt_gate_failure(err)
                 self._state.verdict = Verdict.FAIL
@@ -855,32 +1141,28 @@ class StateMachine:
                 self._state.infra_errors.append(
                     "mutation: surviving mutants reported in 3 consecutive rounds"
                 )
+                self._finish_host_attempt(
+                    "reset" if _fp != _FixpointResult.CLEAN else "unavailable", _fp
+                )
                 self._persist_state()
                 return Verdict.FAIL
 
-            _threshold = self.clean_round_threshold
+            _threshold = (
+                max(self.clean_round_threshold, read_required_cycles(self.cwd))
+                if active
+                else self.clean_round_threshold
+            )
 
-            _fp = self._fixpoint_reached()
             if _fp == _FixpointResult.CLEAN:
                 self._state.consecutive_clean_rounds += 1
                 # Track the clean window: rounds whose receipts are
                 # clean evidence, scoped to the last `threshold` clean
                 # rounds for terminal attestation.
                 self._clean_window_cycles.append(round_index + 1)
-                self._clean_window_cycles = self._clean_window_cycles[-self.clean_round_threshold :]
-            elif _fp == _FixpointResult.CYCLE_RESTART:
-                # P2 / P3-density restart. The counter is already 0 here: clause (a)
-                # zeroes it on any finding's first (NEW) appearance, and a finding cannot
-                # reach CYCLE_RESTART without first being NEW, so no clean rounds can have
-                # accumulated. This reset is therefore redundant, kept explicit to match
-                # the SKILL.md "P2 resets to cycle 1" contract and stay correct if clause
-                # (a) ever changes. FALL THROUGH (no `continue`) so _should_enter_hold() runs.
-                self._state.consecutive_clean_rounds = 0
-                self._state.infra_errors.append(
-                    "tiered-reset: P2/P3-density -- restarting cycle %d" % round_index
-                )
-            else:
-                self._state.consecutive_clean_rounds = 0
+                if active:
+                    self._state.earned_clean_window["cycles"].append(earned_entry)
+                else:
+                    self._clean_window_cycles = self._clean_window_cycles[-_threshold:]
 
             # Record the fixpoint with the round it belongs to and
             # persist again. _execute_round already persisted before
@@ -889,7 +1171,9 @@ class StateMachine:
             # anyone reading state.json mid-run or after a kill misreads
             # it (observed 2026-09-05: five rounds on disk at clean=0
             # that were CLEAN/RESET/CLEAN/CLEAN/RESET in memory).
-            if self._state.round_history:
+            if active:
+                self._finish_host_attempt("earned" if _fp == _FixpointResult.CLEAN else "reset", _fp)
+            elif self._state.round_history:
                 self._state.round_history[-1]["fixpoint"] = _fp.name
                 self._state.round_history[-1]["clean_rounds_after"] = (
                     self._state.consecutive_clean_rounds
@@ -926,7 +1210,7 @@ class StateMachine:
                 return Verdict.ESCALATED
 
         # MAX_TOTAL_ROUNDS exhausted -> STATE-05 diagnosis + ESCALATED
-        category = diagnose_non_convergence(self._state.round_history, self._state.infra_errors)
+        category = diagnose_non_convergence(self._product_history(), self._state.infra_errors)
         self._state.verdict = Verdict.ESCALATED
         self._state.converged = False
         self._state.infra_errors.append(f"ESCALATED category={category}")
@@ -1009,7 +1293,7 @@ class StateMachine:
         Usage accumulated to _round_input_tokens/_round_output_tokens for
         cost tracking. Cost written to State after full round (H3 fix).
         """
-        l1_candidates, l1_excerpts, usage, duration = self.l1_provider()
+        l1_candidates, l1_excerpts, usage, duration = self._observe_phase("l1", self.l1_provider)
         # Accumulate round-level token usage (H3: applied after round ends)
         self._round_input_tokens += usage.input_tokens
         self._round_output_tokens += usage.output_tokens
@@ -1388,6 +1672,18 @@ class StateMachine:
         """
         errors: list[str] = []
         diff_text = self._receipt_diff()
+        if self._host_receipt_active():
+            from .verify import parse_diff_files, run_verify
+
+            result = run_verify(
+                self.cwd,
+                self.source_hash,
+                parse_diff_files(diff_text),
+                diff_text=diff_text,
+                required_cycles=self.clean_round_threshold,
+                reviewed_repositories=self.reviewed_repositories,
+            )
+            return [] if result.passed else [f"receipt acceptance: {result.reason}"]
         if not diff_text:
             # Nothing to verify against (non-git / stub reviews).
             return errors
@@ -1567,12 +1863,12 @@ class StateMachine:
         self._state.converged = False
         self._state.round = round_index
         progress.emit("round %d start" % round_index)
-        l0_findings = self._run_l0_phase()
+        l0_findings = self._observe_phase("l0", self._run_l0_phase)
         if self.mode == Mode.LOCAL:
             self._apply_autofix_loop_to(l0_findings)
         # Pre-convergence promotion bridge: configured rulepack rules become
         # genuine StateFindings so they block and reset cycle counters.
-        rulepack_findings = self._run_rulepack_blocking_phase()
+        rulepack_findings = self._observe_phase("rulepack", self._run_rulepack_blocking_phase)
         self._raw_observations_last_round = []
         self._unavailable_rejected_passes_last_round = set()
         l1_findings, l1_excerpts = self._run_l1_phase()
@@ -1589,6 +1885,8 @@ class StateMachine:
             l1_excerpts,
         )
         self._excerpts_last_round = l1_excerpts
+        if self._host_attempt_round is not None:
+            self._phase_findings["l1"] = l1_findings
         self._last_receipt_write_errors = []
         # Attempted (schema-failed) payloads the producer retained for
         # audit: written by the receipt writer as failure artifacts.
@@ -1611,9 +1909,9 @@ class StateMachine:
                     self._state.infra_errors.append(error)
                     logging.getLogger("code_forge").warning(error)
             raise
-        l2_findings = self._run_l2_phase()
-        e2e_findings = self._run_e2e_phase()
-        coverage_findings = self._run_coverage_phase()
+        l2_findings = self._observe_phase("l2", self._run_l2_phase)
+        e2e_findings = self._observe_phase("e2e", self._run_e2e_phase)
+        coverage_findings = self._observe_phase("coverage", self._run_coverage_phase)
         merged = self._merge_findings(
             l0_findings,
             l1_findings,
@@ -1624,6 +1922,8 @@ class StateMachine:
         )
         merged = self._apply_promotion_stickiness(merged)
         merged = self._apply_dismissed_stickiness(merged)
+        if self._host_attempt_round is not None:
+            self._attempt_findings = merged
         self._state.findings = merged
         if self.exec_falsify:
             self._run_exec_falsifier()
@@ -1671,6 +1971,20 @@ class StateMachine:
         self._persist_state()
         if self.post_round_hook is not None:
             self.post_round_hook(round_index)
+
+    def _observe_phase(self, name, operation):
+        try:
+            result = operation()
+            if self._host_attempt_round is not None:
+                self._phase_findings[name] = result[0] if name == "l1" else result
+                if name == "l1":
+                    self._capture_acquisition_markers(self._phase_findings[name])
+                self._phase_status[name] = "returned"
+            return result
+        except Exception:
+            if self._host_attempt_round is not None:
+                self._phase_status[name] = "failed"
+            raise
 
     def _apply_autofix_loop_to(self, findings: list[StateFinding]) -> None:
         """LOCAL only: attempt auto-fix on the given finding list.
@@ -1746,14 +2060,15 @@ class StateMachine:
             P3_DISTINCT_PER_FILE_THRESHOLD,
         )
 
-        history = self._state.round_history
-        current_disps = {f.fingerprint: f.disposition for f in self._state.findings}
+        history = self._product_history(prior=True)
+        product_findings = self._product_findings()
+        current_disps = {f.fingerprint: f.disposition for f in product_findings}
 
         # Previous round's dispositions, for clause (b) only (a FIXED
         # that comes back CONFIRMED is a reversion against the round that
         # fixed it). Clause (a) uses ever_seen below, not this.
-        if len(history) >= 2:
-            prior_disps = history[-2].get("dispositions", {})
+        if history:
+            prior_disps = history[-1].get("dispositions", {})
         else:
             prior_disps = {}
 
@@ -1768,7 +2083,7 @@ class StateMachine:
         # and comes back is recurring, not new; whether it holds the
         # review open is the severity tiers' question below.
         ever_seen: set = set()
-        for past in history[:-1]:
+        for past in history:
             ever_seen.update(past.get("dispositions", {}).keys())
 
         # (a) a CONFIRMED fingerprint no earlier round has seen = full reset
@@ -1781,10 +2096,10 @@ class StateMachine:
             if disp == Disposition.CONFIRMED and prior_disps.get(fp) == "FIXED":
                 return _FixpointResult.RESET
 
-        confirmed = [f for f in self._state.findings if f.disposition == Disposition.CONFIRMED]
+        confirmed = [f for f in product_findings if f.disposition == Disposition.CONFIRMED]
 
         # (d) zero UNCERTAIN remain (unchanged from binary version)
-        for f in self._state.findings:
+        for f in product_findings:
             if is_receipt_audit(f):
                 continue
             if f.disposition == Disposition.UNCERTAIN:
@@ -1862,7 +2177,7 @@ class StateMachine:
         response cache makes that freeze look like progress. Three
         rounds is two confirmations of the freeze.
         """
-        history = self._state.round_history
+        history = self._product_history()
         if len(history) < 3:
             return False
         maps = [h.get("dispositions") or {} for h in history[-3:]]
@@ -2701,8 +3016,13 @@ class StateMachine:
             if attempts >= self.max_fix_attempts:
                 # Check prior round for promotion evidence
                 prior_was_uncertain = False
-                if self._state.round_history:
-                    last_disps = self._state.round_history[-1].get("dispositions", {})
+                history = (
+                    self._product_history(prior=True)
+                    if self._host_attempt_round is not None or self._host_receipt_active()
+                    else self._product_history()
+                )
+                if history:
+                    last_disps = history[-1].get("dispositions", {})
                     if last_disps.get(fp) == "UNCERTAIN":
                         prior_was_uncertain = True
                 if prior_was_uncertain:
@@ -2755,7 +3075,11 @@ class StateMachine:
         # overwrite earlier ones; the final value is the most recent.
         latest_disps: dict[str, str] = {
             fp: disp
-            for snapshot in self._state.round_history
+            for snapshot in (
+                self._product_history(prior=True)
+                if self._host_attempt_round is not None or self._host_receipt_active()
+                else self._product_history()
+            )
             for fp, disp in snapshot.get("dispositions", {}).items()
         }
         # HOLD decisions are persisted after the last review snapshot.
@@ -2789,7 +3113,11 @@ class StateMachine:
                 f.fingerprint for f in self._state.findings if f.disposition == Disposition.FIXED
             ],
         }
-        self._state.round_history.append(snapshot)
+        if self._host_attempt_round is not None:
+            if any(value == "returned" for value in self._phase_status.values()):
+                self._attempt_snapshot = snapshot
+        else:
+            self._state.round_history.append(snapshot)
 
     def _count(self, disposition: Disposition) -> int:
         """Count findings with a given disposition."""
@@ -2810,7 +3138,12 @@ class StateMachine:
     def _persist_state(self) -> None:
         """Write state.json to cwd/.code-forge/state.json."""
         state_path = self.cwd / ".code-forge" / "state.json"
-        save_state(self._state, state_path)
+        try:
+            save_state(self._state, state_path)
+        except OSError:
+            self._state.verdict = Verdict.FAIL
+            self._state.converged = False
+            raise
 
     def _unlink_mutation_result(self, result_path: Path) -> None:
         """Remove a mutation-result.json this round has consumed.

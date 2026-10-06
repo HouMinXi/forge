@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 from dataclasses import dataclass, field
 from enum import Enum
@@ -22,6 +23,18 @@ from .errors import CorruptedStateError, SchemaVersionMismatchError
 
 SCHEMA_VERSION: int = 1
 MUTATION_SURVIVOR_COUNTER_VERSION: int = 1
+EARNED_WINDOW_VERSION = 1
+ROUND_PHASES = ("l0", "rulepack", "l1", "l2", "e2e", "coverage")
+HOST_ROUND_FIELDS = frozenset(
+    {
+        "clean_credit_action",
+        "phase_status",
+        "acquisition_failures",
+        "reset_observed",
+        "source_hash",
+        "reviewed_repositories",
+    }
+)
 
 # Canonical pass names (shared by receipt.py, outlet_c.py, sarif.py).
 _PASS_NAMES = ("qodo", "expert", "adversarial")
@@ -220,6 +233,10 @@ class State:
     survivor_counter_migration: dict[str, Any] | None = None
     _legacy_survivor_state: bytes | None = field(default=None, repr=False, compare=False)
     consecutive_clean_rounds: int = 0  # LOCAL mode only
+    earned_clean_window: dict | None = None
+    clean_window_migration: dict | None = None
+    _earned_window_present: bool = field(default=False, repr=False, compare=False)
+    _clean_state_sha256: str | None = field(default=None, repr=False, compare=False)
     # Rounds ending with a pass that did not complete. Persisted for the
     # same reason the two above are: a run that stops before its third
     # round (FAIL on round 1 is the common shape) would otherwise restart
@@ -242,6 +259,230 @@ class State:
     env_manifest: dict[str, Any] | None = None
     # Phase 53a addition: exec_evidence snapshot
     exec_evidence: dict[str, Any] | None = None
+
+
+def _valid_repository_manifest(value) -> bool:
+    return value is None or (
+        isinstance(value, dict)
+        and bool(value)
+        and all(
+            isinstance(k, str) and bool(k) and isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v)
+            for k, v in value.items()
+        )
+    )
+
+
+def validate_earned_clean_window(window: dict) -> None:
+    """Validate additive proof shape without reading receipts or making policy."""
+    if not isinstance(window, dict) or set(window) != {
+        "version",
+        "source_hash",
+        "reviewed_repositories",
+        "cycles",
+    }:
+        raise CorruptedStateError("invalid earned clean window object")
+    if type(window["version"]) is not int or window["version"] != EARNED_WINDOW_VERSION:
+        raise CorruptedStateError("unsupported earned clean window version")
+    if not isinstance(window["source_hash"], str) or not window["source_hash"]:
+        raise CorruptedStateError("invalid earned clean window source")
+    if not _valid_repository_manifest(window["reviewed_repositories"]):
+        raise CorruptedStateError("invalid earned clean window repository scope")
+    if not isinstance(window["cycles"], list):
+        raise CorruptedStateError("invalid earned clean window cycles")
+    previous = 0
+    for entry in window["cycles"]:
+        if not isinstance(entry, dict) or set(entry) != {"cycle", "receipt_sha256"}:
+            raise CorruptedStateError("invalid earned cycle entry")
+        cycle = entry["cycle"]
+        hashes = entry["receipt_sha256"]
+        if type(cycle) is not int or cycle <= previous:
+            raise CorruptedStateError("earned cycles must be positive, unique and increasing")
+        if (
+            not isinstance(hashes, dict)
+            or set(hashes) != {"1", "2", "3"}
+            or not all(isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v) for v in hashes.values())
+        ):
+            raise CorruptedStateError("invalid earned receipt digests")
+        previous = cycle
+
+
+def is_host_round(row: dict) -> bool:
+    """Presence of any authority field prevents legacy interpretation."""
+    return bool(HOST_ROUND_FIELDS.intersection(row))
+
+
+def validate_round_history(history: list[dict], round_index: int | None = None) -> None:
+    """Validate immutable attempt IDs and modern host observations."""
+    if not isinstance(history, list):
+        raise CorruptedStateError("invalid round history container")
+    previous = -1
+    for row in history:
+        if not isinstance(row, dict):
+            raise CorruptedStateError("invalid round history row")
+        index = row.get("round")
+        if type(index) is not int or index < 0 or index <= previous:
+            raise CorruptedStateError("round history IDs must be nonnegative, unique and increasing")
+        previous = index
+        if not is_host_round(row):
+            continue
+        if not HOST_ROUND_FIELDS.issubset(row):
+            raise CorruptedStateError("incomplete host round authority")
+        action = row["clean_credit_action"]
+        if action not in ("pending", "earned", "interrupted", "reset", "unavailable"):
+            raise CorruptedStateError("invalid host clean credit action")
+        phases = row["phase_status"]
+        if (
+            not isinstance(phases, dict)
+            or set(phases) != set(ROUND_PHASES)
+            or not all(value in ("not_run", "returned", "failed") for value in phases.values())
+        ):
+            raise CorruptedStateError("invalid host phase status")
+        if (
+            not isinstance(row["source_hash"], str)
+            or not row["source_hash"]
+            or not (_valid_repository_manifest(row["reviewed_repositories"]))
+        ):
+            raise CorruptedStateError("invalid host round source/scope")
+        if type(row["reset_observed"]) is not bool or (
+            type(row.get("clean_rounds_after")) is not int or row["clean_rounds_after"] < 0
+        ):
+            raise CorruptedStateError("invalid host reset/count")
+        failures = row["acquisition_failures"]
+        if not isinstance(failures, list):
+            raise CorruptedStateError("invalid acquisition failure list")
+        for failure in failures:
+            if not isinstance(failure, dict) or set(failure) != {
+                "id",
+                "fingerprint",
+                "pass_name",
+                "outcome",
+            }:
+                raise CorruptedStateError("invalid acquisition failure identity")
+            name = failure["pass_name"]
+            if name not in _PASS_NAMES or failure["outcome"] not in ("error", "timeout"):
+                raise CorruptedStateError("invalid acquisition failure outcome")
+            kind = "spawn" if failure["id"] == f"l1-{name}-spawn-fail" else "invoke"
+            if (
+                failure["id"] != f"l1-{name}-{kind}-fail"
+                or (failure["fingerprint"] != f"{kind}-fail-{name}")
+                or (kind == "spawn" and failure["outcome"] != "timeout")
+            ):
+                raise CorruptedStateError("invalid acquisition producer marker")
+        observed = any(value == "returned" for value in phases.values())
+        if action == "pending" and (
+            any(value != "not_run" for value in phases.values())
+            or failures
+            or row["reset_observed"]
+            or "fixpoint" in row
+        ):
+            raise CorruptedStateError("pending host round contains finalized observations")
+        if "dispositions" in row:
+            disps = row["dispositions"]
+            if (
+                not observed
+                or action == "pending"
+                or not isinstance(disps, dict)
+                or not all(
+                    isinstance(k, str) and isinstance(v, str) and v in {d.value for d in Disposition}
+                    for k, v in disps.items()
+                )
+            ):
+                raise CorruptedStateError("invalid observed product snapshot")
+        if action == "earned" and (
+            not all(value == "returned" for value in phases.values())
+            or failures
+            or row["reset_observed"]
+            or row.get("fixpoint") != "CLEAN"
+        ):
+            raise CorruptedStateError("earned host round lacks CLEAN observation")
+        if action == "interrupted" and (
+            not failures
+            or phases["l1"] != "returned"
+            or row["reset_observed"]
+            or row.get("fixpoint") != "CLEAN"
+        ):
+            raise CorruptedStateError("interrupted host round lacks nonreset acquisition observation")
+        if action == "reset" and (
+            not row["reset_observed"]
+            or row["clean_rounds_after"] != 0
+            or row.get("fixpoint") not in ("RESET", "CYCLE_RESTART")
+        ):
+            raise CorruptedStateError("reset host round lacks reset observation")
+        if action in ("earned", "interrupted", "reset") and "dispositions" not in row:
+            raise CorruptedStateError("finalized host round lacks product snapshot")
+    if round_index is not None and (
+        type(round_index) is not int
+        or round_index < 0
+        or (history and round_index != previous)
+        or (not history and round_index != 0)
+    ):
+        raise CorruptedStateError("stored round disagrees with attempt history")
+
+
+def product_round_history(history: list[dict], *, before_round: int | None = None) -> list[dict]:
+    """Project finalized observed product snapshots without hiding host attempts."""
+    if any(isinstance(row, dict) and is_host_round(row) for row in history):
+        validate_round_history(history)
+    projected = []
+    for row in history:
+        if before_round is not None and row.get("round", -1) >= before_round:
+            continue
+        if is_host_round(row):
+            if row["clean_credit_action"] == "pending" or "dispositions" not in row:
+                continue
+            row = dict(row)
+            collisions = {
+                fp
+                for name in ("l0", "l2", "e2e", "rulepack")
+                for fp in row.get(f"{name}_fingerprints", [])
+            }
+            synthetic = {f["fingerprint"] for f in row["acquisition_failures"]} - collisions
+            row["dispositions"] = {
+                fp: disp for fp, disp in row["dispositions"].items() if fp not in synthetic
+            }
+        projected.append(row)
+    return projected
+
+
+def earned_history_cycles(state: State, source_hash: str, manifest: dict | None) -> list[int]:
+    """Reconstruct CLEAN/reset transitions; unfinished reservations earn no credit."""
+    validate_round_history(state.round_history, state.round)
+    earned = []
+    for row in state.round_history:
+        if is_host_round(row):
+            if row["source_hash"] != source_hash:
+                continue
+            if row["reviewed_repositories"] != manifest:
+                raise CorruptedStateError("host round repository scope mismatch")
+            action = row["clean_credit_action"]
+            if action == "earned":
+                earned.append(row["round"] + 1)
+            elif action == "reset":
+                earned.clear()
+            elif action not in ("interrupted", "pending") and earned:
+                if action == "unavailable" and all(
+                    value == "not_run" for value in row["phase_status"].values()
+                ):
+                    raise CorruptedStateError(
+                        "unfinished host execution cannot prove absence of reset observations"
+                    )
+                raise CorruptedStateError("unavailable host attempt cannot prove inherited credit")
+        else:
+            fixpoint = row.get("fixpoint")
+            if fixpoint == "CLEAN":
+                earned.append(row["round"] + 1)
+            elif fixpoint in ("RESET", "CYCLE_RESTART"):
+                earned.clear()
+            else:
+                raise CorruptedStateError("legacy round lacks an explicit CLEAN/reset transition")
+        if (
+            row.get("clean_rounds_after") != len(earned)
+            or type(row.get("clean_rounds_after")) is not int
+        ):
+            raise CorruptedStateError("clean count disagrees with round history")
+    if type(state.consecutive_clean_rounds) is not int or state.consecutive_clean_rounds != len(earned):
+        raise CorruptedStateError("clean count lacks complete history provenance")
+    return earned
 
 
 def _finding_from_dict(d: dict) -> StateFinding:
@@ -291,6 +532,9 @@ def load_state(path: Path) -> State | None:
             "remove .code-forge/state.json to start fresh"
         )
 
+    if data.get("source_hash") is not None and not isinstance(data["source_hash"], str):
+        raise CorruptedStateError(f"invalid source identity in {path}")
+
     try:
         findings = [_finding_from_dict(f) for f in data.get("findings", [])]
         dispositions = {k: Disposition(v) for k, v in data.get("dispositions", {}).items()}
@@ -322,6 +566,10 @@ def load_state(path: Path) -> State | None:
     # loader returns a State with defaults rather than KeyError.
     state.baseline_spec_repr = data.get("baseline_spec_repr")
     state.round_history = data.get("round_history", [])
+    if not isinstance(state.round_history, list) or not all(
+        isinstance(row, dict) for row in state.round_history
+    ):
+        raise CorruptedStateError(f"invalid round history in {path}")
     state.infra_errors = data.get("infra_errors", [])
 
     # 02-04 additions: backward-compat defaults for pre-02-04 state.json.
@@ -348,6 +596,16 @@ def load_state(path: Path) -> State | None:
         }
         state._legacy_survivor_state = original
     state.consecutive_clean_rounds = data.get("consecutive_clean_rounds", 0)
+    state._earned_window_present = "earned_clean_window" in data
+    state.earned_clean_window = data.get("earned_clean_window")
+    state.clean_window_migration = data.get("clean_window_migration")
+    state._clean_state_sha256 = hashlib.sha256(original).hexdigest()
+    if state._earned_window_present:
+        validate_earned_clean_window(state.earned_clean_window)
+    if state._earned_window_present or any(
+        isinstance(row, dict) and is_host_round(row) for row in state.round_history
+    ):
+        validate_round_history(state.round_history, state.round)
     state.rounds_with_failed_pass = data.get("rounds_with_failed_pass", 0)
     state.rounds_with_falsify_infra = data.get("rounds_with_falsify_infra", 0)
 
@@ -460,6 +718,10 @@ def save_state(state: State, path: Path) -> None:
         "exec_evidence": state.exec_evidence,
     }
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+    if state.earned_clean_window is not None or state._earned_window_present:
+        data["earned_clean_window"] = state.earned_clean_window
+    if state.clean_window_migration is not None:
+        data["clean_window_migration"] = state.clean_window_migration
     _archive_legacy_survivor_state(state, path)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
