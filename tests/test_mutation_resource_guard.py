@@ -9,6 +9,7 @@ RLIMIT_AS backstop, the integration-test exclusion, and the detached
 launcher's forwarding of both guards.
 """
 
+import ast
 import json
 import os
 import pathlib
@@ -233,17 +234,34 @@ def test_review_forwards_skip_globs_from_gate_config():
     the run reports PASS over mutants nobody meant to score.
     """
     source = pathlib.Path(__import__("code_forge.machine", fromlist=["x"]).__file__).read_text()
-    lookup_start = source.index("mutation_max_children = test_config.get")
-    call_end = source.index(")", source.index("launch_detached_mutation(", lookup_start))
-    region = source[lookup_start:call_end]
-
+    tree = ast.parse(source)
+    ci = next(
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_run_ci"
+    )
+    launch = next(
+        node
+        for node in ast.walk(ci)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "launch_detached_mutation"
+    )
+    forwarded = {keyword.arg: keyword.value for keyword in launch.keywords}
     for key in ("mutation_skip_globs", "mutation_include_globs"):
-        assert 'test_config.get("%s")' % key in region, (
-            "machine.py never reads %s out of gate.yaml, so the "
-            "configured list dies before reaching the runner" % key
-        )
-        assert "%s=%s" % (key, key) in region, (
-            "%s is read but not passed to launch_detached_mutation" % key
+        assert any(
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == key for target in node.targets)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and isinstance(node.value.func.value, ast.Name)
+            and node.value.func.value.id == "test_config"
+            and node.value.func.attr == "get"
+            and len(node.value.args) == 1
+            and isinstance(node.value.args[0], ast.Constant)
+            and node.value.args[0].value == key
+            for node in ast.walk(ci)
+        ), f"machine.py never reads {key} out of gate.yaml"
+        assert isinstance(forwarded.get(key), ast.Name) and forwarded[key].id == key, (
+            f"{key} is read but not passed to launch_detached_mutation"
         )
 
 
