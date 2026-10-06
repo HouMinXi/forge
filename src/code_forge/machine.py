@@ -285,7 +285,7 @@ class StateMachine:
       l0_runner: callable (registry, files) -> (findings, infra_errors)
       l1_provider: callable returning L1 candidates (default: no L1)
       l2_runner: callable (diff_files, baseline_cmd, *, baseline_timeout,
-        timeout=600, also_copy=None)
+        timeout=600, also_copy=None, max_children=None, memory_limit_bytes=None)
         -> (findings, infra_errors). Surviving mutants use source MUTANT,
         disposition CONFIRMED and a reserved mutant- ID with a nonempty suffix.
         Other IDs remain findings, not measured surviving mutants.
@@ -308,7 +308,7 @@ class StateMachine:
     l0_runner: Callable = field(default=_default_l0_runner)
     l1_provider: L1Provider = field(default=lambda: ([], [], Usage(), 0.0))
     l2_runner: Callable = field(
-        default=lambda diff_files, baseline_cmd, *, baseline_timeout=120, timeout=600, also_copy=None: (
+        default=lambda diff_files, baseline_cmd, *, baseline_timeout=120, timeout=600, also_copy=None, max_children=None, memory_limit_bytes=None: (
             [],
             [],
         )
@@ -1237,6 +1237,9 @@ class StateMachine:
                 baseline_timeout = config["test"].get("timeout_seconds", 120)
                 mutation_timeout = config["test"].get("mutation_timeout_seconds")
                 also_copy = config["test"].get("also_copy")
+                max_children = config["test"].get("mutation_max_children")
+                memory_mb = config["test"].get("mutation_memory_limit_mb")
+                memory_limit_bytes = memory_mb * 1024**2 if memory_mb is not None else None
             except Exception as exc:  # noqa: BLE001
                 self._state.infra_errors.append(
                     f"L2: gate.yaml missing or test.command not configured: {exc}"
@@ -1246,6 +1249,8 @@ class StateMachine:
             baseline_timeout = 120
             mutation_timeout = None
             also_copy = None
+            max_children = None
+            memory_limit_bytes = None
 
         if needs_baseline:
             progress.emit("mutation: running baseline")
@@ -1258,6 +1263,8 @@ class StateMachine:
                 baseline_timeout=baseline_timeout,
                 **({"also_copy": also_copy} if also_copy is not None else {}),
                 **({"timeout": mutation_timeout} if mutation_timeout is not None else {}),
+                **({"max_children": max_children} if max_children is not None else {}),
+                **({"memory_limit_bytes": memory_limit_bytes} if memory_limit_bytes is not None else {}),
             )
             self._state.infra_errors.extend(l2_infra)
             return l2_findings
