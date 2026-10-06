@@ -1064,7 +1064,7 @@ def _make_subagent_spawn(
 
     def _spawn(pass_name: str, diff_text: str) -> str:
         from .llm_invoke import llm_invoke
-        from .reviewer_json import REVIEW_JSON_CONTRACT
+        from .reviewer_json import REVIEW_JSON_CONTRACT, _requires_l1_excerpts
 
         role = _PASS_ROLES.get(pass_name, "code reviewer")
         prompt = "You are a " + role + ". Review this diff.\n" + REVIEW_JSON_CONTRACT
@@ -1086,7 +1086,9 @@ def _make_subagent_spawn(
         from .diff import annotated_diff_prompt_block
 
         prompt += annotated_diff_prompt_block(diff_text)
-        result = llm_invoke(prompt, backend=backend)
+        result = llm_invoke(
+            prompt, backend=backend, l1_evidence_required=_requires_l1_excerpts(diff_text)
+        )
         content = result.content
         if isinstance(content, dict):
             return json.dumps(content)

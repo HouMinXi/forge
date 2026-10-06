@@ -22,7 +22,8 @@ def test_repair_usage_and_duration_are_added_to_the_first_call(monkeypatch):
     monkeypatch.setattr(invoke, "_invoke_cli", lambda *a, **k: first)
     repair_calls = []
 
-    def fake_repair(parsed, prompt, backend, timeout_s):
+    def fake_repair(parsed, prompt, backend, timeout_s, *, l1_evidence_required=False):
+        assert l1_evidence_required is False
         repair_calls.append((parsed, prompt, backend, timeout_s))
         return ({**parsed, "code_excerpts": _EXCERPTS}, _usage(6, 2, 1), 0.5)
 
@@ -61,3 +62,20 @@ def test_envelope_with_excerpts_already_present_is_not_repaired(monkeypatch):
     assert result.content is content
     assert result.usage.input_tokens == 10
     assert result.duration_s == 1.5
+
+
+def test_error_usage_carrier_preserves_existing_positional_constructor():
+    error = invoke.LLMInvokeError("failed", 7, "owned stderr", 2.5, True, False, 3.0, "empty")
+    assert (
+        str(error),
+        error.exit_code,
+        error.stderr,
+        error.duration_s,
+        error.is_timeout,
+        error.retryable,
+        error.retry_after,
+        error.kind,
+        error.usage,
+    ) == ("failed", 7, "owned stderr", 2.5, True, False, 3.0, "empty", None)
+    known_zero = invoke.LLMInvokeError("failed", usage=Usage())
+    assert known_zero.usage == Usage() and known_zero.usage is not None

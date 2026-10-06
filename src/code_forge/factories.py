@@ -487,6 +487,9 @@ def build_l1_provider(
                 initial_delay_s=initial_delay_s,
                 continuation_breaker=continuation_breaker,
                 retry_timeout=retry_timeout,
+                l1_evidence_required=_requires_l1_excerpts(
+                    diff_text, reviewed_repositories=reviewed_repositories
+                ),
             )
             if r.usage.input_tokens > 0 or r.usage.output_tokens > 0 or r.usage.cached_input_tokens > 0:
                 bname = backend.name if backend else "unknown"
