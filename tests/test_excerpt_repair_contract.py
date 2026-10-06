@@ -2,8 +2,8 @@
 
 The repair call asks once for code_excerpts. It must route by backend
 type, pass the repair prompt and the caller's timeout through, and on
-failure hand back the original envelope with zero usage and duration so
-the caller still sees the findings as UNTRUSTED.
+failure hand back the original envelope with available usage and measured
+duration. Unknown usage stays zero; cost metadata cannot make findings trusted.
 """
 
 import code_forge.llm_invoke as invoke
@@ -91,11 +91,13 @@ def test_api_backend_asks_once_without_expected_keys(monkeypatch):
     assert repaired["code_excerpts"] == _EXCERPTS
 
 
-def test_llm_error_returns_original_with_zero_usage_and_duration(
+def test_llm_error_returns_original_with_unknown_usage_and_measured_duration(
     monkeypatch,
 ):
     _record(monkeypatch, "_invoke_api", error=LLMInvokeError("backend down"))
     _capture_progress(monkeypatch)
+    ticks = iter([10.0, 12.5])
+    monkeypatch.setattr(invoke.time, "monotonic", lambda: next(ticks))
 
     repaired, got_usage, got_duration = _repair_missing_excerpts(
         _PARSED, "review a.py", _backend("api"), 90
@@ -105,7 +107,7 @@ def test_llm_error_returns_original_with_zero_usage_and_duration(
     assert got_usage.input_tokens == 0
     assert got_usage.output_tokens == 0
     assert got_usage.cached_input_tokens == 0
-    assert got_duration == 0.0
+    assert got_duration == 2.5
 
 
 def test_empty_follow_up_returns_original_with_real_usage(monkeypatch):
