@@ -185,6 +185,8 @@ class TestReplayStallBreaker:
     CONFIRMED and UNCERTAIN together prevent both.
     """
 
+    STALL_DIAGNOSTIC_PREFIX = "review stalled: identical disposition maps for 3 consecutive rounds"
+
     def _stuck_machine(self, tmp_path, max_rounds=8):
         def mock_l0(registry, files):
             return (
@@ -219,11 +221,14 @@ class TestReplayStallBreaker:
         verdict = machine.run()
         assert verdict == Verdict.ESCALATED
         assert machine._state.round == 2
-        assert any("replay" in e.lower() or "stall" in e.lower() for e in machine._state.infra_errors)
+        assert any(e.startswith(self.STALL_DIAGNOSTIC_PREFIX) for e in machine._state.infra_errors)
 
     def test_clean_rounds_are_not_a_stall(self, tmp_path):
         def mock_l0(registry, files):
             return ([], [])
+
+        cwd = tmp_path / "installed" / "replay"
+        cwd.mkdir(parents=True)
 
         machine = StateMachine(
             mode=Mode.LOCAL,
@@ -233,7 +238,7 @@ class TestReplayStallBreaker:
             resolved_review=_make_resolved(),
             source_hash="abc",
             baseline_spec_repr="empty",
-            cwd=tmp_path,
+            cwd=cwd,
             registry={},
             l0_runner=mock_l0,
             max_total_rounds=8,
@@ -241,9 +246,7 @@ class TestReplayStallBreaker:
         verdict = machine.run()
         assert verdict == Verdict.PASS
         assert machine._state.round == 2
-        assert not any(
-            "stall" in e.lower() or "replay" in e.lower() for e in machine._state.infra_errors
-        )
+        assert not any(e.startswith(self.STALL_DIAGNOSTIC_PREFIX) for e in machine._state.infra_errors)
 
     def test_four_cycle_threshold_is_not_a_stall(self, tmp_path):
         """A higher clean threshold must still reach PASS, not ESCALATED."""
