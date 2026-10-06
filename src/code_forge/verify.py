@@ -15,6 +15,8 @@ on receipts, not a replacement for them.
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import logging
 import re
@@ -277,7 +279,10 @@ def _validate_receipt_schema(obj: dict, name: str) -> None:
             )
 
 
-def _load_receipts(rd: Path) -> list[dict]:
+_ReceiptRecord = tuple[Path, bytes, dict]
+
+
+def _load_receipt_records(rd: Path) -> tuple[_ReceiptRecord, ...]:
     """Load every receipt-*.json in rd.
 
     Raises CorruptedReceiptError naming the file when one cannot be read,
@@ -288,11 +293,12 @@ def _load_receipts(rd: Path) -> list[dict]:
     one and hide the real cause.
     """
     if not rd.exists():
-        return []
+        return ()
     receipts = []
     for f in sorted(rd.glob("receipt-*.json")):
         try:
-            obj = json.loads(f.read_text(encoding="utf-8"))
+            raw = f.read_bytes()
+            obj = json.loads(raw.decode("utf-8"))
         except (ValueError, OSError, RecursionError) as exc:
             # Catch ValueError itself, not its subclasses: JSONDecodeError and
             # UnicodeDecodeError both derive from it, and so does json.loads
@@ -308,14 +314,262 @@ def _load_receipts(rd: Path) -> list[dict]:
             # AttributeError, so the annotation above is enforced here.
             raise CorruptedReceiptError(f"{f.name}: expected a JSON object, got {type(obj).__name__}")
         _validate_receipt_schema(obj, f.name)
-        receipts.append(obj)
+        receipts.append((f, raw, obj))
     # Order by the numbers inside the receipts, not by their filenames. The
     # glob sorts as text, so once a review passes nine cycles "receipt-c10p1"
     # sorts ahead of "receipt-c9p1" and the monotonic-timestamp check reads a
     # correctly written set as out of order. The schema check above has
     # already proved cycle and pass are integers.
-    receipts.sort(key=lambda r: (r["cycle"], r["pass"]))
-    return receipts
+    receipts.sort(key=lambda r: (r[2]["cycle"], r[2]["pass"]))
+    return tuple(receipts)
+
+
+def _load_receipts(rd: Path) -> list[dict]:
+    """Compatible parsed view; raw proof always uses the record loader."""
+    return [record[2] for record in _load_receipt_records(rd)]
+
+
+def _capture_earned_cycle(
+    cwd: Path,
+    diff_sha256: str,
+    diff_files: dict[str, list[int]],
+    *,
+    cycle: int,
+    hardened: bool = True,
+    diff_text: str | None = None,
+    reviewed_repositories: dict[str, str] | None = None,
+    receipt_records: tuple[_ReceiptRecord, ...] | None = None,
+) -> tuple[dict | None, VerifyResult]:
+    """Earn a triplet only from explicitly completed, actually verified bytes."""
+    if type(cycle) is not int or cycle < 1:
+        return None, VerifyResult(False, "earned cycle must be a positive int", 1, 0)
+    try:
+        if receipt_records is None:
+            receipt_records = _load_receipt_records(cwd / ".code-forge" / "receipts")
+    except CorruptedReceiptError as exc:
+        return None, VerifyResult(False, f"corrupt receipt: {exc}", 1, 0)
+    selected = [record for record in receipt_records if record[2]["cycle"] == cycle]
+    if len(selected) != 3 or {record[2]["pass"] for record in selected} != {1, 2, 3}:
+        return None, VerifyResult(False, f"earned cycle {cycle} requires exactly three receipts", 1, 0)
+    if any(record[2].get("pass_status") != "completed" for record in selected):
+        return None, VerifyResult(
+            False, f"earned cycle {cycle} requires explicit completed status", 1, 0
+        )
+    result = _run_verify_impl(
+        cwd,
+        diff_sha256,
+        diff_files,
+        hardened=hardened,
+        diff_text=diff_text,
+        required_cycles=1,
+        cycles=[cycle],
+        respect_floor=False,
+        reviewed_repositories=reviewed_repositories,
+        require_convergence=True,
+        receipt_records=receipt_records,
+    )
+    if not result.passed:
+        return None, result
+    return {
+        "cycle": cycle,
+        "receipt_sha256": {
+            str(record[2]["pass"]): hashlib.sha256(record[1]).hexdigest() for record in selected
+        },
+    }, result
+
+
+def _validate_earned_state(
+    state,
+    cwd: Path,
+    diff_sha256: str,
+    diff_files: dict[str, list[int]],
+    *,
+    receipt_records: tuple[_ReceiptRecord, ...],
+    hardened: bool,
+    diff_text: str | None,
+    reviewed_repositories: dict[str, str] | None,
+    _restore_pending: bool = False,
+) -> VerifyResult:
+    """Revalidate credit, keeping latest pending reservations private to restoration."""
+    from .errors import CorruptedStateError
+    from .receipt_scope import repository_scope
+    from .state import earned_history_cycles, is_host_round, validate_earned_clean_window
+
+    manifest = None if reviewed_repositories is None else repository_scope(reviewed_repositories)[1]
+    window = state.earned_clean_window
+    try:
+        validate_earned_clean_window(window)
+        if window["source_hash"] != diff_sha256 or window["reviewed_repositories"] != manifest:
+            return VerifyResult(False, "earned window source/repository scope mismatch", 1, 0)
+        expected = earned_history_cycles(state, diff_sha256, manifest)
+        if expected != [entry["cycle"] for entry in window["cycles"]]:
+            return VerifyResult(False, "earned window disagrees with clean/reset history", 1, 0)
+        own_history = [
+            row
+            for row in state.round_history
+            if not is_host_round(row) or row["source_hash"] == diff_sha256
+        ]
+        if (
+            not _restore_pending
+            and own_history
+            and is_host_round(own_history[-1])
+            and own_history[-1]["clean_credit_action"] == "pending"
+        ):
+            return VerifyResult(False, "latest host attempt is still pending", 1, 0)
+    except CorruptedStateError as exc:
+        return VerifyResult(False, f"unavailable earned proof: {exc}", 1, 0)
+    for original in window["cycles"]:
+        current, result = _capture_earned_cycle(
+            cwd,
+            diff_sha256,
+            diff_files,
+            cycle=original["cycle"],
+            hardened=hardened,
+            diff_text=diff_text,
+            reviewed_repositories=reviewed_repositories,
+            receipt_records=receipt_records,
+        )
+        if not result.passed:
+            return VerifyResult(
+                False, f"earned proof: {result.reason}", result.checks_run, result.checks_passed
+            )
+        if current != original:
+            return VerifyResult(False, f"earned receipt digest mismatch cycle {original['cycle']}", 1, 0)
+    return VerifyResult(True, "earned proof revalidated", 0, 0)
+
+
+def _restore_earned_window(
+    state,
+    cwd: Path,
+    diff_sha256: str,
+    diff_files: dict[str, list[int]],
+    *,
+    diff_text: str | None,
+    reviewed_repositories: dict[str, str] | None,
+) -> VerifyResult:
+    """Validate saved credit or prove a unique legacy migration before dispatch."""
+    from .errors import CorruptedStateError
+    from .receipt_scope import repository_scope
+    from .state import earned_history_cycles, is_host_round
+
+    try:
+        records = _load_receipt_records(cwd / ".code-forge" / "receipts")
+        if state.earned_clean_window is None:
+            if state._earned_window_present or any(is_host_round(row) for row in state.round_history):
+                return VerifyResult(False, "modern history requires an earned clean window", 1, 0)
+            manifest = (
+                None if reviewed_repositories is None else repository_scope(reviewed_repositories)[1]
+            )
+            cycles = earned_history_cycles(state, diff_sha256, manifest)
+            entries = []
+            for cycle in cycles:
+                entry, result = _capture_earned_cycle(
+                    cwd,
+                    diff_sha256,
+                    diff_files,
+                    cycle=cycle,
+                    diff_text=diff_text,
+                    reviewed_repositories=reviewed_repositories,
+                    receipt_records=records,
+                )
+                if not result.passed:
+                    return result
+                entries.append(entry)
+            state.earned_clean_window = {
+                "version": 1,
+                "source_hash": diff_sha256,
+                "reviewed_repositories": manifest,
+                "cycles": entries,
+            }
+            state._earned_window_present = True
+            if state._clean_state_sha256 is not None:
+                state.clean_window_migration = {
+                    "original_state_sha256": state._clean_state_sha256,
+                    "selected_cycles": cycles,
+                }
+        return _validate_earned_state(
+            state,
+            cwd,
+            diff_sha256,
+            diff_files,
+            receipt_records=records,
+            hardened=True,
+            diff_text=diff_text,
+            reviewed_repositories=reviewed_repositories,
+            _restore_pending=True,
+        )
+    except (CorruptedReceiptError, CorruptedStateError, ValueError) as exc:
+        return VerifyResult(False, f"unavailable inherited clean proof: {exc}", 1, 0)
+
+
+def _select_default_earned_cycles(
+    cwd: Path,
+    diff_sha256: str,
+    diff_files: dict[str, list[int]],
+    *,
+    receipt_records: tuple[_ReceiptRecord, ...],
+    required_cycles: int,
+    hardened: bool,
+    diff_text: str | None,
+    reviewed_repositories: dict[str, str] | None,
+) -> list[int] | None | VerifyResult:
+    from .errors import CorruptedStateError, SchemaVersionMismatchError
+    from .state import is_host_round, load_state, validate_round_history
+
+    try:
+        try:
+            state = load_state(cwd / ".code-forge" / "state.json")
+        except (AttributeError, TypeError) as exc:
+            return VerifyResult(False, f"unavailable earned state: malformed state.json: {exc}", 1, 0)
+        if state is None:
+            return None
+        validate_round_history(state.round_history)
+        modern = any(is_host_round(row) for row in state.round_history)
+        if not state.source_hash:
+            if modern or state._earned_window_present:
+                return VerifyResult(False, "modern state lacks source identity", 1, 0)
+            return None
+        if state.source_hash != diff_sha256:
+            return None
+        if state.earned_clean_window is None:
+            if modern or state._earned_window_present:
+                return VerifyResult(False, "modern history requires an earned clean window", 1, 0)
+            return None
+    except (CorruptedStateError, SchemaVersionMismatchError, ValueError, OSError, RecursionError) as exc:
+        return VerifyResult(False, f"unavailable earned state: {exc}", 1, 0)
+    result = _validate_earned_state(
+        state,
+        cwd,
+        diff_sha256,
+        diff_files,
+        receipt_records=receipt_records,
+        hardened=hardened,
+        diff_text=diff_text,
+        reviewed_repositories=reviewed_repositories,
+    )
+    if not result.passed:
+        return result
+    entries = state.earned_clean_window["cycles"]
+    if not entries or len(entries) < required_cycles:
+        return VerifyResult(
+            False,
+            f"earned window has {len(entries)} cycles; verifier floor demands {required_cycles}",
+            1,
+            0,
+        )
+    own_history = [
+        row for row in state.round_history if not is_host_round(row) or row["source_hash"] == diff_sha256
+    ]
+    latest = own_history[-1] if own_history else None
+    if (
+        latest is None
+        or (is_host_round(latest) and latest["clean_credit_action"] != "earned")
+        or (latest["round"] + 1 != entries[-1]["cycle"])
+    ):
+        return VerifyResult(False, "latest host attempt did not earn clean proof", 1, 0)
+    if max((record[2]["cycle"] for record in receipt_records), default=0) != entries[-1]["cycle"]:
+        return VerifyResult(False, "earned receipt window stale against latest disk cycle", 1, 0)
+    return [entry["cycle"] for entry in entries[-required_cycles:]]
 
 
 def _covered(receipt: dict) -> set[tuple[str, int]]:
@@ -1088,6 +1342,34 @@ def run_verify(
     reviewed_repositories: dict[str, str] | None = None,
     require_convergence: bool = True,
 ) -> VerifyResult:
+    return _run_verify_impl(
+        cwd,
+        diff_sha256,
+        diff_files,
+        hardened=hardened,
+        diff_text=diff_text,
+        required_cycles=required_cycles,
+        cycles=cycles,
+        respect_floor=respect_floor,
+        reviewed_repositories=reviewed_repositories,
+        require_convergence=require_convergence,
+    )
+
+
+def _run_verify_impl(
+    cwd: Path,
+    diff_sha256: str,
+    diff_files: dict[str, list[int]],
+    hardened: bool = True,
+    diff_text: str | None = None,
+    required_cycles: int | None = None,
+    cycles: list[int] | None = None,
+    respect_floor: bool = True,
+    reviewed_repositories: dict[str, str] | None = None,
+    require_convergence: bool = True,
+    *,
+    receipt_records: tuple[_ReceiptRecord, ...] | None = None,
+) -> VerifyResult:
     cp = 0
     if not isinstance(require_convergence, bool):
         return VerifyResult(False, "require_convergence must be a boolean", 1, cp)
@@ -1155,9 +1437,29 @@ def run_verify(
             return VerifyResult(False, f"unreadable gate: {exc}", 1, cp)
     required = required_cycles * PASSES_PER_CYCLE
     try:
-        receipts = _load_receipts(cwd / ".code-forge" / "receipts")
+        if receipt_records is None:
+            receipt_records = _load_receipt_records(cwd / ".code-forge" / "receipts")
+        receipts = [record[2] for record in receipt_records]
     except CorruptedReceiptError as exc:
         return VerifyResult(False, f"corrupt receipt: {exc}", 1, cp)
+
+    earned_selection = False
+    if cycles is None and require_convergence:
+        selection = _select_default_earned_cycles(
+            cwd,
+            diff_sha256,
+            diff_files,
+            receipt_records=receipt_records,
+            required_cycles=required_cycles,
+            hardened=hardened,
+            diff_text=diff_text,
+            reviewed_repositories=reviewed_repositories,
+        )
+        if isinstance(selection, VerifyResult):
+            return selection
+        if selection is not None:
+            cycles = selection
+            earned_selection = True
 
     # 1. completeness: last N consecutive cycles
     # findings_count. Reviews that take more rounds write later cycle
@@ -1191,7 +1493,7 @@ def run_verify(
             )
         last_n = all_cycle_vals[-required_cycles:]
     for i in range(len(last_n) - 1):
-        if last_n[i + 1] - last_n[i] != 1:
+        if not earned_selection and last_n[i + 1] - last_n[i] != 1:
             return VerifyResult(False, f"last {required_cycles} cycles not consecutive: {last_n}", 1, cp)
     attested = [r for r in receipts if r["cycle"] in last_n]
     if not require_convergence and len(last_n) != 1:
@@ -1274,7 +1576,7 @@ def run_verify(
         # and overlap checks; persisted model coordinates stay untouched.
         assessments = {}
         for exc in all_excerpts:
-            assessment = assess_excerpt_evidence(exc, hunk_map, post_image, exempt_files)
+            assessment = assess_excerpt_evidence(copy.deepcopy(exc), hunk_map, post_image, exempt_files)
             if assessment.status is ExcerptStatus.INVALID:
                 return VerifyResult(False, assessment.diagnostic or "invalid excerpt evidence", 5, cp)
             assessments[id(exc)] = assessment

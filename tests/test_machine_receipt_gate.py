@@ -464,11 +464,16 @@ def test_wrong_literal_receipts_not_completed(mode, tmp_path, monkeypatch):
     assert writer_calls[0][3]
     for receipt in receipts:
         assert receipt["pass_status"] == "schema_fail"
-        matching = [call for call in writer_calls if call[:3] == (DIFF, receipt["code_excerpts"], tmp_path)]
+        matching = [
+            call for call in writer_calls if call[:3] == (DIFF, receipt["code_excerpts"], tmp_path)
+        ]
         assert matching
         assert receipt["excerpt_validation_errors"] == matching[0][3]
         assert receipt["diff_sha256"] == compute_source_hash(git_diff=DIFF)
-        assert receipt["code_excerpts"][0]["content"] == _payload("wrong_literal")["code_excerpts"][0]["content"]
+        assert (
+            receipt["code_excerpts"][0]["content"]
+            == _payload("wrong_literal")["code_excerpts"][0]["content"]
+        )
 
 
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
@@ -881,6 +886,30 @@ def test_healthy_acquired_receipts_keep_normal_order(tmp_path, monkeypatch):
     assert not list((tmp_path / ".code-forge/receipts/attempted").glob("*.json"))
 
 
+def _assert_local_early_attempt(machine, *, round_index):
+    history = machine._state.round_history
+    assert len({row["round"] for row in history}) == len(history)
+    row = history[-1]
+    assert row["round"] == round_index
+    assert row["source_hash"] == machine.source_hash
+    assert row["reviewed_repositories"] is None
+    assert row["clean_credit_action"] == "reset"
+    assert row["phase_status"] == {
+        "l0": "returned",
+        "rulepack": "returned",
+        "l1": "returned",
+        "l2": "not_run",
+        "e2e": "not_run",
+        "coverage": "not_run",
+    }
+    assert row["reset_observed"] is True
+    assert row["acquisition_failures"] == []  # real rejected audit, not host acquisition
+    assert row["clean_rounds_after"] == machine._state.consecutive_clean_rounds == 0
+    assert row["dispositions"]
+    assert row["l2_fingerprints"] == row["e2e_fingerprints"] == []
+    assert machine._state.earned_clean_window["cycles"] == []
+
+
 @pytest.mark.parametrize("failed_pass", PASS_NAMES)
 def test_terminal_acquired_receipts_preserve_final_attempt(tmp_path, monkeypatch, failed_pass):
     from code_forge.machine import TimeoutBreaker
@@ -922,16 +951,27 @@ def test_terminal_acquired_receipts_preserve_final_attempt(tmp_path, monkeypatch
                 "_run_l2_phase",
                 "_run_e2e_phase",
                 "_run_coverage_phase",
-                "_append_round_snapshot",
                 "_run_exec_falsifier",
             ):
                 assert case["counts"][method] == 0
             assert "hook" not in case["events"]
             for field, value in prior.items():
-                if field.startswith("cost_") or field == "round_history":
+                if field.startswith("cost_"):
                     assert getattr(machine._state, field) == value
-            assert len(machine._state.round_history) == 2
-            assert case["events"] == ["save", "guard", "save", "breaker", "writer"]
+            assert machine._state.round_history[:-1] == prior["round_history"]
+            assert len(machine._state.round_history) == 3
+            assert case["counts"]["_append_round_snapshot"] == 1
+            _assert_local_early_attempt(machine, round_index=2)
+            assert case["events"] == [
+                "save",
+                "save",
+                "save",
+                "guard",
+                "save",
+                "breaker",
+                "writer",
+                "save",
+            ]
     disk = json.loads((tmp_path / ".code-forge/state.json").read_text())
     assert disk["verdict"] == "FAIL"
     assert disk["round"] == 2
@@ -991,7 +1031,19 @@ def test_terminal_acquired_error_boundaries(tmp_path, monkeypatch, caplog, mode,
     assert disk["round"] == 0
     assert disk["converged"] is False
     assert machine._state.cost_passes == 0
-    assert not machine._state.round_history
+    if mode == Mode.LOCAL:
+        _assert_local_early_attempt(machine, round_index=0)
+        assert case["counts"]["_append_round_snapshot"] == 1
+        if failure != "diagnostic_save":
+            assert disk["round_history"] == machine._state.round_history
+        else:
+            # Both later saves were impossible. The last durable row marks
+            # execution as unknown and never claims a completed observation.
+            assert disk["round_history"][0]["clean_credit_action"] == "unavailable"
+            assert set(disk["round_history"][0]["phase_status"].values()) == {"not_run"}
+    else:
+        assert not machine._state.round_history
+        assert case["counts"]["_append_round_snapshot"] == 0
     assert "hook" not in case["events"]
     assert not any(
         case["counts"][method]
@@ -999,7 +1051,6 @@ def test_terminal_acquired_error_boundaries(tmp_path, monkeypatch, caplog, mode,
             "_run_l2_phase",
             "_run_e2e_phase",
             "_run_coverage_phase",
-            "_append_round_snapshot",
             "_run_exec_falsifier",
         )
     )
@@ -1063,6 +1114,13 @@ def test_normal_acquired_preparation_error_still_propagates(tmp_path, monkeypatc
 
 def _seed_acquired_state(case):
     machine = case["machine"]
+    # These fixtures declare prior product decisions with zero earned
+    # credit. Give each legacy observation an explicit reset/ID rather
+    # than leaving an ambiguous pre-schema history that must refuse resume.
+    for index, row in enumerate(machine._state.round_history):
+        row.update(round=index, fixpoint="RESET", clean_rounds_after=0)
+    if machine._state.round_history:
+        machine._state.round = machine._state.round_history[-1]["round"]
     machine._state.source_hash = machine.source_hash
     machine._persist_state()
     return json.loads((machine.cwd / ".code-forge/state.json").read_text())
@@ -1078,25 +1136,31 @@ def _assert_terminal_round_unchanged(case, prior, returned):
     assert disk["verdict"] == "FAIL"
     assert disk["rounds_with_failed_pass"] == 3
     assert disk["converged"] is False
-    assert disk["round"] == 0
+    expected_round = len(prior["round_history"])
+    assert disk["round"] == expected_round
     for key, value in prior.items():
-        if key.startswith("cost_") or key in ("findings", "round_history", "exec_evidence"):
+        if key.startswith("cost_") or key == "exec_evidence":
             assert disk[key] == value
+    assert disk["round_history"][:-1] == prior["round_history"]
+    _assert_local_early_attempt(machine, round_index=expected_round)
+    assert disk["round_history"][-1]["dispositions"] == {
+        finding["fingerprint"]: finding["disposition"] for finding in disk["findings"]
+    }
     assert case["counts"]["transport"] == 3
     assert case["counts"]["writer"] == 1
-    assert machine._written_cycles == [1]
+    assert machine._written_cycles == [expected_round + 1]
     assert not any(
         case["counts"][method]
         for method in (
             "_run_l2_phase",
             "_run_e2e_phase",
             "_run_coverage_phase",
-            "_append_round_snapshot",
             "_run_exec_falsifier",
         )
     )
+    assert case["counts"]["_append_round_snapshot"] == 1
     assert "hook" not in case["events"]
-    _assert_acquired_receipts(machine.cwd, case, cycles=(1,), failed_pass="qodo")
+    _assert_acquired_receipts(machine.cwd, case, cycles=(expected_round + 1,), failed_pass="qodo")
 
 
 @pytest.mark.parametrize("status", ["pass_after", "fail_before"])
