@@ -38,7 +38,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypedDict
 
-from ._mutation_process import MutationProcessError, limit_address_space, run_owned_command
+from ._mutation_process import (
+    MutationProcessError, _bind_cancellation_evidence, limit_address_space, run_owned_command,
+)
 from ._mutation_workspace import MutationWorkspace, MutationWorkspaceError
 from .disposition import Disposition
 from .mutation_config import DEFAULT_MUTATION_TIMEOUT, validate_mutation_timeout
@@ -845,6 +847,8 @@ def run_mutation(
     root = Path.cwd() if cwd is None else cwd
     workspace = MutationWorkspace(os.path.abspath(root))
     outcome: tuple[list[StateFinding], list[str]] = ([], [])
+    cancellation = None
+    workspace_error = None
 
     def failed(exc):
         nonlocal outcome
@@ -856,32 +860,94 @@ def run_mutation(
         evidence["infra_errors"] = infra
         outcome = findings, infra
 
-    try:
-        outcome = _run_mutation(
-            diff_files,
-            baseline_cmd,
-            timeout,
-            root,
-            baseline_timeout,
-            also_copy,
-            max_children,
-            memory_limit_bytes,
-            mutation_skip_globs,
-            mutation_include_globs,
-            _evidence=evidence,
-            _workspace=workspace,
-        )
-    except MutationProcessError as exc:
-        workspace.cleanup_complete &= exc.cleanup_complete
-        evidence["process_failure"] = exc.report
-        failed(exc)
-    except (MutationWorkspaceError, OSError) as exc:
-        failed(exc)
-    finally:
+    def record_cancellation(exc, cleanup_allowed):
         try:
-            workspace.release()
+            cleanup_complete = getattr(exc, "cleanup_complete", False) is True
+            ownership = getattr(exc, "ownership", {})
+            workspace.cleanup_complete = cleanup_allowed and cleanup_complete
+            evidence.update(process_failure=ownership, cancelled=True,
+                            baseline_passed=False, completed_measurement=False)
+        except BaseException as evidence_exc:  # noqa: BLE001 - an interrupted proof cannot authorize restoration
+            workspace.cleanup_complete = False
+            _bind_cancellation_evidence(exc, cleanup_complete=False, cleanup_evidence_error=evidence_exc)
+            evidence.update(process_failure={}, cancelled=True,
+                            baseline_passed=False, completed_measurement=False)
+
+    try:
+        try:
+            outcome = _run_mutation(
+                diff_files,
+                baseline_cmd,
+                timeout,
+                root,
+                baseline_timeout,
+                also_copy,
+                max_children,
+                memory_limit_bytes,
+                mutation_skip_globs,
+                mutation_include_globs,
+                _evidence=evidence,
+                _workspace=workspace,
+            )
+        except MutationProcessError as exc:
+            workspace.cleanup_complete &= exc.cleanup_complete
+            evidence["process_failure"] = exc.report
+            failed(exc)
         except (MutationWorkspaceError, OSError) as exc:
             failed(exc)
+    except BaseException as exc:  # noqa: BLE001 - bind cleanup evidence without consuming cancellation
+        if isinstance(exc, Exception):
+            raise
+        cancellation = exc
+        try:
+            cleanup_allowed = workspace.cleanup_complete
+            workspace.cleanup_complete = False
+            record_cancellation(exc, cleanup_allowed)
+        except BaseException as evidence_exc:  # noqa: BLE001 - retain the selected object if metadata dispatch is interrupted
+            workspace.cleanup_complete = False
+            _bind_cancellation_evidence(exc, cleanup_complete=False, cleanup_evidence_error=evidence_exc)
+            evidence.update(process_failure={}, cancelled=True,
+                            baseline_passed=False, completed_measurement=False)
+    finally:
+        try:
+            try:
+                workspace.release()
+            except BaseException as exc:  # noqa: BLE001 - teardown failure remains secondary to cancellation
+                if cancellation is not None:
+                    workspace_error = exc
+                    workspace.cleanup_complete = False
+                    _bind_cancellation_evidence(
+                        cancellation, cleanup_complete=False, workspace_cleanup_error=exc,
+                        note=f"mutation workspace cleanup failed: {exc}",
+                    )
+                    evidence["cleanup_error"] = str(exc)
+                elif isinstance(exc, (MutationWorkspaceError, OSError)):
+                    failed(exc)
+                else:
+                    raise
+        except BaseException as evidence_exc:  # noqa: BLE001 - diagnostic failure cannot replace cancellation
+            if cancellation is None:
+                if isinstance(evidence_exc, Exception):
+                    raise
+                cancellation = evidence_exc
+                try:
+                    cleanup_allowed = workspace.cleanup_complete
+                    workspace.cleanup_complete = False
+                    record_cancellation(evidence_exc, cleanup_allowed)
+                except BaseException as secondary:  # noqa: BLE001 - a later interruption cannot replace the selected object
+                    workspace.cleanup_complete = False
+                    _bind_cancellation_evidence(evidence_exc, cleanup_complete=False, cleanup_evidence_error=secondary)
+                    evidence.update(process_failure={}, cancelled=True,
+                                    baseline_passed=False, completed_measurement=False)
+            else:
+                _bind_cancellation_evidence(
+                    cancellation, cleanup_complete=False,
+                    workspace_cleanup_error=workspace_error if workspace_error is not None else evidence_exc,
+                    cleanup_evidence_error=evidence_exc,
+                )
+        finally:
+            if cancellation is not None:
+                raise cancellation
     return outcome
 
 
@@ -1308,6 +1374,46 @@ def _run_mutation(
     return _with_other(findings, infra_errors)
 
 
+def _publish_mutation_error(
+    result_path: Path, data: dict, error: BaseException, evidence: dict,
+    publication_error: BaseException | None = None,
+) -> None:
+    """Publish terminal non-measurement evidence without changing cleanup proof."""
+    cancelled = not isinstance(error, Exception)
+    data.update(
+        status="error", cancelled=cancelled,
+        cancellation_type=type(error).__name__ if cancelled else None,
+        cleanup_complete=getattr(error, "cleanup_complete", None),
+        process_failure=evidence.get("process_failure", {}),
+        cleanup_error=evidence.get("cleanup_error"),
+        baseline_passed=False, completed_measurement=False, survivors=[],
+        message=str(error), skipped=[], infra_errors=[str(error)],
+        inventory=evidence.get("inventory", {}),
+    )
+    if publication_error is not None:
+        data["publication_error"] = f"{type(publication_error).__name__}: {publication_error}"
+    with open(result_path, "w", encoding="utf-8") as stream:
+        json.dump(data, stream)
+
+
+def _record_mutation_publication_failure(
+    error: BaseException, failure: BaseException, *, attribute: str, note_prefix: str,
+) -> BaseException:
+    """Retain a pending cancellation while best-effort publication diagnostics run."""
+    try:
+        _bind_cancellation_evidence(error, **{attribute: failure}, note=f"{note_prefix}: {failure}")
+    except BaseException as diagnostic_error:  # noqa: BLE001 - diagnostics must retain the selected cancellation
+        if isinstance(error, Exception) and not isinstance(diagnostic_error, Exception):
+            error = diagnostic_error
+        try:
+            _bind_cancellation_evidence(error, **{attribute: failure},
+                                        detached_publication_diagnostic_error=diagnostic_error)
+        except BaseException as fallback_error:  # noqa: BLE001 - select the first control interruption
+            if isinstance(error, Exception) and not isinstance(fallback_error, Exception):
+                error = fallback_error
+    return error
+
+
 def launch_detached_mutation(
     diff_files: list[str],
     baseline_cmd: list[str],
@@ -1372,13 +1478,13 @@ from pathlib import Path
 # Add src to path so code_forge is importable if run from source
 sys.path.insert(0, {forge_src!r})
 try:
-    from code_forge.mutation import run_mutation, _mutation_outcome
+    from code_forge.mutation import run_mutation, _mutation_outcome, _publish_mutation_error, _record_mutation_publication_failure
 except ImportError:
     # Installed package layout: the cwd itself may be the package root
     import os as _os
     _os.chdir(str(Path({str(cwd)!r})))
     sys.path.insert(0, str(Path({str(cwd)!r})))
-    from code_forge.mutation import run_mutation, _mutation_outcome
+    from code_forge.mutation import run_mutation, _mutation_outcome, _publish_mutation_error, _record_mutation_publication_failure
 
 result_path = Path({str(result_path)!r})
 cwd_ref = Path({str(cwd)!r})
@@ -1419,18 +1525,27 @@ try:
     data.update(_mutation_outcome(mm_findings, _infra, evidence))
     with open(result_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
-except Exception as e:
-    data["status"] = "error"
-    data["baseline_passed"] = False
-    data["message"] = str(e)
-    data["skipped"] = []
-    data["infra_errors"] = [str(e)]
-    data["inventory"] = evidence.get("inventory", {{}})
+except BaseException as e:
+    original_error = e
     try:
-        with open(result_path, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-    except Exception:
-        pass
+        _publish_mutation_error(result_path, data, e, evidence)
+    except BaseException as publication_error:
+        if isinstance(e, Exception) and not isinstance(publication_error, Exception):
+            e = publication_error
+        e = _record_mutation_publication_failure(e, publication_error,
+            attribute="detached_publication_error", note_prefix="mutation result publication failed")
+        try:
+            _publish_mutation_error(result_path, data, e, evidence, publication_error)
+        except BaseException as retry_error:
+            if isinstance(e, Exception) and not isinstance(retry_error, Exception):
+                e = retry_error
+            e = _record_mutation_publication_failure(e, retry_error,
+                attribute="detached_publication_retry_error", note_prefix="mutation result publication retry failed")
+    finally:
+        if not isinstance(e, Exception):
+            if e is not original_error:
+                raise e from original_error
+            raise e
 """
     # The run reports its own pid into result_path, and every later
     # check reads it from there. Keeping it as a direct child only

@@ -33,6 +33,18 @@ class MutationProcessError(RuntimeError):
         self.report = report or {}
 
 
+def _bind_cancellation_evidence(cancellation: BaseException, *, note: str | None = None, **evidence):
+    """Propagate the first control interruption, retaining an already pending one."""
+    try:
+        cancellation.__dict__.update(evidence)
+        if note is not None:
+            cancellation.add_note(note)
+    except BaseException as exc:  # noqa: BLE001 - retain cancellation while recording interrupted evidence
+        if isinstance(cancellation, Exception) and not isinstance(exc, Exception):
+            raise
+        cancellation.__dict__.update(evidence, cleanup_complete=False, cleanup_evidence_error=exc)
+
+
 def limit_address_space(memory_limit_bytes: int) -> None:
     import resource
 
@@ -343,49 +355,93 @@ def run_owned_command(
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
-    cancellation = None
+    interruption = None
+    report = {}
     try:
-        raw, diagnostic = helper.communicate(
-            json.dumps({"request": request, "authority": authority}).encode("utf-8"),
-            timeout=timeout + _CLEANUP_SECONDS + 5,
-        )
-    except BaseException as exc:  # noqa: BLE001 - cancellation must drain the private owner
-        cancellation = exc
         try:
-            helper.send_signal(signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+            raw, diagnostic = helper.communicate(
+                json.dumps({"request": request, "authority": authority}).encode("utf-8"),
+                timeout=timeout + _CLEANUP_SECONDS + 5,
+            )
+        except BaseException as exc:  # noqa: BLE001 - every interruption drains the private owner
+            interruption = exc
+            try:
+                helper.send_signal(signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                raw, diagnostic = helper.communicate(timeout=_CLEANUP_SECONDS + 2)
+            except Exception as cleanup_exc:  # noqa: BLE001 - ordinary drain failures need cleanup evidence
+                raise MutationProcessError(
+                    f"mutation owner {helper.pid} did not finish cleanup",
+                    cleanup_complete=False,
+                ) from cleanup_exc
         try:
-            raw, diagnostic = helper.communicate(timeout=_CLEANUP_SECONDS + 2)
-        except subprocess.TimeoutExpired as cleanup_exc:
+            report = json.loads(raw)
+            if not isinstance(report, dict) or type(report.get("cleanup_complete")) is not bool:
+                raise ValueError("invalid owner report")
+        except (ValueError, TypeError) as exc:
+            report = {}
             raise MutationProcessError(
-                f"mutation owner {helper.pid} did not finish cleanup",
+                f"mutation owner failed to report cleanup: {diagnostic.decode('utf-8', 'replace')}",
                 cleanup_complete=False,
-            ) from cleanup_exc
-    try:
-        report = json.loads(raw)
-        if not isinstance(report, dict) or type(report.get("cleanup_complete")) is not bool:
-            raise ValueError("invalid owner report")
-    except (ValueError, TypeError) as exc:
+            ) from exc
+        if interruption is None and report.get("cancelled"):
+            interruption = KeyboardInterrupt("mutation command was cancelled")
+        if not report["cleanup_complete"]:
+            remaining = ", ".join(
+                f"{item['pid']}:{item['start_ticks']}"
+                for item in report.get("owned", [])
+                if item.get("remaining")
+            )
+            raise MutationProcessError(
+                f"mutation descendants did not finish cleanup: {remaining}",
+                cleanup_complete=False,
+                report=report,
+            )
+        if interruption is not None and not isinstance(interruption, Exception):
+            _bind_cancellation_evidence(interruption, cleanup_complete=True, ownership=report)
+    except BaseException as cleanup_exc:  # noqa: BLE001 - cleanup must not replace control flow
+        cancelled = interruption is not None and not isinstance(interruption, Exception)
+        if cancelled or not isinstance(cleanup_exc, Exception):
+            cancellation = interruption if cancelled else cleanup_exc
+            cause = cleanup_exc if cancellation is interruption else interruption
+            try:
+                _bind_cancellation_evidence(
+                    cancellation, cleanup_complete=False, ownership=report,
+                    **({"cleanup_error": cause} if cause is not None else {}),
+                )
+                if cause is not None:
+                    label = ("mutation cleanup failed" if cancelled
+                             else "mutation owner communication failed")
+                    _bind_cancellation_evidence(cancellation, note=f"{label}: {cause}")
+            except BaseException as evidence_exc:  # noqa: BLE001 - diagnostic failure is secondary to cancellation
+                _bind_cancellation_evidence(
+                    cancellation, cleanup_complete=False, ownership=report,
+                    cleanup_error=cause if cause is not None else evidence_exc,
+                    cleanup_evidence_error=evidence_exc,
+                )
+            finally:
+                if cause is not None:
+                    raise cancellation from cause
+                raise cancellation
+        if interruption is not None:
+            failure = MutationProcessError(
+                f"mutation owner communication failed: {interruption}; cleanup: {cleanup_exc}",
+                cleanup_complete=False,
+                report=report,
+            )
+            failure.cleanup_error = cleanup_exc
+            raise failure from interruption
+        raise
+    if interruption is not None:
+        if not isinstance(interruption, Exception):
+            raise interruption
         raise MutationProcessError(
-            f"mutation owner failed to report cleanup: {diagnostic.decode('utf-8', 'replace')}",
-            cleanup_complete=False,
-        ) from exc
-    if not report["cleanup_complete"]:
-        remaining = ", ".join(
-            f"{item['pid']}:{item['start_ticks']}"
-            for item in report.get("owned", [])
-            if item.get("remaining")
-        )
-        raise MutationProcessError(
-            f"mutation descendants did not finish cleanup: {remaining}",
-            cleanup_complete=False,
+            f"mutation owner communication failed: {interruption}",
+            cleanup_complete=True,
             report=report,
-        )
-    if cancellation is not None or report.get("cancelled"):
-        raise MutationProcessError(
-            "mutation command was cancelled", cleanup_complete=True, report=report
-        ) from cancellation
+        ) from interruption
     if report.get("error"):
         if report.get("error_kind") == "FileNotFoundError":
             raise FileNotFoundError(report["error"])

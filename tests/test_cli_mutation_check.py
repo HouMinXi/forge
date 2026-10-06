@@ -87,6 +87,19 @@ class TestMutationCheckParser:
 class TestMutationCheckDispatch:
     """Dispatch and exit-code tests for mutation-check subcommand."""
 
+    def test_cancellation_prints_interrupted_and_exits_130(self, tmp_path, monkeypatch, capsys):
+        diff_file = tmp_path / "test.diff"
+        diff_file.write_text("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-a\n+b\n")
+        with patch("code_forge.mutation.run_mutation", side_effect=KeyboardInterrupt("CANCELLED")):
+            monkeypatch.setattr(sys, "argv", ["code-forge", "mutation-check", "--diff", str(diff_file)])
+            with pytest.raises(BaseException) as caught:
+                main()
+        assert isinstance(caught.value, SystemExit)
+        assert caught.value.code == 130
+        output = capsys.readouterr()
+        assert output.err == "code-forge: interrupted\n"
+        assert not output.out
+
     def test_dispatch_pass_no_survivors(self, tmp_path, monkeypatch):
         """mutation-check returns EXIT_PASS when run_mutation returns no survivors."""
         from code_forge.disposition import Disposition
