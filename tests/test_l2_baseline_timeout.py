@@ -39,8 +39,37 @@ def make_machine(tmp_path, command, timeout=None):
         baseline_spec_repr="empty",
         cwd=tmp_path,
         registry={},
-        l2_runner=factories.build_l2_runner(),
+        l2_runner=factories.build_l2_runner(cwd=tmp_path),
     )
+
+
+def test_machine_helper_binds_mutation_to_its_repository(tmp_path, monkeypatch):
+    caller = tmp_path / "caller"
+    project = tmp_path / "project"
+    caller.mkdir()
+    project.mkdir()
+    monkeypatch.chdir(caller)
+    monkeypatch.setattr(factories.shutil, "which", lambda command: "/tools/mutmut")
+    seen = []
+
+    def record(files, command, *, cwd=None, baseline_timeout=120):
+        seen.append((files, command, cwd, baseline_timeout))
+        return [], []
+
+    def unexpected_launch(*args, **kwargs):
+        pytest.fail("recording control must not launch a subprocess")
+
+    monkeypatch.setattr(factories, "run_mutation", record)
+    monkeypatch.setattr(subprocess, "Popen", unexpected_launch)
+    command = [sys.executable, "-m", "pytest", "-q"]
+    machine = make_machine(project, command, 1)
+    assert Path.cwd() == caller
+    assert machine.cwd == project
+    assert machine._run_l2_phase() == []
+    assert seen == [(["src/sample.py"], command, project, 1)]
+    assert (project / "src" / "sample.py").read_text() == "def sample():\n    return 1\n"
+    assert not (caller / "src").exists()
+    assert machine._state.infra_errors == []
 
 
 @pytest.mark.parametrize("mode", [Mode.LOCAL, Mode.CI])
