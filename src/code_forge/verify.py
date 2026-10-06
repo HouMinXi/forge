@@ -688,9 +688,17 @@ def assess_excerpt_evidence(
         # omitted tail can explain the count; indentation stays untrusted.
         if (exact_prefix or indent_prefix) and tail is not None:
             trusted_blank = tail_blank and exact_prefix
+            missing = (
+                None if tail_blank else _single_gap_line(exc_start, exc_end, actual_lines, file_lines)
+            )
+            diagnostic = (
+                f"excerpt {location} is missing source line {missing}"
+                if missing is not None
+                else count_error
+            )
             return _anchored_assessment(
                 valid if trusted_blank else untrusted,
-                None if trusted_blank else count_error,
+                None if trusted_blank else diagnostic,
                 prefix,
                 hunks,
                 location,
@@ -761,7 +769,12 @@ def assess_excerpt_evidence(
                 invalid,
                 f"excerpt {location} is outside every hunk; it belongs in context_quotes",
             )
-        if unknown and len(quoted) >= 10 and len(unknown) * 10 < len(quoted):
+        if (
+            unknown
+            and all(_only_leading_ws_differs(quoted[n], file_lines[n]) for n in mismatches)
+            and len(quoted) >= 10
+            and len(unknown) * 10 < len(quoted)
+        ):
             return ExcerptAssessment(
                 untrusted,
                 f"excerpt {location} line {min(unknown)} sits outside the diff; the rest matches",

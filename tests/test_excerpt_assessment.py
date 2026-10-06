@@ -84,7 +84,11 @@ def test_short_indent_damaged_quote_preserves_raw_evidence(tmp_path, tail, as_li
     assessment = _assess(diff, exc)
     assert assessment.status is ExcerptStatus.UNTRUSTED
     assert assessment.proven_lines == frozenset({1, 2})
-    assert assessment.diagnostic
+    assert assessment.diagnostic == (
+        "excerpt mod.py:1-3 is missing source line 3"
+        if tail == "    return answer"
+        else "excerpt mod.py:1-3 declares 3 lines but carries 2"
+    )
     assert exc == original
     assert validate_excerpts_against_diff(diff, [exc]) == []
 
@@ -383,6 +387,54 @@ def test_unknown_tail_is_not_source_proven():
     assert validate_excerpts_against_diff(diff, [_exc(1, 3, "alpha\nbeta")])
 
 
+def test_small_unknown_tail_does_not_hide_known_mismatches():
+    quoted = [f"value_{number} = {number}" for number in range(1, 17)]
+    source = list(quoted[:15])
+    for number in (13, 14, 15):
+        source[number - 1] = f"changed_{number} = {number}"
+    diff = _diff(source)
+    exc = _exc(1, 16, "\n".join(quoted))
+
+    result = _assess(diff, exc)
+    assert result.status.value == "INVALID"
+    assert result.diagnostic == (
+        "excerpt mod.py:1-16 claims line 16 outside the diff post-image; it cannot be verified"
+    )
+    assert "the rest matches" not in result.diagnostic
+    assert validate_excerpts_against_diff(diff, [exc]) == [result.diagnostic]
+
+    matching_diff = _diff(quoted[:15])
+    matching = _assess(matching_diff, exc)
+    assert matching.status.value == "UNTRUSTED"
+    assert matching.diagnostic == "excerpt mod.py:1-16 line 16 sits outside the diff; the rest matches"
+    assert validate_excerpts_against_diff(matching_diff, [exc]) == []
+
+
+@pytest.mark.parametrize("as_list", [False, True])
+def test_small_unknown_tail_preserves_indent_only_damage(as_list):
+    quoted = [f"value_{number} = {number}" for number in range(1, 17)]
+    source = ["    " + line for line in quoted[:15]]
+    exc = _exc(1, 16, quoted if as_list else "\n".join(quoted))
+    original = copy.deepcopy(exc)
+    diff = _diff(source)
+
+    result = _assess(diff, exc)
+    assert result.status.value == "UNTRUSTED"
+    assert result.diagnostic == "excerpt mod.py:1-16 line 16 sits outside the diff; the rest matches"
+    assert result.proven_lines == frozenset()
+    assert validate_excerpts_against_diff(diff, [exc]) == []
+    assert exc == original
+
+    source[12] = "    value_13=13"
+    changed_diff = _diff(source)
+    changed = _assess(changed_diff, exc)
+    assert changed.status.value == "INVALID"
+    assert "claims line 16 outside the diff post-image" in changed.diagnostic
+    assert changed.proven_lines == frozenset()
+    assert validate_excerpts_against_diff(changed_diff, [exc]) == [changed.diagnostic]
+    assert exc == original
+
+
 @pytest.mark.parametrize("missing", [1, 2, 3])
 @pytest.mark.parametrize("known", [False, True])
 def test_single_gap_requires_a_known_source_line(missing, known):
@@ -611,23 +663,58 @@ def test_unknown_postimage_cannot_claim_valid_status(post, diagnostic):
 
 
 @pytest.mark.parametrize(
-    "lines,content,status",
+    "lines,content,status,missing",
     [
-        (["alpha", "beta", ""], "alpha\nbeta", "VALID"),
-        (["  alpha", "  beta", "tail"], "  alpha\n  beta", "UNTRUSTED"),
-        (["alpha  ", "beta  ", "tail"], "alpha\nbeta", "UNTRUSTED"),
-        (["alpha", "beta", "tail"], "alpha  \nbeta  ", "UNTRUSTED"),
+        (["alpha", "beta", ""], "alpha\nbeta", "VALID", False),
+        (["  alpha", "  beta", "tail"], "  alpha\n  beta", "UNTRUSTED", True),
+        (["alpha  ", "beta  ", "tail"], "alpha\nbeta", "UNTRUSTED", True),
+        (["alpha", "beta", "tail"], "alpha  \nbeta  ", "UNTRUSTED", True),
+        (["  alpha", "  beta", ""], "alpha\nbeta", "UNTRUSTED", False),
+        (["alpha", "beta", "beta"], "alpha\nbeta", "UNTRUSTED", False),
     ],
 )
-def test_tail_omission_preserves_whitespace_and_blank_classification(lines, content, status):
+@pytest.mark.parametrize("as_list", [False, True])
+def test_tail_omission_preserves_whitespace_and_blank_classification(
+    lines, content, status, missing, as_list
+):
     from code_forge.verify import ExcerptStatus
 
-    result = _assess(_diff(lines), _exc(1, 3, content))
+    exc = _exc(1, 3, content.splitlines() if as_list else content)
+    original = copy.deepcopy(exc)
+    diff = _diff(lines)
+    result = _assess(diff, exc)
     assert result.status is ExcerptStatus(status)
     assert result.proven_lines == frozenset({1, 2})
     assert result.diagnostic == (
-        None if status == "VALID" else "excerpt mod.py:1-3 declares 3 lines but carries 2"
+        None
+        if status == "VALID"
+        else "excerpt mod.py:1-3 is missing source line 3"
+        if missing
+        else "excerpt mod.py:1-3 declares 3 lines but carries 2"
     )
+    assert validate_excerpts_against_diff(diff, [exc]) == []
+    assert exc == original
+
+
+def test_missing_tail_diagnostic_preserves_invalid_content_gate():
+    from code_forge.verify import ExcerptStatus
+
+    lines = ["registerOpencodeQuotaFetcher()", "register_other()", "get_retry_decision()"]
+    diff = _diff(lines)
+    missing = _exc(1, 3, "\n".join(lines[:2]))
+    wrong = _exc(1, 3, "\n".join(["registerOpenrouterQuotaFetcher()", *lines[1:]]))
+    original = copy.deepcopy([missing, wrong])
+
+    missing_result = _assess(diff, missing)
+    assert missing_result.status is ExcerptStatus.UNTRUSTED
+    assert missing_result.diagnostic == "excerpt mod.py:1-3 is missing source line 3"
+    assert missing_result.proven_lines == frozenset({1, 2})
+    wrong_result = _assess(diff, wrong)
+    assert wrong_result.status is ExcerptStatus.INVALID
+    assert wrong_result.diagnostic == "excerpt content mismatch at mod.py:1-3 (line 1)"
+    assert wrong_result.proven_lines == frozenset()
+    assert validate_excerpts_against_diff(diff, [missing, wrong]) == [wrong_result.diagnostic]
+    assert [missing, wrong] == original
 
 
 @pytest.mark.parametrize(
