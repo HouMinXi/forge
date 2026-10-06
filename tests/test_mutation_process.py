@@ -252,7 +252,11 @@ def genuine_rewritten_owner(tmp_path, monkeypatch):
         i for i, line in enumerate(raw.splitlines(), 1) if line.strip() == "if os.getppid() != parent:"
     ]
     assert len(lines) == 1
-    generated, names = mutate_file_contents(process.__file__, raw, covered_lines=set(lines))
+    rewritten = mutate_file_contents(process.__file__, raw, covered_lines=set(lines))
+    if isinstance(rewritten, tuple):
+        generated, names = rewritten
+    else:
+        generated, names = rewritten.code, rewritten.mutant_names
     variants = [
         node.name
         for node in ast.parse(generated).body
@@ -1550,14 +1554,28 @@ def test_named_identity_contradiction_is_not_waited(monkeypatch):
 
 @pytest.mark.parametrize("site", ["discover", "live", "reap", "cleanup"])
 def test_high_descriptor_pidfd_keeps_owned_lifecycle_checks(tmp_path, monkeypatch, site):
-    proc, identity, original_fd = _proc_child()
-    fd = fcntl.fcntl(original_fd, fcntl.F_DUPFD_CLOEXEC, 1024)
-    os.close(original_fd)
+    import resource
+
+    limits = resource.getrlimit(resource.RLIMIT_NOFILE)
+    soft, hard = limits
+    if hard != resource.RLIM_INFINITY and hard <= 1024:
+        pytest.skip("RLIMIT_NOFILE hard cap cannot represent descriptor 1024")
     tree = process._OwnedTree()
+    proc, identity, original_fd = _proc_child()
     tree.identities[proc.pid] = identity
-    tree.fds[proc.pid] = fd
+    tree.fds[proc.pid] = original_fd
     original = process._identity
     try:
+        try:
+            if soft != resource.RLIM_INFINITY and soft <= 1024:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (1025, hard))
+            fd = fcntl.fcntl(original_fd, fcntl.F_DUPFD_CLOEXEC, 1024)
+            tree.fds[proc.pid] = fd
+            os.close(original_fd)
+            original_fd = None
+        finally:
+            if resource.getrlimit(resource.RLIMIT_NOFILE) != limits:
+                resource.setrlimit(resource.RLIMIT_NOFILE, limits)
         assert fd >= 1024
         if site in ("live", "reap"):
             monkeypatch.setattr(
@@ -1588,11 +1606,13 @@ def test_high_descriptor_pidfd_keeps_owned_lifecycle_checks(tmp_path, monkeypatc
             assert tree.reaped[proc.pid] == proc.returncode
             assert original(proc.pid) is None
     finally:
-        if proc.pid in tree.fds:
-            _close_proc_child(proc, tree.fds.pop(proc.pid))
-        else:
-            _close_proc_child(proc, None)
-        tree.close()
+        try:
+            owned_fd = tree.fds.pop(proc.pid, None)
+            _close_proc_child(proc, owned_fd)
+        finally:
+            if original_fd is not None and original_fd != owned_fd:
+                os.close(original_fd)
+            tree.close()
 
 
 def test_finished_descriptors_retire_without_losing_identity_or_inventing_wait_status():
