@@ -8,6 +8,7 @@ CI async mutation, bug-inject teeth test.
 
 import json
 from pathlib import Path
+import pytest
 
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
@@ -238,6 +239,30 @@ class TestThreeConsecutiveSurvivorRounds:
 
 class TestL2RunnerException:
     """Test 7: l2_runner exception does not crash state machine."""
+
+    def test_cancellation_stops_local_run_before_next_round(self, tmp_path):
+        _setup_gate_yaml(tmp_path)
+        cancellation = KeyboardInterrupt("CALLER_CANCELLED")
+        calls = []
+
+        def l0(_registry, _files):
+            calls.append("l0")
+            return [], []
+
+        def l2(_files, _command, *, baseline_timeout):
+            calls.append("l2")
+            raise cancellation
+
+        machine = StateMachine(mode=Mode.LOCAL, falsifier=StubFalsifier(), autofixer=StubAutoFixer(),
+                               revert_fn=lambda _finding: None, resolved_review=_make_resolved(),
+                               source_hash="abc", baseline_spec_repr="empty", cwd=tmp_path,
+                               registry={}, l0_runner=l0, l2_runner=l2)
+        with pytest.raises(KeyboardInterrupt) as caught:
+            machine.run()
+        assert caught.value is cancellation
+        assert calls == ["l0", "l2"]
+        assert not machine._state.converged
+        assert not any("L2 runner failed" in error for error in machine._state.infra_errors)
 
     def test_exception_graceful_degradation(self, tmp_path):
         _setup_gate_yaml(tmp_path)

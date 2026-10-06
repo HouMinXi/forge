@@ -1,6 +1,8 @@
 """Owned command teardown uses identities, including escaped descendants."""
 
 import io
+import asyncio
+import inspect
 import json
 import fcntl
 import ctypes
@@ -1100,6 +1102,8 @@ def test_owner_report_and_wrapper_cancellation_are_fail_closed(monkeypatch, case
         if case == "missing"
         else subprocess.TimeoutExpired
         if case == "timeout"
+        else KeyboardInterrupt
+        if case in ("cancelled", "cancel-wait", "owner-stuck", "gone-owner")
         else process.MutationProcessError
     )
     with pytest.raises(expected) as captured:
@@ -1110,8 +1114,168 @@ def test_owner_report_and_wrapper_cancellation_are_fail_closed(monkeypatch, case
         )
     if case == "incomplete":
         assert "11:12" in str(captured.value)
+    if isinstance(captured.value, KeyboardInterrupt):
+        assert captured.value.cleanup_complete is (case != "owner-stuck")
+        if case == "owner-stuck":
+            assert isinstance(captured.value.cleanup_error, process.MutationProcessError)
     if len(calls) == 2:
         assert calls[1][1]["timeout"] == process._CLEANUP_SECONDS + 2
+
+
+@pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
+@pytest.mark.parametrize("secondary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("transport", [False, True])
+@pytest.mark.parametrize("site", ["note-format", "metadata-call", "note-call", "note-lookup",
+                                  "metadata-attribute", "secondary-report"])
+def test_owner_diagnostic_interruption_keeps_first_cancellation(monkeypatch, exception, secondary_type,
+                                                              transport, site):
+    secondary = secondary_type("SECOND_CANCEL")
+    fired = False
+
+    def interrupt():
+        nonlocal fired
+        if not fired:
+            fired = True
+            raise secondary
+
+    class Cancellation(exception):
+        def __getattribute__(self, key):
+            if site == "metadata-attribute" and key == "__dict__":
+                interrupt()
+            return super().__getattribute__(key)
+
+    cancellation = Cancellation("FIRST_CANCEL")
+
+    class Failure(RuntimeError if transport else PermissionError):
+        def __str__(self):
+            if site in ("note-format", "secondary-report"):
+                interrupt()
+            return "TRANSPORT_FAILED" if transport else "CLEANUP_FAILED"
+
+    failure = Failure()
+    calls = []
+
+    class Owner:
+        pid = 123
+
+        def communicate(self, *_args, **_kwargs):
+            calls.append("communicate")
+            raise failure if transport and len(calls) == 1 else cancellation
+
+        def send_signal(self, _signum):
+            calls.append("signal")
+            if not transport:
+                raise failure
+
+    binder = process._bind_cancellation_evidence
+
+    def bind(error, **kwargs):
+        if site == "metadata-call" and "cleanup_complete" in kwargs and "cleanup_evidence_error" not in kwargs:
+            interrupt()
+        if site == "note-call" and "note" in kwargs:
+            interrupt()
+        if site == "secondary-report" and "cleanup_evidence_error" in kwargs:
+            raise OSError("SECONDARY_DIAGNOSTIC_FAILED")
+        return binder(error, **kwargs)
+
+    target = None
+    if site == "note-lookup":
+        lines, start = inspect.getsourcelines(process.run_owned_command)
+        target = start + next(i for i, line in enumerate(lines)
+                              if '_bind_cancellation_evidence(cancellation, note=' in line)
+
+    def trace(frame, event, _arg):
+        if (site == "note-lookup" and event == "line" and
+                frame.f_code is process.run_owned_command.__code__ and frame.f_lineno == target):
+            interrupt()
+        return trace
+
+    monkeypatch.setattr(process.subprocess, "Popen", lambda *_a, **_k: Owner())
+    monkeypatch.setattr(process, "_bind_cancellation_evidence", bind)
+    previous_trace = sys.gettrace()
+    if site == "note-lookup":
+        sys.settrace(trace)
+    try:
+        with pytest.raises(Cancellation) as caught:
+            process.run_owned_command(["fixture"], timeout=1)
+    finally:
+        sys.settrace(previous_trace)
+    assert caught.value is cancellation and fired
+    assert cancellation.cleanup_complete is False and cancellation.ownership == {}
+    assert cancellation.cleanup_error is failure and cancellation.__cause__ is failure
+    if site != "secondary-report":
+        assert cancellation.cleanup_evidence_error is secondary
+    assert calls == (["communicate", "signal", "communicate"] if transport else ["communicate", "signal"])
+
+
+@pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
+@pytest.mark.parametrize("secondary_type", [KeyboardInterrupt, SystemExit])
+def test_owner_success_proof_call_interruption_preserves_first(monkeypatch, exception, secondary_type):
+    cancellation = exception("FIRST_CANCEL")
+    secondary = secondary_type("SECOND_CANCEL_AT_PROOF")
+    report = {"cleanup_complete": True, "cancelled": True}
+
+    class Owner:
+        pid = 123
+        calls = 0
+
+        def communicate(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise cancellation
+            return json.dumps(report).encode(), b""
+
+        def send_signal(self, _signum):
+            pass
+
+    binder = process._bind_cancellation_evidence
+
+    def bind(error, **kwargs):
+        if kwargs.get("cleanup_complete") is True:
+            raise secondary
+        return binder(error, **kwargs)
+
+    monkeypatch.setattr(process.subprocess, "Popen", lambda *_a, **_k: Owner())
+    monkeypatch.setattr(process, "_bind_cancellation_evidence", bind)
+    with pytest.raises(exception) as caught:
+        process.run_owned_command(["fixture"], timeout=1)
+    assert caught.value is cancellation
+    assert cancellation.cleanup_complete is False and cancellation.ownership == report
+    assert cancellation.cleanup_error is secondary and cancellation.__cause__ is secondary
+
+
+@pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
+@pytest.mark.parametrize("secondary_type", [KeyboardInterrupt, SystemExit])
+def test_owner_first_report_cancellation_survives_secondary_report_failure(monkeypatch, exception, secondary_type):
+    cancellation = exception("FIRST_CANCEL_AT_REPORT")
+    secondary = secondary_type("SECOND_CANCEL_AT_BINDING")
+    loads = process.json.loads
+    binder = process._bind_cancellation_evidence
+
+    class Owner:
+        pid = 123
+
+        def communicate(self, *_args, **_kwargs):
+            return b"OWNER_REPORT_SENTINEL", b""
+
+    def read_report(raw, *args, **kwargs):
+        if raw == b"OWNER_REPORT_SENTINEL":
+            raise cancellation
+        return loads(raw, *args, **kwargs)
+
+    def bind(error, **kwargs):
+        if "cleanup_evidence_error" in kwargs:
+            raise OSError("SECONDARY_REPORT_FAILED")
+        binder(error, **kwargs)
+        raise secondary
+
+    monkeypatch.setattr(process.subprocess, "Popen", lambda *_a, **_k: Owner())
+    monkeypatch.setattr(process.json, "loads", read_report)
+    monkeypatch.setattr(process, "_bind_cancellation_evidence", bind)
+    with pytest.raises(exception) as caught:
+        process.run_owned_command(["fixture"], timeout=1)
+    assert caught.value is cancellation and cancellation.__cause__ is None
+    assert cancellation.cleanup_complete is False and cancellation.ownership == {}
 
 
 @pytest.mark.parametrize(
@@ -1501,3 +1665,36 @@ def test_retired_identity_cannot_be_rebound_or_signaled(monkeypatch):
     monkeypatch.setattr(process, "_identity", lambda _: process._Identity(999, tree.owner.pid, 101, "S"))
     with pytest.raises(RuntimeError, match="identity changed"):
         tree.discover()
+
+
+@pytest.mark.parametrize("pending_type", [RuntimeError, KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("diagnostic_type", [OSError, KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("site", ["metadata", "note"])
+def test_evidence_binder_first_control_precedence(pending_type, diagnostic_type, site):
+    diagnostic = diagnostic_type("DIAGNOSTIC_INTERRUPTION")
+    fired = []
+
+    class Pending(pending_type):
+        def __getattribute__(self, name):
+            if site == "metadata" and name == "__dict__" and not fired:
+                fired.append(site)
+                raise diagnostic
+            return super().__getattribute__(name)
+
+        def add_note(self, note):
+            if site == "note" and not fired:
+                fired.append(site)
+                raise diagnostic
+            return super().add_note(note)
+
+    pending = Pending("PENDING_ERROR")
+    first_control = isinstance(pending, Exception) and not isinstance(diagnostic, Exception)
+    if first_control:
+        with pytest.raises(diagnostic_type) as caught:
+            process._bind_cancellation_evidence(pending, note="diagnostic", marker=True)
+        assert caught.value is diagnostic
+    else:
+        process._bind_cancellation_evidence(pending, note="diagnostic", marker=True)
+        assert pending.marker and pending.cleanup_complete is False
+        assert pending.cleanup_evidence_error is diagnostic
+    assert fired == [site]

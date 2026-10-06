@@ -2612,7 +2612,11 @@ def main() -> int:
         )
 
     elif args.subcommand == "mutation-check":
-        return _run_mutation_check(args, cwd=Path.cwd())
+        try:
+            return _run_mutation_check(args, cwd=Path.cwd())
+        except KeyboardInterrupt:
+            print("code-forge: interrupted", file=sys.stderr)
+            raise SystemExit(130) from None
 
     elif args.subcommand == "e2e-check":
         return _run_e2e_check_cmd(args, cwd=Path.cwd())
