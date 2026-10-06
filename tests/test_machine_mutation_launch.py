@@ -16,7 +16,10 @@ import os
 import shutil
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
+
+import pytest
 
 from code_forge import mutation as mutation_module
 from code_forge.autofix import StubAutoFixer
@@ -389,41 +392,151 @@ class TestAlsoCopyReachesTheMirror:
         )
 
 
+def _run_identity(pid):
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    return fields[19], fields[0]
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError(2, "gone"), ProcessLookupError(3, "gone")])
+@pytest.mark.parametrize("reader", ["_run_identity", "_parent_of"])
+def test_detached_proc_read_disappearance_is_non_live(monkeypatch, error, reader):
+    paths = []
+
+    def disappeared(path):
+        paths.append(path)
+        raise error
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(Path, "read_text", disappeared)
+        assert globals()[reader](42) is None
+    assert paths == [Path("/proc/42/stat")]
+
+
+@pytest.mark.parametrize("denied", [False, True])
+@pytest.mark.parametrize("reader", ["_run_identity", "_parent_of"])
+def test_detached_proc_read_rejects_unavailable_or_malformed(monkeypatch, denied, reader):
+    error = PermissionError("stat denied")
+
+    def unreadable(path):
+        if denied:
+            raise error
+        return "malformed stat"
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(Path, "read_text", unreadable)
+        with pytest.raises(PermissionError if denied else IndexError) as caught:
+            globals()[reader](42)
+    if denied:
+        assert caught.value is error
+
+
+class _DetachedRun:
+    def __init__(self, result_path):
+        self.result_path = result_path
+        self.identity = None
+        self.reported_pid = None
+        self.completed_without_start = False
+
+    def observe(self):
+        try:
+            data = json.loads(self.result_path.read_text())
+        except (OSError, ValueError):
+            return None
+        pid = data.get("pid")
+        if type(pid) is not int or pid <= 0:
+            return None
+        if self.reported_pid is None:
+            self.reported_pid = pid
+        elif pid != self.reported_pid:
+            raise AssertionError("Detached run changed its reported PID")
+        if self.identity is None and not self.completed_without_start:
+            current = _run_identity(pid)
+            if current is not None:
+                self.identity = pid, current[0]
+            elif data.get("status") in ("done", "error"):
+                # The owned invocation completed before a start could be observed.
+                self.completed_without_start = True
+        return data
+
+    def wait_for_pid(self):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            self.observe()
+            if self.identity is not None:
+                return self.identity[0]
+            if self.completed_without_start:
+                return self.reported_pid
+            time.sleep(0.005)
+        raise AssertionError("Detached run never supplied an observable PID/start identity")
+
+    def finish(self):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            data = self.observe()
+            if self.completed_without_start and data is not None:
+                if data.get("pid") == self.reported_pid and data.get("status") in ("done", "error"):
+                    return
+            if self.identity is not None and data is not None:
+                pid, start = self.identity
+                current = _run_identity(pid)
+                terminal = data.get("pid") == pid and data.get("status") in ("done", "error")
+                non_live = current is None or current[0] != start or current[1] == "Z"
+                if terminal and non_live:
+                    return
+            time.sleep(0.005)
+        raise AssertionError("Detached run did not reach terminal/non-live state with owned identity")
+
+
+@contextmanager
+def _detached_run(result_path):
+    if not Path("/proc/self/stat").is_file() or not hasattr(os, "fork"):
+        pytest.skip("Detached parentage checks require Linux /proc and fork")
+    assert not result_path.exists(), "Detached invocation needs a fresh owned result path"
+    run = _DetachedRun(result_path)
+    primary = None
+    try:
+        yield run
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        try:
+            run.finish()
+        except BaseException as error:
+            if primary is None:
+                raise
+            primary.add_note(f"Detached run cleanup failed: {error!r}")
+
+
 def test_launch_leaves_no_child_to_reap(tmp_path):
     # The caller only keeps the pid; the result travels through a file.
     # If the launcher stays the direct parent, nobody ever calls wait()
     # and the finished run lingers as a zombie.
     result_path = tmp_path / ".code-forge" / "mutation-result.json"
 
-    started = mutation_module.launch_detached_mutation(
-        diff_files=["README.md"],
-        baseline_cmd=[sys.executable, "-c", "pass"],
-        cwd=tmp_path,
-        result_path=result_path,
-    )
-    assert started is True
+    with _detached_run(result_path) as run:
+        started = mutation_module.launch_detached_mutation(
+            diff_files=["README.md"],
+            baseline_cmd=[sys.executable, "-c", "pass"],
+            cwd=tmp_path,
+            result_path=result_path,
+        )
+        assert started is True
 
-    # No child may be left behind: the middle process is waited for
-    # inside the launcher, and the run itself belongs to init. Ask about
-    # that one pid only -- waiting on -1 would steal another test's child.
-    # The run writes a placeholder first and its own pid later; wait for
-    # the pid, not merely for the file to exist.
-    run_pid = None
-    for _ in range(100):
-        if result_path.exists():
-            run_pid = json.loads(result_path.read_text()).get("pid")
-            if run_pid is not None:
-                break
-        time.sleep(0.05)
-    assert run_pid is not None, "the run never reported its pid"
-    try:
-        reaped, _ = os.waitpid(run_pid, os.WNOHANG)
-    except ChildProcessError:
-        return
-    raise AssertionError(
-        f"run {run_pid} is still our child (waitpid returned {reaped}), so it "
-        "will sit as a zombie once the caller drops the handle"
-    )
+        # Ask about that one pid only -- waiting on -1 would steal
+        # another test's child. Completion is awaited on context exit.
+        run_pid = run.wait_for_pid()
+        try:
+            reaped, _ = os.waitpid(run_pid, os.WNOHANG)
+        except ChildProcessError:
+            return
+        raise AssertionError(
+            f"run {run_pid} is still our child (waitpid returned {reaped}), so it "
+            "will sit as a zombie once the caller drops the handle"
+        )
 
 
 def _parent_of(pid: int) -> int | None:
@@ -437,7 +550,7 @@ def _parent_of(pid: int) -> int | None:
     stat = Path(f"/proc/{pid}/stat")
     try:
         text = stat.read_text()
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return None
     return int(text.rsplit(")", 1)[1].split()[1])
 
@@ -450,34 +563,293 @@ def test_the_run_is_reparented_away_from_us(tmp_path):
     # The run writes its own pid; if it were still our child, that pid
     # would report us as its parent and we would owe it a wait().
     result_path = tmp_path / "result.json"
-    started = mutation_module.launch_detached_mutation(
-        diff_files=["test.py"],
-        baseline_cmd=[sys.executable, "-c", "import time; time.sleep(3); raise SystemExit(1)"],
-        cwd=tmp_path,
-        result_path=result_path,
+    with _detached_run(result_path) as run:
+        started = mutation_module.launch_detached_mutation(
+            diff_files=["test.py"],
+            baseline_cmd=[sys.executable, "-c", "import time; time.sleep(3); raise SystemExit(1)"],
+            cwd=tmp_path,
+            result_path=result_path,
+        )
+        assert started is True
+        run_pid = run.wait_for_pid()
+        ppid = _parent_of(run_pid)
+        if ppid is None:
+            return
+        assert ppid != os.getpid(), (
+            "the run is still our direct child, so nothing reaps it once the caller drops the handle"
+        )
+
+
+@pytest.fixture
+def observed_runs(monkeypatch):
+    runs = []
+    initialize = _DetachedRun.__init__
+
+    def record(self, result_path):
+        initialize(self, result_path)
+        runs.append(self)
+
+    monkeypatch.setattr(_DetachedRun, "__init__", record)
+    return runs
+
+
+@pytest.mark.parametrize(
+    "reused_pid,observe_start",
+    [(False, True), (True, True), (True, False)],
+    ids=["ordinary", "reused-observed", "reused-fast"],
+)
+def test_fast_parentage_fixture_waits_for_a_live_run(
+    tmp_path, monkeypatch, observed_runs, reused_pid, observe_start
+):
+    launch = mutation_module.launch_detached_mutation
+
+    def slow_launch(**kwargs):
+        kwargs["diff_files"] = ["test.py"]
+        kwargs["baseline_cmd"] = [
+            sys.executable,
+            "-c",
+            "import time; time.sleep(3); raise SystemExit(1)",
+        ]
+        return launch(**kwargs)
+
+    monkeypatch.setattr(mutation_module, "launch_detached_mutation", slow_launch)
+    if not observe_start:
+        monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: None)
+    test_launch_leaves_no_child_to_reap(tmp_path)
+    assert len(observed_runs) == 1
+    run = observed_runs[0]
+    if not observe_start:
+        assert run.identity is None and run.completed_without_start
+    if reused_pid:
+        monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: ("reused-start", "S"))
+    data = json.loads((tmp_path / ".code-forge" / "mutation-result.json").read_text())
+    assert data["status"] in ("done", "error")
+    current = _run_identity(data["pid"])
+    if run.identity is None:
+        assert run.completed_without_start
+    else:
+        assert current is None or current[0] != run.identity[1] or current[1] == "Z"
+
+
+@pytest.mark.parametrize("failure_point", ["started", "before_pid", "after_pid"])
+@pytest.mark.parametrize(
+    "reused_pid,observe_start",
+    [(False, True), (True, True), (True, False)],
+    ids=["ordinary", "reused-observed", "reused-fast"],
+)
+def test_parentage_failure_still_waits_for_its_run(
+    tmp_path, monkeypatch, failure_point, observed_runs, reused_pid, observe_start
+):
+    marker = AssertionError("original parentage assertion")
+    events = []
+
+    def fail(*args):
+        raise marker
+
+    if failure_point == "started":
+        launch = mutation_module.launch_detached_mutation
+
+        def started_false(**kwargs):
+            returned = launch(**kwargs)
+            events.append(("launch_returned", returned))
+            assert returned is True
+            events.append(("returning_false", False))
+            return False
+
+        monkeypatch.setattr(mutation_module, "launch_detached_mutation", started_false)
+    elif failure_point == "before_pid":
+        monkeypatch.setattr(_DetachedRun, "wait_for_pid", fail)
+    else:
+        monkeypatch.setattr(sys.modules[__name__], "_parent_of", fail)
+    if not observe_start:
+        monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: None)
+    with pytest.raises(AssertionError) as caught:
+        test_the_run_is_reparented_away_from_us(tmp_path)
+    if failure_point != "started":
+        assert caught.value is marker
+    else:
+        assert events == [("launch_returned", True), ("returning_false", False)]
+    assert not getattr(caught.value, "__notes__", [])
+    assert len(observed_runs) == 1
+    run = observed_runs[0]
+    if not observe_start:
+        assert run.identity is None and run.completed_without_start
+    if reused_pid:
+        monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: ("reused-start", "S"))
+    data = json.loads((tmp_path / "result.json").read_text())
+    assert data["status"] in ("done", "error")
+    current = _run_identity(data["pid"])
+    if run.identity is None:
+        assert run.completed_without_start
+    else:
+        assert current is None or current[0] != run.identity[1] or current[1] == "Z"
+
+
+def test_detached_cleanup_keeps_the_primary_assertion(tmp_path, monkeypatch):
+    def fail(self):
+        raise AssertionError("cleanup observation failed")
+
+    monkeypatch.setattr(_DetachedRun, "finish", fail)
+    primary = AssertionError("parentage assertion failed")
+    with pytest.raises(AssertionError) as caught:
+        with _detached_run(tmp_path / "unused-result.json"):
+            raise primary
+    assert caught.value is primary
+    assert caught.value.__notes__ == [
+        "Detached run cleanup failed: AssertionError('cleanup observation failed')"
+    ]
+    with pytest.raises(AssertionError, match="cleanup observation failed"):
+        with _detached_run(tmp_path / "unused-result.json"):
+            pass
+
+
+def test_detached_completion_requires_terminal_and_non_live(tmp_path, monkeypatch):
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps({"pid": 42, "status": "running"}))
+    run = _DetachedRun(path)
+    run.identity = (42, "owned-start")
+    ticks = iter([0, 0, 11])
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(time, "sleep", lambda delay: None)
+    monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: None)
+    with pytest.raises(AssertionError, match="terminal/non-live"):
+        run.finish()
+    path.write_text(json.dumps({"pid": 42, "status": "done"}))
+    ticks = iter([0, 0, 11])
+    monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: ("owned-start", "S"))
+    with pytest.raises(AssertionError, match="terminal/non-live"):
+        run.finish()
+    ticks = iter([0, 0])
+    monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: ("owned-start", "Z"))
+    run.finish()
+    ticks = iter([0, 0])
+    monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: ("reused-start", "S"))
+    run.finish()
+
+
+def test_detached_observation_retains_first_identity(tmp_path, monkeypatch):
+    path = tmp_path / "result.json"
+    run = _DetachedRun(path)
+    assert run.observe() is None
+    path.write_text("{")
+    assert run.observe() is None
+    path.write_text(json.dumps({"pid": 42, "status": "running"}))
+    monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: ("first-start", "S"))
+    assert run.wait_for_pid() == 42
+    monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: ("reused-start", "S"))
+    run.observe()
+    assert run.identity == (42, "first-start")
+    path.write_text(json.dumps({"pid": 43, "status": "done"}))
+    with pytest.raises(AssertionError, match="changed its reported PID"):
+        run.observe()
+
+
+def test_detached_missing_identity_is_an_explicit_failure(tmp_path, monkeypatch):
+    run = _DetachedRun(tmp_path / "missing-result.json")
+    ticks = iter([0, 0, 6])
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(time, "sleep", lambda delay: None)
+    with pytest.raises(AssertionError, match="observable PID/start identity"):
+        run.wait_for_pid()
+    ticks = iter([0, 0, 11])
+    with pytest.raises(AssertionError, match="owned identity"):
+        run.finish()
+    assert _run_identity(1 << 30) is None
+
+
+@pytest.mark.parametrize("status", ["done", "error"])
+def test_detached_fast_absent_completion_has_no_invented_start(tmp_path, status):
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps({"pid": 1 << 30, "status": status}))
+    run = _DetachedRun(path)
+    assert run.wait_for_pid() == 1 << 30
+    assert run.reported_pid == 1 << 30
+    assert run.identity is None and run.completed_without_start
+    run.finish()
+
+
+@pytest.mark.parametrize("pid", [True, 0, -1, "42"])
+def test_detached_fast_completion_rejects_invalid_pid(tmp_path, pid):
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps({"pid": pid, "status": "done"}))
+    run = _DetachedRun(path)
+    run.observe()
+    assert run.identity is None and not run.completed_without_start
+    assert run.reported_pid is None
+
+
+@pytest.mark.parametrize("pid,terminal_pid", [(42, 42.0), (1, True)])
+@pytest.mark.parametrize("fast_complete", [False, True])
+def test_detached_terminal_rejects_changed_pid_type(
+    tmp_path, monkeypatch, pid, terminal_pid, fast_complete
+):
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps({"pid": pid, "status": "done"}))
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_run_identity",
+        lambda value: None if fast_complete else ("owned-start", "Z"),
     )
-    assert started is True
+    run = _DetachedRun(path)
+    assert run.wait_for_pid() == pid
+    assert run.completed_without_start is fast_complete
+    path.write_text(json.dumps({"pid": terminal_pid, "status": "done"}))
+    ticks = iter([0, 0, 11])
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(time, "sleep", lambda delay: None)
+    with pytest.raises(AssertionError, match="terminal/non-live"):
+        run.finish()
+    assert run.reported_pid == pid
 
-    run_pid = None
-    for _ in range(100):
-        try:
-            run_pid = json.loads(result_path.read_text()).get("pid")
-        except (OSError, ValueError):
-            run_pid = None
-        if run_pid:
-            break
-        time.sleep(0.05)
-    assert run_pid, "the run never reported its pid"
 
-    if not Path("/proc").is_dir():  # pragma: no cover - non-Linux
-        return
+@pytest.mark.parametrize("error", [PermissionError("stat denied"), ValueError("malformed stat")])
+def test_detached_fast_completion_requires_real_absence(tmp_path, monkeypatch, error):
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps({"pid": os.getpid(), "status": "done"}))
+    monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: ("owned-start", "S"))
+    run = _DetachedRun(path)
+    assert run.wait_for_pid() == os.getpid()
+    assert run.identity is not None and not run.completed_without_start
 
-    ppid = _parent_of(run_pid)
-    if ppid is None:
-        return
-    assert ppid != os.getpid(), (
-        "the run is still our direct child, so nothing reaps it once the caller drops the handle"
+    def denied(pid):
+        raise error
+
+    monkeypatch.setattr(sys.modules[__name__], "_run_identity", denied)
+    run = _DetachedRun(path)
+    with pytest.raises(type(error), match=str(error)):
+        run.observe()
+    assert not run.completed_without_start
+    path.write_text(json.dumps({"pid": 1 << 30, "status": "running"}))
+    monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: None)
+    run = _DetachedRun(path)
+    run.observe()
+    assert not run.completed_without_start
+
+
+def test_detached_absence_control_is_platform_independent(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_run_identity", lambda pid: None)
+    test_detached_fast_completion_requires_real_absence(
+        tmp_path, monkeypatch, PermissionError("stat denied")
     )
+
+
+def test_detached_context_rejects_a_preexisting_result(tmp_path, monkeypatch):
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps({"pid": 1 << 30, "status": "done"}))
+    monkeypatch.setattr(_DetachedRun, "finish", lambda self: None)
+    with pytest.raises(AssertionError, match="fresh owned result path"):
+        with _detached_run(path):
+            pass
+
+
+@pytest.mark.parametrize("already_absent", [False, True])
+def test_detached_platform_check_precedes_launch(tmp_path, monkeypatch, already_absent):
+    if already_absent:
+        monkeypatch.delattr(os, "fork", raising=False)
+    monkeypatch.delattr(os, "fork", raising=False)
+    with pytest.raises(pytest.skip.Exception, match="Linux /proc and fork"):
+        with _detached_run(tmp_path / "unused-result.json"):
+            raise AssertionError("Unsupported fixture must not reach launch")
 
 
 def test_a_middle_process_that_hangs_is_cleaned_up(tmp_path, monkeypatch):
