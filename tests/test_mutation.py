@@ -268,7 +268,7 @@ class TestRunMutation:
         findings, infra = run_mutation(["test.py"], ["pytest"])
         assert len(findings) == 1
         assert findings[0].id == "MUTATION_ERROR"
-        assert findings[0].source == "MUTANT"
+        assert findings[0].source == "INFRA"
         assert findings[0].disposition == Disposition.CONFIRMED
         assert "exit 1" in findings[0].description
         assert len(infra) == 1
