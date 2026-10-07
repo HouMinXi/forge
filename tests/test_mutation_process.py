@@ -968,6 +968,7 @@ def test_cleanup_retry_shares_one_bounded_deadline(monkeypatch):
         "unsupported",
         "prctl",
         "wrong-parent",
+        "enumeration",
         "cap",
         "launch",
         "discover",
@@ -984,6 +985,7 @@ def test_supervisor_faults_never_invent_clean_completion(monkeypatch, case):
     request = {"argv": ["fixture"], "timeout": 1, "caller_pid": os.getppid()}
     fake_tree = SimpleNamespace(
         owner=process._Identity(999, os.getppid(), 100, "S"),
+        verify_enumeration=lambda: None,
         discover=lambda: events.append("discover"),
         reap=lambda driver: events.append("reap"),
         cleanup=lambda driver: events.append("cleanup") or case != "incomplete",
@@ -1011,6 +1013,10 @@ def test_supervisor_faults_never_invent_clean_completion(monkeypatch, case):
         monkeypatch.setattr(process.sys, "platform", "unsupported")
     elif case == "wrong-parent":
         request["caller_pid"] = 1 << 30
+    elif case == "enumeration":
+        fake_tree.verify_enumeration = lambda: (_ for _ in ()).throw(
+            RuntimeError("KNOWN_ENUMERATION_FAILURE")
+        )
     elif case == "cap":
         request["memory_limit_bytes"] = 1
         monkeypatch.setattr(
@@ -1045,7 +1051,7 @@ def test_supervisor_faults_never_invent_clean_completion(monkeypatch, case):
         assert not report["cleanup_complete"] and "cleanup: KNOWN_CLEANUP_FAILURE" in report["error"]
     elif case != "incomplete":
         assert report["cleanup_complete"]
-    if case in ("unsupported", "prctl", "wrong-parent", "cap"):
+    if case in ("unsupported", "prctl", "wrong-parent", "enumeration", "cap"):
         assert "launch" not in events
 
 

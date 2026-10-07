@@ -1485,8 +1485,11 @@ def test_editable_pth_interpreter_rules_reach_public_entries(tmp_path, damage, l
     assert ("Forge source:" in stderr) is interpreter_admits_path
 
 
-@pytest.mark.parametrize("decoder", ["legacy", "locale-fallback"])
-def test_editable_pth_decoder_branches(launcher, tmp_path, monkeypatch, decoder):
+@pytest.mark.parametrize(
+    "version,decoder",
+    [((3, 12, 3), "legacy"), ((3, 12, 4), "locale-fallback"), ((3, 14), "locale-fallback")],
+)
+def test_editable_pth_decoder_branches(launcher, tmp_path, monkeypatch, version, decoder):
     standard_site = tmp_path / "site"
     checkout = tmp_path / "anchor"
     (checkout / "src").mkdir(parents=True)
@@ -1496,11 +1499,25 @@ def test_editable_pth_decoder_branches(launcher, tmp_path, monkeypatch, decoder)
     write(standard_site / "forge.pth", "")
     (standard_site / "forge.pth").write_bytes(data)
     monkeypatch.setattr(
-        launcher, "sys", SimpleNamespace(version_info=(3, 12) if decoder == "legacy" else (3, 14))
+        launcher, "sys", SimpleNamespace(version_info=version)
     )
     monkeypatch.setattr(launcher.locale, "getencoding", lambda: "latin-1")
     dist = SimpleNamespace(locate_file=lambda name: standard_site / name)
     assert launcher._editable_layout(dist, ["forge.pth"], standard_site, checkout) == "static"
+
+
+@pytest.mark.parametrize("version", [(3, 12, 0), (3, 12, 3), (3, 12, 4), (3, 12, 14), (3, 13)])
+def test_editable_pth_bom_patch_release_boundary(launcher, tmp_path, monkeypatch, version):
+    standard_site = tmp_path / "site"
+    checkout = tmp_path / "anchor"
+    (checkout / "src").mkdir(parents=True)
+    write(standard_site / "forge.pth", "\ufeff" + str(checkout / "src") + "\n")
+    monkeypatch.setattr(launcher, "sys", SimpleNamespace(version_info=version))
+    dist = SimpleNamespace(locate_file=lambda name: standard_site / name)
+    if version < (3, 12, 4):
+        assert launcher._editable_layout(dist, ["forge.pth"], standard_site, checkout) == "finder"
+    else:
+        assert launcher._editable_layout(dist, ["forge.pth"], standard_site, checkout) == "static"
 
 
 def test_editable_percent_url_is_decoded_once(launcher, tmp_path, monkeypatch):

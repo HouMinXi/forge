@@ -111,6 +111,23 @@ class _OwnedTree:
         self.reaped: dict[int, int] = {}
         self.cleanup_deadline: float | None = None
 
+    def verify_enumeration(self) -> None:
+        """Reject incomplete procfs before a command can create descendants.
+
+        The owner's main task cannot disappear while this method runs. Its
+        missing children interface is therefore a capability failure, not the
+        transient task-exit race tolerated by _children during discovery.
+        """
+        path = Path(f"/proc/{self.owner.pid}/task/{self.owner.pid}/children")
+        try:
+            for child in path.read_bytes().split():
+                int(child)
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(
+                "mutation process ownership unavailable: readable procfs task children "
+                "interface required; native command was not launched"
+            ) from exc
+
     def discover(self) -> None:
         pending = [self.owner]
         visited: set[int] = set()
@@ -268,6 +285,7 @@ def _supervise(request: dict) -> dict:
         tree = _OwnedTree()
         report["owner_pid"] = tree.owner.pid
         report["owner_start_ticks"] = tree.owner.start_ticks
+        tree.verify_enumeration()
         with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
             if cancelled:
                 raise RuntimeError("mutation caller exited before command launch")

@@ -351,6 +351,19 @@ Code Change
 [COMMIT GATE]  # post-review-c3
 ```
 
+### Historical finding decisions
+
+The outcome ledger is an audit trail, not a location-based allowlist. A prior
+`FIXED` outcome never dismisses a newly confirmed finding: the defect may have
+recurred. `DISPROVED` and `DUPLICATE` can suppress only the same reviewed base/head
+SHAs, exact raw diff, file, line, review pass, and claim text. Changing even the
+working-tree diff without a new commit requires a fresh decision.
+
+New ledger rows carry an additive `suppression_key`; older rows remain readable
+and exportable but cannot automatically dismiss fresh candidates. CLI adjudication
+preserves that identity only when it preserves the original SHAs. Manual rows or
+reviews without complete snapshot provenance do not automatically suppress.
+
 ## What ships
 
 | Skill              | Step      | Purpose                                                  |

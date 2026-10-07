@@ -3145,3 +3145,33 @@ def test_cross_repo_raw_scopes_reach_actual_receipts_and_verifier(
         assert not result.passed and result.reason.startswith("coverage 0%"), result.reason
     else:
         assert result.passed, result.reason
+
+
+def test_attempt_diagnostic_cannot_lower_earned_window_floor(tmp_path):
+    """A completed attempted cycle is diagnostic evidence, not earned convergence."""
+    diff = diff_for("control.ts")
+    resolved = ResolvedReview([Path("control.ts")], None, diff, "git")
+    with patch(
+        "code_forge.llm_invoke.llm_invoke", return_value=LLMResult(good("control.ts"), Usage(), 0.0)
+    ):
+        provider = build_l1_provider("auto", resolved)
+        machine = machine_for(tmp_path, Mode.LOCAL, provider, diff, ["control.ts"])
+        machine.max_total_rounds = 1
+        assert machine.run() is Verdict.ESCALATED
+    assert machine._state.consecutive_clean_rounds == 1
+    assert [entry["cycle"] for entry in machine._state.earned_clean_window["cycles"]] == [1]
+    errors = machine._receipt_gate_terminal_errors()
+    assert len(errors) == 1
+    assert "earned window has 1 cycles; verifier floor demands 3" in errors[0]
+    assert not run_verify(tmp_path, machine.source_hash, parse_diff_files(diff), diff_text=diff).passed
+    # The supplemental path uses an explicitly scoped inspection. A later
+    # foreign failing cycle must not be reported as THIS attempt's failure.
+    directory = tmp_path / ".code-forge/receipts"
+    for path in list(directory.glob("receipt-c1p*.json")):
+        receipt = json.loads(path.read_text())
+        receipt["cycle"] = 99
+        receipt["pass_status"] = "incomplete"
+        (directory / path.name.replace("c1p", "c99p")).write_text(json.dumps(receipt))
+    errors = machine._receipt_gate_terminal_errors()
+    assert errors and not any(error.startswith("receipt attempt:") for error in errors)
+    assert machine._state.consecutive_clean_rounds == 1

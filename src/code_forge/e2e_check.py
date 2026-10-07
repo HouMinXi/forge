@@ -183,6 +183,8 @@ def load_components_yaml(repo_root: Path) -> Optional[dict]:
             data = yaml.safe_load(f)
     except yaml.YAMLError as e:
         raise ComponentsConfigError("components.yaml: YAML parse error: %s" % e) from e
+    except (OSError, UnicodeError) as e:
+        raise ComponentsConfigError("components.yaml: cannot read configuration: %s" % e) from e
 
     if not isinstance(data, dict):
         raise ComponentsConfigError("components.yaml: top-level value must be a mapping")
@@ -201,6 +203,17 @@ def load_components_yaml(repo_root: Path) -> Optional[dict]:
             raise ComponentsConfigError("components.yaml: component %r: missing 'paths' list" % name)
         if not isinstance(info["paths"], list):
             raise ComponentsConfigError("components.yaml: component %r: 'paths' must be a list" % name)
+        if not all(isinstance(path, str) for path in info["paths"]):
+            raise ComponentsConfigError(
+                "components.yaml: component %r: 'paths' elements must be strings" % name
+            )
+        dependencies = info.get("depends_on", [])
+        if not isinstance(dependencies, list) or not all(
+            isinstance(target, str) for target in dependencies
+        ):
+            raise ComponentsConfigError(
+                "components.yaml: component %r: 'depends_on' must be a list of strings" % name
+            )
 
     component_names = set(raw_components.keys())
 

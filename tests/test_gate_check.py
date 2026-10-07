@@ -1167,9 +1167,9 @@ class TestTranslateExitCode:
         """Exit 2 -> 0 (warn, keyboard interrupt)."""
         assert translate_exit_code(2) == 0
 
-    def test_exit_3_warn(self):
-        """Exit 3 -> 0 (warn, internal error)."""
-        assert translate_exit_code(3) == 0
+    def test_exit_3_block(self):
+        """Exit 3 -> 1 (BLOCK, internal error is not a completed test run)."""
+        assert translate_exit_code(3) == 1
 
     def test_exit_4_block(self):
         """Exit 4 -> 1 (BLOCK - usage error)."""

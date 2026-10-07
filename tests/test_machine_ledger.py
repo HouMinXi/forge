@@ -623,36 +623,36 @@ def test_known_terminal_fingerprints_latest_unadjudicated(tmp_path):
 
 
 def test_ci_suppress_known_fixed_fingerprint(tmp_path):
-    """Known FIXED fingerprint → CONFIRMED → DISMISSED, verdict PASS."""
+    """A prior fix does not disprove a newly CONFIRMED candidate."""
     _prep_local_state(tmp_path)
     _write_ledger_line(tmp_path, "fp-known-fixed", "FIXED")
     finding = _make_finding("fp-known-fixed", disp=Disposition.CONFIRMED)
     machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
     verdict = machine.run()
-    assert verdict == Verdict.PASS
-    assert any("ledger: suppressed" in err for err in machine._state.infra_errors)
+    assert verdict == Verdict.FAIL
+    assert not any("ledger: suppressed" in err for err in machine._state.infra_errors)
 
 
 def test_ci_suppress_known_disproved_fingerprint(tmp_path):
-    """Known DISPROVED fingerprint → CONFIRMED → DISMISSED, verdict PASS."""
+    """Legacy DISPROVED rows lack exact snapshot/claim provenance."""
     _prep_local_state(tmp_path)
     _write_ledger_line(tmp_path, "fp-known-disproved", "DISPROVED")
     finding = _make_finding("fp-known-disproved", disp=Disposition.CONFIRMED)
     machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
     verdict = machine.run()
-    assert verdict == Verdict.PASS
-    assert any("ledger: suppressed" in err for err in machine._state.infra_errors)
+    assert verdict == Verdict.FAIL
+    assert not any("ledger: suppressed" in err for err in machine._state.infra_errors)
 
 
 def test_ci_suppress_known_duplicate_fingerprint(tmp_path):
-    """Known DUPLICATE fingerprint → CONFIRMED → DISMISSED, verdict PASS."""
+    """Legacy DUPLICATE rows cannot suppress a potentially different claim."""
     _prep_local_state(tmp_path)
     _write_ledger_line(tmp_path, "fp-known-dup", "DUPLICATE")
     finding = _make_finding("fp-known-dup", disp=Disposition.CONFIRMED)
     machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
     verdict = machine.run()
-    assert verdict == Verdict.PASS
-    assert any("ledger: suppressed" in err for err in machine._state.infra_errors)
+    assert verdict == Verdict.FAIL
+    assert not any("ledger: suppressed" in err for err in machine._state.infra_errors)
 
 
 def test_ci_suppress_unknown_fingerprint(tmp_path):
@@ -679,7 +679,7 @@ def test_ci_suppress_escaped_fingerprint(tmp_path):
 
 
 def test_ci_suppress_mixed_known_and_unknown(tmp_path):
-    """Known suppressed, unknown stays → FAIL (because unknown is still CONFIRMED)."""
+    """Historical FIXED and unknown candidates both stay CONFIRMED."""
     _prep_local_state(tmp_path)
     _write_ledger_line(tmp_path, "fp-known", "FIXED")
     known = _make_finding("fp-known", disp=Disposition.CONFIRMED)
@@ -687,10 +687,9 @@ def test_ci_suppress_mixed_known_and_unknown(tmp_path):
     machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[known, unknown])
     verdict = machine.run()
     assert verdict == Verdict.FAIL
-    # Infra should have suppression note for known
+    # A location-only history match is not sufficient evidence.
     suppress_notes = [e for e in machine._state.infra_errors if "ledger: suppressed" in e]
-    assert len(suppress_notes) == 1
-    assert "fp-known" in suppress_notes[0]
+    assert suppress_notes == []
 
 
 def test_ci_suppress_missing_ledger(tmp_path):

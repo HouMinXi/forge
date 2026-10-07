@@ -681,6 +681,7 @@ class TestDoctorLive:
 
     def _green_ctx(self):
         return [
+            patch("code_forge.doctor._audit_python_deps", return_value=[(True, "fixture dependencies")]),
             patch("code_forge.doctor._check_handshake", return_value=(True, "code-forge-mcp")),
             patch("code_forge.doctor._check_registries", return_value=[("Claude Code", "PRESENT")]),
             patch("code_forge.trust.trust_status", return_value=MagicMock(trusted=True)),

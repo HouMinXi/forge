@@ -312,6 +312,12 @@
           "type": "string",
           "description": "CLI binary name or path. For type=cli only. Default: 'claude'."
         },
+        "prompt_transport": {
+          "type": "string",
+          "enum": ["argv", "stdin"],
+          "default": "argv",
+          "description": "CLI only. Default argv passes the prompt as -p PROMPT. Opt-in stdin passes -p - and sends the complete UTF-8 prompt on standard input, avoiding OS argument limits. Requires a command that supports this contract."
+        },
         "model": {
           "type": "string",
           "description": "Model ID. Optional for both types. Omit to use session default."

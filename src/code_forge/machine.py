@@ -51,6 +51,7 @@ from .hold import check_escalated_frozen
 from .ledger import (
     LedgerRow,
     TerminalState,
+    finding_suppression_key,
     resolve_ledger_root,
 )
 from .ledger import (
@@ -464,7 +465,7 @@ class StateMachine:
                 self._state = loaded
 
     def _run_ci(self) -> Verdict:
-        """CI: linear single round; FAIL on any CONFIRMED, else PASS.
+        """CI: FAIL on CONFIRMED, UNRELIABLE on failed falsification, else PASS.
 
         Per R1 H5: converged=True on PASS only; FAIL exits early so
         converged=False.
@@ -735,7 +736,15 @@ class StateMachine:
         # a silent PASS over an unreviewed file is a false green.
         confirmed = self._count(Disposition.CONFIRMED)
         coverage_gaps = self._count_coverage_gaps()
-        verdict = Verdict.FAIL if confirmed > 0 or coverage_gaps > 0 else Verdict.PASS
+        if confirmed > 0 or coverage_gaps > 0:
+            verdict = Verdict.FAIL
+        elif self._state.rounds_with_falsify_infra > 0:
+            # A backend/protocol failure also leaves UNCERTAIN, but is not
+            # the semantic uncertainty CI deliberately permits. The single
+            # CI round cannot wait for the multi-round circuit breaker.
+            verdict = Verdict.UNRELIABLE
+        else:
+            verdict = Verdict.PASS
         if coverage_gaps > 0 and confirmed == 0:
             self._state.infra_errors.append(
                 "coverage: %d in-scope file(s) had no review layer "
@@ -1377,6 +1386,7 @@ class StateMachine:
                 f.disposition = Disposition.UNCERTAIN
                 f.error = f"falsify() raised: {exc}"
                 with _lock:
+                    falsify_infra_failures.append(f.fingerprint)
                     self._state.infra_errors.append(f"falsify exception on {f.fingerprint}: {exc}")
                 progress.emit("falsify %d/%d: failed (%.1fs)" % (i, total, time.monotonic() - t_falsify))
             except Exception:
@@ -1683,7 +1693,28 @@ class StateMachine:
                 required_cycles=self.clean_round_threshold,
                 reviewed_repositories=self.reviewed_repositories,
             )
-            return [] if result.passed else [f"receipt acceptance: {result.reason}"]
+            if result.passed:
+                return []
+            errors.append(f"receipt acceptance: {result.reason}")
+            # Earned-window refusal remains authoritative. Supplement it
+            # with the latest attempted cycle's concrete evidence error,
+            # which an empty earned window otherwise hides. This forensic
+            # check cannot grant credit or turn the terminal result green.
+            if self._written_cycles:
+                attempted = run_verify(
+                    self.cwd,
+                    self.source_hash,
+                    parse_diff_files(diff_text),
+                    diff_text=diff_text,
+                    required_cycles=1,
+                    cycles=[self._written_cycles[-1]],
+                    respect_floor=False,
+                    require_convergence=False,
+                    reviewed_repositories=self.reviewed_repositories,
+                )
+                if not attempted.passed and attempted.reason != result.reason:
+                    errors.append(f"receipt attempt: {attempted.reason}")
+            return errors
         if not diff_text:
             # Nothing to verify against (non-git / stub reviews).
             return errors
@@ -2336,6 +2367,7 @@ class StateMachine:
         version_sensitive: bool = False,
         repo_root: str | None = None,
         backend: str | None = None,
+        suppression_key: str = "",
     ) -> LedgerRow:
         """Construct a LedgerRow from review state (shared between local and CI writers).
 
@@ -2365,6 +2397,18 @@ class StateMachine:
             ctx_contract=self.ctx_contract,
             ctx_whole_file=self.ctx_whole_file,
             ctx_canary=self.ctx_canary,
+            suppression_key=suppression_key,
+        )
+
+    def _finding_suppression_key(self, finding: StateFinding) -> str:
+        return finding_suppression_key(
+            base_sha=self.resolved_review.base_sha,
+            head_sha=self.resolved_review.head_sha,
+            git_diff=self.resolved_review.git_diff,
+            file=finding.file,
+            line=finding.line_range[0] if finding.line_range else 0,
+            source=finding.source,
+            description=finding.description,
         )
 
     def _write_ledger_rows(self) -> int:
@@ -2379,9 +2423,8 @@ class StateMachine:
         runs (where SHAs are unavailable) yield 0 to satisfy the
         "no placeholder/empty values" invariant.
 
-        Best-effort dedup: if a (fingerprint, terminal_state) pair is
-        already present in the ledger from any prior run, we do not
-        append a duplicate row regardless of SHAs. This is a
+        Best-effort dedup uses (fingerprint, terminal_state, suppression_key),
+        so a changed snapshot or claim retains its own terminal decision. This is a
         TOCTOU window but the worst case is one extra row per
         convergence -- still monotonic non-decreasing, still
         append-only, still auditable.
@@ -2393,7 +2436,7 @@ class StateMachine:
         from .ledger import iter_rows
 
         ledger_root = resolve_ledger_root(self.cwd)
-        existing = {(r.fingerprint, r.terminal_state) for r in iter_rows(ledger_root)}
+        existing = {(r.fingerprint, r.terminal_state, r.suppression_key) for r in iter_rows(ledger_root)}
         from datetime import datetime
 
         ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -2405,7 +2448,8 @@ class StateMachine:
                 state = TerminalState.DISPROVED
             else:
                 continue
-            if (f.fingerprint, state) in existing:
+            suppression_key = self._finding_suppression_key(f)
+            if (f.fingerprint, state, suppression_key) in existing:
                 continue
             evidence = (
                 "fix_applied" if state == TerminalState.FIXED else (f.error or "falsifier_rejected")
@@ -2423,9 +2467,10 @@ class StateMachine:
                 version_sensitive=ct.version_sensitive,
                 backend=f.backend,
                 repo_root=str(ledger_root.resolve()),
+                suppression_key=suppression_key,
             )
             ledger_append(ledger_root, row)
-            existing.add((f.fingerprint, state))
+            existing.add((f.fingerprint, state, suppression_key))
             rows += 1
         return rows
 
@@ -2441,7 +2486,8 @@ class StateMachine:
         `resolve_ledger_root(self.cwd)`. The row's `repo_root` field records the
         main repo path so downstream diff extraction survives worktree cleanup.
 
-        D-08: Dedup key for UNADJUDICATED rows is (fingerprint, base_sha, head_sha).
+        D-08: Dedup includes the exact suppression key so dirty diffs sharing
+        the same SHAs and nearby claims retain separate audit records.
         Re-running the same diff does not re-append duplicate rows.
 
         D-16: Growth expectations and compaction trigger: append-only growth is
@@ -2494,7 +2540,10 @@ class StateMachine:
                 return 0
 
             ledger_root = resolve_ledger_root(self.cwd)
-            existing = {(r.fingerprint, r.base_sha, r.head_sha) for r in iter_rows(ledger_root)}
+            existing = {
+                (r.fingerprint, r.base_sha, r.head_sha, r.suppression_key)
+                for r in iter_rows(ledger_root)
+            }
             ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             # Collect findings in scope: CONFIRMED + style-downgraded findings (CP1 W-5)
@@ -2509,7 +2558,7 @@ class StateMachine:
                 # Zero-finding PASS: emit a single clean row with diff-scoped fingerprint (D-07)
                 if self._state.verdict == Verdict.PASS:
                     clean_fp = hashlib.sha256(f"clean:{base}:{head}".encode()).hexdigest()[:16]
-                    if (clean_fp, base, head) not in existing:
+                    if (clean_fp, base, head, "") not in existing:
                         row = self._build_ledger_row(
                             fingerprint=clean_fp,
                             file="",
@@ -2523,12 +2572,13 @@ class StateMachine:
                             repo_root=str(ledger_root.resolve()),
                         )
                         ledger_append(ledger_root, row)
-                        existing.add((clean_fp, base, head))
+                        existing.add((clean_fp, base, head, ""))
                         rows_written += 1
                 return rows_written
 
             for f in findings_to_write:
-                if (f.fingerprint, base, head) in existing:
+                suppression_key = self._finding_suppression_key(f)
+                if (f.fingerprint, base, head, suppression_key) in existing:
                     continue
                 evidence = f.error or f.description or "confirmed_finding"
                 ct = derive_claim_type(f.source)
@@ -2544,9 +2594,10 @@ class StateMachine:
                     version_sensitive=ct.version_sensitive,
                     repo_root=str(ledger_root.resolve()),
                     backend=f.backend,
+                    suppression_key=suppression_key,
                 )
                 ledger_append(ledger_root, row)
-                existing.add((f.fingerprint, base, head))
+                existing.add((f.fingerprint, base, head, suppression_key))
                 rows_written += 1
 
             return rows_written
@@ -2562,7 +2613,7 @@ class StateMachine:
 
         D-23: Reads ledger via resolve_ledger_root, loads gate.yaml pinned_paths
         and style_downgrade, then for each CONFIRMED finding:
-          - fingerprint in known_terminal_fingerprints -> DISMISSED
+          - exact snapshot/claim key previously DISPROVED or DUPLICATE -> DISMISSED
           - file matches pinned_paths glob -> DISMISSED
           - source in style_downgrade.pass_names or description matches keyword -> STYLE
         Fail-open: ledger read failure or missing gate.yaml silently degrades.
@@ -2573,7 +2624,7 @@ class StateMachine:
         import yaml
 
         from .ledger import (
-            known_terminal_fingerprints,
+            suppressible_finding_keys,
             resolve_ledger_root,
         )
 
@@ -2603,11 +2654,11 @@ class StateMachine:
             self._state.infra_errors.append(msg)
             print(msg, file=sys.stderr)
 
-        # --- Load known terminal fingerprints from ledger ---
-        known_fps: set[str] = set()
+        # --- Load exact snapshot/claim identities from ledger ---
+        known_keys: set[str] = set()
         try:
             ledger_root = resolve_ledger_root(self.cwd)
-            known_fps = known_terminal_fingerprints(ledger_root)
+            known_keys = suppressible_finding_keys(ledger_root)
         except (OSError, ValueError, AttributeError, TypeError) as exc:
             msg = f"CI: ledger read for suppression failed (fail-open): {exc}"
             self._state.infra_errors.append(msg)
@@ -2618,11 +2669,11 @@ class StateMachine:
             if f.disposition != Disposition.CONFIRMED:
                 continue
 
-            # 1. Ledger-known fingerprint
-            if f.fingerprint in known_fps:
+            # 1. Exact previously disproved/duplicate candidate, never FIXED.
+            if self._finding_suppression_key(f) in known_keys:
                 f.disposition = Disposition.DISMISSED
                 self._state.infra_errors.append(
-                    f"ledger: suppressed {f.fingerprint} (known terminal fingerprint)"
+                    f"ledger: suppressed {f.fingerprint} (same reviewed snapshot and claim)"
                 )
                 continue
 

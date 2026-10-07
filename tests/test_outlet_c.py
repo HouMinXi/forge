@@ -9,6 +9,8 @@ SC1-SC3: reviewer independence tests (Phase 15).
 import hashlib
 import json
 from pathlib import Path
+
+import pytest
 from unittest.mock import patch
 
 from code_forge.baseline import ResolvedReview
@@ -500,8 +502,13 @@ class TestContextIsolation:
 class TestThresholdThreading:
     """clean_round_threshold threaded to StateMachine."""
 
-    def test_threshold_threading(self, tmp_path):
-        """run_outlet_c with clean_round_threshold=2 converges after 2."""
+    @pytest.mark.parametrize("repository_floor, expected_rounds", [(None, 3), (2, 2), (4, 4)])
+    def test_threshold_threading(self, tmp_path, repository_floor, expected_rounds):
+        """Requested threshold is forwarded without bypassing repository policy."""
+        if repository_floor is not None:
+            directory = tmp_path / ".code-forge"
+            directory.mkdir()
+            (directory / "gate.yaml").write_text(f"verify:\n  required_cycles: {repository_floor}\n")
         result = run_outlet_c(
             resolved_review=_resolved_with_diff(),
             source_hash=_source_hash(),
@@ -513,8 +520,9 @@ class TestThresholdThreading:
         )
         assert result == Verdict.PASS
         state = load_state(tmp_path / ".code-forge" / "state.json")
-        assert state.consecutive_clean_rounds >= 2
-        assert state.round == 1  # rounds 0 and 1 are clean
+        assert state.consecutive_clean_rounds == expected_rounds
+        assert state.round == expected_rounds - 1
+        assert len(state.earned_clean_window["cycles"]) == expected_rounds
 
 
 class TestOutletCInfraSourceTagging:
@@ -536,10 +544,18 @@ class TestOutletCInfraSourceTagging:
         )
         state = load_state(tmp_path / ".code-forge" / "state.json")
         infra = [f for f in state.findings if f.source == "INFRA"]
-        assert len(infra) >= 1
-        for f in infra:
-            assert f.disposition.value == "CONFIRMED"
-            assert "spawn-fail" in f.fingerprint
+        assert _result is Verdict.FAIL
+        assert state.consecutive_clean_rounds == 0
+        assert state.earned_clean_window["cycles"] == []
+        assert all(f.disposition.value == "CONFIRMED" for f in infra)
+        spawn_failures = [f for f in infra if f.id.startswith("l1-")]
+        assert {f.fingerprint for f in spawn_failures} == {
+            "spawn-fail-qodo",
+            "spawn-fail-expert",
+            "spawn-fail-adversarial",
+        }
+        assert all(f.file == "<spawn>" for f in spawn_failures)
+        assert any(f.id == "RECEIPT_INVALID" for f in infra)
 
     def test_outlet_c_schema_fail_tagged_infra(self, tmp_path):
         """schema-fail finding has source=INFRA and disposition=CONFIRMED."""

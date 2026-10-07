@@ -242,6 +242,7 @@ class BackendConfig:
     env_unset: Tuple[str, ...] = ()  # var names to remove from child env
     env_set: Tuple[Tuple[str, str], ...] = ()  # (name, value) pairs to set
     output_token_limit: int = 0  # 0 = unknown; >0 = known maximum, including retries
+    prompt_transport: str = "argv"  # cli: argv or opt-in stdin (-p -)
 
 
 # -- DEFAULT_BACKEND -------------------------------------------------
@@ -578,6 +579,8 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
     output_ceiling = max(0, entry.get("output_ceiling", 0))
 
     if btype == "api":
+        if "prompt_transport" in entry:
+            raise CliError("backend %r (api): prompt_transport is only valid on cli backends" % name)
         fmt = entry.get("format")
         if not fmt:
             raise CliError(
@@ -654,6 +657,12 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
             raise CliError("backend %r (cli): field %r is only valid on api backends" % (name, af))
 
     env_kw = _parse_cli_env(entry, name)
+    prompt_transport = entry.get("prompt_transport", "argv")
+    if prompt_transport not in ("argv", "stdin"):
+        raise CliError("backend %r: prompt_transport must be 'argv' or 'stdin'" % name)
+    timeout_s = entry.get("timeout_s", 0)
+    if type(timeout_s) is not int or timeout_s < 0:
+        raise CliError("backend %r: timeout_s must be a nonnegative integer" % name)
 
     command = entry.get("command", "")
     return BackendConfig(
@@ -666,6 +675,8 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
         command=command,
         default=is_default,
         max_tokens=max_tokens,
+        prompt_transport=prompt_transport,
+        timeout_s=timeout_s,
         **env_kw,
     )
 

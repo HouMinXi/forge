@@ -45,7 +45,7 @@ def test_source_proven_tail_omission_has_separate_report_channel(tmp_path):
     assert report["runs"][0]["results"] == []
     audit = report["runs"][0]["properties"]["receiptAudit"]
     assert audit == json.loads(state_path.read_text(encoding="utf-8"))["findings"]
-    assert "declares 3 lines but carries 2" in audit[0]["description"]
+    assert "is missing source line 3" in audit[0]["description"]
     assert format_summary(restored) == (
         "code-forge: PASS findings=0 confirmed=0 uncertain=0 dismissed=0 fixed=0 receipt_audit=1"
     )
@@ -110,5 +110,3 @@ def test_no_audit_keeps_existing_report_shape():
         format_summary(state)
         == "code-forge: PASS findings=0 confirmed=0 uncertain=0 dismissed=0 fixed=0"
     )
-
-

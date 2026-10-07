@@ -91,7 +91,7 @@ def test_downgrade_one_line_slips_single_nonblank_tail_omission():
 
     # Exactly one appended StateFinding with required fields
     audit_finding = out_findings[1]
-    expected_diag = "excerpt mod.py:1-3 declares 3 lines but carries 2"
+    expected_diag = "excerpt mod.py:1-3 is missing source line 3"
     expected_digest = hashlib.sha256(expected_diag.encode("utf-8")).hexdigest()[:12]
     expected_fp = f"receipt-{expected_digest}"
 
@@ -144,7 +144,7 @@ def test_downgrade_two_damaged_excerpts_preserves_order_and_filters_controls():
 
     # Verify first damaged excerpt audit record
     f1 = out_findings[0]
-    expected_diag1 = "excerpt mod.py:1-3 declares 3 lines but carries 2"
+    expected_diag1 = "excerpt mod.py:1-3 is missing source line 3"
     expected_fp1 = "receipt-" + hashlib.sha256(expected_diag1.encode("utf-8")).hexdigest()[:12]
     assert f1.id == "RECEIPT_UNTRUSTED"
     assert f1.source == "UNTRUSTED"
@@ -156,7 +156,7 @@ def test_downgrade_two_damaged_excerpts_preserves_order_and_filters_controls():
 
     # Verify second damaged excerpt audit record
     f2 = out_findings[1]
-    expected_diag2 = "excerpt mod.py:4-6 declares 3 lines but carries 2"
+    expected_diag2 = "excerpt mod.py:4-6 is missing source line 6"
     expected_fp2 = "receipt-" + hashlib.sha256(expected_diag2.encode("utf-8")).hexdigest()[:12]
     assert f2.id == "RECEIPT_UNTRUSTED"
     assert f2.source == "UNTRUSTED"

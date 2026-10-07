@@ -2344,6 +2344,11 @@ def _run_ledger(args, cwd: Path) -> int:
                 ctx_contract=latest_row.ctx_contract,
                 ctx_whole_file=latest_row.ctx_whole_file,
                 ctx_canary=latest_row.ctx_canary,
+                suppression_key=(
+                    latest_row.suppression_key
+                    if (base_sha, head_sha) == (latest_row.base_sha, latest_row.head_sha)
+                    else ""
+                ),
             ),
         )
         print(
@@ -4786,6 +4791,8 @@ def _run_e2e_check_cmd(args, cwd: Path) -> int:
 
     for err in infra_errors:
         print("code-forge: e2e-check: %s" % err, file=sys.stderr)
+    if infra_errors:
+        return EXIT_CLI_ERROR
 
     # UNCERTAIN findings are the P2-equivalent gate failures.
     uncertain = [f for f in findings if f.disposition == Disposition.UNCERTAIN]

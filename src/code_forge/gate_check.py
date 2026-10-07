@@ -908,7 +908,8 @@ def translate_exit_code(test_returncode: int) -> int:
     Mapping:
         0 -> 0 (allow)
         1 -> 1 (BLOCK - real test failure)
-        2, 3 -> 0 (allow - pytest interrupt/internal error)
+        2 -> 0 (interrupt candidate; caller verifies the interrupt banner)
+        3 -> 1 (BLOCK - pytest internal error)
         4 -> 1 (BLOCK - usage error, misconfigured command)
         5 -> 1 (BLOCK - no tests collected, toothless gate)
         negative -> 1 (BLOCK - killed by signal)
@@ -924,10 +925,10 @@ def translate_exit_code(test_returncode: int) -> int:
         return 0  # Pass
     if test_returncode == 1:
         return 1  # Real failure
-    if test_returncode in (2, 3):
-        return 0  # Interrupt/internal error, warn but allow
-    if test_returncode in (4, 5):
-        return 1  # Usage error / no tests collected
+    if test_returncode == 2:
+        return 0  # Caller verifies this was an interrupt, not a collection error
+    if test_returncode in (3, 4, 5):
+        return 1  # Internal error / usage error / no tests collected
     # timeout or unknown (>5)
     return 1  # Block
 
@@ -1114,7 +1115,7 @@ def run_gate_check(
     if test_result.stderr and test_result.stderr.strip():
         print(test_result.stderr.rstrip(), file=stderr)
 
-    # Special handling for exit 2-3 (warn but allow)
+    # Only an identified interrupt may use the legacy exit-2 allowance.
     if test_returncode == 2:
         # pytest reuses exit code 2 for a failed collection, where no
         # test ever ran. Waving that through would pass the gate on a
@@ -1130,7 +1131,7 @@ def run_gate_check(
             return EXIT_FAIL
         warn("forge: warning: tests exited with code 2 (keyboard interrupt); allowing commit")
     elif test_returncode == 3:
-        warn("forge: warning: tests exited with code 3 (internal error); allowing commit")
+        print("forge: error: tests exited with code 3 (internal error); blocking commit", file=stderr)
 
     # Baseline delta applies ONLY to real test failures (exit 1).
     # Exit 4 (usage error), exit 5 (no tests collected), and timeout BLOCK

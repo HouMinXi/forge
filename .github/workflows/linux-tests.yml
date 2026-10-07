@@ -1,0 +1,143 @@
+name: Linux tests
+
+'on':
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, 'fix/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A branch push and its PR share a group; unrelated forks do not.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  linux-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      SEMGREP_SEND_METRICS: 'off'
+      SEMGREP_ENABLE_VERSION_CHECK: '0'
+      OTEL_SDK_DISABLED: 'true'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up qualified Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12.14'
+
+      - name: Verify Linux process ownership prerequisites
+        id: preflight
+        timeout-minutes: 2
+        run: |
+          # The stdout-pressure regression needs disk-backed temporary storage.
+          export TMPDIR="$RUNNER_TEMP/forge-tests"
+          export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+          printf 'TMPDIR=%s\nEVIDENCE=%s\n' "$TMPDIR" "$EVIDENCE" >> "$GITHUB_ENV"
+          mkdir -p "$TMPDIR" "$EVIDENCE"
+          python - <<'PY' 2>&1 | tee "$EVIDENCE/preflight.log"
+          import os
+          from pathlib import Path
+          import resource
+          import select
+          import subprocess
+          import sys
+
+          assert sys.platform == 'linux', sys.platform
+          assert sys.implementation.name == 'cpython'
+          assert sys.version_info[:3] == (3, 12, 14), sys.version
+          assert hasattr(os, 'pidfd_open'), 'Linux pidfd_open is required'
+          assert resource.getrlimit(resource.RLIMIT_NOFILE)[1] > 1024, 'High-FD tests must run'
+          # Do not treat absent or unreadable task-children as an empty tree.
+          children_path = Path(f'/proc/{os.getpid()}/task/{os.getpid()}/children')
+          children_path.read_bytes()
+          child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+          try:
+              children = {int(pid) for pid in children_path.read_bytes().split()}
+              assert child.pid in children, f'Live child {child.pid} absent from {children_path}'
+              fd = os.pidfd_open(child.pid)
+              try:
+                  assert not select.select([fd], [], [], 0)[0], 'Live-child pidfd unexpectedly ready'
+              finally:
+                  os.close(fd)
+              print(f'PASS: readable {children_path}; live child {child.pid} visible; pidfd usable')
+              print(sys.version)
+          finally:
+              child.terminate()
+              child.wait(timeout=5)
+          PY
+          df -h "$TMPDIR" | tee "$EVIDENCE/disk.log"
+
+      - name: Install declared extras and qualified pytest
+        id: install
+        timeout-minutes: 10
+        run: |
+          python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.1.1' \
+            2>&1 | tee "$EVIDENCE/install.log"
+          # Some FIXVAL fixtures use /usr/bin/python3 and reset PYTHONPATH.
+          # Its normal user site works without modifying the system interpreter.
+          python -m pip install --target "$(/usr/bin/python3 -m site --user-site)" 'pytest==9.1.1' \
+            2>&1 | tee "$EVIDENCE/system-pytest-install.log"
+          for interpreter in python /usr/bin/python3; do
+            "$interpreter" -c 'import sys, pytest; assert sys.implementation.name == "cpython"; assert sys.version_info[:2] == (3, 12), sys.version; assert pytest.__version__ == "9.1.1"; print(sys.executable, sys.version, "pytest", pytest.__version__)'
+          done | tee "$EVIDENCE/interpreters.log"
+          python -m pip check 2>&1 | tee "$EVIDENCE/pip-check.log"
+          python -m pip freeze | tee "$EVIDENCE/requirements.freeze.txt"
+
+      - name: Run real ownership and cancellation regressions
+        timeout-minutes: 20
+        run: |
+          python -m pytest -v -ra -p no:cacheprovider \
+            tests/test_mutation_process.py tests/test_mutation_process_capability.py \
+            tests/test_mutation_cancellation.py \
+            tests/test_mcp_simple_cancel.py tests/test_mcp_budgeted_cancel.py \
+            --junitxml="$EVIDENCE/ownership.xml" 2>&1 | tee "$EVIDENCE/ownership.log"
+          python - <<'PY' 2>&1 | tee "$EVIDENCE/ownership-coverage.log"
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          cases = ET.parse(Path(os.environ['EVIDENCE']) / 'ownership.xml').findall('.//testcase')
+          assert cases, 'Ownership phase collected no tests'
+          skipped = [case.attrib for case in cases if case.find('skipped') is not None]
+          assert not skipped, f'Ownership/cancellation regressions must execute: {skipped}'
+          print(f'PASS: all {len(cases)} ownership/cancellation cases executed without skips')
+          PY
+
+      - name: Run full service-free test selection
+        if: ${{ !cancelled() && steps.preflight.outcome == 'success' && steps.install.outcome == 'success' }}
+        timeout-minutes: 40
+        run: |
+          python -m pytest -q -ra -m 'not real_api and not integration' -p no:cacheprovider \
+            --junitxml="$EVIDENCE/pytest.xml" 2>&1 | tee "$EVIDENCE/pytest.log"
+
+      - name: Run local process integration tests
+        if: ${{ !cancelled() && steps.preflight.outcome == 'success' && steps.install.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          # These integration-marked tests use local subprocesses, not services.
+          python -m pytest -v -ra -m integration -p no:cacheprovider \
+            tests/test_lock_signals.py tests/test_mutation_detach_integration.py \
+            --junitxml="$EVIDENCE/local-integration.xml" 2>&1 | tee "$EVIDENCE/local-integration.log"
+
+      - name: Preserve logs and JUnit reports
+        if: ${{ always() }}
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-test-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/forge-evidence/
+          if-no-files-found: warn
+          retention-days: 14

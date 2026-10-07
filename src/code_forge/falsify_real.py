@@ -211,6 +211,18 @@ class RealFalsifier(Falsifier):
                 "falsifier verdict %r not in Disposition for %s" % (verdict_str, finding.fingerprint),
                 raw=response,
             ) from err
+        if disposition not in (
+            Disposition.CONFIRMED,
+            Disposition.DISMISSED,
+            Disposition.UNCERTAIN,
+        ):
+            # The state machine's vocabulary also includes policy-owned
+            # states such as STYLE. A model cannot grant itself a downgrade.
+            raise FalsifyProtocolError(
+                "falsifier verdict %r is not an allowed verification verdict for %s"
+                % (verdict_str, finding.fingerprint),
+                raw=response,
+            )
 
         # A verdict that turns on library behaviour needs an execution
         # receipt. Without one the model is reasoning about behaviour it

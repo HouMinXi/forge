@@ -1132,7 +1132,7 @@ def test_factory_binds_actual_mutation_baseline_cwd(tmp_path, monkeypatch):
         baseline_calls.append((argv, kwargs.get("cwd")))
         return subprocess.CompletedProcess(argv, 1, "controlled baseline failure", "")
 
-    monkeypatch.setattr(mutation.subprocess, "run", baseline)
+    monkeypatch.setattr(mutation, "run_owned_command", baseline)
     machine = _machine(
         state,
         diff,

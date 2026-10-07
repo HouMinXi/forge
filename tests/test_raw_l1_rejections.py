@@ -398,31 +398,56 @@ def _publish(
         )
     else:
         provider = build_l1_provider("auto", resolved, **kwargs)
-    machine = StateMachine(
-        mode=mode,
-        falsifier=StubFalsifier(),
-        autofixer=StubAutoFixer(),
-        revert_fn=lambda finding: None,
-        resolved_review=resolved,
-        source_hash=compute_source_hash(git_diff=combined_diff),
-        baseline_spec_repr="offline raw",
-        cwd=tmp_path,
-        registry={},
-        l0_runner=lambda *args: ([], []),
-        l1_provider=provider,
-        l2_runner=lambda *args, **kw: ([], []),
-        e2e_runner=lambda *args, **kw: ([], []),
-        advisory_runners=[],
-        max_total_rounds=4 if first_only else 3 if recovered or persistent else 1,
-        clean_round_threshold=3,
-    )
-    machine._state.env_manifest = {"tier": "declared", "offline_fixture": True}
+
+    def make_machine():
+        machine = StateMachine(
+            mode=mode,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda finding: None,
+            resolved_review=resolved,
+            source_hash=compute_source_hash(git_diff=combined_diff),
+            baseline_spec_repr="offline raw",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=lambda *args: ([], []),
+            l1_provider=provider,
+            l2_runner=lambda *args, **kw: ([], []),
+            e2e_runner=lambda *args, **kw: ([], []),
+            advisory_runners=[],
+            max_total_rounds=4 if first_only else 3 if recovered or persistent else 1,
+            clean_round_threshold=3,
+        )
+        machine._state.env_manifest = {"tier": "declared", "offline_fixture": True}
+        return machine
+
+    machine = make_machine()
     if terminal:
         machine._state.rounds_with_failed_pass = 2
     active[0] = True
     try:
         try:
             outcome = machine.run()
+            if mode is Mode.LOCAL and (first_only and not legacy or persistent):
+                assert outcome is Verdict.FAIL
+                assert machine._state.consecutive_clean_rounds == 0
+                assert machine._state.earned_clean_window["cycles"] == []
+                assert len(machine._state.round_history) == 1
+                # A failed acquisition ends this invocation. A new machine
+                # may resume, but may neither replace its raw audit bytes nor
+                # count that failed attempt as a clean cycle.
+                directory = tmp_path / ".code-forge/receipts"
+                failed_bytes = {path: path.read_bytes() for path in directory.rglob("*.json")}
+                for attempt in range(1, 3 if persistent else 2):
+                    machine = make_machine()
+                    try:
+                        outcome = machine.run()
+                    finally:
+                        assert all(path.read_bytes() == raw for path, raw in failed_bytes.items())
+                    if persistent:
+                        assert outcome is Verdict.FAIL
+                        assert machine._state.earned_clean_window["cycles"] == []
+                        assert machine._state.rounds_with_failed_pass == attempt + 1
         except TimeoutBreaker as exc:
             outcome = exc
     finally:
@@ -443,11 +468,13 @@ def _publish(
     assert not (tmp_path / "NEVER_EXECUTED").exists()
     assert counts["forbidden"] == 0
     if not recovered and not first_only:
-        assert (
-            isinstance(outcome, TimeoutBreaker)
-            if terminal or persistent
-            else outcome == (Verdict.FAIL if legacy or mode == Mode.CI else Verdict.ESCALATED)
-        )
+        # API acquisition failures stop the host attempt. A direct model
+        # schema error is still a product/reset finding and may exhaust the
+        # LOCAL round budget; neither path can earn clean review credit.
+        expected = Verdict.FAIL if api or legacy or mode is Mode.CI else Verdict.ESCALATED
+        assert isinstance(outcome, TimeoutBreaker) if terminal or persistent else outcome == expected
+        if mode is Mode.LOCAL:
+            assert machine._state.earned_clean_window["cycles"] == []
         failed = next(item for item in receipts if item["pass"] == NAMES.index(failed_pass) + 1)
         assert failed["pass_status"] != "completed"
     return attempts, provider, machine, counts, prompts, outcome
@@ -755,8 +782,10 @@ def test_first_failed_then_healthy_recovery(tmp_path, monkeypatch, external_guar
     attempts, provider, machine, counts, _, outcome = _publish(
         tmp_path, monkeypatch, external_guard, raw, api=True, first_only=True, grouped=grouped
     )
-    assert outcome == Verdict.PASS, "raw observation must preserve four-round recovery"
-    assert machine._written_cycles == [1, 2, 3, 4]
+    assert outcome == Verdict.PASS, "a new host invocation must recover without losing raw evidence"
+    assert machine._written_cycles == [2, 3, 4]
+    assert [entry["cycle"] for entry in machine._state.earned_clean_window["cycles"]] == [2, 3, 4]
+    assert machine._state.round_history[0]["clean_credit_action"] == "interrupted"
     assert counts["qodo"] == counts["expert"] == counts["adversarial"] == (8 if grouped else 4)
     assert len(attempts) == 1 and attempts[0]["cycle"] == 1
     assert attempts[0]["payload"] == {"raw_response": raw, "pass_name": "qodo"}
