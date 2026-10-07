@@ -80,6 +80,43 @@ jobs:
           PY
           df -h "$TMPDIR" | tee "$EVIDENCE/disk.log"
 
+      - name: Install and verify Linux sandbox prerequisites
+        id: sandbox
+        # New apt/probe phase: provisional until its first successful CI timing.
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update -o APT::Update::Error-Mode=any \
+            2>&1 | tee "$EVIDENCE/apt-update.log"
+          sudo apt-get install --no-install-recommends -y bubblewrap \
+            2>&1 | tee "$EVIDENCE/apt-install.log"
+          dpkg-query -W -f='${Package} ${Version}\n' bubblewrap | tee "$EVIDENCE/bubblewrap-package.log"
+          bwrap --version | tee "$EVIDENCE/bubblewrap-version.log"
+          # Use the same delegated root and prerequisite check as the corpus tests.
+          PYTHONPATH=src python - <<'PY' 2>&1 | tee "$EVIDENCE/sandbox-preflight.log"
+          import os
+          import subprocess
+          from code_forge.mutation_engines.isolate import verify_isolation_support
+
+          uid = os.getuid()
+          cgroup_root = f'/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service'
+          verify_isolation_support(cgroup_root)
+          # Exercise the production namespace flags as the unprivileged test user.
+          # Do not add AppArmor/sysctl overrides or degraded sandbox fallbacks.
+          command = [
+              'bwrap', '--die-with-parent', '--new-session', '--unshare-user',
+              '--unshare-pid', '--unshare-net', '--unshare-uts', '--unshare-ipc',
+              '--clearenv',
+          ]
+          for path in ('/usr', '/lib', '/lib64', '/bin', '/sbin', '/etc'):
+              command.extend(('--ro-bind', path, path))
+          command.extend((
+              '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp',
+              '--tmpfs', '/workspace', '--chdir', '/workspace', '--', '/usr/bin/true',
+          ))
+          subprocess.run(command, check=True, timeout=10)
+          print(f'PASS: bubblewrap namespace launch and delegated cgroup prerequisites: {cgroup_root}')
+          PY
+
       - name: Install declared extras and qualified pytest
         id: install
         timeout-minutes: 10
@@ -117,14 +154,14 @@ jobs:
           PY
 
       - name: Run full service-free test selection
-        if: ${{ !cancelled() && steps.preflight.outcome == 'success' && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.preflight.outcome == 'success' && steps.sandbox.outcome == 'success' && steps.install.outcome == 'success' }}
         timeout-minutes: 40
         run: |
           python -m pytest -q -ra -m 'not real_api and not integration' -p no:cacheprovider \
             --junitxml="$EVIDENCE/pytest.xml" 2>&1 | tee "$EVIDENCE/pytest.log"
 
       - name: Run local process integration tests
-        if: ${{ !cancelled() && steps.preflight.outcome == 'success' && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.preflight.outcome == 'success' && steps.sandbox.outcome == 'success' && steps.install.outcome == 'success' }}
         timeout-minutes: 5
         run: |
           # These integration-marked tests use local subprocesses, not services.
