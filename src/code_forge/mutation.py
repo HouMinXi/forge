@@ -716,7 +716,7 @@ def _process_error(message: str) -> StateFinding:
     return StateFinding(
         id="MUTATION_ERROR",
         fingerprint="mutation-evidence-error",
-        source="MUTANT",
+        source="INFRA",
         disposition=Disposition.CONFIRMED,
         file="",
         line_range=[],
@@ -815,7 +815,7 @@ def _mutation_command_error(phase: str, result: subprocess.CompletedProcess) -> 
     return StateFinding(
         id="MUTATION_ERROR",
         fingerprint=f"mutation-{phase}-error",
-        source="MUTANT",
+        source="INFRA",
         disposition=Disposition.CONFIRMED,
         file="",
         line_range=[],

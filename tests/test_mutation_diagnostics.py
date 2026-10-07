@@ -8,9 +8,12 @@ from unittest.mock import patch
 
 import pytest
 
+from code_forge import mutation
+from code_forge.basis import derive_basis
 from code_forge.disposition import Disposition
 from code_forge.mutation import launch_detached_mutation, run_mutation
-from code_forge.state import StateFinding
+from code_forge.sarif import build_sarif_log, format_summary
+from code_forge.state import State, StateFinding, Verdict, load_state, save_state
 from tests.mutation_result_fixture import write_inventory
 
 
@@ -25,7 +28,10 @@ from tests.mutation_result_fixture import write_inventory
     ],
 )
 def test_process_failure_keeps_both_stream_tails(tmp_path, phase, stdout, stderr):
+    commands = []
+
     def command(args, **kwargs):
+        commands.append(args)
         # The mutmut subcommand is a token of the argv, not the last
         # element: run_mutation appends "--max-children <n>" after "run".
         failed = phase in args
@@ -43,11 +49,19 @@ def test_process_failure_keeps_both_stream_tails(tmp_path, phase, stdout, stderr
         patch("code_forge.mutation._resolve_mutmut_invocation", return_value=["mutmut"]),
         patch("code_forge.mutation.run_owned_command", side_effect=command),
     ):
-        findings, errors = run_mutation(["source.py"], ["pytest"], cwd=tmp_path)
+        evidence = {}
+        findings, errors = run_mutation(
+            ["source.py"], ["pytest"], cwd=tmp_path, _evidence=evidence
+        )
     assert len(findings) == 1
     assert findings[0].id == "MUTATION_ERROR"
     assert findings[0].disposition == Disposition.CONFIRMED
-    assert errors
+    assert findings[0].fingerprint == f"mutation-{phase}-error"
+    assert any(phase in args for args in commands)
+    assert evidence["baseline_passed"] is False
+    assert evidence["completed_measurement"] is False
+    assert errors == [findings[0].description]
+    _assert_unavailable_evidence(findings[0])
     for message in [findings[0].description, *errors]:
         assert phase in message and "7" in message
         assert len(message) < 2500
@@ -57,6 +71,137 @@ def test_process_failure_keeps_both_stream_tails(tmp_path, phase, stdout, stderr
             assert "stderr" in message and stderr[-30:] in message
         if not stdout and not stderr:
             assert "no output" in message
+
+
+def _assert_unavailable_evidence(finding):
+    assert finding.source == "INFRA"
+    basis = derive_basis(finding)
+    assert basis.authority == "infra-unavailable"
+    assert basis.falsification_survived is False
+
+
+def _foreign_container(root):
+    (root / "source.py").write_text("def value():\n    return 1\n")
+    container = root / ".code-forge" / "mutation-empty-mirror"
+    container.mkdir(parents=True)
+    return container
+
+
+def test_owned_preflight_refusal_has_no_executed_authority(tmp_path):
+    container = _foreign_container(tmp_path)
+    original = container.stat()
+    evidence = {}
+    with (
+        patch("code_forge.mutation._run_baseline_guard") as baseline,
+        patch("code_forge.mutation.run_owned_command") as command,
+    ):
+        findings, infra = run_mutation(
+            ["source.py"], ["pytest"], cwd=tmp_path, _evidence=evidence
+        )
+    baseline.assert_not_called()
+    command.assert_not_called()
+    assert len(findings) == 1
+    finding = findings[0]
+    message = "foreign mutation container has no completed ownership record"
+    assert finding.id == "MUTATION_ERROR"
+    assert finding.fingerprint == "mutation-evidence-error"
+    assert finding.disposition == Disposition.CONFIRMED
+    assert finding.description == message
+    assert finding.file == "" and finding.line_range == []
+    assert infra == [message]
+    assert evidence["baseline_passed"] is False
+    assert evidence["completed_measurement"] is False
+    assert evidence["infra_errors"] == infra
+    outcome = mutation._mutation_outcome(findings, infra, evidence)
+    assert outcome["status"] == "error"
+    assert outcome["survivors"] == []
+    assert outcome["baseline_passed"] is False
+    assert outcome["infra_errors"] == infra
+    assert outcome["message"] == "\n".join([message, message])
+    current = container.stat()
+    assert (current.st_dev, current.st_ino) == (original.st_dev, original.st_ino)
+    assert list(container.iterdir()) == []
+    assert not (tmp_path / "setup.cfg").exists()
+    assert (tmp_path / "source.py").read_text() == "def value():\n    return 1\n"
+
+    state_path = tmp_path / "state.json"
+    save_state(State(findings=findings, infra_errors=infra, verdict=Verdict.FAIL), state_path)
+    state = load_state(state_path)
+    assert state is not None
+    assert state.findings == findings and state.infra_errors == infra
+    result = build_sarif_log(state, {}, "test")["runs"][0]["results"][0]
+    assert result["ruleId"] == finding.fingerprint
+    assert result["message"]["text"] == message
+    assert result["level"] == "error" and "suppressions" not in result
+    assert result["properties"]["source"] == "INFRA"
+    assert result["properties"]["basis"]["authority"] == "infra-unavailable"
+    assert result["properties"]["basis"]["falsification_survived"] is False
+    assert "infra=1" in format_summary(state)
+    _assert_unavailable_evidence(finding)
+
+
+def test_detached_owned_preflight_preserves_error_contract(tmp_path, run_detached_payload):
+    _foreign_container(tmp_path)
+    captured = []
+
+    def spawn(args, **kwargs):
+        captured.append(args[2])
+        return type("Child", (), {"pid": 1234, "wait": lambda self, timeout=None: 0})()
+
+    result_path = tmp_path / "result.json"
+    with patch("code_forge.mutation.subprocess.Popen", side_effect=spawn):
+        assert launch_detached_mutation(["source.py"], ["pytest"], tmp_path, result_path)
+    with (
+        patch("code_forge.mutation._run_baseline_guard") as baseline,
+        patch("code_forge.mutation.run_owned_command") as command,
+    ):
+        run_detached_payload(captured[0])
+    baseline.assert_not_called()
+    command.assert_not_called()
+    data = json.loads(result_path.read_text())
+    message = "foreign mutation container has no completed ownership record"
+    assert data["status"] == "error"
+    assert data["baseline_passed"] is False
+    assert data["survivors"] == []
+    assert data["inventory"] == {} and data["skipped"] == []
+    assert data["infra_errors"] == [message]
+    assert data["message"] == "\n".join([message, message])
+
+
+def test_parsed_survivor_retains_executed_authority(tmp_path):
+    (tmp_path / "source.py").write_text("def value():\n    return 1\n")
+    commands = []
+
+    def command(args, **kwargs):
+        commands.append(args)
+        stdout = ""
+        if "run" in args:
+            write_inventory(tmp_path, "source.py", {"x_example__mutmut_1": "survived"})
+        elif "results" in args:
+            stdout = "source.x_example__mutmut_1: survived"
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    evidence = {}
+    with (
+        patch("code_forge.mutation._resolve_mutmut_invocation", return_value=["mutmut"]),
+        patch("code_forge.mutation.run_owned_command", side_effect=command),
+    ):
+        findings, infra = run_mutation(
+            ["source.py"], ["pytest"], cwd=tmp_path, _evidence=evidence
+        )
+    assert infra == [] and len(findings) == 1
+    finding = findings[0]
+    assert finding.id == "mutant-source.x_example__mutmut_1"
+    assert finding.fingerprint == "mutant:source.x_example__mutmut_1"
+    assert finding.source == "MUTANT" and finding.disposition == Disposition.CONFIRMED
+    basis = derive_basis(finding)
+    assert basis.authority == "deterministic-executed"
+    assert basis.falsification_survived is True
+    assert evidence["baseline_passed"] is True
+    assert evidence["completed_measurement"] is True
+    assert any("results" in args for args in commands)
+    outcome = mutation._mutation_outcome(findings, infra, evidence)
+    assert outcome["status"] == "done" and outcome["survivors"] == [finding.id]
 
 
 @pytest.mark.parametrize("outcome", ["error", "exception", "survivor", "clean"])
