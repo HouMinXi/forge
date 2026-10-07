@@ -114,6 +114,7 @@ jobs:
             2>&1 | tee "$EVIDENCE/apt-install.log"
           dpkg-query -W -f='${Package} ${Version}\n' bubblewrap | tee "$EVIDENCE/bubblewrap-package.log"
           bwrap --version | tee "$EVIDENCE/bubblewrap-version.log"
+          date --utc '+%Y-%m-%d %H:%M:%S.%6N UTC' > "$EVIDENCE/sandbox-probe-start.txt"
           # Use the same delegated root and prerequisite check as the corpus tests.
           PYTHONPATH=src python - <<'PY' 2>&1 | tee "$EVIDENCE/sandbox-preflight.log"
           import os
@@ -136,9 +137,58 @@ jobs:
               '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp',
               '--tmpfs', '/workspace', '--chdir', '/workspace', '--', '/usr/bin/true',
           ))
-          subprocess.run(command, check=True, timeout=10)
+          with subprocess.Popen(command) as probe:
+              print(f'Sandbox probe bwrap pid={probe.pid}', flush=True)
+              try:
+                  probe.wait(timeout=10)
+              except subprocess.TimeoutExpired:
+                  probe.kill()
+                  probe.wait()
+                  raise
+              if probe.returncode:
+                  raise subprocess.CalledProcessError(probe.returncode, command)
           print(f'PASS: bubblewrap namespace launch and delegated cgroup prerequisites: {cgroup_root}')
           PY
+
+      - name: Collect read-only sandbox failure diagnostics
+        if: ${{ failure() && steps.sandbox.outcome == 'failure' }}
+        timeout-minutes: 1
+        run: |
+          # Evidence only: no successful diagnostic can repair the failed gate.
+          read_check() {
+            printf '\nCOMMAND:'
+            printf ' %q' "$@"
+            printf '\n'
+            if "$@"; then
+              printf 'DIAGNOSTIC STATUS: 0\n'
+            else
+              printf 'DIAGNOSTIC STATUS: %s (unavailable or failed)\n' "$?"
+            fi
+          }
+          {
+            read_check timeout 3s uname -r
+            read_check timeout 3s id
+            read_check timeout 3s dpkg-query -W -f='${Package} ${Version}\n' apparmor bubblewrap
+            read_check timeout 3s apparmor_parser --version
+            read_check timeout 3s stat -c '%A %a %U:%G %n' /usr/bin/bwrap
+            read_check timeout 3s getcap /usr/bin/bwrap
+            read_check timeout 3s cat /proc/self/attr/current
+            read_check timeout 3s cat /sys/module/apparmor/parameters/enabled
+            read_check timeout 3s cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+            read_check timeout 3s grep -E '^Cap(Inh|Prm|Eff|Bnd|Amb):|^NoNewPrivs:|^Seccomp:' /proc/self/status
+            read_check sudo -n timeout 3s grep -E 'bwrap|unprivileged_userns' /sys/kernel/security/apparmor/profiles
+            read_check timeout 3s sha256sum /etc/apparmor/parser.conf /etc/apparmor.d/abi/4.0 /etc/apparmor.d/tunables/global
+            if [[ -r "$EVIDENCE/sandbox-probe-start.txt" ]]; then
+              start="$(cat "$EVIDENCE/sandbox-probe-start.txt")"
+              end="$(date --utc '+%Y-%m-%d %H:%M:%S.%6N UTC')"
+              printf '\nAudit window: %s through %s; at most 100 matching entries\n' "$start" "$end"
+              read_check sudo -n timeout 10s journalctl -k --since "$start" --until "$end" \
+                --no-pager --output=short-iso-precise --lines=100 \
+                --grep='apparmor="DENIED".*(bwrap|unprivileged_userns|userns_create)'
+            else
+              printf 'Audit unavailable: no recorded sandbox probe start time\n'
+            fi
+          } 2>&1 | tee "$EVIDENCE/sandbox-security-diagnostics.log"
 
       - name: Install declared extras and qualified pytest
         id: install
