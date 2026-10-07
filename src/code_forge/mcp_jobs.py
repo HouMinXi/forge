@@ -91,6 +91,7 @@ def start_job(
     focus_tempfile_path: str | None = None,
     stderr_log_path: str | None = None,
     max_lifetime_s: float | None = None,
+    deadline: float | None = None,
 ) -> str:
     """Register a background job. Returns job_id (UUID4).
 
@@ -99,6 +100,7 @@ def start_job(
 
     max_lifetime_s: wall-clock cap for the entire job (LLM timeout +
     retry overhead + subprocess grace).  None = unbounded (legacy).
+    deadline: Absolute monotonic deadline, overriding the relative cap.
     """
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {
@@ -112,6 +114,7 @@ def start_job(
         "focus_tempfile_path": focus_tempfile_path,
         "stderr_log_path": stderr_log_path,
         "max_lifetime_s": max_lifetime_s,
+        "deadline": deadline,
     }
     _jobs[job_id]["wait_task"] = asyncio.create_task(_wait_for_job(job_id))
     return job_id
@@ -255,6 +258,9 @@ async def _wait_for_job(job_id: str) -> None:
     cap = entry.get("max_lifetime_s")
     elapsed = 0.0
     try:
+        deadline = entry.get("deadline")
+        if deadline is not None:
+            cap = max(0.0, deadline - time.monotonic())
         if cap is not None:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 entry["comm_task"],
@@ -317,10 +323,13 @@ async def _wait_for_job(job_id: str) -> None:
             return
         await _terminate_and_reap(proc)
         # D-state children survive SIGKILL; proc.returncode stays None.
+        timeout_reason = (
+            "job exceeded CLI deadline" if deadline is not None else "job exceeded %ds cap" % int(cap)
+        )
         entry["status"] = "failed"
         entry["result"] = {
             "stdout": "",
-            "stderr": ("job exceeded %ds cap\n%s" % (int(cap), stderr_tail)),
+            "stderr": f"{timeout_reason}\n{stderr_tail}",
             "exit_code": proc.returncode if proc.returncode is not None else -1,
             "verdict": "TIMEOUT",
             "duration_s": elapsed,

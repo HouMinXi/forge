@@ -24,20 +24,33 @@ import signal
 import sys
 import tempfile
 import time
+from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Annotated, Any, AsyncIterator
 
 import anyio
 from anyio import BrokenResourceError, ClosedResourceError, EndOfStream
+from anyio.abc import ObjectReceiveStream, ObjectSendStream
 from mcp.shared.exceptions import McpError
-from pydantic import ValidationError
+from mcp.shared.message import SessionMessage
+from pydantic import Field, TypeAdapter, ValidationError
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp import server as _fastmcp_server
 from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from mcp.server.stdio import stdio_server
+from mcp.types import (
+    INVALID_PARAMS,
+    CallToolResult,
+    ErrorData,
+    JSONRPCError,
+    JSONRPCMessage,
+    JSONRPCRequest,
+    TextContent,
+    ToolAnnotations,
+)
 
 from code_forge.llm_invoke import effective_invoke_timeout_s
 from code_forge.mcp_jobs import (
@@ -53,6 +66,82 @@ from code_forge.mcp_jobs import (
 )
 
 log = logging.getLogger(__name__)
+
+_TimeoutSeconds = Annotated[
+    float,
+    Field(
+        strict=True,
+        gt=0,
+        allow_inf_nan=False,
+        description="Total CLI runtime limit in seconds, including background execution; null uses server defaults.",
+    ),
+]
+_timeout_adapter = TypeAdapter(_TimeoutSeconds | None)
+
+
+def _validate_timeout(timeout_s: float | None) -> float | None:
+    """Validate direct calls with the same constraints as the MCP schema."""
+    try:
+        return _timeout_adapter.validate_python(timeout_s)
+    except ValidationError as exc:
+        raise ToolError("timeout_s must be a finite positive number or null") from exc
+
+
+class _TimeoutReceiveStream(ObjectReceiveStream[SessionMessage | Exception]):
+    """Validate timeouts before the SDK's JSON dump can erase nonfinite values."""
+
+    def __init__(
+        self,
+        incoming: ObjectReceiveStream[SessionMessage | Exception],
+        outgoing: ObjectSendStream[SessionMessage],
+    ) -> None:
+        self._incoming = incoming
+        self._outgoing = outgoing
+
+    @property
+    def extra_attributes(self) -> Mapping[object, Callable[[], Any]]:
+        return self._incoming.extra_attributes
+
+    async def receive(self) -> SessionMessage | Exception:
+        while True:
+            message = await self._incoming.receive()
+            if isinstance(message, Exception):
+                return message
+            request = message.message.root
+            if (
+                not isinstance(request, JSONRPCRequest)
+                or request.method != "tools/call"
+                or not isinstance(request.params, dict)
+                or request.params.get("name") not in ("forge_review", "forge_gate_check")
+                or not isinstance(request.params.get("arguments"), dict)
+            ):
+                return message
+            try:
+                _validate_timeout(request.params["arguments"].get("timeout_s"))
+            except ToolError as exc:
+                error = JSONRPCError(
+                    jsonrpc="2.0", id=request.id,
+                    error=ErrorData(code=INVALID_PARAMS, message=str(exc)),
+                )
+                await self._outgoing.send(SessionMessage(message=JSONRPCMessage(error)))
+            else:
+                return message
+
+    async def aclose(self) -> None:
+        await self._incoming.aclose()
+
+
+class _ForgeFastMCP(FastMCP):
+    async def run_stdio_async(self) -> None:
+        # Keep the SDK transport, initialization and lifespan; only intercept
+        # parsed input before ServerSession's lossy JSON-mode serialization.
+        async with stdio_server() as (read_stream, write_stream):
+            await self._mcp_server.run(
+                _TimeoutReceiveStream(read_stream, write_stream),
+                write_stream,
+                self._mcp_server.create_initialization_options(),
+            )
+
 
 # -- signal-driven shutdown for the stdio server --
 # The CLI signal handler (llm_invoke._install_signal_handlers) raises
@@ -457,7 +546,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
 # before pydantic-settings inspects environment-backed fields.
 _fastmcp_server.Settings.model_rebuild(_types_namespace=vars(_fastmcp_server))
 
-mcp = FastMCP(
+mcp = _ForgeFastMCP(
     "code-forge-mcp",
     instructions=(
         "Forge code review tools. The server auto-detects the project "
@@ -478,9 +567,8 @@ mcp = FastMCP(
 #
 # TECHNICAL DEBT: uses private mcp._tool_manager.call_tool because SDK
 # FastMCP exposes no middleware/call-interceptor hook. Coerces all None
-# values (not just str-typed params) -- safe because Pydantic rejects ""
-# for bool/int exactly as it rejects None (ValidationError either way;
-# no observable behavior change). Mitigations: pin mcp<2 in
+# values except the nullable timeout_s on review/gate tools. Pydantic
+# rejects "" for bool/int exactly as it rejects None. Mitigations: pin mcp<2 in
 # pyproject.toml; test_null_coercion_* tests act as a tripwire if a
 # future mcp 1.x renames _tool_manager (import-time crash, suite RED).
 # Upstream FR for middleware support would let us drop this entirely.
@@ -530,8 +618,10 @@ def _refuse_if_source_moved() -> None:
 
 async def _null_coerce_call_tool(name, arguments, **kw):
     _refuse_if_source_moved()
+    if name in {"forge_review", "forge_gate_check"}:
+        _validate_timeout(arguments.get("timeout_s"))
     for k, v in list(arguments.items()):
-        if v is None:
+        if v is None and not (k == "timeout_s" and name in {"forge_review", "forge_gate_check"}):
             arguments[k] = ""
     return await _original_tc(name, arguments, **kw)
 
@@ -663,6 +753,7 @@ async def _run_cli_budgeted(
     workspace: Path,
     budget: float = 20.0,
     env: dict[str, str] | None = None,
+    deadline: float | None = None,
 ) -> tuple[str, int, float, str] | tuple[asyncio.Task[Any], asyncio.subprocess.Process, str]:
     """Run CLI with a time budget.
 
@@ -670,6 +761,7 @@ async def _run_cli_budgeted(
         *args: CLI arguments to pass to code-forge.
         workspace: Working directory for the subprocess.
         budget: Maximum wall-clock seconds before timeout.
+        deadline: Optional absolute monotonic deadline, including spawn time.
         env: Optional environment dict for the subprocess. When None,
             the child inherits the server process environment. When
             provided, it completely replaces the child's environment
@@ -717,6 +809,8 @@ async def _run_cli_budgeted(
     stderr_fh.close()  # parent fd closed; child owns the file
 
     start = time.monotonic()
+    if deadline is not None:
+        budget = min(budget, max(0.0, deadline - start))
     inner_task = asyncio.create_task(proc.communicate())
     try:
         stdout_bytes, _stderr_none = await asyncio.wait_for(asyncio.shield(inner_task), timeout=budget)
@@ -829,6 +923,7 @@ async def _dispatch_cli(
     contract: str | None = None,
     focus: str | None = None,
     env: dict[str, str] | None = None,
+    timeout_s: float | None = None,
 ) -> CallToolResult:
     """Shared CLI-subprocess dispatch with contract+focus tmpfile lifecycle.
 
@@ -840,6 +935,7 @@ async def _dispatch_cli(
       - job result: transfer tmpfile ownership to start_job;
         if start_job raises, unlink all three (contract + focus + stderr)
     """
+    deadline = time.monotonic() + timeout_s if timeout_s is not None else None
     contract_tmp: str | None = None
     focus_tmp: str | None = None
     try:
@@ -861,7 +957,12 @@ async def _dispatch_cli(
         raise
 
     try:
-        result = await _run_cli_budgeted(*cli_args, workspace=workspace, env=env)
+        if deadline is None:
+            result = await _run_cli_budgeted(*cli_args, workspace=workspace, env=env)
+        else:
+            result = await _run_cli_budgeted(
+                *cli_args, workspace=workspace, env=env, deadline=deadline
+            )
     except BaseException:
         _unlink(contract_tmp)
         _unlink(focus_tmp)
@@ -882,7 +983,8 @@ async def _dispatch_cli(
             tempfile_path=contract_tmp,
             focus_tempfile_path=focus_tmp,
             stderr_log_path=stderr_path,
-            max_lifetime_s=cap,
+            max_lifetime_s=cap if deadline is None else max(0.0, deadline - time.monotonic()),
+            **({"deadline": deadline} if deadline is not None else {}),
         )
     except Exception:
         _unlink(contract_tmp)
@@ -1031,8 +1133,10 @@ async def forge_review(
     allow_main: bool = False,
     project_dir: str = "",
     ctx: Context = None,
+    timeout_s: _TimeoutSeconds | None = None,
 ) -> CallToolResult:
     """Run forge review pipeline."""
+    timeout_s = _validate_timeout(timeout_s)
     workspace = await _workspace_for(ctx, project_dir=project_dir)
     whole_files = _normalize_whole_file(whole_file, workspace=workspace)
     if whole_files and committed:
@@ -1070,7 +1174,7 @@ async def forge_review(
     # Build per-call env when allow_main is requested so we never
     # mutate the server process environment.
     child_env: dict[str, str] | None = {**os.environ, "FORGE_ALLOW_MAIN": "1"} if allow_main else None
-    cap = _job_cap_s(workspace, backend)
+    cap = _job_cap_s(workspace, backend) if timeout_s is None else timeout_s
     return await _dispatch_cli(
         cli_args,
         workspace,
@@ -1078,6 +1182,7 @@ async def forge_review(
         contract=contract or None,
         focus=focus or None,
         env=child_env,
+        **({"timeout_s": timeout_s} if timeout_s is not None else {}),
     )
 
 
@@ -1091,8 +1196,10 @@ async def forge_gate_check(
     backend: str = "",
     project_dir: str = "",
     ctx: Context = None,
+    timeout_s: _TimeoutSeconds | None = None,
 ) -> CallToolResult:
     """Run forge gate-check pipeline."""
+    timeout_s = _validate_timeout(timeout_s)
     workspace = await _workspace_for(ctx, project_dir=project_dir)
     from code_forge.outlet_resolver import load_outlet_from_gate
 
@@ -1114,8 +1221,10 @@ async def forge_gate_check(
     if backend:
         cli_args.extend(["--backend", backend])
 
-    cap = _job_cap_s(workspace, backend)
-    return await _dispatch_cli(cli_args, workspace, cap)
+    cap = _job_cap_s(workspace, backend) if timeout_s is None else timeout_s
+    return await _dispatch_cli(
+        cli_args, workspace, cap, **({"timeout_s": timeout_s} if timeout_s is not None else {})
+    )
 
 
 @mcp.tool(
@@ -1229,7 +1338,7 @@ async def forge_job_status(job_id: str) -> CallToolResult:
         r = entry["result"]
         output = r.get("stdout", "")
         stderr = r.get("stderr", "")
-        if r.get("exit_code", 0) != 0 and stderr.strip():
+        if (status == "failed" or r.get("exit_code", 0) != 0) and stderr.strip():
             output = output + "\n--- stderr ---\n" + stderr
         forge_result = ForgeResult(
             verdict=r.get("verdict", "UNKNOWN(-1)"),
