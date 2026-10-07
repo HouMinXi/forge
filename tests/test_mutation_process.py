@@ -1327,6 +1327,73 @@ def test_child_discovery_refuses_unstable_parent_and_tolerates_exit(monkeypatch,
     assert process._children(parent) == []
 
 
+@pytest.mark.parametrize("error_type", [FileNotFoundError, ProcessLookupError])
+def test_children_read_disappearance_retains_other_tasks(monkeypatch, error_type):
+    parent = process._Identity(999, 1, 100, "S")
+    monkeypatch.setattr(process, "_identity", lambda _: parent)
+    tasks = [Path("/proc/999/task/1000"), Path("/proc/999/task/1001")]
+    monkeypatch.setattr(Path, "iterdir", lambda _: iter(tasks))
+    reads = []
+
+    def read(path):
+        reads.append(path)
+        if path.parent == tasks[0]:
+            raise error_type(3, "task disappeared", str(path))
+        return b"222 111 222"
+
+    monkeypatch.setattr(Path, "read_bytes", read)
+    assert process._children(parent) == [111, 222]
+    assert reads == [task / "children" for task in tasks]
+
+
+@pytest.mark.parametrize("error_type", [FileNotFoundError, ProcessLookupError])
+@pytest.mark.parametrize("lazy", [False, True])
+def test_task_iteration_disappearance_discards_partial_children(monkeypatch, error_type, lazy):
+    parent = process._Identity(999, 1, 100, "S")
+    monkeypatch.setattr(process, "_identity", lambda _: parent)
+    monkeypatch.setattr(Path, "read_bytes", lambda _: b"111")
+
+    def vanished():
+        yield Path("/proc/999/task/1000")
+        raise error_type(3, "task disappeared")
+
+    def tasks(_):
+        if not lazy:
+            raise error_type(3, "task disappeared")
+        return vanished()
+
+    monkeypatch.setattr(Path, "iterdir", tasks)
+    assert process._children(parent) == []
+
+
+@pytest.mark.parametrize("site", ["read", "iteration"])
+@pytest.mark.parametrize("error", [PermissionError(13, "denied"), OSError(5, "I/O error")])
+def test_children_unexpected_filesystem_error_propagates(monkeypatch, site, error):
+    parent = process._Identity(999, 1, 100, "S")
+    monkeypatch.setattr(process, "_identity", lambda _: parent)
+    monkeypatch.setattr(Path, "iterdir", lambda _: iter([Path("/proc/999/task/1000")]))
+    monkeypatch.setattr(Path, "read_bytes", lambda _: b"111")
+
+    def fail(_):
+        raise error
+
+    monkeypatch.setattr(Path, "read_bytes" if site == "read" else "iterdir", fail)
+    with pytest.raises(type(error)) as caught:
+        process._children(parent)
+    assert caught.value is error
+
+
+@pytest.mark.parametrize("changed_at", ["before", "after"])
+def test_children_reused_parent_start_ticks_rejects_children(monkeypatch, changed_at):
+    parent = process._Identity(999, 1, 100, "S")
+    reused = process._Identity(999, 1, 101, "S")
+    identities = iter([reused] if changed_at == "before" else [parent, reused])
+    monkeypatch.setattr(process, "_identity", lambda _: next(identities))
+    monkeypatch.setattr(Path, "iterdir", lambda _: iter([Path("/proc/999/task/1000")]))
+    monkeypatch.setattr(Path, "read_bytes", lambda _: b"111")
+    assert process._children(parent) == []
+
+
 def test_owner_identity_is_required_before_launch(monkeypatch):
     monkeypatch.setattr(process, "_identity", lambda _: None)
     with pytest.raises(RuntimeError, match="cannot identify"):

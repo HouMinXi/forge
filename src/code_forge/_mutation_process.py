@@ -80,9 +80,9 @@ def _children(identity: _Identity) -> list[int]:
         for task in Path(f"/proc/{identity.pid}/task").iterdir():
             try:
                 children.update(int(pid) for pid in (task / "children").read_bytes().split())
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
                 continue
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return []
     after = _identity(identity.pid)
     if after is None or after.start_ticks != identity.start_ticks:
