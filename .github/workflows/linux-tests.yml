@@ -85,9 +85,32 @@ jobs:
         # New apt/probe phase: provisional until its first successful CI timing.
         timeout-minutes: 5
         run: |
-          sudo apt-get update -o APT::Update::Error-Mode=any \
+          # Avoid the runner's stalled Azure HTTP mirror without changing its sources.
+          apt_dir="$(mktemp -d /tmp/forge-apt.XXXXXXXX)"
+          chmod 755 "$apt_dir"
+          mkdir -p "$apt_dir/lists/partial" "$apt_dir/sourceparts"
+          cat > "$apt_dir/ubuntu.sources" <<'APT'
+          Types: deb
+          URIs: https://archive.ubuntu.com/ubuntu
+          Suites: noble noble-updates noble-security
+          Components: main
+          Architectures: amd64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          APT
+          cp "$apt_dir/ubuntu.sources" "$EVIDENCE/apt-sources.sources"
+          apt_options=(
+            -o "Dir::Etc::sourcelist=$apt_dir/ubuntu.sources"
+            -o "Dir::Etc::sourceparts=$apt_dir/sourceparts"
+            -o "Dir::State::lists=$apt_dir/lists"
+            -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache=
+            -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15
+            -o Acquire::Retries=2 -o Acquire::Languages=none
+          )
+          sudo apt-get "${apt_options[@]}" update -o APT::Update::Error-Mode=any \
             2>&1 | tee "$EVIDENCE/apt-update.log"
-          sudo apt-get install --no-install-recommends -y bubblewrap \
+          apt-cache "${apt_options[@]}" policy bubblewrap \
+            2>&1 | tee "$EVIDENCE/bubblewrap-policy.log"
+          sudo apt-get "${apt_options[@]}" install --no-install-recommends -y bubblewrap \
             2>&1 | tee "$EVIDENCE/apt-install.log"
           dpkg-query -W -f='${Package} ${Version}\n' bubblewrap | tee "$EVIDENCE/bubblewrap-package.log"
           bwrap --version | tee "$EVIDENCE/bubblewrap-version.log"
