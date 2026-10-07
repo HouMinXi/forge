@@ -56,7 +56,7 @@ from .ledger import (
 from .ledger import (
     append_row as ledger_append,
 )
-from .llm_invoke import FalsifyProtocolError, LLMInvokeError, Usage
+from .llm_invoke import FalsifyProtocolError, InvalidJSONResponseError, LLMInvokeError, Usage
 from .mutation import launch_detached_mutation
 from .mutation_findings import is_mutation_survivor
 from .parsers.base import Finding, ToolError
@@ -1338,9 +1338,9 @@ class StateMachine:
                     "falsify %d/%d: done %s (%.1fs)"
                     % (i, total, f.disposition, time.monotonic() - t_falsify)
                 )
-            except FalsifyProtocolError as exc:
+            except (FalsifyProtocolError, InvalidJSONResponseError) as exc:
                 # The backend answered, but not in the contract (non-dict,
-                # no verdict key, unknown verdict). Same infra routing as
+                # invalid JSON, no verdict key, unknown verdict). Same infra routing as
                 # an outage so the convergence guard sees it, but named
                 # separately: a dead backend and a model that stopped
                 # following the schema are different problems to fix.
@@ -1402,19 +1402,19 @@ class StateMachine:
         return (l1_findings, l1_excerpts)
 
     def _check_falsify_can_still_converge(self, infra_failures: list[str]) -> None:
-        """Stop a run whose falsifier backend keeps failing to answer.
+        """Stop a run whose falsifier keeps failing to adjudicate.
 
         Sibling of _check_l1_can_still_converge, for the other half of
-        the round. A falsify that cannot reach its backend leaves the
+        the round. A falsify without a usable verdict leaves the
         finding UNCERTAIN, and clause (d) of the fixpoint check treats
-        any UNCERTAIN as a reset -- so a backend that stays down resets
+        any UNCERTAIN as a reset -- so repeated infrastructure failures reset
         the clean-round counter every round until max_total_rounds, at
         30-180s per call. The 2026-08-27 measurement was three hours to
         learn nothing.
 
         HOLD does not rescue this either: _should_enter_hold requires
         zero unfixed CONFIRMED, so one real finding open alongside N
-        unreachable-backend UNCERTAINs never holds.
+        infrastructure-blocked UNCERTAINs never holds.
 
         Consecutive rounds, not cumulative, matching the L1 guard: a
         backend that fails once and recovers is a transient that the
@@ -1426,7 +1426,7 @@ class StateMachine:
             return
         self._state.rounds_with_falsify_infra += 1
         self._state.infra_errors.append(
-            "round %d: falsify could not reach the backend for %d "
+            "round %d: falsify could not adjudicate %d "
             "finding(s): %s" % (self._state.round, len(infra_failures), infra_failures)
         )
         if self._state.rounds_with_falsify_infra >= 3:
@@ -1438,12 +1438,12 @@ class StateMachine:
             self._state.converged = False
             self._persist_state()
             raise TimeoutBreaker(
-                "%d consecutive rounds where the falsifier could not "
-                "reach its backend (latest: %d finding(s) unadjudicated). "
-                "Each unanswered finding stays UNCERTAIN, which resets the "
+                "%d consecutive rounds where the falsifier could not adjudicate "
+                "findings (latest: %d finding(s) unadjudicated). "
+                "Each unadjudicated finding stays UNCERTAIN, which resets the "
                 "clean-round counter, so this review cannot converge no "
-                "matter how many rounds remain. Fix the backend or switch "
-                "to another one rather than waiting."
+                "matter how many rounds remain. Check the recorded falsify "
+                "errors and repair the response contract or backend before retrying."
                 % (self._state.rounds_with_falsify_infra, len(infra_failures))
             )
 

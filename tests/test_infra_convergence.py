@@ -124,7 +124,7 @@ class TestFalsifyInfraDoesNotSilentlyReset:
             sm._run_l1_phase()
 
         message = str(exc.value)
-        assert "could not reach its backend" in message
+        assert "could not adjudicate" in message
         assert "cannot converge" in message, (
             "the operator needs to be told the run is unconvergeable, not just that a call failed"
         )
