@@ -465,6 +465,7 @@ def test_git_history_native_failure_keeps_text_diagnostics(tmp_path, monkeypatch
 
     from code_forge.context_sources import GitHistorySource
 
+    monkeypatch.setenv("LC_ALL", "C")
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
     if malformed_config:
         _raw_git_history(tmp_path, monkeypatch, [b"valid subject"])
