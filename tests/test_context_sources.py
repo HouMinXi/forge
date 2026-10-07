@@ -348,6 +348,144 @@ def test_git_history_skips_git_when_no_file_gained_a_line(tmp_path):
     assert calls["n"] == 0
 
 
+def _raw_git_history(path, monkeypatch, subjects):
+    """Write real commits without passing their messages through text decoding."""
+    import subprocess
+
+    for key in (
+        "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR",
+        "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("LC_ALL", "C")
+
+    def git(*args, input=None):
+        return subprocess.run(
+            ["git", *args], cwd=path, input=input, capture_output=True,
+            check=True, timeout=10,
+        ).stdout
+
+    git("init", "-q")
+    parent = None
+    short_ids = []
+    for index, subject in enumerate(subjects):
+        (path / "a.py").write_text(f"value = {index}\n", encoding="utf-8")
+        git("add", "a.py")
+        tree = git("write-tree").strip()
+        body = b"tree " + tree + b"\n"
+        if parent is not None:
+            body += b"parent " + parent + b"\n"
+        body += (
+            b"author T <t@example.com> 1000000000 +0000\n"
+            b"committer T <t@example.com> 1000000000 +0000\n\n"
+            + subject + b"\n"
+        )
+        parent = git("hash-object", "-t", "commit", "-w", "--stdin", input=body).strip()
+        git("update-ref", "HEAD", parent.decode("ascii"))
+        short_ids.append(git("rev-parse", "--short", "HEAD").decode("ascii").strip())
+    return git, short_ids
+
+
+def test_git_history_preserves_malformed_subjects_and_other_commits(tmp_path, monkeypatch):
+    from code_forge.context_sources import GitHistorySource
+
+    git, short_ids = _raw_git_history(
+        tmp_path, monkeypatch, [b"valid older subject", b"keep \xff context", b"keep \xfe context"],
+    )
+    raw = git("log", "--encoding=utf-8", "--format=%h %s", "--", "a.py")
+    assert b"keep \xff context" in raw and b"keep \xfe context" in raw
+    expected = [
+        FactRow("keep \ufffd context", "", "", short_ids[2], "git-history"),
+        FactRow("keep \ufffd context", "", "", short_ids[1], "git-history"),
+        FactRow("valid older subject", "", "", short_ids[0], "git-history"),
+    ]
+    assert len(set(short_ids)) == 3
+    source = GitHistorySource(tmp_path)
+    assert source.facts(["a.py"], "") == expected
+    warnings = []
+    result = gather([source], ["a.py"], "", head_sha=None, on_error=lambda *args: warnings.append(args))
+    assert result.rows == expected
+    assert result.errors == [] and warnings == []
+    rendered = render_context_sources(result)
+    assert "keep \ufffd context" in rendered
+    assert all(short in rendered for short in short_ids)
+
+
+@pytest.mark.parametrize(
+    ("subject", "expected"),
+    [
+        ("first\u2028not-a-hash second".encode("utf-8"), "first\u2028not-a-hash second"),
+        ("first\u2029second".encode("utf-8"), "first\u2029second"),
+        (b"first\x0bsecond", "first\x0bsecond"),
+        (b"first\x0csecond", "first\x0csecond"),
+        (b"first\x1esecond", "first\x1esecond"),
+        (b"first\x1fsecond", "first\x1fsecond"),
+        (b"first\x1bsecond", "first\x1bsecond"),
+        (b"first\tsecond", "first\tsecond"),
+        (b"first\rsecond", "first\rsecond"),
+        (b"first\nsecond", "first second"),
+        (b"first\r\nsecond", "first second"),
+        (b"", ""),
+        (b"first\r", "first"),
+    ],
+)
+def test_git_history_uses_git_record_boundaries(tmp_path, monkeypatch, subject, expected):
+    from code_forge.context_sources import GitHistorySource
+
+    _, short_ids = _raw_git_history(tmp_path, monkeypatch, [b"older subject", subject])
+    source = GitHistorySource(tmp_path)
+    rows = source.facts(["a.py"], "")
+    assert rows == [
+        FactRow(expected, "", "", short_ids[1], "git-history"),
+        FactRow("older subject", "", "", short_ids[0], "git-history"),
+    ]
+    result = gather([source], ["a.py"], "", head_sha=None)
+    assert result.rows == rows and result.errors == []
+
+
+def test_git_history_runner_preserves_subject_controls(tmp_path):
+    from code_forge.context_sources import GitHistorySource
+
+    def runner(cmd, timeout):
+        assert cmd == ["git", "log", "--encoding=utf-8", "-n", "5", "--format=%h %s", "--", "a.py"]
+        assert timeout == 2
+        return "abc123 first\u2028second\rthird\n\ndef456 \n"
+
+    assert GitHistorySource(tmp_path, runner=runner, timeout=2).facts(["a.py"], "") == [
+        FactRow("first\u2028second\rthird", "", "", "abc123", "git-history"),
+        FactRow("", "", "", "def456", "git-history"),
+    ]
+
+
+@pytest.mark.parametrize("malformed_config", [False, True])
+def test_git_history_native_failure_keeps_text_diagnostics(tmp_path, monkeypatch, malformed_config):
+    from subprocess import CalledProcessError
+
+    from code_forge.context_sources import GitHistorySource
+
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+    if malformed_config:
+        _raw_git_history(tmp_path, monkeypatch, [b"valid subject"])
+        (tmp_path / ".git" / "config").write_bytes(b"[core]\nrepositoryformatversion = \xff\n")
+        diagnostic = "bad numeric config value '\ufffd'"
+    else:
+        diagnostic = "not a git repository"
+    source = GitHistorySource(tmp_path)
+    with pytest.raises(CalledProcessError) as failure:
+        source.facts(["a.py"], "")
+    assert failure.value.returncode == 128
+    assert failure.value.stdout == ""
+    assert isinstance(failure.value.stderr, str)
+    assert diagnostic in failure.value.stderr
+    warnings = []
+    result = gather([source], ["a.py"], "", head_sha=None, on_error=lambda *args: warnings.append(args))
+    assert result.rows == []
+    assert len(result.errors) == len(warnings) == 1
+    assert "CalledProcessError" in result.errors[0]
+
+
 _DIFF = "+".join(["\n", "def alpha():\n", "    beta = 12345\n"])
 
 

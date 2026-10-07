@@ -935,15 +935,17 @@ class GitHistorySource:
             out = self.runner(cmd, self.timeout)
         else:
             proc = subprocess.run(
-                cmd, cwd=self.root, capture_output=True, text=True,
-                encoding="utf-8", timeout=self.timeout, check=False,
+                cmd, cwd=self.root, capture_output=True,
+                timeout=self.timeout, check=False,
             )
+            # Text mode would turn a subject's bare CR into a record boundary.
+            out = proc.stdout.decode("utf-8", errors="replace")
             if proc.returncode != 0:
                 raise subprocess.CalledProcessError(
-                    proc.returncode, cmd, proc.stdout, proc.stderr)
-            out = proc.stdout
+                    proc.returncode, cmd, out, proc.stderr.decode("utf-8", errors="replace"))
         rows = []
-        for line in out.splitlines():
+        # Git flattens subject newlines; only its LF terminates a record.
+        for line in out.split("\n"):
             if not line.strip():
                 continue
             short, _, subject = line.partition(" ")
