@@ -59,19 +59,25 @@ def _normal_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def _installed_file(path: Path) -> Path:
+    """Resolve installed directories while leaving the pinned leaf untouched."""
+    path = path.absolute()
+    return path.parent.resolve(strict=True) / path.name
+
+
 def _distribution(name: str) -> tuple[dict, dict, list[str]]:
     distribution = importlib.metadata.distribution(name)
     if not isinstance(distribution._path, Path):
         raise TypeError("mutation distribution must use physical metadata")
     root = Path(distribution.locate_file("")).resolve()
-    metadata_path = Path(distribution._path) / "METADATA"
+    metadata_path = _installed_file(Path(distribution._path) / "METADATA")
     if not metadata_path.is_relative_to(root):
         raise ValueError("mutation distribution metadata has a foreign origin")
     metadata, raw = _pin_file(metadata_path)
     parsed = email.message_from_bytes(raw)
     if _normal_name(parsed.get("Name", "")) != _normal_name(name) or not parsed.get("Version"):
         raise ValueError("mutation distribution metadata name/version mismatch")
-    record, raw_record = _pin_file(Path(distribution._path) / "RECORD")
+    record, raw_record = _pin_file(_installed_file(Path(distribution._path) / "RECORD"))
     modules = {}
     for entry in csv.reader(io.StringIO(raw_record.decode("utf-8"))):
         if not entry:
@@ -93,7 +99,7 @@ def _distribution(name: str) -> tuple[dict, dict, list[str]]:
                     break
         if kind is None or not tail or not all(part.isidentifier() for part in tail):
             continue
-        path = Path(distribution.locate_file(entry[0])).absolute()
+        path = _installed_file(Path(distribution.locate_file(entry[0])))
         if not path.is_relative_to(root):
             raise ValueError("mutation dependency has a foreign origin")
         row, _ = _pin_file(path)
@@ -111,7 +117,12 @@ def _requirements_api():
     for name, module in tuple(sys.modules.items()):
         if name == "packaging" or name.startswith("packaging."):
             row = origins.get(name)
-            if row is None or getattr(module, "__file__", None) != row["path"]:
+            loaded_path = getattr(module, "__file__", None)
+            if (
+                row is None
+                or not isinstance(loaded_path, str)
+                or _installed_file(Path(loaded_path)) != Path(row["path"])
+            ):
                 raise ValueError("foreign parent packaging module")
             pin, _ = _pin_file(Path(row["path"]))
             if any(pin[key] != row[key] for key in pin):
