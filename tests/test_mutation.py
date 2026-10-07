@@ -18,6 +18,7 @@ import pytest
 
 from code_forge.disposition import Disposition
 from code_forge.mutation import parse_mutmut_results, run_mutation
+from code_forge.state import StateFinding
 from tests.mutation_result_fixture import write_inventory
 
 
@@ -768,6 +769,85 @@ def _skip_unless_mutmut_on_path():
         pytest.skip("mutmut not installed")
 
 
+def _assert_strong_mutation_result(findings, infra_errors, evidence):
+    """Require a completed native measurement that killed actual mutants."""
+    error_findings = [f for f in findings if f.id == "MUTATION_ERROR"]
+    assert error_findings == [], (
+        "mutmut invocation failed: %s\ninfra_errors: %s"
+        % (error_findings, infra_errors)
+    )
+    assert evidence.get("completed_measurement") is True, evidence
+    inventory = evidence.get("inventory", {})
+    assert inventory, "mutmut measured no mutants"
+    assert all(status == "killed" for status in inventory.values()), inventory
+    other_findings = [f for f in findings if f.id != "MUTATION_ERROR"]
+    assert other_findings == [], other_findings
+    assert infra_errors == [], infra_errors
+
+
+def test_strong_mutation_result_accepts_completed_all_killed_inventory():
+    _assert_strong_mutation_result(
+        [], [], {"completed_measurement": True, "inventory": {"add.mutant": "killed"}}
+    )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "incomplete",
+        "empty",
+        "survived",
+        "caught by type check",
+        "survivor-finding",
+        "skip-finding",
+        "error-finding",
+        "diagnostic-finding",
+        "infra-error",
+    ],
+)
+def test_strong_mutation_result_rejects_unqualified_outcome(fault, tmp_path, monkeypatch):
+    evidence = {"completed_measurement": True, "inventory": {"add.mutant": "killed"}}
+    findings, infra_errors = [], []
+    if fault == "incomplete":
+        evidence["completed_measurement"] = False
+    elif fault == "empty":
+        evidence["inventory"] = {}
+    elif fault in ("survived", "caught by type check"):
+        evidence["inventory"]["add.mutant"] = fault
+    elif fault == "infra-error":
+        infra_errors = ["mutmut infrastructure failure"]
+    else:
+        finding_id = {
+            "survivor-finding": "mutant-add.mutant",
+            "skip-finding": "MUTATION_SKIPPED",
+            "error-finding": "MUTATION_ERROR",
+            "diagnostic-finding": "MUTATION_INVENTORY_INVALID",
+        }[fault]
+        findings = [
+            StateFinding(
+                id=finding_id,
+                fingerprint=fault,
+                source="MUTANT",
+                disposition=Disposition.CONFIRMED,
+                file="src/add.py",
+                line_range=[],
+                description=fault,
+            )
+        ]
+    with pytest.raises(AssertionError):
+        _assert_strong_mutation_result(findings, infra_errors, evidence)
+
+    def unqualified_run(*args, _evidence=None, **kwargs):
+        if _evidence is not None:
+            _evidence.update(evidence)
+        return findings, infra_errors
+
+    monkeypatch.setattr(sys.modules[__name__], "run_mutation", unqualified_run)
+    monkeypatch.setattr(sys.modules[__name__], "_skip_unless_mutmut_on_path", lambda: None)
+    with pytest.raises(AssertionError):
+        TestMutationRealCLI().test_real_mutmut_runs_without_usage_error(tmp_path)
+
+
 class TestMutationRealCLI:
     """Real mutmut CLI smoke tests (skipped if mutmut not installed).
 
@@ -870,11 +950,7 @@ class TestMutationRealCLI:
         )
 
     def test_real_mutmut_runs_without_usage_error(self, tmp_path):
-        """Test 19: real mutmut CLI accepts our invocation on a good test.
-
-        Uses a strong test (checks return value). All mutants should be
-        killed; zero MUTATION_ERROR findings.
-        """
+        """Real mutmut completes a nonempty measurement and kills every mutant."""
         _skip_unless_mutmut_on_path()
         src_dir = tmp_path / "src"
         src_dir.mkdir()
@@ -885,17 +961,15 @@ class TestMutationRealCLI:
             "from add import add\ndef test_add():\n    assert add(1, 2) == 3\n"
         )
 
+        evidence = {}
         findings, infra_errors = run_mutation(
             diff_files=["src/add.py"],
             baseline_cmd=[sys.executable, "-m", "pytest", "tests/"],
             cwd=tmp_path,
+            _evidence=evidence,
         )
 
-        error_findings = [f for f in findings if f.id == "MUTATION_ERROR"]
-        assert error_findings == [], (
-            "mutmut invocation failed with error (bug NOT fixed): %s\n"
-            "infra_errors: %s" % (error_findings, infra_errors)
-        )
+        _assert_strong_mutation_result(findings, infra_errors, evidence)
 
     def test_cleanup_after_run(self, tmp_path):
         """Test 20: mutants/ dir and setup.cfg are cleaned up after run."""
