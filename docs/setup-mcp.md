@@ -63,6 +63,33 @@ Example `.claude.json` MCP entry:
 }
 ```
 
+## Review and gate-check timeout
+
+`forge_review` and `forge_gate_check` accept an optional `timeout_s` argument
+to set a wall-clock deadline for that one CLI run. The value must be a finite
+number greater than zero; booleans are invalid. Omitting it, or passing
+`None` in Python (`null` in JSON), keeps the server's existing timeout
+behavior.
+
+```python
+forge_review(project_dir="/home/user/code/myproject", timeout_s=7200)
+forge_gate_check(project_dir="/home/user/code/myproject", timeout_s=7200)
+```
+
+The deadline starts before CLI setup and process launch, so that time uses the
+same allowance as the foreground wait and any background work after handoff. A
+foreground wait is capped at 20 seconds or the remaining deadline, whichever is
+shorter. A still-running command then returns a job ID; setup, process launch
+and scheduling can add latency. Poll it with `forge_job_status` as usual (the
+suggested polling interval remains 10 seconds). Handoff does not restart the
+timeout. When the deadline is reached, Forge starts terminating and reaping the
+CLI process; that cleanup can take additional time.
+
+An explicit `timeout_s` overrides the server-wide `FORGE_MCP_JOB_TIMEOUT_S`
+setting and the cap derived from the backend for that call only. It controls
+the total CLI run, not an individual LLM invocation. It also cannot extend the
+MCP client's own request timeout, which is configured by the client.
+
 ## Troubleshooting
 
 ### Zombie processes after /mcp reconnect

@@ -161,25 +161,25 @@ Values less than 1 or greater than 120 are rejected with a clear error.
 
 Sets the timeout (in seconds) for each LLM invocation during review.
 
-- **Default**: `120` seconds
-- **Precedence**: explicit `timeout_s` argument > `FORGE_LLM_TIMEOUT_S` env > `120`
-- **Resolved per call** (not frozen at import), so the override takes effect
-  even when the env var is set after the process starts.
+- **Precedence**: positive backend `timeout_s` > positive caller-supplied LLM
+  timeout > positive `FORGE_LLM_TIMEOUT_S` env > fallback
+- **Fallback**: `1800` seconds, capped at `300` seconds for CLI backends or
+  `600` seconds for API backends when neither an explicit backend nor caller
+  timeout is set
+- **Resolved per call** (not frozen at import), so an environment override
+  takes effect even when the env var is set after the process starts.
 
 ```bash
 export FORGE_LLM_TIMEOUT_S=300   # cross-region or reasoning backends
 ```
 
-An unset, malformed, or non-positive value falls back to `120`. Raise this when
-a healthy backend call is aborted mid-flight by the default 120s ceiling (slow
-cross-region APIs, reasoning models). Distinct from `FORGE_AUTH_TIMEOUT`, which
-bounds the zero-cost reachability probe, not the review inference call.
-
-> **Update note**: `FORGE_LLM_TIMEOUT_S` requires forge v2.4 or later. If
-> you are running an older installation, update via
-> `pip install --upgrade code-forge` or reinstall from source. On older
-> builds, the per-call timeout is hardcoded to 120 seconds and cannot be
-> overridden.
+An unset, malformed, or non-positive value uses the fallback and backend-type
+cap above. Positive `timeout_s` values configured on the backend take priority
+over this environment variable and are not limited by the implicit backend-type
+cap. This setting bounds each model invocation, not the total MCP CLI run.
+For the MCP tools' per-call total-run deadline, see [Review and gate-check
+timeout](setup-mcp.md#review-and-gate-check-timeout). `FORGE_AUTH_TIMEOUT`
+bounds the separate zero-cost reachability probe.
 
 ---
 
