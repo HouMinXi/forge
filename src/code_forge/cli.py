@@ -4107,6 +4107,8 @@ def _run(args, env, cwd: Path) -> Verdict:
     _manifest_spec_a = _manifest_a.to_prompt_block()
 
     from .diff_grouping import (
+        GroupingCoverageError,
+        GroupingResult,
         group_diff,
         max_prompt_tokens_from_gate_config,
         thresholds_from_gate_config,
@@ -4147,11 +4149,22 @@ def _run(args, env, cwd: Path) -> Verdict:
 
         _sem_outcome = _run_sem(resolved.git_diff or "", cwd)
         _changes = _sem_outcome.entities if _sem_outcome.completed else []
-        _grouping = group_diff(
-            _changes,
-            cwd,
-            *thresholds_from_gate_config(gate_data),
+        _grouping_reason = (
+            "sem returned no entities"
+            if _sem_outcome.completed
+            else "semantic acquisition %s: %s" % (_sem_outcome.status, _sem_outcome.diagnostic)
         )
+        try:
+            _grouping = group_diff(
+                _changes,
+                cwd,
+                *thresholds_from_gate_config(gate_data),
+                changed_files=get_changed_files(resolved.git_diff or ""),
+            )
+        except GroupingCoverageError as exc:
+            _grouping = GroupingResult()
+            if _changes:
+                _grouping_reason = "semantic coverage incomplete: %s" % exc
         _review_groups = [g for g in _grouping.groups if g.passes > 0]
         if not _review_groups:
             # sem produced nothing usable -- degrade to the single-diff
@@ -4162,9 +4175,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 % (
                     _l1_est_tokens,
                     _group_budget,
-                    "sem returned no entities"
-                    if _sem_outcome.completed
-                    else "semantic acquisition %s: %s" % (_sem_outcome.status, _sem_outcome.diagnostic),
+                    _grouping_reason,
                 )
             )
             l1_provider = build_l1_provider(

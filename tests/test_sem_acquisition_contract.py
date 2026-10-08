@@ -81,7 +81,7 @@ def sem_controls(tmp_path, monkeypatch):
             }
             if kwargs.get("stdin") is not None:
                 self.call["stdin"] = kwargs["stdin"].read()
-                assert self.call["stdin"] == DIFF
+                assert self.call["stdin"] == controls.get("patch", DIFF)
             controls["calls"].append(self.call)
             if self.packet[0] == "missing":
                 raise FileNotFoundError("controlled missing executable")
@@ -1234,3 +1234,221 @@ def test_actual_cli_graphdb_excludes_suffix_nodes(graphdb_controls, cli_pipeline
     assert findings[0].description.startswith("measured ")
     assert seen["source"].findings_cache == findings
     assert seen["source"].acquisition_outcome.status == "completed"
+
+
+_COVERAGE_SECTIONS = {
+    "source": (
+        "b.py",
+        "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1 +1 @@\n-old = 0\n+new = 1\n",
+    ),
+    "deletion": (
+        "obsolete.py",
+        "diff --git a/obsolete.py b/obsolete.py\ndeleted file mode 100644\n"
+        "--- a/obsolete.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-old = 0\n",
+    ),
+    "binary": (
+        "blob.bin",
+        "diff --git a/blob.bin b/blob.bin\nindex abc1234..def5678 100644\n"
+        "Binary files a/blob.bin and b/blob.bin differ\n",
+    ),
+    "mode": (
+        "run.sh",
+        "diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n",
+    ),
+    "rename": (
+        "renamed.py",
+        "diff --git a/old.py b/renamed.py\nsimilarity index 100%\n"
+        "rename from old.py\nrename to renamed.py\n",
+    ),
+    "replacement": (
+        "target.py",
+        "diff --git a/target.py b/target.py\ndeleted file mode 120000\n"
+        "--- a/target.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-old.py\n"
+        "diff --git a/target.py b/target.py\nnew file mode 100644\n"
+        "--- /dev/null\n+++ b/target.py\n@@ -0,0 +1 @@\n+value = 1\n",
+    ),
+}
+
+
+@pytest.fixture
+def coverage_pipeline(sem_controls, cli_pipeline, monkeypatch):
+    from code_forge import cli, diff_grouping
+    from code_forge.baseline import ResolvedReview
+
+    root, args, seen = cli_pipeline
+    reads = []
+    actual_extract = diff_grouping.extract_names
+
+    def extract(path):
+        reads.append(path)
+        return actual_extract(path)
+
+    monkeypatch.setattr(diff_grouping, "extract_names", extract)
+
+    def configure(patch, paths, mode):
+        args.mode = mode
+        sem_controls["patch"] = patch
+        sem_controls["diff"] = (
+            0,
+            json.dumps({"changes": [dict(filePath=path, changeType="modified") for path in paths]}),
+        )
+        resolved = ResolvedReview(
+            source_files=[root / "a.py"], baseline_content=None, git_diff=patch, mode_hint="non-git"
+        )
+        monkeypatch.setattr(cli, "resolve_baseline", lambda *a, **kw: resolved)
+        return root, args, seen, reads
+
+    return configure
+
+
+@pytest.mark.parametrize("mode", ["local", "ci"])
+@pytest.mark.parametrize("kind", _COVERAGE_SECTIONS)
+@pytest.mark.parametrize("complete", [False, True], ids=["missing", "complete"])
+def test_actual_cli_grouping_covers_every_diff_section(coverage_pipeline, kind, mode, complete, capsys):
+    from code_forge import cli
+    from code_forge.baseline import ResolvedReview
+    from code_forge.state import Verdict
+
+    path, section = _COVERAGE_SECTIONS[kind]
+    patch = DIFF + section
+    paths = ["a.py", path] if complete else ["a.py"]
+    root, args, seen, reads = coverage_pipeline(patch, paths, mode)
+    if kind != "deletion":
+        (root / path).write_text("value = 1\n")
+    assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PENDING
+    assert len(seen["providers"]) == 1
+    payload = seen["providers"][0]["args"][1]
+    stderr = capsys.readouterr().err
+    if complete:
+        assert isinstance(payload, list)
+        assert sorted(str(p) for spec in payload for p in spec["resolved"].source_files) == sorted(paths)
+        assert sum(spec["resolved"].git_diff.count(DIFF) for spec in payload) == 1
+        assert sum(spec["resolved"].git_diff.count(section) for spec in payload) == 1
+        assert "falling back" not in stderr
+    else:
+        assert isinstance(payload, ResolvedReview), "incomplete grouping must retain the full diff"
+        assert payload.git_diff == patch
+        assert "semantic coverage incomplete" in stderr and path in stderr
+        assert reads == [], "coverage must be checked before grouping reads source files"
+
+
+@pytest.mark.parametrize("mode", ["local", "ci"])
+@pytest.mark.parametrize("extra", ["unknown.py", "../foreign.py", "/foreign.py"])
+def test_actual_cli_grouping_refuses_foreign_entities(coverage_pipeline, mode, extra, capsys):
+    from code_forge import cli
+    from code_forge.baseline import ResolvedReview
+    from code_forge.state import Verdict
+
+    root, args, seen, reads = coverage_pipeline(DIFF, ["a.py", extra], mode)
+    assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PENDING
+    payload = seen["providers"][0]["args"][1]
+    assert isinstance(payload, ResolvedReview) and payload.git_diff == DIFF
+    assert reads == []
+    assert "semantic coverage incomplete" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("mode", ["local", "ci"])
+@pytest.mark.parametrize("missing", [None, "README.md", "options.yaml"])
+def test_actual_cli_grouping_keeps_explicit_zero_pass_groups(
+    coverage_pipeline, monkeypatch, mode, missing
+):
+    from code_forge import cli, diff_grouping
+    from code_forge.baseline import ResolvedReview
+    from code_forge.state import Verdict
+
+    paths = ["a.py", "README.md", "options.yaml"]
+    patch = DIFF + "".join(
+        f"diff --git a/{path} b/{path}\nold mode 100644\nnew mode 100755\n" for path in paths[1:]
+    )
+    root, args, seen, reads = coverage_pipeline(patch, [p for p in paths if p != missing], mode)
+    actual_build = diff_grouping.build_groups
+    groups = []
+
+    def build(*args, **kwargs):
+        result = actual_build(*args, **kwargs)
+        groups.extend(result[0])
+        return result
+
+    monkeypatch.setattr(diff_grouping, "build_groups", build)
+    assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PENDING
+    payload = seen["providers"][0]["args"][1]
+    if missing:
+        assert isinstance(payload, ResolvedReview) and payload.git_diff == patch
+        assert reads == []
+    else:
+        assert isinstance(payload, list) and len(payload) == 1
+        assert payload[0]["resolved"].git_diff == DIFF
+        assert sorted((g.role, g.passes) for g in groups) == [
+            ("config", 0),
+            ("docs", 0),
+            ("integration", 3),
+        ]
+        assert sorted(m for g in groups for m in g.members) == sorted(paths)
+
+
+@pytest.mark.parametrize("mode", ["local", "ci"])
+@pytest.mark.parametrize("placement", ["duplicate", "duplicate-docs", "missing", "foreign"])
+def test_actual_cli_grouping_checks_final_placement(
+    coverage_pipeline, monkeypatch, placement, mode, capsys
+):
+    from dataclasses import replace
+    from code_forge import cli, diff_grouping
+    from code_forge.baseline import ResolvedReview
+    from code_forge.state import Verdict
+
+    patch = DIFF + "diff --git a/README.md b/README.md\nold mode 100644\nnew mode 100755\n"
+    root, args, seen, _ = coverage_pipeline(patch, ["a.py", "README.md"], mode)
+    actual_build = diff_grouping.build_groups
+
+    def build(*args, **kwargs):
+        groups, orphans = actual_build(*args, **kwargs)
+        index = (
+            next(i for i, g in enumerate(groups) if g.role == "docs")
+            if placement == "duplicate-docs"
+            else 0
+        )
+        group = groups[index]
+        if placement.startswith("duplicate"):
+            groups.append(replace(group, name="duplicate"))
+        elif placement == "missing":
+            groups.pop(index)
+        else:
+            groups[index] = replace(group, members=[*group.members, "foreign.py"])
+        return groups, orphans
+
+    monkeypatch.setattr(diff_grouping, "build_groups", build)
+    assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PENDING
+    payload = seen["providers"][0]["args"][1]
+    assert isinstance(payload, ResolvedReview) and payload.git_diff == patch
+    assert "semantic coverage incomplete" in capsys.readouterr().err
+
+
+def test_grouping_coverage_preserves_legacy_and_loud_errors(tmp_path):
+    from code_forge.diff_grouping import GroupingCoverageError
+
+    assert group_diff([], tmp_path).groups == []
+    assert group_diff([], tmp_path, changed_files=[]).groups == []
+    assert group_diff([ENTITY], tmp_path).groups[0].members == ["a.py"]
+    with pytest.raises(GroupingCoverageError):
+        group_diff([ENTITY], tmp_path, changed_files=[])
+    with pytest.raises(GroupingCoverageError):
+        group_diff([], tmp_path, changed_files=["a.py"])
+    with pytest.raises(ValueError, match="engine_churn"):
+        group_diff([ENTITY], tmp_path, engine_churn=0, changed_files=["a.py"])
+    with pytest.raises(KeyError, match="filePath"):
+        group_diff([{}], tmp_path, changed_files=["a.py"])
+
+
+@pytest.mark.parametrize("error", [ValueError("bad threshold"), KeyError("filePath")])
+def test_actual_cli_grouping_does_not_swallow_unrelated_errors(coverage_pipeline, monkeypatch, error):
+    from code_forge import cli, diff_grouping
+
+    root, args, seen, _ = coverage_pipeline(DIFF, ["a.py"], "local")
+
+    def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(diff_grouping, "group_diff", fail)
+    with pytest.raises(type(error), match=str(error).strip("'")):
+        cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root)
+    assert seen["providers"] == []

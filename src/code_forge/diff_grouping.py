@@ -23,7 +23,7 @@ Design record: .planning/charter_review_decomposition.md
 from __future__ import annotations
 
 import ast
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -410,28 +410,46 @@ def cross_group_edges(
     return out
 
 
+class GroupingCoverageError(ValueError):
+    """Semantic groups cannot account for every changed file exactly once."""
+
+
 def group_diff(
     changes: list[dict],
     repo_root: Path,
     engine_churn: int = _ENGINE_CHURN,
     integration_churn: int = _INTEGRATION_CHURN,
+    *,
+    changed_files: list[str] | None = None,
 ) -> GroupingResult:
     """Group one diff's entity changes. The module's entry point.
 
     `changes` is what `sem diff --format json` puts under "changes", which
     graph_triage._run_sem already returns. Threshold overrides come from
     gate.yaml's optional `grouping:` section; absent that, the defaults
-    calibrated on forge's own history apply.
+    calibrated on forge's own history apply. When supplied, `changed_files`
+    is the authoritative inventory from the full diff, including metadata
+    changes and deletions. Refuse incomplete or foreign entities before
+    reading their source, and require each file in exactly one final group.
     """
     _check_thresholds(engine_churn, integration_churn)
     by_file: dict[str, list[dict]] = defaultdict(list)
     for c in changes:
         by_file[c["filePath"]].append(c)
+    expected = set(changed_files) if changed_files is not None else set(by_file)
+    if set(by_file) != expected:
+        raise GroupingCoverageError(
+            "semantic file coverage mismatch: missing=%s; unexpected=%s"
+            % (sorted(expected - set(by_file)), sorted(set(by_file) - expected))
+        )
     if not by_file:
         return GroupingResult()
 
     edges, file_defined, file_used = build_edges(by_file, repo_root)
     groups, orphans = build_groups(by_file, file_defined, file_used, engine_churn, integration_churn)
+    placed = Counter(member for group in groups for member in group.members)
+    if placed != Counter(expected):
+        raise GroupingCoverageError("group membership must cover each changed file exactly once")
     roles = {f: classify_file(f, by_file, engine_churn, integration_churn) for f in by_file}
 
     return GroupingResult(
