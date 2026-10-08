@@ -6,7 +6,10 @@ verify each L1 candidate.  Maps the verdict to a Disposition value.
 
 from __future__ import annotations
 
+from io import StringIO
 from typing import Optional
+
+import unidiff
 
 from .backend import BackendConfig
 from .disposition import Disposition
@@ -105,7 +108,80 @@ def _other_changed_files(diff_text: Optional[str], anchored: str) -> list[str]:
     return [path for path in changed_files_in_order(diff_text) if path != anchored]
 
 
-def _diff_for_file(diff_text: Optional[str], path: str) -> str:
+def _clip_diff_line(text: str) -> str:
+    """Keep long source lines from displacing all neighboring evidence."""
+    limit = _DIFF_CAP // 4
+    if len(text) <= limit:
+        return text
+    notice = " ... [line truncated]\n"
+    return text[: limit - len(notice)] + notice
+
+
+def _anchored_diff_excerpt(section: str, text: str, line_range: Optional[list[int]]) -> str:
+    """Select a continuous hunk excerpt using parsed coordinates, never source tags."""
+    if (
+        not isinstance(line_range, (list, tuple))
+        or len(line_range) != 2
+        or any(type(value) is not int for value in line_range)
+        or not 0 < line_range[0] <= line_range[1]
+    ):
+        return ""
+    try:
+        files = unidiff.PatchSet(section)
+    except unidiff.errors.UnidiffParseError:
+        return ""
+
+    rendered = list(StringIO(text))
+    for file in files:
+        for hunk in file:
+            cursor = hunk.target_start
+            pivot = None
+            for line in hunk:
+                if line.diff_line_no is None:
+                    continue
+                coordinate = line.target_line_no if line.target_line_no is not None else cursor
+                if line.target_line_no is not None:
+                    cursor = line.target_line_no + 1
+                if not line_range[0] <= coordinate <= line_range[1]:
+                    continue
+                if pivot is None or line.target_line_no is not None:
+                    pivot = line.diff_line_no - 1
+                if line.target_line_no is not None:
+                    break
+            if pivot is None:
+                continue
+            first = hunk[0].diff_line_no - 1
+            stop = first + len(hunk)
+            header = _clip_diff_line(rendered[first - 1])
+            notice = (
+                "\n... [diff excerpt truncated to %d characters; omitted diff text; "
+                "cited range and hunks may be incomplete]\n" % _DIFF_CAP
+            )
+            budget = _DIFF_CAP - len(header) - len(notice)
+            selected = {pivot: _clip_diff_line(rendered[pivot])}
+            size = len(selected[pivot])
+            left, right = pivot, pivot + 1
+            while left > first or right < stop:
+                for index in (left - 1 if left > first else None, right if right < stop else None):
+                    if index is None:
+                        continue
+                    value = _clip_diff_line(rendered[index])
+                    if size + len(value) > budget:
+                        break
+                    selected[index] = value
+                    size += len(value)
+                    left = min(left, index)
+                    right = max(right, index + 1)
+                else:
+                    continue
+                break
+            return header + "".join(selected[key] for key in sorted(selected)) + notice
+    return ""
+
+
+def _diff_for_file(
+    diff_text: Optional[str], path: str, line_range: Optional[list[int]] = None
+) -> str:
     """Annotated hunks for one file, or "" when the file has none."""
     if not diff_text or not path:
         return ""
@@ -116,7 +192,15 @@ def _diff_for_file(diff_text: Optional[str], path: str) -> str:
         return ""
     text = annotate_diff_lines(section)
     if len(text) > _DIFF_CAP:
-        text = text[:_DIFF_CAP] + "\n... [truncated to %d bytes]\n" % _DIFF_CAP
+        anchored = _anchored_diff_excerpt(section, text, line_range)
+        if anchored:
+            return anchored
+        notice = (
+            "\n... [anchor unavailable; cited code not located; prefix truncated to %d characters; "
+            "omitted diff text]\n"
+            % _DIFF_CAP
+        )
+        text = text[: _DIFF_CAP - len(notice)] + notice
     return text
 
 
@@ -154,7 +238,7 @@ class RealFalsifier(Falsifier):
             + finding.description
             + "\n"
         )
-        hunks = _diff_for_file(self._diff_text, finding.file)
+        hunks = _diff_for_file(self._diff_text, finding.file, finding.line_range)
         if hunks:
             prompt += _DIFF_SECTION + hunks
         others = _other_changed_files(self._diff_text, finding.file)

@@ -15,8 +15,12 @@ prompt is byte-identical to before (so the calibration A/B is clean).
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 from code_forge.disposition import Disposition
 from code_forge.falsify_real import RealFalsifier
@@ -126,10 +130,185 @@ def test_diff_section_is_capped(monkeypatch):
     assert "truncated" in p.lower()
 
 
-# ---- wiring: every build_falsifier call site passes the diff ------------
+def _large_diff(tail="", values=None):
+    values = values or ["padding_%d = '%s'" % (n, "x" * 60) for n in range(700)]
+    return (
+        "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n"
+        "@@ -0,0 +1,%d @@\n" % len(values)
+        + "".join("+%s\n" % value for value in values)
+        + tail
+    )
 
-import ast
-from pathlib import Path
+
+def _large_prompt(diff, lr=(600, 600)):
+    return _capture(RealFalsifier(diff_text=diff), _finding(file="x.py", lr=lr))
+
+
+def _payload(prompt):
+    from code_forge.falsify_real import _DIFF_SECTION
+
+    return prompt.split(_DIFF_SECTION, 1)[1]
+
+
+def test_late_line_in_single_added_hunk_keeps_nearby_handler():
+    values = ["padding_%d = '%s'" % (n, "x" * 60) for n in range(700)]
+    values[598:602] = ["try:", "    LATE_CALL()", "except ValueError:", "    RECOVERY()"]
+    prompt = _large_prompt(_large_diff(values=values))
+    assert "[+ 600] +    LATE_CALL()" in prompt
+    assert "except ValueError:" in prompt and "RECOVERY()" in prompt
+    assert "padding_0" not in _payload(prompt)
+    assert "omitted" in prompt.lower() and "characters" in prompt.lower()
+    assert len(_payload(prompt)) <= 8192
+
+
+@pytest.mark.parametrize("lr", [(900, 900), (901, 901), (900, 902)])
+def test_later_hunk_keeps_context_and_removed_guard(lr):
+    tail = (
+        "@@ -900,3 +900,3 @@ guard\n context_before\n"
+        "-    OLD_GUARD()\n+    LATE_REPLACEMENT()\n context_after\n"
+    )
+    prompt = _large_prompt(_large_diff(tail), lr)
+    assert "[----] -    OLD_GUARD()" in prompt
+    assert "[+ 901] +    LATE_REPLACEMENT()" in prompt
+    assert "context_before" in prompt and "context_after" in prompt
+    assert "@@ -900,3 +900,3 @@ guard" in prompt
+    assert "padding_0" not in _payload(prompt)
+
+
+def test_deletion_only_later_hunk_keeps_removed_lines():
+    tail = "@@ -900,2 +899,0 @@\n-OLD_GUARD()\n-OLD_RECOVERY()\n"
+    prompt = _large_prompt(_large_diff(tail), (899, 899))
+    assert "[----] -OLD_GUARD()" in prompt and "[----] -OLD_RECOVERY()" in prompt
+
+
+def test_long_removed_block_does_not_displace_cited_post_image_line():
+    tail = (
+        "@@ -900,501 +900,2 @@\n"
+        + "".join("-old_%d = '%s'\n" % (n, "x" * 60) for n in range(500))
+        + "+POST_IMAGE_ANCHOR()\n context_after\n"
+    )
+    prompt = _large_prompt(_large_diff(tail), (900, 900))
+    assert "[+ 900] +POST_IMAGE_ANCHOR()" in prompt
+    assert "[----] -old_499" in prompt and "context_after" in prompt
+
+
+def test_source_line_tags_do_not_choose_the_anchor():
+    values = ["padding_%d = '%s'" % (n, "x" * 60) for n in range(700)]
+    values[0] = "fake = '[+ 600] +FAKE_ANCHOR()'"
+    values[599] = "REAL_ANCHOR()"
+    prompt = _large_prompt(_large_diff(values=values))
+    assert "[+ 600] +REAL_ANCHOR()" in prompt
+    assert "FAKE_ANCHOR" not in _payload(prompt)
+
+
+def test_long_anchor_line_is_clipped_without_displacing_neighbors():
+    values = ["padding_%d = '%s'" % (n, "x" * 60) for n in range(700)]
+    values[598:602] = ["BEFORE()", "LONG_ANCHOR = '" + "x" * 20000, "except Error:", "AFTER()"]
+    prompt = _large_prompt(_large_diff(values=values))
+    assert "[+ 600] +LONG_ANCHOR" in prompt
+    assert "BEFORE()" in prompt and "except Error:" in prompt and "AFTER()" in prompt
+    assert "line truncated" in prompt.lower()
+    assert len(_payload(prompt)) <= 8192
+
+
+@pytest.mark.parametrize("lr", [(), (0, 1), (5, 3), (True, True), ("600", "600"), (9000, 9000)])
+def test_invalid_or_unavailable_anchor_uses_explicit_bounded_prefix(lr):
+    prompt = _large_prompt(_large_diff(), lr)
+    assert "padding_0" in prompt
+    assert "anchor unavailable" in prompt.lower()
+    assert "omitted" in prompt.lower()
+    assert len(_payload(prompt)) <= 8192
+
+
+def test_missing_anchor_uses_explicit_bounded_prefix():
+    from code_forge.falsify_real import _diff_for_file
+
+    selected = _diff_for_file(_large_diff(), "x.py")
+    assert "padding_0" in selected and "anchor unavailable" in selected.lower()
+    assert len(selected) <= 8192
+
+
+def test_unparseable_large_diff_falls_back_without_invented_line_numbers():
+    bad = _large_diff().replace("@@ -0,0 +1,700 @@", "@@ -0,0 +1,900 @@")
+    selected = _payload(_large_prompt(bad))
+    assert "anchor unavailable" in selected.lower()
+    assert "[+ 600]" not in selected
+    assert len(selected) <= 8192
+
+
+def test_unicode_limit_counts_characters_and_discloses_omission():
+    values = ["value_%d = '%s'" % (n, chr(0xE9) * 60) for n in range(700)]
+    selected = _payload(_large_prompt(_large_diff(values=values)))
+    assert "[+ 600]" in selected
+    assert "characters" in selected and "bytes" not in selected
+    assert len(selected) <= 8192 and len(selected.encode()) > 8192
+
+
+def test_small_diff_retains_exact_annotation_with_or_without_anchor():
+    from code_forge.diff import annotate_diff_lines, split_diff_for_files
+    from code_forge.falsify_real import _diff_for_file
+
+    expected = annotate_diff_lines(split_diff_for_files(DIFF, ["sphinx/domains/std.py"]))
+    assert _diff_for_file(DIFF, "sphinx/domains/std.py") == expected
+    small = _large_diff(values=["one = 1", "two = 2"])
+    assert _payload(_large_prompt(small, (1, 1))) == annotate_diff_lines(small)
+
+
+def test_cross_hunk_range_explicitly_discloses_incomplete_cited_range():
+    tail = "@@ -900 +900 @@\n-OLD()\n+NEW()\n"
+    selected = _payload(_large_prompt(_large_diff(tail), (690, 901)))
+    assert "[+ 690]" in selected
+    assert "cited range and hunks may be incomplete" in selected
+
+
+@pytest.mark.parametrize("lr", [(700, 700), (9000, 9000)])
+def test_large_diff_preserves_no_newline_marker_or_discloses_unavailable_anchor(lr):
+    diff = _large_diff() + "\\ No newline at end of file\n"
+    selected = _payload(_large_prompt(diff, lr))
+    if lr[0] == 700:
+        assert "[+ 700]" in selected and "[    ] \\ No newline at end of file" in selected
+    else:
+        assert "anchor unavailable" in selected
+
+
+def test_large_crlf_diff_uses_structural_post_image_numbers():
+    prompt = _large_prompt(_large_diff().replace("\n", "\r\n"))
+    assert "[+ 600] +padding_599" in prompt
+
+
+def test_large_source_with_unicode_line_separator_keeps_git_line_coordinates():
+    values = ["padding_%d = '%s'" % (n, "x" * 60) for n in range(700)]
+    values[599] = "left" + chr(0x2028) + "right"
+    prompt = _large_prompt(_large_diff(values=values))
+    assert "[+ 600] +left" + chr(0x2028) + "right\n" in prompt
+    assert "[+ 601] +padding_600" in prompt
+
+
+def test_large_metadata_only_diff_uses_explicit_prefix():
+    diff = "diff --git a/x.py b/x.py\nold mode 100644\nnew mode 100755\n" + "note " * 3000
+    selected = _payload(_large_prompt(diff))
+    assert "old mode 100644" in selected and "anchor unavailable" in selected
+    assert len(selected) <= 8192
+
+
+def test_large_hunk_header_is_clipped_without_displacing_anchor():
+    diff = _large_diff().replace("@@ -0,0 +1,700 @@", "@@ -0,0 +1,700 @@ " + "x" * 20000)
+    selected = _payload(_large_prompt(diff))
+    assert "[+ 600]" in selected and "line truncated" in selected
+    assert len(selected) <= 8192
+
+
+def test_annotation_exactly_at_cap_is_unchanged():
+    from code_forge.diff import annotate_diff_lines
+
+    small = _large_diff(values=["anchor"])
+    diff = small.replace("+anchor", "+anchor" + "x" * (8192 - len(annotate_diff_lines(small))))
+    selected = _payload(_large_prompt(diff, (1, 1)))
+    assert selected == annotate_diff_lines(diff)
+    assert len(selected) == 8192
+
+
+# ---- wiring: every build_falsifier call site passes the diff ------------
 
 _SRC = Path(__file__).resolve().parent.parent / "src" / "code_forge"
 
