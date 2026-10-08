@@ -44,6 +44,10 @@ MAX_TOTAL = 128 * 1024 * 1024
 class FactError(RuntimeError):
     """A missing or ambiguous observation; never evidence of absence."""
 
+    def __init__(self, message: str, *, observations: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.observations = observations
+
 
 def canonical_bytes(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode()
@@ -257,7 +261,8 @@ def parse_loaded_profiles(raw: bytes) -> list[dict[str, str]]:
     return sorted(items, key=lambda item: item["qualified_name"])
 
 
-def semantic_inventory(namespaces: list[str], profiles: list[dict[str, Any]]) -> dict[str, Any]:
+def semantic_inventory(namespaces: list[str], profiles: list[dict[str, Any]], *,
+                       preserve_opaque: bool = False) -> dict[str, Any]:
     """No kernel directory IDs, inodes, boot IDs, collection paths, or ordering."""
     canonical = []
     seen = set()
@@ -268,7 +273,8 @@ def semantic_inventory(namespaces: list[str], profiles: list[dict[str, Any]]) ->
         if key in seen or key[0] not in namespaces:
             raise FactError("duplicate profile identity or unknown namespace")
         seen.add(key)
-        if profile["attachment"].strip().lower() in {"<unknown>", "unknown", "<opaque>", ""}:
+        if (not preserve_opaque
+                and profile["attachment"].strip().lower() in {"<unknown>", "unknown", "<opaque>", ""}):
             raise FactError(f"opaque attachment for {key}")
         canonical.append({key: profile[key] for key in (
             "namespace", "name", "mode", "attachment", "metadata")})
@@ -390,7 +396,9 @@ def collect_kernel_inventory(reader: Reader) -> dict[str, Any]:
             raise FactError("kernel namespace revision changed during collection")
     if scope != collect_kernel_scope(reader):
         raise FactError("AppArmor namespace/stack scope changed during inventory")
-    semantic = semantic_inventory(namespaces, profiles)
+    # Preserve the complete inventory for review, then retain the same STOP
+    # decision below. An opaque display is never accepted as no attachment.
+    semantic = semantic_inventory(namespaces, profiles, preserve_opaque=True)
     semantic["scope"] = scope
     actual = sorted((p["qualified_name"], p["mode"]) for p in parse_loaded_profiles(listing_before))
     expected = sorted(((f":{p['namespace']}://" if p["namespace"] else "") + p["name"], p["mode"])
@@ -398,11 +406,17 @@ def collect_kernel_inventory(reader: Reader) -> dict[str, Any]:
     if actual != expected:
         raise FactError("authoritative profile tree and loaded-profile listing disagree")
     conflicts = [p["name"] for p in profiles if p["name"].split("//")[0] in {"bwrap", "unpriv_bwrap"}]
-    return {"semantic": semantic, "semantic_sha256": digest(semantic), "scope": scope, "raw_profiles": profiles,
+    result = {"semantic": semantic, "semantic_sha256": digest(semantic), "scope": scope, "raw_profiles": profiles,
             "raw_tree": tree, "loaded_profiles": parse_loaded_profiles(listing_before),
             "conflicting_names": conflicts, "attachment_review": "REQUIRED",
             "reviewed_inventory_sha256": None,
             "conditional_semantics": "Raw metadata exported; no attachment expression has been approved."}
+    opaque = [{"namespace": p["namespace"], "name": p["name"], "attachment": p["attachment"]}
+              for p in profiles if p["attachment"].strip().lower() in {"<unknown>", "unknown", "<opaque>", ""}]
+    if opaque:
+        result["unresolved_attachments"] = opaque
+        raise FactError("opaque attachments require review", observations=result)
+    return result
 
 
 def source_snapshot(repo: Path, relative: str, reader: Reader) -> dict[str, Any]:
@@ -459,9 +473,9 @@ def executable_identity(path: str, reader: Reader, *, require_root: bool = True)
     if first.startswith(b"#!"):
         line = decode(first.split(b"\n", 1)[0][2:], "shebang").strip()
         result["shebang"] = line
-        raise FactError(f"unreviewed executable shebang closure: {path}: {line}")
+        raise FactError(f"unreviewed executable shebang closure: {path}: {line}", observations=result)
     if not result["elf"] or capability or info.st_mode & 0o6022 or (require_root and info.st_uid != 0):
-        raise FactError(f"unexpected executable identity/privilege: {path}")
+        raise FactError(f"unexpected executable identity/privilege: {path}", observations=result)
     return result
 
 
@@ -594,6 +608,7 @@ def collect_policy_inputs(reader: Reader, vendor_dir: Path | None) -> dict[str, 
             if any(name in relevant for name in parts[1:]) or PurePosixPath(entry["target"]).name in relevant:
                 forbidden.append(path)
     closure: dict[str, Any] = {}
+    mismatches: list[str] = []
     absent_optional = []
     visiting = set()
 
@@ -646,8 +661,10 @@ def collect_policy_inputs(reader: Reader, vendor_dir: Path | None) -> dict[str, 
         if vendor_dir:
             counterpart = vendor_dir / "apparmor" / "etc/apparmor.d" / relative
             if not counterpart.is_file() or counterpart.is_symlink() or counterpart.read_bytes() != data:
-                raise FactError(f"policy include differs from authenticated apparmor package: {relative}")
-            record["matches_vendor_package"] = True
+                mismatches.append(relative)
+                record["matches_vendor_package"] = False
+            else:
+                record["matches_vendor_package"] = True
         closure[relative] = record
         visiting.remove(relative)
 
@@ -662,6 +679,11 @@ def collect_policy_inputs(reader: Reader, vendor_dir: Path | None) -> dict[str, 
               "parser_conf": {"sha256": hashlib.sha256(parser_conf).hexdigest(),
                               "text": decode(parser_conf, "parser.conf")},
               "vendor_comparison": "not supplied" if vendor_dir is None else "matched include closure"}
+    if mismatches:
+        result["vendor_comparison"] = "STOP: include mismatches require review"
+        result["unresolved_include_mismatches"] = sorted(mismatches)
+        raise FactError("policy include differs from authenticated apparmor package: "
+                        + ", ".join(sorted(mismatches)), observations=result)
     if vendor_dir:
         profile = vendor_dir / "apparmor-profiles/usr/share/apparmor/extra-profiles/bwrap-userns-restrict"
         data = reader.read(str(profile))
@@ -736,13 +758,12 @@ def collect_host(reader: Reader) -> dict[str, Any]:
     restriction = _field(reader, "/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
     if enabled != "Y" or restriction != "1":
         raise FactError("required AppArmor/userns restriction state is not enabled/1")
-    if any(os.environ.get(name) for name in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT")):
-        raise FactError("unexpected dynamic-loader environment")
+    loader = {name: os.environ.get(name) for name in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT")}
     cgroup = f"/sys/fs/cgroup/user.slice/user-{uids[0]}.slice/user@{uids[0]}.service"
     cgroup_state = guard_path(cgroup, "isdir")
     if not cgroup_state["matches"]:
         raise FactError("ordinary runner's delegated cgroup root is absent")
-    return {"identity": environment, "uname": list(os.uname()),
+    result = {"identity": environment, "uname": list(os.uname()),
             "os_release": decode(reader.read("/etc/os-release"), "os-release"),
             "boot_id": _field(reader, "/proc/sys/kernel/random/boot_id"),
             "caller": {"pid": os.getpid(), "ppid": os.getppid(), "label": label, "status": fields,
@@ -750,6 +771,12 @@ def collect_host(reader: Reader) -> dict[str, Any]:
                        for name in ("user", "mnt", "pid", "net", "uts", "ipc", "cgroup")}},
             "apparmor_enabled": enabled, "userns_restriction": restriction,
             "cgroup": cgroup_state, "cgroup_controllers": _field(reader, "/sys/fs/cgroup/cgroup.controllers")}
+    result["loader_environment"] = loader
+    result["python_roots"] = {name: os.environ.get(name) for name in
+                              ("pythonLocation", "Python_ROOT_DIR", "Python3_ROOT_DIR", "RUNNER_TOOL_CACHE")}
+    if any(loader.values()):
+        raise FactError("unexpected dynamic-loader environment", observations=result)
+    return result
 
 
 def collect_system_tools(reader: Reader, vendor_dir: Path | None) -> dict[str, Any]:
@@ -913,7 +940,14 @@ def collect_python(reader: Reader, repo: Path, executables: list[str]) -> dict[s
         raise FactError("both distinct installed 3.12 interpreters must be inventoried")
     records = []
     for executable in executables:
-        identity = executable_identity(executable, reader, require_root=(executable == "/usr/bin/python3"))
+        try:
+            identity = executable_identity(executable, reader, require_root=(executable == "/usr/bin/python3"))
+        except FactError as exc:
+            if exc.observations is not None:
+                records.append({"binary": exc.observations, "inventory": None, "status": "STOP"})
+                raise FactError(str(exc), observations={"interpreters": records,
+                                "trust_review": "STOP; executable identity remains unapproved"}) from exc
+            raise
         raw = reader.commands.run([executable, "-c", PYTHON_FACTS_SCRIPT], timeout=90, cwd=repo)
         inventory = strict_json(raw)
         if not isinstance(inventory, dict) or not inventory.get("distributions") or not inventory.get("freeze"):
@@ -959,6 +993,8 @@ def collect(output: Path, *, repo: Path, vendor_dir: Path | None = None,
                 if name == "natural_adapter_guards" and result["unexpectedly_eligible"]:
                     raise FactError("extra real adapters unexpectedly eligible: " + ", ".join(result["unexpectedly_eligible"]))
             except (FactError, OSError, ValueError, SyntaxError) as exc:
+                if isinstance(exc, FactError) and exc.observations is not None:
+                    report["facts"][name] = exc.observations
                 report["errors"].append({"stage": name, "error": str(exc)})
             evidence.json("facts.json", report)
     except (FactError, OSError) as exc:

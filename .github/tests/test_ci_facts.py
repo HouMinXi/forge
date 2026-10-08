@@ -504,3 +504,176 @@ def test_host_scope_is_bound_into_semantic_inventory():
     assert result["semantic"]["scope"] == {
         "ns_level": "0", "ns_name": "root", "stacked": "no", "ns_stacked": "no"}
     assert result["semantic_sha256"] == facts.digest(result["semantic"])
+
+def test_opaque_stop_retains_complete_inventory_and_manual_review(tmp_path, monkeypatch):
+    original = facts.collect_kernel_inventory
+    _stub_collection(monkeypatch)
+    reader, _ = kernel_fixture(attachment="<unknown>")
+    monkeypatch.setattr(facts, "collect_kernel_inventory", lambda unused: original(reader))
+    output = tmp_path / "evidence"
+    assert facts.collect(output, repo=tmp_path) == 2
+    report = json.loads((output / "facts.json").read_text())
+    group = report["facts"]["kernel_policy"]
+    assert group["unresolved_attachments"] == [
+        {"namespace": "", "name": "example", "attachment": "<unknown>"}]
+    assert group["semantic"]["profiles"][0]["attachment"] == "<unknown>"
+    assert group["raw_profiles"] and group["raw_tree"] and group["loaded_profiles"]
+    assert report["status"] == "STOP" and report["admission"] is False
+    assert report["reviewed_inventory_sha256"] is None
+    assert "opaque" in report["errors"][0]["error"]
+    approval = json.loads((output / "attachment-review-required.json").read_text())
+    assert approval["admission"] is False and approval["reviewed_inventory_sha256"] is None
+
+
+def test_include_mismatch_preserves_all_reachable_bytes_without_admitting_them(tmp_path):
+    reader = policy_fixture()
+    reader.file(facts.PROFILE_ROOT + "/tunables/global",
+                "include <tunables/home.d>\ninclude <tunables/alias>\n")
+    reader.file(facts.PROFILE_ROOT + "/tunables/home.d/ubuntu", "# generated default\n")
+    with pytest.raises(facts.FactError, match="differs from authenticated") as caught:
+        facts.collect_policy_inputs(reader, tmp_path)
+    result = caught.value.observations
+    assert result["include_closure"]["tunables/home.d/ubuntu"]["matches_vendor_package"] is False
+    assert result["include_closure"]["tunables/alias"]["matches_vendor_package"] is False
+    assert facts.PROFILE_ROOT + "/tunables/alias" in reader.reads
+    assert result["unresolved_include_mismatches"] == [
+        "abi/4.0", "tunables/alias", "tunables/global", "tunables/home.d/ubuntu"]
+    assert result["vendor_comparison"].startswith("STOP")
+
+
+def test_include_mismatch_does_not_mask_an_unreadable_later_input(tmp_path):
+    reader = policy_fixture()
+    reader.fail.add(facts.PROFILE_ROOT + "/tunables/alias")
+    with pytest.raises(facts.FactError, match="unreadable"):
+        facts.collect_policy_inputs(reader, tmp_path)
+
+
+def test_rejected_binary_identity_is_preserved_without_execution(tmp_path, monkeypatch):
+    import errno
+    binary = tmp_path / "python3.12"
+    binary.write_bytes(b"\x7fELF" + b"not an executable test fixture")
+    binary.chmod(0o777)
+    link = tmp_path / "python"
+    link.symlink_to(binary.name)
+    def no_capabilities(*args):
+        raise OSError(errno.ENODATA, "no capabilities")
+    monkeypatch.setattr(facts.os, "getxattr", no_capabilities)
+    with pytest.raises(facts.FactError, match="unexpected executable") as caught:
+        facts.executable_identity(str(link), None, require_root=False)
+    identity = caught.value.observations
+    assert identity["mode"] == 0o777 and identity["canonical"] == str(binary)
+    assert identity["file_capabilities_hex"] == "" and identity["elf"] is True
+    assert identity["symlinks"] == [{"path": str(link), "target": "python3.12"}]
+    assert identity["sha256"] == facts.hash_file(binary)
+    class NeverExecute:
+        def run(self, *args, **kwargs):
+            pytest.fail("a rejected interpreter must not execute")
+    class Reader:
+        commands = NeverExecute()
+    with pytest.raises(facts.FactError, match="unexpected executable") as python_error:
+        facts.collect_python(Reader(), tmp_path, [str(link), sys.executable])
+    assert python_error.value.observations["interpreters"][0] == {
+        "binary": identity, "inventory": None, "status": "STOP"}
+
+
+def host_fixture(monkeypatch):
+    reader = FakeReader()
+    fields = {"Uid": "1001 1001 1001 1001", "Gid": "1001 1001 1001 1001",
+              "CapInh": "0", "CapPrm": "0", "CapEff": "0", "CapBnd": "ffff",
+              "CapAmb": "0", "NoNewPrivs": "0", "Seccomp": "0"}
+    reader.file("/proc/self/status", "\n".join(name + ": " + value for name, value in fields.items()))
+    for path, value in {
+        "/proc/self/attr/current": "unconfined", "/sys/module/apparmor/parameters/enabled": "Y",
+        "/proc/sys/kernel/apparmor_restrict_unprivileged_userns": "1", "/etc/os-release": "Ubuntu",
+        "/proc/sys/kernel/random/boot_id": "fake-boot", "/sys/fs/cgroup/cgroup.controllers": "memory pids"
+    }.items():
+        reader.file(path, value + "\n")
+    names = ("GITHUB_REPOSITORY GITHUB_REPOSITORY_ID GITHUB_SHA GITHUB_WORKFLOW_SHA GITHUB_RUN_ID "
+             "GITHUB_RUN_ATTEMPT GITHUB_JOB GITHUB_EVENT_NAME RUNNER_ARCH ImageOS ImageVersion").split()
+    for name in names:
+        monkeypatch.setenv(name, "synthetic")
+    monkeypatch.setenv("RUNNER_ENVIRONMENT", "github-hosted")
+    monkeypatch.setenv("RUNNER_OS", "Linux")
+    monkeypatch.setenv("UNRELATED_SECRET", "must not be recorded")
+    for name in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(facts.os, "getuid", lambda: 1001)
+    monkeypatch.setattr(facts.os, "getgid", lambda: 1001)
+    monkeypatch.setattr(facts.os, "getgroups", lambda: [1001])
+    monkeypatch.setattr(facts.os, "readlink", lambda path: "namespace-observation")
+    monkeypatch.setattr(facts, "guard_path", lambda path, kind: {"path": path, "matches": True})
+    return reader
+
+
+@pytest.mark.parametrize("name,value", [
+    ("LD_LIBRARY_PATH", "/opt/hostedtoolcache/Python/3.12.14/x64/lib"),
+    ("LD_LIBRARY_PATH", "/unexpected::relative"),
+    ("LD_PRELOAD", "/unexpected.so"), ("LD_AUDIT", "/unexpected.so")])
+def test_loader_observation_is_preserved_but_remains_stop(monkeypatch, name, value):
+    reader = host_fixture(monkeypatch)
+    monkeypatch.setenv(name, value)
+    with pytest.raises(facts.FactError, match="unexpected dynamic-loader") as caught:
+        facts.collect_host(reader)
+    result = caught.value.observations
+    assert result["loader_environment"][name] == value
+    assert result["caller"]["label"] == "unconfined"
+    assert result["userns_restriction"] == "1"
+    assert "UNRELATED_SECRET" not in json.dumps(result)
+    assert "must not be recorded" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("stage,function", [
+    ("host", "collect_host"), ("policy_inputs", "collect_policy_inputs"), ("python", "collect_python")])
+def test_partial_fact_error_never_becomes_success(tmp_path, monkeypatch, stage, function):
+    _stub_collection(monkeypatch)
+    observed = {"unapproved": "recorded bytes"}
+    def fail(*args):
+        raise facts.FactError("still rejected", observations=observed)
+    monkeypatch.setattr(facts, function, fail)
+    output = tmp_path / "evidence"
+    assert facts.collect(output, repo=tmp_path) == 2
+    report = json.loads((output / "facts.json").read_text())
+    assert report["facts"][stage] == observed
+    assert report["errors"] == [{"stage": stage, "error": "still rejected"}]
+    assert report["status"] == "STOP" and report["admission"] is False
+    assert report["reviewed_inventory_sha256"] is None
+
+
+def test_second_rejected_interpreter_is_retained_but_never_executed(tmp_path, monkeypatch):
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.touch()
+    second.touch()
+    rejected = {"requested": str(second), "file_capabilities_hex": "unapproved"}
+    def identity(path, reader, **kwargs):
+        if path == str(second):
+            raise facts.FactError("still rejected", observations=rejected)
+        return {"requested": path}
+    monkeypatch.setattr(facts, "executable_identity", identity)
+    calls = []
+    class Commands:
+        def run(self, argv, **kwargs):
+            calls.append(argv[0])
+            return b'{"distributions":[{"name":"pytest"}],"freeze":["pytest==synthetic"]}'
+    class Reader:
+        commands = Commands()
+    with pytest.raises(facts.FactError, match="still rejected") as caught:
+        facts.collect_python(Reader(), tmp_path, [str(first), str(second)])
+    assert calls == [str(first)]
+    assert len(caught.value.observations["interpreters"]) == 2
+    assert caught.value.observations["interpreters"][1]["binary"] == rejected
+    assert caught.value.observations["interpreters"][1]["inventory"] is None
+
+
+@pytest.mark.parametrize("problem", ["listing", "revision"])
+def test_opaque_display_does_not_bypass_inventory_consistency(problem):
+    reader, _ = kernel_fixture(attachment="<unknown>")
+    if problem == "listing":
+        reader.file(facts.APPARMOR_ROOT + "/profiles", "other (enforce)\n")
+    else:
+        def mutate(reader):
+            if reader.trees == 2:
+                reader.files[facts.POLICY_ROOT + "/revision"] = b"8\n"
+        reader.mutate = mutate
+    with pytest.raises(facts.FactError, match="disagree|revision changed") as caught:
+        facts.collect_kernel_inventory(reader)
+    assert caught.value.observations is None
