@@ -124,7 +124,7 @@ class TestEof:
         def eof_input(prompt):
             raise EOFError
 
-        with pytest.raises(HoldAborted, match="HOLD UX aborted by user"):
+        with pytest.raises(HoldAborted, match=r"HOLD UX stopped: input ended \(EOF\)"):
             run_hold_ui(state, state_path, input_fn=eof_input)
 
 
@@ -168,7 +168,7 @@ class TestHoldReasonCleared:
 
 
 class TestQuitInput:
-    """(h) "q" input -> raise HoldAborted (same message as EOF)."""
+    """(h) "q" input -> raise HoldAborted."""
 
     def test_quit_aborts(self, tmp_path):
         finding = _make_finding()

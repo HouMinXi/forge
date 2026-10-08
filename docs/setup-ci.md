@@ -56,7 +56,7 @@ forge uses the exit code as the gate signal:
 | 0 | PASS |
 | 1 | FAIL (findings, or new test failures) |
 | 2 | CLI_ERROR (bad invocation, no reachable backend) |
-| 3 | BUSY |
+| 3 | BUSY (lock held) or PENDING (manual continuation required) |
 | 4 | ESCALATED (review escalated for human decision) |
 | 5 | DELEGATED (inline outlet -- review not enforced by CLI) |
 | 6 | TIMEOUT |
