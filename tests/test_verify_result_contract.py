@@ -471,6 +471,18 @@ def test_empty_diff_overlap_retains_empty_coverage_verdict(tmp_path, has_left, h
     _failure(result, "no excerpt coverage in cycles 2 and 3 (findings present but excerpts empty)", 7, 5)
 
 
+@pytest.mark.parametrize("covered_cycle", [2, 3])
+def test_one_empty_excerpt_cycle_is_not_rubber_stamping(tmp_path, covered_cycle):
+    rd = _setup(tmp_path, floor=2, cycles=(2, 3), excerpts=[], findings=[{"description": "open"}])
+    for perspective in (1, 2, 3):
+        _change(rd, cycle=covered_cycle, perspective=perspective, code_excerpts=[EXCERPT])
+
+    result = _verify(tmp_path)
+
+    assert result.passed is True
+    assert (result.reason, result.checks_run, result.checks_passed) == ("all 8 checks passed", 8, 8)
+
+
 @pytest.mark.parametrize("mode", ["missing", "mismatch", "complete"])
 def test_legacy_file_verification_reports_exact_result(tmp_path, mode):
     _setup(tmp_path)
