@@ -6,7 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -152,61 +152,88 @@ class TestReplayEntry:
         assert result.actual_verdict == "SKIPPED"
         assert "timeout" in result.skipped_reason.lower()
 
-    def test_deterministic_tags_get_runs_1(self) -> None:
-        """Deterministic axis tags (TRUST, SEC, FIXVAL) default to runs=1."""
-        for tag in ["TRUST", "SEC", "FIXVAL"]:
-            entry = _entry(tags=[tag])
-            assert any(t in DETERMINISTIC_TAGS for t in entry.axis_tags)
-
-    @patch("code_forge.eval.runner.subprocess.run")
-    @patch("code_forge.eval.runner.record_trust")
-    def test_llm_tags_get_runs_3(
+    @pytest.mark.parametrize(
+        "tags, requested_runs, flags, expected_runs, expected_caught, expected_verdict",
+        [
+            pytest.param(("TRUST",), None, (True,), 1, 1, "HOLD", id="default-trust"),
+            pytest.param(("SEC",), None, (False,), 1, 0, "PASS", id="default-sec"),
+            pytest.param(("FIXVAL",), None, (True,), 1, 1, "HOLD", id="default-fixval"),
+            pytest.param(
+                ("RUNTIME",), None, (True, False, True), 3, 2, "HOLD", id="default-runtime"
+            ),
+            pytest.param(
+                ("LEGACY",), None, (True, False, False), 3, 1, "PASS", id="default-legacy"
+            ),
+            pytest.param(
+                ("INTENT",), None, (False, True, True), 3, 2, "HOLD", id="default-intent"
+            ),
+            pytest.param(
+                ("TRUST",), 5, (True, False, True, False, True), 5, 3, "HOLD",
+                id="override-trust-five",
+            ),
+            pytest.param(
+                ("RUNTIME",), 5, (False, True, False, True, False), 5, 2, "PASS",
+                id="override-runtime-five",
+            ),
+            pytest.param(
+                ("RUNTIME", "TRUST"), None, (False,), 1, 0, "PASS", id="mixed-llm-first"
+            ),
+            pytest.param(
+                ("TRUST", "RUNTIME"), None, (True,), 1, 1, "HOLD",
+                id="mixed-deterministic-first",
+            ),
+        ],
+    )
+    def test_replay_run_counts(
         self,
-        mock_trust: MagicMock,
-        mock_run: MagicMock,
         tmp_path: Path,
+        tags: tuple[str, ...],
+        requested_runs: int | None,
+        flags: tuple[bool, ...],
+        expected_runs: int,
+        expected_caught: int,
+        expected_verdict: str,
     ) -> None:
-        """LLM axis tags (RUNTIME, LEGACY, INTENT) default to runs=3."""
-        mock_run.return_value = MagicMock(
-            returncode=1,
-            stderr=b"",
-            stdout=b"",
-        )
+        """Defaults and overrides execute complete, isolated replay passes."""
+        corpus_dir = tmp_path / "corpus"
+        diff_path = corpus_dir / "diffs" / "test.diff"
+        diff_path.parent.mkdir(parents=True)
+        diff_path.write_text("--- a/f\n+++ b/f\n")
+        entry = _entry(tags=list(tags))
+        outcomes = iter(flags)
+        temp_paths = []
 
-        diff_dir = tmp_path / "corpus"
-        diff_dir.mkdir()
-        diffs_dir = diff_dir / "diffs"
-        diffs_dir.mkdir()
-        (diffs_dir / "test.diff").write_text("--- a/f\n+++ b/f\n")
+        def complete_run(entry, diff_path, temp_dir, backend_name, backend_config=None, corpus_dir=None):
+            path = Path(temp_dir)
+            assert path.is_dir()
+            temp_paths.append(path)
+            return next(outcomes), ""
 
-        entry = _entry(tags=["RUNTIME"])
-        result = replay_entry(entry, diff_dir, "test-backend")
-        assert result.runs == 3
+        with (
+            patch("code_forge.eval.runner._run_single", autospec=True, side_effect=complete_run) as run,
+            patch(
+                "code_forge.eval.runner.subprocess.Popen",
+                autospec=True,
+                side_effect=AssertionError("replay count test must not start a child"),
+            ) as popen,
+        ):
+            kwargs = {} if requested_runs is None else {"runs": requested_runs}
+            result = replay_entry(entry, corpus_dir, "test-backend", **kwargs)
 
-    @patch("code_forge.eval.runner.subprocess.run")
-    @patch("code_forge.eval.runner.record_trust")
-    def test_runs_override(
-        self,
-        mock_trust: MagicMock,
-        mock_run: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """--runs N overrides default run count."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stderr=b"",
-            stdout=b"",
-        )
-
-        diff_dir = tmp_path / "corpus"
-        diff_dir.mkdir()
-        diffs_dir = diff_dir / "diffs"
-        diffs_dir.mkdir()
-        (diffs_dir / "test.diff").write_text("--- a/f\n+++ b/f\n")
-
-        entry = _entry(tags=["RUNTIME"])
-        result = replay_entry(entry, diff_dir, "test-backend", runs=5)
-        assert result.runs == 5
+        popen.assert_not_called()
+        assert run.call_count == expected_runs
+        assert run.call_args_list == [
+            call(entry, diff_path, str(path), "test-backend", None, corpus_dir)
+            for path in temp_paths
+        ]
+        assert all(args.args[0] is entry for args in run.call_args_list)
+        assert len(temp_paths) == len(set(temp_paths)) == expected_runs
+        assert all(not path.exists() for path in temp_paths)
+        assert result.entry is entry
+        assert result.runs == expected_runs
+        assert result.caught_count == expected_caught
+        assert result.actual_verdict == expected_verdict
+        assert result.skipped_reason == ""
 
     def test_missing_diff_file_skipped(self, tmp_path: Path) -> None:
         """Missing diff file at runtime = SKIPPED."""
