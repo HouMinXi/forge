@@ -344,7 +344,6 @@ def cli_pipeline(sem_controls, monkeypatch):
     from code_forge.state import Verdict
 
     root = sem_controls["root"]
-    monkeypatch.chdir(root)
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(root.parent.resolve()))
     monkeypatch.setenv("FORGE_PROJECT_DIR", str(root))
     (root / "custom.yaml").write_text("tools: {}\n")
@@ -355,7 +354,7 @@ def cli_pipeline(sem_controls, monkeypatch):
             "--backend",
             "test",
             "--registry",
-            "custom.yaml",
+            str(root / "custom.yaml"),
             "--falsification-engine",
             "stub",
             "a.py",
@@ -931,7 +930,7 @@ def graphdb_controls(sem_controls, monkeypatch):
             self.cursor = connection.cursor()
 
         def execute(self, statement, parameters=()):
-            if statement.startswith("SELECT id, kind") and parameters == ("%b.py",):
+            if statement.startswith("SELECT id, kind") and parameters[0] == "b.py":
                 return self.cursor.execute("select value from owned_missing_table")
             return self.cursor.execute(statement, parameters)
 
@@ -995,7 +994,7 @@ def test_graphdb_failed_read_discards_rows_and_recovers(graphdb_controls, failur
     else:
         controls["failure"] = failure
     files = ["a.py", "b.py"] if failure == "query" else ["a.py"]
-    outcome = gt._run_graphdb(str(db), files)
+    outcome = gt._run_graphdb(str(db), files, root)
     assert not outcome.completed and outcome.status == "execution_error"
     assert outcome.entities == [] and outcome.impact_complete is False and outcome.diagnostic
     if failure == "query":
@@ -1198,3 +1197,40 @@ def test_actual_cli_graphdb_empty_success_seeds_once(graphdb_controls, cli_pipel
     assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PASS
     assert l2_roots == [root]
     assert observations == [[]]
+
+
+@pytest.mark.parametrize("mode", ["ci", "local"])
+def test_actual_cli_graphdb_excludes_suffix_nodes(graphdb_controls, cli_pipeline, monkeypatch, mode):
+    import sqlite3
+    from contextlib import closing
+    from code_forge import cli
+    from code_forge.baseline import ResolvedReview
+    from code_forge.state import Verdict
+
+    root, args, seen = cli_pipeline
+    args.mode = mode
+    paths = ["tests/eval/corpus/base_files/BUG-P12-01/a.py", str(root.parent / "foreign/a.py")]
+    with closing(sqlite3.connect(graphdb_controls["db"])) as connection:
+        for index, path in enumerate(paths, 4):
+            connection.execute(
+                "INSERT INTO nodes VALUES (?, 'Function', 'lookalike', ?, ?, 50, 60)",
+                (index, "%s::lookalike" % path, path),
+            )
+        connection.commit()
+    monkeypatch.setattr(
+        cli,
+        "resolve_baseline",
+        lambda *a, **kw: ResolvedReview(
+            source_files=[root / "a.py"],
+            baseline_content=None,
+            git_diff=DIFF,
+            mode_hint="non-git",
+            head_sha="a" * 40,
+        ),
+    )
+    assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PENDING
+    findings = seen["hold"]["pre_graph_findings"]
+    assert len(findings) == 1 and findings[0].file == "a.py"
+    assert findings[0].description.startswith("measured ")
+    assert seen["source"].findings_cache == findings
+    assert seen["source"].acquisition_outcome.status == "completed"
