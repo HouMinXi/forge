@@ -907,57 +907,63 @@ def _run_single(
     """
     repo_path = Path(temp_dir)
 
-    subprocess.run(
-        ["git", "init", "-b", "main"],
-        cwd=temp_dir,
-        capture_output=True,
-        check=False,
-    )
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.name=eval",
-            "-c",
-            "user.email=eval@test",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "init",
-        ],
-        cwd=temp_dir,
-        capture_output=True,
-        check=False,
-    )
+    def prepare_git(args: list[str], input_data: bytes | None = None) -> str:
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=temp_dir,
+                capture_output=True,
+                check=False,
+                input=input_data,
+            )
+        except OSError as exc:
+            return "infra: git preparation error: %s" % exc
+        if result.returncode != 0:
+            stderr = result.stderr
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            return "infra: git preparation failed (%s): %s" % (" ".join(args), stderr)
+        return ""
+
+    for args in (
+        ["init", "-b", "main"],
+        ["-c", "user.name=eval", "-c", "user.email=eval@test", "commit", "--allow-empty", "-m", "init"],
+    ):
+        setup_error = prepare_git(args)
+        if setup_error:
+            return False, setup_error
 
     if corpus_dir is not None:
         base_dir = corpus_dir / "base_files" / entry.name
         if base_dir.is_dir():
+            seed_paths: list[bytes] = []
+
+            def copy_seed(source, destination):
+                result = shutil.copy2(source, destination)
+                seed_paths.append(os.fsencode(os.path.relpath(destination, temp_dir)))
+                return result
+
             try:
-                shutil.copytree(base_dir, temp_dir, dirs_exist_ok=True)
+                shutil.copytree(base_dir, temp_dir, dirs_exist_ok=True, copy_function=copy_seed)
             except OSError as exc:
                 return False, "infra: base_files seed error: %s" % exc
-            subprocess.run(
-                ["git", "add", "-A"],
-                cwd=temp_dir,
-                capture_output=True,
-                check=False,
+            setup_error = prepare_git(["add", "-A"])
+            if setup_error:
+                return False, setup_error
+            if seed_paths:
+                # Explicit seed context includes files excluded by its own ignores.
+                # Force only copied paths, not unrelated ignored runtime files.
+                setup_error = prepare_git(
+                    ["--literal-pathspecs", "add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"],
+                    b"\0".join(seed_paths) + b"\0",
+                )
+                if setup_error:
+                    return False, setup_error
+            setup_error = prepare_git(
+                ["-c", "user.name=eval", "-c", "user.email=eval@test", "commit", "--allow-empty", "-m", "seed base files"]
             )
-            subprocess.run(
-                [
-                    "git",
-                    "-c",
-                    "user.name=eval",
-                    "-c",
-                    "user.email=eval@test",
-                    "commit",
-                    "-m",
-                    "seed base files",
-                ],
-                cwd=temp_dir,
-                capture_output=True,
-                check=False,
-            )
+            if setup_error:
+                return False, setup_error
 
     apply_result = subprocess.run(
         ["git", "apply", str(diff_path.resolve())],
