@@ -44,9 +44,11 @@ MAX_TOTAL = 128 * 1024 * 1024
 class FactError(RuntimeError):
     """A missing or ambiguous observation; never evidence of absence."""
 
-    def __init__(self, message: str, *, observations: dict[str, Any] | None = None):
+    def __init__(self, message: str, *, observations: dict[str, Any] | None = None,
+                 stdout: bytes | None = None):
         super().__init__(message)
         self.observations = observations
+        self.stdout = stdout
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -159,7 +161,7 @@ class Commands:
                 record[key] = self.evidence.save(f"command:{len(self.records)}:{key}", bytes(data))
         if failure or process.returncode != 0:
             record["error"] = failure or f"exit {process.returncode}"
-            raise FactError(f"{argv[0]}: {record['error']}")
+            raise FactError(f"{argv[0]}: {record['error']}", stdout=bytes(chunks["stdout"]))
         return bytes(chunks["stdout"])
 
 
@@ -441,7 +443,8 @@ def source_snapshot(repo: Path, relative: str, reader: Reader) -> dict[str, Any]
     return {"binding": relative, "sha256": digest(items), "files": items}
 
 
-def executable_identity(path: str, reader: Reader, *, require_root: bool = True) -> dict[str, Any]:
+def observe_executable_identity(path: str) -> dict[str, Any]:
+    """Read bounded identity facts without approving or executing the binary."""
     try:
         canonical = Path(path).resolve(strict=True)
         info = canonical.stat()
@@ -471,11 +474,32 @@ def executable_identity(path: str, reader: Reader, *, require_root: bool = True)
               "bytes": info.st_size, "symlinks": chain,
               "file_capabilities_hex": capability.hex(), "elf": first.startswith(b"\x7fELF")}
     if first.startswith(b"#!"):
-        line = decode(first.split(b"\n", 1)[0][2:], "shebang").strip()
-        result["shebang"] = line
-        raise FactError(f"unreviewed executable shebang closure: {path}: {line}", observations=result)
-    if not result["elf"] or capability or info.st_mode & 0o6022 or (require_root and info.st_uid != 0):
+        result["shebang"] = decode(first.split(b"\n", 1)[0][2:], "shebang").strip()
+    return result
+
+
+def executable_identity(path: str, reader: Reader, *, require_root: bool = True) -> dict[str, Any]:
+    result = observe_executable_identity(path)
+    if "shebang" in result:
+        raise FactError(f"unreviewed executable shebang closure: {path}: {result['shebang']}", observations=result)
+    if (not result["elf"] or result["file_capabilities_hex"] or result["mode"] & 0o6022
+            or (require_root and result["uid"] != 0)):
         raise FactError(f"unexpected executable identity/privilege: {path}", observations=result)
+    return result
+
+
+def collect_collection_utilities() -> dict[str, Any]:
+    result = {"executables": {}, "errors": [], "admission": False,
+              "trust_review": "REQUIRED; privilege-bearing collection utilities are observations only"}
+    for path in ("/usr/bin/sudo", "/usr/bin/timeout", "/usr/bin/journalctl"):
+        try:
+            identity = observe_executable_identity(path)
+            identity["privilege_bearing"] = bool(identity["mode"] & 0o6000 or identity["file_capabilities_hex"])
+            result["executables"][path] = identity
+        except (FactError, OSError) as exc:
+            result["errors"].append({"path": path, "error": str(exc)})
+    if result["errors"]:
+        raise FactError("collection utility identity is incomplete", observations=result)
     return result
 
 
@@ -818,8 +842,11 @@ def collect_system_tools(reader: Reader, vendor_dir: Path | None) -> dict[str, A
 # recorded rather than bypassed with -I/-S. The runner's installed environment
 # is a trusted input that still needs explicit human review before activation.
 PYTHON_FACTS_SCRIPT = r'''
-import base64, hashlib, importlib.metadata, json, os, pathlib, site, stat, sys, sysconfig
+import base64, csv, hashlib, importlib.metadata, importlib.util, io, json, os, pathlib, re, site, stat, sys, sysconfig
 MAX_FILES = 100000
+MAX_DISTRIBUTIONS = 10000
+MAX_RECORD_BYTES = 4 * 1024 * 1024
+record_rows = 0
 MAX_BYTES = 2 * 1024 * 1024 * 1024
 count = 0
 total = 0
@@ -846,78 +873,208 @@ def describe(path, raw=False):
             raise RuntimeError('startup input too large: ' + str(p))
         item['base64'] = base64.b64encode(p.read_bytes()).decode('ascii')
     return item
-if sys.version_info[:2] != (3, 12):
-    raise RuntimeError('reviewed interpreters must both be Python 3.12')
-distributions = []
-seen = set()
-for distribution in importlib.metadata.distributions():
-    name = distribution.metadata.get('Name')
-    key = (name or '').lower().replace('_', '-').replace('.', '-')
-    if not key or key in seen:
-        raise RuntimeError('missing/duplicate distribution identity: ' + str(name))
-    seen.add(key)
-    if distribution.files is None:
-        raise RuntimeError('missing installed file inventory: ' + name)
-    members = []
-    for member in distribution.files:
-        # Generated bytecode is a real executable input too, if it exists.
-        path = pathlib.Path(distribution.locate_file(member))
-        try:
-            path.stat()
-        except FileNotFoundError:
-            if str(member).endswith(('.pyc', '.pyo')):
-                continue
-            raise RuntimeError('missing distribution file: ' + str(path))
-        members.append(describe(path))
-    plugins = [dict(name=ep.name, value=ep.value, group=ep.group)
-               for ep in distribution.entry_points if ep.group == 'pytest11']
-    distributions.append(dict(name=name, version=distribution.version,
-                             location=str(distribution.locate_file('')),
-                             files=sorted(members, key=lambda x:x['canonical']),
-                             pytest_entry_points=sorted(plugins, key=lambda x:x['name'])))
-site_paths = site.getsitepackages() + [site.getusersitepackages()]
-startup = []
-path_states = []
-for value in sorted(set(site_paths + sys.path)):
-    directory = pathlib.Path(value or os.getcwd())
+def metadata_bytes(path, observation):
     try:
-        info = directory.stat()
+        info = path.stat()
     except FileNotFoundError:
-        path_states.append(dict(path=str(directory), state='absent'))
-        continue
-    if stat.S_ISREG(info.st_mode):
-        path_states.append(dict(path=str(directory), state='file', identity=describe(directory)))
-        continue
-    if not stat.S_ISDIR(info.st_mode):
-        raise RuntimeError('unsupported Python search path: ' + str(directory))
-    names = list(directory.iterdir())  # permission failures are NOT absence
-    path_states.append(dict(path=str(directory), state='directory'))
-    for path in names:
-        if path.suffix == '.pth' or path.name in ('sitecustomize.py', 'usercustomize.py', 'sitecustomize.pyc', 'usercustomize.pyc'):
-            startup.append(describe(path, raw=True))
-        if path.name in ('sitecustomize', 'usercustomize') and path.is_dir():
-            for member in sorted(path.rglob('*')):
-                if member.is_file():
-                    startup.append(describe(member, raw=True))
+        observation['state'] = 'absent'
+        return None
+    if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_RECORD_BYTES:
+        raise RuntimeError('metadata type/size bound exceeded: ' + str(path))
+    with path.open('rb') as stream:
+        data = stream.read(MAX_RECORD_BYTES + 1)
+    if len(data) > MAX_RECORD_BYTES:
+        raise RuntimeError('metadata read bound exceeded: ' + str(path))
+    observation['base64'] = base64.b64encode(data).decode('ascii')
+    observation['identity'] = describe(path)
+    if len(data) != observation['identity']['bytes'] or hashlib.sha256(data).hexdigest() != observation['identity']['sha256']:
+        raise RuntimeError('metadata changed during observation: ' + str(path))
+    observation['state'] = 'observed'
+    return data
+def record_members(entry):
+    global record_rows
+    metadata = pathlib.Path(entry['metadata_path'])
+    entry['metadata_inputs'] = []
+    paths = ([metadata] if metadata.is_file() else [metadata / name for name in
+             ('METADATA', 'PKG-INFO', 'SOURCES.txt', 'installed-files.txt', 'entry_points.txt', 'WHEEL', 'INSTALLER')])
+    for path in paths:
+        observation = dict(path=str(path), state='unknown')
+        entry['metadata_inputs'].append(observation)
+        metadata_bytes(path, observation)
+    record = dict(path=str(metadata / 'RECORD'), rows=[], state='unknown')
+    entry['record'] = record
+    if not metadata.name.endswith('.dist-info'):
+        raise RuntimeError('unknown installed file inventory without dist-info RECORD: ' + str(metadata))
+    path = metadata / 'RECORD'
+    data = metadata_bytes(path, record)
+    if data is None:
+        raise RuntimeError('missing installed file inventory RECORD: ' + str(path))
+    csv.field_size_limit(MAX_RECORD_BYTES)
+    for fields in csv.reader(io.StringIO(data.decode('utf-8'), newline=''), strict=True):
+        record_rows += 1
+        if record_rows > MAX_FILES:
+            raise RuntimeError('RECORD row inventory bound exceeded')
+        record['rows'].append(dict(fields=fields))
+    if not record['rows']:
+        raise RuntimeError('empty installed RECORD inventory: ' + str(path))
+    seen = set()
+    for row in record['rows']:
+        fields = row['fields']
+        if len(fields) != 3:
+            raise RuntimeError('RECORD row must have exactly three fields')
+        name, encoded_hash, encoded_size = fields
+        # Parent components are legitimate for installed console scripts outside site-packages.
+        if (not name or name.startswith('/') or '\\' in name
+                or any(ord(char) < 32 or ord(char) == 127 for char in name)
+                or any(part in ('', '.') for part in name.split('/'))):
+            raise RuntimeError('unsupported RECORD path: ' + repr(name))
+        if name in seen:
+            raise RuntimeError('duplicate RECORD path: ' + name)
+        seen.add(name)
+        recorded_hash = None
+        if encoded_hash:
+            algorithm, separator, value = encoded_hash.partition('=')
+            if not separator or not re.fullmatch(r'[A-Za-z0-9_+-]+', algorithm) or not re.fullmatch(r'[A-Za-z0-9_-]+', value):
+                raise RuntimeError('malformed RECORD hash: ' + name)
+            decoded_hash = base64.b64decode(value + '=' * (-len(value) % 4), altchars=b'-_', validate=True)
+            if (base64.urlsafe_b64encode(decoded_hash).rstrip(b'=').decode('ascii') != value
+                    or len(decoded_hash) != hashlib.new(algorithm).digest_size):
+                raise RuntimeError('malformed RECORD digest: ' + name)
+            recorded_hash = dict(algorithm=algorithm, value=value)
+        if encoded_size and (not re.fullmatch(r'[0-9]+', encoded_size) or len(encoded_size) > 20):
+            raise RuntimeError('malformed RECORD size: ' + name)
+        row.update(path=name, record_hash=recorded_hash,
+                   record_size=int(encoded_size) if encoded_size else None, state='pending')
+    return record['rows']
+distributions, site_paths, startup, path_states = [], [], [], []
 loaded_hooks = {}
-for name in ('sitecustomize', 'usercustomize'):
-    module = sys.modules.get(name)
-    if module is None:
-        loaded_hooks[name] = None
-    else:
-        path = getattr(module, '__file__', None)
-        if not path:
-            raise RuntimeError('opaque loaded startup hook: ' + name)
-        loaded_hooks[name] = describe(path, raw=True)
 result = dict(executable=sys.executable, version=sys.version, prefix=sys.prefix,
-              base_prefix=sys.base_prefix, path=sys.path, site_paths=site_paths,
-              sysconfig_paths=sysconfig.get_paths(), enable_user_site=site.ENABLE_USER_SITE,
+              base_prefix=sys.base_prefix, path=list(sys.path), site_paths=site_paths,
+              enable_user_site=site.ENABLE_USER_SITE, complete=False,
               search_path_states=path_states, startup_inputs=startup, loaded_hooks=loaded_hooks,
-              distributions=sorted(distributions,key=lambda x:x['name'].lower()),
-              freeze=sorted(x['name']+'=='+x['version'] for x in distributions),
-              environment={key:os.environ.get(key) for key in ('PYTHONPATH','PYTHONHOME','PYTHONNOUSERSITE','PYTEST_ADDOPTS','PYTEST_PLUGINS','PYTEST_DISABLE_PLUGIN_AUTOLOAD')},
-              files_hashed=count, bytes_hashed=total)
-print(json.dumps(result, sort_keys=True, separators=(',', ':')))
+              distributions=distributions, distribution_errors=[], module_resolution={},
+              environment={key:os.environ.get(key) for key in ('PYTHONPATH','PYTHONHOME','PYTHONUSERBASE','PYTHONNOUSERSITE','PYTHONSAFEPATH','PYTHONSTARTUP','PYTEST_ADDOPTS','PYTEST_PLUGINS','PYTEST_DISABLE_PLUGIN_AUTOLOAD')})
+try:
+    if sys.version_info[:2] != (3, 12):
+        raise RuntimeError('reviewed interpreters must both be Python 3.12')
+    site_paths.extend(site.getsitepackages() + [site.getusersitepackages()])
+    result['sysconfig_paths'] = sysconfig.get_paths()
+    for name in ('pytest', '_pytest'):
+        spec = importlib.util.find_spec(name)  # Top-level lookup never imports pytest or its plugins.
+        resolution = None if spec is None else dict(
+            origin=spec.origin,
+            search_locations=None if spec.submodule_search_locations is None else list(spec.submodule_search_locations),
+            loader=None if spec.loader is None else type(spec.loader).__module__ + '.' + type(spec.loader).__qualname__)
+        result['module_resolution'][name] = resolution
+        if spec is not None and spec.origin not in (None, 'built-in', 'frozen'):
+            resolution['file'] = describe(spec.origin)
+    for value in sorted(set(site_paths + sys.path)):
+        directory = pathlib.Path(value or os.getcwd())
+        try:
+            info = directory.stat()
+        except FileNotFoundError:
+            path_states.append(dict(path=str(directory), state='absent'))
+            continue
+        if stat.S_ISREG(info.st_mode):
+            path_states.append(dict(path=str(directory), state='file', identity=describe(directory)))
+            continue
+        if not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError('unsupported Python search path: ' + str(directory))
+        names = list(directory.iterdir())  # permission failures are NOT absence
+        path_states.append(dict(path=str(directory), state='directory'))
+        for path in names:
+            if path.suffix == '.pth' or path.name in ('sitecustomize.py', 'usercustomize.py', 'sitecustomize.pyc', 'usercustomize.pyc'):
+                startup.append(describe(path, raw=True))
+            if path.name in ('sitecustomize', 'usercustomize') and path.is_dir():
+                for member in sorted(path.rglob('*')):
+                    if member.is_file():
+                        startup.append(describe(member, raw=True))
+    for name in ('sitecustomize', 'usercustomize'):
+        module = sys.modules.get(name)
+        if module is None:
+            loaded_hooks[name] = None
+        else:
+            path = getattr(module, '__file__', None)
+            if not path:
+                raise RuntimeError('opaque loaded startup hook: ' + name)
+            loaded_hooks[name] = describe(path, raw=True)
+    instances = []
+    # Discover bounded identities before any missing file inventory can obscure later instances.
+    for distribution in importlib.metadata.distributions():
+        if len(distributions) >= MAX_DISTRIBUTIONS:
+            raise RuntimeError('Python distribution inventory bound exceeded')
+        index = len(distributions)
+        entry = dict(name=None, normalized_name=None, version=None, location=None,
+                     metadata_path=None, files=[], pytest_entry_points=[], complete=False)
+        distributions.append(entry)
+        try:
+            entry['location'] = str(distribution.locate_file(''))
+            # PathDistribution's metadata directory distinguishes instances even within one site directory.
+            metadata_path = getattr(distribution, '_path', None)
+            if metadata_path is None:
+                raise RuntimeError('missing distribution metadata location: ' + str(entry['location']))
+            entry['metadata_path'] = str(metadata_path)
+            entry['metadata_canonical'] = str(pathlib.Path(metadata_path).resolve(strict=True))
+            name = distribution.metadata.get('Name')
+            key = re.sub(r'[-_.]+', '-', (name or '').lower())
+            entry.update(name=name, normalized_name=key)
+            if not key:
+                raise RuntimeError('missing distribution identity: ' + str(name))
+            entry['version'] = distribution.version
+            if not isinstance(entry['version'], str):
+                raise RuntimeError('missing distribution version: ' + name)
+        except Exception as exc:
+            entry['error'] = type(exc).__name__ + ': ' + str(exc)
+            result['distribution_errors'].append(dict(instance=index, phase='identity', error=entry['error']))
+        else:
+            instances.append((index, distribution, entry))
+    for index, distribution, entry in instances:
+        try:
+            entry['pytest_entry_points'] = sorted(
+                [dict(name=ep.name, value=ep.value, group=ep.group)
+                 for ep in distribution.entry_points if ep.group == 'pytest11'], key=lambda x:x['name'])
+            members = record_members(entry)
+            for member in members:
+                # Generated bytecode is a real executable input too, if it exists.
+                path = pathlib.Path(distribution.locate_file(member['path']))
+                try:
+                    path.stat()
+                except FileNotFoundError:
+                    if member['path'].endswith(('.pyc', '.pyo')):
+                        member['state'] = 'absent_generated_bytecode'
+                        continue
+                    member['state'] = 'missing'
+                    raise RuntimeError('missing distribution file: ' + str(path))
+                observed = describe(path)
+                observed['record_hash'] = member['record_hash']
+                observed['record_size'] = member['record_size']
+                member.update(state='observed', file_index=len(entry['files']))
+                entry['files'].append(observed)
+            entry['complete'] = True
+        except Exception as exc:
+            entry['error'] = type(exc).__name__ + ': ' + str(exc)
+            result['distribution_errors'].append(dict(instance=index, phase='files', error=entry['error']))
+    if result['distribution_errors']:
+        raise RuntimeError('Python distribution metadata errors require review')
+    result['complete'] = True
+except Exception as exc:
+    result['error'] = type(exc).__name__ + ': ' + str(exc)
+    raise
+finally:
+    # Keep every occurrence, including conflicting versions and paths. None is admitted.
+    by_name = {}
+    for index, entry in enumerate(distributions):
+        if entry['normalized_name']:
+            by_name.setdefault(entry['normalized_name'], []).append(index)
+    result['duplicate_distributions'] = [dict(normalized_name=name, instances=indices)
+        for name, indices in sorted(by_name.items()) if len(indices) > 1]
+    result['freeze'] = sorted(x['name']+'=='+x['version'] for x in distributions
+                              if isinstance(x['name'], str) and isinstance(x['version'], str))
+    result.update(files_hashed=count, bytes_hashed=total)
+    print(json.dumps(result, sort_keys=True, separators=(',', ':')), flush=True)
+if result['duplicate_distributions']:
+    raise RuntimeError('duplicate distribution identities: ' + ', '.join(
+        item['normalized_name'] for item in result['duplicate_distributions']))
 '''
 
 
@@ -939,22 +1096,53 @@ def collect_python(reader: Reader, repo: Path, executables: list[str]) -> dict[s
     if len(executables) != 2 or len({str(Path(path).resolve(strict=True)) for path in executables}) != 2:
         raise FactError("both distinct installed 3.12 interpreters must be inventoried")
     records = []
+    errors = []
     for executable in executables:
         try:
             identity = executable_identity(executable, reader, require_root=(executable == "/usr/bin/python3"))
         except FactError as exc:
-            if exc.observations is not None:
-                records.append({"binary": exc.observations, "inventory": None, "status": "STOP"})
-                raise FactError(str(exc), observations={"interpreters": records,
-                                "trust_review": "STOP; executable identity remains unapproved"}) from exc
-            raise
-        raw = reader.commands.run([executable, "-c", PYTHON_FACTS_SCRIPT], timeout=90, cwd=repo)
-        inventory = strict_json(raw)
-        if not isinstance(inventory, dict) or not inventory.get("distributions") or not inventory.get("freeze"):
-            raise FactError("empty Python distribution inventory")
-        if not any(entry["name"].lower() == "pytest" for entry in inventory["distributions"]):
-            raise FactError("pytest is absent from a required interpreter")
-        records.append({"binary": identity, "inventory": inventory, "inventory_sha256": digest(inventory)})
+            records.append({"binary": exc.observations or {"requested": executable},
+                            "inventory": None, "status": "STOP"})
+            raise FactError(str(exc), observations={"interpreters": records,
+                            "trust_review": "STOP; executable identity remains unapproved"}) from exc
+        record = {"binary": identity, "inventory": None}
+        records.append(record)
+        try:
+            raw = reader.commands.run([executable, "-c", PYTHON_FACTS_SCRIPT], timeout=90, cwd=repo)
+            inventory = strict_json(raw)
+            record.update(inventory=inventory, inventory_sha256=digest(inventory))
+            if (not isinstance(inventory, dict)
+                    or not isinstance(inventory.get("distributions"), list) or not inventory["distributions"]
+                    or not isinstance(inventory.get("freeze"), list) or not inventory["freeze"]):
+                raise FactError("empty Python distribution inventory")
+            names = []
+            for entry in inventory["distributions"]:
+                name = entry.get("name") if isinstance(entry, dict) else None
+                if not isinstance(name, str) or not name:
+                    raise FactError("missing Python distribution identity")
+                names.append(re.sub(r"[-_.]+", "-", name.lower()))
+            if len(set(names)) != len(names) or inventory.get("duplicate_distributions"):
+                raise FactError("duplicate Python distribution identities remain unapproved")
+            if inventory.get("complete") is not True or inventory.get("error"):
+                raise FactError("incomplete Python inventory remains unapproved")
+            if "pytest" not in names:
+                raise FactError("pytest is absent from a required interpreter")
+        except (FactError, OSError, ValueError) as exc:
+            if isinstance(exc, FactError) and exc.stdout is not None:
+                # Commands already stores bounded raw stdout/stderr, even on failure.
+                # Parse only a complete JSON record; contaminated/truncated output stays raw.
+                try:
+                    inventory = strict_json(exc.stdout)
+                except FactError as parse_error:
+                    record["inventory_error"] = str(parse_error)
+                else:
+                    record.update(inventory=inventory, inventory_sha256=digest(inventory))
+            record.update(status="STOP", error=str(exc))
+            errors.append(f"{executable}: {exc}")
+    if errors:
+        raise FactError("; ".join(errors), observations={"interpreters": records,
+                        "script_sha256": hashlib.sha256(PYTHON_FACTS_SCRIPT.encode()).hexdigest(),
+                        "trust_review": "STOP; Python inventory remains unapproved"})
     return {"interpreters": records, "script_sha256": hashlib.sha256(PYTHON_FACTS_SCRIPT.encode()).hexdigest(),
             "trust_review": "REQUIRED; installed code, startup hooks, and plugins are not admitted here"}
 
@@ -970,6 +1158,7 @@ def collect(output: Path, *, repo: Path, vendor_dir: Path | None = None,
     report["started_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     stages = [
         ("host", lambda: collect_host(reader)),
+        ("collection_utilities", collect_collection_utilities),
         ("kernel_policy", lambda: collect_kernel_inventory(reader)),
         ("policy_inputs", lambda: collect_policy_inputs(reader, vendor_dir)),
         ("tools", lambda: collect_system_tools(reader, vendor_dir)),

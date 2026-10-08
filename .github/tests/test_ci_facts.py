@@ -391,6 +391,7 @@ def _stub_collection(monkeypatch):
     monkeypatch.setattr(facts.os, "getuid", lambda: 1001)
     monkeypatch.setattr(facts.os, "geteuid", lambda: 1001)
     monkeypatch.setattr(facts, "collect_host", lambda reader: {"caller": "fake"})
+    monkeypatch.setattr(facts, "collect_collection_utilities", lambda: {})
     monkeypatch.setattr(facts, "collect_kernel_inventory", lambda reader: {
         "conflicting_names": [], "semantic": {"profiles": []}, "semantic_sha256": "test-digest"})
     monkeypatch.setattr(facts, "collect_policy_inputs", lambda *args: {"forbidden_overrides": []})
@@ -653,7 +654,7 @@ def test_second_rejected_interpreter_is_retained_but_never_executed(tmp_path, mo
     class Commands:
         def run(self, argv, **kwargs):
             calls.append(argv[0])
-            return b'{"distributions":[{"name":"pytest"}],"freeze":["pytest==synthetic"]}'
+            return b'{"distributions":[{"name":"pytest"}],"freeze":["pytest==synthetic"],"complete":true}'
     class Reader:
         commands = Commands()
     with pytest.raises(facts.FactError, match="still rejected") as caught:
@@ -677,3 +678,419 @@ def test_opaque_display_does_not_bypass_inventory_consistency(problem):
     with pytest.raises(facts.FactError, match="disagree|revision changed") as caught:
         facts.collect_kernel_inventory(reader)
     assert caught.value.observations is None
+
+
+def _python_distribution(root, name="pytest", version="9.1.1", *, metadata_name=None):
+    """Real stdlib metadata fixture. Package/plugin bodies must never be imported."""
+    metadata = root / (metadata_name or f"{name}-{version}.dist-info")
+    metadata.mkdir(parents=True)
+    (metadata / "METADATA").write_text(f"Name: {name}\nVersion: {version}\n")
+    members = ["pytest.py", "_pytest.py", "forbidden_fixture_plugin.py",
+               f"{metadata.name}/METADATA", f"{metadata.name}/entry_points.txt"]
+    for module in members[:3]:
+        (root / module).write_text("raise AssertionError('inventory must not import this module')\n")
+    (metadata / "entry_points.txt").write_text("[pytest11]\nfixture = forbidden_fixture_plugin:plugin\n")
+    (metadata / "RECORD").write_text("".join(f"{member},,\n" for member in members))
+    return metadata
+
+
+def _run_python_inventory(monkeypatch, roots):
+    import contextlib
+    import importlib.metadata
+    import io
+    import site
+    import sysconfig
+
+    sysconfig.get_paths()  # Load generated stdlib configuration before restricting sys.path.
+    output = io.StringIO()
+    error = None
+    paths = [str(root) for root in roots]
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "path", paths)
+        patch.setattr(site, "getsitepackages", lambda: paths[:1])
+        patch.setattr(site, "getusersitepackages", lambda: paths[-1])
+        patch.setattr(importlib.metadata, "distributions",
+                      lambda: importlib.metadata.Distribution.discover(path=paths))
+        for name in ("pytest", "_pytest", "sitecustomize", "usercustomize"):
+            patch.delitem(sys.modules, name, raising=False)
+        with contextlib.redirect_stdout(output):
+            try:
+                exec(compile(facts.PYTHON_FACTS_SCRIPT, "python-inventory", "exec"), {})  # noqa: S102
+            except (RuntimeError, OSError, ValueError) as exc:
+                error = str(exc)
+        assert "pytest" not in sys.modules and "_pytest" not in sys.modules
+        assert "forbidden_fixture_plugin" not in sys.modules
+    return facts.strict_json(output.getvalue().encode()), error
+
+
+@pytest.mark.parametrize("version,location", [
+    ("9.1.1", "user-site"), ("9.2.0", "user-site"), ("9.1.1", "unexpected-site")])
+def test_duplicate_distribution_instances_remain_visible_and_rejected(tmp_path, monkeypatch, version, location):
+    first, second = tmp_path / "toolcache", tmp_path / location
+    metadata = [_python_distribution(first), _python_distribution(second, "PyTeSt", version)]
+    (first / "startup.pth").write_text("import forbidden_fixture_plugin\n")
+    monkeypatch.setenv("PYTEST_PLUGINS", "forbidden_fixture_plugin")
+    monkeypatch.setenv("PYTHONUSERBASE", str(second))
+    inventory, error = _run_python_inventory(monkeypatch, [first, second])
+    assert error == "duplicate distribution identities: pytest"
+    assert inventory["duplicate_distributions"] == [{"normalized_name": "pytest", "instances": [0, 1]}]
+    instances = inventory["distributions"]
+    assert [entry["metadata_path"] for entry in instances] == list(map(str, metadata))
+    assert [entry["metadata_canonical"] for entry in instances] == list(map(str, metadata))
+    assert [entry["location"] for entry in instances] == [str(first), str(second)]
+    assert [entry["version"] for entry in instances] == ["9.1.1", version]
+    assert all(entry["files"] and entry["complete"] for entry in instances)
+    assert all(entry["pytest_entry_points"][0]["value"] == "forbidden_fixture_plugin:plugin"
+               for entry in instances)
+    assert inventory["path"] == inventory["site_paths"] == [str(first), str(second)]
+    assert inventory["module_resolution"]["pytest"]["origin"] == str(first / "pytest.py")
+    assert inventory["module_resolution"]["_pytest"]["origin"] == str(first / "_pytest.py")
+    assert inventory["module_resolution"]["pytest"]["file"]["sha256"] == facts.hash_file(first / "pytest.py")
+    assert inventory["startup_inputs"][0]["path"] == str(first / "startup.pth")
+    assert inventory["environment"]["PYTEST_PLUGINS"] == "forbidden_fixture_plugin"
+    assert inventory["environment"]["PYTHONUSERBASE"] == str(second)
+
+
+def test_same_site_different_versions_and_normalized_names_are_not_deduplicated(tmp_path, monkeypatch):
+    _python_distribution(tmp_path)
+    metadata = [_python_distribution(tmp_path, "plug.in", "1"),
+                _python_distribution(tmp_path, "plug__in", "2")]
+    inventory, error = _run_python_inventory(monkeypatch, [tmp_path])
+    assert error == "duplicate distribution identities: plug-in"
+    duplicate = inventory["duplicate_distributions"][0]
+    assert duplicate["normalized_name"] == "plug-in"
+    instances = [inventory["distributions"][index] for index in duplicate["instances"]]
+    assert {entry["metadata_path"] for entry in instances} == set(map(str, metadata))
+    assert {entry["version"] for entry in instances} == {"1", "2"}
+
+
+@pytest.mark.parametrize("problem", ["unnamed", "missing-version", "missing-record", "missing-file", "directory", "oversize"])
+def test_python_metadata_errors_emit_partial_inventory_but_still_fail(tmp_path, monkeypatch, problem):
+    first, second, third = tmp_path / "first", tmp_path / "second", tmp_path / "third"
+    _python_distribution(first)
+    metadata = _python_distribution(second, "" if problem == "unnamed" else "broken")
+    _python_distribution(third, "later")
+    if problem == "missing-version":
+        (metadata / "METADATA").write_text("Name: broken\n")
+    elif problem == "missing-record":
+        (metadata / "RECORD").unlink()
+    elif problem in ("missing-file", "directory", "oversize"):
+        member = second / "broken-input"
+        if problem == "directory":
+            member.mkdir()
+        elif problem == "oversize":
+            with member.open("wb") as stream:
+                stream.truncate(256 * 1024 * 1024 + 1)
+        with (metadata / "RECORD").open("a") as stream:
+            stream.write("broken-input,,\n")
+    inventory, error = _run_python_inventory(monkeypatch, [first, second, third])
+    assert error and inventory["error"].endswith(error)
+    assert inventory["complete"] is False
+    assert inventory["distributions"][0]["complete"] is True
+    assert inventory["distributions"][0]["files"]
+    assert inventory["distributions"][1]["complete"] is False
+    assert len(inventory["distributions"]) == 3
+    assert inventory["distributions"][1]["metadata_path"] == str(metadata)
+    assert inventory["distributions"][2]["name"] == "later"
+    assert inventory["distributions"][2]["complete"] is True
+    assert inventory["distributions"][2]["files"]
+    assert len(inventory["distribution_errors"]) == 1
+    assert inventory["distribution_errors"][0]["instance"] == 1
+    assert inventory["distribution_errors"][0]["error"] == inventory["distributions"][1]["error"]
+    assert inventory["module_resolution"]["pytest"]["origin"] == str(first / "pytest.py")
+
+
+def test_command_failure_preserves_bounded_stdout_and_stderr(tmp_path):
+    evidence = facts.Evidence(tmp_path / "evidence")
+    commands = facts.Commands(evidence)
+    with pytest.raises(facts.FactError, match="exit 1") as caught:
+        commands.run([sys.executable, "-c",
+                      "import sys; print('{\"complete\":false}'); print('metadata error', file=sys.stderr); sys.exit(1)"],
+                     limit=1024)
+    assert caught.value.stdout == b'{"complete":false}\n'
+    record = commands.records[0]
+    assert (evidence.output / record["stdout"]["artifact"]).read_bytes() == caught.value.stdout
+    assert (evidence.output / record["stderr"]["artifact"]).read_bytes() == b"metadata error\n"
+
+
+@pytest.mark.parametrize("output,reason", [
+    (b'{"complete":false,"distributions":[{"name":"pytest","version":"9.1.1"}]}', "exit 1"),
+    (b'{"incomplete":', "command deadline exceeded"),
+    (b'contamination\n{}', "command output limit exceeded"),
+    (None, "cannot execute interpreter")])
+@pytest.mark.parametrize("failed_index", [0, 1])
+def test_interpreter_failure_keeps_binary_and_other_inventory(tmp_path, monkeypatch, output, reason, failed_index):
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.touch()
+    second.touch()
+    monkeypatch.setattr(facts, "executable_identity", lambda path, *args, **kwargs:
+                        {"requested": path, "mode": 0o755, "sha256": "observed"})
+    failed = (first, second)[failed_index]
+    calls = []
+    class Commands:
+        def run(self, argv, **kwargs):
+            calls.append(argv[0])
+            if argv[0] == str(failed):
+                raise facts.FactError(reason, stdout=output)
+            return b'{"complete":true,"distributions":[{"name":"pytest"}],"freeze":["pytest==9.1.1"]}'
+    class Reader:
+        commands = Commands()
+    with pytest.raises(facts.FactError, match=reason) as caught:
+        facts.collect_python(Reader(), tmp_path, [str(first), str(second)])
+    records = caught.value.observations["interpreters"]
+    assert calls == [str(first), str(second)]
+    assert len(records) == 2 and records[1 - failed_index]["inventory"]["complete"] is True
+    record = records[failed_index]
+    assert record["binary"] == {"requested": str(failed), "mode": 0o755, "sha256": "observed"}
+    assert record["status"] == "STOP"
+    if reason == "exit 1":
+        assert record["inventory"] == json.loads(output)
+        assert record["inventory_sha256"] == facts.digest(json.loads(output))
+    else:
+        assert record["inventory"] is None
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+@pytest.mark.parametrize("version,location", [
+    ("9.1.1", "user-site"), ("9.2.0", "user-site"), ("9.1.1", "unexpected-site")])
+def test_duplicate_python_evidence_persists_with_exit2_and_no_admission(
+        tmp_path, monkeypatch, returncode, version, location):
+    python_collector = facts.collect_python
+    _stub_collection(monkeypatch)
+    monkeypatch.setattr(facts, "collect_python", python_collector)
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.touch()
+    second.touch()
+    monkeypatch.setattr(facts, "executable_identity", lambda path, *args, **kwargs: {"requested": path})
+    inventory = {"complete": True, "freeze": ["pytest==9.1.1", "pytest==" + version],
+                 "distributions": [{"name": "pytest", "version": "9.1.1", "location": "toolcache"},
+                                   {"name": "PyTeSt", "version": version, "location": location}],
+                 "duplicate_distributions": [{"normalized_name": "pytest", "instances": [0, 1]}]}
+    calls = []
+    def run(self, argv, **kwargs):
+        calls.append(argv[0])
+        if argv[0] == str(second):
+            return b'{"complete":true,"distributions":[{"name":"pytest"}],"freeze":["pytest==9.1.1"]}'
+        raw = facts.canonical_bytes(inventory)
+        if returncode:
+            raise facts.FactError("interpreter: exit 1", stdout=raw)
+        return raw
+    monkeypatch.setattr(facts.Commands, "run", run)
+    output = tmp_path / "evidence"
+    assert facts.collect(output, repo=tmp_path, pythons=[str(first), str(second)]) == 2
+    report = json.loads((output / "facts.json").read_text())
+    assert report["status"] == "STOP" and report["admission"] is False
+    assert report["reviewed_inventory_sha256"] is None
+    record = report["facts"]["python"]["interpreters"][0]
+    assert record["status"] == "STOP" and record["inventory"] == inventory
+    assert record["inventory_sha256"] == facts.digest(inventory)
+    assert report["errors"][0]["stage"] == "python"
+    assert calls == [str(first), str(second)]
+    assert report["facts"]["python"]["interpreters"][1]["inventory"]["complete"] is True
+
+
+def test_both_python_failures_are_explicit_and_preserved(tmp_path, monkeypatch):
+    executables = [tmp_path / "first", tmp_path / "second"]
+    for path in executables:
+        path.touch()
+    monkeypatch.setattr(facts, "executable_identity", lambda path, *args, **kwargs: {"requested": path})
+    class Commands:
+        def run(self, argv, **kwargs):
+            raise facts.FactError("metadata failed for " + argv[0], stdout=b'{"complete":false}')
+    class Reader:
+        commands = Commands()
+    with pytest.raises(facts.FactError) as caught:
+        facts.collect_python(Reader(), tmp_path, list(map(str, executables)))
+    records = caught.value.observations["interpreters"]
+    assert len(records) == 2
+    for path, record in zip(executables, records, strict=True):
+        assert str(path) in str(caught.value)
+        assert record["binary"]["requested"] == str(path)
+        assert record["error"] == "metadata failed for " + str(path)
+        assert record["status"] == "STOP" and record["inventory"] == {"complete": False}
+
+
+def test_installed_record_hash_and_size_are_observed_beside_actual_bytes(tmp_path, monkeypatch):
+    import base64
+    import hashlib
+    metadata = _python_distribution(tmp_path)
+    for name in ("generated.pyc", "shipped.pyc"):
+        (tmp_path / name).write_bytes(b"synthetic bytecode input; never executed")
+    recorded = base64.urlsafe_b64encode(hashlib.sha256(b"wheel bytes").digest()).rstrip(b"=").decode()
+    with (metadata / "RECORD").open("a") as stream:
+        stream.write(f"generated.pyc,,\nshipped.pyc,sha256={recorded},123\n")
+    inventory, error = _run_python_inventory(monkeypatch, [tmp_path])
+    assert error is None
+    files = {Path(entry["path"]).name: entry for entry in inventory["distributions"][0]["files"]}
+    assert files["generated.pyc"]["record_hash"] is None and files["generated.pyc"]["record_size"] is None
+    assert files["shipped.pyc"]["record_hash"] == {"algorithm": "sha256", "value": recorded}
+    assert files["shipped.pyc"]["record_size"] == 123
+    for name in ("generated.pyc", "shipped.pyc"):
+        assert files[name]["sha256"] == facts.hash_file(tmp_path / name)
+        assert files[name]["bytes"] == (tmp_path / name).stat().st_size
+
+
+def test_missing_required_record_member_retains_raw_rows_hash_and_size(tmp_path, monkeypatch):
+    import base64
+    import hashlib
+    metadata = _python_distribution(tmp_path)
+    recorded = base64.urlsafe_b64encode(hashlib.sha256(b"missing bytes").digest()).rstrip(b"=").decode()
+    with (metadata / "RECORD").open("a") as stream:
+        stream.write(f"missing-essential.py,sha256={recorded},99\npytest.pyc,,\n")
+    inventory, error = _run_python_inventory(monkeypatch, [tmp_path])
+    assert error and inventory["complete"] is False
+    entry = inventory["distributions"][0]
+    assert "missing distribution file" in entry["error"] and entry["complete"] is False
+    record = entry["record"]
+    assert base64.b64decode(record["base64"]) == (metadata / "RECORD").read_bytes()
+    row = record["rows"][-2]
+    assert row["fields"] == ["missing-essential.py", "sha256=" + recorded, "99"]
+    assert row["record_hash"] == {"algorithm": "sha256", "value": recorded}
+    assert row["record_size"] == 99 and row["state"] == "missing"
+    assert record["rows"][-1]["path"] == "pytest.pyc"
+
+
+@pytest.mark.parametrize("raw", [
+    b"", b"missing.py,\n", b"missing.py,,,\n", b'"unterminated,,\n', b"\xff,,\n",
+    b"missing.py,,negative\n", b"missing.py,invalid,1\n", b"missing.py,sha256=AA,1\n",
+    b"/absolute.py,,\n", b"path//file.py,,\n", b"path\\file.py,,\n", b"bad\0.py,,\n",
+    b'"bad\nname.py",,\n', b"pytest.py,,\npytest.py,,\n"])
+def test_malformed_real_record_is_preserved_and_stops_without_hiding_later_distribution(tmp_path, monkeypatch, raw):
+    import base64
+    first, later = tmp_path / "first", tmp_path / "later"
+    metadata = _python_distribution(first)
+    _python_distribution(later, "later")
+    (metadata / "RECORD").write_bytes(raw)
+    inventory, error = _run_python_inventory(monkeypatch, [first, later])
+    assert error and inventory["complete"] is False
+    entry = inventory["distributions"][0]
+    assert entry["complete"] is False and entry["error"]
+    assert base64.b64decode(entry["record"]["base64"]) == raw
+    assert entry["record"]["identity"]["sha256"] == facts.hash_file(metadata / "RECORD")
+    assert inventory["distributions"][1]["complete"] is True
+
+
+def test_missing_generated_bytecode_and_relative_console_script_keep_existing_handling(tmp_path, monkeypatch):
+    metadata = _python_distribution(tmp_path)
+    console = tmp_path.parent / (tmp_path.name + "-console")
+    console.write_bytes(b"console bytes; never executed")
+    with (metadata / "RECORD").open("a") as stream:
+        stream.write(f"missing.pyc,,\nmissing.pyo,,\n../{console.name},,\n")
+    inventory, error = _run_python_inventory(monkeypatch, [tmp_path])
+    assert error is None and inventory["complete"] is True
+    rows = inventory["distributions"][0]["record"]["rows"]
+    assert [row["state"] for row in rows[-3:]] == ["absent_generated_bytecode", "absent_generated_bytecode", "observed"]
+    entry = inventory["distributions"][0]["files"][rows[-1]["file_index"]]
+    assert entry["canonical"] == str(console) and entry["sha256"] == facts.hash_file(console)
+
+
+def test_egg_info_without_authoritative_record_is_unknown_and_stop(tmp_path, monkeypatch):
+    import base64
+    metadata = _python_distribution(tmp_path, metadata_name="pytest.egg-info")
+    (metadata / "RECORD").unlink()
+    (metadata / "SOURCES.txt").write_text("pytest.py\nmissing-essential.py\n")
+    (metadata / "installed-files.txt").write_text("../pytest.py\n../missing-essential.py\n")
+    inventory, error = _run_python_inventory(monkeypatch, [tmp_path])
+    assert error and inventory["complete"] is False
+    entry = inventory["distributions"][0]
+    assert entry["name"] == "pytest" and entry["complete"] is False
+    assert "unknown installed file inventory" in entry["error"]
+    inputs = {Path(item["path"]).name: item for item in entry["metadata_inputs"]}
+    assert inputs["METADATA"]["state"] == "observed" and inputs["PKG-INFO"]["state"] == "absent"
+    for name in ("SOURCES.txt", "installed-files.txt"):
+        assert base64.b64decode(inputs[name]["base64"]) == (metadata / name).read_bytes()
+
+
+def test_file_egg_info_is_retained_as_unknown_metadata_without_approval(tmp_path, monkeypatch):
+    import base64
+    _python_distribution(tmp_path)
+    raw = b"Name: distro-input\nVersion: 1\n"
+    metadata = tmp_path / "distro_input.egg-info"
+    metadata.write_bytes(raw)
+    inventory, error = _run_python_inventory(monkeypatch, [tmp_path])
+    assert error and inventory["complete"] is False
+    entry = next(item for item in inventory["distributions"] if item["name"] == "distro-input")
+    assert entry["complete"] is False and "unknown installed file inventory" in entry["error"]
+    assert base64.b64decode(entry["metadata_inputs"][0]["base64"]) == raw
+
+
+def test_oversize_record_stops_before_reading_it(tmp_path, monkeypatch):
+    metadata = _python_distribution(tmp_path)
+    with (metadata / "RECORD").open("wb") as stream:
+        stream.truncate(4 * 1024 * 1024 + 1)
+    inventory, error = _run_python_inventory(monkeypatch, [tmp_path])
+    assert error and inventory["complete"] is False
+    entry = inventory["distributions"][0]
+    assert "metadata type/size bound exceeded" in entry["error"]
+    assert "base64" not in entry["record"]
+
+
+def test_quoted_record_path_is_parsed_as_one_observed_member(tmp_path, monkeypatch):
+    metadata = _python_distribution(tmp_path)
+    path = tmp_path / "a,b.py"
+    path.write_bytes(b"data only")
+    with (metadata / "RECORD").open("a") as stream:
+        stream.write('"a,b.py",,\n')
+    inventory, error = _run_python_inventory(monkeypatch, [tmp_path])
+    assert error is None
+    row = inventory["distributions"][0]["record"]["rows"][-1]
+    assert row["path"] == "a,b.py" and row["state"] == "observed"
+
+
+def test_privilege_bearing_utility_observation_does_not_approve_execution(tmp_path, monkeypatch):
+    import errno
+    binary = tmp_path / "sudo-fixture"
+    binary.write_bytes(b"\x7fELFsynthetic binary; never executed")
+    binary.chmod(0o4755)
+    def no_capabilities(*args):
+        raise OSError(errno.ENODATA, "no capabilities")
+    monkeypatch.setattr(facts.os, "getxattr", no_capabilities)
+    observed = facts.observe_executable_identity(str(binary))
+    assert observed["mode"] == 0o4755 and observed["sha256"] == facts.hash_file(binary)
+    assert observed["canonical"] == str(binary) and observed["file_capabilities_hex"] == ""
+    with pytest.raises(facts.FactError, match="unexpected executable") as caught:
+        facts.executable_identity(str(binary), None, require_root=False)
+    assert caught.value.observations == observed
+
+
+@pytest.mark.parametrize("change,require_root,accepted", [
+    ({}, True, True), ({"uid": 1001}, True, False), ({"uid": 1001}, False, True),
+    ({"mode": 0o4755}, False, False), ({"mode": 0o2755}, False, False),
+    ({"mode": 0o775}, True, False), ({"mode": 0o757}, True, False),
+    ({"file_capabilities_hex": "01"}, True, False), ({"elf": False}, True, False),
+    ({"shebang": "/usr/bin/python3"}, False, False)])
+def test_executable_acceptance_predicate_is_unchanged(monkeypatch, change, require_root, accepted):
+    observed = {"elf": True, "file_capabilities_hex": "", "mode": 0o755, "uid": 0, **change}
+    monkeypatch.setattr(facts, "observe_executable_identity", lambda path: observed)
+    if accepted:
+        assert facts.executable_identity("/synthetic", None, require_root=require_root) == observed
+    else:
+        with pytest.raises(facts.FactError) as caught:
+            facts.executable_identity("/synthetic", None, require_root=require_root)
+        assert caught.value.observations == observed
+
+
+@pytest.mark.parametrize("missing", [None, "/usr/bin/timeout"])
+def test_collection_utilities_are_fixed_data_only_and_unapproved(monkeypatch, missing):
+    calls = []
+    def observe(path):
+        calls.append(path)
+        if path == missing:
+            raise facts.FactError("unreadable utility")
+        return {"requested": path, "canonical": path, "uid": 0, "gid": 0,
+                "mode": 0o4755 if path == "/usr/bin/sudo" else 0o755,
+                "sha256": "observed-digest", "file_capabilities_hex": ""}
+    monkeypatch.setattr(facts, "observe_executable_identity", observe)
+    if missing:
+        with pytest.raises(facts.FactError, match="incomplete") as caught:
+            facts.collect_collection_utilities()
+        result = caught.value.observations
+        assert result["errors"] == [{"path": missing, "error": "unreadable utility"}]
+    else:
+        result = facts.collect_collection_utilities()
+        assert result["errors"] == []
+    assert calls == ["/usr/bin/sudo", "/usr/bin/timeout", "/usr/bin/journalctl"]
+    assert result["admission"] is False and result["trust_review"].startswith("REQUIRED")
+    assert result["executables"]["/usr/bin/sudo"]["privilege_bearing"] is True
+    assert result["executables"]["/usr/bin/journalctl"]["privilege_bearing"] is False
+    assert result["executables"]["/usr/bin/sudo"]["mode"] == 0o4755
