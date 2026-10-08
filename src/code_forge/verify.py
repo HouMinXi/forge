@@ -139,12 +139,20 @@ def read_required_cycles(cwd: Path) -> int:
     return n
 
 
+class VerifyFailureKind(str, Enum):
+    INCOMPLETE_PASS = "incomplete-pass"
+
+
 @dataclass
 class VerifyResult:
     passed: bool
     reason: str
     checks_run: int = 0
     checks_passed: int = 0
+    failure_kind: VerifyFailureKind | None = None
+    incomplete_passes: tuple[int, ...] = ()
+    completion_statuses: tuple[tuple[int, int, str | None], ...] = ()
+    unresolved_findings: tuple[tuple[int, int, str, str], ...] = ()
 
 
 def parse_diff_files(diff_text: str) -> dict[str, list[int]]:
@@ -351,10 +359,6 @@ def _capture_earned_cycle(
     selected = [record for record in receipt_records if record[2]["cycle"] == cycle]
     if len(selected) != 3 or {record[2]["pass"] for record in selected} != {1, 2, 3}:
         return None, VerifyResult(False, f"earned cycle {cycle} requires exactly three receipts", 1, 0)
-    if any(record[2].get("pass_status") != "completed" for record in selected):
-        return None, VerifyResult(
-            False, f"earned cycle {cycle} requires explicit completed status", 1, 0
-        )
     result = _run_verify_impl(
         cwd,
         diff_sha256,
@@ -369,7 +373,13 @@ def _capture_earned_cycle(
         receipt_records=receipt_records,
     )
     if not result.passed:
+        if result.failure_kind is VerifyFailureKind.INCOMPLETE_PASS:
+            result.reason = f"earned cycle {cycle} requires explicit completed status"
         return None, result
+    if any(record[2].get("pass_status") != "completed" for record in selected):
+        return None, VerifyResult(
+            False, f"earned cycle {cycle} requires explicit completed status", 1, 0
+        )
     return {
         "cycle": cycle,
         "receipt_sha256": {
@@ -1775,21 +1785,35 @@ def _run_verify_impl(
     # before writing this: all 204 receipts on disk carry the field
     # (189 completed, 12 error, 3 timeout), so the signal is real; the
     # tolerance is for the writers that are not receipt.py.
-    for r in receipts:
-        if r.get("cycle") not in last_n:
-            continue
-        status = r.get("pass_status")
-        if status is not None and status != "completed":
+    from .state import PassOutcome
+
+    valid_statuses = {outcome.value for outcome in PassOutcome}
+    for receipt in attested:
+        status = receipt.get("pass_status")
+        if status is not None and (type(status) is not str or status not in valid_statuses):
+            return VerifyResult(
+                False, f"invalid pass completion status: c{receipt['cycle']}p{receipt['pass']}", 8, cp
+            )
+    completion_statuses = tuple(
+        (receipt["cycle"], receipt["pass"], receipt.get("pass_status")) for receipt in attested
+    )
+    incomplete = [r for r in attested if r.get("pass_status") not in (None, "completed")]
+    if incomplete:
+        # Legacy receipts may omit status when all passes otherwise completed.
+        # An omitted sibling cannot establish capacity-only host causality.
+        unspecified = next((r for r in attested if r.get("pass_status") is None), None)
+        if unspecified is not None:
             return VerifyResult(
                 False,
-                f"pass did not complete: c{r['cycle']}p{r['pass']} status={status} -- that pass contributed no review, so the cycle cannot attest",
+                f"pass completion status missing: c{unspecified['cycle']}p{unspecified['pass']} -- incomplete cycle cannot attest",
                 8,
                 cp,
             )
-        # CI checks evidence for one invocation without claiming clean
-        # convergence. External acceptance also needs unresolved product
-        # candidates to have usable evidence, in either verifier mode.
-        if require_convergence:
+    unresolved = []
+    # Healthy CI checks one invocation without claiming convergence. An
+    # incomplete role cannot exempt independent findings in any role.
+    if require_convergence or incomplete:
+        for r in attested:
             for finding in r["findings"]:
                 basis = finding.get("basis")
                 if (
@@ -1797,12 +1821,32 @@ def _run_verify_impl(
                     and isinstance(basis, dict)
                     and basis.get("authority") == "infra-unavailable"
                 ):
-                    return VerifyResult(
-                        False,
-                        f"unresolved unverified product finding c{r['cycle']}p{r['pass']} -- convergence not established",
-                        8,
-                        cp,
-                    )
+                    unresolved.append((
+                        r["cycle"], r["pass"], r["diff_sha256"],
+                        json.dumps(finding, sort_keys=True, separators=(",", ":")),
+                    ))
+    if unresolved:
+        cycle, number, _, _ = unresolved[0]
+        return VerifyResult(
+            False,
+            f"unresolved unverified product finding c{cycle}p{number} -- convergence not established",
+            8,
+            cp,
+            incomplete_passes=tuple(sorted({r["pass"] for r in incomplete})),
+            completion_statuses=completion_statuses,
+            unresolved_findings=tuple(unresolved),
+        )
+    if incomplete:
+        first = incomplete[0]
+        return VerifyResult(
+            False,
+            f"pass did not complete: c{first['cycle']}p{first['pass']} status={first['pass_status']} -- that pass contributed no review, so the cycle cannot attest",
+            8,
+            cp,
+            failure_kind=VerifyFailureKind.INCOMPLETE_PASS,
+            incomplete_passes=tuple(sorted({r["pass"] for r in incomplete})),
+            completion_statuses=completion_statuses,
+        )
     cp += 1
 
-    return VerifyResult(True, "all 8 checks passed", 8, 8)
+    return VerifyResult(True, "all 8 checks passed", 8, 8, completion_statuses=completion_statuses)

@@ -127,6 +127,11 @@ def _run_chunk(
                     description="spawn failed: %s" % e,
                 )
             )
+            from .state import record_provider_failure
+
+            record_provider_failure(findings[-1], e)
+            if rejection_state is not None:
+                rejection_state.acquisition_failures.append(findings[-1])
             continue
         original_exact_dict = type(raw) is dict
         raw_snapshot = _snapshot_raw_response(raw)

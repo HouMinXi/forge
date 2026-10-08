@@ -21,6 +21,9 @@ from .state import (
     PassOutcome,
     derive_pass_outcomes,
     is_receipt_audit,
+    FindingDiagnosticKind,
+    is_provider_diagnostic,
+    reporting_product_findings,
     _PASS_NAMES,
     _finding_to_dict,
 )
@@ -102,6 +105,9 @@ def build_sarif_log(
     receipt_audit = [_finding_to_dict(f) for f in state.findings if is_receipt_audit(f)]
     if receipt_audit:
         run.setdefault("properties", {})["receiptAudit"] = receipt_audit
+    provider_diagnostics = [_finding_to_dict(f) for f in state.findings if is_provider_diagnostic(f)]
+    if provider_diagnostics:
+        run.setdefault("properties", {})["providerDiagnostics"] = provider_diagnostics
     if backend_name is not None and state.cost_passes > 0:
         run.setdefault("properties", {})["tokenCost"] = {
             "inputTokens": state.cost_total_input,
@@ -184,8 +190,7 @@ def _build_run(
                 manifest_tier=manifest_tier,
                 exec_evidence=_exec_ev,
             )
-            for f in state.findings
-            if not is_receipt_audit(f)
+            for f in reporting_product_findings(state.findings)
         ],
     }
 
@@ -292,6 +297,8 @@ def _build_properties(
         props["evidence_files"] = finding.evidence_files
     if finding.error is not None:
         props["error"] = finding.error
+    if type(finding.provider_failure) is dict:
+        props["provider_failure"] = finding.provider_failure
     props["source"] = finding.source
     basis = derive_basis(
         finding,
@@ -348,13 +355,15 @@ def format_summary(
     infra = 0
     receipt_audit_count = 0
     for f in state.findings:
+        if is_provider_diagnostic(f):
+            continue
         if is_receipt_audit(f):
             receipt_audit_count += 1
             continue
         counts[f.disposition] += 1
         if f.source == "INFRA":
             infra += 1
-    total = len(state.findings) - receipt_audit_count
+    total = len(reporting_product_findings(state.findings))
     line = "code-forge: %s findings=%d confirmed=%d uncertain=%d dismissed=%d fixed=%d" % (
         state.verdict.value,
         total,
@@ -365,6 +374,13 @@ def format_summary(
     )
     if receipt_audit_count:
         line += " receipt_audit=%d" % receipt_audit_count
+    for kind, label in (
+        (FindingDiagnosticKind.PROVIDER_CAPACITY, "provider_capacity"),
+        (FindingDiagnosticKind.CAPACITY_INCOMPLETE, "capacity_incomplete"),
+    ):
+        count = sum(1 for f in state.findings if is_provider_diagnostic(f) and f.diagnostic_kind is kind)
+        if count:
+            line += f" {label}={count}"
     if counts[Disposition.STYLE]:
         line += " style=%d" % counts[Disposition.STYLE]
     if infra:

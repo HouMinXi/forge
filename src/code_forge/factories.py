@@ -35,7 +35,7 @@ from .reviewer_json import (
     _json_to_state_findings,
     _strip_fence,
 )
-from .state import StateFinding
+from .state import StateFinding, record_provider_failure, provider_failure_snapshot
 
 
 _RAW_RESPONSE_REFUSED = object()
@@ -337,6 +337,7 @@ class _L1Call:
         self.attempted_excerpts: list[dict] = []
         self.raw_observations: list[dict] = []
         self.unavailable_rejected_passes: set[str] = set()
+        self.acquisition_failures: list[StateFinding] = []
         self.is_stub_l1 = False
 
     @property
@@ -345,8 +346,24 @@ class _L1Call:
 
     def __call__(self) -> tuple:
         self.raw_observations = []
+        self.acquisition_failures = []
         self.unavailable_rejected_passes = set()
-        return self._body(self)
+        result = self._body(self)
+        # Snapshot before attaching observations: grouped calls may already
+        # carry child audit data, which must never reference itself.
+        observations: dict[str, list[dict]] = {}
+        for finding in self.acquisition_failures:
+            observations.setdefault(finding.fingerprint, []).append({
+                "description": finding.description,
+                "provider_failure": provider_failure_snapshot(finding.provider_failure),
+            })
+        for finding in self.acquisition_failures:
+            original = observations[finding.fingerprint]
+            if len(original) > 1:
+                if finding.provider_failure is None:
+                    finding.provider_failure = {}
+                finding.provider_failure["observations"] = original
+        return result
 
 
 def build_l1_provider(
@@ -560,6 +577,8 @@ def build_l1_provider(
                         is_timeout=pr.is_timeout,
                     )
                 )
+                record_provider_failure(all_candidates[-1], pr)
+                call.acquisition_failures.append(all_candidates[-1])
                 if breaker is not None:
                     if pr.is_timeout:
                         breaker.record_timeout()
@@ -588,6 +607,7 @@ def build_l1_provider(
                         % (backend.name if backend else "unknown", type(pr).__name__, pr),
                     )
                 )
+                call.acquisition_failures.append(all_candidates[-1])
                 if breaker is not None:
                     breaker.record_other_error()
                 continue
@@ -822,6 +842,7 @@ def build_grouped_l1_provider(
         total_duration = 0.0
         for scope, provider in providers:
             findings, excerpts, usage, duration = provider()
+            call.acquisition_failures.extend(provider.acquisition_failures)
             all_findings.extend(_dedup_by_fingerprint(findings, seen))
             all_excerpts.extend(excerpts)
             call.attempted_excerpts.extend(
