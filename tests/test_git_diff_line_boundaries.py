@@ -3,6 +3,8 @@
 """Literal Git line separators remain filename and source data."""
 
 from pathlib import Path
+import os
+import shutil
 import subprocess
 
 import pytest
@@ -86,10 +88,19 @@ def test_literal_content_occupies_one_annotated_git_line(tmp_path, separator):
 
 @pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\u0085"], ids=["U2028", "U2029", "U0085"])
 @pytest.mark.parametrize("final_lf", [True, False], ids=["final-lf", "no-final-lf"])
-def test_headerless_literal_git_header_runs_actual_hollow_test(tmp_path, separator, final_lf):
+def test_headerless_literal_git_header_runs_actual_hollow_test(
+    tmp_path, monkeypatch, separator, final_lf
+):
     import sys
 
     from code_forge.fixval import FixvalCandidate, FixvalStatus, run_fixval
+
+    monkeypatch.setenv(
+        "PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")
+    )
+    interpreter = shutil.which("python3")
+    assert interpreter is not None
+    assert Path(interpreter).resolve() == Path(sys.executable).resolve()
 
     name = "src/module.py"
     after = 'value = "left' + separator + 'diff --git fake"\n'
@@ -113,7 +124,7 @@ def test_headerless_literal_git_header_runs_actual_hollow_test(tmp_path, separat
     head = _git(tmp_path, "rev-parse", "HEAD")
     result = run_fixval(
         FixvalCandidate(["tests/test_case.py"], [name]),
-        [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider"],
+        ["python3", "-B", "-m", "pytest", "-p", "no:cacheprovider"],
         tmp_path,
         "Validate owned parser fixture",
         headerless,
@@ -126,3 +137,24 @@ def test_headerless_literal_git_header_runs_actual_hollow_test(tmp_path, separat
     assert _git(tmp_path, "rev-parse", "HEAD") == head
     assert not list(tmp_path.glob(".fixval-recovery-*"))
     assert not list(tmp_path.glob(".fixval-retired-*"))
+
+
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\u0085"], ids=["U2028", "U2029", "U0085"])
+@pytest.mark.parametrize("suffix", ["@@ malformed @@", "ordinary payload"])
+@pytest.mark.parametrize("final_lf", [True, False], ids=["final-lf", "no-final-lf"])
+def test_projection_keeps_literal_payload_as_one_git_line(tmp_path, separator, suffix, final_lf):
+    after = 'value = "left' + separator + suffix + '"\n'
+    _, selected = _packet(tmp_path, "src/module.py", 'value = "old"\n', after)
+    if not final_lf:
+        selected = selected.removesuffix("\n")
+    assert _filter_non_test_patch(selected) == selected
+
+
+@pytest.mark.parametrize("garbage", ["@@ malformed @@", "ordinary payload"])
+def test_projection_rejects_actual_lf_framed_garbage(tmp_path, garbage):
+    from code_forge._fixval_transaction import TransactionError
+    from unidiff.errors import UnidiffParseError
+
+    _, selected = _packet(tmp_path, "src/module.py", "value = 1\n", "value = 2\n")
+    with pytest.raises((TransactionError, UnidiffParseError)):
+        _filter_non_test_patch(selected + garbage + "\n")

@@ -9,6 +9,7 @@ from code_forge import cli, factories, trust
 from code_forge.backend import BackendConfig
 from code_forge.baseline import ResolvedReview
 from code_forge.context_sources import FactRow, GraphTriageSource, RemovedSymbolReaders
+from code_forge.diff_grouping import Group, GroupingResult
 from code_forge.graph_triage import SemAcquisition
 from code_forge.kernel_context import KernelContextSource, validate_kernel_context
 from code_forge.state import Verdict
@@ -157,22 +158,39 @@ def test_disabled_keeps_cross_repo_and_empty_extra_estimate(pipeline, monkeypatc
 
 @pytest.mark.parametrize("grouped", [False, True])
 def test_grouped_and_fallback_reuse_one_snapshot(pipeline, monkeypatch, grouped):
-    from types import SimpleNamespace
-
     root, _, _, args, captured = pipeline
     monkeypatch.setattr("code_forge.diff_grouping.max_prompt_tokens_from_gate_config", lambda data: 1)
     monkeypatch.setattr("code_forge.graph_triage._run_sem", lambda *a: SemAcquisition("completed_empty"))
     groups = (
         [
-            SimpleNamespace(name="one", passes=3, members=["driver.c"]),
-            SimpleNamespace(name="two", passes=3, members=["driver.c"]),
+            Group(name="one", role="engine", passes=3, members=["driver.c"]),
+            Group(name="two", role="engine", passes=3, members=["other.c"]),
         ]
         if grouped
         else []
     )
     monkeypatch.setattr(
         "code_forge.diff_grouping.group_diff",
-        lambda *a: SimpleNamespace(groups=groups, cross_group_edges=[]),
+        lambda *a: GroupingResult(groups=groups),
+    )
+    # Genuine disjoint slices for grouped review; deletion-only input preserves
+    # the no-mandatory-hunks single-provider fallback exercised by this case.
+    patch_text = (
+        diff(["#ifdef CONFIG_X"]) + diff(["int other;"], path="other.c")
+        if grouped
+        else diff([], removed=["#ifdef CONFIG_X"])
+    )
+    if grouped:
+        (root / "other.c").write_text("int other;\n")
+    monkeypatch.setattr(
+        cli,
+        "resolve_baseline",
+        lambda *a: ResolvedReview(
+            source_files=[root / "driver.c"] + ([root / "other.c"] if grouped else []),
+            baseline_content=None,
+            git_diff=patch_text,
+            mode_hint="git",
+        ),
     )
     original = KernelContextSource._read_config
     reads = []
@@ -201,8 +219,6 @@ def test_grouped_and_fallback_reuse_one_snapshot(pipeline, monkeypatch, grouped)
 
 @pytest.mark.parametrize("enabled", [False, True])
 def test_context_cost_flips_grouping_only_when_enabled(pipeline, monkeypatch, enabled):
-    from types import SimpleNamespace
-
     root, gate, data, args, captured = pipeline
     data["kernel_context"]["enabled"] = enabled
     gate.write_text(yaml.safe_dump(data))
@@ -227,7 +243,7 @@ def test_context_cost_flips_grouping_only_when_enabled(pipeline, monkeypatch, en
     monkeypatch.setattr(
         "code_forge.diff_grouping.max_prompt_tokens_from_gate_config", lambda data: Boundary()
     )
-    grouping = Mock(return_value=SimpleNamespace(groups=[], cross_group_edges=[]))
+    grouping = Mock(return_value=GroupingResult())
     monkeypatch.setattr("code_forge.diff_grouping.group_diff", grouping)
     monkeypatch.setattr("code_forge.graph_triage._run_sem", lambda *a: SemAcquisition("completed_empty"))
     monkeypatch.setattr(

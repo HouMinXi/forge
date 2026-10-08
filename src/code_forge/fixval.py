@@ -311,6 +311,7 @@ def _filter_non_test_patch(diff_text: str) -> str:
 
     if not diff_text.strip():
         return ""
+    # Git and unidiff count LF records; Unicode separators remain path/body data.
     blocks = []
     metadata = (
         "diff --git ",
@@ -333,15 +334,15 @@ def _filter_non_test_patch(diff_text: str) -> str:
         for entry in entries:
             info = str(entry.patch_info or "")
             if not entry.is_binary_file:
-                if any(line.strip() and not line.startswith(metadata) for line in info.splitlines()):
+                if any(line.strip() and not line.startswith(metadata) for line in info.split("\n")):
                     raise TransactionError("unrecognized text outside diff hunks")
                 if any(
                     line.startswith("@@")
                     and re.match(r"^@@ -[0-9]+(?:,[0-9]+)? \+[0-9]+(?:,[0-9]+)? @@", line) is None
-                    for line in block.splitlines()
+                    for line in block.split("\n")
                 ):
                     raise TransactionError("malformed diff hunk header")
-                headers = info.splitlines()
+                headers = info.split("\n")
 
                 def has(prefix, lines=headers):
                     return any(line.startswith(prefix) for line in lines)
@@ -360,12 +361,12 @@ def _filter_non_test_patch(diff_text: str) -> str:
                     raise TransactionError("diff file lacks a hunk or actionable metadata")
         if not any(entry.is_binary_file for entry in entries):
             body = {line.diff_line_no for entry in entries for hunk in entry for line in hunk}
-            for number, line in enumerate(block.splitlines(), 1):
+            for number, line in enumerate(block.split("\n"), 1):
                 if number in body or not line.strip() or line.startswith(metadata + ("--- ", "+++ ")):
                     continue
                 if (
                     re.match(r"^@@ -[0-9]+(?:,[0-9]+)? \+[0-9]+(?:,[0-9]+)? @@", line)
-                    or line == "\\ No newline at end of file"
+                    or line.removesuffix("\r") == "\\ No newline at end of file"
                 ):
                     continue
                 raise TransactionError("unparsed text in diff frame")

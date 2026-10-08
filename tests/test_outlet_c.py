@@ -9,9 +9,9 @@ SC1-SC3: reviewer independence tests (Phase 15).
 import hashlib
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
-from unittest.mock import patch
 
 from code_forge.baseline import ResolvedReview
 from code_forge.falsify import StubFalsifier
@@ -502,39 +502,65 @@ class TestContextIsolation:
 class TestThresholdThreading:
     """clean_round_threshold threaded to StateMachine."""
 
-    @pytest.mark.parametrize("repository_floor, expected_rounds", [(None, 3), (2, 2), (4, 4)])
-    def test_threshold_threading(self, tmp_path, repository_floor, expected_rounds):
-        """Requested threshold is forwarded without bypassing repository policy."""
+    @pytest.mark.parametrize(
+        "repository_floor, requested_threshold, expected_rounds",
+        [(None, 2, 3), (None, 4, 4), (2, 2, 2), (4, 2, 4)],
+    )
+    def test_threshold_threading(
+        self, tmp_path, repository_floor, requested_threshold, expected_rounds
+    ):
+        """Repository floors and requested thresholds both reach verified receipts."""
         if repository_floor is not None:
             directory = tmp_path / ".code-forge"
             directory.mkdir()
             (directory / "gate.yaml").write_text(f"verify:\n  required_cycles: {repository_floor}\n")
+        calls = []
+
+        def spawn(pass_name, diff_text):
+            calls.append((pass_name, diff_text))
+            return _valid_reviewer_json()
+
         result = run_outlet_c(
             resolved_review=_resolved_with_diff(),
             source_hash=_source_hash(),
             cwd=tmp_path,
-            spawn_fn=lambda pn, dt: _valid_reviewer_json(),
+            spawn_fn=spawn,
             falsifier=StubFalsifier(),
             max_total_rounds=10,
-            clean_round_threshold=2,
+            clean_round_threshold=requested_threshold,
         )
         assert result == Verdict.PASS
         state = load_state(tmp_path / ".code-forge" / "state.json")
+        assert state.verdict == Verdict.PASS
+        assert state.converged is True
         assert state.consecutive_clean_rounds == expected_rounds
         assert state.round == expected_rounds - 1
         assert len(state.earned_clean_window["cycles"]) == expected_rounds
+        assert calls == [
+            (name, _DIFF_TEXT) for name in ("qodo", "expert", "adversarial") * expected_rounds
+        ]
+        verified = run_verify(
+            cwd=tmp_path,
+            diff_sha256=_source_hash(),
+            diff_files=parse_diff_files(_DIFF_TEXT),
+            diff_text=_DIFF_TEXT,
+            required_cycles=expected_rounds,
+        )
+        assert verified.passed, verified.reason
 
 
 class TestOutletCInfraSourceTagging:
     """F3: outlet_c error-path findings tagged source=INFRA."""
 
     def test_outlet_c_spawn_fail_tagged_infra(self, tmp_path):
-        """spawn-fail finding has source=INFRA and disposition=CONFIRMED."""
+        """Spawn failures retain all three findings and the independent receipt diagnostic."""
+        calls = []
 
-        def _raise_spawn(pn, dt):
+        def _raise_spawn(pass_name, diff_text):
+            calls.append((pass_name, diff_text))
             raise RuntimeError("spawn exploded")
 
-        _result = run_outlet_c(
+        result = run_outlet_c(
             resolved_review=_resolved_with_diff(),
             source_hash=_source_hash(),
             cwd=tmp_path,
@@ -542,20 +568,40 @@ class TestOutletCInfraSourceTagging:
             falsifier=StubFalsifier(),
             max_total_rounds=1,
         )
+        assert result is Verdict.FAIL
         state = load_state(tmp_path / ".code-forge" / "state.json")
-        infra = [f for f in state.findings if f.source == "INFRA"]
-        assert _result is Verdict.FAIL
+        assert state.verdict == Verdict.FAIL
+        assert state.converged is False
+        assert state.round == 0
         assert state.consecutive_clean_rounds == 0
         assert state.earned_clean_window["cycles"] == []
-        assert all(f.disposition.value == "CONFIRMED" for f in infra)
-        spawn_failures = [f for f in infra if f.id.startswith("l1-")]
-        assert {f.fingerprint for f in spawn_failures} == {
-            "spawn-fail-qodo",
-            "spawn-fail-expert",
-            "spawn-fail-adversarial",
+        pass_names = ("qodo", "expert", "adversarial")
+        assert calls == [(name, _DIFF_TEXT) for name in pass_names]
+        findings = {finding.id: finding for finding in state.findings}
+        assert len(state.findings) == 4
+        assert set(findings) == {"l1-%s-spawn-fail" % name for name in pass_names} | {
+            "RECEIPT_INVALID"
         }
-        assert all(f.file == "<spawn>" for f in spawn_failures)
-        assert any(f.id == "RECEIPT_INVALID" for f in infra)
+        for name in pass_names:
+            finding = findings["l1-%s-spawn-fail" % name]
+            assert finding.fingerprint == "spawn-fail-%s" % name
+            assert finding.source == "INFRA"
+            assert finding.disposition.value == "CONFIRMED"
+            assert finding.file == "<spawn>"
+            assert finding.line_range == [0, 0]
+            assert finding.description == "spawn failed: spawn exploded"
+
+        receipt = findings["RECEIPT_INVALID"]
+        description = "receipt acceptance: earned cycle 1 requires explicit completed status"
+        assert receipt.source == "INFRA"
+        assert receipt.disposition.value == "CONFIRMED"
+        assert receipt.file == "<receipt-evidence>"
+        assert receipt.line_range == [0, 0]
+        assert receipt.description == description
+        assert receipt.fingerprint == "receipt-" + hashlib.sha256(description.encode()).hexdigest()[:12]
+        assert [error for error in state.infra_errors if error.startswith("receipt:")] == [
+            "receipt: " + description
+        ]
 
     def test_outlet_c_schema_fail_tagged_infra(self, tmp_path):
         """schema-fail finding has source=INFRA and disposition=CONFIRMED."""

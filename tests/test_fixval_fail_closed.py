@@ -622,10 +622,17 @@ def test_real_public_terminal_fixval_topology(tmp_path, monkeypatch, shape):
     assert proof["outcome"] == "PASS" and proof["witness"]["file"] == "tests/test_changed.py"
     assert len(proof["witness"]["green"]) == 3
     assert (repo / ".git/index").read_bytes() == index
-    assert {
-        str(path.relative_to(repo)): (path.read_bytes(), path.stat().st_mode)
-        for path in (repo / "src").iterdir()
-    } == before
+    # Git does not track empty directories: restoring a deletion may remove src.
+    source_dir = repo / "src"
+    if shape == "deletion" and not source_dir.exists() and not source_dir.is_symlink():
+        assert before == {}
+        after = {}
+    else:
+        after = {
+            str(path.relative_to(repo)): (path.read_bytes(), path.stat().st_mode)
+            for path in source_dir.iterdir()
+        }
+    assert after == before
     if shape == "restoration":
         assert marker.exists() and not Path("/proc/" + marker.read_text()).exists()
         time.sleep(1.1)
