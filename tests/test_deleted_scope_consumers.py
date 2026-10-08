@@ -1116,6 +1116,8 @@ print(json.dumps([run_tools({{'inspect':config(cmd)}}, ['live.js'], cwd=cwd)
 
 
 def test_factory_binds_actual_mutation_baseline_cwd(tmp_path, monkeypatch):
+    import json
+
     from code_forge import factories, mutation
 
     repo = tmp_path / "project"
@@ -1123,16 +1125,34 @@ def test_factory_binds_actual_mutation_baseline_cwd(tmp_path, monkeypatch):
     diff, paths = _retained_deletion_with_live(repo, "py")
     state = tmp_path / "state"
     state.mkdir()
+    witness = state / "baseline-witness.json"
+    program = (
+        "import json, os, sys; from pathlib import Path; "
+        f"Path({str(witness)!r}).write_text(json.dumps({{"
+        "'cwd': os.getcwd(), 'pythonpath': os.environ.get('PYTHONPATH'), "
+        "'argv': sys.argv[1:]})); "
+        "print('controlled baseline failure'); raise SystemExit(1)"
+    )
+    baseline_cmd = ["/usr/bin/python3", "-B", "-c", program, "cwd-boundary"]
+    (repo / ".code-forge/gate.yaml").write_text(
+        "test:\n  command: " + json.dumps(baseline_cmd) + "\n  timeout_seconds: 11\n",
+        encoding="utf-8",
+    )
     shutil.copytree(repo / ".code-forge", state / ".code-forge")
+    monkeypatch.chdir(state)
     files = [repo / p for p in paths]
     baseline_calls = []
+    baseline_results = []
+    actual_owner = mutation.run_owned_command
     monkeypatch.setattr(factories.shutil, "which", lambda _: "/fixture/mutmut")
 
     def baseline(argv, **kwargs):
-        baseline_calls.append((argv, kwargs.get("cwd")))
-        return subprocess.CompletedProcess(argv, 1, "controlled baseline failure", "")
+        baseline_calls.append((list(argv), kwargs.copy()))
+        result = actual_owner(argv, **kwargs)
+        baseline_results.append(result)
+        return result
 
-    monkeypatch.setattr(mutation.subprocess, "run", baseline)
+    monkeypatch.setattr(mutation, "run_owned_command", baseline)
     machine = _machine(
         state,
         diff,
@@ -1141,8 +1161,31 @@ def test_factory_binds_actual_mutation_baseline_cwd(tmp_path, monkeypatch):
         l2_runner=factories.build_l2_runner(cwd=repo),
     )
     findings = machine._run_l2_phase()
-    assert baseline_calls == [(["echo", "ok"], str(repo))]
+    assert len(baseline_calls) == 1
+    argv, kwargs = baseline_calls[0]
+    assert argv == baseline_cmd
+    expected_env = {**os.environ, "PYTHONPATH": str(repo / "src")}
+    expected_env["PATH"] = "/usr/bin" + os.pathsep + expected_env.get("PATH", "")
+    assert kwargs == {
+        "cwd": str(repo),
+        "env": expected_env,
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": 11,
+        "check": False,
+    }
+    assert json.loads(witness.read_text()) == {
+        "cwd": str(repo), "pythonpath": str(repo / "src"), "argv": ["cwd-boundary"]
+    }
+    assert baseline_results[0].returncode == 1
+    assert baseline_results[0].stdout == "controlled baseline failure\n"
+    assert baseline_results[0].stderr == ""
     assert findings and findings[0].fingerprint == "mutation-flaky"
+    assert "baseline failed" in findings[0].description
+    assert "returncode 1" in findings[0].description
+    assert machine._state.infra_errors
     assert machine._source_files() == files
 
 

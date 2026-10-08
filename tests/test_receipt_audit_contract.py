@@ -9,6 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from code_forge.baseline import ResolvedReview
 from code_forge.machine import StateMachine
 from code_forge.receipt import write_receipts
 from code_forge.state import Disposition, StateFinding
@@ -91,7 +92,7 @@ def test_downgrade_one_line_slips_single_nonblank_tail_omission():
 
     # Exactly one appended StateFinding with required fields
     audit_finding = out_findings[1]
-    expected_diag = "excerpt mod.py:1-3 declares 3 lines but carries 2"
+    expected_diag = "excerpt mod.py:1-3 is missing source line 3"
     expected_digest = hashlib.sha256(expected_diag.encode("utf-8")).hexdigest()[:12]
     expected_fp = f"receipt-{expected_digest}"
 
@@ -144,7 +145,7 @@ def test_downgrade_two_damaged_excerpts_preserves_order_and_filters_controls():
 
     # Verify first damaged excerpt audit record
     f1 = out_findings[0]
-    expected_diag1 = "excerpt mod.py:1-3 declares 3 lines but carries 2"
+    expected_diag1 = "excerpt mod.py:1-3 is missing source line 3"
     expected_fp1 = "receipt-" + hashlib.sha256(expected_diag1.encode("utf-8")).hexdigest()[:12]
     assert f1.id == "RECEIPT_UNTRUSTED"
     assert f1.source == "UNTRUSTED"
@@ -156,7 +157,7 @@ def test_downgrade_two_damaged_excerpts_preserves_order_and_filters_controls():
 
     # Verify second damaged excerpt audit record
     f2 = out_findings[1]
-    expected_diag2 = "excerpt mod.py:4-6 declares 3 lines but carries 2"
+    expected_diag2 = "excerpt mod.py:4-6 is missing source line 6"
     expected_fp2 = "receipt-" + hashlib.sha256(expected_diag2.encode("utf-8")).hexdigest()[:12]
     assert f2.id == "RECEIPT_UNTRUSTED"
     assert f2.source == "UNTRUSTED"
@@ -193,6 +194,23 @@ def test_empty_diff_and_empty_excerpts_return_originals():
     f_res2, e_res2 = machine_with_diff._downgrade_one_line_slips(initial_findings, empty_excerpts)
     assert f_res2 is initial_findings
     assert e_res2 is empty_excerpts
+
+
+def test_non_git_review_without_diff_preserves_excerpts():
+    machine = object.__new__(StateMachine)
+    machine.cwd = Path(".")
+    machine.reviewed_repositories = None
+    machine.resolved_review = ResolvedReview([Path("mod.py")], None, None, "non-git")
+    findings = []
+    excerpts = [{"file": "mod.py", "start_line": 1, "end_line": 3, "content": "alpha = 1"}]
+    saved_excerpts = copy.deepcopy(excerpts)
+
+    assert machine._receipt_diff() is None
+    out_findings, out_excerpts = machine._downgrade_one_line_slips(findings, excerpts)
+
+    assert out_findings is findings
+    assert out_excerpts is excerpts
+    assert excerpts == saved_excerpts
 
 
 def test_real_receipt_writer_coordinates_and_content_survive(tmp_path):
