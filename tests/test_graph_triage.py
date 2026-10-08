@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from code_forge.graph_triage import (
     GraphTriageRunner,
@@ -596,6 +600,161 @@ class TestGraphDBBackend:
 # ---------------------------------------------------------------------------
 
 
+class TestGraphDBFileIdentity:
+    """Use real SQLite to select only the changed checkout's file."""
+
+    def _write_graph(self, root, paths):
+        db = root / ".code-review-graph/graph.db"
+        db.parent.mkdir(parents=True)
+        with closing(sqlite3.connect(db)) as connection:
+            connection.execute(
+                "CREATE TABLE nodes (id INTEGER, kind TEXT, name TEXT, qualified_name TEXT, "
+                "file_path TEXT, line_start INTEGER, line_end INTEGER)"
+            )
+            connection.execute(
+                "CREATE TABLE edges (kind TEXT, source_qualified TEXT, target_qualified TEXT)"
+            )
+            for index, path in enumerate(paths):
+                name = "entity_%d" % index
+                connection.execute(
+                    "INSERT INTO nodes VALUES (?, 'Function', ?, ?, ?, 1, 10)",
+                    (index, name, "%s::%s" % (path, name), path),
+                )
+            connection.commit()
+        return db
+
+    @pytest.mark.parametrize("symlink_root", [False, True])
+    @pytest.mark.parametrize("storage", ["relative", "lexical", "resolved"])
+    @pytest.mark.parametrize(
+        "relative", ["src/foo.py", "src/foo_bar.py", "src/foo%bar.py", "src/quote'file.py"]
+    )
+    def test_runner_selects_exact_file(self, tmp_path, monkeypatch, symlink_root, storage, relative):
+        root = tmp_path / "checkout"
+        root.mkdir()
+        if symlink_root:
+            alias = tmp_path / "alias"
+            alias.symlink_to(root, target_is_directory=True)
+            root = alias
+        stored = {
+            "relative": relative,
+            "lexical": str(root / relative),
+            "resolved": str(root.resolve() / relative),
+        }[storage]
+        paths = [
+            stored,
+            "tests/eval/corpus/base_files/BUG-P12-01/" + relative,
+            str(tmp_path / "foreign" / relative),
+        ]
+        lookalike = relative.replace("_", "X").replace("%", "XY")
+        if lookalike != relative:
+            paths.append(lookalike)
+        self._write_graph(root, paths)
+        monkeypatch.setattr("code_forge.graph_triage.shutil.which", lambda _: None)
+        runner = GraphTriageRunner()
+        findings = runner.run(_make_diff([relative]), root)
+        assert [(f.file, f.line_range) for f in findings] == [(relative, (1, 10))]
+        assert findings[0].description.startswith("entity_0 ")
+        assert runner.acquisition_outcome.status == "completed" and not runner.infra_errors
+
+    @pytest.mark.parametrize("storage", ["corpus", "foreign"])
+    def test_suffix_only_is_completed_empty(self, tmp_path, monkeypatch, storage):
+        relative = "tests/test_outlet_c.py"
+        stored = (
+            "tests/eval/corpus/base_files/BUG-P12-01/" + relative
+            if storage == "corpus"
+            else str(tmp_path / "other-checkout" / relative)
+        )
+        root = tmp_path / "checkout"
+        self._write_graph(root, [stored])
+        monkeypatch.setattr("code_forge.graph_triage.shutil.which", lambda _: None)
+        runner = GraphTriageRunner()
+        assert runner.run(_make_diff([relative]), root) == []
+        assert runner.acquisition_outcome.status == "completed_empty"
+        assert runner.acquisition_outcome.impact_complete and not runner.infra_errors
+
+    def test_explicit_relative_root_does_not_follow_database_location(self, tmp_path, monkeypatch):
+        root = tmp_path / "checkout"
+        root.mkdir()
+        db = self._write_graph(tmp_path / "database-location", [str(root / "src/foo.py")])
+        relative_root = Path(os.path.relpath(root, Path.cwd()))
+        assert not relative_root.is_absolute()
+        monkeypatch.setenv("CRG_DB_PATH", str(db))
+        monkeypatch.setattr("code_forge.graph_triage.shutil.which", lambda _: None)
+        runner = GraphTriageRunner()
+        findings = runner.run(_make_diff(["./src/foo.py"]), relative_root)
+        assert len(findings) == 1 and findings[0].file == "src/foo.py"
+        assert not runner.infra_errors
+
+    @pytest.mark.parametrize("invalid", ["../a.py", "src/../../a.py", "/a.py", ".", "a\0.py"])
+    def test_invalid_identity_discards_prior_rows(self, tmp_path, monkeypatch, invalid):
+        self._write_graph(tmp_path, ["valid.py"])
+        monkeypatch.setattr("code_forge.graph_triage.shutil.which", lambda _: None)
+        runner = GraphTriageRunner()
+        assert runner.run(_make_diff(["valid.py", invalid]), tmp_path) == []
+        assert runner.acquisition_outcome.status == "schema_error"
+        assert runner.acquisition_outcome.entities == [] and runner.infra_errors
+        assert runner.acquisition_outcome.impact_complete is False
+        assert runner._cached_findings is None
+        diagnostic = runner.acquisition_outcome.diagnostic
+        assert isinstance(diagnostic, str) and diagnostic.strip()
+        assert repr(invalid) in diagnostic
+        assert "invalid" in diagnostic.casefold()
+        assert any(diagnostic in error for error in runner.infra_errors)
+
+    def test_ambiguous_stored_spellings_discards_prior_rows(self, tmp_path, monkeypatch):
+        self._write_graph(tmp_path, ["valid.py", "src/foo.py", str(tmp_path / "src/foo.py")])
+        monkeypatch.setattr("code_forge.graph_triage.shutil.which", lambda _: None)
+        runner = GraphTriageRunner()
+        assert runner.run(_make_diff(["valid.py", "src/foo.py"]), tmp_path) == []
+        assert runner.acquisition_outcome.status == "schema_error"
+        assert runner.acquisition_outcome.entities == [] and runner.infra_errors
+        assert runner.acquisition_outcome.impact_complete is False
+        assert runner._cached_findings is None
+        diagnostic = runner.acquisition_outcome.diagnostic
+        assert isinstance(diagnostic, str) and diagnostic.strip()
+        assert "src/foo.py" in diagnostic
+        assert "ambiguous" in diagnostic.casefold()
+        assert any(diagnostic in error for error in runner.infra_errors)
+
+    def test_real_graphdb_caller_arguments_preserved(self, tmp_path):
+        from code_forge.graph_triage import _run_graphdb
+
+        relative = "src/identitymodule.py"
+        db = self._write_graph(tmp_path, [relative])
+        callers = [
+            ("caller", "from identitymodule import entity_0", "entity_0()", "identitymodule"),
+            ("unrelated", "import differentmodule", "differentmodule.entity_0()", "differentmodule"),
+        ]
+        with closing(sqlite3.connect(db)) as connection:
+            for index, (name, import_text, call_text, module) in enumerate(callers, start=1):
+                caller_file = tmp_path / (name + ".py")
+                caller_file.write_text(
+                    "%s\n\ndef %s():\n    return %s\n" % (import_text, name, call_text),
+                    encoding="utf-8",
+                )
+                qualified = "%s::%s" % (caller_file, name)
+                connection.execute(
+                    "INSERT INTO nodes VALUES (?, 'Function', ?, ?, ?, 3, 4)",
+                    (index, name, qualified, str(caller_file)),
+                )
+                connection.executemany(
+                    "INSERT INTO edges VALUES (?, ?, ?)",
+                    [
+                        ("CALLS", qualified, "entity_0"),
+                        ("IMPORTS_FROM", str(caller_file), module),
+                    ],
+                )
+            connection.commit()
+
+        outcome = _run_graphdb(str(db), [relative], tmp_path)
+        assert outcome.status == "completed" and outcome.impact_complete
+        assert len(outcome.entities) == 1
+        entity = outcome.entities[0]
+        assert entity["file"] == relative
+        assert entity["dependent_count"] == 1
+        assert entity["top_dependents"] == ["%s::caller" % (tmp_path / "caller.py")]
+
+
 class TestNoShellTrue:
     """Verify no subprocess call uses shell=True."""
 
@@ -668,3 +827,195 @@ class TestFindEntityDependents:
         """When neither backend available, returns empty list."""
         result = find_entity_dependents("my_func", "src/foo.py", tmp_path)
         assert result == []
+
+
+class TestGraphSourceAndConfigRoots:
+    """Keep the source checkout separate from private review configuration."""
+
+    _write_graph = TestGraphDBFileIdentity._write_graph
+
+    def _state_cwd(self, tmp_path, monkeypatch, graph_config):
+        import tempfile
+        from code_forge.cross_repo import make_per_repo_cwd
+
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        gate = {"test": {"command": ["never-executed"]}, "graph_triage": graph_config}
+        cwd = make_per_repo_cwd("graph-roots", gate)
+        assert cwd.parent == tmp_path
+        return cwd
+
+    def _machine(self, root, cwd, runners):
+        from code_forge.autofix import NoChangeAutoFixer
+        from code_forge.baseline import ResolvedReview
+        from code_forge.machine import StateMachine
+        from code_forge.state import Mode
+
+        source = root / "src/foo.py"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("def foo():\n    return 2\n", encoding="utf-8")
+        return StateMachine(
+            mode=Mode.CI,
+            falsifier=object(),
+            autofixer=NoChangeAutoFixer(),
+            revert_fn=lambda finding: None,
+            resolved_review=ResolvedReview(
+                source_files=[source],
+                baseline_content=None,
+                git_diff=_make_diff(["src/foo.py"]),
+                mode_hint="git",
+            ),
+            source_hash="graph-roots",
+            baseline_spec_repr="source and configuration roots",
+            cwd=cwd,
+            source_root=root,
+            registry={},
+            advisory_runners=runners,
+            coverage_l1_active=False,
+        )
+
+    @pytest.mark.parametrize("symlink_root", [False, True])
+    @pytest.mark.parametrize("selection", ["default", "override"])
+    def test_machine_source_identity_and_config_snapshot(
+        self, tmp_path, monkeypatch, symlink_root, selection
+    ):
+        import yaml
+
+        root = tmp_path / "source"
+        root.mkdir()
+        if symlink_root:
+            alias = tmp_path / "source-alias"
+            alias.symlink_to(root, target_is_directory=True)
+            root = alias
+        stored = str(root.resolve() / "src/foo.py")
+        config = {"enabled": True}
+        if selection == "override":
+            self._write_graph(root, [str(tmp_path / "foreign/src/foo.py")])
+            db = self._write_graph(tmp_path / "override-location", [stored])
+            config["db_path"] = str(db)
+        else:
+            self._write_graph(root, [stored])
+        source_gate = root / ".code-forge/gate.yaml"
+        source_gate.parent.mkdir()
+        source_gate.write_text(
+            yaml.safe_dump({"test": {"command": ["never-executed"]},
+                            "graph_triage": {"enabled": False}}),
+            encoding="utf-8",
+        )
+        cwd = self._state_cwd(tmp_path, monkeypatch, config)
+        monkeypatch.setattr("code_forge.graph_triage.shutil.which", lambda _: None)
+        runner = GraphTriageRunner()
+        sm = self._machine(root, cwd, [runner])
+        sm._run_advisory_axes()
+        assert [(f.file, f.line_range) for f in sm._advisories] == [("src/foo.py", (1, 10))]
+        assert runner.acquisition_outcome.status == "completed"
+        assert runner.acquisition_outcome.impact_complete and not sm._state.infra_errors
+        assert runner.source_files == [root / "src/foo.py"]
+        assert not (root / ".code-forge/state.json").exists()
+
+    @pytest.mark.parametrize("policy", ["disabled", "invalid", "missing"])
+    def test_machine_configuration_root_preserves_policy(self, tmp_path, monkeypatch, policy):
+        import yaml
+
+        root = tmp_path / "source"
+        self._write_graph(root, [str(root / "src/foo.py")])
+        source_gate = root / ".code-forge/gate.yaml"
+        source_gate.parent.mkdir()
+        source_gate.write_text(
+            yaml.safe_dump({"test": {"command": ["never-executed"]},
+                            "graph_triage": {"enabled": True}}),
+            encoding="utf-8",
+        )
+        policy_config = {"enabled": False if policy == "disabled" else "invalid"}
+        cwd = self._state_cwd(tmp_path, monkeypatch, policy_config)
+        if policy == "missing":
+            (cwd / ".code-forge/gate.yaml").unlink()
+        monkeypatch.setattr("code_forge.graph_triage.shutil.which", lambda _: None)
+        runner = GraphTriageRunner()
+        sm = self._machine(root, cwd, [runner])
+        sm._run_advisory_axes()
+        expected = {"disabled": "disabled", "invalid": "configuration_error",
+                    "missing": "completed"}[policy]
+        assert runner.acquisition_outcome.status == expected
+        assert len(sm._advisories) == (1 if policy == "missing" else 0)
+        assert bool(sm._state.infra_errors) == (policy == "invalid")
+
+    def test_machine_sem_backend_uses_source_root(self, tmp_path, monkeypatch):
+        from code_forge import graph_triage as gt
+
+        root = tmp_path / "source"
+        root.mkdir()
+        cwd = self._state_cwd(tmp_path, monkeypatch, {"enabled": True})
+        observed = []
+        monkeypatch.setattr(gt.shutil, "which", lambda _: "/controlled/sem")
+
+        def has_index(repo_root):
+            observed.append(("index", repo_root))
+            return True
+
+        def acquire(diff, repo_root):
+            observed.append(("diff", repo_root))
+            return SemAcquisition("completed", [_make_entity("foo", "src/foo.py")])
+
+        def impact(name, file, repo_root):
+            observed.append(("impact", repo_root))
+            return {"impact": {"total": 1}, "dependents": []}
+
+        monkeypatch.setattr(gt, "_sem_has_index", has_index)
+        monkeypatch.setattr(gt, "_run_sem", acquire)
+        monkeypatch.setattr(gt, "_get_sem_impact", impact)
+        runner = GraphTriageRunner()
+        sm = self._machine(root, cwd, [runner])
+        sm._run_advisory_axes()
+        assert observed == [("index", root), ("diff", root), ("impact", root)]
+        assert len(sm._advisories) == 1 and not sm._state.infra_errors
+
+    def test_machine_inherited_graph_implementation_uses_source_root(self, tmp_path, monkeypatch):
+        class InheritedGraphRunner(GraphTriageRunner):
+            pass
+
+        root = tmp_path / "source"
+        self._write_graph(root, [str(root / "src/foo.py")])
+        cwd = self._state_cwd(tmp_path, monkeypatch, {"enabled": True})
+        monkeypatch.setattr("code_forge.graph_triage.shutil.which", lambda _: None)
+        runner = InheritedGraphRunner()
+        sm = self._machine(root, cwd, [runner])
+        sm._run_advisory_axes()
+        assert len(sm._advisories) == 1 and not sm._state.infra_errors
+        assert runner.acquisition_outcome.status == "completed"
+
+    def test_machine_preserves_specialized_source_runner_and_other_axis(self, tmp_path, monkeypatch):
+        from code_forge.context_sources import GraphTriageSource
+
+        root = tmp_path / "source"
+        self._write_graph(root, [str(root / "src/foo.py")])
+        cwd = self._state_cwd(tmp_path, monkeypatch, {"enabled": False})
+        monkeypatch.setattr("code_forge.graph_triage.shutil.which", lambda _: None)
+        direct = GraphTriageRunner()
+        cached = direct.run(_make_diff(["src/foo.py"]), root)
+        assert len(cached) == 1
+        specialized = GraphTriageSource(root).advisory_runner(None, allow_unsnapshotted=True)
+        specialized._cached_findings = cached
+
+        class OtherAxis:
+            source_files = None
+
+            def run(self, diff, repo_root):
+                self.root = repo_root
+                return []
+
+        other = OtherAxis()
+        sm = self._machine(root, cwd, [specialized, other])
+        sm._run_advisory_axes()
+        assert sm._advisories == cached and not sm._state.infra_errors
+        assert other.root == cwd and other.source_files == [root / "src/foo.py"]
+
+    def test_public_config_root_is_optional(self, tmp_path, monkeypatch):
+        root = tmp_path / "source"
+        self._write_graph(root, [str(root / "src/foo.py")])
+        cwd = self._state_cwd(tmp_path, monkeypatch, {"enabled": False})
+        monkeypatch.setattr("code_forge.graph_triage.shutil.which", lambda _: None)
+        direct = GraphTriageRunner()
+        assert len(direct.run(_make_diff(["src/foo.py"]), root)) == 1
+        controlled = GraphTriageRunner()
+        assert controlled.run(_make_diff(["src/foo.py"]), root, config_root=cwd) == []
+        assert controlled.acquisition_outcome.status == "disabled" and not controlled.infra_errors

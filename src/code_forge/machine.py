@@ -2862,9 +2862,14 @@ class StateMachine:
                     if isinstance(candidate, _RuntimeRunner):
                         runner._runtime_runner = candidate
                         break
+        from .graph_triage import GraphTriageRunner
+
         for runner in self.advisory_runners:
             try:
-                findings = runner.run(diff_text, self.cwd)
+                if isinstance(runner, GraphTriageRunner) and type(runner).run is GraphTriageRunner.run:
+                    findings = runner.run(diff_text, self._source_root(), config_root=self.cwd)
+                else:
+                    findings = runner.run(diff_text, self.cwd)
                 self._advisories.extend(findings)
             except Exception as exc:  # noqa: BLE001
                 self._state.infra_errors.append(
