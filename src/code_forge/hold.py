@@ -21,10 +21,7 @@ QUIT_INPUTS = {"q"}
 
 
 class HoldAborted(Exception):
-    """Raised when human aborts HOLD UX (Ctrl+D / EOF / "q" input).
-
-    Message is generic ("HOLD UX aborted by user"), not stdin-specific.
-    """
+    """Raised when HOLD input ends or the user chooses "q"."""
 
 
 def run_hold_ui(
@@ -107,7 +104,7 @@ def _prompt_one(
         try:
             choice = input_fn("    [c]onfirm / [d]ismiss / [s]kip / [q]uit: ").strip().lower()
         except EOFError:
-            raise HoldAborted("HOLD UX aborted by user")
+            raise HoldAborted("HOLD UX stopped: input ended (EOF)")
         if choice in QUIT_INPUTS:
             raise HoldAborted("HOLD UX aborted by user")
         if choice == "s":
