@@ -20,13 +20,16 @@ from code_forge.disposition import Disposition
 from code_forge.fixval import (
     FixvalCandidate,
     FixvalSkip,
+    _filter_non_test_patch,
+    _transactional_probe,
+    _test_reverted_candidate,
     FixvalStatus,
     classify_fixval_candidate,
     parse_fixval_waiver,
     run_fixval,
     run_overfit_guard,
 )
-from code_forge.state import StateFinding
+from code_forge.fixval_evidence import EvidenceError, Inventory
 
 
 # ---- classify_fixval_candidate tests ----
@@ -176,386 +179,278 @@ def _private_reverse_results(results):
     return run
 
 
+_SIMPLE_PATCH = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
+
+
+def _fixed_source(root):
+    source = root / "src/foo.py"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"new\n")
+    return source
+
+
+def _unit_inventory(code=0):
+    """Synthetic parser/component input; never a qualified execution stage."""
+    return Inventory(
+        {
+            "tests/test_foo.py::test_value": (
+                "tests/test_foo.py",
+                "passed",
+                "passed" if code == 0 else "failed",
+                "passed",
+                False,
+            )
+        },
+        code,
+        "0" * 64,
+        100,
+        "9.1.1",
+    )
+
+
 class TestRunFixval:
-    """run_fixval: revert-RED/restore-GREEN core logic."""
+    """Fail-closed orchestration and isolated reversible-probe components."""
 
     def test_diff_text_none_skips(self, tmp_path):
-        candidate = _make_candidate()
-        result = run_fixval(
-            candidate,
-            test_cmd=["python", "-m", "pytest"],
-            cwd=tmp_path,
-            commit_message="fix: foo",
-            diff_text=None,
-        )
+        result = run_fixval(_make_candidate(), [], tmp_path, "fix: foo", None)
         assert result.status == FixvalStatus.SKIPPED
+        assert result.reason == "non_git"
         assert "non-git review" in result.findings[0].description.lower()
 
-    @patch("code_forge.fixval.parse_fixval_waiver")
-    def test_waiver_bypasses_with_advisory(self, mock_waiver, tmp_path):
-        mock_waiver.return_value = "flaky network test"
-        candidate = _make_candidate()
+    def test_waiver_bypasses_with_advisory(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("FIXVAL_WAIVER", raising=False)
         result = run_fixval(
-            candidate,
-            test_cmd=["python", "-m", "pytest"],
-            cwd=tmp_path,
-            commit_message="fix: foo\n\nFixval-Waiver: flaky network test",
-            diff_text="some diff",
+            _make_candidate(), [], tmp_path, "fix: foo\n\nFixval-Waiver: flaky network test", "some diff"
         )
         assert result.status == FixvalStatus.WAIVED
-        assert len(result.advisories) >= 1
+        assert result.reason == "explicit_waiver"
         assert result.advisories[0].axis == "FIXVAL"
 
-    @patch("code_forge.fixval._run_baseline_guard")
-    def test_baseline_failure_skips(self, mock_guard, tmp_path):
-        mock_guard.return_value = (
-            "skip",
-            [
-                StateFinding(
-                    id="FIXVAL_SKIPPED",
-                    fingerprint="fixval-baseline-fail",
-                    source="FIXVAL",
-                    disposition=Disposition.DISMISSED,
-                    file="",
-                    line_range=[],
-                    description="baseline failed",
-                )
-            ],
-            ["baseline failed"],
-        )
-        candidate = _make_candidate()
-        result = run_fixval(
-            candidate,
-            test_cmd=["python", "-m", "pytest"],
-            cwd=tmp_path,
-            commit_message="fix: foo",
-            diff_text="--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n",
-        )
-        assert result.status == FixvalStatus.SKIPPED
+    def test_baseline_failure_is_error(self, tmp_path):
+        with (
+            patch(
+                "code_forge.fixval_evidence.EvidenceSession.execute",
+                side_effect=EvidenceError("baseline failed: tests/test_foo.py::test_value"),
+            ) as execute,
+            patch("code_forge.fixval._transactional_probe") as transaction,
+        ):
+            result = run_fixval(
+                _make_candidate(), ["python", "-m", "pytest"], tmp_path, "fix", _SIMPLE_PATCH
+            )
+        assert result.status == FixvalStatus.ERROR
+        assert result.reason == "execution"
+        assert result.findings[0].disposition == Disposition.UNCERTAIN
+        assert result.findings[0].source == "FIXVAL"
+        assert "baseline failed" in result.findings[0].description
+        assert result.infra_errors == [result.findings[0].description]
+        execute.assert_called_once()
+        transaction.assert_not_called()
 
-    @patch("code_forge.fixval._run_baseline_guard")
     @patch("subprocess.run")
-    def test_revert_apply_failure_blocks(self, mock_run, mock_guard, tmp_path):
-        mock_guard.return_value = ("passed", [], [])
-        # git apply -R fails
-        mock_run.return_value = MagicMock(returncode=1, stderr="error")
-        candidate = _make_candidate()
-        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
-        result = run_fixval(
-            candidate,
-            test_cmd=["python", "-m", "pytest"],
-            cwd=tmp_path,
-            commit_message="fix: foo",
-            diff_text=diff,
-        )
+    def test_revert_apply_failure_blocks(self, mock_run, tmp_path):
+        source = _fixed_source(tmp_path)
+        mock_run.return_value = subprocess.CompletedProcess([], 1, "", "error")
+        probe = MagicMock()
+        result = _transactional_probe(tmp_path, _SIMPLE_PATCH, probe)
         assert result.status == FixvalStatus.BLOCK
+        assert result.reason == "transaction"
         assert "revert" in result.findings[0].description.lower()
+        probe.assert_not_called()
+        assert source.read_bytes() == b"new\n"
 
-    @patch("code_forge.fixval._run_baseline_guard")
+    @pytest.mark.parametrize("returncode", [0, 1])
     @patch("subprocess.run")
-    def test_test_fails_on_revert_passes(self, mock_run, mock_guard, tmp_path):
-        mock_guard.return_value = ("passed", [], [])
-        # First call: git apply -R (revert) succeeds
-        # Second call: test run -> fails (RED) = PASS
-        # Third call: git apply (restore) succeeds
+    def test_transaction_returns_probe_observation_after_restoration(
+        self, mock_run, tmp_path, returncode
+    ):
+        # A subprocess observation is deliberately not a FIXVAL PASS proof.
+        source = _fixed_source(tmp_path)
+        observation = subprocess.CompletedProcess([], returncode, "", "")
         mock_run.side_effect = _private_reverse_results(
             [
-                MagicMock(returncode=0),  # git apply -R
-                MagicMock(returncode=1),  # test fails (RED) -> FIXVAL PASS
-                MagicMock(returncode=0),  # git apply (restore)
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 0, "", ""),
             ]
         )
-        candidate = _make_candidate()
-        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
-        result = run_fixval(
-            candidate,
-            test_cmd=["python", "-m", "pytest"],
-            cwd=tmp_path,
-            commit_message="fix: foo",
-            diff_text=diff,
-        )
-        assert result.status == FixvalStatus.PASS
 
-    @patch("code_forge.fixval._run_baseline_guard")
+        def probe():
+            assert source.read_bytes() == b"old\n"
+            return observation
+
+        result = _transactional_probe(tmp_path, _SIMPLE_PATCH, probe)
+        assert result is observation
+        assert source.read_bytes() == b"new\n"
+
     @patch("subprocess.run")
-    def test_test_passes_on_revert_blocks(self, mock_run, mock_guard, tmp_path):
-        mock_guard.return_value = ("passed", [], [])
+    def test_restore_validates_apply_without_checkout(self, mock_run, tmp_path):
+        source = _fixed_source(tmp_path)
+        observation = object()
         mock_run.side_effect = _private_reverse_results(
             [
-                MagicMock(returncode=0),  # git apply -R (revert)
-                MagicMock(returncode=0),  # test passes (GREEN) -> FIXVAL BLOCK
-                MagicMock(returncode=0),  # git apply (restore)
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 0, "", ""),
             ]
         )
-        candidate = _make_candidate()
-        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
-        result = run_fixval(
-            candidate,
-            test_cmd=["python", "-m", "pytest"],
-            cwd=tmp_path,
-            commit_message="fix: foo",
-            diff_text=diff,
-        )
-        assert result.status == FixvalStatus.BLOCK
-        assert result.block_message  # non-empty
-
-    @patch("code_forge.fixval._run_baseline_guard")
-    @patch("subprocess.run")
-    def test_restore_validates_apply_without_checkout(self, mock_run, mock_guard, tmp_path):
-        mock_guard.return_value = ("passed", [], [])
-        mock_run.side_effect = _private_reverse_results(
-            [
-                MagicMock(returncode=0),  # git apply -R
-                MagicMock(returncode=1),  # test fails -> PASS
-                MagicMock(returncode=0),  # git apply (forward restore)
-            ]
-        )
-        candidate = _make_candidate()
-        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
-        run_fixval(
-            candidate,
-            test_cmd=["python", "-m", "pytest"],
-            cwd=tmp_path,
-            commit_message="fix: foo",
-            diff_text=diff,
-        )
-        # Verify Git validates forward applicability without publishing source.
-        restore_call = mock_run.call_args_list[-1]
-        cmd = restore_call[0][0] if restore_call[0] else restore_call[1].get("args", [])
-        assert "git" in cmd[0] if isinstance(cmd, list) else True
-        assert "--check" in cmd
-        # Must NOT contain "checkout"
-        for call in mock_run.call_args_list:
-            args = call[0][0] if call[0] else call[1].get("args", [])
-            if isinstance(args, list):
-                assert "checkout" not in args
+        assert _transactional_probe(tmp_path, _SIMPLE_PATCH, lambda: observation) is observation
+        assert mock_run.call_args_list[-1].args[0][:3] == ["git", "apply", "--check"]
+        assert all("checkout" not in call.args[0] for call in mock_run.call_args_list)
+        assert source.read_bytes() == b"new\n"
 
     @patch("code_forge.fixval._logger")
-    @patch("code_forge.fixval._run_baseline_guard")
     @patch("subprocess.run")
-    def test_restore_failure_logs_error(self, mock_run, mock_guard, mock_logger, tmp_path):
-        """If restore patch fails, _logger.error is called with details."""
-        mock_guard.return_value = ("passed", [], [])
+    def test_restore_failure_logs_error(self, mock_run, mock_logger, tmp_path):
+        source = _fixed_source(tmp_path)
         mock_run.side_effect = _private_reverse_results(
             [
-                MagicMock(returncode=0),  # git apply -R
-                MagicMock(returncode=0),  # test passes -> BLOCK
-                MagicMock(returncode=1, stderr="conflict"),  # restore FAILS
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 1, "", "conflict"),
             ]
         )
-        candidate = _make_candidate()
-        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
-        result = run_fixval(
-            candidate,
-            test_cmd=["python", "-m", "pytest"],
-            cwd=tmp_path,
-            commit_message="fix: foo",
-            diff_text=diff,
-        )
+        result = _transactional_probe(tmp_path, _SIMPLE_PATCH, object)
         assert result.status == FixvalStatus.BLOCK
+        assert "forward patch failed: conflict" in result.block_message
         assert mock_logger.error.called
+        assert source.read_bytes() == b"new\n"
 
-    @patch("code_forge.fixval._run_baseline_guard")
-    @patch("subprocess.run")
-    def test_scoped_test_cmd(self, mock_run, mock_guard, tmp_path):
-        mock_guard.return_value = ("passed", [], [])
-        mock_run.side_effect = _private_reverse_results(
-            [
-                MagicMock(returncode=0),  # git apply -R
-                MagicMock(returncode=1),  # test (scoped)
-                MagicMock(returncode=0),  # git apply restore
-            ]
+    def test_scoped_test_cmd(self, tmp_path):
+        candidate = FixvalCandidate(["tests/test_a.py", "tests/test_b.py"], ["src/foo.py"])
+        with patch(
+            "code_forge.fixval_evidence.EvidenceSession", side_effect=EvidenceError("component stop")
+        ) as session:
+            result = run_fixval(candidate, ["python", "-m", "pytest"], tmp_path, "fix", _SIMPLE_PATCH)
+        assert result.status == FixvalStatus.ERROR
+        assert session.call_args.args[:3] == (
+            tmp_path,
+            ["python", "-m", "pytest", "tests/test_a.py", "tests/test_b.py"],
+            candidate.test_files,
         )
-        candidate = FixvalCandidate(
-            test_files=["tests/test_a.py", "tests/test_b.py"],
-            non_test_files=["src/foo.py"],
-        )
-        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
-        run_fixval(
-            candidate,
-            test_cmd=["python", "-m", "pytest"],
-            cwd=tmp_path,
-            commit_message="fix: foo",
-            diff_text=diff,
-        )
-        # The test run call (second subprocess.run call) should include
-        # test files appended to test_cmd
-        test_call = mock_run.call_args_list[1]
-        args = test_call[0][0] if test_call[0] else test_call[1].get("args", [])
-        assert "tests/test_a.py" in args
-        assert "tests/test_b.py" in args
 
-    @patch("code_forge.fixval._run_baseline_guard")
-    def test_baseline_needs_strip_retry(self, mock_guard, tmp_path):
-        # First call returns needs_strip_retry, second returns passed,
-        # then test passes on revert -> BLOCK
-        mock_guard.side_effect = [
-            ("needs_strip_retry", [], []),
-            ("passed", [], []),
-        ]
-        candidate = _make_candidate()
-        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = _private_reverse_results(
-                [
-                    MagicMock(returncode=0),  # git apply -R
-                    MagicMock(returncode=0),  # test passes -> BLOCK
-                    MagicMock(returncode=0),  # git apply restore
-                ]
-            )
+    def test_baseline_needs_strip_retry(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VIRTUAL_ENV", "/private-venv")
+        monkeypatch.setenv("PATH", "/private-venv/bin:/usr/bin")
+        missing = FileNotFoundError("runner missing")
+        # Isolated launch-boundary input, not a qualified owned execution.
+        missing.ownership = {
+            "error_kind": "FileNotFoundError",
+            "driver_pid": None,
+            "cleanup_complete": True,
+        }
+        with patch(
+            "code_forge.fixval_evidence.EvidenceSession.execute",
+            side_effect=[missing, EvidenceError("retry still unavailable")],
+        ) as execute:
             result = run_fixval(
-                candidate,
-                test_cmd=["python", "-m", "pytest"],
-                cwd=tmp_path,
-                commit_message="fix: foo",
-                diff_text=diff,
+                _make_candidate(), ["python", "-m", "pytest"], tmp_path, "fix", _SIMPLE_PATCH
             )
-        assert result.status == FixvalStatus.BLOCK
-        assert mock_guard.call_count == 2
+        assert result.status == FixvalStatus.ERROR
+        assert execute.call_count == 2
+        first, second = execute.call_args_list
+        assert first.kwargs == {"phase": "fixed:0:0", "timeout": 120}
+        assert second.kwargs == {"phase": "fixed:1:0", "timeout": 120}
+        assert first.args[0]["VIRTUAL_ENV"] == "/private-venv"
+        assert "VIRTUAL_ENV" not in second.args[0]
+        assert second.args[0]["PATH"] == "/usr/bin"
+        assert second.args[0]["PYTHONPATH"] == str(tmp_path / "src")
 
-    @patch("code_forge.fixval._run_baseline_guard")
     @patch("subprocess.run")
-    def test_revert_from_diff_text(self, mock_run, mock_guard, tmp_path):
-        """Verify revert patch is derived from diff_text via unidiff,
-        not from a separate git command."""
-        mock_guard.return_value = ("passed", [], [])
-        mock_run.side_effect = _private_reverse_results(
+    def test_revert_from_diff_text(self, mock_run, tmp_path):
+        source = _fixed_source(tmp_path)
+        full_diff = _SIMPLE_PATCH + (
+            "--- a/tests/test_foo.py\n+++ b/tests/test_foo.py\n@@ -1 +1 @@\n-old_test\n+new_test\n"
+        )
+        projected = _filter_non_test_patch(full_diff)
+        assert "src/foo.py" in projected
+        assert "tests/test_foo.py" not in projected
+        reverse = _private_reverse_results(
             [
-                MagicMock(returncode=0),  # git apply -R
-                MagicMock(returncode=1),  # test fails -> PASS
-                MagicMock(returncode=0),  # git apply restore
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 0, "", ""),
             ]
         )
-        candidate = _make_candidate()
-        diff = (
-            "--- a/src/foo.py\n+++ b/src/foo.py\n"
-            "@@ -1 +1 @@\n-old\n+new\n"
-            "--- a/tests/test_foo.py\n+++ b/tests/test_foo.py\n"
-            "@@ -1 +1 @@\n-old_test\n+new_test\n"
-        )
-        run_fixval(
-            candidate,
-            test_cmd=["python", "-m", "pytest"],
-            cwd=tmp_path,
-            commit_message="fix: foo",
-            diff_text=diff,
-        )
-        # The revert (git apply -R) should be called with a temp file
-        # containing only the non-test diff (src/foo.py), not test_foo.py
-        revert_call = mock_run.call_args_list[0]
-        args = revert_call[0][0] if revert_call[0] else revert_call[1].get("args", [])
-        assert args[0] == "git"
-        assert args[1] == "apply"
-        assert "-R" in args
 
+        def inspect_patch(argv, **kwargs):
+            if "-R" in argv:
+                assert Path(argv[-1]).read_text() == projected
+            return reverse(argv, **kwargs)
 
-# ---- FixvalResult findings tests ----
+        mock_run.side_effect = inspect_patch
+        observation = object()
+        assert _transactional_probe(tmp_path, projected, lambda: observation) is observation
+        assert source.read_bytes() == b"new\n"
 
 
 class TestFixvalResultFindings:
-    """Verify correct StateFinding for each status."""
+    """Component finding semantics do not manufacture terminal gate proof."""
 
     def test_block_produces_dismissed(self, tmp_path):
-        """BLOCK -> DISMISSED StateFinding (block via Verdict.FAIL,
-        not CONFIRMED -- CONFIRMED blocks reconvergence)."""
-        with (
-            patch("code_forge.fixval._run_baseline_guard") as mock_guard,
-            patch("subprocess.run") as mock_run,
-        ):
-            mock_guard.return_value = ("passed", [], [])
-            mock_run.side_effect = _private_reverse_results(
-                [
-                    MagicMock(returncode=0),
-                    MagicMock(returncode=0),  # test passes -> BLOCK
-                    MagicMock(returncode=0),
-                ]
-            )
-            candidate = _make_candidate()
-            diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
-            result = run_fixval(
-                candidate,
-                test_cmd=["python", "-m", "pytest"],
-                cwd=tmp_path,
-                commit_message="fix: foo",
-                diff_text=diff,
-            )
+        session = MagicMock(candidates={"tests/test_foo.py"})
+        session.execute.return_value = _unit_inventory()
+        result = _test_reverted_candidate(
+            _make_candidate(),
+            [],
+            {},
+            str(tmp_path),
+            evidence=session,
+            greens=[_unit_inventory() for _ in range(3)],
+        )
         assert result.status == FixvalStatus.BLOCK
+        assert result.stage is None
         assert len(result.findings) == 1
-        f = result.findings[0]
-        assert f.disposition == Disposition.DISMISSED
-        assert f.source == "FIXVAL"
-        assert f.id == "FIXVAL_HOLLOW"
-        assert f.fingerprint == "fixval-hollow"
+        finding = result.findings[0]
+        assert finding.disposition == Disposition.DISMISSED
+        assert finding.source == "FIXVAL"
+        assert finding.id == "FIXVAL_HOLLOW"
+        assert finding.fingerprint == "fixval-hollow"
+        assert result.block_message
 
-    def test_pass_produces_empty(self, tmp_path):
-        with (
-            patch("code_forge.fixval._run_baseline_guard") as mock_guard,
-            patch("subprocess.run") as mock_run,
-        ):
-            mock_guard.return_value = ("passed", [], [])
-            mock_run.side_effect = _private_reverse_results(
-                [
-                    MagicMock(returncode=0),
-                    MagicMock(returncode=1),  # test fails -> PASS
-                    MagicMock(returncode=0),
-                ]
-            )
-            candidate = _make_candidate()
-            diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
-            result = run_fixval(
-                candidate,
-                test_cmd=["python", "-m", "pytest"],
-                cwd=tmp_path,
-                commit_message="fix: foo",
-                diff_text=diff,
-            )
+    def test_pass_produces_empty_provisional_findings(self, tmp_path):
+        session = MagicMock(candidates={"tests/test_foo.py"})
+        session.execute.return_value = _unit_inventory(1)
+        result = _test_reverted_candidate(
+            _make_candidate(),
+            [],
+            {},
+            str(tmp_path),
+            evidence=session,
+            greens=[_unit_inventory() for _ in range(3)],
+        )
         assert result.status == FixvalStatus.PASS
         assert result.findings == []
+        assert result.stage is None  # The machine must reject this unbound component result.
+
+    def test_bare_exit_failure_without_green_evidence_is_error(self, tmp_path):
+        result = _test_reverted_candidate(_make_candidate(), [], {}, str(tmp_path))
+        assert result.status == FixvalStatus.ERROR
+        assert result.reason == "missing_green_evidence"
+        assert result.findings[0].disposition == Disposition.UNCERTAIN
 
     def test_skipped_produces_dismissed(self, tmp_path):
-        candidate = _make_candidate()
-        result = run_fixval(
-            candidate,
-            test_cmd=["python", "-m", "pytest"],
-            cwd=tmp_path,
-            commit_message="fix: foo",
-            diff_text=None,
-        )
+        result = run_fixval(_make_candidate(), [], tmp_path, "fix: foo", None)
         assert result.status == FixvalStatus.SKIPPED
         assert len(result.findings) == 1
-        f = result.findings[0]
-        assert f.disposition == Disposition.DISMISSED
-        assert f.source == "FIXVAL"
-        assert f.id == "FIXVAL_SKIPPED"
+        finding = result.findings[0]
+        assert finding.disposition == Disposition.DISMISSED
+        assert finding.source == "FIXVAL"
+        assert finding.id == "FIXVAL_SKIPPED"
 
-    @patch("code_forge.fixval.parse_fixval_waiver")
-    def test_waived_produces_dismissed_plus_advisory(self, mock_waiver, tmp_path):
-        mock_waiver.return_value = "flaky"
-        candidate = _make_candidate()
-        result = run_fixval(
-            candidate,
-            test_cmd=["python", "-m", "pytest"],
-            cwd=tmp_path,
-            commit_message="fix: foo",
-            diff_text="some diff",
-        )
+    def test_waived_produces_dismissed_plus_advisory(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FIXVAL_WAIVER", "flaky")
+        result = run_fixval(_make_candidate(), [], tmp_path, "fix: foo", "some diff")
         assert result.status == FixvalStatus.WAIVED
         assert len(result.findings) == 1
-        f = result.findings[0]
-        assert f.disposition == Disposition.DISMISSED
-        assert f.source == "FIXVAL"
-        assert len(result.advisories) >= 1
+        assert result.findings[0].disposition == Disposition.DISMISSED
+        assert result.findings[0].source == "FIXVAL"
+        assert len(result.advisories) == 1
 
 
 # ---- Integration test (real git) ----
 
 
 class TestEndToEndRealGit:
-    """Real git operations, no mocking."""
+    """Real Git reversal/restoration; this is not owned pytest qualification."""
 
     def test_end_to_end_real_git(self, tmp_path):
-        """Create a tmp_path git repo, add code+test, run run_fixval
-        with real git apply -R / git apply (forward restore)."""
+        """Preserve source/index across an actual reversed-code observation."""
         # Init git repo
         subprocess.run(
             ["git", "init"],
@@ -616,33 +511,25 @@ class TestEndToEndRealGit:
         )
         diff_text = diff_result.stdout
 
-        candidate = FixvalCandidate(
-            test_files=["tests/test_calc.py"],
-            non_test_files=["src/calc.py"],
-        )
+        # This integration tests Git reversal/restoration only. Its Python -c
+        # observation cannot qualify the owned pytest FIXVAL execution gate.
+        index_before = (tmp_path / ".git/index").read_bytes()
+        original = code_file.read_bytes()
+        scoped_cmd = [
+            "python3",
+            "-B",
+            "-c",
+            "import sys; sys.path.insert(0, '.'); from src.calc import add; assert add(1, 2) == 3",
+        ]
 
-        # run_fixval with real git. The test should go RED on revert
-        # because the reverted code returns 0, but the test expects 3.
-        with patch("code_forge.fixval._run_baseline_guard") as mock_guard:
-            mock_guard.return_value = ("passed", [], [])
-            result = run_fixval(
-                candidate,
-                test_cmd=[
-                    "python3",
-                    "-c",
-                    "import sys; sys.path.insert(0, 'src'); "
-                    "sys.path.insert(0, '.'); "
-                    "from src.calc import add; "
-                    "assert add(1, 2) == 3, 'expected 3'",
-                ],
-                cwd=tmp_path,
-                commit_message="fix: correct add function",
-                diff_text=diff_text,
-            )
+        def probe():
+            assert "return 0" in code_file.read_text()
+            return subprocess.run(scoped_cmd, cwd=tmp_path, capture_output=True, check=False)
 
-        assert result.status == FixvalStatus.PASS
-        # Verify code was restored
-        assert "return a + b" in code_file.read_text()
+        observation = _transactional_probe(tmp_path, _filter_non_test_patch(diff_text), probe)
+        assert observation.returncode == 1
+        assert code_file.read_bytes() == original
+        assert (tmp_path / ".git/index").read_bytes() == index_before
 
 
 # ---- _VariableRenamer tests ----
@@ -675,7 +562,7 @@ class TestVariableRenamer:
         _ast.fix_missing_locations(transformed)
         out = _ast.unparse(transformed)
         ns: dict = {}
-        exec(compile(out, "<string>", "exec"), ns)
+        exec(compile(out, "<string>", "exec"), ns)  # noqa: S102 - execute the isolated AST transform
         assert ns["compute"]() == 42
 
 
@@ -683,7 +570,7 @@ class TestVariableRenamer:
 
 
 class TestRunOverfitGuard:
-    """Overfit guard is ADVISORY, never blocking."""
+    """Ordinary overfit observations are advisory after safe restoration."""
 
     def test_rename_breaks_test_emits_advisory(self, tmp_path):
         # Create a .py file with a local variable
@@ -692,11 +579,11 @@ class TestRunOverfitGuard:
         src_file.write_text("def compute():\n    result = 42\n    return result\n")
         candidate = FixvalCandidate(
             test_files=["tests/test_module.py"],
-            non_test_files=[str(src_file)],
+            non_test_files=["src/module.py"],
         )
-        # Mock subprocess: test fails after rename -> overfitting
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1)
+        # Isolated observation mock; real Git transaction must still restore source.
+        with patch("code_forge.fixval_evidence.EvidenceSession.execute") as execute:
+            execute.return_value = _unit_inventory(1)
             advisories = run_overfit_guard(
                 candidate,
                 test_cmd=["python", "-m", "pytest"],
@@ -712,10 +599,10 @@ class TestRunOverfitGuard:
         src_file.write_text("def compute():\n    result = 42\n    return result\n")
         candidate = FixvalCandidate(
             test_files=["tests/test_module.py"],
-            non_test_files=[str(src_file)],
+            non_test_files=["src/module.py"],
         )
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+        with patch("code_forge.fixval_evidence.EvidenceSession.execute") as execute:
+            execute.return_value = _unit_inventory()
             advisories = run_overfit_guard(
                 candidate,
                 test_cmd=["python", "-m", "pytest"],
@@ -737,16 +624,16 @@ class TestRunOverfitGuard:
         src_file.write_text(original)
         candidate = FixvalCandidate(
             test_files=["tests/test_module.py"],
-            non_test_files=[str(src_file)],
+            non_test_files=["src/module.py"],
         )
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+        with patch("code_forge.fixval_evidence.EvidenceSession.execute") as execute:
+            execute.return_value = _unit_inventory()
             run_overfit_guard(
                 candidate,
                 test_cmd=["python", "-m", "pytest"],
                 cwd=tmp_path,
             )
-        assert src_file.read_text() == original
+        assert src_file.read_bytes() == original.encode("utf-8")
 
     def test_non_python_files_skipped(self, tmp_path):
         """Non-.py files produce empty advisory list."""
@@ -1162,7 +1049,6 @@ def test_fixval_preflight_errors_do_not_start_git(tmp_path, monkeypatch, failure
 
     transaction, live = _preservation_fixture(tmp_path)
     transaction.close()
-    monkeypatch.setattr("code_forge.fixval._run_baseline_guard", lambda *a, **k: ("passed", [], []))
     monkeypatch.delenv("FIXVAL_WAIVER", raising=False)
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("preflight must not invoke Git"))
     patch_text = "--- a/src/model.py\n+++ b/src/model.py\n@@ -1 +1 @@\n-old\n+new\n"
@@ -1178,14 +1064,20 @@ def test_fixval_preflight_errors_do_not_start_git(tmp_path, monkeypatch, failure
         patch_text = patch_text.replace("model.py", "model.py\x00bad")
     else:
         patch_text = patch_text.replace("src/model.py", "tests/test_model.py")
-    result = run_fixval(
-        FixvalCandidate(["tests/test_live.py"], ["src/model.py"]),
-        ["python", "-m", "pytest"],
-        tmp_path,
-        "fix",
-        patch_text,
-    )
-    assert result.status == (FixvalStatus.SKIPPED if failure == "test_only" else FixvalStatus.BLOCK)
+    if failure in {"patch_allocation", "nul_path"}:
+        result = _transactional_probe(tmp_path, patch_text, lambda: pytest.fail("unsafe probe"))
+        assert result.status == FixvalStatus.BLOCK
+        assert result.reason == "transaction"
+    else:
+        result = run_fixval(
+            FixvalCandidate(["tests/test_live.py"], ["src/model.py"]),
+            ["python", "-m", "pytest"],
+            tmp_path,
+            "fix",
+            patch_text,
+        )
+        assert result.status == (FixvalStatus.SKIPPED if failure == "test_only" else FixvalStatus.ERROR)
+        assert result.reason == ("no_production_patch" if failure == "test_only" else "invalid_patch")
     assert live.read_bytes() == b"new\n"
     assert live.stat().st_mode & 0o777 == 0o751
 
@@ -1203,7 +1095,6 @@ def test_fixval_cleanup_interruption_restores_known_source_and_truthful_recovery
 
     transaction, live = _preservation_fixture(tmp_path)
     transaction.close()
-    monkeypatch.setattr("code_forge.fixval._run_baseline_guard", lambda *a, **k: ("passed", [], []))
     monkeypatch.delenv("FIXVAL_WAIVER", raising=False)
     real_run = subprocess.run
 
@@ -1250,25 +1141,13 @@ def test_fixval_cleanup_interruption_restores_known_source_and_truthful_recovery
         monkeypatch.setattr(os, "supports_dir_fd", os.supports_dir_fd | {unlink_with_error})
     patch_text = "--- a/src/model.py\n+++ b/src/model.py\n@@ -1 +1 @@\n-old\n+new\n"
     if failure == "patch_unlink":
-        result = run_fixval(
-            FixvalCandidate(["tests/test_live.py"], ["src/model.py"]),
-            ["python", "-m", "pytest"],
-            tmp_path,
-            "fix",
-            patch_text,
-        )
+        result = _transactional_probe(tmp_path, patch_text, object)
         assert result.status == FixvalStatus.BLOCK
         recovery = result.block_message.rsplit("Recovery: ", 1)[1]
         assert Path(recovery).is_file()
     else:
         with pytest.raises(KeyboardInterrupt, match="injected") as captured:
-            run_fixval(
-                FixvalCandidate(["tests/test_live.py"], ["src/model.py"]),
-                ["python", "-m", "pytest"],
-                tmp_path,
-                "fix",
-                patch_text,
-            )
+            _transactional_probe(tmp_path, patch_text, object)
         assert captured.value.__notes__
         if failure == "close_cancel":
             recovery = captured.value.__notes__[0].split("FIXVAL recovery: ", 1)[1].split(" (", 1)[0]
@@ -2581,9 +2460,6 @@ def test_fixval_restoration_errors_close_descriptors_and_retain_original(
 
     transaction, live = _preservation_fixture(tmp_path)
     transaction.close()
-    monkeypatch.setattr(
-        "code_forge.fixval._run_baseline_guard", lambda *args, **kwargs: ("passed", [], [])
-    )
     monkeypatch.delenv("FIXVAL_WAIVER", raising=False)
     original_run = subprocess.run
     captured = []
@@ -2625,21 +2501,9 @@ def test_fixval_restoration_errors_close_descriptors_and_retain_original(
     expected_exception = {"retry_error": KeyboardInterrupt, "escaped_error": RuntimeError}.get(failure)
     if expected_exception:
         with pytest.raises(expected_exception, match="owned") as caught:
-            run_fixval(
-                FixvalCandidate(["tests/test_live.py"], ["src/model.py"]),
-                ["python", "-m", "pytest"],
-                tmp_path,
-                "fix",
-                patch_text,
-            )
+            _transactional_probe(tmp_path, patch_text, object)
     else:
-        result = run_fixval(
-            FixvalCandidate(["tests/test_live.py"], ["src/model.py"]),
-            ["python", "-m", "pytest"],
-            tmp_path,
-            "fix",
-            patch_text,
-        )
+        result = _transactional_probe(tmp_path, patch_text, object)
         assert result.status == FixvalStatus.BLOCK
         assert "entry restoration failed" in result.block_message
     if failure == "retry_error":

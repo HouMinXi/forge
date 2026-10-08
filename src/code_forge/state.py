@@ -259,6 +259,7 @@ class State:
     env_manifest: dict[str, Any] | None = None
     # Phase 53a addition: exec_evidence snapshot
     exec_evidence: dict[str, Any] | None = None
+    fixval_stage: dict[str, Any] | None = None
 
 
 def _valid_repository_manifest(value) -> bool:
@@ -623,6 +624,14 @@ def load_state(path: Path) -> State | None:
 
     # Phase 53a additions: exec_evidence snapshot
     state.exec_evidence = data.get("exec_evidence")
+    state.fixval_stage = data.get("fixval_stage")
+    if state.fixval_stage is not None:
+        from .fixval_evidence import validate_stage
+
+        try:
+            validate_stage(state.fixval_stage)
+        except (ValueError, TypeError, KeyError, OverflowError) as exc:
+            raise CorruptedStateError(f"invalid FIXVAL terminal stage: {exc}") from exc
 
     return state
 
@@ -716,7 +725,12 @@ def save_state(state: State, path: Path) -> None:
         },
         "env_manifest": state.env_manifest,
         "exec_evidence": state.exec_evidence,
+        "fixval_stage": state.fixval_stage,
     }
+    if state.fixval_stage is not None:
+        from .fixval_evidence import validate_stage
+
+        validate_stage(state.fixval_stage)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     if state.earned_clean_window is not None or state._earned_window_present:
         data["earned_clean_window"] = state.earned_clean_window

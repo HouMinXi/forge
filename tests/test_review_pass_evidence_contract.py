@@ -82,6 +82,26 @@ def machine_for(tmp_path, mode, provider, diff, files):
     return machine
 
 
+def assert_required_pass_terminal_refusal(machine):
+    assert machine._receipt_gate_round_errors()
+    errors = machine._receipt_gate_terminal_errors()
+    if machine.mode is Mode.LOCAL:
+        assert machine.clean_round_threshold == 3
+        assert machine._state.earned_clean_window["cycles"] == []
+        assert machine._state.consecutive_clean_rounds == 0
+        assert machine._state.converged is False
+        assert len(errors) == 2
+        assert errors[0] == (
+            "receipt acceptance: earned window has 0 cycles; verifier floor demands 3"
+        )
+        # The attempted-cycle diagnostic supplements, but cannot replace,
+        # the authoritative earned-window refusal.
+        assert errors[1].startswith("receipt attempt: ")
+        assert "status=incomplete" in errors[1]
+    else:
+        assert "status=incomplete" in ";".join(errors)
+
+
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
 @pytest.mark.parametrize("missing_pass", [1, 2, 3])
 def test_missing_required_pass_refuses_full_machine(tmp_path, mode, missing_pass):
@@ -105,7 +125,7 @@ def test_missing_required_pass_refuses_full_machine(tmp_path, mode, missing_pass
     assert disk["verdict"] == "FAIL" and disk["converged"] is False
     assert receipt["pass_status"] == "incomplete" and receipt["code_excerpts"] == []
     assert machine._receipt_gate_round_errors()
-    assert "status=incomplete" in ";".join(machine._receipt_gate_terminal_errors())
+    assert_required_pass_terminal_refusal(machine)
     verified = run_verify(
         tmp_path,
         machine.source_hash,
@@ -401,7 +421,7 @@ def test_finding_only_required_pass_refuses_without_changing_validator(tmp_path,
     assert len(retained) == 1 and retained[0].disposition == Disposition.UNCERTAIN
     assert not any(f.source == "L1" for f in machine._state.findings)
     assert len(provider.attempted_excerpts) == 1
-    assert "status=incomplete" in ";".join(machine._receipt_gate_terminal_errors())
+    assert_required_pass_terminal_refusal(machine)
     receipt = json.loads((tmp_path / ".code-forge/receipts/receipt-c1p2.json").read_text())
     assert receipt["pass_status"] == "incomplete"
     assert len(receipt["code_excerpts"]) == (1 if grouped else 0)
@@ -462,7 +482,7 @@ def test_outlet_c_required_scope_reaches_real_machine_and_receipts(
     assert receipt["pass_status"] == "incomplete"
     assert len(machine.l1_provider.attempted_excerpts) == 1
     assert machine._receipt_gate_round_errors()
-    assert "status=incomplete" in ";".join(machine._receipt_gate_terminal_errors())
+    assert_required_pass_terminal_refusal(machine)
     verified = run_verify(
         tmp_path,
         machine.source_hash,
@@ -573,7 +593,7 @@ def test_blank_attempt_raw_survives_actual_machine(tmp_path, mode, grouped, as_t
     receipt = json.loads((tmp_path / ".code-forge/receipts/receipt-c1p2.json").read_text())
     assert receipt["pass_status"] == "incomplete"
     assert len(receipt["code_excerpts"]) == (1 if grouped else 0)
-    assert "status=incomplete" in ";".join(machine._receipt_gate_terminal_errors())
+    assert_required_pass_terminal_refusal(machine)
 
 
 @pytest.mark.parametrize("chunked", [False, True])
@@ -626,7 +646,7 @@ def test_blank_attempt_raw_survives_actual_outlet(tmp_path, monkeypatch, chunked
     )
     assert artifact["payload"] == raw | {"pass_name": "expert"}
     assert "group_scope" not in artifact
-    assert "status=incomplete" in ";".join(actual[0]._receipt_gate_terminal_errors())
+    assert_required_pass_terminal_refusal(actual[0])
 
 
 ENCODED_BINARY = (

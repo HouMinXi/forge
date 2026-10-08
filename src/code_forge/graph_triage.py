@@ -392,7 +392,7 @@ def _get_sem_impact(
 # ---------------------------------------------------------------------------
 
 
-def _run_graphdb(db_path: str, diff_files: list[str]) -> SemAcquisition:
+def _run_graphdb(db_path: str, diff_files: list[str], repo_root: Path) -> SemAcquisition:
     """Query graph.db for changed entities and their dependents.
 
     Uses IMPORTS_FROM disambiguation to reduce false positives from
@@ -401,24 +401,47 @@ def _run_graphdb(db_path: str, diff_files: list[str]) -> SemAcquisition:
     Args:
         db_path: path to graph.db SQLite file.
         diff_files: list of file paths from the diff.
+        repo_root: explicit checkout root for stored absolute file identities.
 
     Returns:
         Complete entity acquisition, or a failure with no partial entities.
     """
     results: list[dict] = []
     try:
+        root = repo_root.absolute()
+        resolved_root = root.resolve()
         with closing(sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)) as conn:
             cursor = conn.cursor()
 
             for file_path in diff_files:
-                # Query nodes by file_path.
+                relative = Path(file_path)
+                if (
+                    not file_path
+                    or relative.is_absolute()
+                    or relative == Path(".")
+                    or ".." in relative.parts
+                    or "\0" in file_path
+                ):
+                    return SemAcquisition(
+                        "schema_error",
+                        diagnostic="invalid repository-relative graph diff path: %r" % file_path,
+                        impact_complete=False,
+                    )
+                file_path = relative.as_posix()
+                # Only the reviewed checkout may supply an absolute identity.
                 cursor.execute(
                     "SELECT id, kind, name, qualified_name, file_path, "
                     "line_start, line_end FROM nodes "
-                    "WHERE file_path LIKE ?",
-                    ("%%%s" % file_path,),
+                    "WHERE file_path IN (?, ?, ?)",
+                    (file_path, str(root / relative), str(resolved_root / relative)),
                 )
                 nodes = cursor.fetchall()
+                if len({node[4] for node in nodes}) > 1:
+                    return SemAcquisition(
+                        "schema_error",
+                        diagnostic="ambiguous graph file identity: %s" % file_path,
+                        impact_complete=False,
+                    )
 
                 for node in nodes:
                     node_id, kind, name, qualified_name, nfile, start, end = node
@@ -589,12 +612,15 @@ class GraphTriageRunner:
         self,
         diff_text: str,
         repo_root: Path,
+        *,
+        config_root: Optional[Path] = None,
     ) -> list[AdvisoryFinding]:
         """Run graph triage on the given diff.
 
         Args:
             diff_text: unified diff of the changes under review.
-            repo_root: path to the repository root.
+            repo_root: path to the reviewed source repository.
+            config_root: directory containing .code-forge/gate.yaml; defaults to repo_root.
 
         Returns:
             List of AdvisoryFinding from blast-radius analysis.
@@ -624,7 +650,7 @@ class GraphTriageRunner:
         if self._backend_selection is not None:
             gate_config = self._backend_selection[1]
         else:
-            gate_path = repo_root / ".code-forge" / "gate.yaml"
+            gate_path = (repo_root if config_root is None else config_root) / ".code-forge/gate.yaml"
             try:
                 from .gate_check import load_gate_config
 
@@ -676,6 +702,7 @@ class GraphTriageRunner:
             return self._run_with_graphdb(
                 diff_text,
                 backend_path,
+                repo_root,
             )
 
         return []
@@ -759,11 +786,12 @@ class GraphTriageRunner:
         self,
         diff_text: str,
         db_path: str,
+        repo_root: Path,
     ) -> list[AdvisoryFinding]:
         """Run analysis using graph.db SQLite backend."""
         diff_files = _parse_diff_files(diff_text)
         outcome = (
-            _run_graphdb(db_path, diff_files)
+            _run_graphdb(db_path, diff_files, repo_root)
             if diff_files
             else SemAcquisition("completed_empty", impact_complete=True)
         )

@@ -109,10 +109,9 @@ def load_gate_config(
         raise ValueError("'test.env' must be a mapping if present")
 
     if "timeout_seconds" in test:
-        if not isinstance(test["timeout_seconds"], int):
-            raise ValueError("'test.timeout_seconds' must be an integer")
-        if test["timeout_seconds"] <= 0:
-            raise ValueError("'test.timeout_seconds' must be positive")
+        from .fixval_evidence import validate_test_timeout
+
+        validate_test_timeout(test["timeout_seconds"])
 
     if "cwd" in test and not isinstance(test["cwd"], str):
         raise ValueError("'test.cwd' must be a string if present")

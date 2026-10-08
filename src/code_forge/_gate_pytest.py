@@ -224,7 +224,13 @@ class Capture:
 
 
 def prepare_pytest_capture(
-    command: list[str], *, test_cwd: Path, test_env: dict[str, str], reporter_path: Path
+    command: list[str],
+    *,
+    test_cwd: Path,
+    test_env: dict[str, str],
+    reporter_path: Path,
+    fixval_binding: dict | None = None,
+    capture_parent: Path | None = None,
 ) -> Capture | None:
     """Prepare only exact supported direct Python pytest prefixes."""
     prefix = 0
@@ -239,11 +245,13 @@ def prepare_pytest_capture(
     capture = None
     fd = None
     try:
+        if fixval_binding is not None:
+            _validate_fixval_binding(fixval_binding)
         reporter_path = reporter_path.resolve(strict=True)
         reporter_source, reporter_identity = _safe_read(reporter_path, reporter_source=True)
         reporter_hash = hashlib.sha256(reporter_source).hexdigest()
         module = "_forge_gate_" + secrets.token_hex(16)
-        directory = Path(tempfile.mkdtemp(prefix="forge-gate-"))
+        directory = Path(tempfile.mkdtemp(prefix="forge-gate-", dir=capture_parent))
         fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         capture = Capture(directory, fd, {}, [], module, prefix)
         bootstrap = directory / (module + ".py")
@@ -284,6 +292,8 @@ def prepare_pytest_capture(
             "directory": str(directory),
             "module": module,
         }
+        if fixval_binding is not None:
+            binding["fixval"] = dict(fixval_binding)
         capture.binding = binding
         capture.command = effective
         data = json.dumps(binding, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
@@ -414,6 +424,31 @@ def decode_record(data):
         raise ValueError("malformed evidence") from exc
 
 
+def _process_incarnation(pid):
+    raw = Path(f"/proc/{pid}/stat").read_bytes()
+    fields = raw[raw.rfind(b")") + 2 :].split()
+    return int(fields[19])
+
+
+def _validate_fixval_binding(value):
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"version", "mode", "nonce", "phase", "source_root", "caller_start_ticks"}
+        or type(value["version"]) is not int
+        or value["version"] != 1
+        or value["mode"] != "owned"
+        or not isinstance(value["nonce"], str)
+        or re.fullmatch(r"[0-9a-f]{32}", value["nonce"]) is None
+        or not isinstance(value["phase"], str)
+        or not value["phase"]
+        or not isinstance(value["source_root"], str)
+        or not Path(value["source_root"]).is_absolute()
+        or type(value["caller_start_ticks"]) is not int
+        or value["caller_start_ticks"] < 1
+    ):
+        raise ValueError("invalid FIXVAL owned binding")
+
+
 def read_binding_transport(transport, bootstrap_path, *, deadline=None):
     expected_path = str(Path(bootstrap_path).parent / "binding.json")
     if (
@@ -446,6 +481,9 @@ def read_binding_transport(transport, bootstrap_path, *, deadline=None):
         "directory",
         "module",
     }
+    if "fixval" in binding:
+        _validate_fixval_binding(binding["fixval"])
+        fields.add("fixval")
     if set(binding) != fields or binding["bootstrap_path"] != str(bootstrap_path):
         raise ValueError("invalid binding fields")
     if (
@@ -499,8 +537,8 @@ def load_binding_transport(encoded, bootstrap_path):
         return None
 
 
-def validate_record(record, *, binding, child_pid, returncode):
-    """Re-derive all identities and counts from the closed inventory."""
+def validate_inventory(record, *, binding, child_pid, returncode):
+    """Pure closed-inventory validation; callers select GREEN or RED policy."""
     bad = EvidenceResult(reason="incomplete or unsupported pytest evidence")
     if not isinstance(record, dict) or set(record) != RECORD_FIELDS:
         return bad
@@ -565,9 +603,22 @@ def validate_record(record, *, binding, child_pid, returncode):
     ):
         if type(record[field]) is not int or record[field] != expected:
             return bad
-    if returncode != 1 or not failures:
+    result = EvidenceResult(True, "complete pytest inventory", failures)
+    result.rows = rows
+    return result
+
+
+def validate_record(record, *, binding, child_pid, returncode):
+    """Keep gate-check's direct, real-call-failure-only waiver contract."""
+    if "fixval" in binding:
+        return EvidenceResult(reason="owned FIXVAL evidence is not direct gate evidence")
+    result = validate_inventory(record, binding=binding, child_pid=child_pid, returncode=returncode)
+    if not result.valid:
+        return result
+    if returncode != 1 or not result.failed_nodes:
         return EvidenceResult(reason="pytest evidence has no call failures")
-    return EvidenceResult(True, "complete pytest evidence", failures)
+    result.reason = "complete pytest evidence"
+    return result
 
 
 def read_pytest_evidence(capture: Capture, *, child_pid: int, returncode: int) -> EvidenceResult:
@@ -639,6 +690,22 @@ class Recorder:
         self.cmdline_return = None
         self.normal_return = False
         self.unconfigure_count = 0
+        self.fixval = binding.get("fixval")
+        self.files = {}
+        self.framework = {}
+        self.producer = None
+        self.framework_callbacks = []
+        if self.fixval is not None:
+            try:
+                _validate_fixval_binding(self.fixval)
+                self.producer = {
+                    "pid": self.pid,
+                    "start_ticks": _process_incarnation(self.pid),
+                    "parent_pid": os.getppid(),
+                    "parent_start_ticks": _process_incarnation(os.getppid()),
+                }
+            except (OSError, ValueError, IndexError):
+                self.refuse("owned producer identity unavailable")
         for kind, path in (
             ("reporter", Path(__file__).resolve()),
             ("bootstrap", Path(bootstrap_path).resolve()),
@@ -654,7 +721,11 @@ class Recorder:
                 or list(identity) != binding[kind + "_identity"]
             ):
                 self.refuse(kind + " origin mismatch")
-        if os.getppid() != binding["parent_pid"] or str(Path.cwd().resolve()) != binding["cwd"]:
+        if (
+            self.fixval is None
+            and os.getppid() != binding["parent_pid"]
+            or str(Path.cwd().resolve()) != binding["cwd"]
+        ):
             self.refuse("producer identity mismatch")
         prefix = binding["effective_argv"].index("pytest") + 1
         if sys.argv[1:] != binding["effective_argv"][prefix:]:
@@ -683,6 +754,8 @@ class Recorder:
             self.refuse("evidence publication unavailable")
 
     def finish(self, version):
+        if any(getattr(cls, name) is not wrapper for cls, name, wrapper in self.framework_callbacks):
+            self.refuse("replaced expected-failure reporting boundary")
         rows = list(self.rows.values())
         record = {
             "schema": 1,
@@ -704,7 +777,47 @@ class Recorder:
             "complete": self.collected and self.normal_return and self.unconfigure_count == 2,
             "invalid": self.invalid,
         }
+        if self.fixval is not None:
+            record = {
+                "schema": "fixval-pytest-v1",
+                "record": record,
+                "files": [self.files.get(row[0]) for row in rows],
+                "framework": [self.framework.get(row[0], False) for row in rows],
+                "producer": self.producer,
+            }
         self.publish("final.json", record)
+
+
+def _expected_framework(item):
+    if item.get_closest_marker("xfail") is not None:
+        return True
+    # Pytest's .obj descriptor can recreate a unittest instance after teardown.
+    # Read only cached collection metadata; callback wrappers below preserve
+    # framework provenance even after pytest clears these caches.
+    parent = getattr(item, "parent", None)
+    values = (vars(item).get("_obj"), vars(parent).get("_obj") if parent is not None else None)
+    return any(
+        getattr(value, "__unittest_expecting_failure__", False)
+        or getattr(value, "todo", None) is not None
+        for value in values
+        if value is not None
+    )
+
+
+def _install_framework_callbacks(recorder, test_case_function):
+    for name in ("addExpectedFailure", "addUnexpectedSuccess"):
+        original = getattr(test_case_function, name, None)
+        if not callable(original):
+            recorder.refuse("unsupported expected-failure framework boundary")
+            return False
+
+        def tracked(item, *args, _original=original, **kwargs):
+            recorder.framework[item.nodeid] = True
+            return _original(item, *args, **kwargs)
+
+        setattr(test_case_function, name, tracked)
+        recorder.framework_callbacks.append((test_case_function, name, tracked))
+    return True
 
 
 def load_plugin(binding, bootstrap_path):
@@ -721,6 +834,12 @@ def load_plugin(binding, bootstrap_path):
     ):
         recorder.refuse("unsupported pytest runtime " + version)
         return None
+    if recorder.fixval is not None:
+        from _pytest.unittest import TestCaseFunction
+
+        if not _install_framework_callbacks(recorder, TestCaseFunction):
+            return None
+
     original_config = pytest_config.Config
     trusted_unconfigure = original_config._ensure_unconfigure
     original_prepare = pytest_config._prepareconfig
@@ -918,9 +1037,29 @@ def load_plugin(binding, bootstrap_path):
                     recorder.refuse("duplicate selected identity")
                 else:
                     recorder.rows[node] = [node, None, None, None]
+                    if recorder.fixval is not None:
+                        try:
+                            path = Path(os.path.abspath(item.path))
+                            relative = path.relative_to(Path(recorder.fixval["source_root"]))
+                            recorder.files[node] = relative.as_posix()
+                            recorder.framework[node] = _expected_framework(item)
+                        except (ValueError, TypeError, AttributeError):
+                            recorder.refuse("collected file outside FIXVAL source")
+
+        @pytest.hookimpl(wrapper=True, tryfirst=True)
+        def pytest_runtest_makereport(self, item, call):
+            if recorder.fixval is not None and _expected_framework(item):
+                recorder.framework[item.nodeid] = True
+            report = yield
+            if recorder.fixval is not None:
+                if _expected_framework(item) or hasattr(report, "wasxfail"):
+                    recorder.framework[item.nodeid] = True
+            return report
 
         def pytest_runtest_logreport(self, report):
             node, phase, outcome = report.nodeid, report.when, report.outcome
+            if recorder.fixval is not None and hasattr(report, "wasxfail"):
+                recorder.framework[node] = True
             if phase not in ("setup", "call", "teardown") or outcome not in OUTCOMES:
                 recorder.refuse("unsupported test report")
                 return

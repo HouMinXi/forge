@@ -1,11 +1,9 @@
-"""Three behaviours the recorded receipt-mutation survivors could change
-and a test can actually reach.
+"""Receipt loading and excerpt validation retain their failure contracts.
 
 The loader rejects a receipt that omits a list it requires, before any
 check runs. A file deleted outright is exempt from the literal excerpt
 check, and dropping that exemption changes the verdict. A line range of
-0, 0 is rejected as nonpositive; loosening the comparison lets it
-through and it then fails for a different reason.
+0, 0 is rejected as nonpositive.
 """
 
 import json
@@ -56,6 +54,3 @@ def test_nonpositive_end_line_is_invalid():
     result = assess_excerpt_evidence(exc, {}, {})
     assert result.status is ExcerptStatus.INVALID
     assert result.diagnostic == "excerpt mod.py:0-0 has nonpositive or unordered range"
-
-
-

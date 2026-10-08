@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import sys
 import threading
 import time
@@ -387,6 +388,7 @@ class StateMachine:
         self._attempt_snapshot: dict | None = None
         self._attempt_findings: list[StateFinding] | None = None
         self._other_source_state: State | None = None
+        self._fixval_invocation_id = secrets.token_hex(16)
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
@@ -1061,6 +1063,23 @@ class StateMachine:
             self._clean_window_cycles = [
                 entry["cycle"] for entry in self._state.earned_clean_window["cycles"]
             ]
+        # A refused inherited proof must remain byte-for-byte available for
+        # explicit recovery. Invalidate terminal credit only once this LOCAL
+        # invocation is admitted, before executing any new review phase.
+        from .fixval_evidence import new_stage
+
+        self._fixval_invocation_id = secrets.token_hex(16)
+        self._state.fixval_stage = new_stage(self._fixval_invocation_id, self.source_hash)
+        # Retain HOLD/escalation semantics; only a prior PASS can falsely
+        # authorize the new invocation before its terminal gate runs.
+        if self._state.verdict == Verdict.PASS:
+            self._state.verdict = Verdict.PENDING
+        self._state.converged = False
+        # Host-backed review persists this pending stage atomically with the
+        # first pending attempt reservation below, before dispatch. Preserve
+        # its existing persistence/cancellation boundaries and prior evidence.
+        if not active:
+            self._persist_state()
         start = self._continuation_round_index()
         for round_index in range(start, start + self.max_total_rounds):
             self._begin_host_attempt(round_index)
@@ -2257,100 +2276,132 @@ class StateMachine:
             return
 
         from .fixval import (
-            FixvalCandidate,
-            FixvalSkip,
             FixvalStatus,
+            FixvalResult,
+            FixvalSkip,
             classify_fixval_candidate,
+            preflight_fixval,
             run_fixval,
-            run_overfit_guard,
+            _execution_error,
+        )
+        from .fixval_evidence import (
+            digest,
+            new_stage,
+            validate_stage,
+            validate_terminal_stage,
+            normalize_file,
         )
 
         changed_files = [str(f) for f in self._source_files()]
         executable_files = {str(f) for f in self._executable_source_files()}
         candidate = classify_fixval_candidate(changed_files, executable_files=executable_files)
+        commit_message = (
+            ""
+            if isinstance(candidate, FixvalSkip) or self.resolved_review.git_diff is None
+            else self._get_commit_message()
+        )
+        result, exception = preflight_fixval(candidate, self.resolved_review.git_diff, commit_message)
+        if self._state.fixval_stage is None:
+            self._state.fixval_stage = new_stage(self._fixval_invocation_id, self.source_hash)
+        config_hash = None
+        preflight_exception = result is not None
+        if result is None:
+            try:
+                from .gate_check import load_gate_config
 
-        if isinstance(candidate, FixvalSkip):
-            # Record SKIPPED with reason (never silent)
-            skip_finding = StateFinding(
-                id="FIXVAL_SKIPPED",
-                fingerprint="fixval-skipped",
-                source="FIXVAL",
-                disposition=Disposition.DISMISSED,
-                file="",
-                line_range=[],
-                description=f"FIXVAL skipped: {candidate.reason}",
+                path = self.cwd / ".code-forge" / "gate.yaml"
+                before = path.read_bytes()
+                config = load_gate_config(path)
+                if path.read_bytes() != before:
+                    raise ValueError("test configuration changed during load")
+                config_hash = hashlib.sha256(before).hexdigest()
+                result = run_fixval(
+                    candidate,
+                    config["test"]["command"],
+                    self._source_root(),
+                    commit_message,
+                    self.resolved_review.git_diff,
+                    recovery_parent=self.recovery_parent,
+                    **(
+                        {"timeout_seconds": config["test"]["timeout_seconds"]}
+                        if "timeout_seconds" in config["test"]
+                        else {}
+                    ),
+                    stage_id=self._fixval_invocation_id,
+                    source_hash=self.source_hash,
+                    config_hash=config_hash,
+                    overfit_files=[f for f in candidate.non_test_files if f in executable_files],
+                )
+                if path.read_bytes() != before:
+                    result = _execution_error(
+                        "configuration_changed", "test configuration changed during FIXVAL"
+                    )
+            except Exception as exc:  # noqa: BLE001 - ordinary execution/config failure cannot authorize PASS
+                result = _execution_error("configuration_or_execution", str(exc))
+
+        if not isinstance(result, FixvalResult) or not isinstance(result.status, FixvalStatus):
+            result = _execution_error("unknown_status", "unexpected FIXVAL result or status")
+        if result.stage is None:
+            stage = new_stage(self._fixval_invocation_id, self.source_hash)
+            stage.update(
+                outcome=result.status.value,
+                reason=result.reason,
+                exception=exception if result.status == FixvalStatus.WAIVED else None,
+                config_sha256=config_hash,
             )
-            self._state.findings.append(skip_finding)
-            # Skip is not a block -- proceed to PASS
-            self._state.verdict = Verdict.PASS
-            self._state.converged = True
-            self._write_ledger_rows()
-            self._persist_state()
-            return
-
-        # FixvalCandidate: run the gate
+        else:
+            stage = result.stage
+        stage["earned_window_sha256"] = digest(self._state.earned_clean_window)
         try:
-            from .gate_check import load_gate_config
+            validate_stage(stage)
+            if (
+                stage["invocation_id"] != self._fixval_invocation_id
+                or stage["source_hash"] != self.source_hash
+            ):
+                raise ValueError("stale FIXVAL terminal proof")
+            if result.status == FixvalStatus.PASS:
+                if preflight_exception or result.stage is None or stage["config_sha256"] != config_hash:
+                    raise ValueError("applicable FIXVAL lacks bound execution proof")
+                from . import fixval_evidence, _gate_pytest
 
-            config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
-            test_cmd = config["test"]["command"]
-        except Exception as exc:  # noqa: BLE001
-            self._state.infra_errors.append(
-                f"FIXVAL: gate.yaml missing or test.command not configured: {exc}"
-            )
-            # Cannot run FIXVAL without test command -- proceed to PASS
-            self._state.verdict = Verdict.PASS
-            self._state.converged = True
-            self._write_ledger_rows()
-            self._persist_state()
-            return
-
-        commit_message = self._get_commit_message()
-        diff_text = self.resolved_review.git_diff
-
-        preservation = (
-            {"recovery_parent": self.recovery_parent} if self.recovery_parent is not None else {}
-        )
-        result = run_fixval(
-            candidate,
-            test_cmd,
-            self._source_root(),
-            commit_message,
-            diff_text,
-            **preservation,
-        )
-
-        # Extend findings and advisories
+                validate_terminal_stage(
+                    stage,
+                    invocation_id=self._fixval_invocation_id,
+                    source_hash=self.source_hash,
+                    config_sha256=config_hash,
+                    candidate_sha256=digest(
+                        {"tests": candidate.test_files, "production": candidate.non_test_files}
+                    ),
+                    earned_window_sha256=digest(self._state.earned_clean_window),
+                    validator_sha256=fixval_evidence.validator_digest(),
+                    reporter_sha256=hashlib.sha256(Path(_gate_pytest.__file__).read_bytes()).hexdigest(),
+                    candidate_files={
+                        normalize_file(f, self._source_root()) for f in candidate.test_files
+                    },
+                    command_sha256=digest(config["test"]["command"] + candidate.test_files),
+                    expected_stage_sha256=digest(stage),
+                    expected_command=config["test"]["command"] + candidate.test_files,
+                )
+                accepted = True
+            else:
+                accepted = preflight_exception and result.status in (
+                    FixvalStatus.SKIPPED,
+                    FixvalStatus.WAIVED,
+                )
+        except (ValueError, TypeError, KeyError) as exc:
+            result = _execution_error("invalid_terminal_proof", str(exc))
+            stage = new_stage(self._fixval_invocation_id, self.source_hash)
+            stage.update(outcome="ERROR", reason=result.reason)
+            accepted = False
+        self._state.fixval_stage = stage
         self._state.findings.extend(result.findings)
+        self._state.infra_errors.extend(result.infra_errors)
         self._advisories.extend(result.advisories)
-
-        if result.status == FixvalStatus.BLOCK:
-            # Hollow test blocks the pipeline
-            # block_message stored in the FIXVAL_HOLLOW finding's error
-            for f in result.findings:
-                if f.id == "FIXVAL_HOLLOW":
-                    f.error = result.block_message
-            self._state.verdict = Verdict.FAIL
-            self._state.converged = False
-            self._write_ledger_rows()
-            self._persist_state()
-            return
-
-        if result.status == FixvalStatus.PASS:
-            # Non-hollow: run overfit guard (advisory only)
-            overfit_advisories = run_overfit_guard(
-                FixvalCandidate(
-                    test_files=candidate.test_files,
-                    non_test_files=[f for f in candidate.non_test_files if f in executable_files],
-                ),
-                test_cmd,
-                self._source_root(),
-            )
-            self._advisories.extend(overfit_advisories)
-
-        # PASS / SKIPPED / WAIVED -- proceed to PASS verdict
-        self._state.verdict = Verdict.PASS
-        self._state.converged = True
+        for finding in result.findings:
+            if finding.id == "FIXVAL_HOLLOW":
+                finding.error = result.block_message
+        self._state.verdict = Verdict.PASS if accepted else Verdict.FAIL
+        self._state.converged = accepted
         self._write_ledger_rows()
         self._persist_state()
 
@@ -2913,9 +2964,14 @@ class StateMachine:
                     if isinstance(candidate, _RuntimeRunner):
                         runner._runtime_runner = candidate
                         break
+        from .graph_triage import GraphTriageRunner
+
         for runner in self.advisory_runners:
             try:
-                findings = runner.run(diff_text, self.cwd)
+                if isinstance(runner, GraphTriageRunner) and type(runner).run is GraphTriageRunner.run:
+                    findings = runner.run(diff_text, self._source_root(), config_root=self.cwd)
+                else:
+                    findings = runner.run(diff_text, self.cwd)
                 self._advisories.extend(findings)
             except Exception as exc:  # noqa: BLE001
                 self._state.infra_errors.append(

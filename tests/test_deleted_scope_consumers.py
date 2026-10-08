@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""Deleted Git entries remain semantic scope without executable post-images."""
+"""Deleted Git entries remain semantic scope without executable post-images.
+
+FIXVAL custom-command cases isolate reversal and terminal refusal. They do not
+qualify the public owned-pytest execution route.
+"""
 
 from pathlib import Path
 import hashlib
@@ -17,10 +21,14 @@ from code_forge.baseline import ResolvedReview
 from code_forge.cli import _assemble_post_image, _build_parser, _run_mutation_check
 from code_forge.detect import JS_TOOL_REGISTRY, PYTHON_TOOL_REGISTRY
 from code_forge.diff import get_changed_files, get_removed_files
-from code_forge.fixval import FixvalCandidate, FixvalStatus, run_fixval
+from code_forge.fixval import (
+    FixvalCandidate, FixvalResult, FixvalStatus, _execution_error,
+    _transactional_probe, preflight_fixval, run_fixval,
+)
+from code_forge.disposition import Disposition
 from code_forge.machine import StateMachine
 from code_forge.registry import ToolConfig
-from code_forge.state import Mode
+from code_forge.state import Mode, StateFinding
 
 
 def _git(repo, *args):
@@ -572,15 +580,117 @@ def test_runner_executes_relative_tool_and_version_in_source_root(tmp_path):
     assert json.loads(stdout) == {"cwd": str(tmp_path), "files": ["live.js"]}
 
 
+def _run_reversal_component(
+    candidate, test_cmd, cwd, commit_message, diff_text, *, recovery_parent=None,
+    timeout_seconds=None, **terminal_bindings,
+):
+    """Exercise source reversal with real subprocesses, never qualify FIXVAL.
+
+    The three fixed-state observations preserve these transaction tests' existing
+    call/injection boundaries. They are not closed GREEN inventories. The
+    callback's PASS is a component outcome only: no terminal stage is minted,
+    and StateMachine must refuse it. Live owned pytest qualification lives in
+    test_fixval_fail_closed.py and is not emulated here.
+    """
+    exception, production = preflight_fixval(candidate, diff_text, commit_message)
+    if exception is not None:
+        return exception
+    command = test_cmd + candidate.test_files
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(cwd) / "src")
+
+    def observe(timeout):
+        return subprocess.run(
+            command, env=env, cwd=str(cwd), timeout=timeout,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        )
+
+    for _ in range(3):
+        observed = observe(120 if timeout_seconds is None else timeout_seconds)
+        if observed.returncode != 0:
+            return _execution_error(
+                "baseline", "component fixed-state command exited %s; stderr: %s; stdout: %s"
+                % (observed.returncode, observed.stderr, observed.stdout),
+            )
+
+    def probe():
+        observed = observe(600 if timeout_seconds is None else timeout_seconds)
+        if observed.returncode == 1:
+            return FixvalResult(FixvalStatus.PASS, [], [], reason="component_red")
+        if observed.returncode != 0:
+            return _execution_error("execution", "component command exited %s" % observed.returncode)
+        return FixvalResult(
+            FixvalStatus.BLOCK,
+            [StateFinding(
+                id="FIXVAL_HOLLOW", fingerprint="fixval-hollow", source="FIXVAL",
+                disposition=Disposition.DISMISSED, file=candidate.test_files[0], line_range=[],
+                description="component test passes on both fixed and reverted source",
+            )], [], block_message="component test did not fail on reversal", reason="hollow",
+        )
+
+    return _transactional_probe(cwd, production, probe, recovery_parent)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        [sys.executable, "-B", "-m", "pytest"],
+        ["/usr/bin/python3", "-B", "-m", "pytest"],
+        [sys.executable, "-I", "-S", "-c", "raise SystemExit(1)"],
+    ],
+    ids=["absolute-test-interpreter", "absolute-system-interpreter", "python-c"],
+)
+def test_fixval_public_api_refuses_legacy_component_commands(tmp_path, monkeypatch, command):
+    """The test-only reversal helper cannot confer public runner support."""
+    source = tmp_path / "value.py"
+    source.write_bytes(b"value = 2\n")
+    patch = "--- a/value.py\n+++ b/value.py\n@@ -1 +1 @@\n-value = 1\n+value = 2\n"
+    monkeypatch.delenv("FIXVAL_WAIVER", raising=False)
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("unsupported configured command launched a process or source reversal")
+
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    monkeypatch.setattr("code_forge.fixval._transactional_probe", forbidden)
+    result = run_fixval(
+        FixvalCandidate(["tests/test_value.py"], ["value.py"]), command, tmp_path, "", patch
+    )
+    assert result.status == FixvalStatus.ERROR
+    assert result.reason == "execution"
+    assert "unsupported direct pytest command" in result.findings[0].description
+    assert result.findings[0].disposition == Disposition.UNCERTAIN
+    assert result.findings[0].source == "FIXVAL"
+    assert result.stage["outcome"] == "ERROR"
+    assert source.read_bytes() == b"value = 2\n"
+
+
+def _install_reversal_component(machine, monkeypatch):
+    """Keep real terminal rejection while recording the transaction component."""
+    machine._reversal_component_calls = []
+    machine._reversal_component_results = []
+
+    def component(*args, **kwargs):
+        machine._reversal_component_calls.append((args, kwargs))
+        result = _run_reversal_component(*args, **kwargs)
+        machine._reversal_component_results.append(result)
+        return result
+
+    monkeypatch.setattr("code_forge.fixval.run_fixval", component)
+
+
 def _terminal_fixture(repo, state, diff, files, monkeypatch):
     import json
+
+    # These component tests assert Git/scope/restoration, not system-Python
+    # identity. Use the active test interpreter so real pytest is available.
 
     (state / ".code-forge").mkdir(exist_ok=True)
     (state / ".code-forge" / "gate.yaml").write_text(
         "test:\n  command: "
         + json.dumps(
             [
-                "/usr/bin/python3",
+                sys.executable,
                 "-B",
                 "-m",
                 "pytest",
@@ -596,12 +706,14 @@ def _terminal_fixture(repo, state, diff, files, monkeypatch):
     monkeypatch.setenv("PYTEST_ADDOPTS", "")
     monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
     machine = _machine(state, diff, files, source_root=repo)
-    # Only receipt/ledger prerequisites are bounded here; FIXVAL and its
-    # baseline, Git revert, scoped pytest and terminal dispatch remain real.
+    # Receipt/ledger prerequisites are outside this source transaction test.
+    # Real Git/custom subprocesses run through the component helper; terminal
+    # acceptance remains real and must refuse the unbound component result.
     monkeypatch.setattr(machine, "_receipt_gate_round_errors", lambda: [])
     monkeypatch.setattr(machine, "_receipt_gate_terminal_errors", lambda: [])
     monkeypatch.setattr(machine, "_write_ledger_rows", lambda: None)
     monkeypatch.setattr(machine, "_persist_state", lambda: None)
+    _install_reversal_component(machine, monkeypatch)
     return machine
 
 
@@ -667,7 +779,12 @@ def test_real_fixval_projects_deleted_tests_and_uses_source_root(
     monkeypatch.setattr(subprocess, "run", capture)
     original = (repo / "src/model.py").read_bytes()
     machine._finalize_local_terminal()
-    assert machine._state.verdict == (Verdict.FAIL if hollow else Verdict.PASS)
+    assert machine._state.verdict == Verdict.FAIL
+    assert not machine._state.converged
+    assert machine._reversal_component_results[-1].status == (
+        FixvalStatus.BLOCK if hollow else FixvalStatus.PASS
+    )
+    assert machine._reversal_component_results[-1].stage is None
     tests = [c for c in calls if "pytest" in c[0]]
     assert len(tests) >= 4
     assert [c[2] for c in tests[:4]] == [0, 0, 0, 0 if hollow else 1]
@@ -702,7 +819,10 @@ def test_real_fixval_keeps_deleted_production_revert_fact(tmp_path, monkeypatch,
     files = [tmp_path / p for p in get_changed_files(diff)]
     machine = _terminal_fixture(tmp_path, tmp_path, diff, files, monkeypatch)
     machine._finalize_local_terminal()
-    assert machine._state.verdict == Verdict.PASS
+    assert machine._state.verdict == Verdict.FAIL
+    assert not machine._state.converged
+    assert machine._reversal_component_results[-1].status == FixvalStatus.PASS
+    assert machine._reversal_component_results[-1].stage is None
     assert machine._source_files() == files
     assert not (tmp_path / gone_path).exists()
     assert not any(f.id in {"FIXVAL_SKIPPED", "MUTATION_SKIPPED"} for f in machine._state.findings)
@@ -729,7 +849,7 @@ def test_deleted_tests_without_current_test_skip_before_pytest(tmp_path, monkeyp
     assert machine._state.verdict == Verdict.PASS
     (finding,) = machine._state.findings
     assert finding.id == "FIXVAL_SKIPPED"
-    assert finding.description == "FIXVAL skipped: no executable test file in diff"
+    assert finding.description == "no executable test file in diff"
     assert machine._source_files() == files
 
 
@@ -754,7 +874,10 @@ def test_non_deleted_missing_test_remains_real_baseline_error(tmp_path, monkeypa
     assert calls and calls[0][1] == 4
     assert str(files[1]) in calls[0][0]
     assert "test_missing.py" in calls[0][2]
-    assert any(f.id == "MUTATION_SKIPPED" for f in machine._state.findings)
+    (finding,) = [f for f in machine._state.findings if f.id == "FIXVAL_ERROR"]
+    assert finding.source == "FIXVAL" and finding.disposition == Disposition.UNCERTAIN
+    assert "test_missing.py" in finding.description
+    assert machine._state.verdict.value == "FAIL"
     assert machine._source_files() == files
 
 
@@ -778,19 +901,14 @@ def test_overfit_uses_projected_live_production_and_source_root(tmp_path, monkey
     machine = _terminal_fixture(repo, state, diff, files, monkeypatch)
     candidates = []
 
-    def accepted(candidate, *args):
-        candidates.append(candidate)
+    def accepted(candidate, command, cwd, *args, **kwargs):
+        candidates.append((candidate, command, cwd, kwargs))
         return fixval.FixvalResult(fixval.FixvalStatus.PASS, [], [])
 
     monkeypatch.setattr(fixval, "run_fixval", accepted)
-    real_guard = fixval.run_overfit_guard
-    guards = []
-
-    def guard(candidate, command, cwd):
-        guards.append((candidate, cwd))
-        return real_guard(candidate, command, cwd)
-
-    monkeypatch.setattr(fixval, "run_overfit_guard", guard)
+    monkeypatch.setattr(
+        fixval, "run_overfit_guard", lambda *a, **k: pytest.fail("obsolete standalone overfit call")
+    )
     real_read = Path.read_bytes
 
     def checked_read(path):
@@ -799,11 +917,13 @@ def test_overfit_uses_projected_live_production_and_source_root(tmp_path, monkey
 
     monkeypatch.setattr(Path, "read_bytes", checked_read)
     machine._finalize_local_terminal()
-    assert str(repo / "src/gone.py") in candidates[0].non_test_files
-    candidate, cwd = guards[0]
-    assert candidate.non_test_files == [str(repo / "src/model.py")]
+    candidate, command, cwd, forwarded = candidates[0]
+    assert str(repo / "src/gone.py") in candidate.non_test_files
+    assert forwarded["overfit_files"] == [str(repo / "src/model.py")]
     assert candidate.test_files == [str(repo / "tests/test_live.py")]
     assert cwd == repo
+    assert machine._state.verdict.value == "FAIL"
+    assert not machine._state.converged
     assert real_read(repo / "src/gone.py") == sentinel
     assert real_read(repo / "src/model.py") == b"value = 2\n"
     assert machine._advisories == []
@@ -948,7 +1068,12 @@ def test_real_fixval_retained_production_cannot_skip_reversal(
     monkeypatch.setattr(subprocess, "run", capture)
     machine._finalize_local_terminal()
     assert not any(f.id in {"FIXVAL_SKIPPED", "MUTATION_SKIPPED"} for f in machine._state.findings)
-    assert machine._state.verdict == (Verdict.FAIL if hollow else Verdict.PASS)
+    assert machine._state.verdict == Verdict.FAIL
+    assert not machine._state.converged
+    assert machine._reversal_component_results[-1].status == (
+        FixvalStatus.BLOCK if hollow else FixvalStatus.PASS
+    )
+    assert machine._reversal_component_results[-1].stage is None
     tests = [call for call in calls if "pytest" in call[0]]
     assert len(tests) >= 4
     assert [call[1] for call in tests[:4]] == [0, 0, 0, 0 if hollow else 1]
@@ -1116,6 +1241,8 @@ print(json.dumps([run_tools({{'inspect':config(cmd)}}, ['live.js'], cwd=cwd)
 
 
 def test_factory_binds_actual_mutation_baseline_cwd(tmp_path, monkeypatch):
+    import json
+
     from code_forge import factories, mutation
 
     repo = tmp_path / "project"
@@ -1123,14 +1250,32 @@ def test_factory_binds_actual_mutation_baseline_cwd(tmp_path, monkeypatch):
     diff, paths = _retained_deletion_with_live(repo, "py")
     state = tmp_path / "state"
     state.mkdir()
+    witness = state / "baseline-witness.json"
+    program = (
+        "import json, os, sys; from pathlib import Path; "
+        f"Path({str(witness)!r}).write_text(json.dumps({{"
+        "'cwd': os.getcwd(), 'pythonpath': os.environ.get('PYTHONPATH'), "
+        "'argv': sys.argv[1:]})); "
+        "print('controlled baseline failure'); raise SystemExit(1)"
+    )
+    baseline_cmd = ["/usr/bin/python3", "-B", "-c", program, "cwd-boundary"]
+    (repo / ".code-forge/gate.yaml").write_text(
+        "test:\n  command: " + json.dumps(baseline_cmd) + "\n  timeout_seconds: 11\n",
+        encoding="utf-8",
+    )
     shutil.copytree(repo / ".code-forge", state / ".code-forge")
+    monkeypatch.chdir(state)
     files = [repo / p for p in paths]
     baseline_calls = []
+    baseline_results = []
+    actual_owner = mutation.run_owned_command
     monkeypatch.setattr(factories.shutil, "which", lambda _: "/fixture/mutmut")
 
     def baseline(argv, **kwargs):
-        baseline_calls.append((argv, kwargs.get("cwd")))
-        return subprocess.CompletedProcess(argv, 1, "controlled baseline failure", "")
+        baseline_calls.append((list(argv), kwargs.copy()))
+        result = actual_owner(argv, **kwargs)
+        baseline_results.append(result)
+        return result
 
     monkeypatch.setattr(mutation, "run_owned_command", baseline)
     machine = _machine(
@@ -1141,8 +1286,31 @@ def test_factory_binds_actual_mutation_baseline_cwd(tmp_path, monkeypatch):
         l2_runner=factories.build_l2_runner(cwd=repo),
     )
     findings = machine._run_l2_phase()
-    assert baseline_calls == [(["echo", "ok"], str(repo))]
+    assert len(baseline_calls) == 1
+    argv, kwargs = baseline_calls[0]
+    assert argv == baseline_cmd
+    expected_env = {**os.environ, "PYTHONPATH": str(repo / "src")}
+    expected_env["PATH"] = "/usr/bin" + os.pathsep + expected_env.get("PATH", "")
+    assert kwargs == {
+        "cwd": str(repo),
+        "env": expected_env,
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": 11,
+        "check": False,
+    }
+    assert json.loads(witness.read_text()) == {
+        "cwd": str(repo), "pythonpath": str(repo / "src"), "argv": ["cwd-boundary"]
+    }
+    assert baseline_results[0].returncode == 1
+    assert baseline_results[0].stdout == "controlled baseline failure\n"
+    assert baseline_results[0].stderr == ""
     assert findings and findings[0].fingerprint == "mutation-flaky"
+    assert "baseline failed" in findings[0].description
+    assert "returncode 1" in findings[0].description
+    assert machine._state.infra_errors
     assert machine._source_files() == files
 
 
@@ -1326,7 +1494,10 @@ def test_real_fixval_transaction_error_never_passes_or_overwrites_foreign(
                 raise OSError("injected test process failure")
             if failure == "test_timeout":
                 raise subprocess.TimeoutExpired(argv, 600)
-            raise KeyboardInterrupt("injected test cancellation")
+            cancelled = KeyboardInterrupt("injected test cancellation")
+            # Synchronous injection before real_run: this callback launched no child.
+            cancelled.cleanup_complete = True
+            raise cancelled
         is_reverse = argv[:3] == ["git", "apply", "-R"]
         is_forward = argv[:2] == ["git", "apply"] and not is_reverse
         if is_reverse and failure == "reverse":
@@ -1399,8 +1570,16 @@ def test_real_fixval_transaction_error_never_passes_or_overwrites_foreign(
         machine._finalize_local_terminal()
         assert machine._state.verdict == Verdict.FAIL
         assert not machine._state.converged
-        (finding,) = [f for f in machine._state.findings if f.id == "FIXVAL_TRANSACTION"]
-        assert finding.error and "Recovery:" in finding.error
+        if failure in {"test_oserror", "test_timeout"}:
+            (finding,) = [f for f in machine._state.findings if f.id == "FIXVAL_ERROR"]
+            assert finding.disposition == Disposition.UNCERTAIN
+            assert finding.is_timeout is (failure == "test_timeout")
+            assert finding.error
+            if failure == "test_oserror":
+                assert "injected test process failure" in finding.error
+        else:
+            (finding,) = [f for f in machine._state.findings if f.id == "FIXVAL_TRANSACTION"]
+            assert finding.error and "Recovery:" in finding.error
     assert any(argv[:3] == ["git", "apply", "-R"] for argv in calls)
     assert test_calls >= (
         3
@@ -1436,7 +1615,7 @@ def test_real_fixval_transaction_error_never_passes_or_overwrites_foreign(
     if recovery_original is not None:
         assert recovery_original.exists()
         assert str(recovery_original) in finding.error
-    if failure == "test_cancel":
+    if failure in {"test_cancel", "test_oserror", "test_timeout"}:
         assert not list(_recovery_paths(tmp_path))
     else:
         assert list(_recovery_paths(tmp_path))
@@ -1513,7 +1692,12 @@ def test_real_fixval_preserves_production_metadata_and_binary_blocks(
 
     monkeypatch.setattr(subprocess, "run", capture)
     machine._finalize_local_terminal()
-    assert machine._state.verdict == (Verdict.FAIL if hollow else Verdict.PASS)
+    assert machine._state.verdict == Verdict.FAIL
+    assert not machine._state.converged
+    assert machine._reversal_component_results[-1].status == (
+        FixvalStatus.BLOCK if hollow else FixvalStatus.PASS
+    )
+    assert machine._reversal_component_results[-1].stage is None
     assert not any(
         f.id in {"FIXVAL_SKIPPED", "FIXVAL_TRANSACTION", "MUTATION_SKIPPED"}
         for f in machine._state.findings
@@ -1588,7 +1772,7 @@ def test_r1_real_added_directory_reverse_restore(tmp_path):
         "-c",
         "import pathlib,sys;sys.exit(0 if pathlib.Path('newpkg/model.py').exists() else 1)",
     ]
-    result = run_fixval(
+    result = _run_reversal_component(
         FixvalCandidate(["tests/test_new.py"], ["newpkg/model.py"]),
         command,
         tmp_path,
@@ -1699,7 +1883,7 @@ def test_r1_real_nested_added_directory_restores_all_modes(
         else "import pathlib,sys;sys.exit(0 if pathlib.Path(%r).exists() else 1)"
         % (parent + "/model.py"),
     ]
-    result = run_fixval(
+    result = _run_reversal_component(
         FixvalCandidate(["tests/test_new.py"], [parent + "/model.py"]),
         command,
         tmp_path,
@@ -1874,9 +2058,9 @@ def test_diff_producer_binary_packet_reaches_real_fixval(tmp_path, monkeypatch, 
         name: ((tmp_path / name).lstat().st_mode, (tmp_path / name).read_bytes())
         for name in ("src/data.bin", "tests/test_live.py")
     }
-    result = run_fixval(
+    result = _run_reversal_component(
         candidate,
-        ["/usr/bin/python3", "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q"],
+        [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q"],
         tmp_path,
         "",
         packet,
@@ -2204,7 +2388,7 @@ def test_quoted_renamed_test_cannot_supply_hollow_fixval_pass(tmp_path):
         "-c",
         "from pathlib import Path;import sys;raise SystemExit(0 if all(Path(p).is_file() for p in sys.argv[1:]) else 1)",
     ]
-    result = run_fixval(classify_fixval_candidate(["value.py", new]), command, tmp_path, "", patch)
+    result = _run_reversal_component(classify_fixval_candidate(["value.py", new]), command, tmp_path, "", patch)
     assert result.status == FixvalStatus.BLOCK
     assert {
         name: ((tmp_path / name).lstat().st_mode, (tmp_path / name).read_bytes()) for name in before
@@ -2380,7 +2564,8 @@ def test_test_rename_sharing_deleted_destination_cannot_supply_fixval_pass(tmp_p
         "",
         packet,
     )
-    assert result.status == FixvalStatus.BLOCK
+    assert result.status == FixvalStatus.ERROR
+    assert result.reason == "invalid_patch"
     assert not (tmp_path / "baseline-called").exists()
     assert get_removed_files(packet) == []
     assert get_changed_files(packet) == ["src/helper.py", "tests/test_live.py"]
@@ -2538,7 +2723,7 @@ def test_fixval_keeps_leading_plain_production_in_mixed_packet(
     ]
     monkeypatch.delenv("FIXVAL_WAIVER", raising=False)
     if entrypoint == "fixval":
-        result = run_fixval(classify_fixval_candidate([new, "value.py"]), command, tmp_path, "", mixed)
+        result = _run_reversal_component(classify_fixval_candidate([new, "value.py"]), command, tmp_path, "", mixed)
         assert result.status == FixvalStatus.BLOCK
         assert [finding.id for finding in result.findings] == ["FIXVAL_HOLLOW"]
     else:
@@ -2558,9 +2743,11 @@ def test_fixval_keeps_leading_plain_production_in_mixed_packet(
         monkeypatch.setattr(machine, "_get_commit_message", lambda: "")
         monkeypatch.setattr(machine, "_write_ledger_rows", lambda: None)
         monkeypatch.setattr(machine, "_persist_state", lambda: None)
-        monkeypatch.setattr(
-            "code_forge.gate_check.load_gate_config", lambda _: {"test": {"command": command}}
-        )
+        import json
+        config = tmp_path / ".code-forge/gate.yaml"
+        config.parent.mkdir(exist_ok=True)
+        config.write_text("test:\n  command: " + json.dumps(command) + "\n")
+        _install_reversal_component(machine, monkeypatch)
         machine._finalize_local_terminal()
         assert machine._state.verdict.value == "FAIL"
         assert not machine._state.converged
@@ -2646,7 +2833,7 @@ def test_mixed_binary_production_keeps_plain_test_excluded(tmp_path, monkeypatch
     assert _filter_non_test_patch(mixed) == production
     before = ((tmp_path / "src/data.bin").read_bytes(), _r1_identity(test), _r1_index(tmp_path))
     monkeypatch.delenv("FIXVAL_WAIVER", raising=False)
-    result = run_fixval(
+    result = _run_reversal_component(
         classify_fixval_candidate(["src/data.bin", "tests/test_new.py"]),
         [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q"],
         tmp_path,
@@ -2696,7 +2883,7 @@ def test_mode_only_frame_excludes_following_plain_test(tmp_path, monkeypatch, en
     command = [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q"]
     monkeypatch.delenv("FIXVAL_WAIVER", raising=False)
     if entrypoint == "fixval":
-        result = run_fixval(
+        result = _run_reversal_component(
             classify_fixval_candidate(["value.py", "tests/test_new.py"]),
             command,
             tmp_path,
@@ -2724,9 +2911,11 @@ def test_mode_only_frame_excludes_following_plain_test(tmp_path, monkeypatch, en
         monkeypatch.setattr(machine, "_get_commit_message", lambda: "")
         monkeypatch.setattr(machine, "_write_ledger_rows", lambda: None)
         monkeypatch.setattr(machine, "_persist_state", lambda: None)
-        monkeypatch.setattr(
-            "code_forge.gate_check.load_gate_config", lambda _: {"test": {"command": command}}
-        )
+        import json
+        config = tmp_path / ".code-forge/gate.yaml"
+        config.parent.mkdir(exist_ok=True)
+        config.write_text("test:\n  command: " + json.dumps(command) + "\n")
+        _install_reversal_component(machine, monkeypatch)
         machine._finalize_local_terminal()
         assert machine._state.verdict.value == "FAIL"
         assert not machine._state.converged
@@ -2855,7 +3044,7 @@ def test_fixval_recovery_is_outside_native_test_scope(tmp_path, meaningful):
         "assert not r.stdout, r.stdout; "
         + ("assert pathlib.Path('value.py').read_text() == 'value = 2\\n'" if meaningful else "")
     )
-    result = run_fixval(
+    result = _run_reversal_component(
         FixvalCandidate(["tests/test_clean.py"], ["value.py"]),
         [sys.executable, "-B", "-c", program],
         tmp_path,
@@ -2908,7 +3097,12 @@ def test_terminal_forwards_external_recovery_parent_to_real_fixval(tmp_path, mon
     assert ((repo / "src/model.py").read_bytes(), (repo / "src/model.py").stat().st_mode) == original
     assert _r1_index(repo) == index
     assert set(os.listdir("/proc/self/fd")) == descriptors
-    assert machine._state.verdict == (Verdict.FAIL if hollow else Verdict.PASS)
+    assert machine._state.verdict == Verdict.FAIL
+    assert not machine._state.converged
+    assert machine._reversal_component_results[-1].status == (
+        FixvalStatus.BLOCK if hollow else FixvalStatus.PASS
+    )
+    assert machine._reversal_component_results[-1].stage is None
     assert parents == [tmp_path]
 
 
@@ -3146,7 +3340,10 @@ def test_real_fixval_surviving_empty_file_keeps_parent_and_mode(tmp_path, monkey
     files = [tmp_path / name for name in get_changed_files(packet)]
     machine = _terminal_fixture(tmp_path, tmp_path, packet, files, monkeypatch)
     machine._finalize_local_terminal()
-    assert machine._state.verdict == Verdict.PASS
+    assert machine._state.verdict == Verdict.FAIL
+    assert not machine._state.converged
+    assert machine._reversal_component_results[-1].status == FixvalStatus.PASS
+    assert machine._reversal_component_results[-1].stage is None
     assert not any(f.id == "FIXVAL_TRANSACTION" for f in machine._state.findings)
     assert (source.read_bytes(), source.stat().st_mode, _r1_index(tmp_path)) == before
     assert _git(tmp_path, "diff", "--cached", "--binary") == packet
@@ -3257,7 +3454,10 @@ def test_real_fixval_private_git_ignores_enclosing_repository(tmp_path, monkeypa
         for key, value in routing.items():
             monkeypatch.setenv(key, value)
     machine._finalize_local_terminal()
-    assert machine._state.verdict == Verdict.PASS
+    assert machine._state.verdict == Verdict.FAIL
+    assert not machine._state.converged
+    assert machine._reversal_component_results[-1].status == FixvalStatus.PASS
+    assert machine._reversal_component_results[-1].stage is None
     assert not any(f.id in {"FIXVAL_TRANSACTION", "FIXVAL_HOLLOW"} for f in machine._state.findings)
     assert _retained_identity(repo / "src/gone.py") == retained_before
     assert (repo / "src/model.py").read_bytes() == b"value = 2\n"
