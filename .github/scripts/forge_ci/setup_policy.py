@@ -64,7 +64,7 @@ BINDING_KEYS = NATIVE_BINDING_KEYS | {"workflow_id", "job_id", "job_started_at",
 REPOSITORY = {"id": 1258832822, "name": "forge", "full_name": "HouMinXi/forge",
               "owner": {"id": 19586012, "login": "HouMinXi", "type": "User"}}
 API_ROOT = "https://api.github.com/repos/HouMinXi/forge"
-MAX_REQUESTS = 8
+MAX_REQUESTS = 6
 MAX_API_TOTAL = 8 * 1024 * 1024
 _SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -641,37 +641,14 @@ class MetadataReader:
         need(not link, "unexpected singleton pagination")
         return value
 
-    def collection(self, path, key, *, count_key="total_count"):
-        result, total, documents = [], None, []
-        for page in (1, 2):
-            current = path + "&page=" + str(page)
-            value, link = self.get(current)
-            count = value.get(count_key)
-            need(type(count) is int and 0 <= count <= 200, "metadata collection count bound exceeded")
-            need(total is None or total == count, "metadata collection count changed")
-            total = count
-            items = value.get(key)
-            need(type(items) is list and len(items) == min(100, total - len(result)), "partial metadata collection")
-            result.extend(items)
-            documents.append(value)
-            more = len(result) < total
-            if link:
-                links = {}
-                for part in link.split(","):
-                    match = re.fullmatch(r'\s*<([^<>]+)>; rel="(next|prev|first|last)"\s*', part)
-                    need(match is not None and match[2] not in links, "ambiguous metadata pagination")
-                    links[match[2]] = match[1]
-                for url in links.values():
-                    need(url in {API_ROOT + path + "&page=1", API_ROOT + path + "&page=2"}, "pagination escapes bounded collection")
-                need(("next" in links) == more, "pagination/count mismatch")
-                if more:
-                    need(links["next"] == API_ROOT + path + "&page=" + str(page + 1), "wrong next metadata page")
-            else:
-                need(not more, "missing metadata continuation")
-            if not more:
-                need(len(result) == total, "incomplete metadata collection")
-                return result, documents
-        raise SetupError("metadata pagination bound exceeded")
+    def collection(self, path, key):
+        """Only one complete item on the fixed first page is admitted."""
+        value = self.one(path)
+        count = value.get("total_count")
+        need(type(count) is int and count == 1, "missing or ambiguous metadata collection")
+        items = value.get(key)
+        need(type(items) is list and len(items) == 1, "partial metadata collection")
+        return items
 
 
 def timestamp_ns(value):
@@ -706,30 +683,37 @@ def _validate_run(run, native, workflow_id):
         need(_identity(run.get(name), "live " + name) == REPOSITORY["owner"], "wrong live actor")
 
 
+def live_metadata_paths(binding, workflow_id):
+    """Exact six provider endpoints; callers validate the native/live binding."""
+    run_path = "/actions/runs/" + str(binding["run_id"])
+    branch = binding["full_ref"][11:].replace("/", "%2F")
+    return {
+        "workflow": "/actions/workflows/" + binding["workflow_path"].rsplit("/", 1)[1],
+        "run": run_path,
+        "jobs": run_path + "/attempts/1/jobs?per_page=100&page=1",
+        "ref": "/git/ref/" + binding["full_ref"][5:],
+        "commit": "/git/commits/" + binding["candidate_sha"],
+        "runs": ("/actions/workflows/" + str(workflow_id) + "/runs?head_sha=" + binding["candidate_sha"]
+                 + "&branch=" + branch + "&event=push&per_page=100&page=1"),
+    }
+
+
 def live_identity(config, native, *, fetcher=None):
     """Read-only recheck; only bootstrap's separate activation claim mutates staging."""
     validate_config(config)
     complete = set(native) == BINDING_KEYS
     validate_binding(native, native=not complete)
     need(native["boot_id"] == trusted_boot_id(), "kernel boot changed")
-    run_path = "/actions/runs/" + str(native["run_id"])
-    jobs_path = run_path + "/attempts/1/jobs?per_page=100"
-    ref_path = "/git/ref/heads/fix/review-correctness-linux-ci"
-    commit_path = "/git/commits/" + native["candidate_sha"]
-    compare_path = "/compare/" + native["before_sha"] + "..." + native["candidate_sha"] + "?per_page=100"
-    workflow_path = "/actions/workflows/linux-tests.yml"
-    fixed = {workflow_path, run_path, ref_path, commit_path} | {
-        path + "&page=" + str(page) for path in (jobs_path, compare_path) for page in (1, 2)}
-    reader = MetadataReader(fixed, fetcher)
+    workflow_path = "/actions/workflows/" + native["workflow_path"].rsplit("/", 1)[1]
+    reader = MetadataReader({workflow_path}, fetcher)
     workflow = reader.one(workflow_path)
     workflow_id = _id(workflow.get("id"), "workflow id")
     need(workflow.get("path") == CONFIG["workflow_path"] and workflow.get("state") == "active"
          and workflow.get("url") == API_ROOT + "/actions/workflows/" + str(workflow_id), "wrong fixed workflow identity")
-    runs_path = ("/actions/workflows/" + str(workflow_id) + "/runs?head_sha=" + native["candidate_sha"]
-                 + "&branch=fix%2Freview-correctness-linux-ci&event=push&per_page=100")
-    reader.allowed |= {runs_path + "&page=" + str(page) for page in (1, 2)}
-    _validate_run(reader.one(run_path), native, workflow_id)
-    jobs, _ = reader.collection(jobs_path, "jobs")
+    paths = live_metadata_paths(native, workflow_id)
+    reader.allowed = frozenset(paths.values())
+    _validate_run(reader.one(paths["run"]), native, workflow_id)
+    jobs = reader.collection(paths["jobs"], "jobs")
     need(len(jobs) == 1 and type(jobs[0]) is dict, "missing or ambiguous fixed job")
     job = jobs[0]
     job_id = _id(job.get("id"), "external numeric job id")
@@ -740,31 +724,29 @@ def live_identity(config, native, *, fetcher=None):
          "wrong or inactive numeric job")
     started_ns = timestamp_ns(job.get("started_at"))
     need(0 <= time.time_ns() - started_ns <= 5400 * 10**9, "stale/future provider job")
-    ref = reader.one(ref_path)
+    ref = reader.one(paths["ref"])
     need(ref.get("ref") == CONFIG["full_ref"] and type(ref.get("object")) is dict
          and ref["object"].get("type") == "commit" and ref["object"].get("sha") == native["candidate_sha"], "live branch head moved")
-    commit = reader.one(commit_path)
+    commit = reader.one(paths["commit"])
     need(commit.get("sha") == native["candidate_sha"] and type(commit.get("tree")) is dict, "wrong admitted commit")
     checked_sha(commit["tree"].get("sha"), "live commit tree")
-    commits, comparisons = reader.collection(compare_path, "commits", count_key="total_commits")
-    need(commits and len({item.get("sha") for item in commits if type(item) is dict}) == len(commits), "duplicate ancestry commits")
-    for item in commits:
-        need(type(item) is dict, "malformed ancestry commit")
-        checked_sha(item.get("sha"), "ancestry commit")
-    need(commits[-1]["sha"] == native["candidate_sha"], "comparison head mismatch")
-    for comparison in comparisons:
-        need(comparison.get("status") == "ahead" and type(comparison.get("ahead_by")) is int
-             and comparison["ahead_by"] == len(commits) and type(comparison.get("behind_by")) is int and comparison["behind_by"] == 0,
-             "push is not verified nonforce ancestry")
-        for name in ("base_commit", "merge_base_commit"):
-            need(type(comparison.get(name)) is dict and comparison[name].get("sha") == native["before_sha"], "comparison base mismatch")
-    runs, _ = reader.collection(runs_path, "workflow_runs")
+    parents = commit.get("parents")
+    need(type(parents) is list and len(parents) in (1, 2), "missing or ambiguous direct parents")
+    parent_shas = []
+    for parent in parents:
+        need(type(parent) is dict, "malformed direct parent")
+        parent_shas.append(checked_sha(parent.get("sha"), "direct parent"))
+    need(len(set(parent_shas)) == len(parent_shas), "duplicate direct parents")
+    need(parent_shas[0] == native["before_sha"], "push before is not the direct first parent")
+    # Root's independent publication review pins the ordered parents and tree.
+    runs = reader.collection(paths["runs"], "workflow_runs")
     need(len(runs) == 1, "competing or replayed workflow run")
     _validate_run(runs[0], native, workflow_id)
     binding = {**{key: native[key] for key in NATIVE_BINDING_KEYS}, "workflow_id": workflow_id, "job_id": job_id,
                "job_started_at": job["started_at"], "job_started_ns": started_ns}
     validate_binding(binding)
     need(not complete or canonical(native) == canonical(binding), "live job/workflow identity changed")
+    need(reader.requests == MAX_REQUESTS and set(reader.digests) == set(paths.values()), "incomplete live endpoint evidence")
     return {"binding": binding, "checked": stamp(), "metadata_sha256": reader.digests,
             "tree_oid": commit["tree"]["sha"]}
 
@@ -780,7 +762,8 @@ def validate_live_evidence(value, binding, tree_oid, *, fresh=False):
     if fresh:
         need(0 <= time.monotonic_ns() - checked["monotonic_ns"] <= 30 * 10**9, "stale live identity observation")
     evidence = value["metadata_sha256"]
-    need(type(evidence) is dict and 7 <= len(evidence) <= MAX_REQUESTS, "incomplete live endpoint evidence")
+    expected = set(live_metadata_paths(binding, binding["workflow_id"]).values())
+    need(type(evidence) is dict and set(evidence) == expected, "incomplete or unreviewed live endpoint evidence")
     for path, checksum in evidence.items():
         need(type(path) is str and len(path) <= 1024 and path.startswith("/"), "invalid metadata evidence path")
         sha(checksum, "metadata evidence")

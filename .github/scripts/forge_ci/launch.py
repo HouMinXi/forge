@@ -280,7 +280,7 @@ def validate_launch(context, event, checkout, *, fetcher=None):
         _need(checkout["tree_oid"] == live["tree_oid"], "provider/checkout immutable tree mismatch")
     except setup.SetupError as exc:
         raise LaunchError(str(exc)) from exc
-    return {"schema_version": 1, "status": "PASS", "binding": live["binding"], "source": checkout, "live": live}
+    return validate_receipt({"schema_version": 1, "status": "PASS", "binding": live["binding"], "source": checkout, "live": live})
 
 
 def validate_receipt(value):

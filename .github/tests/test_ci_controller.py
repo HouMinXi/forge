@@ -163,7 +163,8 @@ class FakeGate:
         result = copy.deepcopy(self.receipt)
         if name == "source":
             live = {"binding": copy.deepcopy(self.receipt["binding"]), "tree_oid": self.receipt["source"]["tree_oid"],
-                    "checked": c.stamp(), "metadata_sha256": {"/repos/HouMinXi/forge/fact-" + str(i): "e" * 64 for i in range(7)}}
+                    "checked": c.stamp(), "metadata_sha256": dict.fromkeys(c.setup_policy.live_metadata_paths(
+                        self.receipt["binding"], self.receipt["binding"]["workflow_id"]).values(), "e" * 64)}
             observed = {"binding": self.receipt["binding"], "live": live,
                         "setup_receipt_sha256": self.receipt["setup_receipt_sha256"],
                         "setup_policy_sha256": self.receipt["setup_policy_sha256"]}

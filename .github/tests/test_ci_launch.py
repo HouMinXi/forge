@@ -71,15 +71,8 @@ def valid(monkeypatch):
             "ref": setup.CONFIG["full_ref"],
             "object": {"type": "commit", "sha": "c" * 40},
         },
-        "/git/commits/" + "c" * 40: {"sha": "c" * 40, "tree": {"sha": "d" * 40}},
-        "/compare/" + "a" * 40 + "..." + "c" * 40 + "?per_page=100&page=1": {
-            "total_commits": 1,
-            "commits": [{"sha": "c" * 40}],
-            "base_commit": {"sha": "a" * 40},
-            "merge_base_commit": {"sha": "a" * 40},
-            "status": "ahead",
-            "ahead_by": 1,
-            "behind_by": 0,
+        "/git/commits/" + "c" * 40: {
+            "sha": "c" * 40, "tree": {"sha": "d" * 40}, "parents": [{"sha": "a" * 40}],
         },
         "/actions/workflows/987/runs?head_sha="
         + "c" * 40
@@ -91,6 +84,7 @@ def valid(monkeypatch):
     calls = []
 
     def fetch(url):
+        assert "/compare/" not in url, "removed comparison endpoint was requested"
         calls.append(url)
         return setup.canonical(documents[url.removeprefix(root)]), ""
 
@@ -118,7 +112,7 @@ def test_existing_workflow_positive_run_number_numeric_job_and_readonly_rechecks
     first = verify(valid)
     assert first["binding"]["run_number"] == 42 and first["binding"]["job_id"] == 456
     assert first["binding"]["job_key"] == "linux-tests" and first["binding"]["run_attempt"] == 1
-    assert len(valid["calls"]) == 7
+    assert len(valid["calls"]) == 6
     second = setup.live_identity(valid["config"], first["binding"], fetcher=valid["fetch"])
     assert second["binding"] == first["binding"]
 
@@ -258,19 +252,14 @@ def test_numeric_job_external_binding_is_strict(valid, field, value):
         "duplicate_run",
         "rerun",
         "partial",
-        "wrong_base",
-        "wrong_merge_base",
-        "wrong_head",
-        "diverged",
         "commit_changed",
         "tree_invalid",
     ],
 )
-def test_replay_head_ancestry_and_completeness(valid, change):
+def test_replay_head_and_completeness(valid, change):
     docs = valid["documents"]
     jobs = next(v for k, v in docs.items() if "/jobs?" in k)
     runs = next(v for k, v in docs.items() if "/runs?" in k)
-    compare = next(v for k, v in docs.items() if k.startswith("/compare/"))
     if change == "head_moved":
         docs["/git/ref/heads/fix/review-correctness-linux-ci"]["object"]["sha"] = "a" * 40
     elif change == "workflow_changed":
@@ -287,14 +276,6 @@ def test_replay_head_ancestry_and_completeness(valid, change):
         runs["workflow_runs"][0]["run_attempt"] = 2
     elif change == "partial":
         jobs["total_count"] = 2
-    elif change == "wrong_base":
-        compare["base_commit"]["sha"] = "b" * 40
-    elif change == "wrong_merge_base":
-        compare["merge_base_commit"]["sha"] = "b" * 40
-    elif change == "wrong_head":
-        compare["commits"][0]["sha"] = "b" * 40
-    elif change == "diverged":
-        compare["status"] = "diverged"
     elif change == "commit_changed":
         docs["/git/commits/" + "c" * 40]["sha"] = "b" * 40
     else:
@@ -335,53 +316,56 @@ def test_deadline_and_request_and_total_bytes_are_finite(monkeypatch):
         reader.get("https://example.com")
 
 
-@pytest.mark.parametrize(
-    "change",
-    [
-        None,
-        "missing_link",
-        "external_link",
-        "third_page",
-        "changed_total",
-        "truncated",
-        "extra_continuation",
-    ],
-)
-def test_collection_consumes_all_bounded_pages(change):
-    path = "/actions/test?per_page=100"
-    pages = {
-        path + "&page=1": (
-            {"total_count": 101, "items": list(range(100))},
-            "<" + setup.API_ROOT + path + '&page=2>; rel="next"',
-        ),
-        path + "&page=2": ({"total_count": 101, "items": [100]}, ""),
-    }
-    if change == "missing_link":
-        pages[path + "&page=1"] = (pages[path + "&page=1"][0], "")
-    elif change in {"external_link", "third_page"}:
-        url = "https://example.com" if change == "external_link" else setup.API_ROOT + path + "&page=3"
-        pages[path + "&page=1"] = (pages[path + "&page=1"][0], "<" + url + '>; rel="next"')
-    elif change == "changed_total":
-        pages[path + "&page=2"][0]["total_count"] = 100
-    elif change == "truncated":
-        pages[path + "&page=2"][0]["items"] = []
-    elif change == "extra_continuation":
-        pages[path + "&page=2"] = (
-            pages[path + "&page=2"][0],
-            "<" + setup.API_ROOT + path + '&page=2>; rel="next"',
-        )
+@pytest.mark.parametrize("count", [0, 2, 100, 101, 200, 201, -1, True, 1.0, "1", None])
+def test_collection_rejects_non_singleton_count_without_continuation(count):
+    path = "/actions/test?per_page=100&page=1"
+    calls = []
 
     def fetch(url):
-        body, link = pages[url.removeprefix(setup.API_ROOT)]
-        return setup.canonical(body), link
+        calls.append(url)
+        return setup.canonical({"total_count": count, "items": [{}]}), ""
 
-    reader = setup.MetadataReader(pages, fetch)
-    if change:
-        with pytest.raises(setup.SetupError):
-            reader.collection(path, "items")
-    else:
-        items, _ = reader.collection(path, "items")
-        assert items == list(range(101)) and reader.requests == 2
+    reader = setup.MetadataReader({path}, fetch)
+    with pytest.raises(setup.SetupError, match="missing or ambiguous"):
+        reader.collection(path, "items")
+    assert calls == [setup.API_ROOT + path] and reader.requests == 1
+
+
+@pytest.mark.parametrize("items", [None, {}, True, [], [{}, {}]])
+def test_collection_rejects_missing_partial_or_extra_items(items):
+    path = "/actions/test?per_page=100&page=1"
+    reader = setup.MetadataReader({path}, lambda _: (setup.canonical({"total_count": 1, "items": items}), ""))
+    with pytest.raises(setup.SetupError, match="partial"):
+        reader.collection(path, "items")
+    assert reader.requests == 1
+
+
+@pytest.mark.parametrize("link", [
+    '<https://example.com>; rel="next"',
+    '<' + setup.API_ROOT + '/actions/test?per_page=100&page=2>; rel="next"',
+    '<' + setup.API_ROOT + '/actions/test?per_page=100&page=3>; rel="next"',
+    '<' + setup.API_ROOT + '/actions/test?per_page=100&page=1>; rel="last"',
+    "malformed",
+])
+def test_collection_rejects_any_pagination_without_following_it(link):
+    path = "/actions/test?per_page=100&page=1"
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        return setup.canonical({"total_count": 1, "items": [{}]}), link
+
+    reader = setup.MetadataReader({path}, fetch)
+    with pytest.raises(setup.SetupError, match="unexpected singleton pagination"):
+        reader.collection(path, "items")
+    assert calls == [setup.API_ROOT + path] and reader.requests == 1
+
+
+def test_collection_accepts_exactly_one_complete_first_page():
+    path = "/actions/test?per_page=100&page=1"
+    reader = setup.MetadataReader({path}, lambda _: (b'{"total_count":1,"items":[{"id":123}]}', ""))
+    assert reader.collection(path, "items") == [{"id": 123}]
+    assert reader.requests == 1
 
 
 def git(repo, *args):
@@ -655,7 +639,7 @@ def test_local_comparison_is_distinct_and_never_network_or_activation(valid, mon
     assert local["observation_kind"] == "local_receipt_check" and "live" not in local
     assert local["binding"] == receipt["binding"] and local["source"] == receipt["source"]
     assert local["receipt_sha256"] == hashlib.sha256(launch.canonical_bytes(receipt) + b"\n").hexdigest()
-    assert len(valid["calls"]) == 7
+    assert len(valid["calls"]) == 6
 
 
 @pytest.mark.parametrize(
@@ -715,23 +699,203 @@ def test_receipt_small_and_observation_existing_large_bounds_separate(tmp_path):
         launch.write_receipt(tmp_path / "too-big.json", report, limit=setup.MAX_JSON + 1)
 
 
-def test_admitted_ancestry_second_page_fits_eight_request_cap(valid):
+@pytest.mark.parametrize("parents", [
+    [{"sha": "a" * 40}],
+    [{"sha": "a" * 40}, {"sha": "b" * 40}],
+])
+def test_direct_first_parent_single_commit_and_two_parent_merge(valid, parents):
+    valid["documents"]["/git/commits/" + "c" * 40]["parents"] = parents
+    # A direct merge can introduce several commits from its secondary history.
+    valid["event"]["commits"] = [{"id": "b" * 40}, {"id": "e" * 40}, {"id": "c" * 40}]
+    valid["native"] = setup.validate_initial_identity(valid["config"], valid["context"], valid["event"])
+    live = verify(valid)
+    assert live["binding"]["before_sha"] == parents[0]["sha"]
+    assert set(live["metadata_sha256"]) == set(valid["documents"])
+    assert valid["calls"] == [setup.API_ROOT + path for path in valid["documents"]]
+    assert len(valid["calls"]) == setup.MAX_REQUESTS == 6
+
+
+@pytest.mark.parametrize("parents", [
+    None, True, False, 1, 1.5, "unknown", {}, [],
+    [None], [True], [False], [1], [1.5], ["unknown"], [[]], [{}],
+    [{"sha": None}], [{"sha": True}], [{"sha": 1}], [{"sha": []}], [{"sha": {}}],
+    [{"sha": "0" * 40}], [{"sha": "A" * 40}], [{"sha": "g" * 40}],
+    [{"sha": "a" * 39}], [{"sha": "a" * 41}],
+    [{"sha": "a" * 40 + "\n"}],
+    [{"sha": "b" * 40}],  # A transitive predecessor is not the direct parent.
+    [{"sha": "b" * 40}, {"sha": "a" * 40}],  # Reordered merge parents.
+    [{"sha": "a" * 40}, {"sha": "a" * 40}],
+    [{"sha": "a" * 40}, {"sha": "0" * 40}],
+    [{"sha": "a" * 40}, {"sha": True}],
+    [{"sha": "a" * 40}, {}],
+    [{"sha": "a" * 40}, {"sha": "b" * 40}, {"sha": "d" * 40}],
+])
+def test_direct_parent_rejects_transitive_reordered_duplicate_and_malformed_vectors(valid, parents):
+    valid["documents"]["/git/commits/" + "c" * 40]["parents"] = parents
+    with pytest.raises(setup.SetupError, match="parent"):
+        verify(valid)
+    assert len(valid["calls"]) == 5
+
+
+def test_missing_parent_vector_rejects(valid):
+    valid["documents"]["/git/commits/" + "c" * 40].pop("parents")
+    with pytest.raises(setup.SetupError, match="parents"):
+        verify(valid)
+
+
+def test_transitive_only_before_does_not_trigger_history_fallback(valid):
     docs = valid["documents"]
-    first = next(key for key in docs if key.startswith("/compare/"))
-    compare = docs[first]
-    compare.update(total_commits=101, ahead_by=101)
-    compare["commits"] = [{"sha": f"{index:040x}"} for index in range(1, 101)]
-    docs[first[:-1] + "2"] = dict(copy.deepcopy(compare), commits=[{"sha": "c" * 40}])
+    docs["/git/commits/" + "c" * 40]["parents"] = [{"sha": "b" * 40}]
+    docs["/git/commits/" + "b" * 40] = {"sha": "b" * 40, "parents": [{"sha": "a" * 40}]}
+    with pytest.raises(setup.SetupError, match="direct first parent"):
+        verify(valid)
+    assert setup.API_ROOT + "/git/commits/" + "b" * 40 not in valid["calls"]
+    assert len(valid["calls"]) == 5
+
+
+def test_native_before_change_cannot_reuse_old_direct_parent(valid):
+    valid["event"]["before"] = "b" * 40
+    valid["native"] = setup.validate_initial_identity(valid["config"], valid["context"], valid["event"])
+    with pytest.raises(setup.SetupError, match="direct first parent"):
+        verify(valid)
+
+
+def test_preserved_commit_parent_tree_fields_admit_without_compare(valid):
+    # Exact relevant fields from the preserved run 37818889925 git-commit response.
+    commit = {
+        "sha": "c0ba5293daf401a6c100b868c3248cb5b0261ceb",
+        "tree": {"sha": "a9eda3178719a77a736d023ab5fe6e3fb5578e03"},
+        "parents": [
+            {"sha": "749a4cba4f62d67a166c9e73e4d62ded0e15d632"},
+            {"sha": "ae554df2314fdff37546fe660c6e6caf70dfd490"},
+        ],
+    }
+    rebind_commit(valid, commit)
+    live = verify(valid)
+    assert live["tree_oid"] == commit["tree"]["sha"]
+    assert live["binding"]["before_sha"] == commit["parents"][0]["sha"]
+    assert live["binding"]["candidate_sha"] == commit["sha"]
+    assert len(valid["calls"]) == 6 and "files" not in commit
+
+
+def rebind_commit(valid, commit):
+    candidate = commit["sha"]
+    before = commit["parents"][0]["sha"]
+    valid["context"].update(GITHUB_SHA=candidate, GITHUB_WORKFLOW_SHA=candidate)
+    valid["event"].update(before=before, after=candidate, head_commit={"id": candidate})
+    valid["native"] = setup.validate_initial_identity(valid["config"], valid["context"], valid["event"])
+    documents = valid["documents"]
+    documents["/git/ref/heads/fix/review-correctness-linux-ci"]["object"]["sha"] = candidate
+    documents.pop("/git/commits/" + "c" * 40)
+    documents["/git/commits/" + candidate] = commit
+    runs_path = next(path for path in documents if "/runs?" in path)
+    runs = documents.pop(runs_path)
+    documents[runs_path.replace("c" * 40, candidate)] = runs
+    for run in (valid["run"], runs["workflow_runs"][0]):
+        run.update(head_sha=candidate, head_commit={"id": candidate})
+    valid["job"]["head_sha"] = candidate
+
+
+@pytest.mark.parametrize("parser", [setup.parse_json, launch.parse_json])
+def test_unused_compare_patch_still_exceeds_unchanged_string_guard(parser):
+    raw = setup.canonical({"files": [{"patch": "x" * 65537}]})
+    assert len(raw) < setup.MAX_API == launch.MAX_API == 1024 * 1024
+    with pytest.raises((setup.SetupError, launch.LaunchError), match="JSON string bound exceeded"):
+        parser(raw, limit=setup.MAX_API)
+
+
+def test_only_exact_six_endpoints_are_admitted_and_compare_is_uncallable(valid, monkeypatch):
+    readers = []
+    original = setup.MetadataReader
+
+    class CapturedReader(original):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            readers.append(self)
+
+    monkeypatch.setattr(setup, "MetadataReader", CapturedReader)
+    live = verify(valid)
+    reader = readers[0]
+    assert reader.allowed == set(valid["documents"]) == set(live["metadata_sha256"])
+    assert reader.requests == len(valid["calls"]) == 6
+    forbidden = [
+        "/compare/" + "a" * 40 + "..." + "c" * 40,
+        "/compare/" + "a" * 40 + "..." + "c" * 40 + "?per_page=100&page=1",
+        "/compare/" + "a" * 40 + "..." + "c" * 40 + "?per_page=100&page=2",
+    ]
+    forbidden += [path[:-1] + "2" for path in reader.allowed if path.endswith("&page=1")]
+    for path in forbidden:
+        with pytest.raises(setup.SetupError, match="unreviewed"):
+            reader.get(path)
+    assert reader.requests == len(valid["calls"]) == 6
+
+
+def test_six_request_ceiling_prevents_seventh_fetch_even_if_allowlisted():
+    paths = ["/test/" + str(index) for index in range(7)]
+    calls = []
 
     def fetch(url):
-        path = url.removeprefix(setup.API_ROOT)
-        valid["calls"].append(url)
-        link = "<" + setup.API_ROOT + first[:-1] + '2>; rel="next"' if path == first else ""
-        return setup.canonical(docs[path]), link
+        calls.append(url)
+        return b"{}", ""
 
-    valid["fetch"] = fetch
-    assert verify(valid)["binding"]["job_id"] == 456
-    assert len(valid["calls"]) == setup.MAX_REQUESTS == 8
+    reader = setup.MetadataReader(paths, fetch)
+    for path in paths[:6]:
+        assert reader.one(path) == {}
+    with pytest.raises(setup.SetupError, match="request"):
+        reader.one(paths[6])
+    assert reader.requests == len(calls) == setup.MAX_REQUESTS == 6
+
+
+@pytest.mark.parametrize("change", [
+    "missing", "extra", "old_seven", "old_eight", "foreign", "compare", "second_page",
+    "other_run", "other_candidate", "other_workflow", "other_branch", "other_attempt",
+    "bad_digest", "zero_digest", "not_object",
+])
+@pytest.mark.parametrize("validator", ["live", "launch", "local"])
+def test_live_and_launch_evidence_require_exact_bound_six_endpoint_keys(valid, change, validator):
+    receipt = compact_receipt(valid)
+    evidence = receipt["live"]["metadata_sha256"]
+    path = next(iter(evidence))
+    if change == "missing":
+        evidence.pop(path)
+    elif change in {"extra", "old_seven", "old_eight"}:
+        evidence["/unreviewed"] = "a" * 64
+        if change == "old_eight":
+            evidence["/unreviewed2"] = "a" * 64
+    elif change == "not_object":
+        receipt["live"]["metadata_sha256"] = list(evidence)
+    elif change in {"bad_digest", "zero_digest"}:
+        evidence[path] = "invalid" if change == "bad_digest" else "0" * 64
+    else:
+        if change == "second_page":
+            path = next(key for key in evidence if key.endswith("&page=1"))
+            replacement = path[:-1] + "2"
+        elif change == "other_run":
+            path = "/actions/runs/123"
+            replacement = "/actions/runs/124"
+        elif change == "other_candidate":
+            path = "/git/commits/" + "c" * 40
+            replacement = "/git/commits/" + "b" * 40
+        elif change == "other_workflow":
+            path = next(key for key in evidence if "/runs?" in key)
+            replacement = path.replace("/987/", "/988/")
+        elif change == "other_branch":
+            path = "/git/ref/heads/fix/review-correctness-linux-ci"
+            replacement = "/git/ref/heads/main"
+        elif change == "other_attempt":
+            path = next(key for key in evidence if "/jobs?" in key)
+            replacement = path.replace("/attempts/1/", "/attempts/2/")
+        else:
+            replacement = "/foreign" if change == "foreign" else "/compare/" + "a" * 40 + "..." + "c" * 40
+        evidence[replacement] = evidence.pop(path)
+        assert len(evidence) == 6
+    with pytest.raises((setup.SetupError, launch.LaunchError), match="endpoint|digest"):
+        if validator == "live":
+            setup.validate_live_evidence(receipt["live"], receipt["binding"], receipt["source"]["tree_oid"])
+        elif validator == "launch":
+            launch.validate_receipt(receipt)
+        else:
+            launch.validate_local_launch(valid["context"], valid["event"], receipt["source"], receipt)
 
 
 def test_exact_live_call_ownership_stays_at_six_runtime_boundaries():
@@ -784,3 +948,4 @@ def test_exact_live_call_ownership_stays_at_six_runtime_boundaries():
         )
     ]
     assert observers == ["prepare", "final_source_recheck"]
+    assert 6 * setup.MAX_REQUESTS == 36

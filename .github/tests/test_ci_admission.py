@@ -49,7 +49,7 @@ def document():
         "binding": binding(),
         "checked": s.stamp(),
         "tree_oid": source["tree_oid"],
-        "metadata_sha256": {"/test" + str(i): "a" * 64 for i in range(7)},
+        "metadata_sha256": dict.fromkeys(s.live_metadata_paths(binding(), binding()["workflow_id"]).values(), "a" * 64),
     }
     return {"schema_version": 1, "status": "PASS", "binding": binding(), "source": source, "live": live}
 

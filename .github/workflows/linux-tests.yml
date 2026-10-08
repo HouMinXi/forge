@@ -115,7 +115,7 @@ jobs:
         REPOSITORY = {"id": 1258832822, "name": "forge", "full_name": "HouMinXi/forge",
                       "owner": {"id": 19586012, "login": "HouMinXi", "type": "User"}}
         API_ROOT = "https://api.github.com/repos/HouMinXi/forge"
-        MAX_REQUESTS = 8
+        MAX_REQUESTS = 6
         MAX_API_TOTAL = 8 * 1024 * 1024
         _SHA1 = re.compile(r"[0-9a-f]{40}\Z")
         _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -209,7 +209,7 @@ jobs:
                                                      'target': '',
                                                      'type': 'f',
                        '''.encode('utf-8')
-        expected = {'name': 'part-00.txt', 'bytes': 8000, 'sha256': '56ac9e6b018a7ba7f0263dc4dcdb3e6398e2d3ad08b232ee5998051a0d2043ef'}
+        expected = {'name': 'part-00.txt', 'bytes': 8000, 'sha256': '00d48e996952f3f92929ef74c5c146c086db08c816ce62b647614f6177831d76'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -824,37 +824,14 @@ jobs:
                 need(not link, "unexpected singleton pagination")
                 return value
 
-            def collection(self, path, key, *, count_key="total_count"):
-                result, total, documents = [], None, []
-                for page in (1, 2):
-                    current = path + "&page=" + str(page)
-                    value, link = self.get(current)
-                    count = value.get(count_key)
-                    need(type(count) is int and 0 <= count <= 200, "metadata collection count bound exceeded")
-                    need(total is None or total == count, "metadata collection count changed")
-                    total = count
-                    items = value.get(key)
-                    need(type(items) is list and len(items) == min(100, total - len(result)), "partial metadata collection")
-                    result.extend(items)
-                    documents.append(value)
-                    more = len(result) < total
-                    if link:
-                        links = {}
-                        for part in link.split(","):
-                            match = re.fullmatch(r'\s*<([^<>]+)>; rel="(next|prev|first|last)"\s*', part)
-                            need(match is not None and match[2] not in links, "ambiguous metadata pagination")
-                            links[match[2]] = match[1]
-                        for url in links.values():
-                            need(url in {API_ROOT + path + "&page=1", API_ROOT + path + "&page=2"}, "pagination escapes bounded collection")
-                        need(("next" in links) == more, "pagination/count mismatch")
-                        if more:
-                            need(links["next"] == API_ROOT + path + "&page=" + str(page + 1), "wrong next metadata page")
-                    else:
-                        need(not more, "missing metadata continuation")
-                    if not more:
-                        need(len(result) == total, "incomplete metadata collection")
-                        return result, documents
-                raise SetupError("metadata pagination bound exceeded")
+            def collection(self, path, key):
+                """Only one complete item on the fixed first page is admitted."""
+                value = self.one(path)
+                count = value.get("total_count")
+                need(type(count) is int and count == 1, "missing or ambiguous metadata collection")
+                items = value.get(key)
+                need(type(items) is list and len(items) == 1, "partial metadata collection")
+                return items
 
 
         def timestamp_ns(value):
@@ -871,8 +848,23 @@ jobs:
 
         def _validate_run(run, native, workflow_id):
             need(type(run) is dict, "missing live run")
-            for name, expected in (("id", native["run'''.encode('utf-8')
-        expected = {'name': 'part-04.txt', 'bytes': 8000, 'sha256': '64f8547a66cdbb79cf18c087375a7fbe540bb80674b22210dabb71d33ed39ea2'}
+            for name, expected in (("id", native["run_id"]), ("workflow_id", workflow_id),
+                                   ("run_attempt", 1), ("run_number", native["run_number"])):
+                need(_id(run.get(name), "live " + name) == expected, "wrong live " + name)
+            need(run.get("path") in (CONFIG["workflow_path"], CONFIG["workflow_path"] + "@" + CONFIG["full_ref"],
+                                    CONFIG["workflow_path"] + "@" + CONFIG["full_ref"][11:]), "wrong live workflow path")
+            need(run.get("url") == API_ROOT + "/actions/runs/" + str(native["run_id"])
+                 and run.get("workflow_url") == API_ROOT + "/actions/workflows/" + str(workflow_id), "wrong live identity URL")
+            need(run.get("head_sha") == native["candidate_sha"] and run.get("head_branch") == CONFIG["full_ref"][11:]
+                 and run.get("event") == "push", "wrong live head/ref/event")
+            need(type(run.get("head_commit")) is dict and run["head_commit"].get("id") == native["candidate_sha"], "wrong live head commit")
+            need(run.get("status") == "in_progress" and run.get("conclusion") is None, "run is not active")
+            for name in ("repository", "head_repository"):
+                need(_repository(run.get(name), "live " + name) == REPOSITORY and run[name].get("private") is False,
+                     "wrong live repository")
+            for name in ("actor", "triggering_actor"):
+                need(_identity(run.get(name), "live " + name) == REPOSITORY["owner"],'''.encode('utf-8')
+        expected = {'name': 'part-04.txt', 'bytes': 8000, 'sha256': 'dd6d53a7044235c5f018f5abba6a1c60debe11ee38e4ba71d6192ec6557753b7'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -904,22 +896,22 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''_id"]), ("workflow_id", workflow_id),
-                                   ("run_attempt", 1), ("run_number", native["run_number"])):
-                need(_id(run.get(name), "live " + name) == expected, "wrong live " + name)
-            need(run.get("path") in (CONFIG["workflow_path"], CONFIG["workflow_path"] + "@" + CONFIG["full_ref"],
-                                    CONFIG["workflow_path"] + "@" + CONFIG["full_ref"][11:]), "wrong live workflow path")
-            need(run.get("url") == API_ROOT + "/actions/runs/" + str(native["run_id"])
-                 and run.get("workflow_url") == API_ROOT + "/actions/workflows/" + str(workflow_id), "wrong live identity URL")
-            need(run.get("head_sha") == native["candidate_sha"] and run.get("head_branch") == CONFIG["full_ref"][11:]
-                 and run.get("event") == "push", "wrong live head/ref/event")
-            need(type(run.get("head_commit")) is dict and run["head_commit"].get("id") == native["candidate_sha"], "wrong live head commit")
-            need(run.get("status") == "in_progress" and run.get("conclusion") is None, "run is not active")
-            for name in ("repository", "head_repository"):
-                need(_repository(run.get(name), "live " + name) == REPOSITORY and run[name].get("private") is False,
-                     "wrong live repository")
-            for name in ("actor", "triggering_actor"):
-                need(_identity(run.get(name), "live " + name) == REPOSITORY["owner"], "wrong live actor")
+        raw = r''' "wrong live actor")
+
+
+        def live_metadata_paths(binding, workflow_id):
+            """Exact six provider endpoints; callers validate the native/live binding."""
+            run_path = "/actions/runs/" + str(binding["run_id"])
+            branch = binding["full_ref"][11:].replace("/", "%2F")
+            return {
+                "workflow": "/actions/workflows/" + binding["workflow_path"].rsplit("/", 1)[1],
+                "run": run_path,
+                "jobs": run_path + "/attempts/1/jobs?per_page=100&page=1",
+                "ref": "/git/ref/" + binding["full_ref"][5:],
+                "commit": "/git/commits/" + binding["candidate_sha"],
+                "runs": ("/actions/workflows/" + str(workflow_id) + "/runs?head_sha=" + binding["candidate_sha"]
+                         + "&branch=" + branch + "&event=push&per_page=100&page=1"),
+            }
 
 
         def live_identity(config, native, *, fetcher=None):
@@ -928,24 +920,16 @@ jobs:
             complete = set(native) == BINDING_KEYS
             validate_binding(native, native=not complete)
             need(native["boot_id"] == trusted_boot_id(), "kernel boot changed")
-            run_path = "/actions/runs/" + str(native["run_id"])
-            jobs_path = run_path + "/attempts/1/jobs?per_page=100"
-            ref_path = "/git/ref/heads/fix/review-correctness-linux-ci"
-            commit_path = "/git/commits/" + native["candidate_sha"]
-            compare_path = "/compare/" + native["before_sha"] + "..." + native["candidate_sha"] + "?per_page=100"
-            workflow_path = "/actions/workflows/linux-tests.yml"
-            fixed = {workflow_path, run_path, ref_path, commit_path} | {
-                path + "&page=" + str(page) for path in (jobs_path, compare_path) for page in (1, 2)}
-            reader = MetadataReader(fixed, fetcher)
+            workflow_path = "/actions/workflows/" + native["workflow_path"].rsplit("/", 1)[1]
+            reader = MetadataReader({workflow_path}, fetcher)
             workflow = reader.one(workflow_path)
             workflow_id = _id(workflow.get("id"), "workflow id")
             need(workflow.get("path") == CONFIG["workflow_path"] and workflow.get("state") == "active"
                  and workflow.get("url") == API_ROOT + "/actions/workflows/" + str(workflow_id), "wrong fixed workflow identity")
-            runs_path = ("/actions/workflows/" + str(workflow_id) + "/runs?head_sha=" + native["candidate_sha"]
-                         + "&branch=fix%2Freview-correctness-linux-ci&event=push&per_page=100")
-            reader.allowed |= {runs_path + "&page=" + str(page) for page in (1, 2)}
-            _validate_run(reader.one(run_path), native, workflow_id)
-            jobs, _ = reader.collection(jobs_path, "jobs")
+            paths = live_metadata_paths(native, workflow_id)
+            reader.allowed = frozenset(paths.values())
+            _validate_run(reader.one(paths["run"]), native, workflow_id)
+            jobs = reader.collection(paths["jobs"], "jobs")
             need(len(jobs) == 1 and type(jobs[0]) is dict, "missing or ambiguous fixed job")
             job = jobs[0]
             job_id = _id(job.get("id"), "external numeric job id")
@@ -956,31 +940,29 @@ jobs:
                  "wrong or inactive numeric job")
             started_ns = timestamp_ns(job.get("started_at"))
             need(0 <= time.time_ns() - started_ns <= 5400 * 10**9, "stale/future provider job")
-            ref = reader.one(ref_path)
+            ref = reader.one(paths["ref"])
             need(ref.get("ref") == CONFIG["full_ref"] and type(ref.get("object")) is dict
                  and ref["object"].get("type") == "commit" and ref["object"].get("sha") == native["candidate_sha"], "live branch head moved")
-            commit = reader.one(commit_path)
+            commit = reader.one(paths["commit"])
             need(commit.get("sha") == native["candidate_sha"] and type(commit.get("tree")) is dict, "wrong admitted commit")
             checked_sha(commit["tree"].get("sha"), "live commit tree")
-            commits, comparisons = reader.collection(compare_path, "commits", count_key="total_commits")
-            need(commits and len({item.get("sha") for item in commits if type(item) is dict}) == len(commits), "duplicate ancestry commits")
-            for item in commits:
-                need(type(item) is dict, "malformed ancestry commit")
-                checked_sha(item.get("sha"), "ancestry commit")
-            need(commits[-1]["sha"] == native["candidate_sha"], "comparison head mismatch")
-            for comparison in comparisons:
-                need(comparison.get("status") == "ahead" and type(comparison.get("ahead_by")) is int
-                     and comparison["ahead_by"] == len(commits) and type(comparison.get("behind_by")) is int and comparison["behind_by"] == 0,
-                     "push is not verified nonforce ancestry")
-                for name in ("base_commit", "merge_base_commit"):
-                    need(type(comparison.get(name)) is dict and comparison[name].get("sha") == native["before_sha"], "comparison base mismatch")
-            runs, _ = reader.collection(runs_path, "workflow_runs")
+            parents = commit.get("parents")
+            need(type(parents) is list and len(parents) in (1, 2), "missing or ambiguous direct parents")
+            parent_shas = []
+            for parent in parents:
+                need(type(parent) is dict, "malformed direct parent")
+                parent_shas.append(checked_sha(parent.get("sha"), "direct parent"))
+            need(len(set(parent_shas)) == len(parent_shas), "duplicate direct parents")
+            need(parent_shas[0] == native["before_sha"], "push before is not the direct first parent")
+            # Root's independent publication review pins the ordered parents and tree.
+            runs = reader.collection(paths["runs"], "workflow_runs")
             need(len(runs) == 1, "competing or replayed workflow run")
             _validate_run(runs[0], native, workflow_id)
             binding = {**{key: native[key] for key in NATIVE_BINDING_KEYS}, "workflow_id": workflow_id, "job_id": job_id,
                        "job_started_at": job["started_at"], "job_started_ns": started_ns}
             validate_binding(binding)
             need(not complete or canonical(native) == canonical(binding), "live job/workflow identity changed")
+            need(reader.requests == MAX_REQUESTS and set(reader.digests) == set(paths.values()), "incomplete live endpoint evidence")
             return {"binding": binding, "checked": stamp(), "metadata_sha256": reader.digests,
                     "tree_oid": commit["tree"]["sha"]}
 
@@ -996,7 +978,8 @@ jobs:
             if fresh:
                 need(0 <= time.monotonic_ns() - checked["monotonic_ns"] <= 30 * 10**9, "stale live identity observation")
             evidence = value["metadata_sha256"]
-            need(type(evidence) is dict and 7 <= len(evidence) <= MAX_REQUESTS, "incomplete live endpoint evidence")
+            expected = set(live_metadata_paths(binding, binding["workflow_id"]).values())
+            need(type(evidence) is dict and set(evidence) == expected, "incomplete or unreviewed live endpoint evidence")
             for path, checksum in evidence.items():
                 need(type(path) is str and len(path) <= 1024 and path.startswith("/"), "invalid metadata evidence path")
                 sha(checksum, "metadata evidence")
@@ -1026,8 +1009,33 @@ jobs:
             return sorted(items, key=lambda item: item["qualified_name"])
 
 
-        def semantic_inventory(namespaces: list[str], profiles: list[dict[str'''.encode('utf-8')
-        expected = {'name': 'part-05.txt', 'bytes': 8000, 'sha256': '186d2866576ecdff7f4631e23f6106175c5432d77acf2a7c0e1a7e58b0762adf'}
+        def semantic_inventory(namespaces: list[str], profiles: list[dict[str, Any]], *,
+                               preserve_opaque: bool = False) -> dict[str, Any]:
+            """No kernel directory IDs, inodes, boot IDs, collection paths, or ordering."""
+            canonical = []
+            seen = set()
+            if len(namespaces) != len(set(namespaces)) or "" not in namespaces:
+                raise SetupError("duplicate or missing root policy namespace")
+            for profile in profiles:
+                key = (profile["namespace"], profile["name"])
+                if key in seen or key[0] not in namespaces:
+                    raise SetupError("duplicate profile identity or unknown namespace")
+                seen.add(key)
+                if (not preserve_opaque
+                        and profile["attachment"].strip().lower() in {"<unknown>", "unknown", "<opaque>", ""}):
+                    raise SetupError(f"opaque attachment for {key}")
+                canonical.append({key: profile[key] for key in (
+                    "namespace", "name", "mode", "attachment", "metadata")})
+            canonical.sort(key=lambda item: (item["namespace"], item["name"]))
+            return {"schema": 1, "namespaces": sorted(namespaces), "profiles": canonical}
+
+
+        def collect_kernel_scope(reader: PolicyReader) -> dict[str, Any]:
+            # Both policy's magic symlink and the loaded-profile listing are relative
+            # to the task's AppArmor namespace. An unconfined label alone is insufficient.
+            values = {name: _field(reader, APPARMOR_ROOT + "/." + name)
+                      for name in ("ns_level", "ns_name", "stacked", "ns_s'''.encode('utf-8')
+        expected = {'name': 'part-05.txt', 'bytes': 8000, 'sha256': '31b842fea50cc873265ddfc7d32de5ddcef945f777c3ee9f70cd3f5bd41e288b'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -1059,32 +1067,7 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r''', Any]], *,
-                               preserve_opaque: bool = False) -> dict[str, Any]:
-            """No kernel directory IDs, inodes, boot IDs, collection paths, or ordering."""
-            canonical = []
-            seen = set()
-            if len(namespaces) != len(set(namespaces)) or "" not in namespaces:
-                raise SetupError("duplicate or missing root policy namespace")
-            for profile in profiles:
-                key = (profile["namespace"], profile["name"])
-                if key in seen or key[0] not in namespaces:
-                    raise SetupError("duplicate profile identity or unknown namespace")
-                seen.add(key)
-                if (not preserve_opaque
-                        and profile["attachment"].strip().lower() in {"<unknown>", "unknown", "<opaque>", ""}):
-                    raise SetupError(f"opaque attachment for {key}")
-                canonical.append({key: profile[key] for key in (
-                    "namespace", "name", "mode", "attachment", "metadata")})
-            canonical.sort(key=lambda item: (item["namespace"], item["name"]))
-            return {"schema": 1, "namespaces": sorted(namespaces), "profiles": canonical}
-
-
-        def collect_kernel_scope(reader: PolicyReader) -> dict[str, Any]:
-            # Both policy's magic symlink and the loaded-profile listing are relative
-            # to the task's AppArmor namespace. An unconfined label alone is insufficient.
-            values = {name: _field(reader, APPARMOR_ROOT + "/." + name)
-                      for name in ("ns_level", "ns_name", "stacked", "ns_stacked")}
+        raw = r"""tacked")}
             if values["ns_level"] != "0" or values["stacked"] != "no" or values["ns_stacked"] != "no":
                 raise SetupError("AppArmor inventory is not root-namespace, unstacked host scope")
             return values
@@ -1205,8 +1188,28 @@ jobs:
                 raise SetupError("authoritative profile tree and loaded-profile listing disagree")
             conflicts = [p["name"] for p in profiles if p["name"].split("//")[0] in {"bwrap", "unpriv_bwrap"}]
             result = {"semantic": semantic, "semantic_sha256": digest(semantic), "scope": scope, "raw_profiles": profiles,
-                '''.encode('utf-8')
-        expected = {'name': 'part-06.txt', 'bytes': 8000, 'sha256': '6f748f7697d2618fc690b169fb3e6d90f6e3da6163f936f1fc5a55e4689c4d04'}
+                    "raw_tree": tree, "loaded_profiles": parse_loaded_profiles(listing_before),
+                    "conflicting_names": conflicts, "attachment_review": "REQUIRED",
+                    "reviewed_inventory_sha256": None,
+                    "conditional_semantics": "Raw metadata exported; no attachment expression has been approved."}
+            opaque = [{"namespace": p["namespace"], "name": p["name"], "attachment": p["attachment"]}
+                      for p in profiles if p["attachment"].strip().lower() in {"<unknown>", "unknown", "<opaque>", ""}]
+            if opaque:
+                result["unresolved_attachments"] = opaque
+            return result
+
+
+        def validate_kernel(value: dict, *, before: dict | None = None, compiled: bytes | None = None) -> dict:
+            semantic = value.get("semantic")
+            keys(semantic, {"schema", "scope", "namespaces", "profiles"}, "kernel semantic inventory")
+            need(type(semantic["schema"]) is int and semantic["schema"] == 1, "invalid kernel schema")
+            need(semantic["scope"] == {"ns_level": "0", "ns_name": "root", "stacked": "no", "ns_stacked": "no"},
+                 "non-root or stacked AppArmor namespace")
+            need(value.get("scope") == semantic["scope"], "kernel scope disagreement")
+            need(digest(semantic) == value.get("semantic_sha256"), "kernel semantic digest is not computed from inventory")
+            # Reconstruct identities and listing independently; no self-reported absence.
+            reconstructed = semantic_inventory(semantic["names""".encode('utf-8')
+        expected = {'name': 'part-06.txt', 'bytes': 8000, 'sha256': '42a8e4479ad7618343708bf0a428248942b4265978687360a57b122ab74c93fc'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -1238,27 +1241,7 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''    "raw_tree": tree, "loaded_profiles": parse_loaded_profiles(listing_before),
-                    "conflicting_names": conflicts, "attachment_review": "REQUIRED",
-                    "reviewed_inventory_sha256": None,
-                    "conditional_semantics": "Raw metadata exported; no attachment expression has been approved."}
-            opaque = [{"namespace": p["namespace"], "name": p["name"], "attachment": p["attachment"]}
-                      for p in profiles if p["attachment"].strip().lower() in {"<unknown>", "unknown", "<opaque>", ""}]
-            if opaque:
-                result["unresolved_attachments"] = opaque
-            return result
-
-
-        def validate_kernel(value: dict, *, before: dict | None = None, compiled: bytes | None = None) -> dict:
-            semantic = value.get("semantic")
-            keys(semantic, {"schema", "scope", "namespaces", "profiles"}, "kernel semantic inventory")
-            need(type(semantic["schema"]) is int and semantic["schema"] == 1, "invalid kernel schema")
-            need(semantic["scope"] == {"ns_level": "0", "ns_name": "root", "stacked": "no", "ns_stacked": "no"},
-                 "non-root or stacked AppArmor namespace")
-            need(value.get("scope") == semantic["scope"], "kernel scope disagreement")
-            need(digest(semantic) == value.get("semantic_sha256"), "kernel semantic digest is not computed from inventory")
-            # Reconstruct identities and listing independently; no self-reported absence.
-            reconstructed = semantic_inventory(semantic["namespaces"], semantic["profiles"], preserve_opaque=True)
+        raw = r'''paces"], semantic["profiles"], preserve_opaque=True)
             reconstructed["scope"] = semantic["scope"]
             need(canonical(reconstructed) == canonical(semantic), "noncanonical kernel semantic inventory")
             expected_listing = sorted([
@@ -1384,8 +1367,36 @@ jobs:
                     or record["clock_id"] != 5 or not 0 < record["resolution_ns"] <= max_interval_ns):
                 raise SetupError("missing or unsupported audit clock evidence")
             for first, last in (("before_ns", "after_ns"), ("monotonic_before_ns", "monotonic_after_ns")):
-                if not 0 <= record[first] <= record[last] or '''.encode('utf-8')
-        expected = {'name': 'part-07.txt', 'bytes': 8000, 'sha256': '1f7ba54a76f0f39c2c541dee0bcb2e233e1204aaf7d84adc453613b4fa059944'}
+                if not 0 <= record[first] <= record[last] or record[last] - record[first] > max_interval_ns:
+                    raise SetupError("backward or unbounded audit clock interval")
+            if type(started) is not dict or type(ended) is not dict:
+                raise SetupError("missing precise operation timestamp interval")
+            for clock in ("utc_ns", "monotonic_ns"):
+                start, end = started.get(clock), ended.get(clock)
+                if (type(start) is not int or type(end) is not int or not 0 < start <= end
+                        or end - start > max_interval_ns):
+                    raise SetupError("missing or unbounded operation timestamp interval")
+            if not record["monotonic_before_ns"] <= started["monotonic_ns"] <= ended["monotonic_ns"] <= record["monotonic_after_ns"]:
+                raise SetupError("audit sampling interval does not enclose the precise operation")
+
+
+        def _audit_fields(raw: str) -> tuple[dict, int, int]:
+            fields = {}
+            for match in _AUDIT_FIELD.finditer(raw):
+                key, value = match.groups()
+                if key in fields:
+                    raise SetupError("duplicate audit field")
+                if value.startswith('"'):
+                    try:
+                        value = json.loads(value)
+                    except ValueError as exc:
+                        raise SetupError("invalid quoted audit field") from exc
+                fields[key] = value
+            events = list(_AUDIT_EVENT.finditer(raw))
+            if len(events) != 1:
+                raise SetupError("missing or ambiguous audit timestamp")
+            seconds, fraction, seri'''.encode('utf-8')
+        expected = {'name': 'part-07.txt', 'bytes': 8000, 'sha256': 'bdf8d1601028c2cd9eed8c4d01e00856ae3e9e5f378f1fd90b2df0eec6cd5341'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -1417,35 +1428,7 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''record[last] - record[first] > max_interval_ns:
-                    raise SetupError("backward or unbounded audit clock interval")
-            if type(started) is not dict or type(ended) is not dict:
-                raise SetupError("missing precise operation timestamp interval")
-            for clock in ("utc_ns", "monotonic_ns"):
-                start, end = started.get(clock), ended.get(clock)
-                if (type(start) is not int or type(end) is not int or not 0 < start <= end
-                        or end - start > max_interval_ns):
-                    raise SetupError("missing or unbounded operation timestamp interval")
-            if not record["monotonic_before_ns"] <= started["monotonic_ns"] <= ended["monotonic_ns"] <= record["monotonic_after_ns"]:
-                raise SetupError("audit sampling interval does not enclose the precise operation")
-
-
-        def _audit_fields(raw: str) -> tuple[dict, int, int]:
-            fields = {}
-            for match in _AUDIT_FIELD.finditer(raw):
-                key, value = match.groups()
-                if key in fields:
-                    raise SetupError("duplicate audit field")
-                if value.startswith('"'):
-                    try:
-                        value = json.loads(value)
-                    except ValueError as exc:
-                        raise SetupError("invalid quoted audit field") from exc
-                fields[key] = value
-            events = list(_AUDIT_EVENT.finditer(raw))
-            if len(events) != 1:
-                raise SetupError("missing or ambiguous audit timestamp")
-            seconds, fraction, serial = events[0].groups()
+        raw = r'''al = events[0].groups()
             if len(fraction) != 3:
                 raise SetupError("invalid audit timestamp precision")
             # Linux audit prints the coarse clock truncated to exactly milliseconds.
@@ -1576,8 +1559,34 @@ jobs:
 
         def parser_argv(operation: str, profile: Path, config: Path) -> list[str]:
             """Fixed finite operations; this is not a general privileged command runner."""
-            n'''.encode('utf-8')
-        expected = {'name': 'part-08.txt', 'bytes': 8000, 'sha256': '82fcd4da2d949938e9763b664e61178f1901f6f576ce18183ecbc242c3ba36b8'}
+            need(operation in {"preprocess", "compile", "load"}, "unknown parser operation")
+            need(profile.is_absolute() and profile.name == "bwrap-userns-restrict", "invalid vendor profile path")
+            need(config.is_absolute() and config.name == "parser.conf", "invalid parser configuration path")
+            options = ["--config-file=" + str(config), "--base=" + INCLUDE_BASE, "--Include=" + INCLUDE_BASE,
+                       "--skip-cache", "--warn=all", "--Werror", "--abort-on-error", "--jobs=0"]
+            if operation != "preprocess":
+                options.append("--Werror=no-rule-not-enforced")
+            if operation == "preprocess":
+                options += ["--skip-kernel-load", "--preprocess"]
+            elif operation == "compile":
+                options += ["--skip-kernel-load", "--stdout"]
+            else:
+                options += ["--add"]
+            prefix = ["/usr/bin/timeout", "--signal=KILL", "20s", PARSER]
+            return [*prefix, *options, "--", str(profile)]
+
+
+        def _raw_stream(record: dict, name: str, limit: int) -> bytes:
+            encoded = record.get(name + "_hex")
+            need(type(encoded) is str and len(encoded) <= 2 * limit, "missing or oversized raw " + name)
+            try:
+                raw = bytes.fromhex(encoded)
+            except ValueError as exc:
+                raise SetupError("invalid raw " + name) from exc
+            need(raw.hex() == encoded and len(raw) <= limit, "noncanonical raw " + name)
+            # Binary compiler stdout is preserved, not parsed via this display string.
+            need(record.get(n'''.encode('utf-8')
+        expected = {'name': 'part-08.txt', 'bytes': 8000, 'sha256': '4b17ab34b750bd6e431a519b217bdf94c5616f81135466b0bb3e135ea9bda24b'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -1609,33 +1618,7 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''eed(operation in {"preprocess", "compile", "load"}, "unknown parser operation")
-            need(profile.is_absolute() and profile.name == "bwrap-userns-restrict", "invalid vendor profile path")
-            need(config.is_absolute() and config.name == "parser.conf", "invalid parser configuration path")
-            options = ["--config-file=" + str(config), "--base=" + INCLUDE_BASE, "--Include=" + INCLUDE_BASE,
-                       "--skip-cache", "--warn=all", "--Werror", "--abort-on-error", "--jobs=0"]
-            if operation != "preprocess":
-                options.append("--Werror=no-rule-not-enforced")
-            if operation == "preprocess":
-                options += ["--skip-kernel-load", "--preprocess"]
-            elif operation == "compile":
-                options += ["--skip-kernel-load", "--stdout"]
-            else:
-                options += ["--add"]
-            prefix = ["/usr/bin/timeout", "--signal=KILL", "20s", PARSER]
-            return [*prefix, *options, "--", str(profile)]
-
-
-        def _raw_stream(record: dict, name: str, limit: int) -> bytes:
-            encoded = record.get(name + "_hex")
-            need(type(encoded) is str and len(encoded) <= 2 * limit, "missing or oversized raw " + name)
-            try:
-                raw = bytes.fromhex(encoded)
-            except ValueError as exc:
-                raise SetupError("invalid raw " + name) from exc
-            need(raw.hex() == encoded and len(raw) <= limit, "noncanonical raw " + name)
-            # Binary compiler stdout is preserved, not parsed via this display string.
-            need(record.get(name) == raw.decode("utf-8", errors="replace"), "display/raw disagreement: " + name)
+        raw = r'''ame) == raw.decode("utf-8", errors="replace"), "display/raw disagreement: " + name)
             return raw
 
 
@@ -1774,8 +1757,34 @@ jobs:
             def __init__(self, evidence):
                 self.evidence, self.total = evidence, 0
 
-            def '''.encode('utf-8')
-        expected = {'name': 'part-09.txt', 'bytes': 8000, 'sha256': 'a49d4b2de2bb0fba8340b7e22aa19bb02cd9edd536e7e101bb23762b9dbf868a'}
+            def read(self, path, *, limit=MAX_READ):
+                if path.startswith(POLICY_ROOT + "/") and path.endswith("/revision"):
+                    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+                    try:
+                        raw = os.read(fd, 129)
+                    finally:
+                        os.close(fd)
+                    need(re.fullmatch(rb"[0-9]+\n", raw) is not None, "ambiguous policy revision")
+                else:
+                    raw = read_regular(Path(path), limit=limit)
+                self.total += len(raw)
+                need(self.total <= 128 * 1024 * 1024, "policy read budget exceeded")
+                self.evidence.data(path, raw)
+                return raw
+
+            def tree(self, path):
+                result = {}
+                def visit(current, root=False):
+                    info = current.stat() if root and str(current) == POLICY_ROOT else current.lstat()
+                    mode = info.st_mode
+                    kind = "d" if stat.S_ISDIR(mode) else "f" if stat.S_ISREG(mode) else "l" if stat.S_ISLNK(mode) else "unknown"
+                    need(kind != "unknown" and len(result) < MAX_FILES and len(current.parts) <= 48, "unknown or oversized policy tree")
+                    result[str(current)] = {"type": kind, "target": os.readlink(current) if kind == "l" else "",
+                                            "mode": stat.S_IMODE(mode), "uid": info.st_uid, "gid": info.st_gid, "size": info.st_size}
+                    if kind == "d":
+                        for child in sorted(current.iterdir()):
+                          '''.encode('utf-8')
+        expected = {'name': 'part-09.txt', 'bytes': 8000, 'sha256': 'f61e892037f17b766e3f2715ab1007360e61f3583c545f56f28d600c82217b60'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -1807,33 +1816,7 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r"""read(self, path, *, limit=MAX_READ):
-                if path.startswith(POLICY_ROOT + "/") and path.endswith("/revision"):
-                    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
-                    try:
-                        raw = os.read(fd, 129)
-                    finally:
-                        os.close(fd)
-                    need(re.fullmatch(rb"[0-9]+\n", raw) is not None, "ambiguous policy revision")
-                else:
-                    raw = read_regular(Path(path), limit=limit)
-                self.total += len(raw)
-                need(self.total <= 128 * 1024 * 1024, "policy read budget exceeded")
-                self.evidence.data(path, raw)
-                return raw
-
-            def tree(self, path):
-                result = {}
-                def visit(current, root=False):
-                    info = current.stat() if root and str(current) == POLICY_ROOT else current.lstat()
-                    mode = info.st_mode
-                    kind = "d" if stat.S_ISDIR(mode) else "f" if stat.S_ISREG(mode) else "l" if stat.S_ISLNK(mode) else "unknown"
-                    need(kind != "unknown" and len(result) < MAX_FILES and len(current.parts) <= 48, "unknown or oversized policy tree")
-                    result[str(current)] = {"type": kind, "target": os.readlink(current) if kind == "l" else "",
-                                            "mode": stat.S_IMODE(mode), "uid": info.st_uid, "gid": info.st_gid, "size": info.st_size}
-                    if kind == "d":
-                        for child in sorted(current.iterdir()):
-                            visit(child)
+        raw = r"""  visit(child)
                 visit(Path(path), root=True)
                 self.evidence.emit("filesystem-tree", {"root": path, "tree": result})
                 return result
@@ -1948,8 +1931,28 @@ jobs:
             info = os_release.lstat()
             need(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022, "untrusted OS release metadata")
             release = dict(line.split("=", 1) for line in read_regular(os_release, limit=65536).decode().splitlines() if "=" in line)
-         """.encode('utf-8')
-        expected = {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '93ef32835d1adb8c0d7201d30b479b0125c942e69e61feaa2cb75609d3bcc80c'}
+            need(release.get("ID", "").strip('"') == "ubuntu" and release.get("VERSION_ID", "").strip('"') == "24.04", "wrong Ubuntu platform")
+            enabled = read_regular(Path("/sys/module/apparmor/parameters/enabled"), limit=32).decode().strip()
+            restriction = read_regular(Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"), limit=32).decode().strip()
+            need(enabled == "Y" and restriction == "1", "AppArmor/global restriction changed")
+            boot = read_regular(Path("/proc/sys/kernel/random/boot_id"), limit=64).decode().strip()
+            need(re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", boot) is not None, "invalid boot identity")
+            return {"kernel": os.uname().release, "architecture": "x86_64", "os": "ubuntu-24.04",
+                    "apparmor_enabled": enabled, "userns_restriction": restriction, "boot_id": boot}
+
+
+        def check_vendor_inputs(stage):
+            vendor = stage / "vendor"
+            root_directory(vendor)
+            paths = {"parser": (Path(PARSER), vendor / "apparmor/sbin/apparmor_parser"),
+                     "bwrap": (Path("/usr/bin/bwrap"), vendor / "bubblewrap/usr/bin/bwrap")}
+            result = {}
+            for name, (installed, packaged) in paths.items():
+                for path in (installed, packaged):
+                    info = path.stat()
+                    need(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o6022, "untrusted vendor executable metadata")
+                raw = read_regular(installed, limit=MAX""".encode('utf-8')
+        expected = {'name': 'part-10.txt', 'bytes': 8000, 'sha256': 'a31c238bbc23d5762a12c5a7a85d79a1010bfd7b777272ef15b20f9cdfdff2df'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -1981,27 +1984,7 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''   need(release.get("ID", "").strip('"') == "ubuntu" and release.get("VERSION_ID", "").strip('"') == "24.04", "wrong Ubuntu platform")
-            enabled = read_regular(Path("/sys/module/apparmor/parameters/enabled"), limit=32).decode().strip()
-            restriction = read_regular(Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"), limit=32).decode().strip()
-            need(enabled == "Y" and restriction == "1", "AppArmor/global restriction changed")
-            boot = read_regular(Path("/proc/sys/kernel/random/boot_id"), limit=64).decode().strip()
-            need(re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", boot) is not None, "invalid boot identity")
-            return {"kernel": os.uname().release, "architecture": "x86_64", "os": "ubuntu-24.04",
-                    "apparmor_enabled": enabled, "userns_restriction": restriction, "boot_id": boot}
-
-
-        def check_vendor_inputs(stage):
-            vendor = stage / "vendor"
-            root_directory(vendor)
-            paths = {"parser": (Path(PARSER), vendor / "apparmor/sbin/apparmor_parser"),
-                     "bwrap": (Path("/usr/bin/bwrap"), vendor / "bubblewrap/usr/bin/bwrap")}
-            result = {}
-            for name, (installed, packaged) in paths.items():
-                for path in (installed, packaged):
-                    info = path.stat()
-                    need(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o6022, "untrusted vendor executable metadata")
-                raw = read_regular(installed, limit=MAX_FILE)
+        raw = r'''_FILE)
                 expected = read_regular(packaged, limit=MAX_FILE)
                 need(raw == expected, "installed " + name + " differs from authenticated package")
                 result[name] = {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
@@ -2119,8 +2102,32 @@ jobs:
             try:
                 with _network_deadline(60):
                     connection.request("GET", "/ubuntu/pool/main/" + directory + "/" + name,
-                                       headers={"Accept-Encoding": "ide'''.encode('utf-8')
-        expected = {'name': 'part-11.txt', 'bytes': 8000, 'sha256': '52ff637173010899e4d9a2f1ae9f6d9b2efb675ef221e3937cc948f70b2e88ba'}
+                                       headers={"Accept-Encoding": "identity", "User-Agent": "forge-setup-policy/1"})
+                    response = connection.getresponse()
+                    need(response.status == 200 and response.getheader("Content-Encoding", "identity") == "identity", "vendor HTTPS download failed")
+                    raw = response.read(MAX_FILE + 1)
+                    need(len(raw) <= MAX_FILE and hashlib.sha256(raw).hexdigest() == ARCHIVES[name], "unauthenticated vendor archive")
+                    return raw
+            finally:
+                connection.close()
+
+
+        def install_vendor(stage, evidence, binding):
+            vendor = stage / "vendor"
+            root_directory(vendor, create=True, exclusive=True)
+            for name, expected in ARCHIVES.items():
+                raw = download_archive(name)
+                sealed_write(vendor / name, raw)
+                evidence.emit("vendor-archive", {"name": name, "sha256": expected, "bytes": len(raw)})
+                package = name.split("_", 1)[0]
+                metadata = checked_command(["/usr/bin/dpkg-deb", "--field", str(vendor / name), "Package", "Version", "Architecture"], evidence)
+                need(("Package: " + package + "\n").encode() in metadata, "vendor package metadata mismatch")
+                checked_command(["/usr/bin/dpkg-deb", "--extract", str(vendor / name), str(vendor / package)], evidence)
+            # Downloads and data-only extraction do not make an old live check fresh.
+            live_identity(CONFIG, binding)
+            # The only installed package is the exact approved bubblewrap prerequisite.
+            checked'''.encode('utf-8')
+        expected = {'name': 'part-11.txt', 'bytes': 8000, 'sha256': 'af570983274bdd540ab4f6b4b70211ece418550f07e67edf220775c256cd8215'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2153,31 +2160,7 @@ jobs:
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
         raw = (
-            'ntity", "User-Agent": "forge-setup-policy/1"})\n'
-            '            response = connection.getresponse()\n'
-            '            need(response.status == 200 and response.getheader("Content-Encoding", "identity") == "identity", "vendor HTTPS download failed")\n'
-            '            raw = response.read(MAX_FILE + 1)\n'
-            '            need(len(raw) <= MAX_FILE and hashlib.sha256(raw).hexdigest() == ARCHIVES[name], "unauthenticated vendor archive")\n'
-            '            return raw\n'
-            '    finally:\n'
-            '        connection.close()\n'
-            '\n'
-            '\n'
-            'def install_vendor(stage, evidence, binding):\n'
-            '    vendor = stage / "vendor"\n'
-            '    root_directory(vendor, create=True, exclusive=True)\n'
-            '    for name, expected in ARCHIVES.items():\n'
-            '        raw = download_archive(name)\n'
-            '        sealed_write(vendor / name, raw)\n'
-            '        evidence.emit("vendor-archive", {"name": name, "sha256": expected, "bytes": len(raw)})\n'
-            '        package = name.split("_", 1)[0]\n'
-            '        metadata = checked_command(["/usr/bin/dpkg-deb", "--field", str(vendor / name), "Package", "Version", "Architecture"], evidence)\n'
-            '        need(("Package: " + package + "\\n").encode() in metadata, "vendor package metadata mismatch")\n'
-            '        checked_command(["/usr/bin/dpkg-deb", "--extract", str(vendor / name), str(vendor / package)], evidence)\n'
-            '    # Downloads and data-only extraction do not make an old live check fresh.\n'
-            '    live_identity(CONFIG, binding)\n'
-            '    # The only installed package is the exact approved bubblewrap prerequisite.\n'
-            '    checked_command(["/usr/bin/dpkg", "--install", str(vendor / "bubblewrap_0.9.0-1ubuntu0.3_amd64.deb")], evidence, timeout=120)\n'
+            '_command(["/usr/bin/dpkg", "--install", str(vendor / "bubblewrap_0.9.0-1ubuntu0.3_amd64.deb")], evidence, timeout=120)\n'
             '    versions = checked_command(["/usr/bin/dpkg-query", "-W", "-f=${Package} ${Version}\\\\n", "apparmor", "bubblewrap"], evidence)\n'
             '    need(versions == b"apparmor 4.0.1really4.0.1-0ubuntu0.24.04.8\\nbubblewrap 0.9.0-1ubuntu0.3\\n", "installed package version changed")\n'
             '\n'
@@ -2283,9 +2266,25 @@ jobs:
             '\n'
             'def observe_sealed(stage, config):\n'
             '    require_clean_root()\n'
-            '    for path in (STAGE_ROOT, s'
+            '    for path in (STAGE_ROOT, stage.parent, stage):\n'
+            '        root_directory(path)\n'
+            '    raw = sealed_read(stage / "setup.json")\n'
+            '    seal = parse_json(raw)\n'
+            '    need(set(seal) == {"schema_version", "status", "binding", "config", "runner", "setup_module_sha256", "observer", "compiled",\n'
+            '                       "before", "after", "input_sha256", "started", "ended", "load_attempted", "positive_passed", "image_version"}, "invalid setup seal schema")\n'
+            '    need(type(seal["schema_version"]) is int and seal["schema_version"] == 1 and seal["status"] == "PASS" and seal["load_attempted"] is True\n'
+            '         and seal["positive_passed"] is True and seal["config"] == config, "setup transition was not sealed PASS")\n'
+            '    need(stage_path(seal["binding"]) == stage, "setup stage/binding mismatch")\n'
+            '    observer = sealed_read(stage / "observer.py")\n'
+            '    need(seal["observer"] == {"sha256": hashlib.sha256(observer).hexdigest(), "bytes": len(observer)}, "sealed observer changed")\n'
+            '    compiled = sealed_read(stage / "compile.stdout", limit=MAX_API)\n'
+            '    need(seal["compiled"] == {"sha256": hashlib.sha256(compiled).hexdigest(), "bytes": len(compiled)}, "sealed compiler bytes changed")\n'
+            '    current = observe_state(stage, PublicEvidence(enabled=False))\n'
+            '    need(current["host"]["boot_id"] == seal["binding"]["boot_id"], "setup boot changed")\n'
+            '    need(digest(stable_state(current)) == seal["input_sha256"], "privileged inputs changed after setup")\n'
+            '    semantic = validate_kerne'
         ).encode('utf-8')
-        expected = {'name': 'part-12.txt', 'bytes': 8000, 'sha256': '8f40797a68d65e138fc1a46af6cafafe7c4e8912e2ce2bb0f63dbfa71d405266'}
+        expected = {'name': 'part-12.txt', 'bytes': 8000, 'sha256': 'b35af5a4d6cd687eacff05b75a31c164721a9323794c52e874a9857d51d584a6'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2317,23 +2316,7 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r"""tage.parent, stage):
-                root_directory(path)
-            raw = sealed_read(stage / "setup.json")
-            seal = parse_json(raw)
-            need(set(seal) == {"schema_version", "status", "binding", "config", "runner", "setup_module_sha256", "observer", "compiled",
-                               "before", "after", "input_sha256", "started", "ended", "load_attempted", "positive_passed", "image_version"}, "invalid setup seal schema")
-            need(type(seal["schema_version"]) is int and seal["schema_version"] == 1 and seal["status"] == "PASS" and seal["load_attempted"] is True
-                 and seal["positive_passed"] is True and seal["config"] == config, "setup transition was not sealed PASS")
-            need(stage_path(seal["binding"]) == stage, "setup stage/binding mismatch")
-            observer = sealed_read(stage / "observer.py")
-            need(seal["observer"] == {"sha256": hashlib.sha256(observer).hexdigest(), "bytes": len(observer)}, "sealed observer changed")
-            compiled = sealed_read(stage / "compile.stdout", limit=MAX_API)
-            need(seal["compiled"] == {"sha256": hashlib.sha256(compiled).hexdigest(), "bytes": len(compiled)}, "sealed compiler bytes changed")
-            current = observe_state(stage, PublicEvidence(enabled=False))
-            need(current["host"]["boot_id"] == seal["binding"]["boot_id"], "setup boot changed")
-            need(digest(stable_state(current)) == seal["input_sha256"], "privileged inputs changed after setup")
-            semantic = validate_kernel(current["kernel"], before=seal["before"], compiled=compiled)
+        raw = r"""l(current["kernel"], before=seal["before"], compiled=compiled)
             need(canonical(semantic) == canonical(seal["after"]), "sealed post-setup policy changed")
             binding = seal["binding"]
             need(parse_json(sealed_read(stage / "activation.json")) == binding, "activation binding changed")
@@ -2438,7 +2421,7 @@ jobs:
                                              "started": started, "ended": stamp(), "error": type(exc).__name__ + ": " + str(exc)})
                 raise
         """.encode('utf-8')
-        expected = {'name': 'part-13.txt', 'bytes': 7408, 'sha256': '1509d4d0b560247017685074249fc558dd72c8ed53f557e780e186a9d9a1f248'}
+        expected = {'name': 'part-13.txt', 'bytes': 5988, 'sha256': 'e04efc2f829466089ce419d992be7fde0f26f4a3cac0e27c290550dfd79ee9f2'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2497,7 +2480,7 @@ jobs:
             info = path.lstat()
             assert path.resolve(strict=True) == path and stat.S_ISDIR(info.st_mode)
             assert info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '56ac9e6b018a7ba7f0263dc4dcdb3e6398e2d3ad08b232ee5998051a0d2043ef'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '750c615a65ac1808240f96d3d6d943a25d4b639f1fabef587032c2b7d83b1b27'}, {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '90b9f7eea4a662326a9e058c0f093dc9b24626564581210a1eae28936bda76ae'}, {'name': 'part-03.txt', 'bytes': 8000, 'sha256': '2d94aca6ca4bbf7cd6943fc2cea64147e7e76619e237bb1be14774a4c7259906'}, {'name': 'part-04.txt', 'bytes': 8000, 'sha256': '64f8547a66cdbb79cf18c087375a7fbe540bb80674b22210dabb71d33ed39ea2'}, {'name': 'part-05.txt', 'bytes': 8000, 'sha256': '186d2866576ecdff7f4631e23f6106175c5432d77acf2a7c0e1a7e58b0762adf'}, {'name': 'part-06.txt', 'bytes': 8000, 'sha256': '6f748f7697d2618fc690b169fb3e6d90f6e3da6163f936f1fc5a55e4689c4d04'}, {'name': 'part-07.txt', 'bytes': 8000, 'sha256': '1f7ba54a76f0f39c2c541dee0bcb2e233e1204aaf7d84adc453613b4fa059944'}, {'name': 'part-08.txt', 'bytes': 8000, 'sha256': '82fcd4da2d949938e9763b664e61178f1901f6f576ce18183ecbc242c3ba36b8'}, {'name': 'part-09.txt', 'bytes': 8000, 'sha256': 'a49d4b2de2bb0fba8340b7e22aa19bb02cd9edd536e7e101bb23762b9dbf868a'}, {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '93ef32835d1adb8c0d7201d30b479b0125c942e69e61feaa2cb75609d3bcc80c'}, {'name': 'part-11.txt', 'bytes': 8000, 'sha256': '52ff637173010899e4d9a2f1ae9f6d9b2efb675ef221e3937cc948f70b2e88ba'}, {'name': 'part-12.txt', 'bytes': 8000, 'sha256': '8f40797a68d65e138fc1a46af6cafafe7c4e8912e2ce2bb0f63dbfa71d405266'}, {'name': 'part-13.txt', 'bytes': 7408, 'sha256': '1509d4d0b560247017685074249fc558dd72c8ed53f557e780e186a9d9a1f248'}]
+        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '00d48e996952f3f92929ef74c5c146c086db08c816ce62b647614f6177831d76'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '750c615a65ac1808240f96d3d6d943a25d4b639f1fabef587032c2b7d83b1b27'}, {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '90b9f7eea4a662326a9e058c0f093dc9b24626564581210a1eae28936bda76ae'}, {'name': 'part-03.txt', 'bytes': 8000, 'sha256': '2d94aca6ca4bbf7cd6943fc2cea64147e7e76619e237bb1be14774a4c7259906'}, {'name': 'part-04.txt', 'bytes': 8000, 'sha256': 'dd6d53a7044235c5f018f5abba6a1c60debe11ee38e4ba71d6192ec6557753b7'}, {'name': 'part-05.txt', 'bytes': 8000, 'sha256': '31b842fea50cc873265ddfc7d32de5ddcef945f777c3ee9f70cd3f5bd41e288b'}, {'name': 'part-06.txt', 'bytes': 8000, 'sha256': '42a8e4479ad7618343708bf0a428248942b4265978687360a57b122ab74c93fc'}, {'name': 'part-07.txt', 'bytes': 8000, 'sha256': 'bdf8d1601028c2cd9eed8c4d01e00856ae3e9e5f378f1fd90b2df0eec6cd5341'}, {'name': 'part-08.txt', 'bytes': 8000, 'sha256': '4b17ab34b750bd6e431a519b217bdf94c5616f81135466b0bb3e135ea9bda24b'}, {'name': 'part-09.txt', 'bytes': 8000, 'sha256': 'f61e892037f17b766e3f2715ab1007360e61f3583c545f56f28d600c82217b60'}, {'name': 'part-10.txt', 'bytes': 8000, 'sha256': 'a31c238bbc23d5762a12c5a7a85d79a1010bfd7b777272ef15b20f9cdfdff2df'}, {'name': 'part-11.txt', 'bytes': 8000, 'sha256': 'af570983274bdd540ab4f6b4b70211ece418550f07e67edf220775c256cd8215'}, {'name': 'part-12.txt', 'bytes': 8000, 'sha256': 'b35af5a4d6cd687eacff05b75a31c164721a9323794c52e874a9857d51d584a6'}, {'name': 'part-13.txt', 'bytes': 5988, 'sha256': 'e04efc2f829466089ce419d992be7fde0f26f4a3cac0e27c290550dfd79ee9f2'}]
         assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts}
         chunks = []
         for part in parts:
@@ -2510,7 +2493,7 @@ jobs:
             assert len(raw) == part['bytes'] and hashlib.sha256(raw).hexdigest() == part['sha256']
             chunks.append(raw)
         raw = b''.join(chunks)
-        assert len(raw) == 111408 and hashlib.sha256(raw).hexdigest() == '7a372080b90b4c130e4d89bcd4ccbb3598416ba96b12d88a9f3a7d16624bff2d'
+        assert len(raw) == 109988 and hashlib.sha256(raw).hexdigest() == '298336a14368fd5429443c62ddd0fa18b9e8477f17524e774c184e8efc47daec'
         source = raw.decode('utf-8')
         namespace = {'__name__': 'fixed_setup_bootstrap'}
         exec(compile(source, '<fixed-workflow-policy-setup>', 'exec'), namespace)
@@ -2861,7 +2844,7 @@ jobs:
                 _need(checkout["tree_oid"] == live["tree_oid"], "provider/checkout immutable tree mismatch")
             except setup.SetupError as exc:
                 raise LaunchError(str(exc)) from exc
-            return {"schema_version": 1, "status": "PASS", "binding": live["binding"], "source": checkout, "live": live}
+            return validate_receipt({"schema_version": 1, "status": "PASS", "binding": live["binding"], "source": checkout, "live": live})
 
 
         def validate_receipt(value):
@@ -2916,8 +2899,8 @@ jobs:
 
 
         def main(argv: list[str] | None = None) -> int:
-            parser = argparse.ArgumentParser(des'''.encode('utf-8')
-        expected = {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '151431b25e3e38431b72c82e7df8108b19f1787204731cbb71fc5c4f6b7d8317'}
+            parser = argparse.'''.encode('utf-8')
+        expected = {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '27c11e83da3e2f845c15b33760a018b5452e9f10a28a18408cdc815dbd019faa'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2948,7 +2931,7 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r"""cription=__doc__)
+        raw = r"""ArgumentParser(description=__doc__)
             parser.add_argument("--receipt", type=Path, required=True)
             parser.add_argument("--output", type=Path, required=True)
             parser.add_argument("--repo", type=Path, required=True)
@@ -2970,7 +2953,7 @@ jobs:
         if __name__ == "__main__":
             raise SystemExit(main())
         """.encode('utf-8')
-        expected = {'name': 'part-02.txt', 'bytes': 975, 'sha256': '7f53e25688dac887a3e5e58789e3bac31e42f0ad9fe85191b764705277de9865'}
+        expected = {'name': 'part-02.txt', 'bytes': 993, 'sha256': '205c1e7f5a16dbbb625f7a9f29a301e8194f24d66a012cadc7e36be6a6d88c1d'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2996,7 +2979,7 @@ jobs:
         info = stage.lstat()
         assert stage.resolve(strict=True) == stage and stat.S_ISDIR(info.st_mode)
         assert info.st_uid == os.getuid() and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == 0o700
-        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': 'b52cf44078aa95d787fbf5bea90db307a42321092f4a9a4ae0380176693264be'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '151431b25e3e38431b72c82e7df8108b19f1787204731cbb71fc5c4f6b7d8317'}, {'name': 'part-02.txt', 'bytes': 975, 'sha256': '7f53e25688dac887a3e5e58789e3bac31e42f0ad9fe85191b764705277de9865'}]
+        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': 'b52cf44078aa95d787fbf5bea90db307a42321092f4a9a4ae0380176693264be'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '27c11e83da3e2f845c15b33760a018b5452e9f10a28a18408cdc815dbd019faa'}, {'name': 'part-02.txt', 'bytes': 993, 'sha256': '205c1e7f5a16dbbb625f7a9f29a301e8194f24d66a012cadc7e36be6a6d88c1d'}]
         assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts}
         chunks = []
         for part in parts:
@@ -3009,12 +2992,12 @@ jobs:
             assert len(raw) == part['bytes'] and hashlib.sha256(raw).hexdigest() == part['sha256']
             chunks.append(raw)
         raw = b''.join(chunks)
-        assert len(raw) == 16975 and hashlib.sha256(raw).hexdigest() == 'd8324ae7b6d88d00c8a1ac3174115db397c810056d467e6d882fdf9aa7116dca'
+        assert len(raw) == 16993 and hashlib.sha256(raw).hexdigest() == '3c367f8957a504f23d2bfd119a68b97317eac63d7204608de6495a0a8c30f7b5'
         source = raw.decode('utf-8')
         namespace = {'__name__': 'fixed_checkout_verifier'}
         exec(compile(source, '<fixed-workflow-checkout-verifier>', 'exec'), namespace)
         root = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
-        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': 'd8324ae7b6d88d00c8a1ac3174115db397c810056d467e6d882fdf9aa7116dca', '.github/scripts/forge_ci/admission.py': '58a8d66a4cf5568f4220290bc58394d5da23a664bd2838c41ef3c1edd8564fdc', '.github/scripts/forge_ci/setup_policy.py': '7a372080b90b4c130e4d89bcd4ccbb3598416ba96b12d88a9f3a7d16624bff2d', '.github/scripts/forge_ci/controller.py': 'd36c4ac7f82c77c415e83c7c67bf72ec24f53dab2ccb703689874339e33c81c0', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'd1b5dbcf03b928557437eabb31deac204df11d9634d0f823a0c2e592f0c73dc8', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': '360d82622fc334410baa4245d195080b76b2c618d4b9a67d4d68844e5aace66c'})
+        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '3c367f8957a504f23d2bfd119a68b97317eac63d7204608de6495a0a8c30f7b5', '.github/scripts/forge_ci/admission.py': '58a8d66a4cf5568f4220290bc58394d5da23a664bd2838c41ef3c1edd8564fdc', '.github/scripts/forge_ci/setup_policy.py': '298336a14368fd5429443c62ddd0fa18b9e8477f17524e774c184e8efc47daec', '.github/scripts/forge_ci/controller.py': 'd36c4ac7f82c77c415e83c7c67bf72ec24f53dab2ccb703689874339e33c81c0', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'd1b5dbcf03b928557437eabb31deac204df11d9634d0f823a0c2e592f0c73dc8', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': '360d82622fc334410baa4245d195080b76b2c618d4b9a67d4d68844e5aace66c'})
         parent = root / '.github/scripts'
         sys.dont_write_bytecode = True
         sys.path.insert(0, str(parent))

@@ -12,7 +12,9 @@ reviewer was never invoked. Every one of the suite's other tests was green
 throughout.
 """
 
+import os
 import pathlib
+import subprocess
 
 import pytest
 
@@ -304,3 +306,188 @@ class TestUnknownBackendFailsBeforeTheCorpus:
         rc, out = self._eval(tmp_path, "real", monkeypatch, capsys)
         # Empty corpus, so it gets past resolution and finds nothing to do.
         assert "unknown backend" not in out.err
+
+
+class _PreparationStopped(Exception):
+    pass
+
+
+class TestExplicitSeedContext:
+    @pytest.fixture(autouse=True)
+    def isolated_git(self, monkeypatch, tmp_path):
+        for name in tuple(os.environ):
+            if name.startswith("GIT_"):
+                monkeypatch.delenv(name)
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.resolve()))
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+        monkeypatch.setenv("GIT_TEMPLATE_DIR", str(tmp_path / "templates"))
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "2")
+        monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_0", "/dev/null")
+        monkeypatch.setenv("GIT_CONFIG_KEY_1", "commit.gpgsign")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_1", "false")
+        (tmp_path / "templates").mkdir()
+        monkeypatch.setattr(runner, "_create_gate_yaml", self.stop)
+        monkeypatch.setattr(runner, "record_trust", self.forbidden)
+        monkeypatch.setattr(runner, "_run_review", self.forbidden)
+
+    @staticmethod
+    def stop(*args, **kwargs):
+        raise _PreparationStopped()
+
+    @staticmethod
+    def forbidden(*args, **kwargs):
+        pytest.fail("preparation reached trust or review")
+
+    @staticmethod
+    def git(repo, *args):
+        return subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, check=True,
+        ).stdout
+
+    @staticmethod
+    def fixture(tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        corpus = tmp_path / "corpus"
+        seed = corpus / "base_files" / "e"
+        seed.mkdir(parents=True)
+        (seed / "m.py").write_bytes(b"a = 1\n")
+        patch = corpus / "d.diff"
+        patch.write_bytes(
+            b"diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n"
+        )
+        return repo, corpus, seed, patch
+
+    def test_uninitialized_child_cannot_discover_ancestor(self, tmp_path, record_property):
+        self.git(tmp_path, "init", "-b", "main")
+        child = tmp_path / "uninitialized"
+        child.mkdir()
+        command = ["git", "rev-parse", "--show-toplevel"]
+        blocked = subprocess.run(command, cwd=child, capture_output=True, check=False)
+        assert os.environ["GIT_CEILING_DIRECTORIES"] == str(tmp_path.resolve())
+        assert blocked.returncode != 0 and not blocked.stdout
+        without_ceiling = os.environ.copy()
+        without_ceiling.pop("GIT_CEILING_DIRECTORIES")
+        visible = subprocess.run(command, cwd=child, env=without_ceiling, capture_output=True, check=False)
+        assert visible.returncode == 0
+        assert pathlib.Path(os.fsdecode(visible.stdout).strip()).resolve() == tmp_path.resolve()
+        record_property("ceiling", os.environ["GIT_CEILING_DIRECTORIES"])
+        record_property("blocked_returncode", blocked.returncode)
+        record_property("blocked_stderr", os.fsdecode(blocked.stderr))
+        record_property("control_ancestor", os.fsdecode(visible.stdout).strip())
+
+    def test_ignored_seed_files_remain_in_the_committed_context(self, tmp_path):
+        repo, corpus, seed, patch = self.fixture(tmp_path)
+        contents = {
+            ".gitignore": b"*.c\n*.tmp\n",
+            "m.py": b"a = 1\n",
+            "unchanged.c": b"neighbor\0bytes\n",
+            "empty.c": b"",
+            "nested/.gitignore": b"*.h\n",
+            "nested/unchanged.h": b"header\n",
+        }
+        for name, raw in contents.items():
+            path = seed / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+        (repo / "existing.txt").write_bytes(b"existing\n")
+        (repo / "runtime.tmp").write_bytes(b"unrelated ignored file\n")
+        with pytest.raises(_PreparationStopped):
+            runner._run_single(_stub_entry(), patch, str(repo), "harness", corpus_dir=corpus)
+        names = self.git(repo, "ls-tree", "-r", "--name-only", "-z", "HEAD").split(b"\0")
+        assert set(names) - {b""} == {name.encode() for name in contents} | {b"existing.txt"}
+        for name, raw in contents.items():
+            assert self.git(repo, "show", "HEAD:" + name) == raw
+            assert (repo / name).read_bytes() == (b"a = 2\n" if name == "m.py" else raw)
+        assert self.git(repo, "diff", "--name-only", "HEAD").splitlines() == [b"m.py"]
+        assert (repo / "runtime.tmp").read_bytes() == b"unrelated ignored file\n"
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX filenames and copy modes")
+    def test_literal_paths_and_copytree_symlink_semantics(self, tmp_path):
+        repo, corpus, seed, patch = self.fixture(tmp_path)
+        names = ["--leading.c", ":(glob)*.c", "line\nbreak.c", "executable.c"]
+        (seed / ".gitignore").write_text("*.c\nalias-dir/\n")
+        for name in names:
+            (seed / name).write_bytes(b"source bytes\n")
+        (seed / "executable.c").chmod(0o755)
+        (seed / "alias.c").symlink_to("executable.c")
+        (seed / "sub").mkdir()
+        (seed / "sub/child.c").write_bytes(b"child\n")
+        (seed / "alias-dir").symlink_to("sub", target_is_directory=True)
+        (repo / "runtime.c").write_bytes(b"unrelated ignored runtime file\n")
+        with pytest.raises(_PreparationStopped):
+            runner._run_single(_stub_entry(), patch, str(repo), "harness", corpus_dir=corpus)
+        copied = names + ["alias.c", "sub/child.c", "alias-dir/child.c"]
+        tracked = self.git(repo, "ls-tree", "-r", "--name-only", "-z", "HEAD").split(b"\0")
+        assert set(tracked) - {b""} == {name.encode() for name in copied + ["m.py", ".gitignore"]}
+        for name in copied:
+            assert self.git(repo, "show", "HEAD:" + name) == (repo / name).read_bytes()
+        assert not (repo / "alias.c").is_symlink()
+        assert not (repo / "alias-dir").is_symlink()
+        tree = self.git(repo, "ls-tree", "HEAD", "executable.c", "alias.c")
+        assert len(tree.splitlines()) == 2
+        assert all(line.startswith(b"100755 blob ") for line in tree.splitlines())
+
+    @pytest.mark.parametrize("kind", ["none", "missing", "empty", "unchanged"])
+    def test_legacy_seed_variants_reach_the_gate(self, tmp_path, kind):
+        repo, corpus, seed, patch = self.fixture(tmp_path)
+        if kind != "unchanged":
+            (seed / "m.py").unlink()
+            (repo / "m.py").write_bytes(b"a = 1\n")
+        if kind == "missing":
+            seed.rmdir()
+        elif kind == "none":
+            corpus = None
+        elif kind == "unchanged":
+            (repo / "m.py").write_bytes(b"a = 1\n")
+            self.git(repo, "init", "-b", "main")
+            self.git(repo, "add", "m.py")
+            self.git(repo, "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-m", "existing")
+        with pytest.raises(_PreparationStopped):
+            runner._run_single(_stub_entry(), patch, str(repo), "harness", corpus_dir=corpus)
+        assert (repo / "m.py").read_bytes() == b"a = 2\n"
+
+    @pytest.mark.parametrize("operation", ["init", "initial-commit", "add", "explicit-add", "seed-commit"])
+    @pytest.mark.parametrize("failure", ["status", "oserror"])
+    def test_git_preparation_failures_stop_before_gate(self, monkeypatch, tmp_path, operation, failure):
+        repo, corpus, seed, patch = self.fixture(tmp_path)
+        real_run = runner.subprocess.run
+        commands = []
+        failed = []
+
+        def run(cmd, **kwargs):
+            if "init" in cmd and "commit" not in cmd:
+                current = "init"
+            elif "commit" in cmd:
+                current = "seed-commit" if "seed base files" in cmd else "initial-commit"
+            elif "add" in cmd:
+                current = "explicit-add" if "-f" in cmd else "add"
+            else:
+                current = "other"
+            commands.append(current)
+            if current == operation:
+                failed.append(current)
+                if failure == "oserror":
+                    raise OSError("Git launch failed")
+                if operation == "init":
+                    (repo / ".git").write_text("invalid git directory marker\n")
+                else:
+                    (repo / ".git" / "index.lock").write_text("held by fixture\n")
+                result = real_run(cmd, **kwargs)
+                assert result.returncode != 0 and result.stderr
+                return result
+            return real_run(cmd, **kwargs)
+
+        monkeypatch.setattr(runner.subprocess, "run", run)
+        monkeypatch.setattr(runner, "_create_gate_yaml", self.forbidden)
+        flagged, reason = runner._run_single(_stub_entry(), patch, str(repo), "harness", corpus_dir=corpus)
+        assert flagged is False and reason.startswith("infra:")
+        assert failed == [operation]
+        assert commands[-1] == operation
+        assert not (repo / ".code-forge").exists()
+        if (repo / "m.py").exists():
+            assert (repo / "m.py").read_bytes() == b"a = 1\n"
+        else:
+            assert operation in ("init", "initial-commit")

@@ -74,8 +74,9 @@ def _check_thresholds(engine_churn: int, integration_churn: int) -> None:
 # recovers 30-37% of the union, so a discount here is a recall cut, not an
 # economy.
 #
-# Only declarative content skips the LLM: config and docs are what the
-# deterministic L0 checks already cover. Source in a language this module
+# Config/docs start with zero passes from role classification. The CLI
+# reconciles mandatory receipt hunks before dispatch and promotes these groups
+# when evidence is required; deterministic L0 checks do not replace L1 excerpts. Source in a language this module
 # cannot parse still gets the full three passes -- no def-use edges is a
 # limit on grouping precision, not a licence to skip review. A shell script
 # that changes process lifecycle is logic-bearing by forge's own rules.
