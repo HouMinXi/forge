@@ -1,0 +1,139 @@
+name: AppArmor qualification 0ca356925863929e90dd44317a05bae4
+'on':
+  push:
+    branches:
+    - ci/qualify-apparmor-0ca356925863929e90dd44317a05bae4
+permissions:
+  contents: read
+concurrency:
+  group: forge-apparmor-0ca356925863929e90dd44317a05bae4-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  qualification:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/ci/qualify-apparmor-0ca356925863929e90dd44317a05bae4'
+      && github.event.created == false && github.event.deleted == false && github.event.forced == false && github.event.before
+      == 'd15921632aa47b4715b2f9f8a38751c55ea5fe55' && github.run_number == 1 }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      SEMGREP_SEND_METRICS: 'off'
+      SEMGREP_ENABLE_VERSION_CHECK: '0'
+      OTEL_SDK_DISABLED: 'true'
+    steps:
+    - name: Check out source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        fetch-depth: 2
+    - name: Set up qualified Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: 3.12.14
+      id: qualified_python
+    - name: Verify exact control transition before candidate installs
+      timeout-minutes: 2
+      run: "umask 077\nexport EVIDENCE=\"$RUNNER_TEMP/forge-evidence\"\ntest ! -e \"$EVIDENCE\"\nmkdir \"$EVIDENCE\"\nprintf\
+        \ 'EVIDENCE=%s\\n' \"$EVIDENCE\" >> \"$GITHUB_ENV\"\npython -I - <<'PYBOOT' 2>&1 | tee \"$EVIDENCE/launch-bootstrap.log\"\
+        \nimport hashlib\nimport os\nfrom pathlib import Path\nimport runpy\nimport sys\n\nroot = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)\n\
+        expected = {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893',\
+        \ '.github/scripts/forge_ci/facts.py': 'c15843525dfe8ddbef177d919ada581b5561aecb3390551334e9075e1928db1d', '.github/scripts/forge_ci/launch.py':\
+        \ 'fe58faceea56da329fe03f4384c1d166c59d2f2fbc52eee69ed70f07269a92d9', '.github/scripts/forge_ci/admission.py': '646e2dd10fffdd8657de2d679372f6fd0da9f377f346da268e881f8de28411af',\
+        \ '.github/scripts/forge_ci/controller.py': '0fe24f4483975489b4da7466750be4aae78b6e758a090ea1e57dd2444d8ef407', '.github/scripts/forge_ci/outcomes.py':\
+        \ '08f9b4f5785f2f0ebe0cedb3463ebff611a538384c50d1aff329f074e341cbee', '.github/scripts/forge_ci/payload.py': 'd118c348ee0319c28d292549ed94b37df277f76326d85ecfa23074e2787faaaa',\
+        \ '.github/scripts/forge_ci/probes.py': '375425c9759f488547aa276d4ff3d224ddf0b3c549b9c55230f58c191a5a3fb0', '.github/scripts/forge_ci/pytest_observer.py':\
+        \ '80a90e8d353256c3533cc5dc3dbb056f955510fb83227c752ec9ee19535c2b3c', '.github/qualification-python.json': '9e1988aa9652da45bfee62e89e1b08508b16dcc0be7877336baa748baba668e0'}\n\
+        for relative, expected_sha in expected.items():\n    path = root / relative\n    assert path.is_file() and not path.is_symlink(),\
+        \ relative\n    assert hashlib.sha256(path.read_bytes()).hexdigest() == expected_sha, relative\n# Import only the\
+        \ fixed hash-checked package, with no source-tree or bytecode shadowing.\nparent = root / '.github/scripts'\npackage\
+        \ = parent / 'forge_ci'\nassert parent.is_dir() and not parent.is_symlink()\nassert package.is_dir() and not package.is_symlink()\n\
+        assert {p.name for p in parent.iterdir()} == {'forge_ci'}\nassert {p.name for p in package.iterdir()} == set(['__init__.py',\
+        \ 'facts.py', 'launch.py', 'admission.py', 'controller.py', 'outcomes.py', 'payload.py', 'probes.py', 'pytest_observer.py'])\n\
+        sys.dont_write_bytecode = True\nsys.path.insert(0, str(parent))\nsys.argv = ['forge_ci.launch', '--manifest', str(root/'.github/qualification-manifest.json'),\n\
+        \            '--repo', str(root), '--output', str(Path(os.environ['EVIDENCE'])/'launch-bootstrap.json')]\nrunpy.run_module('forge_ci.launch',\
+        \ run_name='__main__')\nPYBOOT"
+    - name: Verify Linux process ownership prerequisites
+      id: preflight
+      timeout-minutes: 2
+      run: "umask 077\n# The stdout-pressure regression needs disk-backed temporary storage.\nexport TMPDIR=\"$RUNNER_TEMP/forge-tests\"\
+        \nexport EVIDENCE=\"$RUNNER_TEMP/forge-evidence\"\nprintf 'TMPDIR=%s\\nEVIDENCE=%s\\n' \"$TMPDIR\" \"$EVIDENCE\" >>\
+        \ \"$GITHUB_ENV\"\nmkdir -p \"$TMPDIR\" \"$EVIDENCE\" \"$EVIDENCE/vendor-packages\"\npython - <<'PY' 2>&1 | tee \"\
+        $EVIDENCE/preflight.log\"\nimport os\nfrom pathlib import Path\nimport resource\nimport select\nimport subprocess\n\
+        import sys\n\nassert sys.platform == 'linux', sys.platform\nassert sys.implementation.name == 'cpython'\nassert sys.version_info[:3]\
+        \ == (3, 12, 14), sys.version\nassert hasattr(os, 'pidfd_open'), 'Linux pidfd_open is required'\nassert resource.getrlimit(resource.RLIMIT_NOFILE)[1]\
+        \ > 1024, 'High-FD tests must run'\n# Do not treat absent or unreadable task-children as an empty tree.\nchildren_path\
+        \ = Path(f'/proc/{os.getpid()}/task/{os.getpid()}/children')\nchildren_path.read_bytes()\nchild = subprocess.Popen([sys.executable,\
+        \ '-c', 'import time; time.sleep(30)'])\ntry:\n    children = {int(pid) for pid in children_path.read_bytes().split()}\n\
+        \    assert child.pid in children, f'Live child {child.pid} absent from {children_path}'\n    fd = os.pidfd_open(child.pid)\n\
+        \    try:\n        assert not select.select([fd], [], [], 0)[0], 'Live-child pidfd unexpectedly ready'\n    finally:\n\
+        \        os.close(fd)\n    print(f'PASS: readable {children_path}; live child {child.pid} visible; pidfd usable')\n\
+        \    print(sys.version)\nfinally:\n    child.terminate()\n    child.wait(timeout=5)\nPY\ndf -h \"$TMPDIR\" | tee \"\
+        $EVIDENCE/disk.log\"\n"
+    - name: Install declared extras and qualified pytest
+      id: install
+      timeout-minutes: 10
+      run: "python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.1.1' \\\n  2>&1 | tee \"$EVIDENCE/install.log\"\
+        \n# Some FIXVAL fixtures use /usr/bin/python3 and reset PYTHONPATH.\n# Its normal user site works without modifying\
+        \ the system interpreter.\npython -m pip install --target \"$(/usr/bin/python3 -m site --user-site)\" 'pytest==9.1.1'\
+        \ \\\n  2>&1 | tee \"$EVIDENCE/system-pytest-install.log\"\nfor interpreter in python /usr/bin/python3; do\n  \"$interpreter\"\
+        \ -c 'import sys, pytest; assert sys.implementation.name == \"cpython\"; assert sys.version_info[:2] == (3, 12), sys.version;\
+        \ assert pytest.__version__ == \"9.1.1\"; print(sys.executable, sys.version, \"pytest\", pytest.__version__)'\ndone\
+        \ | tee \"$EVIDENCE/interpreters.log\"\npython -m pip check 2>&1 | tee \"$EVIDENCE/pip-check.log\"\npython -m pip\
+        \ freeze | tee \"$EVIDENCE/requirements.freeze.txt\"\n\n# Same-attempt receipt for the two original installs and native\
+        \ pinned setup success.\npython - <<'PYRECEIPT'\nimport hashlib\nimport json\nimport os\nfrom pathlib import Path\n\
+        import pip\nimport subprocess\n\nwheel = Path(pip.__file__).resolve().parent/'_internal/operations/install/wheel.py'\n\
+        user_site = subprocess.check_output(['/usr/bin/python3','-m','site','--user-site'], text=True).strip()\nassert user_site\
+        \ == '/home/runner/.local/lib/python3.12/site-packages'\nassert os.environ['FORGE_SETUP_PYTHON_OUTCOME'] == 'success'\n\
+        receipt = {\n    'schema_version': 3, 'control_sha': os.environ['GITHUB_SHA'],\n    'run_id': int(os.environ['GITHUB_RUN_ID']),\
+        \ 'run_attempt': int(os.environ['GITHUB_RUN_ATTEMPT']),\n    'job': os.environ['GITHUB_JOB'], 'pip_version': pip.__version__,\n\
+        \    'wheel_sha256': hashlib.sha256(wheel.read_bytes()).hexdigest(),\n    'setup_python': {\n        'action': 'actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97',\n\
+        \        'python_version': '3.12.14', 'outcome': os.environ['FORGE_SETUP_PYTHON_OUTCOME'],\n    },\n    'steps': [\n\
+        \        {'name': 'toolcache-install', 'argv': ['python','-m','pip','install','-e','.[dev,mcp,semgrep,vertex]','pytest==9.1.1'],\n\
+        \         'exit_code': 0, 'completed': True},\n        {'name': 'system-user-site-install', 'argv': ['python','-m','pip','install','--target',user_site,'pytest==9.1.1'],\n\
+        \         'exit_code': 0, 'completed': True},\n    ],\n}\npath = Path(os.environ['EVIDENCE'])/'vendor-packages/install-receipt.json'\n\
+        fd = os.open(path, os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW, 0o600)\nwith os.fdopen(fd, 'w') as stream:\n  \
+        \  json.dump(receipt, stream, sort_keys=True, separators=(',', ':'))\n    stream.write('\\n')\n    stream.flush()\n\
+        \    os.fsync(stream.fileno())\nPYRECEIPT\n"
+      env:
+        FORGE_SETUP_PYTHON_OUTCOME: ${{ steps.qualified_python.outcome }}
+    - name: Provision authenticated sandbox prerequisite data
+      id: sandbox
+      timeout-minutes: 5
+      run: "# Avoid the runner's stalled Azure HTTP mirror without changing its sources.\napt_dir=\"$(mktemp -d /tmp/forge-apt.XXXXXXXX)\"\
+        \nchmod 755 \"$apt_dir\"\nmkdir -p \"$apt_dir/lists/partial\" \"$apt_dir/sourceparts\"\ncat > \"$apt_dir/ubuntu.sources\"\
+        \ <<'APT'\nTypes: deb\nURIs: https://archive.ubuntu.com/ubuntu\nSuites: noble noble-updates noble-security\nComponents:\
+        \ main\nArchitectures: amd64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\nAPT\ncp \"$apt_dir/ubuntu.sources\"\
+        \ \"$EVIDENCE/apt-sources.sources\"\napt_options=(\n  -o \"Dir::Etc::sourcelist=$apt_dir/ubuntu.sources\"\n  -o \"\
+        Dir::Etc::sourceparts=$apt_dir/sourceparts\"\n  -o \"Dir::State::lists=$apt_dir/lists\"\n  -o Dir::Cache::pkgcache=\
+        \ -o Dir::Cache::srcpkgcache=\n  -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15\n  -o Acquire::Retries=2\
+        \ -o Acquire::Languages=none\n)\nsudo apt-get \"${apt_options[@]}\" update -o APT::Update::Error-Mode=any \\\n  2>&1\
+        \ | tee \"$EVIDENCE/apt-update.log\"\napt-cache \"${apt_options[@]}\" policy bubblewrap \\\n  2>&1 | tee \"$EVIDENCE/bubblewrap-policy.log\"\
+        \nsudo apt-get \"${apt_options[@]}\" install --no-install-recommends -y bubblewrap \\\n  2>&1 | tee \"$EVIDENCE/apt-install.log\"\
+        \ndpkg-query -W -f='${Package} ${Version}\\n' bubblewrap | tee \"$EVIDENCE/bubblewrap-package.log\"\nbwrap --version\
+        \ | tee \"$EVIDENCE/bubblewrap-version.log\"\n# Data-only vendor inputs for manual admission review. Do not install/load\
+        \ profiles.\nvendor_dir=\"$EVIDENCE/vendor-packages\"\nmkdir -p \"$vendor_dir\"\napparmor_version=\"$(dpkg-query -W\
+        \ -f='${Version}' apparmor)\"\nbubblewrap_version=\"$(dpkg-query -W -f='${Version}' bubblewrap)\"\n(\n  cd \"$vendor_dir\"\
+        \n  apt-get \"${apt_options[@]}\" download \\\n    'apparmor-profiles=4.0.1really4.0.1-0ubuntu0.24.04.8' \\\n    \"\
+        apparmor=$apparmor_version\" \"bubblewrap=$bubblewrap_version\"\n) 2>&1 | tee \"$EVIDENCE/vendor-download.log\"\n\
+        printf '%s  %s\\n' \\\n  '4e7d728322f899a7a06e71bedd4f4bd1f20c21f0b3361120f34cf5c0feec849e' \\\n  \"$vendor_dir/apparmor-profiles_4.0.1really4.0.1-0ubuntu0.24.04.8_all.deb\"\
+        \ \\\n  | sha256sum --check\nshopt -s nullglob\nfor package in apparmor-profiles apparmor bubblewrap; do\n  archives=(\"\
+        $vendor_dir/${package}_\"*.deb)\n  [[ ${#archives[@]} == 1 ]]\n  sha256sum \"${archives[0]}\" | tee -a \"$EVIDENCE/vendor-sha256.log\"\
+        \n  dpkg-deb --field \"${archives[0]}\" Package Version Architecture \\\n    | tee -a \"$EVIDENCE/vendor-package-metadata.log\"\
+        \n  dpkg-deb --extract \"${archives[0]}\" \"$vendor_dir/$package\"\ndone\n"
+    - name: Qualify vendor policy and run the unchanged test phases
+      timeout-minutes: 75
+      run: "PYTHONPATH=.github/scripts:src python -m forge_ci.controller \\\n  --manifest \"$GITHUB_WORKSPACE/.github/qualification-manifest.json\"\
+        \ \\\n  --repo \"$GITHUB_WORKSPACE\" \\\n  --vendor-dir \"$EVIDENCE/vendor-packages\" \\\n  --evidence \"$EVIDENCE/qualification\"\
+        \ \\\n  2>&1 | tee \"$EVIDENCE/qualification-controller.log\""
+    - name: Preserve logs and JUnit reports
+      if: ${{ always() }}
+      timeout-minutes: 5
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: apparmor-qualification-0ca356925863929e90dd44317a05bae4-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/forge-evidence/
+        if-no-files-found: error
+        retention-days: 14
