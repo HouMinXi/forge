@@ -581,7 +581,7 @@ class TestOutletCInfraSourceTagging:
             assert finding.description == "spawn failed: spawn exploded"
 
         receipt = findings["RECEIPT_INVALID"]
-        description = "receipt acceptance: earned cycle 1 requires explicit completed status"
+        description = "receipt acceptance: unwitnessed hunk test.py:1-4"
         assert receipt.source == "INFRA"
         assert receipt.disposition.value == "CONFIRMED"
         assert receipt.file == "<receipt-evidence>"
