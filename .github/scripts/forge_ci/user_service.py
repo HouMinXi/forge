@@ -1038,12 +1038,59 @@ def runtime_file(path, deadline_ns):
             "gid": before.st_gid, "mode": stat.S_IMODE(before.st_mode), "bytes": total, "sha256": checksum.hexdigest()}
 
 
-def runtime_directory(path, *, private=False):
+DIRECTORY_STOP_LIMIT = 2048
+DIRECTORY_LABELS = frozenset({"private_home", "private_config", "private_cache", "private_data", "private_tmp",
+                              "private_local", "provider_bin", "usr_local_bin", "usr_bin", "bin_alias"})
+DIRECTORY_TYPES = {stat.S_IFDIR: "directory", stat.S_IFREG: "regular", stat.S_IFLNK: "symlink",
+                   stat.S_IFIFO: "fifo", stat.S_IFSOCK: "socket", stat.S_IFCHR: "character", stat.S_IFBLK: "block"}
+DIRECTORY_OBSERVATION_KEYS = {"label", "file_type", "uid", "gid", "mode", "ordinary_uid", "ordinary_gid",
+                              "is_directory", "write_bits_clear", "uid_allowed", "gid_allowed"}
+DIRECTORY_STOP_KEYS = {"schema_version", "kind", "status", "gate", "run_id", "run_attempt", "candidate_sha",
+                       "workflow_sha", "workflow_job", "boot_id", "observation"}
+
+
+def validate_directory_observation(value):
+    # This closed, data-only diagnostic cannot authorize a directory or runtime.
+    need(type(value) is dict and value.keys() == DIRECTORY_OBSERVATION_KEYS, "untrusted runtime directory")
+    need(type(value["label"]) is str and value["label"] in DIRECTORY_LABELS
+         and type(value["file_type"]) is str and value["file_type"] in {*DIRECTORY_TYPES.values(), "unknown"},
+         "untrusted runtime directory")
+    need(all(type(value[key]) is int and 0 <= value[key] < 2**32 for key in ("uid", "gid", "ordinary_uid", "ordinary_gid"))
+         and value["ordinary_uid"] > 0 and value["ordinary_gid"] > 0, "untrusted runtime directory")
+    need(type(value["mode"]) is str and re.fullmatch(r"[0-7]{4}", value["mode"]) is not None,
+         "untrusted runtime directory")
+    predicates = {"is_directory": value["file_type"] == "directory",
+                  "write_bits_clear": not int(value["mode"], 8) & 0o022,
+                  "uid_allowed": value["uid"] in {0, value["ordinary_uid"]},
+                  "gid_allowed": value["gid"] in {0, value["ordinary_gid"]}}
+    need(all(type(value[key]) is bool and value[key] == expected for key, expected in predicates.items())
+         and not all(predicates.values()), "untrusted runtime directory")
+
+
+def runtime_directory(path, *, private=False, diagnostic_label=None):
     path = Path(path)
     need(path.is_absolute() and path.resolve(strict=True) == path, "runtime directory alias")
     info = path.lstat()
-    need(stat.S_ISDIR(info.st_mode) and not info.st_mode & 0o022
-         and info.st_uid in {0, os.getuid()} and info.st_gid in {0, os.getgid()}, "untrusted runtime directory")
+    uid, gid = os.getuid(), os.getgid()
+    try:
+        need(stat.S_ISDIR(info.st_mode) and not info.st_mode & 0o022
+             and info.st_uid in {0, uid} and info.st_gid in {0, gid}, "untrusted runtime directory")
+    except ServiceError as error:
+        # Capture only this rejecting lstat, never a second observation of path.
+        # Diagnostic errors must not replace the original fixed rejection.
+        try:
+            if type(diagnostic_label) is str and diagnostic_label in DIRECTORY_LABELS:
+                observation = {"label": diagnostic_label, "file_type": DIRECTORY_TYPES.get(stat.S_IFMT(info.st_mode), "unknown"),
+                               "uid": info.st_uid, "gid": info.st_gid, "mode": format(stat.S_IMODE(info.st_mode), "04o"),
+                               "ordinary_uid": uid, "ordinary_gid": gid, "is_directory": stat.S_ISDIR(info.st_mode),
+                               "write_bits_clear": not info.st_mode & 0o022,
+                               "uid_allowed": info.st_uid in {0, uid}, "gid_allowed": info.st_gid in {0, gid}}
+                validate_directory_observation(observation)
+                error.directory_observation = observation
+        except Exception as diagnostic_error:  # noqa: BLE001 - optional metadata cannot expose exception values
+            if getattr(diagnostic_error, "_forge_control", False):
+                raise
+        raise
     if private:
         need(info.st_uid == os.getuid() and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == 0o700,
              "runtime root is not private")
@@ -1062,10 +1109,11 @@ def check_private_profile(environment, *, deadline_ns):
         need(stat.S_ISDIR(info.st_mode) and info.st_uid in {0, os.getuid()}
              and (not info.st_mode & 0o022 or (info.st_uid == 0 and info.st_mode & stat.S_ISVTX)),
              "untrusted runtime ancestor")
-    roots = [runtime_directory(environment[key], private=True)
-             for key in ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR")]
+    roots = [runtime_directory(environment[key], private=True, diagnostic_label=label)
+             for key, label in (("HOME", "private_home"), ("XDG_CONFIG_HOME", "private_config"),
+                                ("XDG_CACHE_HOME", "private_cache"), ("XDG_DATA_HOME", "private_data"), ("TMPDIR", "private_tmp"))]
     home = Path(environment["HOME"])
-    runtime_directory(home / ".local", private=True)
+    runtime_directory(home / ".local", private=True, diagnostic_label="private_local")
     for relative in CREDENTIAL_PATHS:
         candidate = home / relative
         need(not candidate.exists() and not candidate.is_symlink(), "credential configuration present")
@@ -1073,11 +1121,11 @@ def check_private_profile(environment, *, deadline_ns):
     # populate it. Reject unknown configuration rather than interpreting secrets.
     need(not any((home / ".config").iterdir()), "unexpected private HOME configuration")
     directories = []
-    for component in PROFILE_PATH.split(":"):
+    for component, label in zip(PROFILE_PATH.split(":"), ("provider_bin", "usr_local_bin", "usr_bin", "bin_alias"), strict=True):
         path = Path(component)
         real = path.resolve(strict=True)
         need(str(real) == component or (component == "/bin" and str(real) == "/usr/bin"), "unreviewed PATH alias")
-        identity = runtime_directory(real)
+        identity = runtime_directory(real, diagnostic_label=label)
         directories.append({"path": component, "realpath": str(real), **{k: v for k, v in identity.items() if k != "path"}})
         cli = path / "claude"
         need(not (cli.exists() and os.access(cli, os.X_OK)), "runnable claude present")
@@ -1266,6 +1314,44 @@ def runtime_write(path, value, limit, deadline_ns):
     return hashlib.sha256(raw).hexdigest()
 
 
+def validate_directory_stop(value):
+    need(type(value) is dict and value.keys() == DIRECTORY_STOP_KEYS, "untrusted runtime directory")
+    need(type(value["schema_version"]) is int and value["schema_version"] == 1
+         and type(value["kind"]) is str and value["kind"] == "runtime-directory-rejection"
+         and type(value["status"]) is str and value["status"] == "STOP"
+         and type(value["gate"]) is str and value["gate"] == "US155", "untrusted runtime directory")
+    need(positive(value["run_id"]) and type(value["run_attempt"]) is int and value["run_attempt"] == 1,
+         "untrusted runtime directory")
+    need(all(type(value[key]) is str and re.fullmatch(r"[0-9a-f]{40}", value[key]) is not None
+             and value[key] != "0" * 40 for key in ("candidate_sha", "workflow_sha"))
+         and value["candidate_sha"] == value["workflow_sha"], "untrusted runtime directory")
+    need(type(value["workflow_job"]) is str and value["workflow_job"] == "linux-tests"
+         and type(value["boot_id"]) is str
+         and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value["boot_id"]) is not None,
+         "untrusted runtime directory")
+    validate_directory_observation(value["observation"])
+    need(len(canonical(value)) <= DIRECTORY_STOP_LIMIT, "runtime record encoded bound")
+
+
+def persist_directory_stop(error, evidence, environment, deadline_ns):
+    if public_gate(error) != "US155" or not hasattr(error, "directory_observation"):
+        return
+    runtime_remaining(deadline_ns)
+    validate_environment(environment)
+    need(os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0, "runtime profile requires ordinary owner")
+    fixed_evidence = Path(environment["RUNNER_TEMP"]) / "forge-evidence"
+    need(str(evidence) == str(fixed_evidence) and environment["EVIDENCE"] == str(fixed_evidence),
+         "runtime fixed paths changed")
+    runtime_directory(fixed_evidence, private=True)
+    value = {"schema_version": 1, "kind": "runtime-directory-rejection", "status": "STOP", "gate": "US155",
+             "run_id": int(environment["GITHUB_RUN_ID"]), "run_attempt": 1, "candidate_sha": environment["GITHUB_SHA"],
+             "workflow_sha": environment["GITHUB_WORKFLOW_SHA"], "workflow_job": environment["GITHUB_JOB"],
+             "boot_id": read_regular("/proc/sys/kernel/random/boot_id", 64).decode("ascii").strip(),
+             "observation": error.directory_observation}
+    validate_directory_stop(value)
+    runtime_write(fixed_evidence / "runtime-directory-stop.json", value, DIRECTORY_STOP_LIMIT, deadline_ns)
+
+
 EDITABLE_DIRECTORY = "src/code_review_forge.egg-info"
 EDITABLE_FILES = ("PKG-INFO", "SOURCES.txt", "dependency_links.txt", "entry_points.txt", "requires.txt", "top_level.txt")
 
@@ -1391,7 +1477,17 @@ def main(argv=None):
             environment = payload_environment(os.environ)
             deadline_ns = time.monotonic_ns() + 120 * NS
             if args.role == "profile-check":
-                check_private_profile(environment, deadline_ns=deadline_ns)
+                try:
+                    check_private_profile(environment, deadline_ns=deadline_ns)
+                except ServiceError as error:
+                    if getattr(error, "_forge_control", False):
+                        raise
+                    try:
+                        persist_directory_stop(error, args.evidence, environment, deadline_ns)
+                    except Exception as diagnostic_error:  # noqa: BLE001 - keep STOP; controls reach the outer handler
+                        if getattr(diagnostic_error, "_forge_control", False):
+                            raise
+                    raise
                 provider = str(Path(PROVIDER).resolve(strict=True))
                 need(runtime_executable("python", deadline_ns)["realpath"] == provider
                      and runtime_executable("python3", deadline_ns)["realpath"] == provider,
