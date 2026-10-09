@@ -31,7 +31,7 @@ PROVIDER = "/opt/hostedtoolcache/Python/3.12.14/x64/bin/python"
 HELPER = ".github/scripts/forge_ci/user_service.py"
 BOOT_ENV = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LC_ALL": "C", "LANG": "C"}
 PROFILE_PATH = "/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/bin:/bin"
-FIXED_ENV = {"PATH": PROFILE_PATH, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONPATH": ".github/scripts:src", "PYTHONDONTWRITEBYTECODE": "1",
+FIXED_ENV = {"NODE_DISABLE_COMPILE_CACHE": "1", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONPATH": ".github/scripts:src", "PYTHONDONTWRITEBYTECODE": "1",
              "SEMGREP_SEND_METRICS": "off", "SEMGREP_ENABLE_VERSION_CHECK": "0", "OTEL_SDK_DISABLED": "true"}
 OPTIONAL_ENV = frozenset()
 REQUIRED_ENV = frozenset("""PATH HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME TMPDIR RUNNER_TEMP RUNNER_OS RUNNER_ARCH GITHUB_ACTIONS CI
@@ -251,6 +251,19 @@ PUBLIC_GATES = {
     'unreviewed checkout import root': "US174",
     'unsupported active import archive or file': "US175",
     'runtime PATH selection changed': "US176",
+    'private Node provision binding changed': "US177",
+    'private Node exposure changed': "US178",
+    'private Node vendor inventory changed': "US179",
+    'private Node provision incomplete': "US180",
+    'private Node archive rejected': "US181",
+    'private Node archive identity changed': "US182",
+    'private Node materialization changed': "US183",
+    'private Node download rejected': "US184",
+    'private Node component deadline': "US185",
+    'private Node component output bound': "US186",
+    'private Node worker failed': "US187",
+    'private Node worker settlement incomplete': "US188",
+    'private Node compatibility failed': "US189",
 }
 
 
@@ -319,6 +332,7 @@ def payload_environment(source):
     for key, value in FIXED_ENV.items():
         need(source.get(key) == value, "changed fixed payload environment")
         result[key] = value
+    need(source.get("PATH") == profile_path(source), "changed fixed payload environment")
     validate_environment(result)
     return result
 
@@ -335,6 +349,7 @@ def validate_environment(value):
          "invalid diagnostic runtime root")
     need(re.fullmatch(r"[1-9][0-9]{0,18}", value["GITHUB_RUN_ID"]) is not None
          and value["GITHUB_RUN_ATTEMPT"] == "1", "invalid diagnostic runtime identity")
+    need(value["PATH"] == profile_path(value), "changed fixed payload environment")
     home = runner / ("forge-b-home-" + value["GITHUB_RUN_ID"] + "-" + value["GITHUB_RUN_ATTEMPT"])
     need(value["HOME"] == str(home) and value["TMPDIR"] == str(runner / "forge-tests")
          and value["XDG_CONFIG_HOME"] == str(home / ".config")
@@ -957,7 +972,7 @@ def launcher(receipt_path, repo, evidence):
 
 # First-B runtime admission is produced only after the fixed reviewed installer.
 # None of these recorded runtime hashes is a pre-install or self-authorizing pin.
-RUNTIME_PROFILE = "first-B-auth-v1"
+RUNTIME_PROFILE = "first-B-auth-v2-private-node"
 RUNTIME_INVENTORY_LIMIT = 8 * 1024 * 1024
 RUNTIME_FILE_LIMIT = 512 * 1024 * 1024
 RUNTIME_TOTAL_LIMIT = 2 * 1024 * 1024 * 1024
@@ -975,7 +990,7 @@ INSTALL_ARGV = [
     ["python", "-m", "pip", "install", "-e", ".[dev,mcp,semgrep,vertex]", "pytest==9.1.1"],
     ["python", "-m", "pip", "install", "--target", "SYSTEM_USER_SITE", "pytest==9.1.1"],
 ]
-INSTALL_RECORDS = ("install.log", "system-pytest-install.log", "interpreters.log", "pip-check.log", "requirements.freeze.txt")
+INSTALL_RECORDS = ("node-provision.json", "install.log", "system-pytest-install.log", "interpreters.log", "pip-check.log", "requirements.freeze.txt")
 CREDENTIAL_PATHS = (".aws", ".azure", ".ssh", ".claude", ".claude.json", ".netrc", ".git-credentials", ".npmrc", ".pypirc",
                     ".config/gcloud", ".config/gh", ".config/claude", ".config/openai", ".config/pip", ".local/share/keyrings")
 RUNTIME_KEYS = {"schema_version", "profile", "spec_sha256", "source", "environment_sha256", "installer_sha256",
@@ -994,6 +1009,639 @@ print(json.dumps({'executable':sys.executable, 'version':list(sys.version_info[:
  'cache_support':{n:hashlib.sha256(b).hexdigest() for n,b in _pytest.cacheprovider.CACHEDIR_FILES.items()}, 'packages':packages},
  sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False))
 '''
+
+
+# Source pins derive from the independently signature-verified official release.
+# A local completion record is evidence, never authority for vendor bytes.
+NODE_ARCHIVE_URL = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz"
+NODE_ARCHIVE_BYTES = 31890184
+NODE_ARCHIVE_SHA256 = "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"
+NODE_DECODED_BYTES = 206673920
+NODE_DECODED_SHA256 = "ae7b5f0310ed1df3b07f969e34e40104e5605d9e99c50b76998458fef060fdec"
+NODE_MANIFEST_BYTES = 446005
+NODE_MANIFEST_SHA256 = "1a32412b8434368fed1ea865a5e1d8f072756e2462165e5ec806d09a01fb3f35"
+NODE_SELECTED_BYTES = 138935660
+NODE_ARCHIVE_ROOT = "node-v24.21.0-linux-x64"
+NODE_ALIASES = {"node": "../runtime/bin/node", "npm": "../runtime/lib/node_modules/npm/bin/npm-cli.js"}
+NODE_VENDOR_LINKS = {"bin/npm": "../lib/node_modules/npm/bin/npm-cli.js", "bin/npx": "../lib/node_modules/npm/bin/npx-cli.js",
+                     "bin/corepack": "../lib/node_modules/corepack/dist/corepack.js"}
+NODE_RECORD_LIMIT = 16 * 1024
+NODE_RECORD_KEYS = {"schema_version", "kind", "binding", "vendor", "root", "expose", "aliases"}
+NODE_CACHE_PROBE = ("const m=require('node:module');const s=m.enableCompileCache();"
+                    "if(s.status!==m.constants.compileCacheStatus.DISABLED)process.exit(1);"
+                    "process.stdout.write(JSON.stringify({arch:process.arch,compile_cache:'DISABLED',"
+                    "executable:process.execPath,platform:process.platform,version:process.version})+'\\n')")
+
+
+def node_root(environment):
+    runner = environment.get("RUNNER_TEMP")
+    run, attempt = environment.get("GITHUB_RUN_ID"), environment.get("GITHUB_RUN_ATTEMPT")
+    need(type(runner) is str and 0 < len(runner) <= 4096 and runner.isprintable() and ":" not in runner,
+         "invalid diagnostic runtime root")
+    path = Path(runner)
+    need(path.is_absolute() and str(path) == runner and ".." not in path.parts, "invalid diagnostic runtime root")
+    need(type(run) is str and re.fullmatch(r"[1-9][0-9]{0,18}", run) is not None and int(run) < 2**63 and attempt == "1",
+         "invalid diagnostic runtime identity")
+    result = path / ("forge-b-node-" + run + "-1")
+    need(len(str(result / "expose").encode("utf-8")) <= 4096, "invalid diagnostic runtime root")
+    return result
+
+
+def profile_path(environment):
+    return str(Path(PROVIDER).parent) + ":" + str(node_root(environment) / "expose") + ":/usr/bin:/bin"
+
+
+def node_pin():
+    return {"archive_sha256": NODE_ARCHIVE_SHA256, "archive_bytes": NODE_ARCHIVE_BYTES,
+            "manifest_sha256": NODE_MANIFEST_SHA256, "manifest_bytes": NODE_MANIFEST_BYTES,
+            "regular_bytes": NODE_SELECTED_BYTES, "entries": 2387, "files": 1928, "directories": 459,
+            "node_version": "v24.21.0", "npm_version": "11.19.0"}
+
+
+def node_binding(environment, deadline_ns):
+    document, _ = runtime_json(Path(environment["EVIDENCE"]) / "launch-bootstrap.json", 256 * 1024, deadline_ns)
+    binding, source = document["binding"], document["source"]
+    validate_binding(binding)
+    validate_source(source, binding)
+    need(str(binding["run_id"]) == environment["GITHUB_RUN_ID"] and binding["run_attempt"] == 1
+         and source["candidate_sha"] == environment["GITHUB_SHA"] == environment["GITHUB_WORKFLOW_SHA"]
+         and binding["boot_id"] == read_regular("/proc/sys/kernel/random/boot_id", 64).decode("ascii").strip(),
+         "private Node provision binding changed")
+    need(runtime_file(Path(environment["GITHUB_WORKSPACE"]) / HELPER, deadline_ns)["sha256"] == source["helper_sha256"][HELPER],
+         "private Node provision binding changed")
+    return {"run_id": binding["run_id"], "run_attempt": 1, "boot_id": binding["boot_id"],
+            "candidate_sha": source["candidate_sha"], "source_sha256": source["source_sha256"],
+            "source_record_sha256": runtime_digest(source), "job_started_ns": binding["job_started_ns"]}
+
+
+def node_aliases(root, deadline_ns):
+    """The two explicitly generated symlinks are outside the regular tree walker."""
+    runtime_remaining(deadline_ns)
+    root, expose = Path(root), Path(root) / "expose"
+    runtime_directory(root, private=True)
+    before = expose.lstat()
+    runtime_directory(expose, private=True)
+    need(sorted(p.name for p in expose.iterdir()) == sorted(NODE_ALIASES), "private Node exposure changed")
+    result = {}
+    for name, target in NODE_ALIASES.items():
+        runtime_remaining(deadline_ns)
+        path = expose / name
+        info = path.lstat()
+        need(stat.S_ISLNK(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.getuid() and info.st_gid == os.getgid()
+             and os.readlink(path) == target, "private Node exposure changed")
+        expected = root / target.removeprefix("../")
+        need(path.resolve(strict=True) == expected and expected.resolve(strict=True) == expected,
+             "private Node exposure changed")
+        identity = expected.lstat()
+        need(stat.S_ISREG(identity.st_mode) and identity.st_nlink == 1 and stat.S_IMODE(identity.st_mode) == 0o700
+             and identity.st_uid == os.getuid() and identity.st_gid == os.getgid()
+             and runtime_stat(expected.lstat()) == runtime_stat(identity)
+             and runtime_stat(path.lstat()) == runtime_stat(info) and os.readlink(path) == target,
+             "private Node exposure changed")
+        result[name] = {"path": str(path), "target": target, "realpath": str(expected), "device": info.st_dev,
+                        "inode": info.st_ino, "uid": info.st_uid, "gid": info.st_gid, "mode": stat.S_IMODE(info.st_mode)}
+    need(runtime_stat(expose.lstat()) == runtime_stat(before)
+         and sorted(p.name for p in expose.iterdir()) == sorted(NODE_ALIASES), "private Node exposure changed")
+    return result
+
+
+def node_vendor_inventory(root, deadline_ns):
+    """Hash the actual entire prefix into the fixed normalized vendor manifest."""
+    root, base = Path(root), Path(root) / "runtime"
+    runtime_directory(root, private=True)
+    runtime_directory(base, private=True)
+    rows, files, directories, seen_directories = {}, [], [], {}
+    count = total = 0
+    for current, dirs, names in os.walk(base, followlinks=False, onerror=runtime_walk_error):
+        runtime_remaining(deadline_ns)
+        current = Path(current)
+        for path in [current, *(current / n for n in dirs), *(current / n for n in names)]:
+            name = path.relative_to(root).as_posix()
+            if name in rows:
+                continue
+            count += 1
+            need(count <= 2387, "private Node vendor inventory changed")
+            info = path.lstat()
+            need(info.st_uid == os.getuid() and info.st_gid == os.getgid(), "private Node vendor inventory changed")
+            if stat.S_ISDIR(info.st_mode):
+                directories.append(runtime_directory(path, private=True))
+                seen_directories[path] = runtime_stat(info)
+                row = {"path": name, "type": "directory", "mode": "0700", "bytes": 0, "sha256": None}
+            else:
+                item = runtime_file(path, deadline_ns)
+                need(item["mode"] in {0o600, 0o700} and item["uid"] == os.getuid() and item["gid"] == os.getgid(),
+                     "private Node vendor inventory changed")
+                total += item["bytes"]
+                need(total <= NODE_SELECTED_BYTES, "private Node vendor inventory changed")
+                files.append(item)
+                row = {"path": name, "type": "regular", "mode": format(item["mode"], "04o"),
+                       "bytes": item["bytes"], "sha256": item["sha256"]}
+            rows[name] = row
+    for path, identity in seen_directories.items():
+        runtime_remaining(deadline_ns)
+        need(runtime_stat(path.lstat()) == identity and path.resolve(strict=True) == path,
+             "private Node vendor inventory changed")
+    raw = canonical([rows[name] for name in sorted(rows)])
+    need(len(files) == 1928 and len(directories) == 459 and total == NODE_SELECTED_BYTES
+         and len(raw) == NODE_MANIFEST_BYTES and hashlib.sha256(raw).hexdigest() == NODE_MANIFEST_SHA256,
+         "private Node vendor inventory changed")
+    runtime_remaining(deadline_ns)
+    return {"manifest_sha256": NODE_MANIFEST_SHA256, "manifest_bytes": len(raw), "regular_bytes": total,
+            "files": files, "directories": directories}
+
+
+def node_provision(environment, deadline_ns):
+    root = node_root(environment)
+    runtime_directory(root, private=True)
+    need(sorted(p.name for p in root.iterdir()) == ["expose", "runtime"], "private Node provision incomplete")
+    value, checksum = runtime_json(Path(environment["EVIDENCE"]) / "node-provision.json", NODE_RECORD_LIMIT, deadline_ns)
+    need(type(value) is dict and value.keys() == NODE_RECORD_KEYS and type(value["schema_version"]) is int
+         and value["schema_version"] == 1 and value["kind"] == "private-pinned-node"
+         and value["vendor"] == node_pin() and value["binding"] == node_binding(environment, deadline_ns),
+         "private Node provision binding changed")
+    need(value["root"] == runtime_directory(root, private=True)
+         and value["expose"] == runtime_directory(root / "expose", private=True), "private Node provision binding changed")
+    node_vendor_inventory(root, deadline_ns)
+    need(value["aliases"] == node_aliases(root, deadline_ns), "private Node exposure changed")
+    return {"record_sha256": checksum, **value}
+
+
+class NodeXZReader:
+    """Public file interface only; limit each decoder output and its private memory."""
+    def __init__(self, stream, deadline_ns):
+        import lzma
+        self.stream, self.deadline_ns = stream, deadline_ns
+        self.decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=128 * 1024 * 1024)
+        self.total, self.sha, self.ended = 0, hashlib.sha256(), False
+
+    def read(self, size):
+        need(type(size) is int and size >= 0, "private Node archive rejected")
+        if size == 0:
+            return b""
+        while not self.ended:
+            runtime_remaining(self.deadline_ns)
+            incoming = self.stream.read(65536) if self.decoder.needs_input else b""
+            need(incoming or not self.decoder.needs_input, "private Node archive rejected")
+            chunk = self.decoder.decompress(incoming, max_length=min(size, 65536))
+            self.total += len(chunk)
+            need(self.total <= 256 * 1024 * 1024, "private Node archive rejected")
+            self.sha.update(chunk)
+            if self.decoder.eof:
+                need(not self.decoder.unused_data and not self.stream.read(1), "private Node archive rejected")
+                self.ended = True
+            if chunk:
+                return chunk
+        return b""
+
+
+def node_member_path(member):
+    name = member.name.rstrip("/")
+    parts = name.split("/")
+    try:
+        encoded = name.encode("utf-8", "strict")
+        lengths = [len(part.encode("utf-8", "strict")) for part in parts]
+    except UnicodeError as exc:
+        raise ServiceError("private Node archive rejected") from exc
+    need(len(encoded) <= 256 and len(parts) <= 16 and all(0 < n <= 128 for n in lengths)
+         and all(part not in {".", ".."} for part in parts) and parts[0] == NODE_ARCHIVE_ROOT
+         and not name.startswith("/") and "\\" not in name and "\0" not in name
+         and not member.pax_headers and not member.issparse(), "private Node archive rejected")
+    return name, "/".join(parts[1:])
+
+
+def node_extract(archive_path, root, deadline_ns):
+    """Authenticate before decode; exclusively create the exact selected regular tree."""
+    import tarfile
+    archive_path, root = Path(archive_path), Path(root)
+    runtime_directory(root, private=True)
+    need(archive_path.lstat().st_size == NODE_ARCHIVE_BYTES, "private Node archive identity changed")
+    archive = runtime_file(archive_path, deadline_ns)
+    need(archive["bytes"] == NODE_ARCHIVE_BYTES and archive["sha256"] == NODE_ARCHIVE_SHA256,
+         "private Node archive identity changed")
+    need(not os.path.lexists(root / "runtime"), "private Node provision incomplete")
+    created, rows, seen = set(), {}, set()
+
+    def add_directory(relative):
+        if relative in created:
+            return
+        target = root / relative
+        if target.parent != root:
+            add_directory(target.parent.relative_to(root).as_posix())
+        runtime_remaining(deadline_ns)
+        parent = runtime_directory(target.parent, private=True)
+        fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            need((os.fstat(fd).st_dev, os.fstat(fd).st_ino) == (parent["device"], parent["inode"]),
+                 "private Node materialization changed")
+            os.mkdir(target.name, 0o700, dir_fd=fd)
+            runtime_directory(target, private=True)
+            need(runtime_directory(target.parent, private=True) == parent, "private Node materialization changed")
+        finally:
+            os.close(fd)
+        created.add(relative)
+        rows[relative] = {"path": relative, "type": "directory", "mode": "0700", "bytes": 0, "sha256": None}
+
+    add_directory("runtime")
+    count = files = directories = links = regular = 0
+    fd = os.open(archive_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        before = runtime_stat(os.fstat(stream.fileno()))
+        # Recheck the retained opened archive so replacing it between hash/open
+        # cannot substitute a different compressed stream.
+        digest, received = hashlib.sha256(), 0
+        while True:
+            runtime_remaining(deadline_ns)
+            chunk = stream.read(65536)
+            if not chunk:
+                break
+            received += len(chunk)
+            need(received <= NODE_ARCHIVE_BYTES, "private Node archive identity changed")
+            digest.update(chunk)
+        need(received == NODE_ARCHIVE_BYTES and digest.hexdigest() == NODE_ARCHIVE_SHA256,
+             "private Node archive identity changed")
+        stream.seek(0)
+        decoded = NodeXZReader(stream, deadline_ns)
+        with tarfile.open(fileobj=decoded, mode="r|", bufsize=10240) as tar:
+            for member in tar:
+                runtime_remaining(deadline_ns)
+                count += 1
+                need(count <= 6000, "private Node archive rejected")
+                name, relative = node_member_path(member)
+                need(name not in seen and (relative or member.isdir()), "private Node archive rejected")
+                seen.add(name)
+                take = relative in {"bin/node", "LICENSE", "lib/node_modules/npm"} or relative.startswith("lib/node_modules/npm/")
+                destination = "runtime/" + relative
+                if member.isdir():
+                    directories += 1
+                    need(member.mode == 0o755 and member.size == 0, "private Node archive rejected")
+                    if take:
+                        add_directory(destination)
+                elif member.issym():
+                    links += 1
+                    need(relative in NODE_VENDOR_LINKS and member.linkname == NODE_VENDOR_LINKS[relative]
+                         and member.mode == 0o777 and member.size == 0, "private Node archive rejected")
+                else:
+                    need(member.type == tarfile.REGTYPE and member.mode in {0o644, 0o755} and 0 <= member.size <= 128 * 1024 * 1024,
+                         "private Node archive rejected")
+                    files += 1
+                    regular += member.size
+                    need(regular <= 256 * 1024 * 1024, "private Node archive rejected")
+                    output = parent_fd = None
+                    checksum, total = hashlib.sha256(), 0
+                    mode = 0o700 if member.mode & 0o111 else 0o600
+                    if take:
+                        target = root / destination
+                        add_directory(target.parent.relative_to(root).as_posix())
+                        parent = runtime_directory(target.parent, private=True)
+                        parent_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                        need((os.fstat(parent_fd).st_dev, os.fstat(parent_fd).st_ino) == (parent["device"], parent["inode"]),
+                             "private Node materialization changed")
+                    try:
+                        if take:
+                            output = os.open(target.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                             mode, dir_fd=parent_fd)
+                        with tar.extractfile(member) as content:
+                            while True:
+                                runtime_remaining(deadline_ns)
+                                chunk = content.read(65536)
+                                if not chunk:
+                                    break
+                                total += len(chunk)
+                                need(total <= member.size, "private Node archive rejected")
+                                if take:
+                                    checksum.update(chunk)
+                                    view = memoryview(chunk)
+                                    while view:
+                                        runtime_remaining(deadline_ns)
+                                        written = os.write(output, view)
+                                        need(written > 0, "private Node materialization changed")
+                                        view = view[written:]
+                        need(total == member.size, "private Node archive rejected")
+                        if take:
+                            info = os.fstat(output)
+                            need(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.getuid()
+                                 and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == mode and info.st_size == total,
+                                 "private Node materialization changed")
+                            need(runtime_stat(target.lstat()) == runtime_stat(info)
+                                 and runtime_directory(target.parent, private=True) == parent,
+                                 "private Node materialization changed")
+                            rows[destination] = {"path": destination, "type": "regular", "mode": format(mode, "04o"),
+                                                 "bytes": total, "sha256": checksum.hexdigest()}
+                    finally:
+                        if output is not None:
+                            os.close(output)
+                        if parent_fd is not None:
+                            os.close(parent_fd)
+        while decoded.read(65536):
+            runtime_remaining(deadline_ns)
+        need(decoded.total == NODE_DECODED_BYTES and decoded.sha.hexdigest() == NODE_DECODED_SHA256
+             and (count, files, directories, links, regular) == (5888, 4797, 1088, 3, 201362264),
+             "private Node archive rejected")
+        need(before == runtime_stat(os.fstat(stream.fileno())) == runtime_stat(archive_path.lstat()),
+             "private Node archive identity changed")
+    raw = canonical([rows[name] for name in sorted(rows)])
+    need(len(raw) == NODE_MANIFEST_BYTES and hashlib.sha256(raw).hexdigest() == NODE_MANIFEST_SHA256,
+         "private Node vendor inventory changed")
+    return node_vendor_inventory(root, deadline_ns)
+
+
+@contextmanager
+def node_wall_limit(deadline_ns):
+    import http.client
+    # Worker-only alarm also bounds libc DNS and TLS/header processing, which a
+    # socket timeout alone does not bound. Never overwrite an earlier timer.
+    need(signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0), "private Node component deadline")
+    old_handler = signal.getsignal(signal.SIGALRM)
+    failure = None
+
+    def retain(exc):
+        nonlocal failure
+        expected = (ServiceError, OSError, http.client.HTTPException)
+        old_control = failure is not None and (getattr(failure, "_forge_control", False) or not isinstance(failure, expected))
+        new_control = getattr(exc, "_forge_control", False) or not isinstance(exc, expected)
+        if failure is None or (not old_control and new_control):
+            failure = exc
+
+    def expired(signum, frame):
+        error = ServiceError("private Node component deadline")
+        error._forge_control = True
+        raise error
+
+    try:
+        signal.signal(signal.SIGALRM, expired)
+        signal.setitimer(signal.ITIMER_REAL, runtime_remaining(deadline_ns))
+        yield
+        runtime_remaining(deadline_ns)
+    except BaseException as exc:  # noqa: BLE001 - preserve first control through both restorations
+        retain(exc)
+    finally:
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+        except BaseException as exc:  # noqa: BLE001 - still attempt the independent handler restore
+            retain(exc)
+        try:
+            signal.signal(signal.SIGALRM, old_handler)
+        except BaseException as exc:  # noqa: BLE001
+            retain(exc)
+    if failure is not None:
+        raise failure
+
+
+def node_download(root, deadline_ns):
+    """One fixed TLS GET; http.client has no ambient proxy/auth/redirect handlers."""
+    import http.client
+    import ssl
+    runtime_remaining(deadline_ns)
+    transfer_deadline = min(deadline_ns, time.monotonic_ns() + 60 * NS)
+    connection = http.client.HTTPSConnection("nodejs.org", timeout=min(10, runtime_remaining(transfer_deadline)),
+                                            context=ssl.create_default_context())
+    path = Path(root) / "archive.tar.xz"
+    fd = response = failure = None
+
+    def retain(exc):
+        nonlocal failure
+        expected = (ServiceError, OSError, http.client.HTTPException)
+        old_control = failure is not None and (getattr(failure, "_forge_control", False) or not isinstance(failure, expected))
+        new_control = getattr(exc, "_forge_control", False) or not isinstance(exc, expected)
+        if failure is None or (not old_control and new_control):
+            failure = exc
+
+    try:
+        with node_wall_limit(min(transfer_deadline, time.monotonic_ns() + 10 * NS)):
+            connection.connect()
+        with node_wall_limit(transfer_deadline):
+            connection.sock.settimeout(min(10, runtime_remaining(transfer_deadline)))
+            connection.request("GET", "/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz",
+                               headers={"Accept-Encoding": "identity", "Connection": "close"})
+            response = connection.getresponse()
+            need(response.status == 200 and response.getheader("Content-Encoding") in {None, "identity"}
+                 and response.getheader("Content-Length") == str(NODE_ARCHIVE_BYTES), "private Node download rejected")
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            digest, total = hashlib.sha256(), 0
+            while True:
+                runtime_remaining(transfer_deadline)
+                # read1 performs at most one underlying socket read. The outer
+                # original transfer alarm also covers a peer trickling headers.
+                if connection.sock is not None:
+                    connection.sock.settimeout(min(10, runtime_remaining(transfer_deadline)))
+                chunk = response.read1(65536)
+                runtime_remaining(transfer_deadline)
+                if not chunk:
+                    break
+                total += len(chunk)
+                need(total <= 32 * 1024 * 1024 and total <= NODE_ARCHIVE_BYTES, "private Node download rejected")
+                digest.update(chunk)
+                view = memoryview(chunk)
+                while view:
+                    runtime_remaining(transfer_deadline)
+                    written = os.write(fd, view)
+                    need(written > 0, "private Node download rejected")
+                    view = view[written:]
+            need(total == NODE_ARCHIVE_BYTES and digest.hexdigest() == NODE_ARCHIVE_SHA256,
+                 "private Node archive identity changed")
+    except BaseException as exc:  # noqa: BLE001 - retain the first control through closure
+        retain(exc)
+    finally:
+        closers = ([lambda: os.close(fd)] if fd is not None else [])
+        closers += ([response.close] if response is not None else [])
+        closers.append(connection.close)
+        for close in closers:
+            try:
+                close()
+            except BaseException as exc:  # noqa: BLE001
+                retain(exc)
+    if failure is not None:
+        raise failure
+    runtime_remaining(transfer_deadline)
+    return path
+
+
+def node_owned_command(argv, environment, cwd, deadline_ns, *, settlement_ns=5 * NS):
+    """One retained child/session, one original cutoff, one bounded settlement."""
+    runtime_remaining(deadline_ns)
+    need(type(settlement_ns) is int and 0 < settlement_ns <= 5 * NS, "private Node component deadline")
+    cutoff = deadline_ns - settlement_ns
+    need(time.monotonic_ns() < cutoff, "private Node component deadline")
+    process = selector = failure = result = None
+    wait_owned = False
+    chunks = {"stdout": bytearray(), "stderr": bytearray()}
+
+    def retain(exc):
+        nonlocal failure
+        expected = (ServiceError, OSError, subprocess.TimeoutExpired)
+        old_control = failure is not None and (getattr(failure, "_forge_control", False) or not isinstance(failure, expected))
+        new_control = getattr(exc, "_forge_control", False) or not isinstance(exc, expected)
+        if failure is None or (not old_control and new_control):
+            failure = exc
+
+    def observe():
+        nonlocal wait_owned
+        need(wait_owned, "private Node worker settlement incomplete")
+        try:
+            terminal = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            need(terminal is None or (terminal.si_pid == process.pid
+                 and terminal.si_code in {os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED}),
+                 "private Node worker settlement incomplete")
+            return terminal
+        except BaseException:  # noqa: BLE001 - never signal after uncertain wait ownership
+            wait_owned = False
+            raise
+
+    try:
+        process = subprocess.Popen(argv, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True, start_new_session=True)
+        wait_owned = True
+        selector = selectors.DefaultSelector()
+        for stream, name in ((process.stdout, "stdout"), (process.stderr, "stderr")):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ, name)
+        while True:
+            left = (cutoff - time.monotonic_ns()) / NS
+            need(left > 0, "private Node component deadline")
+            if not selector.get_map():
+                terminal = observe()
+                if terminal is not None:
+                    # Retain the original leader PID while signaling its group,
+                    # including members that closed both inherited pipes. This
+                    # proves signaling and direct-child reap, not whole-tree
+                    # quiescence or supervision of an escaped session.
+                    need(time.monotonic_ns() < cutoff, "private Node component deadline")
+                    need(os.getpgid(process.pid) == process.pid and os.getsid(process.pid) == process.pid,
+                         "private Node worker settlement incomplete")
+                    need(time.monotonic_ns() < cutoff, "private Node component deadline")
+                    os.killpg(process.pid, signal.SIGKILL)
+                    need(time.monotonic_ns() < cutoff, "private Node component deadline")
+                    code = process.wait(timeout=0)
+                    wait_owned = False
+                    expected_code = terminal.si_status if terminal.si_code == os.CLD_EXITED else -terminal.si_status
+                    need(code == expected_code, "private Node worker settlement incomplete")
+                    break
+            for key, _ in selector.select(min(left, 0.1)):
+                chunk = os.read(key.fd, 65536)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                chunks[key.data].extend(chunk)
+                need(sum(map(len, chunks.values())) <= MAX_METADATA, "private Node component output bound")
+        need(process.returncode == 0 and not chunks["stderr"], "private Node worker failed")
+        result = bytes(chunks["stdout"])
+    except BaseException as exc:  # noqa: BLE001 - first control/unexpected error keeps identity
+        retain(exc)
+    finally:
+        if selector is not None:
+            try:
+                selector.close()
+            except BaseException as exc:  # noqa: BLE001
+                retain(exc)
+        if process is not None:
+            try:
+                # No poll/reap precedes this path. An exited leader still owns
+                # its PID, so its original group can be signaled safely.
+                if process.returncode is None and wait_owned and time.monotonic_ns() < deadline_ns:
+                    observe()
+                    need(os.getpgid(process.pid) == process.pid and os.getsid(process.pid) == process.pid,
+                         "private Node worker settlement incomplete")
+                    need(time.monotonic_ns() < deadline_ns, "private Node component deadline")
+                    os.killpg(process.pid, signal.SIGKILL)
+                    left = (deadline_ns - time.monotonic_ns()) / NS
+                    if left > 0:
+                        process.wait(timeout=min(5, left))
+                        wait_owned = False
+                need(process.returncode is not None, "private Node worker settlement incomplete")
+            except BaseException as exc:  # noqa: BLE001 - no second wait or renewed budget
+                retain(exc)
+            finally:
+                for pipe in (process.stdout, process.stderr):
+                    if pipe is not None:
+                        try:
+                            pipe.close()
+                        except BaseException as exc:  # noqa: BLE001
+                            retain(exc)
+    if failure is not None:
+        raise failure
+    need(time.monotonic_ns() < cutoff, "private Node component deadline")
+    return result
+
+
+def node_install_worker(environment, deadline_ns):
+    check_private_profile(environment, deadline_ns=deadline_ns)
+    root = node_root(environment)
+    need(sorted(p.name for p in root.iterdir()) == ["expose"] and not any((root / "expose").iterdir()),
+         "private Node provision incomplete")
+    binding = node_binding(environment, deadline_ns)
+    archive = node_download(root, deadline_ns)
+    node_extract(archive, root, deadline_ns)
+    runtime_remaining(deadline_ns)
+    # No failure cleanup: a partial tree stays unadmitted. Normal reproducible
+    # staging removal happens before the original success cutoff only.
+    os.unlink(archive)
+    runtime_remaining(deadline_ns)
+    for name, target in NODE_ALIASES.items():
+        os.symlink(target, root / "expose" / name)
+    aliases = node_aliases(root, deadline_ns)
+    need(binding == node_binding(environment, deadline_ns), "private Node provision binding changed")
+    value = {"schema_version": 1, "kind": "private-pinned-node", "binding": binding, "vendor": node_pin(),
+             "root": runtime_directory(root, private=True), "expose": runtime_directory(root / "expose", private=True),
+             "aliases": aliases}
+    runtime_write(Path(environment["EVIDENCE"]) / "node-provision.json", value, NODE_RECORD_LIMIT, deadline_ns)
+    runtime_remaining(deadline_ns)
+
+
+def node_install(environment, deadline_ns):
+    started = time.monotonic_ns()
+    need(type(deadline_ns) is int and started < deadline_ns <= started + 600 * NS, "private Node component deadline")
+    provisional_cutoff = min(started + 175 * NS, deadline_ns - 5 * NS)
+    runtime_remaining(provisional_cutoff)
+    # Read the existing authenticated clock before scans or network work. This
+    # does not add a fresh window to the remaining original prelude budget.
+    document, _ = runtime_json(Path(environment["EVIDENCE"]) / "launch-bootstrap.json", 256 * 1024, provisional_cutoff)
+    validate_binding(document["binding"])
+    validate_source(document["source"], document["binding"])
+    clock_monotonic, clock_utc = time.monotonic_ns(), time.time_ns()
+    need(document["binding"]["job_started_ns"] <= clock_utc, "private Node component deadline")
+    prelude_left = document["binding"]["job_started_ns"] + (JOB_SECONDS - STEP_SECONDS - CLEANUP_SECONDS - ARTIFACT_SECONDS) * NS - clock_utc
+    total_deadline = min(started + 180 * NS, deadline_ns, clock_monotonic + prelude_left)
+    need(total_deadline > time.monotonic_ns() + 5 * NS, "private Node component deadline")
+    work_cutoff = total_deadline - 5 * NS
+    binding = node_binding(environment, work_cutoff)
+    need(binding["job_started_ns"] == document["binding"]["job_started_ns"], "private Node provision binding changed")
+    check_private_profile(environment, deadline_ns=work_cutoff)
+    argv = [PROVIDER, "-B", "-I", "-S", str(Path(environment["GITHUB_WORKSPACE"]) / HELPER),
+            "node-install-worker", "--deadline-ns", str(work_cutoff)]
+    raw = node_owned_command(argv, environment, environment["GITHUB_WORKSPACE"], total_deadline)
+    need(raw == b"", "private Node worker failed")
+    node_provision(environment, work_cutoff)
+    runtime_remaining(work_cutoff)
+
+
+def node_probe(environment, deadline_ns):
+    # Each executable probe starts only after full source/vendor/alias revalidation.
+    root, expose = node_root(environment), node_root(environment) / "expose"
+    identity = {"arch": "x64", "compile_cache": "DISABLED", "executable": str(root / "runtime/bin/node"),
+                "platform": "linux", "version": "v24.21.0"}
+    commands = [([str(expose / "node"), "--version"], b"v24.21.0\n"),
+                ([str(expose / "npm"), "--prefix=" + str(expose), "--userconfig=" + str(expose / ".npm-user-probe"),
+                  "--globalconfig=" + str(expose / ".npm-global-probe"), "--version"], b"11.19.0\n"),
+                ([str(expose / "node"), "-e", NODE_CACHE_PROBE], identity)]
+    for argv, expected in commands:
+        node_provision(environment, deadline_ns)
+        need(environment.get("NODE_DISABLE_COMPILE_CACHE") == "1" and environment.get("PATH") == profile_path(environment),
+             "changed fixed payload environment")
+        timeout = min(5, runtime_remaining(deadline_ns))
+        probe_deadline = min(deadline_ns, time.monotonic_ns() + int(timeout * NS))
+        settlement_ns = int(min(0.25, timeout / 2) * NS)
+        work_cutoff = probe_deadline - settlement_ns
+        raw = node_owned_command(argv, environment, expose, probe_deadline, settlement_ns=settlement_ns)
+        runtime_remaining(work_cutoff)
+        if type(expected) is dict:
+            observed = json.loads(raw, object_pairs_hook=_pairs, parse_constant=_no_constant)
+            need(type(observed) is dict and observed == expected, "private Node compatibility failed")
+        else:
+            need(raw == expected, "private Node compatibility failed")
+        runtime_remaining(work_cutoff)
+        node_aliases(root, work_cutoff)
+        runtime_remaining(work_cutoff)
+    return {"node_version": "v24.21.0", "npm_version": "11.19.0", "compile_cache": "DISABLED", "node_identity": identity}
 
 
 def runtime_remaining(deadline_ns):
@@ -1049,7 +1697,7 @@ def runtime_file(path, deadline_ns):
 
 DIRECTORY_STOP_LIMIT = 2048
 DIRECTORY_LABELS = frozenset({"private_home", "private_config", "private_cache", "private_data", "private_tmp",
-                              "private_local", "provider_bin", "usr_local_bin", "usr_bin", "bin_alias"})
+                              "private_local", "private_node", "provider_bin", "usr_local_bin", "usr_bin", "bin_alias"})
 DIRECTORY_TYPES = {stat.S_IFDIR: "directory", stat.S_IFREG: "regular", stat.S_IFLNK: "symlink",
                    stat.S_IFIFO: "fifo", stat.S_IFSOCK: "socket", stat.S_IFCHR: "character", stat.S_IFBLK: "block"}
 DIRECTORY_OBSERVATION_KEYS = {"label", "file_type", "uid", "gid", "mode", "ordinary_uid", "ordinary_gid",
@@ -1129,8 +1777,17 @@ def check_private_profile(environment, *, deadline_ns):
     # Config starts empty, and the fixed dependency installer has no reason to
     # populate it. Reject unknown configuration rather than interpreting secrets.
     need(not any((home / ".config").iterdir()), "unexpected private HOME configuration")
+    node = node_root(environment)
+    roots.append(runtime_directory(node, private=True, diagnostic_label="private_node"))
+    runtime_directory(node / "expose", private=True, diagnostic_label="private_node")
+    members = sorted(p.name for p in (node / "expose").iterdir())
+    if not members:
+        need(sorted(p.name for p in node.iterdir()) == ["expose"], "private Node provision incomplete")
+    else:
+        need(members == sorted(NODE_ALIASES), "private Node exposure changed")
+        node_provision(environment, deadline_ns)
     directories = []
-    for component, label in zip(PROFILE_PATH.split(":"), ("provider_bin", "usr_bin", "bin_alias"), strict=True):
+    for component, label in zip(profile_path(environment).split(":"), ("provider_bin", "private_node", "usr_bin", "bin_alias"), strict=True):
         path = Path(component)
         real = path.resolve(strict=True)
         need(str(real) == component or (component == "/bin" and str(real) == "/usr/bin"), "unreviewed PATH alias")
@@ -1142,12 +1799,18 @@ def check_private_profile(environment, *, deadline_ns):
     return {"roots": roots, "path_directories": directories}
 
 
-def runtime_executable(name, deadline_ns):
+def runtime_executable(name, deadline_ns, environment=None):
     import shutil
-    resolved = shutil.which(name, path=PROFILE_PATH)
+    environment = os.environ if environment is None else environment
+    if name in NODE_ALIASES:
+        node_provision(environment, deadline_ns)
+    resolved = shutil.which(name, path=profile_path(environment))
     need(resolved is not None, "declared diagnostic tool missing")
     path = Path(resolved)
     real = path.resolve(strict=True)
+    if name in NODE_ALIASES:
+        need(path == node_root(environment) / "expose" / name
+             and real == node_root(environment) / NODE_ALIASES[name].removeprefix("../"), "private Node exposure changed")
     result = runtime_file(real, deadline_ns)
     need(result["mode"] & 0o111, "runtime tool is not executable")
     return {"requested": name, "path": str(path), "realpath": str(real), "identity": result}
@@ -1249,8 +1912,15 @@ def runtime_walk_error(_):
     raise ServiceError("runtime package traversal unreadable")
 
 
-def runtime_inventory(probes, executables, deadline_ns):
+def runtime_inventory(probes, executables, deadline_ns, environment=None):
+    environment = os.environ if environment is None else environment
     roots, missing = inventory_import_roots(probes)
+    node = node_root(environment)
+    provision = node_provision(environment, deadline_ns)
+    native_root = str(node / "runtime")
+    need(not any(Path(native_root).is_relative_to(Path(root)) or Path(root).is_relative_to(node) for root in roots),
+         "overlapping runtime import boundaries")
+    roots = sorted([*roots, native_root])
     files, directories, directory_stats, count, total = {}, {}, {}, 0, 0
     for root in roots:
         base = Path(root)
@@ -1277,17 +1947,37 @@ def runtime_inventory(probes, executables, deadline_ns):
         runtime_remaining(deadline_ns)
         need(runtime_stat(Path(name).lstat()) == identity and Path(name).resolve(strict=True) == Path(name),
              "runtime package directory changed during inventory")
+    # Charge all leaves, including executables outside import roots, to the
+    # same aggregate and global deduplication. Native bytes were walked above.
     for item in executables.values():
-        files[item["realpath"]] = item["identity"]
+        if item["realpath"] not in files:
+            count += 1
+            total += item["identity"]["bytes"]
+            need(count <= RUNTIME_ENTRIES, "runtime package inventory entry bound")
+            need(total <= RUNTIME_TOTAL_LIMIT, "runtime package inventory byte bound")
+            files[item["realpath"]] = item["identity"]
+    for path in (node, node / "expose"):
+        name = str(path)
+        need(name not in directories and name not in files, "overlapping runtime import boundaries")
+        count += 1
+        directories[name] = runtime_directory(path, private=True)
+    aliases = node_aliases(node, deadline_ns)
+    count += len(aliases)
+    total += sum(len(item["target"].encode("utf-8")) for item in aliases.values())
+    need(count <= RUNTIME_ENTRIES, "runtime package inventory entry bound")
+    need(total <= RUNTIME_TOTAL_LIMIT, "runtime package inventory byte bound")
+    need(provision == node_provision(environment, deadline_ns), "private Node provision binding changed")
     result = {"schema_version": 1, "roots": roots, "missing_roots": missing, "directories": [directories[n] for n in sorted(directories)],
-              "files": [files[n] for n in sorted(files)]}
+              "files": [files[n] for n in sorted(files)], "native_aliases": aliases}
     need(len(canonical(result)) <= RUNTIME_INVENTORY_LIMIT, "runtime inventory encoded bound")
     runtime_remaining(deadline_ns)
     return result
 
 
-def current_executables(deadline_ns):
-    executables = {name: runtime_executable(name, deadline_ns) for name in REQUIRED_TOOLS}
+def current_executables(deadline_ns, environment=None):
+    environment = os.environ if environment is None else environment
+    node_provision(environment, deadline_ns)
+    executables = {name: runtime_executable(name, deadline_ns, environment) for name in REQUIRED_TOOLS}
     provider = Path(PROVIDER).resolve(strict=True)
     need(executables["python"]["realpath"] == executables["python3"]["realpath"] == str(provider),
          "PATH Python differs from provider")
@@ -1299,34 +1989,49 @@ def current_executables(deadline_ns):
 
 def validate_path_selection(value):
     need(type(value) is dict and value.keys() == set(PATH_SELECTION_TOOLS), "runtime PATH selection changed")
-    need(all(item is None or (type(item) is str and item in PATH_SELECTION_LABELS) for item in value.values()),
-         "runtime PATH selection changed")
+    for name, item in value.items():
+        need(item is None or (type(item) is str and item in (*PATH_SELECTION_LABELS, "private_node")),
+             "runtime PATH selection changed")
+        need((name in NODE_ALIASES and item == "private_node") or (name not in NODE_ALIASES and item != "private_node"),
+             "runtime PATH selection changed")
     need(len(canonical(value)) <= PATH_STOP_LIMIT, "runtime record encoded bound")
 
 
-def validate_path_observations(value):
+def approved_node_transition(name, observation):
+    return (name in NODE_ALIASES and observation["old"] in {None, "usr_local_bin"}
+            and observation["base"] is None and observation["new"] == "private_node")
+
+
+def validate_path_observations(value, *, rejected=True):
+    # Closed diagnostic labels do not authorize execution or an exception.
     need(type(value) is dict and value.keys() == set(PATH_SELECTION_TOOLS), "runtime PATH selection changed")
-    for observation in value.values():
-        need(type(observation) is dict and observation.keys() == {"old", "new"}, "runtime PATH selection changed")
-        for side, labels in (("old", OLD_PATH_SELECTION_LABELS), ("new", PATH_SELECTION_LABELS)):
+    for name, observation in value.items():
+        need(type(observation) is dict and observation.keys() == {"old", "base", "new"}, "runtime PATH selection changed")
+        for side, labels in (("old", OLD_PATH_SELECTION_LABELS), ("base", PATH_SELECTION_LABELS),
+                             ("new", (*PATH_SELECTION_LABELS, "private_node"))):
             item = observation[side]
             need(item is None or (type(item) is str and item in labels), "runtime PATH selection changed")
-    need(any(item["old"] != item["new"] for item in value.values()), "runtime PATH selection changed")
+            need(item != "private_node" or name in NODE_ALIASES, "runtime PATH selection changed")
+    if rejected:
+        need(any(not approved_node_transition(name, item) and
+                 (item["old"] != item["new"] or item["base"] != item["new"])
+                 for name, item in value.items()), "runtime PATH selection changed")
     need(len(canonical(value)) <= PATH_STOP_LIMIT, "runtime record encoded bound")
 
 
-def current_path_selection(deadline_ns):
+def current_path_selection(deadline_ns, environment=None, *, retain_observations=None):
     import shutil
-    # Metadata lookup only: no execution, resolution or trust of excluded tools.
-    # Repeated observations are bounded by the caller's original deadline; they
-    # do not claim atomicity against concurrent whole-host changes.
+    environment = os.environ if environment is None else environment
+    node_provision(environment, deadline_ns)
+    final_path = profile_path(environment)
     snapshots, finite_snapshots = [], []
     for _ in range(2):
         snapshot, finite_snapshot = {}, {}
         for name in PATH_SELECTION_TOOLS:
             observation, finite_observation = {}, {}
             for side, path, labels in (("old", OLD_PROFILE_PATH, OLD_PATH_SELECTION_LABELS),
-                                       ("new", PROFILE_PATH, PATH_SELECTION_LABELS)):
+                                       ("base", PROFILE_PATH, PATH_SELECTION_LABELS),
+                                       ("new", final_path, ("provider_bin", "private_node", "usr_bin", "bin_alias"))):
                 runtime_remaining(deadline_ns)
                 selected = shutil.which(name, path=path)
                 runtime_remaining(deadline_ns)
@@ -1339,36 +2044,49 @@ def current_path_selection(deadline_ns):
         snapshots.append(snapshot)
         finite_snapshots.append(finite_snapshot)
     try:
-        need(snapshots[0] == snapshots[1]
-             and all(item["old"] == item["new"] for snapshot in snapshots for item in snapshot.values()),
-             "runtime PATH selection changed")
+        need(snapshots[0] == snapshots[1], "runtime PATH selection changed")
+        for name, item in snapshots[0].items():
+            if name in NODE_ALIASES:
+                need(approved_node_transition(name, finite_snapshots[0][name])
+                     and item["new"] == str(node_root(environment) / "expose" / name), "runtime PATH selection changed")
+            else:
+                need(item["old"] == item["base"] == item["new"], "runtime PATH selection changed")
     except ServiceError as error:
         try:
-            for snapshot, observations in zip(snapshots, finite_snapshots, strict=True):
-                if any(item["old"] != item["new"] for item in snapshot.values()):
+            for observations in finite_snapshots:
+                if any(not approved_node_transition(name, item) and
+                       (item["old"] != item["new"] or item["base"] != item["new"])
+                       for name, item in observations.items()):
                     validate_path_observations(observations)
                     error.path_observations = observations
                     break
-        except Exception as diagnostic_error:  # noqa: BLE001 - optional finite metadata cannot replace STOP
+        except Exception as diagnostic_error:  # noqa: BLE001 - preserve fixed rejection and first controls
             if getattr(diagnostic_error, "_forge_control", False):
                 raise
         raise
     selection = {name: item["new"] for name, item in finite_snapshots[0].items()}
     validate_path_selection(selection)
+    validate_path_observations(finite_snapshots[0], rejected=False)
+    if retain_observations is not None:
+        need(type(retain_observations) is dict and not retain_observations, "runtime PATH selection changed")
+        retain_observations.update(finite_snapshots[0])
     runtime_remaining(deadline_ns)
     return selection
 
 
 def current_runtime(environment, *, deadline_ns):
     profile = check_private_profile(environment, deadline_ns=deadline_ns)
-    profile["path_selection"] = current_path_selection(deadline_ns)
-    executables = current_executables(deadline_ns)
+    profile["private_node"] = node_provision(environment, deadline_ns)
+    profile["path_observations"] = {}
+    profile["path_selection"] = current_path_selection(deadline_ns, environment, retain_observations=profile["path_observations"])
+    executables = current_executables(deadline_ns, environment)
+    profile["node_probe"] = node_probe(environment, deadline_ns)
     probes = {"provider": runtime_probe(PROVIDER, environment, deadline_ns),
               "system": runtime_probe("/usr/bin/python3", environment, deadline_ns)}
     need(probes["provider"]["version"] == [3, 12, 14], "wrong provider patch version")
     profile.update(executables=executables, provider={k: v for k, v in probes["provider"].items() if k != "packages"},
                    system={k: v for k, v in probes["system"].items() if k != "packages"})
-    return profile, probes, runtime_inventory(probes, executables, deadline_ns)
+    return profile, probes, runtime_inventory(probes, executables, deadline_ns, environment)
 
 
 def runtime_write(path, value, limit, deadline_ns):
@@ -1536,6 +2254,8 @@ def revalidate_runtime_admission(record, environment, source, *, deadline_ns):
     need(type(record["profile_metadata"]) is dict and "path_selection" in record["profile_metadata"],
          "runtime PATH selection changed")
     validate_path_selection(record["profile_metadata"]["path_selection"])
+    need("path_observations" in record["profile_metadata"], "runtime PATH selection changed")
+    validate_path_observations(record["profile_metadata"]["path_observations"], rejected=False)
     evidence, repo = Path(environment["EVIDENCE"]), Path(environment["GITHUB_WORKSPACE"])
     retained, _ = runtime_json(evidence / "runtime-admission.json", MAX_METADATA, deadline_ns)
     need(retained == record, "runtime admission changed")
@@ -1546,10 +2266,10 @@ def revalidate_runtime_admission(record, environment, source, *, deadline_ns):
     # Rehash authenticated executable and package bytes BEFORE importing them.
     # A changed package may not execute merely to report that it has changed.
     check_private_profile(environment, deadline_ns=deadline_ns)
-    executables = current_executables(deadline_ns)
+    executables = current_executables(deadline_ns, environment)
     need(executables == record["profile_metadata"]["executables"], "installed executable drift before import")
     saved_probes, _ = runtime_json(runtime_record_path(environment, "runtime-packages.json"), MAX_METADATA, deadline_ns)
-    before = runtime_inventory(saved_probes, executables, deadline_ns)
+    before = runtime_inventory(saved_probes, executables, deadline_ns, environment)
     need(runtime_digest(before) == record["records_sha256"]["runtime-inventory.json"], "installed package drift before import")
     from forge_ci import launch
     need(launch.inspect_checkout(repo, source["candidate_sha"], deadline=deadline_ns / NS) == source,
@@ -1583,8 +2303,26 @@ def main(argv=None):
         command = commands.add_parser(role)
         command.add_argument("--repo", required=True, type=Path)
         command.add_argument("--evidence", required=True, type=Path)
+    install = commands.add_parser("node-install")
+    for name in ("repo", "evidence"):
+        install.add_argument("--" + name, required=True, type=Path)
+    install.add_argument("--deadline-ns", required=True, type=int)
+    worker = commands.add_parser("node-install-worker")
+    worker.add_argument("--deadline-ns", required=True, type=int)
     args = parser.parse_args(argv)
     try:
+        if args.role in {"node-install", "node-install-worker"}:
+            os.umask(0o077)
+            environment = payload_environment(os.environ)
+            if args.role == "node-install":
+                need(args.repo == Path(environment["GITHUB_WORKSPACE"]) and args.evidence == Path(environment["EVIDENCE"]),
+                     "runtime fixed paths changed")
+                node_install(environment, args.deadline_ns)
+            else:
+                need(time.monotonic_ns() < args.deadline_ns <= time.monotonic_ns() + 175 * NS,
+                     "private Node component deadline")
+                node_install_worker(environment, args.deadline_ns)
+            return 0
         if args.role in {"profile-check", "preflight"}:
             os.umask(0o077)
             environment = payload_environment(os.environ)
@@ -1602,8 +2340,8 @@ def main(argv=None):
                             raise
                     raise
                 provider = str(Path(PROVIDER).resolve(strict=True))
-                need(runtime_executable("python", deadline_ns)["realpath"] == provider
-                     and runtime_executable("python3", deadline_ns)["realpath"] == provider,
+                need(runtime_executable("python", deadline_ns, environment)["realpath"] == provider
+                     and runtime_executable("python3", deadline_ns, environment)["realpath"] == provider,
                      "PATH Python differs from provider")
             else:
                 try:

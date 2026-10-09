@@ -238,6 +238,7 @@ print(sys.version)
 '''
 
 PROFILE_PATH = "/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/bin:/bin"
+NODE_PATH_SHELL = "/opt/hostedtoolcache/Python/3.12.14/x64/bin:${RUNNER_TEMP}/forge-b-node-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/expose:/usr/bin:/bin"
 PROFILE_NATIVE_KEYS = tuple("""RUNNER_TEMP RUNNER_OS RUNNER_ARCH GITHUB_WORKSPACE GITHUB_EVENT_PATH
 GITHUB_EVENT_NAME GITHUB_REF_TYPE GITHUB_REF GITHUB_REPOSITORY GITHUB_REPOSITORY_OWNER
 GITHUB_REPOSITORY_ID GITHUB_REPOSITORY_OWNER_ID GITHUB_ACTOR GITHUB_ACTOR_ID GITHUB_TRIGGERING_ACTOR
@@ -249,13 +250,13 @@ def clean_profile_shell(script):
     """A fixed explicit allowlist, shared by installs, preflight and launcher."""
     fields = [key + '="${' + key + '}"' for key in PROFILE_NATIVE_KEYS]
     fields += [
-        'PATH=' + PROFILE_PATH, 'LANG=C.UTF-8', 'LC_ALL=C.UTF-8', 'CI=true', 'GITHUB_ACTIONS=true',
+        'PATH="' + NODE_PATH_SHELL + '"', 'LANG=C.UTF-8', 'LC_ALL=C.UTF-8', 'CI=true', 'GITHUB_ACTIONS=true',
         'HOME="$RUNNER_TEMP/forge-b-home-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"',
         'XDG_CONFIG_HOME="$RUNNER_TEMP/forge-b-home-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/.config"',
         'XDG_CACHE_HOME="$RUNNER_TEMP/forge-b-home-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/.cache"',
         'XDG_DATA_HOME="$RUNNER_TEMP/forge-b-home-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/.local/share"',
         'TMPDIR="$RUNNER_TEMP/forge-tests"', 'EVIDENCE="$RUNNER_TEMP/forge-evidence"',
-        'PYTHONPATH=.github/scripts:src', 'PYTHONDONTWRITEBYTECODE=1',
+        'PYTHONPATH=.github/scripts:src', 'PYTHONDONTWRITEBYTECODE=1', 'NODE_DISABLE_COMPILE_CACHE=1',
         'SEMGREP_SEND_METRICS=off', 'SEMGREP_ENABLE_VERSION_CHECK=0', 'OTEL_SDK_DISABLED=true',
     ]
     return ('umask 077\n/usr/bin/env -i \\\n  ' + ' \\\n  '.join(fields)
@@ -271,6 +272,7 @@ assert os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0
 os.umask(0o077)
 runner = Path(os.environ['RUNNER_TEMP'])
 assert runner.is_absolute() and runner.resolve(strict=True) == runner
+assert ':' not in str(runner) and all(character.isprintable() for character in str(runner))
 for path in (runner, *runner.parents):
     info = path.lstat()
     assert stat.S_ISDIR(info.st_mode) and info.st_uid in (0, os.getuid())
@@ -290,9 +292,20 @@ for path in paths:
     assert stat.S_IMODE(info.st_mode) == 0o700
 for key, relative in (('XDG_CONFIG_HOME', '.config'), ('XDG_CACHE_HOME', '.cache'), ('XDG_DATA_HOME', '.local/share')):
     assert os.environ[key] == str(home / relative)
+node_root = runner / ('forge-b-node-' + run + '-' + attempt)
+assert len(str(node_root / 'expose').encode('utf-8')) <= 4096
+for path in (node_root, node_root / 'expose'):
+    assert path.resolve(strict=False) == path and not path.exists() and not path.is_symlink()
+    path.mkdir(mode=0o700)
+    info = path.lstat()
+    assert stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and info.st_gid == os.getgid()
+    assert stat.S_IMODE(info.st_mode) == 0o700
+assert not any((node_root / 'expose').iterdir())
 '''
 
-INSTALL = r'''python -m forge_ci.user_service profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
+INSTALL = r'''install_deadline_ns="$(python -B -c 'import time; print(time.monotonic_ns()+600*1000000000)')"
+python -m forge_ci.user_service profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
+python -m forge_ci.user_service node-install --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns"
 python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.1.1' \
   2>&1 | tee "$EVIDENCE/install.log"
 # Preserve the unchanged literal system fixture's user-site install under this HOME.

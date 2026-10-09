@@ -3499,7 +3499,7 @@ jobs:
         namespace = {'__name__': 'fixed_checkout_verifier'}
         exec(compile(source, '<fixed-workflow-checkout-verifier>', 'exec'), namespace)
         root = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
-        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '7fad0e830207e037c782c848a80d79a91e033766388bc77c50058de32f860f98', '.github/scripts/forge_ci/admission.py': '9f230a7d46c24112cffcf92bac69838a31937710c9e17f72a701720e7d8c0a74', '.github/scripts/forge_ci/setup_policy.py': '16fcc6e138b50be59109ab06162da0ea822e683480ff83a8ab20edfb4ab0e731', '.github/scripts/forge_ci/controller.py': '8506cf9739592bb556bcf4760ef3866e381c08d7132c3323b2dd433cbb69e730', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'edeb61543b581e95ec5066728dcb99e54b003362bb13132633138ed789b29b8c', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': '2bf1aa512afa3fcc3d0c1ace6d8c48fb563b5fd7165365c3ff441c338cead48f', '.github/scripts/forge_ci/baseline_measurement.py': 'a19bf6884341e1f245800534fe96bc3a1206a4472cf0fb0baa9496b5f714588b'})
+        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '7fad0e830207e037c782c848a80d79a91e033766388bc77c50058de32f860f98', '.github/scripts/forge_ci/admission.py': '9f230a7d46c24112cffcf92bac69838a31937710c9e17f72a701720e7d8c0a74', '.github/scripts/forge_ci/setup_policy.py': '16fcc6e138b50be59109ab06162da0ea822e683480ff83a8ab20edfb4ab0e731', '.github/scripts/forge_ci/controller.py': '8506cf9739592bb556bcf4760ef3866e381c08d7132c3323b2dd433cbb69e730', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'edeb61543b581e95ec5066728dcb99e54b003362bb13132633138ed789b29b8c', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': 'f1ae76d1a73d12a50aad73170218127cf9aaf453d8640f7ce1b1a1b41f3cb51f', '.github/scripts/forge_ci/baseline_measurement.py': 'a19bf6884341e1f245800534fe96bc3a1206a4472cf0fb0baa9496b5f714588b'})
         parent = root / '.github/scripts'
         sys.dont_write_bytecode = True
         sys.path.insert(0, str(parent))
@@ -3544,7 +3544,7 @@ jobs:
           GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT}" \
           RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT}" \
           ImageOS="${ImageOS}" \
-          PATH=/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/bin:/bin \
+          PATH="/opt/hostedtoolcache/Python/3.12.14/x64/bin:${RUNNER_TEMP}/forge-b-node-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/expose:/usr/bin:/bin" \
           LANG=C.UTF-8 \
           LC_ALL=C.UTF-8 \
           CI=true \
@@ -3557,6 +3557,7 @@ jobs:
           EVIDENCE="$RUNNER_TEMP/forge-evidence" \
           PYTHONPATH=.github/scripts:src \
           PYTHONDONTWRITEBYTECODE=1 \
+          NODE_DISABLE_COMPILE_CACHE=1 \
           SEMGREP_SEND_METRICS=off \
           SEMGREP_ENABLE_VERSION_CHECK=0 \
           OTEL_SDK_DISABLED=true \
@@ -3571,6 +3572,7 @@ jobs:
         os.umask(0o077)
         runner = Path(os.environ['RUNNER_TEMP'])
         assert runner.is_absolute() and runner.resolve(strict=True) == runner
+        assert ':' not in str(runner) and all(character.isprintable() for character in str(runner))
         for path in (runner, *runner.parents):
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid in (0, os.getuid())
@@ -3590,6 +3592,15 @@ jobs:
             assert stat.S_IMODE(info.st_mode) == 0o700
         for key, relative in (('XDG_CONFIG_HOME', '.config'), ('XDG_CACHE_HOME', '.cache'), ('XDG_DATA_HOME', '.local/share')):
             assert os.environ[key] == str(home / relative)
+        node_root = runner / ('forge-b-node-' + run + '-' + attempt)
+        assert len(str(node_root / 'expose').encode('utf-8')) <= 4096
+        for path in (node_root, node_root / 'expose'):
+            assert path.resolve(strict=False) == path and not path.exists() and not path.is_symlink()
+            path.mkdir(mode=0o700)
+            info = path.lstat()
+            assert stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and info.st_gid == os.getgid()
+            assert stat.S_IMODE(info.st_mode) == 0o700
+        assert not any((node_root / 'expose').iterdir())
 
         PYPRIVATEHOME
         python -m forge_ci.user_service profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
@@ -3626,7 +3637,7 @@ jobs:
           GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT}" \
           RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT}" \
           ImageOS="${ImageOS}" \
-          PATH=/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/bin:/bin \
+          PATH="/opt/hostedtoolcache/Python/3.12.14/x64/bin:${RUNNER_TEMP}/forge-b-node-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/expose:/usr/bin:/bin" \
           LANG=C.UTF-8 \
           LC_ALL=C.UTF-8 \
           CI=true \
@@ -3639,6 +3650,7 @@ jobs:
           EVIDENCE="$RUNNER_TEMP/forge-evidence" \
           PYTHONPATH=.github/scripts:src \
           PYTHONDONTWRITEBYTECODE=1 \
+          NODE_DISABLE_COMPILE_CACHE=1 \
           SEMGREP_SEND_METRICS=off \
           SEMGREP_ENABLE_VERSION_CHECK=0 \
           OTEL_SDK_DISABLED=true \
@@ -3758,7 +3770,7 @@ jobs:
           GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT}" \
           RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT}" \
           ImageOS="${ImageOS}" \
-          PATH=/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/bin:/bin \
+          PATH="/opt/hostedtoolcache/Python/3.12.14/x64/bin:${RUNNER_TEMP}/forge-b-node-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/expose:/usr/bin:/bin" \
           LANG=C.UTF-8 \
           LC_ALL=C.UTF-8 \
           CI=true \
@@ -3771,12 +3783,15 @@ jobs:
           EVIDENCE="$RUNNER_TEMP/forge-evidence" \
           PYTHONPATH=.github/scripts:src \
           PYTHONDONTWRITEBYTECODE=1 \
+          NODE_DISABLE_COMPILE_CACHE=1 \
           SEMGREP_SEND_METRICS=off \
           SEMGREP_ENABLE_VERSION_CHECK=0 \
           OTEL_SDK_DISABLED=true \
           /bin/bash --noprofile --norc -e -o pipefail -s <<'PYCLEANPROFILE'
         umask 077
+        install_deadline_ns="$(python -B -c 'import time; print(time.monotonic_ns()+600*1000000000)')"
         python -m forge_ci.user_service profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
+        python -m forge_ci.user_service node-install --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns"
         python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.1.1' \
           2>&1 | tee "$EVIDENCE/install.log"
         # Preserve the unchanged literal system fixture's user-site install under this HOME.
@@ -3831,7 +3846,7 @@ jobs:
           GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT}" \
           RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT}" \
           ImageOS="${ImageOS}" \
-          PATH=/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/bin:/bin \
+          PATH="/opt/hostedtoolcache/Python/3.12.14/x64/bin:${RUNNER_TEMP}/forge-b-node-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/expose:/usr/bin:/bin" \
           LANG=C.UTF-8 \
           LC_ALL=C.UTF-8 \
           CI=true \
@@ -3844,6 +3859,7 @@ jobs:
           EVIDENCE="$RUNNER_TEMP/forge-evidence" \
           PYTHONPATH=.github/scripts:src \
           PYTHONDONTWRITEBYTECODE=1 \
+          NODE_DISABLE_COMPILE_CACHE=1 \
           SEMGREP_SEND_METRICS=off \
           SEMGREP_ENABLE_VERSION_CHECK=0 \
           OTEL_SDK_DISABLED=true \
