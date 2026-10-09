@@ -82,7 +82,29 @@ def machine_for(tmp_path, mode, provider, diff, files):
     return machine
 
 
-def assert_required_pass_terminal_refusal(machine):
+def assert_unverified_product_refusal(machine, result):
+    """Bind this hard refusal to actual current receipt data, never capacity."""
+    assert result.passed is False
+    assert result.reason == (
+        "unresolved unverified product finding c1p2 -- convergence not established"
+    )
+    assert result.checks_run == 8
+    assert result.failure_kind is None
+    assert result.incomplete_passes == (2,)
+    assert (1, 2, "incomplete") in result.completion_statuses
+    receipt = json.loads((machine.cwd / ".code-forge/receipts/receipt-c1p2.json").read_text())
+    assert receipt["pass_status"] == "incomplete"
+    expected = tuple(
+        (1, 2, machine.source_hash, json.dumps(finding, sort_keys=True, separators=(",", ":")))
+        for finding in receipt["findings"]
+        if finding["disposition"] in ("CONFIRMED", "UNCERTAIN")
+        and finding["basis"]["authority"] == "infra-unavailable"
+    )
+    assert expected and result.unresolved_findings == expected
+    assert machine._capacity_incomplete(result) is False
+
+
+def assert_required_pass_terminal_refusal(machine, *, unresolved_product=False):
     assert machine._receipt_gate_round_errors()
     errors = machine._receipt_gate_terminal_errors()
     if machine.mode is Mode.LOCAL:
@@ -97,9 +119,17 @@ def assert_required_pass_terminal_refusal(machine):
         # The attempted-cycle diagnostic supplements, but cannot replace,
         # the authoritative earned-window refusal.
         assert errors[1].startswith("receipt attempt: ")
-        assert "status=incomplete" in errors[1]
-    else:
+        if not unresolved_product:
+            assert "status=incomplete" in errors[1]
+    elif not unresolved_product:
         assert "status=incomplete" in ";".join(errors)
+    if unresolved_product:
+        failure = errors[-1]
+        prefix = "receipt attempt: " if machine.mode is Mode.LOCAL else "receipt acceptance: "
+        assert failure == prefix + (
+            "unresolved unverified product finding c1p2 -- convergence not established"
+        )
+        assert_unverified_product_refusal(machine, failure.verification)
 
 
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
@@ -421,7 +451,7 @@ def test_finding_only_required_pass_refuses_without_changing_validator(tmp_path,
     assert len(retained) == 1 and retained[0].disposition == Disposition.UNCERTAIN
     assert not any(f.source == "L1" for f in machine._state.findings)
     assert len(provider.attempted_excerpts) == 1
-    assert_required_pass_terminal_refusal(machine)
+    assert_required_pass_terminal_refusal(machine, unresolved_product=True)
     receipt = json.loads((tmp_path / ".code-forge/receipts/receipt-c1p2.json").read_text())
     assert receipt["pass_status"] == "incomplete"
     assert len(receipt["code_excerpts"]) == (1 if grouped else 0)
@@ -482,7 +512,7 @@ def test_outlet_c_required_scope_reaches_real_machine_and_receipts(
     assert receipt["pass_status"] == "incomplete"
     assert len(machine.l1_provider.attempted_excerpts) == 1
     assert machine._receipt_gate_round_errors()
-    assert_required_pass_terminal_refusal(machine)
+    assert_required_pass_terminal_refusal(machine, unresolved_product=finding_only)
     verified = run_verify(
         tmp_path,
         machine.source_hash,
@@ -493,7 +523,10 @@ def test_outlet_c_required_scope_reaches_real_machine_and_receipts(
         respect_floor=False,
         require_convergence=False,
     )
-    assert not verified.passed and "status=incomplete" in verified.reason
+    if finding_only:
+        assert_unverified_product_refusal(machine, verified)
+    else:
+        assert not verified.passed and "status=incomplete" in verified.reason
     assert len(calls) == 3 * len(files)
 
 

@@ -2761,7 +2761,14 @@ jobs:
                     info = path.lstat()
                     if relative in tracked:
                         continue
-                    _need(name != "__pycache__", "unexpected import cache")
+                    if name == "__pycache__":
+                        kind = ("directory" if stat.S_ISDIR(info.st_mode) else
+                                "regular_file" if stat.S_ISREG(info.st_mode) else
+                                "symlink" if stat.S_ISLNK(info.st_mode) else "other")
+                        detail = {"kind": "unexpected_import_cache", "path": relative[:64],
+                                  "path_truncated": len(relative) > 64, "type": kind}
+                        _need(False, "unexpected import cache " + json.dumps(
+                            detail, ensure_ascii=True, separators=(",", ":")))
                     if stat.S_ISDIR(info.st_mode):
                         continue
                     _need(stat.S_ISREG(info.st_mode) and not info.st_mode & 0o111
@@ -2887,20 +2894,8 @@ jobs:
 
 
         def write_receipt(path: Path, report: dict, *, limit=MAX_JSON) -> None:
-            # Full sealed policy observations retain their existing separate 8 MiB bound.
-            _need(type(limit) is int and 0 < limit <= MAX_TREE, "unreviewed receipt byte bound")
-            data = canonical_bytes(report) + b"\n"
-            _need(len(data) <= limit, "receipt byte bound exceeded")
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            with os.fdopen(fd, "wb") as stream:
-                stream.write(data)
-                stream.flush()
-                os.fsync(stream.fileno())
-
-
-        def main(argv: list[str] | None = None) -> int:
-            parser = argparse.'''.encode('utf-8')
-        expected = {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '27c11e83da3e2f845c15b33760a018b5452e9f10a28a18408cdc815dbd019faa'}
+            # Full sealed policy observations retain their existing'''.encode('utf-8')
+        expected = {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '9f3ebcb7869989e082f5ca8f9b6ded9444ba75bbe1c1a136fb72b011387cf358'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2931,7 +2926,19 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r"""ArgumentParser(description=__doc__)
+        raw = r""" separate 8 MiB bound.
+            _need(type(limit) is int and 0 < limit <= MAX_TREE, "unreviewed receipt byte bound")
+            data = canonical_bytes(report) + b"\n"
+            _need(len(data) <= limit, "receipt byte bound exceeded")
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+
+
+        def main(argv: list[str] | None = None) -> int:
+            parser = argparse.ArgumentParser(description=__doc__)
             parser.add_argument("--receipt", type=Path, required=True)
             parser.add_argument("--output", type=Path, required=True)
             parser.add_argument("--repo", type=Path, required=True)
@@ -2953,7 +2960,7 @@ jobs:
         if __name__ == "__main__":
             raise SystemExit(main())
         """.encode('utf-8')
-        expected = {'name': 'part-02.txt', 'bytes': 993, 'sha256': '205c1e7f5a16dbbb625f7a9f29a301e8194f24d66a012cadc7e36be6a6d88c1d'}
+        expected = {'name': 'part-02.txt', 'bytes': 1489, 'sha256': '76e59c1c468500d6b67d86722a0fd39b397dd1b183ad74da332faa9d0b898439'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2979,7 +2986,7 @@ jobs:
         info = stage.lstat()
         assert stage.resolve(strict=True) == stage and stat.S_ISDIR(info.st_mode)
         assert info.st_uid == os.getuid() and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == 0o700
-        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': 'b52cf44078aa95d787fbf5bea90db307a42321092f4a9a4ae0380176693264be'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '27c11e83da3e2f845c15b33760a018b5452e9f10a28a18408cdc815dbd019faa'}, {'name': 'part-02.txt', 'bytes': 993, 'sha256': '205c1e7f5a16dbbb625f7a9f29a301e8194f24d66a012cadc7e36be6a6d88c1d'}]
+        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': 'b52cf44078aa95d787fbf5bea90db307a42321092f4a9a4ae0380176693264be'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '9f3ebcb7869989e082f5ca8f9b6ded9444ba75bbe1c1a136fb72b011387cf358'}, {'name': 'part-02.txt', 'bytes': 1489, 'sha256': '76e59c1c468500d6b67d86722a0fd39b397dd1b183ad74da332faa9d0b898439'}]
         assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts}
         chunks = []
         for part in parts:
@@ -2992,12 +2999,12 @@ jobs:
             assert len(raw) == part['bytes'] and hashlib.sha256(raw).hexdigest() == part['sha256']
             chunks.append(raw)
         raw = b''.join(chunks)
-        assert len(raw) == 16993 and hashlib.sha256(raw).hexdigest() == '3c367f8957a504f23d2bfd119a68b97317eac63d7204608de6495a0a8c30f7b5'
+        assert len(raw) == 17489 and hashlib.sha256(raw).hexdigest() == '7cf6c31a0df6a1ded7d38e381f18a37019114f8adf8196af81be9994182cd5e6'
         source = raw.decode('utf-8')
         namespace = {'__name__': 'fixed_checkout_verifier'}
         exec(compile(source, '<fixed-workflow-checkout-verifier>', 'exec'), namespace)
         root = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
-        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '3c367f8957a504f23d2bfd119a68b97317eac63d7204608de6495a0a8c30f7b5', '.github/scripts/forge_ci/admission.py': '58a8d66a4cf5568f4220290bc58394d5da23a664bd2838c41ef3c1edd8564fdc', '.github/scripts/forge_ci/setup_policy.py': '298336a14368fd5429443c62ddd0fa18b9e8477f17524e774c184e8efc47daec', '.github/scripts/forge_ci/controller.py': 'd36c4ac7f82c77c415e83c7c67bf72ec24f53dab2ccb703689874339e33c81c0', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'd1b5dbcf03b928557437eabb31deac204df11d9634d0f823a0c2e592f0c73dc8', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': '360d82622fc334410baa4245d195080b76b2c618d4b9a67d4d68844e5aace66c'})
+        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '7cf6c31a0df6a1ded7d38e381f18a37019114f8adf8196af81be9994182cd5e6', '.github/scripts/forge_ci/admission.py': '58a8d66a4cf5568f4220290bc58394d5da23a664bd2838c41ef3c1edd8564fdc', '.github/scripts/forge_ci/setup_policy.py': '298336a14368fd5429443c62ddd0fa18b9e8477f17524e774c184e8efc47daec', '.github/scripts/forge_ci/controller.py': 'd36c4ac7f82c77c415e83c7c67bf72ec24f53dab2ccb703689874339e33c81c0', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'd1b5dbcf03b928557437eabb31deac204df11d9634d0f823a0c2e592f0c73dc8', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': '360d82622fc334410baa4245d195080b76b2c618d4b9a67d4d68844e5aace66c'})
         parent = root / '.github/scripts'
         sys.dont_write_bytecode = True
         sys.path.insert(0, str(parent))

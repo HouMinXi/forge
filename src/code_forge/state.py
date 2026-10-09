@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -83,6 +84,13 @@ class Verdict(str, Enum):
     UNRELIABLE = "UNRELIABLE"
 
 
+class FindingDiagnosticKind(str, Enum):
+    """Host-generated diagnostics that do not describe product defects."""
+
+    PROVIDER_CAPACITY = "provider-capacity"
+    CAPACITY_INCOMPLETE = "capacity-incomplete"
+
+
 @dataclass
 class StateFinding:
     """A single finding entry in state.json findings[].
@@ -135,6 +143,9 @@ class StateFinding:
     # Why the falsifier reached its verdict. Empty when no falsifier ran.
     # A dismissed finding without this cannot be audited later.
     falsify_reasoning: str | None = None
+    # Set at trusted acquisition or verified completeness boundaries only.
+    diagnostic_kind: FindingDiagnosticKind | None = None
+    provider_failure: dict | None = None
 
 
 def is_receipt_audit(finding: StateFinding) -> bool:
@@ -144,6 +155,99 @@ def is_receipt_audit(finding: StateFinding) -> bool:
         and finding.source == "UNTRUSTED"
         and finding.disposition == Disposition.UNCERTAIN
     )
+
+
+def provider_failure_snapshot(metadata: dict | None) -> dict | None:
+    """Copy only acquired fields as plain JSON, excluding nested observations."""
+    if type(metadata) is not dict:
+        return None
+
+    def scalar(value):
+        if value is None or type(value) in (str, int, bool):
+            return value
+        if type(value) is float and math.isfinite(value):
+            return value
+        return None
+
+    usage = metadata.get("usage")
+    return {
+        key: (
+            {name: scalar(usage.get(name)) for name in (
+                "input_tokens", "output_tokens", "cached_input_tokens"
+            )} if type(usage) is dict else None
+        ) if key == "usage" else scalar(metadata.get(key))
+        for key in ("kind", "duration_s", "exit_code", "stderr", "usage")
+    }
+
+
+def record_provider_failure(finding: StateFinding, error: Exception) -> None:
+    """Retain actual invocation metadata; only typed truncation is capacity."""
+    from .llm_invoke import LLMInvokeError, Usage
+
+    if not isinstance(error, LLMInvokeError):
+        return
+    finding.is_timeout = error.is_timeout
+    finding.provider_failure = provider_failure_snapshot({
+        "kind": error.kind,
+        "duration_s": error.duration_s,
+        "exit_code": error.exit_code,
+        "stderr": error.stderr,
+        "usage": None if type(error.usage) is not Usage else {
+            "input_tokens": error.usage.input_tokens,
+            "output_tokens": error.usage.output_tokens,
+            "cached_input_tokens": error.usage.cached_input_tokens,
+        },
+    })
+    if error.kind == "truncated":
+        finding.diagnostic_kind = FindingDiagnosticKind.PROVIDER_CAPACITY
+
+
+def _host_diagnostic_shape(finding: StateFinding) -> bool:
+    return (
+        all(type(value) is str for value in (finding.id, finding.fingerprint, finding.source, finding.file))
+        and finding.source == "INFRA"
+        and finding.disposition is Disposition.CONFIRMED
+        and type(finding.line_range) is list
+        and finding.line_range == [0, 0]
+        and all(type(line) is int for line in finding.line_range)
+    )
+
+
+def is_provider_capacity(finding: StateFinding) -> bool:
+    """Only a typed diagnostic with the host producer structure qualifies."""
+    if (
+        type(finding.diagnostic_kind) is not FindingDiagnosticKind
+        or finding.diagnostic_kind is not FindingDiagnosticKind.PROVIDER_CAPACITY
+        or not _host_diagnostic_shape(finding)
+        or type(finding.provider_failure) is not dict
+        or type(finding.provider_failure.get("kind")) is not str
+        or finding.provider_failure.get("kind") != "truncated"
+    ):
+        return False
+    return any(
+        finding.id == f"l1-{name}-{kind}-fail"
+        and finding.fingerprint == f"{kind}-fail-{name}"
+        and finding.file == file
+        for name in _PASS_NAMES
+        for kind, file in (("invoke", "<llm-invoke>"), ("spawn", "<spawn>"))
+    )
+
+
+def is_provider_diagnostic(finding: StateFinding) -> bool:
+    """Capacity acquisition and its independently validated incomplete proof."""
+    return is_provider_capacity(finding) or (
+        type(finding.diagnostic_kind) is FindingDiagnosticKind
+        and finding.diagnostic_kind is FindingDiagnosticKind.CAPACITY_INCOMPLETE
+        and finding.id == "RECEIPT_INVALID"
+        and _host_diagnostic_shape(finding)
+        and finding.file == "<receipt-evidence>"
+        and re.fullmatch(r"receipt-[0-9a-f]{12}", finding.fingerprint) is not None
+    )
+
+
+def reporting_product_findings(findings: list[StateFinding]) -> list[StateFinding]:
+    """Shared product projection; raw findings remain available for diagnosis."""
+    return [f for f in findings if not is_receipt_audit(f) and not is_provider_diagnostic(f)]
 
 
 def derive_pass_outcomes(
@@ -172,7 +276,11 @@ def derive_pass_outcomes(
         for pass_name in _PASS_NAMES:
             candidate: PassOutcome | None = None
             if f.id == f"l1-{pass_name}-spawn-fail":
-                candidate = PassOutcome.TIMEOUT
+                candidate = (
+                    PassOutcome.TIMEOUT
+                    if type(f.provider_failure) is not dict or type(f.provider_failure.get("kind")) is not str or f.is_timeout
+                    else PassOutcome.ERROR
+                )
             elif f.id == f"l1-{pass_name}-invoke-fail":
                 candidate = PassOutcome.TIMEOUT if getattr(f, "is_timeout", False) else PassOutcome.ERROR
             elif f.id == f"l1-{pass_name}-schema-fail":
@@ -366,7 +474,6 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             if (
                 failure["id"] != f"l1-{name}-{kind}-fail"
                 or (failure["fingerprint"] != f"{kind}-fail-{name}")
-                or (kind == "spawn" and failure["outcome"] != "timeout")
             ):
                 raise CorruptedStateError("invalid acquisition producer marker")
         observed = any(value == "returned" for value in phases.values())
@@ -507,6 +614,11 @@ def _finding_from_dict(d: dict) -> StateFinding:
         severity=d.get("severity"),
         excerpt=d.get("excerpt"),
         falsify_reasoning=d.get("falsify_reasoning"),
+        diagnostic_kind=(
+            None if d.get("diagnostic_kind") is None
+            else FindingDiagnosticKind(d["diagnostic_kind"])
+        ),
+        provider_failure=d.get("provider_failure"),
     )
 
 
@@ -654,6 +766,8 @@ def _finding_to_dict(f: StateFinding) -> dict:
         "severity": f.severity,
         "excerpt": f.excerpt,
         "falsify_reasoning": f.falsify_reasoning,
+        "diagnostic_kind": None if f.diagnostic_kind is None else f.diagnostic_kind.value,
+        "provider_failure": f.provider_failure,
     }
     return d
 

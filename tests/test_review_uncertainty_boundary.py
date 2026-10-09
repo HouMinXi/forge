@@ -586,7 +586,18 @@ def test_duplicate_dismissal_keeps_distinct_unverified_candidate_open(tmp_path, 
     )
     assert verification.passed is False
     assert "earned window has 0 cycles" in verification.reason
-    assert "status=incomplete" in ";".join(machine._receipt_gate_terminal_errors())
+    from tests.test_review_pass_evidence_contract import assert_unverified_product_refusal
+
+    assert receipt["pass_status"] == "incomplete"
+    errors = machine._receipt_gate_terminal_errors()
+    assert len(errors) == 2
+    assert errors[0] == (
+        "receipt acceptance: earned window has 0 cycles; verifier floor demands 3"
+    )
+    assert errors[1] == (
+        "receipt attempt: unresolved unverified product finding c1p2 -- convergence not established"
+    )
+    assert_unverified_product_refusal(machine, errors[1].verification)
 
 
 def test_unresolved_duplicates_remain_visible_and_uncertain(tmp_path, monkeypatch):

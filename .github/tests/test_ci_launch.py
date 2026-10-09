@@ -949,3 +949,54 @@ def test_exact_live_call_ownership_stays_at_six_runtime_boundaries():
     ]
     assert observers == ["prepare", "final_source_recheck"]
     assert 6 * setup.MAX_REQUESTS == 36
+
+
+@pytest.mark.parametrize("kind", ["directory", "regular_file", "symlink", "other"])
+def test_cache_rejection_reports_first_relative_path_without_following(tmp_path, kind):
+    import json
+    import time
+
+    parent = tmp_path / "src"
+    parent.mkdir()
+    cache = parent / "__pycache__"
+    if kind == "directory":
+        cache.mkdir()
+    elif kind == "regular_file":
+        cache.write_bytes(b"not read")
+    elif kind == "symlink":
+        cache.symlink_to("private-dangling-target")
+    else:
+        os.mkfifo(cache)
+    with pytest.raises(launch.LaunchError) as caught:
+        launch._unexpected_artifacts(tmp_path, set(), time.monotonic() + 5)
+    message = str(caught.value)
+    assert message.startswith("unexpected import cache ")
+    assert json.loads(message.removeprefix("unexpected import cache ")) == {
+        "kind": "unexpected_import_cache",
+        "path": "src/__pycache__", "path_truncated": False, "type": kind,
+    }
+    assert str(tmp_path) not in message and "private-dangling-target" not in message
+    assert cache.lstat()  # Rejection never removes the offending object.
+
+
+def test_cache_rejection_long_unicode_path_is_escaped_and_bounded(tmp_path):
+    import json
+    import time
+
+    # Non-BMP code points maximize ensure_ascii expansion to12 bytes each.
+    part = "\U0001f600" * 48 + "\n"
+    parent = tmp_path / part / part
+    parent.mkdir(parents=True)
+    (parent / "__pycache__").mkdir()
+    relative = (parent / "__pycache__").relative_to(tmp_path).as_posix()
+    with pytest.raises(launch.LaunchError) as caught:
+        launch._unexpected_artifacts(tmp_path, set(), time.monotonic() + 5)
+    message = str(caught.value)
+    record = message.removeprefix("unexpected import cache ")
+    assert len(record.encode("ascii")) < 896 and len(message) < 1024
+    assert "\n" not in message and str(tmp_path) not in message
+    assert json.loads(record) == {
+        "kind": "unexpected_import_cache",
+        "path": relative[:64], "path_truncated": True, "type": "directory",
+    }
+    assert (parent / "__pycache__").is_dir()

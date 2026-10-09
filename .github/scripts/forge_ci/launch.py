@@ -197,7 +197,14 @@ def _unexpected_artifacts(repo, tracked, deadline):
             info = path.lstat()
             if relative in tracked:
                 continue
-            _need(name != "__pycache__", "unexpected import cache")
+            if name == "__pycache__":
+                kind = ("directory" if stat.S_ISDIR(info.st_mode) else
+                        "regular_file" if stat.S_ISREG(info.st_mode) else
+                        "symlink" if stat.S_ISLNK(info.st_mode) else "other")
+                detail = {"kind": "unexpected_import_cache", "path": relative[:64],
+                          "path_truncated": len(relative) > 64, "type": kind}
+                _need(False, "unexpected import cache " + json.dumps(
+                    detail, ensure_ascii=True, separators=(",", ":")))
             if stat.S_ISDIR(info.st_mode):
                 continue
             _need(stat.S_ISREG(info.st_mode) and not info.st_mode & 0o111

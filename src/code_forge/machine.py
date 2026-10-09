@@ -71,6 +71,10 @@ from .state import (
     derive_pass_outcomes,
     is_host_round,
     is_receipt_audit,
+    FindingDiagnosticKind,
+    PassOutcome,
+    is_provider_capacity,
+    reporting_product_findings,
     load_state,
     product_round_history,
     save_state,
@@ -80,6 +84,25 @@ from .state import (
 # L1 candidate provider type alias.
 # Returns (candidates, excerpts, usage, duration_s) 4-tuple.
 L1Provider = Callable[[], tuple[list[StateFinding], list[dict], Usage, float]]
+
+
+@dataclass(frozen=True)
+class _AcquisitionFact:
+    original: StateFinding
+    number: int
+    outcome: PassOutcome
+    capacity: bool
+    emitted: bool
+
+
+@dataclass(frozen=True)
+class _AcquisitionSnapshot:
+    producer: object
+    cycle: int
+    source_hash: str
+    facts: tuple[_AcquisitionFact, ...]
+    outcomes: tuple[PassOutcome, ...]
+    markers: tuple[StateFinding, ...]
 
 
 class TimeoutBreaker(Exception):
@@ -276,6 +299,15 @@ def mutation_result_verdict(result_data: dict) -> "Verdict | None":
     return None
 
 
+class _ReceiptGateFailure(str):
+    """The terminal gate's fresh verification result, with compatible text."""
+
+    def __new__(cls, message: str, verification):
+        value = super().__new__(cls, message)
+        value.verification = verification
+        return value
+
+
 @dataclass
 class StateMachine:
     """Forge state machine. Constructor wires dependencies; .run() executes.
@@ -350,8 +382,8 @@ class StateMachine:
         """Non-dismissed findings, excluding metadata-only receipt diagnostics."""
         return [
             f
-            for f in self._state.findings
-            if f.disposition != Disposition.DISMISSED and not is_receipt_audit(f)
+            for f in reporting_product_findings(self._state.findings)
+            if f.disposition != Disposition.DISMISSED
         ]
 
     @property
@@ -372,6 +404,7 @@ class StateMachine:
         # 1, etc.), collected so terminal acceptance can attest exactly
         # the current run's window and never a stale one from disk.
         self._written_cycles: list[int] = []
+        self._written_pass_outcomes: tuple[tuple[int, int, str], ...] = ()
         # The last clean window's cycles: rounds that reached the clean
         # fixpoint. Terminal attestation scopes to these, so an earlier
         # resolved finding cannot poison the clean tail.
@@ -385,6 +418,8 @@ class StateMachine:
         self._phase_status = {name: "not_run" for name in ROUND_PHASES}
         self._phase_findings: dict[str, list[StateFinding]] = {}
         self._acquisition_markers: list[StateFinding] = []
+        self._acquisition_receipts: tuple[tuple[int, int, str, str], ...] = ()
+        self._acquisition_authority: _AcquisitionSnapshot | None = None
         self._attempt_snapshot: dict | None = None
         self._attempt_findings: list[StateFinding] | None = None
         self._other_source_state: State | None = None
@@ -392,6 +427,8 @@ class StateMachine:
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
+        self._acquisition_receipts = ()
+        self._acquisition_authority = None
         progress.reset()
         progress.emit(f"run start: mode={self.mode.value}")
         self._maybe_load_prior_state()
@@ -409,21 +446,31 @@ class StateMachine:
                 self._finish_failed_host_attempt(primary)
                 raise
         elif self.mode == Mode.CI:
-            verdict = self._run_ci()
+            try:
+                verdict = self._run_ci()
+            except BaseException:  # noqa: BLE001 - discard authority, preserve the failure
+                self._acquisition_receipts = ()
+                self._acquisition_authority = None
+                raise
         else:
             raise ValueError(f"unknown mode: {self.mode}")
 
         # Advisory axes run once after convergence, regardless of verdict
         # . Covers PASS, HOLD/PENDING, ESCALATED.
-        self._run_advisory_axes()
-        self._advisories.extend(self._preexisting_buf)
-        self._preexisting_buf.clear()
-        self._serialize_advisories()
-        self._display_advisories()
-        progress.emit(
-            "run done: verdict=%s findings=%d confirmed=%d"
-            % (verdict.value, len(self._state.findings), self._count(Disposition.CONFIRMED))
-        )
+        try:
+            self._run_advisory_axes()
+            self._advisories.extend(self._preexisting_buf)
+            self._preexisting_buf.clear()
+            self._serialize_advisories()
+            self._display_advisories()
+            progress.emit(
+                "run done: verdict=%s findings=%d confirmed=%d"
+                % (verdict.value, len(reporting_product_findings(self._state.findings)), self._count(Disposition.CONFIRMED))
+            )
+        except BaseException:  # noqa: BLE001 - discard authority, preserve the failure
+            self._acquisition_receipts = ()
+            self._acquisition_authority = None
+            raise
         return verdict
 
     def _maybe_load_prior_state(self) -> None:
@@ -501,7 +548,12 @@ class StateMachine:
         gate_errors = self._receipt_gate_terminal_errors()
         if gate_errors:
             for err in gate_errors:
-                self._record_receipt_gate_failure(err)
+                if type(err) is _ReceiptGateFailure and self._capacity_incomplete(err.verification):
+                    self._record_receipt_gate_failure(
+                        err, diagnostic_kind=FindingDiagnosticKind.CAPACITY_INCOMPLETE
+                    )
+                else:
+                    self._record_receipt_gate_failure(err)
             self._state.verdict = Verdict.FAIL
             self._state.converged = False
             self._persist_state()
@@ -738,7 +790,7 @@ class StateMachine:
         # a silent PASS over an unreviewed file is a false green.
         confirmed = self._count(Disposition.CONFIRMED)
         coverage_gaps = self._count_coverage_gaps()
-        if confirmed > 0 or coverage_gaps > 0:
+        if confirmed > 0 or coverage_gaps > 0 or self._acquisition_markers:
             verdict = Verdict.FAIL
         elif self._state.rounds_with_falsify_infra > 0:
             # A backend/protocol failure also leaves UNCERTAIN, but is not
@@ -936,6 +988,8 @@ class StateMachine:
 
     def _finish_failed_host_attempt(self, primary: BaseException) -> None:
         """Retain the original error while recording only phases actually observed."""
+        self._acquisition_receipts = ()
+        self._acquisition_authority = None
         try:
             for name in self._phase_findings:
                 self._phase_status[name] = "returned"
@@ -1130,6 +1184,7 @@ class StateMachine:
             # accumulating clean rounds toward a false PASS.
             gate_errors = self._receipt_gate_round_errors()
             earned_entry = None
+            capacity_gate_error = None
             if active and _fp == _FixpointResult.CLEAN and not gate_errors:
                 from .verify import _capture_earned_cycle
 
@@ -1141,8 +1196,13 @@ class StateMachine:
                     diff_text=diff_text,
                     reviewed_repositories=self.reviewed_repositories,
                 )
+                captured = self._verify_host_completion(captured)
                 if not captured.passed:
-                    gate_errors.append(f"receipt acceptance: {captured.reason}")
+                    earned_entry = None
+                    error = f"receipt acceptance: {captured.reason}"
+                    gate_errors.append(error)
+                    if self._capacity_incomplete(captured):
+                        capacity_gate_error = error
             if gate_errors:
                 self._finish_host_attempt(
                     ("interrupted" if self._acquisition_markers else "unavailable")
@@ -1151,7 +1211,12 @@ class StateMachine:
                     _fp,
                 )
                 for err in gate_errors:
-                    self._record_receipt_gate_failure(err)
+                    if err == capacity_gate_error:
+                        self._record_receipt_gate_failure(
+                            err, diagnostic_kind=FindingDiagnosticKind.CAPACITY_INCOMPLETE
+                        )
+                    else:
+                        self._record_receipt_gate_failure(err)
                 self._state.verdict = Verdict.FAIL
                 self._state.converged = False
                 self._persist_state()
@@ -1181,7 +1246,7 @@ class StateMachine:
                 else self.clean_round_threshold
             )
 
-            if _fp == _FixpointResult.CLEAN:
+            if _fp == _FixpointResult.CLEAN and not self._acquisition_markers:
                 self._state.consecutive_clean_rounds += 1
                 # Track the clean window: rounds whose receipts are
                 # clean evidence, scoped to the last `threshold` clean
@@ -1516,9 +1581,9 @@ class StateMachine:
             self._persist_state()
             raise TimeoutBreaker(
                 "%d consecutive rounds had a pass that did not complete "
-                "(latest: %s). Each one leaves a CONFIRMED infra finding, "
-                "which resets the clean-round counter, so this review cannot "
-                "converge no matter how many rounds remain. Fix the backend "
+                "(latest: %s). Missing completed perspectives prevent new "
+                "earned clean cycles, so this review cannot converge while "
+                "these failures persist. Fix the backend "
                 "or switch to another one rather than waiting."
                 % (self._state.rounds_with_failed_pass, failed)
             )
@@ -1712,9 +1777,10 @@ class StateMachine:
                 required_cycles=self.clean_round_threshold,
                 reviewed_repositories=self.reviewed_repositories,
             )
+            result = self._verify_host_completion(result)
             if result.passed:
                 return []
-            errors.append(f"receipt acceptance: {result.reason}")
+            errors.append(_ReceiptGateFailure(f"receipt acceptance: {result.reason}", result))
             # Earned-window refusal remains authoritative. Supplement it
             # with the latest attempted cycle's concrete evidence error,
             # which an empty earned window otherwise hides. This forensic
@@ -1731,8 +1797,13 @@ class StateMachine:
                     require_convergence=False,
                     reviewed_repositories=self.reviewed_repositories,
                 )
-                if not attempted.passed and attempted.reason != result.reason:
-                    errors.append(f"receipt attempt: {attempted.reason}")
+                attempted = self._verify_host_completion(attempted)
+                # Keep independent forensic authority even when two failures
+                # happen to share human-readable text.
+                if not attempted.passed and attempted != result:
+                    errors.append(
+                        _ReceiptGateFailure(f"receipt attempt: {attempted.reason}", attempted)
+                    )
             return errors
         if not diff_text:
             # Nothing to verify against (non-git / stub reviews).
@@ -1790,8 +1861,9 @@ class StateMachine:
             reviewed_repositories=self.reviewed_repositories,
             require_convergence=self.mode != Mode.CI,
         )
+        vr = self._verify_host_completion(vr)
         if not vr.passed:
-            errors.append(f"receipt acceptance: {vr.reason}")
+            errors.append(_ReceiptGateFailure(f"receipt acceptance: {vr.reason}", vr))
         return errors
 
     def _downgrade_one_line_slips(
@@ -1839,7 +1911,182 @@ class StateMachine:
             findings = list(findings) + extra
         return findings, excerpts
 
-    def _record_receipt_gate_failure(self, error: str) -> None:
+    def _verify_host_completion(self, result):
+        """Compare verified bytes with this round's actual published outcomes."""
+        from .verify import VerifyFailureKind, VerifyResult
+
+        if type(result) is not VerifyResult:
+            return result
+        if not result.passed and result.failure_kind is not VerifyFailureKind.INCOMPLETE_PASS and not result.unresolved_findings:
+            return result
+        cycle = self._state.round + 1
+        expected = {}
+        observed = {}
+        valid_statuses = {outcome.value for outcome in PassOutcome}
+        for snapshot, target in ((self._written_pass_outcomes, expected), (result.completion_statuses, observed)):
+            malformed = type(snapshot) is not tuple
+            seen = set()
+            if not malformed:
+                for row in snapshot:
+                    if not (
+                        type(row) is tuple and len(row) == 3
+                        and type(row[0]) is int and row[0] > 0
+                        and type(row[1]) is int and row[1] in (1, 2, 3)
+                        and ((target is observed and row[2] is None) or (type(row[2]) is str and row[2] in valid_statuses))
+                        and (row[0], row[1]) not in seen
+                    ):
+                        malformed = True
+                        break
+                    seen.add((row[0], row[1]))
+                    if row[0] == cycle:
+                        target[row[1]] = row[2]
+            if malformed:
+                return VerifyResult(False, "current host completion snapshot invalid", 8, min(result.checks_passed, 7))
+        acquired = self._current_acquisition()
+        if self._acquisition_authority is not None and acquired is None:
+            return VerifyResult(False, "current host acquisition snapshot invalid", 8, min(result.checks_passed, 7))
+        if acquired is not None:
+            for number, outcome in enumerate(acquired.outcomes, 1):
+                if outcome is not PassOutcome.COMPLETED:
+                    expected[number] = outcome.value
+        if set(expected) != {1, 2, 3} or set(observed) != {1, 2, 3}:
+            if self._acquisition_markers:
+                return VerifyResult(False, "current host completion snapshot unavailable", 8, min(result.checks_passed, 7))
+            return result
+        for number in (1, 2, 3):
+            if observed[number] == expected[number]:
+                continue
+            if observed[number] is None and expected[number] == "completed" and not self._acquisition_markers:
+                continue  # public legacy omission without actual host failure
+            return VerifyResult(
+                False, f"receipt completion contradicts actual host outcome: c{cycle}p{number} expected {expected[number]}",
+                8, min(result.checks_passed, 7),
+            )
+        return result
+
+    def _capacity_incomplete(self, result) -> bool:
+        """Bind verified missing perspectives to fresh host capacity objects."""
+        from .verify import VerifyResult
+
+        if (
+            type(result) is not VerifyResult
+            or result.passed
+            or result.failure_kind is not None
+            or result.checks_run != 8 or result.checks_passed not in (6, 7)
+            or type(result.incomplete_passes) is not tuple
+            or not result.incomplete_passes
+            or any(type(number) is not int or number not in (1, 2, 3) for number in result.incomplete_passes)
+        ):
+            return False
+        acquired = self._current_acquisition()
+        if acquired is None or not acquired.facts:
+            return False
+        if self._verify_host_completion(result) is not result:
+            return False
+        for snapshot in (self._acquisition_receipts, result.unresolved_findings):
+            if type(snapshot) is not tuple or not snapshot or any(
+                type(row) is not tuple or len(row) != 4
+                or type(row[0]) is not int or row[0] != self._state.round + 1
+                or type(row[1]) is not int or row[1] not in (1, 2, 3)
+                or type(row[2]) is not str or row[2] != self.source_hash
+                or type(row[3]) is not str
+                for row in snapshot
+            ):
+                return False
+        if sorted(self._acquisition_receipts) != sorted(result.unresolved_findings):
+            return False
+        for number in result.incomplete_passes:
+            facts = [fact for fact in acquired.facts if fact.number == number]
+            if (
+                not facts or not any(fact.emitted for fact in facts)
+                or acquired.outcomes[number - 1] is not PassOutcome.ERROR
+                or not all(fact.capacity and fact.outcome is PassOutcome.ERROR for fact in facts)
+            ):
+                return False
+        return True
+
+    def _current_acquisition(self) -> _AcquisitionSnapshot | None:
+        """Validate current membership without rereading mutable eligibility."""
+        from .factories import _L1Call
+
+        snapshot = self._acquisition_authority
+        if (
+            type(snapshot) is not _AcquisitionSnapshot
+            or type(self.l1_provider) is not _L1Call
+            or snapshot.producer is not self.l1_provider
+            or type(snapshot.cycle) is not int or snapshot.cycle != self._state.round + 1
+            or type(snapshot.source_hash) is not str or snapshot.source_hash != self.source_hash
+            or type(snapshot.facts) is not tuple
+            or type(snapshot.outcomes) is not tuple or len(snapshot.outcomes) != 3
+            or any(type(outcome) is not PassOutcome for outcome in snapshot.outcomes)
+            or type(snapshot.markers) is not tuple
+        ):
+            return None
+        if any(
+            type(fact) is not _AcquisitionFact or type(fact.original) is not StateFinding
+            or type(fact.number) is not int or fact.number not in (1, 2, 3)
+            or type(fact.outcome) is not PassOutcome
+            or type(fact.capacity) is not bool or type(fact.emitted) is not bool
+            for fact in snapshot.facts
+        ):
+            return None
+        originals = self.l1_provider.acquisition_failures
+        if (
+            type(originals) is not list or type(self._acquisition_markers) is not list
+            or sorted(map(id, originals)) != sorted(id(fact.original) for fact in snapshot.facts)
+            or sorted(map(id, self._acquisition_markers)) != sorted(map(id, snapshot.markers))
+        ):
+            return None
+        return snapshot
+
+    def _capture_acquisition_receipts(self) -> None:
+        """Freeze all acquired facts and emitted receipts before downstream mutation."""
+        from .basis import derive_basis
+        from .factories import _L1Call
+        from .state import _PASS_NAMES
+
+        self._acquisition_receipts = ()
+        self._acquisition_authority = None
+        if type(self.l1_provider) is not _L1Call:
+            return
+        originals = self.l1_provider.acquisition_failures
+        if type(originals) is not list:
+            return
+        cycle = self._state.round + 1
+        facts = []
+        for original in originals:
+            number = next((index for index, role in enumerate(_PASS_NAMES, 1) if original.id in (f"l1-{role}-invoke-fail", f"l1-{role}-spawn-fail")), 0)
+            outcomes = derive_pass_outcomes([original])
+            facts.append(_AcquisitionFact(
+                original, number,
+                outcomes[_PASS_NAMES[number - 1]] if number else PassOutcome.COMPLETED,
+                is_provider_capacity(original),
+                any(original is marker for marker in self._acquisition_markers),
+            ))
+        outcomes = derive_pass_outcomes(originals)
+        snapshot = _AcquisitionSnapshot(
+            self.l1_provider, cycle, self.source_hash, tuple(facts),
+            tuple(outcomes[role] for role in _PASS_NAMES), tuple(self._acquisition_markers),
+        )
+        entries = []
+        for finding in self._acquisition_markers:
+            if not any(finding is original for original in originals):
+                continue
+            number = next(index for index, role in enumerate(_PASS_NAMES, 1) if finding.id.startswith(f"l1-{role}-"))
+            entry = {
+                "file": finding.file,
+                "line": finding.line_range[0] if finding.line_range else 0,
+                "description": finding.description,
+                "disposition": finding.disposition.value,
+                "basis": derive_basis(finding, convergence_rounds=cycle).to_dict(),
+            }
+            entries.append((cycle, number, self.source_hash, json.dumps(entry, sort_keys=True, separators=(",", ":"))))
+        self._acquisition_receipts = tuple(entries)
+        self._acquisition_authority = snapshot
+
+    def _record_receipt_gate_failure(
+        self, error: str, *, diagnostic_kind: FindingDiagnosticKind | None = None
+    ) -> None:
         """Persist a deterministic CONFIRMED finding for invalid evidence.
 
         The receipt gate returns before fixpoint accounting, preserving
@@ -1861,6 +2108,7 @@ class StateMachine:
                 file="<receipt-evidence>",
                 line_range=[0, 0],
                 description=error,
+                diagnostic_kind=diagnostic_kind,
             )
         )
         self._state.infra_errors.append(f"receipt: {error}")
@@ -1880,7 +2128,7 @@ class StateMachine:
         diff_text = self._receipt_diff()
         diff_files = parse_diff_files(diff_text) if diff_text else None
         try:
-            write_receipts(
+            written = write_receipts(
                 receipts_dir=self.cwd / ".code-forge" / "receipts",
                 round_index=round_index,
                 l1_findings=l1_findings,
@@ -1898,6 +2146,23 @@ class StateMachine:
                 unavailable_rejected_passes=self._unavailable_rejected_passes_last_round,
             )
             self._written_cycles.append(round_index + 1)
+            # This boundary precedes post_round_hook. Retain only just-written
+            # outcomes, never a prior state/receipt cache or model attributes.
+            self._written_pass_outcomes = ()
+            try:
+                directory = self.cwd / ".code-forge" / "receipts"
+                paths = [directory / f"receipt-c{round_index + 1}p{number}.json" for number in (1, 2, 3)]
+                if type(written) is list and len(written) == 3 and all(type(path) is type(directory) for path in written) and set(written) == set(paths):
+                    statuses = []
+                    for number, path in enumerate(paths, 1):
+                        receipt = json.loads(path.read_text(encoding="utf-8"))
+                        if type(receipt) is not dict or type(receipt.get("pass_status")) is not str or receipt["pass_status"] not in {outcome.value for outcome in PassOutcome}:
+                            raise ValueError("writer completion snapshot invalid")
+                        statuses.append((round_index + 1, number, receipt["pass_status"]))
+                    self._written_pass_outcomes = tuple(statuses)
+            except (ValueError, OSError, RecursionError):
+                self._written_pass_outcomes = ()
+
         except OSError as exc:
             # A receipt-write failure must persist non-PASS state instead
             # of crashing and leaving a stale PASS (or no) state.json.
@@ -1910,6 +2175,10 @@ class StateMachine:
           LOCAL: L0 detect -> L0 autofix loop -> L1 -> L2 -> E2E
           CI:    L0 detect -> L1 -> L2 -> E2E (no autofix loop per STATE-03)
         """
+        self._written_pass_outcomes = ()
+        self._acquisition_markers = []
+        self._acquisition_receipts = ()
+        self._acquisition_authority = None
         self._state.converged = False
         self._state.round = round_index
         progress.emit("round %d start" % round_index)
@@ -2027,8 +2296,10 @@ class StateMachine:
             result = operation()
             if self._host_attempt_round is not None:
                 self._phase_findings[name] = result[0] if name == "l1" else result
-                if name == "l1":
-                    self._capture_acquisition_markers(self._phase_findings[name])
+            if name == "l1":
+                self._capture_acquisition_markers(result[0])
+                self._capture_acquisition_receipts()
+            if self._host_attempt_round is not None:
                 self._phase_status[name] = "returned"
             return result
         except Exception:
@@ -2266,7 +2537,7 @@ class StateMachine:
         # floor, hunk witness, completeness, stale-window).
         gate_errors = self._receipt_gate_round_errors()
         gate_errors.extend(self._receipt_gate_terminal_errors())
-        if gate_errors:
+        if gate_errors or self._acquisition_markers:
             for err in gate_errors:
                 self._record_receipt_gate_failure(err)
             self._state.verdict = Verdict.FAIL
@@ -3228,7 +3499,7 @@ class StateMachine:
 
     def _count(self, disposition: Disposition) -> int:
         """Count findings with a given disposition."""
-        return sum(1 for f in self._state.findings if f.disposition == disposition)
+        return sum(1 for f in reporting_product_findings(self._state.findings) if f.disposition == disposition)
 
     def _count_coverage_gaps(self) -> int:
         """Count active COVERAGE findings (per-file review gaps).
