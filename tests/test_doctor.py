@@ -249,6 +249,98 @@ def test_handshake_import_error():
     assert "mcp not installed" in msg
 
 
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("inherited", [None, "", "1"])
+@pytest.mark.parametrize("installed", [False, True])
+def test_handshake_propagates_only_active_bytecode_policy(monkeypatch, active, inherited, installed):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from mcp.client import session, stdio
+
+    command = "/fixture/code-forge-mcp" if installed else None
+    monkeypatch.setattr("code_forge.doctor.shutil.which", lambda name: command)
+    monkeypatch.setenv("PYTHONPATH", "/must-not-forward")
+    monkeypatch.setenv("FORGE_DIAGNOSTIC_SECRET", "fixture-only")
+    if inherited is None:
+        monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    else:
+        monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", inherited)
+    observed = []
+
+    @asynccontextmanager
+    async def transport(params):
+        observed.append(params)
+        yield object(), object()
+
+    class Session:
+        def __init__(self, read, write):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def initialize(self):
+            return SimpleNamespace(serverInfo=SimpleNamespace(name="fixture-server"))
+
+    monkeypatch.setattr(stdio, "stdio_client", transport)
+    monkeypatch.setattr(session, "ClientSession", Session)
+    with patch.object(sys, "dont_write_bytecode", active):
+        assert _check_handshake() == (True, "fixture-server")
+    assert len(observed) == 1
+    params = observed[0]
+    assert params.command == (command or sys.executable)
+    assert params.args == ([] if installed else ["-m", "code_forge.mcp_server"])
+    assert params.env == ({"PYTHONDONTWRITEBYTECODE": "1"} if active else None)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable fixture")
+@pytest.mark.parametrize("active", [False, True])
+def test_handshake_bytecode_policy_reaches_real_stdio_child(tmp_path, monkeypatch, active):
+    # Import before changing runtime policy; use a real stderr file below so
+    # capture/import ordering cannot short-circuit the child before it starts.
+    from mcp.client import stdio
+
+    child = tmp_path / "code-forge-mcp"
+    (tmp_path / "cache_probe.py").write_text("VALUE = 1\n", encoding="utf-8")
+    child.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "import cache_probe\n"
+        "for line in sys.stdin:\n"
+        "    request = json.loads(line)\n"
+        "    if request.get('method') == 'initialize':\n"
+        "        assert 'FORGE_DIAGNOSTIC_SECRET' not in os.environ\n"
+        "        assert 'PYTHONPATH' not in os.environ\n"
+        "        result = {'protocolVersion': request['params']['protocolVersion'],\n"
+        "                  'capabilities': {}, 'serverInfo': {\n"
+        "                  'name': 'bytecode-off' if sys.dont_write_bytecode else 'bytecode-on',\n"
+        "                  'version': '1'}}\n"
+        "        print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}), flush=True)\n",
+        encoding="utf-8",
+    )
+    child.chmod(0o700)
+    monkeypatch.setattr("code_forge.doctor.shutil.which", lambda name: str(child))
+    monkeypatch.setenv("PYTHONPATH", "/must-not-forward")
+    monkeypatch.setenv("FORGE_DIAGNOSTIC_SECRET", "fixture-only")
+    # Deliberately disagree with the runtime flag: forwarding the environment
+    # value instead of the active policy must fail either case.
+    monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "" if active else "1")
+    actual_transport = stdio.stdio_client
+    with (tmp_path / "server.stderr").open("w") as stderr:
+        monkeypatch.setattr(
+            stdio, "stdio_client", lambda params: actual_transport(params, errlog=stderr)
+        )
+        with patch.object(sys, "dont_write_bytecode", active):
+            result = _check_handshake()
+    assert result == (True, "bytecode-off" if active else "bytecode-on")
+    caches = list(tmp_path.glob("__pycache__/cache_probe.*.pyc"))
+    assert bool(caches) is (not active)
+
+
 # -- _check_registries --
 
 

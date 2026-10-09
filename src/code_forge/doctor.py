@@ -240,7 +240,10 @@ def _check_handshake() -> tuple[bool, str]:
         binary = shutil.which("code-forge-mcp")
         cmd = binary or sys.executable
         args = [] if binary else ["-m", "code_forge.mcp_server"]
-        params = StdioServerParameters(command=cmd, args=args)
+        # The SDK filters inherited Python settings. Preserve only the active
+        # bytecode policy, before an installed console script imports Forge.
+        child_env = {"PYTHONDONTWRITEBYTECODE": "1"} if sys.dont_write_bytecode else None
+        params = StdioServerParameters(command=cmd, args=args, env=child_env)
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
                 result = await asyncio.wait_for(session.initialize(), 15)
