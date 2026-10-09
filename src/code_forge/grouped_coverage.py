@@ -44,6 +44,18 @@ def _obligations(diff_text: str) -> Counter:
     )
 
 
+def validate_grouped_diff(diff_text: str) -> Counter:
+    """Validate original input and return its existing mandatory obligations.
+
+    This is the same pure parser check used during reconciliation, allowing
+    callers to reject invalid input before semantic acquisition or fallback.
+    It does not establish sliceability, semantic coverage, or provider fit.
+    """
+    if not isinstance(diff_text, str):
+        raise GroupedCoverageError("grouping: diff must be text")
+    return _obligations(diff_text)
+
+
 def reconcile_grouped_coverage(
     diff_text: str, grouping: GroupingResult
 ) -> tuple[PlannedReviewGroup, ...]:
@@ -53,11 +65,9 @@ def reconcile_grouped_coverage(
     comes from the existing parser/slicer; no filesystem or basename matching
     may reassign an obligation. All errors precede provider construction.
     """
-    if not isinstance(diff_text, str):
-        raise GroupedCoverageError("grouping: diff must be text")
+    original = validate_grouped_diff(diff_text)
     if not isinstance(grouping, GroupingResult) or not isinstance(grouping.groups, list):
         raise GroupedCoverageError("grouping: expected a GroupingResult with a group list")
-    original = _obligations(diff_text)
     required = {key[0] for key in original}
     inventory = set(get_changed_files(diff_text))
     owners: set[str] = set()
@@ -103,7 +113,7 @@ def reconcile_grouped_coverage(
             raise GroupedCoverageError(f"grouping: altered diff slice for {name!r}")
         if not sliced and required.intersection(members):
             raise GroupedCoverageError(f"grouping: empty mandatory diff slice for {name!r}")
-        actual = _obligations(sliced)
+        actual = validate_grouped_diff(sliced)
         projected = Counter({key: count for key, count in original.items() if key[0] in member_set})
         if actual != projected:
             raise GroupedCoverageError(f"grouping: mandatory hunk mismatch for {name!r}")

@@ -494,7 +494,8 @@ def test_source_and_live_receipt_closed_and_reusable(valid, tmp_path):
         "workflow_sha256": "e" * 64,
         "helper_sha256": dict.fromkeys(launch.HELPER_PATHS, "f" * 64),
     }
-    receipt = launch.validate_launch(valid["context"], valid["event"], source, fetcher=valid["fetch"])
+    live = verify(valid)
+    receipt = launch.validate_receipt({"schema_version": 1, "status": "PASS", "binding": live["binding"], "source": source, "live": live})
     path = tmp_path / "receipt.json"
     launch.write_receipt(path, receipt)
     assert launch.load_receipt(path) == receipt
@@ -550,12 +551,19 @@ def test_transport_rejects_http_redirect_rate_limit_and_partial_body(
         return Connection()
 
     monkeypatch.setattr(setup.http.client, "HTTPSConnection", connection)
-    reader = setup.MetadataReader({"/actions/workflows/linux-tests.yml"})
+    from test_setup_policy import binding_fixture
+
+    sentinel = b"offline-metadata-sentinel"
+    binding = binding_fixture()
+    monkeypatch.setattr(setup, "_read_metadata_credential", lambda value: sentinel if value == binding else pytest.fail("wrong credential binding"))
+    reader = setup.MetadataReader({"/actions/workflows/linux-tests.yml"}, binding=binding)
     with pytest.raises(setup.SetupError, match=expected) as error:
         reader.one("/actions/workflows/linux-tests.yml")
     assert "secret" not in str(error.value)
     assert requests[0][0] == "GET" and requests[-1] == "closed"
-    assert "Authorization" not in requests[0][2]
+    assert requests[0][2]["Authorization"] == b"Bearer " + sentinel
+    assert sentinel.decode() not in str(error.value)
+    assert all(sentinel.decode() not in str(value) for value in reader.__dict__.values())
 
 
 def test_http_deadline_includes_slow_injected_read(monkeypatch):
@@ -614,7 +622,209 @@ def compact_receipt(valid):
         "workflow_sha256": "e" * 64,
         "helper_sha256": dict.fromkeys(launch.HELPER_PATHS, "f" * 64),
     }
-    return launch.validate_launch(valid["context"], valid["event"], source, fetcher=valid["fetch"])
+    live = verify(valid)
+    return launch.validate_receipt({"schema_version": 1, "status": "PASS", "binding": live["binding"], "source": source, "live": live})
+
+
+@pytest.fixture
+def root_launch(tmp_path, monkeypatch):
+    """Fake only the root process boundary; keep both receipt validators real."""
+    from forge_ci import admission
+    from test_ci_admission import document, observation
+
+    def denied(*_args, **_kwargs):
+        pytest.fail("initial checkout attempted ordinary-user transport or a live command")
+
+    monkeypatch.setattr(subprocess, "Popen", denied)
+    monkeypatch.setattr(setup.http.client, "HTTPSConnection", denied)
+    monkeypatch.setattr(setup, "live_identity", denied)
+    monkeypatch.setattr(setup, "MetadataReader", denied)
+    monkeypatch.setattr(setup, "_read_metadata_credential", denied)
+    monkeypatch.setattr(setup, "claim_activation", denied)
+    doc, observed = document(), observation()
+    monkeypatch.setattr(setup, "trusted_boot_id", lambda: doc["binding"]["boot_id"])
+    _cfg, context, event = native_fixture()
+    evidence = tmp_path / "initial-evidence"
+    evidence.mkdir()
+    calls = []
+    native = {key: doc["binding"][key] for key in setup.NATIVE_BINDING_KEYS}
+    fixture = {"context": context, "event": event, "source": doc["source"], "observed": observed,
+               "evidence": evidence, "native": native, "calls": calls, "change_result": lambda result: None}
+
+    def command(argv, timeout, **kwargs):
+        assert argv == setup.observer_argv_native(native)
+        assert argv == setup.observer_argv(doc["binding"])
+        assert timeout == 30 and kwargs == {"env": dict(setup.SYSTEM_ENV), "limit": setup.MAX_JSON}
+        calls.append((list(argv), copy.deepcopy(kwargs)))
+        raw = setup.canonical(fixture["observed"]) + b"\n"
+        result = {"argv": list(argv), "returncode": 0, "stdout": raw.decode(), "stdout_hex": raw.hex(),
+                  "stderr": "", "stderr_hex": "", "wrapper_pid": 123,
+                  "started": setup.stamp(), "ended": setup.stamp()}
+        fixture["change_result"](result)
+        return result
+
+    monkeypatch.setattr(admission.payload, "bounded_command", command)
+    return fixture
+
+
+def invoke_root_launch(fixture):
+    return launch.validate_launch(fixture["context"], fixture["event"], fixture["source"],
+                                  evidence_dir=fixture["evidence"])
+
+
+def test_initial_launch_uses_fresh_fixed_root_observer_and_preserves_receipt_schema(root_launch, monkeypatch):
+    sentinel = "offline-token-must-not-reach-observer"
+    monkeypatch.setenv("GITHUB_TOKEN", sentinel)
+    monkeypatch.setenv("PYTHONPATH", "/unreviewed/imports")
+    receipt = invoke_root_launch(root_launch)
+    assert receipt == {"schema_version": 1, "status": "PASS", "binding": root_launch["observed"]["binding"],
+                       "source": root_launch["source"], "live": root_launch["observed"]["live"]}
+    assert set(root_launch["native"]) == setup.NATIVE_BINDING_KEYS
+    assert {"job_id", "workflow_id", "job_started_at", "job_started_ns"}.isdisjoint(root_launch["native"])
+    assert receipt["binding"]["job_id"] == 456 and receipt["binding"]["workflow_id"] == 987
+    assert len(root_launch["calls"]) == 1
+    first = copy.deepcopy(receipt)
+    # Even an existing valid receipt cannot replace a second fresh root invocation.
+    launch.write_receipt(root_launch["evidence"] / "launch.json", receipt)
+    root_launch["evidence"] = root_launch["evidence"].parent / "second-evidence"
+    root_launch["evidence"].mkdir()
+    launch.write_receipt(root_launch["evidence"] / "launch.json", receipt)
+    root_launch["observed"]["observed"] = setup.stamp()
+    root_launch["observed"]["live"]["checked"] = setup.stamp()
+    second = invoke_root_launch(root_launch)
+    assert len(root_launch["calls"]) == 2
+    assert second["live"]["checked"]["monotonic_ns"] > first["live"]["checked"]["monotonic_ns"]
+    for evidence in root_launch["evidence"].parent.iterdir():
+        assert not (evidence / "setup-observer-initial.stdout").exists()
+        assert (evidence / "setup-observer-initial.stderr").read_bytes() == b""
+        diagnostic = launch.parse_json((evidence / "setup-observer-initial.json").read_bytes())
+        assert diagnostic["argv"] == root_launch["calls"][0][0]
+        for path in evidence.iterdir():
+            assert sentinel.encode() not in path.read_bytes()
+    assert sentinel not in repr(root_launch["calls"]) and sentinel not in repr(receipt)
+
+
+def test_initial_numeric_job_identity_comes_only_from_consistent_root_receipt(root_launch):
+    observed = root_launch["observed"]
+    for binding in (observed["binding"], observed["setup_receipt"]["binding"], observed["live"]["binding"]):
+        binding["job_id"] = 789
+    observed["setup_receipt_sha256"] = hashlib.sha256(setup.canonical(observed["setup_receipt"]) + b"\n").hexdigest()
+    root_launch["context"]["GITHUB_JOB_ID"] = "999"
+    root_launch["context"]["GITHUB_WORKFLOW_ID"] = "999"
+    assert invoke_root_launch(root_launch)["binding"]["job_id"] == 789
+    assert len(root_launch["calls"]) == 1
+
+
+def test_existing_launch_receipt_cannot_replace_a_failed_fresh_root_observation(root_launch):
+    observed = root_launch["observed"]
+    previous = {"schema_version": 1, "status": "PASS", "binding": observed["binding"],
+                "source": root_launch["source"], "live": observed["live"]}
+    path = root_launch["evidence"] / "launch.json"
+    launch.write_receipt(path, launch.validate_receipt(previous))
+    root_launch["change_result"] = lambda result: result.update(returncode=1)
+    with pytest.raises(launch.LaunchError, match="root observer failed"):
+        invoke_root_launch(root_launch)
+    assert len(root_launch["calls"]) == 1
+    assert path.read_bytes() == launch.canonical_bytes(previous) + b"\n"
+    assert (root_launch["evidence"] / "setup-observer-initial.stdout").is_file()
+
+
+@pytest.mark.parametrize("change", ["candidate", "source_schema", "native_attempt", "native_actor", "event_head"])
+def test_initial_launch_rejects_unverified_source_or_native_identity_before_root(root_launch, change):
+    if change == "candidate":
+        root_launch["source"]["candidate_sha"] = "9" * 40
+    elif change == "source_schema":
+        root_launch["source"]["excluded"] = []
+    elif change == "native_attempt":
+        root_launch["context"]["GITHUB_RUN_ATTEMPT"] = "2"
+    elif change == "native_actor":
+        root_launch["context"]["GITHUB_ACTOR"] = "other"
+    else:
+        root_launch["event"]["head_commit"]["id"] = "9" * 40
+    with pytest.raises(launch.LaunchError):
+        invoke_root_launch(root_launch)
+    assert not root_launch["calls"] and not list(root_launch["evidence"].iterdir())
+
+
+@pytest.mark.parametrize("change", [
+    "run", "run_number", "attempt", "boot", "head", "parent", "missing_job", "bool_job", "job_start",
+    "seal_job", "live_job", "tree", "stale_live", "future_live", "stale_policy", "missing_metadata",
+    "extra_metadata", "metadata_digest", "module", "observer", "policy", "seal_digest", "incomplete",
+])
+def test_initial_launch_rejects_root_identity_source_policy_and_freshness_drift(root_launch, change):
+    observed = root_launch["observed"]
+    field = {"run": "run_id", "run_number": "run_number", "attempt": "run_attempt",
+             "boot": "boot_id", "head": "candidate_sha", "parent": "before_sha"}.get(change)
+    if field:
+        observed["binding"][field] = ({"boot": "22222222-2222-2222-2222-222222222222",
+                                      "head": "9" * 40, "parent": "9" * 40}.get(change, 2))
+    elif change == "missing_job":
+        observed["binding"].pop("job_id")
+    elif change == "bool_job":
+        observed["binding"]["job_id"] = True
+    elif change == "job_start":
+        observed["binding"]["job_started_ns"] += 1
+    elif change == "seal_job":
+        observed["setup_receipt"]["binding"]["job_id"] += 1
+    elif change == "live_job":
+        observed["live"]["binding"]["job_id"] += 1
+    elif change == "tree":
+        observed["live"]["tree_oid"] = "9" * 40
+    elif change in {"stale_live", "future_live", "stale_policy"}:
+        stamp = observed["observed"] if change == "stale_policy" else observed["live"]["checked"]
+        stamp["monotonic_ns"] = 1 if change != "future_live" else setup.time.monotonic_ns() + 10**9
+    elif change == "missing_metadata":
+        observed["live"]["metadata_sha256"].popitem()
+    elif change == "extra_metadata":
+        observed["live"]["metadata_sha256"]["/unreviewed"] = "a" * 64
+    elif change == "metadata_digest":
+        path = next(iter(observed["live"]["metadata_sha256"]))
+        observed["live"]["metadata_sha256"][path] = "invalid"
+    elif change == "module":
+        root_launch["source"]["helper_sha256"][".github/scripts/forge_ci/setup_policy.py"] = "9" * 64
+    elif change == "observer":
+        observed["setup_receipt"]["observer"]["sha256"] = "9" * 64
+    elif change == "policy":
+        observed["policy"] = {"different": True}
+    elif change == "seal_digest":
+        observed["setup_receipt_sha256"] = "9" * 64
+    else:
+        observed.pop("setup_receipt")
+    with pytest.raises(launch.LaunchError):
+        invoke_root_launch(root_launch)
+    assert len(root_launch["calls"]) == 1
+    assert (root_launch["evidence"] / "setup-observer-initial.stdout").is_file()
+    assert not (root_launch["evidence"] / "launch.json").exists()
+
+
+@pytest.mark.parametrize("change", ["exit", "bool_exit", "error", "argv", "stderr", "raw_stderr",
+                                     "noncanonical", "display", "malformed", "duplicate", "bad_hex", "oversize"])
+def test_initial_launch_requires_exact_bounded_root_command_result(root_launch, change):
+    def mutate(result):
+        if change in {"exit", "bool_exit"}:
+            result["returncode"] = 1 if change == "exit" else False
+        elif change == "error":
+            result["error"] = "command deadline exceeded"
+        elif change == "argv":
+            result["argv"] = ["/unreviewed/observer.py"]
+        elif change == "stderr":
+            result.update(stderr="unexpected diagnostics", stderr_hex=b"unexpected diagnostics".hex())
+        elif change == "raw_stderr":
+            result["stderr_hex"] = b"hidden diagnostics".hex()
+        elif change == "display":
+            result["stdout"] = "different display"
+        elif change == "bad_hex":
+            result["stdout_hex"] = "ffgg"
+        elif change == "oversize":
+            result["stdout_hex"] = "00" * (setup.MAX_JSON + 1)
+        else:
+            raw = {"noncanonical": b" " + bytes.fromhex(result["stdout_hex"]),
+                   "malformed": b"not JSON\n", "duplicate": b'{"binding":{},"binding":{}}\n'}[change]
+            result.update(stdout=raw.decode(), stdout_hex=raw.hex())
+    root_launch["change_result"] = mutate
+    with pytest.raises(launch.LaunchError):
+        invoke_root_launch(root_launch)
+    assert len(root_launch["calls"]) == 1
 
 
 def test_local_comparison_is_distinct_and_never_network_or_activation(valid, monkeypatch):
@@ -927,11 +1137,14 @@ def test_exact_live_call_ownership_stays_at_six_runtime_boundaries():
         "install_vendor": 1,
         "observe_sealed": 1,
     }
-    assert callers(root / "launch.py", "live_identity") == {"validate_launch": 1}
+    assert callers(root / "launch.py", "live_identity") == {}
+    assert callers(root / "launch.py", "observe_setup") == {"validate_launch": 1}
+    assert callers(root / "admission.py", "live_identity") == {}
+    assert callers(root / "admission.py", "observe_setup") == {"Gate": 1}
     assert callers(root / "admission.py", "validate_launch") == {}
     assert callers(root / "controller.py", "validate_launch") == {}
     assert callers(root / "user_service.py", "validate_launch") == {}
-    # The observer is invoked exactly once during prepare and once during final.
+    # One root observation at checkout, plus one during prepare and one at final.
     admission_tree = ast.parse((root / "admission.py").read_text())
     gate = next(
         node for node in admission_tree.body if isinstance(node, ast.ClassDef) and node.name == "Gate"

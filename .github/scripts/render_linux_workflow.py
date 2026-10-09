@@ -83,7 +83,10 @@ for path in (base, stage):
     assert path.resolve(strict=True) == path and stat.S_ISDIR(info.st_mode)
     assert info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
 parts = SOURCE_PART_RECORDS
-assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts}
+assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts} | {'bootstrap-entry.py'}
+entry_info = (stage / 'bootstrap-entry.py').lstat()
+assert stat.S_ISREG(entry_info.st_mode) and entry_info.st_uid == entry_info.st_gid == 0
+assert stat.S_IMODE(entry_info.st_mode) == 0o400 and entry_info.st_nlink == 1
 chunks = []
 for part in parts:
     fd = os.open(stage / part['name'], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -99,7 +102,7 @@ assert len(raw) == SOURCE_BYTE_COUNT and hashlib.sha256(raw).hexdigest() == SOUR
 source = raw.decode('utf-8')
 namespace = {'__name__': 'fixed_setup_bootstrap'}
 exec(compile(source, '<fixed-workflow-policy-setup>', 'exec'), namespace)
-result = namespace['bootstrap'](namespace['CONFIG'], source)
+result = namespace['bootstrap'](namespace['CONFIG'], source, credential_layout={'parts': parts})
 assert type(result) is dict and result.get('status') == 'PASS'
 assert result.get('load_attempted') is True and result.get('positive_passed') is True
 '''
@@ -151,7 +154,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(parent))
 from forge_ci import launch
 event = launch.parse_json(launch.read_regular(Path(os.environ['GITHUB_EVENT_PATH']), limit=launch.MAX_API), limit=launch.MAX_API)
-record = launch.validate_launch(os.environ, event, checkout)
+record = launch.validate_launch(os.environ, event, checkout, evidence_dir=Path(os.environ['EVIDENCE']))
 launch.write_receipt(Path(os.environ['EVIDENCE']) / 'launch-bootstrap.json', record)
 '''
 
@@ -259,6 +262,49 @@ def native_keys(source):
     raise ValueError('setup_policy must expose literal NATIVE_KEYS')
 
 
+
+CLEANUP_NAMES = frozenset({
+    "BOOTSTRAP_ROOT", "MAX_ID", "MAX_CREDENTIAL", "MAX_FILE", "_SHA256", "_BOOT", "SetupError",
+    "need", "keys", "_id", "sha", "read_regular", "trusted_boot_id", "_credential_stage",
+    "_credential_parts", "_credential_directory", "_credential_identity", "_credential_stage_fd",
+    "_credential_file_info", "_credential_file_fd", "_credential_read_fd", "_credential_inventory",
+    "cleanup_metadata_credential",
+})
+
+
+def cleanup_source(source, records):
+    """Copy only fixed read/unlink dependencies; never import candidate code."""
+    import ast
+    selected, found = [], set()
+    for node in ast.parse(source).body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            names = {node.name}
+        elif isinstance(node, ast.Assign):
+            names = {target.id for target in node.targets if isinstance(target, ast.Name)}
+        else:
+            continue
+        if names & CLEANUP_NAMES:
+            assert names <= CLEANUP_NAMES and not found & names
+            selected.append(node)
+            found.update(names)
+    assert found == CLEANUP_NAMES, 'fixed credential cleanup dependencies changed'
+    prefix = ("from __future__ import annotations\nimport os, stat, hashlib, re, json\n"
+              "from pathlib import Path\nfrom contextlib import contextmanager\nfrom typing import Any\n")
+    code = prefix + ast.unparse(ast.Module(body=selected, type_ignores=[])) + "\n"
+    code += "layout = " + repr({'parts': records}) + "\n"
+    code += r'''try:
+    run_id = _id(os.environ.get('GITHUB_RUN_ID'), 'cleanup run id', native=True)
+    attempt = _id(os.environ.get('GITHUB_RUN_ATTEMPT'), 'cleanup attempt', native=True)
+    result = cleanup_metadata_credential(run_id, attempt, trusted_boot_id(), credential_layout=layout)
+except BaseException:
+    print(json.dumps({'schema_version': 1, 'status': 'STOP', 'token_absent': False,
+                      'error': 'credential cleanup failed'}, sort_keys=True, separators=(',', ':')))
+    raise SystemExit(1)
+print(json.dumps(result, sort_keys=True, separators=(',', ':')))
+'''
+    return code
+
+
 def render(repo):
     repo = Path(repo).resolve(strict=True)
     helpers = {'.github/scripts/forge_ci/' + name: (repo / '.github/scripts/forge_ci' / name).read_bytes() for name in HELPERS}
@@ -267,11 +313,12 @@ def render(repo):
     verifier = helpers['.github/scripts/forge_ci/launch.py'].decode()
     assert 0 < len(source.encode()) <= 256 * 1024 and 0 < len(verifier.encode()) <= 256 * 1024
     assert '${{' not in source and '${{' not in verifier
-    for marker in ('PYSTAGE', 'PYSETUP', 'PYBOOT', 'PYVERIFYCHUNK'):
+    for marker in ('PYSTAGE', 'PYSETUP', 'PYBOOT', 'PYVERIFYCHUNK', 'PYENTRY', 'PYCREDENTIALCLEANUP'):
         assert '\n' + marker + '\n' not in source + verifier
     chunks = [source[index:index + 8000] for index in range(0, len(source), 8000)]
     records = [{'name': f'part-{i:02d}.txt', 'bytes': len(part.encode()), 'sha256': hashlib.sha256(part.encode()).hexdigest()}
                for i, part in enumerate(chunks)]
+    assert 1 <= len(chunks) <= 32, 'fixed root source chunk count exceeded'
     steps = []
     for index, (part, record) in enumerate(zip(chunks, records, strict=True)):
         header = r'''umask 077
@@ -290,14 +337,39 @@ printf 'EVIDENCE=%s\n' "$EVIDENCE" >> "$GITHUB_ENV"
     code = (BOOT_CODE.replace('STAGING_ROOT_LITERAL', repr(STAGING_ROOT)).replace('SOURCE_PART_RECORDS', repr(records))
             .replace('SOURCE_BYTE_COUNT', str(len(source.encode())))
             .replace('SOURCE_SHA256', repr(expected['.github/scripts/forge_ci/setup_policy.py'])))
-    bootstrap = r'''umask 077
+    entry_code = code
+    entry_record = {'name': 'bootstrap-entry.py', 'bytes': len(entry_code.encode()),
+                    'sha256': hashlib.sha256(entry_code.encode()).hexdigest()}
+    stage_prefix = code.split('chunks = []', 1)[0]
+    stage_prefix = stage_prefix[:stage_prefix.index("assert {p.name for p in stage.iterdir()}")]
+    stage_prefix += "assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts}\n"
+    stage_prefix += code[code.index('chunks = []'):code.index("source = raw.decode('utf-8')")]
+    entry_stage_code = stage_prefix + ("raw = " + literal(entry_code) + ".encode('utf-8')\n"
+        + "expected = " + repr(entry_record) + "\n"
+        + "assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']\n"
+        + "fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)\n"
+        + "with os.fdopen(fd, 'wb') as stream:\n    stream.write(raw)\n    stream.flush()\n    os.fsync(stream.fileno())\n"
+        + "fd = os.open(stage / expected['name'], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)\n"
+        + "with os.fdopen(fd, 'rb') as stream:\n    info = os.fstat(stream.fileno())\n"
+        + "    assert stat.S_ISREG(info.st_mode) and info.st_uid == info.st_gid == 0\n"
+        + "    assert stat.S_IMODE(info.st_mode) == 0o400 and info.st_nlink == 1 and info.st_size == expected['bytes']\n"
+        + "    written = stream.read(expected['bytes'] + 1)\n"
+        + "assert len(written) == expected['bytes'] and hashlib.sha256(written).hexdigest() == expected['sha256']\n"
+        + "assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts} | {'bootstrap-entry.py'}\n")
+    entry_stage = r'''/usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
+  GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYENTRY'
+''' + entry_stage_code + '\nPYENTRY\n'
+    bootstrap = r'''set +x
+export -n FORGE_CI_METADATA_TOKEN
+umask 077
+trap 'unset FORGE_CI_METADATA_TOKEN' EXIT
 runner_uid="$(/usr/bin/id -u)"
 runner_gid="$(/usr/bin/id -g)"
-/usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
+builtin printf '%s' "$FORGE_CI_METADATA_TOKEN" | /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
   FORGE_RUNNER_UID="$runner_uid" FORGE_RUNNER_GID="$runner_gid" \
   NATIVE_ENV \
-  /usr/bin/python3 -B -I -S - <<'PYSETUP' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-setup.log"
-'''.replace('NATIVE_ENV', env_lines) + code + '\nPYSETUP\n'
+  /usr/bin/python3 -B -I -S "/var/lib/forge-ci-bootstrap/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/bootstrap-entry.py" 2>&1 | /usr/bin/tee "$EVIDENCE/policy-setup.log"
+'''.replace('NATIVE_ENV', env_lines)
     verifier_chunks = [verifier[index:index + 8000] for index in range(0, len(verifier), 8000)]
     verifier_records = [{'name': f'part-{i:02d}.txt', 'bytes': len(part.encode()),
                          'sha256': hashlib.sha256(part.encode()).hexdigest()}
@@ -321,8 +393,13 @@ mkdir "$TMPDIR"
 printf 'TMPDIR=%s\n' "$TMPDIR" >> "$GITHUB_ENV"
 python - <<'PYPREFLIGHT' 2>&1 | tee "$EVIDENCE/preflight.log"
 ''' + PREFLIGHT_PYTHON + '\nPYPREFLIGHT\ndf -h "$TMPDIR" | tee "$EVIDENCE/disk.log"\n'
+    cleanup = r'''/usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
+  GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYCREDENTIALCLEANUP' | /usr/bin/tee "$RUNNER_TEMP/forge-evidence/credential-cleanup.json"
+''' + cleanup_source(source, records) + '\nPYCREDENTIALCLEANUP\n'
     steps.extend([
-        {'name': 'Authenticate and establish fixed vendor policy before actions', 'id': 'policy_setup', 'timeout-minutes': 10, 'run': bootstrap},
+        {'name': 'Stage fixed bootstrap entrypoint', 'timeout-minutes': 1, 'run': entry_stage},
+        {'name': 'Authenticate and establish fixed vendor policy before actions', 'id': 'policy_setup', 'timeout-minutes': 10,
+         'env': {'FORGE_CI_METADATA_TOKEN': '${{ github.token }}'}, 'run': bootstrap},
         {'name': 'Check out exact admitted source', 'uses': CHECKOUT,
          'with': {'ref': '${{ github.sha }}', 'fetch-depth': 0, 'persist-credentials': False}},
         *verifier_steps,
@@ -335,6 +412,8 @@ python - <<'PYPREFLIGHT' 2>&1 | tee "$EVIDENCE/preflight.log"
   --receipt "$EVIDENCE/launch-bootstrap.json" --repo "$GITHUB_WORKSPACE" \
   --evidence "$EVIDENCE/qualification" 2>&1 | tee "$EVIDENCE/qualification-controller.log"
 '''},
+        {'name': 'Remove private metadata credential', 'id': 'credential_cleanup', 'if': '${{ always() }}',
+         'timeout-minutes': 1, 'run': cleanup},
         {'name': 'Preserve logs and JUnit reports', 'if': '${{ always() }}', 'timeout-minutes': 5, 'uses': UPLOAD,
          'with': {'name': 'linux-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}',
                   'path': '${{ runner.temp }}/forge-evidence/', 'if-no-files-found': 'error', 'retention-days': 14}},

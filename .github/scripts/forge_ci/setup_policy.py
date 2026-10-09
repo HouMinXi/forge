@@ -38,6 +38,9 @@ PATH_CERTIFICATE_SHA256 = "b84f1e5388334a09441d2800cae6f346161c0728bf633274ee038
 VENDOR_PROFILE_SHA256 = "11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9"
 PROFILE_MEMBER = "apparmor-profiles/usr/share/apparmor/extra-profiles/bwrap-userns-restrict"
 STAGE_ROOT = Path("/var/lib/forge-qualification")
+BOOTSTRAP_ROOT = Path("/var/lib/forge-ci-bootstrap")
+MAX_CREDENTIAL = 4096
+CREDENTIAL_INGRESS_SECONDS = 5
 APPARMOR_ROOT = "/sys/kernel/security/apparmor"
 POLICY_ROOT = APPARMOR_ROOT + "/policy"
 PROFILE_ROOT = "/etc/apparmor.d"
@@ -583,8 +586,10 @@ def _network_deadline(seconds: float):
 
 class MetadataReader:
     """Finite fixed-host GET-only transport. Injected fetchers are offline tests only."""
-    def __init__(self, allowed, fetcher=None):
+    def __init__(self, allowed, fetcher=None, *, binding=None):
         self.allowed, self.fetcher = frozenset(allowed), fetcher
+        self.binding = binding
+        self.workflow_id = binding.get("workflow_id") if type(binding) is dict else None
         self.deadline, self.requests, self.total = time.monotonic() + 30, 0, 0
         self.digests = {}
 
@@ -600,10 +605,17 @@ class MetadataReader:
                 if self.fetcher is not None:
                     raw, link = self.fetcher(API_ROOT + path)
                 else:
+                    need(type(self.binding) is dict, "metadata credential binding is required")
+                    validate_binding(self.binding, native=set(self.binding) == NATIVE_BINDING_KEYS)
+                    paths = (live_metadata_paths(self.binding, _id(self.workflow_id, "metadata workflow id"))
+                             if self.workflow_id is not None else
+                             {"workflow": "/actions/workflows/" + self.binding["workflow_path"].rsplit("/", 1)[1]})
+                    need(path in paths.values(), "unreviewed authenticated metadata endpoint")
                     connection = http.client.HTTPSConnection("api.github.com", timeout=timeout, context=ssl.create_default_context())
                     connection.request("GET", "/repos/HouMinXi/forge" + path, headers={
                         "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
-                        "User-Agent": "forge-ci-owner-push/1", "Accept-Encoding": "identity"})
+                        "User-Agent": "forge-ci-owner-push/1", "Accept-Encoding": "identity",
+                        "Authorization": b"Bearer " + _read_metadata_credential(self.binding)})
                     response = connection.getresponse()
                     if response.status != 200:
                         # Only nonsecret finite numeric provider diagnostics; no response body/header dump.
@@ -630,11 +642,16 @@ class MetadataReader:
                 value = parse_json(raw, limit=MAX_API)
                 self.digests[path] = hashlib.sha256(raw).hexdigest()
                 return value, link
-        except (OSError, http.client.HTTPException, ValueError) as exc:
-            raise SetupError("metadata unavailable") from exc
+        except SetupError:
+            raise
+        except Exception:  # noqa: BLE001 - transport exceptions must never expose request credentials.
+            raise SetupError("metadata unavailable") from None
         finally:
             if connection is not None:
-                connection.close()
+                try:
+                    connection.close()
+                except Exception:  # noqa: BLE001 - connection cleanup may retain credential-bearing request state.
+                    raise SetupError("metadata connection cleanup failed") from None
 
     def one(self, path):
         value, link = self.get(path)
@@ -705,12 +722,13 @@ def live_identity(config, native, *, fetcher=None):
     validate_binding(native, native=not complete)
     need(native["boot_id"] == trusted_boot_id(), "kernel boot changed")
     workflow_path = "/actions/workflows/" + native["workflow_path"].rsplit("/", 1)[1]
-    reader = MetadataReader({workflow_path}, fetcher)
+    reader = MetadataReader({workflow_path}, fetcher, binding=native)
     workflow = reader.one(workflow_path)
     workflow_id = _id(workflow.get("id"), "workflow id")
     need(workflow.get("path") == CONFIG["workflow_path"] and workflow.get("state") == "active"
          and workflow.get("url") == API_ROOT + "/actions/workflows/" + str(workflow_id), "wrong fixed workflow identity")
     paths = live_metadata_paths(native, workflow_id)
+    reader.workflow_id = workflow_id
     reader.allowed = frozenset(paths.values())
     _validate_run(reader.one(paths["run"]), native, workflow_id)
     jobs = reader.collection(paths["jobs"], "jobs")
@@ -1348,9 +1366,252 @@ def claim_activation(binding):
 
 
 def observer_argv(binding):
+    validate_binding(binding)
+    return observer_argv_native({key: binding[key] for key in NATIVE_BINDING_KEYS})
+
+
+def observer_argv_native(native):
+    """Derive only the fixed observer path before external numeric job admission."""
+    validate_binding(native, native=True)
+    stage = STAGE_ROOT / str(native["run_id"]) / "1"
     return ["/usr/bin/sudo", "-n", "--", "/usr/bin/timeout", "--signal=KILL", "25s", "/usr/bin/env", "-i",
             *(key + "=" + value for key, value in SYSTEM_ENV.items()),
-            "/usr/bin/python3", "-B", "-I", "-S", str(stage_path(binding) / "observer.py"), "observe"]
+            "/usr/bin/python3", "-B", "-I", "-S", str(stage / "observer.py"), "observe"]
+
+
+def _credential_stage(run_id, run_attempt):
+    _id(run_id, "credential run id")
+    need(type(run_attempt) is int and run_attempt == 1, "invalid credential run attempt")
+    return BOOTSTRAP_ROOT / (str(run_id) + "-1")
+
+
+def _credential_parts(layout):
+    keys(layout, {"parts"}, "credential layout")
+    parts = layout["parts"]
+    need(type(parts) in (tuple, list) and 1 <= len(parts) <= 32, "invalid credential source manifest")
+    for index, part in enumerate(parts):
+        keys(part, {"name", "bytes", "sha256"}, "credential source part")
+        need(part["name"] == f"part-{index:02d}.txt", "invalid credential source ordering")
+        need(type(part["bytes"]) is int and 0 < part["bytes"] <= 32000, "invalid credential source size")
+        sha(part["sha256"], "credential source")
+    need(sum(part["bytes"] for part in parts) <= 256 * 1024, "credential source bound exceeded")
+    return parts
+
+
+def _credential_directory(path, *, missing_ok=False):
+    need(path.is_absolute() and path.resolve(strict=False) == path, "invalid credential directory")
+    for parent in path.parents:
+        info = parent.lstat()
+        need(stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and not info.st_mode & 0o022,
+             "untrusted credential ancestor")
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        need(missing_ok, "credential directory is absent")
+        return None
+    need(stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0
+         and stat.S_IMODE(info.st_mode) == 0o700, "untrusted credential directory")
+    return info
+
+
+def _credential_identity(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid, info.st_nlink, info.st_size)
+
+
+@contextmanager
+def _credential_stage_fd(run_id, run_attempt, *, missing_ok=False):
+    stage = _credential_stage(run_id, run_attempt)
+    if _credential_directory(BOOTSTRAP_ROOT, missing_ok=missing_ok) is None:
+        yield stage, None
+        return
+    info = _credential_directory(stage, missing_ok=missing_ok)
+    if info is None:
+        yield stage, None
+        return
+    fd = os.open(stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        need(_credential_identity(os.fstat(fd)) == _credential_identity(info), "credential directory changed")
+        yield stage, fd
+        need(_credential_identity(os.fstat(fd)) == _credential_identity(stage.lstat()), "credential directory changed")
+    finally:
+        os.close(fd)
+
+
+def _credential_file_info(info, limit):
+    need(stat.S_ISREG(info.st_mode) and info.st_uid == info.st_gid == 0 and info.st_nlink == 1
+         and stat.S_IMODE(info.st_mode) == 0o400 and 0 <= info.st_size <= limit,
+         "untrusted credential staging file")
+
+
+@contextmanager
+def _credential_file_fd(directory_fd, name, limit):
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+    try:
+        info = os.fstat(fd)
+        _credential_file_info(info, limit)
+        need(_credential_identity(info) == _credential_identity(os.stat(name, dir_fd=directory_fd, follow_symlinks=False)),
+             "credential staging file changed")
+        yield fd
+        need(_credential_identity(os.fstat(fd)) == _credential_identity(os.stat(name, dir_fd=directory_fd, follow_symlinks=False)),
+             "credential staging file changed")
+    finally:
+        os.close(fd)
+
+
+def _credential_read_fd(fd, limit):
+    chunks = []
+    total = 0
+    while total <= limit:
+        chunk = os.read(fd, limit + 1 - total)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    need(total <= limit, "credential staging file bound exceeded")
+    return b"".join(chunks)
+
+
+def _credential_inventory(directory_fd, parts, *, token):
+    expected = {part["name"] for part in parts} | {"bootstrap-entry.py"}
+    if token:
+        expected.add("metadata-token")
+    need(set(os.listdir(directory_fd)) == expected, "credential staging inventory changed")
+    for part in parts:
+        with _credential_file_fd(directory_fd, part["name"], part["bytes"]) as fd:
+            raw = _credential_read_fd(fd, part["bytes"])
+            need(len(raw) == part["bytes"] and hashlib.sha256(raw).hexdigest() == part["sha256"],
+                 "credential source part changed")
+    # The fixed workflow literal supplies independent entrypoint byte authority.
+    with _credential_file_fd(directory_fd, "bootstrap-entry.py", 65536) as fd:
+        need(os.fstat(fd).st_size > 0, "empty credential entrypoint")
+    if token:
+        with _credential_file_fd(directory_fd, "metadata-token", MAX_CREDENTIAL) as fd:
+            need(os.fstat(fd).st_size > 0, "empty metadata credential")
+
+
+def _validate_credential_bytes(raw):
+    need(type(raw) is bytes and 1 <= len(raw) <= MAX_CREDENTIAL and all(33 <= byte <= 126 for byte in raw),
+         "invalid metadata credential")
+    return raw
+
+
+def _read_credential_ingress(fd):
+    """Require bounded EOF; close the actual pipe reader on every outcome."""
+    deadline = time.monotonic() + CREDENTIAL_INGRESS_SECONDS
+    selector = None
+    chunks = []
+    total = 0
+    try:
+        need(type(fd) is int and fd >= 0 and stat.S_ISFIFO(os.fstat(fd).st_mode), "credential ingress is not a pipe")
+        os.set_blocking(fd, False)
+        selector = selectors.DefaultSelector()
+        selector.register(fd, selectors.EVENT_READ)
+        while True:
+            remaining = deadline - time.monotonic()
+            need(remaining > 0, "credential ingress deadline exceeded")
+            need(selector.select(remaining), "credential ingress deadline exceeded")
+            need(time.monotonic() < deadline, "credential ingress deadline exceeded")
+            try:
+                raw = os.read(fd, MAX_CREDENTIAL + 1 - total)
+            except BlockingIOError:
+                continue
+            if not raw:
+                need(time.monotonic() < deadline, "credential ingress deadline exceeded")
+                return _validate_credential_bytes(b"".join(chunks))
+            chunks.append(raw)
+            total += len(raw)
+            need(total <= MAX_CREDENTIAL, "credential ingress byte bound exceeded")
+    except OSError:
+        raise SetupError("credential ingress unavailable") from None
+    finally:
+        try:
+            if selector is not None:
+                selector.close()
+        finally:
+            if type(fd) is int and fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+
+def stage_metadata_credential(native, credential_layout, *, ingress_fd=0):
+    """Separate temporary pre-admission resource; never an activation claim."""
+    try:
+        require_clean_root()
+        validate_binding(native, native=True)
+        need(native["boot_id"] == trusted_boot_id(), "credential boot changed")
+        parts = _credential_parts(credential_layout)
+        with _credential_stage_fd(native["run_id"], native["run_attempt"]) as (_, directory_fd):
+            _credential_inventory(directory_fd, parts, token=False)
+            active_ingress, ingress_fd = ingress_fd, None
+            raw = _read_credential_ingress(active_ingress)
+            fd = os.open("metadata-token", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o400, dir_fd=directory_fd)
+            try:
+                _credential_file_info(os.fstat(fd), MAX_CREDENTIAL)
+                view = memoryview(raw)
+                while view:
+                    written = os.write(fd, view)
+                    need(written > 0, "credential staging write failed")
+                    view = view[written:]
+                os.fsync(fd)
+                need(_credential_identity(os.fstat(fd)) == _credential_identity(
+                    os.stat("metadata-token", dir_fd=directory_fd, follow_symlinks=False)), "credential staging file changed")
+            finally:
+                os.close(fd)
+            _credential_inventory(directory_fd, parts, token=True)
+    except OSError:
+        raise SetupError("credential staging unavailable") from None
+    finally:
+        if ingress_fd is not None:
+            try:
+                os.close(ingress_fd)
+            except OSError:
+                pass
+
+
+def _read_metadata_credential(binding):
+    require_clean_root()
+    validate_binding(binding, native=set(binding) == NATIVE_BINDING_KEYS)
+    need(binding["boot_id"] == trusted_boot_id(), "credential boot changed")
+    try:
+        with _credential_stage_fd(binding["run_id"], binding["run_attempt"]) as (_, directory_fd):
+            with _credential_file_fd(directory_fd, "metadata-token", MAX_CREDENTIAL) as fd:
+                return _validate_credential_bytes(_credential_read_fd(fd, MAX_CREDENTIAL))
+    except OSError:
+        raise SetupError("metadata credential unavailable") from None
+
+
+def cleanup_metadata_credential(run_id, run_attempt, boot_id, *, credential_layout):
+    """Remove only the separately validated token before reporting inventory drift."""
+    need(os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0, "credential cleanup requires root")
+    parts = _credential_parts(credential_layout)
+    need(type(boot_id) is str and _BOOT.fullmatch(boot_id) is not None and boot_id == trusted_boot_id(),
+         "credential cleanup boot changed")
+    try:
+        with _credential_stage_fd(run_id, run_attempt, missing_ok=True) as (_, directory_fd):
+            if directory_fd is not None:
+                try:
+                    fd = os.open("metadata-token", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+                except FileNotFoundError:
+                    fd = None
+                if fd is not None:
+                    try:
+                        info = os.fstat(fd)
+                        _credential_file_info(info, MAX_CREDENTIAL)
+                        need(_credential_identity(info) == _credential_identity(
+                            os.stat("metadata-token", dir_fd=directory_fd, follow_symlinks=False)), "credential cleanup file changed")
+                        os.unlink("metadata-token", dir_fd=directory_fd)
+                        need(os.fstat(fd).st_nlink == 0, "credential cleanup unlink failed")
+                    finally:
+                        os.close(fd)
+                need("metadata-token" not in os.listdir(directory_fd), "credential cleanup token remains")
+                _credential_inventory(directory_fd, parts, token=False)
+    except OSError:
+        raise SetupError("credential cleanup unavailable") from None
+    return {"schema_version": 1, "status": "PASS", "run_id": run_id, "run_attempt": run_attempt,
+            "boot_id": boot_id, "token_absent": True}
 
 
 def root_directory(path, *, create=False, exclusive=False):
@@ -1797,7 +2058,8 @@ def observer_source(source, config):
     removed = {"bootstrap", "claim_activation", "sealed_write", "observer_source", "install_vendor", "download_archive", "runner_probe",
                "parser_argv", "validate_parser", "production_probe_argv", "parse_info_record", "validate_negative_control",
                "begin_audit_clock", "end_audit_clock", "validate_audit_clock",
-               "validate_negative_audit", "validate_audit", "_audit_fields", "_utc_for_journal", "checked_command", "command", "kill_owned_command", "cancellation_guard"}
+               "validate_negative_audit", "validate_audit", "_audit_fields", "_utc_for_journal", "checked_command", "command", "kill_owned_command", "cancellation_guard",
+               "_credential_parts", "_credential_inventory", "_read_credential_ingress", "stage_metadata_credential", "cleanup_metadata_credential"}
     tree = ast.parse(source)
     lines = source.splitlines(keepends=True)
     discarded = set()
@@ -1868,10 +2130,12 @@ def cancellation_guard():
 
 
 @cancellation_guard()
-def bootstrap(config, source):
+def bootstrap(config, source, *, credential_layout):
     evidence = PublicEvidence()
     started = stamp()
     stage = None
+    native = None
+    ingress_fd = 0
     load_attempted = False
     try:
         require_clean_root()
@@ -1882,6 +2146,8 @@ def bootstrap(config, source):
         need(event_path.is_absolute(), "invalid native event path")
         event = parse_json(read_regular(event_path, limit=MAX_API), limit=MAX_API)
         native = validate_initial_identity(config, context, event)
+        active_ingress, ingress_fd = ingress_fd, None
+        stage_metadata_credential(native, credential_layout, ingress_fd=active_ingress)
         uid, gid = int(context["FORGE_RUNNER_UID"]), int(context["FORGE_RUNNER_GID"])
         need(uid > 0 and gid > 0 and pwd.getpwuid(uid).pw_gid == gid, "invalid original runner identity")
         host = host_prerequisites()
@@ -1935,6 +2201,22 @@ def bootstrap(config, source):
         evidence.emit("setup-pass", seal)
         return seal
     except BaseException as exc:
+        cleanup_error = None
+        if native is not None:
+            try:
+                evidence.emit("metadata-cleanup", cleanup_metadata_credential(
+                    native["run_id"], native["run_attempt"], native["boot_id"], credential_layout=credential_layout))
+            except BaseException:  # noqa: BLE001 - cancellation during cleanup must remain a categorical failure.
+                cleanup_error = "credential failure cleanup failed"
         evidence.emit("setup-stop", {"status": "STOP", "qualified": False, "load_attempted": load_attempted,
-                                     "started": started, "ended": stamp(), "error": type(exc).__name__ + ": " + str(exc)})
+                                     "started": started, "ended": stamp(), "error": type(exc).__name__ + ": " + str(exc),
+                                     "credential_cleanup_error": cleanup_error})
+        if cleanup_error is not None:
+            raise SetupError(cleanup_error) from None
         raise
+    finally:
+        if ingress_fd is not None:
+            try:
+                os.close(ingress_fd)
+            except OSError:
+                pass

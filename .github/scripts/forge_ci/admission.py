@@ -115,6 +115,62 @@ def validate_observer(record, binding, rule):
     return seal
 
 
+def observe_setup(binding, rule, tree_oid, evidence_dir, phase):
+    """Run the sealed observer afresh; initial callers supply native identity only."""
+    need(phase in {"initial", "prepare", "final"}, "unknown observer phase")
+    evidence = Path(evidence_dir).resolve(strict=True)
+    native = phase == "initial"
+    argv = setup.observer_argv_native(binding) if native else setup.observer_argv(binding)
+    result = payload.bounded_command(argv, 30, env=dict(setup.SYSTEM_ENV), limit=setup.MAX_JSON)
+    need(type(result) is dict, "invalid root observer command result")
+    prefix = "setup-observer-" + phase
+    streams = {}
+    for name in ("stdout", "stderr"):
+        encoded = result.get(name + "_hex")
+        need(type(encoded) is str and len(encoded) <= 2 * setup.MAX_JSON, "invalid observer diagnostic bound")
+        try:
+            raw = bytes.fromhex(encoded)
+        except ValueError as exc:
+            raise AdmissionError("invalid observer diagnostic bytes") from exc
+        need(raw.hex() == encoded, "noncanonical observer diagnostic bytes")
+        streams[name] = raw
+    def preserve(name):
+        fd = os.open(evidence / (prefix + "." + name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(streams[name])
+            handle.flush()
+            os.fsync(handle.fileno())
+    preserve("stderr")
+    diagnostic = {name: result.get(name) for name in ("argv", "wrapper_pid", "returncode", "error", "started", "ended")}
+    diagnostic["streams"] = {name: {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
+                                    "file": prefix + "." + name, "on_failure_only": name == "stdout"}
+                             for name, raw in streams.items()}
+    launch.write_receipt(evidence / (prefix + ".json"), diagnostic)
+    try:
+        need(not result.get("error") and type(result.get("returncode")) is int
+             and result["returncode"] == 0 and result.get("argv") == argv
+             and result.get("stderr") == "" and result.get("stderr_hex") == "", "root observer failed or emitted diagnostics")
+        try:
+            raw = payload.command_stdout_bytes(result, setup.MAX_JSON)
+        except payload.ProbeError as exc:
+            raise AdmissionError("invalid root observer output") from exc
+        observed = setup.parse_json(raw)
+        need(raw == setup.canonical(observed) + b"\n", "noncanonical root observation")
+        actual_binding = observed.get("binding") if type(observed) is dict else None
+        setup.validate_binding(actual_binding)
+        if native:
+            need({key: actual_binding[key] for key in setup.NATIVE_BINDING_KEYS} == binding,
+                 "initial observer/native identity changed")
+        else:
+            need(actual_binding == binding, "observer identity changed")
+        validate_observer(observed, actual_binding, rule)
+        setup.validate_live_evidence(observed["live"], actual_binding, tree_oid, fresh=True)
+        return observed
+    except BaseException:
+        preserve("stdout")
+        raise
+
+
 class Gate:
     def __init__(self, document, repo, evidence_dir):
         self.rule = source_rule(document)
@@ -141,43 +197,8 @@ class Gate:
         return source
 
     def _observer(self, binding):
-        argv = setup.observer_argv(binding)
-        result = payload.bounded_command(argv, 30, env=dict(setup.SYSTEM_ENV), limit=setup.MAX_JSON)
-        phase = "prepare" if self.receipt is None else "final"
-        prefix = "setup-observer-" + phase
-        streams = {}
-        for name in ("stdout", "stderr"):
-            encoded = result.get(name + "_hex")
-            need(type(encoded) is str and len(encoded) <= 2 * setup.MAX_JSON, "invalid observer diagnostic bound")
-            try:
-                raw = bytes.fromhex(encoded)
-            except ValueError as exc:
-                raise AdmissionError("invalid observer diagnostic bytes") from exc
-            need(raw.hex() == encoded, "noncanonical observer diagnostic bytes")
-            streams[name] = raw
-        def preserve(name):
-            fd = os.open(self.evidence / (prefix + "." + name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(streams[name])
-                handle.flush()
-                os.fsync(handle.fileno())
-        preserve("stderr")
-        diagnostic = {name: result.get(name) for name in ("argv", "wrapper_pid", "returncode", "error", "started", "ended")}
-        diagnostic["streams"] = {name: {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
-                                        "file": prefix + "." + name, "on_failure_only": name == "stdout"}
-                                 for name, raw in streams.items()}
-        launch.write_receipt(self.evidence / (prefix + ".json"), diagnostic)
-        try:
-            need(not result.get("error") and result.get("returncode") == 0 and result.get("argv") == argv
-                 and result.get("stderr") == "" and result.get("stderr_hex") == "", "root observer failed or emitted diagnostics")
-            raw = payload.command_stdout_bytes(result, setup.MAX_JSON)
-            observed = setup.parse_json(raw)
-            validate_observer(observed, binding, self.rule)
-            setup.validate_live_evidence(observed["live"], binding, self.document["source"]["tree_oid"], fresh=True)
-            return observed
-        except BaseException:
-            preserve("stdout")
-            raise
+        return observe_setup(binding, self.rule, self.document["source"]["tree_oid"], self.evidence,
+                             "prepare" if self.receipt is None else "final")
 
     def _paths(self):
         caller = probes.require_runner()

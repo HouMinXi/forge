@@ -470,3 +470,38 @@ class TestMaxPromptTokens:
             {"grouping": {"engine_churn": 20, "max_prompt_tokens": 50000}}
         )
         assert (engine, integration) == (20, 2)
+
+
+class TestAuthoritativeInventory:
+    def test_inventory_rejection_precedes_all_grouping_source_reads(self, tmp_path, monkeypatch):
+        import pytest
+        import code_forge.diff_grouping as grouping
+
+        def refuse(*args):
+            raise AssertionError("rejected inventory must not read source or build edges")
+
+        monkeypatch.setattr(grouping, "build_edges", refuse)
+        for changes, expected in [
+            ([], ["a.py"]),
+            ([_entity("a.py")], ["a.py", "README.md"]),
+            ([_entity("foreign.py")], ["a.py"]),
+            ([_entity("../foreign.py")], []),
+        ]:
+            with pytest.raises(grouping.GroupingCoverageError, match="semantic file coverage mismatch"):
+                group_diff(changes, tmp_path, changed_files=expected)
+
+    def test_invalid_threshold_is_loud_even_with_incomplete_inventory(self, tmp_path):
+        import pytest
+        from code_forge.diff_grouping import GroupingCoverageError
+
+        with pytest.raises(ValueError, match="engine_churn") as raised:
+            group_diff([], tmp_path, engine_churn=0, changed_files=["a.py"])
+        assert not isinstance(raised.value, GroupingCoverageError)
+
+    def test_unknown_entity_change_type_is_not_coverage_fallback(self, tmp_path):
+        import pytest
+        from code_forge.diff_grouping import GroupingCoverageError
+
+        with pytest.raises(ValueError, match="unknown sem changeType") as raised:
+            group_diff([_entity("a.py", "unknown")], tmp_path, changed_files=["a.py"])
+        assert not isinstance(raised.value, GroupingCoverageError)

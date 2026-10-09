@@ -22,7 +22,7 @@ jobs:
       SEMGREP_ENABLE_VERSION_CHECK: '0'
       OTEL_SDK_DISABLED: 'true'
     steps:
-    - name: Stage fixed policy source 1/14
+    - name: Stage fixed policy source 1/16
       timeout-minutes: 1
       run: |
         umask 077
@@ -89,6 +89,9 @@ jobs:
         VENDOR_PROFILE_SHA256 = "11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9"
         PROFILE_MEMBER = "apparmor-profiles/usr/share/apparmor/extra-profiles/bwrap-userns-restrict"
         STAGE_ROOT = Path("/var/lib/forge-qualification")
+        BOOTSTRAP_ROOT = Path("/var/lib/forge-ci-bootstrap")
+        MAX_CREDENTIAL = 4096
+        CREDENTIAL_INGRESS_SECONDS = 5
         APPARMOR_ROOT = "/sys/kernel/security/apparmor"
         POLICY_ROOT = APPARMOR_ROOT + "/policy"
         PROFILE_ROOT = "/etc/apparmor.d"
@@ -206,10 +209,8 @@ jobs:
                                         'metadata': {'gid': 0,
                                                      'mode': 420,
                                                      'size': 634,
-                                                     'target': '',
-                                                     'type': 'f',
-                       '''.encode('utf-8')
-        expected = {'name': 'part-00.txt', 'bytes': 8000, 'sha256': '00d48e996952f3f92929ef74c5c146c086db08c816ce62b647614f6177831d76'}
+                                  '''.encode('utf-8')
+        expected = {'name': 'part-00.txt', 'bytes': 8000, 'sha256': '95fecb51ff4f7406c51ae3baf572d3f3ccd2deda0b76440f9c5d0e66fc0f24bb'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -218,7 +219,7 @@ jobs:
             os.fsync(stream.fileno())
 
         PYSTAGE
-    - name: Stage fixed policy source 2/14
+    - name: Stage fixed policy source 2/16
       timeout-minutes: 1
       run: |
         umask 077
@@ -241,7 +242,9 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r"""                              'uid': 0},
+        raw = r"""                   'target': '',
+                                                     'type': 'f',
+                                                     'uid': 0},
                                         'sha256': 'f6f9d209f8015196f2e391ea02debcebecbf8022ececfee3a08e3973c3bb06d4',
                                         'type': 'file'},
          'tunables/home.d/ubuntu': {'bytes': 337,
@@ -354,9 +357,8 @@ jobs:
                                    'text': 'yes\n'},
          'domain/computed_longest_left': {'sha256': '5040625b1fb6fa4af07226683f6e6003b29e5e70b16f8cfb24be7a752393f0ee',
                                           'text': 'yes\n'},
-         'domain/disconnected.ipc': {'sha256': '5040625b1fb6fa4af07226683f6e6003b29e5e70b16f8cfb24be7a752393f0ee',
-                               """.encode('utf-8')
-        expected = {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '750c615a65ac1808240f96d3d6d943a25d4b639f1fabef587032c2b7d83b1b27'}
+         'domain/disconnected.ip""".encode('utf-8')
+        expected = {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'f04a4386410c15ad914d867139693e4784f6e8152077619ce3c37d8430fed7c5'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -365,7 +367,7 @@ jobs:
             os.fsync(stream.fileno())
 
         PYSTAGE
-    - name: Stage fixed policy source 3/14
+    - name: Stage fixed policy source 3/16
       timeout-minutes: 1
       run: |
         umask 077
@@ -388,7 +390,8 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r"""      'text': 'yes\n'},
+        raw = r"""c': {'sha256': '5040625b1fb6fa4af07226683f6e6003b29e5e70b16f8cfb24be7a752393f0ee',
+                                     'text': 'yes\n'},
          'domain/disconnected.path': {'sha256': '5040625b1fb6fa4af07226683f6e6003b29e5e70b16f8cfb24be7a752393f0ee',
                                       'text': 'yes\n'},
          'domain/fix_binfmt_elf_mmap': {'sha256': '5040625b1fb6fa4af07226683f6e6003b29e5e70b16f8cfb24be7a752393f0ee',
@@ -486,9 +489,8 @@ jobs:
          'query/label/multi_transaction': {'sha256': '5040625b1fb6fa4af07226683f6e6003b29e5e70b16f8cfb24be7a752393f0ee',
                                            'text': 'yes\n'},
          'query/label/perms': {'sha256': '987b6a95dc59553cce4ca635e0a23c5e34b80e6c7587946b7a53946a8b277cd1',
-                               'text': 'allow deny audit quiet\n'},
-         'rlimit/mask': {'sha256': 'a66cb18a6c584924d6e1cded01ac3fb64""".encode('utf-8')
-        expected = {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '90b9f7eea4a662326a9e058c0f093dc9b24626564581210a1eae28936bda76ae'}
+                       """.encode('utf-8')
+        expected = {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '01992e4d039ac50617986eb4873995a67d3452dd4d1ed88db61dc55bbdc1452b'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -497,7 +499,7 @@ jobs:
             os.fsync(stream.fileno())
 
         PYSTAGE
-    - name: Stage fixed policy source 4/14
+    - name: Stage fixed policy source 4/16
       timeout-minutes: 1
       run: |
         umask 077
@@ -520,7 +522,8 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''6e131a840c4f9707578e8b719c50f33',
+        raw = r'''        'text': 'allow deny audit quiet\n'},
+         'rlimit/mask': {'sha256': 'a66cb18a6c584924d6e1cded01ac3fb646e131a840c4f9707578e8b719c50f33',
                          'text': 'cpu fsize data stack core rss nproc nofile memlock as locks sigpending msgqueue nice '
                                  'rtprio rttime\n'},
          'signal/mask': {'sha256': 'a8417e3f71e56a56d7302730fb3d424b84e9879f536350b156fef893c25da321',
@@ -696,10 +699,8 @@ jobs:
                 need(type(context.get(name)) is str and context[name] == expected_value, "wrong native " + name)
             for name, expected_value in (("GITHUB_REPOSITORY_ID", CONFIG["repository_id"]),
                                          ("GITHUB_REPOSITORY_OWNER_ID", CONFIG["owner_id"]), ("GITHUB_ACTOR_ID", CONFIG["actor_id"])):
-                need(_id(context.get(name), name, native=True) == expected_value, "wrong native " + name)
-            candidate = checked_sha(context.get("GITHUB_SHA"), "native SHA")
-            n'''.encode('utf-8')
-        expected = {'name': 'part-03.txt', 'bytes': 8000, 'sha256': '2d94aca6ca4bbf7cd6943fc2cea64147e7e76619e237bb1be14774a4c7259906'}
+                need(_id(context.get(name), name, native=True) == expected'''.encode('utf-8')
+        expected = {'name': 'part-03.txt', 'bytes': 8000, 'sha256': 'd9acb04ac91bca9bf2d630b476f4a3fb657b3c18798476914d9c75303009a932'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -708,7 +709,7 @@ jobs:
             os.fsync(stream.fileno())
 
         PYSTAGE
-    - name: Stage fixed policy source 5/14
+    - name: Stage fixed policy source 5/16
       timeout-minutes: 1
       run: |
         umask 077
@@ -731,7 +732,9 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''eed(context.get("GITHUB_WORKFLOW_SHA") == candidate, "workflow SHA differs from event SHA")
+        raw = r'''_value, "wrong native " + name)
+            candidate = checked_sha(context.get("GITHUB_SHA"), "native SHA")
+            need(context.get("GITHUB_WORKFLOW_SHA") == candidate, "workflow SHA differs from event SHA")
             need(type(event) is dict, "missing native event")
             need(all(type(event.get(name)) is bool and event[name] is False for name in ("created", "deleted", "forced")),
                  "not a nonforce existing-branch push")
@@ -766,8 +769,10 @@ jobs:
 
         class MetadataReader:
             """Finite fixed-host GET-only transport. Injected fetchers are offline tests only."""
-            def __init__(self, allowed, fetcher=None):
+            def __init__(self, allowed, fetcher=None, *, binding=None):
                 self.allowed, self.fetcher = frozenset(allowed), fetcher
+                self.binding = binding
+                self.workflow_id = binding.get("workflow_id") if type(binding) is dict else None
                 self.deadline, self.requests, self.total = time.monotonic() + 30, 0, 0
                 self.digests = {}
 
@@ -783,10 +788,17 @@ jobs:
                         if self.fetcher is not None:
                             raw, link = self.fetcher(API_ROOT + path)
                         else:
+                            need(type(self.binding) is dict, "metadata credential binding is required")
+                            validate_binding(self.binding, native=set(self.binding) == NATIVE_BINDING_KEYS)
+                            paths = (live_metadata_paths(self.binding, _id(self.workflow_id, "metadata workflow id"))
+                                     if self.workflow_id is not None else
+                                     {"workflow": "/actions/workflows/" + self.binding["workflow_path"].rsplit("/", 1)[1]})
+                            need(path in paths.values(), "unreviewed authenticated metadata endpoint")
                             connection = http.client.HTTPSConnection("api.github.com", timeout=timeout, context=ssl.create_default_context())
                             connection.request("GET", "/repos/HouMinXi/forge" + path, headers={
                                 "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
-                                "User-Agent": "forge-ci-owner-push/1", "Accept-Encoding": "identity"})
+                                "User-Agent": "forge-ci-owner-push/1", "Accept-Encoding": "identity",
+                                "Authorization": b"Bearer " + _read_metadata_credential(self.binding)})
                             response = connection.getresponse()
                             if response.status != 200:
                                 # Only nonsecret finite numeric provider diagnostics; no response body/header dump.
@@ -813,11 +825,16 @@ jobs:
                         value = parse_json(raw, limit=MAX_API)
                         self.digests[path] = hashlib.sha256(raw).hexdigest()
                         return value, link
-                except (OSError, http.client.HTTPException, ValueError) as exc:
-                    raise SetupError("metadata unavailable") from exc
+                except SetupError:
+                    raise
+                except Exception:  # noqa: BLE001 - transport exceptions must never expose request credentials.
+                    raise SetupError("metadata unavailable") from None
                 finally:
                     if connection is not None:
-                        connection.close()
+                        try:
+                            connection.close()
+                        except Exception:  # noqa: BLE001 - connection cleanup may retain credential-bearing request state.
+                            raise SetupError("metadata connection cleanup failed") from None
 
             def one(self, path):
                 value, link = self.get(path)
@@ -850,21 +867,8 @@ jobs:
             need(type(run) is dict, "missing live run")
             for name, expected in (("id", native["run_id"]), ("workflow_id", workflow_id),
                                    ("run_attempt", 1), ("run_number", native["run_number"])):
-                need(_id(run.get(name), "live " + name) == expected, "wrong live " + name)
-            need(run.get("path") in (CONFIG["workflow_path"], CONFIG["workflow_path"] + "@" + CONFIG["full_ref"],
-                                    CONFIG["workflow_path"] + "@" + CONFIG["full_ref"][11:]), "wrong live workflow path")
-            need(run.get("url") == API_ROOT + "/actions/runs/" + str(native["run_id"])
-                 and run.get("workflow_url") == API_ROOT + "/actions/workflows/" + str(workflow_id), "wrong live identity URL")
-            need(run.get("head_sha") == native["candidate_sha"] and run.get("head_branch") == CONFIG["full_ref"][11:]
-                 and run.get("event") == "push", "wrong live head/ref/event")
-            need(type(run.get("head_commit")) is dict and run["head_commit"].get("id") == native["candidate_sha"], "wrong live head commit")
-            need(run.get("status") == "in_progress" and run.get("conclusion") is None, "run is not active")
-            for name in ("repository", "head_repository"):
-                need(_repository(run.get(name), "live " + name) == REPOSITORY and run[name].get("private") is False,
-                     "wrong live repository")
-            for name in ("actor", "triggering_actor"):
-                need(_identity(run.get(name), "live " + name) == REPOSITORY["owner"],'''.encode('utf-8')
-        expected = {'name': 'part-04.txt', 'bytes': 8000, 'sha256': 'dd6d53a7044235c5f018f5abba6a1c60debe11ee38e4ba71d6192ec6557753b7'}
+                need'''.encode('utf-8')
+        expected = {'name': 'part-04.txt', 'bytes': 8000, 'sha256': '13a70a23b75d497a1077b7595d2651ce8a22ab6705cd3b1b8afd279018e60d42'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -873,7 +877,7 @@ jobs:
             os.fsync(stream.fileno())
 
         PYSTAGE
-    - name: Stage fixed policy source 6/14
+    - name: Stage fixed policy source 6/16
       timeout-minutes: 1
       run: |
         umask 077
@@ -896,7 +900,20 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r''' "wrong live actor")
+        raw = r'''(_id(run.get(name), "live " + name) == expected, "wrong live " + name)
+            need(run.get("path") in (CONFIG["workflow_path"], CONFIG["workflow_path"] + "@" + CONFIG["full_ref"],
+                                    CONFIG["workflow_path"] + "@" + CONFIG["full_ref"][11:]), "wrong live workflow path")
+            need(run.get("url") == API_ROOT + "/actions/runs/" + str(native["run_id"])
+                 and run.get("workflow_url") == API_ROOT + "/actions/workflows/" + str(workflow_id), "wrong live identity URL")
+            need(run.get("head_sha") == native["candidate_sha"] and run.get("head_branch") == CONFIG["full_ref"][11:]
+                 and run.get("event") == "push", "wrong live head/ref/event")
+            need(type(run.get("head_commit")) is dict and run["head_commit"].get("id") == native["candidate_sha"], "wrong live head commit")
+            need(run.get("status") == "in_progress" and run.get("conclusion") is None, "run is not active")
+            for name in ("repository", "head_repository"):
+                need(_repository(run.get(name), "live " + name) == REPOSITORY and run[name].get("private") is False,
+                     "wrong live repository")
+            for name in ("actor", "triggering_actor"):
+                need(_identity(run.get(name), "live " + name) == REPOSITORY["owner"], "wrong live actor")
 
 
         def live_metadata_paths(binding, workflow_id):
@@ -921,12 +938,13 @@ jobs:
             validate_binding(native, native=not complete)
             need(native["boot_id"] == trusted_boot_id(), "kernel boot changed")
             workflow_path = "/actions/workflows/" + native["workflow_path"].rsplit("/", 1)[1]
-            reader = MetadataReader({workflow_path}, fetcher)
+            reader = MetadataReader({workflow_path}, fetcher, binding=native)
             workflow = reader.one(workflow_path)
             workflow_id = _id(workflow.get("id"), "workflow id")
             need(workflow.get("path") == CONFIG["workflow_path"] and workflow.get("state") == "active"
                  and workflow.get("url") == API_ROOT + "/actions/workflows/" + str(workflow_id), "wrong fixed workflow identity")
             paths = live_metadata_paths(native, workflow_id)
+            reader.workflow_id = workflow_id
             reader.allowed = frozenset(paths.values())
             _validate_run(reader.one(paths["run"]), native, workflow_id)
             jobs = reader.collection(paths["jobs"], "jobs")
@@ -1011,31 +1029,8 @@ jobs:
 
         def semantic_inventory(namespaces: list[str], profiles: list[dict[str, Any]], *,
                                preserve_opaque: bool = False) -> dict[str, Any]:
-            """No kernel directory IDs, inodes, boot IDs, collection paths, or ordering."""
-            canonical = []
-            seen = set()
-            if len(namespaces) != len(set(namespaces)) or "" not in namespaces:
-                raise SetupError("duplicate or missing root policy namespace")
-            for profile in profiles:
-                key = (profile["namespace"], profile["name"])
-                if key in seen or key[0] not in namespaces:
-                    raise SetupError("duplicate profile identity or unknown namespace")
-                seen.add(key)
-                if (not preserve_opaque
-                        and profile["attachment"].strip().lower() in {"<unknown>", "unknown", "<opaque>", ""}):
-                    raise SetupError(f"opaque attachment for {key}")
-                canonical.append({key: profile[key] for key in (
-                    "namespace", "name", "mode", "attachment", "metadata")})
-            canonical.sort(key=lambda item: (item["namespace"], item["name"]))
-            return {"schema": 1, "namespaces": sorted(namespaces), "profiles": canonical}
-
-
-        def collect_kernel_scope(reader: PolicyReader) -> dict[str, Any]:
-            # Both policy's magic symlink and the loaded-profile listing are relative
-            # to the task's AppArmor namespace. An unconfined label alone is insufficient.
-            values = {name: _field(reader, APPARMOR_ROOT + "/." + name)
-                      for name in ("ns_level", "ns_name", "stacked", "ns_s'''.encode('utf-8')
-        expected = {'name': 'part-05.txt', 'bytes': 8000, 'sha256': '31b842fea50cc873265ddfc7d32de5ddcef945f777c3ee9f70cd3f5bd41e288b'}
+            """No kernel directory IDs, inodes, boot IDs, collect'''.encode('utf-8')
+        expected = {'name': 'part-05.txt', 'bytes': 8000, 'sha256': 'b7815b2337005f3d91e1c6768d71faae787b388ae198384052f2b0795867b81c'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -1044,7 +1039,7 @@ jobs:
             os.fsync(stream.fileno())
 
         PYSTAGE
-    - name: Stage fixed policy source 7/14
+    - name: Stage fixed policy source 7/16
       timeout-minutes: 1
       run: |
         umask 077
@@ -1067,7 +1062,30 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r"""tacked")}
+        raw = r'''ion paths, or ordering."""
+            canonical = []
+            seen = set()
+            if len(namespaces) != len(set(namespaces)) or "" not in namespaces:
+                raise SetupError("duplicate or missing root policy namespace")
+            for profile in profiles:
+                key = (profile["namespace"], profile["name"])
+                if key in seen or key[0] not in namespaces:
+                    raise SetupError("duplicate profile identity or unknown namespace")
+                seen.add(key)
+                if (not preserve_opaque
+                        and profile["attachment"].strip().lower() in {"<unknown>", "unknown", "<opaque>", ""}):
+                    raise SetupError(f"opaque attachment for {key}")
+                canonical.append({key: profile[key] for key in (
+                    "namespace", "name", "mode", "attachment", "metadata")})
+            canonical.sort(key=lambda item: (item["namespace"], item["name"]))
+            return {"schema": 1, "namespaces": sorted(namespaces), "profiles": canonical}
+
+
+        def collect_kernel_scope(reader: PolicyReader) -> dict[str, Any]:
+            # Both policy's magic symlink and the loaded-profile listing are relative
+            # to the task's AppArmor namespace. An unconfined label alone is insufficient.
+            values = {name: _field(reader, APPARMOR_ROOT + "/." + name)
+                      for name in ("ns_level", "ns_name", "stacked", "ns_stacked")}
             if values["ns_level"] != "0" or values["stacked"] != "no" or values["ns_stacked"] != "no":
                 raise SetupError("AppArmor inventory is not root-namespace, unstacked host scope")
             return values
@@ -1189,27 +1207,8 @@ jobs:
             conflicts = [p["name"] for p in profiles if p["name"].split("//")[0] in {"bwrap", "unpriv_bwrap"}]
             result = {"semantic": semantic, "semantic_sha256": digest(semantic), "scope": scope, "raw_profiles": profiles,
                     "raw_tree": tree, "loaded_profiles": parse_loaded_profiles(listing_before),
-                    "conflicting_names": conflicts, "attachment_review": "REQUIRED",
-                    "reviewed_inventory_sha256": None,
-                    "conditional_semantics": "Raw metadata exported; no attachment expression has been approved."}
-            opaque = [{"namespace": p["namespace"], "name": p["name"], "attachment": p["attachment"]}
-                      for p in profiles if p["attachment"].strip().lower() in {"<unknown>", "unknown", "<opaque>", ""}]
-            if opaque:
-                result["unresolved_attachments"] = opaque
-            return result
-
-
-        def validate_kernel(value: dict, *, before: dict | None = None, compiled: bytes | None = None) -> dict:
-            semantic = value.get("semantic")
-            keys(semantic, {"schema", "scope", "namespaces", "profiles"}, "kernel semantic inventory")
-            need(type(semantic["schema"]) is int and semantic["schema"] == 1, "invalid kernel schema")
-            need(semantic["scope"] == {"ns_level": "0", "ns_name": "root", "stacked": "no", "ns_stacked": "no"},
-                 "non-root or stacked AppArmor namespace")
-            need(value.get("scope") == semantic["scope"], "kernel scope disagreement")
-            need(digest(semantic) == value.get("semantic_sha256"), "kernel semantic digest is not computed from inventory")
-            # Reconstruct identities and listing independently; no self-reported absence.
-            reconstructed = semantic_inventory(semantic["names""".encode('utf-8')
-        expected = {'name': 'part-06.txt', 'bytes': 8000, 'sha256': '42a8e4479ad7618343708bf0a428248942b4265978687360a57b122ab74c93fc'}
+                    "conflicting_names": conflicts, "attachment_review'''.encode('utf-8')
+        expected = {'name': 'part-06.txt', 'bytes': 8000, 'sha256': 'cc65a41ee707f632bc6fed715269084189786bdd3b3e4fde0e9672d9f89d4953'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -1218,7 +1217,7 @@ jobs:
             os.fsync(stream.fileno())
 
         PYSTAGE
-    - name: Stage fixed policy source 8/14
+    - name: Stage fixed policy source 8/16
       timeout-minutes: 1
       run: |
         umask 077
@@ -1241,7 +1240,26 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''paces"], semantic["profiles"], preserve_opaque=True)
+        raw = r'''": "REQUIRED",
+                    "reviewed_inventory_sha256": None,
+                    "conditional_semantics": "Raw metadata exported; no attachment expression has been approved."}
+            opaque = [{"namespace": p["namespace"], "name": p["name"], "attachment": p["attachment"]}
+                      for p in profiles if p["attachment"].strip().lower() in {"<unknown>", "unknown", "<opaque>", ""}]
+            if opaque:
+                result["unresolved_attachments"] = opaque
+            return result
+
+
+        def validate_kernel(value: dict, *, before: dict | None = None, compiled: bytes | None = None) -> dict:
+            semantic = value.get("semantic")
+            keys(semantic, {"schema", "scope", "namespaces", "profiles"}, "kernel semantic inventory")
+            need(type(semantic["schema"]) is int and semantic["schema"] == 1, "invalid kernel schema")
+            need(semantic["scope"] == {"ns_level": "0", "ns_name": "root", "stacked": "no", "ns_stacked": "no"},
+                 "non-root or stacked AppArmor namespace")
+            need(value.get("scope") == semantic["scope"], "kernel scope disagreement")
+            need(digest(semantic) == value.get("semantic_sha256"), "kernel semantic digest is not computed from inventory")
+            # Reconstruct identities and listing independently; no self-reported absence.
+            reconstructed = semantic_inventory(semantic["namespaces"], semantic["profiles"], preserve_opaque=True)
             reconstructed["scope"] = semantic["scope"]
             need(canonical(reconstructed) == canonical(semantic), "noncanonical kernel semantic inventory")
             expected_listing = sorted([
@@ -1369,7 +1387,40 @@ jobs:
             for first, last in (("before_ns", "after_ns"), ("monotonic_before_ns", "monotonic_after_ns")):
                 if not 0 <= record[first] <= record[last] or record[last] - record[first] > max_interval_ns:
                     raise SetupError("backward or unbounded audit clock interval")
-            if type(started) is not dict or type(ended) is not dict:
+            if type(started'''.encode('utf-8')
+        expected = {'name': 'part-07.txt', 'bytes': 8000, 'sha256': '495165f1a4c988d05b36182fe1e92dbed4568c7b44e34d14fa3cc43b9a7403b5'}
+        assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
+        fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        PYSTAGE
+    - name: Stage fixed policy source 9/16
+      timeout-minutes: 1
+      run: |
+        umask 077
+        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
+          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-08.log"
+        import hashlib
+        import os
+        from pathlib import Path
+        import stat
+
+        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
+        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
+        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
+        assert values[1] == '1'
+        base = Path('/var/lib/forge-ci-bootstrap')
+        stage = base / '-'.join(values)
+        for path in (base, stage):
+            assert path.is_absolute() and path.resolve(strict=False) == path
+            if False:
+                path.mkdir(mode=0o700, exist_ok=path != stage)
+            info = path.lstat()
+            assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
+        raw = r''') is not dict or type(ended) is not dict:
                 raise SetupError("missing precise operation timestamp interval")
             for clock in ("utc_ns", "monotonic_ns"):
                 start, end = started.get(clock), ended.get(clock)
@@ -1395,40 +1446,7 @@ jobs:
             events = list(_AUDIT_EVENT.finditer(raw))
             if len(events) != 1:
                 raise SetupError("missing or ambiguous audit timestamp")
-            seconds, fraction, seri'''.encode('utf-8')
-        expected = {'name': 'part-07.txt', 'bytes': 8000, 'sha256': 'bdf8d1601028c2cd9eed8c4d01e00856ae3e9e5f378f1fd90b2df0eec6cd5341'}
-        assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
-        fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(raw)
-            stream.flush()
-            os.fsync(stream.fileno())
-
-        PYSTAGE
-    - name: Stage fixed policy source 9/14
-      timeout-minutes: 1
-      run: |
-        umask 077
-        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
-          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-08.log"
-        import hashlib
-        import os
-        from pathlib import Path
-        import stat
-
-        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
-        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
-        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
-        assert values[1] == '1'
-        base = Path('/var/lib/forge-ci-bootstrap')
-        stage = base / '-'.join(values)
-        for path in (base, stage):
-            assert path.is_absolute() and path.resolve(strict=False) == path
-            if False:
-                path.mkdir(mode=0o700, exist_ok=path != stage)
-            info = path.lstat()
-            assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''al = events[0].groups()
+            seconds, fraction, serial = events[0].groups()
             if len(fraction) != 3:
                 raise SetupError("invalid audit timestamp precision")
             # Linux audit prints the coarse clock truncated to exactly milliseconds.
@@ -1560,7 +1578,40 @@ jobs:
         def parser_argv(operation: str, profile: Path, config: Path) -> list[str]:
             """Fixed finite operations; this is not a general privileged command runner."""
             need(operation in {"preprocess", "compile", "load"}, "unknown parser operation")
-            need(profile.is_absolute() and profile.name == "bwrap-userns-restrict", "invalid vendor profile path")
+            need(profile.is_absolute() and profile.name == "bwrap-user'''.encode('utf-8')
+        expected = {'name': 'part-08.txt', 'bytes': 8000, 'sha256': 'be3de9a426e0e4d234d4a73881d3fa46a00a13353f6310568fd35a600c02caa0'}
+        assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
+        fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        PYSTAGE
+    - name: Stage fixed policy source 10/16
+      timeout-minutes: 1
+      run: |
+        umask 077
+        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
+          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-09.log"
+        import hashlib
+        import os
+        from pathlib import Path
+        import stat
+
+        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
+        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
+        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
+        assert values[1] == '1'
+        base = Path('/var/lib/forge-ci-bootstrap')
+        stage = base / '-'.join(values)
+        for path in (base, stage):
+            assert path.is_absolute() and path.resolve(strict=False) == path
+            if False:
+                path.mkdir(mode=0o700, exist_ok=path != stage)
+            info = path.lstat()
+            assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
+        raw = r'''ns-restrict", "invalid vendor profile path")
             need(config.is_absolute() and config.name == "parser.conf", "invalid parser configuration path")
             options = ["--config-file=" + str(config), "--base=" + INCLUDE_BASE, "--Include=" + INCLUDE_BASE,
                        "--skip-cache", "--warn=all", "--Werror", "--abort-on-error", "--jobs=0"]
@@ -1585,40 +1636,7 @@ jobs:
                 raise SetupError("invalid raw " + name) from exc
             need(raw.hex() == encoded and len(raw) <= limit, "noncanonical raw " + name)
             # Binary compiler stdout is preserved, not parsed via this display string.
-            need(record.get(n'''.encode('utf-8')
-        expected = {'name': 'part-08.txt', 'bytes': 8000, 'sha256': '4b17ab34b750bd6e431a519b217bdf94c5616f81135466b0bb3e135ea9bda24b'}
-        assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
-        fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(raw)
-            stream.flush()
-            os.fsync(stream.fileno())
-
-        PYSTAGE
-    - name: Stage fixed policy source 10/14
-      timeout-minutes: 1
-      run: |
-        umask 077
-        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
-          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-09.log"
-        import hashlib
-        import os
-        from pathlib import Path
-        import stat
-
-        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
-        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
-        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
-        assert values[1] == '1'
-        base = Path('/var/lib/forge-ci-bootstrap')
-        stage = base / '-'.join(values)
-        for path in (base, stage):
-            assert path.is_absolute() and path.resolve(strict=False) == path
-            if False:
-                path.mkdir(mode=0o700, exist_ok=path != stage)
-            info = path.lstat()
-            assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''ame) == raw.decode("utf-8", errors="replace"), "display/raw disagreement: " + name)
+            need(record.get(name) == raw.decode("utf-8", errors="replace"), "display/raw disagreement: " + name)
             return raw
 
 
@@ -1696,9 +1714,318 @@ jobs:
 
 
         def observer_argv(binding):
+            validate_binding(binding)
+            return observer_argv_native({key: binding[key] for key in NATIVE_BINDING_KEYS})
+
+
+        def observer_argv_native(native):
+            """Derive only the fixed observer path before external numeric job admission."""
+            validate_binding(native, native=True)
+            stage = STAGE_ROOT / str(native["run_id"]) / "1"
             return ["/usr/bin/sudo", "-n", "--", "/usr/bin/timeout", "--signal=KILL", "25s", "/usr/bin/env", "-i",
                     *(key + "=" + value for key, value in SYSTEM_ENV.items()),
-                    "/usr/bin/python3", "-B", "-I", "-S", str(stage_path(binding) / "observer.py"), "observe"]
+                    "/usr/bin/python3", "-B", "-I", "-S", str(stage / "observer.py"), "observe"]
+
+
+        def _credential_stage(run_id, run_attempt):
+            _id(run_id, "credential run id")
+            need(type(run_attempt) is int and run_attempt == 1, "invalid credential run attempt")
+            return BOOTSTRAP_ROOT / (str(run_id) + "-1")
+
+
+        def _credential_parts(layout):
+            keys(layout, {"parts"}, "credential layout")
+            parts = layout["parts"]
+            need(type(parts) in (tuple, list) and 1 <= len(parts) <= 32, "invalid credential source manifest")
+            for index, part in enumerate(parts):
+                keys(part, {"name", "bytes", "sha256"}, "credential source part")
+                need(part["name"] == f"part-{index:02d}.txt", "invalid credential source ordering")
+                need(type(part["bytes"]) is int and 0 < part["bytes"] <= 32000, "invalid credential source size")
+                sha(part["sha256"], "credential source")
+            need(sum(part["bytes"] for part in parts) <= 256 * 1024, "credential source bound exceeded")
+            return parts
+
+
+        def _credential_directory(path, *, missing_ok=False):
+            need(path.is_absolute() and path.resolve(strict=False) == path, "invalid credential directory")
+            for parent in path.parents:
+                info = parent.lstat()
+                need(stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and not info.st_mode & 0o022,
+                     "untrusted credential ancestor")
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                need(missing_ok, "credential directory is absent")
+                return None
+            need(stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0
+                 and stat.S_IMODE(info.st_mode) == 0o700, "untrusted credential directory")
+            return info
+
+
+        def _credential_identity(info):
+            return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid, info.st_nlink, info.st_size)
+
+
+        @contextmanager
+        def _credential_stage_fd(run_id, run_attempt, *, missing_ok=False):
+            stage = _credential_stage(run_id, run_attempt)
+            if _credential_directory(BOOTSTRAP_ROOT, missing_ok=missing_ok) is None:
+                yield stage, None
+                return
+            info = _credential_directory(stage, missing_ok=missing_ok)
+            if info is None:
+                yield stage, None
+                return
+            fd = os.open(stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOC'''.encode('utf-8')
+        expected = {'name': 'part-09.txt', 'bytes': 8000, 'sha256': '26da8961584956c3e13232ac00e13d7616c4c3567a9966f68dc5b1287ac744b6'}
+        assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
+        fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        PYSTAGE
+    - name: Stage fixed policy source 11/16
+      timeout-minutes: 1
+      run: |
+        umask 077
+        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
+          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-10.log"
+        import hashlib
+        import os
+        from pathlib import Path
+        import stat
+
+        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
+        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
+        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
+        assert values[1] == '1'
+        base = Path('/var/lib/forge-ci-bootstrap')
+        stage = base / '-'.join(values)
+        for path in (base, stage):
+            assert path.is_absolute() and path.resolve(strict=False) == path
+            if False:
+                path.mkdir(mode=0o700, exist_ok=path != stage)
+            info = path.lstat()
+            assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
+        raw = r'''K)
+            try:
+                need(_credential_identity(os.fstat(fd)) == _credential_identity(info), "credential directory changed")
+                yield stage, fd
+                need(_credential_identity(os.fstat(fd)) == _credential_identity(stage.lstat()), "credential directory changed")
+            finally:
+                os.close(fd)
+
+
+        def _credential_file_info(info, limit):
+            need(stat.S_ISREG(info.st_mode) and info.st_uid == info.st_gid == 0 and info.st_nlink == 1
+                 and stat.S_IMODE(info.st_mode) == 0o400 and 0 <= info.st_size <= limit,
+                 "untrusted credential staging file")
+
+
+        @contextmanager
+        def _credential_file_fd(directory_fd, name, limit):
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+            try:
+                info = os.fstat(fd)
+                _credential_file_info(info, limit)
+                need(_credential_identity(info) == _credential_identity(os.stat(name, dir_fd=directory_fd, follow_symlinks=False)),
+                     "credential staging file changed")
+                yield fd
+                need(_credential_identity(os.fstat(fd)) == _credential_identity(os.stat(name, dir_fd=directory_fd, follow_symlinks=False)),
+                     "credential staging file changed")
+            finally:
+                os.close(fd)
+
+
+        def _credential_read_fd(fd, limit):
+            chunks = []
+            total = 0
+            while total <= limit:
+                chunk = os.read(fd, limit + 1 - total)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            need(total <= limit, "credential staging file bound exceeded")
+            return b"".join(chunks)
+
+
+        def _credential_inventory(directory_fd, parts, *, token):
+            expected = {part["name"] for part in parts} | {"bootstrap-entry.py"}
+            if token:
+                expected.add("metadata-token")
+            need(set(os.listdir(directory_fd)) == expected, "credential staging inventory changed")
+            for part in parts:
+                with _credential_file_fd(directory_fd, part["name"], part["bytes"]) as fd:
+                    raw = _credential_read_fd(fd, part["bytes"])
+                    need(len(raw) == part["bytes"] and hashlib.sha256(raw).hexdigest() == part["sha256"],
+                         "credential source part changed")
+            # The fixed workflow literal supplies independent entrypoint byte authority.
+            with _credential_file_fd(directory_fd, "bootstrap-entry.py", 65536) as fd:
+                need(os.fstat(fd).st_size > 0, "empty credential entrypoint")
+            if token:
+                with _credential_file_fd(directory_fd, "metadata-token", MAX_CREDENTIAL) as fd:
+                    need(os.fstat(fd).st_size > 0, "empty metadata credential")
+
+
+        def _validate_credential_bytes(raw):
+            need(type(raw) is bytes and 1 <= len(raw) <= MAX_CREDENTIAL and all(33 <= byte <= 126 for byte in raw),
+                 "invalid metadata credential")
+            return raw
+
+
+        def _read_credential_ingress(fd):
+            """Require bounded EOF; close the actual pipe reader on every outcome."""
+            deadline = time.monotonic() + CREDENTIAL_INGRESS_SECONDS
+            selector = None
+            chunks = []
+            total = 0
+            try:
+                need(type(fd) is int and fd >= 0 and stat.S_ISFIFO(os.fstat(fd).st_mode), "credential ingress is not a pipe")
+                os.set_blocking(fd, False)
+                selector = selectors.DefaultSelector()
+                selector.register(fd, selectors.EVENT_READ)
+                while True:
+                    remaining = deadline - time.monotonic()
+                    need(remaining > 0, "credential ingress deadline exceeded")
+                    need(selector.select(remaining), "credential ingress deadline exceeded")
+                    need(time.monotonic() < deadline, "credential ingress deadline exceeded")
+                    try:
+                        raw = os.read(fd, MAX_CREDENTIAL + 1 - total)
+                    except BlockingIOError:
+                        continue
+                    if not raw:
+                        need(time.monotonic() < deadline, "credential ingress deadline exceeded")
+                        return _validate_credential_bytes(b"".join(chunks))
+                    chunks.append(raw)
+                    total += len(raw)
+                    need(total <= MAX_CREDENTIAL, "credential ingress byte bound exceeded")
+            except OSError:
+                raise SetupError("credential ingress unavailable") from None
+            finally:
+                try:
+                    if selector is not None:
+                        selector.close()
+                finally:
+                    if type(fd) is int and fd >= 0:
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+
+
+        def stage_metadata_credential(native, credential_layout, *, ingress_fd=0):
+            """Separate temporary pre-admission resource; never an activation claim."""
+            try:
+                require_clean_root()
+                validate_binding(native, native=True)
+                need(native["boot_id"] == trusted_boot_id(), "credential boot changed")
+                parts = _credential_parts(credential_layout)
+                with _credential_stage_fd(native["run_id"], native["run_attempt"]) as (_, directory_fd):
+                    _credential_inventory(directory_fd, parts, token=False)
+                    active_ingress, ingress_fd = ingress_fd, None
+                    raw = _read_credential_ingress(active_ingress)
+                    fd = os.open("metadata-token", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                 0o400, dir_fd=directory_fd)
+                    try:
+                        _credential_file_info(os.fstat(fd), MAX_CREDENTIAL)
+                        view = memoryview(raw)
+                        while view:
+                            written = os.write(fd, view)
+                            need(written > 0, "credential staging write failed")
+                            view = view[written:]
+                        os.fsync(fd)
+                        need(_credential_identity(os.fstat(fd)) == _credential_identity(
+                            os.stat("metadata-token", dir_fd=directory_fd, follow_symlinks=False)), "credential staging file changed")
+                    finally:
+                        os.close(fd)
+                    _credential_inventory(directory_fd, parts, token=True)
+            except OSError:
+                raise SetupError("credential staging unavailable") from None
+            finally:
+                if ingress_fd is not None:
+                    try:
+                        os.close(ingress_fd)
+                    except OSError:
+                        pass
+
+
+        def _read_metadata_credential(binding):
+            require_clean_root()
+            validate_binding(binding, native=set(binding) == NATIVE_BINDING_KEYS)
+            need(binding["boot_id"] == trusted_boot_id(), "credential boot changed")
+            try:
+                with _credential_stage_fd(binding["run_id"], binding["run_attempt"]) as (_, directory_fd):
+                    with _credential_file_fd(directory_fd, "metadata-token", MAX_CREDENTIAL) as fd:
+                        return _validate_credential_bytes(_credential_read_fd(fd, MAX_CREDENTIAL))
+            except OSError:
+                raise SetupError("metadata credential unavailable") from None
+
+
+        def cleanup_metadata_credential(run_id, run_attempt, boot_id, *, credential_layout):
+            """Remove only the separately validated token before reporting inventory drift."""
+            need(os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0, "credential cleanup requires root")
+            parts = _credential_parts(credential_layout)
+            need(type(boot_id) is str and _BOOT.fullmatch(boot_id) is not None and boot_id == trusted_boot_id(),
+                 "credential cleanup boot changed")
+            try:
+                with _credential_stage_fd(run_id, run_attempt, missing_ok=True) as (_, directory_fd):
+                    if directory_fd is not None:
+                        try:
+                            fd = os.open("metadata-token", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+                        except FileNotFoundError:
+                            fd = None
+                        if fd is not None:
+                            try:
+                                info = os.fstat(fd)
+                                _credential_file_info(info, MAX_CREDENTIAL)
+                                need(_credential_identity(info) == _credential_identity(
+                                    os.stat("metadata-token", dir_fd=directory_fd, follow_symlinks=False)), "credential cleanup file changed")
+                                os.unlink("metadata-token", dir_fd=directory_fd)
+                                nee'''.encode('utf-8')
+        expected = {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '84df00ddde9832d4194dd88926076b33fcacca93a179844f60212db4de55be11'}
+        assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
+        fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        PYSTAGE
+    - name: Stage fixed policy source 12/16
+      timeout-minutes: 1
+      run: |
+        umask 077
+        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
+          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-11.log"
+        import hashlib
+        import os
+        from pathlib import Path
+        import stat
+
+        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
+        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
+        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
+        assert values[1] == '1'
+        base = Path('/var/lib/forge-ci-bootstrap')
+        stage = base / '-'.join(values)
+        for path in (base, stage):
+            assert path.is_absolute() and path.resolve(strict=False) == path
+            if False:
+                path.mkdir(mode=0o700, exist_ok=path != stage)
+            info = path.lstat()
+            assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
+        raw = r'''d(os.fstat(fd).st_nlink == 0, "credential cleanup unlink failed")
+                            finally:
+                                os.close(fd)
+                        need("metadata-token" not in os.listdir(directory_fd), "credential cleanup token remains")
+                        _credential_inventory(directory_fd, parts, token=False)
+            except OSError:
+                raise SetupError("credential cleanup unavailable") from None
+            return {"schema_version": 1, "status": "PASS", "run_id": run_id, "run_attempt": run_attempt,
+                    "boot_id": boot_id, "token_absent": True}
 
 
         def root_directory(path, *, create=False, exclusive=False):
@@ -1783,40 +2110,7 @@ jobs:
                                             "mode": stat.S_IMODE(mode), "uid": info.st_uid, "gid": info.st_gid, "size": info.st_size}
                     if kind == "d":
                         for child in sorted(current.iterdir()):
-                          '''.encode('utf-8')
-        expected = {'name': 'part-09.txt', 'bytes': 8000, 'sha256': 'f61e892037f17b766e3f2715ab1007360e61f3583c545f56f28d600c82217b60'}
-        assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
-        fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(raw)
-            stream.flush()
-            os.fsync(stream.fileno())
-
-        PYSTAGE
-    - name: Stage fixed policy source 11/14
-      timeout-minutes: 1
-      run: |
-        umask 077
-        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
-          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-10.log"
-        import hashlib
-        import os
-        from pathlib import Path
-        import stat
-
-        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
-        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
-        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
-        assert values[1] == '1'
-        base = Path('/var/lib/forge-ci-bootstrap')
-        stage = base / '-'.join(values)
-        for path in (base, stage):
-            assert path.is_absolute() and path.resolve(strict=False) == path
-            if False:
-                path.mkdir(mode=0o700, exist_ok=path != stage)
-            info = path.lstat()
-            assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r"""  visit(child)
+                            visit(child)
                 visit(Path(path), root=True)
                 self.evidence.emit("filesystem-tree", {"root": path, "tree": result})
                 return result
@@ -1882,7 +2176,40 @@ jobs:
                     allowed = "python3.12" if str(component) == PROVIDER_ROOT + "/bin/python" else SYSTEM_LINKS.get(str(component))
                     need(target == allowed, "finite executable symlink changed: component=" + repr(str(component))
                          + "; expected=" + repr(allowed) + "; observed=" + repr(target))
-                    links.append({"path": str(component), "target": target})
+                    links.append({"path": str(co'''.encode('utf-8')
+        expected = {'name': 'part-11.txt', 'bytes': 8000, 'sha256': 'bb0308dd8b4be3d037354a4840255754b2b0a554fab23542c986976a344b04d4'}
+        assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
+        fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        PYSTAGE
+    - name: Stage fixed policy source 13/16
+      timeout-minutes: 1
+      run: |
+        umask 077
+        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
+          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-12.log"
+        import hashlib
+        import os
+        from pathlib import Path
+        import stat
+
+        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
+        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
+        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
+        assert values[1] == '1'
+        base = Path('/var/lib/forge-ci-bootstrap')
+        stage = base / '-'.join(values)
+        for path in (base, stage):
+            assert path.is_absolute() and path.resolve(strict=False) == path
+            if False:
+                path.mkdir(mode=0o700, exist_ok=path != stage)
+            info = path.lstat()
+            assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
+        raw = r'''mponent), "target": target})
             info = canonical_path.stat()
             # These exact two post-setup host interpreters are trusted provider inputs,
             # not sandbox-mounted runtimes. Record their build owner and write modes;
@@ -1951,40 +2278,7 @@ jobs:
                 for path in (installed, packaged):
                     info = path.stat()
                     need(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o6022, "untrusted vendor executable metadata")
-                raw = read_regular(installed, limit=MAX""".encode('utf-8')
-        expected = {'name': 'part-10.txt', 'bytes': 8000, 'sha256': 'a31c238bbc23d5762a12c5a7a85d79a1010bfd7b777272ef15b20f9cdfdff2df'}
-        assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
-        fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(raw)
-            stream.flush()
-            os.fsync(stream.fileno())
-
-        PYSTAGE
-    - name: Stage fixed policy source 12/14
-      timeout-minutes: 1
-      run: |
-        umask 077
-        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
-          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-11.log"
-        import hashlib
-        import os
-        from pathlib import Path
-        import stat
-
-        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
-        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
-        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
-        assert values[1] == '1'
-        base = Path('/var/lib/forge-ci-bootstrap')
-        stage = base / '-'.join(values)
-        for path in (base, stage):
-            assert path.is_absolute() and path.resolve(strict=False) == path
-            if False:
-                path.mkdir(mode=0o700, exist_ok=path != stage)
-            info = path.lstat()
-            assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''_FILE)
+                raw = read_regular(installed, limit=MAX_FILE)
                 expected = read_regular(packaged, limit=MAX_FILE)
                 need(raw == expected, "installed " + name + " differs from authenticated package")
                 result[name] = {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
@@ -2049,85 +2343,8 @@ jobs:
 
 
         def command(argv, timeout=30, *, user=None, group=None, extra_groups=None, pass_fds=(), limit=COMMAND_LIMIT):
-            """Internal bounded subprocess primitive; no CLI or data-driven relay exists."""
-            need(0 < timeout <= 240, "command deadline bound")
-            record = {"argv": list(argv), "started": stamp()}
-            options = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE,
-                       "env": dict(SYSTEM_ENV), "pass_fds": pass_fds, "start_new_session": True}
-            if user is not None:
-                options.update(user=user, group=group, extra_groups=extra_groups)
-            stdout, stderr = bytearray(), bytearray()
-            with subprocess.Popen(argv, **options) as process:
-                record["wrapper_pid"] = process.pid
-                with selectors.DefaultSelector() as selector:
-                    for pipe, output in ((process.stdout, stdout), (process.stderr, stderr)):
-                        os.set_blocking(pipe.fileno(), False)
-                        selector.register(pipe, selectors.EVENT_READ, output)
-                    deadline = time.monotonic() + timeout
-                    try:
-                        while selector.get_map():
-                            need(time.monotonic() <= deadline, "command timed out")
-                            for key, _ in selector.select(0.1):
-                                chunk = os.read(key.fd, 65536)
-                                if not chunk:
-                                    selector.unregister(key.fileobj)
-                                else:
-                                    key.data.extend(chunk)
-                                    need(len(stdout) + len(stderr) <= limit, "command output overflow")
-                        process.wait(timeout=max(0.001, deadline - time.monotonic()))
-                    except BaseException as exc:  # noqa: BLE001 - preserve failure evidence and reap only the owned child
-                        kill_owned_command(process)
-                        try:
-                            process.wait(timeout=5)
-                        except (ChildProcessError, subprocess.TimeoutExpired):
-                            pass
-                        record["error"] = type(exc).__name__ + ": " + str(exc)
-                record.update(returncode=process.returncode, stdout=bytes(stdout).decode("utf-8", errors="replace"),
-                              stderr=bytes(stderr).decode("utf-8", errors="replace"), stdout_hex=bytes(stdout).hex(),
-                              stderr_hex=bytes(stderr).hex(), ended=stamp())
-            return record
-
-
-        def checked_command(argv, evidence, timeout=30):
-            result = command(argv, timeout)
-            evidence.emit("command", result)
-            need(not result.get("error") and result["returncode"] == 0, "fixed system command failed")
-            return bytes.fromhex(result["stdout_hex"])
-
-
-        def download_archive(name):
-            need(name in ARCHIVES, "unreviewed archive name")
-            directory = "b/bubblewrap" if name.startswith("bubblewrap_") else "a/apparmor"
-            connection = http.client.HTTPSConnection("security.ubuntu.com", timeout=20, context=ssl.create_default_context())
-            try:
-                with _network_deadline(60):
-                    connection.request("GET", "/ubuntu/pool/main/" + directory + "/" + name,
-                                       headers={"Accept-Encoding": "identity", "User-Agent": "forge-setup-policy/1"})
-                    response = connection.getresponse()
-                    need(response.status == 200 and response.getheader("Content-Encoding", "identity") == "identity", "vendor HTTPS download failed")
-                    raw = response.read(MAX_FILE + 1)
-                    need(len(raw) <= MAX_FILE and hashlib.sha256(raw).hexdigest() == ARCHIVES[name], "unauthenticated vendor archive")
-                    return raw
-            finally:
-                connection.close()
-
-
-        def install_vendor(stage, evidence, binding):
-            vendor = stage / "vendor"
-            root_directory(vendor, create=True, exclusive=True)
-            for name, expected in ARCHIVES.items():
-                raw = download_archive(name)
-                sealed_write(vendor / name, raw)
-                evidence.emit("vendor-archive", {"name": name, "sha256": expected, "bytes": len(raw)})
-                package = name.split("_", 1)[0]
-                metadata = checked_command(["/usr/bin/dpkg-deb", "--field", str(vendor / name), "Package", "Version", "Architecture"], evidence)
-                need(("Package: " + package + "\n").encode() in metadata, "vendor package metadata mismatch")
-                checked_command(["/usr/bin/dpkg-deb", "--extract", str(vendor / name), str(vendor / package)], evidence)
-            # Downloads and data-only extraction do not make an old live check fresh.
-            live_identity(CONFIG, binding)
-            # The only installed package is the exact approved bubblewrap prerequisite.
-            checked'''.encode('utf-8')
-        expected = {'name': 'part-11.txt', 'bytes': 8000, 'sha256': 'af570983274bdd540ab4f6b4b70211ece418550f07e67edf220775c256cd8215'}
+            """Internal bounded subprocess primitive; no CLI'''.encode('utf-8')
+        expected = {'name': 'part-12.txt', 'bytes': 8000, 'sha256': 'bb4a44c5fc0743f438f5d7c793809b6507933d903b893d314552fb98056eec80'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2136,12 +2353,12 @@ jobs:
             os.fsync(stream.fileno())
 
         PYSTAGE
-    - name: Stage fixed policy source 13/14
+    - name: Stage fixed policy source 14/16
       timeout-minutes: 1
       run: |
         umask 077
         /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
-          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-12.log"
+          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-13.log"
         import hashlib
         import os
         from pathlib import Path
@@ -2160,7 +2377,84 @@ jobs:
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
         raw = (
-            '_command(["/usr/bin/dpkg", "--install", str(vendor / "bubblewrap_0.9.0-1ubuntu0.3_amd64.deb")], evidence, timeout=120)\n'
+            ' or data-driven relay exists."""\n'
+            '    need(0 < timeout <= 240, "command deadline bound")\n'
+            '    record = {"argv": list(argv), "started": stamp()}\n'
+            '    options = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE,\n'
+            '               "env": dict(SYSTEM_ENV), "pass_fds": pass_fds, "start_new_session": True}\n'
+            '    if user is not None:\n'
+            '        options.update(user=user, group=group, extra_groups=extra_groups)\n'
+            '    stdout, stderr = bytearray(), bytearray()\n'
+            '    with subprocess.Popen(argv, **options) as process:\n'
+            '        record["wrapper_pid"] = process.pid\n'
+            '        with selectors.DefaultSelector() as selector:\n'
+            '            for pipe, output in ((process.stdout, stdout), (process.stderr, stderr)):\n'
+            '                os.set_blocking(pipe.fileno(), False)\n'
+            '                selector.register(pipe, selectors.EVENT_READ, output)\n'
+            '            deadline = time.monotonic() + timeout\n'
+            '            try:\n'
+            '                while selector.get_map():\n'
+            '                    need(time.monotonic() <= deadline, "command timed out")\n'
+            '                    for key, _ in selector.select(0.1):\n'
+            '                        chunk = os.read(key.fd, 65536)\n'
+            '                        if not chunk:\n'
+            '                            selector.unregister(key.fileobj)\n'
+            '                        else:\n'
+            '                            key.data.extend(chunk)\n'
+            '                            need(len(stdout) + len(stderr) <= limit, "command output overflow")\n'
+            '                process.wait(timeout=max(0.001, deadline - time.monotonic()))\n'
+            '            except BaseException as exc:  # noqa: BLE001 - preserve failure evidence and reap only the owned child\n'
+            '                kill_owned_command(process)\n'
+            '                try:\n'
+            '                    process.wait(timeout=5)\n'
+            '                except (ChildProcessError, subprocess.TimeoutExpired):\n'
+            '                    pass\n'
+            '                record["error"] = type(exc).__name__ + ": " + str(exc)\n'
+            '        record.update(returncode=process.returncode, stdout=bytes(stdout).decode("utf-8", errors="replace"),\n'
+            '                      stderr=bytes(stderr).decode("utf-8", errors="replace"), stdout_hex=bytes(stdout).hex(),\n'
+            '                      stderr_hex=bytes(stderr).hex(), ended=stamp())\n'
+            '    return record\n'
+            '\n'
+            '\n'
+            'def checked_command(argv, evidence, timeout=30):\n'
+            '    result = command(argv, timeout)\n'
+            '    evidence.emit("command", result)\n'
+            '    need(not result.get("error") and result["returncode"] == 0, "fixed system command failed")\n'
+            '    return bytes.fromhex(result["stdout_hex"])\n'
+            '\n'
+            '\n'
+            'def download_archive(name):\n'
+            '    need(name in ARCHIVES, "unreviewed archive name")\n'
+            '    directory = "b/bubblewrap" if name.startswith("bubblewrap_") else "a/apparmor"\n'
+            '    connection = http.client.HTTPSConnection("security.ubuntu.com", timeout=20, context=ssl.create_default_context())\n'
+            '    try:\n'
+            '        with _network_deadline(60):\n'
+            '            connection.request("GET", "/ubuntu/pool/main/" + directory + "/" + name,\n'
+            '                               headers={"Accept-Encoding": "identity", "User-Agent": "forge-setup-policy/1"})\n'
+            '            response = connection.getresponse()\n'
+            '            need(response.status == 200 and response.getheader("Content-Encoding", "identity") == "identity", "vendor HTTPS download failed")\n'
+            '            raw = response.read(MAX_FILE + 1)\n'
+            '            need(len(raw) <= MAX_FILE and hashlib.sha256(raw).hexdigest() == ARCHIVES[name], "unauthenticated vendor archive")\n'
+            '            return raw\n'
+            '    finally:\n'
+            '        connection.close()\n'
+            '\n'
+            '\n'
+            'def install_vendor(stage, evidence, binding):\n'
+            '    vendor = stage / "vendor"\n'
+            '    root_directory(vendor, create=True, exclusive=True)\n'
+            '    for name, expected in ARCHIVES.items():\n'
+            '        raw = download_archive(name)\n'
+            '        sealed_write(vendor / name, raw)\n'
+            '        evidence.emit("vendor-archive", {"name": name, "sha256": expected, "bytes": len(raw)})\n'
+            '        package = name.split("_", 1)[0]\n'
+            '        metadata = checked_command(["/usr/bin/dpkg-deb", "--field", str(vendor / name), "Package", "Version", "Architecture"], evidence)\n'
+            '        need(("Package: " + package + "\\n").encode() in metadata, "vendor package metadata mismatch")\n'
+            '        checked_command(["/usr/bin/dpkg-deb", "--extract", str(vendor / name), str(vendor / package)], evidence)\n'
+            '    # Downloads and data-only extraction do not make an old live check fresh.\n'
+            '    live_identity(CONFIG, binding)\n'
+            '    # The only installed package is the exact approved bubblewrap prerequisite.\n'
+            '    checked_command(["/usr/bin/dpkg", "--install", str(vendor / "bubblewrap_0.9.0-1ubuntu0.3_amd64.deb")], evidence, timeout=120)\n'
             '    versions = checked_command(["/usr/bin/dpkg-query", "-W", "-f=${Package} ${Version}\\\\n", "apparmor", "bubblewrap"], evidence)\n'
             '    need(versions == b"apparmor 4.0.1really4.0.1-0ubuntu0.24.04.8\\nbubblewrap 0.9.0-1ubuntu0.3\\n", "installed package version changed")\n'
             '\n'
@@ -2222,69 +2516,9 @@ jobs:
             '            info.seek(0)\n'
             '            raw = info.read(INFO_LIMIT + 1)\n'
             '            result.update(info_raw_hex=raw.hex(), info_bytes=len(raw), info=parse_info_record(raw))\n'
-            '            since, until = result["started"]["utc_ns"], result["ended"]["utc_ns"]\n'
-            '            audit = checked_command(["/usr/bin/timeout", "--signal=KILL", "4s", "/usr/bin/journalctl", "-k", "--no-pager", "--output=json",\n'
-            '                                     "--since=" + _utc_for_journal(since - 1_000_000), "--until=" + _utc_for_journal(until + 1_000_000),\n'
-            '                                     \'--grep=apparmor="DENIED".*(bwrap|unprivileged_userns|userns_create)\'], evidence, timeout=5)\n'
-            '            records = []\n'
-            '            for line in audit.splitlines():\n'
-            '                entry = parse_json(line, limit=AUDIT_LIMIT)\n'
-            '                need(entry.get("_TRANSPORT") == "kernel" and type(entry.get("MESSAGE")) is str, "invalid kernel audit record")\n'
-            '                records.append(entry["MESSAGE"])\n'
-            '            result["audit"] = records\n'
-            '            evidence.emit("negative-probe", result)\n'
-            '            validate_negative_control(result)\n'
-            '        else:\n'
-            '            evidence.emit("runner-snapshot" if snapshot_only else "positive-probe", result)\n'
-            '            need(result["returncode"] == 0, "ordinary-user positive/snapshot probe failed")\n'
-            '        return result\n'
-            '\n'
-            '\n'
-            'def observer_source(source, config):\n'
-            '    """Seal only the fixed read-only observation call graph, never an early loader."""\n'
-            '    removed = {"bootstrap", "claim_activation", "sealed_write", "observer_source", "install_vendor", "download_archive", "runner_probe",\n'
-            '               "parser_argv", "validate_parser", "production_probe_argv", "parse_info_record", "validate_negative_control",\n'
-            '               "begin_audit_clock", "end_audit_clock", "validate_audit_clock",\n'
-            '               "validate_negative_audit", "validate_audit", "_audit_fields", "_utc_for_journal", "checked_command", "command", "kill_owned_command", "cancellation_guard"}\n'
-            '    tree = ast.parse(source)\n'
-            '    lines = source.splitlines(keepends=True)\n'
-            '    discarded = set()\n'
-            '    for node in tree.body:\n'
-            '        remove = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in removed\n'
-            '        remove = remove or (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "RUNNER_TRAMPOLINE" for t in node.targets))\n'
-            '        if remove:\n'
-            '            decorators = getattr(node, "decorator_list", ())\n'
-            '            first = min([node.lineno, *(d.lineno for d in decorators)])\n'
-            '            discarded.update(range(first - 1, node.end_lineno))\n'
-            '    retained = "".join(line for index, line in enumerate(lines) if index not in discarded)\n'
-            '    # CONFIG contains only strict strings, integers and dictionaries, so its\n'
-            '    # canonical JSON is also a deterministic Python literal on both interpreters.\n'
-            '    raw = (retained + "\\n\\nif __name__ == \'__main__\':\\n    observer_main(" + canonical(config).decode() + ")\\n").encode()\n'
-            '    need(b"--add" not in raw and b"--install" not in raw and b"subprocess.Popen(" not in raw, "observer retained a mutating command entrypoint")\n'
-            '    return raw\n'
-            '\n'
-            '\n'
-            'def observe_sealed(stage, config):\n'
-            '    require_clean_root()\n'
-            '    for path in (STAGE_ROOT, stage.parent, stage):\n'
-            '        root_directory(path)\n'
-            '    raw = sealed_read(stage / "setup.json")\n'
-            '    seal = parse_json(raw)\n'
-            '    need(set(seal) == {"schema_version", "status", "binding", "config", "runner", "setup_module_sha256", "observer", "compiled",\n'
-            '                       "before", "after", "input_sha256", "started", "ended", "load_attempted", "positive_passed", "image_version"}, "invalid setup seal schema")\n'
-            '    need(type(seal["schema_version"]) is int and seal["schema_version"] == 1 and seal["status"] == "PASS" and seal["load_attempted"] is True\n'
-            '         and seal["positive_passed"] is True and seal["config"] == config, "setup transition was not sealed PASS")\n'
-            '    need(stage_path(seal["binding"]) == stage, "setup stage/binding mismatch")\n'
-            '    observer = sealed_read(stage / "observer.py")\n'
-            '    need(seal["observer"] == {"sha256": hashlib.sha256(observer).hexdigest(), "bytes": len(observer)}, "sealed observer changed")\n'
-            '    compiled = sealed_read(stage / "compile.stdout", limit=MAX_API)\n'
-            '    need(seal["compiled"] == {"sha256": hashlib.sha256(compiled).hexdigest(), "bytes": len(compiled)}, "sealed compiler bytes changed")\n'
-            '    current = observe_state(stage, PublicEvidence(enabled=False))\n'
-            '    need(current["host"]["boot_id"] == seal["binding"]["boot_id"], "setup boot changed")\n'
-            '    need(digest(stable_state(current)) == seal["input_sha256"], "privileged inputs changed after setup")\n'
-            '    semantic = validate_kerne'
+            '            since, until = result["started"]["utc_ns"], result["end'
         ).encode('utf-8')
-        expected = {'name': 'part-12.txt', 'bytes': 8000, 'sha256': 'b35af5a4d6cd687eacff05b75a31c164721a9323794c52e874a9857d51d584a6'}
+        expected = {'name': 'part-13.txt', 'bytes': 8000, 'sha256': '79ec386735fe23ae0b458ee5e6b59a7a27df3ebb996ad18842e9a59acfca19ab'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2293,12 +2527,12 @@ jobs:
             os.fsync(stream.fileno())
 
         PYSTAGE
-    - name: Stage fixed policy source 14/14
+    - name: Stage fixed policy source 15/16
       timeout-minutes: 1
       run: |
         umask 077
         /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
-          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-13.log"
+          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-14.log"
         import hashlib
         import os
         from pathlib import Path
@@ -2316,7 +2550,68 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r"""l(current["kernel"], before=seal["before"], compiled=compiled)
+        raw = r'''ed"]["utc_ns"]
+                    audit = checked_command(["/usr/bin/timeout", "--signal=KILL", "4s", "/usr/bin/journalctl", "-k", "--no-pager", "--output=json",
+                                             "--since=" + _utc_for_journal(since - 1_000_000), "--until=" + _utc_for_journal(until + 1_000_000),
+                                             '--grep=apparmor="DENIED".*(bwrap|unprivileged_userns|userns_create)'], evidence, timeout=5)
+                    records = []
+                    for line in audit.splitlines():
+                        entry = parse_json(line, limit=AUDIT_LIMIT)
+                        need(entry.get("_TRANSPORT") == "kernel" and type(entry.get("MESSAGE")) is str, "invalid kernel audit record")
+                        records.append(entry["MESSAGE"])
+                    result["audit"] = records
+                    evidence.emit("negative-probe", result)
+                    validate_negative_control(result)
+                else:
+                    evidence.emit("runner-snapshot" if snapshot_only else "positive-probe", result)
+                    need(result["returncode"] == 0, "ordinary-user positive/snapshot probe failed")
+                return result
+
+
+        def observer_source(source, config):
+            """Seal only the fixed read-only observation call graph, never an early loader."""
+            removed = {"bootstrap", "claim_activation", "sealed_write", "observer_source", "install_vendor", "download_archive", "runner_probe",
+                       "parser_argv", "validate_parser", "production_probe_argv", "parse_info_record", "validate_negative_control",
+                       "begin_audit_clock", "end_audit_clock", "validate_audit_clock",
+                       "validate_negative_audit", "validate_audit", "_audit_fields", "_utc_for_journal", "checked_command", "command", "kill_owned_command", "cancellation_guard",
+                       "_credential_parts", "_credential_inventory", "_read_credential_ingress", "stage_metadata_credential", "cleanup_metadata_credential"}
+            tree = ast.parse(source)
+            lines = source.splitlines(keepends=True)
+            discarded = set()
+            for node in tree.body:
+                remove = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in removed
+                remove = remove or (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "RUNNER_TRAMPOLINE" for t in node.targets))
+                if remove:
+                    decorators = getattr(node, "decorator_list", ())
+                    first = min([node.lineno, *(d.lineno for d in decorators)])
+                    discarded.update(range(first - 1, node.end_lineno))
+            retained = "".join(line for index, line in enumerate(lines) if index not in discarded)
+            # CONFIG contains only strict strings, integers and dictionaries, so its
+            # canonical JSON is also a deterministic Python literal on both interpreters.
+            raw = (retained + "\n\nif __name__ == '__main__':\n    observer_main(" + canonical(config).decode() + ")\n").encode()
+            need(b"--add" not in raw and b"--install" not in raw and b"subprocess.Popen(" not in raw, "observer retained a mutating command entrypoint")
+            return raw
+
+
+        def observe_sealed(stage, config):
+            require_clean_root()
+            for path in (STAGE_ROOT, stage.parent, stage):
+                root_directory(path)
+            raw = sealed_read(stage / "setup.json")
+            seal = parse_json(raw)
+            need(set(seal) == {"schema_version", "status", "binding", "config", "runner", "setup_module_sha256", "observer", "compiled",
+                               "before", "after", "input_sha256", "started", "ended", "load_attempted", "positive_passed", "image_version"}, "invalid setup seal schema")
+            need(type(seal["schema_version"]) is int and seal["schema_version"] == 1 and seal["status"] == "PASS" and seal["load_attempted"] is True
+                 and seal["positive_passed"] is True and seal["config"] == config, "setup transition was not sealed PASS")
+            need(stage_path(seal["binding"]) == stage, "setup stage/binding mismatch")
+            observer = sealed_read(stage / "observer.py")
+            need(seal["observer"] == {"sha256": hashlib.sha256(observer).hexdigest(), "bytes": len(observer)}, "sealed observer changed")
+            compiled = sealed_read(stage / "compile.stdout", limit=MAX_API)
+            need(seal["compiled"] == {"sha256": hashlib.sha256(compiled).hexdigest(), "bytes": len(compiled)}, "sealed compiler bytes changed")
+            current = observe_state(stage, PublicEvidence(enabled=False))
+            need(current["host"]["boot_id"] == seal["binding"]["boot_id"], "setup boot changed")
+            need(digest(stable_state(current)) == seal["input_sha256"], "privileged inputs changed after setup")
+            semantic = validate_kernel(current["kernel"], before=seal["before"], compiled=compiled)
             need(canonical(semantic) == canonical(seal["after"]), "sealed post-setup policy changed")
             binding = seal["binding"]
             need(parse_json(sealed_read(stage / "activation.json")) == binding, "activation binding changed")
@@ -2350,10 +2645,12 @@ jobs:
 
 
         @cancellation_guard()
-        def bootstrap(config, source):
+        def bootstrap(config, source, *, credential_layout):
             evidence = PublicEvidence()
             started = stamp()
             stage = None
+            native = None
+            ingress_fd = 0
             load_attempted = False
             try:
                 require_clean_root()
@@ -2364,6 +2661,8 @@ jobs:
                 need(event_path.is_absolute(), "invalid native event path")
                 event = parse_json(read_regular(event_path, limit=MAX_API), limit=MAX_API)
                 native = validate_initial_identity(config, context, event)
+                active_ingress, ingress_fd = ingress_fd, None
+                stage_metadata_credential(native, credential_layout, ingress_fd=active_ingress)
                 uid, gid = int(context["FORGE_RUNNER_UID"]), int(context["FORGE_RUNNER_GID"])
                 need(uid > 0 and gid > 0 and pwd.getpwuid(uid).pw_gid == gid, "invalid original runner identity")
                 host = host_prerequisites()
@@ -2382,7 +2681,40 @@ jobs:
                 need(len(semantic_before["profiles"]) == 123, "wrong finite existing-profile count")
                 runner_probe(stage, uid, gid, evidence, negative=True)
                 profile = stage / "vendor" / PROFILE_MEMBER
-                for operation in ("preprocess", "compile"):
+                for operation in ("preprocess"'''.encode('utf-8')
+        expected = {'name': 'part-14.txt', 'bytes': 8000, 'sha256': 'b75791ea2acbbcdc5ecdf6e6a8b45e06a1a2f7ccd0e7e0b09bc432be2ec43765'}
+        assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
+        fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        PYSTAGE
+    - name: Stage fixed policy source 16/16
+      timeout-minutes: 1
+      run: |
+        umask 077
+        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
+          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYSTAGE' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-stage-15.log"
+        import hashlib
+        import os
+        from pathlib import Path
+        import stat
+
+        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
+        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
+        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
+        assert values[1] == '1'
+        base = Path('/var/lib/forge-ci-bootstrap')
+        stage = base / '-'.join(values)
+        for path in (base, stage):
+            assert path.is_absolute() and path.resolve(strict=False) == path
+            if False:
+                path.mkdir(mode=0o700, exist_ok=path != stage)
+            info = path.lstat()
+            assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
+        raw = r""", "compile"):
                     argv = parser_argv(operation, profile, stage / "parser.conf")
                     result = command(argv, 25, limit=PARSER_LIMIT)
                     evidence.emit(operation, result)
@@ -2417,11 +2749,27 @@ jobs:
                 evidence.emit("setup-pass", seal)
                 return seal
             except BaseException as exc:
+                cleanup_error = None
+                if native is not None:
+                    try:
+                        evidence.emit("metadata-cleanup", cleanup_metadata_credential(
+                            native["run_id"], native["run_attempt"], native["boot_id"], credential_layout=credential_layout))
+                    except BaseException:  # noqa: BLE001 - cancellation during cleanup must remain a categorical failure.
+                        cleanup_error = "credential failure cleanup failed"
                 evidence.emit("setup-stop", {"status": "STOP", "qualified": False, "load_attempted": load_attempted,
-                                             "started": started, "ended": stamp(), "error": type(exc).__name__ + ": " + str(exc)})
+                                             "started": started, "ended": stamp(), "error": type(exc).__name__ + ": " + str(exc),
+                                             "credential_cleanup_error": cleanup_error})
+                if cleanup_error is not None:
+                    raise SetupError(cleanup_error) from None
                 raise
+            finally:
+                if ingress_fd is not None:
+                    try:
+                        os.close(ingress_fd)
+                    except OSError:
+                        pass
         """.encode('utf-8')
-        expected = {'name': 'part-13.txt', 'bytes': 5988, 'sha256': 'e04efc2f829466089ce419d992be7fde0f26f4a3cac0e27c290550dfd79ee9f2'}
+        expected = {'name': 'part-15.txt', 'bytes': 3466, 'sha256': '4ae6191a7db7340a60914ecae7e8a43e0c2f9fd8b434474d67a0ce4267434b7e'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2430,14 +2778,109 @@ jobs:
             os.fsync(stream.fileno())
 
         PYSTAGE
+    - name: Stage fixed bootstrap entrypoint
+      timeout-minutes: 1
+      run: |
+        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
+          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYENTRY'
+        import hashlib
+        import os
+        from pathlib import Path
+        import stat
+
+        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
+        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
+        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
+        assert values[1] == '1'
+        base = Path('/var/lib/forge-ci-bootstrap')
+        stage = base / '-'.join(values)
+        for path in (base, stage):
+            info = path.lstat()
+            assert path.resolve(strict=True) == path and stat.S_ISDIR(info.st_mode)
+            assert info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
+        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '95fecb51ff4f7406c51ae3baf572d3f3ccd2deda0b76440f9c5d0e66fc0f24bb'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'f04a4386410c15ad914d867139693e4784f6e8152077619ce3c37d8430fed7c5'}, {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '01992e4d039ac50617986eb4873995a67d3452dd4d1ed88db61dc55bbdc1452b'}, {'name': 'part-03.txt', 'bytes': 8000, 'sha256': 'd9acb04ac91bca9bf2d630b476f4a3fb657b3c18798476914d9c75303009a932'}, {'name': 'part-04.txt', 'bytes': 8000, 'sha256': '13a70a23b75d497a1077b7595d2651ce8a22ab6705cd3b1b8afd279018e60d42'}, {'name': 'part-05.txt', 'bytes': 8000, 'sha256': 'b7815b2337005f3d91e1c6768d71faae787b388ae198384052f2b0795867b81c'}, {'name': 'part-06.txt', 'bytes': 8000, 'sha256': 'cc65a41ee707f632bc6fed715269084189786bdd3b3e4fde0e9672d9f89d4953'}, {'name': 'part-07.txt', 'bytes': 8000, 'sha256': '495165f1a4c988d05b36182fe1e92dbed4568c7b44e34d14fa3cc43b9a7403b5'}, {'name': 'part-08.txt', 'bytes': 8000, 'sha256': 'be3de9a426e0e4d234d4a73881d3fa46a00a13353f6310568fd35a600c02caa0'}, {'name': 'part-09.txt', 'bytes': 8000, 'sha256': '26da8961584956c3e13232ac00e13d7616c4c3567a9966f68dc5b1287ac744b6'}, {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '84df00ddde9832d4194dd88926076b33fcacca93a179844f60212db4de55be11'}, {'name': 'part-11.txt', 'bytes': 8000, 'sha256': 'bb0308dd8b4be3d037354a4840255754b2b0a554fab23542c986976a344b04d4'}, {'name': 'part-12.txt', 'bytes': 8000, 'sha256': 'bb4a44c5fc0743f438f5d7c793809b6507933d903b893d314552fb98056eec80'}, {'name': 'part-13.txt', 'bytes': 8000, 'sha256': '79ec386735fe23ae0b458ee5e6b59a7a27df3ebb996ad18842e9a59acfca19ab'}, {'name': 'part-14.txt', 'bytes': 8000, 'sha256': 'b75791ea2acbbcdc5ecdf6e6a8b45e06a1a2f7ccd0e7e0b09bc432be2ec43765'}, {'name': 'part-15.txt', 'bytes': 3466, 'sha256': '4ae6191a7db7340a60914ecae7e8a43e0c2f9fd8b434474d67a0ce4267434b7e'}]
+        assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts}
+        chunks = []
+        for part in parts:
+            fd = os.open(stage / part['name'], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, 'rb') as stream:
+                info = os.fstat(stream.fileno())
+                assert stat.S_ISREG(info.st_mode) and info.st_uid == info.st_gid == 0
+                assert stat.S_IMODE(info.st_mode) == 0o400 and info.st_nlink == 1 and info.st_size == part['bytes']
+                raw = stream.read(part['bytes'] + 1)
+            assert len(raw) == part['bytes'] and hashlib.sha256(raw).hexdigest() == part['sha256']
+            chunks.append(raw)
+        raw = b''.join(chunks)
+        assert len(raw) == 123466 and hashlib.sha256(raw).hexdigest() == 'b5f72069defddb11e344d70b67b7c0494340825093e2b8a277d1a1fdfa00a1b6'
+        raw = r"""import hashlib
+        import os
+        from pathlib import Path
+        import stat
+
+        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
+        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
+        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
+        assert values[1] == '1'
+        base = Path('/var/lib/forge-ci-bootstrap')
+        stage = base / '-'.join(values)
+        for path in (base, stage):
+            info = path.lstat()
+            assert path.resolve(strict=True) == path and stat.S_ISDIR(info.st_mode)
+            assert info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
+        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '95fecb51ff4f7406c51ae3baf572d3f3ccd2deda0b76440f9c5d0e66fc0f24bb'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'f04a4386410c15ad914d867139693e4784f6e8152077619ce3c37d8430fed7c5'}, {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '01992e4d039ac50617986eb4873995a67d3452dd4d1ed88db61dc55bbdc1452b'}, {'name': 'part-03.txt', 'bytes': 8000, 'sha256': 'd9acb04ac91bca9bf2d630b476f4a3fb657b3c18798476914d9c75303009a932'}, {'name': 'part-04.txt', 'bytes': 8000, 'sha256': '13a70a23b75d497a1077b7595d2651ce8a22ab6705cd3b1b8afd279018e60d42'}, {'name': 'part-05.txt', 'bytes': 8000, 'sha256': 'b7815b2337005f3d91e1c6768d71faae787b388ae198384052f2b0795867b81c'}, {'name': 'part-06.txt', 'bytes': 8000, 'sha256': 'cc65a41ee707f632bc6fed715269084189786bdd3b3e4fde0e9672d9f89d4953'}, {'name': 'part-07.txt', 'bytes': 8000, 'sha256': '495165f1a4c988d05b36182fe1e92dbed4568c7b44e34d14fa3cc43b9a7403b5'}, {'name': 'part-08.txt', 'bytes': 8000, 'sha256': 'be3de9a426e0e4d234d4a73881d3fa46a00a13353f6310568fd35a600c02caa0'}, {'name': 'part-09.txt', 'bytes': 8000, 'sha256': '26da8961584956c3e13232ac00e13d7616c4c3567a9966f68dc5b1287ac744b6'}, {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '84df00ddde9832d4194dd88926076b33fcacca93a179844f60212db4de55be11'}, {'name': 'part-11.txt', 'bytes': 8000, 'sha256': 'bb0308dd8b4be3d037354a4840255754b2b0a554fab23542c986976a344b04d4'}, {'name': 'part-12.txt', 'bytes': 8000, 'sha256': 'bb4a44c5fc0743f438f5d7c793809b6507933d903b893d314552fb98056eec80'}, {'name': 'part-13.txt', 'bytes': 8000, 'sha256': '79ec386735fe23ae0b458ee5e6b59a7a27df3ebb996ad18842e9a59acfca19ab'}, {'name': 'part-14.txt', 'bytes': 8000, 'sha256': 'b75791ea2acbbcdc5ecdf6e6a8b45e06a1a2f7ccd0e7e0b09bc432be2ec43765'}, {'name': 'part-15.txt', 'bytes': 3466, 'sha256': '4ae6191a7db7340a60914ecae7e8a43e0c2f9fd8b434474d67a0ce4267434b7e'}]
+        assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts} | {'bootstrap-entry.py'}
+        entry_info = (stage / 'bootstrap-entry.py').lstat()
+        assert stat.S_ISREG(entry_info.st_mode) and entry_info.st_uid == entry_info.st_gid == 0
+        assert stat.S_IMODE(entry_info.st_mode) == 0o400 and entry_info.st_nlink == 1
+        chunks = []
+        for part in parts:
+            fd = os.open(stage / part['name'], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, 'rb') as stream:
+                info = os.fstat(stream.fileno())
+                assert stat.S_ISREG(info.st_mode) and info.st_uid == info.st_gid == 0
+                assert stat.S_IMODE(info.st_mode) == 0o400 and info.st_nlink == 1 and info.st_size == part['bytes']
+                raw = stream.read(part['bytes'] + 1)
+            assert len(raw) == part['bytes'] and hashlib.sha256(raw).hexdigest() == part['sha256']
+            chunks.append(raw)
+        raw = b''.join(chunks)
+        assert len(raw) == 123466 and hashlib.sha256(raw).hexdigest() == 'b5f72069defddb11e344d70b67b7c0494340825093e2b8a277d1a1fdfa00a1b6'
+        source = raw.decode('utf-8')
+        namespace = {'__name__': 'fixed_setup_bootstrap'}
+        exec(compile(source, '<fixed-workflow-policy-setup>', 'exec'), namespace)
+        result = namespace['bootstrap'](namespace['CONFIG'], source, credential_layout={'parts': parts})
+        assert type(result) is dict and result.get('status') == 'PASS'
+        assert result.get('load_attempted') is True and result.get('positive_passed') is True
+        """.encode('utf-8')
+        expected = {'name': 'bootstrap-entry.py', 'bytes': 3953, 'sha256': '5dbafa47a3e001f9f9e0c4afa9ca37da7e3e95df0deeb1910e251be75b935718'}
+        assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
+        fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        fd = os.open(stage / expected['name'], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            assert stat.S_ISREG(info.st_mode) and info.st_uid == info.st_gid == 0
+            assert stat.S_IMODE(info.st_mode) == 0o400 and info.st_nlink == 1 and info.st_size == expected['bytes']
+            written = stream.read(expected['bytes'] + 1)
+        assert len(written) == expected['bytes'] and hashlib.sha256(written).hexdigest() == expected['sha256']
+        assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts} | {'bootstrap-entry.py'}
+
+        PYENTRY
     - name: Authenticate and establish fixed vendor policy before actions
       id: policy_setup
       timeout-minutes: 10
+      env:
+        FORGE_CI_METADATA_TOKEN: ${{ github.token }}
       run: |
+        set +x
+        export -n FORGE_CI_METADATA_TOKEN
         umask 077
+        trap 'unset FORGE_CI_METADATA_TOKEN' EXIT
         runner_uid="$(/usr/bin/id -u)"
         runner_gid="$(/usr/bin/id -g)"
-        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
+        builtin printf '%s' "$FORGE_CI_METADATA_TOKEN" | /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
           FORGE_RUNNER_UID="$runner_uid" FORGE_RUNNER_GID="$runner_gid" \
           GITHUB_EVENT_NAME="${GITHUB_EVENT_NAME}" \
           GITHUB_REF_TYPE="${GITHUB_REF_TYPE}" \
@@ -2464,44 +2907,7 @@ jobs:
           RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT}" \
           ImageOS="${ImageOS}" \
           ImageVersion="${ImageVersion}" \
-          /usr/bin/python3 -B -I -S - <<'PYSETUP' 2>&1 | /usr/bin/tee "$EVIDENCE/policy-setup.log"
-        import hashlib
-        import os
-        from pathlib import Path
-        import stat
-
-        assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
-        values = [os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
-        assert all(value.isascii() and value.isdecimal() and 0 < int(value) < 2**63 and str(int(value)) == value for value in values)
-        assert values[1] == '1'
-        base = Path('/var/lib/forge-ci-bootstrap')
-        stage = base / '-'.join(values)
-        for path in (base, stage):
-            info = path.lstat()
-            assert path.resolve(strict=True) == path and stat.S_ISDIR(info.st_mode)
-            assert info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '00d48e996952f3f92929ef74c5c146c086db08c816ce62b647614f6177831d76'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '750c615a65ac1808240f96d3d6d943a25d4b639f1fabef587032c2b7d83b1b27'}, {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '90b9f7eea4a662326a9e058c0f093dc9b24626564581210a1eae28936bda76ae'}, {'name': 'part-03.txt', 'bytes': 8000, 'sha256': '2d94aca6ca4bbf7cd6943fc2cea64147e7e76619e237bb1be14774a4c7259906'}, {'name': 'part-04.txt', 'bytes': 8000, 'sha256': 'dd6d53a7044235c5f018f5abba6a1c60debe11ee38e4ba71d6192ec6557753b7'}, {'name': 'part-05.txt', 'bytes': 8000, 'sha256': '31b842fea50cc873265ddfc7d32de5ddcef945f777c3ee9f70cd3f5bd41e288b'}, {'name': 'part-06.txt', 'bytes': 8000, 'sha256': '42a8e4479ad7618343708bf0a428248942b4265978687360a57b122ab74c93fc'}, {'name': 'part-07.txt', 'bytes': 8000, 'sha256': 'bdf8d1601028c2cd9eed8c4d01e00856ae3e9e5f378f1fd90b2df0eec6cd5341'}, {'name': 'part-08.txt', 'bytes': 8000, 'sha256': '4b17ab34b750bd6e431a519b217bdf94c5616f81135466b0bb3e135ea9bda24b'}, {'name': 'part-09.txt', 'bytes': 8000, 'sha256': 'f61e892037f17b766e3f2715ab1007360e61f3583c545f56f28d600c82217b60'}, {'name': 'part-10.txt', 'bytes': 8000, 'sha256': 'a31c238bbc23d5762a12c5a7a85d79a1010bfd7b777272ef15b20f9cdfdff2df'}, {'name': 'part-11.txt', 'bytes': 8000, 'sha256': 'af570983274bdd540ab4f6b4b70211ece418550f07e67edf220775c256cd8215'}, {'name': 'part-12.txt', 'bytes': 8000, 'sha256': 'b35af5a4d6cd687eacff05b75a31c164721a9323794c52e874a9857d51d584a6'}, {'name': 'part-13.txt', 'bytes': 5988, 'sha256': 'e04efc2f829466089ce419d992be7fde0f26f4a3cac0e27c290550dfd79ee9f2'}]
-        assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts}
-        chunks = []
-        for part in parts:
-            fd = os.open(stage / part['name'], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-            with os.fdopen(fd, 'rb') as stream:
-                info = os.fstat(stream.fileno())
-                assert stat.S_ISREG(info.st_mode) and info.st_uid == info.st_gid == 0
-                assert stat.S_IMODE(info.st_mode) == 0o400 and info.st_nlink == 1 and info.st_size == part['bytes']
-                raw = stream.read(part['bytes'] + 1)
-            assert len(raw) == part['bytes'] and hashlib.sha256(raw).hexdigest() == part['sha256']
-            chunks.append(raw)
-        raw = b''.join(chunks)
-        assert len(raw) == 109988 and hashlib.sha256(raw).hexdigest() == '298336a14368fd5429443c62ddd0fa18b9e8477f17524e774c184e8efc47daec'
-        source = raw.decode('utf-8')
-        namespace = {'__name__': 'fixed_setup_bootstrap'}
-        exec(compile(source, '<fixed-workflow-policy-setup>', 'exec'), namespace)
-        result = namespace['bootstrap'](namespace['CONFIG'], source)
-        assert type(result) is dict and result.get('status') == 'PASS'
-        assert result.get('load_attempted') is True and result.get('positive_passed') is True
-
-        PYSETUP
+          /usr/bin/python3 -B -I -S "/var/lib/forge-ci-bootstrap/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/bootstrap-entry.py" 2>&1 | /usr/bin/tee "$EVIDENCE/policy-setup.log"
     - name: Check out exact admitted source
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -2840,16 +3246,20 @@ jobs:
             return source
 
 
-        def validate_launch(context, event, checkout, *, fetcher=None):
+        def validate_launch(context, event, checkout, *, evidence_dir):
+            """Bind verified source to a fresh root observation without a credential handoff."""
             # This lazy import is only used after the caller's literal checkout verifier.
-            from . import setup_policy as setup
+            from . import admission, setup_policy as setup
             validate_source(checkout)
             try:
                 native = setup.validate_initial_identity(setup.CONFIG, context, event)
                 _need(checkout["candidate_sha"] == native["candidate_sha"], "native/checkout candidate mismatch")
-                live = setup.live_identity(setup.CONFIG, native, fetcher=fetcher)
+                rule = {"schema_version": 2, "setup_spec_sha256": setup.SPEC_SHA256,
+                        "setup_module_sha256": checkout["helper_sha256"][".github/scripts/forge_ci/setup_policy.py"]}
+                observed = admission.observe_setup(native, rule, checkout["tree_oid"], evidence_dir, "initial")
+                live = observed["live"]
                 _need(checkout["tree_oid"] == live["tree_oid"], "provider/checkout immutable tree mismatch")
-            except setup.SetupError as exc:
+            except (setup.SetupError, admission.AdmissionError) as exc:
                 raise LaunchError(str(exc)) from exc
             return validate_receipt({"schema_version": 1, "status": "PASS", "binding": live["binding"], "source": checkout, "live": live})
 
@@ -2883,19 +3293,8 @@ jobs:
                     "binding": json.loads(canonical_bytes(authenticated_receipt["binding"])),
                     "source": json.loads(canonical_bytes(checkout)),
                     "receipt_sha256": hashlib.sha256(canonical_bytes(authenticated_receipt) + b"\n").hexdigest(),
-                    "local_checked": setup.stamp()}
-
-
-        def load_receipt(path):
-            raw = read_regular(Path(path), limit=MAX_JSON)
-            value = validate_receipt(parse_json(raw))
-            _need(raw == canonical_bytes(value) + b"\n", "noncanonical launch receipt")
-            return value
-
-
-        def write_receipt(path: Path, report: dict, *, limit=MAX_JSON) -> None:
-            # Full sealed policy observations retain their existing'''.encode('utf-8')
-        expected = {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '9f3ebcb7869989e082f5ca8f9b6ded9444ba75bbe1c1a136fb72b011387cf358'}
+                    "local_c'''.encode('utf-8')
+        expected = {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '4f4e1d6053b4e8faff0ac7ceb588150b69bdc4ca736ad6d8fb76b1f4da48f1a3'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2926,7 +3325,18 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r""" separate 8 MiB bound.
+        raw = r"""hecked": setup.stamp()}
+
+
+        def load_receipt(path):
+            raw = read_regular(Path(path), limit=MAX_JSON)
+            value = validate_receipt(parse_json(raw))
+            _need(raw == canonical_bytes(value) + b"\n", "noncanonical launch receipt")
+            return value
+
+
+        def write_receipt(path: Path, report: dict, *, limit=MAX_JSON) -> None:
+            # Full sealed policy observations retain their existing separate 8 MiB bound.
             _need(type(limit) is int and 0 < limit <= MAX_TREE, "unreviewed receipt byte bound")
             data = canonical_bytes(report) + b"\n"
             _need(len(data) <= limit, "receipt byte bound exceeded")
@@ -2960,7 +3370,7 @@ jobs:
         if __name__ == "__main__":
             raise SystemExit(main())
         """.encode('utf-8')
-        expected = {'name': 'part-02.txt', 'bytes': 1489, 'sha256': '76e59c1c468500d6b67d86722a0fd39b397dd1b183ad74da332faa9d0b898439'}
+        expected = {'name': 'part-02.txt', 'bytes': 1866, 'sha256': 'a17a6653e1f6ab141dbacaa07fa86d7a155812ec5f236ecc5ae4170d091d6449'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2986,7 +3396,7 @@ jobs:
         info = stage.lstat()
         assert stage.resolve(strict=True) == stage and stat.S_ISDIR(info.st_mode)
         assert info.st_uid == os.getuid() and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == 0o700
-        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': 'b52cf44078aa95d787fbf5bea90db307a42321092f4a9a4ae0380176693264be'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '9f3ebcb7869989e082f5ca8f9b6ded9444ba75bbe1c1a136fb72b011387cf358'}, {'name': 'part-02.txt', 'bytes': 1489, 'sha256': '76e59c1c468500d6b67d86722a0fd39b397dd1b183ad74da332faa9d0b898439'}]
+        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': 'b52cf44078aa95d787fbf5bea90db307a42321092f4a9a4ae0380176693264be'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': '4f4e1d6053b4e8faff0ac7ceb588150b69bdc4ca736ad6d8fb76b1f4da48f1a3'}, {'name': 'part-02.txt', 'bytes': 1866, 'sha256': 'a17a6653e1f6ab141dbacaa07fa86d7a155812ec5f236ecc5ae4170d091d6449'}]
         assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts}
         chunks = []
         for part in parts:
@@ -2999,18 +3409,18 @@ jobs:
             assert len(raw) == part['bytes'] and hashlib.sha256(raw).hexdigest() == part['sha256']
             chunks.append(raw)
         raw = b''.join(chunks)
-        assert len(raw) == 17489 and hashlib.sha256(raw).hexdigest() == '7cf6c31a0df6a1ded7d38e381f18a37019114f8adf8196af81be9994182cd5e6'
+        assert len(raw) == 17866 and hashlib.sha256(raw).hexdigest() == '6214d54b3df87e05e3c4608c5e5a17cb8ec3c98f344d5a773a1d74edc6265bc0'
         source = raw.decode('utf-8')
         namespace = {'__name__': 'fixed_checkout_verifier'}
         exec(compile(source, '<fixed-workflow-checkout-verifier>', 'exec'), namespace)
         root = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
-        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '7cf6c31a0df6a1ded7d38e381f18a37019114f8adf8196af81be9994182cd5e6', '.github/scripts/forge_ci/admission.py': '58a8d66a4cf5568f4220290bc58394d5da23a664bd2838c41ef3c1edd8564fdc', '.github/scripts/forge_ci/setup_policy.py': '298336a14368fd5429443c62ddd0fa18b9e8477f17524e774c184e8efc47daec', '.github/scripts/forge_ci/controller.py': 'd36c4ac7f82c77c415e83c7c67bf72ec24f53dab2ccb703689874339e33c81c0', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'd1b5dbcf03b928557437eabb31deac204df11d9634d0f823a0c2e592f0c73dc8', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': '360d82622fc334410baa4245d195080b76b2c618d4b9a67d4d68844e5aace66c'})
+        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '6214d54b3df87e05e3c4608c5e5a17cb8ec3c98f344d5a773a1d74edc6265bc0', '.github/scripts/forge_ci/admission.py': '4fe23c1611c7ea4cffd6e9f13a882dc516bec262489be7c9276cae8f4abd6027', '.github/scripts/forge_ci/setup_policy.py': 'b5f72069defddb11e344d70b67b7c0494340825093e2b8a277d1a1fdfa00a1b6', '.github/scripts/forge_ci/controller.py': 'd36c4ac7f82c77c415e83c7c67bf72ec24f53dab2ccb703689874339e33c81c0', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'd1b5dbcf03b928557437eabb31deac204df11d9634d0f823a0c2e592f0c73dc8', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': '4d711390afa293c6b36bb41ef120ca2ec3e285ef33ef12c2d066f79c3fb9dcc4'})
         parent = root / '.github/scripts'
         sys.dont_write_bytecode = True
         sys.path.insert(0, str(parent))
         from forge_ci import launch
         event = launch.parse_json(launch.read_regular(Path(os.environ['GITHUB_EVENT_PATH']), limit=launch.MAX_API), limit=launch.MAX_API)
-        record = launch.validate_launch(os.environ, event, checkout)
+        record = launch.validate_launch(os.environ, event, checkout, evidence_dir=Path(os.environ['EVIDENCE']))
         launch.write_receipt(Path(os.environ['EVIDENCE']) / 'launch-bootstrap.json', record)
 
         PYBOOT
@@ -3126,6 +3536,195 @@ jobs:
         PYTHONPATH=.github/scripts:src python -m forge_ci.user_service launch \
           --receipt "$EVIDENCE/launch-bootstrap.json" --repo "$GITHUB_WORKSPACE" \
           --evidence "$EVIDENCE/qualification" 2>&1 | tee "$EVIDENCE/qualification-controller.log"
+    - name: Remove private metadata credential
+      id: credential_cleanup
+      if: ${{ always() }}
+      timeout-minutes: 1
+      run: |
+        /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
+          GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYCREDENTIALCLEANUP' | /usr/bin/tee "$RUNNER_TEMP/forge-evidence/credential-cleanup.json"
+        from __future__ import annotations
+        import os, stat, hashlib, re, json
+        from pathlib import Path
+        from contextlib import contextmanager
+        from typing import Any
+        BOOTSTRAP_ROOT = Path('/var/lib/forge-ci-bootstrap')
+        MAX_CREDENTIAL = 4096
+        MAX_FILE = 16 * 1024 * 1024
+        MAX_ID = 2 ** 63 - 1
+        _SHA256 = re.compile('[0-9a-f]{64}\\Z')
+        _BOOT = re.compile('[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\\Z')
+
+        class SetupError(RuntimeError):
+            """Missing, changed, partial or unreviewed evidence requires STOP."""
+
+        def need(condition, message):
+            if not condition:
+                raise SetupError(message)
+
+        def sha(value, label):
+            need(type(value) is str and _SHA256.fullmatch(value) is not None and (value != '0' * 64), 'invalid ' + label + ' digest')
+            return value
+
+        def keys(value: Any, keys: set[str], label: str) -> dict:
+            need(type(value) is dict and set(value) == keys, f'invalid {label} fields')
+            return value
+
+        def _id(value: Any, label: str, *, native: bool=False) -> int:
+            if native:
+                need(type(value) is str and re.fullmatch('[1-9][0-9]{0,18}', value) is not None, f'invalid native {label}')
+                value = int(value)
+            need(type(value) is int and 0 < value <= MAX_ID, f'invalid {label}')
+            return value
+
+        def read_regular(path: Path, *, limit: int=MAX_FILE) -> bytes:
+            """No symlink or FIFO reads, bounded even if the file changes while reading."""
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(fd, 'rb') as stream:
+                    need(stat.S_ISREG(os.fstat(stream.fileno()).st_mode), 'nonregular input file')
+                    raw = stream.read(limit + 1)
+            except OSError as exc:
+                raise SetupError('cannot read required file') from exc
+            need(len(raw) <= limit, 'input file bound exceeded')
+            return raw
+
+        def trusted_boot_id():
+            value = read_regular(Path('/proc/sys/kernel/random/boot_id'), limit=64).decode('ascii').strip()
+            need(_BOOT.fullmatch(value) is not None, 'invalid kernel boot identity')
+            return value
+
+        def _credential_stage(run_id, run_attempt):
+            _id(run_id, 'credential run id')
+            need(type(run_attempt) is int and run_attempt == 1, 'invalid credential run attempt')
+            return BOOTSTRAP_ROOT / (str(run_id) + '-1')
+
+        def _credential_parts(layout):
+            keys(layout, {'parts'}, 'credential layout')
+            parts = layout['parts']
+            need(type(parts) in (tuple, list) and 1 <= len(parts) <= 32, 'invalid credential source manifest')
+            for index, part in enumerate(parts):
+                keys(part, {'name', 'bytes', 'sha256'}, 'credential source part')
+                need(part['name'] == f'part-{index:02d}.txt', 'invalid credential source ordering')
+                need(type(part['bytes']) is int and 0 < part['bytes'] <= 32000, 'invalid credential source size')
+                sha(part['sha256'], 'credential source')
+            need(sum((part['bytes'] for part in parts)) <= 256 * 1024, 'credential source bound exceeded')
+            return parts
+
+        def _credential_directory(path, *, missing_ok=False):
+            need(path.is_absolute() and path.resolve(strict=False) == path, 'invalid credential directory')
+            for parent in path.parents:
+                info = parent.lstat()
+                need(stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and (not info.st_mode & 18), 'untrusted credential ancestor')
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                need(missing_ok, 'credential directory is absent')
+                return None
+            need(stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and (stat.S_IMODE(info.st_mode) == 448), 'untrusted credential directory')
+            return info
+
+        def _credential_identity(info):
+            return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid, info.st_nlink, info.st_size)
+
+        @contextmanager
+        def _credential_stage_fd(run_id, run_attempt, *, missing_ok=False):
+            stage = _credential_stage(run_id, run_attempt)
+            if _credential_directory(BOOTSTRAP_ROOT, missing_ok=missing_ok) is None:
+                yield (stage, None)
+                return
+            info = _credential_directory(stage, missing_ok=missing_ok)
+            if info is None:
+                yield (stage, None)
+                return
+            fd = os.open(stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                need(_credential_identity(os.fstat(fd)) == _credential_identity(info), 'credential directory changed')
+                yield (stage, fd)
+                need(_credential_identity(os.fstat(fd)) == _credential_identity(stage.lstat()), 'credential directory changed')
+            finally:
+                os.close(fd)
+
+        def _credential_file_info(info, limit):
+            need(stat.S_ISREG(info.st_mode) and info.st_uid == info.st_gid == 0 and (info.st_nlink == 1) and (stat.S_IMODE(info.st_mode) == 256) and (0 <= info.st_size <= limit), 'untrusted credential staging file')
+
+        @contextmanager
+        def _credential_file_fd(directory_fd, name, limit):
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+            try:
+                info = os.fstat(fd)
+                _credential_file_info(info, limit)
+                need(_credential_identity(info) == _credential_identity(os.stat(name, dir_fd=directory_fd, follow_symlinks=False)), 'credential staging file changed')
+                yield fd
+                need(_credential_identity(os.fstat(fd)) == _credential_identity(os.stat(name, dir_fd=directory_fd, follow_symlinks=False)), 'credential staging file changed')
+            finally:
+                os.close(fd)
+
+        def _credential_read_fd(fd, limit):
+            chunks = []
+            total = 0
+            while total <= limit:
+                chunk = os.read(fd, limit + 1 - total)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            need(total <= limit, 'credential staging file bound exceeded')
+            return b''.join(chunks)
+
+        def _credential_inventory(directory_fd, parts, *, token):
+            expected = {part['name'] for part in parts} | {'bootstrap-entry.py'}
+            if token:
+                expected.add('metadata-token')
+            need(set(os.listdir(directory_fd)) == expected, 'credential staging inventory changed')
+            for part in parts:
+                with _credential_file_fd(directory_fd, part['name'], part['bytes']) as fd:
+                    raw = _credential_read_fd(fd, part['bytes'])
+                    need(len(raw) == part['bytes'] and hashlib.sha256(raw).hexdigest() == part['sha256'], 'credential source part changed')
+            with _credential_file_fd(directory_fd, 'bootstrap-entry.py', 65536) as fd:
+                need(os.fstat(fd).st_size > 0, 'empty credential entrypoint')
+            if token:
+                with _credential_file_fd(directory_fd, 'metadata-token', MAX_CREDENTIAL) as fd:
+                    need(os.fstat(fd).st_size > 0, 'empty metadata credential')
+
+        def cleanup_metadata_credential(run_id, run_attempt, boot_id, *, credential_layout):
+            """Remove only the separately validated token before reporting inventory drift."""
+            need(os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0, 'credential cleanup requires root')
+            parts = _credential_parts(credential_layout)
+            need(type(boot_id) is str and _BOOT.fullmatch(boot_id) is not None and (boot_id == trusted_boot_id()), 'credential cleanup boot changed')
+            try:
+                with _credential_stage_fd(run_id, run_attempt, missing_ok=True) as (_, directory_fd):
+                    if directory_fd is not None:
+                        try:
+                            fd = os.open('metadata-token', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+                        except FileNotFoundError:
+                            fd = None
+                        if fd is not None:
+                            try:
+                                info = os.fstat(fd)
+                                _credential_file_info(info, MAX_CREDENTIAL)
+                                need(_credential_identity(info) == _credential_identity(os.stat('metadata-token', dir_fd=directory_fd, follow_symlinks=False)), 'credential cleanup file changed')
+                                os.unlink('metadata-token', dir_fd=directory_fd)
+                                need(os.fstat(fd).st_nlink == 0, 'credential cleanup unlink failed')
+                            finally:
+                                os.close(fd)
+                        need('metadata-token' not in os.listdir(directory_fd), 'credential cleanup token remains')
+                        _credential_inventory(directory_fd, parts, token=False)
+            except OSError:
+                raise SetupError('credential cleanup unavailable') from None
+            return {'schema_version': 1, 'status': 'PASS', 'run_id': run_id, 'run_attempt': run_attempt, 'boot_id': boot_id, 'token_absent': True}
+        layout = {'parts': [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '95fecb51ff4f7406c51ae3baf572d3f3ccd2deda0b76440f9c5d0e66fc0f24bb'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'f04a4386410c15ad914d867139693e4784f6e8152077619ce3c37d8430fed7c5'}, {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '01992e4d039ac50617986eb4873995a67d3452dd4d1ed88db61dc55bbdc1452b'}, {'name': 'part-03.txt', 'bytes': 8000, 'sha256': 'd9acb04ac91bca9bf2d630b476f4a3fb657b3c18798476914d9c75303009a932'}, {'name': 'part-04.txt', 'bytes': 8000, 'sha256': '13a70a23b75d497a1077b7595d2651ce8a22ab6705cd3b1b8afd279018e60d42'}, {'name': 'part-05.txt', 'bytes': 8000, 'sha256': 'b7815b2337005f3d91e1c6768d71faae787b388ae198384052f2b0795867b81c'}, {'name': 'part-06.txt', 'bytes': 8000, 'sha256': 'cc65a41ee707f632bc6fed715269084189786bdd3b3e4fde0e9672d9f89d4953'}, {'name': 'part-07.txt', 'bytes': 8000, 'sha256': '495165f1a4c988d05b36182fe1e92dbed4568c7b44e34d14fa3cc43b9a7403b5'}, {'name': 'part-08.txt', 'bytes': 8000, 'sha256': 'be3de9a426e0e4d234d4a73881d3fa46a00a13353f6310568fd35a600c02caa0'}, {'name': 'part-09.txt', 'bytes': 8000, 'sha256': '26da8961584956c3e13232ac00e13d7616c4c3567a9966f68dc5b1287ac744b6'}, {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '84df00ddde9832d4194dd88926076b33fcacca93a179844f60212db4de55be11'}, {'name': 'part-11.txt', 'bytes': 8000, 'sha256': 'bb0308dd8b4be3d037354a4840255754b2b0a554fab23542c986976a344b04d4'}, {'name': 'part-12.txt', 'bytes': 8000, 'sha256': 'bb4a44c5fc0743f438f5d7c793809b6507933d903b893d314552fb98056eec80'}, {'name': 'part-13.txt', 'bytes': 8000, 'sha256': '79ec386735fe23ae0b458ee5e6b59a7a27df3ebb996ad18842e9a59acfca19ab'}, {'name': 'part-14.txt', 'bytes': 8000, 'sha256': 'b75791ea2acbbcdc5ecdf6e6a8b45e06a1a2f7ccd0e7e0b09bc432be2ec43765'}, {'name': 'part-15.txt', 'bytes': 3466, 'sha256': '4ae6191a7db7340a60914ecae7e8a43e0c2f9fd8b434474d67a0ce4267434b7e'}]}
+        try:
+            run_id = _id(os.environ.get('GITHUB_RUN_ID'), 'cleanup run id', native=True)
+            attempt = _id(os.environ.get('GITHUB_RUN_ATTEMPT'), 'cleanup attempt', native=True)
+            result = cleanup_metadata_credential(run_id, attempt, trusted_boot_id(), credential_layout=layout)
+        except BaseException:
+            print(json.dumps({'schema_version': 1, 'status': 'STOP', 'token_absent': False,
+                              'error': 'credential cleanup failed'}, sort_keys=True, separators=(',', ':')))
+            raise SystemExit(1)
+        print(json.dumps(result, sort_keys=True, separators=(',', ':')))
+
+        PYCREDENTIALCLEANUP
     - name: Preserve logs and JUnit reports
       if: ${{ always() }}
       timeout-minutes: 5

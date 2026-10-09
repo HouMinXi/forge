@@ -890,8 +890,8 @@ def test_real_pre_admission_environment_failure_is_attributable(monkeypatch, cap
     assert "SECRET" not in result.err and "PRIVATE_MANAGER_KEY" not in result.err
 
 
-@pytest.mark.parametrize("elapsed,accepted", [(0, True), (599, True), (600, True), (601, False), (-1, False)])
-def test_authenticated_job_budget_reserves_full_qualification_and_artifacts(capsule, elapsed, accepted):
+@pytest.mark.parametrize("elapsed,accepted", [(0, True), (539, True), (540, True), (541, False), (600, False), (601, False), (-1, False)])
+def test_authenticated_job_budget_reserves_qualification_cleanup_and_artifacts(capsule, elapsed, accepted):
     binding = capsule["binding"]
     now = binding["job_started_ns"] + elapsed * s.NS
     if accepted:
@@ -903,7 +903,7 @@ def test_authenticated_job_budget_reserves_full_qualification_and_artifacts(caps
 
 def test_remaining_clamps_to_authenticated_job_artifact_deadline(monkeypatch, capsule):
     clock = capsule["clock"]
-    now = clock["artifact_deadline_utc_ns"] - 5 * s.NS
+    now = clock["artifact_deadline_utc_ns"] - (s.CLEANUP_SECONDS + 5) * s.NS
     monkeypatch.setattr(s.time, "time_ns", lambda: now)
     monkeypatch.setattr(s.time, "monotonic_ns", lambda: clock["started_monotonic_ns"])
     # Move the local relative deadline forward only in this pure test to show
@@ -930,7 +930,7 @@ def test_external_numeric_job_binding_is_strict(capsule, field, value):
 
 def test_exhausted_authenticated_job_budget_stops_with_evidence_before_service(monkeypatch, capsule, tmp_path):
     repo, evidence = prepare_mock_launcher(monkeypatch, capsule, tmp_path)
-    capsule["binding"]["job_started_ns"] = time.time_ns() - 601 * s.NS
+    capsule["binding"]["job_started_ns"] = time.time_ns() - 541 * s.NS
     monkeypatch.setattr(s, "manager_environment", lambda *a: pytest.fail("started manager operation with insufficient job budget"))
     with pytest.raises(s.ServiceError, match="authenticated job headroom"):
         s.launcher(evidence / "launch-bootstrap.json", repo, evidence / "qualification")
@@ -996,3 +996,21 @@ def test_service_receipt_strictly_binds_schema_provider_and_source(capsule, tmp_
     path.write_bytes(s.canonical(record))
     with pytest.raises(s.ServiceError):
         s.load_receipt(capsule, "terminal")
+
+
+
+def test_capsule_cannot_consume_authenticated_cleanup_reserve(capsule):
+    clock = capsule["clock"]
+    clock["deadline_utc_ns"] = clock["artifact_deadline_utc_ns"] - 59 * s.NS
+    clock["started_utc_ns"] = clock["deadline_utc_ns"] - s.STEP_SECONDS * s.NS
+    with pytest.raises(s.ServiceError, match="changed action budget"):
+        s.validate_capsule(capsule)
+
+
+def test_prebind_clock_keeps_original_deadline_without_cleanup_subtraction(monkeypatch, capsule):
+    clock = {key: value for key, value in capsule["clock"].items()
+             if key not in {"job_deadline_utc_ns", "artifact_deadline_utc_ns"}}
+    now = clock["deadline_utc_ns"] - 5 * s.NS
+    monkeypatch.setattr(s.time, "time_ns", lambda: now)
+    monkeypatch.setattr(s.time, "monotonic_ns", lambda: clock["started_monotonic_ns"])
+    assert s.remaining(clock, s.STEP_SECONDS) == 5

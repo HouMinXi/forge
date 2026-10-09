@@ -276,16 +276,20 @@ def verify_initial_checkout(repo, expected_helper_sha256):
     return source
 
 
-def validate_launch(context, event, checkout, *, fetcher=None):
+def validate_launch(context, event, checkout, *, evidence_dir):
+    """Bind verified source to a fresh root observation without a credential handoff."""
     # This lazy import is only used after the caller's literal checkout verifier.
-    from . import setup_policy as setup
+    from . import admission, setup_policy as setup
     validate_source(checkout)
     try:
         native = setup.validate_initial_identity(setup.CONFIG, context, event)
         _need(checkout["candidate_sha"] == native["candidate_sha"], "native/checkout candidate mismatch")
-        live = setup.live_identity(setup.CONFIG, native, fetcher=fetcher)
+        rule = {"schema_version": 2, "setup_spec_sha256": setup.SPEC_SHA256,
+                "setup_module_sha256": checkout["helper_sha256"][".github/scripts/forge_ci/setup_policy.py"]}
+        observed = admission.observe_setup(native, rule, checkout["tree_oid"], evidence_dir, "initial")
+        live = observed["live"]
         _need(checkout["tree_oid"] == live["tree_oid"], "provider/checkout immutable tree mismatch")
-    except setup.SetupError as exc:
+    except (setup.SetupError, admission.AdmissionError) as exc:
         raise LaunchError(str(exc)) from exc
     return validate_receipt({"schema_version": 1, "status": "PASS", "binding": live["binding"], "source": checkout, "live": live})
 

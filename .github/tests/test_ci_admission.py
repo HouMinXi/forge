@@ -118,6 +118,40 @@ def test_sealed_observer_requires_exact_source_bound_read_only_code():
     assert a.validate_observer(value, binding(), a.source_rule(document())) == value["setup_receipt"]
 
 
+@pytest.mark.parametrize("phase", ["initial", "prepare", "final"])
+def test_shared_observer_retains_exact_binding_contract_and_fresh_command_for_each_phase(tmp_path, monkeypatch, phase):
+    observed = observation()
+    raw = s.canonical(observed) + b"\n"
+    native = {key: binding()[key] for key in s.NATIVE_BINDING_KEYS}
+    expected = native if phase == "initial" else binding()
+    calls = []
+
+    def command(argv, timeout, *, env, limit):
+        assert argv == s.observer_argv(binding())
+        assert timeout == 30 and env == s.SYSTEM_ENV and limit == s.MAX_JSON
+        calls.append(argv)
+        return {"argv": argv, "returncode": 0, "stdout": raw.decode(), "stdout_hex": raw.hex(),
+                "stderr": "", "stderr_hex": ""}
+
+    monkeypatch.setattr(a.payload, "bounded_command", command)
+    assert a.observe_setup(expected, a.source_rule(document()), document()["source"]["tree_oid"], tmp_path, phase) == observed
+    assert len(calls) == 1
+    assert (tmp_path / ("setup-observer-" + phase + ".json")).is_file()
+
+
+@pytest.mark.parametrize("phase", ["initial", "prepare", "final", "unreviewed"])
+def test_shared_observer_rejects_wrong_binding_shape_before_command(tmp_path, monkeypatch, phase):
+    def denied(*_args, **_kwargs):
+        pytest.fail("invalid observation request reached root command")
+
+    monkeypatch.setattr(a.payload, "bounded_command", denied)
+    native = {key: binding()[key] for key in s.NATIVE_BINDING_KEYS}
+    wrong = binding() if phase == "initial" else native
+    with pytest.raises((a.AdmissionError, s.SetupError)):
+        a.observe_setup(wrong, a.source_rule(document()), document()["source"]["tree_oid"], tmp_path, phase)
+    assert not list(tmp_path.iterdir())
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -321,7 +355,7 @@ def test_observer_preserves_bounded_failure_diagnostics_without_qualifying(
         observed["binding"]["job_id"] += 1
     if failure == "stale_live":
         observed["live"]["checked"]["monotonic_ns"] = 1
-    raw = b"not JSON" if failure == "malformed" else s.canonical(observed)
+    raw = b"not JSON" if failure == "malformed" else s.canonical(observed) + b"\n"
     stderr = (
         b'metadata HTTP/rate-limit failure {"status":403,"X-RateLimit-Remaining":"0"}'
         if failure == "rate_limit"
@@ -366,7 +400,7 @@ def test_forged_local_receipt_cannot_match_root_sealed_numeric_job(tmp_path, mon
     monkeypatch.setattr(
         gate, "_paths", lambda: pytest.fail("payload path admission passed forged root binding")
     )
-    raw = s.canonical(observation())
+    raw = s.canonical(observation()) + b"\n"
 
     def command(argv, *_args, **_kwargs):
         return {
@@ -379,6 +413,6 @@ def test_forged_local_receipt_cannot_match_root_sealed_numeric_job(tmp_path, mon
         }
 
     monkeypatch.setattr(a.payload, "bounded_command", command)
-    with pytest.raises(a.AdmissionError, match="mismatch"):
+    with pytest.raises(a.AdmissionError, match="observer identity changed"):
         gate.prepare()
     assert gate.state == "STOP" and gate.receipt is None

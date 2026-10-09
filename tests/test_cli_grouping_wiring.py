@@ -90,28 +90,35 @@ def test_grouped_cli_specs_keep_exact_slices_and_provenance(tmp_path, monkeypatc
     import code_forge.graph_triage as triage
     from code_forge.baseline import ResolvedReview
 
-    diff = _coverage_patch("a.py") + _coverage_patch("config.yaml") + _coverage_patch("omitted.md")
+    diff = _coverage_patch("a.py") + _coverage_patch("config.yaml") + _coverage_patch("included.md")
     monkeypatch.setattr(triage, "_run_sem", lambda *a: SimpleNamespace(completed=True, entities=[{}]))
     groups = grouping.GroupingResult(
         groups=[
             grouping.Group("code", "code", ["a.py"], 3),
             grouping.Group("config", "config", ["config.yaml"], 0),
+            grouping.Group("docs", "docs", ["included.md"], 0),
         ]
     )
-    monkeypatch.setattr(grouping, "group_diff", lambda *a: groups)
+    def group_diff(*args, changed_files):
+        from code_forge.diff import get_changed_files
+
+        assert changed_files == get_changed_files(diff)
+        return groups
+
+    monkeypatch.setattr(grouping, "group_diff", group_diff)
     monkeypatch.setattr(cli, "_assemble_post_image", lambda cwd, d: ("post:" + d, "conv"))
     resolved = ResolvedReview(
         baseline_content=None, mode_hint="git", source_files=[Path("a.py")], git_diff=diff
     )
     specs = cli._prepare_grouped_l1_specs(resolved, tmp_path, {}, lambda s: None)
-    assert [s["provenance"] for s in specs] == ["semantic", "promoted", "non_semantic_fallback"]
+    assert [s["provenance"] for s in specs] == ["semantic", "promoted", "promoted"]
     assert [s["resolved"].source_files for s in specs] == [
         [Path("a.py")],
         [Path("config.yaml")],
-        [Path("omitted.md")],
+        [Path("included.md")],
     ]
     assert [s["resolved"].git_diff for s in specs] == [
-        _coverage_patch(p) for p in ("a.py", "config.yaml", "omitted.md")
+        _coverage_patch(p) for p in ("a.py", "config.yaml", "included.md")
     ]
     assert resolved.git_diff == diff and groups.groups[1].passes == 0
 
@@ -137,7 +144,8 @@ def test_grouped_cli_sem_failure_and_empty_are_honest_fallbacks(tmp_path, monkey
         monkeypatch.setattr(triage, "_run_sem", lambda *a, result=outcome: result)
         warnings = []
         specs = cli._prepare_grouped_l1_specs(resolved, tmp_path, {}, warnings.append)
-        assert len(specs) == 1 and specs[0]["provenance"] == "non_semantic_fallback"
+        assert specs is None
+        assert any("truncation risk stands" in warning for warning in warnings)
         assert any(expected in warning for warning in warnings)
 
 
@@ -157,7 +165,7 @@ def test_grouped_cli_invalid_last_group_is_atomic(tmp_path, monkeypatch):
     monkeypatch.setattr(
         grouping,
         "group_diff",
-        lambda *a: grouping.GroupingResult(
+        lambda *a, **k: grouping.GroupingResult(
             groups=[
                 grouping.Group("code", "code", ["a.py"], 3),
                 grouping.Group("bad", "docs", ["unknown.md"], 0),
@@ -211,7 +219,13 @@ def _actual_grouped_cli(tmp_path, monkeypatch, diff, groups):
     monkeypatch.setattr(cli, "_estimate_l1_prompt_tokens", lambda *a, **k: 100000)
     monkeypatch.setattr(context, "gather", lambda *a, **k: context.GatherResult())
     monkeypatch.setattr(triage, "_run_sem", lambda *a: SimpleNamespace(completed=True, entities=[{}]))
-    monkeypatch.setattr(grouping, "group_diff", lambda *a: groups)
+    def group_diff(*args, changed_files):
+        from code_forge.diff import get_changed_files
+
+        assert changed_files == get_changed_files(diff)
+        return groups
+
+    monkeypatch.setattr(grouping, "group_diff", group_diff)
     monkeypatch.setattr(cli, "_assemble_post_image", lambda *a: ("", ""))
     seen = []
 

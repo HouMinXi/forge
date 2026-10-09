@@ -1216,32 +1216,53 @@ def _split_context_for_group(group_name: str, cross_group_edges: list) -> str:
     )
 
 
-def _prepare_grouped_l1_specs(resolved, cwd: Path, gate_data: dict, warn_fn) -> list[dict]:
+def _prepare_grouped_l1_specs(resolved, cwd: Path, gate_data: dict, warn_fn) -> list[dict] | None:
     """Reconcile the complete grouped input before constructing any provider.
 
-    No model calls or provider construction occur here. Existing native runtime
+    None explicitly selects the unchanged whole-diff single-provider route
+    after semantic coverage rejection; an empty list is a valid non-obligation
+    plan. No model calls or provider construction occur here. Existing native runtime
     admission still owns request/count/context budgets; the grouping threshold
     remains the existing rough switch, not a new per-group context guarantee.
     """
     import dataclasses
 
-    from .diff_grouping import group_diff, thresholds_from_gate_config
+    from .diff import get_changed_files
+    from .diff_grouping import GroupingCoverageError, group_diff, thresholds_from_gate_config
     from .graph_triage import _run_sem
-    from .grouped_coverage import reconcile_grouped_coverage
+    from .grouped_coverage import reconcile_grouped_coverage, validate_grouped_diff
 
-    diff_text = resolved.git_diff or ""
-    outcome = _run_sem(diff_text, cwd)
-    if not outcome.completed:
-        warn_fn("grouping: semantic acquisition %s: %s" % (outcome.status, outcome.diagnostic))
-    elif not outcome.entities:
-        warn_fn("grouping: sem returned no entities")
+    diff_text = resolved.git_diff if resolved.git_diff is not None else ""
     try:
-        grouping = group_diff(
-            outcome.entities if outcome.completed else [], cwd, *thresholds_from_gate_config(gate_data)
-        )
+        validate_grouped_diff(diff_text)
+    except ValueError as exc:
+        raise CliError(str(exc)) from exc
+    outcome = _run_sem(diff_text, cwd)
+    acquisition_reason = ""
+    if not outcome.completed:
+        acquisition_reason = "semantic acquisition %s: %s" % (outcome.status, outcome.diagnostic)
+    elif not outcome.entities:
+        acquisition_reason = "sem returned no entities"
+    try:
+        try:
+            grouping = group_diff(
+                outcome.entities if outcome.completed else [],
+                cwd,
+                *thresholds_from_gate_config(gate_data),
+                changed_files=get_changed_files(diff_text),
+            )
+        except GroupingCoverageError as exc:
+            reason = "; ".join(part for part in (acquisition_reason, str(exc)) if part)
+            warn_fn(
+                "grouping: semantic coverage incomplete: %s; falling back to "
+                "single-pass review (truncation risk stands)" % reason
+            )
+            return None
         plan = reconcile_grouped_coverage(diff_text, grouping)
     except ValueError as exc:
         raise CliError(str(exc)) from exc
+    if acquisition_reason:
+        warn_fn("grouping: " + acquisition_reason)
 
     specs = []
     for group in plan:
@@ -4185,8 +4206,8 @@ def _run(args, env, cwd: Path) -> Verdict:
         )
     else:
         def _grouping_warning(message):
-            # Keep acquisition diagnostics coupled to the original threshold
-            # context, including when required-path fallback now supplies work.
+            # Keep acquisition and coverage diagnostics coupled to the original
+            # over-budget context when selecting whole-diff fallback.
             if message.startswith("grouping: sem"):
                 message = "grouping: estimated %d tokens over budget %d; %s" % (
                     _l1_est_tokens, _group_budget, message.removeprefix("grouping: ")
@@ -4195,13 +4216,15 @@ def _run(args, env, cwd: Path) -> Verdict:
 
         _specs = _prepare_grouped_l1_specs(resolved, cwd, gate_data, _grouping_warning)
         if not _specs:
-            # No mandatory hunks and no existing positive group. Preserve the
-            # existing non-obligation route, never an empty composite review.
-            warn(
-                "grouping: estimated %d tokens over budget %d but no producing groups "
-                "or mandatory hunks; falling back to single-pass review (truncation risk stands)"
-                % (_l1_est_tokens, _group_budget)
-            )
+            # None means semantic coverage rejected before reconciliation; []
+            # means a valid non-obligation plan. Both retain the original review
+            # unchanged and never construct an empty composite provider.
+            if _specs is not None:
+                warn(
+                    "grouping: estimated %d tokens over budget %d but no producing groups "
+                    "or mandatory hunks; falling back to single-pass review (truncation risk stands)"
+                    % (_l1_est_tokens, _group_budget)
+                )
             l1_provider = build_l1_provider(
                 engine_choice,
                 resolved,

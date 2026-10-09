@@ -239,3 +239,40 @@ def test_late_group_failure_cannot_borrow_earlier_coverage(tmp_path, monkeypatch
                 assert files == {"src/app.py", "settings.json"}
         else:
             assert receipt["pass_status"] == "completed"
+
+
+@pytest.mark.parametrize("complete", [False, True], ids=["whole-diff-fallback", "complete-grouping"])
+def test_cli_composition_retains_real_receipt_coverage(tmp_path, monkeypatch, complete):
+    """Use real CLI planning and receipt verification with local transport only."""
+    from types import SimpleNamespace
+
+    from code_forge import cli, graph_triage
+
+    resolved = ResolvedReview([Path(path) for path in POST_IMAGES], None, DIFF, "git")
+    entities = [
+        {"filePath": path, "changeType": "modified"}
+        for path in POST_IMAGES
+        if complete or path != "docs/usage.md"
+    ]
+    monkeypatch.setattr(
+        graph_triage, "_run_sem", lambda *args: SimpleNamespace(completed=True, entities=entities)
+    )
+    warnings = []
+    specs = cli._prepare_grouped_l1_specs(resolved, tmp_path, {}, warnings.append)
+    assert resolved.git_diff == DIFF
+    if complete:
+        assert len(specs) == 3
+        assert sorted(spec["provenance"] for spec in specs) == ["promoted", "promoted", "semantic"]
+    else:
+        assert specs is None
+        assert len(warnings) == 1 and "semantic coverage incomplete" in warnings[0]
+        specs = [{"name": "whole-diff", "resolved": resolved}]
+    result, receipts, calls = _run(tmp_path, monkeypatch, specs, grouped=complete)
+    assert len(calls) == (36 if complete else 12)
+    assert all(receipt["pass_status"] == "completed" for receipt in receipts)
+    assert all(
+        {excerpt["file"] for excerpt in receipt["code_excerpts"]} == set(POST_IMAGES)
+        for receipt in receipts
+    )
+    assert result.passed
+    assert result.checks_run == result.checks_passed == 8

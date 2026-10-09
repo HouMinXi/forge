@@ -163,3 +163,48 @@ def test_repeated_hunk_coordinates_preserve_occurrence_counts():
     original = coverage._obligations(diff)
     assert list(original.values()) == [2]
     assert reconcile_grouped_coverage(diff, GroupingResult())[0].diff_text == diff
+
+
+@pytest.mark.parametrize("invalid", [None, False, 0, [], {}])
+def test_public_original_validation_rejects_nontext(invalid):
+    from code_forge.grouped_coverage import GroupedCoverageError, validate_grouped_diff
+
+    with pytest.raises(GroupedCoverageError, match="diff must be text"):
+        validate_grouped_diff(invalid)
+
+
+def test_public_original_validation_rejects_malformed_required_hunk():
+    from code_forge.grouped_coverage import GroupedCoverageError, validate_grouped_diff
+
+    malformed = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,4 +1,4 @@\n-old\n+new\n"
+    with pytest.raises(GroupedCoverageError, match="diff parse failed"):
+        validate_grouped_diff(malformed)
+
+
+@pytest.mark.parametrize(
+    "diff",
+    [
+        "",
+        " \n",
+        "diff --git a/README.md b/README.md\nold mode 100644\nnew mode 100755\n",
+        "diff --git a/a.bin b/a.bin\nBinary files a/a.bin and b/a.bin differ\n",
+        "diff --git a/old.py b/new.py\nsimilarity index 100%\nrename from old.py\nrename to new.py\n",
+        "diff --git a/a.py b/a.py\ndeleted file mode 100644\nindex aaaa..0000\n"
+        "--- a/a.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n",
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,2 +1 @@\n keep\n-drop\n",
+    ],
+)
+def test_public_original_validation_preserves_exemptions(diff):
+    from collections import Counter
+    from code_forge.grouped_coverage import validate_grouped_diff
+
+    assert validate_grouped_diff(diff) == Counter()
+
+
+@pytest.mark.parametrize("path", ["options.yaml", "README.md"])
+def test_public_original_validation_requires_added_config_and_docs(path):
+    from collections import Counter
+    from code_forge.grouped_coverage import validate_grouped_diff
+
+    diff = f"diff --git a/{path} b/{path}\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1 @@\n+new\n"
+    assert validate_grouped_diff(diff) == Counter({(path, 1, 1, (1,)): 1})

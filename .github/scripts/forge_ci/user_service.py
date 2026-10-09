@@ -62,7 +62,7 @@ OWNER_KEYS = {"pid", "uid", "gid", "start_ticks", "pidns", "userns", "mntns", "c
 CAPSULE_KEYS = {"schema_version", "kind", "binding", "owner", "repo", "evidence", "cwd", "entrypoint", "clock", "environment", "receipt", "source"}
 STARTUP_SECONDS, CANCEL_SECONDS, RUNTIME_SECONDS, CLIENT_SECONDS, STEP_SECONDS = 30, 4290, 4380, 4470, 4500
 GRACE_SECONDS, REAP_SECONDS, STOP_SECONDS = 45, 10, 30
-JOB_SECONDS, ARTIFACT_SECONDS = 5400, 300
+JOB_SECONDS, CLEANUP_SECONDS, ARTIFACT_SECONDS = 5400, 60, 300
 NS = 1_000_000_000
 
 
@@ -336,7 +336,7 @@ def validate_capsule(value):
          and clock["job_deadline_utc_ns"] == value["binding"]["job_started_ns"] + JOB_SECONDS * NS
          and clock["artifact_deadline_utc_ns"] == clock["job_deadline_utc_ns"] - ARTIFACT_SECONDS * NS
          and value["binding"]["job_started_ns"] <= clock["started_utc_ns"]
-         and clock["deadline_utc_ns"] <= clock["artifact_deadline_utc_ns"], "changed action budget")
+         and clock["deadline_utc_ns"] <= clock["artifact_deadline_utc_ns"] - CLEANUP_SECONDS * NS, "changed action budget")
     validate_environment(value["environment"])
     env = value["environment"]
     need(env["GITHUB_WORKSPACE"] == value["repo"] and env["EVIDENCE"] == str(Path(value["evidence"]).parent), "payload path mismatch")
@@ -451,7 +451,8 @@ def read_capsule(transport):
 def remaining(clock, seconds):
     return min((clock["started_monotonic_ns"] + seconds * NS - time.monotonic_ns()) / NS,
                (min(clock["started_utc_ns"] + seconds * NS, clock["deadline_utc_ns"],
-                    clock.get("artifact_deadline_utc_ns", clock["deadline_utc_ns"])) - time.time_ns()) / NS)
+                    (clock["artifact_deadline_utc_ns"] - CLEANUP_SECONDS * NS
+                     if "artifact_deadline_utc_ns" in clock else clock["deadline_utc_ns"])) - time.time_ns()) / NS)
 
 
 def budget(clock, seconds=CLIENT_SECONDS, cap=5):
@@ -602,7 +603,7 @@ def entrypoint_identity(repo, receipt_path):
 def require_job_headroom(binding, now=None):
     now = time.time_ns() if now is None else now
     need(positive(now) and binding["job_started_ns"] <= now
-         and now + (STEP_SECONDS + ARTIFACT_SECONDS) * NS <= binding["job_started_ns"] + JOB_SECONDS * NS,
+         and now + (STEP_SECONDS + CLEANUP_SECONDS + ARTIFACT_SECONDS) * NS <= binding["job_started_ns"] + JOB_SECONDS * NS,
          "insufficient authenticated job headroom")
 
 

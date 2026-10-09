@@ -9,6 +9,8 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -540,7 +542,9 @@ def test_observer_contains_no_bootstrap_loader_package_or_command_interface():
     parsed = ast.parse(one)
     names = {n.name for n in parsed.body if isinstance(n, ast.FunctionDef)}
     assert {"observe_sealed", "observer_main", "validate_kernel"} <= names
-    assert not names & {"bootstrap", "command", "checked_command", "install_vendor", "download_archive", "runner_probe", "parser_argv", "kill_owned_command", "claim_activation", "sealed_write"}
+    assert not names & {"bootstrap", "command", "checked_command", "install_vendor", "download_archive", "runner_probe", "parser_argv", "kill_owned_command", "claim_activation", "sealed_write",
+                        "stage_metadata_credential", "cleanup_metadata_credential", "_read_credential_ingress", "_credential_inventory", "_credential_parts"}
+    assert "_read_metadata_credential" in names
     assert b"--add" not in one and b"--install" not in one and b"subprocess.Popen(" not in one
     assert b"forge_ci" not in one and b"code_forge" not in one
     assert source.split("def observe_state(", 1)[1].split("\ndef stable_state", 1)[0].encode() in one
@@ -559,6 +563,483 @@ def test_fixed_observer_argv_is_privileged_timeout_isolated_system_python():
     assert argv[:6] == ["/usr/bin/sudo", "-n", "--", "/usr/bin/timeout", "--signal=KILL", "25s"]
     assert argv[-6:] == ["/usr/bin/python3", "-B", "-I", "-S", "/var/lib/forge-qualification/123/1/observer.py", "observe"]
     assert "-i" in argv and "HOME=/nonexistent" in argv
+
+
+def test_native_observer_argv_requires_exact_native_binding_and_fixed_path():
+    binding = binding_fixture()
+    native = {key: binding[key] for key in a.NATIVE_BINDING_KEYS}
+    assert a.observer_argv_native(native) == a.observer_argv(binding)
+    for changed in (binding, dict(native, run_id="123"), dict(native, run_attempt=2), dict(native, run_id="../evil")):
+        with pytest.raises(a.SetupError):
+            a.observer_argv_native(changed)
+    with pytest.raises(a.SetupError):
+        a.observer_argv(native)
+
+
+FAKE_CREDENTIAL = b"offline_FAKE_only-Credential-Sentinel_921"
+
+
+def credential_pipe(raw, *, eof=True):
+    reader, writer = os.pipe()
+    assert os.write(writer, raw) == len(raw)
+    if eof:
+        os.close(writer)
+    return reader, writer
+
+
+@pytest.mark.parametrize("raw", [b"a", FAKE_CREDENTIAL, b"x" * 4096])
+def test_credential_ingress_accepts_only_complete_bounded_eof_and_closes_reader(raw):
+    reader, _ = credential_pipe(raw)
+    assert a._read_credential_ingress(reader) == raw
+    with pytest.raises(OSError):
+        os.fstat(reader)
+
+
+@pytest.mark.parametrize("raw", [b"", b"x" * 4097, b"a\nb", b"a\rb", b"a\x00b", b"a b", b"\t", b"\x7f", b"\x80"])
+def test_credential_ingress_rejects_invalid_input_without_echo(raw, capsys):
+    reader, _ = credential_pipe(raw)
+    with pytest.raises(a.SetupError) as error:
+        a._read_credential_ingress(reader)
+    assert "metadata credential" in str(error.value) or "byte bound" in str(error.value)
+    assert capsys.readouterr() == ("", "")
+    with pytest.raises(OSError):
+        os.fstat(reader)
+
+
+@pytest.mark.parametrize("initial", [b"", FAKE_CREDENTIAL])
+def test_credential_ingress_deadline_includes_empty_or_nonempty_without_eof(monkeypatch, initial):
+    monkeypatch.setattr(a, "CREDENTIAL_INGRESS_SECONDS", 0.025)
+    reader, writer = credential_pipe(initial, eof=False)
+    started = time.monotonic()
+    try:
+        with pytest.raises(a.SetupError, match="deadline"):
+            a._read_credential_ingress(reader)
+        assert time.monotonic() - started < 1
+        with pytest.raises(BrokenPipeError):
+            os.write(writer, b"x")
+    finally:
+        os.close(writer)
+
+
+def test_credential_ingress_trickling_never_restarts_deadline(monkeypatch):
+    monkeypatch.setattr(a, "CREDENTIAL_INGRESS_SECONDS", 0.04)
+    reader, writer = os.pipe()
+    stopped = threading.Event()
+    closed_reader = []
+    def trickle():
+        try:
+            while not stopped.wait(0.003):
+                try:
+                    os.write(writer, b"x")
+                except BrokenPipeError:
+                    closed_reader.append(True)
+                    return
+        finally:
+            os.close(writer)
+    thread = threading.Thread(target=trickle)
+    thread.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(a.SetupError, match="deadline"):
+            a._read_credential_ingress(reader)
+        thread.join(timeout=1)
+        assert closed_reader == [True] and not thread.is_alive()
+        assert time.monotonic() - started < 1
+    finally:
+        stopped.set()
+        thread.join(timeout=1)
+
+
+def test_credential_ingress_overflow_does_not_wait_for_eof(monkeypatch):
+    reader, writer = credential_pipe(b"x" * 4097, eof=False)
+    try:
+        with pytest.raises(a.SetupError, match="byte bound"):
+            a._read_credential_ingress(reader)
+        with pytest.raises(BrokenPipeError):
+            os.write(writer, b"x")
+    finally:
+        os.close(writer)
+
+
+def test_credential_ingress_cancellation_closes_selector_and_pipe(monkeypatch):
+    reader, writer = os.pipe()
+    closed = []
+    class Selector:
+        def register(self, *_):
+            pass
+        def select(self, *_):
+            raise KeyboardInterrupt()
+        def close(self):
+            closed.append(True)
+    monkeypatch.setattr(a.selectors, "DefaultSelector", Selector)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            a._read_credential_ingress(reader)
+        assert closed == [True]
+        with pytest.raises(BrokenPipeError):
+            os.write(writer, b"x")
+    finally:
+        os.close(writer)
+
+
+@pytest.fixture
+def credential_world(tmp_path, monkeypatch):
+    """Real temporary descriptors; root ownership is modeled, never acquired."""
+    root = tmp_path / "bootstrap"
+    root.mkdir(mode=0o700)
+    stage = root / "123-1"
+    stage.mkdir(mode=0o700)
+    monkeypatch.setattr(a, "BOOTSTRAP_ROOT", root)
+    faults = {}
+    ancestor_inodes = {p.stat().st_ino for p in root.parents}
+    real_stat, real_fstat = os.stat, os.fstat
+    def modeled(info):
+        values = {name: getattr(info, name) for name in dir(info) if name.startswith("st_")}
+        values.update(st_uid=0, st_gid=0)
+        if info.st_ino in ancestor_inodes:
+            values["st_mode"] &= ~0o022
+        values.update(faults.get(info.st_ino, {}))
+        return SimpleNamespace(**values)
+    monkeypatch.setattr(a.os, "stat", lambda *args, **kwargs: modeled(real_stat(*args, **kwargs)))
+    monkeypatch.setattr(a.os, "fstat", lambda fd: modeled(real_fstat(fd)))
+    for name in ("getuid", "geteuid", "getgid", "getegid"):
+        monkeypatch.setattr(a.os, name, lambda: 0)
+    monkeypatch.setattr(a, "require_clean_root", lambda: None)
+    binding = binding_fixture()
+    native = {key: binding[key] for key in a.NATIVE_BINDING_KEYS}
+    monkeypatch.setattr(a, "trusted_boot_id", lambda: binding["boot_id"])
+    parts = []
+    for index, raw in enumerate((b"fixed source first part", b"fixed source second part")):
+        name = f"part-{index:02d}.txt"
+        (stage / name).write_bytes(raw)
+        (stage / name).chmod(0o400)
+        parts.append({"name": name, "bytes": len(raw), "sha256": checksum(raw)})
+    (stage / "bootstrap-entry.py").write_bytes(b"# fixed literal entrypoint\n")
+    (stage / "bootstrap-entry.py").chmod(0o400)
+    world = SimpleNamespace(root=root, stage=stage, native=native, binding=binding, layout={"parts": parts}, faults=faults)
+    def stage_token(raw=FAKE_CREDENTIAL):
+        reader, _ = credential_pipe(raw)
+        return a.stage_metadata_credential(native, world.layout, ingress_fd=reader)
+    world.stage_token = stage_token
+    world.cleanup = lambda: a.cleanup_metadata_credential(123, 1, native["boot_id"], credential_layout=world.layout)
+    return world
+
+
+def test_credential_staging_read_and_idempotent_cleanup_never_records_token(credential_world, capsys):
+    world = credential_world
+    assert world.stage_token() is None
+    target = world.stage / "metadata-token"
+    info = target.lstat()
+    assert stat.S_IMODE(info.st_mode) == 0o400 and info.st_nlink == 1
+    assert target.read_bytes() == FAKE_CREDENTIAL
+    assert a._read_metadata_credential(world.binding) == FAKE_CREDENTIAL
+    receipt = world.cleanup()
+    assert receipt == {"schema_version": 1, "status": "PASS", "run_id": 123, "run_attempt": 1,
+                       "boot_id": world.native["boot_id"], "token_absent": True}
+    assert not target.exists() and world.cleanup() == receipt
+    assert set(p.name for p in world.stage.iterdir()) == {"part-00.txt", "part-01.txt", "bootstrap-entry.py"}
+    assert FAKE_CREDENTIAL.decode() not in repr(receipt)
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("change", ["extra", "missing", "changed", "entry_mode", "entry_symlink", "owner", "group", "link"])
+def test_credential_staging_requires_exact_verified_source_and_entry_before_read(credential_world, monkeypatch, change):
+    world = credential_world
+    path = world.stage / "part-00.txt"
+    if change == "extra":
+        (world.stage / "unreviewed").write_bytes(b"extra")
+    elif change == "missing":
+        path.unlink()
+    elif change == "changed":
+        path.chmod(0o600)
+        path.write_bytes(b"x" * len(path.read_bytes()))
+        path.chmod(0o400)
+    elif change == "entry_mode":
+        (world.stage / "bootstrap-entry.py").chmod(0o600)
+    elif change == "entry_symlink":
+        entry = world.stage / "bootstrap-entry.py"
+        entry.unlink()
+        entry.symlink_to(path)
+    elif change == "link":
+        os.link(path, world.root / "outside-link")
+    else:
+        world.faults[path.stat().st_ino] = {"st_uid" if change == "owner" else "st_gid": 1001}
+    monkeypatch.setattr(a, "_read_credential_ingress", lambda *_: pytest.fail("read token before source validation"))
+    with pytest.raises(a.SetupError):
+        world.stage_token()
+    assert not (world.stage / "metadata-token").exists()
+
+
+def test_duplicate_credential_staging_rejects_before_ingress(credential_world, monkeypatch):
+    world = credential_world
+    world.stage_token()
+    monkeypatch.setattr(a, "_read_credential_ingress", lambda *_: pytest.fail("duplicate ingress"))
+    with pytest.raises(a.SetupError):
+        world.stage_token()
+    assert a._read_metadata_credential(world.binding) == FAKE_CREDENTIAL
+
+
+@pytest.mark.parametrize("exception", [a.SetupError("credential ingress failed"), KeyboardInterrupt()])
+def test_failed_ingress_cannot_close_a_reused_descriptor(credential_world, monkeypatch, exception):
+    world = credential_world
+    replacements = []
+    def failed_reader(fd):
+        os.close(fd)
+        replacement = os.open("/dev/null", os.O_RDONLY)
+        assert replacement == fd
+        replacements.append(replacement)
+        raise exception
+    monkeypatch.setattr(a, "_read_credential_ingress", failed_reader)
+    try:
+        with pytest.raises(type(exception)):
+            world.stage_token()
+        assert len(replacements) == 1
+        assert stat.S_ISCHR(os.fstat(replacements[0]).st_mode)
+    finally:
+        for replacement in replacements:
+            os.close(replacement)
+
+
+@pytest.mark.parametrize("change", ["symlink", "hardlink", "owner", "group", "mode", "overflow", "empty", "control"])
+def test_credential_reads_reject_unsealed_or_malformed_token(credential_world, change):
+    world = credential_world
+    world.stage_token()
+    path = world.stage / "metadata-token"
+    if change == "symlink":
+        path.unlink()
+        path.symlink_to(world.stage / "part-00.txt")
+    elif change == "hardlink":
+        os.link(path, world.root / "outside-link")
+    elif change in {"owner", "group"}:
+        world.faults[path.stat().st_ino] = {"st_uid" if change == "owner" else "st_gid": 1001}
+    else:
+        path.chmod(0o600)
+        if change != "mode":
+            path.write_bytes({"overflow": b"x" * 4097, "empty": b"", "control": b"x\n"}[change])
+            path.chmod(0o400)
+    with pytest.raises(a.SetupError):
+        a._read_metadata_credential(world.binding)
+
+
+@pytest.mark.parametrize("change", ["extra", "changed_part", "missing_part", "missing_entry"])
+def test_cleanup_removes_valid_token_before_reporting_unrelated_inventory_failure(credential_world, change):
+    world = credential_world
+    world.stage_token()
+    if change == "extra":
+        (world.stage / "unexpected").write_bytes(b"do not remove")
+    elif change == "changed_part":
+        path = world.stage / "part-00.txt"
+        path.chmod(0o600)
+    else:
+        (world.stage / ("part-00.txt" if change == "missing_part" else "bootstrap-entry.py")).unlink()
+    remaining = set(p.name for p in world.stage.iterdir()) - {"metadata-token"}
+    with pytest.raises(a.SetupError):
+        world.cleanup()
+    assert not (world.stage / "metadata-token").exists()
+    assert set(p.name for p in world.stage.iterdir()) == remaining
+
+
+@pytest.mark.parametrize("change", ["symlink", "hardlink", "owner", "mode", "directory"])
+def test_cleanup_does_not_unlink_untrusted_token(credential_world, change):
+    world = credential_world
+    world.stage_token()
+    path = world.stage / "metadata-token"
+    if change in {"symlink", "directory"}:
+        path.unlink()
+        path.symlink_to(world.stage / "part-00.txt") if change == "symlink" else path.mkdir()
+    elif change == "hardlink":
+        os.link(path, world.root / "outside-link")
+    elif change == "owner":
+        world.faults[path.stat().st_ino] = {"st_uid": 1001}
+    else:
+        path.chmod(0o600)
+    with pytest.raises(a.SetupError):
+        world.cleanup()
+    assert path.exists() or path.is_symlink()
+
+
+@pytest.mark.parametrize("raw", [b"", b"x" * 4097, FAKE_CREDENTIAL + b"\n"])
+def test_rejected_ingress_never_creates_credential_file(credential_world, raw):
+    with pytest.raises(a.SetupError):
+        credential_world.stage_token(raw)
+    assert not (credential_world.stage / "metadata-token").exists()
+
+
+def test_no_eof_never_creates_file_and_cleanup_remains_safe(credential_world, monkeypatch):
+    world = credential_world
+    monkeypatch.setattr(a, "CREDENTIAL_INGRESS_SECONDS", 0.025)
+    reader, writer = credential_pipe(FAKE_CREDENTIAL, eof=False)
+    try:
+        with pytest.raises(a.SetupError, match="deadline"):
+            a.stage_metadata_credential(world.native, world.layout, ingress_fd=reader)
+        assert not (world.stage / "metadata-token").exists()
+        assert world.cleanup()["token_absent"] is True
+        with pytest.raises(BrokenPipeError):
+            os.write(writer, b"x")
+    finally:
+        os.close(writer)
+
+
+def test_stage_write_failure_leaves_only_safely_removable_token(credential_world, monkeypatch):
+    world = credential_world
+    monkeypatch.setattr(a.os, "fsync", lambda _: (_ for _ in ()).throw(OSError("synthetic disk failure")))
+    with pytest.raises(a.SetupError, match="staging unavailable"):
+        world.stage_token()
+    assert (world.stage / "metadata-token").exists()
+    assert world.cleanup()["token_absent"] is True
+
+
+@pytest.mark.parametrize("missing_root", [False, True])
+def test_cleanup_accepts_stage_that_never_existed_without_admission_claim(credential_world, missing_root):
+    world = credential_world
+    for path in world.stage.iterdir():
+        path.unlink()
+    world.stage.rmdir()
+    if missing_root:
+        world.root.rmdir()
+    receipt = world.cleanup()
+    assert receipt["token_absent"] is True
+    assert not set(receipt) & {"binding", "setup_receipt", "load_attempted", "positive_passed", "qualified"}
+
+
+@pytest.mark.parametrize("action", ["read", "cleanup"])
+def test_token_descriptor_path_identity_mismatch_never_reads_or_unlinks(credential_world, monkeypatch, action):
+    world = credential_world
+    world.stage_token()
+    original_stat = os.stat
+    def switched(*args, **kwargs):
+        info = original_stat(*args, **kwargs)
+        if args[0] == "metadata-token" and "dir_fd" in kwargs:
+            return SimpleNamespace(**{**vars(info), "st_ino": info.st_ino + 1})
+        return info
+    monkeypatch.setattr(a.os, "stat", switched)
+    monkeypatch.setattr(a, "_credential_read_fd", lambda *_: pytest.fail("read changed token"))
+    with pytest.raises(a.SetupError, match="changed"):
+        a._read_metadata_credential(world.binding) if action == "read" else world.cleanup()
+    assert (world.stage / "metadata-token").exists()
+
+
+@pytest.mark.parametrize("change", ["owner", "group", "mode"])
+def test_credential_parent_chain_rejects_wrong_ownership_or_writable_ancestor(credential_world, change):
+    world = credential_world
+    ancestor = world.root.parent
+    world.faults[ancestor.stat().st_ino] = {"st_uid": 1001} if change == "owner" else {"st_gid": 1001} if change == "group" else {"st_mode": stat.S_IFDIR | 0o777}
+    with pytest.raises(a.SetupError, match="ancestor"):
+        world.stage_token()
+
+
+@pytest.mark.parametrize("change", ["empty", "too_many", "duplicate", "order", "traversal", "size", "boolean", "extra", "digest"])
+def test_credential_part_manifest_is_finite_ordered_exact_and_cannot_choose_paths(credential_world, change):
+    layout = copy.deepcopy(credential_world.layout)
+    if change == "empty":
+        layout["parts"] = []
+    elif change == "too_many":
+        layout["parts"] *= 17
+    elif change == "duplicate":
+        layout["parts"][1] = copy.deepcopy(layout["parts"][0])
+    elif change == "order":
+        layout["parts"].reverse()
+    elif change == "traversal":
+        layout["parts"][0]["name"] = "../metadata-token"
+    elif change == "size":
+        layout["parts"][0]["bytes"] = 32001
+    elif change == "boolean":
+        layout["parts"][0]["bytes"] = True
+    elif change == "extra":
+        layout["path"] = "/untrusted"
+    else:
+        layout["parts"][0]["sha256"] = "0" * 64
+    with pytest.raises(a.SetupError):
+        a._credential_parts(layout)
+
+
+def test_fixed_six_metadata_gets_authenticate_only_at_transport_and_keep_receipts_clean(credential_world, monkeypatch, capsys):
+    import base64
+    import urllib.parse
+    world = credential_world
+    world.stage_token()
+    calls = []
+    class Connection:
+        def __init__(self, host, **kwargs):
+            assert host == "api.github.com" and 0 < kwargs["timeout"] <= 5
+        def request(self, method, path, *, headers):
+            calls.append((method, path, headers))
+        def getresponse(self):
+            return SimpleNamespace(status=200, getheader=lambda name, default=None: "application/json" if name == "Content-Type" else default,
+                                   read=lambda _: b'{"result":"fixed"}')
+        def close(self):
+            pass
+    monkeypatch.setattr(a.http.client, "HTTPSConnection", Connection)
+    paths = a.live_metadata_paths(world.binding, world.binding["workflow_id"])
+    reader = a.MetadataReader(set(paths.values()), binding=world.binding)
+    for path in paths.values():
+        assert reader.one(path) == {"result": "fixed"}
+    assert reader.requests == 6 and len(calls) == 6
+    assert all(method == "GET" and path in {"/repos/HouMinXi/forge" + p for p in paths.values()}
+               and headers.pop("Authorization") == b"Bearer " + FAKE_CREDENTIAL for method, path, headers in calls)
+    assert not set(vars(reader)) & {"token", "credential", "authorization", "headers"}
+    output = repr((vars(reader), calls, capsys.readouterr(), world.cleanup(), a.observer_argv(world.binding), a.SYSTEM_ENV))
+    for sentinel in (FAKE_CREDENTIAL.decode(), FAKE_CREDENTIAL.hex(), base64.b64encode(FAKE_CREDENTIAL).decode(), urllib.parse.quote(FAKE_CREDENTIAL.decode())):
+        assert sentinel not in output
+
+
+@pytest.mark.parametrize("failure", ["request", "response", "close"])
+def test_transport_errors_never_serialize_credential_or_provider_exception(credential_world, monkeypatch, failure):
+    import traceback
+    world = credential_world
+    world.stage_token()
+    calls = []
+    class Connection:
+        def __init__(self, *_args, **_kwargs):
+            pass
+        def request(self, *_args, **_kwargs):
+            calls.append("request")
+            if failure == "request":
+                raise RuntimeError(FAKE_CREDENTIAL.decode())
+        def getresponse(self):
+            if failure == "response":
+                raise ValueError(FAKE_CREDENTIAL.decode())
+            return SimpleNamespace(status=200, getheader=lambda name, default=None: "application/json" if name == "Content-Type" else default,
+                                   read=lambda _: b"{}")
+        def close(self):
+            if failure == "close":
+                raise OSError(FAKE_CREDENTIAL.decode())
+    monkeypatch.setattr(a.http.client, "HTTPSConnection", Connection)
+    reader = a.MetadataReader({"/actions/workflows/linux-tests.yml"}, binding=world.binding)
+    with pytest.raises(a.SetupError) as error:
+        reader.one("/actions/workflows/linux-tests.yml")
+    assert FAKE_CREDENTIAL.decode() not in "".join(traceback.format_exception(error.value))
+    assert calls == ["request"] and reader.requests == 1
+
+
+def test_credential_is_never_read_for_nonfixed_authenticated_endpoint(credential_world, monkeypatch):
+    world = credential_world
+    reads = []
+    monkeypatch.setattr(a, "_read_metadata_credential", lambda *_: reads.append(True) or FAKE_CREDENTIAL)
+    reader = a.MetadataReader({"/anything"}, binding=world.binding)
+    with pytest.raises(a.SetupError, match="unreviewed authenticated"):
+        reader.one("/anything")
+    assert reads == []
+
+
+def test_vendor_download_has_no_credential_read_or_authorization(monkeypatch):
+    calls = []
+    name = next(iter(a.ARCHIVES))
+    raw = b"offline vendor fixture"
+    monkeypatch.setattr(a, "ARCHIVES", {name: checksum(raw)})
+    monkeypatch.setattr(a, "_read_metadata_credential", lambda *_: pytest.fail("vendor requested credential"))
+    class Connection:
+        def __init__(self, host, **_kwargs):
+            assert host == "security.ubuntu.com"
+        def request(self, method, path, *, headers):
+            calls.append((method, path, headers))
+        def getresponse(self):
+            return SimpleNamespace(status=200, getheader=lambda _name, default=None: default, read=lambda _: raw)
+        def close(self):
+            pass
+    monkeypatch.setattr(a.http.client, "HTTPSConnection", Connection)
+    assert a.download_archive(name) == raw
+    assert len(calls) == 1 and "Authorization" not in calls[0][2]
 
 
 @pytest.mark.parametrize("requested_name", ["python", "python3.12"])
@@ -679,7 +1160,25 @@ def bootstrap_world(tmp_path, monkeypatch):
     after = added(before)
     host = {"boot_id": "11111111-1111-1111-1111-111111111111", "kernel": "reviewed", "userns_restriction": "1"}
     world = SimpleNamespace(config=cfg, source=source, fail=None, events=[], files={}, stages=[], observations=0,
-                            live_count=0, reads={}, host=host, before=before, after=after)
+                            live_count=0, reads={}, host=host, before=before, after=after, credential_present=False,
+                            credential_layout={"parts": [{"name": "part-00.txt", "bytes": 1, "sha256": checksum(b"x")}]})
+    original_close = os.close
+    monkeypatch.setattr(a.os, "close", lambda fd: None if fd == 0 else original_close(fd))
+    def stage_credential(native, layout, *, ingress_fd):
+        assert layout == world.credential_layout and set(native) == a.NATIVE_BINDING_KEYS
+        assert ingress_fd == 0
+        if world.credential_present:
+            raise FileExistsError("credential already staged")
+        world.credential_present = True
+        world.stages.append("credential")
+    def cleanup_credential(run_id, run_attempt, boot_id, *, credential_layout):
+        assert (run_id, run_attempt, boot_id) == (123, 1, host["boot_id"])
+        assert credential_layout == world.credential_layout
+        world.credential_present = False
+        return {"schema_version": 1, "status": "PASS", "run_id": run_id, "run_attempt": run_attempt,
+                "boot_id": boot_id, "token_absent": True}
+    monkeypatch.setattr(a, "stage_metadata_credential", stage_credential)
+    monkeypatch.setattr(a, "cleanup_metadata_credential", cleanup_credential)
     class Evidence:
         def __init__(self, enabled=True):
             self.enabled = enabled
@@ -758,14 +1257,14 @@ def bootstrap_world(tmp_path, monkeypatch):
 
 def test_bootstrap_orders_all_security_work_before_pass_and_seals_once(bootstrap_world):
     world = bootstrap_world
-    result = a.bootstrap(world.config, world.source)
+    result = a.bootstrap(world.config, world.source, credential_layout=world.credential_layout)
     assert result["status"] == "PASS" and result["load_attempted"] is True and result["positive_passed"] is True
-    assert world.stages == ["live", "snapshot", "live", "install", "before", "negative", "preprocess", "compile", "live", "recheck", "load", "after", "positive"]
+    assert world.stages == ["credential", "live", "snapshot", "live", "install", "before", "negative", "preprocess", "compile", "live", "recheck", "load", "after", "positive"]
     stage = a.stage_path(result["binding"])
     assert json.loads(world.files[str(stage / "setup.json")]) == result
     assert world.stages.count("load") == 1
     with pytest.raises(FileExistsError):
-        a.bootstrap(world.config, world.source)
+        a.bootstrap(world.config, world.source, credential_layout=world.credential_layout)
     assert world.stages.count("load") == 1
 
 
@@ -774,10 +1273,11 @@ def test_every_early_failure_has_zero_add_and_no_seal(bootstrap_world, failure):
     world = bootstrap_world
     world.fail = failure
     with pytest.raises(a.SetupError):
-        a.bootstrap(world.config, world.source)
+        a.bootstrap(world.config, world.source, credential_layout=world.credential_layout)
     assert "load" not in world.stages and "positive" not in world.stages
     assert not any(name.endswith("/setup.json") for name in world.files)
     assert world.events[-1][0] == "setup-stop" and world.events[-1][1]["load_attempted"] is False
+    assert world.credential_present is False
 
 
 @pytest.mark.parametrize("failure", ["load", "after", "changed_after", "invalid_after", "positive", "cancel_load"])
@@ -785,10 +1285,11 @@ def test_failed_or_uncertain_add_never_seals_or_qualifies(bootstrap_world, failu
     world = bootstrap_world
     world.fail = failure
     with pytest.raises(a.SetupError):
-        a.bootstrap(world.config, world.source)
+        a.bootstrap(world.config, world.source, credential_layout=world.credential_layout)
     assert world.stages.count("load") == 1
     assert not any(name.endswith("/setup.json") for name in world.files)
     assert world.events[-1][0] == "setup-stop" and world.events[-1][1]["load_attempted"] is True
+    assert world.credential_present is False
     if failure != "positive":
         assert "positive" not in world.stages
 
@@ -796,7 +1297,7 @@ def test_failed_or_uncertain_add_never_seals_or_qualifies(bootstrap_world, failu
 @pytest.mark.parametrize("change", [None, "compiled", "observer", "boot", "inputs", "policy", "live", "seal"])
 def test_read_only_observer_rechecks_sealed_whole_policy_and_binding(bootstrap_world, monkeypatch, change):
     world = bootstrap_world
-    seal = a.bootstrap(world.config, world.source)
+    seal = a.bootstrap(world.config, world.source, credential_layout=world.credential_layout)
     stage = a.stage_path(seal["binding"])
     if change in {"compiled", "observer"}:
         name = "compile.stdout" if change == "compiled" else "observer.py"
