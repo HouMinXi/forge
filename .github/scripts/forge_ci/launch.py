@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -31,7 +32,7 @@ HELPER_PATHS = frozenset(
     ".github/scripts/forge_ci/" + name
     for name in (
         "__init__.py", "facts.py", "launch.py", "admission.py", "setup_policy.py", "controller.py",
-        "outcomes.py", "payload.py", "probes.py", "pytest_observer.py", "user_service.py",
+        "outcomes.py", "payload.py", "probes.py", "pytest_observer.py", "user_service.py", "baseline_measurement.py",
     )
 )
 _SHA1 = re.compile(r"[0-9a-f]{40}\Z")
@@ -102,8 +103,9 @@ def parse_json(raw: bytes, *, limit: int = MAX_JSON) -> dict:
     return value
 
 
-def read_regular(path: Path, *, limit: int = MAX_FILE) -> bytes:
+def read_regular(path: Path, *, limit: int = MAX_FILE, deadline=None) -> bytes:
     """No symlink or FIFO reads, bounded even if the file changes while reading."""
+    _need(deadline is None or time.monotonic() < deadline, "checkout read deadline exceeded")
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as stream:
@@ -112,6 +114,7 @@ def read_regular(path: Path, *, limit: int = MAX_FILE) -> bytes:
     except OSError as exc:
         raise LaunchError("cannot read required file") from exc
     _need(len(raw) <= limit, "input file bound exceeded")
+    _need(deadline is None or time.monotonic() < deadline, "checkout read deadline exceeded")
     return raw
 
 
@@ -119,40 +122,87 @@ def _git(repo: Path, *args: str, deadline=None) -> bytes:
     # No inherited Git alternate object locations, config injection or replace refs.
     environment = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LC_ALL": "C",
                    "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_NO_REPLACE_OBJECTS": "1"}
+    started = time.monotonic()
+    _need(deadline is None or (type(deadline) in (int, float) and math.isfinite(deadline)
+                              and deadline > started + 5), "checkout metadata settlement budget unavailable")
+    command_cutoff = started + 20 if deadline is None else min(started + 20, deadline - 5)
+    cleanup_cutoff = command_cutoff + 5 if deadline is None else min(deadline, command_cutoff + 5)
+    process = selector = None
+    failure = None
+    result = None
+    chunks = {"stdout": bytearray(), "stderr": bytearray()}
+
+    def retain(exc):
+        nonlocal failure
+        expected = (LaunchError, OSError, subprocess.TimeoutExpired)
+        if failure is None or (isinstance(failure, expected) and not isinstance(exc, expected)):
+            # The first control/unexpected exception outranks an ordinary
+            # failure; subsequent teardown cannot replace that exact object.
+            failure = exc
+
     try:
         process = subprocess.Popen(["/usr/bin/git", "--no-replace-objects", "-C", str(repo), *args],
                                    env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, start_new_session=True)
-    except OSError as exc:
-        raise LaunchError("checkout metadata unavailable") from exc
-    chunks = {"stdout": bytearray(), "stderr": bytearray()}
-    deadline = min(deadline or float("inf"), time.monotonic() + 20)
-    try:
-        with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ, "stdout")
-            selector.register(process.stderr, selectors.EVENT_READ, "stderr")
-            while selector.get_map():
-                remaining = deadline - time.monotonic()
-                _need(remaining > 0, "checkout metadata deadline exceeded")
-                for key, _ in selector.select(min(remaining, 0.1)):
-                    chunk = os.read(key.fileobj.fileno(), 65536)
-                    if not chunk:
-                        selector.unregister(key.fileobj)
-                        continue
-                    chunks[key.data].extend(chunk)
-                    limit = MAX_TREE if key.data == "stdout" else 65536
-                    _need(len(chunks[key.data]) <= limit, "checkout metadata byte bound exceeded")
-            process.wait(timeout=max(0.001, deadline - time.monotonic()))
+        _need(time.monotonic() < command_cutoff, "checkout metadata deadline exceeded")
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+        # EOF does not prove child exit. Poll under the command cutoff; reserve
+        # the single positive wait exclusively for failure settlement below.
+        while True:
+            remaining = command_cutoff - time.monotonic()
+            _need(remaining > 0, "checkout metadata deadline exceeded")
+            if not selector.get_map() and process.poll() is not None:
+                break
+            for key, _ in selector.select(min(remaining, 0.1)):
+                chunk = os.read(key.fileobj.fileno(), 65536)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                chunks[key.data].extend(chunk)
+                limit = MAX_TREE if key.data == "stdout" else 65536
+                _need(len(chunks[key.data]) <= limit, "checkout metadata byte bound exceeded")
         _need(process.returncode == 0, "checkout metadata command failed")
-        return bytes(chunks["stdout"])
-    except subprocess.TimeoutExpired as exc:
-        raise LaunchError("checkout metadata deadline exceeded") from exc
+        result = bytes(chunks["stdout"])
+        _need(time.monotonic() < command_cutoff, "checkout metadata deadline exceeded")
+    except BaseException as exc:  # noqa: BLE001 - retain control through owned cleanup
+        if process is None and isinstance(exc, OSError):
+            failure = LaunchError("checkout metadata unavailable")
+            failure.__cause__ = exc
+        else:
+            retain(exc)
     finally:
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=5)
-        process.stdout.close()
-        process.stderr.close()
+        if selector is not None:
+            try:
+                selector.close()
+            except BaseException as exc:  # noqa: BLE001 - cannot mask first control
+                retain(exc)
+        if process is not None:
+            try:
+                if process.poll() is None and time.monotonic() < cleanup_cutoff:
+                    # The original session is signaled only while its retained
+                    # leader is still live, never after a reaped/reused identity.
+                    os.killpg(process.pid, signal.SIGKILL)
+                    remaining = cleanup_cutoff - time.monotonic()
+                    if remaining > 0:
+                        process.wait(timeout=min(5, remaining))
+                _need(process.poll() is not None, "checkout metadata cleanup incomplete")
+            except BaseException as exc:  # noqa: BLE001 - no second wait or new window
+                retain(exc)
+            finally:
+                for pipe in (process.stdout, process.stderr):
+                    if pipe is not None:
+                        try:
+                            pipe.close()
+                        except BaseException as exc:  # noqa: BLE001 - close both, preserve first
+                            retain(exc)
+    if failure is not None:
+        raise failure
+    # Successful completion, validation and closure must precede the command
+    # cutoff. A late exit0 during settlement is always failure.
+    _need(time.monotonic() < command_cutoff, "checkout metadata deadline exceeded")
+    return result
 
 
 def _tree(repo: Path, revision: str, *, deadline=None) -> dict[str, tuple[str, str]]:
@@ -212,9 +262,10 @@ def _unexpected_artifacts(repo, tracked, deadline):
                   "unexpected executable/import artifact")
 
 
-def inspect_checkout(repo: Path, candidate_sha: str) -> dict:
+def inspect_checkout(repo: Path, candidate_sha: str, *, deadline=None) -> dict:
     _sha(candidate_sha, "admitted candidate")
-    deadline = time.monotonic() + 60
+    deadline = min(float("inf") if deadline is None else deadline, time.monotonic() + 60)
+    _need(time.monotonic() < deadline, "checkout inspection deadline exceeded")
     repo = Path(repo).resolve(strict=True)
     head = _git(repo, "rev-parse", "--verify", "HEAD", deadline=deadline).decode("ascii").strip()
     _need(head == candidate_sha, "checkout HEAD differs from admitted candidate")
@@ -238,7 +289,7 @@ def inspect_checkout(repo: Path, candidate_sha: str) -> dict:
         else:
             _need(stat.S_ISREG(info.st_mode), "nonregular checkout file")
             _need(bool(info.st_mode & 0o111) == (mode == "100755"), "checkout executable mode drift")
-            raw = read_regular(target)
+            raw = read_regular(target, deadline=deadline)
         total += len(raw)
         _need(total <= MAX_TOTAL, "checkout byte bound exceeded")
         blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw, usedforsecurity=False).hexdigest()
@@ -333,16 +384,21 @@ def load_receipt(path):
     return value
 
 
-def write_receipt(path: Path, report: dict, *, limit=MAX_JSON) -> None:
+def write_receipt(path: Path, report: dict, *, limit=MAX_JSON, deadline=None) -> None:
+    _need(deadline is None or time.monotonic() < deadline, "receipt deadline exceeded")
     # Full sealed policy observations retain their existing separate 8 MiB bound.
     _need(type(limit) is int and 0 < limit <= MAX_TREE, "unreviewed receipt byte bound")
     data = canonical_bytes(report) + b"\n"
     _need(len(data) <= limit, "receipt byte bound exceeded")
+    _need(deadline is None or time.monotonic() < deadline, "receipt deadline exceeded")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "wb") as stream:
         stream.write(data)
+        _need(deadline is None or time.monotonic() < deadline, "receipt deadline exceeded")
         stream.flush()
+        _need(deadline is None or time.monotonic() < deadline, "receipt deadline exceeded")
         os.fsync(stream.fileno())
+    _need(deadline is None or time.monotonic() < deadline, "receipt deadline exceeded")
 
 
 def main(argv: list[str] | None = None) -> int:

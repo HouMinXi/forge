@@ -60,7 +60,7 @@ INFO_LIMIT = 4096
 MAX_COMMAND_OUTPUT = 8 * 1024 * 1024
 CONFIG = {"schema_version": 1, "repository_id": 1258832822, "owner_id": 19586012,
           "actor_id": 19586012, "triggering_actor_id": 19586012, "event_name": "push",
-          "full_ref": "refs/heads/fix/review-correctness-linux-ci",
+          "full_ref": "refs/heads/ci/baseline-b-4dd7214cf1a24483a42c7e19cfc8ec28",
           "workflow_path": ".github/workflows/linux-tests.yml", "job_key": "linux-tests"}
 NATIVE_BINDING_KEYS = set(CONFIG) | {"before_sha", "candidate_sha", "workflow_sha", "run_id", "run_number", "run_attempt", "boot_id"}
 BINDING_KEYS = NATIVE_BINDING_KEYS | {"workflow_id", "job_id", "job_started_at", "job_started_ns"}
@@ -741,7 +741,7 @@ def live_identity(config, native, *, fetcher=None):
          and job.get("status") == "in_progress" and job.get("conclusion") is None and job.get("completed_at") is None,
          "wrong or inactive numeric job")
     started_ns = timestamp_ns(job.get("started_at"))
-    need(0 <= time.time_ns() - started_ns <= 5400 * 10**9, "stale/future provider job")
+    need(0 <= time.time_ns() - started_ns <= 9000 * 10**9, "stale/future provider job")
     ref = reader.one(paths["ref"])
     need(ref.get("ref") == CONFIG["full_ref"] and type(ref.get("object")) is dict
          and ref["object"].get("type") == "commit" and ref["object"].get("sha") == native["candidate_sha"], "live branch head moved")

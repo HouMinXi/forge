@@ -83,7 +83,8 @@ def corpus_contract(repo: Path) -> dict:
             "memory_mb": 256, "pids": 64, "workspace_mb": 64, "cwd": "/workspace"}
 
 
-def validate_observer(record, binding, rule):
+def validate_observer(record, binding, rule, *, deadline=None):
+    _remaining(deadline)
     need(type(record) is dict and set(record) == {"schema_version", "status", "binding", "setup_receipt", "setup_receipt_sha256",
                                                 "setup_policy_sha256", "observed", "live", "policy"}
          and type(record["schema_version"]) is int and record["schema_version"] == 1 and record["status"] == "PASS",
@@ -98,7 +99,7 @@ def validate_observer(record, binding, rule):
     setup.validate_config(config)
     setup.validate_binding(binding)
     need(type(record["live"]) is dict and record["live"].get("binding") == binding, "observer live binding mismatch")
-    source = launch.read_regular(Path(setup.__file__), limit=256 * 1024)
+    source = launch.read_regular(Path(setup.__file__), limit=256 * 1024, **_deadline_options(deadline))
     need(hashlib.sha256(source).hexdigest() == rule["setup_module_sha256"], "late setup helper changed")
     observer = setup.observer_source(source.decode(), config)
     need(seal.get("observer") == {"sha256": hashlib.sha256(observer).hexdigest(), "bytes": len(observer)},
@@ -112,16 +113,37 @@ def validate_observer(record, binding, rule):
          and all(type(x) is int and x > 0 for x in observed.values())
          and 0 <= now - observed["monotonic_ns"] <= 30 * 10**9, "stale root policy observation")
     need(seal.get("runner") == {"uid": os.getuid(), "gid": os.getgid()}, "sealed original runner changed")
+    _remaining(deadline)
     return seal
 
 
-def observe_setup(binding, rule, tree_oid, evidence_dir, phase):
+def _remaining(deadline, cap=None):
+    if deadline is None:
+        return cap
+    need(type(deadline) in (int, float), "invalid finalization deadline")
+    remaining = deadline - time.monotonic()
+    need(remaining > 0, "FINALIZATION_TIMEOUT")
+    return remaining if cap is None else min(cap, remaining)
+
+
+def _deadline_options(deadline):
+    _remaining(deadline)
+    return {} if deadline is None else {"deadline": deadline}
+
+
+def observe_setup(binding, rule, tree_oid, evidence_dir, phase, *, deadline=None):
     """Run the sealed observer afresh; initial callers supply native identity only."""
+    _remaining(deadline)
     need(phase in {"initial", "prepare", "final"}, "unknown observer phase")
     evidence = Path(evidence_dir).resolve(strict=True)
     native = phase == "initial"
     argv = setup.observer_argv_native(binding) if native else setup.observer_argv(binding)
-    result = payload.bounded_command(argv, 30, env=dict(setup.SYSTEM_ENV), limit=setup.MAX_JSON)
+    # The root observer keeps its fixed 25s watchdog inside the existing 30s
+    # command envelope. Its 5s wrapper settlement must also fit before D.
+    need(deadline is None or _remaining(deadline) >= 35, "observer settlement budget unavailable")
+    result = payload.bounded_command(argv, 30, env=dict(setup.SYSTEM_ENV), limit=setup.MAX_JSON,
+                                     **_deadline_options(deadline))
+    _remaining(deadline)
     need(type(result) is dict, "invalid root observer command result")
     prefix = "setup-observer-" + phase
     streams = {}
@@ -135,17 +157,21 @@ def observe_setup(binding, rule, tree_oid, evidence_dir, phase):
         need(raw.hex() == encoded, "noncanonical observer diagnostic bytes")
         streams[name] = raw
     def preserve(name):
+        _remaining(deadline)
         fd = os.open(evidence / (prefix + "." + name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "wb") as handle:
             handle.write(streams[name])
+            _remaining(deadline)
             handle.flush()
+            _remaining(deadline)
             os.fsync(handle.fileno())
+        _remaining(deadline)
     preserve("stderr")
     diagnostic = {name: result.get(name) for name in ("argv", "wrapper_pid", "returncode", "error", "started", "ended")}
     diagnostic["streams"] = {name: {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
                                     "file": prefix + "." + name, "on_failure_only": name == "stdout"}
                              for name, raw in streams.items()}
-    launch.write_receipt(evidence / (prefix + ".json"), diagnostic)
+    launch.write_receipt(evidence / (prefix + ".json"), diagnostic, **_deadline_options(deadline))
     try:
         need(not result.get("error") and type(result.get("returncode")) is int
              and result["returncode"] == 0 and result.get("argv") == argv
@@ -163,8 +189,9 @@ def observe_setup(binding, rule, tree_oid, evidence_dir, phase):
                  "initial observer/native identity changed")
         else:
             need(actual_binding == binding, "observer identity changed")
-        validate_observer(observed, actual_binding, rule)
+        validate_observer(observed, actual_binding, rule, **_deadline_options(deadline))
         setup.validate_live_evidence(observed["live"], actual_binding, tree_oid, fresh=True)
+        _remaining(deadline)
         return observed
     except BaseException:
         preserve("stdout")
@@ -180,30 +207,46 @@ class Gate:
         self.receipt = None
         self.contract = None
         self.state = "CREATED"
+        self.final_deadline_ns = None
+
+    def _time_left(self, cap=None):
+        if self.final_deadline_ns is None:
+            return cap
+        need(type(self.final_deadline_ns) is int, "invalid finalization deadline")
+        remaining = (self.final_deadline_ns - time.monotonic_ns()) / 1e9
+        need(remaining > 0, "FINALIZATION_TIMEOUT")
+        return remaining if cap is None else min(cap, remaining)
+
+    def _io_options(self):
+        self._time_left()
+        return {} if self.final_deadline_ns is None else {"deadline": self.final_deadline_ns / 1e9}
 
     def _source(self):
-        event = launch.parse_json(launch.read_regular(Path(os.environ["GITHUB_EVENT_PATH"]), limit=launch.MAX_API), limit=launch.MAX_API)
-        checkout = launch.inspect_checkout(self.repo, self.document["binding"]["candidate_sha"])
+        event = launch.parse_json(launch.read_regular(Path(os.environ["GITHUB_EVENT_PATH"]), limit=launch.MAX_API,
+                                                     **self._io_options()), limit=launch.MAX_API)
+        checkout = launch.inspect_checkout(self.repo, self.document["binding"]["candidate_sha"], **self._io_options())
         live = launch.validate_local_launch(os.environ, event, checkout, self.document)
         need(checkout == self.document["source"] and live["binding"] == self.document["binding"], "immutable source/live binding changed")
+        self._time_left()
         return live
 
     def _binding(self, live):
         return setup.validate_binding(live["binding"])
 
     def _source_bytes(self):
-        source = launch.inspect_checkout(self.repo, self.document["binding"]["candidate_sha"])
+        source = launch.inspect_checkout(self.repo, self.document["binding"]["candidate_sha"], **self._io_options())
         need(source == self.document["source"], "immutable source changed during admission")
         return source
 
     def _observer(self, binding):
         return observe_setup(binding, self.rule, self.document["source"]["tree_oid"], self.evidence,
-                             "prepare" if self.receipt is None else "final")
+                             "prepare" if self.receipt is None else "final", **self._io_options())
 
     def _paths(self):
+        self._time_left()
         caller = probes.require_runner()
         try:
-            pending = launch.read_regular(Path("/proc/self/attr/exec"), limit=4096)
+            pending = launch.read_regular(Path("/proc/self/attr/exec"), limit=4096, **self._io_options())
         except launch.LaunchError as exc:
             cause = exc.__cause__
             need(isinstance(cause, OSError) and cause.errno == errno.EINVAL, "unknown pending exec transition")
@@ -212,10 +255,12 @@ class Gate:
         need(sys.executable == setup.PROVIDER_ROOT + "/bin/python" and sys.version_info[:3] == (3, 12, 14),
              "wrong qualified Python/version")
         paths = setup.finite_paths(include_provider=True)
+        self._time_left()
+        gate = self
         class Reader:
             @staticmethod
             def read(path):
-                return launch.read_regular(Path(path))
+                return launch.read_regular(Path(path), **gate._io_options())
         guards = facts.collect_guards(self.repo, Reader())
         need(guards["unexpectedly_eligible"] == [] and not any(x["naturally_eligible"] for x in guards["adapters"].values()),
              "newly eligible adapter requires review")
@@ -223,7 +268,9 @@ class Gate:
         info = root.lstat()
         need(stat.S_ISDIR(info.st_mode) and info.st_uid == caller["uid"] and root.resolve() == root,
              "ordinary owned delegated cgroup missing")
-        return {"paths": paths, "guards": guards, "corpus": corpus_contract(self.repo), "cgroup_root": str(root)}
+        result = {"paths": paths, "guards": guards, "corpus": corpus_contract(self.repo), "cgroup_root": str(root)}
+        self._time_left()
+        return result
 
     def prepare(self):
         need(self.state == "CREATED", "setup admission is one-shot")
@@ -243,6 +290,7 @@ class Gate:
         return json.loads(setup.canonical(self.receipt))
 
     def final_source_recheck(self, receipt):
+        self._time_left()
         need(self.state == "PREPARED" and setup.canonical(receipt) == setup.canonical(self.receipt), "invalid final setup receipt/state")
         self.state = "STOP"
         binding = self._binding(self._source())
@@ -252,7 +300,9 @@ class Gate:
              and observed["setup_policy_sha256"] == self.receipt["setup_policy_sha256"], "final sealed policy identity changed")
         need(setup.canonical(self._paths()) == self.contract, "final finite path/natural-guard/corpus contract changed")
         self._source_bytes()
-        launch.write_receipt(self.evidence / "setup-final-observation.json", observed, limit=setup.MAX_JSON)
+        launch.write_receipt(self.evidence / "setup-final-observation.json", observed, limit=setup.MAX_JSON,
+                             **self._io_options())
+        self._time_left()
         self.state = "FINAL"
         return {"status": "PASS", "binding": binding, "source": self.document["source"], "live": observed["live"],
                 "setup_final_observation_sha256": hashlib.sha256(setup.canonical(observed) + b"\n").hexdigest()}

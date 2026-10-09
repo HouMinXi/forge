@@ -11,12 +11,12 @@ from pathlib import Path
 
 import yaml
 
-BRANCH = "fix/review-correctness-linux-ci"
+BRANCH = "ci/baseline-b-4dd7214cf1a24483a42c7e19cfc8ec28"
 WORKFLOW_PATH = ".github/workflows/linux-tests.yml"
 STAGING_ROOT = "/var/lib/forge-ci-bootstrap"
 HELPERS = (
     "__init__.py", "facts.py", "launch.py", "admission.py", "setup_policy.py",
-    "controller.py", "outcomes.py", "payload.py", "probes.py", "pytest_observer.py", "user_service.py",
+    "controller.py", "outcomes.py", "payload.py", "probes.py", "pytest_observer.py", "user_service.py", "baseline_measurement.py",
 )
 CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 SETUP_PYTHON = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"
@@ -237,16 +237,83 @@ print('PASS: real proc/pidfd and ext4/btrfs durability primitives; full invocati
 print(sys.version)
 '''
 
-INSTALL = r'''python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.1.1' \
+PROFILE_PATH = "/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/local/bin:/usr/bin:/bin"
+PROFILE_NATIVE_KEYS = tuple("""RUNNER_TEMP RUNNER_OS RUNNER_ARCH GITHUB_WORKSPACE GITHUB_EVENT_PATH
+GITHUB_EVENT_NAME GITHUB_REF_TYPE GITHUB_REF GITHUB_REPOSITORY GITHUB_REPOSITORY_OWNER
+GITHUB_REPOSITORY_ID GITHUB_REPOSITORY_OWNER_ID GITHUB_ACTOR GITHUB_ACTOR_ID GITHUB_TRIGGERING_ACTOR
+GITHUB_WORKFLOW_REF GITHUB_RUN_NUMBER GITHUB_SERVER_URL GITHUB_API_URL GITHUB_SHA GITHUB_WORKFLOW_SHA
+GITHUB_JOB GITHUB_RUN_ID GITHUB_RUN_ATTEMPT RUNNER_ENVIRONMENT ImageOS""".split())
+
+
+def clean_profile_shell(script):
+    """A fixed explicit allowlist, shared by installs, preflight and launcher."""
+    fields = [key + '="${' + key + '}"' for key in PROFILE_NATIVE_KEYS]
+    fields += [
+        'PATH=' + PROFILE_PATH, 'LANG=C.UTF-8', 'LC_ALL=C.UTF-8', 'CI=true', 'GITHUB_ACTIONS=true',
+        'HOME="$RUNNER_TEMP/forge-b-home-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"',
+        'XDG_CONFIG_HOME="$RUNNER_TEMP/forge-b-home-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/.config"',
+        'XDG_CACHE_HOME="$RUNNER_TEMP/forge-b-home-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/.cache"',
+        'XDG_DATA_HOME="$RUNNER_TEMP/forge-b-home-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/.local/share"',
+        'TMPDIR="$RUNNER_TEMP/forge-tests"', 'EVIDENCE="$RUNNER_TEMP/forge-evidence"',
+        'PYTHONPATH=.github/scripts:src', 'PYTHONDONTWRITEBYTECODE=1',
+        'SEMGREP_SEND_METRICS=off', 'SEMGREP_ENABLE_VERSION_CHECK=0', 'OTEL_SDK_DISABLED=true',
+    ]
+    return ('umask 077\n/usr/bin/env -i \\\n  ' + ' \\\n  '.join(fields)
+            + " \\\n  /bin/bash --noprofile --norc -e -o pipefail -s <<'PYCLEANPROFILE'\numask 077\n"
+            + script + '\nPYCLEANPROFILE\n')
+
+
+PRIVATE_HOME_PYTHON = r'''import os
+from pathlib import Path
+import stat
+
+assert os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0
+os.umask(0o077)
+runner = Path(os.environ['RUNNER_TEMP'])
+assert runner.is_absolute() and runner.resolve(strict=True) == runner
+for path in (runner, *runner.parents):
+    info = path.lstat()
+    assert stat.S_ISDIR(info.st_mode) and info.st_uid in (0, os.getuid())
+    assert not info.st_mode & 0o022 or (info.st_uid == 0 and info.st_mode & stat.S_ISVTX)
+run, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
+assert run.isascii() and run.isdecimal() and 0 < int(run) < 2**63 and str(int(run)) == run and attempt == '1'
+home = runner / ('forge-b-home-' + run + '-' + attempt)
+assert os.environ['HOME'] == str(home) and os.environ['TMPDIR'] == str(runner / 'forge-tests')
+paths = (home, home / '.config', home / '.cache', home / '.local', home / '.local/share', runner / 'forge-tests')
+assert not home.exists() and not home.is_symlink()
+assert not paths[-1].exists() and not paths[-1].is_symlink()
+for path in paths:
+    assert path.resolve(strict=False) == path and not path.exists() and not path.is_symlink()
+    path.mkdir(mode=0o700)
+    info = path.lstat()
+    assert stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and info.st_gid == os.getgid()
+    assert stat.S_IMODE(info.st_mode) == 0o700
+for key, relative in (('XDG_CONFIG_HOME', '.config'), ('XDG_CACHE_HOME', '.cache'), ('XDG_DATA_HOME', '.local/share')):
+    assert os.environ[key] == str(home / relative)
+'''
+
+INSTALL = r'''python -m forge_ci.user_service profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
+python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.1.1' \
   2>&1 | tee "$EVIDENCE/install.log"
-# Preserve the unchanged /usr/bin fixture's ordinary user-site dependency.
-python -m pip install --target "$(/usr/bin/python3 -m site --user-site)" 'pytest==9.1.1' \
+# Preserve the unchanged literal system fixture's user-site install under this HOME.
+system_site="$(/usr/bin/python3 -m site --user-site)"
+python - "$system_site" <<'PYSYSTEMSITE'
+import os
+from pathlib import Path
+import sys
+home, target = Path(os.environ['HOME']), Path(sys.argv[1])
+assert home.is_absolute() and home.resolve(strict=True) == home
+assert target.is_absolute() and target.is_relative_to(home) and target.resolve(strict=False) == target
+assert target != home
+PYSYSTEMSITE
+python -m pip install --target "$system_site" 'pytest==9.1.1' \
   2>&1 | tee "$EVIDENCE/system-pytest-install.log"
 for interpreter in python /usr/bin/python3; do
-  "$interpreter" -c 'import sys, pytest; assert sys.implementation.name == "cpython"; assert sys.version_info[:2] == (3, 12), sys.version; assert pytest.__version__ == "9.1.1"; print(sys.executable, sys.version, "pytest", pytest.__version__)'
+  "$interpreter" -c 'import os, pathlib, sys, pytest; assert sys.implementation.name == "cpython"; assert sys.version_info[:2] == (3, 12), sys.version; assert pytest.__version__ == "9.1.1"; assert pathlib.Path(os.environ["HOME"]).is_absolute(); print(sys.executable, sys.version, "pytest", pytest.__version__, pytest.__file__)'
 done | tee "$EVIDENCE/interpreters.log"
 python -m pip check 2>&1 | tee "$EVIDENCE/pip-check.log"
 python -m pip freeze | tee "$EVIDENCE/requirements.freeze.txt"
+python -m forge_ci.user_service preflight --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
 '''
 
 
@@ -386,13 +453,10 @@ builtin printf '%s' "$FORGE_CI_METADATA_TOKEN" | /usr/bin/sudo -n -- /usr/bin/en
             .replace('VERIFIER_SHA256', repr(expected['.github/scripts/forge_ci/launch.py']))
             .replace('EXPECTED_HELPERS', repr(expected)))
     verify = "/usr/bin/python3 -B -I -S - <<'PYBOOT' 2>&1 | tee \"$EVIDENCE/launch-bootstrap.log\"\n" + code + '\nPYBOOT\n'
-    preflight = r'''umask 077
-export TMPDIR="$RUNNER_TEMP/forge-tests"
-test ! -e "$TMPDIR"
-mkdir "$TMPDIR"
-printf 'TMPDIR=%s\n' "$TMPDIR" >> "$GITHUB_ENV"
-python - <<'PYPREFLIGHT' 2>&1 | tee "$EVIDENCE/preflight.log"
-''' + PREFLIGHT_PYTHON + '\nPYPREFLIGHT\ndf -h "$TMPDIR" | tee "$EVIDENCE/disk.log"\n'
+    prepare = clean_profile_shell("/usr/bin/python3 -B -I -S - <<'PYPRIVATEHOME'\n" + PRIVATE_HOME_PYTHON + "\nPYPRIVATEHOME\n"
+                                  + 'python -m forge_ci.user_service profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"\n')
+    preflight = clean_profile_shell("python - <<'PYPREFLIGHT' 2>&1 | tee \"$EVIDENCE/preflight.log\"\n"
+                                    + PREFLIGHT_PYTHON + '\nPYPREFLIGHT\ndf -h "$TMPDIR" | tee "$EVIDENCE/disk.log"\n')
     cleanup = r'''/usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
   GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYCREDENTIALCLEANUP' | /usr/bin/tee "$RUNNER_TEMP/forge-evidence/credential-cleanup.json"
 ''' + cleanup_source(source, records) + '\nPYCREDENTIALCLEANUP\n'
@@ -405,13 +469,14 @@ python - <<'PYPREFLIGHT' 2>&1 | tee "$EVIDENCE/preflight.log"
         *verifier_steps,
         {'name': 'Verify complete source and live identity before imports', 'timeout-minutes': 2, 'run': verify},
         {'name': 'Set up qualified Python', 'uses': SETUP_PYTHON, 'with': {'python-version': '3.12.14'}},
+        {'name': 'Establish fresh private diagnostic HOME before all phases', 'timeout-minutes': 2, 'run': prepare},
         {'name': 'Verify real Linux ownership and durable disk prerequisites', 'timeout-minutes': 2, 'run': preflight},
-        {'name': 'Install declared extras and qualified pytest', 'timeout-minutes': 10, 'run': INSTALL},
-        {'name': 'Verify production boundary and run complete test phases', 'timeout-minutes': 75,
-         'run': r'''PYTHONPATH=.github/scripts:src python -m forge_ci.user_service launch \
+        {'name': 'Install declared extras and qualified pytest', 'timeout-minutes': 10, 'run': clean_profile_shell(INSTALL)},
+        {'name': 'Verify production boundary and run complete test phases', 'timeout-minutes': 120,
+         'run': clean_profile_shell(r'''python -m forge_ci.user_service launch \
   --receipt "$EVIDENCE/launch-bootstrap.json" --repo "$GITHUB_WORKSPACE" \
   --evidence "$EVIDENCE/qualification" 2>&1 | tee "$EVIDENCE/qualification-controller.log"
-'''},
+''')},
         {'name': 'Remove private metadata credential', 'id': 'credential_cleanup', 'if': '${{ always() }}',
          'timeout-minutes': 1, 'run': cleanup},
         {'name': 'Preserve logs and JUnit reports', 'if': '${{ always() }}', 'timeout-minutes': 5, 'uses': UPLOAD,
@@ -421,7 +486,7 @@ python - <<'PYPREFLIGHT' 2>&1 | tee "$EVIDENCE/preflight.log"
     workflow = {
         'name': 'Linux tests', 'on': {'push': {'branches': [BRANCH]}}, 'permissions': {'contents': 'read'},
         'concurrency': {'group': 'forge-linux-admitted-${{ github.run_id }}', 'cancel-in-progress': False},
-        'jobs': {'linux-tests': {'name': 'linux-tests', 'runs-on': 'ubuntu-24.04', 'timeout-minutes': 90,
+        'jobs': {'linux-tests': {'name': 'linux-tests', 'runs-on': 'ubuntu-24.04', 'timeout-minutes': 150,
                                'defaults': {'run': {'shell': 'bash'}},
                                'env': {'PYTHONDONTWRITEBYTECODE': '1', 'SEMGREP_SEND_METRICS': 'off',
                                        'SEMGREP_ENABLE_VERSION_CHECK': '0', 'OTEL_SDK_DISABLED': 'true'}, 'steps': steps}},

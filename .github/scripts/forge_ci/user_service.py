@@ -23,17 +23,18 @@ import sys
 import threading
 import time
 
-SPEC_SHA256 = "501bf70d2cf7688e7918029bc57abb1227877bdb0a85b67f2c7034b387a1944a"
+SPEC_SHA256 = "52f595d6c254b4e89c7e08329e3a9b16663c4e4a72565693d03ca72717663177"
 MAX_CAPSULE = 128 * 1024
 MAX_METADATA = 64 * 1024
 SO_PEERPIDFD = 77
 PROVIDER = "/opt/hostedtoolcache/Python/3.12.14/x64/bin/python"
 HELPER = ".github/scripts/forge_ci/user_service.py"
 BOOT_ENV = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LC_ALL": "C", "LANG": "C"}
-FIXED_ENV = {"PYTHONPATH": ".github/scripts:src", "PYTHONDONTWRITEBYTECODE": "1",
+PROFILE_PATH = "/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/local/bin:/usr/bin:/bin"
+FIXED_ENV = {"PATH": PROFILE_PATH, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONPATH": ".github/scripts:src", "PYTHONDONTWRITEBYTECODE": "1",
              "SEMGREP_SEND_METRICS": "off", "SEMGREP_ENABLE_VERSION_CHECK": "0", "OTEL_SDK_DISABLED": "true"}
-OPTIONAL_ENV = frozenset("USER LOGNAME SHELL LANG LC_ALL LC_CTYPE TZ".split())
-REQUIRED_ENV = frozenset("""PATH HOME TMPDIR RUNNER_TEMP RUNNER_OS RUNNER_ARCH GITHUB_ACTIONS CI
+OPTIONAL_ENV = frozenset()
+REQUIRED_ENV = frozenset("""PATH HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME TMPDIR RUNNER_TEMP RUNNER_OS RUNNER_ARCH GITHUB_ACTIONS CI
 GITHUB_WORKSPACE GITHUB_EVENT_PATH GITHUB_EVENT_NAME GITHUB_REF_TYPE GITHUB_REF GITHUB_REPOSITORY
 GITHUB_REPOSITORY_OWNER GITHUB_REPOSITORY_ID GITHUB_REPOSITORY_OWNER_ID GITHUB_ACTOR GITHUB_ACTOR_ID
 GITHUB_TRIGGERING_ACTOR GITHUB_WORKFLOW_REF GITHUB_RUN_NUMBER GITHUB_SERVER_URL GITHUB_API_URL
@@ -57,12 +58,12 @@ BINDING_KEYS = {"schema_version", "repository_id", "owner_id", "actor_id", "trig
 SOURCE_KEYS = {"candidate_sha", "tree_oid", "source_sha256", "workflow_sha256", "helper_sha256"}
 HELPERS = {".github/scripts/forge_ci/" + name + ".py" for name in (
     "__init__", "facts", "launch", "admission", "setup_policy", "controller", "outcomes", "payload",
-    "probes", "pytest_observer", "user_service")}
+    "probes", "pytest_observer", "user_service", "baseline_measurement")}
 OWNER_KEYS = {"pid", "uid", "gid", "start_ticks", "pidns", "userns", "mntns", "cgroupns", "boot_id"}
 CAPSULE_KEYS = {"schema_version", "kind", "binding", "owner", "repo", "evidence", "cwd", "entrypoint", "clock", "environment", "receipt", "source"}
-STARTUP_SECONDS, CANCEL_SECONDS, RUNTIME_SECONDS, CLIENT_SECONDS, STEP_SECONDS = 30, 4290, 4380, 4470, 4500
+STARTUP_SECONDS, CANCEL_SECONDS, RUNTIME_SECONDS, CLIENT_SECONDS, STEP_SECONDS = 30, 6990, 7080, 7170, 7200
 GRACE_SECONDS, REAP_SECONDS, STOP_SECONDS = 45, 10, 30
-JOB_SECONDS, CLEANUP_SECONDS, ARTIFACT_SECONDS = 5400, 60, 300
+JOB_SECONDS, CLEANUP_SECONDS, ARTIFACT_SECONDS = 9000, 60, 300
 NS = 1_000_000_000
 
 
@@ -185,6 +186,70 @@ PUBLIC_GATES = {
     'cancelled before service creation': "US109",
     'invalid source fields': "US110",
     'insufficient authenticated job headroom': "US111",
+    'PATH Python differs from provider': "US112",
+    'credential configuration present': "US113",
+    'declared diagnostic tool missing': "US114",
+    'diagnostic HOME or XDG mismatch': "US115",
+    'installed runtime changed': "US116",
+    'invalid diagnostic runtime identity': "US117",
+    'invalid diagnostic runtime root': "US118",
+    'invalid runtime admission fields': "US119",
+    'invalid runtime interpreter fields': "US120",
+    'invalid runtime protected file': "US121",
+    'invalid runtime record hashes fields': "US122",
+    'noncanonical runtime record': "US123",
+    'retained runtime record changed': "US124",
+    'runnable claude present': "US125",
+    'runtime admission binding mismatch': "US126",
+    'runtime admission changed': "US127",
+    'runtime ancestor alias': "US128",
+    'runtime checkout source changed': "US129",
+    'runtime directory alias': "US130",
+    'runtime file bound exceeded': "US131",
+    'runtime file identity changed': "US132",
+    'runtime fixed paths changed': "US133",
+    'runtime install selection changed': "US134",
+    'runtime installer changed': "US135",
+    'runtime inventory encoded bound': "US136",
+    'runtime package inventory byte bound': "US137",
+    'runtime package inventory entry bound': "US138",
+    'runtime package root alias': "US139",
+    'runtime profile deadline exceeded': "US140",
+    'runtime profile requires ordinary owner': "US141",
+    'runtime protected file changed while reading': "US142",
+    'runtime protected path alias': "US143",
+    'runtime record encoded bound': "US144",
+    'runtime record hash invalid': "US145",
+    'runtime root is not private': "US146",
+    'runtime summary bound': "US147",
+    'runtime tool is not executable': "US148",
+    'system pytest imported outside diagnostic HOME': "US149",
+    'system pytest site outside diagnostic HOME': "US150",
+    'unexpected private HOME configuration': "US151",
+    'unknown runtime record': "US152",
+    'unreviewed PATH alias': "US153",
+    'untrusted runtime ancestor': "US154",
+    'untrusted runtime directory': "US155",
+    'wrong diagnostic Python or packages': "US156",
+    'wrong provider patch version': "US157",
+    'foreign installed metadata directory': "US158",
+    'installed metadata aggregate bound': "US159",
+    'installed metadata drift': "US160",
+    'installed metadata members changed': "US161",
+    'invalid installed metadata member': "US162",
+    'installed executable drift before import': "US163",
+    'installed package drift before import': "US164",
+    'runtime package directory changed during inventory': "US165",
+    'runtime package traversal unreadable': "US166",
+    'active import root exceeds package boundary': "US167",
+    'invalid active import roots': "US168",
+    'invalid runtime distribution locations': "US169",
+    'noncanonical active import root': "US170",
+    'overlapping runtime import boundaries': "US171",
+    'previously absent import root appeared': "US172",
+    'runtime checkout root alias': "US173",
+    'unreviewed checkout import root': "US174",
+    'unsupported active import archive or file': "US175",
 }
 
 
@@ -264,6 +329,16 @@ def validate_environment(value):
     need(all(value[key] == item for key, item in FIXED_ENV.items()), "changed fixed payload environment")
     need(value["RUNNER_OS"] == "Linux" and value["RUNNER_ARCH"] == "X64"
          and value["GITHUB_ACTIONS"] == "true" and value["CI"] == "true", "wrong runner environment")
+    runner = Path(value["RUNNER_TEMP"])
+    need(runner.is_absolute() and str(runner) == value["RUNNER_TEMP"] and ".." not in runner.parts,
+         "invalid diagnostic runtime root")
+    need(re.fullmatch(r"[1-9][0-9]{0,18}", value["GITHUB_RUN_ID"]) is not None
+         and value["GITHUB_RUN_ATTEMPT"] == "1", "invalid diagnostic runtime identity")
+    home = runner / ("forge-b-home-" + value["GITHUB_RUN_ID"] + "-" + value["GITHUB_RUN_ATTEMPT"])
+    need(value["HOME"] == str(home) and value["TMPDIR"] == str(runner / "forge-tests")
+         and value["XDG_CONFIG_HOME"] == str(home / ".config")
+         and value["XDG_CACHE_HOME"] == str(home / ".cache")
+         and value["XDG_DATA_HOME"] == str(home / ".local/share"), "diagnostic HOME or XDG mismatch")
 
 
 def unit_name(binding):
@@ -285,7 +360,7 @@ def validate_binding(value):
              "run_id", "run_number", "run_attempt", "workflow_id", "job_id", "job_started_ns"))
          and value["run_attempt"] == 1, "invalid run binding")
     need(value["job_key"] == "linux-tests" and value["event_name"] == "push"
-         and value["full_ref"] == "refs/heads/fix/review-correctness-linux-ci"
+         and value["full_ref"] == "refs/heads/ci/baseline-b-4dd7214cf1a24483a42c7e19cfc8ec28"
          and value["workflow_path"] == ".github/workflows/linux-tests.yml", "invalid job binding")
     need(type(value["job_started_at"]) is str
          and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value["job_started_at"]),
@@ -323,20 +398,22 @@ def validate_capsule(value):
              and ".." not in Path(item).parts, "noncanonical capsule path")
     need(value["repo"] == value["cwd"] and Path(value["evidence"]).name == "qualification"
          and Path(value["receipt"]) == Path(value["evidence"]).parent / "launch-bootstrap.json", "wrong fixed working paths")
-    keys(value["entrypoint"], {"python", "helper_sha256", "controller_sha256", "receipt_sha256"}, "entrypoint")
+    keys(value["entrypoint"], {"python", "helper_sha256", "controller_sha256", "receipt_sha256", "runtime_sha256"}, "entrypoint")
     need(value["entrypoint"]["python"] == PROVIDER, "wrong fixed interpreter")
     need(all(type(value["entrypoint"][key]) is str and re.fullmatch(r"[0-9a-f]{64}", value["entrypoint"][key])
-             for key in ("helper_sha256", "controller_sha256", "receipt_sha256")), "invalid entrypoint identity")
+             for key in ("helper_sha256", "controller_sha256", "receipt_sha256", "runtime_sha256")), "invalid entrypoint identity")
     keys(value["clock"], {"started_utc_ns", "started_monotonic_ns", "deadline_utc_ns", "deadline_monotonic_ns",
                           "job_deadline_utc_ns", "artifact_deadline_utc_ns"}, "clock")
     clock = value["clock"]
     need(all(positive(item) for item in clock.values()), "invalid clock")
+    artifact_deadline_utc_ns = clock["artifact_deadline_utc_ns"]  # A: J + 8700
+    work_deadline_utc_ns = artifact_deadline_utc_ns - CLEANUP_SECONDS * NS  # C
     need(clock["deadline_utc_ns"] - clock["started_utc_ns"] == STEP_SECONDS * NS
          and clock["deadline_monotonic_ns"] - clock["started_monotonic_ns"] == STEP_SECONDS * NS
          and clock["job_deadline_utc_ns"] == value["binding"]["job_started_ns"] + JOB_SECONDS * NS
          and clock["artifact_deadline_utc_ns"] == clock["job_deadline_utc_ns"] - ARTIFACT_SECONDS * NS
          and value["binding"]["job_started_ns"] <= clock["started_utc_ns"]
-         and clock["deadline_utc_ns"] <= clock["artifact_deadline_utc_ns"] - CLEANUP_SECONDS * NS, "changed action budget")
+         and clock["deadline_utc_ns"] <= work_deadline_utc_ns, "changed action budget")
     validate_environment(value["environment"])
     env = value["environment"]
     need(env["GITHUB_WORKSPACE"] == value["repo"] and env["EVIDENCE"] == str(Path(value["evidence"]).parent), "payload path mismatch")
@@ -370,7 +447,11 @@ def service_argv(capsule, unset):
 
 def controller_argv(capsule):
     return [PROVIDER, "-m", "forge_ci.controller", "--receipt", capsule["receipt"],
-            "--repo", capsule["repo"], "--evidence", capsule["evidence"]]
+            "--repo", capsule["repo"], "--evidence", capsule["evidence"],
+            "--service-started-monotonic-ns", str(capsule["clock"]["started_monotonic_ns"]),
+            "--service-started-utc-ns", str(capsule["clock"]["started_utc_ns"]),
+            "--service-artifact-deadline-utc-ns", str(capsule["clock"]["artifact_deadline_utc_ns"]),
+            "--runtime-sha256", capsule["entrypoint"]["runtime_sha256"]]
 
 
 def process_identity(pid):
@@ -597,7 +678,8 @@ def verify_checkout_imports(capsule):
 def entrypoint_identity(repo, receipt_path):
     return {"python": PROVIDER, "helper_sha256": hashlib.sha256(read_regular(repo / HELPER, 256 * 1024)).hexdigest(),
             "controller_sha256": hashlib.sha256(read_regular(repo / ".github/scripts/forge_ci/controller.py", 256 * 1024)).hexdigest(),
-            "receipt_sha256": hashlib.sha256(read_regular(receipt_path, 256 * 1024)).hexdigest()}
+            "receipt_sha256": hashlib.sha256(read_regular(receipt_path, 256 * 1024)).hexdigest(),
+            "runtime_sha256": hashlib.sha256(read_regular(receipt_path.parent / "runtime-admission.json", MAX_METADATA)).hexdigest()}
 
 
 def require_job_headroom(binding, now=None):
@@ -872,6 +954,425 @@ def launcher(receipt_path, repo, evidence):
             raise
 
 
+# First-B runtime admission is produced only after the fixed reviewed installer.
+# None of these recorded runtime hashes is a pre-install or self-authorizing pin.
+RUNTIME_PROFILE = "first-B-auth-v1"
+RUNTIME_INVENTORY_LIMIT = 8 * 1024 * 1024
+RUNTIME_FILE_LIMIT = 512 * 1024 * 1024
+RUNTIME_TOTAL_LIMIT = 2 * 1024 * 1024 * 1024
+RUNTIME_ENTRIES = 50000
+REQUIRED_TOOLS = ("python", "python3", "git", "bash", "sh", "bwrap", "node", "npm", "semgrep", "ruff")
+INSTALL_ARGV = [
+    ["python", "-m", "pip", "install", "-e", ".[dev,mcp,semgrep,vertex]", "pytest==9.1.1"],
+    ["python", "-m", "pip", "install", "--target", "SYSTEM_USER_SITE", "pytest==9.1.1"],
+]
+INSTALL_RECORDS = ("install.log", "system-pytest-install.log", "interpreters.log", "pip-check.log", "requirements.freeze.txt")
+CREDENTIAL_PATHS = (".aws", ".azure", ".ssh", ".claude", ".claude.json", ".netrc", ".git-credentials", ".npmrc", ".pypirc",
+                    ".config/gcloud", ".config/gh", ".config/claude", ".config/openai", ".config/pip", ".local/share/keyrings")
+RUNTIME_KEYS = {"schema_version", "profile", "spec_sha256", "source", "environment_sha256", "installer_sha256",
+                "records_sha256", "profile_metadata", "install_argv", "generated_install_metadata"}
+RUNTIME_PROBE = r'''import hashlib, importlib.metadata, json, pathlib, site, sys, sysconfig
+import pytest, _pytest.cacheprovider
+assert sys.implementation.name == 'cpython' and sys.version_info[:2] == (3, 12)
+assert pytest.__version__ == '9.1.1'
+assert set(_pytest.cacheprovider.CACHEDIR_FILES) == {'.gitignore', 'README.md', 'CACHEDIR.TAG'}
+packages = sorted([[d.metadata['Name'], d.version, str(pathlib.Path(d.locate_file('')).resolve())] for d in importlib.metadata.distributions()])
+assert all(type(n) is str and n and type(v) is str and v and type(p) is str for n, v, p in packages)
+assert len(packages) <= 4096 and len({(n.lower().replace('_', '-'), p) for n,v,p in packages}) == len(packages)
+print(json.dumps({'executable':sys.executable, 'version':list(sys.version_info[:3]),
+ 'user_site':site.getusersitepackages(), 'import_roots':list(sys.path), 'package_roots':sorted(set([sysconfig.get_path('purelib'), sysconfig.get_path('platlib'), site.getusersitepackages()])),
+ 'pytest_path':str(pathlib.Path(pytest.__file__).resolve()), 'cache_source':str(pathlib.Path(_pytest.cacheprovider.__file__).resolve()),
+ 'cache_support':{n:hashlib.sha256(b).hexdigest() for n,b in _pytest.cacheprovider.CACHEDIR_FILES.items()}, 'packages':packages},
+ sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False))
+'''
+
+
+def runtime_remaining(deadline_ns):
+    need(type(deadline_ns) is int and time.monotonic_ns() < deadline_ns, "runtime profile deadline exceeded")
+    return (deadline_ns - time.monotonic_ns()) / NS
+
+
+def runtime_digest(value):
+    return hashlib.sha256(canonical(value)).hexdigest()
+
+
+def runtime_json(path, limit, deadline_ns):
+    runtime_remaining(deadline_ns)
+    raw = read_regular(path, limit)
+    value = json.loads(raw, object_pairs_hook=_pairs, parse_constant=_no_constant)
+    need(raw == canonical(value), "noncanonical runtime record")
+    runtime_remaining(deadline_ns)
+    return value, hashlib.sha256(raw).hexdigest()
+
+
+def runtime_stat(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_uid, info.st_gid,
+            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def runtime_file(path, deadline_ns):
+    runtime_remaining(deadline_ns)
+    path = Path(path)
+    need(path.is_absolute() and path.resolve(strict=True) == path, "runtime protected path alias")
+    before = path.lstat()
+    need(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and not before.st_mode & 0o022
+         and before.st_uid in {0, os.getuid()} and before.st_gid in {0, os.getgid()}
+         and before.st_size <= RUNTIME_FILE_LIMIT, "invalid runtime protected file")
+    checksum = hashlib.sha256()
+    total = 0
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        need(runtime_stat(os.fstat(stream.fileno())) == runtime_stat(before), "runtime file identity changed")
+        while True:
+            runtime_remaining(deadline_ns)
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            need(total <= RUNTIME_FILE_LIMIT, "runtime file bound exceeded")
+            checksum.update(chunk)
+        need(runtime_stat(os.fstat(stream.fileno())) == runtime_stat(before) and runtime_stat(path.lstat()) == runtime_stat(before) and total == before.st_size
+             and path.resolve(strict=True) == path, "runtime protected file changed while reading")
+    runtime_remaining(deadline_ns)
+    return {"path": str(path), "device": before.st_dev, "inode": before.st_ino, "uid": before.st_uid,
+            "gid": before.st_gid, "mode": stat.S_IMODE(before.st_mode), "bytes": total, "sha256": checksum.hexdigest()}
+
+
+def runtime_directory(path, *, private=False):
+    path = Path(path)
+    need(path.is_absolute() and path.resolve(strict=True) == path, "runtime directory alias")
+    info = path.lstat()
+    need(stat.S_ISDIR(info.st_mode) and not info.st_mode & 0o022
+         and info.st_uid in {0, os.getuid()} and info.st_gid in {0, os.getgid()}, "untrusted runtime directory")
+    if private:
+        need(info.st_uid == os.getuid() and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == 0o700,
+             "runtime root is not private")
+    return {"path": str(path), "device": info.st_dev, "inode": info.st_ino,
+            "uid": info.st_uid, "gid": info.st_gid, "mode": stat.S_IMODE(info.st_mode)}
+
+
+def check_private_profile(environment, *, deadline_ns):
+    validate_environment(environment)
+    runtime_remaining(deadline_ns)
+    need(os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0, "runtime profile requires ordinary owner")
+    runner = Path(environment["RUNNER_TEMP"])
+    need(runner.resolve(strict=True) == runner, "runtime ancestor alias")
+    for ancestor in (runner, *runner.parents):
+        info = ancestor.lstat()
+        need(stat.S_ISDIR(info.st_mode) and info.st_uid in {0, os.getuid()}
+             and (not info.st_mode & 0o022 or (info.st_uid == 0 and info.st_mode & stat.S_ISVTX)),
+             "untrusted runtime ancestor")
+    roots = [runtime_directory(environment[key], private=True)
+             for key in ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TMPDIR")]
+    home = Path(environment["HOME"])
+    runtime_directory(home / ".local", private=True)
+    for relative in CREDENTIAL_PATHS:
+        candidate = home / relative
+        need(not candidate.exists() and not candidate.is_symlink(), "credential configuration present")
+    # Config starts empty, and the fixed dependency installer has no reason to
+    # populate it. Reject unknown configuration rather than interpreting secrets.
+    need(not any((home / ".config").iterdir()), "unexpected private HOME configuration")
+    directories = []
+    for component in PROFILE_PATH.split(":"):
+        path = Path(component)
+        real = path.resolve(strict=True)
+        need(str(real) == component or (component == "/bin" and str(real) == "/usr/bin"), "unreviewed PATH alias")
+        identity = runtime_directory(real)
+        directories.append({"path": component, "realpath": str(real), **{k: v for k, v in identity.items() if k != "path"}})
+        cli = path / "claude"
+        need(not (cli.exists() and os.access(cli, os.X_OK)), "runnable claude present")
+    runtime_remaining(deadline_ns)
+    return {"roots": roots, "path_directories": directories}
+
+
+def runtime_executable(name, deadline_ns):
+    import shutil
+    resolved = shutil.which(name, path=PROFILE_PATH)
+    need(resolved is not None, "declared diagnostic tool missing")
+    path = Path(resolved)
+    real = path.resolve(strict=True)
+    result = runtime_file(real, deadline_ns)
+    need(result["mode"] & 0o111, "runtime tool is not executable")
+    return {"requested": name, "path": str(path), "realpath": str(real), "identity": result}
+
+
+def runtime_probe(interpreter, environment, deadline_ns):
+    raw = metadata([interpreter, "-B", "-c", RUNTIME_PROBE], environment,
+                   timeout=min(5, runtime_remaining(deadline_ns)))
+    value = json.loads(raw, object_pairs_hook=_pairs, parse_constant=_no_constant)
+    keys(value, {"executable", "version", "user_site", "package_roots", "import_roots", "pytest_path", "cache_source", "cache_support", "packages"}, "runtime interpreter")
+    need(value["version"][:2] == [3, 12] and type(value["packages"]) is list, "wrong diagnostic Python or packages")
+    site = Path(value["user_site"])
+    home = Path(environment["HOME"])
+    need(site.is_absolute() and site.is_relative_to(home) and site.resolve(strict=True) == site,
+         "system pytest site outside diagnostic HOME")
+    need(Path(value["pytest_path"]).is_relative_to(site) if interpreter == "/usr/bin/python3" else True,
+         "system pytest imported outside diagnostic HOME")
+    return runtime_import_plan(value, environment, interpreter)
+
+
+def runtime_import_plan(value, environment, interpreter):
+    """Classify only the active import search roots, never the whole host.
+
+    Checkout roots retain full launch/source proof. The two literal stdlib
+    directories and their lib-dynload children retain the existing interpreter
+    trust boundary. Every other active directory is package content to hash.
+    """
+    repo = Path(environment["GITHUB_WORKSPACE"])
+    home = Path(environment["HOME"])
+    need(repo.is_absolute() and repo.resolve(strict=True) == repo, "runtime checkout root alias")
+    checkout = {str(repo), str(repo / "src"), str(repo / ".github/scripts")}
+    stdlib = Path("/usr/lib/python3.12" if interpreter == "/usr/bin/python3" else
+                  "/opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12")
+    stdlib_paths = {str(stdlib), str(stdlib / "lib-dynload")}
+    need(type(value["import_roots"]) is list and len(value["import_roots"]) <= 256
+         and type(value["package_roots"]) is list and len(value["package_roots"]) <= 256
+         and all(type(p) is str and len(p) <= 4096 for p in value["import_roots"] + value["package_roots"]),
+         "invalid active import roots")
+    need(type(value["packages"]) is list and len(value["packages"]) <= 4096
+         and all(type(p) is list and len(p) == 3 and all(text(x, 4096) for x in p) for p in value["packages"]),
+         "invalid runtime distribution locations")
+    distribution_roots = {p[2] for p in value["packages"]}
+    active = {str(repo) if p == "" else p for p in value["import_roots"]}
+    candidates = active | set(value["package_roots"]) | distribution_roots
+    package_roots, missing, source_roots, standard_roots = set(), set(), set(), set()
+    for name in sorted(candidates):
+        path = Path(name)
+        need(path.is_absolute() and str(path) == name and path.resolve(strict=False) == path,
+             "noncanonical active import root")
+        if name in checkout:
+            source_roots.add(name)
+            continue
+        if name in stdlib_paths and name not in distribution_roots and name not in value["package_roots"]:
+            runtime_directory(path)
+            standard_roots.add(name)
+            continue
+        need(not path.is_relative_to(repo), "unreviewed checkout import root")
+        need(not any(anchor == path or anchor.is_relative_to(path) for anchor in (repo, home, stdlib)),
+             "active import root exceeds package boundary")
+        if not path.exists():
+            need(not path.is_symlink(), "noncanonical active import root")
+            missing.add(name)
+            continue
+        need(path.is_dir(), "unsupported active import archive or file")
+        runtime_directory(path)
+        package_roots.add(name)
+    value.update(package_roots=sorted(package_roots), import_roots=sorted(active),
+                 checkout_roots=sorted(source_roots), stdlib_roots=sorted(standard_roots), missing_roots=sorted(missing))
+    return value
+
+
+def inventory_import_roots(probes):
+    roots, missing = set(), set()
+    for probe in probes.values():
+        # Include distribution and sys.path roots independently of sysconfig;
+        # otherwise Debian and .pth-added package bytes would be omitted.
+        declared = set(probe["package_roots"])
+        locations = {p[2] for p in probe.get("packages", [])}
+        active = set(probe.get("import_roots", []))
+        exempt = set(probe.get("checkout_roots", [])) | set(probe.get("stdlib_roots", []))
+        absent = set(probe.get("missing_roots", []))
+        need(not exempt & declared and not exempt & absent and not absent & declared,
+             "overlapping runtime import boundaries")
+        roots.update((declared | locations | active) - exempt - absent)
+        missing.update(absent)
+    for name in sorted(missing):
+        path = Path(name)
+        need(path.is_absolute() and path.resolve(strict=False) == path and not path.exists() and not path.is_symlink(),
+             "previously absent import root appeared")
+    for name in sorted(roots):
+        path = Path(name)
+        need(path.is_absolute() and str(path) == name and path.resolve(strict=True) == path,
+             "runtime package root alias")
+        need(path.is_dir(), "unsupported active import archive or file")
+    return sorted(roots), sorted(missing)
+
+
+def runtime_walk_error(_):
+    raise ServiceError("runtime package traversal unreadable")
+
+
+def runtime_inventory(probes, executables, deadline_ns):
+    roots, missing = inventory_import_roots(probes)
+    files, directories, directory_stats, count, total = {}, {}, {}, 0, 0
+    for root in roots:
+        base = Path(root)
+        need(base.resolve(strict=True) == base, "runtime package root alias")
+        for current, dirs, names in os.walk(base, followlinks=False, onerror=runtime_walk_error):
+            runtime_remaining(deadline_ns)
+            current = Path(current)
+            for path in [current, *(current / n for n in dirs), *(current / n for n in names)]:
+                name = str(path)
+                if name in files or name in directories:
+                    continue
+                count += 1
+                need(count <= RUNTIME_ENTRIES, "runtime package inventory entry bound")
+                info = path.lstat()
+                if stat.S_ISDIR(info.st_mode):
+                    directories[name] = runtime_directory(path)
+                    directory_stats[name] = runtime_stat(info)
+                else:
+                    item = runtime_file(path, deadline_ns)
+                    total += item["bytes"]
+                    need(total <= RUNTIME_TOTAL_LIMIT, "runtime package inventory byte bound")
+                    files[name] = item
+    for name, identity in directory_stats.items():
+        runtime_remaining(deadline_ns)
+        need(runtime_stat(Path(name).lstat()) == identity and Path(name).resolve(strict=True) == Path(name),
+             "runtime package directory changed during inventory")
+    for item in executables.values():
+        files[item["realpath"]] = item["identity"]
+    result = {"schema_version": 1, "roots": roots, "missing_roots": missing, "directories": [directories[n] for n in sorted(directories)],
+              "files": [files[n] for n in sorted(files)]}
+    need(len(canonical(result)) <= RUNTIME_INVENTORY_LIMIT, "runtime inventory encoded bound")
+    runtime_remaining(deadline_ns)
+    return result
+
+
+def current_executables(deadline_ns):
+    executables = {name: runtime_executable(name, deadline_ns) for name in REQUIRED_TOOLS}
+    provider = Path(PROVIDER).resolve(strict=True)
+    need(executables["python"]["realpath"] == executables["python3"]["realpath"] == str(provider),
+         "PATH Python differs from provider")
+    system = Path("/usr/bin/python3").resolve(strict=True)
+    executables["/usr/bin/python3"] = {"requested": "/usr/bin/python3", "path": "/usr/bin/python3",
+                                          "realpath": str(system), "identity": runtime_file(system, deadline_ns)}
+    return executables
+
+
+def current_runtime(environment, *, deadline_ns):
+    profile = check_private_profile(environment, deadline_ns=deadline_ns)
+    executables = current_executables(deadline_ns)
+    probes = {"provider": runtime_probe(PROVIDER, environment, deadline_ns),
+              "system": runtime_probe("/usr/bin/python3", environment, deadline_ns)}
+    need(probes["provider"]["version"] == [3, 12, 14], "wrong provider patch version")
+    profile.update(executables=executables, provider={k: v for k, v in probes["provider"].items() if k != "packages"},
+                   system={k: v for k, v in probes["system"].items() if k != "packages"})
+    return profile, probes, runtime_inventory(probes, executables, deadline_ns)
+
+
+def runtime_write(path, value, limit, deadline_ns):
+    runtime_remaining(deadline_ns)
+    raw = canonical(value)
+    need(len(raw) <= limit, "runtime record encoded bound")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(raw)
+        runtime_remaining(deadline_ns)
+        stream.flush()
+        runtime_remaining(deadline_ns)
+        os.fsync(stream.fileno())
+    runtime_remaining(deadline_ns)
+    return hashlib.sha256(raw).hexdigest()
+
+
+EDITABLE_DIRECTORY = "src/code_review_forge.egg-info"
+EDITABLE_FILES = ("PKG-INFO", "SOURCES.txt", "dependency_links.txt", "entry_points.txt", "requires.txt", "top_level.txt")
+
+
+def installed_metadata(environment, deadline_ns):
+    runtime_remaining(deadline_ns)
+    repo = Path(environment["GITHUB_WORKSPACE"])
+    directory = repo / EDITABLE_DIRECTORY
+    identity = runtime_directory(directory)
+    need(identity["uid"] == os.getuid() and identity["gid"] == os.getgid(), "foreign installed metadata directory")
+    need({path.name for path in directory.iterdir()} == set(EDITABLE_FILES), "installed metadata members changed")
+    entries, total = [], 0
+    for name in EDITABLE_FILES:
+        item = runtime_file(directory / name, deadline_ns)
+        need(item["uid"] == os.getuid() and item["gid"] == os.getgid() and not item["mode"] & 0o111
+             and item["bytes"] <= 65536, "invalid installed metadata member")
+        total += item["bytes"]
+        need(total <= 262144, "installed metadata aggregate bound")
+        entries.append({"path": EDITABLE_DIRECTORY + "/" + name, "mode": item["mode"], "uid": item["uid"],
+                        "gid": item["gid"], "size": item["bytes"], "sha256": item["sha256"]})
+    runtime_remaining(deadline_ns)
+    need({path.name for path in directory.iterdir()} == set(EDITABLE_FILES), "installed metadata members changed")
+    return {"directory": EDITABLE_DIRECTORY, "entries": entries}
+
+
+def runtime_record_path(environment, name):
+    need(name in set(INSTALL_RECORDS) | {"runtime-packages.json", "runtime-inventory.json"}, "unknown runtime record")
+    return (Path(environment["EVIDENCE"]) if name in INSTALL_RECORDS else
+            Path(environment["XDG_DATA_HOME"]) / "forge-b-runtime") / name
+
+
+def produce_runtime_admission(repo, evidence, environment, *, deadline_ns):
+    from forge_ci import launch
+    need(repo == Path(environment["GITHUB_WORKSPACE"]) and evidence == Path(environment["EVIDENCE"]), "runtime fixed paths changed")
+    receipt = launch.load_receipt(evidence / "launch-bootstrap.json")
+    need(launch.inspect_checkout(repo, receipt["binding"]["candidate_sha"], deadline=deadline_ns / NS) == receipt["source"],
+         "runtime checkout source changed")
+    profile, probes, inventory = current_runtime(environment, deadline_ns=deadline_ns)
+    records = {name: runtime_file((evidence / name).resolve(strict=True), deadline_ns)["sha256"] for name in INSTALL_RECORDS}
+    private_records = Path(environment["XDG_DATA_HOME"]) / "forge-b-runtime"
+    private_records.mkdir(mode=0o700)
+    runtime_directory(private_records, private=True)
+    records["runtime-packages.json"] = runtime_write(private_records / "runtime-packages.json", probes, MAX_METADATA, deadline_ns)
+    records["runtime-inventory.json"] = runtime_write(private_records / "runtime-inventory.json", inventory, RUNTIME_INVENTORY_LIMIT, deadline_ns)
+    argv = [INSTALL_ARGV[0], [*INSTALL_ARGV[1][:5], probes["system"]["user_site"], *INSTALL_ARGV[1][6:]]]
+    record = {"schema_version": 1, "profile": RUNTIME_PROFILE, "spec_sha256": SPEC_SHA256, "source": receipt["source"],
+              "environment_sha256": runtime_digest(environment),
+              "installer_sha256": runtime_file(repo / ".github/scripts/render_linux_workflow.py", deadline_ns)["sha256"],
+              "records_sha256": records, "profile_metadata": profile, "install_argv": argv,
+              "generated_install_metadata": installed_metadata(environment, deadline_ns)}
+    runtime_write(evidence / "runtime-admission.json", record, MAX_METADATA, deadline_ns)
+    return record
+
+
+def load_runtime_admission(environment, source, *, deadline_ns):
+    validate_environment(environment)
+    record, _ = runtime_json(Path(environment["EVIDENCE"]) / "runtime-admission.json", MAX_METADATA, deadline_ns)
+    keys(record, RUNTIME_KEYS, "runtime admission")
+    need(record["schema_version"] == 1 and record["profile"] == RUNTIME_PROFILE and record["spec_sha256"] == SPEC_SHA256
+         and record["source"] == source and record["environment_sha256"] == runtime_digest(environment), "runtime admission binding mismatch")
+    expected = set(INSTALL_RECORDS) | {"runtime-packages.json", "runtime-inventory.json"}
+    keys(record["records_sha256"], expected, "runtime record hashes")
+    need(all(type(x) is str and re.fullmatch(r"[0-9a-f]{64}", x) for x in record["records_sha256"].values()), "runtime record hash invalid")
+    revalidate_runtime_admission(record, environment, source, deadline_ns=deadline_ns)
+    return record
+
+
+def revalidate_runtime_admission(record, environment, source, *, deadline_ns):
+    runtime_remaining(deadline_ns)
+    keys(record, RUNTIME_KEYS, "runtime admission")
+    need(record["source"] == source and record["environment_sha256"] == runtime_digest(environment), "runtime admission binding mismatch")
+    evidence, repo = Path(environment["EVIDENCE"]), Path(environment["GITHUB_WORKSPACE"])
+    retained, _ = runtime_json(evidence / "runtime-admission.json", MAX_METADATA, deadline_ns)
+    need(retained == record, "runtime admission changed")
+    need(runtime_file(repo / ".github/scripts/render_linux_workflow.py", deadline_ns)["sha256"] == record["installer_sha256"], "runtime installer changed")
+    for name, checksum in record["records_sha256"].items():
+        need(runtime_file(runtime_record_path(environment, name), deadline_ns)["sha256"] == checksum, "retained runtime record changed")
+    need(installed_metadata(environment, deadline_ns) == record["generated_install_metadata"], "installed metadata drift")
+    # Rehash authenticated executable and package bytes BEFORE importing them.
+    # A changed package may not execute merely to report that it has changed.
+    check_private_profile(environment, deadline_ns=deadline_ns)
+    executables = current_executables(deadline_ns)
+    need(executables == record["profile_metadata"]["executables"], "installed executable drift before import")
+    saved_probes, _ = runtime_json(runtime_record_path(environment, "runtime-packages.json"), MAX_METADATA, deadline_ns)
+    before = runtime_inventory(saved_probes, executables, deadline_ns)
+    need(runtime_digest(before) == record["records_sha256"]["runtime-inventory.json"], "installed package drift before import")
+    from forge_ci import launch
+    need(launch.inspect_checkout(repo, source["candidate_sha"], deadline=deadline_ns / NS) == source,
+         "runtime checkout source changed")
+    profile, probes, inventory = current_runtime(environment, deadline_ns=deadline_ns)
+    need(profile == record["profile_metadata"] and runtime_digest(probes) == record["records_sha256"]["runtime-packages.json"]
+         and runtime_digest(inventory) == record["records_sha256"]["runtime-inventory.json"], "installed runtime changed")
+    need(record["install_argv"] == [INSTALL_ARGV[0], [*INSTALL_ARGV[1][:5], probes["system"]["user_site"], *INSTALL_ARGV[1][6:]]],
+         "runtime install selection changed")
+    runtime_remaining(deadline_ns)
+
+
+def runtime_summary(record):
+    keys(record, RUNTIME_KEYS, "runtime admission")
+    result = {"schema_version": 1, "profile": RUNTIME_PROFILE, "admission_sha256": runtime_digest(record),
+              "installer_sha256": record["installer_sha256"], "records_sha256": record["records_sha256"],
+              "profile_metadata": record["profile_metadata"],
+              "generated_install_metadata_sha256": runtime_digest(record["generated_install_metadata"])}
+    need(len(canonical(result)) <= MAX_METADATA, "runtime summary bound")
+    return result
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="role", required=True)
@@ -879,8 +1380,25 @@ def main(argv=None):
     launch = commands.add_parser("launch")
     for name in ("receipt", "repo", "evidence"):
         launch.add_argument("--" + name, required=True, type=Path)
+    for role in ("profile-check", "preflight"):
+        command = commands.add_parser(role)
+        command.add_argument("--repo", required=True, type=Path)
+        command.add_argument("--evidence", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.role in {"profile-check", "preflight"}:
+            os.umask(0o077)
+            environment = payload_environment(os.environ)
+            deadline_ns = time.monotonic_ns() + 120 * NS
+            if args.role == "profile-check":
+                check_private_profile(environment, deadline_ns=deadline_ns)
+                provider = str(Path(PROVIDER).resolve(strict=True))
+                need(runtime_executable("python", deadline_ns)["realpath"] == provider
+                     and runtime_executable("python3", deadline_ns)["realpath"] == provider,
+                     "PATH Python differs from provider")
+            else:
+                produce_runtime_admission(args.repo, args.evidence, environment, deadline_ns=deadline_ns)
+            return 0
         code = bootstrap() if args.role == "bootstrap" else launcher(args.receipt, args.repo, args.evidence)
         # Preserve actual signal identity in terminal evidence and conventional
         # shell exit semantics. Never reinterpret systemd client success as PASS.

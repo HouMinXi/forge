@@ -197,54 +197,150 @@ def validate_snapshot(value: dict, *, nonroot: bool = True) -> None:
 
 
 def bounded_command(
-    argv: list[str], timeout: float, *, pass_fds=(), env=None, limit: int = MAX_COMMAND_OUTPUT
+    argv: list[str], timeout: float, *, pass_fds=(), env=None, limit: int = MAX_COMMAND_OUTPUT,
+    deadline: float | None = None,
 ) -> dict:
-    """Drain both pipes continuously, fail rather than accept truncation."""
-    if timeout <= 0 or timeout > 30:
+    """Drain bounded output and settle only the retained direct child, within one budget."""
+    if type(timeout) not in (int, float) or not 0 < timeout <= 30:
         raise ProbeError("command timeout outside bounded probe envelope")
+    if deadline is not None:
+        try:
+            valid_deadline = (type(deadline) in (int, float)
+                              and math.isfinite(deadline) and deadline > 0)
+        except OverflowError:
+            valid_deadline = False
+        if not valid_deadline:
+            raise ProbeError("invalid absolute command deadline")
     started = {"utc_ns": time.time_ns(), "monotonic_ns": time.monotonic_ns()}
     stdout, stderr = bytearray(), bytearray()
     record = {"argv": list(argv), "started": started, "stdout": "", "stderr": ""}
-    with subprocess.Popen(
-        argv,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        pass_fds=pass_fds,
-        env=env,
-    ) as process:
-        record["wrapper_pid"] = process.pid
-        with selectors.DefaultSelector() as selector:
-            for pipe, output in ((process.stdout, stdout), (process.stderr, stderr)):
-                os.set_blocking(pipe.fileno(), False)
-                selector.register(pipe, selectors.EVENT_READ, output)
-            try:
-                deadline = time.monotonic() + timeout
-                while selector.get_map():
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise ProbeError("command deadline exceeded")
-                    for key, _ in selector.select(min(remaining, 0.1)):
-                        chunk = os.read(key.fd, 4096)
-                        if not chunk:
-                            selector.unregister(key.fileobj)
-                            continue
-                        key.data.extend(chunk)
-                        if len(stdout) + len(stderr) > limit:
-                            raise ProbeError("command output exceeded bound")
-                process.wait(timeout=max(0.001, deadline - time.monotonic()))
-            except (ProbeError, OSError, subprocess.TimeoutExpired) as exc:
-                process.kill()
-                process.wait(timeout=5)
-                record["error"] = str(exc)
-        record.update(
-            stdout_hex=bytes(stdout[:limit]).hex(),
-            stderr_hex=bytes(stderr[:limit]).hex(),
-            returncode=process.returncode,
-            stdout=bytes(stdout[:limit]).decode("utf-8", errors="replace"),
-            stderr=bytes(stderr[:limit]).decode("utf-8", errors="replace"),
-            ended={"utc_ns": time.time_ns(), "monotonic_ns": time.monotonic_ns()},
+    process = selector = None
+    pending = None
+    pending_traceback = None
+
+    def retain(exc: BaseException, *, cleanup: bool = False) -> None:
+        nonlocal pending, pending_traceback
+        if isinstance(exc, (ProbeError, OSError, subprocess.TimeoutExpired)):
+            record.setdefault("error", "command cleanup failed" if cleanup else str(exc))
+        elif pending is None:
+            # A later alarm or close failure must not replace the first control.
+            pending, pending_traceback = exc, exc.__traceback__
+
+    start = time.monotonic()
+    command_cutoff = start + timeout
+    cleanup_cutoff = command_cutoff + 5
+    if deadline is not None:
+        cleanup_cutoff = min(deadline, cleanup_cutoff)
+
+    def remaining_command() -> float:
+        now = time.monotonic()
+        remaining = min(command_cutoff, deadline if deadline is not None else cleanup_cutoff) - now
+        if remaining <= 0:
+            raise ProbeError("command deadline exceeded")
+        return remaining
+
+    # Admission is checked at the spawn boundary; creation consumes this budget.
+    if deadline is not None and deadline - time.monotonic() < timeout + 5:
+        raise ProbeError("insufficient command and settlement deadline")
+    try:
+        process = subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            pass_fds=pass_fds,
+            env=env,
         )
+        record["wrapper_pid"] = process.pid
+        remaining_command()
+        selector = selectors.DefaultSelector()
+        for pipe, output in ((process.stdout, stdout), (process.stderr, stderr)):
+            os.set_blocking(pipe.fileno(), False)
+            selector.register(pipe, selectors.EVENT_READ, output)
+        while True:
+            remaining_command()
+            exited = process.poll() is not None
+            if not selector.get_map():
+                if exited:
+                    remaining_command()
+                    break
+                # EOF does not prove the child exited. Never enter an unbounded wait.
+                time.sleep(min(remaining_command(), 0.01))
+                continue
+            for key, _ in selector.select(min(remaining_command(), 0.1)):
+                remaining_command()
+                chunk = os.read(key.fd, 4096)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                key.data.extend(chunk)
+                if len(stdout) + len(stderr) > limit:
+                    raise ProbeError("command output exceeded bound")
+    except BaseException as exc:  # noqa: BLE001 - preserve controls through cleanup
+        retain(exc)
+    finally:
+        try:
+            if process is not None:
+                try:
+                    if process.poll() is None:
+                        try:
+                            if time.monotonic() < cleanup_cutoff:
+                                process.kill()
+                        except BaseException as exc:  # noqa: BLE001 - preserve controls through cleanup
+                            retain(exc, cleanup=True)
+                        # This is the only positive settlement wait. It never
+                        # replenishes the clock, including after failed signaling.
+                        if process.poll() is None:
+                            remaining = cleanup_cutoff - time.monotonic()
+                            if remaining > 0:
+                                try:
+                                    process.wait(timeout=min(5, remaining))
+                                except BaseException as exc:  # noqa: BLE001 - preserve controls through cleanup
+                                    retain(exc, cleanup=True)
+                        if process.poll() is None:
+                            record.setdefault("error", "command child settlement incomplete")
+                except BaseException as exc:  # noqa: BLE001 - preserve controls through cleanup
+                    retain(exc, cleanup=True)
+        finally:
+            try:
+                if selector is not None:
+                    try:
+                        selector.close()
+                    except BaseException as exc:  # noqa: BLE001 - preserve controls through cleanup
+                        retain(exc, cleanup=True)
+            finally:
+                try:
+                    if process is not None and process.stdout is not None:
+                        try:
+                            process.stdout.close()
+                        except BaseException as exc:  # noqa: BLE001 - preserve controls through cleanup
+                            retain(exc, cleanup=True)
+                finally:
+                    if process is not None and process.stderr is not None:
+                        try:
+                            process.stderr.close()
+                        except BaseException as exc:  # noqa: BLE001 - preserve controls through cleanup
+                            retain(exc, cleanup=True)
+    if pending is not None:
+        raise pending.with_traceback(pending_traceback)
+    if "error" not in record:
+        try:
+            remaining_command()
+        except ProbeError as exc:
+            record["error"] = str(exc)
+    record.update(
+        stdout_hex=bytes(stdout[:limit]).hex(),
+        stderr_hex=bytes(stderr[:limit]).hex(),
+        returncode=process.returncode if process is not None else None,
+        stdout=bytes(stdout[:limit]).decode("utf-8", errors="replace"),
+        stderr=bytes(stderr[:limit]).decode("utf-8", errors="replace"),
+        ended={"utc_ns": time.time_ns(), "monotonic_ns": time.monotonic_ns()},
+    )
+    if "error" not in record:
+        try:
+            remaining_command()
+        except ProbeError as exc:
+            record["error"] = str(exc)
     return record
 
 
