@@ -2430,6 +2430,1048 @@ def runtime_summary(record):
     return result
 
 
+# Fixed passive installation evidence. These codes are observations, not admission.
+INSTALL_OBSERVATION_LIMITS = (352 * 1024, 288 * 1024, 384 * 1024)
+INSTALL_OBSERVATION_NAMES = (*PATH_SELECTION_TOOLS, "pysemgrep", "py.test")
+INSTALL_OBSERVATION_DESTINATIONS = ("semgrep", "pysemgrep", "ruff", "mutmut", "pytest", "py.test", "code-forge", "code-forge-mcp")
+INSTALL_OBSERVATION_DISTRIBUTIONS = ("pip", "semgrep", "ruff", "mutmut", "pytest", "code-review-forge", "pytest")
+INSTALL_OBSERVATION_MEMBERS = ("METADATA", "WHEEL", "entry_points.txt", "RECORD")
+INSTALL_OBSERVATION_SOURCES = ("pip/__init__.py", "pip/__main__.py", "pip/_internal/operations/install/wheel.py",
+                               "pip/_internal/utils/unpacking.py", "pip/_vendor/distlib/scripts.py", "pip/_vendor/distlib/util.py")
+INSTALL_OBSERVATION_KEYS = {"schema_version", "kind", "stage", "status", "binding", "shell_umask", "observer_umask",
+                            "tools", "directories", "metadata", "sources", "probes", "bytes_read", "deadline_ns", "finished_ns", "error"}
+INSTALL_OBSERVATION_BINDING = {"run_id", "run_attempt", "candidate_sha", "workflow_sha", "workflow_job", "boot_id", "launch_receipt_sha256"}
+
+
+class InstallObservationError(ServiceError):
+    """A fixed, value-free observation error; never runtime authorization."""
+
+    def __init__(self, code):
+        super().__init__("installation observation incomplete")
+        self.code = code
+
+
+def install_observation_need(condition, code=8):
+    if not condition:
+        raise InstallObservationError(code)
+
+
+def install_observation_code(error):
+    import errno
+    if isinstance(error, InstallObservationError):
+        return error.code
+    if isinstance(error, OSError):
+        return {errno.ENOENT: 1, errno.ENODATA: 1, errno.EACCES: 3, errno.EPERM: 3,
+                errno.ENOTSUP: 4, errno.ENOSYS: 4, errno.ELOOP: 5, errno.ENOTDIR: 6,
+                errno.EEXIST: 11, errno.ERANGE: 9}.get(error.errno, 15)
+    return 15
+
+
+def install_observation_retain(first, later):
+    expected = (InstallObservationError, OSError, ServiceError)
+    if first is None or (isinstance(first, expected) and not getattr(first, "_forge_control", False)
+                         and (not isinstance(later, expected) or getattr(later, "_forge_control", False))):
+        return later
+    return first
+
+
+def install_observation_stat(info):
+    types = {stat.S_IFREG: 0, stat.S_IFDIR: 1, stat.S_IFLNK: 2, stat.S_IFIFO: 3,
+             stat.S_IFSOCK: 4, stat.S_IFCHR: 5, stat.S_IFBLK: 6}
+    row = [types.get(stat.S_IFMT(info.st_mode), 7), info.st_dev, info.st_ino, info.st_uid,
+           info.st_gid, info.st_nlink, stat.S_IMODE(info.st_mode), info.st_size]
+    limits = (7, 2**64 - 1, 2**64 - 1, 2**32 - 1, 2**32 - 1, 2**32 - 1, 4095, 2**63 - 1)
+    install_observation_need(all(type(x) is int and 0 <= x <= limit for x, limit in zip(row, limits, strict=True)), 9)
+    return row
+
+
+def install_observation_identity(info):
+    # Full stable metadata, including nanoseconds, is required for content reads.
+    return (info.st_mode, info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_nlink,
+            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def install_observation_safe(info, *, ancestor=False):
+    return (info.st_uid in {0, os.getuid()} and (not info.st_mode & 0o022
+            or (ancestor and info.st_uid == 0 and info.st_mode & stat.S_ISVTX)))
+
+
+def install_observation_acl(raw):
+    install_observation_need(type(raw) is bytes and 4 <= len(raw) <= 4096, 9 if len(raw) > 4096 else 8)
+    install_observation_need((len(raw) - 4) % 8 == 0 and (len(raw) - 4) // 8 <= 128
+                             and struct.unpack_from("<I", raw)[0] == 2)
+    base, named = {}, {2: set(), 8: set()}
+    for offset in range(4, len(raw), 8):
+        tag, permissions, identifier = struct.unpack_from("<HHI", raw, offset)
+        install_observation_need(tag in {1, 2, 4, 8, 16, 32} and permissions <= 7)
+        if tag in named:
+            install_observation_need(identifier != 2**32 - 1 and identifier not in named[tag])
+            named[tag].add(identifier)
+        else:
+            install_observation_need(identifier == 2**32 - 1 and tag not in base)
+            base[tag] = permissions
+    install_observation_need({1, 4, 32} <= base.keys() and (not any(named.values()) or 16 in base))
+    # Group/named permissions are limited by the mask. Preserve the stored group
+    # bits and mask separately; callers must not treat group_bits as effective.
+    return [0, len(raw), hashlib.sha256(raw).hexdigest(), base[1], base[4], base[32],
+            base.get(16), len(named[2]), len(named[8])]
+
+
+def validate_install_observation(value):
+    """Validate exactly the retained spec-sizing-v2 schema and scalar widths."""
+    def integer(item, maximum, minimum=0):
+        return type(item) is int and minimum <= item <= maximum
+
+    def digest(item):
+        return type(item) is str and re.fullmatch(r"[0-9a-f]{64}", item) is not None
+
+    def row(item, count):
+        install_observation_need(type(item) is list and len(item) == count)
+
+    def code(item):
+        install_observation_need(integer(item, 15))
+
+    def stat_row(item):
+        if item is None:
+            return
+        row(item, 8)
+        limits = (7, 2**64 - 1, 2**64 - 1, 2**32 - 1, 2**32 - 1, 2**32 - 1, 4095, 2**63 - 1)
+        install_observation_need(all(integer(x, cap) for x, cap in zip(item, limits, strict=True)))
+
+    def acl(item):
+        row(item, 9)
+        code(item[0])
+        install_observation_need(item[1] is None or integer(item[1], 4096))
+        install_observation_need(item[2] is None or digest(item[2]))
+        install_observation_need(all(x is None or integer(x, 7) for x in item[3:7]))
+        install_observation_need(all(x is None or integer(x, 128) for x in item[7:]))
+        if item[0] == 0:
+            install_observation_need(item[1] is not None and digest(item[2]) and all(x is not None for x in item[3:6] + item[7:]))
+
+    install_observation_need(type(value) is dict and value.keys() == INSTALL_OBSERVATION_KEYS)
+    install_observation_need(type(value["schema_version"]) is int and value["schema_version"] == 1
+                             and value["kind"] == "installation-mode-observation" and integer(value["stage"], 2)
+                             and type(value["status"]) is str and value["status"] in {"COMPLETE", "STOP"})
+    stage = value["stage"]
+    binding = value["binding"]
+    install_observation_need(type(binding) is dict and binding.keys() == INSTALL_OBSERVATION_BINDING)
+    install_observation_need(positive(binding["run_id"]) and type(binding["run_attempt"]) is int and binding["run_attempt"] == 1)
+    install_observation_need(all(type(binding[k]) is str and re.fullmatch(r"[0-9a-f]{40}", binding[k])
+                                 and binding[k] != "0" * 40 for k in ("candidate_sha", "workflow_sha"))
+                             and binding["candidate_sha"] == binding["workflow_sha"] and binding["workflow_job"] == "linux-tests"
+                             and type(binding["boot_id"]) is str
+                             and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", binding["boot_id"])
+                             and digest(binding["launch_receipt_sha256"]))
+    install_observation_need(all(type(value[k]) is str and re.fullmatch(r"[0-7]{4}", value[k])
+                                 for k in ("shell_umask", "observer_umask")))
+    install_observation_need(positive(value["deadline_ns"]) and positive(value["finished_ns"])
+                             and value["finished_ns"] < value["deadline_ns"]
+                             and integer(value["bytes_read"], INSTALL_OBSERVATION_LIMITS[stage]))
+    code(value["error"])
+    install_observation_need((value["error"] == 0) == (value["status"] == "COMPLETE"))
+    install_observation_need(type(value["tools"]) is list and len(value["tools"]) == 47)
+    for slot, item in enumerate(value["tools"]):
+        row(item, 8)
+        install_observation_need(integer(item[0], 46) and item[0] == slot)
+        code(item[1])
+        for root, path_digest in ((item[2], item[3]), (item[4], item[5])):
+            install_observation_need((root is None and path_digest is None) or (integer(root, 15) and digest(path_digest)))
+        if item[6] is not None:
+            row(item[6], 3)
+            install_observation_need(integer(item[6][0], 7) and all(integer(x, 2**64 - 1) for x in item[6][1:]))
+        stat_row(item[7])
+    directory_roles = (0, 4, 6) if stage == 1 else tuple(range(10))
+    install_observation_need(type(value["directories"]) is list and len(value["directories"]) == len(directory_roles))
+    for role, item in zip(directory_roles, value["directories"], strict=True):
+        row(item, 6)
+        install_observation_need(integer(item[0], 9) and item[0] == role and digest(item[1]))
+        stat_row(item[2])
+        acl(item[3])
+        acl(item[4])
+        code(item[5])
+    install_observation_need(type(value["metadata"]) is list and len(value["metadata"]) == (1, 6, 7)[stage])
+    for slot, item in enumerate(value["metadata"]):
+        row(item, 4)
+        install_observation_need(integer(item[0], 6) and item[0] == slot
+                                 and (item[1] is None or (type(item[1]) is str and re.fullmatch(r"[A-Za-z0-9.!+_-]{1,64}", item[1]))))
+        row(item[2], 4)
+        for pair in item[2]:
+            row(pair, 2)
+            install_observation_need(pair == [None, None] or (integer(pair[0], 128 * 1024) and digest(pair[1])))
+        code(item[3])
+    install_observation_need(type(value["sources"]) is list and len(value["sources"]) == (0 if stage == 1 else 6))
+    for slot, item in enumerate(value["sources"]):
+        row(item, 4)
+        install_observation_need(integer(item[0], 5) and item[0] == slot
+                                 and ((item[1] is None and item[2] is None) or (integer(item[1], 128 * 1024) and digest(item[2]))))
+        code(item[3])
+    install_observation_need(type(value["probes"]) is list and len(value["probes"]) == (3 if stage == 0 else 0))
+    for slot, item in enumerate(value["probes"]):
+        row(item, 7)
+        install_observation_need(integer(item[0], 2) and item[0] == slot and item[5] == value["observer_umask"])
+        stat_row(item[1])
+        acl(item[2])
+        acl(item[3])
+        row(item[4], 2)
+        for mode, child in zip(("0666", "0600"), item[4], strict=True):
+            row(child, 3)
+            install_observation_need(child[0] == mode)
+            stat_row(child[1])
+            acl(child[2])
+        code(item[6])
+    install_observation_need(len(canonical(value)) <= 24 * 1024, 9)
+
+
+class _InstallObservation:
+    """One finite checkpoint; no subprocesses, callbacks or imported packages."""
+
+    # A blocked/late iterator must not be implicitly closed by local decref
+    # after D. Keep it alive through this one-role process's termination.
+    _unclosed_scans = []
+
+    def __init__(self, environment, stage, deadline_ns):
+        import sysconfig
+        self.environment, self.stage = environment, stage
+        self.started = time.monotonic_ns()
+        install_observation_need(positive(deadline_ns) and self.started < deadline_ns <= self.started + 600 * NS, 12)
+        self.deadline = min(self.started + 20 * NS, deadline_ns)
+        self.cutoff = self.deadline - 2 * NS
+        self.bytes_read = self.source_bytes = self.acl_calls = 0
+        self.fds, self.directory_cache, self.tool_cache, self.content_cache = set(), {}, {}, {}
+        self.pending_receipt = None
+        provider = Path(PROVIDER).parent.parent
+        home, repo = Path(environment["HOME"]), Path(environment["GITHUB_WORKSPACE"])
+        self.roots = (provider, Path("/usr/bin"), Path("/bin"), node_root(environment), home / ".local", repo)
+        paths = sysconfig.get_paths()
+        install_observation_need(all(type(paths.get(key)) is str for key in ("scripts", "purelib", "platlib")), 5)
+        scripts, purelib, platlib = (self.path(paths[key]) for key in ("scripts", "purelib", "platlib"))
+        install_observation_need(scripts == Path(PROVIDER).parent and purelib.is_relative_to(provider)
+                                 and platlib.is_relative_to(provider), 5)
+        target = home / ".local/lib/python3.12/site-packages"
+        self.directories = (scripts, purelib, platlib, home / ".local", home / ".local/bin",
+                            target, target / "bin", repo, repo / "src", repo / "src/code_review_forge.egg-info")
+        self.evidence = Path(environment["RUNNER_TEMP"]) / "forge-evidence"
+        self.allowed_reads = {self.evidence / "launch-bootstrap.json", Path("/proc/self/status"), Path("/proc/sys/kernel/random/boot_id")}
+        self.allowed_reads.update(root / relative for root in (purelib, platlib) for relative in INSTALL_OBSERVATION_SOURCES)
+        install_observation_need(environment["EVIDENCE"] == str(self.evidence), 8)
+        self.check()
+
+    def check(self, *, settlement=False):
+        install_observation_need(time.monotonic_ns() < (self.deadline if settlement else self.cutoff), 12)
+
+    def close(self, fd, *, settlement=None):
+        if fd in self.fds:
+            active = sys.exception()
+            settling = active is not None if settlement is None else settlement
+            try:
+                self.check(settlement=settling)
+                self.fds.remove(fd)
+                os.close(fd)
+                self.check(settlement=settling)
+            except BaseException as error:  # noqa: BLE001 - preserve an active control during descriptor cleanup
+                raise install_observation_retain(active, error) from None
+
+    def open(self, path, flags, mode=0o777, *, parent=None, settlement=False):
+        self.check(settlement=settlement)
+        fd = os.open(path, flags | os.O_CLOEXEC, mode, dir_fd=parent)
+        self.fds.add(fd)  # Retain ownership even when the syscall returns late.
+        self.check(settlement=settlement)
+        return fd
+
+    def stat(self, path, *, dir_fd=None, follow_symlinks=False, settlement=False):
+        self.check(settlement=settlement)
+        result = os.stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+        self.check(settlement=settlement)
+        return result
+
+    def fstat(self, fd, *, settlement=False):
+        self.check(settlement=settlement)
+        result = os.fstat(fd)
+        self.check(settlement=settlement)
+        return result
+
+    def scan(self, fd, limit, *, settlement=False, code=9):
+        """A bounded name-only scan whose close also obeys the original cutoff."""
+        self.check(settlement=settlement)
+        entries = os.scandir(fd)
+        self._unclosed_scans.append(entries)
+        names, failure = [], None
+        try:
+            self.check(settlement=settlement)
+            for _ in range(limit):
+                self.check(settlement=settlement)
+                entry = next(entries, None)
+                self.check(settlement=settlement)
+                if entry is None:
+                    break
+                install_observation_need(len(entry.name.encode("utf-8")) <= 255, code)
+                names.append(entry.name)
+            else:
+                # Do not consume a (limit+1)th directory entry to prove overflow.
+                raise InstallObservationError(code)
+        except BaseException as error:  # noqa: BLE001 - keep the first control through iterator cleanup
+            failure = error
+        finally:
+            try:
+                settling = settlement or failure is not None
+                self.check(settlement=settling)
+                entries.close()
+                self._unclosed_scans.remove(entries)
+                self.check(settlement=settling)
+            except BaseException as error:  # noqa: BLE001 - a late iterator is not permission to close after D
+                failure = install_observation_retain(failure, error)
+        if failure is not None:
+            raise failure
+        return names
+
+    def path(self, path):
+        path = Path(path)
+        install_observation_need(path.is_absolute() and str(path).encode("utf-8", "strict")
+                                 and len(str(path).encode("utf-8")) <= 4096 and len(path.parts) <= 64
+                                 and ".." not in path.parts, 9)
+        return path
+
+    def location(self, path, *, real=False):
+        path = self.path(path)
+        for index, root in enumerate(self.roots):
+            if path.is_relative_to(root):
+                relative = path.relative_to(root).as_posix()
+                domain = b"installation-observation-real" if real else b"installation-observation-lexical"
+                return index, hashlib.sha256(domain + b"\0" + relative.encode("utf-8")).hexdigest()
+        raise InstallObservationError(5)
+
+    @contextmanager
+    def parent(self, path, *, leaf_link=False, settlement=False):
+        """Bounded descriptor walk. Aliases can only resolve into fixed roots."""
+        path, links, opened, failure = self.path(path), 0, [], None
+        unsafe = False
+        try:
+            while True:
+                self.check(settlement=settlement)
+                fd = self.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, settlement=settlement)
+                opened.append(fd)
+                current, restart = Path("/"), False
+                for index, part in enumerate(path.parts[1:]):
+                    self.check(settlement=settlement)
+                    info = self.stat(part, dir_fd=fd, follow_symlinks=False, settlement=settlement)
+                    self.check(settlement=settlement)
+                    last = index == len(path.parts) - 2
+                    if stat.S_ISLNK(info.st_mode) and (not last or leaf_link):
+                        links += 1
+                        install_observation_need(links <= 8, 5)
+                        self.check(settlement=settlement)
+                        target = os.readlink(part, dir_fd=fd)
+                        self.check(settlement=settlement)
+                        install_observation_need(self.stat(part, dir_fd=fd, follow_symlinks=False, settlement=settlement) == info, 7)
+                        install_observation_need(len(target.encode("utf-8")) <= 4096, 9)
+                        normalized = Path(os.path.normpath(str(current / target)))
+                        path = self.path(normalized.joinpath(*path.parts[index + 2:]))
+                        if path != Path("/proc") / str(os.getpid()) / "status":
+                            self.location(path, real=True)
+                        restart = True
+                        break
+                    if last:
+                        yield fd, part, info, path, unsafe
+                        return
+                    install_observation_need(stat.S_ISDIR(info.st_mode), 6)
+                    unsafe = unsafe or not install_observation_safe(info, ancestor=True)
+                    child = self.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, parent=fd, settlement=settlement)
+                    opened.append(child)
+                    install_observation_need(install_observation_identity(self.fstat(child, settlement=settlement)) == install_observation_identity(info), 7)
+                    self.close(fd, settlement=settlement)
+                    opened.remove(fd)
+                    fd, current = child, current / part
+                if not restart:
+                    raise InstallObservationError(6)
+                for fd in reversed(opened):
+                    self.close(fd, settlement=settlement)
+                opened.clear()
+        except BaseException as error:  # noqa: BLE001 - close every owned descriptor without replacing controls
+            failure = error
+        finally:
+            for fd in reversed(opened):
+                try:
+                    self.close(fd, settlement=settlement or failure is not None)
+                except BaseException as error:  # noqa: BLE001 - independent descriptor close attempts
+                    failure = install_observation_retain(failure, error)
+        if failure is not None:
+            raise failure
+
+    def read(self, path, limit=128 * 1024, *, source=False, proc=False):
+        path = self.path(path)
+        install_observation_need(path in self.allowed_reads, 5)
+        proc_path = path in {Path("/proc/self/status"), Path("/proc/sys/kernel/random/boot_id")}
+        install_observation_need(proc == proc_path, 5)
+        cap = (2048 if path == Path("/proc/self/status") else 64 if proc_path else
+               16 * 1024 if path == self.evidence / "launch-bootstrap.json" else 128 * 1024)
+        install_observation_need(type(limit) is int and 0 < limit <= cap, 9)
+        if any(path == root / relative for root in (self.directories[1], self.directories[2])
+               for relative in INSTALL_OBSERVATION_SOURCES):
+            install_observation_need(self.stage in (0, 2), 5)
+            source = True
+        cache_key = str(path)
+        if cache_key in self.content_cache:
+            return self.content_cache[cache_key]
+        with self.parent(path) as (parent, name, before, real, unsafe):
+            # Public reads stay on this exact catalog item, not a different
+            # distribution/source merely because that other item is allowed.
+            install_observation_need(real == path or (path == Path("/proc/self/status")
+                                     and real == Path("/proc") / str(os.getpid()) / "status"), 5)
+            install_observation_need(stat.S_ISREG(before.st_mode) and before.st_nlink == 1, 6)
+            install_observation_need(not unsafe and before.st_uid in {0, os.getuid()}, 10)
+            install_observation_need(0 <= before.st_size <= limit, 9)
+            fd = self.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, parent=parent)
+            try:
+                install_observation_need(install_observation_identity(self.fstat(fd)) == install_observation_identity(before), 7)
+                wanted = limit if proc else before.st_size
+                allowed = INSTALL_OBSERVATION_LIMITS[self.stage] - self.bytes_read
+                if source:
+                    allowed = min(allowed, 144 * 1024 - self.source_bytes)
+                install_observation_need(wanted <= allowed, 9)
+                raw = bytearray()
+                while len(raw) < wanted:
+                    self.check()
+                    count = min(16384, wanted - len(raw))
+                    try:
+                        chunk = os.read(fd, count)
+                    except BaseException:
+                        self.bytes_read += count
+                        if source:
+                            self.source_bytes += count
+                        raise
+                    self.bytes_read += len(chunk)
+                    if source:
+                        self.source_bytes += len(chunk)
+                    self.check()
+                    if not chunk:
+                        break
+                    raw.extend(chunk)
+                install_observation_need((len(raw) < limit if proc else len(raw) == before.st_size), 9 if proc else 7)
+                install_observation_need(install_observation_identity(self.fstat(fd)) == install_observation_identity(before), 7)
+                self.check()
+                result = bytes(raw), (0 if install_observation_safe(before) else 10)
+                if not proc:
+                    self.content_cache[cache_key] = result
+                return result
+            finally:
+                self.close(fd)
+
+    def acl(self, fd, name):
+        try:
+            return self._acl(fd, name)
+        except (OSError, InstallObservationError) as error:
+            if getattr(error, "_forge_control", False):
+                raise
+            if not hasattr(error, "acl_row"):
+                error.acl_row = [install_observation_code(error), None, None, None, None, None, None, None, None]
+            raise
+
+    def _acl(self, fd, name):
+        self.check()
+        self.acl_calls += 1
+        install_observation_need(self.acl_calls <= (32, 6, 20)[self.stage], 9)
+        before = self.fstat(fd)
+        try:
+            raw = os.getxattr(fd, name)
+        except OSError as error:
+            if getattr(error, "_forge_control", False):
+                raise
+            self.check()
+            code = install_observation_code(error)
+            install_observation_need(install_observation_identity(self.fstat(fd)) == install_observation_identity(before), 7)
+            if code in {1, 4}:
+                return [code, None, None, None, None, None, None, None, None]
+            raise InstallObservationError(code) from error
+        self.check()
+        # Linux bounds this syscall at 64 KiB; stop at the first >4 KiB value.
+        try:
+            install_observation_need(len(raw) <= 4096, 9)
+            install_observation_need(install_observation_identity(self.fstat(fd)) == install_observation_identity(before), 7)
+            return install_observation_acl(raw)
+        except InstallObservationError as error:
+            error.acl_row = [error.code, len(raw) if len(raw) <= 4096 else None,
+                             hashlib.sha256(raw).hexdigest() if len(raw) <= 4096 else None, None, None, None, None, None, None]
+            raise
+
+    def directory(self, role):
+        path = self.directories[role]
+        path_digest = self.location(path)[1]
+        unavailable = [14, None, None, None, None, None, None, None, None]
+        row = [role, path_digest, None, unavailable[:], unavailable[:], 14]
+        acl_index = 3
+        try:
+            with self.parent(path, leaf_link=True) as (parent, name, info, _real, unsafe):
+                row[2] = install_observation_stat(info)
+                install_observation_need(stat.S_ISDIR(info.st_mode), 6)
+                key = install_observation_identity(info)
+                if key in self.directory_cache:
+                    prior = self.directory_cache[key]
+                    return [role, path_digest, *prior[2:5], 10 if unsafe or not install_observation_safe(info) else prior[5]]
+                fd = self.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, parent=parent)
+                try:
+                    install_observation_need(install_observation_identity(self.fstat(fd)) == key, 7)
+                    row[3] = self.acl(fd, "system.posix_acl_access")
+                    acl_index = 4
+                    row[4] = self.acl(fd, "system.posix_acl_default")
+                    row[5] = 10 if unsafe or not install_observation_safe(info) else 0
+                    self.directory_cache[key] = row
+                finally:
+                    self.close(fd)
+        except (OSError, InstallObservationError) as error:
+            if getattr(error, "_forge_control", False):
+                raise
+            row[5] = install_observation_code(error)
+            if hasattr(error, "acl_row"):
+                row[acl_index] = error.acl_row
+            if row[5] not in {1, 4, 5, 6, 10}:
+                error.observation_row = row
+                raise
+        return row
+
+    def tool(self, slot, path):
+        lexical_root, lexical_digest = self.location(path)
+        row = [slot, 14, lexical_root, lexical_digest, None, None, None, None]
+        if str(path) in self.tool_cache:
+            return [slot, *self.tool_cache[str(path)][1:]]
+        try:
+            with self.parent(path) as (_parent, _name, info, _real, _unsafe):
+                row[6] = install_observation_stat(info)[:3]
+                lexical_identity = install_observation_identity(info)
+            with self.parent(path, leaf_link=True) as (parent, name, info, real, unsafe):
+                row[4], row[5] = self.location(real, real=True)
+                row[7] = install_observation_stat(info)
+                row[1] = 6 if not stat.S_ISREG(info.st_mode) else 10 if unsafe or not install_observation_safe(info) else 0
+                self.check()
+                install_observation_need(install_observation_identity(self.stat(name, dir_fd=parent, follow_symlinks=False))
+                                         == install_observation_identity(info), 7)
+            with self.parent(path) as (_parent, _name, info, _real, _unsafe):
+                install_observation_need(install_observation_identity(info) == lexical_identity, 7)
+        except (OSError, InstallObservationError) as error:
+            if getattr(error, "_forge_control", False):
+                raise
+            row[1] = install_observation_code(error)
+            if row[1] in {7, 9, 12}:
+                error.observation_row = row
+                raise
+        self.tool_cache[str(path)] = row
+        return row
+
+    def tools(self):
+        result = []
+        for slot, name in enumerate(INSTALL_OBSERVATION_NAMES):
+            selected = [slot, 1, None, None, None, None, None, None]
+            incomplete = None
+            for directory in self.environment["PATH"].split(":"):
+                row = self.tool(slot, Path(directory) / name)
+                if row[1] == 1:
+                    continue
+                if incomplete is None and row[1] in {2, 3, 4, 5, 15}:
+                    incomplete = row
+                if row[7] is not None and row[7][0] != 0:
+                    continue
+                self.check()
+                executable = os.access(Path(directory) / name, os.X_OK, effective_ids=True)
+                self.check()
+                if not executable:
+                    continue
+                selected = row
+                break
+            result.append(incomplete if selected[1] == 1 and incomplete is not None else selected)
+        for directory, names in ((self.directories[0], INSTALL_OBSERVATION_DESTINATIONS),
+                                  (self.directories[4], INSTALL_OBSERVATION_DESTINATIONS),
+                                  (self.directories[6], ("pytest", "py.test"))):
+            for name in names:
+                result.append(self.tool(len(result), directory / name))
+        return result
+
+    def distribution_paths(self, roots):
+        """Only immediate provider/expected-target metadata directory names."""
+        found = {name: [] for name in set(INSTALL_OBSERVATION_DISTRIBUTIONS)}
+        seen = set()
+        for root in roots:
+            try:
+                with self.parent(root, leaf_link=True) as (parent, name, info, _real, unsafe):
+                    install_observation_need(stat.S_ISDIR(info.st_mode), 6)
+                    identity = (info.st_dev, info.st_ino)
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    if unsafe or not install_observation_safe(info):
+                        for candidates in found.values():
+                            candidates.append((None, "unsafe"))
+                        continue
+                    fd = self.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, parent=parent)
+                    try:
+                        install_observation_need(install_observation_identity(self.fstat(fd)) == install_observation_identity(info), 7)
+                        for entry_name in self.scan(fd, 4096):
+                            for canonical_name in found:
+                                prefix = r"[-_.]+".join(canonical_name.split("-"))
+                                match = re.fullmatch(prefix + r"(?:-[^/]+)?\.(dist-info|egg-info)", entry_name, re.IGNORECASE)
+                                if match:
+                                    found[canonical_name].append((root / entry_name, match[1]))
+                                    self.allowed_reads.update(root / entry_name / member for member in INSTALL_OBSERVATION_MEMBERS)
+                        install_observation_need(install_observation_identity(self.fstat(fd)) == install_observation_identity(info), 7)
+                    finally:
+                        self.close(fd)
+            except (OSError, InstallObservationError) as error:
+                if getattr(error, "_forge_control", False):
+                    raise
+                if install_observation_code(error) != 1:
+                    raise
+        return found
+
+    def distribution(self, slot, found):
+        name = INSTALL_OBSERVATION_DISTRIBUTIONS[slot]
+        candidates = found[name]
+        row = [slot, None, [[None, None] for _ in INSTALL_OBSERVATION_MEMBERS], 1]
+        if len(candidates) != 1:
+            row[3] = 8 if candidates else 1
+            return row
+        path, layout = candidates[0]
+        if layout != "dist-info":
+            row[3] = 10 if layout == "unsafe" else 4
+            return row
+        row[3], headers = 0, None
+        for index, member in enumerate(INSTALL_OBSERVATION_MEMBERS):
+            try:
+                raw, status = self.read(path / member)
+                row[2][index] = [len(raw), hashlib.sha256(raw).hexdigest()]
+                if status == 10:
+                    row[3] = 10
+                if member == "METADATA":
+                    headers = []
+                    for line in raw.splitlines():
+                        if not line:
+                            break
+                        headers.append(line)
+            except (OSError, InstallObservationError) as error:
+                if getattr(error, "_forge_control", False):
+                    raise
+                status = install_observation_code(error)
+                if status == 1:
+                    continue
+                if status in {5, 6, 10}:
+                    if row[3] != 10:
+                        row[3] = status
+                    continue
+                error.observation_row = row
+                raise
+        if headers is not None:
+            names = [x[5:].strip() for x in headers if x.startswith(b"Name:")]
+            versions = [x[8:].strip() for x in headers if x.startswith(b"Version:")]
+            if (len(names) == len(versions) == 1 and len(names[0]) <= 64
+                    and re.fullmatch(rb"[A-Za-z0-9_.-]+", names[0])
+                    and re.sub(rb"[-_.]+", b"-", names[0]).lower() == name.encode("ascii")
+                    and re.fullmatch(rb"[A-Za-z0-9.!+_-]{1,64}", versions[0])):
+                row[1] = versions[0].decode("ascii")
+            elif row[3] != 10:
+                row[3] = 8
+        elif row[3] == 0:
+            row[3] = 2
+        return row
+
+    def sources(self):
+        result = []
+        for slot, relative in enumerate(INSTALL_OBSERVATION_SOURCES):
+            row = [slot, None, None, 1]
+            candidates = []
+            for root in dict.fromkeys((self.directories[1], self.directories[2])):
+                try:
+                    with self.parent(root / relative) as (_parent, _name, _info, _real, _unsafe):
+                        candidates.append(root / relative)
+                except (OSError, InstallObservationError) as error:
+                    if getattr(error, "_forge_control", False):
+                        raise
+                    if install_observation_code(error) != 1:
+                        row[3] = install_observation_code(error)
+                        if row[3] in {7, 9, 12}:
+                            raise
+            if len(candidates) == 1:
+                try:
+                    raw, row[3] = self.read(candidates[0], source=True)
+                    row[1:3] = [len(raw), hashlib.sha256(raw).hexdigest()]
+                except (OSError, InstallObservationError) as error:
+                    if getattr(error, "_forge_control", False):
+                        raise
+                    row[3] = install_observation_code(error)
+                    if row[3] not in {1, 4, 5, 6, 10}:
+                        raise
+            elif len(candidates) > 1:
+                row[3] = 8
+            result.append(row)
+        return result
+
+    def probe(self, slot, parent_row, observer_umask):
+        unavailable = [14, None, None, None, None, None, None, None, None]
+        row = [slot, None, parent_row[4], unavailable[:],
+               [["0666", None, unavailable[:]], ["0600", None, unavailable[:]]], observer_umask, 4]
+        root = self.directories[(0, 1, 3)[slot]]
+        if parent_row[5] != 0 or parent_row[3][0] not in {0, 1} or parent_row[4][0] not in {0, 1}:
+            return row
+        name = ".forge-install-observation-" + self.environment["GITHUB_RUN_ID"] + "-1"
+        parent_fd = directory_fd = None
+        files, created, failure = {}, False, None
+        try:
+            with self.parent(root, leaf_link=True) as (ancestor, leaf, info, _real, unsafe):
+                install_observation_need(not unsafe and install_observation_safe(info) and stat.S_ISDIR(info.st_mode), 10)
+                install_observation_need(install_observation_stat(info) == parent_row[2]
+                                         and install_observation_identity(info) in self.directory_cache, 7)
+                parent_fd = self.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, parent=ancestor)
+                install_observation_need(install_observation_identity(self.fstat(parent_fd)) == install_observation_identity(info), 7)
+            self.check()
+            if not os.access(root, os.W_OK | os.X_OK, effective_ids=True):
+                self.check()
+                raise InstallObservationError(4)
+            self.check()
+            try:
+                self.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError as error:
+                if getattr(error, "_forge_control", False):
+                    raise
+            else:
+                raise InstallObservationError(11)
+            self.check()
+            os.mkdir(name, 0o700, dir_fd=parent_fd)
+            created = True
+            self.check()
+            before = self.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            install_observation_need(stat.S_ISDIR(before.st_mode) and before.st_uid == os.getuid()
+                                     and before.st_gid == os.getgid() and stat.S_IMODE(before.st_mode) == 0o700, 10)
+            directory_fd = self.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, parent=parent_fd)
+            install_observation_need(install_observation_identity(self.fstat(directory_fd)) == install_observation_identity(before), 7)
+            row[1] = install_observation_stat(before)
+            try:
+                row[3] = self.acl(directory_fd, "system.posix_acl_default")
+            except (OSError, InstallObservationError) as error:
+                if getattr(error, "_forge_control", False):
+                    raise
+                if hasattr(error, "acl_row"):
+                    row[3] = error.acl_row
+                raise
+            install_observation_need(row[3][0] in {0, 1}, 4)
+            for index, (child, mode) in enumerate((("ordinary", 0o666), ("restricted", 0o600))):
+                self.check()
+                fd = os.open(child, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, mode, dir_fd=directory_fd)
+                self.fds.add(fd)
+                files[child] = fd  # Retain the exact name/fd even if open returned late.
+                self.check()
+                info = self.fstat(fd)
+                row[4][index][1] = install_observation_stat(info)
+                install_observation_need(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+                                         and info.st_gid == os.getgid() and info.st_nlink == 1 and info.st_size == 0
+                                         and not stat.S_IMODE(info.st_mode) & ~mode, 10)
+                try:
+                    row[4][index][2] = self.acl(fd, "system.posix_acl_access")
+                except (OSError, InstallObservationError) as error:
+                    if getattr(error, "_forge_control", False):
+                        raise
+                    if hasattr(error, "acl_row"):
+                        row[4][index][2] = error.acl_row
+                    raise
+                install_observation_need(row[4][index][2][0] in {0, 1}, 4)
+            self.check()
+        except BaseException as error:  # noqa: BLE001 - retain control over exact cleanup failures
+            failure = None if not created and not getattr(error, "_forge_control", False) and install_observation_code(error) == 4 else error
+        finally:
+            if created:
+                try:
+                    self.check(settlement=failure is not None)
+                    # A late mkdir without an anchored original directory fd
+                    # cannot authorize adopting whatever now occupies its name.
+                    install_observation_need(directory_fd is not None and parent_fd is not None, 13)
+                    self.cleanup_probe(parent_fd, name, directory_fd, files, settlement=failure is not None)
+                    row[6] = 0  # Removed means every exact unlink and rmdir succeeded.
+                except BaseException as error:  # noqa: BLE001 - settlement never replaces the first control
+                    row[6] = 13
+                    failure = install_observation_retain(failure, error)
+            elif failure is not None:
+                row[6] = install_observation_code(failure)
+            for fd in (*files.values(), directory_fd, parent_fd):
+                if fd is not None:
+                    try:
+                        self.check(settlement=failure is not None)
+                        self.close(fd, settlement=failure is not None)
+                    except BaseException as error:  # noqa: BLE001 - independent close attempts
+                        failure = install_observation_retain(failure, error)
+        if failure is not None:
+            if row[6] == 0:
+                row[6] = install_observation_code(failure)
+            failure.observation_row = row
+            raise failure
+        return row
+
+    def cleanup_probe(self, parent_fd, name, directory_fd, files, *, settlement=False):
+        self.check(settlement=settlement)
+        names = self.scan(directory_fd, 3, settlement=settlement, code=13)
+        install_observation_need(set(names) == set(files) and len(names) == len(files), 13)
+        for child, fd in files.items():
+            self.check(settlement=settlement)
+            held = self.fstat(fd, settlement=settlement)
+            current = self.stat(child, dir_fd=directory_fd, follow_symlinks=False, settlement=settlement)
+            install_observation_need(stat.S_ISREG(held.st_mode) and held.st_nlink == 1 and held.st_size == 0
+                                     and install_observation_identity(current) == install_observation_identity(held), 13)
+            self.check(settlement=settlement)
+            os.unlink(child, dir_fd=directory_fd)
+            self.check(settlement=settlement)
+        install_observation_need(not self.scan(directory_fd, 1, settlement=settlement, code=13), 13)
+        self.check(settlement=settlement)
+        held = self.fstat(directory_fd, settlement=settlement)
+        current = self.stat(name, dir_fd=parent_fd, follow_symlinks=False, settlement=settlement)
+        install_observation_need(stat.S_ISDIR(held.st_mode) and held.st_uid == os.getuid()
+                                 and stat.S_IMODE(held.st_mode) == 0o700
+                                 and install_observation_identity(current) == install_observation_identity(held), 13)
+        self.check(settlement=settlement)
+        os.rmdir(name, dir_fd=parent_fd)
+        self.check(settlement=settlement)
+
+    def binding(self):
+        raw, status = self.read(self.evidence / "launch-bootstrap.json", 16 * 1024)
+        install_observation_need(status == 0, 10)
+        try:
+            document = json.loads(raw, object_pairs_hook=_pairs, parse_constant=_no_constant)
+        except (ValueError, UnicodeError, RecursionError) as error:
+            if getattr(error, "_forge_control", False):
+                raise
+            raise InstallObservationError(8) from error
+        install_observation_need(type(document) is dict and document.keys() == {"schema_version", "status", "binding", "source", "live"}
+                                 and type(document["schema_version"]) is int and document["schema_version"] == 1
+                                 and document["status"] == "PASS" and canonical(document) == raw)
+        binding, source, live = document["binding"], document["source"], document["live"]
+        validate_binding(binding)
+        validate_source(source, binding)
+        install_observation_need(type(live) is dict and live.keys() == {"binding", "checked", "metadata_sha256", "tree_oid"}
+                                 and live["binding"] == binding and live["tree_oid"] == source["tree_oid"]
+                                 and type(live["checked"]) is dict and live["checked"].keys() == {"utc_ns", "monotonic_ns"}
+                                 and all(positive(x) for x in live["checked"].values()))
+        run_path = "/actions/runs/" + str(binding["run_id"])
+        expected = {"/actions/workflows/linux-tests.yml", run_path, run_path + "/attempts/1/jobs?per_page=100&page=1",
+                    "/git/ref/" + binding["full_ref"][5:], "/git/commits/" + binding["candidate_sha"],
+                    "/actions/workflows/" + str(binding["workflow_id"]) + "/runs?head_sha=" + binding["candidate_sha"]
+                    + "&branch=" + binding["full_ref"][11:].replace("/", "%2F") + "&event=push&per_page=100&page=1"}
+        install_observation_need(type(live["metadata_sha256"]) is dict and live["metadata_sha256"].keys() == expected
+                                 and all(type(x) is str and re.fullmatch(r"[0-9a-f]{64}", x) and x != "0" * 64
+                                         for x in live["metadata_sha256"].values()))
+        native = {"GITHUB_RUN_ID": "run_id", "GITHUB_RUN_ATTEMPT": "run_attempt", "GITHUB_RUN_NUMBER": "run_number",
+                  "GITHUB_REPOSITORY_ID": "repository_id", "GITHUB_REPOSITORY_OWNER_ID": "owner_id", "GITHUB_ACTOR_ID": "actor_id",
+                  "GITHUB_SHA": "candidate_sha", "GITHUB_WORKFLOW_SHA": "workflow_sha", "GITHUB_JOB": "job_key",
+                  "GITHUB_EVENT_NAME": "event_name", "GITHUB_REF": "full_ref"}
+        install_observation_need(all(self.environment[key] == str(binding[field]) for key, field in native.items()))
+        boot, _ = self.read(Path("/proc/sys/kernel/random/boot_id"), 64, proc=True)
+        install_observation_need(boot == (binding["boot_id"] + "\n").encode("ascii"))
+        monotonic, wall = time.monotonic_ns(), time.time_ns()
+        install_observation_need(binding["job_started_ns"] <= wall, 12)
+        self.deadline = min(self.deadline, monotonic + binding["job_started_ns"] + 1440 * NS - wall)
+        self.cutoff = self.deadline - 2 * NS
+        self.check()
+        return {"run_id": binding["run_id"], "run_attempt": 1, "candidate_sha": binding["candidate_sha"],
+                "workflow_sha": binding["workflow_sha"], "workflow_job": "linux-tests", "boot_id": binding["boot_id"],
+                "launch_receipt_sha256": hashlib.sha256(raw).hexdigest()}
+
+    def mask(self):
+        raw, _ = self.read(Path("/proc/self/status"), 2048, proc=True)
+        masks = re.findall(rb"(?m)^Umask:\s*([0-7]{4})$", raw)
+        install_observation_need(len(masks) == 1)
+        return masks[0].decode("ascii")
+
+    def persist(self, value, *, settlement=False):
+        try:
+            self._persist(value, settlement=settlement)
+            self.pending_receipt = None
+        except BaseException as error:  # noqa: BLE001 - final close can fail after the last successful write
+            failure = error
+            if self.pending_receipt is not None:
+                try:
+                    self.discard_receipt()
+                except BaseException as cleanup_error:  # noqa: BLE001 - retain original control and original cutoff
+                    failure = install_observation_retain(failure, cleanup_error)
+            raise failure from None
+
+    def discard_receipt(self):
+        """Remove only this attempt's exact failed receipt, while D permits."""
+        target, identity = self.pending_receipt
+        self.check(settlement=True)
+        with self.parent(self.evidence, settlement=True) as (ancestor, name, info, _real, unsafe):
+            install_observation_need(not unsafe and info.st_uid == os.getuid() and stat.S_ISDIR(info.st_mode)
+                                     and stat.S_IMODE(info.st_mode) == 0o700, 13)
+            parent = self.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, parent=ancestor, settlement=True)
+            held, failure = None, None
+            try:
+                self.check(settlement=True)
+                before = self.stat(target, dir_fd=parent, follow_symlinks=False, settlement=True)
+                install_observation_need(install_observation_identity(before) == identity, 13)
+                held = self.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, parent=parent, settlement=True)
+                install_observation_need(install_observation_identity(self.fstat(held, settlement=True)) == identity, 13)
+                self.check(settlement=True)
+                install_observation_need(install_observation_identity(self.stat(target, dir_fd=parent, follow_symlinks=False, settlement=True)) == identity, 13)
+                self.check(settlement=True)
+                os.unlink(target, dir_fd=parent)
+                self.pending_receipt = None
+                self.check(settlement=True)
+            except BaseException as error:  # noqa: BLE001 - preserve first control through both closes
+                failure = error
+            finally:
+                for fd in (held, parent):
+                    if fd is not None:
+                        try:
+                            self.close(fd, settlement=True)
+                        except BaseException as error:  # noqa: BLE001 - independent closes
+                            failure = install_observation_retain(failure, error)
+            if failure is not None:
+                raise failure
+
+    def _persist(self, value, *, settlement=False):
+        self.check(settlement=settlement)
+        value["bytes_read"], value["finished_ns"] = self.bytes_read, time.monotonic_ns()
+        validate_install_observation(value)
+        data = canonical(value)
+        self.check(settlement=settlement)
+        with self.parent(self.evidence, settlement=settlement) as (ancestor, name, info, _real, unsafe):
+            install_observation_need(not unsafe and info.st_uid == os.getuid() and stat.S_ISDIR(info.st_mode)
+                                     and stat.S_IMODE(info.st_mode) == 0o700, 10)
+            fd = self.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, parent=ancestor, settlement=settlement)
+            target, output, created = "install-observation-" + str(self.stage) + ".json", None, False
+            failure = None
+            try:
+                install_observation_need(install_observation_identity(self.fstat(fd, settlement=settlement)) == install_observation_identity(info), 7)
+                total = len(data)
+                for stage in range(3):
+                    self.check(settlement=settlement)
+                    try:
+                        previous = self.stat("install-observation-" + str(stage) + ".json", dir_fd=fd, follow_symlinks=False, settlement=settlement)
+                    except FileNotFoundError as error:
+                        if getattr(error, "_forge_control", False):
+                            raise
+                        continue
+                    install_observation_need(stage < self.stage and stat.S_ISREG(previous.st_mode) and previous.st_nlink == 1
+                                             and previous.st_uid == os.getuid() and previous.st_gid == os.getgid()
+                                             and stat.S_IMODE(previous.st_mode) == 0o600 and 0 < previous.st_size <= 24 * 1024, 11)
+                    total += previous.st_size
+                install_observation_need(total <= 64 * 1024, 9)
+                output = self.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, parent=fd, settlement=settlement)
+                created = True
+                identity = self.fstat(output, settlement=settlement)
+                install_observation_need(stat.S_ISREG(identity.st_mode) and identity.st_nlink == 1 and identity.st_size == 0
+                                         and identity.st_uid == os.getuid() and identity.st_gid == os.getgid()
+                                         and stat.S_IMODE(identity.st_mode) == 0o600, 10)
+                offset = 0
+                while offset < len(data):
+                    self.check(settlement=settlement)
+                    written = os.write(output, data[offset:])
+                    install_observation_need(written > 0, 15)
+                    offset += written
+                    self.check(settlement=settlement)
+                self.check(settlement=settlement)
+                os.fsync(output)
+                self.check(settlement=settlement)
+                after = self.fstat(output, settlement=settlement)
+                install_observation_need(after.st_size == len(data) and after.st_nlink == 1
+                                         and (after.st_dev, after.st_ino, after.st_uid, after.st_gid, after.st_mode)
+                                         == (identity.st_dev, identity.st_ino, identity.st_uid, identity.st_gid, identity.st_mode), 7)
+                install_observation_need(install_observation_identity(self.stat(target, dir_fd=fd, follow_symlinks=False, settlement=settlement))
+                                         == install_observation_identity(after), 7)
+                self.pending_receipt = target, install_observation_identity(after)
+                self.check(settlement=settlement)
+            except BaseException as error:  # noqa: BLE001 - never retain a partial or late COMPLETE as successful
+                failure = error
+                if created and output is not None:
+                    try:
+                        self.check(settlement=True)
+                        install_observation_need(install_observation_identity(self.stat(target, dir_fd=fd, follow_symlinks=False, settlement=True))
+                                                 == install_observation_identity(self.fstat(output, settlement=True)), 13)
+                        self.check(settlement=True)
+                        os.unlink(target, dir_fd=fd)
+                        self.pending_receipt = None
+                        self.check(settlement=True)
+                    except BaseException as cleanup_error:  # noqa: BLE001 - preserve first control
+                        failure = install_observation_retain(failure, cleanup_error)
+            finally:
+                for owned in (output, fd):
+                    if owned is not None:
+                        try:
+                            self.close(owned, settlement=settlement or failure is not None)
+                        except BaseException as error:  # noqa: BLE001 - attempt independent closes
+                            failure = install_observation_retain(failure, error)
+            if failure is not None:
+                raise failure
+        self.check(settlement=settlement)
+
+
+def install_observe(environment, stage, deadline_ns, shell_umask):
+    """Collect one closed passive checkpoint under the original install clock."""
+    validate_environment(environment)
+    install_observation_need(type(stage) is int and stage in (0, 1, 2)
+                             and type(shell_umask) is str and re.fullmatch(r"[0-7]{4}", shell_umask))
+    install_observation_need(os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0, 10)
+    observer = _InstallObservation(environment, stage, deadline_ns)
+    value, failure = None, None
+    try:
+        binding, mask = observer.binding(), observer.mask()
+        unavailable = [14, None, None, None, None, None, None, None, None]
+        roles = (0, 4, 6) if stage == 1 else tuple(range(10))
+        value = {"schema_version": 1, "kind": "installation-mode-observation", "stage": stage, "status": "STOP",
+                 "binding": binding, "shell_umask": shell_umask, "observer_umask": mask,
+                 "tools": [[slot, 14, None, None, None, None, None, None] for slot in range(47)],
+                 "directories": [[role, observer.location(observer.directories[role])[1], None, unavailable[:], unavailable[:], 14] for role in roles],
+                 "metadata": [[slot, None, [[None, None] for _ in range(4)], 14] for slot in range((1, 6, 7)[stage])],
+                 "sources": [[slot, None, None, 14] for slot in range(0 if stage == 1 else 6)],
+                 "probes": [[slot, None, unavailable[:], unavailable[:], [["0666", None, unavailable[:]], ["0600", None, unavailable[:]]], mask, 14]
+                            for slot in range(3 if stage == 0 else 0)],
+                 "bytes_read": observer.bytes_read, "deadline_ns": observer.deadline, "finished_ns": time.monotonic_ns(), "error": 14}
+        value["tools"] = observer.tools()
+        for index, role in enumerate(roles):
+            try:
+                value["directories"][index] = observer.directory(role)
+            except (OSError, InstallObservationError) as error:
+                if hasattr(error, "observation_row"):
+                    value["directories"][index] = error.observation_row
+                raise
+        roots = observer.distribution_paths((observer.directories[1], observer.directories[2]))
+        for slot in range(min(6, len(value["metadata"]))):
+            value["metadata"][slot] = observer.distribution(slot, roots)
+        if stage == 2:
+            value["metadata"][6] = observer.distribution(6, observer.distribution_paths((observer.directories[5],)))
+        if stage != 1:
+            value["sources"] = observer.sources()
+        if stage == 0:
+            seen = {}
+            for slot, role in enumerate((0, 1, 3)):
+                parent_row = value["directories"][role]
+                identity = tuple(parent_row[2][1:3]) if parent_row[2] is not None else None
+                if identity is not None and identity in seen:
+                    value["probes"][slot] = [slot, *seen[identity][1:]]
+                    continue
+                try:
+                    value["probes"][slot] = observer.probe(slot, parent_row, mask)
+                    if identity is not None:
+                        seen[identity] = value["probes"][slot]
+                except BaseException as error:  # noqa: BLE001 - save exact cleanup outcome, then preserve control
+                    if hasattr(error, "observation_row"):
+                        value["probes"][slot] = error.observation_row
+                    raise
+        install_observation_need(observer.mask() == mask, 7)
+        observer.check()
+        value["status"], value["error"] = "COMPLETE", 0
+        observer.persist(value)
+    except BaseException as error:  # noqa: BLE001 - controls outrank expected failures through persistence
+        failure = error
+        if value is not None:
+            value["status"], value["error"] = "STOP", install_observation_code(error)
+            try:
+                observer.persist(value, settlement=True)
+            except BaseException as persistence_error:  # noqa: BLE001 - never replace original control
+                failure = install_observation_retain(failure, persistence_error)
+    finally:
+        for fd in tuple(observer.fds):
+            try:
+                observer.check(settlement=failure is not None)
+                observer.close(fd, settlement=failure is not None)
+            except BaseException as error:  # noqa: BLE001 - attempt every remaining descriptor close
+                failure = install_observation_retain(failure, error)
+    if failure is not None:
+        raise failure
+    return value
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="role", required=True)
@@ -2447,8 +3489,16 @@ def main(argv=None):
     install.add_argument("--deadline-ns", required=True, type=int)
     worker = commands.add_parser("node-install-worker")
     worker.add_argument("--deadline-ns", required=True, type=int)
+    observe = commands.add_parser("install-observe")
+    observe.add_argument("--stage", required=True, type=int, choices=(0, 1, 2))
+    observe.add_argument("--deadline-ns", required=True, type=int)
+    observe.add_argument("--shell-umask", required=True)
     args = parser.parse_args(argv)
     try:
+        if args.role == "install-observe":
+            install_observation_need(sys.flags.isolated == 1 and sys.flags.no_site == 1 and sys.flags.dont_write_bytecode == 1)
+            install_observe(payload_environment(os.environ), args.stage, args.deadline_ns, args.shell_umask)
+            return 0
         if args.role in {"node-install", "node-install-worker"}:
             os.umask(0o077)
             environment = payload_environment(os.environ)

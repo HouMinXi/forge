@@ -306,8 +306,10 @@ assert not any((node_root / 'expose').iterdir())
 INSTALL = r'''install_deadline_ns="$(python -B -c 'import time; print(time.monotonic_ns()+600*1000000000)')"
 python -m forge_ci.user_service profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
 python -m forge_ci.user_service node-install --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns"
+/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 0 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)"
 python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.1.1' \
   2>&1 | tee "$EVIDENCE/install.log"
+/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 1 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)"
 # Preserve the unchanged literal system fixture's user-site install under this HOME.
 system_site="$(/usr/bin/python3 -m site --user-site)"
 python - "$system_site" <<'PYSYSTEMSITE'
@@ -326,6 +328,7 @@ for interpreter in python /usr/bin/python3; do
 done | tee "$EVIDENCE/interpreters.log"
 python -m pip check 2>&1 | tee "$EVIDENCE/pip-check.log"
 python -m pip freeze | tee "$EVIDENCE/requirements.freeze.txt"
+/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 2 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)"
 python -m forge_ci.user_service preflight --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
 '''
 
