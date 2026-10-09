@@ -1067,7 +1067,8 @@ def node_binding(environment, deadline_ns):
          and source["candidate_sha"] == environment["GITHUB_SHA"] == environment["GITHUB_WORKFLOW_SHA"]
          and binding["boot_id"] == read_regular("/proc/sys/kernel/random/boot_id", 64).decode("ascii").strip(),
          "private Node provision binding changed")
-    need(runtime_file(Path(environment["GITHUB_WORKSPACE"]) / HELPER, deadline_ns)["sha256"] == source["helper_sha256"][HELPER],
+    need(runtime_file(Path(environment["GITHUB_WORKSPACE"]) / HELPER, deadline_ns,
+                      diagnostic_role="node_binding_helper", diagnostic_member="user_service.py")["sha256"] == source["helper_sha256"][HELPER],
          "private Node provision binding changed")
     return {"run_id": binding["run_id"], "run_attempt": 1, "boot_id": binding["boot_id"],
             "candidate_sha": source["candidate_sha"], "source_sha256": source["source_sha256"],
@@ -1128,7 +1129,7 @@ def node_vendor_inventory(root, deadline_ns):
                 seen_directories[path] = runtime_stat(info)
                 row = {"path": name, "type": "directory", "mode": "0700", "bytes": 0, "sha256": None}
             else:
-                item = runtime_file(path, deadline_ns)
+                item = runtime_file(path, deadline_ns, diagnostic_role="node_vendor_leaf", diagnostic_root=root)
                 need(item["mode"] in {0o600, 0o700} and item["uid"] == os.getuid() and item["gid"] == os.getgid(),
                      "private Node vendor inventory changed")
                 total += item["bytes"]
@@ -1215,7 +1216,9 @@ def node_extract(archive_path, root, deadline_ns):
     archive_path, root = Path(archive_path), Path(root)
     runtime_directory(root, private=True)
     need(archive_path.lstat().st_size == NODE_ARCHIVE_BYTES, "private Node archive identity changed")
-    archive = runtime_file(archive_path, deadline_ns)
+    # This label names the expected pinned artifact, not the staging basename
+    # or authenticated archive content: its hash is checked only after this call.
+    archive = runtime_file(archive_path, deadline_ns, diagnostic_role="node_archive", diagnostic_member="node-v24.21.0-linux-x64.tar.xz")
     need(archive["bytes"] == NODE_ARCHIVE_BYTES and archive["sha256"] == NODE_ARCHIVE_SHA256,
          "private Node archive identity changed")
     need(not os.path.lexists(root / "runtime"), "private Node provision incomplete")
@@ -1667,14 +1670,94 @@ def runtime_stat(info):
             info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
-def runtime_file(path, deadline_ns):
+FILE_STOP_LIMIT = 2048
+FILE_OBSERVATION_KEYS = {"role", "member", "root_class", "relative_name_sha256", "file_type", "uid", "gid", "mode", "nlink", "bytes",
+                         "ordinary_uid", "ordinary_gid", "is_regular", "single_link", "write_bits_clear", "uid_allowed", "gid_allowed", "size_allowed"}
+FILE_STOP_KEYS = {"schema_version", "kind", "status", "gate", "run_id", "run_attempt", "candidate_sha",
+                  "workflow_sha", "workflow_job", "boot_id", "observation"}
+FILE_DYNAMIC_CONTEXTS = {"node_vendor_leaf": "private_node_prefix", "runtime_inventory_native": "private_node_prefix",
+                         "runtime_inventory_package": "python_package_root"}
+
+
+def file_root_class(role, member):
+    need(type(role) is str, "invalid runtime protected file")
+    if role in FILE_DYNAMIC_CONTEXTS:
+        need(member is None, "invalid runtime protected file")
+        return FILE_DYNAMIC_CONTEXTS[role]
+    need(role in FILE_FIXED_CONTEXTS and type(member) is str and member in FILE_FIXED_CONTEXTS[role],
+         "invalid runtime protected file")
+    return FILE_FIXED_CONTEXTS[role][member]
+
+
+def validate_file_observation(value):
+    # Data-only rejection evidence never authorizes a file or runtime root.
+    need(type(value) is dict and value.keys() == FILE_OBSERVATION_KEYS, "invalid runtime protected file")
+    root_class = file_root_class(value["role"], value["member"])
+    need(type(value["root_class"]) is str and value["root_class"] == root_class, "invalid runtime protected file")
+    digest = value["relative_name_sha256"]
+    need((type(digest) is str and re.fullmatch(r"[0-9a-f]{64}", digest) is not None)
+         if value["role"] in FILE_DYNAMIC_CONTEXTS else digest is None, "invalid runtime protected file")
+    need(type(value["file_type"]) is str and value["file_type"] in {*DIRECTORY_TYPES.values(), "unknown"},
+         "invalid runtime protected file")
+    need(all(type(value[key]) is int and 0 <= value[key] < 2**32 for key in ("uid", "gid", "ordinary_uid", "ordinary_gid"))
+         and value["ordinary_uid"] > 0 and value["ordinary_gid"] > 0, "invalid runtime protected file")
+    need(type(value["nlink"]) is int and 0 <= value["nlink"] < 2**64
+         and type(value["bytes"]) is int and 0 <= value["bytes"] < 2**63, "invalid runtime protected file")
+    need(type(value["mode"]) is str and re.fullmatch(r"[0-7]{4}", value["mode"]) is not None, "invalid runtime protected file")
+    predicates = {"is_regular": value["file_type"] == "regular", "single_link": value["nlink"] == 1,
+                  "write_bits_clear": not int(value["mode"], 8) & 0o022,
+                  "uid_allowed": value["uid"] in {0, value["ordinary_uid"]},
+                  "gid_allowed": value["gid"] in {0, value["ordinary_gid"]},
+                  "size_allowed": value["bytes"] <= RUNTIME_FILE_LIMIT}
+    need(all(type(value[key]) is bool and value[key] == expected for key, expected in predicates.items())
+         and not all(predicates.values()), "invalid runtime protected file")
+
+
+def runtime_file_observation(path, info, uid, gid, role, member, root):
+    root_class = file_root_class(role, member)
+    digest = None
+    if role in FILE_DYNAMIC_CONTEXTS:
+        need(isinstance(root, Path) and root.is_absolute(), "invalid runtime protected file")
+        relative = path.relative_to(root).as_posix()
+        need(relative and not relative.startswith("/") and all(part not in {"", ".", ".."} for part in relative.split("/")),
+             "invalid runtime protected file")
+        encoded = os.fsencode(relative)
+        need(len(encoded) <= 4096, "invalid runtime protected file")
+        digest = hashlib.sha256(b"runtime-file-relative-v1\0" + encoded).hexdigest()
+    else:
+        need(root is None, "invalid runtime protected file")
+    observation = {"role": role, "member": member, "root_class": root_class, "relative_name_sha256": digest,
+                   "file_type": DIRECTORY_TYPES.get(stat.S_IFMT(info.st_mode), "unknown"),
+                   "uid": info.st_uid, "gid": info.st_gid, "mode": format(stat.S_IMODE(info.st_mode), "04o"),
+                   "nlink": info.st_nlink, "bytes": info.st_size, "ordinary_uid": uid, "ordinary_gid": gid,
+                   "is_regular": stat.S_ISREG(info.st_mode), "single_link": info.st_nlink == 1,
+                   "write_bits_clear": not info.st_mode & 0o022,
+                   "uid_allowed": info.st_uid in {0, uid}, "gid_allowed": info.st_gid in {0, gid},
+                   "size_allowed": info.st_size <= RUNTIME_FILE_LIMIT}
+    validate_file_observation(observation)
+    return observation
+
+
+def runtime_file(path, deadline_ns, *, diagnostic_role=None, diagnostic_member=None, diagnostic_root=None):
     runtime_remaining(deadline_ns)
     path = Path(path)
     need(path.is_absolute() and path.resolve(strict=True) == path, "runtime protected path alias")
     before = path.lstat()
-    need(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and not before.st_mode & 0o022
-         and before.st_uid in {0, os.getuid()} and before.st_gid in {0, os.getgid()}
-         and before.st_size <= RUNTIME_FILE_LIMIT, "invalid runtime protected file")
+    uid, gid = os.getuid(), os.getgid()
+    try:
+        need(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and not before.st_mode & 0o022
+             and before.st_uid in {0, uid} and before.st_gid in {0, gid}
+             and before.st_size <= RUNTIME_FILE_LIMIT, "invalid runtime protected file")
+    except ServiceError as error:
+        # Only the same rejecting lstat is observed, before opening the file.
+        if getattr(error, "_forge_control", False):
+            raise
+        try:
+            error.file_observation = runtime_file_observation(path, before, uid, gid, diagnostic_role, diagnostic_member, diagnostic_root)
+        except Exception as diagnostic_error:  # noqa: BLE001 - optional metadata cannot expose exception values
+            if getattr(diagnostic_error, "_forge_control", False):
+                raise
+        raise
     checksum = hashlib.sha256()
     total = 0
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -1811,7 +1894,7 @@ def runtime_executable(name, deadline_ns, environment=None):
     if name in NODE_ALIASES:
         need(path == node_root(environment) / "expose" / name
              and real == node_root(environment) / NODE_ALIASES[name].removeprefix("../"), "private Node exposure changed")
-    result = runtime_file(real, deadline_ns)
+    result = runtime_file(real, deadline_ns, diagnostic_role="required_executable", diagnostic_member=name)
     need(result["mode"] & 0o111, "runtime tool is not executable")
     return {"requested": name, "path": str(path), "realpath": str(real), "identity": result}
 
@@ -1939,7 +2022,9 @@ def runtime_inventory(probes, executables, deadline_ns, environment=None):
                     directories[name] = runtime_directory(path)
                     directory_stats[name] = runtime_stat(info)
                 else:
-                    item = runtime_file(path, deadline_ns)
+                    item = runtime_file(path, deadline_ns,
+                                        diagnostic_role="runtime_inventory_native" if root == native_root else "runtime_inventory_package",
+                                        diagnostic_root=node if root == native_root else base)
                     total += item["bytes"]
                     need(total <= RUNTIME_TOTAL_LIMIT, "runtime package inventory byte bound")
                     files[name] = item
@@ -1983,7 +2068,8 @@ def current_executables(deadline_ns, environment=None):
          "PATH Python differs from provider")
     system = Path("/usr/bin/python3").resolve(strict=True)
     executables["/usr/bin/python3"] = {"requested": "/usr/bin/python3", "path": "/usr/bin/python3",
-                                          "realpath": str(system), "identity": runtime_file(system, deadline_ns)}
+                                          "realpath": str(system), "identity": runtime_file(system, deadline_ns,
+                                              diagnostic_role="system_interpreter", diagnostic_member="system_python3")}
     return executables
 
 
@@ -2104,6 +2190,44 @@ def runtime_write(path, value, limit, deadline_ns):
     return hashlib.sha256(raw).hexdigest()
 
 
+def validate_file_stop(value):
+    need(type(value) is dict and value.keys() == FILE_STOP_KEYS, "invalid runtime protected file")
+    need(type(value["schema_version"]) is int and value["schema_version"] == 1
+         and type(value["kind"]) is str and value["kind"] == "runtime-file-rejection"
+         and type(value["status"]) is str and value["status"] == "STOP"
+         and type(value["gate"]) is str and value["gate"] == "US121", "invalid runtime protected file")
+    need(positive(value["run_id"]) and type(value["run_attempt"]) is int and value["run_attempt"] == 1,
+         "invalid runtime protected file")
+    need(all(type(value[key]) is str and re.fullmatch(r"[0-9a-f]{40}", value[key]) is not None
+             and value[key] != "0" * 40 for key in ("candidate_sha", "workflow_sha"))
+         and value["candidate_sha"] == value["workflow_sha"], "invalid runtime protected file")
+    need(type(value["workflow_job"]) is str and value["workflow_job"] == "linux-tests"
+         and type(value["boot_id"]) is str
+         and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value["boot_id"]) is not None,
+         "invalid runtime protected file")
+    validate_file_observation(value["observation"])
+    need(len(canonical(value)) <= FILE_STOP_LIMIT, "runtime record encoded bound")
+
+
+def persist_file_stop(error, evidence, environment, deadline_ns):
+    if public_gate(error) != "US121" or not hasattr(error, "file_observation"):
+        return
+    runtime_remaining(deadline_ns)
+    validate_environment(environment)
+    need(os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0, "runtime profile requires ordinary owner")
+    fixed_evidence = Path(environment["RUNNER_TEMP"]) / "forge-evidence"
+    need(str(evidence) == str(fixed_evidence) and environment["EVIDENCE"] == str(fixed_evidence),
+         "runtime fixed paths changed")
+    runtime_directory(fixed_evidence, private=True)
+    value = {"schema_version": 1, "kind": "runtime-file-rejection", "status": "STOP", "gate": "US121",
+             "run_id": int(environment["GITHUB_RUN_ID"]), "run_attempt": 1, "candidate_sha": environment["GITHUB_SHA"],
+             "workflow_sha": environment["GITHUB_WORKFLOW_SHA"], "workflow_job": environment["GITHUB_JOB"],
+             "boot_id": read_regular("/proc/sys/kernel/random/boot_id", 64).decode("ascii").strip(),
+             "observation": error.file_observation}
+    validate_file_stop(value)
+    runtime_write(fixed_evidence / "runtime-file-stop.json", value, FILE_STOP_LIMIT, deadline_ns)
+
+
 def validate_directory_stop(value):
     need(type(value) is dict and value.keys() == DIRECTORY_STOP_KEYS, "untrusted runtime directory")
     need(type(value["schema_version"]) is int and value["schema_version"] == 1
@@ -2182,6 +2306,16 @@ def persist_path_stop(error, evidence, environment, deadline_ns):
 
 EDITABLE_DIRECTORY = "src/code_review_forge.egg-info"
 EDITABLE_FILES = ("PKG-INFO", "SOURCES.txt", "dependency_links.txt", "entry_points.txt", "requires.txt", "top_level.txt")
+FILE_FIXED_CONTEXTS = {
+    "node_binding_helper": {"user_service.py": "checkout"},
+    "node_archive": {"node-v24.21.0-linux-x64.tar.xz": "node_download_staging"},
+    "required_executable": dict.fromkeys(REQUIRED_TOOLS, "required_tool"),
+    "system_interpreter": {"system_python3": "system_tool"},
+    "retained_runtime_record": {**dict.fromkeys(INSTALL_RECORDS, "evidence_record"),
+                                "runtime-packages.json": "private_runtime_record", "runtime-inventory.json": "private_runtime_record"},
+    "runtime_installer": {"render_linux_workflow.py": "checkout"},
+    "editable_metadata": dict.fromkeys(EDITABLE_FILES, "editable_metadata"),
+}
 
 
 def installed_metadata(environment, deadline_ns):
@@ -2193,7 +2327,7 @@ def installed_metadata(environment, deadline_ns):
     need({path.name for path in directory.iterdir()} == set(EDITABLE_FILES), "installed metadata members changed")
     entries, total = [], 0
     for name in EDITABLE_FILES:
-        item = runtime_file(directory / name, deadline_ns)
+        item = runtime_file(directory / name, deadline_ns, diagnostic_role="editable_metadata", diagnostic_member=name)
         need(item["uid"] == os.getuid() and item["gid"] == os.getgid() and not item["mode"] & 0o111
              and item["bytes"] <= 65536, "invalid installed metadata member")
         total += item["bytes"]
@@ -2218,7 +2352,8 @@ def produce_runtime_admission(repo, evidence, environment, *, deadline_ns):
     need(launch.inspect_checkout(repo, receipt["binding"]["candidate_sha"], deadline=deadline_ns / NS) == receipt["source"],
          "runtime checkout source changed")
     profile, probes, inventory = current_runtime(environment, deadline_ns=deadline_ns)
-    records = {name: runtime_file((evidence / name).resolve(strict=True), deadline_ns)["sha256"] for name in INSTALL_RECORDS}
+    records = {name: runtime_file((evidence / name).resolve(strict=True), deadline_ns,
+                                 diagnostic_role="retained_runtime_record", diagnostic_member=name)["sha256"] for name in INSTALL_RECORDS}
     private_records = Path(environment["XDG_DATA_HOME"]) / "forge-b-runtime"
     private_records.mkdir(mode=0o700)
     runtime_directory(private_records, private=True)
@@ -2227,7 +2362,8 @@ def produce_runtime_admission(repo, evidence, environment, *, deadline_ns):
     argv = [INSTALL_ARGV[0], [*INSTALL_ARGV[1][:5], probes["system"]["user_site"], *INSTALL_ARGV[1][6:]]]
     record = {"schema_version": 1, "profile": RUNTIME_PROFILE, "spec_sha256": SPEC_SHA256, "source": receipt["source"],
               "environment_sha256": runtime_digest(environment),
-              "installer_sha256": runtime_file(repo / ".github/scripts/render_linux_workflow.py", deadline_ns)["sha256"],
+              "installer_sha256": runtime_file(repo / ".github/scripts/render_linux_workflow.py", deadline_ns,
+                                                diagnostic_role="runtime_installer", diagnostic_member="render_linux_workflow.py")["sha256"],
               "records_sha256": records, "profile_metadata": profile, "install_argv": argv,
               "generated_install_metadata": installed_metadata(environment, deadline_ns)}
     runtime_write(evidence / "runtime-admission.json", record, MAX_METADATA, deadline_ns)
@@ -2259,9 +2395,11 @@ def revalidate_runtime_admission(record, environment, source, *, deadline_ns):
     evidence, repo = Path(environment["EVIDENCE"]), Path(environment["GITHUB_WORKSPACE"])
     retained, _ = runtime_json(evidence / "runtime-admission.json", MAX_METADATA, deadline_ns)
     need(retained == record, "runtime admission changed")
-    need(runtime_file(repo / ".github/scripts/render_linux_workflow.py", deadline_ns)["sha256"] == record["installer_sha256"], "runtime installer changed")
+    need(runtime_file(repo / ".github/scripts/render_linux_workflow.py", deadline_ns,
+                      diagnostic_role="runtime_installer", diagnostic_member="render_linux_workflow.py")["sha256"] == record["installer_sha256"], "runtime installer changed")
     for name, checksum in record["records_sha256"].items():
-        need(runtime_file(runtime_record_path(environment, name), deadline_ns)["sha256"] == checksum, "retained runtime record changed")
+        need(runtime_file(runtime_record_path(environment, name), deadline_ns,
+                          diagnostic_role="retained_runtime_record", diagnostic_member=name)["sha256"] == checksum, "retained runtime record changed")
     need(installed_metadata(environment, deadline_ns) == record["generated_install_metadata"], "installed metadata drift")
     # Rehash authenticated executable and package bytes BEFORE importing them.
     # A changed package may not execute merely to report that it has changed.
@@ -2351,6 +2489,7 @@ def main(argv=None):
                         raise
                     try:
                         persist_path_stop(error, args.evidence, environment, deadline_ns)
+                        persist_file_stop(error, args.evidence, environment, deadline_ns)
                     except Exception as diagnostic_error:  # noqa: BLE001 - keep STOP; controls reach the outer handler
                         if getattr(diagnostic_error, "_forge_control", False):
                             raise
