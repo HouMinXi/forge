@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 from pathlib import Path
 
 import yaml
@@ -17,6 +18,7 @@ STAGING_ROOT = "/var/lib/forge-ci-bootstrap"
 HELPERS = (
     "__init__.py", "facts.py", "launch.py", "admission.py", "setup_policy.py",
     "controller.py", "outcomes.py", "payload.py", "probes.py", "pytest_observer.py", "user_service.py", "baseline_measurement.py",
+    "python_prefix.py",
 )
 CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 SETUP_PYTHON = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"
@@ -195,7 +197,7 @@ assert hasattr(os, 'pidfd_open'), 'Linux pidfd_open is required'
 assert resource.getrlimit(resource.RLIMIT_NOFILE)[1] > 1024, 'High-FD tests must run'
 children_path = Path(f'/proc/{os.getpid()}/task/{os.getpid()}/children')
 children_path.read_bytes()
-child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+child = subprocess.Popen([sys.executable, '-B', '-I', '-S', '-c', 'import time; time.sleep(30)'])
 try:
     children = {int(pid) for pid in children_path.read_bytes().split()}
     assert child.pid in children, 'live child absent from task children'
@@ -303,33 +305,34 @@ for path in (node_root, node_root / 'expose'):
 assert not any((node_root / 'expose').iterdir())
 '''
 
-INSTALL = r'''install_deadline_ns="$(python -B -c 'import time; print(time.monotonic_ns()+600*1000000000)')"
-python -m forge_ci.user_service profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
-python -m forge_ci.user_service node-install --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns"
-/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 0 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)"
-python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.1.1' \
+INSTALL = r'''install_deadline_ns="$(/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S -c 'import time; print(time.monotonic_ns()+600*1000000000)')"
+BASE_HELPER profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns" --helper-map-sha256 HELPER_MAP_SHA256
+BASE_HELPER node-install --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns" --helper-map-sha256 HELPER_MAP_SHA256
+BASE_HELPER python-install --deadline-ns "$install_deadline_ns" --helper-map-sha256 HELPER_MAP_SHA256
+BASE_HELPER python-checkpoint --stage pip --deadline-ns "$install_deadline_ns" --helper-map-sha256 HELPER_MAP_SHA256
+BASE_HELPER install-observe --stage 0 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)" --helper-map-sha256 HELPER_MAP_SHA256
+private_python="$RUNNER_TEMP/forge-b-python-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/python"
+/usr/bin/env -u PYTHONPATH PIP_CONFIG_FILE=/dev/null "$private_python" -B -I -m pip --isolated --disable-pip-version-check --no-input --no-cache-dir install --index-url https://pypi.org/simple -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.1.1' \
   2>&1 | tee "$EVIDENCE/install.log"
-/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 1 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)"
-# Preserve the unchanged literal system fixture's user-site install under this HOME.
+BASE_HELPER python-checkpoint --stage extras --deadline-ns "$install_deadline_ns" --helper-map-sha256 HELPER_MAP_SHA256
+BASE_HELPER install-observe --stage 1 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)" --helper-map-sha256 HELPER_MAP_SHA256
+# The passive extras checkpoint validates the exact private target before discovery.
 system_site="$(/usr/bin/python3 -m site --user-site)"
-python - "$system_site" <<'PYSYSTEMSITE'
+/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S - "$system_site" <<'PYSYSTEMSITE'
 import os
 from pathlib import Path
 import sys
 home, target = Path(os.environ['HOME']), Path(sys.argv[1])
 assert home.is_absolute() and home.resolve(strict=True) == home
-assert target.is_absolute() and target.is_relative_to(home) and target.resolve(strict=False) == target
-assert target != home
+assert target == home / '.local/lib/python3.12/site-packages'
+assert target.resolve(strict=False) == target and target.is_relative_to(home)
 PYSYSTEMSITE
-python -m pip install --target "$system_site" 'pytest==9.1.1' \
+BASE_HELPER python-checkpoint --stage extras --deadline-ns "$install_deadline_ns" --helper-map-sha256 HELPER_MAP_SHA256
+/usr/bin/env -u PYTHONPATH PIP_CONFIG_FILE=/dev/null "$private_python" -B -I -m pip --isolated --disable-pip-version-check --no-input --no-cache-dir install --index-url https://pypi.org/simple --target "$system_site" 'pytest==9.1.1' \
   2>&1 | tee "$EVIDENCE/system-pytest-install.log"
-for interpreter in python /usr/bin/python3; do
-  "$interpreter" -c 'import os, pathlib, sys, pytest; assert sys.implementation.name == "cpython"; assert sys.version_info[:2] == (3, 12), sys.version; assert pytest.__version__ == "9.1.1"; assert pathlib.Path(os.environ["HOME"]).is_absolute(); print(sys.executable, sys.version, "pytest", pytest.__version__, pytest.__file__)'
-done | tee "$EVIDENCE/interpreters.log"
-python -m pip check 2>&1 | tee "$EVIDENCE/pip-check.log"
-python -m pip freeze | tee "$EVIDENCE/requirements.freeze.txt"
-/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 2 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)"
-python -m forge_ci.user_service preflight --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
+BASE_HELPER python-checks --deadline-ns "$install_deadline_ns" --helper-map-sha256 HELPER_MAP_SHA256
+BASE_HELPER install-observe --stage 2 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)" --helper-map-sha256 HELPER_MAP_SHA256
+BASE_HELPER preflight --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns" --helper-map-sha256 HELPER_MAP_SHA256
 '''
 
 
@@ -392,6 +395,10 @@ def render(repo):
     repo = Path(repo).resolve(strict=True)
     helpers = {'.github/scripts/forge_ci/' + name: (repo / '.github/scripts/forge_ci' / name).read_bytes() for name in HELPERS}
     expected = {path: hashlib.sha256(raw).hexdigest() for path, raw in helpers.items()}
+    helper_map_sha256 = hashlib.sha256((json.dumps(expected, sort_keys=True, separators=(",", ":"),
+                                                 ensure_ascii=True, allow_nan=False) + "\n").encode()).hexdigest()
+    base_helper = '/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py"'
+    install_script = INSTALL.replace('BASE_HELPER', base_helper).replace('HELPER_MAP_SHA256', helper_map_sha256)
     source = helpers['.github/scripts/forge_ci/setup_policy.py'].decode()
     verifier = helpers['.github/scripts/forge_ci/launch.py'].decode()
     assert 0 < len(source.encode()) <= 256 * 1024 and 0 < len(verifier.encode()) <= 256 * 1024
@@ -469,9 +476,9 @@ builtin printf '%s' "$FORGE_CI_METADATA_TOKEN" | /usr/bin/sudo -n -- /usr/bin/en
             .replace('VERIFIER_SHA256', repr(expected['.github/scripts/forge_ci/launch.py']))
             .replace('EXPECTED_HELPERS', repr(expected)))
     verify = "/usr/bin/python3 -B -I -S - <<'PYBOOT' 2>&1 | tee \"$EVIDENCE/launch-bootstrap.log\"\n" + code + '\nPYBOOT\n'
-    prepare = clean_profile_shell("/usr/bin/python3 -B -I -S - <<'PYPRIVATEHOME'\n" + PRIVATE_HOME_PYTHON + "\nPYPRIVATEHOME\n"
-                                  + 'python -m forge_ci.user_service profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"\n')
-    preflight = clean_profile_shell("python - <<'PYPREFLIGHT' 2>&1 | tee \"$EVIDENCE/preflight.log\"\n"
+    prepare = clean_profile_shell("/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S - <<'PYPRIVATEHOME'\n" + PRIVATE_HOME_PYTHON + "\nPYPRIVATEHOME\n"
+                                  + base_helper + ' profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --helper-map-sha256 ' + helper_map_sha256 + '\n')
+    preflight = clean_profile_shell("/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S - <<'PYPREFLIGHT' 2>&1 | tee \"$EVIDENCE/preflight.log\"\n"
                                     + PREFLIGHT_PYTHON + '\nPYPREFLIGHT\ndf -h "$TMPDIR" | tee "$EVIDENCE/disk.log"\n')
     cleanup = r'''/usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C LANG=C HOME=/nonexistent \
   GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" /usr/bin/python3 -B -I -S - <<'PYCREDENTIALCLEANUP' | /usr/bin/tee "$RUNNER_TEMP/forge-evidence/credential-cleanup.json"
@@ -487,12 +494,12 @@ builtin printf '%s' "$FORGE_CI_METADATA_TOKEN" | /usr/bin/sudo -n -- /usr/bin/en
         {'name': 'Set up qualified Python', 'uses': SETUP_PYTHON, 'with': {'python-version': '3.12.14'}},
         {'name': 'Establish fresh private diagnostic HOME before all phases', 'timeout-minutes': 2, 'run': prepare},
         {'name': 'Verify real Linux ownership and durable disk prerequisites', 'timeout-minutes': 2, 'run': preflight},
-        {'name': 'Install declared extras and qualified pytest', 'timeout-minutes': 10, 'run': clean_profile_shell(INSTALL)},
+        {'name': 'Install declared extras and qualified pytest', 'timeout-minutes': 10, 'run': clean_profile_shell(install_script)},
         {'name': 'Verify production boundary and run complete test phases', 'timeout-minutes': 120,
-         'run': clean_profile_shell(r'''python -m forge_ci.user_service launch \
+         'run': clean_profile_shell(base_helper + r''' launch \
   --receipt "$EVIDENCE/launch-bootstrap.json" --repo "$GITHUB_WORKSPACE" \
-  --evidence "$EVIDENCE/qualification" 2>&1 | tee "$EVIDENCE/qualification-controller.log"
-''')},
+  --evidence "$EVIDENCE/qualification" --helper-map-sha256 HELPER_MAP_SHA256 2>&1 | tee "$EVIDENCE/qualification-controller.log"
+'''.replace('HELPER_MAP_SHA256', helper_map_sha256))},
         {'name': 'Remove private metadata credential', 'id': 'credential_cleanup', 'if': '${{ always() }}',
          'timeout-minutes': 1, 'run': cleanup},
         {'name': 'Preserve logs and JUnit reports', 'if': '${{ always() }}', 'timeout-minutes': 5, 'uses': UPLOAD,

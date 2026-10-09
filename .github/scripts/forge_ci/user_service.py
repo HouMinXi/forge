@@ -23,7 +23,7 @@ import sys
 import threading
 import time
 
-SPEC_SHA256 = "52f595d6c254b4e89c7e08329e3a9b16663c4e4a72565693d03ca72717663177"
+SPEC_SHA256 = "ae8d2ebd1a45a7165626833baadb74e3ff8d18e7468d7c443bb6007d7081c0b7"
 MAX_CAPSULE = 128 * 1024
 MAX_METADATA = 64 * 1024
 SO_PEERPIDFD = 77
@@ -58,7 +58,7 @@ BINDING_KEYS = {"schema_version", "repository_id", "owner_id", "actor_id", "trig
 SOURCE_KEYS = {"candidate_sha", "tree_oid", "source_sha256", "workflow_sha256", "helper_sha256"}
 HELPERS = {".github/scripts/forge_ci/" + name + ".py" for name in (
     "__init__", "facts", "launch", "admission", "setup_policy", "controller", "outcomes", "payload",
-    "probes", "pytest_observer", "user_service", "baseline_measurement")}
+    "probes", "pytest_observer", "user_service", "baseline_measurement", "python_prefix")}
 OWNER_KEYS = {"pid", "uid", "gid", "start_ticks", "pidns", "userns", "mntns", "cgroupns", "boot_id"}
 CAPSULE_KEYS = {"schema_version", "kind", "binding", "owner", "repo", "evidence", "cwd", "entrypoint", "clock", "environment", "receipt", "source"}
 STARTUP_SECONDS, CANCEL_SECONDS, RUNTIME_SECONDS, CLIENT_SECONDS, STEP_SECONDS = 30, 6990, 7080, 7170, 7200
@@ -264,12 +264,34 @@ PUBLIC_GATES = {
     'private Node worker failed': "US187",
     'private Node worker settlement incomplete': "US188",
     'private Node compatibility failed': "US189",
+    'changed authenticated helper directories': "US201",
+    'changed fixed base environment': "US202",
+    'installed runtime changed during probe': "US203",
+    'invalid authenticated helper deadline': "US204",
+    'invalid authenticated helper directories': "US205",
+    'invalid launch receipt fields': "US206",
+    'invalid private Python stage fields': "US207",
+    'invalid runtime admission measurement fields': "US208",
+    'invalid runtime capacity fields': "US209",
+    'private Python active import root changed': "US210",
+    'private Python deadline': "US211",
+    'private Python factory changed': "US212",
+    'private Python provision changed': "US213",
+    'private Python relation changed': "US214",
+    'private Python stage changed': "US215",
+    'runtime admission measurement changed': "US216",
+    'runtime capacity changed': "US217",
+    'unclean Python installer environment': "US218",
+    'wrong isolated launcher interpreter': "US219",
 }
 
 
 def public_gate(error):
     if type(error) is ServiceError and len(error.args) == 1 and type(error.args[0]) is str:
         return PUBLIC_GATES.get(error.args[0], "US000")
+    prefix = sys.modules.get("forge_ci.python_prefix")
+    if prefix is not None and type(error) is prefix.PrefixError:
+        return "US200"
     return "US000"
 
 
@@ -324,6 +346,38 @@ def parse_capsule(raw):
         return value
     except (ValueError, TypeError, UnicodeError, RecursionError) as exc:
         raise ServiceError("malformed capsule") from exc
+
+
+def base_environment(source):
+    need(REQUIRED_ENV <= source.keys(), "missing payload environment")
+    result = {key: source[key] for key in REQUIRED_ENV | OPTIONAL_ENV if key in source}
+    for key, value in FIXED_ENV.items():
+        need(source.get(key) == value, "changed fixed payload environment")
+        result[key] = value
+    validate_base_environment(result)
+    return result
+
+
+def validate_base_environment(value):
+    need(type(value) is dict and value.get("PATH") == base_profile_path(value), "changed fixed base environment")
+    workload = dict(value, PATH=profile_path(value))
+    validate_environment(workload)
+
+
+def workload_environment(base):
+    validate_base_environment(base)
+    result = dict(base, PATH=profile_path(base))
+    validate_environment(result)
+    return result
+
+
+def installer_environment(base):
+    validate_base_environment(base)
+    result = {key: value for key, value in base.items() if key != "PYTHONPATH"}
+    result["PIP_CONFIG_FILE"] = "/dev/null"
+    need(not any(key in result for key in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "PYTHONNOUSERSITE")),
+         "unclean Python installer environment")
+    return result
 
 
 def payload_environment(source):
@@ -415,7 +469,7 @@ def validate_capsule(value):
     need(value["repo"] == value["cwd"] and Path(value["evidence"]).name == "qualification"
          and Path(value["receipt"]) == Path(value["evidence"]).parent / "launch-bootstrap.json", "wrong fixed working paths")
     keys(value["entrypoint"], {"python", "helper_sha256", "controller_sha256", "receipt_sha256", "runtime_sha256"}, "entrypoint")
-    need(value["entrypoint"]["python"] == PROVIDER, "wrong fixed interpreter")
+    need(value["entrypoint"]["python"] == str(python_root(value["environment"]) / "bin/python"), "wrong fixed interpreter")
     need(all(type(value["entrypoint"][key]) is str and re.fullmatch(r"[0-9a-f]{64}", value["entrypoint"][key])
              for key in ("helper_sha256", "controller_sha256", "receipt_sha256", "runtime_sha256")), "invalid entrypoint identity")
     keys(value["clock"], {"started_utc_ns", "started_monotonic_ns", "deadline_utc_ns", "deadline_monotonic_ns",
@@ -462,7 +516,7 @@ def service_argv(capsule, unset):
 
 
 def controller_argv(capsule):
-    return [PROVIDER, "-m", "forge_ci.controller", "--receipt", capsule["receipt"],
+    return [capsule["entrypoint"]["python"], "-m", "forge_ci.controller", "--receipt", capsule["receipt"],
             "--repo", capsule["repo"], "--evidence", capsule["evidence"],
             "--service-started-monotonic-ns", str(capsule["clock"]["started_monotonic_ns"]),
             "--service-started-utc-ns", str(capsule["clock"]["started_utc_ns"]),
@@ -660,39 +714,162 @@ def unit_facts(unit, environment, timeout=5):
     return facts
 
 
-def local_receipt(repo, receipt_path, environment):
+def authenticate_helpers(repo, receipt_path, environment, helper_map_sha256, *, deadline_ns):
+    """Pure bounded receipt/source authentication, before any checkout import."""
+    need(positive(deadline_ns), "invalid authenticated helper deadline")
+    runtime_remaining(deadline_ns)
+    need(type(helper_map_sha256) is str and re.fullmatch(r"[0-9a-f]{64}", helper_map_sha256),
+         "invalid authenticated helper set")
+    need(repo.resolve(strict=True) == repo and Path.cwd() == repo
+         and receipt_path == Path(environment["EVIDENCE"]) / "launch-bootstrap.json", "wrong canonical checkout")
+    raw = read_regular(receipt_path, 256 * 1024)
+    document = json.loads(raw, object_pairs_hook=_pairs, parse_constant=_no_constant)
+    keys(document, {"schema_version", "status", "binding", "source", "live"}, "launch receipt")
+    need(raw == canonical(document), "bootstrap source binding mismatch")
+    need(type(document["schema_version"]) is int and document["schema_version"] == 1
+         and document["status"] == "PASS", "bootstrap source binding mismatch")
+    validate_binding(document["binding"])
+    validate_source(document["source"], document["binding"])
+    binding = document["binding"]
+    for key, field in (("GITHUB_SHA", "candidate_sha"), ("GITHUB_WORKFLOW_SHA", "workflow_sha"),
+                       ("GITHUB_RUN_ID", "run_id"), ("GITHUB_RUN_ATTEMPT", "run_attempt"),
+                       ("GITHUB_JOB", "job_key"), ("GITHUB_RUN_NUMBER", "run_number")):
+        need(environment[key] == str(binding[field]), "payload binding mismatch")
+    need(binding["boot_id"] == read_regular("/proc/sys/kernel/random/boot_id", 64).decode("ascii").strip(),
+         "bootstrap source binding mismatch")
+    verify_helper_map(repo, document["source"]["helper_sha256"], helper_map_sha256, deadline_ns=deadline_ns)
+    return document
+
+
+def helper_directory_state(fd, expected, deadline_ns):
+    """One finite no-follow observation, including proven EOF and iterator close."""
+    runtime_remaining(deadline_ns)
+    before = runtime_stat(os.fstat(fd))
+    need(stat.S_ISDIR(before[2]), "invalid authenticated helper directories")
+    iterator = failure = None
+    members = {}
+    try:
+        iterator = os.scandir(fd)
+        for _ in range(len(expected)):
+            runtime_remaining(deadline_ns)
+            entry = next(iterator, None)
+            runtime_remaining(deadline_ns)
+            need(entry is not None and entry.name in expected and entry.name not in members,
+                 "invalid authenticated helper directories")
+            info = os.stat(entry.name, dir_fd=fd, follow_symlinks=False)
+            need(stat.S_IFMT(info.st_mode) == expected[entry.name], "invalid authenticated helper directories")
+            members[entry.name] = runtime_stat(info)
+        runtime_remaining(deadline_ns)
+        need(next(iterator, None) is None and members.keys() == expected.keys(), "invalid authenticated helper directories")
+        runtime_remaining(deadline_ns)
+        need(runtime_stat(os.fstat(fd)) == before, "changed authenticated helper directories")
+    except BaseException as error:  # noqa: BLE001 - keep original control through explicit iterator closure
+        failure = error
+    finally:
+        if iterator is not None:
+            try:
+                iterator.close()
+                runtime_remaining(deadline_ns)
+            except BaseException as error:  # noqa: BLE001 - late or failed close cannot certify a complete scan
+                failure = install_observation_retain(failure, error)
+    if failure is not None:
+        raise failure
+    runtime_remaining(deadline_ns)
+    return before, members
+
+
+def verify_helper_map(repo, helpers, expected, *, deadline_ns):
+    need(positive(deadline_ns), "invalid authenticated helper deadline")
+    runtime_remaining(deadline_ns)
+    need(type(helpers) is dict and helpers.keys() == HELPERS and runtime_digest(helpers) == expected,
+         "invalid authenticated helper set")
+    need(".github/scripts/forge_ci/__init__.py" in HELPERS
+         and all(type(name) is str and Path(name).parent == Path(".github/scripts/forge_ci")
+                 and Path(name).suffix == ".py" for name in HELPERS), "invalid authenticated helper set")
+    package_members = {Path(name).name: stat.S_IFREG for name in HELPERS}
+    need(len(package_members) == len(HELPERS) == 13, "invalid authenticated helper set")
+    scripts_members = {"forge_ci": stat.S_IFDIR, "render_linux_workflow.py": stat.S_IFREG}
+    scripts, package = repo / ".github/scripts", repo / ".github/scripts/forge_ci"
+    scripts_fd = package_fd = failure = None
+    try:
+        need(scripts.resolve(strict=True) == scripts and package.resolve(strict=True) == package,
+             "invalid authenticated helper directories")
+        runtime_remaining(deadline_ns)
+        scripts_fd = os.open(scripts, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        runtime_remaining(deadline_ns)
+        package_fd = os.open("forge_ci", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=scripts_fd)
+        before_scripts = helper_directory_state(scripts_fd, scripts_members, deadline_ns)
+        before_package = helper_directory_state(package_fd, package_members, deadline_ns)
+        need(runtime_stat(scripts.lstat()) == before_scripts[0]
+             and before_scripts[1]["forge_ci"] == before_package[0]
+             and runtime_stat(os.stat("forge_ci", dir_fd=scripts_fd, follow_symlinks=False)) == before_package[0],
+             "changed authenticated helper directories")
+        for relative, digest in helpers.items():
+            runtime_remaining(deadline_ns)
+            path = repo / relative
+            need(path.resolve(strict=True) == path and hashlib.sha256(read_regular(path, 256 * 1024)).hexdigest() == digest,
+                 "changed authenticated helper bytes")
+            runtime_remaining(deadline_ns)
+        need(helper_directory_state(scripts_fd, scripts_members, deadline_ns) == before_scripts
+             and helper_directory_state(package_fd, package_members, deadline_ns) == before_package,
+             "changed authenticated helper directories")
+        need(scripts.resolve(strict=True) == scripts and package.resolve(strict=True) == package
+             and runtime_stat(scripts.lstat()) == before_scripts[0]
+             and runtime_stat(os.stat("forge_ci", dir_fd=scripts_fd, follow_symlinks=False)) == before_package[0],
+             "changed authenticated helper directories")
+        runtime_remaining(deadline_ns)
+    except BaseException as error:  # noqa: BLE001 - preserve first control across both retained directory closes
+        failure = error
+    finally:
+        for fd in (package_fd, scripts_fd):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                    runtime_remaining(deadline_ns)
+                except BaseException as error:  # noqa: BLE001 - still attempt the other independent close
+                    failure = install_observation_retain(failure, error)
+    if failure is not None:
+        raise failure
+    runtime_remaining(deadline_ns)
+
+
+def local_receipt(repo, receipt_path, environment, helper_map_sha256, *, deadline_ns):
+    authenticated = authenticate_helpers(repo, receipt_path, environment, helper_map_sha256, deadline_ns=deadline_ns)
+    options = {"deadline": deadline_ns / NS}
     need(repo.resolve(strict=True) == repo and Path.cwd() == repo
          and receipt_path == Path(environment["EVIDENCE"]) / "launch-bootstrap.json", "wrong canonical checkout")
     sys.path.insert(0, str(repo / ".github/scripts"))
     launch = importlib.import_module("forge_ci.launch")
     document = launch.load_receipt(receipt_path)
-    checkout = launch.inspect_checkout(repo, document["binding"]["candidate_sha"])
-    event = launch.parse_json(launch.read_regular(Path(environment["GITHUB_EVENT_PATH"]), limit=launch.MAX_API), limit=launch.MAX_API)
+    need(document == authenticated, "bootstrap source binding mismatch")
+    checkout = launch.inspect_checkout(repo, document["binding"]["candidate_sha"], **options)
+    event = launch.parse_json(launch.read_regular(Path(environment["GITHUB_EVENT_PATH"]), limit=launch.MAX_API, **options), limit=launch.MAX_API)
     current = launch.validate_local_launch(environment, event, checkout, document)
     need(current["binding"] == document["binding"] and current["source"] == document["source"],
          "bootstrap source binding mismatch")
+    runtime_remaining(deadline_ns)
     return document
 
 
 def verify_checkout_imports(capsule):
     """Authenticate every helper and receipt before the first checkout import."""
+    deadline_ns = capsule["clock"]["started_monotonic_ns"] + STARTUP_SECONDS * NS
+    runtime_remaining(deadline_ns)
     repo = Path(capsule["repo"])
     need(repo.resolve(strict=True) == repo and Path.cwd() == repo, "wrong bootstrap checkout")
-    need(entrypoint_identity(repo, Path(capsule["receipt"])) == capsule["entrypoint"], "changed authenticated entrypoint")
+    need(entrypoint_identity(repo, Path(capsule["receipt"]), capsule["environment"]) == capsule["entrypoint"], "changed authenticated entrypoint")
     raw = read_regular(capsule["receipt"], 256 * 1024)
     document = json.loads(raw, object_pairs_hook=_pairs, parse_constant=_no_constant)
     need(canonical(document.get("binding")) == canonical(capsule["binding"])
          and canonical(document.get("source")) == canonical(capsule["source"]), "bootstrap source binding mismatch")
     validate_source(document["source"], capsule["binding"])
-    for relative, digest in document["source"]["helper_sha256"].items():
-        path = repo / relative
-        need(path.resolve(strict=True) == path and hashlib.sha256(read_regular(path, 256 * 1024)).hexdigest() == digest,
-             "changed authenticated helper bytes")
+    verify_helper_map(repo, document["source"]["helper_sha256"], runtime_digest(capsule["source"]["helper_sha256"]),
+                      deadline_ns=deadline_ns)
     need(not any(name == "forge_ci" or name.startswith("forge_ci.") for name in sys.modules), "checkout package imported before authentication")
 
 
-def entrypoint_identity(repo, receipt_path):
-    return {"python": PROVIDER, "helper_sha256": hashlib.sha256(read_regular(repo / HELPER, 256 * 1024)).hexdigest(),
+def entrypoint_identity(repo, receipt_path, environment):
+    return {"python": str(python_root(environment) / "bin/python"), "helper_sha256": hashlib.sha256(read_regular(repo / HELPER, 256 * 1024)).hexdigest(),
             "controller_sha256": hashlib.sha256(read_regular(repo / ".github/scripts/forge_ci/controller.py", 256 * 1024)).hexdigest(),
             "receipt_sha256": hashlib.sha256(read_regular(receipt_path, 256 * 1024)).hexdigest(),
             "runtime_sha256": hashlib.sha256(read_regular(receipt_path.parent / "runtime-admission.json", MAX_METADATA)).hexdigest()}
@@ -806,10 +983,13 @@ def bootstrap():
                     need(runner["uid"] == capsule["owner"]["uid"] and runner["gid"] == capsule["owner"]["gid"], "bootstrap identity mismatch")
                     repo = Path(capsule["repo"])
                     verify_checkout_imports(capsule)
-                    document = local_receipt(repo, Path(capsule["receipt"]), capsule["environment"])
+                    document = local_receipt(repo, Path(capsule["receipt"]), capsule["environment"], runtime_digest(capsule["source"]["helper_sha256"]),
+                                             deadline_ns=capsule["clock"]["started_monotonic_ns"] + STARTUP_SECONDS * NS)
                     need(document["binding"] == capsule["binding"] and document["source"] == capsule["source"], "bootstrap source binding mismatch")
-                    need(entrypoint_identity(repo, Path(capsule["receipt"])) == capsule["entrypoint"] and Path(__file__).resolve(strict=True) == repo / HELPER, "bootstrap entrypoint mismatch")
+                    need(entrypoint_identity(repo, Path(capsule["receipt"]), capsule["environment"]) == capsule["entrypoint"] and Path(__file__).resolve(strict=True) == repo / HELPER, "bootstrap entrypoint mismatch")
                     source = ancestry(capsule)
+                    load_runtime_admission_passive(capsule["environment"], capsule["source"],
+                        deadline_ns=capsule["clock"]["started_monotonic_ns"] + STARTUP_SECONDS * NS)
                     need(not cancelled["signal"] and not ready(owner_fd), "cancelled during bootstrap")
                     admitted = True
                     receipt(capsule, "setup", {"status": "ADMITTED", "owner": capsule["owner"], "owner_contract": "SO_PEERCRED+SO_PEERPIDFD",
@@ -904,7 +1084,7 @@ def reconcile_client(capsule, client, environment, cancelled):
     return 1 if signalled or cancelled["signal"] or terminal.get("cancel_reason") else code
 
 
-def launcher(receipt_path, repo, evidence):
+def launcher(receipt_path, repo, evidence, helper_map_sha256):
     started = {"started_utc_ns": time.time_ns(), "started_monotonic_ns": time.monotonic_ns()}
     clock = {**started, "deadline_utc_ns": started["started_utc_ns"] + STEP_SECONDS * NS,
              "deadline_monotonic_ns": started["started_monotonic_ns"] + STEP_SECONDS * NS}
@@ -914,14 +1094,19 @@ def launcher(receipt_path, repo, evidence):
             with startup_limit(clock):
                 need(sys.executable == PROVIDER and sys.version_info[:3] == (3, 12, 14), "wrong launcher interpreter")
                 owner = require_runner()
-                env = payload_environment(os.environ)
-                document = local_receipt(repo, receipt_path, env)
+                need(sys.flags.isolated == sys.flags.no_site == sys.flags.dont_write_bytecode == 1,
+                     "wrong isolated launcher interpreter")
+                base = base_environment(os.environ)
+                document = local_receipt(repo, receipt_path, base, helper_map_sha256, deadline_ns=started["started_monotonic_ns"] + STARTUP_SECONDS * NS)
+                env = workload_environment(base)
+                load_runtime_admission_passive(env, document["source"],
+                    deadline_ns=started["started_monotonic_ns"] + STARTUP_SECONDS * NS)
                 binding = document["binding"]
                 need(evidence.parent.resolve(strict=True) == evidence.parent and not evidence.exists() and not evidence.is_symlink(), "controller evidence is not fresh")
                 capsule = {"schema_version": 1, "kind": "qualification", "binding": binding, "owner": owner,
                            "repo": str(repo), "cwd": str(repo), "evidence": str(evidence),
                            "receipt": str(receipt_path), "source": document["source"],
-                           "entrypoint": entrypoint_identity(repo, receipt_path),
+                           "entrypoint": entrypoint_identity(repo, receipt_path, env),
                            "clock": clock, "environment": env}
                 clock = bind_clock(clock, binding)
                 capsule["clock"] = clock
@@ -972,7 +1157,292 @@ def launcher(receipt_path, repo, evidence):
 
 # First-B runtime admission is produced only after the fixed reviewed installer.
 # None of these recorded runtime hashes is a pre-install or self-authorizing pin.
-RUNTIME_PROFILE = "first-B-auth-v2-private-node"
+# Python construction remains statically wired here. The authenticated helper
+# supplies only passive data checks; it owns no child or mutable environment.
+PYTHON_STAGE_RECORDS = ("python-stage-root.json", "python-stage-factory.json", "python-stage-pip.json")
+
+
+def python_binding(environment, deadline_ns):
+    document, checksum = runtime_json(Path(environment["EVIDENCE"]) / "launch-bootstrap.json", 256 * 1024, deadline_ns)
+    validate_binding(document["binding"])
+    validate_source(document["source"], document["binding"])
+    binding = document["binding"]
+    need(binding["boot_id"] == read_regular("/proc/sys/kernel/random/boot_id", 64).decode("ascii").strip()
+         and str(binding["run_id"]) == environment["GITHUB_RUN_ID"] and binding["run_attempt"] == 1
+         and binding["candidate_sha"] == environment["GITHUB_SHA"] == environment["GITHUB_WORKFLOW_SHA"],
+         "private Python provision changed")
+    return {"run_id": binding["run_id"], "run_attempt": 1, "candidate_sha": binding["candidate_sha"],
+            "workflow_sha": binding["workflow_sha"], "workflow_job": binding["job_key"], "boot_id": binding["boot_id"],
+            "launch_receipt_sha256": checksum, "helper_map_sha256": runtime_digest(document["source"]["helper_sha256"])}
+
+
+def python_deadline(environment, deadline_ns):
+    started = time.monotonic_ns()
+    need(type(deadline_ns) is int and started < deadline_ns <= started + 600 * NS, "private Python deadline")
+    document, _ = runtime_json(Path(environment["EVIDENCE"]) / "launch-bootstrap.json", 256 * 1024, deadline_ns)
+    validate_binding(document["binding"])
+    now, wall = time.monotonic_ns(), time.time_ns()
+    need(document["binding"]["job_started_ns"] <= wall, "private Python deadline")
+    result = min(deadline_ns, now + document["binding"]["job_started_ns"] + 1440 * NS - wall)
+    runtime_remaining(result)
+    return result
+
+
+def python_stage_manifest(stage, binding, inventory):
+    need(stage in {"root", "factory", "pip"}, "private Python stage changed")
+    return {**inventory, "stage": stage, "binding_sha256": runtime_digest(binding)}
+
+
+def python_stage(name, started, deadline, argv, before, after):
+    finished = time.monotonic_ns()
+    need(started < finished < deadline - (5 if name == "root" else 2) * NS, "private Python deadline")
+    return {"name": name, "started_ns": started, "finished_ns": finished, "deadline_ns": deadline,
+            "argv_sha256": None if argv is None else runtime_digest(argv), "input_sha256": runtime_digest(before),
+            "output_sha256": runtime_digest(after), "returncode": None if argv is None else 0,
+            "direct_child_reaped": None if argv is None else True}
+
+
+def python_persist(path, raw, limit, deadline_ns):
+    """Exclusive fixed-record persistence; completion includes both descriptor closes."""
+    runtime_remaining(deadline_ns)
+    need(type(raw) is bytes and len(raw) <= limit, "runtime record encoded bound")
+    path = Path(path)
+    parent_identity = runtime_directory(path.parent, private=True)
+    parent = fd = failure = None
+    try:
+        parent = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        info = os.fstat(parent)
+        need((info.st_dev, info.st_ino) == (parent_identity["device"], parent_identity["inode"]),
+             "private Python stage changed")
+        runtime_remaining(deadline_ns)
+        fd = os.open(path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent)
+        info = os.fstat(fd)
+        need(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.getuid()
+             and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == 0o600, "private Python stage changed")
+        offset = 0
+        while offset < len(raw):
+            runtime_remaining(deadline_ns)
+            count = os.write(fd, raw[offset:offset + 65536])
+            need(type(count) is int and 0 < count <= min(65536, len(raw) - offset), "private Python stage changed")
+            offset += count
+        runtime_remaining(deadline_ns)
+        os.fsync(fd)
+        runtime_remaining(deadline_ns)
+        os.fsync(parent)
+        runtime_remaining(deadline_ns)
+    except BaseException as error:  # noqa: BLE001 - first control survives independent file and parent closure
+        failure = error
+    finally:
+        for opened in (fd, parent):
+            if opened is not None:
+                try:
+                    os.close(opened)
+                    runtime_remaining(deadline_ns)
+                except BaseException as error:  # noqa: BLE001 - always attempt the other descriptor close
+                    failure = install_observation_retain(failure, error)
+    if failure is not None:
+        raise failure
+    runtime_remaining(deadline_ns)
+    return hashlib.sha256(raw).hexdigest()
+
+
+def python_install(environment, deadline_ns):
+    started = time.monotonic_ns()
+    need(type(deadline_ns) is int and started < deadline_ns <= started + 600 * NS, "private Python deadline")
+    # Receipt/import validation consumes this component's original window too.
+    # Its provisional work cutoff reserves settlement before any initial I/O.
+    provisional_cutoff = min(started + 175 * NS, deadline_ns - 5 * NS)
+    runtime_remaining(provisional_cutoff)
+    from forge_ci import python_prefix as prefix
+    validate_base_environment(environment)
+    runtime_remaining(provisional_cutoff)
+    document, _ = runtime_json(Path(environment["EVIDENCE"]) / "launch-bootstrap.json", 256 * 1024, provisional_cutoff)
+    runtime_remaining(provisional_cutoff)
+    validate_binding(document["binding"])
+    clock_monotonic, clock_utc = time.monotonic_ns(), time.time_ns()
+    need(document["binding"]["job_started_ns"] <= clock_utc, "private Python deadline")
+    prelude_left = document["binding"]["job_started_ns"] + 1440 * NS - clock_utc
+    total_deadline = min(started + 180 * NS, deadline_ns, clock_monotonic + prelude_left)
+    cutoff = total_deadline - 5 * NS
+    runtime_remaining(cutoff)
+    binding = python_binding(environment, cutoff)
+    check_private_profile(environment, deadline_ns=cutoff, base=True)
+    private_records = Path(environment["XDG_DATA_HOME"]) / "forge-b-runtime"
+    need(not os.path.lexists(private_records), "private Python stage changed")
+    private_records.mkdir(mode=0o700)
+    runtime_directory(private_records, private=True)
+    root = prefix.prefix_root(environment)
+    staging = Path(environment["HOME"]) / ".local" / ("." + root.name)
+    need(not os.path.lexists(root) and not os.path.lexists(staging), "private Python stage changed")
+    initial = {"staging": hashlib.sha256(str(staging).encode()).hexdigest(),
+               "destination": hashlib.sha256(str(root).encode()).hexdigest(), "absent": True}
+    started = time.monotonic_ns()
+    identity = prefix.create_empty_root(environment, cutoff)
+    root_manifest = python_stage_manifest("root", binding, {"schema_version": 1, "root_identity": identity,
+        "directories": [runtime_directory(root, private=True)], "files": [], "aliases": {}, "bin_origins": {}})
+    python_persist(private_records / PYTHON_STAGE_RECORDS[0], canonical(root_manifest), RUNTIME_INVENTORY_LIMIT, cutoff)
+    stages = [python_stage("root", started, total_deadline, None, initial, root_manifest)]
+
+    inputs = prefix.constructor_inputs(environment, cutoff)
+    clean_cwd = prefix.check_empty_cwd(environment, cutoff)
+    install_env = installer_environment(environment)
+    started = time.monotonic_ns()
+    stage_deadline = min(started + 30 * NS, cutoff)
+    argv = prefix.factory_argv(environment)
+    need(node_owned_command(argv, install_env, str(Path(environment["XDG_CONFIG_HOME"])), stage_deadline,
+                            settlement_ns=2 * NS) == b"", "private Python stage changed")
+    factory = prefix.validate_factory(environment, inputs, stage_deadline - 2 * NS)
+    need(clean_cwd == prefix.check_empty_cwd(environment, stage_deadline - 2 * NS), "private Python stage changed")
+    # Retain the exact trusted constructor inputs as ordinary file rows. These
+    # additional rows are outside V and are never mistaken for package roots.
+    trusted_rows = [inputs["executable"], *inputs["sources"].values(), *inputs["templates"].values()]
+    factory_manifest = python_stage_manifest("factory", binding,
+        dict(factory, files=sorted([*factory["files"], *trusted_rows], key=lambda row: row["path"])))
+    python_persist(private_records / PYTHON_STAGE_RECORDS[1], canonical(factory_manifest), RUNTIME_INVENTORY_LIMIT, stage_deadline - 2 * NS)
+    stages.append(python_stage("factory", started, stage_deadline, argv, root_manifest, factory_manifest))
+
+    started = time.monotonic_ns()
+    stage_deadline = min(started + 30 * NS, cutoff)
+    argv = [PROVIDER, "-B", "-I", "-S", str(Path(environment["GITHUB_WORKSPACE"]) / HELPER),
+            "python-wheel-worker", "--deadline-ns", str(stage_deadline - 2 * NS),
+            "--helper-map-sha256", binding["helper_map_sha256"]]
+    need(node_owned_command(argv, environment, environment["GITHUB_WORKSPACE"], stage_deadline,
+                            settlement_ns=2 * NS) == b"", "private Python stage changed")
+    wheel_manifest = prefix.validate_factory(environment, inputs, stage_deadline - 2 * NS, wheel=True)
+    stages.append(python_stage("wheel", started, stage_deadline, argv, factory_manifest, wheel_manifest))
+
+    started = time.monotonic_ns()
+    stage_deadline = min(started + 30 * NS, cutoff)
+    # Revalidate immediately before site-enabled Q, after transfer has settled.
+    need(prefix.validate_factory(environment, inputs, stage_deadline - 2 * NS, wheel=True) == wheel_manifest,
+         "private Python stage changed")
+    need(clean_cwd == prefix.check_empty_cwd(environment, stage_deadline - 2 * NS), "private Python stage changed")
+    argv = prefix.bootstrap_argv(environment)
+    node_owned_command(argv, install_env, environment["XDG_CONFIG_HOME"], stage_deadline,
+                       settlement_ns=2 * NS, installer_output=True)
+    pip_manifest = python_stage_manifest("pip", binding, prefix.validate_pip_stage(environment, inputs, stage_deadline - 2 * NS))
+    need(clean_cwd == prefix.check_empty_cwd(environment, stage_deadline - 2 * NS), "private Python stage changed")
+    python_persist(private_records / PYTHON_STAGE_RECORDS[2], canonical(pip_manifest), RUNTIME_INVENTORY_LIMIT, stage_deadline - 2 * NS)
+    stages.append(python_stage("bootstrap", started, stage_deadline, argv, wheel_manifest, pip_manifest))
+    record = {"schema_version": 1, "kind": "private-python-bootstrap", "profile": RUNTIME_PROFILE,
+        "binding": binding, "root_identity": identity,
+        "factory": {"constructor": PROVIDER, "base_realpath": prefix.BASE_REALPATH, "version": [3, 12, 14],
+            "cfg_sha256": inputs["outputs"]["pyvenv.cfg"]["sha256"],
+            "templates_sha256": {name: row["sha256"] for name, row in inputs["templates"].items()},
+            "manifest_sha256": runtime_digest(factory_manifest)},
+        "pip": {"version": prefix.PIP_VERSION, "wheel_bytes": prefix.WHEEL_BYTES, "wheel_sha256": prefix.WHEEL_SHA256,
+                "entrypoint_sha256": prefix.WHEEL_ENTRY_SHA256, "installed_manifest_sha256": runtime_digest(pip_manifest)},
+        "stages": stages}
+    prefix.validate_provision(record, environment, binding)
+    python_persist(Path(environment["EVIDENCE"]) / "python-provision.json", canonical(record), 16 * 1024, cutoff)
+    python_provision(environment, cutoff)
+    runtime_remaining(cutoff)
+
+
+def python_provision(environment, deadline_ns):
+    from forge_ci import python_prefix as prefix
+    record, checksum = runtime_json(Path(environment["EVIDENCE"]) / "python-provision.json", 16 * 1024, deadline_ns)
+    binding = python_binding(environment, deadline_ns)
+    prefix.validate_provision(record, environment, binding)
+    need(record["root_identity"] == prefix.root_identity(environment, deadline_ns), "private Python provision changed")
+    private = Path(environment["XDG_DATA_HOME"]) / "forge-b-runtime"
+    manifests = []
+    expected_hashes = [record["stages"][0]["output_sha256"], record["factory"]["manifest_sha256"],
+                       record["pip"]["installed_manifest_sha256"]]
+    for name, stage, expected in zip(PYTHON_STAGE_RECORDS, ("root", "factory", "pip"), expected_hashes, strict=True):
+        manifest, digest = runtime_json(private / name, RUNTIME_INVENTORY_LIMIT, deadline_ns)
+        keys(manifest, {"schema_version", "stage", "binding_sha256", "root_identity", "directories", "files", "aliases", "bin_origins"},
+             "private Python stage")
+        need(digest == expected and manifest["schema_version"] == 1 and manifest["stage"] == stage
+             and manifest["binding_sha256"] == runtime_digest(binding) and manifest["root_identity"] == record["root_identity"],
+             "private Python provision changed")
+        manifests.append(manifest)
+    # Factory artifacts, aliases and constructor inputs remain unchanged after
+    # mutable installation. Mutable package additions are frozen separately.
+    for row in manifests[1]["files"]:
+        need(runtime_file(row["path"], deadline_ns) == row, "private Python factory changed")
+    for row in manifests[1]["aliases"].values():
+        path = Path(row["path"])
+        info = path.lstat()
+        current = {"path": str(path), "target": os.readlink(path), "realpath": str(path.resolve(strict=True)),
+                   "device": info.st_dev, "inode": info.st_ino, "uid": info.st_uid, "gid": info.st_gid,
+                   "mode": stat.S_IMODE(info.st_mode)}
+        need(stat.S_ISLNK(info.st_mode) and current == row, "private Python factory changed")
+    runtime_remaining(deadline_ns)
+    return {"record_sha256": checksum, **record}
+
+
+def python_install_argv(environment):
+    from forge_ci import python_prefix as prefix
+    return [prefix.factory_argv(environment), prefix.bootstrap_argv(environment),
+            prefix.extras_argv(environment), prefix.target_argv(environment)]
+
+
+def python_source(environment, deadline_ns):
+    from forge_ci import launch
+    document, _ = runtime_json(Path(environment["EVIDENCE"]) / "launch-bootstrap.json", 256 * 1024, deadline_ns)
+    source = launch.inspect_checkout(Path(environment["GITHUB_WORKSPACE"]), environment["GITHUB_SHA"], deadline=deadline_ns / NS)
+    need(source == document["source"], "runtime checkout source changed")
+    return source
+
+
+def python_installed_state(environment, deadline_ns):
+    from forge_ci import python_prefix as prefix
+    return {"provision": python_provision(environment, deadline_ns), "source": python_source(environment, deadline_ns),
+            "prefix": prefix.prefix_inventory(environment, deadline_ns),
+            "system": prefix.validate_system_target(environment, deadline_ns),
+            "editable": installed_metadata(environment, deadline_ns)}
+
+
+def python_checkpoint(environment, stage, deadline_ns):
+    from forge_ci import python_prefix as prefix
+    deadline_ns = python_deadline(environment, deadline_ns)
+    python_provision(environment, deadline_ns)
+    python_source(environment, deadline_ns)
+    prefix.prefix_inventory(environment, deadline_ns)
+    if stage == "pip":
+        # The producer's saved pip manifest must match before installed pip runs.
+        saved, _ = runtime_json(Path(environment["XDG_DATA_HOME"]) / "forge-b-runtime/python-stage-pip.json",
+                                RUNTIME_INVENTORY_LIMIT, deadline_ns)
+        need(saved == python_stage_manifest("pip", python_binding(environment, deadline_ns),
+                                           prefix.prefix_inventory(environment, deadline_ns)), "private Python stage changed")
+    else:
+        need(stage == "extras", "private Python stage changed")
+        installed_metadata(environment, deadline_ns)
+    prefix.validate_system_target(environment, deadline_ns, empty=True)
+    runtime_remaining(deadline_ns)
+
+
+def python_log(path, raw, deadline_ns):
+    python_persist(path, raw, MAX_METADATA, deadline_ns)
+
+
+def python_checks(environment, deadline_ns):
+    from forge_ci import python_prefix as prefix
+    deadline_ns = python_deadline(environment, deadline_ns)
+    python_provision(environment, deadline_ns)
+    before = python_installed_state(environment, deadline_ns)
+    clean = installer_environment(environment)
+    code = ('import os, pathlib, sys, pytest; assert sys.implementation.name == "cpython"; '
+            'assert sys.version_info[:2] == (3, 12), sys.version; assert pytest.__version__ == "9.1.1"; '
+            'assert pathlib.Path(os.environ["HOME"]).is_absolute(); '
+            'print(sys.executable, sys.version, "pytest", pytest.__version__, pytest.__file__)')
+    commands = ([str(prefix.python_path(environment)), "-B", "-I", "-c", code],
+                ["/usr/bin/python3", "-B", "-c", code],
+                [str(prefix.python_path(environment)), "-B", "-I", "-m", "pip", *prefix.PIP_FLAGS, "check"],
+                [str(prefix.python_path(environment)), "-B", "-I", "-m", "pip", *prefix.PIP_FLAGS, "freeze"])
+    results = []
+    for argv in commands:
+        need(before == python_installed_state(environment, deadline_ns), "installed runtime changed during probe")
+        results.append(node_owned_command(argv, clean, environment["GITHUB_WORKSPACE"], deadline_ns))
+        need(before == python_installed_state(environment, deadline_ns), "installed runtime changed during probe")
+    for name, raw in (("interpreters.log", results[0] + results[1]), ("pip-check.log", results[2]),
+                      ("requirements.freeze.txt", results[3])):
+        python_log(Path(environment["EVIDENCE"]) / name, raw, deadline_ns)
+    runtime_remaining(deadline_ns)
+
+
+RUNTIME_PROFILE = "first-B-auth-v3-private-python"
 RUNTIME_INVENTORY_LIMIT = 8 * 1024 * 1024
 RUNTIME_FILE_LIMIT = 512 * 1024 * 1024
 RUNTIME_TOTAL_LIMIT = 2 * 1024 * 1024 * 1024
@@ -986,15 +1456,11 @@ OLD_PATH_SELECTION_LABELS = ("provider_bin", "usr_local_bin", "usr_bin", "bin_al
 PATH_STOP_LIMIT = 4096
 PATH_STOP_KEYS = {"schema_version", "kind", "status", "gate", "run_id", "run_attempt", "candidate_sha",
                   "workflow_sha", "workflow_job", "boot_id", "observations"}
-INSTALL_ARGV = [
-    ["python", "-m", "pip", "install", "-e", ".[dev,mcp,semgrep,vertex]", "pytest==9.1.1"],
-    ["python", "-m", "pip", "install", "--target", "SYSTEM_USER_SITE", "pytest==9.1.1"],
-]
-INSTALL_RECORDS = ("node-provision.json", "install.log", "system-pytest-install.log", "interpreters.log", "pip-check.log", "requirements.freeze.txt")
+INSTALL_RECORDS = ("python-provision.json", "node-provision.json", "install.log", "system-pytest-install.log", "interpreters.log", "pip-check.log", "requirements.freeze.txt")
 CREDENTIAL_PATHS = (".aws", ".azure", ".ssh", ".claude", ".claude.json", ".netrc", ".git-credentials", ".npmrc", ".pypirc",
                     ".config/gcloud", ".config/gh", ".config/claude", ".config/openai", ".config/pip", ".local/share/keyrings")
 RUNTIME_KEYS = {"schema_version", "profile", "spec_sha256", "source", "environment_sha256", "installer_sha256",
-                "records_sha256", "profile_metadata", "install_argv", "generated_install_metadata"}
+                "records_sha256", "profile_metadata", "install_argv", "generated_install_metadata", "admission_measurement"}
 RUNTIME_PROBE = r'''import hashlib, importlib.metadata, json, pathlib, site, sys, sysconfig
 import pytest, _pytest.cacheprovider
 assert sys.implementation.name == 'cpython' and sys.version_info[:2] == (3, 12)
@@ -1003,8 +1469,10 @@ assert set(_pytest.cacheprovider.CACHEDIR_FILES) == {'.gitignore', 'README.md', 
 packages = sorted([[d.metadata['Name'], d.version, str(pathlib.Path(d.locate_file('')).resolve())] for d in importlib.metadata.distributions()])
 assert all(type(n) is str and n and type(v) is str and v and type(p) is str for n, v, p in packages)
 assert len(packages) <= 4096 and len({(n.lower().replace('_', '-'), p) for n,v,p in packages}) == len(packages)
-print(json.dumps({'executable':sys.executable, 'version':list(sys.version_info[:3]),
- 'user_site':site.getusersitepackages(), 'import_roots':list(sys.path), 'package_roots':sorted(set([sysconfig.get_path('purelib'), sysconfig.get_path('platlib'), site.getusersitepackages()])),
+print(json.dumps({'executable':sys.executable, 'base_executable':sys._base_executable,
+ 'prefix':sys.prefix, 'base_prefix':sys.base_prefix, 'exec_prefix':sys.exec_prefix,
+ 'base_exec_prefix':sys.base_exec_prefix, 'user_site_enabled':site.ENABLE_USER_SITE, 'version':list(sys.version_info[:3]),
+ 'user_site':site.getusersitepackages(), 'import_roots':list(sys.path), 'package_roots':sorted(set([sysconfig.get_path('purelib'), sysconfig.get_path('platlib')] + ([site.getusersitepackages()] if site.ENABLE_USER_SITE else []))),
  'pytest_path':str(pathlib.Path(pytest.__file__).resolve()), 'cache_source':str(pathlib.Path(_pytest.cacheprovider.__file__).resolve()),
  'cache_support':{n:hashlib.sha256(b).hexdigest() for n,b in _pytest.cacheprovider.CACHEDIR_FILES.items()}, 'packages':packages},
  sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False))
@@ -1047,8 +1515,18 @@ def node_root(environment):
     return result
 
 
-def profile_path(environment):
+def base_profile_path(environment):
     return str(Path(PROVIDER).parent) + ":" + str(node_root(environment) / "expose") + ":/usr/bin:/bin"
+
+
+def python_root(environment):
+    # Derive only; no private code import is needed for capsule authentication.
+    root = node_root(environment)
+    return root.with_name("forge-b-python-" + environment["GITHUB_RUN_ID"] + "-1")
+
+
+def profile_path(environment):
+    return str(python_root(environment) / "bin") + ":" + base_profile_path(environment)
 
 
 def node_pin():
@@ -1459,10 +1937,10 @@ def node_download(root, deadline_ns):
     return path
 
 
-def node_owned_command(argv, environment, cwd, deadline_ns, *, settlement_ns=5 * NS):
+def node_owned_command(argv, environment, cwd, deadline_ns, *, settlement_ns=5 * NS, installer_output=False):
     """One retained child/session, one original cutoff, one bounded settlement."""
     runtime_remaining(deadline_ns)
-    need(type(settlement_ns) is int and 0 < settlement_ns <= 5 * NS, "private Node component deadline")
+    need(type(installer_output) is bool and type(settlement_ns) is int and 0 < settlement_ns <= 5 * NS, "private Node component deadline")
     cutoff = deadline_ns - settlement_ns
     need(time.monotonic_ns() < cutoff, "private Node component deadline")
     process = selector = failure = result = None
@@ -1526,8 +2004,8 @@ def node_owned_command(argv, environment, cwd, deadline_ns, *, settlement_ns=5 *
                     continue
                 chunks[key.data].extend(chunk)
                 need(sum(map(len, chunks.values())) <= MAX_METADATA, "private Node component output bound")
-        need(process.returncode == 0 and not chunks["stderr"], "private Node worker failed")
-        result = bytes(chunks["stdout"])
+        need(process.returncode == 0 and (installer_output or not chunks["stderr"]), "private Node worker failed")
+        result = bytes(chunks["stdout"]) + (bytes(chunks["stderr"]) if installer_output else b"")
     except BaseException as exc:  # noqa: BLE001 - first control/unexpected error keeps identity
         retain(exc)
     finally:
@@ -1567,7 +2045,7 @@ def node_owned_command(argv, environment, cwd, deadline_ns, *, settlement_ns=5 *
 
 
 def node_install_worker(environment, deadline_ns):
-    check_private_profile(environment, deadline_ns=deadline_ns)
+    check_private_profile(environment, deadline_ns=deadline_ns, base=True)
     root = node_root(environment)
     need(sorted(p.name for p in root.iterdir()) == ["expose"] and not any((root / "expose").iterdir()),
          "private Node provision incomplete")
@@ -1608,9 +2086,10 @@ def node_install(environment, deadline_ns):
     work_cutoff = total_deadline - 5 * NS
     binding = node_binding(environment, work_cutoff)
     need(binding["job_started_ns"] == document["binding"]["job_started_ns"], "private Node provision binding changed")
-    check_private_profile(environment, deadline_ns=work_cutoff)
+    check_private_profile(environment, deadline_ns=work_cutoff, base=True)
     argv = [PROVIDER, "-B", "-I", "-S", str(Path(environment["GITHUB_WORKSPACE"]) / HELPER),
-            "node-install-worker", "--deadline-ns", str(work_cutoff)]
+            "node-install-worker", "--deadline-ns", str(work_cutoff),
+            "--helper-map-sha256", runtime_digest(document["source"]["helper_sha256"])]
     raw = node_owned_command(argv, environment, environment["GITHUB_WORKSPACE"], total_deadline)
     need(raw == b"", "private Node worker failed")
     node_provision(environment, work_cutoff)
@@ -1780,7 +2259,7 @@ def runtime_file(path, deadline_ns, *, diagnostic_role=None, diagnostic_member=N
 
 DIRECTORY_STOP_LIMIT = 2048
 DIRECTORY_LABELS = frozenset({"private_home", "private_config", "private_cache", "private_data", "private_tmp",
-                              "private_local", "private_node", "provider_bin", "usr_local_bin", "usr_bin", "bin_alias"})
+                              "private_local", "private_node", "private_python", "provider_bin", "usr_local_bin", "usr_bin", "bin_alias"})
 DIRECTORY_TYPES = {stat.S_IFDIR: "directory", stat.S_IFREG: "regular", stat.S_IFLNK: "symlink",
                    stat.S_IFIFO: "fifo", stat.S_IFSOCK: "socket", stat.S_IFCHR: "character", stat.S_IFBLK: "block"}
 DIRECTORY_OBSERVATION_KEYS = {"label", "file_type", "uid", "gid", "mode", "ordinary_uid", "ordinary_gid",
@@ -1838,8 +2317,11 @@ def runtime_directory(path, *, private=False, diagnostic_label=None):
             "uid": info.st_uid, "gid": info.st_gid, "mode": stat.S_IMODE(info.st_mode)}
 
 
-def check_private_profile(environment, *, deadline_ns):
-    validate_environment(environment)
+def check_private_profile(environment, *, deadline_ns, base=False):
+    if base:
+        validate_base_environment(environment)
+    else:
+        validate_environment(environment)
     runtime_remaining(deadline_ns)
     need(os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0, "runtime profile requires ordinary owner")
     runner = Path(environment["RUNNER_TEMP"])
@@ -1870,7 +2352,11 @@ def check_private_profile(environment, *, deadline_ns):
         need(members == sorted(NODE_ALIASES), "private Node exposure changed")
         node_provision(environment, deadline_ns)
     directories = []
-    for component, label in zip(profile_path(environment).split(":"), ("provider_bin", "private_node", "usr_bin", "bin_alias"), strict=True):
+    labels = ("provider_bin", "private_node", "usr_bin", "bin_alias")
+    path_value = base_profile_path(environment) if base else profile_path(environment)
+    if not base:
+        labels = ("private_python", *labels)
+    for component, label in zip(path_value.split(":"), labels, strict=True):
         path = Path(component)
         real = path.resolve(strict=True)
         need(str(real) == component or (component == "/bin" and str(real) == "/usr/bin"), "unreviewed PATH alias")
@@ -1903,7 +2389,7 @@ def runtime_probe(interpreter, environment, deadline_ns):
     raw = metadata([interpreter, "-B", "-c", RUNTIME_PROBE], environment,
                    timeout=min(5, runtime_remaining(deadline_ns)))
     value = json.loads(raw, object_pairs_hook=_pairs, parse_constant=_no_constant)
-    keys(value, {"executable", "version", "user_site", "package_roots", "import_roots", "pytest_path", "cache_source", "cache_support", "packages"}, "runtime interpreter")
+    keys(value, {"executable", "base_executable", "prefix", "base_prefix", "exec_prefix", "base_exec_prefix", "user_site_enabled", "version", "user_site", "package_roots", "import_roots", "pytest_path", "cache_source", "cache_support", "packages"}, "runtime interpreter")
     need(value["version"][:2] == [3, 12] and type(value["packages"]) is list, "wrong diagnostic Python or packages")
     site = Path(value["user_site"])
     home = Path(environment["HOME"])
@@ -1911,6 +2397,14 @@ def runtime_probe(interpreter, environment, deadline_ns):
          "system pytest site outside diagnostic HOME")
     need(Path(value["pytest_path"]).is_relative_to(site) if interpreter == "/usr/bin/python3" else True,
          "system pytest imported outside diagnostic HOME")
+    if interpreter != "/usr/bin/python3":
+        from forge_ci import python_prefix as prefix
+        need(interpreter == value["executable"] == str(prefix.python_path(environment))
+             and value["base_executable"] == prefix.BASE_REALPATH
+             and value["prefix"] == value["exec_prefix"] == str(prefix.prefix_root(environment))
+             and value["base_prefix"] == value["base_exec_prefix"] == prefix.BASE_PREFIX
+             and value["user_site_enabled"] is False
+             and Path(value["pytest_path"]).is_relative_to(prefix.site_path(environment)), "private Python relation changed")
     return runtime_import_plan(value, environment, interpreter)
 
 
@@ -1953,6 +2447,11 @@ def runtime_import_plan(value, environment, interpreter):
         need(not path.is_relative_to(repo), "unreviewed checkout import root")
         need(not any(anchor == path or anchor.is_relative_to(path) for anchor in (repo, home, stdlib)),
              "active import root exceeds package boundary")
+        if interpreter != "/usr/bin/python3":
+            private_site = python_root(environment) / "lib/python3.12/site-packages"
+            allowed_zip = stdlib.parent / "python312.zip"
+            need(path == private_site or (path == allowed_zip and not path.exists()),
+                 "private Python active import root changed")
         if not path.exists():
             need(not path.is_symlink(), "noncanonical active import root")
             missing.add(name)
@@ -1997,14 +2496,23 @@ def runtime_walk_error(_):
 
 def runtime_inventory(probes, executables, deadline_ns, environment=None):
     environment = os.environ if environment is None else environment
+    from forge_ci import python_prefix as prefix
+    private = prefix.prefix_inventory(environment, deadline_ns)
+    prefix.validate_system_target(environment, deadline_ns)
     roots, missing = inventory_import_roots(probes)
+    private_root = prefix.prefix_root(environment)
+    roots = [root for root in roots if not Path(root).is_relative_to(private_root)]
     node = node_root(environment)
     provision = node_provision(environment, deadline_ns)
     native_root = str(node / "runtime")
     need(not any(Path(native_root).is_relative_to(Path(root)) or Path(root).is_relative_to(node) for root in roots),
          "overlapping runtime import boundaries")
     roots = sorted([*roots, native_root])
-    files, directories, directory_stats, count, total = {}, {}, {}, 0, 0
+    files = {row["path"]: row for row in private["files"]}
+    directories = {row["path"]: row for row in private["directories"]}
+    directory_stats = {}
+    count = len(files) + len(directories) + len(private["aliases"])
+    total = sum(row["bytes"] for row in files.values()) + sum(len(row["target"].encode()) for row in private["aliases"].values())
     for root in roots:
         base = Path(root)
         need(base.resolve(strict=True) == base, "runtime package root alias")
@@ -2052,8 +2560,9 @@ def runtime_inventory(probes, executables, deadline_ns, environment=None):
     need(count <= RUNTIME_ENTRIES, "runtime package inventory entry bound")
     need(total <= RUNTIME_TOTAL_LIMIT, "runtime package inventory byte bound")
     need(provision == node_provision(environment, deadline_ns), "private Node provision binding changed")
-    result = {"schema_version": 1, "roots": roots, "missing_roots": missing, "directories": [directories[n] for n in sorted(directories)],
-              "files": [files[n] for n in sorted(files)], "native_aliases": aliases}
+    result = {"schema_version": 2, "roots": sorted([*roots, str(private_root)]), "missing_roots": missing,
+              "directories": [directories[n] for n in sorted(directories)], "files": [files[n] for n in sorted(files)],
+              "native_aliases": aliases, "python_aliases": private["aliases"], "python_bin_origins": private["bin_origins"]}
     need(len(canonical(result)) <= RUNTIME_INVENTORY_LIMIT, "runtime inventory encoded bound")
     runtime_remaining(deadline_ns)
     return result
@@ -2064,7 +2573,9 @@ def current_executables(deadline_ns, environment=None):
     node_provision(environment, deadline_ns)
     executables = {name: runtime_executable(name, deadline_ns, environment) for name in REQUIRED_TOOLS}
     provider = Path(PROVIDER).resolve(strict=True)
-    need(executables["python"]["realpath"] == executables["python3"]["realpath"] == str(provider),
+    need(executables["python"]["realpath"] == executables["python3"]["realpath"] == str(provider)
+         and executables["python"]["path"] == str(python_root(environment) / "bin/python")
+         and executables["python3"]["path"] == str(python_root(environment) / "bin/python3"),
          "PATH Python differs from provider")
     system = Path("/usr/bin/python3").resolve(strict=True)
     executables["/usr/bin/python3"] = {"requested": "/usr/bin/python3", "path": "/usr/bin/python3",
@@ -2076,11 +2587,23 @@ def current_executables(deadline_ns, environment=None):
 def validate_path_selection(value):
     need(type(value) is dict and value.keys() == set(PATH_SELECTION_TOOLS), "runtime PATH selection changed")
     for name, item in value.items():
-        need(item is None or (type(item) is str and item in (*PATH_SELECTION_LABELS, "private_node")),
+        need(item is None or (type(item) is str and item in (*PATH_SELECTION_LABELS, "private_node", "private_python")),
              "runtime PATH selection changed")
+        need(item != "private_python" or name in PYTHON_MIGRATIONS, "runtime PATH selection changed")
         need((name in NODE_ALIASES and item == "private_node") or (name not in NODE_ALIASES and item != "private_node"),
              "runtime PATH selection changed")
     need(len(canonical(value)) <= PATH_STOP_LIMIT, "runtime record encoded bound")
+
+
+PYTHON_MIGRATIONS = {"python": None, "python3": None, "python3.12": None, "semgrep": "semgrep",
+                     "ruff": "ruff", "mutmut": "mutmut", "code-forge": "code-review-forge",
+                     "code-forge-mcp": "code-review-forge", "pytest": "pytest"}
+
+
+def approved_python_transition(name, observation):
+    return (name in PYTHON_MIGRATIONS and observation["new"] == "private_python"
+            and observation["old"] == observation["base"]
+            and observation["base"] in ({"provider_bin"} if PYTHON_MIGRATIONS[name] is None else {None, "provider_bin"}))
 
 
 def approved_node_transition(name, observation):
@@ -2094,12 +2617,13 @@ def validate_path_observations(value, *, rejected=True):
     for name, observation in value.items():
         need(type(observation) is dict and observation.keys() == {"old", "base", "new"}, "runtime PATH selection changed")
         for side, labels in (("old", OLD_PATH_SELECTION_LABELS), ("base", PATH_SELECTION_LABELS),
-                             ("new", (*PATH_SELECTION_LABELS, "private_node"))):
+                             ("new", (*PATH_SELECTION_LABELS, "private_node", "private_python"))):
             item = observation[side]
             need(item is None or (type(item) is str and item in labels), "runtime PATH selection changed")
             need(item != "private_node" or name in NODE_ALIASES, "runtime PATH selection changed")
+            need(item != "private_python" or name in PYTHON_MIGRATIONS, "runtime PATH selection changed")
     if rejected:
-        need(any(not approved_node_transition(name, item) and
+        need(any(not approved_node_transition(name, item) and not approved_python_transition(name, item) and
                  (item["old"] != item["new"] or item["base"] != item["new"])
                  for name, item in value.items()), "runtime PATH selection changed")
     need(len(canonical(value)) <= PATH_STOP_LIMIT, "runtime record encoded bound")
@@ -2109,6 +2633,8 @@ def current_path_selection(deadline_ns, environment=None, *, retain_observations
     import shutil
     environment = os.environ if environment is None else environment
     node_provision(environment, deadline_ns)
+    from forge_ci import python_prefix as prefix
+    private = prefix.prefix_inventory(environment, deadline_ns)
     final_path = profile_path(environment)
     snapshots, finite_snapshots = [], []
     for _ in range(2):
@@ -2117,7 +2643,7 @@ def current_path_selection(deadline_ns, environment=None, *, retain_observations
             observation, finite_observation = {}, {}
             for side, path, labels in (("old", OLD_PROFILE_PATH, OLD_PATH_SELECTION_LABELS),
                                        ("base", PROFILE_PATH, PATH_SELECTION_LABELS),
-                                       ("new", final_path, ("provider_bin", "private_node", "usr_bin", "bin_alias"))):
+                                       ("new", final_path, ("private_python", "provider_bin", "private_node", "usr_bin", "bin_alias"))):
                 runtime_remaining(deadline_ns)
                 selected = shutil.which(name, path=path)
                 runtime_remaining(deadline_ns)
@@ -2135,12 +2661,21 @@ def current_path_selection(deadline_ns, environment=None, *, retain_observations
             if name in NODE_ALIASES:
                 need(approved_node_transition(name, finite_snapshots[0][name])
                      and item["new"] == str(node_root(environment) / "expose" / name), "runtime PATH selection changed")
+            elif name in PYTHON_MIGRATIONS:
+                endpoint = str(python_root(environment) / "bin" / name)
+                origin = private["bin_origins"].get(endpoint)
+                need(approved_python_transition(name, finite_snapshots[0][name]) and item["new"] == endpoint
+                     and type(origin) is dict, "runtime PATH selection changed")
+                expected_distribution = PYTHON_MIGRATIONS[name]
+                need((expected_distribution is None and origin["kind"] == "factory")
+                     or (expected_distribution is not None and origin["kind"] == "distribution"
+                         and origin["distribution"] == expected_distribution), "runtime PATH selection changed")
             else:
                 need(item["old"] == item["base"] == item["new"], "runtime PATH selection changed")
     except ServiceError as error:
         try:
             for observations in finite_snapshots:
-                if any(not approved_node_transition(name, item) and
+                if any(not approved_node_transition(name, item) and not approved_python_transition(name, item) and
                        (item["old"] != item["new"] or item["base"] != item["new"])
                        for name, item in observations.items()):
                     validate_path_observations(observations)
@@ -2160,19 +2695,116 @@ def current_path_selection(deadline_ns, environment=None, *, retain_observations
     return selection
 
 
+CAPACITY_FIELDS = {"regular_files", "directories", "aliases", "regular_bytes", "alias_target_bytes", "inventory_bytes"}
+MEASUREMENT_FIELDS = {"schema_version", "kind", "complete", "source_sha256", "environment_sha256", "inventory_sha256",
+                      "started_monotonic_ns", "finished_monotonic_ns", "deadline_monotonic_ns", "elapsed_ns"}
+
+
+def inventory_capacity(inventory, aliases):
+    """Project complete already-admitted rows; a partial traversal cannot call this."""
+    need(type(inventory) is dict and type(inventory.get("files")) is list
+         and type(inventory.get("directories")) is list and type(aliases) is dict, "runtime capacity changed")
+    files, directories = inventory["files"], inventory["directories"]
+    need(len(files) + len(directories) + len(aliases) <= RUNTIME_ENTRIES, "runtime capacity changed")
+    paths, regular_bytes, alias_bytes = set(), 0, 0
+    for row in [*files, *directories, *aliases.values()]:
+        need(type(row) is dict and text(row.get("path"), 4096) and row["path"] not in paths,
+             "runtime capacity changed")
+        paths.add(row["path"])
+    for row in files:
+        size = row.get("bytes")
+        need(type(size) is int and 0 <= size <= RUNTIME_FILE_LIMIT, "runtime capacity changed")
+        regular_bytes += size
+    for row in aliases.values():
+        need(text(row.get("target"), 4096), "runtime capacity changed")
+        alias_bytes += len(row["target"].encode("utf-8"))
+    value = {"regular_files": len(files), "directories": len(directories), "aliases": len(aliases),
+             "regular_bytes": regular_bytes, "alias_target_bytes": alias_bytes, "inventory_bytes": len(canonical(inventory))}
+    validate_capacity_counts(value)
+    return value
+
+
+def validate_capacity_counts(value):
+    keys(value, CAPACITY_FIELDS, "runtime capacity")
+    need(all(type(item) is int and 0 <= item < 2**63 for item in value.values())
+         and value["regular_files"] + value["directories"] + value["aliases"] <= RUNTIME_ENTRIES
+         and value["regular_bytes"] + value["alias_target_bytes"] <= RUNTIME_TOTAL_LIMIT
+         and value["inventory_bytes"] <= RUNTIME_INVENTORY_LIMIT, "runtime capacity changed")
+
+
+def validate_capacity(value):
+    keys(value, {"schema_version", "prefix", "combined"}, "runtime capacity")
+    need(type(value["schema_version"]) is int and value["schema_version"] == 1, "runtime capacity changed")
+    validate_capacity_counts(value["prefix"])
+    validate_capacity_counts(value["combined"])
+    need(all(value["prefix"][field] <= value["combined"][field]
+             for field in CAPACITY_FIELDS - {"inventory_bytes"}) and len(canonical(value)) <= 1024,
+         "runtime capacity changed")
+
+
+def runtime_capacity(private, combined):
+    need(type(private) is dict and type(combined) is dict
+         and type(private.get("aliases")) is dict and type(combined.get("native_aliases")) is dict
+         and type(combined.get("python_aliases")) is dict, "runtime capacity changed")
+    aliases = {"node:" + name: row for name, row in combined["native_aliases"].items()}
+    aliases.update({"python:" + name: row for name, row in combined["python_aliases"].items()})
+    result = {"schema_version": 1, "prefix": inventory_capacity(private, private["aliases"]),
+              "combined": inventory_capacity(combined, aliases)}
+    for kind in ("files", "directories"):
+        current = {row["path"]: row for row in combined[kind]}
+        need(all(current.get(row["path"]) == row for row in private[kind]), "runtime capacity changed")
+    need(combined["python_aliases"] == private["aliases"], "runtime capacity changed")
+    validate_capacity(result)
+    return result
+
+
+def validate_runtime_capacity(value, private, combined):
+    validate_capacity(value)
+    need(value == runtime_capacity(private, combined), "runtime capacity changed")
+
+
+def validate_admission_measurement(record):
+    measurement = record["admission_measurement"]
+    keys(measurement, MEASUREMENT_FIELDS, "runtime admission measurement")
+    need(type(measurement["schema_version"]) is int and measurement["schema_version"] == 1
+         and measurement["kind"] == "initial-runtime-measurement" and measurement["complete"] is True,
+         "runtime admission measurement changed")
+    expected = {"source_sha256": record["source"]["source_sha256"],
+                "environment_sha256": record["environment_sha256"],
+                "inventory_sha256": record["records_sha256"]["runtime-inventory.json"]}
+    need(all(type(measurement[field]) is str and re.fullmatch(r"[0-9a-f]{64}", measurement[field])
+             and measurement[field] == value for field, value in expected.items()), "runtime admission measurement changed")
+    need(all(positive(measurement[field]) for field in ("started_monotonic_ns", "finished_monotonic_ns",
+              "deadline_monotonic_ns", "elapsed_ns"))
+         and measurement["started_monotonic_ns"] < measurement["finished_monotonic_ns"] < measurement["deadline_monotonic_ns"]
+         and measurement["elapsed_ns"] == measurement["finished_monotonic_ns"] - measurement["started_monotonic_ns"]
+         and len(canonical(measurement)) <= 1024, "runtime admission measurement changed")
+
+
 def current_runtime(environment, *, deadline_ns):
+    # The first package-bearing probe receives authority from a complete passive
+    # prefix/target/metadata snapshot, never from the probe's own output.
+    before = python_installed_state(environment, deadline_ns)
     profile = check_private_profile(environment, deadline_ns=deadline_ns)
     profile["private_node"] = node_provision(environment, deadline_ns)
+    profile["private_python"] = python_provision(environment, deadline_ns)
     profile["path_observations"] = {}
     profile["path_selection"] = current_path_selection(deadline_ns, environment, retain_observations=profile["path_observations"])
     executables = current_executables(deadline_ns, environment)
     profile["node_probe"] = node_probe(environment, deadline_ns)
-    probes = {"provider": runtime_probe(PROVIDER, environment, deadline_ns),
-              "system": runtime_probe("/usr/bin/python3", environment, deadline_ns)}
+    need(before == python_installed_state(environment, deadline_ns), "installed runtime changed during probe")
+    provider_probe = runtime_probe(str(python_root(environment) / "bin/python"), environment, deadline_ns)
+    need(before == python_installed_state(environment, deadline_ns), "installed runtime changed during probe")
+    system_probe = runtime_probe("/usr/bin/python3", environment, deadline_ns)
+    need(before == python_installed_state(environment, deadline_ns), "installed runtime changed during probe")
+    probes = {"provider": provider_probe, "system": system_probe}
     need(probes["provider"]["version"] == [3, 12, 14], "wrong provider patch version")
     profile.update(executables=executables, provider={k: v for k, v in probes["provider"].items() if k != "packages"},
                    system={k: v for k, v in probes["system"].items() if k != "packages"})
-    return profile, probes, runtime_inventory(probes, executables, deadline_ns, environment)
+    inventory = runtime_inventory(probes, executables, deadline_ns, environment)
+    need(before == python_installed_state(environment, deadline_ns), "installed runtime changed during probe")
+    profile["capacity"] = runtime_capacity(before["prefix"], inventory)
+    return profile, probes, inventory
 
 
 def runtime_write(path, value, limit, deadline_ns):
@@ -2312,6 +2944,7 @@ FILE_FIXED_CONTEXTS = {
     "required_executable": dict.fromkeys(REQUIRED_TOOLS, "required_tool"),
     "system_interpreter": {"system_python3": "system_tool"},
     "retained_runtime_record": {**dict.fromkeys(INSTALL_RECORDS, "evidence_record"),
+                                **dict.fromkeys(PYTHON_STAGE_RECORDS, "private_runtime_record"),
                                 "runtime-packages.json": "private_runtime_record", "runtime-inventory.json": "private_runtime_record"},
     "runtime_installer": {"render_linux_workflow.py": "checkout"},
     "editable_metadata": dict.fromkeys(EDITABLE_FILES, "editable_metadata"),
@@ -2340,53 +2973,72 @@ def installed_metadata(environment, deadline_ns):
 
 
 def runtime_record_path(environment, name):
-    need(name in set(INSTALL_RECORDS) | {"runtime-packages.json", "runtime-inventory.json"}, "unknown runtime record")
+    need(name in set(INSTALL_RECORDS) | set(PYTHON_STAGE_RECORDS) | {"runtime-packages.json", "runtime-inventory.json"}, "unknown runtime record")
     return (Path(environment["EVIDENCE"]) if name in INSTALL_RECORDS else
             Path(environment["XDG_DATA_HOME"]) / "forge-b-runtime") / name
 
 
 def produce_runtime_admission(repo, evidence, environment, *, deadline_ns):
+    started_ns = time.monotonic_ns()
+    runtime_remaining(deadline_ns)
     from forge_ci import launch
     need(repo == Path(environment["GITHUB_WORKSPACE"]) and evidence == Path(environment["EVIDENCE"]), "runtime fixed paths changed")
     receipt = launch.load_receipt(evidence / "launch-bootstrap.json")
     need(launch.inspect_checkout(repo, receipt["binding"]["candidate_sha"], deadline=deadline_ns / NS) == receipt["source"],
          "runtime checkout source changed")
     profile, probes, inventory = current_runtime(environment, deadline_ns=deadline_ns)
-    records = {name: runtime_file((evidence / name).resolve(strict=True), deadline_ns,
-                                 diagnostic_role="retained_runtime_record", diagnostic_member=name)["sha256"] for name in INSTALL_RECORDS}
+    records = {name: runtime_file(runtime_record_path(environment, name), deadline_ns,
+                                 diagnostic_role="retained_runtime_record", diagnostic_member=name)["sha256"] for name in (*INSTALL_RECORDS, *PYTHON_STAGE_RECORDS)}
     private_records = Path(environment["XDG_DATA_HOME"]) / "forge-b-runtime"
-    private_records.mkdir(mode=0o700)
     runtime_directory(private_records, private=True)
-    records["runtime-packages.json"] = runtime_write(private_records / "runtime-packages.json", probes, MAX_METADATA, deadline_ns)
-    records["runtime-inventory.json"] = runtime_write(private_records / "runtime-inventory.json", inventory, RUNTIME_INVENTORY_LIMIT, deadline_ns)
-    argv = [INSTALL_ARGV[0], [*INSTALL_ARGV[1][:5], probes["system"]["user_site"], *INSTALL_ARGV[1][6:]]]
-    record = {"schema_version": 1, "profile": RUNTIME_PROFILE, "spec_sha256": SPEC_SHA256, "source": receipt["source"],
+    records["runtime-packages.json"] = python_persist(private_records / "runtime-packages.json", canonical(probes), MAX_METADATA, deadline_ns)
+    records["runtime-inventory.json"] = python_persist(private_records / "runtime-inventory.json", canonical(inventory), RUNTIME_INVENTORY_LIMIT, deadline_ns)
+    argv = python_install_argv(environment)
+    record = {"schema_version": 2, "profile": RUNTIME_PROFILE, "spec_sha256": SPEC_SHA256, "source": receipt["source"],
               "environment_sha256": runtime_digest(environment),
               "installer_sha256": runtime_file(repo / ".github/scripts/render_linux_workflow.py", deadline_ns,
                                                 diagnostic_role="runtime_installer", diagnostic_member="render_linux_workflow.py")["sha256"],
               "records_sha256": records, "profile_metadata": profile, "install_argv": argv,
               "generated_install_metadata": installed_metadata(environment, deadline_ns)}
-    runtime_write(evidence / "runtime-admission.json", record, MAX_METADATA, deadline_ns)
+    finished_ns = time.monotonic_ns()
+    record["admission_measurement"] = {"schema_version": 1, "kind": "initial-runtime-measurement", "complete": True,
+        "source_sha256": receipt["source"]["source_sha256"], "environment_sha256": record["environment_sha256"],
+        "inventory_sha256": records["runtime-inventory.json"], "started_monotonic_ns": started_ns,
+        "finished_monotonic_ns": finished_ns, "deadline_monotonic_ns": deadline_ns, "elapsed_ns": finished_ns - started_ns}
+    validate_capacity(profile["capacity"])
+    validate_admission_measurement(record)
+    python_persist(evidence / "runtime-admission.json", canonical(record), MAX_METADATA, deadline_ns)
+    return record
+
+
+def load_runtime_admission_passive(environment, source, *, deadline_ns):
+    validate_environment(environment)
+    record, _ = runtime_json(Path(environment["EVIDENCE"]) / "runtime-admission.json", MAX_METADATA, deadline_ns)
+    keys(record, RUNTIME_KEYS, "runtime admission")
+    need(type(record["schema_version"]) is int and record["schema_version"] == 2 and record["profile"] == RUNTIME_PROFILE and record["spec_sha256"] == SPEC_SHA256
+         and record["source"] == source and record["environment_sha256"] == runtime_digest(environment), "runtime admission binding mismatch")
+    expected = set(INSTALL_RECORDS) | set(PYTHON_STAGE_RECORDS) | {"runtime-packages.json", "runtime-inventory.json"}
+    keys(record["records_sha256"], expected, "runtime record hashes")
+    need(all(type(x) is str and re.fullmatch(r"[0-9a-f]{64}", x) for x in record["records_sha256"].values()), "runtime record hash invalid")
+    revalidate_runtime_admission_passive(record, environment, source, deadline_ns=deadline_ns)
     return record
 
 
 def load_runtime_admission(environment, source, *, deadline_ns):
-    validate_environment(environment)
-    record, _ = runtime_json(Path(environment["EVIDENCE"]) / "runtime-admission.json", MAX_METADATA, deadline_ns)
-    keys(record, RUNTIME_KEYS, "runtime admission")
-    need(record["schema_version"] == 1 and record["profile"] == RUNTIME_PROFILE and record["spec_sha256"] == SPEC_SHA256
-         and record["source"] == source and record["environment_sha256"] == runtime_digest(environment), "runtime admission binding mismatch")
-    expected = set(INSTALL_RECORDS) | {"runtime-packages.json", "runtime-inventory.json"}
-    keys(record["records_sha256"], expected, "runtime record hashes")
-    need(all(type(x) is str and re.fullmatch(r"[0-9a-f]{64}", x) for x in record["records_sha256"].values()), "runtime record hash invalid")
-    revalidate_runtime_admission(record, environment, source, deadline_ns=deadline_ns)
+    record = load_runtime_admission_passive(environment, source, deadline_ns=deadline_ns)
+    revalidate_runtime_admission_active(record, environment, deadline_ns=deadline_ns)
     return record
 
 
-def revalidate_runtime_admission(record, environment, source, *, deadline_ns):
+def revalidate_runtime_admission_passive(record, environment, source, *, deadline_ns):
+    validate_environment(environment)
     runtime_remaining(deadline_ns)
     keys(record, RUNTIME_KEYS, "runtime admission")
-    need(record["source"] == source and record["environment_sha256"] == runtime_digest(environment), "runtime admission binding mismatch")
+    need(type(record["schema_version"]) is int and record["schema_version"] == 2
+         and record["profile"] == RUNTIME_PROFILE and record["spec_sha256"] == SPEC_SHA256
+         and record["source"] == source and record["environment_sha256"] == runtime_digest(environment), "runtime admission binding mismatch")
+    keys(record["records_sha256"], set(INSTALL_RECORDS) | set(PYTHON_STAGE_RECORDS) | {"runtime-packages.json", "runtime-inventory.json"},
+         "runtime record hashes")
     need(type(record["profile_metadata"]) is dict and "path_selection" in record["profile_metadata"],
          "runtime PATH selection changed")
     validate_path_selection(record["profile_metadata"]["path_selection"])
@@ -2409,22 +3061,39 @@ def revalidate_runtime_admission(record, environment, source, *, deadline_ns):
     saved_probes, _ = runtime_json(runtime_record_path(environment, "runtime-packages.json"), MAX_METADATA, deadline_ns)
     before = runtime_inventory(saved_probes, executables, deadline_ns, environment)
     need(runtime_digest(before) == record["records_sha256"]["runtime-inventory.json"], "installed package drift before import")
+    from forge_ci import python_prefix as prefix
+    validate_runtime_capacity(record["profile_metadata"]["capacity"], prefix.prefix_inventory(environment, deadline_ns), before)
+    validate_admission_measurement(record)
     from forge_ci import launch
     need(launch.inspect_checkout(repo, source["candidate_sha"], deadline=deadline_ns / NS) == source,
          "runtime checkout source changed")
+    need(record["install_argv"] == python_install_argv(environment), "runtime install selection changed")
+    need(record["profile_metadata"]["private_python"] == python_provision(environment, deadline_ns),
+         "private Python provision changed")
+    runtime_remaining(deadline_ns)
+
+
+def revalidate_runtime_admission_active(record, environment, *, deadline_ns):
     profile, probes, inventory = current_runtime(environment, deadline_ns=deadline_ns)
     need(profile == record["profile_metadata"] and runtime_digest(probes) == record["records_sha256"]["runtime-packages.json"]
          and runtime_digest(inventory) == record["records_sha256"]["runtime-inventory.json"], "installed runtime changed")
-    need(record["install_argv"] == [INSTALL_ARGV[0], [*INSTALL_ARGV[1][:5], probes["system"]["user_site"], *INSTALL_ARGV[1][6:]]],
-         "runtime install selection changed")
+    need(record["install_argv"] == python_install_argv(environment), "runtime install selection changed")
     runtime_remaining(deadline_ns)
+
+
+def revalidate_runtime_admission(record, environment, source, *, deadline_ns):
+    revalidate_runtime_admission_passive(record, environment, source, deadline_ns=deadline_ns)
+    revalidate_runtime_admission_active(record, environment, deadline_ns=deadline_ns)
 
 
 def runtime_summary(record):
     keys(record, RUNTIME_KEYS, "runtime admission")
+    need(type(record["schema_version"]) is int and record["schema_version"] == 2, "runtime admission binding mismatch")
+    validate_capacity(record["profile_metadata"]["capacity"])
+    validate_admission_measurement(record)
     result = {"schema_version": 1, "profile": RUNTIME_PROFILE, "admission_sha256": runtime_digest(record),
               "installer_sha256": record["installer_sha256"], "records_sha256": record["records_sha256"],
-              "profile_metadata": record["profile_metadata"],
+              "profile_metadata": record["profile_metadata"], "admission_measurement": record["admission_measurement"],
               "generated_install_metadata_sha256": runtime_digest(record["generated_install_metadata"])}
     need(len(canonical(result)) <= MAX_METADATA, "runtime summary bound")
     return result
@@ -2549,8 +3218,8 @@ def validate_install_observation(value):
             install_observation_need(item[1] is not None and digest(item[2]) and all(x is not None for x in item[3:6] + item[7:]))
 
     install_observation_need(type(value) is dict and value.keys() == INSTALL_OBSERVATION_KEYS)
-    install_observation_need(type(value["schema_version"]) is int and value["schema_version"] == 1
-                             and value["kind"] == "installation-mode-observation" and integer(value["stage"], 2)
+    install_observation_need(type(value["schema_version"]) is int and value["schema_version"] == 2
+                             and value["kind"] == "private-python-installation-mode-observation" and integer(value["stage"], 2)
                              and type(value["status"]) is str and value["status"] in {"COMPLETE", "STOP"})
     stage = value["stage"]
     binding = value["binding"]
@@ -2630,8 +3299,7 @@ class _InstallObservation:
     _unclosed_scans = []
 
     def __init__(self, environment, stage, deadline_ns):
-        import sysconfig
-        self.environment, self.stage = environment, stage
+        self.environment, self.stage = dict(environment, PATH=profile_path(environment)), stage
         self.started = time.monotonic_ns()
         install_observation_need(positive(deadline_ns) and self.started < deadline_ns <= self.started + 600 * NS, 12)
         self.deadline = min(self.started + 20 * NS, deadline_ns)
@@ -2639,14 +3307,12 @@ class _InstallObservation:
         self.bytes_read = self.source_bytes = self.acl_calls = 0
         self.fds, self.directory_cache, self.tool_cache, self.content_cache = set(), {}, {}, {}
         self.pending_receipt = None
-        provider = Path(PROVIDER).parent.parent
+        provider = python_root(environment)
         home, repo = Path(environment["HOME"]), Path(environment["GITHUB_WORKSPACE"])
-        self.roots = (provider, Path("/usr/bin"), Path("/bin"), node_root(environment), home / ".local", repo)
-        paths = sysconfig.get_paths()
-        install_observation_need(all(type(paths.get(key)) is str for key in ("scripts", "purelib", "platlib")), 5)
-        scripts, purelib, platlib = (self.path(paths[key]) for key in ("scripts", "purelib", "platlib"))
-        install_observation_need(scripts == Path(PROVIDER).parent and purelib.is_relative_to(provider)
-                                 and platlib.is_relative_to(provider), 5)
+        self.roots = (provider, Path("/usr/bin"), Path("/bin"), node_root(environment), home / ".local", repo,
+                      Path(PROVIDER).parent.parent)
+        scripts = provider / "bin"
+        purelib = platlib = provider / "lib/python3.12/site-packages"
         target = home / ".local/lib/python3.12/site-packages"
         self.directories = (scripts, purelib, platlib, home / ".local", home / ".local/bin",
                             target, target / "bin", repo, repo / "src", repo / "src/code_review_forge.egg-info")
@@ -3398,7 +4064,7 @@ class _InstallObservation:
 
 def install_observe(environment, stage, deadline_ns, shell_umask):
     """Collect one closed passive checkpoint under the original install clock."""
-    validate_environment(environment)
+    validate_base_environment(environment)
     install_observation_need(type(stage) is int and stage in (0, 1, 2)
                              and type(shell_umask) is str and re.fullmatch(r"[0-7]{4}", shell_umask))
     install_observation_need(os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0, 10)
@@ -3408,7 +4074,7 @@ def install_observe(environment, stage, deadline_ns, shell_umask):
         binding, mask = observer.binding(), observer.mask()
         unavailable = [14, None, None, None, None, None, None, None, None]
         roles = (0, 4, 6) if stage == 1 else tuple(range(10))
-        value = {"schema_version": 1, "kind": "installation-mode-observation", "stage": stage, "status": "STOP",
+        value = {"schema_version": 2, "kind": "private-python-installation-mode-observation", "stage": stage, "status": "STOP",
                  "binding": binding, "shell_umask": shell_umask, "observer_umask": mask,
                  "tools": [[slot, 14, None, None, None, None, None, None] for slot in range(47)],
                  "directories": [[role, observer.location(observer.directories[role])[1], None, unavailable[:], unavailable[:], 14] for role in roles],
@@ -3493,15 +4159,60 @@ def main(argv=None):
     observe.add_argument("--stage", required=True, type=int, choices=(0, 1, 2))
     observe.add_argument("--deadline-ns", required=True, type=int)
     observe.add_argument("--shell-umask", required=True)
+    for role in ("python-install", "python-wheel-worker", "python-checkpoint", "python-checks"):
+        command = commands.add_parser(role)
+        command.add_argument("--deadline-ns", required=True, type=int)
+        if role == "python-checkpoint":
+            command.add_argument("--stage", required=True, choices=("pip", "extras"))
+    for role, command in commands.choices.items():
+        if role != "bootstrap":
+            command.add_argument("--helper-map-sha256", required=True)
+        if role in {"profile-check", "preflight"}:
+            command.add_argument("--deadline-ns", required=role == "preflight", type=int)
     args = parser.parse_args(argv)
     try:
+        if args.role not in {"bootstrap", "launch"}:
+            need(sys.executable == PROVIDER and sys.version_info[:3] == (3, 12, 14)
+                 and sys.flags.isolated == sys.flags.no_site == sys.flags.dont_write_bytecode == 1,
+                 "wrong isolated launcher interpreter")
+            # Start the existing profile/preflight allowance before source
+            # authentication; every later check reuses this absolute cutoff.
+            deadline_ns = getattr(args, "deadline_ns", None)
+            if args.role in {"profile-check", "preflight"}:
+                profile_deadline_ns = time.monotonic_ns() + 120 * NS
+                if deadline_ns is not None:
+                    profile_deadline_ns = min(profile_deadline_ns, deadline_ns)
+                deadline_ns = profile_deadline_ns
+            environment = base_environment(os.environ)
+            repo = Path(environment["GITHUB_WORKSPACE"])
+            authenticate_helpers(repo, Path(environment["EVIDENCE"]) / "launch-bootstrap.json", environment,
+                                 args.helper_map_sha256, deadline_ns=deadline_ns)
+            need(not any(name == "forge_ci" or name.startswith("forge_ci.") for name in sys.modules),
+                 "checkout package imported before authentication")
+            sys.path.insert(0, str(repo / ".github/scripts"))
+        if args.role == "python-wheel-worker":
+            from forge_ci import python_prefix as prefix
+            need(time.monotonic_ns() < args.deadline_ns <= time.monotonic_ns() + 28 * NS, "private Python deadline")
+            with node_wall_limit(args.deadline_ns):
+                prefix.download_worker(environment, args.deadline_ns)
+            return 0
+        if args.role == "python-install":
+            os.umask(0o077)
+            python_install(environment, args.deadline_ns)
+            return 0
+        if args.role == "python-checkpoint":
+            python_checkpoint(environment, args.stage, args.deadline_ns)
+            return 0
+        if args.role == "python-checks":
+            python_checks(environment, args.deadline_ns)
+            return 0
         if args.role == "install-observe":
             install_observation_need(sys.flags.isolated == 1 and sys.flags.no_site == 1 and sys.flags.dont_write_bytecode == 1)
-            install_observe(payload_environment(os.environ), args.stage, args.deadline_ns, args.shell_umask)
+            install_observe(environment, args.stage, args.deadline_ns, args.shell_umask)
             return 0
         if args.role in {"node-install", "node-install-worker"}:
             os.umask(0o077)
-            environment = payload_environment(os.environ)
+            environment = base_environment(os.environ)
             if args.role == "node-install":
                 need(args.repo == Path(environment["GITHUB_WORKSPACE"]) and args.evidence == Path(environment["EVIDENCE"]),
                      "runtime fixed paths changed")
@@ -3513,39 +4224,43 @@ def main(argv=None):
             return 0
         if args.role in {"profile-check", "preflight"}:
             os.umask(0o077)
-            environment = payload_environment(os.environ)
-            deadline_ns = time.monotonic_ns() + 120 * NS
+            environment = base_environment(os.environ)
+            deadline_ns = profile_deadline_ns
+            if args.deadline_ns is not None:
+                deadline_ns = min(deadline_ns, python_deadline(environment, args.deadline_ns))
+            local_receipt(args.repo, Path(environment["EVIDENCE"]) / "launch-bootstrap.json", environment,
+                          args.helper_map_sha256, deadline_ns=deadline_ns)
             if args.role == "profile-check":
                 try:
-                    check_private_profile(environment, deadline_ns=deadline_ns)
+                    check_private_profile(environment, deadline_ns=deadline_ns, base=True)
                 except ServiceError as error:
                     if getattr(error, "_forge_control", False):
                         raise
                     try:
-                        persist_directory_stop(error, args.evidence, environment, deadline_ns)
+                        persist_directory_stop(error, args.evidence, workload_environment(environment), deadline_ns)
                     except Exception as diagnostic_error:  # noqa: BLE001 - keep STOP; controls reach the outer handler
                         if getattr(diagnostic_error, "_forge_control", False):
                             raise
                     raise
+                import shutil
                 provider = str(Path(PROVIDER).resolve(strict=True))
-                need(runtime_executable("python", deadline_ns, environment)["realpath"] == provider
-                     and runtime_executable("python3", deadline_ns, environment)["realpath"] == provider,
-                     "PATH Python differs from provider")
+                need(all(str(Path(shutil.which(name, path=base_profile_path(environment))).resolve(strict=True)) == provider
+                         for name in ("python", "python3")), "PATH Python differs from provider")
             else:
                 try:
-                    produce_runtime_admission(args.repo, args.evidence, environment, deadline_ns=deadline_ns)
+                    produce_runtime_admission(args.repo, args.evidence, workload_environment(environment), deadline_ns=deadline_ns)
                 except ServiceError as error:
                     if getattr(error, "_forge_control", False):
                         raise
                     try:
-                        persist_path_stop(error, args.evidence, environment, deadline_ns)
-                        persist_file_stop(error, args.evidence, environment, deadline_ns)
+                        persist_path_stop(error, args.evidence, workload_environment(environment), deadline_ns)
+                        persist_file_stop(error, args.evidence, workload_environment(environment), deadline_ns)
                     except Exception as diagnostic_error:  # noqa: BLE001 - keep STOP; controls reach the outer handler
                         if getattr(diagnostic_error, "_forge_control", False):
                             raise
                     raise
             return 0
-        code = bootstrap() if args.role == "bootstrap" else launcher(args.receipt, args.repo, args.evidence)
+        code = bootstrap() if args.role == "bootstrap" else launcher(args.receipt, args.repo, args.evidence, args.helper_map_sha256)
         # Preserve actual signal identity in terminal evidence and conventional
         # shell exit semantics. Never reinterpret systemd client success as PASS.
         return code if code >= 0 else 128 - code

@@ -3000,6 +3000,7 @@ jobs:
             for name in (
                 "__init__.py", "facts.py", "launch.py", "admission.py", "setup_policy.py", "controller.py",
                 "outcomes.py", "payload.py", "probes.py", "pytest_observer.py", "user_service.py", "baseline_measurement.py",
+                "python_prefix.py",
             )
         )
         _SHA1 = re.compile(r"[0-9a-f]{40}\Z")
@@ -3149,9 +3150,8 @@ jobs:
                     try:
                         if process.poll() is None and time.monotonic() < cleanup_cutoff:
                             # The original session is signaled only while its retained
-                            # leader is still live, never after a reaped/reused identity.
-                            os.'''.encode('utf-8')
-        expected = {'name': 'part-00.txt', 'bytes': 8000, 'sha256': '653165ace3c0f68b0d1be13fe140598ff7f139886e9025e61388a98fc4a22a36'}
+                            # leader is still live, never after a reaped/reused ident'''.encode('utf-8')
+        expected = {'name': 'part-00.txt', 'bytes': 8000, 'sha256': '07c1dc2b8aff9de39b1352090781c3a224142b1a3611deb09191d84a7be97311'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -3182,7 +3182,8 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''killpg(process.pid, signal.SIGKILL)
+        raw = r'''ity.
+                            os.killpg(process.pid, signal.SIGKILL)
                             remaining = cleanup_cutoff - time.monotonic()
                             if remaining > 0:
                                 process.wait(timeout=min(5, remaining))
@@ -3327,8 +3328,8 @@ jobs:
 
 
         def validate_launch(context, event, checkout, *, evidence_dir):
-            """Bind verified source to a fresh root observation without a credential h'''.encode('utf-8')
-        expected = {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'b117850944a13ec79de8c5eb7a35c04a55a73e7c87845ef5a70722c1e67c7d3b'}
+            """Bind verified source to a fresh root observ'''.encode('utf-8')
+        expected = {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'b6cc76804dc49e39431ce48731a9b3594bc6390ff4a50f0049f17945d1ce716e'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -3359,7 +3360,7 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''andoff."""
+        raw = r'''ation without a credential handoff."""
             # This lazy import is only used after the caller's literal checkout verifier.
             from . import admission, setup_policy as setup
             validate_source(checkout)
@@ -3455,7 +3456,7 @@ jobs:
         if __name__ == "__main__":
             raise SystemExit(main())
         '''.encode('utf-8')
-        expected = {'name': 'part-02.txt', 'bytes': 5262, 'sha256': '15dfd9bd62731b8a1cee39ec350489124bee38c1bb10b81d0fea052c033714e8'}
+        expected = {'name': 'part-02.txt', 'bytes': 5290, 'sha256': 'cf1cd28a1787bc56917d0dafa0ac9e9ebe990446fcb38253057e523331dd2f79'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -3481,7 +3482,7 @@ jobs:
         info = stage.lstat()
         assert stage.resolve(strict=True) == stage and stat.S_ISDIR(info.st_mode)
         assert info.st_uid == os.getuid() and info.st_gid == os.getgid() and stat.S_IMODE(info.st_mode) == 0o700
-        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '653165ace3c0f68b0d1be13fe140598ff7f139886e9025e61388a98fc4a22a36'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'b117850944a13ec79de8c5eb7a35c04a55a73e7c87845ef5a70722c1e67c7d3b'}, {'name': 'part-02.txt', 'bytes': 5262, 'sha256': '15dfd9bd62731b8a1cee39ec350489124bee38c1bb10b81d0fea052c033714e8'}]
+        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '07c1dc2b8aff9de39b1352090781c3a224142b1a3611deb09191d84a7be97311'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'b6cc76804dc49e39431ce48731a9b3594bc6390ff4a50f0049f17945d1ce716e'}, {'name': 'part-02.txt', 'bytes': 5290, 'sha256': 'cf1cd28a1787bc56917d0dafa0ac9e9ebe990446fcb38253057e523331dd2f79'}]
         assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts}
         chunks = []
         for part in parts:
@@ -3494,12 +3495,12 @@ jobs:
             assert len(raw) == part['bytes'] and hashlib.sha256(raw).hexdigest() == part['sha256']
             chunks.append(raw)
         raw = b''.join(chunks)
-        assert len(raw) == 21262 and hashlib.sha256(raw).hexdigest() == '7fad0e830207e037c782c848a80d79a91e033766388bc77c50058de32f860f98'
+        assert len(raw) == 21290 and hashlib.sha256(raw).hexdigest() == '8e97e394578fc86061eb259e823715d92012ff07226aa7e47b2da3d085bc94ad'
         source = raw.decode('utf-8')
         namespace = {'__name__': 'fixed_checkout_verifier'}
         exec(compile(source, '<fixed-workflow-checkout-verifier>', 'exec'), namespace)
         root = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
-        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '7fad0e830207e037c782c848a80d79a91e033766388bc77c50058de32f860f98', '.github/scripts/forge_ci/admission.py': '9f230a7d46c24112cffcf92bac69838a31937710c9e17f72a701720e7d8c0a74', '.github/scripts/forge_ci/setup_policy.py': '16fcc6e138b50be59109ab06162da0ea822e683480ff83a8ab20edfb4ab0e731', '.github/scripts/forge_ci/controller.py': '8506cf9739592bb556bcf4760ef3866e381c08d7132c3323b2dd433cbb69e730', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'edeb61543b581e95ec5066728dcb99e54b003362bb13132633138ed789b29b8c', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': '4e33cf3ef2153a3f8ea435fc4f345e143a6c526423762a8605cc6b36d5a1a6ad', '.github/scripts/forge_ci/baseline_measurement.py': 'a19bf6884341e1f245800534fe96bc3a1206a4472cf0fb0baa9496b5f714588b'})
+        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '8e97e394578fc86061eb259e823715d92012ff07226aa7e47b2da3d085bc94ad', '.github/scripts/forge_ci/admission.py': '377591786c181e97ba7e2fc7c9b43fdead71157c4b2a7860e55c88a9e0c1cf7e', '.github/scripts/forge_ci/setup_policy.py': '16fcc6e138b50be59109ab06162da0ea822e683480ff83a8ab20edfb4ab0e731', '.github/scripts/forge_ci/controller.py': '8506cf9739592bb556bcf4760ef3866e381c08d7132c3323b2dd433cbb69e730', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'edeb61543b581e95ec5066728dcb99e54b003362bb13132633138ed789b29b8c', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': 'f75d29a8e168596f89e17f4f4c23cd6731e328e6cdf057a75be3b4b6984c0ba4', '.github/scripts/forge_ci/baseline_measurement.py': 'a19bf6884341e1f245800534fe96bc3a1206a4472cf0fb0baa9496b5f714588b', '.github/scripts/forge_ci/python_prefix.py': '6d1921d5d8ce63c5f4ff8ae7aac56020b810a36c4732c709a98267fd5021b429'})
         parent = root / '.github/scripts'
         sys.dont_write_bytecode = True
         sys.path.insert(0, str(parent))
@@ -3563,7 +3564,7 @@ jobs:
           OTEL_SDK_DISABLED=true \
           /bin/bash --noprofile --norc -e -o pipefail -s <<'PYCLEANPROFILE'
         umask 077
-        /usr/bin/python3 -B -I -S - <<'PYPRIVATEHOME'
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S - <<'PYPRIVATEHOME'
         import os
         from pathlib import Path
         import stat
@@ -3603,7 +3604,7 @@ jobs:
         assert not any((node_root / 'expose').iterdir())
 
         PYPRIVATEHOME
-        python -m forge_ci.user_service profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
 
         PYCLEANPROFILE
     - name: Verify real Linux ownership and durable disk prerequisites
@@ -3656,7 +3657,7 @@ jobs:
           OTEL_SDK_DISABLED=true \
           /bin/bash --noprofile --norc -e -o pipefail -s <<'PYCLEANPROFILE'
         umask 077
-        python - <<'PYPREFLIGHT' 2>&1 | tee "$EVIDENCE/preflight.log"
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S - <<'PYPREFLIGHT' 2>&1 | tee "$EVIDENCE/preflight.log"
         import json
         import os
         from pathlib import Path
@@ -3694,7 +3695,7 @@ jobs:
         assert resource.getrlimit(resource.RLIMIT_NOFILE)[1] > 1024, 'High-FD tests must run'
         children_path = Path(f'/proc/{os.getpid()}/task/{os.getpid()}/children')
         children_path.read_bytes()
-        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+        child = subprocess.Popen([sys.executable, '-B', '-I', '-S', '-c', 'import time; time.sleep(30)'])
         try:
             children = {int(pid) for pid in children_path.read_bytes().split()}
             assert child.pid in children, 'live child absent from task children'
@@ -3789,33 +3790,34 @@ jobs:
           OTEL_SDK_DISABLED=true \
           /bin/bash --noprofile --norc -e -o pipefail -s <<'PYCLEANPROFILE'
         umask 077
-        install_deadline_ns="$(python -B -c 'import time; print(time.monotonic_ns()+600*1000000000)')"
-        python -m forge_ci.user_service profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
-        python -m forge_ci.user_service node-install --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns"
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 0 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)"
-        python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.1.1' \
+        install_deadline_ns="$(/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S -c 'import time; print(time.monotonic_ns()+600*1000000000)')"
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" node-install --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-install --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-checkpoint --stage pip --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 0 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        private_python="$RUNNER_TEMP/forge-b-python-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/python"
+        /usr/bin/env -u PYTHONPATH PIP_CONFIG_FILE=/dev/null "$private_python" -B -I -m pip --isolated --disable-pip-version-check --no-input --no-cache-dir install --index-url https://pypi.org/simple -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.1.1' \
           2>&1 | tee "$EVIDENCE/install.log"
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 1 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)"
-        # Preserve the unchanged literal system fixture's user-site install under this HOME.
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-checkpoint --stage extras --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 1 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        # The passive extras checkpoint validates the exact private target before discovery.
         system_site="$(/usr/bin/python3 -m site --user-site)"
-        python - "$system_site" <<'PYSYSTEMSITE'
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S - "$system_site" <<'PYSYSTEMSITE'
         import os
         from pathlib import Path
         import sys
         home, target = Path(os.environ['HOME']), Path(sys.argv[1])
         assert home.is_absolute() and home.resolve(strict=True) == home
-        assert target.is_absolute() and target.is_relative_to(home) and target.resolve(strict=False) == target
-        assert target != home
+        assert target == home / '.local/lib/python3.12/site-packages'
+        assert target.resolve(strict=False) == target and target.is_relative_to(home)
         PYSYSTEMSITE
-        python -m pip install --target "$system_site" 'pytest==9.1.1' \
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-checkpoint --stage extras --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /usr/bin/env -u PYTHONPATH PIP_CONFIG_FILE=/dev/null "$private_python" -B -I -m pip --isolated --disable-pip-version-check --no-input --no-cache-dir install --index-url https://pypi.org/simple --target "$system_site" 'pytest==9.1.1' \
           2>&1 | tee "$EVIDENCE/system-pytest-install.log"
-        for interpreter in python /usr/bin/python3; do
-          "$interpreter" -c 'import os, pathlib, sys, pytest; assert sys.implementation.name == "cpython"; assert sys.version_info[:2] == (3, 12), sys.version; assert pytest.__version__ == "9.1.1"; assert pathlib.Path(os.environ["HOME"]).is_absolute(); print(sys.executable, sys.version, "pytest", pytest.__version__, pytest.__file__)'
-        done | tee "$EVIDENCE/interpreters.log"
-        python -m pip check 2>&1 | tee "$EVIDENCE/pip-check.log"
-        python -m pip freeze | tee "$EVIDENCE/requirements.freeze.txt"
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 2 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)"
-        python -m forge_ci.user_service preflight --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE"
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-checks --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 2 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" preflight --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
 
         PYCLEANPROFILE
     - name: Verify production boundary and run complete test phases
@@ -3868,9 +3870,9 @@ jobs:
           OTEL_SDK_DISABLED=true \
           /bin/bash --noprofile --norc -e -o pipefail -s <<'PYCLEANPROFILE'
         umask 077
-        python -m forge_ci.user_service launch \
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" launch \
           --receipt "$EVIDENCE/launch-bootstrap.json" --repo "$GITHUB_WORKSPACE" \
-          --evidence "$EVIDENCE/qualification" 2>&1 | tee "$EVIDENCE/qualification-controller.log"
+          --evidence "$EVIDENCE/qualification" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff 2>&1 | tee "$EVIDENCE/qualification-controller.log"
 
         PYCLEANPROFILE
     - name: Remove private metadata credential

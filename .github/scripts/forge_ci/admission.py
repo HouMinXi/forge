@@ -252,7 +252,12 @@ class Gate:
             need(isinstance(cause, OSError) and cause.errno == errno.EINVAL, "unknown pending exec transition")
             pending = b""
         need(pending in (b"", b"\n"), "pending named transition")
-        need(sys.executable == setup.PROVIDER_ROOT + "/bin/python" and sys.version_info[:3] == (3, 12, 14),
+        private_root = Path(os.environ["RUNNER_TEMP"]) / ("forge-b-python-" + str(self.document["binding"]["run_id"]) + "-1")
+        need(sys.executable == str(private_root / "bin/python") and sys.version_info[:3] == (3, 12, 14)
+             and sys.prefix == sys.exec_prefix == str(private_root)
+             and sys.base_prefix == sys.base_exec_prefix == setup.PROVIDER_ROOT
+             and sys._base_executable == setup.PROVIDER_ROOT + "/bin/python3.12"
+             and Path(sys.executable).resolve(strict=True) == Path(sys._base_executable),
              "wrong qualified Python/version")
         paths = setup.finite_paths(include_provider=True)
         self._time_left()

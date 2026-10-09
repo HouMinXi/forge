@@ -33,6 +33,7 @@ HELPER_PATHS = frozenset(
     for name in (
         "__init__.py", "facts.py", "launch.py", "admission.py", "setup_policy.py", "controller.py",
         "outcomes.py", "payload.py", "probes.py", "pytest_observer.py", "user_service.py", "baseline_measurement.py",
+        "python_prefix.py",
     )
 )
 _SHA1 = re.compile(r"[0-9a-f]{40}\Z")
