@@ -87,13 +87,67 @@ def _failed_nodes(output: str) -> list[str]:
     return nodes
 
 
+def _traceback_summary(lines: list[str]) -> str | None:
+    """Keep the latest root summary and first nonblank empty-message continuation."""
+    summary = None
+    margin = None
+    has_frame = False
+    pending_message = False
+    for line in lines:
+        header = re.fullmatch(
+            r"(\s*)(\+ )?(?:Exception Group )?Traceback \(most recent call last\):", line
+        )
+        if header:
+            margin = header[1] + ("| " if header[2] else "")
+            has_frame = False
+            pending_message = False
+        elif margin is not None:
+            if not line.startswith(margin):
+                margin = None
+                continue
+            content = line[len(margin):]
+            if pending_message:
+                if content.strip():
+                    summary += " " + content.strip()
+                    margin = None
+                continue
+            if re.fullmatch(r'  File ".+", line \d+(?:, in .+)?', content):
+                has_frame = True
+            elif content and not content[0].isspace():
+                if has_frame and re.fullmatch(r"[\w.<>]+(?::(?:\s.*)?|)", content):
+                    summary = content
+                    pending_message = re.fullmatch(r"[\w.<>]+:\s*", content) is not None
+                if not pending_message:
+                    margin = None
+    return summary
+
+
 def _output_detail(stderr: str | bytes | None, stdout: str | bytes | None) -> str:
-    """Keep normalized stderr then stdout, capped at 200 characters per stream."""
+    """Prefer diagnostic lines in long output, capped at 200 per stream.
+
+    Short output keeps its existing whitespace normalization. Long output
+    selects the first pytest cause, latest root traceback summary, direct
+    exception, or diagnostic heading, in that order, then the prefix.
+    """
     streams = []
     for label, value in (("stderr", stderr), ("stdout", stdout)):
         if isinstance(value, bytes):
             value = value.decode("utf-8", errors="replace")
-        excerpt = " ".join((value or "").split())[:200]
+        normalized = " ".join((value or "").split())
+        excerpt = normalized[:200]
+        if len(normalized) > 200:
+            lines = (value or "").splitlines()
+            for priority, pattern in enumerate((
+                r"^E\s+(?!\[\s*\d+%\]\s*$)\S",
+                r"^(?:[\w.]*(?:Error|Exception)|SystemExit|KeyboardInterrupt):(?:\s|$)",
+                r"^(?:ERROR(?:\s|:)|FAILED\s|Traceback \(most recent call last\):)",
+            )):
+                diagnostic = next((line for line in lines if re.match(pattern, line.strip())), None)
+                if priority == 1:
+                    diagnostic = _traceback_summary(lines) or diagnostic
+                if diagnostic is not None:
+                    excerpt = " ".join(diagnostic.split())[:200]
+                    break
         if excerpt:
             streams.append(f"{label}: {excerpt}")
     return ("; " + "; ".join(streams)) if streams else ""
