@@ -1952,6 +1952,34 @@ jobs:
                         pass
 
 
+        def reserve_bootstrap_stdin():
+            """Reserve only vacant fd0 after successful disposal of the owned ingress."""
+            require_clean_root()
+            fd = None
+            reserved = False
+            try:
+                try:
+                    os.fstat(0)
+                except OSError as exc:
+                    need(exc.errno == errno.EBADF, "bootstrap stdin vacancy unavailable")
+                else:
+                    raise SetupError("bootstrap stdin is unexpectedly occupied")
+                fd = os.open("/dev/null", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+                need(fd == 0, "bootstrap stdin reservation changed")
+                info = os.fstat(fd)
+                need(stat.S_ISCHR(info.st_mode) and os.major(info.st_rdev) == 1 and os.minor(info.st_rdev) == 3
+                     and not os.get_inheritable(fd), "bootstrap stdin is not inert")
+                reserved = True
+            except OSError:
+                raise SetupError("bootstrap stdin reservation unavailable") from None
+            finally:
+                if fd is not None and not reserved:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        raise SetupError("bootstrap stdin reservation unavailable") from None
+
+
         def _read_metadata_credential(binding):
             require_clean_root()
             validate_binding(binding, native=set(binding) == NATIVE_BINDING_KEYS)
@@ -1966,26 +1994,8 @@ jobs:
 
         def cleanup_metadata_credential(run_id, run_attempt, boot_id, *, credential_layout):
             """Remove only the separately validated token before reporting inventory drift."""
-            need(os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0, "credential cleanup requires root")
-            parts = _credential_parts(credential_layout)
-            need(type(boot_id) is str and _BOOT.fullmatch(boot_id) is not None and boot_id == trusted_boot_id(),
-                 "credential cleanup boot changed")
-            try:
-                with _credential_stage_fd(run_id, run_attempt, missing_ok=True) as (_, directory_fd):
-                    if directory_fd is not None:
-                        try:
-                            fd = os.open("metadata-token", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
-                        except FileNotFoundError:
-                            fd = None
-                        if fd is not None:
-                            try:
-                                info = os.fstat(fd)
-                                _credential_file_info(info, MAX_CREDENTIAL)
-                                need(_credential_identity(info) == _credential_identity(
-                                    os.stat("metadata-token", dir_fd=directory_fd, follow_symlinks=False)), "credential cleanup file changed")
-                                os.unlink("metadata-token", dir_fd=directory_fd)
-                                nee'''.encode('utf-8')
-        expected = {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '84df00ddde9832d4194dd88926076b33fcacca93a179844f60212db4de55be11'}
+            need(os.getuid() == os'''.encode('utf-8')
+        expected = {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '1f92b6b166e7a23f6b4deef114fd02ee284f8a431e433ad1c2787dbc4bc7da57'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2017,7 +2027,25 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''d(os.fstat(fd).st_nlink == 0, "credential cleanup unlink failed")
+        raw = r'''.geteuid() == os.getgid() == os.getegid() == 0, "credential cleanup requires root")
+            parts = _credential_parts(credential_layout)
+            need(type(boot_id) is str and _BOOT.fullmatch(boot_id) is not None and boot_id == trusted_boot_id(),
+                 "credential cleanup boot changed")
+            try:
+                with _credential_stage_fd(run_id, run_attempt, missing_ok=True) as (_, directory_fd):
+                    if directory_fd is not None:
+                        try:
+                            fd = os.open("metadata-token", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+                        except FileNotFoundError:
+                            fd = None
+                        if fd is not None:
+                            try:
+                                info = os.fstat(fd)
+                                _credential_file_info(info, MAX_CREDENTIAL)
+                                need(_credential_identity(info) == _credential_identity(
+                                    os.stat("metadata-token", dir_fd=directory_fd, follow_symlinks=False)), "credential cleanup file changed")
+                                os.unlink("metadata-token", dir_fd=directory_fd)
+                                need(os.fstat(fd).st_nlink == 0, "credential cleanup unlink failed")
                             finally:
                                 os.close(fd)
                         need("metadata-token" not in os.listdir(directory_fd), "credential cleanup token remains")
@@ -2157,27 +2185,8 @@ jobs:
                     continue
                 need(parent.resolve(strict=True) == parent and parent.is_dir(), "ambiguous policy override directory")
                 for item in parent.rglob("*"):
-                    need(not any(part in relevant for part in item.relative_to(parent).parts)
-                         and (not item.is_symlink() or Path(os.readlink(item)).name not in relevant), "relevant policy override present")
-            return result
-
-
-        def ordinary_executable(path):
-            requested = Path(path)
-            canonical_path = requested.resolve(strict=True)
-            name = requested.name
-            expected = (PROVIDER_ROOT + "/bin/python3.12" if path.startswith(PROVIDER_ROOT + "/") else
-                        "/usr/bin/" + {"sh": "dash", "python3": "python3.12"}.get(name, name))
-            need(str(canonical_path) == expected, "finite executable canonical path changed: " + path)
-            links = []
-            for component in (requested, *requested.parents):
-                if component.is_symlink():
-                    target = os.readlink(component)
-                    allowed = "python3.12" if str(component) == PROVIDER_ROOT + "/bin/python" else SYSTEM_LINKS.get(str(component))
-                    need(target == allowed, "finite executable symlink changed: component=" + repr(str(component))
-                         + "; expected=" + repr(allowed) + "; observed=" + repr(target))
-                    links.append({"path": str(co'''.encode('utf-8')
-        expected = {'name': 'part-11.txt', 'bytes': 8000, 'sha256': 'bb0308dd8b4be3d037354a4840255754b2b0a554fab23542c986976a344b04d4'}
+                    need(not any('''.encode('utf-8')
+        expected = {'name': 'part-11.txt', 'bytes': 8000, 'sha256': '86a4824583a3a57edc07b29d70e46368df9072b1335e1664df5b6016c5907597'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2209,7 +2218,26 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''mponent), "target": target})
+        raw = r'''part in relevant for part in item.relative_to(parent).parts)
+                         and (not item.is_symlink() or Path(os.readlink(item)).name not in relevant), "relevant policy override present")
+            return result
+
+
+        def ordinary_executable(path):
+            requested = Path(path)
+            canonical_path = requested.resolve(strict=True)
+            name = requested.name
+            expected = (PROVIDER_ROOT + "/bin/python3.12" if path.startswith(PROVIDER_ROOT + "/") else
+                        "/usr/bin/" + {"sh": "dash", "python3": "python3.12"}.get(name, name))
+            need(str(canonical_path) == expected, "finite executable canonical path changed: " + path)
+            links = []
+            for component in (requested, *requested.parents):
+                if component.is_symlink():
+                    target = os.readlink(component)
+                    allowed = "python3.12" if str(component) == PROVIDER_ROOT + "/bin/python" else SYSTEM_LINKS.get(str(component))
+                    need(target == allowed, "finite executable symlink changed: component=" + repr(str(component))
+                         + "; expected=" + repr(allowed) + "; observed=" + repr(target))
+                    links.append({"path": str(component), "target": target})
             info = canonical_path.stat()
             # These exact two post-setup host interpreters are trusted provider inputs,
             # not sandbox-mounted runtimes. Record their build owner and write modes;
@@ -2324,27 +2352,8 @@ jobs:
             if process.returncode is not None:
                 return
             need(type(process.pid) is int and process.pid > 0, "missing owned phase process group")
-            # A Python signal may interrupt wait after waitpid reaps but before Popen
-            # assigns returncode. WNOWAIT checks child ownership without reaping an
-            # exited leader; its PID stays reserved until we signal this owned group.
-            # The controller is single-threaded here and starts no intervening child.
-            need(all(hasattr(os, name) for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")),
-                 "non-reaping child-ownership check is unavailable")
-            try:
-                observed = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-            except ChildProcessError:
-                return  # Already reaped, including the interrupted returncode gap.
-            need(observed is None or observed.si_pid == process.pid, "ambiguous phase child ownership")
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass  # It exited between timeout detection and the signal; still reap.
-            process.wait(timeout=5)
-
-
-        def command(argv, timeout=30, *, user=None, group=None, extra_groups=None, pass_fds=(), limit=COMMAND_LIMIT):
-            """Internal bounded subprocess primitive; no CLI'''.encode('utf-8')
-        expected = {'name': 'part-12.txt', 'bytes': 8000, 'sha256': 'bb4a44c5fc0743f438f5d7c793809b6507933d903b893d314552fb98056eec80'}
+            #'''.encode('utf-8')
+        expected = {'name': 'part-12.txt', 'bytes': 8000, 'sha256': '11fd268ff7384702312cbcb9efc6b4c202c4891cc507298ebb90174fb3497693'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2377,7 +2386,26 @@ jobs:
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
         raw = (
-            ' or data-driven relay exists."""\n'
+            ' A Python signal may interrupt wait after waitpid reaps but before Popen\n'
+            '    # assigns returncode. WNOWAIT checks child ownership without reaping an\n'
+            '    # exited leader; its PID stays reserved until we signal this owned group.\n'
+            '    # The controller is single-threaded here and starts no intervening child.\n'
+            '    need(all(hasattr(os, name) for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")),\n'
+            '         "non-reaping child-ownership check is unavailable")\n'
+            '    try:\n'
+            '        observed = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)\n'
+            '    except ChildProcessError:\n'
+            '        return  # Already reaped, including the interrupted returncode gap.\n'
+            '    need(observed is None or observed.si_pid == process.pid, "ambiguous phase child ownership")\n'
+            '    try:\n'
+            '        os.killpg(process.pid, signal.SIGKILL)\n'
+            '    except ProcessLookupError:\n'
+            '        pass  # It exited between timeout detection and the signal; still reap.\n'
+            '    process.wait(timeout=5)\n'
+            '\n'
+            '\n'
+            'def command(argv, timeout=30, *, user=None, group=None, extra_groups=None, pass_fds=(), limit=COMMAND_LIMIT):\n'
+            '    """Internal bounded subprocess primitive; no CLI or data-driven relay exists."""\n'
             '    need(0 < timeout <= 240, "command deadline bound")\n'
             '    record = {"argv": list(argv), "started": stamp()}\n'
             '    options = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE,\n'
@@ -2499,26 +2527,9 @@ jobs:
             '            result["audit_clock"] = audit_clock\n'
             '            try:\n'
             '                end_audit_clock(audit_clock)\n'
-            '                validate_audit_clock(audit_clock, result.get("started"), result.get("ended"), 30_000_000_000)\n'
-            '            except SetupError as exc:\n'
-            '                result["error"] = (result.get("error", "") + "; audit clock: " + str(exc)).lstrip("; ")\n'
-            '                evidence.emit("negative-probe", result)\n'
-            '                raise\n'
-            '        caller.seek(0)\n'
-            '        caller_raw = caller.read(65537)\n'
-            '        observed = parse_json(caller_raw, limit=65536)\n'
-            '        need(observed.get("uid") == uid and observed.get("gid") == gid and observed.get("pid") == result["wrapper_pid"]\n'
-            '             and observed.get("label") == "unconfined" and observed.get("exec_argv") == argv\n'
-            '             and observed.get("pending_exec_absent") is True, "ordinary-user probe context changed")\n'
-            '        result.update(launch_argv=result["argv"], argv=argv, caller=observed, original_argv=original)\n'
-            '        need(not result.get("error"), "ordinary-user probe did not complete")\n'
-            '        if negative:\n'
-            '            info.seek(0)\n'
-            '            raw = info.read(INFO_LIMIT + 1)\n'
-            '            result.update(info_raw_hex=raw.hex(), info_bytes=len(raw), info=parse_info_record(raw))\n'
-            '            since, until = result["started"]["utc_ns"], result["end'
+            '                validate_audit_clock(audit_clock, result.get("started"), re'
         ).encode('utf-8')
-        expected = {'name': 'part-13.txt', 'bytes': 8000, 'sha256': '79ec386735fe23ae0b458ee5e6b59a7a27df3ebb996ad18842e9a59acfca19ab'}
+        expected = {'name': 'part-13.txt', 'bytes': 8000, 'sha256': 'dfa06a02b19d15a01fd0864701321bfc0558414a1ddd464a22246565a7790ba8'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2550,7 +2561,24 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r'''ed"]["utc_ns"]
+        raw = r'''sult.get("ended"), 30_000_000_000)
+                    except SetupError as exc:
+                        result["error"] = (result.get("error", "") + "; audit clock: " + str(exc)).lstrip("; ")
+                        evidence.emit("negative-probe", result)
+                        raise
+                caller.seek(0)
+                caller_raw = caller.read(65537)
+                observed = parse_json(caller_raw, limit=65536)
+                need(observed.get("uid") == uid and observed.get("gid") == gid and observed.get("pid") == result["wrapper_pid"]
+                     and observed.get("label") == "unconfined" and observed.get("exec_argv") == argv
+                     and observed.get("pending_exec_absent") is True, "ordinary-user probe context changed")
+                result.update(launch_argv=result["argv"], argv=argv, caller=observed, original_argv=original)
+                need(not result.get("error"), "ordinary-user probe did not complete")
+                if negative:
+                    info.seek(0)
+                    raw = info.read(INFO_LIMIT + 1)
+                    result.update(info_raw_hex=raw.hex(), info_bytes=len(raw), info=parse_info_record(raw))
+                    since, until = result["started"]["utc_ns"], result["ended"]["utc_ns"]
                     audit = checked_command(["/usr/bin/timeout", "--signal=KILL", "4s", "/usr/bin/journalctl", "-k", "--no-pager", "--output=json",
                                              "--since=" + _utc_for_journal(since - 1_000_000), "--until=" + _utc_for_journal(until + 1_000_000),
                                              '--grep=apparmor="DENIED".*(bwrap|unprivileged_userns|userns_create)'], evidence, timeout=5)
@@ -2574,7 +2602,7 @@ jobs:
                        "parser_argv", "validate_parser", "production_probe_argv", "parse_info_record", "validate_negative_control",
                        "begin_audit_clock", "end_audit_clock", "validate_audit_clock",
                        "validate_negative_audit", "validate_audit", "_audit_fields", "_utc_for_journal", "checked_command", "command", "kill_owned_command", "cancellation_guard",
-                       "_credential_parts", "_credential_inventory", "_read_credential_ingress", "stage_metadata_credential", "cleanup_metadata_credential"}
+                       "_credential_parts", "_credential_inventory", "_read_credential_ingress", "stage_metadata_credential", "cleanup_metadata_credential", "reserve_bootstrap_stdin"}
             tree = ast.parse(source)
             lines = source.splitlines(keepends=True)
             discarded = set()
@@ -2663,26 +2691,9 @@ jobs:
                 native = validate_initial_identity(config, context, event)
                 active_ingress, ingress_fd = ingress_fd, None
                 stage_metadata_credential(native, credential_layout, ingress_fd=active_ingress)
-                uid, gid = int(context["FORGE_RUNNER_UID"]), int(context["FORGE_RUNNER_GID"])
-                need(uid > 0 and gid > 0 and pwd.getpwuid(uid).pw_gid == gid, "invalid original runner identity")
-                host = host_prerequisites()
-                live = live_identity(config, native)
-                binding = live["binding"]
-                need(binding["boot_id"] == host["boot_id"], "host/kernel boot changed")
-                stage = claim_activation(binding)
-                evidence.emit("setup-start", {"binding": binding, "image_version": context.get("ImageVersion"), "started": started})
-                sealed_write(stage / "parser.conf", b"")
-                observer = observer_source(source, config)
-                observer_identity = sealed_write(stage / "observer.py", observer)
-                runner_probe(stage, uid, gid, evidence, snapshot_only=True)
-                install_vendor(stage, evidence, binding)
-                before = observe_state(stage, evidence)
-                semantic_before = validate_kernel(before["kernel"])
-                need(len(semantic_before["profiles"]) == 123, "wrong finite existing-profile count")
-                runner_probe(stage, uid, gid, evidence, negative=True)
-                profile = stage / "vendor" / PROFILE_MEMBER
-                for operation in ("preprocess"'''.encode('utf-8')
-        expected = {'name': 'part-14.txt', 'bytes': 8000, 'sha256': 'b75791ea2acbbcdc5ecdf6e6a8b45e06a1a2f7ccd0e7e0b09bc432be2ec43765'}
+                reserve_bootstrap_stdin()
+                uid, g'''.encode('utf-8')
+        expected = {'name': 'part-14.txt', 'bytes': 8000, 'sha256': '664e1aef31eddb8ae0c1f29e7f7d6ec903533f246b62e9d59a935d4886f75930'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2714,7 +2725,25 @@ jobs:
                 path.mkdir(mode=0o700, exist_ok=path != stage)
             info = path.lstat()
             assert stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        raw = r""", "compile"):
+        raw = r"""id = int(context["FORGE_RUNNER_UID"]), int(context["FORGE_RUNNER_GID"])
+                need(uid > 0 and gid > 0 and pwd.getpwuid(uid).pw_gid == gid, "invalid original runner identity")
+                host = host_prerequisites()
+                live = live_identity(config, native)
+                binding = live["binding"]
+                need(binding["boot_id"] == host["boot_id"], "host/kernel boot changed")
+                stage = claim_activation(binding)
+                evidence.emit("setup-start", {"binding": binding, "image_version": context.get("ImageVersion"), "started": started})
+                sealed_write(stage / "parser.conf", b"")
+                observer = observer_source(source, config)
+                observer_identity = sealed_write(stage / "observer.py", observer)
+                runner_probe(stage, uid, gid, evidence, snapshot_only=True)
+                install_vendor(stage, evidence, binding)
+                before = observe_state(stage, evidence)
+                semantic_before = validate_kernel(before["kernel"])
+                need(len(semantic_before["profiles"]) == 123, "wrong finite existing-profile count")
+                runner_probe(stage, uid, gid, evidence, negative=True)
+                profile = stage / "vendor" / PROFILE_MEMBER
+                for operation in ("preprocess", "compile"):
                     argv = parser_argv(operation, profile, stage / "parser.conf")
                     result = command(argv, 25, limit=PARSER_LIMIT)
                     evidence.emit(operation, result)
@@ -2769,7 +2798,7 @@ jobs:
                     except OSError:
                         pass
         """.encode('utf-8')
-        expected = {'name': 'part-15.txt', 'bytes': 3466, 'sha256': '4ae6191a7db7340a60914ecae7e8a43e0c2f9fd8b434474d67a0ce4267434b7e'}
+        expected = {'name': 'part-15.txt', 'bytes': 4651, 'sha256': '1f33b655966cc162d72b8981c9edf2175a309a1d54f56895be37220c02c4eee0'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -2798,7 +2827,7 @@ jobs:
             info = path.lstat()
             assert path.resolve(strict=True) == path and stat.S_ISDIR(info.st_mode)
             assert info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '95fecb51ff4f7406c51ae3baf572d3f3ccd2deda0b76440f9c5d0e66fc0f24bb'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'f04a4386410c15ad914d867139693e4784f6e8152077619ce3c37d8430fed7c5'}, {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '01992e4d039ac50617986eb4873995a67d3452dd4d1ed88db61dc55bbdc1452b'}, {'name': 'part-03.txt', 'bytes': 8000, 'sha256': 'd9acb04ac91bca9bf2d630b476f4a3fb657b3c18798476914d9c75303009a932'}, {'name': 'part-04.txt', 'bytes': 8000, 'sha256': '13a70a23b75d497a1077b7595d2651ce8a22ab6705cd3b1b8afd279018e60d42'}, {'name': 'part-05.txt', 'bytes': 8000, 'sha256': 'b7815b2337005f3d91e1c6768d71faae787b388ae198384052f2b0795867b81c'}, {'name': 'part-06.txt', 'bytes': 8000, 'sha256': 'cc65a41ee707f632bc6fed715269084189786bdd3b3e4fde0e9672d9f89d4953'}, {'name': 'part-07.txt', 'bytes': 8000, 'sha256': '495165f1a4c988d05b36182fe1e92dbed4568c7b44e34d14fa3cc43b9a7403b5'}, {'name': 'part-08.txt', 'bytes': 8000, 'sha256': 'be3de9a426e0e4d234d4a73881d3fa46a00a13353f6310568fd35a600c02caa0'}, {'name': 'part-09.txt', 'bytes': 8000, 'sha256': '26da8961584956c3e13232ac00e13d7616c4c3567a9966f68dc5b1287ac744b6'}, {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '84df00ddde9832d4194dd88926076b33fcacca93a179844f60212db4de55be11'}, {'name': 'part-11.txt', 'bytes': 8000, 'sha256': 'bb0308dd8b4be3d037354a4840255754b2b0a554fab23542c986976a344b04d4'}, {'name': 'part-12.txt', 'bytes': 8000, 'sha256': 'bb4a44c5fc0743f438f5d7c793809b6507933d903b893d314552fb98056eec80'}, {'name': 'part-13.txt', 'bytes': 8000, 'sha256': '79ec386735fe23ae0b458ee5e6b59a7a27df3ebb996ad18842e9a59acfca19ab'}, {'name': 'part-14.txt', 'bytes': 8000, 'sha256': 'b75791ea2acbbcdc5ecdf6e6a8b45e06a1a2f7ccd0e7e0b09bc432be2ec43765'}, {'name': 'part-15.txt', 'bytes': 3466, 'sha256': '4ae6191a7db7340a60914ecae7e8a43e0c2f9fd8b434474d67a0ce4267434b7e'}]
+        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '95fecb51ff4f7406c51ae3baf572d3f3ccd2deda0b76440f9c5d0e66fc0f24bb'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'f04a4386410c15ad914d867139693e4784f6e8152077619ce3c37d8430fed7c5'}, {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '01992e4d039ac50617986eb4873995a67d3452dd4d1ed88db61dc55bbdc1452b'}, {'name': 'part-03.txt', 'bytes': 8000, 'sha256': 'd9acb04ac91bca9bf2d630b476f4a3fb657b3c18798476914d9c75303009a932'}, {'name': 'part-04.txt', 'bytes': 8000, 'sha256': '13a70a23b75d497a1077b7595d2651ce8a22ab6705cd3b1b8afd279018e60d42'}, {'name': 'part-05.txt', 'bytes': 8000, 'sha256': 'b7815b2337005f3d91e1c6768d71faae787b388ae198384052f2b0795867b81c'}, {'name': 'part-06.txt', 'bytes': 8000, 'sha256': 'cc65a41ee707f632bc6fed715269084189786bdd3b3e4fde0e9672d9f89d4953'}, {'name': 'part-07.txt', 'bytes': 8000, 'sha256': '495165f1a4c988d05b36182fe1e92dbed4568c7b44e34d14fa3cc43b9a7403b5'}, {'name': 'part-08.txt', 'bytes': 8000, 'sha256': 'be3de9a426e0e4d234d4a73881d3fa46a00a13353f6310568fd35a600c02caa0'}, {'name': 'part-09.txt', 'bytes': 8000, 'sha256': '26da8961584956c3e13232ac00e13d7616c4c3567a9966f68dc5b1287ac744b6'}, {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '1f92b6b166e7a23f6b4deef114fd02ee284f8a431e433ad1c2787dbc4bc7da57'}, {'name': 'part-11.txt', 'bytes': 8000, 'sha256': '86a4824583a3a57edc07b29d70e46368df9072b1335e1664df5b6016c5907597'}, {'name': 'part-12.txt', 'bytes': 8000, 'sha256': '11fd268ff7384702312cbcb9efc6b4c202c4891cc507298ebb90174fb3497693'}, {'name': 'part-13.txt', 'bytes': 8000, 'sha256': 'dfa06a02b19d15a01fd0864701321bfc0558414a1ddd464a22246565a7790ba8'}, {'name': 'part-14.txt', 'bytes': 8000, 'sha256': '664e1aef31eddb8ae0c1f29e7f7d6ec903533f246b62e9d59a935d4886f75930'}, {'name': 'part-15.txt', 'bytes': 4651, 'sha256': '1f33b655966cc162d72b8981c9edf2175a309a1d54f56895be37220c02c4eee0'}]
         assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts}
         chunks = []
         for part in parts:
@@ -2811,7 +2840,7 @@ jobs:
             assert len(raw) == part['bytes'] and hashlib.sha256(raw).hexdigest() == part['sha256']
             chunks.append(raw)
         raw = b''.join(chunks)
-        assert len(raw) == 123466 and hashlib.sha256(raw).hexdigest() == 'b5f72069defddb11e344d70b67b7c0494340825093e2b8a277d1a1fdfa00a1b6'
+        assert len(raw) == 124651 and hashlib.sha256(raw).hexdigest() == 'fc026084857a1fc3ba135ccad6f1ade751ca1e100f2cb867fe3bf462d2c4e56a'
         raw = r"""import hashlib
         import os
         from pathlib import Path
@@ -2827,7 +2856,7 @@ jobs:
             info = path.lstat()
             assert path.resolve(strict=True) == path and stat.S_ISDIR(info.st_mode)
             assert info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700
-        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '95fecb51ff4f7406c51ae3baf572d3f3ccd2deda0b76440f9c5d0e66fc0f24bb'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'f04a4386410c15ad914d867139693e4784f6e8152077619ce3c37d8430fed7c5'}, {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '01992e4d039ac50617986eb4873995a67d3452dd4d1ed88db61dc55bbdc1452b'}, {'name': 'part-03.txt', 'bytes': 8000, 'sha256': 'd9acb04ac91bca9bf2d630b476f4a3fb657b3c18798476914d9c75303009a932'}, {'name': 'part-04.txt', 'bytes': 8000, 'sha256': '13a70a23b75d497a1077b7595d2651ce8a22ab6705cd3b1b8afd279018e60d42'}, {'name': 'part-05.txt', 'bytes': 8000, 'sha256': 'b7815b2337005f3d91e1c6768d71faae787b388ae198384052f2b0795867b81c'}, {'name': 'part-06.txt', 'bytes': 8000, 'sha256': 'cc65a41ee707f632bc6fed715269084189786bdd3b3e4fde0e9672d9f89d4953'}, {'name': 'part-07.txt', 'bytes': 8000, 'sha256': '495165f1a4c988d05b36182fe1e92dbed4568c7b44e34d14fa3cc43b9a7403b5'}, {'name': 'part-08.txt', 'bytes': 8000, 'sha256': 'be3de9a426e0e4d234d4a73881d3fa46a00a13353f6310568fd35a600c02caa0'}, {'name': 'part-09.txt', 'bytes': 8000, 'sha256': '26da8961584956c3e13232ac00e13d7616c4c3567a9966f68dc5b1287ac744b6'}, {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '84df00ddde9832d4194dd88926076b33fcacca93a179844f60212db4de55be11'}, {'name': 'part-11.txt', 'bytes': 8000, 'sha256': 'bb0308dd8b4be3d037354a4840255754b2b0a554fab23542c986976a344b04d4'}, {'name': 'part-12.txt', 'bytes': 8000, 'sha256': 'bb4a44c5fc0743f438f5d7c793809b6507933d903b893d314552fb98056eec80'}, {'name': 'part-13.txt', 'bytes': 8000, 'sha256': '79ec386735fe23ae0b458ee5e6b59a7a27df3ebb996ad18842e9a59acfca19ab'}, {'name': 'part-14.txt', 'bytes': 8000, 'sha256': 'b75791ea2acbbcdc5ecdf6e6a8b45e06a1a2f7ccd0e7e0b09bc432be2ec43765'}, {'name': 'part-15.txt', 'bytes': 3466, 'sha256': '4ae6191a7db7340a60914ecae7e8a43e0c2f9fd8b434474d67a0ce4267434b7e'}]
+        parts = [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '95fecb51ff4f7406c51ae3baf572d3f3ccd2deda0b76440f9c5d0e66fc0f24bb'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'f04a4386410c15ad914d867139693e4784f6e8152077619ce3c37d8430fed7c5'}, {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '01992e4d039ac50617986eb4873995a67d3452dd4d1ed88db61dc55bbdc1452b'}, {'name': 'part-03.txt', 'bytes': 8000, 'sha256': 'd9acb04ac91bca9bf2d630b476f4a3fb657b3c18798476914d9c75303009a932'}, {'name': 'part-04.txt', 'bytes': 8000, 'sha256': '13a70a23b75d497a1077b7595d2651ce8a22ab6705cd3b1b8afd279018e60d42'}, {'name': 'part-05.txt', 'bytes': 8000, 'sha256': 'b7815b2337005f3d91e1c6768d71faae787b388ae198384052f2b0795867b81c'}, {'name': 'part-06.txt', 'bytes': 8000, 'sha256': 'cc65a41ee707f632bc6fed715269084189786bdd3b3e4fde0e9672d9f89d4953'}, {'name': 'part-07.txt', 'bytes': 8000, 'sha256': '495165f1a4c988d05b36182fe1e92dbed4568c7b44e34d14fa3cc43b9a7403b5'}, {'name': 'part-08.txt', 'bytes': 8000, 'sha256': 'be3de9a426e0e4d234d4a73881d3fa46a00a13353f6310568fd35a600c02caa0'}, {'name': 'part-09.txt', 'bytes': 8000, 'sha256': '26da8961584956c3e13232ac00e13d7616c4c3567a9966f68dc5b1287ac744b6'}, {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '1f92b6b166e7a23f6b4deef114fd02ee284f8a431e433ad1c2787dbc4bc7da57'}, {'name': 'part-11.txt', 'bytes': 8000, 'sha256': '86a4824583a3a57edc07b29d70e46368df9072b1335e1664df5b6016c5907597'}, {'name': 'part-12.txt', 'bytes': 8000, 'sha256': '11fd268ff7384702312cbcb9efc6b4c202c4891cc507298ebb90174fb3497693'}, {'name': 'part-13.txt', 'bytes': 8000, 'sha256': 'dfa06a02b19d15a01fd0864701321bfc0558414a1ddd464a22246565a7790ba8'}, {'name': 'part-14.txt', 'bytes': 8000, 'sha256': '664e1aef31eddb8ae0c1f29e7f7d6ec903533f246b62e9d59a935d4886f75930'}, {'name': 'part-15.txt', 'bytes': 4651, 'sha256': '1f33b655966cc162d72b8981c9edf2175a309a1d54f56895be37220c02c4eee0'}]
         assert {p.name for p in stage.iterdir()} == {p['name'] for p in parts} | {'bootstrap-entry.py'}
         entry_info = (stage / 'bootstrap-entry.py').lstat()
         assert stat.S_ISREG(entry_info.st_mode) and entry_info.st_uid == entry_info.st_gid == 0
@@ -2843,7 +2872,7 @@ jobs:
             assert len(raw) == part['bytes'] and hashlib.sha256(raw).hexdigest() == part['sha256']
             chunks.append(raw)
         raw = b''.join(chunks)
-        assert len(raw) == 123466 and hashlib.sha256(raw).hexdigest() == 'b5f72069defddb11e344d70b67b7c0494340825093e2b8a277d1a1fdfa00a1b6'
+        assert len(raw) == 124651 and hashlib.sha256(raw).hexdigest() == 'fc026084857a1fc3ba135ccad6f1ade751ca1e100f2cb867fe3bf462d2c4e56a'
         source = raw.decode('utf-8')
         namespace = {'__name__': 'fixed_setup_bootstrap'}
         exec(compile(source, '<fixed-workflow-policy-setup>', 'exec'), namespace)
@@ -2851,7 +2880,7 @@ jobs:
         assert type(result) is dict and result.get('status') == 'PASS'
         assert result.get('load_attempted') is True and result.get('positive_passed') is True
         """.encode('utf-8')
-        expected = {'name': 'bootstrap-entry.py', 'bytes': 3953, 'sha256': '5dbafa47a3e001f9f9e0c4afa9ca37da7e3e95df0deeb1910e251be75b935718'}
+        expected = {'name': 'bootstrap-entry.py', 'bytes': 3953, 'sha256': '55da1531dfd0ff4f2d3971f1bfda12f0cdfbd6e5837a02ec54bd0827e7bed348'}
         assert len(raw) == expected['bytes'] and hashlib.sha256(raw).hexdigest() == expected['sha256']
         fd = os.open(stage / expected['name'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
         with os.fdopen(fd, 'wb') as stream:
@@ -3414,7 +3443,7 @@ jobs:
         namespace = {'__name__': 'fixed_checkout_verifier'}
         exec(compile(source, '<fixed-workflow-checkout-verifier>', 'exec'), namespace)
         root = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
-        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '6214d54b3df87e05e3c4608c5e5a17cb8ec3c98f344d5a773a1d74edc6265bc0', '.github/scripts/forge_ci/admission.py': '4fe23c1611c7ea4cffd6e9f13a882dc516bec262489be7c9276cae8f4abd6027', '.github/scripts/forge_ci/setup_policy.py': 'b5f72069defddb11e344d70b67b7c0494340825093e2b8a277d1a1fdfa00a1b6', '.github/scripts/forge_ci/controller.py': 'd36c4ac7f82c77c415e83c7c67bf72ec24f53dab2ccb703689874339e33c81c0', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'd1b5dbcf03b928557437eabb31deac204df11d9634d0f823a0c2e592f0c73dc8', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': '4d711390afa293c6b36bb41ef120ca2ec3e285ef33ef12c2d066f79c3fb9dcc4'})
+        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '6214d54b3df87e05e3c4608c5e5a17cb8ec3c98f344d5a773a1d74edc6265bc0', '.github/scripts/forge_ci/admission.py': '4fe23c1611c7ea4cffd6e9f13a882dc516bec262489be7c9276cae8f4abd6027', '.github/scripts/forge_ci/setup_policy.py': 'fc026084857a1fc3ba135ccad6f1ade751ca1e100f2cb867fe3bf462d2c4e56a', '.github/scripts/forge_ci/controller.py': 'd36c4ac7f82c77c415e83c7c67bf72ec24f53dab2ccb703689874339e33c81c0', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'd1b5dbcf03b928557437eabb31deac204df11d9634d0f823a0c2e592f0c73dc8', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': '4d711390afa293c6b36bb41ef120ca2ec3e285ef33ef12c2d066f79c3fb9dcc4'})
         parent = root / '.github/scripts'
         sys.dont_write_bytecode = True
         sys.path.insert(0, str(parent))
@@ -3713,7 +3742,7 @@ jobs:
             except OSError:
                 raise SetupError('credential cleanup unavailable') from None
             return {'schema_version': 1, 'status': 'PASS', 'run_id': run_id, 'run_attempt': run_attempt, 'boot_id': boot_id, 'token_absent': True}
-        layout = {'parts': [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '95fecb51ff4f7406c51ae3baf572d3f3ccd2deda0b76440f9c5d0e66fc0f24bb'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'f04a4386410c15ad914d867139693e4784f6e8152077619ce3c37d8430fed7c5'}, {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '01992e4d039ac50617986eb4873995a67d3452dd4d1ed88db61dc55bbdc1452b'}, {'name': 'part-03.txt', 'bytes': 8000, 'sha256': 'd9acb04ac91bca9bf2d630b476f4a3fb657b3c18798476914d9c75303009a932'}, {'name': 'part-04.txt', 'bytes': 8000, 'sha256': '13a70a23b75d497a1077b7595d2651ce8a22ab6705cd3b1b8afd279018e60d42'}, {'name': 'part-05.txt', 'bytes': 8000, 'sha256': 'b7815b2337005f3d91e1c6768d71faae787b388ae198384052f2b0795867b81c'}, {'name': 'part-06.txt', 'bytes': 8000, 'sha256': 'cc65a41ee707f632bc6fed715269084189786bdd3b3e4fde0e9672d9f89d4953'}, {'name': 'part-07.txt', 'bytes': 8000, 'sha256': '495165f1a4c988d05b36182fe1e92dbed4568c7b44e34d14fa3cc43b9a7403b5'}, {'name': 'part-08.txt', 'bytes': 8000, 'sha256': 'be3de9a426e0e4d234d4a73881d3fa46a00a13353f6310568fd35a600c02caa0'}, {'name': 'part-09.txt', 'bytes': 8000, 'sha256': '26da8961584956c3e13232ac00e13d7616c4c3567a9966f68dc5b1287ac744b6'}, {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '84df00ddde9832d4194dd88926076b33fcacca93a179844f60212db4de55be11'}, {'name': 'part-11.txt', 'bytes': 8000, 'sha256': 'bb0308dd8b4be3d037354a4840255754b2b0a554fab23542c986976a344b04d4'}, {'name': 'part-12.txt', 'bytes': 8000, 'sha256': 'bb4a44c5fc0743f438f5d7c793809b6507933d903b893d314552fb98056eec80'}, {'name': 'part-13.txt', 'bytes': 8000, 'sha256': '79ec386735fe23ae0b458ee5e6b59a7a27df3ebb996ad18842e9a59acfca19ab'}, {'name': 'part-14.txt', 'bytes': 8000, 'sha256': 'b75791ea2acbbcdc5ecdf6e6a8b45e06a1a2f7ccd0e7e0b09bc432be2ec43765'}, {'name': 'part-15.txt', 'bytes': 3466, 'sha256': '4ae6191a7db7340a60914ecae7e8a43e0c2f9fd8b434474d67a0ce4267434b7e'}]}
+        layout = {'parts': [{'name': 'part-00.txt', 'bytes': 8000, 'sha256': '95fecb51ff4f7406c51ae3baf572d3f3ccd2deda0b76440f9c5d0e66fc0f24bb'}, {'name': 'part-01.txt', 'bytes': 8000, 'sha256': 'f04a4386410c15ad914d867139693e4784f6e8152077619ce3c37d8430fed7c5'}, {'name': 'part-02.txt', 'bytes': 8000, 'sha256': '01992e4d039ac50617986eb4873995a67d3452dd4d1ed88db61dc55bbdc1452b'}, {'name': 'part-03.txt', 'bytes': 8000, 'sha256': 'd9acb04ac91bca9bf2d630b476f4a3fb657b3c18798476914d9c75303009a932'}, {'name': 'part-04.txt', 'bytes': 8000, 'sha256': '13a70a23b75d497a1077b7595d2651ce8a22ab6705cd3b1b8afd279018e60d42'}, {'name': 'part-05.txt', 'bytes': 8000, 'sha256': 'b7815b2337005f3d91e1c6768d71faae787b388ae198384052f2b0795867b81c'}, {'name': 'part-06.txt', 'bytes': 8000, 'sha256': 'cc65a41ee707f632bc6fed715269084189786bdd3b3e4fde0e9672d9f89d4953'}, {'name': 'part-07.txt', 'bytes': 8000, 'sha256': '495165f1a4c988d05b36182fe1e92dbed4568c7b44e34d14fa3cc43b9a7403b5'}, {'name': 'part-08.txt', 'bytes': 8000, 'sha256': 'be3de9a426e0e4d234d4a73881d3fa46a00a13353f6310568fd35a600c02caa0'}, {'name': 'part-09.txt', 'bytes': 8000, 'sha256': '26da8961584956c3e13232ac00e13d7616c4c3567a9966f68dc5b1287ac744b6'}, {'name': 'part-10.txt', 'bytes': 8000, 'sha256': '1f92b6b166e7a23f6b4deef114fd02ee284f8a431e433ad1c2787dbc4bc7da57'}, {'name': 'part-11.txt', 'bytes': 8000, 'sha256': '86a4824583a3a57edc07b29d70e46368df9072b1335e1664df5b6016c5907597'}, {'name': 'part-12.txt', 'bytes': 8000, 'sha256': '11fd268ff7384702312cbcb9efc6b4c202c4891cc507298ebb90174fb3497693'}, {'name': 'part-13.txt', 'bytes': 8000, 'sha256': 'dfa06a02b19d15a01fd0864701321bfc0558414a1ddd464a22246565a7790ba8'}, {'name': 'part-14.txt', 'bytes': 8000, 'sha256': '664e1aef31eddb8ae0c1f29e7f7d6ec903533f246b62e9d59a935d4886f75930'}, {'name': 'part-15.txt', 'bytes': 4651, 'sha256': '1f33b655966cc162d72b8981c9edf2175a309a1d54f56895be37220c02c4eee0'}]}
         try:
             run_id = _id(os.environ.get('GITHUB_RUN_ID'), 'cleanup run id', native=True)
             attempt = _id(os.environ.get('GITHUB_RUN_ATTEMPT'), 'cleanup attempt', native=True)

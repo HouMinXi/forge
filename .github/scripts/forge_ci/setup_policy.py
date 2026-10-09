@@ -1571,6 +1571,34 @@ def stage_metadata_credential(native, credential_layout, *, ingress_fd=0):
                 pass
 
 
+def reserve_bootstrap_stdin():
+    """Reserve only vacant fd0 after successful disposal of the owned ingress."""
+    require_clean_root()
+    fd = None
+    reserved = False
+    try:
+        try:
+            os.fstat(0)
+        except OSError as exc:
+            need(exc.errno == errno.EBADF, "bootstrap stdin vacancy unavailable")
+        else:
+            raise SetupError("bootstrap stdin is unexpectedly occupied")
+        fd = os.open("/dev/null", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+        need(fd == 0, "bootstrap stdin reservation changed")
+        info = os.fstat(fd)
+        need(stat.S_ISCHR(info.st_mode) and os.major(info.st_rdev) == 1 and os.minor(info.st_rdev) == 3
+             and not os.get_inheritable(fd), "bootstrap stdin is not inert")
+        reserved = True
+    except OSError:
+        raise SetupError("bootstrap stdin reservation unavailable") from None
+    finally:
+        if fd is not None and not reserved:
+            try:
+                os.close(fd)
+            except OSError:
+                raise SetupError("bootstrap stdin reservation unavailable") from None
+
+
 def _read_metadata_credential(binding):
     require_clean_root()
     validate_binding(binding, native=set(binding) == NATIVE_BINDING_KEYS)
@@ -2059,7 +2087,7 @@ def observer_source(source, config):
                "parser_argv", "validate_parser", "production_probe_argv", "parse_info_record", "validate_negative_control",
                "begin_audit_clock", "end_audit_clock", "validate_audit_clock",
                "validate_negative_audit", "validate_audit", "_audit_fields", "_utc_for_journal", "checked_command", "command", "kill_owned_command", "cancellation_guard",
-               "_credential_parts", "_credential_inventory", "_read_credential_ingress", "stage_metadata_credential", "cleanup_metadata_credential"}
+               "_credential_parts", "_credential_inventory", "_read_credential_ingress", "stage_metadata_credential", "cleanup_metadata_credential", "reserve_bootstrap_stdin"}
     tree = ast.parse(source)
     lines = source.splitlines(keepends=True)
     discarded = set()
@@ -2148,6 +2176,7 @@ def bootstrap(config, source, *, credential_layout):
         native = validate_initial_identity(config, context, event)
         active_ingress, ingress_fd = ingress_fd, None
         stage_metadata_credential(native, credential_layout, ingress_fd=active_ingress)
+        reserve_bootstrap_stdin()
         uid, gid = int(context["FORGE_RUNNER_UID"]), int(context["FORGE_RUNNER_GID"])
         need(uid > 0 and gid > 0 and pwd.getpwuid(uid).pw_gid == gid, "invalid original runner identity")
         host = host_prerequisites()

@@ -18,6 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from forge_ci import setup_policy as a  # noqa: E402
 facts = probes = c = a
+ORDINARY_POPEN = subprocess.Popen
 
 @pytest.fixture(autouse=True)
 def no_live_mutation(monkeypatch):
@@ -543,7 +544,7 @@ def test_observer_contains_no_bootstrap_loader_package_or_command_interface():
     names = {n.name for n in parsed.body if isinstance(n, ast.FunctionDef)}
     assert {"observe_sealed", "observer_main", "validate_kernel"} <= names
     assert not names & {"bootstrap", "command", "checked_command", "install_vendor", "download_archive", "runner_probe", "parser_argv", "kill_owned_command", "claim_activation", "sealed_write",
-                        "stage_metadata_credential", "cleanup_metadata_credential", "_read_credential_ingress", "_credential_inventory", "_credential_parts"}
+                        "stage_metadata_credential", "cleanup_metadata_credential", "_read_credential_ingress", "_credential_inventory", "_credential_parts", "reserve_bootstrap_stdin"}
     assert "_read_metadata_credential" in names
     assert b"--add" not in one and b"--install" not in one and b"subprocess.Popen(" not in one
     assert b"forge_ci" not in one and b"code_forge" not in one
@@ -680,6 +681,269 @@ def test_credential_ingress_cancellation_closes_selector_and_pipe(monkeypatch):
             os.write(writer, b"x")
     finally:
         os.close(writer)
+
+
+@pytest.mark.parametrize("fault", [None, "root", "occupied", "vacancy_error", "missing", "symlink", "open_error",
+                                  "unexpected_fd", "regular", "directory", "wrong_major", "wrong_minor",
+                                  "fstat", "inheritable", "inheritance_error", "close_error"])
+def test_bootstrap_stdin_reservation_is_fixed_inert_and_owns_only_new_fd(monkeypatch, fault):
+    events = []
+    def root():
+        events.append("root")
+        if fault == "root":
+            raise a.SetupError("root context unavailable")
+    def fstat(fd):
+        events.append(("fstat", fd))
+        if events.count(("fstat", fd)) == 1:
+            if fault == "occupied":
+                return SimpleNamespace(st_mode=stat.S_IFIFO)
+            raise OSError(errno.EIO if fault == "vacancy_error" else errno.EBADF, "private diagnostic")
+        if fault == "fstat":
+            raise OSError(errno.EIO, "private diagnostic")
+        mode = stat.S_IFREG if fault == "regular" else stat.S_IFDIR if fault == "directory" else stat.S_IFCHR
+        device = os.makedev(2 if fault == "wrong_major" else 1, 5 if fault == "wrong_minor" else 3)
+        return SimpleNamespace(st_mode=mode, st_rdev=device)
+    def opening(path, flags):
+        events.append(("open", path, flags))
+        assert path == "/dev/null" and flags == os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+        if fault in {"missing", "symlink", "open_error"}:
+            raise OSError({"missing": errno.ENOENT, "symlink": errno.ELOOP, "open_error": errno.EACCES}[fault], "private diagnostic")
+        return 7 if fault == "unexpected_fd" else 0
+    def inheritable(fd):
+        events.append(("get_inheritable", fd))
+        if fault == "inheritance_error":
+            raise OSError(errno.EIO, "private diagnostic")
+        return fault in {"inheritable", "close_error"}
+    def close(fd):
+        events.append(("close", fd))
+        if fault == "close_error":
+            raise OSError(errno.EIO, "private diagnostic")
+    monkeypatch.setattr(a, "require_clean_root", root)
+    monkeypatch.setattr(a.os, "fstat", fstat)
+    monkeypatch.setattr(a.os, "open", opening)
+    monkeypatch.setattr(a.os, "get_inheritable", inheritable)
+    monkeypatch.setattr(a.os, "close", close)
+    if fault is None:
+        assert a.reserve_bootstrap_stdin() is None
+    else:
+        with pytest.raises(a.SetupError) as caught:
+            a.reserve_bootstrap_stdin()
+        assert "private diagnostic" not in str(caught.value)
+    assert events[0] == "root"
+    closed = [item[1] for item in events if isinstance(item, tuple) and item[0] == "close"]
+    if fault in {None, "root", "occupied", "vacancy_error", "missing", "symlink", "open_error"}:
+        assert closed == []
+    else:
+        assert closed == [7 if fault == "unexpected_fd" else 0]
+    if fault in {"root", "occupied", "vacancy_error"}:
+        assert not any(isinstance(item, tuple) and item[0] == "open" for item in events)
+
+
+def ordinary_setup_child(script, *args):
+    """Only a fresh ordinary interpreter may disturb its own real fd0."""
+    prefix = "import sys\nsys.path.insert(0, sys.argv[1])\nfrom forge_ci import setup_policy as a\n"
+    argv = [sys.executable, "-B", "-I", "-S", "-c", prefix + script,
+            str(Path(a.__file__).resolve().parent.parent), *args]
+    with ORDINARY_POPEN(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate(timeout=5)
+            raise
+        assert process.returncode == 0, stderr.decode(errors="replace")
+    assert stderr == b""
+    return json.loads(stdout)
+
+
+@pytest.mark.parametrize("reserve", [False, True])
+def test_real_ingress_then_snapshot_capture_requires_reserved_stdin(reserve):
+    result = ordinary_setup_child(r'''
+import errno, fcntl, json, os, stat, tempfile
+assert os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0
+a.require_clean_root = lambda: None
+os.close(0)
+reader, writer = os.pipe()
+assert reader == 0
+assert os.write(writer, b'offline-fake-credential') == 23
+os.close(writer)
+assert a._read_credential_ingress(reader) == b'offline-fake-credential'
+try:
+    os.fstat(0)
+except OSError as error:
+    assert error.errno == errno.EBADF
+else:
+    raise AssertionError('ingress retained fd0')
+reserve = sys.argv[2] == 'yes'
+if reserve:
+    a.reserve_bootstrap_stdin()
+    info = os.fstat(0)
+    assert stat.S_ISCHR(info.st_mode) and (os.major(info.st_rdev), os.minor(info.st_rdev)) == (1, 3)
+    assert not os.get_inheritable(0) and os.read(0, 1) == b''
+    assert fcntl.fcntl(0, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY
+with tempfile.TemporaryFile(mode='w+b') as caller, tempfile.TemporaryFile(mode='w+b') as info:
+    child = "import json,os,sys;fd=int(sys.argv[1]);os.write(fd,json.dumps(dict(uid=os.getuid(),gid=os.getgid(),pid=os.getpid(),marker='harmless')).encode());os.close(fd)"
+    record = a.command([sys.executable, '-B', '-I', '-S', '-c', child, str(caller.fileno())],
+                       5, pass_fds=(caller.fileno(), info.fileno()))
+    assert record['returncode'] == 0 and not record.get('error') and record['stderr'] == ''
+    caller.seek(0)
+    raw = caller.read(65537)
+    if reserve:
+        observed = a.parse_json(raw, limit=65536)
+        assert observed == dict(uid=os.getuid(), gid=os.getgid(), pid=record['wrapper_pid'], marker='harmless')
+        assert caller.fileno() >= 3 and info.fileno() >= 3
+    else:
+        assert caller.fileno() == 0 and raw == b''
+        try:
+            a.parse_json(raw, limit=65536)
+        except a.SetupError:
+            pass
+        else:
+            raise AssertionError('empty caller report admitted')
+    print(json.dumps(dict(reserved=reserve, caller_fd=caller.fileno(), capture_bytes=len(raw),
+                          returncode=record['returncode'], uid=os.getuid(), gid=os.getgid())))
+''', "yes" if reserve else "no")
+    assert result["reserved"] is reserve and result["returncode"] == 0
+    assert result["uid"] > 0 and result["gid"] > 0
+    assert result["capture_bytes"] > 0 if reserve else result["capture_bytes"] == 0
+    assert result["caller_fd"] >= 3 if reserve else result["caller_fd"] == 0
+
+
+def test_real_staging_disposes_ingress_before_reservation_and_snapshot_capture():
+    native = {key: value for key, value in binding_fixture().items() if key in a.NATIVE_BINDING_KEYS}
+    result = ordinary_setup_child(r'''
+import errno, hashlib, json, os, stat, tempfile
+from pathlib import Path
+from types import SimpleNamespace
+assert os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0
+native = json.loads(sys.argv[2])
+a.require_clean_root = lambda: None
+a.trusted_boot_id = lambda: native['boot_id']
+with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary) / 'bootstrap'
+    root.mkdir(mode=0o700)
+    stage = root / '123-1'
+    stage.mkdir(mode=0o700)
+    a.BOOTSTRAP_ROOT = root
+    part = b'fixed offline source'
+    (stage / 'part-00.txt').write_bytes(part)
+    (stage / 'part-00.txt').chmod(0o400)
+    (stage / 'bootstrap-entry.py').write_bytes(b'# fixed offline entrypoint\n')
+    (stage / 'bootstrap-entry.py').chmod(0o400)
+    layout = dict(parts=[dict(name='part-00.txt', bytes=len(part), sha256=hashlib.sha256(part).hexdigest())])
+    real_stat, real_fstat = os.stat, os.fstat
+    ancestors = {path.stat().st_ino for path in root.parents}
+    def root_metadata(info):
+        fields = {name: getattr(info, name) for name in dir(info) if name.startswith('st_')}
+        fields.update(st_uid=0, st_gid=0)
+        if info.st_ino in ancestors:
+            fields['st_mode'] &= ~0o022
+        return SimpleNamespace(**fields)
+    os.stat = lambda *args, **kwargs: root_metadata(real_stat(*args, **kwargs))
+    os.fstat = lambda fd: root_metadata(real_fstat(fd))
+    os.close(0)
+    reader, writer = os.pipe()
+    assert reader == 0
+    fake = b'offline-fake-credential'
+    assert os.write(writer, fake) == len(fake)
+    os.close(writer)
+    a.stage_metadata_credential(native, layout)
+    try:
+        os.fstat(0)
+    except OSError as error:
+        assert error.errno == errno.EBADF
+    else:
+        raise AssertionError('staging retained ingress')
+    assert (stage / 'metadata-token').read_bytes() == fake
+    assert stat.S_IMODE((stage / 'metadata-token').stat().st_mode) == 0o400
+    a.reserve_bootstrap_stdin()
+    null = real_fstat(0)
+    assert stat.S_ISCHR(null.st_mode) and (os.major(null.st_rdev), os.minor(null.st_rdev)) == (1, 3)
+    assert not os.get_inheritable(0) and os.read(0, 1) == b''
+    with tempfile.TemporaryFile(mode='w+b', dir=stage) as caller, tempfile.TemporaryFile(mode='w+b', dir=stage) as info:
+        assert caller.fileno() >= 3 and info.fileno() >= 3
+        child = "import json,os,sys;os.write(int(sys.argv[1]),json.dumps(dict(uid=os.getuid(),gid=os.getgid(),pid=os.getpid())).encode())"
+        record = a.command([sys.executable, '-B', '-I', '-S', '-c', child, str(caller.fileno())],
+                           5, pass_fds=(caller.fileno(), info.fileno()))
+        assert record['returncode'] == 0 and not record.get('error') and record['stderr'] == ''
+        caller.seek(0)
+        raw = caller.read(65537)
+        observed = a.parse_json(raw, limit=65536)
+        assert observed == dict(uid=os.getuid(), gid=os.getgid(), pid=record['wrapper_pid'])
+    os.stat, os.fstat = real_stat, real_fstat
+    print(json.dumps(dict(staged=True, ingress_closed=True, stdin_reserved=True, capture_bytes=len(raw))))
+''', json.dumps(native))
+    assert result["staged"] and result["ingress_closed"] and result["stdin_reserved"]
+    assert 0 < result["capture_bytes"] <= 65536
+
+
+@pytest.mark.parametrize("failure", ["overflow", "deadline", "cancel"])
+def test_real_ingress_failure_disposes_pipe_and_settles_writer_before_fd_reuse(failure):
+    result = ordinary_setup_child(r'''
+import errno, json, os, signal, stat
+assert os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0
+os.close(0)
+reader, writer = os.pipe()
+assert reader == 0 and a.CREDENTIAL_INGRESS_SECONDS == 5
+failure = sys.argv[2]
+os.write(writer, b'x' * (4097 if failure == 'overflow' else 23))
+def cancelled(*_):
+    raise KeyboardInterrupt()
+if failure == 'cancel':
+    signal.signal(signal.SIGALRM, cancelled)
+    signal.setitimer(signal.ITIMER_REAL, 0.025)
+try:
+    a._read_credential_ingress(0)
+except (a.SetupError, KeyboardInterrupt) as error:
+    assert isinstance(error, KeyboardInterrupt) if failure == 'cancel' else isinstance(error, a.SetupError)
+else:
+    raise AssertionError('failed ingress admitted')
+finally:
+    signal.setitimer(signal.ITIMER_REAL, 0)
+try:
+    os.fstat(0)
+except OSError as error:
+    assert error.errno == errno.EBADF
+else:
+    raise AssertionError('failed ingress retained fd0')
+try:
+    os.write(writer, b'x')
+except BrokenPipeError:
+    pass
+else:
+    raise AssertionError('writer still has an ingress reader')
+os.close(writer)
+replacement = os.open('/dev/null', os.O_RDONLY | os.O_CLOEXEC)
+assert replacement == 0 and stat.S_ISCHR(os.fstat(replacement).st_mode)
+os.close(replacement)
+print(json.dumps(dict(failure=failure, writer_settled=True, ingress_closed=True)))
+''', failure)
+    assert result == {"failure": failure, "writer_settled": True, "ingress_closed": True}
+
+
+def test_real_stdin_reservation_never_overwrites_an_occupied_pipe():
+    result = ordinary_setup_child(r'''
+import json, os, stat
+assert os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0
+a.require_clean_root = lambda: None
+os.close(0)
+reader, writer = os.pipe()
+assert reader == 0
+before = os.fstat(0)
+try:
+    a.reserve_bootstrap_stdin()
+except a.SetupError:
+    pass
+else:
+    raise AssertionError('occupied stdin overwritten')
+after = os.fstat(0)
+assert stat.S_ISFIFO(after.st_mode) and (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino)
+assert os.write(writer, b'owned-pipe') == 10 and os.read(0, 10) == b'owned-pipe'
+os.close(reader)
+os.close(writer)
+print(json.dumps(dict(occupied_pipe_preserved=True)))
+''')
+    assert result == {"occupied_pipe_preserved": True}
 
 
 @pytest.fixture
@@ -1171,6 +1435,15 @@ def bootstrap_world(tmp_path, monkeypatch):
             raise FileExistsError("credential already staged")
         world.credential_present = True
         world.stages.append("credential")
+        if world.fail == "credential":
+            raise a.SetupError("credential staging unavailable")
+        if world.fail == "cancel_credential":
+            a.signal.getsignal(a.signal.SIGTERM)(a.signal.SIGTERM, None)
+    def reserve_stdin():
+        assert world.credential_present and world.stages == ["credential"]
+        world.stages.append("stdin")
+        if world.fail == "stdin":
+            raise a.SetupError("bootstrap stdin reservation unavailable")
     def cleanup_credential(run_id, run_attempt, boot_id, *, credential_layout):
         assert (run_id, run_attempt, boot_id) == (123, 1, host["boot_id"])
         assert credential_layout == world.credential_layout
@@ -1178,6 +1451,7 @@ def bootstrap_world(tmp_path, monkeypatch):
         return {"schema_version": 1, "status": "PASS", "run_id": run_id, "run_attempt": run_attempt,
                 "boot_id": boot_id, "token_absent": True}
     monkeypatch.setattr(a, "stage_metadata_credential", stage_credential)
+    monkeypatch.setattr(a, "reserve_bootstrap_stdin", reserve_stdin)
     monkeypatch.setattr(a, "cleanup_metadata_credential", cleanup_credential)
     class Evidence:
         def __init__(self, enabled=True):
@@ -1259,7 +1533,7 @@ def test_bootstrap_orders_all_security_work_before_pass_and_seals_once(bootstrap
     world = bootstrap_world
     result = a.bootstrap(world.config, world.source, credential_layout=world.credential_layout)
     assert result["status"] == "PASS" and result["load_attempted"] is True and result["positive_passed"] is True
-    assert world.stages == ["credential", "live", "snapshot", "live", "install", "before", "negative", "preprocess", "compile", "live", "recheck", "load", "after", "positive"]
+    assert world.stages == ["credential", "stdin", "live", "snapshot", "live", "install", "before", "negative", "preprocess", "compile", "live", "recheck", "load", "after", "positive"]
     stage = a.stage_path(result["binding"])
     assert json.loads(world.files[str(stage / "setup.json")]) == result
     assert world.stages.count("load") == 1
@@ -1268,7 +1542,7 @@ def test_bootstrap_orders_all_security_work_before_pass_and_seals_once(bootstrap
     assert world.stages.count("load") == 1
 
 
-@pytest.mark.parametrize("failure", ["root_directory", "live_initial", "snapshot", "install", "before", "negative", "preprocess", "compile", "live_preload", "recheck", "changed_preload", "compiler_preload", "cancel_compile"])
+@pytest.mark.parametrize("failure", ["credential", "cancel_credential", "stdin", "root_directory", "live_initial", "snapshot", "install", "before", "negative", "preprocess", "compile", "live_preload", "recheck", "changed_preload", "compiler_preload", "cancel_compile"])
 def test_every_early_failure_has_zero_add_and_no_seal(bootstrap_world, failure):
     world = bootstrap_world
     world.fail = failure
@@ -1278,6 +1552,9 @@ def test_every_early_failure_has_zero_add_and_no_seal(bootstrap_world, failure):
     assert not any(name.endswith("/setup.json") for name in world.files)
     assert world.events[-1][0] == "setup-stop" and world.events[-1][1]["load_attempted"] is False
     assert world.credential_present is False
+    if failure in {"credential", "cancel_credential", "stdin"}:
+        assert world.stages == (["credential", "stdin"] if failure == "stdin" else ["credential"])
+        assert world.files == {}
 
 
 @pytest.mark.parametrize("failure", ["load", "after", "changed_after", "invalid_after", "positive", "cancel_load"])
@@ -1793,3 +2070,40 @@ def test_closed_vendor_install_only_fixed_bubblewrap_and_fresh_preinstall_live(t
     install_index = events.index(("command", installs[0]))
     assert events[install_index - 1] == ("live", binding_fixture())
     assert a.ARCHIVES["bubblewrap_0.9.0-1ubuntu0.3_amd64.deb"] == "2461f1beee9cb04c8942739fe1a2b37e7b7c2a3d518f0779dc75f9245baa3094"
+
+
+
+def test_real_stdin_reservation_rejects_fifo_without_waiting_for_writer():
+    result = ordinary_setup_child(r'''
+import errno, json, os, tempfile
+assert os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0
+a.require_clean_root = lambda: None
+with tempfile.TemporaryDirectory() as directory:
+    fifo = directory + '/not-null'
+    os.mkfifo(fifo, 0o600)
+    real_open = os.open
+    def redirect_only_fixed_open(path, flags, *args, **kwargs):
+        if path == '/dev/null':
+            assert flags & os.O_NONBLOCK
+            path = fifo
+        return real_open(path, flags, *args, **kwargs)
+    os.close(0)
+    a.os.open = redirect_only_fixed_open
+    try:
+        try:
+            a.reserve_bootstrap_stdin()
+        except a.SetupError:
+            pass
+        else:
+            raise AssertionError('FIFO admitted as null device')
+    finally:
+        a.os.open = real_open
+    try:
+        os.fstat(0)
+    except OSError as error:
+        assert error.errno == errno.EBADF
+    else:
+        raise AssertionError('rejected FIFO descriptor retained')
+    print(json.dumps(dict(fifo_rejected=True, stdin_closed=True)))
+''')
+    assert result == {"fifo_rejected": True, "stdin_closed": True}
