@@ -30,7 +30,7 @@ SO_PEERPIDFD = 77
 PROVIDER = "/opt/hostedtoolcache/Python/3.12.14/x64/bin/python"
 HELPER = ".github/scripts/forge_ci/user_service.py"
 BOOT_ENV = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LC_ALL": "C", "LANG": "C"}
-PROFILE_PATH = "/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/local/bin:/usr/bin:/bin"
+PROFILE_PATH = "/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/bin:/bin"
 FIXED_ENV = {"PATH": PROFILE_PATH, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONPATH": ".github/scripts:src", "PYTHONDONTWRITEBYTECODE": "1",
              "SEMGREP_SEND_METRICS": "off", "SEMGREP_ENABLE_VERSION_CHECK": "0", "OTEL_SDK_DISABLED": "true"}
 OPTIONAL_ENV = frozenset()
@@ -250,6 +250,7 @@ PUBLIC_GATES = {
     'runtime checkout root alias': "US173",
     'unreviewed checkout import root': "US174",
     'unsupported active import archive or file': "US175",
+    'runtime PATH selection changed': "US176",
 }
 
 
@@ -962,6 +963,14 @@ RUNTIME_FILE_LIMIT = 512 * 1024 * 1024
 RUNTIME_TOTAL_LIMIT = 2 * 1024 * 1024 * 1024
 RUNTIME_ENTRIES = 50000
 REQUIRED_TOOLS = ("python", "python3", "git", "bash", "sh", "bwrap", "node", "npm", "semgrep", "ruff")
+OLD_PROFILE_PATH = "/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/local/bin:/usr/bin:/bin"
+PATH_SELECTION_TOOLS = (*REQUIRED_TOOLS, "shellcheck", "eslint", "mutmut", "gremlins", "python3.9", "python3.12",
+                        "python3.14", "code-forge", "code-forge-mcp", "pytest", "tee", "df", "cp", "perl", "grep", "pgrep", "true")
+PATH_SELECTION_LABELS = ("provider_bin", "usr_bin", "bin_alias")
+OLD_PATH_SELECTION_LABELS = ("provider_bin", "usr_local_bin", "usr_bin", "bin_alias")
+PATH_STOP_LIMIT = 4096
+PATH_STOP_KEYS = {"schema_version", "kind", "status", "gate", "run_id", "run_attempt", "candidate_sha",
+                  "workflow_sha", "workflow_job", "boot_id", "observations"}
 INSTALL_ARGV = [
     ["python", "-m", "pip", "install", "-e", ".[dev,mcp,semgrep,vertex]", "pytest==9.1.1"],
     ["python", "-m", "pip", "install", "--target", "SYSTEM_USER_SITE", "pytest==9.1.1"],
@@ -1121,7 +1130,7 @@ def check_private_profile(environment, *, deadline_ns):
     # populate it. Reject unknown configuration rather than interpreting secrets.
     need(not any((home / ".config").iterdir()), "unexpected private HOME configuration")
     directories = []
-    for component, label in zip(PROFILE_PATH.split(":"), ("provider_bin", "usr_local_bin", "usr_bin", "bin_alias"), strict=True):
+    for component, label in zip(PROFILE_PATH.split(":"), ("provider_bin", "usr_bin", "bin_alias"), strict=True):
         path = Path(component)
         real = path.resolve(strict=True)
         need(str(real) == component or (component == "/bin" and str(real) == "/usr/bin"), "unreviewed PATH alias")
@@ -1288,8 +1297,71 @@ def current_executables(deadline_ns):
     return executables
 
 
+def validate_path_selection(value):
+    need(type(value) is dict and value.keys() == set(PATH_SELECTION_TOOLS), "runtime PATH selection changed")
+    need(all(item is None or (type(item) is str and item in PATH_SELECTION_LABELS) for item in value.values()),
+         "runtime PATH selection changed")
+    need(len(canonical(value)) <= PATH_STOP_LIMIT, "runtime record encoded bound")
+
+
+def validate_path_observations(value):
+    need(type(value) is dict and value.keys() == set(PATH_SELECTION_TOOLS), "runtime PATH selection changed")
+    for observation in value.values():
+        need(type(observation) is dict and observation.keys() == {"old", "new"}, "runtime PATH selection changed")
+        for side, labels in (("old", OLD_PATH_SELECTION_LABELS), ("new", PATH_SELECTION_LABELS)):
+            item = observation[side]
+            need(item is None or (type(item) is str and item in labels), "runtime PATH selection changed")
+    need(any(item["old"] != item["new"] for item in value.values()), "runtime PATH selection changed")
+    need(len(canonical(value)) <= PATH_STOP_LIMIT, "runtime record encoded bound")
+
+
+def current_path_selection(deadline_ns):
+    import shutil
+    # Metadata lookup only: no execution, resolution or trust of excluded tools.
+    # Repeated observations are bounded by the caller's original deadline; they
+    # do not claim atomicity against concurrent whole-host changes.
+    snapshots, finite_snapshots = [], []
+    for _ in range(2):
+        snapshot, finite_snapshot = {}, {}
+        for name in PATH_SELECTION_TOOLS:
+            observation, finite_observation = {}, {}
+            for side, path, labels in (("old", OLD_PROFILE_PATH, OLD_PATH_SELECTION_LABELS),
+                                       ("new", PROFILE_PATH, PATH_SELECTION_LABELS)):
+                runtime_remaining(deadline_ns)
+                selected = shutil.which(name, path=path)
+                runtime_remaining(deadline_ns)
+                allowed = {directory + "/" + name: label for directory, label in zip(path.split(":"), labels, strict=True)}
+                need(selected is None or (type(selected) is str and selected in allowed), "runtime PATH selection changed")
+                observation[side] = selected
+                finite_observation[side] = None if selected is None else allowed[selected]
+            snapshot[name] = observation
+            finite_snapshot[name] = finite_observation
+        snapshots.append(snapshot)
+        finite_snapshots.append(finite_snapshot)
+    try:
+        need(snapshots[0] == snapshots[1]
+             and all(item["old"] == item["new"] for snapshot in snapshots for item in snapshot.values()),
+             "runtime PATH selection changed")
+    except ServiceError as error:
+        try:
+            for snapshot, observations in zip(snapshots, finite_snapshots, strict=True):
+                if any(item["old"] != item["new"] for item in snapshot.values()):
+                    validate_path_observations(observations)
+                    error.path_observations = observations
+                    break
+        except Exception as diagnostic_error:  # noqa: BLE001 - optional finite metadata cannot replace STOP
+            if getattr(diagnostic_error, "_forge_control", False):
+                raise
+        raise
+    selection = {name: item["new"] for name, item in finite_snapshots[0].items()}
+    validate_path_selection(selection)
+    runtime_remaining(deadline_ns)
+    return selection
+
+
 def current_runtime(environment, *, deadline_ns):
     profile = check_private_profile(environment, deadline_ns=deadline_ns)
+    profile["path_selection"] = current_path_selection(deadline_ns)
     executables = current_executables(deadline_ns)
     probes = {"provider": runtime_probe(PROVIDER, environment, deadline_ns),
               "system": runtime_probe("/usr/bin/python3", environment, deadline_ns)}
@@ -1350,6 +1422,44 @@ def persist_directory_stop(error, evidence, environment, deadline_ns):
              "observation": error.directory_observation}
     validate_directory_stop(value)
     runtime_write(fixed_evidence / "runtime-directory-stop.json", value, DIRECTORY_STOP_LIMIT, deadline_ns)
+
+
+def validate_path_stop(value):
+    need(type(value) is dict and value.keys() == PATH_STOP_KEYS, "runtime PATH selection changed")
+    need(type(value["schema_version"]) is int and value["schema_version"] == 1
+         and type(value["kind"]) is str and value["kind"] == "runtime-path-selection-change"
+         and type(value["status"]) is str and value["status"] == "STOP"
+         and type(value["gate"]) is str and value["gate"] == "US176", "runtime PATH selection changed")
+    need(positive(value["run_id"]) and type(value["run_attempt"]) is int and value["run_attempt"] == 1,
+         "runtime PATH selection changed")
+    need(all(type(value[key]) is str and re.fullmatch(r"[0-9a-f]{40}", value[key]) is not None
+             and value[key] != "0" * 40 for key in ("candidate_sha", "workflow_sha"))
+         and value["candidate_sha"] == value["workflow_sha"], "runtime PATH selection changed")
+    need(type(value["workflow_job"]) is str and value["workflow_job"] == "linux-tests"
+         and type(value["boot_id"]) is str
+         and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value["boot_id"]) is not None,
+         "runtime PATH selection changed")
+    validate_path_observations(value["observations"])
+    need(len(canonical(value)) <= PATH_STOP_LIMIT, "runtime record encoded bound")
+
+
+def persist_path_stop(error, evidence, environment, deadline_ns):
+    if public_gate(error) != "US176" or not hasattr(error, "path_observations"):
+        return
+    runtime_remaining(deadline_ns)
+    validate_environment(environment)
+    need(os.getuid() == os.geteuid() > 0 and os.getgid() == os.getegid() > 0, "runtime profile requires ordinary owner")
+    fixed_evidence = Path(environment["RUNNER_TEMP"]) / "forge-evidence"
+    need(str(evidence) == str(fixed_evidence) and environment["EVIDENCE"] == str(fixed_evidence),
+         "runtime fixed paths changed")
+    runtime_directory(fixed_evidence, private=True)
+    value = {"schema_version": 1, "kind": "runtime-path-selection-change", "status": "STOP", "gate": "US176",
+             "run_id": int(environment["GITHUB_RUN_ID"]), "run_attempt": 1, "candidate_sha": environment["GITHUB_SHA"],
+             "workflow_sha": environment["GITHUB_WORKFLOW_SHA"], "workflow_job": environment["GITHUB_JOB"],
+             "boot_id": read_regular("/proc/sys/kernel/random/boot_id", 64).decode("ascii").strip(),
+             "observations": error.path_observations}
+    validate_path_stop(value)
+    runtime_write(fixed_evidence / "runtime-path-stop.json", value, PATH_STOP_LIMIT, deadline_ns)
 
 
 EDITABLE_DIRECTORY = "src/code_review_forge.egg-info"
@@ -1423,6 +1533,9 @@ def revalidate_runtime_admission(record, environment, source, *, deadline_ns):
     runtime_remaining(deadline_ns)
     keys(record, RUNTIME_KEYS, "runtime admission")
     need(record["source"] == source and record["environment_sha256"] == runtime_digest(environment), "runtime admission binding mismatch")
+    need(type(record["profile_metadata"]) is dict and "path_selection" in record["profile_metadata"],
+         "runtime PATH selection changed")
+    validate_path_selection(record["profile_metadata"]["path_selection"])
     evidence, repo = Path(environment["EVIDENCE"]), Path(environment["GITHUB_WORKSPACE"])
     retained, _ = runtime_json(evidence / "runtime-admission.json", MAX_METADATA, deadline_ns)
     need(retained == record, "runtime admission changed")
@@ -1493,7 +1606,17 @@ def main(argv=None):
                      and runtime_executable("python3", deadline_ns)["realpath"] == provider,
                      "PATH Python differs from provider")
             else:
-                produce_runtime_admission(args.repo, args.evidence, environment, deadline_ns=deadline_ns)
+                try:
+                    produce_runtime_admission(args.repo, args.evidence, environment, deadline_ns=deadline_ns)
+                except ServiceError as error:
+                    if getattr(error, "_forge_control", False):
+                        raise
+                    try:
+                        persist_path_stop(error, args.evidence, environment, deadline_ns)
+                    except Exception as diagnostic_error:  # noqa: BLE001 - keep STOP; controls reach the outer handler
+                        if getattr(diagnostic_error, "_forge_control", False):
+                            raise
+                    raise
             return 0
         code = bootstrap() if args.role == "bootstrap" else launcher(args.receipt, args.repo, args.evidence)
         # Preserve actual signal identity in terminal evidence and conventional

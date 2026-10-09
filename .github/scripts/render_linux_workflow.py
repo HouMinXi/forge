@@ -237,7 +237,7 @@ print('PASS: real proc/pidfd and ext4/btrfs durability primitives; full invocati
 print(sys.version)
 '''
 
-PROFILE_PATH = "/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/local/bin:/usr/bin:/bin"
+PROFILE_PATH = "/opt/hostedtoolcache/Python/3.12.14/x64/bin:/usr/bin:/bin"
 PROFILE_NATIVE_KEYS = tuple("""RUNNER_TEMP RUNNER_OS RUNNER_ARCH GITHUB_WORKSPACE GITHUB_EVENT_PATH
 GITHUB_EVENT_NAME GITHUB_REF_TYPE GITHUB_REF GITHUB_REPOSITORY GITHUB_REPOSITORY_OWNER
 GITHUB_REPOSITORY_ID GITHUB_REPOSITORY_OWNER_ID GITHUB_ACTOR GITHUB_ACTOR_ID GITHUB_TRIGGERING_ACTOR
