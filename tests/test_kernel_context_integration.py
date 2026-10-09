@@ -169,10 +169,11 @@ def test_grouped_and_fallback_reuse_one_snapshot(pipeline, monkeypatch, grouped)
         if grouped
         else []
     )
-    monkeypatch.setattr(
-        "code_forge.diff_grouping.group_diff",
-        lambda *a: GroupingResult(groups=groups),
-    )
+    def group_diff(*args, changed_files):
+        assert changed_files == (["driver.c", "other.c"] if grouped else ["driver.c"])
+        return GroupingResult(groups=groups)
+
+    monkeypatch.setattr("code_forge.diff_grouping.group_diff", group_diff)
     # Genuine disjoint slices for grouped review; deletion-only input preserves
     # the no-mandatory-hunks single-provider fallback exercised by this case.
     patch_text = (

@@ -1142,7 +1142,7 @@ def test_refused_pass_publication_and_verify(
     tmp_path, monkeypatch, external_guard, producer, kind, failed_pass, raw_text=False
 ):
     from code_forge import outlet_c
-    from code_forge.verify import parse_diff_files, run_verify
+    from code_forge.verify import VerifyFailureKind, parse_diff_files, run_verify
 
     files = ["control.txt", "other.txt"] if producer in ("grouped", "c-chunks") else ["control.txt"]
     for file in files:
@@ -1258,7 +1258,34 @@ def test_refused_pass_publication_and_verify(
             )
             assert not result.passed
             assert result.checks_run == 8 and result.checks_passed == 6
-            assert f"status={expected}" in result.reason
+            failed_number = NAMES.index(failed_pass) + 1
+            assert result.incomplete_passes == (failed_number,)
+            assert sorted(result.completion_statuses) == [
+                (1, number, expected if number == failed_number else "completed")
+                for number in (1, 2, 3)
+            ]
+            if kind == "schema":
+                assert result.reason == (
+                    f"unresolved unverified product finding c1p{failed_number}"
+                    " -- convergence not established"
+                )
+                assert result.failure_kind is None
+                assert len(failed["findings"]) == 1
+                finding = failed["findings"][0]
+                assert finding["file"] == "<schema-validation>"
+                assert finding["disposition"] == "CONFIRMED"
+                assert finding["basis"]["authority"] == "infra-unavailable"
+                assert result.unresolved_findings == ((
+                    1, failed_number, machine.source_hash,
+                    json.dumps(finding, sort_keys=True, separators=(",", ":")),
+                ),)
+            else:
+                assert result.reason == (
+                    f"pass did not complete: c1p{failed_number} status={expected}"
+                    " -- that pass contributed no review, so the cycle cannot attest"
+                )
+                assert result.failure_kind is VerifyFailureKind.INCOMPLETE_PASS
+                assert result.unresolved_findings == ()
     finally:
         active[0] = False
     assert outcome == Verdict.FAIL

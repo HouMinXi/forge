@@ -408,6 +408,17 @@ def test_smoke_no_backends(tmp_path, capsys):
 # -- _check_hook_drift --
 
 
+@pytest.fixture
+def fixed_hook_invocation(monkeypatch):
+    """Generator checks must not depend on a one-second host liveness probe."""
+    from code_forge import install_hooks as hooks
+
+    monkeypatch.setattr(
+        hooks, "_resolve_forge_invocation",
+        lambda: hooks._ForgeInvocationResolution("/fixture/code-forge gate-check", "primary_ok", ""),
+    )
+
+
 def _init_repo(path: Path) -> None:
     import subprocess
 
@@ -438,6 +449,7 @@ def _by_hook(results):
     return dict((msg.split(":")[0], ok) for ok, msg in results)
 
 
+@pytest.mark.usefixtures("fixed_hook_invocation")
 def test_hook_drift_current_is_silent(tmp_path):
     from code_forge.doctor import _check_hook_drift
 
@@ -448,6 +460,7 @@ def test_hook_drift_current_is_silent(tmp_path):
     assert all("current" in msg for _, msg in results)
 
 
+@pytest.mark.usefixtures("fixed_hook_invocation")
 def test_hook_drift_stale_pre_commit_fails(tmp_path):
     from code_forge.doctor import _check_hook_drift
 
@@ -473,6 +486,7 @@ def test_hook_drift_stale_pre_commit_fails(tmp_path):
     assert results["commit-msg"] is True
 
 
+@pytest.mark.usefixtures("fixed_hook_invocation")
 def test_hook_drift_stale_commit_msg_fails(tmp_path):
     from code_forge.doctor import _check_hook_drift
 
@@ -486,6 +500,7 @@ def test_hook_drift_stale_commit_msg_fails(tmp_path):
     assert results["pre-commit"] is True
 
 
+@pytest.mark.usefixtures("fixed_hook_invocation")
 def test_hook_drift_missing_hook_skips(tmp_path):
     from code_forge.doctor import _check_hook_drift
 
@@ -497,6 +512,7 @@ def test_hook_drift_missing_hook_skips(tmp_path):
     assert results["commit-msg"] is True
 
 
+@pytest.mark.usefixtures("fixed_hook_invocation")
 def test_hook_drift_foreign_hook_skips(tmp_path):
     from code_forge.doctor import _check_hook_drift
 
@@ -507,6 +523,7 @@ def test_hook_drift_foreign_hook_skips(tmp_path):
     assert results["pre-commit"] is None
 
 
+@pytest.mark.usefixtures("fixed_hook_invocation")
 def test_hook_drift_chained_hook_is_current(tmp_path):
     """A hook chaining a backup is current, not drift."""
     from code_forge.doctor import _check_hook_drift
@@ -522,6 +539,7 @@ def test_hook_drift_chained_hook_is_current(tmp_path):
     assert [ok for ok, _ in results] == [True, True]
 
 
+@pytest.mark.usefixtures("fixed_hook_invocation")
 def test_hook_drift_non_git_is_silent(tmp_path):
     from code_forge.doctor import _check_hook_drift
 
@@ -531,6 +549,7 @@ def test_hook_drift_non_git_is_silent(tmp_path):
     assert _check_hook_drift(tmp_path) == []
 
 
+@pytest.mark.usefixtures("fixed_hook_invocation")
 def test_hook_drift_ungeneratable_gate_fails(tmp_path):
     """A forge hook is installed but gate.yaml can no longer produce one."""
     from code_forge.doctor import _check_hook_drift
@@ -544,6 +563,7 @@ def test_hook_drift_ungeneratable_gate_fails(tmp_path):
     assert all("\n" not in msg for _, msg in results)
 
 
+@pytest.mark.usefixtures("fixed_hook_invocation")
 def test_doctor_reports_hook_drift(tmp_path, capsys):
     """run_doctor surfaces a stale hook as a FAIL row and exit 1."""
     _init_repo(tmp_path)
@@ -810,3 +830,232 @@ class TestDoctorLiveCliDispatch:
         cli_mod.main()
 
         assert calls.get("live") is True
+
+
+@pytest.fixture
+def hook_version_transport(monkeypatch):
+    """Use real installer/doctor paths; control only external --version transport."""
+    import subprocess
+    from code_forge import install_hooks as hooks
+
+    primary = "/fixture bin/code-forge"
+    real_run, real_access, real_which = subprocess.run, os.access, hooks.shutil.which
+    calls, outcomes = [], []
+    def run(argv, *args, **kwargs):
+        if argv == [primary, "--version"]:
+            calls.append(argv)
+            assert kwargs["timeout"] == 1
+            outcome = outcomes.pop(0)
+            if outcome == "timeout":
+                raise subprocess.TimeoutExpired(argv, 1)
+            if outcome == "oserror":
+                raise OSError("fixture error")
+            if outcome == "subprocess":
+                raise subprocess.SubprocessError("fixture failure")
+            return subprocess.CompletedProcess(
+                argv, 7 if outcome == "exit" else 0,
+                "wrong" if outcome == "invalid" else "code-forge fixture\n", "",
+            )
+        return real_run(argv, *args, **kwargs)
+    monkeypatch.setattr(hooks.subprocess, "run", run)
+    monkeypatch.setattr(hooks.shutil, "which", lambda name, *a, **kw:
+                        primary if name == "code-forge" else real_which(name, *a, **kw))
+    monkeypatch.setattr(hooks.os, "access", lambda path, mode:
+                        True if path == primary else real_access(path, mode))
+    return outcomes, calls
+
+
+@pytest.mark.parametrize("chained", [False, True])
+@pytest.mark.parametrize("install_probe,doctor_probe,expected_kind", [
+    ("success", "timeout", "cannot verify invocation"),
+    ("timeout", "success", "equivalence is unverified"),
+    ("success", "success", "current"),
+    ("timeout", "timeout", "cannot verify invocation"),
+    ("success", "oserror", "cannot verify invocation"),
+    ("success", "subprocess", "cannot verify invocation"),
+    ("success", "exit", "cannot verify invocation"),
+    ("success", "invalid", "cannot verify invocation"),
+])
+def test_hook_invocation_probe_directions(
+    tmp_path, hook_version_transport, chained, install_probe, doctor_probe, expected_kind
+):
+    from code_forge.doctor import _check_hook_drift
+
+    outcomes, calls = hook_version_transport
+    outcomes.extend([install_probe, doctor_probe])
+    _init_repo(tmp_path)
+    if chained:
+        for name in ("pre-commit", "commit-msg"):
+            (tmp_path / ".git" / "hooks" / name).write_text("#!/bin/sh\necho existing\n")
+    _install(tmp_path)
+    results = _check_hook_drift(tmp_path)
+    assert [ok for ok, _ in results] == [expected_kind == "current", True]
+    assert expected_kind in results[0][1]
+    assert "differs from generated" not in results[0][1]
+    assert "run code-forge install-hooks" not in results[0][1]
+    assert len(calls) == 2
+    assert not outcomes
+
+
+@pytest.mark.usefixtures("fixed_hook_invocation")
+@pytest.mark.parametrize("mode", ["missing", "foreign", "non_git"])
+def test_commit_msg_does_not_resolve_invocation(tmp_path, monkeypatch, mode):
+    from code_forge import install_hooks as hooks
+    from code_forge.doctor import _check_hook_drift
+
+    if mode != "non_git":
+        _init_repo(tmp_path)
+        hook = _install(tmp_path) / "pre-commit"
+        if mode == "missing":
+            hook.unlink()
+        else:
+            hook.write_text("#!/bin/sh\n# foreign\n")
+    resolver = MagicMock(side_effect=AssertionError("unexpected invocation resolution"))
+    monkeypatch.setattr(hooks, "_resolve_forge_invocation", resolver)
+    results = _check_hook_drift(tmp_path)
+    if mode == "non_git":
+        assert results == []
+    else:
+        assert [ok for ok, _ in results] == [None, True]
+    resolver.assert_not_called()
+
+
+@pytest.mark.usefixtures("fixed_hook_invocation")
+@pytest.mark.parametrize("error", [ValueError("bad config"), RuntimeError("unexpected config")])
+def test_hook_configuration_error_retains_early_return(tmp_path, monkeypatch, error):
+    from code_forge import install_hooks as hooks
+    from code_forge.doctor import _check_hook_drift
+
+    _init_repo(tmp_path)
+    _install(tmp_path)
+    monkeypatch.setattr(hooks, "_collect_hook_config", MagicMock(side_effect=error))
+    resolver = MagicMock(side_effect=AssertionError("resolver ran before config"))
+    monkeypatch.setattr(hooks, "_resolve_forge_invocation", resolver)
+    assert _check_hook_drift(tmp_path) == [(False, "cannot regenerate: " + str(error))]
+    resolver.assert_not_called()
+
+
+@pytest.mark.usefixtures("fixed_hook_invocation")
+@pytest.mark.parametrize("change", [
+    "review", "gate", "shell", "arbitrary", "historical", "mixed", "stale", "config",
+])
+def test_hook_alternate_classification_never_accepts_tampering(tmp_path, monkeypatch, change):
+    from code_forge import install_hooks as hooks
+    from code_forge.doctor import _check_hook_drift
+
+    _init_repo(tmp_path)
+    path = _install(tmp_path) / "pre-commit"
+    text = path.read_text()
+    old = "/fixture/code-forge"
+    if change == "review":
+        text = text.replace("_FORGE=" + old, "_FORGE=/arbitrary/command")
+    elif change == "gate":
+        text = text.replace("exec " + old, "exec /arbitrary/command")
+    elif change == "shell":
+        text += "\n/arbitrary/command; echo injected\n"
+    elif change in ("arbitrary", "historical"):
+        text = text.replace(old, "/unrecognized/" + change)
+    elif change == "mixed":
+        text = text.replace("exec " + old, "exec /fixture/python -m code_forge")
+    elif change == "stale":
+        text = text.replace("VERIFY_OUT=", "STALE_OUT=")
+    else:
+        gate = tmp_path / ".code-forge" / "gate.yaml"
+        gate.write_text(gate.read_text() + "non_ascii: strict\n")
+    if change != "config":
+        assert text != path.read_text()
+    path.write_text(text)
+    monkeypatch.setattr(hooks, "_interpreter_invocation", lambda: "/fixture/python -m code_forge gate-check")
+    import subprocess
+    real_run = subprocess.run
+    calls = []
+    def guarded(argv, *args, **kwargs):
+        calls.append(argv)
+        assert argv[0] == "git", "doctor executed an installed command"
+        return real_run(argv, *args, **kwargs)
+    monkeypatch.setattr(hooks.subprocess, "run", guarded)
+    results = _check_hook_drift(tmp_path)
+    assert results[0][0] is False
+    assert "differs from generated" in results[0][1]
+    assert not calls
+
+
+@pytest.mark.usefixtures("fixed_hook_invocation")
+def test_hook_unavailable_invocation_still_checks_commit_msg(tmp_path, monkeypatch):
+    from code_forge import install_hooks as hooks
+    from code_forge.doctor import _check_hook_drift
+
+    _init_repo(tmp_path)
+    _install(tmp_path)
+    monkeypatch.setattr(hooks, "_resolve_forge_invocation", lambda:
+                        hooks._ForgeInvocationResolution(None, "no_usable_invocation", "unavailable"))
+    results = _check_hook_drift(tmp_path)
+    assert [ok for ok, _ in results] == [False, True]
+    assert "cannot verify invocation" in results[0][1]
+
+
+def test_hook_no_primary_fallback_is_current(tmp_path, monkeypatch):
+    from code_forge import install_hooks as hooks
+    from code_forge.doctor import _check_hook_drift
+
+    real_which = hooks.shutil.which
+    monkeypatch.setattr(hooks.shutil, "which", lambda name, *a, **kw:
+                        None if name == "code-forge" else real_which(name, *a, **kw))
+    _init_repo(tmp_path)
+    _install(tmp_path)
+    assert [ok for ok, _ in _check_hook_drift(tmp_path)] == [True, True]
+
+
+@pytest.mark.usefixtures("fixed_hook_invocation")
+def test_hook_primary_current_never_checks_alternate(tmp_path, monkeypatch):
+    from code_forge import install_hooks as hooks
+    from code_forge.doctor import _check_hook_drift
+
+    _init_repo(tmp_path)
+    _install(tmp_path)
+    alternate = MagicMock(side_effect=AssertionError("unused fallback was inspected"))
+    monkeypatch.setattr(hooks, "_interpreter_invocation", alternate)
+    assert [ok for ok, _ in _check_hook_drift(tmp_path)] == [True, True]
+    alternate.assert_not_called()
+
+
+@pytest.mark.usefixtures("fixed_hook_invocation")
+def test_hook_doctor_preserves_configuration_resolution_order(tmp_path, monkeypatch):
+    from code_forge import install_hooks as hooks
+    from code_forge.doctor import _check_hook_drift
+
+    _init_repo(tmp_path)
+    _install(tmp_path)
+    events = []
+    real_config, real_is_file = hooks.load_gate_config, Path.is_file
+    resolution = hooks._resolve_forge_invocation()
+    def config(path):
+        events.append("config")
+        return real_config(path)
+    def is_file(path):
+        if path == tmp_path / "src" / "code_forge" / "__init__.py":
+            events.append("planning")
+        return real_is_file(path)
+    def resolve():
+        events.append("resolution")
+        return resolution
+    monkeypatch.setattr(hooks, "load_gate_config", config)
+    monkeypatch.setattr(Path, "is_file", is_file)
+    monkeypatch.setattr(hooks, "_resolve_forge_invocation", resolve)
+    assert [ok for ok, _ in _check_hook_drift(tmp_path)] == [True, True]
+    assert events == ["config", "planning", "resolution"]
+
+
+@pytest.mark.usefixtures("fixed_hook_invocation")
+def test_hook_resolver_exception_does_not_mask_commit_msg_drift(tmp_path, monkeypatch):
+    from code_forge import install_hooks as hooks
+    from code_forge.doctor import _check_hook_drift
+
+    _init_repo(tmp_path)
+    commit_msg = _install(tmp_path) / "commit-msg"
+    commit_msg.write_text(commit_msg.read_text().replace("head -5", "head -3"))
+    monkeypatch.setattr(hooks, "_resolve_forge_invocation", MagicMock(side_effect=ValueError("unexpected")))
+    results = _check_hook_drift(tmp_path)
+    assert [ok for ok, _ in results] == [False, False]
+    assert "cannot verify invocation" in results[0][1]
+    assert "differs from generated" in results[1][1]
