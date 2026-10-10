@@ -22,6 +22,7 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 
 SPEC_SHA256 = "ae8d2ebd1a45a7165626833baadb74e3ff8d18e7468d7c443bb6007d7081c0b7"
 MAX_CAPSULE = 128 * 1024
@@ -283,6 +284,7 @@ PUBLIC_GATES = {
     'runtime capacity changed': "US217",
     'unclean Python installer environment': "US218",
     'wrong isolated launcher interpreter': "US219",
+    'invalid runtime probe diagnostic': "US221",
 }
 
 
@@ -641,36 +643,51 @@ def cancellation():
             signal.signal(number, handler)
 
 
-def metadata(argv, env, timeout=5):
+def metadata(argv, env, timeout=5, *, diagnostic_slot=None, diagnostic_role=None, diagnostic_deadline_ns=None):
     """Bound both output streams, discard stderr values, kill/reap owned child."""
     need(0 < timeout <= 5, "invalid metadata time budget")
     deadline = time.monotonic() + timeout
     work_deadline = deadline - min(0.25, timeout / 2)
     process = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
     chunks = {"out": bytearray(), "err": bytearray()}
+    rejected = None
     try:
-        with selectors.DefaultSelector() as selector:
-            for stream, name in ((process.stdout, "out"), (process.stderr, "err")):
-                os.set_blocking(stream.fileno(), False)
-                selector.register(stream, selectors.EVENT_READ, name)
-            while selector.get_map():
-                need(time.monotonic() < work_deadline, "metadata deadline")
-                for key, _ in selector.select(max(0, min(0.1, work_deadline - time.monotonic()))):
-                    chunk = os.read(key.fd, 65536)
-                    if not chunk:
-                        selector.unregister(key.fileobj)
-                    else:
-                        chunks[key.data].extend(chunk)
-                        need(sum(map(len, chunks.values())) <= MAX_METADATA, "metadata output byte bound")
-        code = process.wait(timeout=max(0, work_deadline - time.monotonic()))
-        need(code == 0 and not chunks["err"], "metadata command failed")
-        return bytes(chunks["out"])
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=max(0, deadline - time.monotonic()))
-        process.stdout.close()
-        process.stderr.close()
+        try:
+            with selectors.DefaultSelector() as selector:
+                for stream, name in ((process.stdout, "out"), (process.stderr, "err")):
+                    os.set_blocking(stream.fileno(), False)
+                    selector.register(stream, selectors.EVENT_READ, name)
+                while selector.get_map():
+                    need(time.monotonic() < work_deadline, "metadata deadline")
+                    for key, _ in selector.select(max(0, min(0.1, work_deadline - time.monotonic()))):
+                        chunk = os.read(key.fd, 65536)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                        else:
+                            chunks[key.data].extend(chunk)
+                            need(sum(map(len, chunks.values())) <= MAX_METADATA, "metadata output byte bound")
+            code = process.wait(timeout=max(0, work_deadline - time.monotonic()))
+            try:
+                need(code == 0 and not chunks["err"], "metadata command failed")
+            except ServiceError as error:
+                rejected = error
+                raise
+            return bytes(chunks["out"])
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=max(0, deadline - time.monotonic()))
+            process.stdout.close()
+            process.stderr.close()
+    except ServiceError as error:
+        if error is rejected and diagnostic_slot is not None:
+            probe_slot_need(type(diagnostic_slot) is list and not diagnostic_slot)
+            if positive(diagnostic_deadline_ns) and probe_time(work_deadline, diagnostic_deadline_ns):
+                with probe_optional():
+                    entry = probe_entry(error, diagnostic_role, code, chunks, work_deadline, diagnostic_deadline_ns)
+                    if entry is not None and probe_time(work_deadline, diagnostic_deadline_ns):
+                        diagnostic_slot.append(entry)
+        raise
 
 
 def manager_environment(owner):
@@ -2385,9 +2402,10 @@ def runtime_executable(name, deadline_ns, environment=None):
     return {"requested": name, "path": str(path), "realpath": str(real), "identity": result}
 
 
-def runtime_probe(interpreter, environment, deadline_ns):
+def runtime_probe(interpreter, environment, deadline_ns, *, diagnostic_slot=None, diagnostic_role=None):
     raw = metadata([interpreter, "-B", "-c", RUNTIME_PROBE], environment,
-                   timeout=min(5, runtime_remaining(deadline_ns)))
+                   timeout=min(5, runtime_remaining(deadline_ns)),
+                   **probe_options(diagnostic_slot, diagnostic_role=diagnostic_role, diagnostic_deadline_ns=deadline_ns))
     value = json.loads(raw, object_pairs_hook=_pairs, parse_constant=_no_constant)
     keys(value, {"executable", "base_executable", "prefix", "base_prefix", "exec_prefix", "base_exec_prefix", "user_site_enabled", "version", "user_site", "package_roots", "import_roots", "pytest_path", "cache_source", "cache_support", "packages"}, "runtime interpreter")
     need(value["version"][:2] == [3, 12] and type(value["packages"]) is list, "wrong diagnostic Python or packages")
@@ -2781,7 +2799,7 @@ def validate_admission_measurement(record):
          and len(canonical(measurement)) <= 1024, "runtime admission measurement changed")
 
 
-def current_runtime(environment, *, deadline_ns):
+def current_runtime(environment, *, deadline_ns, diagnostic_slot=None):
     # The first package-bearing probe receives authority from a complete passive
     # prefix/target/metadata snapshot, never from the probe's own output.
     before = python_installed_state(environment, deadline_ns)
@@ -2793,9 +2811,11 @@ def current_runtime(environment, *, deadline_ns):
     executables = current_executables(deadline_ns, environment)
     profile["node_probe"] = node_probe(environment, deadline_ns)
     need(before == python_installed_state(environment, deadline_ns), "installed runtime changed during probe")
-    provider_probe = runtime_probe(str(python_root(environment) / "bin/python"), environment, deadline_ns)
+    provider_probe = runtime_probe(str(python_root(environment) / "bin/python"), environment, deadline_ns,
+                                   **probe_options(diagnostic_slot, diagnostic_role="private-provider"))
     need(before == python_installed_state(environment, deadline_ns), "installed runtime changed during probe")
-    system_probe = runtime_probe("/usr/bin/python3", environment, deadline_ns)
+    system_probe = runtime_probe("/usr/bin/python3", environment, deadline_ns,
+                                 **probe_options(diagnostic_slot, diagnostic_role="system"))
     need(before == python_installed_state(environment, deadline_ns), "installed runtime changed during probe")
     probes = {"provider": provider_probe, "system": system_probe}
     need(probes["provider"]["version"] == [3, 12, 14], "wrong provider patch version")
@@ -2978,7 +2998,7 @@ def runtime_record_path(environment, name):
             Path(environment["XDG_DATA_HOME"]) / "forge-b-runtime") / name
 
 
-def produce_runtime_admission(repo, evidence, environment, *, deadline_ns):
+def produce_runtime_admission(repo, evidence, environment, *, deadline_ns, diagnostic_slot=None):
     started_ns = time.monotonic_ns()
     runtime_remaining(deadline_ns)
     from forge_ci import launch
@@ -2986,7 +3006,8 @@ def produce_runtime_admission(repo, evidence, environment, *, deadline_ns):
     receipt = launch.load_receipt(evidence / "launch-bootstrap.json")
     need(launch.inspect_checkout(repo, receipt["binding"]["candidate_sha"], deadline=deadline_ns / NS) == receipt["source"],
          "runtime checkout source changed")
-    profile, probes, inventory = current_runtime(environment, deadline_ns=deadline_ns)
+    profile, probes, inventory = current_runtime(environment, deadline_ns=deadline_ns,
+                                                 **probe_options(diagnostic_slot))
     records = {name: runtime_file(runtime_record_path(environment, name), deadline_ns,
                                  diagnostic_role="retained_runtime_record", diagnostic_member=name)["sha256"] for name in (*INSTALL_RECORDS, *PYTHON_STAGE_RECORDS)}
     private_records = Path(environment["XDG_DATA_HOME"]) / "forge-b-runtime"
@@ -4138,6 +4159,171 @@ def install_observe(environment, stage, deadline_ns, shell_umask):
     return value
 
 
+PROBE_MAP_SHA256 = "de8b387b76e63b7c8e9e85ae6dac9d7209392f53889c8eade3922afd0506c8c3"
+PROBE_STAGES = ("unknown", "stdlib-import", "pytest-import", "python-assertion", "pytest-version-assertion",
+                "cache-keys-assertion", "distribution-enumeration", "metadata-fields-assertion",
+                "package-count-uniqueness-assertion", "result-construction")
+PROBE_CLASSES = ("AssertionError", "AttributeError", "TypeError", "ValueError", "ImportError",
+                 "ModuleNotFoundError", "RuntimeError", "OSError")
+PROBE_BINDING = frozenset("run_id run_attempt boot_id candidate_sha workflow_sha workflow_job tree_oid source_sha256 helper_map_sha256 probe_sha256".split())
+PROBE_LABELS = ("untrusted_traceback_reported_stage", "untrusted_traceback_reported_exception_class")
+PROBE_OBSERVATION = frozenset((*"role returncode exit_kind stdout_bytes stderr_bytes stderr_present".split(), *PROBE_LABELS))
+
+
+def probe_slot_need(value):
+    if not value:
+        raise RuntimeError("invalid runtime probe diagnostic slot")
+
+
+def probe_need(value):
+    need(value, "invalid runtime probe diagnostic")
+
+
+@contextmanager
+def probe_optional():
+    try:
+        yield
+    except (ServiceError, OSError) as error:
+        if getattr(error, "_forge_control", False):
+            raise
+
+
+def probe_keys(value, expected):
+    probe_need(type(value) is dict and len(value) == len(expected)
+               and all(type(k) is str for k in value) and value.keys() == expected)
+
+
+def probe_binding(value):
+    probe_keys(value, PROBE_BINDING)
+    for key, size in zip(("candidate_sha", "workflow_sha", "tree_oid", "source_sha256", "helper_map_sha256", "probe_sha256"),
+                         (40, 40, 40, 64, 64, 64)):
+        probe_need(text(value[key], size) and re.fullmatch(r"[0-9a-f]{%d}" % size, value[key]))
+    probe_need(positive(value["run_id"])
+        and positive(value["run_attempt"]) and value["run_attempt"] == 1
+        and text(value["boot_id"], 36)
+        and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value["boot_id"])
+        and value["candidate_sha"] == value["workflow_sha"] != "0" * 40
+        and text(value["workflow_job"], 11) and value["workflow_job"] == "linux-tests")
+
+
+def probe_context(document, helper_map_sha256):
+    probe_need(type(document) is dict)
+    binding, source = document.get("binding"), document.get("source")
+    probe_need(type(binding) is dict and type(source) is dict)
+    value = {k: binding.get(k) for k in ("run_id", "run_attempt", "boot_id", "candidate_sha", "workflow_sha")}
+    value.update(workflow_job=binding.get("job_key"), tree_oid=source.get("tree_oid"), source_sha256=source.get("source_sha256"),
+                 helper_map_sha256=helper_map_sha256, probe_sha256=hashlib.sha256(RUNTIME_PROBE.encode()).hexdigest())
+    probe_binding(value)
+    return value
+
+
+def probe_exit(code):
+    return "signal-style" if code < 0 else "nonzero-exit" if code else "zero-with-stderr"
+
+
+def probe_observation(value):
+    probe_keys(value, PROBE_OBSERVATION)
+    probe_need(all(type(value[k]) is str for k in ("role", "exit_kind", *PROBE_LABELS)))
+    code, out, err = (value[k] for k in ("returncode", "stdout_bytes", "stderr_bytes"))
+    probe_need(type(code) is int and -64 <= code <= 255
+        and value["role"] in {"private-provider", "system"}
+        and all(type(n) is int and 0 <= n <= MAX_METADATA for n in (out, err))
+        and out + err <= MAX_METADATA
+        and type(value["stderr_present"]) is bool and value["stderr_present"] == (err > 0)
+        and (code != 0 or value["stderr_present"])
+        and value["exit_kind"] == (probe_exit(code)))
+    stage, kind = (value[k] for k in PROBE_LABELS)
+    probe_need(stage in PROBE_STAGES and kind in ("unknown", *PROBE_CLASSES)
+        and (stage == "unknown") == (kind == "unknown"))
+
+
+def probe_options(slot, **values):
+    return {} if slot is None else dict(diagnostic_slot=slot, **values)
+
+
+def probe_time(work_deadline, deadline_ns):
+    return time.monotonic() < work_deadline and time.monotonic_ns() < deadline_ns
+
+
+def probe_labels(raw, probe_sha256, work_deadline, deadline_ns):
+    if not probe_time(work_deadline, deadline_ns):
+        return None
+    unknown = ("unknown", "unknown")
+    if probe_sha256 != PROBE_MAP_SHA256:
+        return unknown
+    ends = []
+    for offset, byte in enumerate(raw):
+        if offset % 4096 == 0 and not probe_time(work_deadline, deadline_ns):
+            return None
+        if byte == 10:
+            ends.append(offset)
+            if len(ends) > 3:
+                return unknown
+        elif not 32 <= byte <= 126:
+            return unknown
+    if not probe_time(work_deadline, deadline_ns):
+        return None
+    if (len(ends) != 3 or ends[-1] != len(raw) - 1 or ends[0] != 34
+            or raw[:34] != b"Traceback (most recent call last):" or not 30 <= ends[1] - ends[0] <= 50):
+        return unknown
+    line = next((n for n in range(1, 16)
+                 if raw[ends[0] + 1:ends[1]] == b'  File "<string>", line ' + str(n).encode() + b", in <module>"), None)
+    if line is None:
+        return unknown
+    start, end = ends[1] + 1, ends[2]
+    for kind in PROBE_CLASSES:
+        token = kind.encode()
+        if raw[start:start + len(token)] == token and (end == start + len(token)
+                or (end > start + len(token) + 2 and raw[start + len(token):start + len(token) + 2] == b": ")):
+            return PROBE_STAGES[min(line, 9)], kind
+    return unknown
+
+
+def probe_entry(error, role, code, chunks, work_deadline, deadline_ns):
+    probe_need(type(deadline_ns) is int and deadline_ns > 0)
+    if not probe_time(work_deadline, deadline_ns):
+        return
+    probe_need(type(code) is int and -64 <= code <= 255)
+    value = dict(role=role, returncode=code,
+                 exit_kind=probe_exit(code),
+                 stdout_bytes=len(chunks["out"]), stderr_bytes=len(chunks["err"]), stderr_present=bool(chunks["err"]),
+                 **dict.fromkeys(PROBE_LABELS, "unknown"))
+    probe_observation(value)
+    labels = probe_labels(chunks["err"], hashlib.sha256(RUNTIME_PROBE.encode()).hexdigest(), work_deadline, deadline_ns)
+    if labels is None:
+        return
+    value.update(zip(PROBE_LABELS, labels))
+    probe_observation(value)
+    if probe_time(work_deadline, deadline_ns):
+        return weakref.ref(error), value
+
+
+def persist_probe_stop(error, slot, context, evidence, environment, deadline_ns):
+    if public_gate(error) != "US062" or slot is None:
+        return
+    probe_slot_need(type(slot) is list and len(slot) <= 1)
+    if not slot:
+        return
+    entry = slot[0]
+    probe_slot_need(type(entry) is tuple and len(entry) == 2 and type(entry[0]) is weakref.ReferenceType
+                    and entry[0].__callback__ is None)
+    if entry[0]() is not error or context is None or time.monotonic_ns() >= deadline_ns:
+        return
+    probe_binding(context)
+    probe_observation(entry[1])
+    for key, name in (("run_id", "GITHUB_RUN_ID"), ("run_attempt", "GITHUB_RUN_ATTEMPT"),
+                      ("candidate_sha", "GITHUB_SHA"), ("workflow_sha", "GITHUB_WORKFLOW_SHA"), ("workflow_job", "GITHUB_JOB")):
+        probe_need(str(context[key]) == environment[name])
+    probe_need(context["probe_sha256"] == hashlib.sha256(RUNTIME_PROBE.encode()).hexdigest()
+        and str(evidence) == environment["EVIDENCE"] == str(Path(environment["RUNNER_TEMP"]) / "forge-evidence"))
+    value = dict(schema_version=1, kind="runtime-probe-rejection", status="STOP", gate="US062",
+                 evidence_class="provisional-advisory", binding=context, observation=entry[1])
+    raw = canonical(value)
+    probe_need(len(raw) <= 2048)
+    python_persist(Path(evidence) / "runtime-probe-stop.json", raw, 2048, deadline_ns)
+
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="role", required=True)
@@ -4228,7 +4414,7 @@ def main(argv=None):
             deadline_ns = profile_deadline_ns
             if args.deadline_ns is not None:
                 deadline_ns = min(deadline_ns, python_deadline(environment, args.deadline_ns))
-            local_receipt(args.repo, Path(environment["EVIDENCE"]) / "launch-bootstrap.json", environment,
+            document = local_receipt(args.repo, Path(environment["EVIDENCE"]) / "launch-bootstrap.json", environment,
                           args.helper_map_sha256, deadline_ns=deadline_ns)
             if args.role == "profile-check":
                 try:
@@ -4247,11 +4433,19 @@ def main(argv=None):
                 need(all(str(Path(shutil.which(name, path=base_profile_path(environment))).resolve(strict=True)) == provider
                          for name in ("python", "python3")), "PATH Python differs from provider")
             else:
+                context = None
+                if time.monotonic_ns() < deadline_ns:
+                    with probe_optional():
+                        context = probe_context(document, args.helper_map_sha256)
+                diagnostic_slot = [] if context is not None else None
                 try:
-                    produce_runtime_admission(args.repo, args.evidence, workload_environment(environment), deadline_ns=deadline_ns)
+                    produce_runtime_admission(args.repo, args.evidence, workload_environment(environment), deadline_ns=deadline_ns,
+                                              **probe_options(diagnostic_slot))
                 except ServiceError as error:
                     if getattr(error, "_forge_control", False):
                         raise
+                    with probe_optional():
+                        persist_probe_stop(error, diagnostic_slot, context, args.evidence, environment, deadline_ns)
                     try:
                         persist_path_stop(error, args.evidence, workload_environment(environment), deadline_ns)
                         persist_file_stop(error, args.evidence, workload_environment(environment), deadline_ns)

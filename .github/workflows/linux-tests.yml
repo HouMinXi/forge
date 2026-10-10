@@ -3500,7 +3500,7 @@ jobs:
         namespace = {'__name__': 'fixed_checkout_verifier'}
         exec(compile(source, '<fixed-workflow-checkout-verifier>', 'exec'), namespace)
         root = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
-        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '8e97e394578fc86061eb259e823715d92012ff07226aa7e47b2da3d085bc94ad', '.github/scripts/forge_ci/admission.py': '377591786c181e97ba7e2fc7c9b43fdead71157c4b2a7860e55c88a9e0c1cf7e', '.github/scripts/forge_ci/setup_policy.py': '16fcc6e138b50be59109ab06162da0ea822e683480ff83a8ab20edfb4ab0e731', '.github/scripts/forge_ci/controller.py': '8506cf9739592bb556bcf4760ef3866e381c08d7132c3323b2dd433cbb69e730', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'edeb61543b581e95ec5066728dcb99e54b003362bb13132633138ed789b29b8c', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': 'f75d29a8e168596f89e17f4f4c23cd6731e328e6cdf057a75be3b4b6984c0ba4', '.github/scripts/forge_ci/baseline_measurement.py': 'a19bf6884341e1f245800534fe96bc3a1206a4472cf0fb0baa9496b5f714588b', '.github/scripts/forge_ci/python_prefix.py': '6d1921d5d8ce63c5f4ff8ae7aac56020b810a36c4732c709a98267fd5021b429'})
+        checkout = namespace['verify_initial_checkout'](root, {'.github/scripts/forge_ci/__init__.py': 'cb4580fe9ce459a45b53eef44e2a9e3046215578b22199b3ea7ebb5ede224893', '.github/scripts/forge_ci/facts.py': '14a265c9ec361960268b5f4844228401f7ba2bab32ea0ddb3c49d250830fc172', '.github/scripts/forge_ci/launch.py': '8e97e394578fc86061eb259e823715d92012ff07226aa7e47b2da3d085bc94ad', '.github/scripts/forge_ci/admission.py': '377591786c181e97ba7e2fc7c9b43fdead71157c4b2a7860e55c88a9e0c1cf7e', '.github/scripts/forge_ci/setup_policy.py': '16fcc6e138b50be59109ab06162da0ea822e683480ff83a8ab20edfb4ab0e731', '.github/scripts/forge_ci/controller.py': '8506cf9739592bb556bcf4760ef3866e381c08d7132c3323b2dd433cbb69e730', '.github/scripts/forge_ci/outcomes.py': '5ca17fad03700bea40719d68ab0ecefd75fb69b6f7d3a461153473686f22c094', '.github/scripts/forge_ci/payload.py': 'edeb61543b581e95ec5066728dcb99e54b003362bb13132633138ed789b29b8c', '.github/scripts/forge_ci/probes.py': '4e7635bd1aab6ec9b8bf3f0a338e6b22430a093b4fa26a40e98ed7201514012b', '.github/scripts/forge_ci/pytest_observer.py': '7d6450628cf3f07a7ca71d4e4e666fceaf47e7898859ece908c64a1302a98173', '.github/scripts/forge_ci/user_service.py': 'bfb95e48e95f69b0fa022358831ef5b81d7a08edf03d96fa8b32e288023f7366', '.github/scripts/forge_ci/baseline_measurement.py': 'a19bf6884341e1f245800534fe96bc3a1206a4472cf0fb0baa9496b5f714588b', '.github/scripts/forge_ci/python_prefix.py': '6d1921d5d8ce63c5f4ff8ae7aac56020b810a36c4732c709a98267fd5021b429'})
         parent = root / '.github/scripts'
         sys.dont_write_bytecode = True
         sys.path.insert(0, str(parent))
@@ -3604,7 +3604,7 @@ jobs:
         assert not any((node_root / 'expose').iterdir())
 
         PYPRIVATEHOME
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5
 
         PYCLEANPROFILE
     - name: Verify real Linux ownership and durable disk prerequisites
@@ -3791,16 +3791,16 @@ jobs:
           /bin/bash --noprofile --norc -e -o pipefail -s <<'PYCLEANPROFILE'
         umask 077
         install_deadline_ns="$(/opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S -c 'import time; print(time.monotonic_ns()+600*1000000000)')"
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" node-install --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-install --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-checkpoint --stage pip --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 0 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" profile-check --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" node-install --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-install --deadline-ns "$install_deadline_ns" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-checkpoint --stage pip --deadline-ns "$install_deadline_ns" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 0 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5
         private_python="$RUNNER_TEMP/forge-b-python-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/python"
         /usr/bin/env -u PYTHONPATH PIP_CONFIG_FILE=/dev/null "$private_python" -B -I -m pip --isolated --disable-pip-version-check --no-input --no-cache-dir install --index-url https://pypi.org/simple -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.1.1' \
           2>&1 | tee "$EVIDENCE/install.log"
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-checkpoint --stage extras --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 1 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-checkpoint --stage extras --deadline-ns "$install_deadline_ns" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 1 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5
         # The passive extras checkpoint validates the exact private target before discovery.
         system_site="$(/usr/bin/python3 -m site --user-site)"
         /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S - "$system_site" <<'PYSYSTEMSITE'
@@ -3812,12 +3812,12 @@ jobs:
         assert target == home / '.local/lib/python3.12/site-packages'
         assert target.resolve(strict=False) == target and target.is_relative_to(home)
         PYSYSTEMSITE
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-checkpoint --stage extras --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-checkpoint --stage extras --deadline-ns "$install_deadline_ns" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5
         /usr/bin/env -u PYTHONPATH PIP_CONFIG_FILE=/dev/null "$private_python" -B -I -m pip --isolated --disable-pip-version-check --no-input --no-cache-dir install --index-url https://pypi.org/simple --target "$system_site" 'pytest==9.1.1' \
           2>&1 | tee "$EVIDENCE/system-pytest-install.log"
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-checks --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 2 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
-        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" preflight --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" python-checks --deadline-ns "$install_deadline_ns" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" install-observe --stage 2 --deadline-ns "$install_deadline_ns" --shell-umask "$(umask)" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5
+        /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" preflight --repo "$GITHUB_WORKSPACE" --evidence "$EVIDENCE" --deadline-ns "$install_deadline_ns" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5
 
         PYCLEANPROFILE
     - name: Verify production boundary and run complete test phases
@@ -3872,7 +3872,7 @@ jobs:
         umask 077
         /opt/hostedtoolcache/Python/3.12.14/x64/bin/python -B -I -S "$GITHUB_WORKSPACE/.github/scripts/forge_ci/user_service.py" launch \
           --receipt "$EVIDENCE/launch-bootstrap.json" --repo "$GITHUB_WORKSPACE" \
-          --evidence "$EVIDENCE/qualification" --helper-map-sha256 67380b8a8678e312e42af3990e2ceb027cc872c43f0716b4caa14bdb1311cdff 2>&1 | tee "$EVIDENCE/qualification-controller.log"
+          --evidence "$EVIDENCE/qualification" --helper-map-sha256 633ad957ba1f45ccf34dcdea53e47bdb11efc63dbd6c4b6483c4ac74f603d4e5 2>&1 | tee "$EVIDENCE/qualification-controller.log"
 
         PYCLEANPROFILE
     - name: Remove private metadata credential
