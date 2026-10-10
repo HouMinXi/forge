@@ -1419,3 +1419,150 @@ class TestAttestationOutputCapture:
         )
         # With --quiet 2>/dev/null, the marker is suppressed
         assert self.MARKER not in result.stderr
+
+
+class TestInvocationResolutionCompatibility:
+    @pytest.mark.parametrize("fallback_ok", [False, True])
+    @pytest.mark.parametrize("kind", ["timeout", "oserror", "subprocess", "exit", "invalid"])
+    def test_failed_probe_preserves_exact_wrapper_contract(self, monkeypatch, kind, fallback_ok):
+        from unittest.mock import Mock
+        from code_forge import install_hooks as hooks
+
+        primary, interpreter = "/fixture/forge", "/fixture/python"
+        errors = {
+            "timeout": subprocess.TimeoutExpired([primary, "--version"], 1),
+            "oserror": OSError("exec format\nerror"),
+            "subprocess": subprocess.SubprocessError("probe failure"),
+        }
+        logger = hooks.logging.getLogger("code_forge")
+        monkeypatch.setattr(logger, "warning", Mock())
+        monkeypatch.setattr(hooks.shutil, "which", lambda name: primary)
+        monkeypatch.setattr(hooks.sys, "executable", interpreter)
+        access = Mock(side_effect=lambda path, mode: path == primary or fallback_ok)
+        monkeypatch.setattr(hooks.os, "access", access)
+        run = Mock()
+        if kind in errors:
+            run.side_effect = errors[kind]
+        else:
+            run.return_value = subprocess.CompletedProcess(
+                [primary, "--version"], 3 if kind == "exit" else 0, "invalid", "unused"
+            )
+        monkeypatch.setattr(hooks.subprocess, "run", run)
+        if fallback_ok:
+            assert resolve_forge_path() == interpreter + " -m code_forge gate-check"
+        else:
+            with pytest.raises(RuntimeError) as exc:
+                resolve_forge_path()
+            assert str(exc.value) == hooks._NO_FORGE_INVOCATION
+        run.assert_called_once_with(
+            [primary, "--version"], capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=1, check=False,
+        )
+        assert [call.args for call in access.call_args_list] == [
+            (primary, os.X_OK), (interpreter, os.X_OK)
+        ]
+        if kind == "timeout":
+            logger.warning.assert_called_once_with(
+                "code-forge at %s --version timed out; falling back to sys.executable", primary
+            )
+        elif kind in errors:
+            logger.warning.assert_called_once_with(
+                "code-forge at %s --version raised %s; falling back to sys.executable",
+                primary, errors[kind],
+            )
+        else:
+            logger.warning.assert_called_once_with(
+                "code-forge at %s failed --version check; falling back to sys.executable", primary
+            )
+        run.reset_mock()
+        resolution = hooks._resolve_forge_invocation()
+        assert resolution.status == {
+            "timeout": "primary_timeout", "oserror": "primary_os_error",
+            "subprocess": "primary_subprocess_error", "exit": "primary_exit_failure",
+            "invalid": "primary_invalid_output",
+        }[kind]
+        assert (resolution.invocation is not None) is fallback_ok
+        assert "\n" not in resolution.detail
+
+    def test_success_does_not_inspect_fallback(self, monkeypatch):
+        from unittest.mock import Mock
+        from code_forge import install_hooks as hooks
+
+        primary = "/fixture directory/code-forge"
+        monkeypatch.setattr(hooks.shutil, "which", lambda name: primary)
+        access = Mock(side_effect=lambda path, mode: True if path == primary else pytest.fail(
+            "successful primary accessed fallback"
+        ))
+        monkeypatch.setattr(hooks.os, "access", access)
+        monkeypatch.setattr(hooks.subprocess, "run", Mock(return_value=subprocess.CompletedProcess(
+            [primary, "--version"], 0, "code-forge 2.0\n", ""
+        )))
+        assert resolve_forge_path() == "'/fixture directory/code-forge' gate-check"
+        access.assert_called_once_with(primary, os.X_OK)
+
+    @pytest.mark.parametrize("primary", [None, "/not-executable"])
+    @pytest.mark.parametrize("interpreter", ["", "/fixture/python"])
+    @pytest.mark.parametrize("fallback_ok", [False, True])
+    def test_no_primary_is_not_a_failed_probe(self, monkeypatch, primary, interpreter, fallback_ok):
+        from unittest.mock import Mock
+        from code_forge import install_hooks as hooks
+
+        monkeypatch.setattr(hooks.shutil, "which", lambda name: primary)
+        monkeypatch.setattr(hooks.sys, "executable", interpreter)
+        monkeypatch.setattr(hooks.os, "access", lambda path, mode: path == interpreter and fallback_ok)
+        run = Mock(side_effect=AssertionError("no primary must not be probed"))
+        monkeypatch.setattr(hooks.subprocess, "run", run)
+        resolution = hooks._resolve_forge_invocation()
+        usable = bool(interpreter) and fallback_ok
+        assert resolution.status == ("fallback_no_primary" if usable else "no_usable_invocation")
+        assert (resolution.invocation is not None) is usable
+        run.assert_not_called()
+
+    def test_unexpected_error_does_not_gain_fallback(self, monkeypatch):
+        from unittest.mock import Mock
+        from code_forge import install_hooks as hooks
+
+        monkeypatch.setattr(hooks.shutil, "which", lambda name: "/fixture/forge")
+        access = Mock(return_value=True)
+        monkeypatch.setattr(hooks.os, "access", access)
+        monkeypatch.setattr(hooks.subprocess, "run", Mock(side_effect=ValueError("unexpected")))
+        with pytest.raises(ValueError, match="^unexpected$"):
+            resolve_forge_path()
+        assert access.call_count == 1
+
+    def test_configuration_precedes_planning_and_resolution(self, monkeypatch, tmp_path):
+        from code_forge import install_hooks as hooks
+
+        events = []
+        def config(path):
+            events.append("config")
+            return {}
+        def planning(path):
+            events.append("planning")
+            return False
+        def resolution():
+            events.append("resolution")
+            return "/fixture/forge gate-check"
+        monkeypatch.setattr(hooks, "load_gate_config", config)
+        monkeypatch.setattr(Path, "is_file", planning)
+        monkeypatch.setattr(hooks, "resolve_forge_path", resolution)
+        inputs = hooks.collect_hook_inputs(tmp_path)
+        assert inputs.forge_invocation == "/fixture/forge gate-check"
+        assert events == ["config", "planning", "resolution"]
+
+    def test_doctor_detail_is_finite_without_changing_warning(self, monkeypatch):
+        from unittest.mock import Mock
+        from code_forge import install_hooks as hooks
+
+        error = OSError("line\n" + "x" * 1000)
+        logger = hooks.logging.getLogger("code_forge")
+        monkeypatch.setattr(logger, "warning", Mock())
+        monkeypatch.setattr(hooks.shutil, "which", lambda name: "/fixture/forge")
+        monkeypatch.setattr(hooks.os, "access", lambda *args: True)
+        monkeypatch.setattr(hooks.subprocess, "run", Mock(side_effect=error))
+        resolution = hooks._resolve_forge_invocation()
+        assert resolution.detail.startswith("PATH executable --version raised OSError: line ")
+        assert len(resolution.detail) == 240
+        assert resolution.detail.endswith("...")
+        assert "\n" not in resolution.detail
+        assert logger.warning.call_args.args[-1] is error

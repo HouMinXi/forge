@@ -87,8 +87,14 @@ def _skip_worktree_check(monkeypatch):
 _real_config_home = pytest.StashKey[Path]()
 
 
+@pytest.fixture(scope="session")
+def _trust_store_parent(tmp_path_factory):
+    """Keep trust children under pytest's normal session retention policy."""
+    return tmp_path_factory.mktemp("trust-stores")
+
+
 @pytest.fixture(autouse=True)
-def _isolate_trust_store(tmp_path_factory, monkeypatch, request):
+def _isolate_trust_store(_trust_store_parent, monkeypatch, request):
     """Point the trust store at a per-test directory.
 
     ``record_trust`` reads ``XDG_CONFIG_HOME`` when it is called, so a test
@@ -99,7 +105,9 @@ def _isolate_trust_store(tmp_path_factory, monkeypatch, request):
     """
     real = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
     request.node.stash[_real_config_home] = Path(real)
-    home = tmp_path_factory.mktemp("trust-store")
+    # Numbering every child rescans the growing session directory per test.
+    # Exclusive random allocation preserves isolation without that scan.
+    home = Path(tempfile.mkdtemp(dir=_trust_store_parent, prefix="trust-"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
 
 

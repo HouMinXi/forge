@@ -2,12 +2,13 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Integration tests for FIXVAL pipeline wiring.
 
-Tests exercise the FIXVAL gate through StateMachine to verify:
+Tests isolate terminal FIXVAL wiring through StateMachine; they do not
+qualify live review receipts or owned pytest execution. They verify:
 - Hollow test blocks with FAIL verdict
-- Non-hollow test passes with PASS verdict
+- Unbound mocked PASS is rejected without execution proof
 - Skip (no test+code pairing) records FIXVAL_SKIPPED, never silent
 - Waiver produces advisory
-- Overfit guard emits advisory on PASS
+- Unbound mocked PASS cannot claim an overfit observation
 - Non-converged machine never runs FIXVAL
 - _get_commit_message works correctly
 """
@@ -15,7 +16,6 @@ Tests exercise the FIXVAL gate through StateMachine to verify:
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from code_forge.advisory import AdvisoryFinding
 from code_forge.autofix import FixOutcome, StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
@@ -23,7 +23,6 @@ from code_forge.falsify import StubFalsifier
 from code_forge.fixval import (
     FixvalCandidate,
     FixvalResult,
-    FixvalSkip,
     FixvalStatus,
 )
 from code_forge.machine import StateMachine
@@ -32,7 +31,7 @@ from code_forge.state import Mode, StateFinding, Verdict
 
 def _make_resolved(
     source_files=None,
-    git_diff="--- a/foo.py\n+++ b/foo.py\n",
+    git_diff="--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n",
 ):
     """Create a ResolvedReview for tests."""
     return ResolvedReview(
@@ -59,7 +58,7 @@ def _make_machine(tmp_path, resolved=None, l0_runner=None):
         encoding="utf-8",
     )
 
-    return StateMachine(
+    machine = StateMachine(
         mode=Mode.LOCAL,
         falsifier=StubFalsifier(),
         autofixer=StubAutoFixer(),
@@ -71,6 +70,10 @@ def _make_machine(tmp_path, resolved=None, l0_runner=None):
         registry={},
         l0_runner=l0_runner,
     )
+    # This isolated machine integration uses StubFalsifier, which supplies no
+    # live L1 receipt witnesses. Keep FIXVAL acceptance and ownership intact.
+    machine.coverage_l1_active = False
+    return machine
 
 
 class TestFixvalBlocksHollowTest:
@@ -91,6 +94,7 @@ class TestFixvalBlocksHollowTest:
             findings=[hollow_finding],
             advisories=[],
             block_message="Test did not fail on revert",
+            reason="hollow",
         )
 
         machine = _make_machine(tmp_path)
@@ -108,7 +112,8 @@ class TestFixvalBlocksHollowTest:
                 return_value=block_result,
             ),
         ):
-            verdict = machine.run()
+            machine._finalize_local_terminal()
+            verdict = machine._state.verdict
 
         assert verdict == Verdict.FAIL
         assert machine._state.converged is False
@@ -123,10 +128,10 @@ class TestFixvalBlocksHollowTest:
         assert hollow[0].error == "Test did not fail on revert"
 
 
-class TestFixvalPassesNonhollowTest:
-    """FIXVAL passes when test fails on reverted code (not hollow)."""
+class TestFixvalRejectsUnboundPass:
+    """A mocked status alone cannot qualify terminal FIXVAL success."""
 
-    def test_nonhollow_returns_pass(self, tmp_path):
+    def test_unbound_pass_returns_fail(self, tmp_path):
         pass_result = FixvalResult(
             status=FixvalStatus.PASS,
             findings=[],
@@ -147,15 +152,18 @@ class TestFixvalPassesNonhollowTest:
                 "code_forge.fixval.run_fixval",
                 return_value=pass_result,
             ),
-            patch(
-                "code_forge.fixval.run_overfit_guard",
-                return_value=[],
-            ),
         ):
-            verdict = machine.run()
+            machine._finalize_local_terminal()
+            verdict = machine._state.verdict
 
-        assert verdict == Verdict.PASS
-        assert machine._state.converged is True
+        assert verdict == Verdict.FAIL
+        assert machine._state.converged is False
+        assert machine._state.fixval_stage["outcome"] == "ERROR"
+        errors = [f for f in machine._state.findings if f.id == "FIXVAL_ERROR"]
+        assert len(errors) == 1
+        assert errors[0].disposition == Disposition.UNCERTAIN
+        assert errors[0].source == "FIXVAL"
+        assert machine._state.infra_errors
 
         # No FIXVAL_HOLLOW finding
         hollow = [f for f in machine._state.findings if f.id == "FIXVAL_HOLLOW"]
@@ -166,122 +174,71 @@ class TestFixvalSkipsNoTestFile:
     """FIXVAL records SKIPPED when no test+code pairing exists."""
 
     def test_skip_records_finding(self, tmp_path):
-        machine = _make_machine(tmp_path)
-
-        with patch(
-            "code_forge.fixval.classify_fixval_candidate",
-            return_value=FixvalSkip(reason="no test file in diff"),
-        ):
-            verdict = machine.run()
-
+        machine = _make_machine(tmp_path, resolved=_make_resolved(source_files=[Path("src/foo.py")]))
+        # Inapplicable FIXVAL must not load missing execution config or invoke Git.
+        (tmp_path / ".code-forge/gate.yaml").unlink()
+        with patch.object(machine, "_get_commit_message", side_effect=AssertionError("unused Git")):
+            machine._finalize_local_terminal()
+            verdict = machine._state.verdict
         assert verdict == Verdict.PASS
-
+        assert machine._state.fixval_stage["outcome"] == "SKIPPED"
+        assert machine._state.fixval_stage["reason"] == "no_tests"
         skip_findings = [f for f in machine._state.findings if f.id == "FIXVAL_SKIPPED"]
         assert len(skip_findings) == 1
         assert skip_findings[0].disposition == Disposition.DISMISSED
-        assert "no test file" in skip_findings[0].description
+        assert "no executable test file" in skip_findings[0].description
 
 
 class TestFixvalWaiverProducesAdvisory:
     """Waiver results in PASS verdict with advisory recorded."""
 
-    def test_waiver_advisory_emitted(self, tmp_path):
-        waiver_advisory = AdvisoryFinding(
-            id="FIXVAL_WAIVER_RECORD",
-            axis="FIXVAL",
-            file="",
-            line_range=[],
-            description="FIXVAL waived via FIXVAL_WAIVER env var: flaky",
-            attribution="fixval-waiver",
-        )
-        waived_result = FixvalResult(
-            status=FixvalStatus.WAIVED,
-            findings=[
-                StateFinding(
-                    id="FIXVAL_WAIVED",
-                    fingerprint="fixval-waived",
-                    source="FIXVAL",
-                    disposition=Disposition.DISMISSED,
-                    file="",
-                    line_range=[],
-                    description="FIXVAL waived: flaky",
-                ),
-            ],
-            advisories=[waiver_advisory],
-        )
-
+    def test_waiver_advisory_emitted(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FIXVAL_WAIVER", "flaky")
         machine = _make_machine(tmp_path)
-
-        with (
-            patch(
-                "code_forge.fixval.classify_fixval_candidate",
-                return_value=FixvalCandidate(
-                    test_files=["tests/test_foo.py"],
-                    non_test_files=["src/foo.py"],
-                ),
-            ),
-            patch(
-                "code_forge.fixval.run_fixval",
-                return_value=waived_result,
-            ),
-        ):
-            verdict = machine.run()
-
+        (tmp_path / ".code-forge/gate.yaml").unlink()
+        with patch.object(machine, "_get_commit_message", return_value="fix: preserve waiver"):
+            machine._finalize_local_terminal()
+            verdict = machine._state.verdict
         assert verdict == Verdict.PASS
-
-        # Advisory present
+        assert machine._state.converged is True
+        assert machine._state.fixval_stage["outcome"] == "WAIVED"
+        assert machine._state.fixval_stage["exception"] == {"reason": "flaky", "channel": "env"}
         assert any(a.id == "FIXVAL_WAIVER_RECORD" for a in machine._advisories)
-
-        # Advisory serialized to file
-        advisory_path = tmp_path / ".code-forge" / "advisory-findings.json"
+        machine._serialize_advisories()
+        advisory_path = tmp_path / ".code-forge/advisory-findings.json"
         assert advisory_path.exists()
         import json
 
         data = json.loads(advisory_path.read_text(encoding="utf-8"))
         waiver_entries = [e for e in data if e.get("id") == "FIXVAL_WAIVER_RECORD"]
         assert len(waiver_entries) == 1
+        assert "flaky" in waiver_entries[0]["description"]
 
 
-class TestFixvalOverfitAdvisoryEmitted:
-    """Overfit guard advisory emitted when FIXVAL passes."""
+class TestFixvalOverfitAdvisoryRequiresExecution:
+    """An unbound PASS must not pretend that overfit was checked."""
 
-    def test_overfit_advisory_in_advisories(self, tmp_path):
-        overfit_advisory = AdvisoryFinding(
-            id="FIXVAL_OVERFIT",
-            axis="FIXVAL",
-            file="src/foo.py",
-            line_range=[],
-            description="test may be overfitting to variable names",
-            attribution="fixval-overfit-guard",
-        )
-
+    def test_unbound_pass_cannot_emit_overfit_advisory(self, tmp_path):
         machine = _make_machine(tmp_path)
-
         with (
-            patch(
-                "code_forge.fixval.classify_fixval_candidate",
-                return_value=FixvalCandidate(
-                    test_files=["tests/test_foo.py"],
-                    non_test_files=["src/foo.py"],
-                ),
-            ),
             patch(
                 "code_forge.fixval.run_fixval",
                 return_value=FixvalResult(
                     status=FixvalStatus.PASS,
                     findings=[],
                     advisories=[],
+                    reason="attributable_red",
                 ),
-            ),
-            patch(
-                "code_forge.fixval.run_overfit_guard",
-                return_value=[overfit_advisory],
-            ),
+            ) as run,
+            patch("code_forge.fixval.run_overfit_guard") as overfit,
         ):
-            verdict = machine.run()
-
-        assert verdict == Verdict.PASS
-        assert any(a.id == "FIXVAL_OVERFIT" for a in machine._advisories)
+            machine._finalize_local_terminal()
+            verdict = machine._state.verdict
+        run.assert_called_once()
+        assert verdict == Verdict.FAIL
+        assert machine._state.converged is False
+        overfit.assert_not_called()
+        assert not any(a.id.startswith("FIXVAL_OVERFIT") for a in machine._advisories)
 
 
 class TestFixvalNotRunOnNonConverged:

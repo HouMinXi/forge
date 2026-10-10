@@ -468,7 +468,9 @@ def _editable_layout(
     try:
         for name in paths:
             data = _file(Path(dist.locate_file(name)), within=site_root).read_bytes()
-            if sys.version_info >= (3, 13):
+            # CPython backported UTF-8/BOM decoding to 3.12.4 (GH-119509).
+            # Earlier 3.12 releases still use the locale-only text stream.
+            if sys.version_info >= (3, 12, 4):
                 try:
                     text = data.decode("utf-8-sig")
                 except UnicodeDecodeError:

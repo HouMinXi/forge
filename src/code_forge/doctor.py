@@ -240,7 +240,10 @@ def _check_handshake() -> tuple[bool, str]:
         binary = shutil.which("code-forge-mcp")
         cmd = binary or sys.executable
         args = [] if binary else ["-m", "code_forge.mcp_server"]
-        params = StdioServerParameters(command=cmd, args=args)
+        # The SDK filters inherited Python settings. Preserve only the active
+        # bytecode policy, before an installed console script imports Forge.
+        child_env = {"PYTHONDONTWRITEBYTECODE": "1"} if sys.dont_write_bytecode else None
+        params = StdioServerParameters(command=cmd, args=args, env=child_env)
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
                 result = await asyncio.wait_for(session.initialize(), 15)
@@ -341,11 +344,26 @@ def _check_hook_drift(
     Returns (ok, message) tuples where ok=None means SKIP.
     """
     from code_forge.install_hooks import (
-        collect_hook_inputs,
+        _collect_hook_config,
+        _interpreter_invocation,
+        _invocation_detail,
+        _resolve_forge_invocation,
         generate_commit_msg_hook_content,
         generate_hook_content,
         resolve_hooks_dir,
     )
+
+    def expected_for(invocation, config, backup):
+        return [
+            generate_hook_content(
+                invocation,
+                chain,
+                presubmit_entries=config.presubmit_entries,
+                non_ascii_mode=config.non_ascii_mode,
+                planning_leak_guard=config.planning_leak_guard,
+            )
+            for chain in (None, backup)
+        ]
 
     try:
         hooks_dir = resolve_hooks_dir(workspace)
@@ -376,7 +394,7 @@ def _check_hook_drift(
         # gate.yaml cannot produce a hook has nothing to compare against.
         if inputs is None:
             try:
-                inputs = collect_hook_inputs(workspace)
+                inputs = _collect_hook_config(workspace)
             except Exception as exc:  # noqa: BLE001  hook input collection failure fails the drift check
                 # A forge hook is installed and we cannot tell whether it
                 # is current. Fail rather than imply it was checked.
@@ -386,16 +404,43 @@ def _check_hook_drift(
         # Chaining alone is not drift: a re-install over a forge hook drops
         # the chain, so both forms are accepted as current.
         if name == "pre-commit":
-            expected = [
-                generate_hook_content(
-                    inputs.forge_invocation,
-                    chain,
-                    presubmit_entries=inputs.presubmit_entries,
-                    non_ascii_mode=inputs.non_ascii_mode,
-                    planning_leak_guard=inputs.planning_leak_guard,
+            try:
+                resolution = _resolve_forge_invocation()
+            except Exception as exc:  # noqa: BLE001  invocation uncertainty must fail closed
+                results.append(
+                    (False, "pre-commit: cannot verify invocation: %s" % _invocation_detail(str(exc)))
                 )
-                for chain in (None, backup)
-            ]
+                continue
+            if resolution.invocation is None or resolution.status not in (
+                "primary_ok", "fallback_no_primary"
+            ):
+                detail = resolution.detail
+                if resolution.invocation is None:
+                    detail += "; no usable fallback invocation"
+                results.append(
+                    (False, "pre-commit: cannot verify invocation: %s" % _invocation_detail(detail))
+                )
+                continue
+
+            expected = expected_for(resolution.invocation, inputs, backup)
+            # A different currently supported invocation is not proven
+            # equivalent. Use it only to classify a non-PASS precisely.
+            # Never parse or execute commands supplied by installed text.
+            if installed not in expected and resolution.status == "primary_ok":
+                try:
+                    alternate = _interpreter_invocation()
+                except Exception as exc:  # noqa: BLE001  identity uncertainty must fail closed
+                    results.append(
+                        (False, "pre-commit: cannot verify invocation: %s" % _invocation_detail(str(exc)))
+                    )
+                    continue
+                if alternate is not None and installed in expected_for(alternate, inputs, backup):
+                    results.append(
+                        (False, "pre-commit: installed invocation differs from current "
+                         "executable selection; equivalence is unverified")
+                    )
+                    continue
+
         else:
             expected = [
                 generate_commit_msg_hook_content(chain, non_ascii_mode=inputs.non_ascii_mode)

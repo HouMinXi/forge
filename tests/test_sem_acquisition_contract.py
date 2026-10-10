@@ -373,7 +373,7 @@ def cli_pipeline(sem_controls, monkeypatch):
     monkeypatch.setattr("code_forge.user_config.load_user_retry", dict)
     monkeypatch.setattr(cli, "_estimate_l1_prompt_tokens", lambda *a, **kw: 100000)
     monkeypatch.setattr(cli, "_run_test_assertion_review", lambda *a, **kw: [])
-    seen = {"providers": [], "actual_hold": cli._run_hold_loop}
+    seen = {"providers": [], "actual_hold": cli._run_hold_loop, "resolved": resolved}
     actual_gather = context_sources.gather
 
     def gather(sources, *args, **kwargs):
@@ -619,20 +619,25 @@ def test_gather_graph_failure_keeps_healthy_neighbor(sem_controls):
     assert source.findings_cache is None
 
 
+@pytest.mark.parametrize("mode", ["local", "ci"])
 @pytest.mark.parametrize(
     "packet,cache,reason",
     [
         ((7, "failed"), None, "execution_error"),
+        (("timeout", ""), None, "timeout"),
+        ((0, "not JSON"), None, "parse_error"),
+        ((0, '{"changes":null}'), None, "schema_error"),
         ((0, '{"changes":[]}'), [], "sem returned no entities"),
     ],
 )
 def test_actual_cli_distinguishes_failed_grouping_and_cache(
-    sem_controls, cli_pipeline, packet, cache, reason, capsys
+    sem_controls, cli_pipeline, packet, cache, reason, capsys, mode
 ):
     from code_forge import cli
     from code_forge.state import Verdict
 
     root, args, seen = cli_pipeline
+    args.mode = mode
     sem_controls["diff"] = packet
     assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PENDING
     assert seen["source"].findings_cache == cache
@@ -640,7 +645,10 @@ def test_actual_cli_distinguishes_failed_grouping_and_cache(
     grouping_warnings = [
         line for line in capsys.readouterr().err.splitlines() if "grouping: estimated" in line
     ]
-    assert seen["providers"] and len(grouping_warnings) == 1
+    assert len(seen["providers"]) == 1 and len(grouping_warnings) == 1
+    assert seen["providers"][0]["args"][1] is seen["resolved"]
+    assert seen["resolved"].git_diff == DIFF
+    assert "truncation risk stands" in grouping_warnings[0]
     assert reason in grouping_warnings[0]
     with pytest.raises(AssertionError, match="provider execution forbidden"):
         seen["hold"]["l1_provider"]()
@@ -1295,6 +1303,7 @@ def coverage_pipeline(sem_controls, cli_pipeline, monkeypatch):
         resolved = ResolvedReview(
             source_files=[root / "a.py"], baseline_content=None, git_diff=patch, mode_hint="non-git"
         )
+        seen["resolved"] = resolved
         monkeypatch.setattr(cli, "resolve_baseline", lambda *a, **kw: resolved)
         return root, args, seen, reads
 
@@ -1327,7 +1336,7 @@ def test_actual_cli_grouping_covers_every_diff_section(coverage_pipeline, kind, 
         assert "falling back" not in stderr
     else:
         assert isinstance(payload, ResolvedReview), "incomplete grouping must retain the full diff"
-        assert payload.git_diff == patch
+        assert payload is seen["resolved"] and payload.git_diff == patch
         assert "semantic coverage incomplete" in stderr and path in stderr
         assert reads == [], "coverage must be checked before grouping reads source files"
 
@@ -1439,16 +1448,194 @@ def test_grouping_coverage_preserves_legacy_and_loud_errors(tmp_path):
         group_diff([{}], tmp_path, changed_files=["a.py"])
 
 
-@pytest.mark.parametrize("error", [ValueError("bad threshold"), KeyError("filePath")])
-def test_actual_cli_grouping_does_not_swallow_unrelated_errors(coverage_pipeline, monkeypatch, error):
+@pytest.mark.parametrize("mode", ["local", "ci"])
+@pytest.mark.parametrize(
+    "error",
+    [ValueError("bad threshold"), KeyError("filePath"), TypeError("bad schema"), RuntimeError("bug")],
+)
+def test_actual_cli_grouping_does_not_swallow_unrelated_errors(
+    coverage_pipeline, monkeypatch, error, mode
+):
     from code_forge import cli, diff_grouping
 
-    root, args, seen, _ = coverage_pipeline(DIFF, ["a.py"], "local")
+    root, args, seen, _ = coverage_pipeline(DIFF, ["a.py"], mode)
 
     def fail(*args, **kwargs):
         raise error
 
     monkeypatch.setattr(diff_grouping, "group_diff", fail)
-    with pytest.raises(type(error), match=str(error).strip("'")):
+    expected = cli.CliError if isinstance(error, ValueError) else type(error)
+    with pytest.raises(expected, match=str(error).strip("'")):
         cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root)
     assert seen["providers"] == []
+
+
+@pytest.mark.parametrize("mode", ["local", "ci"])
+def test_actual_cli_complete_config_and_docs_are_promoted(coverage_pipeline, monkeypatch, mode):
+    from code_forge import cli, diff_grouping
+    from code_forge.state import Verdict
+
+    paths = ["a.py", "options.yaml", "README.md"]
+    sections = [
+        f"diff --git a/{path} b/{path}\nnew file mode 100644\n"
+        f"--- /dev/null\n+++ b/{path}\n@@ -0,0 +1 @@\n+enabled\n"
+        for path in paths[1:]
+    ]
+    patch = DIFF + "".join(sections)
+    root, args, seen, _ = coverage_pipeline(patch, paths, mode)
+    actual_group_diff = diff_grouping.group_diff
+    semantic_groups = []
+
+    def group(*args, **kwargs):
+        assert kwargs["changed_files"] == sorted(paths)
+        result = actual_group_diff(*args, **kwargs)
+        semantic_groups.extend(result.groups)
+        return result
+
+    monkeypatch.setattr(diff_grouping, "group_diff", group)
+    assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PENDING
+    assert len(seen["providers"]) == 1
+    specs = seen["providers"][0]["args"][1]
+    assert isinstance(specs, list) and len(specs) == 3
+    assert {spec["resolved"].git_diff for spec in specs} == {DIFF, *sections}
+    assert sorted(spec["provenance"] for spec in specs) == ["promoted", "promoted", "semantic"]
+    assert sorted((group.role, group.passes) for group in semantic_groups) == [
+        ("config", 0), ("docs", 0), ("integration", 3)
+    ]
+    assert seen["resolved"].git_diff == patch
+
+
+@pytest.mark.parametrize("mode", ["local", "ci"])
+@pytest.mark.parametrize("kind", ["mode", "deletion"])
+def test_actual_cli_complete_exempt_only_plan_stays_nonproducing(coverage_pipeline, mode, kind, capsys):
+    from code_forge import cli
+    from code_forge.state import Verdict
+
+    if kind == "mode":
+        patch = "diff --git a/README.md b/README.md\nold mode 100644\nnew mode 100755\n"
+    else:
+        patch = (
+            "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n"
+            "@@ -1,2 +1 @@\n keep\n-drop\n"
+        )
+    root, args, seen, _ = coverage_pipeline(patch, ["README.md"], mode)
+    assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PENDING
+    assert len(seen["providers"]) == 1
+    assert seen["providers"][0]["args"][1] is seen["resolved"]
+    assert seen["resolved"].git_diff == patch
+    stderr = capsys.readouterr().err
+    assert "no producing groups or mandatory hunks" in stderr
+    assert "semantic coverage incomplete" not in stderr
+
+
+@pytest.mark.parametrize("mode", ["local", "ci"])
+def test_actual_cli_coverage_rejection_bypasses_reconciliation(coverage_pipeline, monkeypatch, mode):
+    from code_forge import cli, grouped_coverage
+    from code_forge.state import Verdict
+
+    patch = DIFF + _COVERAGE_SECTIONS["mode"][1]
+    root, args, seen, reads = coverage_pipeline(patch, ["a.py"], mode)
+
+    def refuse(*args):
+        raise AssertionError("coverage rejection must bypass required-only reconciliation")
+
+    monkeypatch.setattr(grouped_coverage, "reconcile_grouped_coverage", refuse)
+    assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PENDING
+    assert len(seen["providers"]) == 1 and reads == []
+    assert seen["providers"][0]["args"][1] is seen["resolved"]
+    assert seen["resolved"].git_diff == patch
+
+
+@pytest.mark.parametrize("mode", ["local", "ci"])
+def test_actual_cli_late_spec_failure_constructs_no_review_provider(
+    coverage_pipeline, monkeypatch, mode
+):
+    from code_forge import cli
+
+    patch = DIFF + (
+        "diff --git a/options.yaml b/options.yaml\n--- a/options.yaml\n+++ b/options.yaml\n"
+        "@@ -1 +1 @@\n-old\n+new\n"
+    )
+    root, args, seen, _ = coverage_pipeline(patch, ["a.py", "options.yaml"], mode)
+    prepared = []
+
+    def post_image(cwd, diff):
+        prepared.append(diff)
+        if len(prepared) == 3:
+            raise RuntimeError("controlled late spec failure")
+        return "", ""
+
+    monkeypatch.setattr(cli, "_assemble_post_image", post_image)
+    with pytest.raises(RuntimeError, match="controlled late spec failure"):
+        cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root)
+    assert len(prepared) == 3
+    assert prepared[0] == patch
+    assert set(prepared[1:]) == {DIFF, patch.removeprefix(DIFF)}
+    assert seen["providers"] == []
+    assert "hold" not in seen
+
+
+@pytest.mark.parametrize("mode", ["local", "ci"])
+@pytest.mark.parametrize("semantic_paths", [[], ["a.py"]], ids=["empty-sem", "nonempty-sem"])
+def test_actual_cli_malformed_diff_fails_before_semantic_acquisition(
+    coverage_pipeline, monkeypatch, mode, semantic_paths
+):
+    from code_forge import cli, context_sources
+
+    patch = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,4 +1,4 @@\n-old\n+new\n"
+    root, args, seen, reads = coverage_pipeline(patch, semantic_paths, mode)
+    # Ancillary context gathering precedes grouped planning and is unchanged.
+    # Isolate the grouped-review acquisition boundary for this precedence test.
+    monkeypatch.setattr(context_sources, "gather", lambda *a, **k: context_sources.GatherResult())
+    acquired = []
+
+    def acquire(*args):
+        acquired.append(args)
+        raise AssertionError("invalid original input must be rejected before semantic acquisition")
+
+    monkeypatch.setattr(gt, "_run_sem", acquire)
+    with pytest.raises(cli.CliError, match="diff parse failed"):
+        cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root)
+    assert acquired == [] and reads == [] and seen["providers"] == []
+    assert "hold" not in seen
+
+
+@pytest.mark.parametrize("mode", ["local", "ci"])
+def test_actual_cli_planner_coverage_exception_does_not_degrade(coverage_pipeline, monkeypatch, mode):
+    from code_forge import cli, grouped_coverage
+    from code_forge.diff_grouping import GroupingCoverageError
+
+    root, args, seen, _ = coverage_pipeline(DIFF, ["a.py"], mode)
+
+    def fail(*args):
+        raise GroupingCoverageError("controlled later planner error")
+
+    monkeypatch.setattr(grouped_coverage, "reconcile_grouped_coverage", fail)
+    with pytest.raises(cli.CliError, match="controlled later planner error"):
+        cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root)
+    assert seen["providers"] == []
+    assert "hold" not in seen
+
+
+@pytest.mark.parametrize("mode", ["local", "ci"])
+@pytest.mark.parametrize("complete", [False, True], ids=["incomplete-sem", "complete-sem"])
+def test_actual_cli_traditional_diff_preserves_whole_bytes_or_rejects_unsliceable_plan(
+    coverage_pipeline, mode, complete
+):
+    from code_forge import cli
+    from code_forge.grouped_coverage import validate_grouped_diff
+    from code_forge.state import Verdict
+
+    patch = "--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-old\n+new\n"
+    assert validate_grouped_diff(patch)
+    root, args, seen, reads = coverage_pipeline(patch, ["a.py"] if complete else [], mode)
+    if complete:
+        with pytest.raises(cli.CliError, match="empty mandatory diff slice"):
+            cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root)
+        assert seen["providers"] == []
+        assert "hold" not in seen
+    else:
+        assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PENDING
+        assert len(seen["providers"]) == 1 and reads == []
+        assert seen["providers"][0]["args"][1] is seen["resolved"]
+        assert seen["resolved"].git_diff == patch

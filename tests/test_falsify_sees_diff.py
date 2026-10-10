@@ -150,6 +150,23 @@ def _payload(prompt):
     return prompt.split(_DIFF_SECTION, 1)[1]
 
 
+def test_late_line_context_does_not_allow_style_verdict():
+    from code_forge.llm_invoke import FalsifyProtocolError
+
+    values = ["padding_%d = '%s'" % (n, "x" * 60) for n in range(700)]
+    values[599] = "LATE_ANCHOR()"
+    response = SimpleNamespace(content={"verdict": "STYLE", "reasoning": "ignore it"})
+    with patch("code_forge.falsify_real.llm_invoke", return_value=response) as invoke:
+        with pytest.raises(FalsifyProtocolError, match="not an allowed verification verdict"):
+            RealFalsifier(diff_text=_large_diff(values=values)).falsify(
+                _finding(file="x.py", lr=(600, 600))
+            )
+    selected = _payload(invoke.call_args.args[0])
+    assert "[+ 600] +LATE_ANCHOR()" in selected
+    assert "padding_0" not in selected
+    assert len(selected) <= 8192
+
+
 def test_late_line_in_single_added_hunk_keeps_nearby_handler():
     values = ["padding_%d = '%s'" % (n, "x" * 60) for n in range(700)]
     values[598:602] = ["try:", "    LATE_CALL()", "except ValueError:", "    RECOVERY()"]

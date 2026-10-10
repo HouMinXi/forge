@@ -1478,11 +1478,23 @@ def _invoke_cli(
     # Resolve model: use backend.model if set, else fallback to FORGE_LLM_MODEL
     effective_model = backend.model or _resolve_model()
 
-    # Large prompt handling: write to temp file for prompts > 1MB
+    # Custom CLIs may explicitly opt into stdin. Never expand this back into
+    # argv: Linux limits each individual argument well below ARG_MAX (128 KiB
+    # on common systems), regardless of whether a shell reads it from a file.
+    if backend.prompt_transport not in ("argv", "stdin"):
+        raise LLMInvokeError("CLI prompt_transport must be 'argv' or 'stdin'")
+    stdin_prompt = backend.prompt_transport == "stdin"
+
+    # Legacy argv transport: preserve existing CLI compatibility.
     import tempfile as _tf
 
     prompt_file = None
-    if len(prompt.encode("utf-8")) > 1_000_000:
+    if stdin_prompt:
+        cmd = [binary, "-p", "-"]
+        if effective_model:
+            cmd.extend(["--model", effective_model])
+        cmd.extend(["--output-format", "json"])
+    elif len(prompt.encode("utf-8")) > 1_000_000:
         fd, prompt_file = _tf.mkstemp(suffix=".txt", prefix="forge-llm-")
         os.write(fd, prompt.encode("utf-8"))
         os.close(fd)
@@ -1519,6 +1531,7 @@ def _invoke_cli(
             errors="replace",
             start_new_session=True,  # Unix: creates new session (setsid)
             env=child_env,
+            **({"stdin": subprocess.PIPE} if stdin_prompt else {}),
         )
     except OSError as exc:
         duration = time.monotonic() - start
@@ -1538,7 +1551,10 @@ def _invoke_cli(
     _active_proc = proc
     try:
         try:
-            stdout_data, stderr_data = proc.communicate(timeout=timeout_s)
+            if stdin_prompt:
+                stdout_data, stderr_data = proc.communicate(input=prompt, timeout=timeout_s)
+            else:
+                stdout_data, stderr_data = proc.communicate(timeout=timeout_s)
         except subprocess.TimeoutExpired as exc:
             _kill_tree(proc)
             duration = time.monotonic() - start

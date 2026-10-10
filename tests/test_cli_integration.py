@@ -737,6 +737,8 @@ class TestInlineFlagsMutualExclusion:
 
     def test_inline_flags_all_four_constructs_config(self, tmp_path, monkeypatch, capsys):
         """All 4 inline flags produce a transient BackendConfig used for the call."""
+        from code_forge.state import Verdict
+
         repo = _setup_git_repo_with_diff(tmp_path)
         captured_backend = {}
         monkeypatch.setenv("EXAMPLE_API_KEY", "sk-test-fake")
@@ -773,11 +775,23 @@ class TestInlineFlagsMutualExclusion:
             lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
-        with patch(
-            "code_forge.cli.build_l1_provider",
-            side_effect=fake_build_l1_provider,
+        # Configuration wiring must not enter reviewers or contact an API.
+        with (
+            patch(
+                "code_forge.cli.build_l1_provider",
+                side_effect=fake_build_l1_provider,
+            ),
+            patch("code_forge.cli._run_hold_loop", return_value=Verdict.PENDING) as hold_loop,
+            patch(
+                "urllib.request.urlopen",
+                side_effect=AssertionError("inline config test must not access the network"),
+            ) as urlopen,
         ):
             main()
+            hold_loop.assert_called_once()
+            urlopen.assert_not_called()
+
+        assert hold_loop.call_args.kwargs["backend"] is captured_backend["backend"]
 
         b = captured_backend.get("backend")
         assert b is not None

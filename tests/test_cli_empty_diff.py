@@ -60,7 +60,7 @@ def scratch_repo(tmp_path):
     # Trust it (HOME must match the review env so trusted.json is found)
     src_dir = str(Path(__file__).resolve().parents[1] / "src")
     subprocess.run(
-        [sys.executable, "-m", "code_forge.cli", "trust"],
+        [sys.executable, "-B", "-m", "code_forge.cli", "trust"],
         cwd=tmp_path,
         capture_output=True,
         check=True,
@@ -92,6 +92,7 @@ def _run_review(cwd, extra_args=None, extra_env=None):
         env.update(extra_env)
     cmd = [
         sys.executable,
+        "-B",
         "-m",
         "code_forge.cli",
         "review",

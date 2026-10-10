@@ -502,9 +502,18 @@ class TestContextIsolation:
 class TestThresholdThreading:
     """clean_round_threshold threaded to StateMachine."""
 
-    @pytest.mark.parametrize("requested_threshold, expected_rounds", [(2, 3), (4, 4)])
-    def test_threshold_threading(self, tmp_path, requested_threshold, expected_rounds):
-        """The receipt floor and a higher requested threshold both reach the public result."""
+    @pytest.mark.parametrize(
+        "repository_floor, requested_threshold, expected_rounds",
+        [(None, 2, 3), (None, 4, 4), (2, 2, 2), (4, 2, 4)],
+    )
+    def test_threshold_threading(
+        self, tmp_path, repository_floor, requested_threshold, expected_rounds
+    ):
+        """Repository floors and requested thresholds both reach verified receipts."""
+        if repository_floor is not None:
+            directory = tmp_path / ".code-forge"
+            directory.mkdir()
+            (directory / "gate.yaml").write_text(f"verify:\n  required_cycles: {repository_floor}\n")
         calls = []
 
         def spawn(pass_name, diff_text):
@@ -526,6 +535,7 @@ class TestThresholdThreading:
         assert state.converged is True
         assert state.consecutive_clean_rounds == expected_rounds
         assert state.round == expected_rounds - 1
+        assert len(state.earned_clean_window["cycles"]) == expected_rounds
         assert calls == [
             (name, _DIFF_TEXT) for name in ("qodo", "expert", "adversarial") * expected_rounds
         ]
@@ -558,12 +568,13 @@ class TestOutletCInfraSourceTagging:
             falsifier=StubFalsifier(),
             max_total_rounds=1,
         )
-        assert result == Verdict.FAIL
+        assert result is Verdict.FAIL
         state = load_state(tmp_path / ".code-forge" / "state.json")
         assert state.verdict == Verdict.FAIL
         assert state.converged is False
         assert state.round == 0
         assert state.consecutive_clean_rounds == 0
+        assert state.earned_clean_window["cycles"] == []
         pass_names = ("qodo", "expert", "adversarial")
         assert calls == [(name, _DIFF_TEXT) for name in pass_names]
         findings = {finding.id: finding for finding in state.findings}

@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import sys
 import threading
 import time
@@ -51,6 +52,7 @@ from .hold import check_escalated_frozen
 from .ledger import (
     LedgerRow,
     TerminalState,
+    finding_suppression_key,
     resolve_ledger_root,
 )
 from .ledger import (
@@ -421,6 +423,7 @@ class StateMachine:
         self._attempt_snapshot: dict | None = None
         self._attempt_findings: list[StateFinding] | None = None
         self._other_source_state: State | None = None
+        self._fixval_invocation_id = secrets.token_hex(16)
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
@@ -511,7 +514,7 @@ class StateMachine:
                 self._state = loaded
 
     def _run_ci(self) -> Verdict:
-        """CI: linear single round; FAIL on any CONFIRMED, else PASS.
+        """CI: FAIL on CONFIRMED, UNRELIABLE on failed falsification, else PASS.
 
         Per R1 H5: converged=True on PASS only; FAIL exits early so
         converged=False.
@@ -787,7 +790,15 @@ class StateMachine:
         # a silent PASS over an unreviewed file is a false green.
         confirmed = self._count(Disposition.CONFIRMED)
         coverage_gaps = self._count_coverage_gaps()
-        verdict = Verdict.FAIL if confirmed > 0 or coverage_gaps > 0 or self._acquisition_markers else Verdict.PASS
+        if confirmed > 0 or coverage_gaps > 0 or self._acquisition_markers:
+            verdict = Verdict.FAIL
+        elif self._state.rounds_with_falsify_infra > 0:
+            # A backend/protocol failure also leaves UNCERTAIN, but is not
+            # the semantic uncertainty CI deliberately permits. The single
+            # CI round cannot wait for the multi-round circuit breaker.
+            verdict = Verdict.UNRELIABLE
+        else:
+            verdict = Verdict.PASS
         if coverage_gaps > 0 and confirmed == 0:
             self._state.infra_errors.append(
                 "coverage: %d in-scope file(s) had no review layer "
@@ -1106,6 +1117,23 @@ class StateMachine:
             self._clean_window_cycles = [
                 entry["cycle"] for entry in self._state.earned_clean_window["cycles"]
             ]
+        # A refused inherited proof must remain byte-for-byte available for
+        # explicit recovery. Invalidate terminal credit only once this LOCAL
+        # invocation is admitted, before executing any new review phase.
+        from .fixval_evidence import new_stage
+
+        self._fixval_invocation_id = secrets.token_hex(16)
+        self._state.fixval_stage = new_stage(self._fixval_invocation_id, self.source_hash)
+        # Retain HOLD/escalation semantics; only a prior PASS can falsely
+        # authorize the new invocation before its terminal gate runs.
+        if self._state.verdict == Verdict.PASS:
+            self._state.verdict = Verdict.PENDING
+        self._state.converged = False
+        # Host-backed review persists this pending stage atomically with the
+        # first pending attempt reservation below, before dispatch. Preserve
+        # its existing persistence/cancellation boundaries and prior evidence.
+        if not active:
+            self._persist_state()
         start = self._continuation_round_index()
         for round_index in range(start, start + self.max_total_rounds):
             self._begin_host_attempt(round_index)
@@ -1442,6 +1470,7 @@ class StateMachine:
                 f.disposition = Disposition.UNCERTAIN
                 f.error = f"falsify() raised: {exc}"
                 with _lock:
+                    falsify_infra_failures.append(f.fingerprint)
                     self._state.infra_errors.append(f"falsify exception on {f.fingerprint}: {exc}")
                 progress.emit("falsify %d/%d: failed (%.1fs)" % (i, total, time.monotonic() - t_falsify))
             except Exception:
@@ -1749,9 +1778,33 @@ class StateMachine:
                 reviewed_repositories=self.reviewed_repositories,
             )
             result = self._verify_host_completion(result)
-            return [] if result.passed else [
-                _ReceiptGateFailure(f"receipt acceptance: {result.reason}", result)
-            ]
+            if result.passed:
+                return []
+            errors.append(_ReceiptGateFailure(f"receipt acceptance: {result.reason}", result))
+            # Earned-window refusal remains authoritative. Supplement it
+            # with the latest attempted cycle's concrete evidence error,
+            # which an empty earned window otherwise hides. This forensic
+            # check cannot grant credit or turn the terminal result green.
+            if self._written_cycles:
+                attempted = run_verify(
+                    self.cwd,
+                    self.source_hash,
+                    parse_diff_files(diff_text),
+                    diff_text=diff_text,
+                    required_cycles=1,
+                    cycles=[self._written_cycles[-1]],
+                    respect_floor=False,
+                    require_convergence=False,
+                    reviewed_repositories=self.reviewed_repositories,
+                )
+                attempted = self._verify_host_completion(attempted)
+                # Keep independent forensic authority even when two failures
+                # happen to share human-readable text.
+                if not attempted.passed and attempted != result:
+                    errors.append(
+                        _ReceiptGateFailure(f"receipt attempt: {attempted.reason}", attempted)
+                    )
+            return errors
         if not diff_text:
             # Nothing to verify against (non-git / stub reviews).
             return errors
@@ -2494,100 +2547,132 @@ class StateMachine:
             return
 
         from .fixval import (
-            FixvalCandidate,
-            FixvalSkip,
             FixvalStatus,
+            FixvalResult,
+            FixvalSkip,
             classify_fixval_candidate,
+            preflight_fixval,
             run_fixval,
-            run_overfit_guard,
+            _execution_error,
+        )
+        from .fixval_evidence import (
+            digest,
+            new_stage,
+            validate_stage,
+            validate_terminal_stage,
+            normalize_file,
         )
 
         changed_files = [str(f) for f in self._source_files()]
         executable_files = {str(f) for f in self._executable_source_files()}
         candidate = classify_fixval_candidate(changed_files, executable_files=executable_files)
+        commit_message = (
+            ""
+            if isinstance(candidate, FixvalSkip) or self.resolved_review.git_diff is None
+            else self._get_commit_message()
+        )
+        result, exception = preflight_fixval(candidate, self.resolved_review.git_diff, commit_message)
+        if self._state.fixval_stage is None:
+            self._state.fixval_stage = new_stage(self._fixval_invocation_id, self.source_hash)
+        config_hash = None
+        preflight_exception = result is not None
+        if result is None:
+            try:
+                from .gate_check import load_gate_config
 
-        if isinstance(candidate, FixvalSkip):
-            # Record SKIPPED with reason (never silent)
-            skip_finding = StateFinding(
-                id="FIXVAL_SKIPPED",
-                fingerprint="fixval-skipped",
-                source="FIXVAL",
-                disposition=Disposition.DISMISSED,
-                file="",
-                line_range=[],
-                description=f"FIXVAL skipped: {candidate.reason}",
+                path = self.cwd / ".code-forge" / "gate.yaml"
+                before = path.read_bytes()
+                config = load_gate_config(path)
+                if path.read_bytes() != before:
+                    raise ValueError("test configuration changed during load")
+                config_hash = hashlib.sha256(before).hexdigest()
+                result = run_fixval(
+                    candidate,
+                    config["test"]["command"],
+                    self._source_root(),
+                    commit_message,
+                    self.resolved_review.git_diff,
+                    recovery_parent=self.recovery_parent,
+                    **(
+                        {"timeout_seconds": config["test"]["timeout_seconds"]}
+                        if "timeout_seconds" in config["test"]
+                        else {}
+                    ),
+                    stage_id=self._fixval_invocation_id,
+                    source_hash=self.source_hash,
+                    config_hash=config_hash,
+                    overfit_files=[f for f in candidate.non_test_files if f in executable_files],
+                )
+                if path.read_bytes() != before:
+                    result = _execution_error(
+                        "configuration_changed", "test configuration changed during FIXVAL"
+                    )
+            except Exception as exc:  # noqa: BLE001 - ordinary execution/config failure cannot authorize PASS
+                result = _execution_error("configuration_or_execution", str(exc))
+
+        if not isinstance(result, FixvalResult) or not isinstance(result.status, FixvalStatus):
+            result = _execution_error("unknown_status", "unexpected FIXVAL result or status")
+        if result.stage is None:
+            stage = new_stage(self._fixval_invocation_id, self.source_hash)
+            stage.update(
+                outcome=result.status.value,
+                reason=result.reason,
+                exception=exception if result.status == FixvalStatus.WAIVED else None,
+                config_sha256=config_hash,
             )
-            self._state.findings.append(skip_finding)
-            # Skip is not a block -- proceed to PASS
-            self._state.verdict = Verdict.PASS
-            self._state.converged = True
-            self._write_ledger_rows()
-            self._persist_state()
-            return
-
-        # FixvalCandidate: run the gate
+        else:
+            stage = result.stage
+        stage["earned_window_sha256"] = digest(self._state.earned_clean_window)
         try:
-            from .gate_check import load_gate_config
+            validate_stage(stage)
+            if (
+                stage["invocation_id"] != self._fixval_invocation_id
+                or stage["source_hash"] != self.source_hash
+            ):
+                raise ValueError("stale FIXVAL terminal proof")
+            if result.status == FixvalStatus.PASS:
+                if preflight_exception or result.stage is None or stage["config_sha256"] != config_hash:
+                    raise ValueError("applicable FIXVAL lacks bound execution proof")
+                from . import fixval_evidence, _gate_pytest
 
-            config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
-            test_cmd = config["test"]["command"]
-        except Exception as exc:  # noqa: BLE001
-            self._state.infra_errors.append(
-                f"FIXVAL: gate.yaml missing or test.command not configured: {exc}"
-            )
-            # Cannot run FIXVAL without test command -- proceed to PASS
-            self._state.verdict = Verdict.PASS
-            self._state.converged = True
-            self._write_ledger_rows()
-            self._persist_state()
-            return
-
-        commit_message = self._get_commit_message()
-        diff_text = self.resolved_review.git_diff
-
-        preservation = (
-            {"recovery_parent": self.recovery_parent} if self.recovery_parent is not None else {}
-        )
-        result = run_fixval(
-            candidate,
-            test_cmd,
-            self._source_root(),
-            commit_message,
-            diff_text,
-            **preservation,
-        )
-
-        # Extend findings and advisories
+                validate_terminal_stage(
+                    stage,
+                    invocation_id=self._fixval_invocation_id,
+                    source_hash=self.source_hash,
+                    config_sha256=config_hash,
+                    candidate_sha256=digest(
+                        {"tests": candidate.test_files, "production": candidate.non_test_files}
+                    ),
+                    earned_window_sha256=digest(self._state.earned_clean_window),
+                    validator_sha256=fixval_evidence.validator_digest(),
+                    reporter_sha256=hashlib.sha256(Path(_gate_pytest.__file__).read_bytes()).hexdigest(),
+                    candidate_files={
+                        normalize_file(f, self._source_root()) for f in candidate.test_files
+                    },
+                    command_sha256=digest(config["test"]["command"] + candidate.test_files),
+                    expected_stage_sha256=digest(stage),
+                    expected_command=config["test"]["command"] + candidate.test_files,
+                )
+                accepted = True
+            else:
+                accepted = preflight_exception and result.status in (
+                    FixvalStatus.SKIPPED,
+                    FixvalStatus.WAIVED,
+                )
+        except (ValueError, TypeError, KeyError) as exc:
+            result = _execution_error("invalid_terminal_proof", str(exc))
+            stage = new_stage(self._fixval_invocation_id, self.source_hash)
+            stage.update(outcome="ERROR", reason=result.reason)
+            accepted = False
+        self._state.fixval_stage = stage
         self._state.findings.extend(result.findings)
+        self._state.infra_errors.extend(result.infra_errors)
         self._advisories.extend(result.advisories)
-
-        if result.status == FixvalStatus.BLOCK:
-            # Hollow test blocks the pipeline
-            # block_message stored in the FIXVAL_HOLLOW finding's error
-            for f in result.findings:
-                if f.id == "FIXVAL_HOLLOW":
-                    f.error = result.block_message
-            self._state.verdict = Verdict.FAIL
-            self._state.converged = False
-            self._write_ledger_rows()
-            self._persist_state()
-            return
-
-        if result.status == FixvalStatus.PASS:
-            # Non-hollow: run overfit guard (advisory only)
-            overfit_advisories = run_overfit_guard(
-                FixvalCandidate(
-                    test_files=candidate.test_files,
-                    non_test_files=[f for f in candidate.non_test_files if f in executable_files],
-                ),
-                test_cmd,
-                self._source_root(),
-            )
-            self._advisories.extend(overfit_advisories)
-
-        # PASS / SKIPPED / WAIVED -- proceed to PASS verdict
-        self._state.verdict = Verdict.PASS
-        self._state.converged = True
+        for finding in result.findings:
+            if finding.id == "FIXVAL_HOLLOW":
+                finding.error = result.block_message
+        self._state.verdict = Verdict.PASS if accepted else Verdict.FAIL
+        self._state.converged = accepted
         self._write_ledger_rows()
         self._persist_state()
 
@@ -2604,6 +2689,7 @@ class StateMachine:
         version_sensitive: bool = False,
         repo_root: str | None = None,
         backend: str | None = None,
+        suppression_key: str = "",
     ) -> LedgerRow:
         """Construct a LedgerRow from review state (shared between local and CI writers).
 
@@ -2633,6 +2719,18 @@ class StateMachine:
             ctx_contract=self.ctx_contract,
             ctx_whole_file=self.ctx_whole_file,
             ctx_canary=self.ctx_canary,
+            suppression_key=suppression_key,
+        )
+
+    def _finding_suppression_key(self, finding: StateFinding) -> str:
+        return finding_suppression_key(
+            base_sha=self.resolved_review.base_sha,
+            head_sha=self.resolved_review.head_sha,
+            git_diff=self.resolved_review.git_diff,
+            file=finding.file,
+            line=finding.line_range[0] if finding.line_range else 0,
+            source=finding.source,
+            description=finding.description,
         )
 
     def _write_ledger_rows(self) -> int:
@@ -2647,9 +2745,8 @@ class StateMachine:
         runs (where SHAs are unavailable) yield 0 to satisfy the
         "no placeholder/empty values" invariant.
 
-        Best-effort dedup: if a (fingerprint, terminal_state) pair is
-        already present in the ledger from any prior run, we do not
-        append a duplicate row regardless of SHAs. This is a
+        Best-effort dedup uses (fingerprint, terminal_state, suppression_key),
+        so a changed snapshot or claim retains its own terminal decision. This is a
         TOCTOU window but the worst case is one extra row per
         convergence -- still monotonic non-decreasing, still
         append-only, still auditable.
@@ -2661,7 +2758,7 @@ class StateMachine:
         from .ledger import iter_rows
 
         ledger_root = resolve_ledger_root(self.cwd)
-        existing = {(r.fingerprint, r.terminal_state) for r in iter_rows(ledger_root)}
+        existing = {(r.fingerprint, r.terminal_state, r.suppression_key) for r in iter_rows(ledger_root)}
         from datetime import datetime
 
         ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -2673,7 +2770,8 @@ class StateMachine:
                 state = TerminalState.DISPROVED
             else:
                 continue
-            if (f.fingerprint, state) in existing:
+            suppression_key = self._finding_suppression_key(f)
+            if (f.fingerprint, state, suppression_key) in existing:
                 continue
             evidence = (
                 "fix_applied" if state == TerminalState.FIXED else (f.error or "falsifier_rejected")
@@ -2691,9 +2789,10 @@ class StateMachine:
                 version_sensitive=ct.version_sensitive,
                 backend=f.backend,
                 repo_root=str(ledger_root.resolve()),
+                suppression_key=suppression_key,
             )
             ledger_append(ledger_root, row)
-            existing.add((f.fingerprint, state))
+            existing.add((f.fingerprint, state, suppression_key))
             rows += 1
         return rows
 
@@ -2709,7 +2808,8 @@ class StateMachine:
         `resolve_ledger_root(self.cwd)`. The row's `repo_root` field records the
         main repo path so downstream diff extraction survives worktree cleanup.
 
-        D-08: Dedup key for UNADJUDICATED rows is (fingerprint, base_sha, head_sha).
+        D-08: Dedup includes the exact suppression key so dirty diffs sharing
+        the same SHAs and nearby claims retain separate audit records.
         Re-running the same diff does not re-append duplicate rows.
 
         D-16: Growth expectations and compaction trigger: append-only growth is
@@ -2762,7 +2862,10 @@ class StateMachine:
                 return 0
 
             ledger_root = resolve_ledger_root(self.cwd)
-            existing = {(r.fingerprint, r.base_sha, r.head_sha) for r in iter_rows(ledger_root)}
+            existing = {
+                (r.fingerprint, r.base_sha, r.head_sha, r.suppression_key)
+                for r in iter_rows(ledger_root)
+            }
             ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             # Collect findings in scope: CONFIRMED + style-downgraded findings (CP1 W-5)
@@ -2777,7 +2880,7 @@ class StateMachine:
                 # Zero-finding PASS: emit a single clean row with diff-scoped fingerprint (D-07)
                 if self._state.verdict == Verdict.PASS:
                     clean_fp = hashlib.sha256(f"clean:{base}:{head}".encode()).hexdigest()[:16]
-                    if (clean_fp, base, head) not in existing:
+                    if (clean_fp, base, head, "") not in existing:
                         row = self._build_ledger_row(
                             fingerprint=clean_fp,
                             file="",
@@ -2791,12 +2894,13 @@ class StateMachine:
                             repo_root=str(ledger_root.resolve()),
                         )
                         ledger_append(ledger_root, row)
-                        existing.add((clean_fp, base, head))
+                        existing.add((clean_fp, base, head, ""))
                         rows_written += 1
                 return rows_written
 
             for f in findings_to_write:
-                if (f.fingerprint, base, head) in existing:
+                suppression_key = self._finding_suppression_key(f)
+                if (f.fingerprint, base, head, suppression_key) in existing:
                     continue
                 evidence = f.error or f.description or "confirmed_finding"
                 ct = derive_claim_type(f.source)
@@ -2812,9 +2916,10 @@ class StateMachine:
                     version_sensitive=ct.version_sensitive,
                     repo_root=str(ledger_root.resolve()),
                     backend=f.backend,
+                    suppression_key=suppression_key,
                 )
                 ledger_append(ledger_root, row)
-                existing.add((f.fingerprint, base, head))
+                existing.add((f.fingerprint, base, head, suppression_key))
                 rows_written += 1
 
             return rows_written
@@ -2830,7 +2935,7 @@ class StateMachine:
 
         D-23: Reads ledger via resolve_ledger_root, loads gate.yaml pinned_paths
         and style_downgrade, then for each CONFIRMED finding:
-          - fingerprint in known_terminal_fingerprints -> DISMISSED
+          - exact snapshot/claim key previously DISPROVED or DUPLICATE -> DISMISSED
           - file matches pinned_paths glob -> DISMISSED
           - source in style_downgrade.pass_names or description matches keyword -> STYLE
         Fail-open: ledger read failure or missing gate.yaml silently degrades.
@@ -2841,7 +2946,7 @@ class StateMachine:
         import yaml
 
         from .ledger import (
-            known_terminal_fingerprints,
+            suppressible_finding_keys,
             resolve_ledger_root,
         )
 
@@ -2871,11 +2976,11 @@ class StateMachine:
             self._state.infra_errors.append(msg)
             print(msg, file=sys.stderr)
 
-        # --- Load known terminal fingerprints from ledger ---
-        known_fps: set[str] = set()
+        # --- Load exact snapshot/claim identities from ledger ---
+        known_keys: set[str] = set()
         try:
             ledger_root = resolve_ledger_root(self.cwd)
-            known_fps = known_terminal_fingerprints(ledger_root)
+            known_keys = suppressible_finding_keys(ledger_root)
         except (OSError, ValueError, AttributeError, TypeError) as exc:
             msg = f"CI: ledger read for suppression failed (fail-open): {exc}"
             self._state.infra_errors.append(msg)
@@ -2886,11 +2991,11 @@ class StateMachine:
             if f.disposition != Disposition.CONFIRMED:
                 continue
 
-            # 1. Ledger-known fingerprint
-            if f.fingerprint in known_fps:
+            # 1. Exact previously disproved/duplicate candidate, never FIXED.
+            if self._finding_suppression_key(f) in known_keys:
                 f.disposition = Disposition.DISMISSED
                 self._state.infra_errors.append(
-                    f"ledger: suppressed {f.fingerprint} (known terminal fingerprint)"
+                    f"ledger: suppressed {f.fingerprint} (same reviewed snapshot and claim)"
                 )
                 continue
 

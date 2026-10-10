@@ -15,6 +15,8 @@ before the verdict.
 from __future__ import annotations
 
 import ast
+import difflib
+import hashlib
 import logging
 import os
 import re
@@ -22,21 +24,22 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from io import StringIO
 from pathlib import Path
 
 import unidiff
 
 from .advisory import AdvisoryFinding
 from ._fixval_transaction import FixvalTransaction, TransactionError
+from ._mutation_process import MutationProcessError
 from .disposition import Disposition
 from .diff import iter_diff_sections, patched_file_path
-from code_forge.baseline_guard import _run_baseline_guard, _strip_venv_from_env
+from code_forge.baseline_guard import _strip_venv_from_env, _output_detail
 from .state import StateFinding
 
 _logger = logging.getLogger("code_forge")
+_TIMEOUT_UNSET = object()
 
 
 class FixvalStatus(str, Enum):
@@ -46,6 +49,7 @@ class FixvalStatus(str, Enum):
     BLOCK = "BLOCK"
     SKIPPED = "SKIPPED"
     WAIVED = "WAIVED"
+    ERROR = "ERROR"
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,10 @@ class FixvalResult:
     findings: list[StateFinding]
     advisories: list[AdvisoryFinding]
     block_message: str = ""
+    reason: str = ""
+    infra_errors: list[str] = field(default_factory=list)
+    stage: dict | None = None
+    restored_identities: dict | None = None
 
 
 # Test file detection patterns (multi-language).
@@ -178,10 +186,11 @@ def parse_fixval_waiver(
     return None
 
 
-def _make_skipped_result(reason: str) -> FixvalResult:
+def _make_skipped_result(reason: str, *, code: str = "") -> FixvalResult:
     """Create a SKIPPED result with one DISMISSED finding."""
     return FixvalResult(
         status=FixvalStatus.SKIPPED,
+        reason=code or skip_reason(reason),
         findings=[
             StateFinding(
                 id="FIXVAL_SKIPPED",
@@ -197,6 +206,101 @@ def _make_skipped_result(reason: str) -> FixvalResult:
     )
 
 
+def skip_reason(reason: str) -> str:
+    return {
+        "no files in diff": "no_files",
+        "no test file in diff": "no_tests",
+        "no executable test file in diff": "no_tests",
+        "no non-test file in diff": "no_production",
+        "non-git review, no diff available": "non_git",
+        "no non-test changes to revert": "no_production_patch",
+    }.get(reason, "unknown_skip")
+
+
+def _execution_error(reason: str, detail: str, *, timed_out=False) -> FixvalResult:
+    message = "FIXVAL unavailable: " + (
+        detail if len(detail) <= 4000 else detail[:4000] + " [diagnostic truncated]"
+    )
+    return FixvalResult(
+        FixvalStatus.ERROR,
+        [
+            StateFinding(
+                id="FIXVAL_ERROR",
+                fingerprint="fixval-" + reason,
+                source="FIXVAL",
+                disposition=Disposition.UNCERTAIN,
+                file="",
+                line_range=[],
+                description=message,
+                error=message,
+                is_timeout=timed_out,
+            )
+        ],
+        [],
+        message,
+        reason=reason,
+        infra_errors=[message],
+    )
+
+
+def _phase_error_detail(session, detail):
+    if not session.phases:
+        return detail
+    latest = session.phases[-1]
+    prefix = latest["phase"]
+    if "returncode" in latest:
+        prefix += " (returncode %s)" % latest["returncode"]
+    inventory = latest.get("inventory")
+    if inventory is not None and inventory.failed:
+        prefix += ": " + ", ".join(sorted(inventory.failed)[:5])
+    return prefix + ": " + detail + _output_detail(latest.get("stderr"), latest.get("stdout"))
+
+
+def preflight_fixval(candidate, diff_text, commit_message):
+    """Resolve genuine exceptions before requesting unused test configuration."""
+    if isinstance(candidate, FixvalSkip):
+        return _make_skipped_result(candidate.reason), None
+    if diff_text is None:
+        return _make_skipped_result("non-git review, no diff available"), None
+    waiver = parse_fixval_waiver(commit_message, env=os.environ)
+    if waiver:
+        channel = "env" if os.environ.get("FIXVAL_WAIVER", "").strip() else "trailer"
+        result = FixvalResult(
+            FixvalStatus.WAIVED,
+            [
+                StateFinding(
+                    id="FIXVAL_WAIVED",
+                    fingerprint="fixval-waived",
+                    source="FIXVAL",
+                    disposition=Disposition.DISMISSED,
+                    file="",
+                    line_range=[],
+                    description="FIXVAL waived: " + waiver,
+                )
+            ],
+            [
+                AdvisoryFinding(
+                    id="FIXVAL_WAIVER_RECORD",
+                    axis="FIXVAL",
+                    file="",
+                    line_range=[],
+                    description="FIXVAL waived via %s: %s" % (channel, waiver),
+                    attribution="fixval-waiver",
+                )
+            ],
+            reason="explicit_waiver",
+        )
+        result_exception = {"reason": waiver, "channel": channel}
+        return (result, result_exception)
+    try:
+        patch = _filter_non_test_patch(diff_text)
+    except (unidiff.errors.UnidiffParseError, TransactionError, ValueError) as exc:
+        return _execution_error("invalid_patch", str(exc)), None
+    if not patch.strip():
+        return _make_skipped_result("no non-test changes to revert"), None
+    return None, patch
+
+
 def _filter_non_test_patch(diff_text: str) -> str:
     """Project production file blocks without reserializing Git binary bodies."""
 
@@ -205,10 +309,68 @@ def _filter_non_test_patch(diff_text: str) -> str:
         tgt_clean = patched_file_path(patched_file) or ""
         return not _is_test_file(src_clean) and not _is_test_file(tgt_clean)
 
-    if any(line.startswith("diff --git ") for line in StringIO(diff_text)):
-        blocks = [(unidiff.PatchSet(block), block) for _path, block in iter_diff_sections(diff_text)]
-    else:
-        blocks = [([entry], str(entry)) for entry in unidiff.PatchSet(diff_text)]
+    if not diff_text.strip():
+        return ""
+    # Git and unidiff count LF records; Unicode separators remain path/body data.
+    blocks = []
+    metadata = (
+        "diff --git ",
+        "index ",
+        "old mode ",
+        "new mode ",
+        "new file mode ",
+        "deleted file mode ",
+        "similarity index ",
+        "dissimilarity index ",
+        "rename from ",
+        "rename to ",
+        "copy from ",
+        "copy to ",
+    )
+    for _path, block in iter_diff_sections(diff_text):
+        entries = unidiff.PatchSet(block)
+        if not entries:
+            raise TransactionError("nonempty diff frame has no parsed file")
+        for entry in entries:
+            info = str(entry.patch_info or "")
+            if not entry.is_binary_file:
+                if any(line.strip() and not line.startswith(metadata) for line in info.split("\n")):
+                    raise TransactionError("unrecognized text outside diff hunks")
+                if any(
+                    line.startswith("@@")
+                    and re.match(r"^@@ -[0-9]+(?:,[0-9]+)? \+[0-9]+(?:,[0-9]+)? @@", line) is None
+                    for line in block.split("\n")
+                ):
+                    raise TransactionError("malformed diff hunk header")
+                headers = info.split("\n")
+
+                def has(prefix, lines=headers):
+                    return any(line.startswith(prefix) for line in lines)
+
+                actionable = (
+                    has("new file mode ")
+                    or has("deleted file mode ")
+                    or has("old mode ")
+                    and has("new mode ")
+                    or has("rename from ")
+                    and has("rename to ")
+                    or has("copy from ")
+                    and has("copy to ")
+                )
+                if not entry and not actionable:
+                    raise TransactionError("diff file lacks a hunk or actionable metadata")
+        if not any(entry.is_binary_file for entry in entries):
+            body = {line.diff_line_no for entry in entries for hunk in entry for line in hunk}
+            for number, line in enumerate(block.split("\n"), 1):
+                if number in body or not line.strip() or line.startswith(metadata + ("--- ", "+++ ")):
+                    continue
+                if (
+                    re.match(r"^@@ -[0-9]+(?:,[0-9]+)? \+[0-9]+(?:,[0-9]+)? @@", line)
+                    or line.removesuffix("\r") == "\\ No newline at end of file"
+                ):
+                    continue
+                raise TransactionError("unparsed text in diff frame")
+        blocks.append((entries, block))
     filtered = []
     production_paths: set[str] = set()
     test_paths: set[str] = set()
@@ -250,23 +412,22 @@ def _transaction_block(message: str, recovery: str) -> FixvalResult:
         ],
         advisories=[],
         block_message=detail,
+        reason="transaction",
+        infra_errors=[detail],
     )
 
 
-def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root) -> FixvalResult:
-    result = subprocess.run(
-        scoped_cmd,
-        env=run_env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=600,
-        check=False,
-        cwd=repo_root,
-    )
-    if result.returncode != 0:
-        return FixvalResult(status=FixvalStatus.PASS, findings=[], advisories=[])
+def _test_reverted_candidate(
+    candidate, scoped_cmd, run_env, repo_root, *, evidence=None, greens=None, timeout=600
+) -> FixvalResult:
+    from .fixval_evidence import choose_witness
+
+    if evidence is None or not greens or len(greens) != 3:
+        return _execution_error("missing_green_evidence", "three closed GREEN inventories are required")
+    red = evidence.execute(run_env, phase="reverted", timeout=timeout)
+    witness, count = choose_witness(greens, red, evidence.candidates)
+    if witness is not None:
+        return FixvalResult(FixvalStatus.PASS, [], [], reason="attributable_red")
     block_msg = "FIXVAL: Test(s) did not fail when the fix was reverted.\n\n  Reverted files:\n"
     for filename in candidate.non_test_files:
         block_msg += "    %s\n" % filename
@@ -300,110 +461,274 @@ def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root) -> Fixva
 
 
 def run_fixval(
-    candidate: FixvalCandidate,
-    test_cmd: list[str],
-    cwd: Path,
-    commit_message: str,
-    diff_text: str | None,
+    candidate,
+    test_cmd,
+    cwd,
+    commit_message,
+    diff_text,
     *,
-    recovery_parent: Path | None = None,
+    recovery_parent=None,
+    timeout_seconds=_TIMEOUT_UNSET,
+    stage_id=None,
+    source_hash=None,
+    config_hash=None,
+    overfit_files=None,
 ) -> FixvalResult:
-    """Run FIXVAL gate on a candidate diff.
-
-    Steps:
-      a. Guard: diff_text None -> SKIPPED
-      b. Waiver check -> WAIVED with advisory
-      c. Baseline guard (3x flaky check)
-      d. Revert non-test hunks via git apply -R
-      e. Run scoped test cmd; FAIL -> PASS, PASS -> BLOCK
-      f. Restore via git apply (forward re-apply) in finally
-
-    Args:
-        candidate: classified FIXVAL candidate (test + non-test files).
-        test_cmd: base test command (e.g. ["python", "-m", "pytest"]).
-        cwd: repository root.
-        commit_message: for waiver trailer parsing.
-        diff_text: unified diff text (same source as classify).
-        recovery_parent: optional preservation parent outside participating source roots.
-
-    Returns:
-        FixvalResult with status, findings, advisories, block_message.
-    """
-    repo_root = str(cwd)
-
-    # (a) Guard: no diff available
-    if diff_text is None:
-        return _make_skipped_result("non-git review, no diff available")
-
-    # (b) Waiver check
-    waiver_reason = parse_fixval_waiver(commit_message, env=os.environ)
-    if waiver_reason is not None:
-        if os.environ.get("FIXVAL_WAIVER", "").strip():
-            channel = "FIXVAL_WAIVER env var"
-        else:
-            channel = "Fixval-Waiver trailer"
-        return FixvalResult(
-            status=FixvalStatus.WAIVED,
-            findings=[
-                StateFinding(
-                    id="FIXVAL_WAIVED",
-                    fingerprint="fixval-waived",
-                    source="FIXVAL",
-                    disposition=Disposition.DISMISSED,
-                    file="",
-                    line_range=[],
-                    description="FIXVAL waived: %s" % waiver_reason,
-                ),
-            ],
-            advisories=[
-                AdvisoryFinding(
-                    id="FIXVAL_WAIVER_RECORD",
-                    axis="FIXVAL",
-                    file="",
-                    line_range=[],
-                    description=("FIXVAL waived via %s: %s" % (channel, waiver_reason)),
-                    attribution="fixval-waiver",
-                ),
-            ],
-        )
-
-    # Qualify the production reversal before executing tests or allocating recovery.
-    try:
-        non_test_patch = _filter_non_test_patch(diff_text)
-    except (unidiff.errors.UnidiffParseError, TransactionError) as exc:
-        return _transaction_block("invalid production patch: %s" % exc, repo_root)
-    if not non_test_patch.strip():
-        return _make_skipped_result("no non-test changes to revert")
-
-    # Baseline guard
-    scoped_cmd = test_cmd + candidate.test_files
-
-    run_env = os.environ.copy()
-    pythonpath = os.path.join(repo_root, "src")
-    run_env["PYTHONPATH"] = pythonpath
-
-    status, guard_findings, guard_infra = _run_baseline_guard(
-        scoped_cmd,
-        run_env,
-        repo_root,
-        allow_strip_retry=True,
+    """Require stable fixed GREENs and a same-candidate ordinary reverted RED."""
+    from .baseline_guard import _is_runner_startup_failure
+    from .fixval_evidence import (
+        EvidenceSession,
+        EvidenceError,
+        choose_witness,
+        digest,
+        new_stage,
+        require_green,
+        validate_test_timeout,
+        source_snapshot,
     )
-    if status == "needs_strip_retry":
-        run_env = _strip_venv_from_env(run_env)
-        run_env["PYTHONPATH"] = pythonpath
-        status, guard_findings, guard_infra = _run_baseline_guard(
-            scoped_cmd,
-            run_env,
-            repo_root,
-            allow_strip_retry=False,
-        )
-    if status == "skip":
-        return FixvalResult(
-            status=FixvalStatus.SKIPPED,
-            findings=guard_findings,
-            advisories=[],
-        )
 
+    exception, projected = preflight_fixval(candidate, diff_text, commit_message)
+    if exception is not None:
+        return exception
+    try:
+        if timeout_seconds is not _TIMEOUT_UNSET:
+            validate_test_timeout(timeout_seconds)
+        baseline_timeout = 120 if timeout_seconds is _TIMEOUT_UNSET else timeout_seconds
+        probe_timeout = 600 if timeout_seconds is _TIMEOUT_UNSET else timeout_seconds
+        session = EvidenceSession(
+            cwd,
+            test_cmd + candidate.test_files,
+            candidate.test_files,
+            parent=recovery_parent,
+            stage_id=stage_id,
+        )
+    except (OSError, ValueError) as exc:
+        return _execution_error("configuration", str(exc))
+    run_env = os.environ.copy()
+    run_env["PYTHONPATH"] = str(Path(cwd) / "src")
+    snapshot_paths = set(candidate.test_files + candidate.non_test_files)
+    for entry in unidiff.PatchSet(projected):
+        for old_side in (False, True):
+            path = patched_file_path(entry, source=old_side)
+            if path:
+                snapshot_paths.add(path)
+    greens = []
+    red = None
+    witness = None
+    witness_count = 0
+    restoration = "not_started"
+    outcome = None
+    try:
+        before_snapshot = source_snapshot(Path(cwd), snapshot_paths)
+        for batch in range(2):
+            greens = []
+            retry = False
+            for ordinal in range(3):
+                try:
+                    inventory = session.execute(
+                        run_env, phase=f"fixed:{batch}:{ordinal}", timeout=baseline_timeout
+                    )
+                    if source_snapshot(Path(cwd), snapshot_paths) != before_snapshot:
+                        raise EvidenceError("candidate source/test/index changed during fixed execution")
+                    require_green(inventory, session.candidates)
+                    if greens and inventory.rows != greens[0].rows:
+                        raise EvidenceError("fixed test inventory/status is unstable")
+                    greens.append(inventory)
+                except (FileNotFoundError, EvidenceError) as exc:
+                    latest = session.phases[-1] if session.phases else {}
+
+                    def diagnostic(name, observed=latest):
+                        value = observed.get(name, "")
+                        return value.decode("utf-8", "replace") if isinstance(value, bytes) else value
+
+                    completed = subprocess.CompletedProcess(
+                        test_cmd, latest.get("returncode", 1), diagnostic("stdout"), diagnostic("stderr")
+                    )
+                    started = any(
+                        (cap.directory / "begin.json").exists()
+                        for cap, rec, _ in session.captures
+                        if rec is latest
+                    )
+                    owner = latest.get("ownership", {})
+                    missing_launch = (
+                        isinstance(exc, FileNotFoundError)
+                        and getattr(exc, "ownership", {}).get("error_kind") == "FileNotFoundError"
+                        and getattr(exc, "ownership", {}).get("driver_pid") is None
+                        and getattr(exc, "ownership", {}).get("cleanup_complete") is True
+                    )
+                    missing_module = (
+                        not started
+                        and owner.get("cleanup_complete") is True
+                        and _is_runner_startup_failure(test_cmd, completed)
+                    )
+                    missing = missing_launch or missing_module
+                    if batch == 0 and "VIRTUAL_ENV" in run_env and missing:
+                        run_env = _strip_venv_from_env(run_env)
+                        run_env["PYTHONPATH"] = str(Path(cwd) / "src")
+                        latest["retry_eligible"] = True
+                        for observed in session.phases:
+                            observed["superseded"] = True
+                        retry = True
+                        break
+                    raise
+            if not retry:
+                break
+        if len(greens) != 3:
+            raise EvidenceError("three completed fixed runs are required")
+        outcome = _transactional_probe(
+            cwd,
+            projected,
+            lambda: _test_reverted_candidate(
+                candidate,
+                session.command,
+                run_env,
+                str(cwd),
+                evidence=session,
+                greens=greens,
+                timeout=probe_timeout,
+            ),
+            recovery_parent,
+        )
+        expected_after = dict(before_snapshot["entries"])
+        expected_after.update(outcome.restored_identities or {})
+        restoration = (
+            "failed"
+            if outcome.status in (FixvalStatus.ERROR, FixvalStatus.BLOCK)
+            and outcome.reason == "transaction"
+            else "restored"
+        )
+        if outcome.status == FixvalStatus.PASS:
+            red = next(rec["inventory"] for rec in session.phases if rec["phase"] == "reverted")
+            witness, witness_count = choose_witness(greens, red, session.candidates)
+            advisory = _run_overfit_owned(
+                candidate, session, run_env, cwd, probe_timeout, recovery_parent, overfit_files
+            )
+            outcome.advisories.extend(advisory.advisories)
+            expected_after.update(advisory.restored_identities or {})
+            if advisory.status == FixvalStatus.ERROR or advisory.reason == "transaction":
+                outcome = advisory
+                restoration = "failed"
+        if outcome.reason != "transaction":
+            after_snapshot = source_snapshot(Path(cwd), snapshot_paths)
+            if (
+                after_snapshot["entries"] != expected_after
+                or after_snapshot["semantic_sha256"] != before_snapshot["semantic_sha256"]
+                or after_snapshot["index_sha256"] != before_snapshot["index_sha256"]
+            ):
+                raise EvidenceError("candidate source/test/index not restored after FIXVAL")
+        # Transaction/cleanup failure retains its original recovery diagnostic.
+        # A generic post-snapshot mismatch must not replace that safety result.
+        if outcome.status == FixvalStatus.ERROR:
+            outcome = _execution_error(
+                outcome.reason,
+                _phase_error_detail(session, outcome.block_message.removeprefix("FIXVAL unavailable: "))
+                + "; raw evidence: "
+                + str(session.directory),
+                timed_out=outcome.reason == "timeout",
+            )
+        stage = session.projection(
+            source_hash=source_hash or hashlib.sha256((diff_text or "").encode()).hexdigest(),
+            config_hash=config_hash
+            or digest(
+                {
+                    "command": test_cmd,
+                    "baseline_timeout": baseline_timeout,
+                    "probe_timeout": probe_timeout,
+                }
+            ),
+            candidate_hash=digest(
+                {"tests": candidate.test_files, "production": candidate.non_test_files}
+            ),
+            greens=greens,
+            red=red,
+            witness=witness if outcome.status == FixvalStatus.PASS else None,
+            witness_count=witness_count,
+            outcome=outcome.status.value,
+            reason=outcome.reason or "hollow",
+            restoration=restoration,
+        )
+        return FixvalResult(
+            outcome.status,
+            outcome.findings,
+            outcome.advisories,
+            outcome.block_message,
+            reason=outcome.reason or "hollow",
+            infra_errors=outcome.infra_errors,
+            stage=stage,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError, MutationProcessError) as exc:
+        secondary = _execution_error(
+            "timeout" if isinstance(exc, subprocess.TimeoutExpired) else "execution",
+            _phase_error_detail(session, str(exc)) + "; raw evidence: " + str(session.directory),
+            timed_out=isinstance(exc, subprocess.TimeoutExpired),
+        )
+        if outcome is not None and outcome.reason == "transaction":
+            # A failed proof replay must not erase unsafe restoration's recovery
+            # location or primary finding. Both failures remain non-PASS.
+            outcome = replace(
+                outcome,
+                findings=outcome.findings + secondary.findings,
+                infra_errors=outcome.infra_errors + secondary.infra_errors,
+                block_message=outcome.block_message + "\n" + secondary.block_message,
+            )
+        else:
+            outcome = secondary
+        stage = new_stage(
+            session.stage_id, source_hash or hashlib.sha256((diff_text or "").encode()).hexdigest()
+        )
+        stage.update(outcome=outcome.status.value, reason=outcome.reason, restoration=restoration)
+        # The raw location remains diagnostic recovery, never success authority.
+        try:
+            stage = session.projection(
+                source_hash=stage["source_hash"],
+                config_hash=config_hash,
+                candidate_hash=digest(
+                    {"tests": candidate.test_files, "production": candidate.non_test_files}
+                ),
+                greens=greens,
+                red=red,
+                witness=None,
+                witness_count=0,
+                outcome=outcome.status.value,
+                reason=outcome.reason,
+                restoration=restoration,
+            )
+        except (OSError, ValueError):
+            try:
+                stage["raw"] = session.manifest()
+            except (OSError, ValueError):
+                pass
+        return replace(outcome, stage=stage)
+    finally:
+        active = sys.exception()
+        # Also cover control interruption inside the ordinary-error handler's
+        # fallback projection/manifest, which sibling except clauses cannot see.
+        if isinstance(active, (KeyboardInterrupt, SystemExit)) and (
+            outcome is not None and outcome.reason == "transaction"
+        ):
+            active.add_note(outcome.block_message)
+        try:
+            session.close()
+        except BaseException as close_error:
+            if active is not None and (
+                not isinstance(active, Exception) or isinstance(close_error, Exception)
+            ):
+                active.add_note("FIXVAL evidence descriptor close failed: " + str(close_error))
+            elif outcome is not None and outcome.reason == "transaction":
+                if not isinstance(close_error, Exception):
+                    close_error.add_note(outcome.block_message)
+                    raise
+                secondary = _execution_error("evidence_close", str(close_error))
+                # The returned frozen result shares these diagnostic lists.
+                # Keep its primary safety finding/recovery location intact.
+                outcome.findings.extend(secondary.findings)
+                outcome.infra_errors.extend(secondary.infra_errors)
+            else:
+                raise
+
+
+def _transactional_probe(cwd, non_test_patch, run_probe, recovery_parent=None):
+    repo_root = str(cwd)
     # Write patch to temp file
     try:
         fd, patch_path = tempfile.mkstemp(prefix=".fixval-revert-", suffix=".patch")
@@ -413,6 +738,10 @@ def run_fixval(
     forward_applied = False
     errors = []
     interrupted = None
+    cleanup_complete = True
+    probe_started = False
+    probe_error = None
+    restored_identities = {}
     outcome = None
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -425,13 +754,37 @@ def run_fixval(
             errors.append("revert patch failed: %s" % revert_result.stderr[:200])
         else:
             transaction.mark_reverted()
-            outcome = _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root)
-    except (OSError, ValueError, TransactionError, subprocess.SubprocessError) as exc:
-        errors.append(str(exc))
+            probe_started = True
+            outcome = run_probe()
+    except (
+        OSError,
+        ValueError,
+        TransactionError,
+        subprocess.SubprocessError,
+        MutationProcessError,
+    ) as exc:
+        cleanup_complete = getattr(
+            exc, "cleanup_complete", getattr(exc, "ownership", {}).get("cleanup_complete", True)
+        )
+        if probe_started:
+            probe_error = exc
+        else:
+            errors.append(str(exc))
     except (KeyboardInterrupt, SystemExit) as exc:
+        cleanup_complete = getattr(exc, "cleanup_complete", False)
         interrupted = exc
     finally:
-        if transaction is not None:
+        if transaction is not None and not cleanup_complete:
+            transaction.recovery_needed = True
+            errors.append("owned descendants not proved stopped; source restoration deferred")
+            try:
+                transaction.close()
+            except (OSError, TransactionError) as exc:
+                errors.append("recovery close failed: %s" % exc)
+            except (KeyboardInterrupt, SystemExit) as exc:
+                interrupted = interrupted or exc
+                errors.append("recovery close interrupted: %s" % type(exc).__name__)
+        if transaction is not None and cleanup_complete:
             try:
                 if transaction.reverted:
                     if transaction.can_apply_forward():
@@ -476,6 +829,8 @@ def run_fixval(
                     errors.append("entry restoration escaped: %s" % type(sys.exception()).__name__)
                 errors.extend(transaction.image_errors)
                 transaction.recovery_needed = transaction.recovery_needed or bool(errors)
+                if not errors:
+                    restored_identities = {entry.path: entry.restored for entry in transaction.entries}
                 try:
                     transaction.close()
                 except (OSError, TransactionError) as exc:
@@ -506,8 +861,20 @@ def run_fixval(
             interrupted.add_note("FIXVAL recovery: %s (%s)" % (recovery, "; ".join(errors)))
         raise interrupted
     if errors:
+        if probe_error is not None:
+            errors.insert(0, str(probe_error))
         return _transaction_block("; ".join(errors), recovery)
-    return outcome
+    if probe_error is not None:
+        timeout = isinstance(probe_error, subprocess.TimeoutExpired)
+        return replace(
+            _execution_error("timeout" if timeout else "execution", str(probe_error), timed_out=timeout),
+            restored_identities=restored_identities,
+        )
+    return (
+        replace(outcome, restored_identities=restored_identities)
+        if isinstance(outcome, FixvalResult)
+        else outcome
+    )
 
 
 class _VariableRenamer(ast.NodeTransformer):
@@ -548,117 +915,107 @@ class _VariableRenamer(ast.NodeTransformer):
         return node
 
 
-def run_overfit_guard(
-    candidate: FixvalCandidate,
-    test_cmd: list[str],
-    cwd: Path,
-) -> list[AdvisoryFinding]:
-    """Run STING overfit guard: advisory only, never blocking.
-
-    Applies a variable-rename transform to the first .py file in
-    non_test_files. If the test breaks after rename, it is overfitting
-    to variable names.
-
-    Original file bytes are saved before any transform and restored
-    verbatim in the finally block (never re-unparse -- ast.unparse
-    is lossy, strips comments/formatting).
-
-    Args:
-        candidate: FIXVAL candidate with test and non-test files.
-        test_cmd: base test command.
-        cwd: repository root.
-
-    Returns:
-        List of AdvisoryFinding (0 or 1 items). Empty if test passes
-        after rename or no .py files found.
-    """
-    # Find first .py file in non_test_files
-    py_file = None
-    for f in candidate.non_test_files:
-        if f.endswith(".py"):
-            py_file = f
-            break
-
+def _run_overfit_owned(candidate, session, run_env, cwd, timeout, recovery_parent, executable=None):
+    eligible = candidate.non_test_files if executable is None else executable
+    py_file = next((f for f in eligible if f.endswith(".py")), None)
     if py_file is None:
-        return []
+        return FixvalResult(FixvalStatus.PASS, [], [])
+    from .fixval_evidence import normalize_file
 
-    file_path = Path(py_file)
-    if not file_path.is_absolute():
-        file_path = Path(cwd) / file_path
-
-    if not file_path.exists():
-        return []
-
-    # Save original bytes before any transform
-    original_bytes = file_path.read_bytes()
-
+    py_file = normalize_file(py_file, Path(cwd))
+    path = Path(cwd) / py_file
+    if not path.exists():
+        return FixvalResult(FixvalStatus.PASS, [], [])
     try:
-        source = original_bytes.decode("utf-8")
-        tree = ast.parse(source)
-
+        original = path.read_bytes()
+        tree = ast.parse(original.decode("utf-8"))
         renamer = _VariableRenamer()
         transformed = renamer.visit(tree)
-
         if renamer.renamed is None:
-            # No local variable found to rename
-            return []
-
-        # Validate transform before writing
+            return FixvalResult(FixvalStatus.PASS, [], [])
         ast.fix_missing_locations(transformed)
-        new_source = ast.unparse(transformed)
-        # Verify the transformed code parses
-        ast.parse(new_source)
-
-        # Write transformed code
-        file_path.write_text(new_source, encoding="utf-8")
-
-        try:
-            # Run test (match run_fixval: set PYTHONPATH=src/ so imports work)
-            scoped_cmd = test_cmd + candidate.test_files
-            run_env = os.environ.copy()
-            run_env["PYTHONPATH"] = os.path.join(str(cwd), "src")
-            result = subprocess.run(
-                scoped_cmd,
-                env=run_env,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=600,
-                check=False,
-                cwd=str(cwd),
+        changed = ast.unparse(transformed) + "\n"
+        # Reversing this patch transforms the original into the renamed source;
+        # the same transaction restores exact original bytes/index afterwards.
+        patch = "".join(
+            difflib.unified_diff(
+                changed.splitlines(keepends=True),
+                original.decode("utf-8").splitlines(keepends=True),
+                fromfile="a/" + py_file,
+                tofile="b/" + py_file,
             )
+        )
+    except (SyntaxError, UnicodeError):
+        return FixvalResult(FixvalStatus.PASS, [], [])
 
-            if result.returncode != 0:
-                # Test failed after rename -> overfitting advisory
-                return [
-                    AdvisoryFinding(
-                        id="FIXVAL_OVERFIT",
-                        axis="FIXVAL",
-                        file=py_file,
-                        line_range=[],
-                        description=(
-                            "test may be overfitting to variable names: "
-                            "renamed '%s' -> '%s' in %s and test broke"
-                            % (renamer.renamed, renamer.new_name, py_file)
-                        ),
-                        attribution="fixval-overfit-guard",
-                    ),
-                ]
+    def probe():
+        try:
+            inventory = session.execute(run_env, phase="overfit", timeout=timeout)
+            if inventory.returncode == 0:
+                return FixvalResult(FixvalStatus.PASS, [], [])
+            text = "test may be overfitting to variable names: renamed %r to %r in %s" % (
+                renamer.renamed,
+                renamer.new_name,
+                py_file,
+            )
+            kind = (
+                "FIXVAL_OVERFIT"
+                if inventory.returncode == 1 and inventory.failed
+                else "FIXVAL_OVERFIT_INCOMPLETE"
+            )
+            if kind.endswith("INCOMPLETE"):
+                text = "overfit observation incomplete: no ordinary test-call failure evidence"
+        except (OSError, ValueError, subprocess.SubprocessError, MutationProcessError) as exc:
+            if (
+                getattr(
+                    exc, "cleanup_complete", getattr(exc, "ownership", {}).get("cleanup_complete", True)
+                )
+                is not True
+            ):
+                raise
+            text = "overfit observation incomplete: " + str(exc)
+            kind = "FIXVAL_OVERFIT_INCOMPLETE"
+        return FixvalResult(
+            FixvalStatus.PASS,
+            [],
+            [
+                AdvisoryFinding(
+                    id=kind,
+                    axis="FIXVAL",
+                    file=py_file,
+                    line_range=[],
+                    description=text,
+                    attribution="fixval-overfit-guard",
+                )
+            ],
+        )
 
-            # Test still passes -> not overfitting
-            return []
+    return _transactional_probe(cwd, patch, probe, recovery_parent)
 
-        finally:
-            # ALWAYS restore original bytes verbatim
-            file_path.write_bytes(original_bytes)
 
-    except SyntaxError:
-        # Cannot parse file -> skip overfit guard
-        return []
+def run_overfit_guard(candidate, test_cmd, cwd, *, timeout_seconds=_TIMEOUT_UNSET, recovery_parent=None):
+    """Standalone advisory API using the same owner and safe transaction."""
+    from .fixval_evidence import EvidenceSession, validate_test_timeout
+
+    timeout = 600 if timeout_seconds is _TIMEOUT_UNSET else validate_test_timeout(timeout_seconds)
+    session = EvidenceSession(
+        cwd, test_cmd + candidate.test_files, candidate.test_files, parent=recovery_parent
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(cwd) / "src")
+    try:
+        result = _run_overfit_owned(candidate, session, env, cwd, timeout, recovery_parent)
+        if result.reason == "transaction":
+            raise TransactionError(result.block_message)
+        return result.advisories
     finally:
-        # Double-ensure original bytes are restored
-        if file_path.exists():
-            current = file_path.read_bytes()
-            if current != original_bytes:
-                file_path.write_bytes(original_bytes)
+        active = sys.exception()
+        try:
+            session.close()
+        except BaseException as close_error:
+            if active is not None and (
+                not isinstance(active, Exception) or isinstance(close_error, Exception)
+            ):
+                active.add_note("FIXVAL evidence descriptor close failed: " + str(close_error))
+            else:
+                raise

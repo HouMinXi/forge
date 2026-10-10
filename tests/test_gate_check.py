@@ -784,7 +784,16 @@ def pytest_unconfigure(config):
     def test_large_executable_argv_known_failure(self, tmp_path):
         source = "def test_known():\n    assert False\n"
         (tmp_path / "test_sample.py").write_text(source)
-        command = ["python3", "-B", "-m", "pytest", "-q", *(["--color=no"] * 10000), "test_sample.py"]
+        # Exercise oversized serialized argv without quadratic parsing of 10,000 options.
+        padding = "--override-ini=markers=argv_padding:" + "x" * 128
+        command = [
+            "python3", "-B", "-m", "pytest", "-q", "--color=no",
+            *([padding] * 1000), "test_sample.py",
+        ]
+        assert len(json.dumps(command, separators=(",", ":")).encode("utf-8")) > 128 * 1024
+        native_sizes = [len(os.fsencode(arg)) + 1 for arg in command]
+        assert sum(native_sizes) >= 110039  # Original 10,000-option native argv size.
+        assert max(native_sizes) < 128 * 1024  # Each exec argument remains kernel-safe.
         original = subprocess.run(command, cwd=tmp_path, capture_output=True, timeout=10, check=False)
         assert original.returncode == 1
         result, error = self.public(
@@ -1167,9 +1176,9 @@ class TestTranslateExitCode:
         """Exit 2 -> 0 (warn, keyboard interrupt)."""
         assert translate_exit_code(2) == 0
 
-    def test_exit_3_warn(self):
-        """Exit 3 -> 0 (warn, internal error)."""
-        assert translate_exit_code(3) == 0
+    def test_exit_3_block(self):
+        """Exit 3 -> 1 (BLOCK, internal error is not a completed test run)."""
+        assert translate_exit_code(3) == 1
 
     def test_exit_4_block(self):
         """Exit 4 -> 1 (BLOCK - usage error)."""

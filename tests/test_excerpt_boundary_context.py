@@ -828,6 +828,7 @@ def test_machine_round_and_quality_use_frozen_context(candidate):
     machine._receipt_diff = lambda: diff
     machine._last_receipt_write_errors = []
     machine._attempted_last_round = []
+    machine._unavailable_rejected_passes_last_round = set()
     machine._excerpts_last_round = [excerpt]
     assert machine._receipt_gate_round_errors() == []
     assert machine._downgrade_one_line_slips([], [excerpt]) == ([], [excerpt])

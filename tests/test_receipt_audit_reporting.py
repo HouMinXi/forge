@@ -110,5 +110,3 @@ def test_no_audit_keeps_existing_report_shape():
         format_summary(state)
         == "code-forge: PASS findings=0 confirmed=0 uncertain=0 dismissed=0 fixed=0"
     )
-
-

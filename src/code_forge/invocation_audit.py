@@ -656,7 +656,7 @@ def _frame(event):
 
 
 def _owner():
-    fields_ = Path("/proc/self/stat").read_text().rsplit(") ", 1)[1].split()
+    fields_ = Path("/proc/self/stat").read_text(encoding="utf-8").rsplit(") ", 1)[1].split()
     return {"pid": os.getpid(), "start_ticks": fields_[19], "owner_id": str(uuid.uuid4())}
 
 

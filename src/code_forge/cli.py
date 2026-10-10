@@ -1216,6 +1216,77 @@ def _split_context_for_group(group_name: str, cross_group_edges: list) -> str:
     )
 
 
+def _prepare_grouped_l1_specs(resolved, cwd: Path, gate_data: dict, warn_fn) -> list[dict] | None:
+    """Reconcile the complete grouped input before constructing any provider.
+
+    None explicitly selects the unchanged whole-diff single-provider route
+    after semantic coverage rejection; an empty list is a valid non-obligation
+    plan. No model calls or provider construction occur here. Existing native runtime
+    admission still owns request/count/context budgets; the grouping threshold
+    remains the existing rough switch, not a new per-group context guarantee.
+    """
+    import dataclasses
+
+    from .diff import get_changed_files
+    from .diff_grouping import GroupingCoverageError, group_diff, thresholds_from_gate_config
+    from .graph_triage import _run_sem
+    from .grouped_coverage import reconcile_grouped_coverage, validate_grouped_diff
+
+    diff_text = resolved.git_diff if resolved.git_diff is not None else ""
+    try:
+        validate_grouped_diff(diff_text)
+    except ValueError as exc:
+        raise CliError(str(exc)) from exc
+    outcome = _run_sem(diff_text, cwd)
+    acquisition_reason = ""
+    if not outcome.completed:
+        acquisition_reason = "semantic acquisition %s: %s" % (outcome.status, outcome.diagnostic)
+    elif not outcome.entities:
+        acquisition_reason = "sem returned no entities"
+    try:
+        try:
+            grouping = group_diff(
+                outcome.entities if outcome.completed else [],
+                cwd,
+                *thresholds_from_gate_config(gate_data),
+                changed_files=get_changed_files(diff_text),
+            )
+        except GroupingCoverageError as exc:
+            reason = "; ".join(part for part in (acquisition_reason, str(exc)) if part)
+            warn_fn(
+                "grouping: semantic coverage incomplete: %s; falling back to "
+                "single-pass review (truncation risk stands)" % reason
+            )
+            return None
+        plan = reconcile_grouped_coverage(diff_text, grouping)
+    except ValueError as exc:
+        raise CliError(str(exc)) from exc
+    if acquisition_reason:
+        warn_fn("grouping: " + acquisition_reason)
+
+    specs = []
+    for group in plan:
+        post_image, conventions = _assemble_post_image(cwd, group.diff_text)
+        specs.append(
+            {
+                "name": group.name,
+                "provenance": group.provenance,
+                "resolved": dataclasses.replace(
+                    resolved,
+                    git_diff=group.diff_text,
+                    source_files=[Path(member) for member in group.members],
+                ),
+                "post_image": post_image,
+                "conventions_digest": conventions,
+                "split_context": _split_context_for_group(group.name, grouping.cross_group_edges),
+            }
+        )
+    for spec in specs:
+        if spec["provenance"] != "semantic":
+            warn_fn("grouping: %s %s" % (spec["provenance"], spec["name"]))
+    return specs
+
+
 def _assemble_post_image(
     cwd: Path,
     diff_text: str,
@@ -2344,6 +2415,11 @@ def _run_ledger(args, cwd: Path) -> int:
                 ctx_contract=latest_row.ctx_contract,
                 ctx_whole_file=latest_row.ctx_whole_file,
                 ctx_canary=latest_row.ctx_canary,
+                suppression_key=(
+                    latest_row.suppression_key
+                    if (base_sha, head_sha) == (latest_row.base_sha, latest_row.head_sha)
+                    else ""
+                ),
             ),
         )
         print(
@@ -4085,15 +4161,6 @@ def _run(args, env, cwd: Path) -> Verdict:
         _pre_graph_findings = []
         _context_rows = []
 
-    falsifier = build_falsifier(
-        engine_choice,
-        backend=backend,
-        diff_text=resolved.git_diff,
-        context_rows=[r for r in _context_rows if r.source != "kernel"],
-    )
-    autofixer = build_autofixer(resolved)
-    revert_fn = build_revert_fn(resolved, cwd)
-
     from .machine import TimeoutCircuitBreaker
 
     breaker = TimeoutCircuitBreaker(threshold=5)
@@ -4106,13 +4173,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     _manifest_a = extract_manifest(cwd)
     _manifest_spec_a = _manifest_a.to_prompt_block()
 
-    from .diff_grouping import (
-        GroupingCoverageError,
-        GroupingResult,
-        group_diff,
-        max_prompt_tokens_from_gate_config,
-        thresholds_from_gate_config,
-    )
+    from .diff_grouping import max_prompt_tokens_from_gate_config
 
     _group_budget = max_prompt_tokens_from_gate_config(gate_data)
     _l1_est_tokens = _estimate_l1_prompt_tokens(
@@ -4144,40 +4205,26 @@ def _run(args, env, cwd: Path) -> Verdict:
             pass_stagger_s=float(retry_cfg.get("l1_pass_stagger_s", 0.0) or 0.0),
         )
     else:
-        from .graph_triage import _run_sem
-        from .diff import split_diff_for_files
-
-        _sem_outcome = _run_sem(resolved.git_diff or "", cwd)
-        _changes = _sem_outcome.entities if _sem_outcome.completed else []
-        _grouping_reason = (
-            "sem returned no entities"
-            if _sem_outcome.completed
-            else "semantic acquisition %s: %s" % (_sem_outcome.status, _sem_outcome.diagnostic)
-        )
-        try:
-            _grouping = group_diff(
-                _changes,
-                cwd,
-                *thresholds_from_gate_config(gate_data),
-                changed_files=get_changed_files(resolved.git_diff or ""),
-            )
-        except GroupingCoverageError as exc:
-            _grouping = GroupingResult()
-            if _changes:
-                _grouping_reason = "semantic coverage incomplete: %s" % exc
-        _review_groups = [g for g in _grouping.groups if g.passes > 0]
-        if not _review_groups:
-            # sem produced nothing usable -- degrade to the single-diff
-            # path loudly rather than reviewing nothing.
-            warn(
-                "grouping: estimated %d tokens over budget %d but %s; "
-                "falling back to single-pass review (truncation risk stands)"
-                % (
-                    _l1_est_tokens,
-                    _group_budget,
-                    _grouping_reason,
+        def _grouping_warning(message):
+            # Keep acquisition and coverage diagnostics coupled to the original
+            # over-budget context when selecting whole-diff fallback.
+            if message.startswith("grouping: sem"):
+                message = "grouping: estimated %d tokens over budget %d; %s" % (
+                    _l1_est_tokens, _group_budget, message.removeprefix("grouping: ")
                 )
-            )
+            warn(message)
+
+        _specs = _prepare_grouped_l1_specs(resolved, cwd, gate_data, _grouping_warning)
+        if not _specs:
+            # None means semantic coverage rejected before reconciliation; []
+            # means a valid non-obligation plan. Both retain the original review
+            # unchanged and never construct an empty composite provider.
+            if _specs is not None:
+                warn(
+                    "grouping: estimated %d tokens over budget %d but no producing groups "
+                    "or mandatory hunks; falling back to single-pass review (truncation risk stands)"
+                    % (_l1_est_tokens, _group_budget)
+                )
             l1_provider = build_l1_provider(
                 engine_choice,
                 resolved,
@@ -4196,37 +4243,12 @@ def _run(args, env, cwd: Path) -> Verdict:
                 pass_stagger_s=float(retry_cfg.get("l1_pass_stagger_s", 0.0) or 0.0),
             )
         else:
-            import dataclasses as _dc
-
-            _specs = []
-            for _g in _review_groups:
-                _gdiff = split_diff_for_files(
-                    resolved.git_diff or "",
-                    _g.members,
-                )
-                _pi_g, _conv_g = _assemble_post_image(cwd, _gdiff)
-                _specs.append(
-                    {
-                        "name": _g.name,
-                        "resolved": _dc.replace(
-                            resolved,
-                            git_diff=_gdiff,
-                            source_files=[Path(m) for m in _g.members],
-                        ),
-                        "post_image": _pi_g,
-                        "conventions_digest": _conv_g,
-                        "split_context": _split_context_for_group(
-                            _g.name,
-                            _grouping.cross_group_edges,
-                        ),
-                    }
-                )
             print(
                 "grouping: %d files -> %d review groups "
                 "(est %d tok > budget %d)"
                 % (
-                    len({m for g in _review_groups for m in g.members}),
-                    len(_review_groups),
+                    len({str(m) for spec in _specs for m in spec["resolved"].source_files}),
+                    len(_specs),
                     _l1_est_tokens,
                     _group_budget,
                 ),
@@ -4249,6 +4271,15 @@ def _run(args, env, cwd: Path) -> Verdict:
                 retry_timeout=bool(retry_cfg.get("retry_timeout", False)),
                 pass_stagger_s=float(retry_cfg.get("l1_pass_stagger_s", 0.0) or 0.0),
             )
+
+    falsifier = build_falsifier(
+        engine_choice,
+        backend=backend,
+        diff_text=resolved.git_diff,
+        context_rows=[r for r in _context_rows if r.source != "kernel"],
+    )
+    autofixer = build_autofixer(resolved)
+    revert_fn = build_revert_fn(resolved, cwd)
 
     # Coverage gate inputs: L1 examines every changed file only when it
     # actually runs over a diff (engine != stub AND a non-empty git diff).
@@ -4797,6 +4828,8 @@ def _run_e2e_check_cmd(args, cwd: Path) -> int:
 
     for err in infra_errors:
         print("code-forge: e2e-check: %s" % err, file=sys.stderr)
+    if infra_errors:
+        return EXIT_CLI_ERROR
 
     # UNCERTAIN findings are the P2-equivalent gate failures.
     uncertain = [f for f in findings if f.disposition == Disposition.UNCERTAIN]

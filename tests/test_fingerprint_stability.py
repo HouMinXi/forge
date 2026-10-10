@@ -642,9 +642,11 @@ class TestHoldLedgerPersistence:
         )
         assert disproved[0].fingerprint == fp_dismissed
 
-    def test_hold_ledger_suppresses_next_round(self, tmp_path):
-        """After HOLD writes a DISPROVED row, known_terminal_fingerprints
-        should return that fingerprint for suppression."""
+    def test_hold_ledger_retains_historical_fingerprint(self, tmp_path):
+        """The legacy lookup remains available for historical diagnostics.
+
+        New candidate suppression requires exact snapshot/claim provenance.
+        """
         from code_forge.ledger import (
             known_terminal_fingerprints,
             append_row,

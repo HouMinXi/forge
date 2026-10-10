@@ -38,7 +38,8 @@
         "timeout_seconds": {
           "type": "integer",
           "minimum": 1,
-          "description": "Timeout in seconds for the test run. Default: 120."
+          "maximum": 86400,
+          "description": "Per-command test timeout in seconds, including configured FIXVAL phases. Integers 1..86400 only. When absent: baseline/gate 120; FIXVAL reverted/overfit 600."
         },
         "mutation_timeout_seconds": {
           "type": "integer",
@@ -311,6 +312,12 @@
         "command": {
           "type": "string",
           "description": "CLI binary name or path. For type=cli only. Default: 'claude'."
+        },
+        "prompt_transport": {
+          "type": "string",
+          "enum": ["argv", "stdin"],
+          "default": "argv",
+          "description": "CLI only. Default argv passes the prompt as -p PROMPT. Opt-in stdin passes -p - and sends the complete UTF-8 prompt on standard input, avoiding OS argument limits. Requires a command that supports this contract."
         },
         "model": {
           "type": "string",

@@ -7,7 +7,7 @@ import logging
 import pytest
 
 from code_forge.receipt_scope import repository_scope
-from code_forge.verify import parse_diff_files, run_verify
+from code_forge.verify import VerifyFailureKind, parse_diff_files, run_verify
 
 
 DIFF = "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n@@ -0,0 +1,5 @@\n+a\n+b\n+c\n+d\n+e\n"
@@ -232,7 +232,14 @@ def test_hardened_failure_names_the_exact_check(tmp_path, case, reason, check, p
         _change(rd, code_excerpts=[dict(EXCERPT, end_line=1, content="forged")])
     elif case == "pass-status":
         _change(rd, pass_status="error")
-    _failure(_verify(tmp_path), reason, check, passed)
+        for perspective in (2, 3):
+            _change(rd, perspective=perspective, pass_status="completed")
+    result = _verify(tmp_path)
+    _failure(result, reason, check, passed)
+    if case == "pass-status":
+        assert result.failure_kind is VerifyFailureKind.INCOMPLETE_PASS
+        assert result.incomplete_passes == (1,)
+        assert result.completion_statuses == ((2, 1, "error"), (2, 2, "completed"), (2, 3, "completed"))
 
 
 @pytest.mark.parametrize("quoted_count,passed", [(2, False), (3, True)])
@@ -413,12 +420,40 @@ def test_legacy_incomplete_pass_keeps_all_previous_check_coordinates(tmp_path):
     rd = _setup(tmp_path)
     (tmp_path / "mod.py").write_text("a\nb\nc\nd\ne\n")
     _change(rd, pass_status="error")
+    for perspective in (2, 3):
+        _change(rd, perspective=perspective, pass_status="completed")
+    result = _verify(tmp_path, hardened=False)
     _failure(
-        _verify(tmp_path, hardened=False),
+        result,
         "pass did not complete: c2p1 status=error -- that pass contributed no review, so the cycle cannot attest",
         8,
         7,
     )
+    assert result.failure_kind is VerifyFailureKind.INCOMPLETE_PASS
+    assert result.incomplete_passes == (1,)
+    assert result.completion_statuses == ((2, 1, "error"), (2, 2, "completed"), (2, 3, "completed"))
+
+
+@pytest.mark.parametrize("hardened", [False, True])
+@pytest.mark.parametrize("omission", ["absent", "null"])
+def test_missing_sibling_status_precedes_explicit_incomplete_pass(tmp_path, hardened, omission):
+    rd = _setup(tmp_path)
+    (tmp_path / "mod.py").write_text("a\nb\nc\nd\ne\n")
+    _change(rd, pass_status="error")
+    _change(rd, perspective=3, pass_status="completed")
+    if omission == "null":
+        _change(rd, perspective=2, pass_status=None)
+    result = _verify(tmp_path, hardened=hardened)
+    _failure(
+        result,
+        "pass completion status missing: c2p2 -- incomplete cycle cannot attest",
+        8,
+        6 if hardened else 7,
+    )
+    assert result.failure_kind is None
+    assert result.incomplete_passes == ()
+    assert result.completion_statuses == ()
+    assert result.unresolved_findings == ()
 
 
 def test_anchor_missing_file_reports_empty_identity(tmp_path):

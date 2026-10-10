@@ -125,11 +125,26 @@ class TestRunMutation:
         assert "Python-only" not in findings[0].description
         assert "other adapters" in infra[0]
 
-    def test_powershell_diff_names_psmutant(self):
-        findings, _infra = run_mutation(["scripts/build.ps1"], ["pytest"])
+    def test_powershell_diff_names_psmutant(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda name: "/fixture/pwsh" if name == "pwsh" else None)
+        with patch("code_forge.mutation_engines.adapters.ps_mutant.PSMutantAdapter.invoke") as invoke:
+            invoke.return_value.reason = "no pester"
+            findings, _infra = run_mutation(["scripts/build.ps1"], ["pytest"])
+        invoke.assert_called_once_with(tmp_path)
         assert "ps-mutant" in findings[0].description
         assert "ps-mutant available" in findings[0].description
         assert "mutation run:" in findings[0].description
+        assert "ps-mutant no pester" in findings[0].description
+
+    def test_powershell_diff_reports_missing_pwsh_without_invoking(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        with patch("code_forge.mutation_engines.adapters.ps_mutant.PSMutantAdapter.invoke") as invoke:
+            findings, _infra = run_mutation(["scripts/build.ps1"], ["pytest"])
+        invoke.assert_not_called()
+        assert findings[0].id == "MUTATION_SKIPPED"
+        assert "pwsh missing" in findings[0].description
+        assert "ps-mutant missing_dependency" in findings[0].description
+        assert "ps-mutant available" not in findings[0].description
 
     @patch("code_forge.mutation.run_owned_command")
     def test_mixed_diff_names_the_non_python_adapter(self, mock_run):

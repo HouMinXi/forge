@@ -82,7 +82,29 @@ def machine_for(tmp_path, mode, provider, diff, files):
     return machine
 
 
-def assert_required_pass_terminal_refusal(machine):
+def assert_unverified_product_refusal(machine, result):
+    """Bind this hard refusal to actual current receipt data, never capacity."""
+    assert result.passed is False
+    assert result.reason == (
+        "unresolved unverified product finding c1p2 -- convergence not established"
+    )
+    assert result.checks_run == 8
+    assert result.failure_kind is None
+    assert result.incomplete_passes == (2,)
+    assert (1, 2, "incomplete") in result.completion_statuses
+    receipt = json.loads((machine.cwd / ".code-forge/receipts/receipt-c1p2.json").read_text())
+    assert receipt["pass_status"] == "incomplete"
+    expected = tuple(
+        (1, 2, machine.source_hash, json.dumps(finding, sort_keys=True, separators=(",", ":")))
+        for finding in receipt["findings"]
+        if finding["disposition"] in ("CONFIRMED", "UNCERTAIN")
+        and finding["basis"]["authority"] == "infra-unavailable"
+    )
+    assert expected and result.unresolved_findings == expected
+    assert machine._capacity_incomplete(result) is False
+
+
+def assert_required_pass_terminal_refusal(machine, *, unresolved_product=False):
     assert machine._receipt_gate_round_errors()
     errors = machine._receipt_gate_terminal_errors()
     if machine.mode is Mode.LOCAL:
@@ -90,11 +112,24 @@ def assert_required_pass_terminal_refusal(machine):
         assert machine._state.earned_clean_window["cycles"] == []
         assert machine._state.consecutive_clean_rounds == 0
         assert machine._state.converged is False
-        assert errors == [
+        assert len(errors) == 2
+        assert errors[0] == (
             "receipt acceptance: earned window has 0 cycles; verifier floor demands 3"
-        ]
-    else:
+        )
+        # The attempted-cycle diagnostic supplements, but cannot replace,
+        # the authoritative earned-window refusal.
+        assert errors[1].startswith("receipt attempt: ")
+        if not unresolved_product:
+            assert "status=incomplete" in errors[1]
+    elif not unresolved_product:
         assert "status=incomplete" in ";".join(errors)
+    if unresolved_product:
+        failure = errors[-1]
+        prefix = "receipt attempt: " if machine.mode is Mode.LOCAL else "receipt acceptance: "
+        assert failure == prefix + (
+            "unresolved unverified product finding c1p2 -- convergence not established"
+        )
+        assert_unverified_product_refusal(machine, failure.verification)
 
 
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
@@ -416,7 +451,7 @@ def test_finding_only_required_pass_refuses_without_changing_validator(tmp_path,
     assert len(retained) == 1 and retained[0].disposition == Disposition.UNCERTAIN
     assert not any(f.source == "L1" for f in machine._state.findings)
     assert len(provider.attempted_excerpts) == 1
-    assert_required_pass_terminal_refusal(machine)
+    assert_required_pass_terminal_refusal(machine, unresolved_product=True)
     receipt = json.loads((tmp_path / ".code-forge/receipts/receipt-c1p2.json").read_text())
     assert receipt["pass_status"] == "incomplete"
     assert len(receipt["code_excerpts"]) == (1 if grouped else 0)
@@ -477,7 +512,7 @@ def test_outlet_c_required_scope_reaches_real_machine_and_receipts(
     assert receipt["pass_status"] == "incomplete"
     assert len(machine.l1_provider.attempted_excerpts) == 1
     assert machine._receipt_gate_round_errors()
-    assert_required_pass_terminal_refusal(machine)
+    assert_required_pass_terminal_refusal(machine, unresolved_product=finding_only)
     verified = run_verify(
         tmp_path,
         machine.source_hash,
@@ -488,7 +523,10 @@ def test_outlet_c_required_scope_reaches_real_machine_and_receipts(
         respect_floor=False,
         require_convergence=False,
     )
-    assert not verified.passed and "status=incomplete" in verified.reason
+    if finding_only:
+        assert_unverified_product_refusal(machine, verified)
+    else:
+        assert not verified.passed and "status=incomplete" in verified.reason
     assert len(calls) == 3 * len(files)
 
 
@@ -3160,3 +3198,33 @@ def test_cross_repo_raw_scopes_reach_actual_receipts_and_verifier(
         assert not result.passed and result.reason.startswith("coverage 0%"), result.reason
     else:
         assert result.passed, result.reason
+
+
+def test_attempt_diagnostic_cannot_lower_earned_window_floor(tmp_path):
+    """A completed attempted cycle is diagnostic evidence, not earned convergence."""
+    diff = diff_for("control.ts")
+    resolved = ResolvedReview([Path("control.ts")], None, diff, "git")
+    with patch(
+        "code_forge.llm_invoke.llm_invoke", return_value=LLMResult(good("control.ts"), Usage(), 0.0)
+    ):
+        provider = build_l1_provider("auto", resolved)
+        machine = machine_for(tmp_path, Mode.LOCAL, provider, diff, ["control.ts"])
+        machine.max_total_rounds = 1
+        assert machine.run() is Verdict.ESCALATED
+    assert machine._state.consecutive_clean_rounds == 1
+    assert [entry["cycle"] for entry in machine._state.earned_clean_window["cycles"]] == [1]
+    errors = machine._receipt_gate_terminal_errors()
+    assert len(errors) == 1
+    assert "earned window has 1 cycles; verifier floor demands 3" in errors[0]
+    assert not run_verify(tmp_path, machine.source_hash, parse_diff_files(diff), diff_text=diff).passed
+    # The supplemental path uses an explicitly scoped inspection. A later
+    # foreign failing cycle must not be reported as THIS attempt's failure.
+    directory = tmp_path / ".code-forge/receipts"
+    for path in list(directory.glob("receipt-c1p*.json")):
+        receipt = json.loads(path.read_text())
+        receipt["cycle"] = 99
+        receipt["pass_status"] = "incomplete"
+        (directory / path.name.replace("c1p", "c99p")).write_text(json.dumps(receipt))
+    errors = machine._receipt_gate_terminal_errors()
+    assert errors and not any(error.startswith("receipt attempt:") for error in errors)
+    assert machine._state.consecutive_clean_rounds == 1

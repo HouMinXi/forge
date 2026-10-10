@@ -31,6 +31,7 @@ def test_unknown_status_is_not_killed():
 def test_gate_invokes_when_probe_is_available(tmp_path, monkeypatch):
     from code_forge.mutation_dispatch import run_note
 
+    monkeypatch.setattr("shutil.which", lambda name: "/fixture/pwsh" if name == "pwsh" else None)
     monkeypatch.setattr(
         "code_forge.mutation_engines.adapters.ps_mutant.PSMutantAdapter.invoke",
         lambda self, root: type("R", (), {"outcomes": (), "reason": "no pester"})(),

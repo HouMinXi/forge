@@ -16,6 +16,7 @@ guaranteed atomic at the syscall level. Ledger rows are well under
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -58,8 +59,8 @@ def resolve_ledger_root(cwd: Path) -> Path:
             if out:
                 common_dir = Path(out).resolve()
                 return common_dir.parent
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 -- best-effort lookup preserves cwd on any failure
+        return cwd
     return cwd
 
 
@@ -83,7 +84,7 @@ class TerminalState(str, Enum):
 
 @dataclass(frozen=True)
 class LedgerRow:
-    """One row of the outcome ledger. Schema v1.1.
+    """One row of the outcome ledger. Schema v1.2 (additive).
 
     The backend and ctx_* fields carry model attribution: which backend
     raised a finding, and which auxiliary context the pipeline fed the
@@ -111,6 +112,8 @@ class LedgerRow:
     ctx_contract: bool = False
     ctx_whole_file: bool = False
     ctx_canary: bool = False
+    # Exact reviewed diff and candidate identity; absent on legacy/manual rows.
+    suppression_key: str = ""
 
 
 def _ledger_path(cwd: Path) -> Path:
@@ -134,27 +137,77 @@ def append_row(cwd: Path, row: LedgerRow) -> None:
         fh.write(line)
 
 
-_SUPPRESSIBLE_TERMINAL_STATES: Final[frozenset[str]] = frozenset(
+_HISTORICAL_TERMINAL_STATES: Final[frozenset[str]] = frozenset(
     {
         "FIXED",
         "DISPROVED",
         "DUPLICATE",
     }
 )
-"""Terminal states whose fingerprint suppresses a re-appearing CONFIRMED finding (D-23)."""
+"""Terminal states exposed by the legacy historical fingerprint lookup."""
 
 
 def known_terminal_fingerprints(root: Path) -> set[str]:
-    """Return fingerprints whose LATEST row is FIXED, DISPROVED, or DUPLICATE.
+    """Historical diagnostic: fingerprints last FIXED, DISPROVED, or DUPLICATE.
+
+    Do not use these location-only identities to dismiss new findings. Use
+    suppressible_finding_keys for snapshot- and claim-scoped decisions.
 
     Latest = last in iteration order (append-only file -> last write wins).
-    UNADJUDICATED and ESCAPED do NOT suppress (D-23, D-25).
+    UNADJUDICATED and ESCAPED are excluded. This is not a suppression API.
     Missing ledger or empty ledger -> empty set (no crash).
     """
     latest: dict[str, tuple[str, str]] = {}  # fp -> (terminal_state, _)
     for r in iter_rows(root):
         latest[r.fingerprint] = (r.terminal_state.value, r.ts)
-    return {fp for fp, (state, _) in latest.items() if state in _SUPPRESSIBLE_TERMINAL_STATES}
+    return {fp for fp, (state, _) in latest.items() if state in _HISTORICAL_TERMINAL_STATES}
+
+
+def finding_suppression_key(
+    *,
+    base_sha: str | None,
+    head_sha: str | None,
+    git_diff: str | None,
+    file: str,
+    line: int,
+    source: str,
+    description: str,
+) -> str:
+    """Bind a disposition to the exact reviewed snapshot and candidate.
+
+    Location fingerprints intentionally collapse nearby claims for convergence;
+    they must not serve as durable evidence that another claim is harmless.
+    Use the resolved diff verbatim, not the whitespace-normalized source hash
+    or a fresh read of mutable working-tree files. Missing provenance is unsafe.
+    """
+    if not base_sha or not head_sha or git_diff is None or not description:
+        return ""
+    payload = [base_sha, head_sha, git_diff, file, line, source, description]
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=True).encode()).hexdigest()
+
+
+def suppressible_finding_keys(root: Path) -> set[str]:
+    """Return exact identities last adjudicated DISPROVED or DUPLICATE.
+
+    FIXED is never proof against a fresh CONFIRMED finding: it may have recurred,
+    or the reviewed snapshot may predate the fix. Legacy rows remain readable
+    but cannot suppress candidates without an exact snapshot/claim identity.
+    A later unscoped re-ruling revokes older keys for its fingerprint; it cannot
+    introduce suppression, even when its new state is DISPROVED or DUPLICATE.
+    """
+    latest: dict[str, TerminalState] = {}
+    keys_by_fingerprint: dict[str, set[str]] = {}
+    for row in iter_rows(root):
+        if row.suppression_key:
+            keys_by_fingerprint.setdefault(row.fingerprint, set()).add(row.suppression_key)
+            latest[row.suppression_key] = row.terminal_state
+        else:
+            for key in keys_by_fingerprint.pop(row.fingerprint, set()):
+                latest.pop(key, None)
+    return {
+        key for key, state in latest.items()
+        if state in {TerminalState.DISPROVED, TerminalState.DUPLICATE}
+    }
 
 
 def iter_rows(cwd: Path) -> Iterator[LedgerRow]:
@@ -202,6 +255,7 @@ def iter_rows(cwd: Path) -> Iterator[LedgerRow]:
                     ctx_contract=data.get("ctx_contract", False),
                     ctx_whole_file=data.get("ctx_whole_file", False),
                     ctx_canary=data.get("ctx_canary", False),
+                    suppression_key=data.get("suppression_key", ""),
                 )
             except (KeyError, ValueError, TypeError) as exc:
                 print(

@@ -312,6 +312,7 @@ def test_note_names_a_missing_binary(monkeypatch):
 def test_note_includes_the_run_when_a_root_is_given(tmp_path, monkeypatch):
     from code_forge.mutation_dispatch import other_adapter_note
 
+    monkeypatch.setattr("shutil.which", lambda name: "/fixture/pwsh" if name == "pwsh" else None)
     monkeypatch.setattr(
         "code_forge.mutation_engines.adapters.ps_mutant.PSMutantAdapter.invoke",
         lambda self, root: type("R", (), {"reason": "no pester"})(),
