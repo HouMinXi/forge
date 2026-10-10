@@ -69,7 +69,8 @@ def test_capacity_public_pipeline_and_recovery(review_workspace, monkeypatch, ca
     assert state.round_history[-1]["clean_credit_action"] == "interrupted"
     assert state.round_history[-1]["reset_observed"] is False
     assert machine.active_findings == []
-    assert "run done: verdict=FAIL findings=0 confirmed=0" in progress
+    assert "review phase done: verdict=FAIL findings=0 confirmed=0" in progress
+    assert "run done:" not in progress
     summary, report = _reported(root)
     assert "FAIL findings=0 confirmed=0" in summary
     assert "provider_capacity=1" in summary and "capacity_incomplete=1" in summary

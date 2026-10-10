@@ -169,4 +169,7 @@ def test_interrupt_suppresses_traceback_context(monkeypatch, capsys):
     assert caught.value.code == 130
     assert caught.value.__suppress_context__ is True
     assert caught.value.__cause__ is None
-    assert capsys.readouterr().err == "code-forge: interrupted\n"
+    lines = capsys.readouterr().err.splitlines()
+    assert len(lines) == 2
+    assert lines[0] == "code-forge: interrupted"
+    assert lines[1].endswith("command done: exit=130")
