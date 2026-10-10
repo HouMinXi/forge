@@ -8,6 +8,7 @@ import os
 import stat
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from code_forge.backend import BackendConfig
 from code_forge.baseline import ResolvedReview
 from code_forge.factories import build_grouped_l1_provider, build_l1_provider
 from code_forge.falsify import StubFalsifier
+from code_forge.falsify_real import RealFalsifier
 from code_forge.errors import CorruptedStateError
 from code_forge.machine import StateMachine, TimeoutBreaker
 from code_forge.source import compute_source_hash
@@ -107,6 +109,29 @@ def _verify(root, **kwargs):
 
 def _receipts(root):
     return sorted((root / ".code-forge" / "receipts").glob("receipt-*.json"))
+
+
+def _falsifier_candidate(reviewer_name="qodo"):
+    return StateFinding(
+        id=f"l1-{reviewer_name}-new-falsifier-candidate",
+        fingerprint="new-falsifier-candidate",
+        source="L1",
+        disposition=Disposition.CONFIRMED,
+        file="control.ts",
+        line_range=[2, 2],
+        description="P1: new candidate",
+        excerpt="const value = 2;",
+    )
+
+
+def _attach_falsifier_candidate(machine):
+    producer = machine.l1_provider
+
+    def provider():
+        findings, excerpts, usage, duration = producer()
+        return findings + [_falsifier_candidate()], excerpts, usage, duration
+
+    machine.l1_provider = provider
 
 
 def _proof(root, cycles):
@@ -413,6 +438,20 @@ def test_legacy_migration_unique_clean_history_binds_original_state(review_works
     assert _verify(root).passed
 
 
+def test_legacy_clean_history_resumes_without_hold_reset(review_workspace, monkeypatch):
+    root = review_workspace
+    path = root / ".code-forge" / "state.json"
+    assert _machine(root, monkeypatch, rounds=2).run() != Verdict.PASS
+    _legacy_state(path)
+
+    assert _machine(root, monkeypatch, rounds=1).run() == Verdict.PASS
+    state = load_state(path)
+    assert state.consecutive_clean_rounds == 3
+    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [1, 2, 3]
+    assert state.round_history[-1]["clean_credit_action"] == "earned"
+    assert _verify(root).passed
+
+
 @pytest.mark.parametrize(
     "damage", ["empty", "duplicate", "bool", "negative", "order", "ambiguous", "count", "status"]
 )
@@ -529,6 +568,790 @@ def test_acquisition_interruption_preserves_only_proved_credit(review_workspace,
     state = load_state(root / ".code-forge" / "state.json")
     assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [1, 2, 4]
     assert _verify(root).passed
+
+
+@pytest.mark.parametrize(
+    "reply,later_failure,gate_failure",
+    [
+        ("not JSON", False, False),
+        ("not JSON", True, False),
+        ("not JSON", False, True),
+        (llm_invoke.InvalidJSONResponseError("invalid JSON", raw_response="not JSON"), False, False),
+        ({"verdict": "UNCERTAIN", "reasoning": "need evidence"}, False, False),
+        ({"verdict": "CONFIRMED", "reasoning": "new defect"}, False, False),
+    ],
+)
+def test_falsifier_protocol_failure_preserves_only_prior_credit(
+    review_workspace, monkeypatch, reply, later_failure, gate_failure
+):
+    root = review_workspace
+    (root / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 2\n")
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
+    first = load_state(root / ".code-forge" / "state.json")
+    assert first.consecutive_clean_rounds == 1
+    assert [entry["cycle"] for entry in first.earned_clean_window["cycles"]] == [1]
+
+    machine = _machine(root, monkeypatch, rounds=1, threshold=2)
+    _attach_falsifier_candidate(machine)
+    if gate_failure:
+        producer = machine.l1_provider
+
+        def bad_excerpts():
+            findings, excerpts, usage, duration = producer()
+            excerpts[0]["content"] = "const value = 200;\n"
+            return findings, excerpts, usage, duration
+
+        machine.l1_provider = bad_excerpts
+    machine.falsifier = RealFalsifier(diff_text=DIFF)
+    if later_failure:
+
+        def failed_l2():
+            raise RuntimeError("owned later phase failure")
+
+        monkeypatch.setattr(machine, "_run_l2_phase", failed_l2)
+    with monkeypatch.context() as patch:
+        def answer(*args, **kwargs):
+            if isinstance(reply, Exception):
+                raise reply
+            return llm_invoke.LLMResult(reply)
+
+        patch.setattr(
+            "code_forge.falsify_real.llm_invoke",
+            answer,
+        )
+        if later_failure:
+            with pytest.raises(RuntimeError, match="owned later phase failure"):
+                machine.run()
+        else:
+            assert machine.run() != Verdict.PASS
+
+    state = load_state(root / ".code-forge" / "state.json")
+    row = state.round_history[-1]
+    if not isinstance(reply, dict):
+        assert state.consecutive_clean_rounds == 1
+        assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [1]
+        assert row["clean_credit_action"] == "interrupted"
+        assert row["fixpoint"] == "INCOMPLETE"
+        assert row["falsify_protocol_failures"] == ["new-falsifier-candidate"]
+        assert row["clean_rounds_after"] == 1
+        assert row["phase_status"]["l2"] == ("failed" if later_failure else "returned")
+        if gate_failure:
+            assert state.verdict == Verdict.FAIL
+        assert state.verdict != Verdict.PASS
+        if not later_failure:
+            receipt = json.loads(
+                (root / ".code-forge" / "receipts" / "receipt-c2p1.json").read_text()
+            )
+            candidate = next(
+                finding for finding in receipt["findings"]
+                if finding["description"].startswith("P1: new candidate")
+            )
+            assert candidate["disposition"] == "UNCERTAIN"
+            assert candidate["basis"]["authority"] == "infra-unavailable"
+            assert candidate["basis"]["falsification_survived"] is False
+        assert _machine(root, monkeypatch, rounds=1, threshold=2).run() == Verdict.PASS
+        final = load_state(root / ".code-forge" / "state.json")
+        assert [entry["cycle"] for entry in final.earned_clean_window["cycles"]] == [1, 3]
+        assert _verify(root).passed
+    else:
+        assert row["fixpoint"] == "RESET"
+        assert row["clean_credit_action"] == "reset"
+        assert state.consecutive_clean_rounds == 0
+        assert state.earned_clean_window["cycles"] == []
+
+
+@pytest.mark.parametrize("decision", ["c", "d"])
+def test_protocol_hold_confirmation_resets_inherited_credit(review_workspace, monkeypatch, decision):
+    from code_forge.hold import run_hold_ui
+
+    root = review_workspace
+    path = root / ".code-forge" / "state.json"
+    assert _machine(root, monkeypatch, rounds=2).run() != Verdict.PASS
+    assert load_state(path).consecutive_clean_rounds == 2
+
+    machine = _machine(root, monkeypatch, rounds=1)
+    _attach_falsifier_candidate(machine)
+    machine.falsifier = RealFalsifier(diff_text=DIFF)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "code_forge.falsify_real.llm_invoke",
+            lambda *args, **kwargs: llm_invoke.LLMResult("not JSON"),
+        )
+        assert machine.run() == Verdict.PENDING
+
+    interrupted = load_state(path)
+    assert interrupted.consecutive_clean_rounds == 2
+    assert [entry["cycle"] for entry in interrupted.earned_clean_window["cycles"]] == [1, 2]
+    assert interrupted.round_history[-1]["clean_credit_action"] == "interrupted"
+    run_hold_ui(interrupted, path, input_fn=lambda _: decision, output_fn=lambda _: None)
+    decided = load_state(path)
+    assert decided.findings[0].disposition == (
+        Disposition.CONFIRMED if decision == "c" else Disposition.DISMISSED
+    )
+
+    resumed = _machine(root, monkeypatch, rounds=1).run()
+    after = load_state(path)
+    if decision == "c":
+        assert resumed != Verdict.PASS
+        assert after.round_history[-1]["clean_credit_action"] == "reset"
+        assert after.consecutive_clean_rounds == 0
+        assert after.earned_clean_window["cycles"] == []
+        assert not _verify(root).passed
+        assert _machine(root, monkeypatch, rounds=3).run() == Verdict.PASS
+        recovered = load_state(path)
+        assert [entry["cycle"] for entry in recovered.earned_clean_window["cycles"]] == [5, 6, 7]
+        assert _verify(root).passed
+    else:
+        assert resumed == Verdict.PASS
+        assert [entry["cycle"] for entry in after.earned_clean_window["cycles"]] == [1, 2, 4]
+        assert _verify(root).passed
+
+
+def test_confirmed_hold_reset_survives_unstarted_pending_attempt(review_workspace, monkeypatch):
+    from code_forge.hold import run_hold_ui
+
+    root = review_workspace
+    path = root / ".code-forge" / "state.json"
+    assert _machine(root, monkeypatch, rounds=2).run() != Verdict.PASS
+    machine = _machine(root, monkeypatch, rounds=1)
+    _attach_falsifier_candidate(machine)
+    machine.falsifier = RealFalsifier(diff_text=DIFF)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "code_forge.falsify_real.llm_invoke",
+            lambda *args, **kwargs: llm_invoke.LLMResult("not JSON"),
+        )
+        assert machine.run() == Verdict.PENDING
+    run_hold_ui(load_state(path), path, input_fn=lambda _: "c", output_fn=lambda _: None)
+
+    reserved = _machine(root, monkeypatch, rounds=1)
+
+    def abort_before_execution():
+        raise KeyboardInterrupt("owned interruption before host execution")
+
+    monkeypatch.setattr(reserved, "_start_host_execution", abort_before_execution)
+    with pytest.raises(KeyboardInterrupt, match="owned interruption"):
+        reserved.run()
+    pending = load_state(path)
+    assert pending.round_history[-1]["clean_credit_action"] == "pending"
+    assert pending.consecutive_clean_rounds == 2
+
+    assert _machine(root, monkeypatch, rounds=1).run() != Verdict.PASS
+    after = load_state(path)
+    assert after.round_history[-1]["clean_credit_action"] == "reset"
+    assert after.consecutive_clean_rounds == 0
+    assert after.earned_clean_window["cycles"] == []
+    assert not _verify(root).passed
+
+
+def test_first_semantic_confirmation_after_protocol_failure_resets_credit(
+    review_workspace, monkeypatch
+):
+    root = review_workspace
+    added = ["const value = 2;"] + [f"const x{i} = {i};" for i in range(19)]
+    lines = ["const context = 1;"] + added + ["const end = 3;"]
+    (root / "control.ts").write_text("\n".join(lines) + "\n")
+    diff = (
+        "diff --git a/control.ts b/control.ts\n--- a/control.ts\n+++ b/control.ts\n"
+        "@@ -1,2 +1,22 @@\n const context = 1;\n"
+        + "".join("+" + line + "\n" for line in added)
+        + " const end = 3;\n"
+    )
+
+    def payload(machine, prompt):
+        start, end = (1, 14) if machine._state.round < 3 else (9, 22)
+        return {
+            "findings": [],
+            "code_excerpts": [{
+                "file": "control.ts",
+                "start_line": start,
+                "end_line": end,
+                "content": "\n".join(lines[start - 1:end]) + "\n",
+            }],
+        }
+
+    def machine_with_candidate(*, rounds=1, candidate=False):
+        machine = _machine(root, monkeypatch, rounds=rounds, diff=diff, payload=payload)
+        if candidate:
+            producer = machine.l1_provider
+
+            def provider():
+                findings, excerpts, usage, duration = producer()
+                finding = _falsifier_candidate()
+                finding.severity = "P3"
+                finding.description = "P3: new candidate"
+                return findings + [finding], excerpts, usage, duration
+
+            machine.l1_provider = provider
+            machine.falsifier = RealFalsifier(diff_text=diff)
+        return machine
+
+    assert machine_with_candidate(rounds=2).run() != Verdict.PASS
+    path = root / ".code-forge" / "state.json"
+    assert load_state(path).consecutive_clean_rounds == 2
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "code_forge.falsify_real.llm_invoke",
+            lambda *args, **kwargs: llm_invoke.LLMResult("not JSON"),
+        )
+        assert machine_with_candidate(candidate=True).run() == Verdict.PENDING
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "code_forge.falsify_real.llm_invoke",
+            lambda *args, **kwargs: llm_invoke.LLMResult({
+                "verdict": "CONFIRMED", "reasoning": "first semantic adjudication",
+            }),
+        )
+        assert machine_with_candidate(candidate=True).run() != Verdict.PASS
+    state = load_state(path)
+    assert state.round_history[-1]["clean_credit_action"] == "reset"
+    assert state.consecutive_clean_rounds == 0
+    assert state.earned_clean_window["cycles"] == []
+    result = verify.run_verify(
+        root,
+        compute_source_hash(git_diff=diff),
+        verify.parse_diff_files(diff),
+        diff_text=diff,
+    )
+    assert not result.passed
+
+
+def test_sticky_dismissal_does_not_credit_failed_falsifier(review_workspace, monkeypatch):
+    root = review_workspace
+    (root / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 2\n")
+    first = _machine(root, monkeypatch, rounds=1, threshold=2)
+    _attach_falsifier_candidate(first)
+    first.falsifier = RealFalsifier(diff_text=DIFF)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "code_forge.falsify_real.llm_invoke",
+            lambda *args, **kwargs: llm_invoke.LLMResult(
+                {"verdict": "DISMISSED", "reasoning": "the diff is correct"}
+            ),
+        )
+        assert first.run() != Verdict.PASS
+    state = load_state(root / ".code-forge" / "state.json")
+    assert state.consecutive_clean_rounds == 1
+    assert state.round_history[-1]["dispositions"]["new-falsifier-candidate"] == "DISMISSED"
+
+    second = _machine(root, monkeypatch, rounds=1, threshold=2)
+    _attach_falsifier_candidate(second)
+    second.falsifier = RealFalsifier(diff_text=DIFF)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "code_forge.falsify_real.llm_invoke",
+            lambda *args, **kwargs: llm_invoke.LLMResult("not JSON"),
+        )
+        assert second.run() != Verdict.PASS
+    state = load_state(root / ".code-forge" / "state.json")
+    assert state.consecutive_clean_rounds == 1
+    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [1]
+    assert state.round_history[-1]["fixpoint"] == "INCOMPLETE"
+    assert state.round_history[-1]["dispositions"]["new-falsifier-candidate"] == "DISMISSED"
+
+
+def test_protocol_failure_does_not_hide_semantic_uncertain_reset(review_workspace, monkeypatch):
+    root = review_workspace
+    (root / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 2\n")
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
+
+    machine = _machine(root, monkeypatch, rounds=1, threshold=2)
+    _attach_falsifier_candidate(machine)
+    producer = machine.l1_provider
+
+    def two_candidates():
+        findings, excerpts, usage, duration = producer()
+        other = _falsifier_candidate()
+        other.id = "l1-expert-semantic-uncertain"
+        other.fingerprint = "semantic-uncertain"
+        return findings + [other], excerpts, usage, duration
+
+    machine.l1_provider = two_candidates
+    machine.falsifier = RealFalsifier(diff_text=DIFF)
+    responses = iter(
+        [
+            llm_invoke.LLMResult("not JSON"),
+            llm_invoke.LLMResult({"verdict": "UNCERTAIN", "reasoning": "need evidence"}),
+        ]
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr("code_forge.falsify_real.llm_invoke", lambda *args, **kwargs: next(responses))
+        assert machine.run() != Verdict.PASS
+
+    state = load_state(root / ".code-forge" / "state.json")
+    row = state.round_history[-1]
+    assert len(row["falsify_protocol_failures"]) == 1
+    assert row["fixpoint"] == "RESET"
+    assert row["clean_credit_action"] == "reset"
+    assert state.consecutive_clean_rounds == 0
+    assert state.earned_clean_window["cycles"] == []
+
+
+@pytest.mark.parametrize(
+    "replies",
+    [
+        [
+            {"verdict": "UNCERTAIN", "reasoning": "semantic ambiguity"},
+            "not JSON",
+        ],
+        [
+            "not JSON",
+            {"verdict": "UNCERTAIN", "reasoning": "semantic ambiguity"},
+        ],
+        [
+            {"verdict": "CONFIRMED", "reasoning": "new defect"},
+            "not JSON",
+        ],
+        [{"verdict": "UNCERTAIN", "reasoning": "semantic ambiguity"}],
+        [{"verdict": "CONFIRMED", "reasoning": "new defect"}],
+    ],
+    ids=[
+        "uncertain-before-protocol",
+        "protocol-before-uncertain",
+        "confirmed-before-protocol",
+        "uncertain-only",
+        "confirmed-only",
+    ],
+)
+def test_same_fingerprint_semantic_reset_survives_protocol_duplicate(
+    review_workspace, monkeypatch, replies
+):
+    root = review_workspace
+    (root / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 2\n")
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
+    before = load_state(root / ".code-forge" / "state.json")
+    assert before.consecutive_clean_rounds == 1
+
+    machine = _machine(root, monkeypatch, rounds=1, threshold=2)
+    producer = machine.l1_provider
+
+    def repeated_candidate():
+        findings, excerpts, usage, duration = producer()
+        names = ("qodo", "expert")[: len(replies)]
+        return findings + [_falsifier_candidate(name) for name in names], excerpts, usage, duration
+
+    machine.l1_provider = repeated_candidate
+    machine.falsifier = RealFalsifier(diff_text=DIFF)
+    responses = iter(llm_invoke.LLMResult(reply) for reply in replies)
+    with monkeypatch.context() as patch:
+        patch.setattr("code_forge.falsify_real.llm_invoke", lambda *args, **kwargs: next(responses))
+        assert machine.run() != Verdict.PASS
+
+    state = load_state(root / ".code-forge" / "state.json")
+    row = state.round_history[-1]
+    assert row["l1_fingerprints"] == ["new-falsifier-candidate"] * len(replies)
+    assert row["falsify_protocol_failures"] == (["new-falsifier-candidate"] if len(replies) == 2 else [])
+    assert row["fixpoint"] == "RESET"
+    assert row["clean_credit_action"] == "reset"
+    assert state.consecutive_clean_rounds == 0
+    assert state.earned_clean_window["cycles"] == []
+
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
+    later = load_state(root / ".code-forge" / "state.json")
+    assert later.consecutive_clean_rounds == 1
+    assert [entry["cycle"] for entry in later.earned_clean_window["cycles"]] == [3]
+
+
+@pytest.mark.parametrize("semantic_pass", ["qodo", "expert"])
+@pytest.mark.parametrize("verdict", ["UNCERTAIN", "CONFIRMED"])
+def test_duplicate_receipts_keep_each_pass_falsifier_result(
+    review_workspace, monkeypatch, semantic_pass, verdict
+):
+    root = review_workspace
+    (root / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 2\n")
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
+
+    machine = _machine(root, monkeypatch, rounds=1, threshold=2)
+    producer = machine.l1_provider
+
+    def two_pass_candidates():
+        findings, excerpts, usage, duration = producer()
+        candidates = [_falsifier_candidate(name) for name in ("qodo", "expert")]
+        return findings + candidates, excerpts, usage, duration
+
+    machine.l1_provider = two_pass_candidates
+    machine.falsifier = RealFalsifier(diff_text=DIFF)
+    replies = iter(
+        llm_invoke.LLMResult(
+            {"verdict": verdict, "reasoning": "semantic result"}
+            if name == semantic_pass else "not JSON"
+        )
+        for name in ("qodo", "expert")
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr("code_forge.falsify_real.llm_invoke", lambda *args, **kwargs: next(replies))
+        assert machine.run() != Verdict.PASS
+
+    state = load_state(root / ".code-forge" / "state.json")
+    row = state.round_history[-1]
+    assert row["fixpoint"] == "RESET"
+    assert row["clean_credit_action"] == "reset"
+    assert state.consecutive_clean_rounds == 0
+    receipts = {
+        name: json.loads((root / ".code-forge" / "receipts" / f"receipt-c2p{number}.json").read_text())
+        for number, name in enumerate(("qodo", "expert"), 1)
+    }
+    assert all(receipt["findings_count"] == 1 for receipt in receipts.values())
+    semantic = receipts[semantic_pass]["findings"][0]
+    failure = receipts["expert" if semantic_pass == "qodo" else "qodo"]["findings"][0]
+    assert semantic["disposition"] == verdict
+    assert failure["disposition"] == "UNCERTAIN"
+    assert failure["basis"]["authority"] == "infra-unavailable"
+    assert failure["basis"]["falsification_survived"] is False
+    assert "falsify() protocol violation" in failure["description"]
+
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() == Verdict.PASS
+    final = load_state(root / ".code-forge" / "state.json")
+    assert [entry["cycle"] for entry in final.earned_clean_window["cycles"]] == [3, 4]
+    assert _verify(root).passed
+
+
+@pytest.mark.parametrize(
+    "reply, error_text",
+    [
+        ("not JSON", "protocol violation"),
+        (llm_invoke.LLMInvokeError("owned outage"), "backend unavailable"),
+        (RuntimeError("owned failure"), "raised"),
+    ],
+    ids=["protocol", "backend", "runtime"],
+)
+def test_ci_falsifier_failure_cannot_attest_clean_pass(
+    review_workspace, monkeypatch, reply, error_text
+):
+    root = review_workspace
+    machine = _machine(root, monkeypatch, rounds=1, threshold=1)
+    machine.mode = Mode.CI
+    machine.resolved_review = replace(
+        machine.resolved_review, base_sha="a" * 40, head_sha="b" * 40
+    )
+    _attach_falsifier_candidate(machine)
+    machine.falsifier = RealFalsifier(diff_text=DIFF)
+    with monkeypatch.context() as patch:
+        def answer(*args, **kwargs):
+            if isinstance(reply, Exception):
+                raise reply
+            return llm_invoke.LLMResult(reply)
+
+        patch.setattr(
+            "code_forge.falsify_real.llm_invoke",
+            answer,
+        )
+        verdict = machine.run()
+
+    state = load_state(root / ".code-forge" / "state.json")
+    receipt = json.loads(
+        (root / ".code-forge" / "receipts" / "receipt-c1p1.json").read_text()
+    )
+    candidate = next(
+        finding for finding in receipt["findings"]
+        if finding["description"].startswith("P1: new candidate")
+    )
+    ledger = root / ".code-forge" / "ledger.jsonl"
+    rows = [json.loads(line) for line in ledger.read_text().splitlines()] if ledger.exists() else []
+
+    assert candidate["disposition"] == "UNCERTAIN"
+    assert candidate["basis"]["falsification_survived"] is False
+    if error_text == "protocol violation":
+        assert candidate["basis"]["authority"] == "infra-unavailable"
+    assert any(
+        finding.fingerprint == "new-falsifier-candidate"
+        and finding.disposition == Disposition.UNCERTAIN
+        and error_text in finding.error
+        for finding in state.findings
+    )
+    assert verdict == state.verdict == Verdict.FAIL
+    assert state.converged is False
+    assert state.rounds_with_falsify_infra == 1
+    assert all(row["evidence_class"] != "clean_pass" for row in rows)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [llm_invoke.LLMInvokeError("owned outage"), RuntimeError("owned failure")],
+    ids=["backend", "runtime"],
+)
+def test_local_falsifier_failure_receipt_grants_no_clean_credit(
+    review_workspace, monkeypatch, error
+):
+    root = review_workspace
+    (root / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 2\n")
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
+    first = load_state(root / ".code-forge" / "state.json")
+    assert first.consecutive_clean_rounds == 1
+
+    machine = _machine(root, monkeypatch, rounds=1, threshold=2)
+    _attach_falsifier_candidate(machine)
+    machine.falsifier = RealFalsifier(diff_text=DIFF)
+    with monkeypatch.context() as patch:
+        def answer(*args, **kwargs):
+            raise error
+
+        patch.setattr("code_forge.falsify_real.llm_invoke", answer)
+        assert machine.run() != Verdict.PASS
+
+    state = load_state(root / ".code-forge" / "state.json")
+    receipt = json.loads(
+        (root / ".code-forge" / "receipts" / "receipt-c2p1.json").read_text()
+    )
+    candidate = next(
+        finding for finding in receipt["findings"]
+        if finding["description"].startswith("P1: new candidate")
+    )
+    row = state.round_history[-1]
+    assert row["fixpoint"] == "RESET"
+    assert row["clean_credit_action"] == "reset"
+    assert state.consecutive_clean_rounds == 0
+    assert state.earned_clean_window["cycles"] == []
+    assert candidate["disposition"] == "UNCERTAIN"
+    assert candidate["basis"]["authority"] == "infra-unavailable"
+    assert candidate["basis"]["falsification_survived"] is False
+
+
+@pytest.mark.parametrize(
+    "error",
+    [llm_invoke.LLMInvokeError("owned outage"), RuntimeError("owned failure")],
+    ids=["backend", "runtime"],
+)
+def test_ci_failed_duplicate_keeps_independent_confirmed_result(
+    review_workspace, monkeypatch, error
+):
+    root = review_workspace
+    monkeypatch.setenv("FORGE_FALSIFY_WORKERS", "1")
+    machine = _machine(root, monkeypatch, rounds=1, threshold=1)
+    machine.mode = Mode.CI
+    machine.resolved_review = replace(
+        machine.resolved_review, base_sha="a" * 40, head_sha="b" * 40
+    )
+    producer = machine.l1_provider
+
+    def two_pass_candidates():
+        findings, excerpts, usage, duration = producer()
+        return findings + [_falsifier_candidate("qodo"), _falsifier_candidate("expert")], excerpts, usage, duration
+
+    machine.l1_provider = two_pass_candidates
+    machine.falsifier = RealFalsifier(diff_text=DIFF)
+    replies = iter([{"verdict": "CONFIRMED", "reasoning": "semantic result"}, error])
+    with monkeypatch.context() as patch:
+        def answer(*args, **kwargs):
+            reply = next(replies)
+            if isinstance(reply, Exception):
+                raise reply
+            return llm_invoke.LLMResult(reply)
+
+        patch.setattr("code_forge.falsify_real.llm_invoke", answer)
+        assert machine.run() == Verdict.FAIL
+
+    state = load_state(root / ".code-forge" / "state.json")
+    findings = [f for f in state.findings if f.fingerprint == "new-falsifier-candidate"]
+    assert len(findings) == 1
+    assert findings[0].disposition == Disposition.CONFIRMED
+    receipts = [
+        json.loads((root / ".code-forge" / "receipts" / f"receipt-c1p{number}.json").read_text())
+        for number in (1, 2)
+    ]
+    assert receipts[0]["findings"][0]["disposition"] == "CONFIRMED"
+    failure = receipts[1]["findings"][0]
+    assert failure["disposition"] == "UNCERTAIN"
+    assert failure["basis"]["authority"] == "infra-unavailable"
+    assert failure["basis"]["falsification_survived"] is False
+    ledger = [
+        json.loads(line)
+        for line in (root / ".code-forge" / "ledger.jsonl").read_text().splitlines()
+    ]
+    assert any(row["fingerprint"] == "new-falsifier-candidate" for row in ledger)
+    assert all(row["evidence_class"] != "clean_pass" for row in ledger)
+
+
+@pytest.mark.parametrize(
+    "replies",
+    [
+        (
+            {"verdict": "DISMISSED", "reasoning": "semantic dismissal"},
+            llm_invoke.LLMInvokeError("owned outage"),
+        ),
+        (
+            {"verdict": "DISMISSED", "reasoning": "semantic dismissal"},
+            RuntimeError("owned failure"),
+        ),
+        (llm_invoke.LLMInvokeError("owned outage"), "not JSON"),
+        ("not JSON", llm_invoke.LLMInvokeError("owned outage")),
+    ],
+    ids=["dismissed-backend", "dismissed-runtime", "backend-protocol", "protocol-backend"],
+)
+def test_local_mixed_falsifier_failure_resets_and_recovers(
+    review_workspace, monkeypatch, replies
+):
+    root = review_workspace
+    monkeypatch.setenv("FORGE_FALSIFY_WORKERS", "1")
+    (root / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 2\n")
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
+    prior = load_state(root / ".code-forge" / "state.json")
+    assert prior.consecutive_clean_rounds == 1
+
+    machine = _machine(root, monkeypatch, rounds=1, threshold=2)
+    producer = machine.l1_provider
+
+    def two_pass_candidates():
+        findings, excerpts, usage, duration = producer()
+        return findings + [_falsifier_candidate("qodo"), _falsifier_candidate("expert")], excerpts, usage, duration
+
+    machine.l1_provider = two_pass_candidates
+    machine.falsifier = RealFalsifier(diff_text=DIFF)
+    sequence = iter(replies)
+    with monkeypatch.context() as patch:
+        def answer(*args, **kwargs):
+            reply = next(sequence)
+            if isinstance(reply, Exception):
+                raise reply
+            return llm_invoke.LLMResult(reply)
+
+        patch.setattr("code_forge.falsify_real.llm_invoke", answer)
+        assert machine.run() != Verdict.PASS
+
+    state = load_state(root / ".code-forge" / "state.json")
+    row = state.round_history[-1]
+    assert row["fixpoint"] == "RESET"
+    assert row["clean_credit_action"] == "reset"
+    assert state.consecutive_clean_rounds == 0
+    assert state.earned_clean_window["cycles"] == []
+
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
+    resumed = load_state(root / ".code-forge" / "state.json")
+    assert resumed.consecutive_clean_rounds == 1
+    assert [entry["cycle"] for entry in resumed.earned_clean_window["cycles"]] == [3]
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() == Verdict.PASS
+    assert _verify(root).passed
+
+
+@pytest.mark.parametrize(
+    "error",
+    [llm_invoke.LLMInvokeError("owned outage"), RuntimeError("owned failure")],
+    ids=["backend", "runtime"],
+)
+def test_local_sticky_dismissal_cannot_hide_later_falsifier_failure(
+    review_workspace, monkeypatch, error
+):
+    root = review_workspace
+    (root / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 2\n")
+
+    first = _machine(root, monkeypatch, rounds=1, threshold=2)
+    _attach_falsifier_candidate(first)
+    first.falsifier = RealFalsifier(diff_text=DIFF)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "code_forge.falsify_real.llm_invoke",
+            lambda *args, **kwargs: llm_invoke.LLMResult(
+                {"verdict": "DISMISSED", "reasoning": "semantic dismissal"}
+            ),
+        )
+        assert first.run() != Verdict.PASS
+    prior = load_state(root / ".code-forge" / "state.json")
+    assert prior.consecutive_clean_rounds == 1
+    assert prior.round_history[-1]["clean_credit_action"] == "earned"
+
+    second = _machine(root, monkeypatch, rounds=1, threshold=2)
+    _attach_falsifier_candidate(second)
+    second.falsifier = RealFalsifier(diff_text=DIFF)
+    with monkeypatch.context() as patch:
+        def outage(*args, **kwargs):
+            raise error
+
+        patch.setattr("code_forge.falsify_real.llm_invoke", outage)
+        assert second.run() != Verdict.PASS
+    failed = load_state(root / ".code-forge" / "state.json")
+    assert failed.round_history[-1]["fixpoint"] == "RESET"
+    assert failed.round_history[-1]["clean_credit_action"] == "reset"
+    assert failed.consecutive_clean_rounds == 0
+    assert failed.earned_clean_window["cycles"] == []
+
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
+    recovered = load_state(root / ".code-forge" / "state.json")
+    assert [entry["cycle"] for entry in recovered.earned_clean_window["cycles"]] == [3]
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() == Verdict.PASS
+    assert _verify(root).passed
+
+
+def test_same_fingerprint_dismissal_and_protocol_error_earns_no_new_credit(
+    review_workspace, monkeypatch
+):
+    root = review_workspace
+    (root / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 2\n")
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
+
+    machine = _machine(root, monkeypatch, rounds=1, threshold=2)
+    producer = machine.l1_provider
+
+    def repeated_candidate():
+        findings, excerpts, usage, duration = producer()
+        return findings + [_falsifier_candidate("qodo"), _falsifier_candidate("expert")], excerpts, usage, duration
+
+    machine.l1_provider = repeated_candidate
+    machine.falsifier = RealFalsifier(diff_text=DIFF)
+    responses = iter(
+        [
+            llm_invoke.LLMResult({"verdict": "DISMISSED", "reasoning": "already safe"}),
+            llm_invoke.LLMResult("not JSON"),
+        ]
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr("code_forge.falsify_real.llm_invoke", lambda *args, **kwargs: next(responses))
+        assert machine.run() != Verdict.PASS
+
+    state = load_state(root / ".code-forge" / "state.json")
+    row = state.round_history[-1]
+    assert row["fixpoint"] == "INCOMPLETE"
+    assert row["clean_credit_action"] == "interrupted"
+    assert row["falsify_protocol_failures"] == ["new-falsifier-candidate"]
+    assert state.consecutive_clean_rounds == 1
+    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [1]
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() == Verdict.PASS
+    assert _verify(root).passed
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "empty", "duplicate", "wrong_fingerprint", "missing_disposition", "l1_not_returned",
+        "clean_fixpoint", "earned", "reset_action",
+    ],
+)
+def test_protocol_interruption_requires_host_observation(review_workspace, monkeypatch, damage):
+    root = review_workspace
+    (root / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 2\n")
+    assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
+    machine = _machine(root, monkeypatch, rounds=1, threshold=2)
+    _attach_falsifier_candidate(machine)
+    machine.falsifier = RealFalsifier(diff_text=DIFF)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "code_forge.falsify_real.llm_invoke",
+            lambda *args, **kwargs: llm_invoke.LLMResult("not JSON"),
+        )
+        assert machine.run() != Verdict.PASS
+    path = root / ".code-forge" / "state.json"
+    data = json.loads(path.read_text())
+    row = data["round_history"][-1]
+    assert row["clean_credit_action"] == "interrupted"
+    if damage == "empty":
+        row["falsify_protocol_failures"] = []
+    elif damage == "duplicate":
+        row["falsify_protocol_failures"] *= 2
+    elif damage == "wrong_fingerprint":
+        row["falsify_protocol_failures"] = ["not-an-l1-finding"]
+    elif damage == "missing_disposition":
+        del row["dispositions"]["new-falsifier-candidate"]
+    elif damage == "l1_not_returned":
+        row["phase_status"]["l1"] = "failed"
+    elif damage == "clean_fixpoint":
+        row["fixpoint"] = "CLEAN"
+    elif damage == "earned":
+        row["clean_credit_action"] = "earned"
+    else:
+        row["clean_credit_action"] = "reset"
+    path.write_text(json.dumps(data))
+    with pytest.raises(CorruptedStateError):
+        load_state(path)
 
 
 def test_attempt_history_pending_is_durable_before_real_dispatch(review_workspace, monkeypatch):

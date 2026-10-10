@@ -24,7 +24,7 @@ import threading
 import time
 import traceback
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -72,6 +72,7 @@ from .state import (
     FindingDiagnosticKind,
     PassOutcome,
     is_provider_capacity,
+    is_provider_diagnostic,
     reporting_product_findings,
     load_state,
     product_round_history,
@@ -243,9 +244,10 @@ def _falsify_workers(total: int, falsifier=None) -> int:
 
 
 class _FixpointResult(str, Enum):
-    """Return type of _fixpoint_reached: signals CLEAN, full RESET, or CYCLE_RESTART."""
+    """Return type of _fixpoint_reached for LOCAL clean-credit transitions."""
 
     CLEAN = "CLEAN"
+    INCOMPLETE = "INCOMPLETE"
     RESET = "RESET"
     CYCLE_RESTART = "CYCLE_RESTART"
 
@@ -416,6 +418,9 @@ class StateMachine:
         self._phase_status = {name: "not_run" for name in ROUND_PHASES}
         self._phase_findings: dict[str, list[StateFinding]] = {}
         self._acquisition_markers: list[StateFinding] = []
+        self._falsify_protocol_findings: list[StateFinding] = []
+        self._falsify_failed_findings: list[StateFinding] = []
+        self._hold_confirmed_fingerprints: list[str] = []
         self._acquisition_receipts: tuple[tuple[int, int, str, str], ...] = ()
         self._acquisition_authority: _AcquisitionSnapshot | None = None
         self._attempt_snapshot: dict | None = None
@@ -787,7 +792,14 @@ class StateMachine:
         # a silent PASS over an unreviewed file is a false green.
         confirmed = self._count(Disposition.CONFIRMED)
         coverage_gaps = self._count_coverage_gaps()
-        verdict = Verdict.FAIL if confirmed > 0 or coverage_gaps > 0 or self._acquisition_markers else Verdict.PASS
+        verdict = (
+            Verdict.FAIL
+            if confirmed > 0
+            or coverage_gaps > 0
+            or self._acquisition_markers
+            or self._state.rounds_with_falsify_infra > 0
+            else Verdict.PASS
+        )
         if coverage_gaps > 0 and confirmed == 0:
             self._state.infra_errors.append(
                 "coverage: %d in-scope file(s) had no review layer "
@@ -893,6 +905,33 @@ class StateMachine:
                     ):
                         self._acquisition_markers.append(finding)
 
+    def _protocol_failure_fingerprints(self) -> list[str]:
+        """Return identities captured by the host's falsifier exception arm."""
+        return list(dict.fromkeys(finding.fingerprint for finding in self._falsify_protocol_findings))
+
+    def _confirmed_hold_fingerprints(self) -> list[str]:
+        """Find human confirmations made after the latest interrupted attempt."""
+        if not self._state.consecutive_clean_rounds or not self._state.round_history:
+            return []
+        latest = self._state.round_history[-1]
+        for latest in reversed(self._state.round_history):
+            if not is_host_round(latest) or latest["source_hash"] != self.source_hash:
+                return []
+            if latest["clean_credit_action"] == "pending":
+                # A reserved attempt may be interrupted before observing
+                # anything. It cannot erase the preceding HOLD decision.
+                continue
+            break
+        if latest["clean_credit_action"] != "interrupted":
+            return []
+        observed = latest["dispositions"]
+        return list(dict.fromkeys(
+            finding.fingerprint
+            for finding in reporting_product_findings(self._state.findings)
+            if observed.get(finding.fingerprint) == Disposition.UNCERTAIN.value
+            and finding.disposition == Disposition.CONFIRMED
+        ))
+
     def _begin_host_attempt(self, round_index: int) -> None:
         if not self._host_receipt_active():
             return
@@ -906,6 +945,8 @@ class StateMachine:
         self._phase_status = {name: "not_run" for name in ROUND_PHASES}
         self._phase_findings = {}
         self._acquisition_markers = []
+        self._falsify_protocol_findings = []
+        self._falsify_failed_findings = []
         self._attempt_snapshot = None
         self._state.round_history.append(
             {
@@ -956,12 +997,17 @@ class StateMachine:
             clean_credit_action=action,
             phase_status=dict(self._phase_status),
             acquisition_failures=failures,
+            falsify_protocol_failures=(
+                self._protocol_failure_fingerprints() if self._phase_status["l1"] == "returned" else []
+            ),
             reset_observed=fixpoint in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART),
             clean_rounds_after=self._state.consecutive_clean_rounds,
         )
         if fixpoint is not None:
             row["fixpoint"] = fixpoint.name
         self._host_attempt_round = None
+        if action == "reset":
+            self._hold_confirmed_fingerprints = []
 
     def _reset_clean_credit(self) -> None:
         self._state.consecutive_clean_rounds = 0
@@ -1050,10 +1096,10 @@ class StateMachine:
                     findings.get("rulepack", []),
                 )
                 fixpoint = self._fixpoint_reached()
-                if fixpoint != _FixpointResult.CLEAN:
+                if fixpoint in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART):
                     self._reset_clean_credit()
                     action = "reset"
-                elif self._acquisition_markers:
+                elif fixpoint == _FixpointResult.INCOMPLETE or self._acquisition_markers:
                     action = "interrupted"
             self._state.verdict = Verdict.FAIL
             self._state.converged = False
@@ -1106,6 +1152,7 @@ class StateMachine:
             self._clean_window_cycles = [
                 entry["cycle"] for entry in self._state.earned_clean_window["cycles"]
             ]
+            self._hold_confirmed_fingerprints = self._confirmed_hold_fingerprints()
         start = self._continuation_round_index()
         for round_index in range(start, start + self.max_total_rounds):
             self._begin_host_attempt(round_index)
@@ -1177,8 +1224,12 @@ class StateMachine:
                         capacity_gate_error = error
             if gate_errors:
                 self._finish_host_attempt(
-                    ("interrupted" if self._acquisition_markers else "unavailable")
-                    if _fp == _FixpointResult.CLEAN
+                    (
+                        "interrupted"
+                        if _fp == _FixpointResult.INCOMPLETE or self._acquisition_markers
+                        else "unavailable"
+                    )
+                    if _fp in (_FixpointResult.CLEAN, _FixpointResult.INCOMPLETE)
                     else "reset",
                     _fp,
                 )
@@ -1207,7 +1258,10 @@ class StateMachine:
                     "mutation: surviving mutants reported in 3 consecutive rounds"
                 )
                 self._finish_host_attempt(
-                    "reset" if _fp != _FixpointResult.CLEAN else "unavailable", _fp
+                    "interrupted"
+                    if _fp == _FixpointResult.INCOMPLETE
+                    else ("reset" if _fp != _FixpointResult.CLEAN else "unavailable"),
+                    _fp,
                 )
                 self._persist_state()
                 return Verdict.FAIL
@@ -1237,7 +1291,12 @@ class StateMachine:
             # it (observed 2026-09-05: five rounds on disk at clean=0
             # that were CLEAN/RESET/CLEAN/CLEAN/RESET in memory).
             if active:
-                self._finish_host_attempt("earned" if _fp == _FixpointResult.CLEAN else "reset", _fp)
+                self._finish_host_attempt(
+                    "earned"
+                    if _fp == _FixpointResult.CLEAN
+                    else ("interrupted" if _fp == _FixpointResult.INCOMPLETE else "reset"),
+                    _fp,
+                )
             elif self._state.round_history:
                 self._state.round_history[-1]["fixpoint"] = _fp.name
                 self._state.round_history[-1]["clean_rounds_after"] = (
@@ -1245,7 +1304,7 @@ class StateMachine:
                 )
             self._persist_state()
 
-            if self._state.consecutive_clean_rounds >= _threshold:
+            if _fp == _FixpointResult.CLEAN and self._state.consecutive_clean_rounds >= _threshold:
                 self._finalize_local_terminal()
                 return self._state.verdict
             if self._should_enter_hold():
@@ -1358,6 +1417,8 @@ class StateMachine:
         Usage accumulated to _round_input_tokens/_round_output_tokens for
         cost tracking. Cost written to State after full round (H3 fix).
         """
+        self._falsify_protocol_findings = []
+        self._falsify_failed_findings = []
         l1_candidates, l1_excerpts, usage, duration = self._observe_phase("l1", self.l1_provider)
         # Accumulate round-level token usage (H3: applied after round ends)
         self._round_input_tokens += usage.input_tokens
@@ -1413,6 +1474,8 @@ class StateMachine:
                 f.error = f"falsify() protocol violation: {exc}"
                 with _lock:
                     falsify_infra_failures.append(f.fingerprint)
+                    self._falsify_protocol_findings.append(f)
+                    self._falsify_failed_findings.append(f)
                     self._state.infra_errors.append(
                         f"falsify protocol violation on {f.fingerprint}: {exc}"
                     )
@@ -1431,6 +1494,7 @@ class StateMachine:
                 f.error = f"falsify() backend unavailable: {exc}"
                 with _lock:
                     falsify_infra_failures.append(f.fingerprint)
+                    self._falsify_failed_findings.append(f)
                     self._state.infra_errors.append(
                         f"falsify backend unavailable on {f.fingerprint}: {exc}"
                     )
@@ -1442,6 +1506,8 @@ class StateMachine:
                 f.disposition = Disposition.UNCERTAIN
                 f.error = f"falsify() raised: {exc}"
                 with _lock:
+                    falsify_infra_failures.append(f.fingerprint)
+                    self._falsify_failed_findings.append(f)
                     self._state.infra_errors.append(f"falsify exception on {f.fingerprint}: {exc}")
                 progress.emit("falsify %d/%d: failed (%.1fs)" % (i, total, time.monotonic() - t_falsify))
             except Exception:
@@ -1471,11 +1537,8 @@ class StateMachine:
 
         Sibling of _check_l1_can_still_converge, for the other half of
         the round. A falsify without a usable verdict leaves the
-        finding UNCERTAIN, and clause (d) of the fixpoint check treats
-        any UNCERTAIN as a reset -- so repeated infrastructure failures reset
-        the clean-round counter every round until max_total_rounds, at
-        30-180s per call. The 2026-08-27 measurement was three hours to
-        learn nothing.
+        finding UNCERTAIN. A protocol failure interrupts clean credit;
+        repeated infrastructure failures still cannot earn a round.
 
         HOLD does not rescue this either: _should_enter_hold requires
         zero unfixed CONFIRMED, so one real finding open alongside N
@@ -1505,8 +1568,8 @@ class StateMachine:
             raise TimeoutBreaker(
                 "%d consecutive rounds where the falsifier could not adjudicate "
                 "findings (latest: %d finding(s) unadjudicated). "
-                "Each unadjudicated finding stays UNCERTAIN, which resets the "
-                "clean-round counter, so this review cannot converge no "
+                "Each unadjudicated finding stays UNCERTAIN and cannot earn "
+                "clean credit, so this review cannot converge no "
                 "matter how many rounds remain. Check the recorded falsify "
                 "errors and repair the response contract or backend before retrying."
                 % (self._state.rounds_with_falsify_infra, len(infra_failures))
@@ -2074,11 +2137,25 @@ class StateMachine:
 
         diff_text = self._receipt_diff()
         diff_files = parse_diff_files(diff_text) if diff_text else None
+        failed_ids = {id(finding) for finding in self._falsify_failed_findings}
+        # The writer derives basis from source. Publish a copy of each failed
+        # falsification as unverified evidence without changing canonical state.
+        receipt_findings = [
+            replace(
+                finding,
+                source="INFRA",
+                disposition=Disposition.UNCERTAIN,
+                description=f"{finding.description} ({finding.error})",
+            )
+            if id(finding) in failed_ids
+            else finding
+            for finding in l1_findings
+        ]
         try:
             written = write_receipts(
                 receipts_dir=self.cwd / ".code-forge" / "receipts",
                 round_index=round_index,
-                l1_findings=l1_findings,
+                l1_findings=receipt_findings,
                 diff_sha256=self.source_hash,
                 source_files=list(self._source_files()),
                 cwd=self.cwd,
@@ -2193,8 +2270,8 @@ class StateMachine:
         self._state.findings = merged
         if self.exec_falsify:
             self._run_exec_falsifier()
-        # State keeps one finding per fingerprint; receipts retain each
-        # candidate, including repeats. They must share its disposition.
+        # State keeps one finding per fingerprint. Receipt publication below
+        # restores each failed falsification's unadjudicated outcome and basis.
         dispositions = {f.fingerprint: f.disposition for f in self._state.findings}
         for finding in l1_findings:
             finding.disposition = dispositions[finding.fingerprint]
@@ -2310,9 +2387,13 @@ class StateMachine:
               any earlier round of this review) -> RESET
           (b) Any FIXED->CONFIRMED reversion -> RESET
         Only recurring CONFIRMED findings reach the tier check.
+        A protocol-only observation is not an adjudication: its first later
+        CONFIRMED result also resets credit, even if the fingerprint was seen.
 
         After (a)/(b):
-          - Any UNCERTAIN -> RESET  (clause d, unchanged)
+          - Semantic UNCERTAIN -> RESET
+          - Host-caught non-protocol falsification failure -> RESET
+          - Host-caught falsifier protocol failure alone -> INCOMPLETE
           - Zero CONFIRMED -> CLEAN
           - P0 or P1 CONFIRMED -> RESET
           - P2 CONFIRMED (no P0/P1) -> CYCLE_RESTART (resets clean-round counter)
@@ -2364,18 +2445,40 @@ class StateMachine:
             if disp == Disposition.CONFIRMED and prior_disps.get(fp) == "FIXED":
                 return _FixpointResult.RESET
 
+        # An interrupted protocol response put the fingerprint in history
+        # without adjudicating it. The first real confirmation after that
+        # interruption must not be treated as a harmless repeat.
+        for fp, disp in current_disps.items():
+            if disp != Disposition.CONFIRMED:
+                continue
+            if any(past.get("dispositions", {}).get(fp) == Disposition.CONFIRMED.value for past in history):
+                continue
+            if any(fp in past.get("falsify_protocol_failures", []) for past in history):
+                return _FixpointResult.RESET
+
+        if self._hold_confirmed_fingerprints:
+            return _FixpointResult.RESET
+
         confirmed = [f for f in product_findings if f.disposition == Disposition.CONFIRMED]
 
-        # (d) zero UNCERTAIN remain (unchanged from binary version)
+        # A received but unusable falsifier response cannot adjudicate its
+        # candidate or erase earlier clean proof. Other UNCERTAIN findings
+        # retain the normal reset policy.
+        protocol_ids = {id(finding) for finding in self._falsify_protocol_findings}
+        if any(id(finding) not in protocol_ids for finding in self._falsify_failed_findings):
+            return _FixpointResult.RESET
+        incomplete = bool(protocol_ids) and self._host_attempt_round is not None
         for f in product_findings:
             if is_receipt_audit(f):
                 continue
             if f.disposition == Disposition.UNCERTAIN:
+                if incomplete and id(f) in protocol_ids:
+                    continue
                 return _FixpointResult.RESET
 
         # (c) zero CONFIRMED -> CLEAN
         if not confirmed:
-            return _FixpointResult.CLEAN
+            return _FixpointResult.INCOMPLETE if incomplete else _FixpointResult.CLEAN
 
         # Severity-tiered check on recurring CONFIRMED findings
         tiers = [_severity_tier(f) for f in confirmed]
@@ -2423,7 +2526,7 @@ class StateMachine:
             if total_p3 / changed_lines > P3_DENSITY_THRESHOLD:
                 return _FixpointResult.CYCLE_RESTART
 
-        return _FixpointResult.CLEAN
+        return _FixpointResult.INCOMPLETE if incomplete else _FixpointResult.CLEAN
 
     def _should_enter_hold(self) -> bool:
         """GATE-01b: HOLD when UNCERTAIN > 0 AND unfixed CONFIRMED == 0.
@@ -2433,7 +2536,14 @@ class StateMachine:
         if self.mode == Mode.CI:
             return False
         has_uncertain = any(f.disposition == Disposition.UNCERTAIN for f in self.active_findings)
-        has_unfixed_confirmed = any(f.disposition == Disposition.CONFIRMED for f in self._state.findings)
+        has_unfixed_confirmed = any(
+            f.disposition == Disposition.CONFIRMED
+            and not (
+                f.diagnostic_kind is FindingDiagnosticKind.CAPACITY_INCOMPLETE
+                and is_provider_diagnostic(f)
+            )
+            for f in self._state.findings
+        )
         return has_uncertain and not has_unfixed_confirmed
 
     def _stalled_on_identical_round(self) -> bool:
@@ -3268,8 +3378,20 @@ class StateMachine:
             merged[f.fingerprint] = f
         for f in l2_findings or []:
             merged[f.fingerprint] = f
+        # An unadjudicated duplicate cannot erase an earlier L1 outcome.
+        # Prefer a candidate with a real disposition for this fingerprint.
+        failed_ids = {id(f) for f in self._falsify_failed_findings}
+        l1_selected: dict[str, StateFinding] = {}
         for f in l1_findings:
-            merged[f.fingerprint] = f
+            previous = l1_selected.get(f.fingerprint)
+            if (
+                previous is not None
+                and id(f) in failed_ids
+                and id(previous) not in failed_ids
+            ):
+                continue
+            l1_selected[f.fingerprint] = f
+        merged.update(l1_selected)
         for f in l0_findings:
             merged[f.fingerprint] = f
         for f in rulepack_findings or []:

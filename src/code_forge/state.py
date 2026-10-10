@@ -354,7 +354,7 @@ class State:
     rounds_with_failed_pass: int = 0  # LOCAL mode only
     # Rounds where the falsifier could not reach its backend. Persisted
     # for the same reason as the field above.
-    rounds_with_falsify_infra: int = 0  # LOCAL mode only
+    rounds_with_falsify_infra: int = 0  # Current failure also blocks CI PASS.
     # 08-02 additions: cost tracking fields (CLI-08)
     cost_total_input: int = 0
     cost_total_output: int = 0
@@ -438,6 +438,13 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
         action = row["clean_credit_action"]
         if action not in ("pending", "earned", "interrupted", "reset", "unavailable"):
             raise CorruptedStateError("invalid host clean credit action")
+        protocol_failures = row.get("falsify_protocol_failures", [])
+        if (
+            not isinstance(protocol_failures, list)
+            or any(not isinstance(fp, str) or not fp for fp in protocol_failures)
+            or len(protocol_failures) != len(set(protocol_failures))
+        ):
+            raise CorruptedStateError("invalid falsifier protocol failure identity")
         phases = row["phase_status"]
         if (
             not isinstance(phases, dict)
@@ -479,6 +486,7 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
         if action == "pending" and (
             any(value != "not_run" for value in phases.values())
             or failures
+            or protocol_failures
             or row["reset_observed"]
             or "fixpoint" in row
         ):
@@ -495,6 +503,15 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
                 )
             ):
                 raise CorruptedStateError("invalid observed product snapshot")
+        if protocol_failures and (
+            phases["l1"] != "returned"
+            or action not in ("interrupted", "reset")
+            or not isinstance(row.get("l1_fingerprints"), list)
+            or any(fp not in row["l1_fingerprints"] for fp in protocol_failures)
+            or "dispositions" not in row
+            or any(fp not in row["dispositions"] for fp in protocol_failures)
+        ):
+            raise CorruptedStateError("falsifier protocol failure lacks L1 observation")
         if action == "earned" and (
             not all(value == "returned" for value in phases.values())
             or failures
@@ -503,12 +520,16 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
         ):
             raise CorruptedStateError("earned host round lacks CLEAN observation")
         if action == "interrupted" and (
-            not failures
-            or phases["l1"] != "returned"
+            phases["l1"] != "returned"
             or row["reset_observed"]
-            or row.get("fixpoint") != "CLEAN"
+            or not (
+                (failures and not protocol_failures and row.get("fixpoint") == "CLEAN")
+                or (protocol_failures and row.get("fixpoint") == "INCOMPLETE")
+            )
         ):
             raise CorruptedStateError("interrupted host round lacks nonreset acquisition observation")
+        if row.get("fixpoint") == "INCOMPLETE" and action != "interrupted":
+            raise CorruptedStateError("incomplete host round lacks protocol interruption")
         if action == "reset" and (
             not row["reset_observed"]
             or row["clean_rounds_after"] != 0

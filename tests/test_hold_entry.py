@@ -13,7 +13,7 @@ from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
 from code_forge.machine import StateMachine
-from code_forge.state import Mode, StateFinding, Verdict
+from code_forge.state import FindingDiagnosticKind, Mode, StateFinding, Verdict
 
 
 def _make_finding(fp="fp-h-1", disp=Disposition.CONFIRMED):
@@ -61,6 +61,50 @@ class TestHoldEntry:
         )
         verdict = machine.run()
         assert verdict == Verdict.PENDING
+
+    def test_typed_capacity_diagnostic_does_not_block_hold(self, tmp_path):
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+        )
+        uncertain = _make_finding(fp="product-uncertain", disp=Disposition.UNCERTAIN)
+        diagnostic = StateFinding(
+            id="RECEIPT_INVALID",
+            fingerprint="receipt-0123456789ab",
+            source="INFRA",
+            disposition=Disposition.CONFIRMED,
+            file="<receipt-evidence>",
+            line_range=[0, 0],
+            description="capacity proof incomplete",
+            diagnostic_kind=FindingDiagnosticKind.CAPACITY_INCOMPLETE,
+        )
+        machine._state.findings = [uncertain, diagnostic]
+        assert machine._should_enter_hold()
+        diagnostic.diagnostic_kind = None
+        assert not machine._should_enter_hold()
+        diagnostic.diagnostic_kind = FindingDiagnosticKind.CAPACITY_INCOMPLETE
+        diagnostic.fingerprint = "malformed-receipt-marker"
+        assert not machine._should_enter_hold()
+        provider_capacity = StateFinding(
+            id="l1-qodo-invoke-fail",
+            fingerprint="invoke-fail-qodo",
+            source="INFRA",
+            disposition=Disposition.CONFIRMED,
+            file="<llm-invoke>",
+            line_range=[0, 0],
+            description="provider response truncated",
+            diagnostic_kind=FindingDiagnosticKind.PROVIDER_CAPACITY,
+            provider_failure={"kind": "truncated"},
+        )
+        machine._state.findings = [uncertain, provider_capacity]
+        assert not machine._should_enter_hold()
 
 
 class TestHoldNotEnteredWithConfirmed:
