@@ -10,6 +10,7 @@ from code_forge.reviewer_json import (
     _hoist_nested_excerpts,
     validate_reviewer_json,
 )
+from code_forge.verify import validate_excerpts_against_diff
 
 VALID = {
     "findings": [
@@ -477,6 +478,76 @@ class TestNestedFindingExcerpts:
         assert out["code_excerpts"] == [self._exc()]
         out["findings"][1]["description"] = "mutated"
         assert plain["description"] == "plain"
+
+
+class TestExcerptFieldAliases:
+    """Known reviewer spellings enter the same schema and diff checks."""
+
+    @staticmethod
+    def _alias_excerpt(**overrides):
+        excerpt = {"file": "mod.py", "line_start": 1, "line_end": 1, "code": "actual_name = 1"}
+        excerpt.update(overrides)
+        return excerpt
+
+    def test_root_aliases_get_canonical_fields(self):
+        payload = {"findings": [], "code_excerpts": [self._alias_excerpt()]}
+        excerpt = validate_reviewer_json(json.dumps(payload))["code_excerpts"][0]
+        assert (excerpt["start_line"], excerpt["end_line"], excerpt["content"]) == (1, 1, "actual_name = 1")
+
+    def test_nested_aliases_are_hoisted_then_normalized(self):
+        finding = {
+            "file": "mod.py",
+            "line": 1,
+            "severity": "P3",
+            "description": "example",
+            "code_excerpts": [self._alias_excerpt()],
+        }
+        result = validate_reviewer_json(json.dumps({"findings": [finding]}))
+        assert result["code_excerpts"][0]["content"] == "actual_name = 1"
+        assert result["code_excerpts"][0]["start_line"] == 1
+        assert "code_excerpts" not in result["findings"][0]
+
+    @pytest.mark.parametrize(
+        ("canonical", "bad_value", "error"),
+        [
+            ("start_line", "1", "start_line must be int"),
+            ("end_line", False, "end_line must be int"),
+            ("content", 42, "content must be str"),
+        ],
+    )
+    def test_present_canonical_field_wins_even_when_invalid(self, canonical, bad_value, error):
+        excerpt = self._alias_excerpt(**{canonical: bad_value})
+        with pytest.raises(ValueError, match=error):
+            validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))
+
+    @pytest.mark.parametrize(
+        ("alias", "bad_value", "error"),
+        [
+            ("line_start", "1", "start_line must be int"),
+            ("line_end", False, "end_line must be int"),
+            ("code", 42, "content must be str"),
+        ],
+    )
+    def test_malformed_alias_still_fails_schema(self, alias, bad_value, error):
+        excerpt = self._alias_excerpt(**{alias: bad_value})
+        with pytest.raises(ValueError, match=error):
+            validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))
+
+    def test_aliases_do_not_bypass_line_count(self):
+        excerpt = self._alias_excerpt(line_end=28, code="\n".join(["actual_name = 1"] * 19))
+        with pytest.raises(ExcerptEvidenceError, match="declares 28 lines but carries 19"):
+            validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))
+
+    def test_aliases_do_not_bypass_physical_diff_content(self):
+        payload = {"findings": [], "code_excerpts": [self._alias_excerpt(code="invented_name = 1")]}
+        excerpt = validate_reviewer_json(json.dumps(payload))["code_excerpts"]
+        diff = (
+            "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
+            "@@ -1 +1 @@\n-old_name = 0\n+actual_name = 1\n"
+        )
+        assert validate_excerpts_against_diff(diff, excerpt) == [
+            "excerpt content mismatch at mod.py:1-1 (line 1)"
+        ]
 
 
 class TestEmptyCleanPassEnvelope:
