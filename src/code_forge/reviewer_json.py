@@ -545,6 +545,23 @@ def _hoist_nested_excerpts(data: dict) -> None:
         data["code_excerpts"] = hoisted
 
 
+def _normalize_excerpt_aliases(data: dict) -> None:
+    """Recognize known excerpt spellings without overriding canonical fields."""
+    excerpts = data.get("code_excerpts")
+    if not isinstance(excerpts, list):
+        return
+    for excerpt in excerpts:
+        if not isinstance(excerpt, dict):
+            continue
+        for alias, canonical in (
+            ("line_start", "start_line"),
+            ("line_end", "end_line"),
+            ("code", "content"),
+        ):
+            if canonical not in excerpt and alias in excerpt:
+                excerpt[canonical] = excerpt[alias]
+
+
 def excerpt_line_count_matches(text: str, claimed: int) -> bool:
     """Report whether an excerpt carries as many lines as it declares.
 
@@ -591,6 +608,7 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         raise ValueError("not a JSON object")  # noqa: TRY004 - salvage routing catches ValueError
 
     _hoist_nested_excerpts(data)
+    _normalize_excerpt_aliases(data)
 
     for field in _REQUIRED_FIELDS:
         if field not in data:
