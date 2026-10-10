@@ -43,7 +43,7 @@ vertex = [
     "requests>=2.20.0",
 ]
 mcp = [
-    "mcp>=1.27,<2",
+    "mcp>=1.27,<3",
 ]
 semgrep = [
     # PATH tool and forge venv pin the 1.176.x series so
