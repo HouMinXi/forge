@@ -461,7 +461,7 @@ class StateMachine:
             self._serialize_advisories()
             self._display_advisories()
             progress.emit(
-                "run done: verdict=%s findings=%d confirmed=%d"
+                "review phase done: verdict=%s findings=%d confirmed=%d"
                 % (verdict.value, len(reporting_product_findings(self._state.findings)), self._count(Disposition.CONFIRMED))
             )
         except BaseException:  # noqa: BLE001 - discard authority, preserve the failure

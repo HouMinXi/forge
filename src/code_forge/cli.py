@@ -1296,11 +1296,13 @@ def _assemble_post_image(
 def _run_test_assertion_review(
     diff_text: str,
     backend: Optional[BackendConfig] = None,
+    *,
+    on_outcome: Optional[Callable[[str], None]] = None,
 ) -> list:
-    """Test-assertion review by independent reviewer.
+    """Return advisory findings, optionally reporting the check's outcome.
 
-    Fresh llm_invoke, never the impl/test author. Runs BEFORE R1.
-    Returns list of advisory findings (do not reset cycle counter).
+    Fresh llm_invoke, never the impl/test author. Runs after the main review.
+    Returns advisory findings without resetting the cycle counter.
 
     Advisory-only: findings are printed to stderr but NOT recorded in
     the receipt system. This is intentionally advisory-only -- the
@@ -1310,7 +1312,7 @@ def _run_test_assertion_review(
     recording advisory findings in receipts would contaminate the cycle
     counter.
     """
-    from .llm_invoke import llm_invoke
+    from .llm_invoke import LLMInvokeError, llm_invoke
     from .reviewer_json import validate_reviewer_json, _json_to_state_findings
     from .diff import get_changed_files
 
@@ -1327,6 +1329,8 @@ def _run_test_assertion_review(
         or "_test." in f.split("/")[-1]
     ]
     if not test_files:
+        if on_outcome is not None:
+            on_outcome("skipped: no test files")
         return []
 
     from .diff import annotated_diff_prompt_block
@@ -1347,17 +1351,51 @@ def _run_test_assertion_review(
     try:
         result = llm_invoke(prompt, backend=backend)
         validated = validate_reviewer_json(result.content)
-        return _json_to_state_findings(
+        findings = _json_to_state_findings(
             validated,
             "test-assertion",
             backend=backend.name if backend else None,
         )
+        if on_outcome is not None:
+            on_outcome("done")
+        return findings
     # Let memory exhaustion abort the review rather than degrade it; an empty
     # finding list is indistinguishable from a genuinely clean assertion review.
     except MemoryError:
         raise
-    except Exception:  # noqa: BLE001 - degradation path, review fails open
+    except Exception as exc:  # noqa: BLE001 - degradation path, review fails open
+        timed_out = isinstance(exc, TimeoutError) or (
+            isinstance(exc, LLMInvokeError) and exc.is_timeout
+        )
+        if on_outcome is not None:
+            on_outcome("failed: timeout" if timed_out else "failed: error")
         return []
+
+
+def _run_test_assertion_phase(
+    diff_text: str,
+    backend: Optional[BackendConfig] = None,
+) -> None:
+    """Show the full post-review phase, including advisory output."""
+    from . import progress
+
+    started = time.monotonic()
+    progress.emit("test-assertion phase start")
+    outcome = "aborted"
+    findings: list = []
+    reported_outcomes: list[str] = []
+    try:
+        findings = _run_test_assertion_review(
+            diff_text, backend, on_outcome=reported_outcomes.append
+        )
+        for finding in findings:
+            sys.stderr.write("[test-assertion] %s\n" % finding.description)
+        outcome = reported_outcomes[0] if reported_outcomes else "unreported"
+    finally:
+        progress.emit(
+            "test-assertion phase %s: findings=%d elapsed=%.1fs"
+            % (outcome, len(findings), time.monotonic() - started)
+        )
 
 
 def _handle_smoke_run(args, cwd: Path) -> int:
@@ -2490,6 +2528,17 @@ def _git_head(cwd: Path) -> str:
     return result.stdout.strip()
 
 
+def _review_terminal_exit(exit_code: int, verdict: Optional[Verdict] = None) -> int:
+    """Emit a terminal marker after the review command's synchronous work."""
+    from . import progress
+
+    if verdict is None:
+        progress.emit("command done: exit=%d" % exit_code)
+    else:
+        progress.emit("command done: verdict=%s exit=%d" % (verdict.value, exit_code))
+    return exit_code
+
+
 def main() -> int:
     """Entry point. Returns exit code (int).
 
@@ -2565,19 +2614,19 @@ def main() -> int:
             print("code-forge: error: %s" % exc, file=sys.stderr)
             if exc.remediation:
                 print("Hint: %s" % exc.remediation, file=sys.stderr)
-            return EXIT_CLI_ERROR
+            return _review_terminal_exit(EXIT_CLI_ERROR)
         except ForgeLockBusy as exc:
             print("code-forge: %s" % exc, file=sys.stderr)
-            return EXIT_BUSY
+            return _review_terminal_exit(EXIT_BUSY)
         except TimeoutBreaker as exc:
             print("code-forge: %s" % exc, file=sys.stderr)
-            return EXIT_TIMEOUT
+            return _review_terminal_exit(EXIT_TIMEOUT)
         except Exception as exc:  # noqa: BLE001
             import traceback
 
             print("code-forge: unexpected error: %s" % exc, file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
-            return EXIT_FAIL
+            return _review_terminal_exit(EXIT_FAIL)
         except SystemExit as exc:
             # A SystemExit escaping the pipeline is a forge internal bug,
             # not a legitimate review outcome: it exits silently with
@@ -2592,17 +2641,18 @@ def main() -> int:
                 file=sys.stderr,
             )
             traceback.print_exc(file=sys.stderr)
-            return EXIT_CLI_ERROR
+            return _review_terminal_exit(EXIT_CLI_ERROR)
         except KeyboardInterrupt:
             print("code-forge: interrupted", file=sys.stderr)
             # Exit with the conventional SIGINT code (130) without an
             # interpreter traceback; a bare re-raise would print one.
+            _review_terminal_exit(130)
             raise SystemExit(130) from None
 
         # B2: PENDING guard before verdict_to_exit.
         if verdict == Verdict.PENDING:
-            return EXIT_BUSY
-        return verdict_to_exit(verdict)
+            return _review_terminal_exit(EXIT_BUSY, verdict)
+        return _review_terminal_exit(verdict_to_exit(verdict), verdict)
 
     elif args.subcommand == "gate-check":
         from .gate_check import run_gate_check
@@ -3457,12 +3507,9 @@ def _dispatch_subagent(
             _c_rulepack,
         ],
     )
-    # Test-assertion review gate: advisory findings to stderr.
-    # D8 exception: not recorded in receipts (see _run_test_assertion_review).
+    # Advisory findings stay outside the receipt gate.
     if resolved.git_diff:
-        _ta_findings = _run_test_assertion_review(resolved.git_diff, backend)
-        for _f in _ta_findings:
-            sys.stderr.write("[test-assertion] %s\n" % _f.description)
+        _run_test_assertion_phase(resolved.git_diff, backend)
     return verdict
 
 
@@ -4390,12 +4437,9 @@ def _run(args, env, cwd: Path) -> Verdict:
         # re-wrap LLMInvokeError as CliError
         raise CliError("backend %s: %s" % (backend.name, exc)) from exc
 
-    # Test-assertion review gate on subprocess path: runs BEFORE
-    # return, advisory-only (D8 exception per _run_test_assertion_review).
+    # Advisory findings stay outside the receipt gate on this outlet too.
     if resolved.git_diff:
-        _ta_findings_a = _run_test_assertion_review(resolved.git_diff, backend)
-        for _f_a in _ta_findings_a:
-            sys.stderr.write("[test-assertion] %s\n" % _f_a.description)
+        _run_test_assertion_phase(resolved.git_diff, backend)
     return verdict
 
 
