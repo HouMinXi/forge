@@ -4,6 +4,7 @@
 
 import json
 import re
+from urllib.parse import unquote_to_bytes
 
 from code_forge.parsers.base import Finding, ToolError
 
@@ -54,6 +55,29 @@ def _artifact_uri(run: dict, artifact: dict) -> str:
     ):
         raise ValueError("conflicting artifact URI")
     return uri
+
+
+def _artifact_path(uri: str) -> str:
+    """Decode supported local file URIs without rewriting raw producer paths.
+
+    Semgrep also emits bare filesystem paths, where percent escapes are literal.
+    Only empty-authority file:/// URIs are supported here; authorities, short
+    file:/ forms and UNC paths need a separate resolution policy. Preserve the
+    resulting lexical spelling, including parent segments and drive-like paths.
+    """
+    if not uri.lower().startswith("file:"):
+        return uri
+    if not uri[5:].startswith("///") or uri[5:].startswith("////"):
+        raise ValueError("unsupported file URI form")
+    if re.search(r"[?#\\\x00-\x1f\x7f-\x9f]", uri):
+        raise ValueError("unsupported file URI delimiter or control character")
+    path = uri[len("file://") :]
+    if re.search(r"%(?![0-9a-fA-F]{2})|%(?:2[fF]|5[cC])", path):
+        raise ValueError("malformed escape or encoded separator in file URI")
+    path = unquote_to_bytes(path).decode("utf-8", errors="strict")
+    if "\x00" in path:
+        raise ValueError("NUL in file URI path")
+    return path
 
 
 def _rule_messages(run: dict, result: dict) -> tuple[dict, dict]:
@@ -222,12 +246,7 @@ def _parse_sarif(
                         raise ValueError("malformed diagnostic")
                     if level not in ("none", "note", "warning", "error"):
                         raise ValueError("malformed diagnostic level")
-                    # Strip file:// prefix, preserving absolute path.
-                    # file:///tmp/foo -> /tmp/foo (not tmp/foo).
-                    if uri.startswith("file:///"):
-                        uri = uri[len("file://") :]
-                    elif uri.startswith("file://"):
-                        uri = uri[len("file://") :]
+                    uri = _artifact_path(uri)
                     start_line = region.get("startLine", 0)
                     end_line_raw = region.get("endLine")
                     column = region.get("startColumn", 0)
