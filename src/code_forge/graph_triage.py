@@ -410,7 +410,7 @@ def _run_graphdb(db_path: str, diff_files: list[str], repo_root: Path) -> SemAcq
     try:
         root = repo_root.absolute()
         resolved_root = root.resolve()
-        with closing(sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)) as conn:
+        with closing(sqlite3.connect(Path(db_path).absolute().as_uri() + "?mode=ro", uri=True)) as conn:
             cursor = conn.cursor()
 
             for file_path in diff_files:
@@ -567,7 +567,7 @@ def find_entity_dependents(
         conn = None
         try:
             conn = sqlite3.connect(
-                "file:%s?mode=ro" % db_path,
+                Path(db_path).absolute().as_uri() + "?mode=ro",
                 uri=True,
             )
             cursor = conn.cursor()
