@@ -196,29 +196,63 @@ def _build_skipped_finding(reason: str) -> AdvisoryFinding:
 def _parse_llm_response(
     content: object,
 ) -> tuple[list[str], list[dict]]:
-    """Parse LLM response content into (surfaces, findings).
+    """Validate delivered runtime content without coercion or partial recovery.
 
-    Accepts dict, JSON string, or a single-element list wrapping a dict.
-    Single-element lists are unwrapped to handle LLMs (e.g. mimo-pro) that
-    wrap the JSON object in an array.
-    Raises ValueError/KeyError/JSONDecodeError on malformed input so callers
-    can map to a SKIPPED finding.
+    Accepts an object or a singleton object wrapper, including complete JSON
+    strings of either form. Already decoded content cannot establish the
+    original response's completeness or duplicate-key provenance.
     """
-    if isinstance(content, dict):
-        parsed = content
-    elif isinstance(content, str):
-        parsed = json.loads(content)
-    elif isinstance(content, list) and len(content) == 1 and isinstance(content[0], dict):
-        # Unwrap single-element list: some LLMs wrap the JSON object in an
-        # array (e.g. mimo-pro returns [{...}] instead of {...}).
-        parsed = content[0]
-    else:
-        raise ValueError("unexpected LLM content type: %s" % type(content).__name__)
-    if "surfaces" not in parsed:
-        raise KeyError("missing 'surfaces' key in LLM response")
-    # Coerce to str: LLM may return integers or nulls in surfaces array.
-    surfaces = [str(s) for s in (parsed.get("surfaces", []) or [])]
-    llm_findings = list(parsed.get("findings", []) or [])
+    def unique_object(pairs: list[tuple[str, object]]) -> dict:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = value
+        return result
+
+    def reject_constant(value: str) -> object:
+        raise ValueError("nonfinite JSON number")
+
+    def finite_float(value: str) -> float:
+        from math import isfinite
+
+        number = float(value)
+        if not isfinite(number):
+            raise ValueError("nonfinite JSON number")
+        return number
+
+    if isinstance(content, str):
+        # Decode the entire document. Never recover a nested object or accept
+        # duplicate keys / nonfinite numbers, even inside inert metadata.
+        try:
+            content = json.loads(
+                content,
+                object_pairs_hook=unique_object,
+                parse_constant=reject_constant,
+                parse_float=finite_float,
+            )
+        except RecursionError:
+            raise ValueError("runtime JSON exceeds decoder recursion capacity") from None
+    if isinstance(content, list) and len(content) == 1 and isinstance(content[0], dict):
+        content = content[0]
+    if not isinstance(content, dict):
+        raise TypeError("runtime response must be an object")
+
+    surfaces = content["surfaces"]
+    llm_findings = content["findings"]
+    if not isinstance(surfaces, list) or not isinstance(llm_findings, list):
+        raise TypeError("runtime surfaces and findings must be lists")
+    if any(not isinstance(surface, str) for surface in surfaces):
+        raise TypeError("runtime surfaces must be strings")
+    for finding in llm_findings:
+        if not isinstance(finding, dict):
+            raise TypeError("runtime findings must be objects")
+        if not isinstance(finding["file"], str) or not isinstance(finding["description"], str):
+            raise TypeError("runtime file and description must be strings")
+        if not isinstance(finding["line"], int) or isinstance(finding["line"], bool):
+            raise TypeError("runtime line must be an integer")
+        if "surface" in finding and not isinstance(finding["surface"], str):
+            raise TypeError("runtime finding surface must be a string")
     return surfaces, llm_findings
 
 
@@ -345,12 +379,23 @@ class RuntimeRunner:
 
         try:
             surfaces, llm_findings = _parse_llm_response(result.content)
-        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-            reason = "LLM response parse error: %s" % exc
+            findings: list[AdvisoryFinding] = [
+                AdvisoryFinding(
+                    id="runtime-%d" % idx,
+                    axis="RUNTIME",
+                    file=lf["file"],
+                    line_range=[lf["line"], lf["line"]],
+                    description=lf["description"],
+                    attribution="runtime-axis/llm",
+                )
+                for idx, lf in enumerate(llm_findings)
+            ]
+        except (KeyError, ValueError, TypeError):
+            # Parser/conversion messages may contain private response values.
+            # Refuse the entire response with one fixed, visible diagnostic.
+            reason = "LLM response parse error: invalid runtime response"
             self.infra_errors.append(reason)
             return [_build_skipped_finding(reason)]
-
-        self.last_surfaces = surfaces or []
 
         receipts_dir = repo_root / ".code-forge" / "smoke-receipts"
         valid_receipts = [
@@ -359,21 +404,9 @@ class RuntimeRunner:
             if r.get("diff_sha256") == diff_hash and r.get("status") == "VERIFIED"
         ]
 
-        findings: list[AdvisoryFinding] = [
-            AdvisoryFinding(
-                id="runtime-%d" % idx,
-                axis="RUNTIME",
-                file=str(lf.get("file", "")),
-                line_range=[int(lf.get("line", 0)), int(lf.get("line", 0))],
-                description=str(lf.get("description", "")),
-                attribution="runtime-axis/llm",
-            )
-            for idx, lf in enumerate(llm_findings)
-            if isinstance(lf, dict)
-        ]
-
         summary = _build_smoke_summary(surfaces, valid_receipts)
         if summary is not None:
             findings.append(summary)
 
+        self.last_surfaces = list(surfaces)
         return findings

@@ -650,8 +650,8 @@ class TestRuntimeRunnerSmokeReceipts:
         # infra_errors should be cleared from previous run
         assert runner.infra_errors == []
 
-    def test_surfaces_null_json_returns_no_summary_not_skipped(self, tmp_path):
-        """LLM returns surfaces=null: coerced to [] not TypeError (M1 kill test)."""
+    def test_surfaces_null_json_returns_visible_skipped_refusal(self, tmp_path):
+        """Null surfaces are invalid, never a successful no-surfaces result."""
         from unittest.mock import MagicMock, patch
 
         from code_forge.runtime import RuntimeRunner
@@ -661,9 +661,10 @@ class TestRuntimeRunnerSmokeReceipts:
         with patch("code_forge.runtime.llm_invoke", return_value=response):
             runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+c", tmp_path)
-        ids = {f.id for f in result}
-        assert "runtime-skipped" not in ids, "surfaces=null must not return SKIPPED"
-        assert "runtime-smoke-summary" not in ids, "surfaces=null (->empty) must produce no summary"
+        assert [f.id for f in result] == ["runtime-skipped"]
+        assert "SKIPPED" in result[0].description
+        assert runner.infra_errors == ["LLM response parse error: invalid runtime response"]
+        assert runner.last_surfaces == []
 
     def test_one_directional_surface_match_is_verified(self, tmp_path):
         """Short receipt surface matches longer LLM surface (M2 kill: or not and, )."""
