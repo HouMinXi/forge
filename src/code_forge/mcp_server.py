@@ -1373,6 +1373,8 @@ async def forge_job_status(job_id: str) -> CallToolResult:
             forge_result.verdict,
             forge_result.exit_code,
         )
+        if forge_result.output:
+            text += "\n" + forge_result.output
     else:
         text = "Job %s: %s%s" % (job_id, status, elapsed_text)
 
