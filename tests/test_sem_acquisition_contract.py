@@ -897,6 +897,7 @@ def graphdb_controls(sem_controls, monkeypatch):
     """Use owned SQLite; only late query/close errors have explicit adapters."""
     import sqlite3
     from contextlib import closing
+    from code_forge._sqlite_uri import readonly_uri
 
     root = sem_controls["root"]
     db = _write_owned_graph(root)
@@ -959,7 +960,7 @@ def graphdb_controls(sem_controls, monkeypatch):
                 raise OSError("controlled owned SQLite close refusal")
 
     def connect(database, *args, **kwargs):
-        assert str(database) in {str(db), "file:%s?mode=ro" % db}
+        assert str(database) in {str(db), "file:%s?mode=ro" % db, db.absolute().as_uri() + "?mode=ro", readonly_uri(db.absolute())}
         connection = actual_connect(database, *args, **kwargs)
         controls["connections"].append(str(database))
         controls["objects"].append(connection)
