@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional, Protocol
 
 from .graph_triage import SemAcquisition
+from ._sqlite_uri import readonly_uri
 
 if TYPE_CHECKING:
     from .advisory import AdvisoryFinding
@@ -197,7 +198,7 @@ def _gate_cfg(repo_root: Path) -> dict:
 
 def _graphdb_head_sha(db: Path) -> Optional[str]:
     try:
-        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
+        con = sqlite3.connect(readonly_uri(db.absolute()), uri=True)
         try:
             row = con.execute("select value from metadata where key='git_head_sha'").fetchone()
         finally:
