@@ -179,7 +179,9 @@ def _is_dead_python(file_path: str, line: int) -> bool:
 # C dead-code detection (lexical scan)
 # ---------------------------------------------------------------------------
 
-_IF0_RE = re.compile(r"^\s*#\s*if\s+0\b")
+# Recognize only a bare zero on this complete physical directive line.
+# Trailing expressions, comments, and backslashes fail open; this is not a C lexer.
+_IF0_RE = re.compile(r"^[ \t]*#[ \t]*if[ \t]+0[ \t]*(?:\r?\n)?\Z")
 _IF_RE = re.compile(r"^\s*#\s*if\b")
 _ENDIF_RE = re.compile(r"^\s*#\s*endif\b")
 _ELSE_RE = re.compile(r"^\s*#\s*(?:else|elif)\b")
