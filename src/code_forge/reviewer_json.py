@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -505,6 +506,60 @@ def read_source_lines(path: Path) -> list[str]:
     return excerpt_lines(text) if text else []
 
 
+def _require_root_excerpt_types(excerpts: object) -> None:
+    """Refuse non-native known evidence values before ROOT opens legacy checks."""
+    if type(excerpts) is not list:
+        raise ValueError("missing required field: findings")
+    for excerpt in excerpts:
+        if not issubclass(type(excerpt), dict):
+            raise ValueError("missing required field: findings")  # noqa: TRY004 - ROOT schema refusal is ValueError
+        file = dict.get(excerpt, "file")
+        start = dict.get(excerpt, "start_line", dict.get(excerpt, "line_start"))
+        end = dict.get(excerpt, "end_line", dict.get(excerpt, "line_end"))
+        content = dict.get(excerpt, "content", dict.get(excerpt, "code"))
+        if type(file) is not str:
+            raise ValueError("missing required field: findings")
+        if type(start) is not int or type(end) is not int:
+            raise ValueError("missing required field: findings")
+        if type(content) is not str and (
+            type(content) is not list or any(type(line) is not str for line in content)
+        ):
+            raise ValueError("missing required field: findings")
+
+
+def _normalize_root_finding(data: dict) -> None:
+    """Wrap a complete root finding without overriding a claimed envelope.
+
+    Root excerpts stay envelope evidence; only an explicitly supplied
+    ``excerpt`` belongs to the finding. All root metadata stays in place.
+    Schema and frozen-diff checks still decide whether the result is usable.
+    """
+    if (
+        "findings" in data
+        or not _FINDING_REQUIRED.issubset(data)
+        or "code_excerpts" not in data
+        or type(data.get("severity")) is not str
+        or type(data.get("file")) is not str
+        or not data["file"].strip()
+        or type(data.get("line")) is not int
+        or abs(data["line"]) > sys.maxsize
+        or type(data.get("description")) is not str
+        or not data["description"].strip()
+        or not any(type(data.get("excerpt")) is native for native in (str, type(None), bool, int, float, list, dict))
+    ):
+        return
+    if "\x00" in data["file"]:
+        return
+    try:
+        data["file"].encode("utf-8")
+    except UnicodeEncodeError:
+        return
+    _require_root_excerpt_types(data["code_excerpts"])
+    data["findings"] = [
+        {key: data[key] for key in ("file", "line", "severity", "description", "excerpt") if key in data}
+    ]
+
+
 def _hoist_nested_excerpts(data: dict) -> None:
     """Lift per-finding code_excerpts onto the envelope root.
 
@@ -597,7 +652,7 @@ def validate_reviewer_json(raw: str | dict) -> dict:
     parsing. Raises ValueError on any schema violation (fail-closed).
     """
     if isinstance(raw, dict):
-        data = raw
+        data = dict(raw) if type(raw) is dict else {key: value for key, value in dict.items(raw)}
     else:
         try:
             data = json.loads(_strip_fence(raw))
@@ -607,7 +662,15 @@ def validate_reviewer_json(raw: str | dict) -> dict:
     if not isinstance(data, dict):
         raise ValueError("not a JSON object")  # noqa: TRY004 - salvage routing catches ValueError
 
+    _normalize_root_finding(data)
     _hoist_nested_excerpts(data)
+    if isinstance(data.get("code_excerpts"), list):
+        # Hoisting copies finding dictionaries but retains excerpt objects.
+        # Isolate alias writes without traversing arbitrary model metadata.
+        data["code_excerpts"] = [
+            (dict(excerpt) if type(excerpt) is dict else {key: value for key, value in dict.items(excerpt)})
+            if isinstance(excerpt, dict) else excerpt for excerpt in data["code_excerpts"]
+        ]
     _normalize_excerpt_aliases(data)
 
     for field in _REQUIRED_FIELDS:
