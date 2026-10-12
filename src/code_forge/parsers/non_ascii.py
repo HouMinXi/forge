@@ -26,13 +26,11 @@ def parse_non_ascii(
         return []
 
     findings = []
-    for line in output.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        m = _GREP_LINE_RE.match(stripped)
+    # grep records end at LF; other whitespace belongs to the path or content.
+    for line in output.split("\n"):
+        m = _GREP_LINE_RE.match(line)
         if m:
-            content = m.group(3).strip()
+            content = m.group(3)
             findings.append(
                 Finding(
                     file=m.group(1),
