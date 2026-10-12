@@ -19,6 +19,7 @@ import os
 import sqlite3
 from pathlib import Path
 
+from ._sqlite_uri import readonly_uri
 from .advisory import AdvisoryFinding
 
 # Reuse helpers from graph_triage -- never duplicate logic.
@@ -78,7 +79,7 @@ def resolve_changed_symbols(
         return []
 
     results: list[dict] = []
-    conn = sqlite3.connect("file:%s?mode=ro" % primary_db, uri=True)
+    conn = sqlite3.connect(readonly_uri(Path(primary_db).absolute()), uri=True)
     try:
         cursor = conn.cursor()
         for file_path in diff_files:
@@ -130,7 +131,7 @@ def find_cross_repo_callers(
         OSError: if the file cannot be opened.
     """
     results: list[dict] = []
-    conn = sqlite3.connect("file:%s?mode=ro" % sibling_db, uri=True)
+    conn = sqlite3.connect(readonly_uri(Path(sibling_db).absolute()), uri=True)
     try:
         cursor = conn.cursor()
         for sym in changed:
