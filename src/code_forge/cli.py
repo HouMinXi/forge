@@ -2382,6 +2382,11 @@ def _run_ledger(args, cwd: Path) -> int:
                 ctx_contract=latest_row.ctx_contract,
                 ctx_whole_file=latest_row.ctx_whole_file,
                 ctx_canary=latest_row.ctx_canary,
+                suppression_key=(
+                    latest_row.suppression_key
+                    if (base_sha, head_sha) == (latest_row.base_sha, latest_row.head_sha)
+                    else ""
+                ),
             ),
         )
         print(
@@ -4625,7 +4630,13 @@ def _run_mutation_check(args, cwd: Path) -> int:
       1  FAIL (survivors found)
       2  CLI_ERROR (git or invocation error)
     """
-    from .mutation import run_mutation
+    from .mutation import run_mutation, _mutation_outcome, capture_mutation_source_guard, mutation_source_guard_matches
+    from .mutation_findings import (
+        apply_mutation_ledger_dispositions, decode_mutation_survivor_details, mutation_review_context,
+    )
+
+    review_head = None
+    source_guard = None
 
     # Resolve diff source.
     if args.diff is not None:
@@ -4649,6 +4660,17 @@ def _run_mutation_check(args, cwd: Path) -> int:
         import subprocess
         from .git import _MACHINE_DIFF_OPTIONS
 
+        def captured_head():
+            try:
+                current = subprocess.run(
+                    ["git", "rev-parse", "HEAD"], cwd=str(cwd), capture_output=True,
+                    text=True, encoding="utf-8", errors="replace", check=False,
+                )
+            except OSError:
+                return None
+            return current.stdout.strip() if current.returncode == 0 else None
+
+        review_head = captured_head()
         try:
             result = subprocess.run(
                 ["git", "diff", *_MACHINE_DIFF_OPTIONS, "HEAD"],
@@ -4686,6 +4708,12 @@ def _run_mutation_check(args, cwd: Path) -> int:
         glob_pat = args.paths
         diff_files = [f for f in diff_files if _fnmatch(f, glob_pat)]
 
+    if args.diff is None:
+        source_guard = capture_mutation_source_guard(
+            source_root=cwd, target_kind="WORKING", base_sha=review_head, head_sha=review_head,
+            git_diff=diff_text, paths=tuple(diff_files), diff_paths=(), selection="TRACKED_WORKING",
+        )
+
     from .gate_check import load_gate_config
 
     test_config = {}
@@ -4712,6 +4740,7 @@ def _run_mutation_check(args, cwd: Path) -> int:
         return EXIT_CLI_ERROR
 
     memory_mb = test_config.get("mutation_memory_limit_mb")
+    evidence = {}
     findings, infra_errors = run_mutation(
         diff_files=diff_files,
         baseline_cmd=test_config.get("command", ["pytest", "--tb=no", "-q"]),
@@ -4721,7 +4750,13 @@ def _run_mutation_check(args, cwd: Path) -> int:
         also_copy=test_config.get("also_copy"),
         max_children=test_config.get("mutation_max_children"),
         memory_limit_bytes=memory_mb * 1024**2 if memory_mb is not None else None,
+        _evidence=evidence,
     )
+    same_head = args.diff is None and review_head is not None and captured_head() == review_head
+    same_source = mutation_source_guard_matches(source_guard, source_root=cwd)
+    if args.diff is None and not same_source:
+        print("code-forge: mutation-check: source changed or review capture unavailable; native ruling refused",
+              file=sys.stderr)
 
     skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
     quiet = {"mutation-tests-only", "mutation-no-adapter"}
@@ -4753,6 +4788,23 @@ def _run_mutation_check(args, cwd: Path) -> int:
             )
         return EXIT_CLI_ERROR
 
+    context = mutation_review_context(
+        source_root=cwd, base_sha=review_head, head_sha=review_head, git_diff=diff_text,
+    ) if same_head and same_source else None
+    decoded = decode_mutation_survivor_details(
+        _mutation_outcome(findings, infra_errors, evidence, review_context=context),
+        review_context=context, include_timeout_diagnostics=True,
+    ) if context is not None else None
+    if decoded is not None:
+        for finding in decoded:
+            if finding.id.startswith("mutation-timeout-"):
+                print("code-forge: mutation-check: " + finding.description, file=sys.stderr)
+    notes = apply_mutation_ledger_dispositions(
+        findings, source_root=cwd, base_sha=review_head, head_sha=review_head,
+        git_diff=diff_text, eligible_measurement=decoded is not None,
+    )
+    for note in notes:
+        print("code-forge: mutation-check: %s" % note, file=sys.stderr)
     survivors = [f for f in findings if is_mutation_survivor(f)]
     if survivors:
         print(

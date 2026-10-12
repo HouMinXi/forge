@@ -16,10 +16,11 @@ guaranteed atomic at the syscall level. Ledger rows are well under
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from enum import Enum
 from pathlib import Path
 from typing import Final, Iterator
@@ -111,6 +112,7 @@ class LedgerRow:
     ctx_contract: bool = False
     ctx_whole_file: bool = False
     ctx_canary: bool = False
+    suppression_key: str = ""
 
 
 def _ledger_path(cwd: Path) -> Path:
@@ -157,30 +159,77 @@ def known_terminal_fingerprints(root: Path) -> set[str]:
     return {fp for fp, (state, _) in latest.items() if state in _SUPPRESSIBLE_TERMINAL_STATES}
 
 
-def iter_rows(cwd: Path) -> Iterator[LedgerRow]:
+def finding_suppression_key(
+    *,
+    base_sha: str | None,
+    head_sha: str | None,
+    git_diff: str | None,
+    file: str,
+    line: int,
+    source: str,
+    description: str,
+) -> str:
+    """Bind a ruling to the verbatim reviewed diff and exact finding claim."""
+    if not base_sha or not head_sha or git_diff is None or not description:
+        return ""
+    payload = [base_sha, head_sha, git_diff, file, line, source, description]
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=True).encode()).hexdigest()
+
+
+def iter_rows(cwd: Path, *, strict: bool = False) -> Iterator[LedgerRow]:
     """Yield ledger rows from `<cwd>/.code-forge/ledger.jsonl`.
 
     Missing file -> empty iterator. Malformed lines are skipped with
     a warning to stderr (does not raise) so a corrupt tail cannot
-    block downstream consumers.
+    block downstream consumers. A strict caller gets an exception for any
+    malformed or unknown row and must consume the entire iterator before
+    relying on its append order.
     """
     path = _ledger_path(cwd)
     if not path.exists():
         return
+
+    def unique_object(pairs):
+        data = {}
+        for key, value in pairs:
+            if key in data:
+                raise ValueError("duplicate ledger field: " + key)
+            data[key] = value
+        return data
+
     with path.open("r", encoding="utf-8") as fh:
         for lineno, raw in enumerate(fh, start=1):
             line = raw.strip()
             if not line:
+                if strict:
+                    raise ValueError("ledger: empty row at line %d" % lineno)
                 continue
             try:
-                data = json.loads(line)
-            except json.JSONDecodeError as exc:
+                data = json.loads(line, object_pairs_hook=unique_object) if strict else json.loads(line)
+            except ValueError as exc:
+                if strict:
+                    raise ValueError("ledger: malformed line %d: %s" % (lineno, exc)) from exc
                 print(
                     "ledger: skipping malformed line %d: %s" % (lineno, exc),
                     file=sys.stderr,
                 )
                 continue
             try:
+                if strict:
+                    if not isinstance(data, dict) or set(data) - {f.name for f in fields(LedgerRow)}:
+                        raise ValueError("unknown ledger fields or non-object row")
+                    for key in ("fingerprint", "repo_root", "base_sha", "head_sha", "file",
+                                "axis_claim", "pass_provenance", "terminal_state", "evidence_class", "ts"):
+                        if type(data[key]) is not str:
+                            raise ValueError("non-string ledger field: " + key)
+                    if not data["fingerprint"] or type(data["line"]) is not int or data["line"] < 0:
+                        raise ValueError("invalid fingerprint or line")
+                    for key in ("version_sensitive", "ctx_graph_triage", "ctx_contract", "ctx_whole_file", "ctx_canary"):
+                        if key in data and type(data[key]) is not bool:
+                            raise ValueError("non-boolean ledger field: " + key)
+                    for key in ("backend", "suppression_key"):
+                        if key in data and type(data[key]) is not str:
+                            raise ValueError("non-string ledger field: " + key)
                 yield LedgerRow(
                     fingerprint=data["fingerprint"],
                     repo_root=data["repo_root"],
@@ -202,8 +251,11 @@ def iter_rows(cwd: Path) -> Iterator[LedgerRow]:
                     ctx_contract=data.get("ctx_contract", False),
                     ctx_whole_file=data.get("ctx_whole_file", False),
                     ctx_canary=data.get("ctx_canary", False),
+                    suppression_key=data.get("suppression_key", ""),
                 )
             except (KeyError, ValueError, TypeError) as exc:
+                if strict:
+                    raise ValueError("ledger: schema-invalid line %d: %s" % (lineno, exc)) from exc
                 print(
                     "ledger: skipping schema-invalid line %d: %s" % (lineno, exc),
                     file=sys.stderr,

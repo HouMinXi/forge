@@ -36,13 +36,14 @@ import subprocess
 from code_forge.baseline_guard import _run_baseline_guard, _strip_venv_from_env
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from ._mutation_process import (
     MutationProcessError, _bind_cancellation_evidence, limit_address_space, run_owned_command,
 )
 from ._mutation_workspace import MutationWorkspace, MutationWorkspaceError
 from .disposition import Disposition
+from .errors import BaselineResolutionError
 from .mutation_config import DEFAULT_MUTATION_TIMEOUT, validate_mutation_timeout
 from .state import StateFinding
 
@@ -69,10 +70,16 @@ class MutationOutcome(TypedDict):
     infra_errors: list[str]
     inventory: dict[str, str]
     message: str
+    survivor_details_version: NotRequired[int]
+    survivor_details: list[dict]
+    completed_measurement: bool
+    review_context: dict | None
 
 
-def _mutation_outcome(findings: list[StateFinding], infra: list[str], evidence: dict) -> MutationOutcome:
-    from .mutation_findings import is_mutation_diagnostic, is_mutation_survivor
+def _mutation_outcome(
+    findings: list[StateFinding], infra: list[str], evidence: dict, *, review_context: dict | None = None,
+) -> MutationOutcome:
+    from .mutation_findings import is_mutation_diagnostic, is_mutation_survivor, mutation_survivor_details
 
     errors = [f.description for f in findings if f.id == "MUTATION_ERROR" or is_mutation_diagnostic(f)]
     skipped = [f.description for f in findings if f.id == "MUTATION_SKIPPED"]
@@ -82,7 +89,7 @@ def _mutation_outcome(findings: list[StateFinding], infra: list[str], evidence: 
         errors.extend(skipped)
         if not errors:
             errors.append("mutation did not prove its baseline and completed measurement")
-    return {
+    outcome: MutationOutcome = {
         "status": "error" if errors else "done",
         "baseline_passed": completed and not errors,
         "survivors": [f.id for f in findings if is_mutation_survivor(f)],
@@ -90,7 +97,19 @@ def _mutation_outcome(findings: list[StateFinding], infra: list[str], evidence: 
         "infra_errors": list(infra),
         "inventory": evidence.get("inventory", {}),
         "message": "\n".join(errors),
+        "survivor_details": mutation_survivor_details(findings) if not errors else [],
+        "completed_measurement": evidence.get("completed_measurement") is True and not errors,
+        "review_context": review_context if not errors else None,
     }
+    # Preserve failure/cleanup metadata for the bound consumer. Dropping a
+    # failed cleanup marker would manufacture a successful canonical carrier.
+    for key in ("publication_error", "cancellation_type", "cleanup_error", "process_failure",
+                "cancelled", "cleanup_complete"):
+        if key in evidence:
+            outcome[key] = evidence[key]
+    if review_context is not None:
+        outcome["survivor_details_version"] = 1
+    return outcome
 
 
 _DEFAULT_MUTATION_SKIP_GLOBS = [
@@ -643,6 +662,144 @@ def _read_inventory_file(path: Path) -> bytes:
         os.close(descriptor)
 
 
+@dataclass(frozen=True)
+class MutationSourceGuard:
+    """WORKING endpoint observations; no immutable execution/copy authority."""
+
+    source_root: str
+    base_sha: str
+    head_sha: str
+    git_diff: str
+    paths: tuple[str, ...]
+    diff_paths: tuple[str, ...]
+    selection: str
+    entries: tuple[tuple[str, int | None, bytes | None], ...]
+
+
+def _guard_head(root: Path) -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD^{commit}"], cwd=root,
+        capture_output=True, text=True, encoding="utf-8", errors="strict",
+        check=False, timeout=15,
+    )
+    if result.returncode != 0:
+        raise ValueError("mutation source guard cannot resolve HEAD")
+    return result.stdout.strip()
+
+
+def _guard_diff(root: Path, base_sha: str, paths: tuple[str, ...], selection: str) -> str:
+    from .git import _MACHINE_DIFF_OPTIONS, working_tree_diff
+
+    if selection == "WORKING":
+        return working_tree_diff(base_sha, [Path(path) for path in paths], root)
+    if selection != "TRACKED_WORKING" or paths:
+        raise ValueError("unsupported mutation review diff selection")
+    result = subprocess.run(
+        ["git", "diff", *_MACHINE_DIFF_OPTIONS, base_sha], cwd=root,
+        capture_output=True, text=True, encoding="utf-8", errors="strict",
+        check=False, timeout=15,
+    )
+    if result.returncode != 0:
+        raise ValueError("mutation source guard cannot repeat reviewed diff")
+    return result.stdout
+
+
+def _guard_entries(root: Path, paths: tuple[str, ...]) -> tuple[tuple[str, int | None, bytes | None], ...]:
+    entries = []
+    for name in paths:
+        path = root / _lexical_source(name, root)
+        relative = path.relative_to(root).as_posix()
+        parents = []
+        for parent in path.parents:
+            if not parent.is_relative_to(root):
+                break
+            info = parent.lstat()
+            if not stat.S_ISDIR(info.st_mode):
+                raise ValueError("mutation source parents must be physical directories")
+            parents.append((parent, info.st_dev, info.st_ino, info.st_mode))
+        try:
+            before = path.lstat()
+        except FileNotFoundError as exc:
+            if any((node.lstat().st_dev, node.lstat().st_ino, node.lstat().st_mode) != (dev, ino, mode)
+                   for node, dev, ino, mode in parents):
+                raise ValueError("mutation source parents changed during absence capture") from exc
+            entries.append((relative, None, None))
+            continue
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise ValueError("mutation source guard requires unaliased regular files")
+        raw = _read_inventory_file(path)
+        after = path.lstat()
+        fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns", "st_nlink")
+        if any(getattr(before, field) != getattr(after, field) for field in fields):
+            raise ValueError("mutation source changed during endpoint capture")
+        if any((node.lstat().st_dev, node.lstat().st_ino, node.lstat().st_mode) != (dev, ino, mode)
+               for node, dev, ino, mode in parents):
+            raise ValueError("mutation source parents changed during endpoint capture")
+        entries.append((relative, before.st_mode, raw))
+    if len({row[0] for row in entries}) != len(entries):
+        raise ValueError("mutation source scope contains aliases")
+    return tuple(entries)
+
+
+def capture_mutation_source_guard(
+    *, source_root: Path, target_kind: str | None, base_sha: str | None,
+    head_sha: str | None, git_diff: str | None, paths: tuple[str, ...],
+    diff_paths: tuple[str, ...] | None, selection: str = "WORKING",
+) -> MutationSourceGuard | None:
+    """Refuse an unsupported/incoherent WORKING review before native execution."""
+    if (target_kind != "WORKING" or type(git_diff) is not str or not git_diff
+            or type(paths) is not tuple or not paths or type(diff_paths) is not tuple
+            or any(type(path) is not str or not path for path in paths + diff_paths)
+            or any(type(value) is not str or re.fullmatch(r"[0-9a-f]{40}", value) is None
+                   for value in (base_sha, head_sha))):
+        return None
+    try:
+        root = Path(os.path.abspath(source_root))
+        for node in (*reversed(root.parents), root):
+            if not stat.S_ISDIR(node.lstat().st_mode):
+                return None
+        if "\nrename from " in git_diff or "\ncopy from " in git_diff:
+            return None
+        if _guard_head(root) != head_sha:
+            return None
+        before = _guard_entries(root, paths)
+        diff_before = _guard_diff(root, base_sha, diff_paths, selection)
+        after = _guard_entries(root, paths)
+        diff_after = _guard_diff(root, base_sha, diff_paths, selection)
+        if before != after or _guard_head(root) != head_sha:
+            return None
+        if diff_before != git_diff or diff_after != git_diff:
+            return None
+        from .diff import get_removed_files
+
+        removed = set(get_removed_files(git_diff))
+        if any(raw is None and name not in removed for name, _mode, raw in after):
+            return None
+        return MutationSourceGuard(str(root), base_sha, head_sha, git_diff, paths,
+                                   diff_paths, selection, after)
+    except (OSError, ValueError, TypeError, BaselineResolutionError, subprocess.SubprocessError):
+        return None
+
+
+def mutation_source_guard_matches(guard: MutationSourceGuard | None, *, source_root: Path) -> bool:
+    """Compare current endpoint only; equal endpoints do not prove lifetime binding."""
+    if type(guard) is not MutationSourceGuard:
+        return False
+    try:
+        root = Path(os.path.abspath(source_root))
+        if str(root) != guard.source_root:
+            return False
+        for node in (*reversed(root.parents), root):
+            if not stat.S_ISDIR(node.lstat().st_mode):
+                return False
+        return (_guard_head(root) == guard.head_sha
+                and _guard_entries(root, guard.paths) == guard.entries
+                and _guard_entries(root, guard.paths) == guard.entries
+                and _guard_head(root) == guard.head_sha)
+    except (OSError, ValueError, TypeError, BaselineResolutionError, subprocess.SubprocessError):
+        return False
+
+
 def _mutation_inventory(repo_root: str, py_files: list[str]) -> tuple[dict[str, str], dict[str, str]]:
     inventory: dict[str, str] = {}
     digests = {}
@@ -677,7 +834,7 @@ def _mutation_inventory(repo_root: str, py_files: list[str]) -> tuple[dict[str, 
             if key in inventory or type(code) is not int or code not in _NATIVE_STATUS:
                 raise ValueError(f"incomplete or unknown mutation result: {key}: {code}")
             status = _NATIVE_STATUS[code]
-            if status not in {"survived", "killed", "caught by type check"}:
+            if status not in {"survived", "killed", "caught by type check", "timeout"}:
                 raise ValueError(f"mutation measurement is incomplete: {key}: {status}")
             inventory[key] = status
         digests[str(relative)] = hashlib.sha256(raw).hexdigest()
@@ -1362,6 +1519,19 @@ def _run_mutation(
             )
             for survivor in survivors
         )
+        findings.extend(
+            StateFinding(
+                id=f"mutation-timeout-{name}",
+                fingerprint=f"mutation-timeout:{name}",
+                source="MUTANT",
+                disposition=Disposition.DISMISSED,
+                file="",
+                line_range=[],
+                description=f"mutant timed out: {name}",
+            )
+            for name, status in inventory.items()
+            if status == "timeout"
+        )
 
     except MutationProcessError as exc:
         cleanup_complete = exc.cleanup_complete
@@ -1387,6 +1557,7 @@ def _publish_mutation_error(
         process_failure=evidence.get("process_failure", {}),
         cleanup_error=evidence.get("cleanup_error"),
         baseline_passed=False, completed_measurement=False, survivors=[],
+        survivor_details=[], review_context=None,
         message=str(error), skipped=[], infra_errors=[str(error)],
         inventory=evidence.get("inventory", {}),
     )
@@ -1426,6 +1597,8 @@ def launch_detached_mutation(
     mutation_skip_globs: list[str] | None = None,
     mutation_include_globs: list[str] | None = None,
     timeout: int = DEFAULT_MUTATION_TIMEOUT,
+    *,
+    review_context: dict | None = None,
 ) -> bool:
     """Launch the mutation run detached, reporting whether it started.
 
@@ -1462,7 +1635,12 @@ def launch_detached_mutation(
         "skipped": [],
         "infra_errors": [],
         "inventory": {},
+        "survivor_details": [],
+        "completed_measurement": False,
+        "review_context": review_context,
     }
+    if review_context is not None:
+        initial_data["survivor_details_version"] = 1
     with open(result_path, "w", encoding="utf-8") as f:
         json.dump(initial_data, f)
 
@@ -1493,6 +1671,7 @@ baseline_cmd = {baseline_cmd!r}
 also_copy = {also_copy!r}
 mutation_skip_globs = {mutation_skip_globs!r}
 mutation_include_globs = {mutation_include_globs!r}
+review_context = {review_context!r}
 
 try:
     with open(result_path, "r", encoding="utf-8") as f:
@@ -1522,7 +1701,7 @@ try:
         mutation_include_globs=mutation_include_globs,
         _evidence=evidence,
     )
-    data.update(_mutation_outcome(mm_findings, _infra, evidence))
+    data.update(_mutation_outcome(mm_findings, _infra, evidence, review_context=review_context))
     with open(result_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
 except BaseException as e:
