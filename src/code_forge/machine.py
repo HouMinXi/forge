@@ -51,14 +51,20 @@ from .hold import check_escalated_frozen
 from .ledger import (
     LedgerRow,
     TerminalState,
+    finding_suppression_key,
     resolve_ledger_root,
 )
 from .ledger import (
     append_row as ledger_append,
 )
 from .llm_invoke import FalsifyProtocolError, InvalidJSONResponseError, LLMInvokeError, Usage
-from .mutation import launch_detached_mutation
-from .mutation_findings import is_mutation_survivor
+from .mutation import launch_detached_mutation, capture_mutation_source_guard, mutation_source_guard_matches
+from .mutation_findings import (
+    apply_mutation_ledger_dispositions,
+    decode_mutation_survivor_details,
+    is_mutation_survivor,
+    mutation_review_context,
+)
 from .parsers.base import Finding, ToolError
 from .state import (
     Mode,
@@ -426,6 +432,29 @@ class StateMachine:
         self._attempt_snapshot: dict | None = None
         self._attempt_findings: list[StateFinding] | None = None
         self._other_source_state: State | None = None
+        self._mutation_source_review = None
+        self._mutation_source_subject = None
+        self._mutation_source_guard = None
+        self._mutation_bound_failure = False
+        self._mutation_timeout_objects: set[int] = set()
+        self._mutation_timeout_emitted: set[str] = set()
+
+    def _capture_mutation_review_source(self) -> None:
+        """Retain the initial subject across autofix rounds; never refresh its guard."""
+        review = self.resolved_review
+        subject = (review.target_kind, review.base_sha, review.head_sha, review.git_diff,
+                   tuple(str(path) for path in review.source_files), review.diff_paths)
+        if self._mutation_source_review is review:
+            if self._mutation_source_subject != subject:
+                self._mutation_source_guard = None
+            return
+        self._mutation_source_review = review
+        self._mutation_source_subject = subject
+        self._mutation_source_guard = capture_mutation_source_guard(
+            source_root=self._source_root(), target_kind=review.target_kind,
+            base_sha=review.base_sha, head_sha=review.head_sha, git_diff=review.git_diff,
+            paths=tuple(str(path) for path in review.source_files), diff_paths=review.diff_paths,
+        )
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
@@ -516,7 +545,7 @@ class StateMachine:
                 self._state = loaded
 
     def _run_ci(self) -> Verdict:
-        """CI: linear single round; FAIL on any CONFIRMED, else PASS.
+        """CI: linear round; unresolved evidence cannot authorize PASS.
 
         Per R1 H5: converged=True on PASS only; FAIL exits early so
         converged=False.
@@ -527,6 +556,8 @@ class StateMachine:
         case left in place -- a "running" marker whose PID has died, or
         never had one, is also consumed.
         """
+        bound_launch_pending = False
+        completed_bound_result = False
         self._execute_round(
             round_index=self._continuation_round_index(),
         )
@@ -565,16 +596,90 @@ class StateMachine:
         # Check for prior mutation result
         result_path = self.cwd / ".code-forge" / "mutation-result.json"
         if result_path.exists():
+            bound_result = False
             try:
-                with open(result_path, "r", encoding="utf-8") as f:
-                    result_data = json.load(f)
+                def unique_object(pairs):
+                    value = {}
+                    for key, item in pairs:
+                        if key in value:
+                            raise ValueError("duplicate mutation result field")
+                        value[key] = item
+                    return value
 
+                def invalid_constant(_value):
+                    raise ValueError("non-JSON mutation result constant")
+
+                with open(result_path, "r", encoding="utf-8") as f:
+                    result_data = json.load(
+                        f, object_pairs_hook=unique_object, parse_constant=invalid_constant,
+                    )
+
+                # Explicit legacy compatibility: an absent version and null
+                # context remain unbound. Stripping both markers cannot be
+                # distinguished from that older format at this endpoint.
+                bound_result = isinstance(result_data, dict) and (
+                    "survivor_details_version" in result_data
+                    or result_data.get("review_context") is not None
+                )
+                if bound_result and result_data.get("status") != "done":
+                    pending = False
+                    if result_data.get("status") == "running":
+                        from .lock import _pid_alive
+
+                        context = mutation_review_context(
+                            source_root=self._source_root(), base_sha=self.resolved_review.base_sha,
+                            head_sha=self.resolved_review.head_sha, git_diff=self.resolved_review.git_diff,
+                        )
+                        valid = (
+                            type(result_data.get("survivor_details_version")) is int
+                            and result_data["survivor_details_version"] == 1
+                            and context is not None and result_data.get("review_context") == context
+                            and mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root())
+                            and not any(key in result_data for key in (
+                                "publication_error", "cancellation_type", "cleanup_error", "process_failure",
+                            ))
+                            and result_data.get("cancelled", False) is False
+                            and result_data.get("cleanup_complete", True) is True
+                            and result_data.get("infra_errors") == []
+                            and result_data.get("message", "") == ""
+                        )
+                        pid, started = result_data.get("pid"), result_data.get("started_at")
+                        if valid and type(pid) is int and 0 < pid <= 2**31 - 1:
+                            pending = _pid_alive(pid)
+                        elif valid and pid is None and type(started) in (int, float):
+                            now = time.time()
+                            pending = now - 120 <= started <= now
+                    # A bound running marker is not a completed measurement.
+                    # Persist the non-PASS state even when the PID is live.
+                    self._state.verdict = (
+                        Verdict.PENDING if pending and not self._mutation_bound_failure else Verdict.FAIL
+                    )
+                    self._state.converged = False
+                    self._state.infra_errors.append(
+                        "CI: bound mutation measurement still running" if pending
+                        else "CI: invalid or incomplete bound mutation measurement"
+                    )
+                    if not pending:
+                        self._unlink_mutation_result(result_path)
+                    self._persist_state()
+                    self._write_ci_ledger_rows()
+                    return self._state.verdict
                 if not isinstance(result_data, dict):
                     self._state.infra_errors.append("CI: mutation-result.json is not a JSON object")
                     self._unlink_mutation_result(result_path)
+                    self._state.verdict = Verdict.FAIL
+                    self._state.converged = False
+                    self._persist_state()
+                    self._write_ci_ledger_rows()
+                    return Verdict.FAIL
                 elif "status" not in result_data:
                     self._state.infra_errors.append("CI: mutation-result.json missing status field")
                     self._unlink_mutation_result(result_path)
+                    self._state.verdict = Verdict.FAIL
+                    self._state.converged = False
+                    self._persist_state()
+                    self._write_ci_ledger_rows()
+                    return Verdict.FAIL
                 else:
                     status = result_data["status"]
                     if status == "done":
@@ -583,7 +688,73 @@ class StateMachine:
                         # re-measures on the next review instead of
                         # replaying this verdict forever.
                         self._unlink_mutation_result(result_path)
-                        verdict = mutation_result_verdict(result_data)
+                        verdict_data = result_data
+                        if bound_result:
+                            context = mutation_review_context(
+                                source_root=self._source_root(), base_sha=self.resolved_review.base_sha,
+                                head_sha=self.resolved_review.head_sha, git_diff=self.resolved_review.git_diff,
+                            )
+                            mutation_findings = decode_mutation_survivor_details(
+                                result_data, review_context=context, include_timeout_diagnostics=True,
+                            )
+                            if not mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root()):
+                                mutation_findings = None
+                            if mutation_findings is None:
+                                self._state.verdict = Verdict.FAIL
+                                self._state.converged = False
+                                self._state.infra_errors.append("CI: invalid bound mutation survivor details")
+                                self._persist_state()
+                                self._write_ci_ledger_rows()
+                                return Verdict.FAIL
+                            prior = {f.fingerprint: f for f in self._state.findings}
+                            timeout_conflict = any(
+                                f.fingerprint in prior
+                                and (f.id.startswith("mutation-timeout-")
+                                     or (prior[f.fingerprint].source == "MUTANT"
+                                         and prior[f.fingerprint].id.startswith("mutation-timeout-")))
+                                and (prior[f.fingerprint].id != f.id
+                                     or prior[f.fingerprint].source != "MUTANT"
+                                     or prior[f.fingerprint].disposition != Disposition.DISMISSED
+                                     or f.disposition != Disposition.DISMISSED)
+                                for f in mutation_findings
+                            )
+                            if timeout_conflict:
+                                self._state.verdict = Verdict.FAIL
+                                self._state.converged = False
+                                self._state.infra_errors.append("CI: bound mutation timeout identity collision")
+                                self._persist_state()
+                                self._write_ci_ledger_rows()
+                                return Verdict.FAIL
+                            notes = apply_mutation_ledger_dispositions(
+                                mutation_findings, source_root=self._source_root(),
+                                base_sha=self.resolved_review.base_sha, head_sha=self.resolved_review.head_sha,
+                                git_diff=self.resolved_review.git_diff, eligible_measurement=True,
+                            )
+                            for note in notes:
+                                progress.emit(note)
+                            unresolved = [f.id for f in mutation_findings if is_mutation_survivor(f)]
+                            progress.emit("mutation: %d unresolved of %d original survivors" % (
+                                len(unresolved), len(result_data["survivors"]),
+                            ))
+                            verdict_data = dict(result_data, survivors=unresolved)
+                            # Persist the actual current identities even on the
+                            # survivor FAIL below. A weaker detached disposition
+                            # cannot erase a blocking finding from this round.
+                            current = {f.fingerprint: f for f in self._state.findings}
+                            for finding in mutation_findings:
+                                previous = current.get(finding.fingerprint)
+                                if previous is None or previous.disposition == Disposition.DISMISSED:
+                                    current[finding.fingerprint] = finding
+                                if (finding.id.startswith("mutation-timeout-")
+                                        and finding.id not in self._mutation_timeout_emitted):
+                                    progress.emit("mutation: " + finding.description)
+                                    self._mutation_timeout_emitted.add(finding.id)
+                            self._state.findings = list(current.values())
+                            # This invocation accepted complete same-source
+                            # result authority. It does not grant direct L2
+                            # eligibility or clear any current failure latch.
+                            completed_bound_result = True
+                        verdict = mutation_result_verdict(verdict_data)
                         survivors = result_data.get("survivors", [])
                         if verdict is Verdict.FAIL:
                             self._state.verdict = Verdict.FAIL
@@ -624,6 +795,12 @@ class StateMachine:
                                 )
                                 self._unlink_mutation_result(result_path)
                             else:
+                                if self._mutation_bound_failure:
+                                    self._state.verdict = Verdict.FAIL
+                                    self._state.converged = False
+                                    self._persist_state()
+                                    self._write_ci_ledger_rows()
+                                    return Verdict.FAIL
                                 return Verdict.PENDING
                         elif pid is not None:
                             from .lock import _pid_alive
@@ -633,6 +810,12 @@ class StateMachine:
                                 self._state.infra_errors.append(
                                     "CI: mutation PID %d still running, skipping new launch" % pid
                                 )
+                                if self._mutation_bound_failure:
+                                    self._state.verdict = Verdict.FAIL
+                                    self._state.converged = False
+                                    self._persist_state()
+                                    self._write_ci_ledger_rows()
+                                    return Verdict.FAIL
                                 return Verdict.PENDING
                             else:
                                 # PID dead, treat as error
@@ -660,8 +843,25 @@ class StateMachine:
                         error_msg = result_data.get("message", "unknown error")
                         self._state.infra_errors.append(f"CI: mutation error: {error_msg}")
                         self._unlink_mutation_result(result_path)
-            except (json.JSONDecodeError, KeyError, OSError) as e:
+                    else:
+                        self._state.infra_errors.append("CI: mutation-result.json invalid status field")
+                        self._unlink_mutation_result(result_path)
+                        self._state.verdict = Verdict.FAIL
+                        self._state.converged = False
+                        self._persist_state()
+                        self._write_ci_ledger_rows()
+                        return Verdict.FAIL
+            except (ValueError, TypeError, KeyError, OSError, RecursionError) as e:
+                # Ambiguous bytes are not an explicit legacy result. Failure
+                # must not depend on having decoded the version marker first.
+                # Leave unreadable bytes in place for diagnosis.
+                self._mutation_bound_failure = True
                 self._state.infra_errors.append(f"CI: failed to read mutation-result.json: {e}")
+                self._state.verdict = Verdict.FAIL
+                self._state.converged = False
+                self._persist_state()
+                self._write_ci_ledger_rows()
+                return Verdict.FAIL
 
         # Launch new async mutation via run_mutation (single invocation point)
         import shutil
@@ -723,7 +923,12 @@ class StateMachine:
                 )
 
             if baseline_cmd is not None:
+                review_context = None
                 try:
+                    review_context = mutation_review_context(
+                        source_root=self._source_root(), base_sha=self.resolved_review.base_sha,
+                        head_sha=self.resolved_review.head_sha, git_diff=self.resolved_review.git_diff,
+                    )
                     started = launch_detached_mutation(
                         diff_files,
                         baseline_cmd,
@@ -735,6 +940,7 @@ class StateMachine:
                         memory_limit_bytes=mutation_memory_limit,
                         mutation_skip_globs=mutation_skip_globs,
                         mutation_include_globs=mutation_include_globs,
+                        **({"review_context": review_context} if review_context is not None else {}),
                         **({"timeout": mutation_timeout} if mutation_timeout is not None else {}),
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -742,6 +948,14 @@ class StateMachine:
                     self._state.infra_errors.append(f"CI: mutation launch error: {exc}")
                 if not started:
                     self._state.infra_errors.append("CI: mutation subprocess failed to start")
+                if (review_context is not None
+                        and not completed_bound_result
+                        and getattr(self, "_mutation_measurement_eligible", False) is not True):
+                    if started:
+                        bound_launch_pending = True
+                        progress.emit("mutation: bound measurement launched; completion pending")
+                    else:
+                        self._mutation_bound_failure = True
         elif not py_files and not other_adapters:
             self._state.findings.append(
                 StateFinding(
@@ -798,7 +1012,8 @@ class StateMachine:
             or coverage_gaps > 0
             or self._acquisition_markers
             or self._state.rounds_with_falsify_infra > 0
-            else Verdict.PASS
+            or self._mutation_bound_failure
+            else Verdict.PENDING if bound_launch_pending else Verdict.PASS
         )
         if coverage_gaps > 0 and confirmed == 0:
             self._state.infra_errors.append(
@@ -1628,6 +1843,13 @@ class StateMachine:
         Calls l2_runner with diff-scoped files and baseline test command.
         Returns MUTANT findings (survivors or MUTATION_SKIPPED).
         """
+        self._mutation_measurement_eligible = False
+        self._mutation_bound_failure = False
+        self._mutation_timeout_objects = set()
+        source_before = False
+        if self.mode in (Mode.LOCAL, Mode.CI):
+            self._capture_mutation_review_source()
+            source_before = mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root())
         diff_files = [str(f) for f in self._executable_source_files()]
 
         if not diff_files:
@@ -1636,6 +1858,19 @@ class StateMachine:
         # A language with a registered adapter needs the baseline command.
         # Unmapped suffixes still skip without a gate.yaml.
         from .mutation_dispatch import adapter_for_path
+
+        from functools import partial
+        from .mutation import run_mutation, _mutation_outcome
+
+        evidence = {}
+        native = self.l2_runner is run_mutation
+        if type(self.l2_runner) is partial and self.l2_runner.func is run_mutation:
+            bound = self.l2_runner.keywords
+            if not self.l2_runner.args and set(bound) == {"cwd"}:
+                try:
+                    native = Path(bound["cwd"]).resolve() == self._source_root().resolve()
+                except (OSError, ValueError, TypeError):
+                    native = False
 
         needs_baseline = any(adapter_for_path(f) for f in diff_files)
         baseline_cmd: list[str] = []
@@ -1653,6 +1888,7 @@ class StateMachine:
                 memory_mb = config["test"].get("mutation_memory_limit_mb")
                 memory_limit_bytes = memory_mb * 1024**2 if memory_mb is not None else None
             except Exception as exc:  # noqa: BLE001
+                self._mutation_bound_failure = native
                 self._state.infra_errors.append(
                     f"L2: gate.yaml missing or test.command not configured: {exc}"
                 )
@@ -1668,6 +1904,9 @@ class StateMachine:
             progress.emit("mutation: running baseline")
         else:
             progress.emit("mutation: checking applicability")
+        proof_kwargs = {"_evidence": evidence} if native else {}
+        if self.l2_runner is run_mutation:
+            proof_kwargs["cwd"] = self._source_root()
         try:
             l2_findings, l2_infra = self.l2_runner(
                 diff_files,
@@ -1677,10 +1916,42 @@ class StateMachine:
                 **({"timeout": mutation_timeout} if mutation_timeout is not None else {}),
                 **({"max_children": max_children} if max_children is not None else {}),
                 **({"memory_limit_bytes": memory_limit_bytes} if memory_limit_bytes is not None else {}),
+                **proof_kwargs,
             )
             self._state.infra_errors.extend(l2_infra)
+            source_after = native and mutation_source_guard_matches(
+                self._mutation_source_guard, source_root=self._source_root(),
+            )
+            decoded = None
+            if native:
+                context = mutation_review_context(
+                    source_root=self._source_root(), base_sha=self.resolved_review.base_sha,
+                    head_sha=self.resolved_review.head_sha, git_diff=self.resolved_review.git_diff,
+                )
+                carrier = _mutation_outcome(l2_findings, l2_infra, evidence, review_context=context)
+                if source_before and source_after:
+                    decoded = decode_mutation_survivor_details(
+                        carrier, review_context=context, include_timeout_diagnostics=True,
+                    )
+                # Raw producer notes may precede a late cleanup failure. They
+                # grant no diagnostic authority until the whole carrier passes.
+                l2_findings = [f for f in l2_findings if not (
+                    f.source == "MUTANT" and f.id.startswith("mutation-timeout-")
+                )]
+                if decoded is not None:
+                    notes = [f for f in decoded if f.id.startswith("mutation-timeout-")]
+                    self._mutation_timeout_objects = {id(f) for f in notes}
+                    l2_findings.extend(notes)
+                else:
+                    self._mutation_bound_failure = True
+                    self._state.infra_errors.append("L2: invalid bound mutation measurement")
+            self._mutation_measurement_eligible = native and decoded is not None
+            if native and not self._mutation_measurement_eligible and any(is_mutation_survivor(f) for f in l2_findings):
+                if not source_before or not mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root()):
+                    progress.emit("mutation: source changed or review capture unavailable; native ruling refused")
             return l2_findings
         except Exception as exc:  # noqa: BLE001
+            self._mutation_bound_failure = native
             self._state.infra_errors.append(f"L2 runner failed: {exc}")
             return []
 
@@ -2205,6 +2476,9 @@ class StateMachine:
         self._acquisition_authority = None
         self._state.converged = False
         self._state.round = round_index
+        self._mutation_timeout_emitted = set()
+        if self.mode in (Mode.LOCAL, Mode.CI):
+            self._capture_mutation_review_source()
         progress.emit("round %d start" % round_index)
         l0_findings = self._observe_phase("l0", self._run_l0_phase)
         if self.mode == Mode.LOCAL:
@@ -2253,6 +2527,21 @@ class StateMachine:
                     logging.getLogger("code_forge").warning(error)
             raise
         l2_findings = self._observe_phase("l2", self._run_l2_phase)
+        # A current L2 survivor needs this round's measurement and ruling.
+        # Capture object identity before the helper can dismiss it so ordinary
+        # carry-forward cannot override a revocation or an unproved successor.
+        l2_survivor_objects = (
+            {id(f) for f in l2_findings if is_mutation_survivor(f)}
+            if self.mode in (Mode.LOCAL, Mode.CI) else set()
+        )
+        if self.mode in (Mode.LOCAL, Mode.CI):
+            notes = apply_mutation_ledger_dispositions(
+                l2_findings, source_root=self._source_root(), base_sha=self.resolved_review.base_sha,
+                head_sha=self.resolved_review.head_sha, git_diff=self.resolved_review.git_diff,
+                eligible_measurement=getattr(self, "_mutation_measurement_eligible", False),
+            )
+            for note in notes:
+                progress.emit(note)
         e2e_findings = self._observe_phase("e2e", self._run_e2e_phase)
         coverage_findings = self._observe_phase("coverage", self._run_coverage_phase)
         merged = self._merge_findings(
@@ -2263,8 +2552,21 @@ class StateMachine:
             coverage_findings,
             rulepack_findings,
         )
-        merged = self._apply_promotion_stickiness(merged)
-        merged = self._apply_dismissed_stickiness(merged)
+        # Terminal timeout diagnostics are observations, not adjudications;
+        # stale promotion history cannot turn them into unresolved findings.
+        carry_forward = [f for f in merged if id(f) not in l2_survivor_objects
+                         and id(f) not in self._mutation_timeout_objects]
+        merged_objects = {id(f) for f in merged}
+        for finding in l2_findings:
+            if id(finding) in self._mutation_timeout_objects:
+                if id(finding) not in merged_objects:
+                    self._mutation_bound_failure = True
+                    self._state.infra_errors.append("L2: mutation timeout identity collision")
+                    continue
+                progress.emit("mutation: " + finding.description)
+                self._mutation_timeout_emitted.add(finding.id)
+        self._apply_promotion_stickiness(carry_forward)
+        self._apply_dismissed_stickiness(carry_forward)
         if self._host_attempt_round is not None:
             self._attempt_findings = merged
         self._state.findings = merged
@@ -2714,6 +3016,7 @@ class StateMachine:
         version_sensitive: bool = False,
         repo_root: str | None = None,
         backend: str | None = None,
+        suppression_key: str = "",
     ) -> LedgerRow:
         """Construct a LedgerRow from review state (shared between local and CI writers).
 
@@ -2724,7 +3027,7 @@ class StateMachine:
         """
         base = self.resolved_review.base_sha
         head = self.resolved_review.head_sha
-        resolved_root = repo_root or str(resolve_ledger_root(self.cwd).resolve())
+        resolved_root = repo_root or str(resolve_ledger_root(self._source_root()).resolve())
         return LedgerRow(
             fingerprint=fingerprint,
             repo_root=resolved_root,
@@ -2743,13 +3046,26 @@ class StateMachine:
             ctx_contract=self.ctx_contract,
             ctx_whole_file=self.ctx_whole_file,
             ctx_canary=self.ctx_canary,
+            suppression_key=suppression_key,
+        )
+
+    def _finding_suppression_key(self, finding: StateFinding) -> str:
+        """Use the captured review and full claim rather than a location alone."""
+        return finding_suppression_key(
+            base_sha=self.resolved_review.base_sha,
+            head_sha=self.resolved_review.head_sha,
+            git_diff=self.resolved_review.git_diff,
+            file=finding.file,
+            line=finding.line_range[0] if finding.line_range else 0,
+            source=finding.source,
+            description=finding.description,
         )
 
     def _write_ledger_rows(self) -> int:
         """Append terminal-StateFinding rows to .code-forge/ledger.jsonl (LOCAL mode).
 
         D-05, D-11, D-20b: Persistence routes to the main repo root via
-        `resolve_ledger_root(self.cwd)` so findings survive worktree cleanup.
+        `resolve_ledger_root(self._source_root())` so findings survive worktree cleanup.
 
         One row per finding whose disposition is FIXED or DISMISSED.
         UNCERTAIN and still-open CONFIRMED findings are not terminal
@@ -2757,9 +3073,9 @@ class StateMachine:
         runs (where SHAs are unavailable) yield 0 to satisfy the
         "no placeholder/empty values" invariant.
 
-        Best-effort dedup: if a (fingerprint, terminal_state) pair is
-        already present in the ledger from any prior run, we do not
-        append a duplicate row regardless of SHAs. This is a
+        Best-effort dedup: if a (fingerprint, terminal_state, suppression_key)
+        tuple is already present, we do not append a duplicate row. A changed
+        reviewed diff or claim has a different key. This is a
         TOCTOU window but the worst case is one extra row per
         convergence -- still monotonic non-decreasing, still
         append-only, still auditable.
@@ -2770,20 +3086,23 @@ class StateMachine:
             return 0
         from .ledger import iter_rows
 
-        ledger_root = resolve_ledger_root(self.cwd)
-        existing = {(r.fingerprint, r.terminal_state) for r in iter_rows(ledger_root)}
+        ledger_root = resolve_ledger_root(self._source_root())
+        existing = {(r.fingerprint, r.terminal_state, r.suppression_key) for r in iter_rows(ledger_root)}
         from datetime import datetime
 
         ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         rows = 0
         for f in self._state.findings:
+            if f.source == "MUTANT" and f.id.startswith("mutation-timeout-"):
+                continue  # An observed timeout is not a disproved/killed mutant.
             if f.disposition == Disposition.FIXED:
                 state = TerminalState.FIXED
             elif f.disposition == Disposition.DISMISSED:
                 state = TerminalState.DISPROVED
             else:
                 continue
-            if (f.fingerprint, state) in existing:
+            key = self._finding_suppression_key(f)
+            if (f.fingerprint, state, key) in existing:
                 continue
             evidence = (
                 "fix_applied" if state == TerminalState.FIXED else (f.error or "falsifier_rejected")
@@ -2801,9 +3120,10 @@ class StateMachine:
                 version_sensitive=ct.version_sensitive,
                 backend=f.backend,
                 repo_root=str(ledger_root.resolve()),
+                suppression_key=key,
             )
             ledger_append(ledger_root, row)
-            existing.add((f.fingerprint, state))
+            existing.add((f.fingerprint, state, key))
             rows += 1
         return rows
 
@@ -2816,10 +3136,10 @@ class StateMachine:
         (axis_claim="clean", file="", line=0, fingerprint=sha256("clean:<base>:<head>")[:16]).
 
         D-05, D-11, D-20b: Persistence routes to the main repo root via
-        `resolve_ledger_root(self.cwd)`. The row's `repo_root` field records the
+        `resolve_ledger_root(self._source_root())`. The row's `repo_root` field records the
         main repo path so downstream diff extraction survives worktree cleanup.
 
-        D-08: Dedup key for UNADJUDICATED rows is (fingerprint, base_sha, head_sha).
+        D-08: Dedup key is (fingerprint, base_sha, head_sha, suppression_key).
         Re-running the same diff does not re-append duplicate rows.
 
         D-16: Growth expectations and compaction trigger: append-only growth is
@@ -2871,8 +3191,8 @@ class StateMachine:
             if base is None or head is None:
                 return 0
 
-            ledger_root = resolve_ledger_root(self.cwd)
-            existing = {(r.fingerprint, r.base_sha, r.head_sha) for r in iter_rows(ledger_root)}
+            ledger_root = resolve_ledger_root(self._source_root())
+            existing = {(r.fingerprint, r.base_sha, r.head_sha, r.suppression_key) for r in iter_rows(ledger_root)}
             ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             # Collect findings in scope: CONFIRMED + style-downgraded findings (CP1 W-5)
@@ -2885,9 +3205,12 @@ class StateMachine:
             rows_written = 0
             if not findings_to_write:
                 # Zero-finding PASS: emit a single clean row with diff-scoped fingerprint (D-07)
-                if self._state.verdict == Verdict.PASS:
+                if self._state.verdict == Verdict.PASS and not any(
+                    f.source == "MUTANT" and f.id.startswith("mutation-timeout-")
+                    for f in self._state.findings
+                ):
                     clean_fp = hashlib.sha256(f"clean:{base}:{head}".encode()).hexdigest()[:16]
-                    if (clean_fp, base, head) not in existing:
+                    if (clean_fp, base, head, "") not in existing:
                         row = self._build_ledger_row(
                             fingerprint=clean_fp,
                             file="",
@@ -2901,12 +3224,13 @@ class StateMachine:
                             repo_root=str(ledger_root.resolve()),
                         )
                         ledger_append(ledger_root, row)
-                        existing.add((clean_fp, base, head))
+                        existing.add((clean_fp, base, head, ""))
                         rows_written += 1
                 return rows_written
 
             for f in findings_to_write:
-                if (f.fingerprint, base, head) in existing:
+                key = self._finding_suppression_key(f)
+                if (f.fingerprint, base, head, key) in existing:
                     continue
                 evidence = f.error or f.description or "confirmed_finding"
                 ct = derive_claim_type(f.source)
@@ -2922,9 +3246,10 @@ class StateMachine:
                     version_sensitive=ct.version_sensitive,
                     repo_root=str(ledger_root.resolve()),
                     backend=f.backend,
+                    suppression_key=key,
                 )
                 ledger_append(ledger_root, row)
-                existing.add((f.fingerprint, base, head))
+                existing.add((f.fingerprint, base, head, key))
                 rows_written += 1
 
             return rows_written
@@ -2936,7 +3261,7 @@ class StateMachine:
             return 0
 
     def _suppress_known_findings(self) -> None:
-        """Suppress CONFIRMED findings that are known in ledger, pinned, or style-downgraded.
+        """Suppress ordinary known/pinned/style findings; native survivors stay blocking.
 
         D-23: Reads ledger via resolve_ledger_root, loads gate.yaml pinned_paths
         and style_downgrade, then for each CONFIRMED finding:
@@ -2994,6 +3319,9 @@ class StateMachine:
         # --- Apply suppression to each CONFIRMED finding ---
         for f in self._state.findings:
             if f.disposition != Disposition.CONFIRMED:
+                continue
+
+            if is_mutation_survivor(f):
                 continue
 
             # 1. Ledger-known fingerprint

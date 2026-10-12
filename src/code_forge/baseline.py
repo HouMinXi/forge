@@ -68,6 +68,8 @@ class ResolvedReview:
     mode_hint: str  # "git" | "non-git"
     base_sha: Optional[str] = None
     head_sha: Optional[str] = None
+    target_kind: Optional[str] = None
+    diff_paths: tuple[str, ...] | None = None
 
 
 def resolve_baseline(
@@ -140,6 +142,8 @@ def _resolve_git(
         mode_hint="git",
         base_sha=base_sha,
         head_sha=head_sha,
+        target_kind=head.ref if head.ref in (WORKING, INDEX) else "COMMIT",
+        diff_paths=tuple(str(path) for path in paths),
     )
 
 
@@ -196,6 +200,8 @@ def _resolve_empty(
             mode_hint="git",
             base_sha=empty_tree_sha,
             head_sha=head_sha,
+            target_kind=head_spec.ref if head_spec.ref in (WORKING, INDEX) else "COMMIT",
+            diff_paths=tuple(str(path) for path in paths),
         )
     mode = "git" if is_git_repo(cwd) else "non-git"
     return ResolvedReview(

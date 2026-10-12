@@ -383,7 +383,6 @@ def test_unknown_guard_status_cannot_prove_baseline(tmp_path, monkeypatch):
     [
         "bool",
         "unknown-code",
-        "timeout",
         "skipped",
         "interrupted",
         "suspicious",

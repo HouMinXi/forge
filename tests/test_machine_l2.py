@@ -556,7 +556,7 @@ class TestCIMutationResultNotSticky:
         result_path.write_text(json.dumps({"pid": 12345}))
 
         machine = self._machine(tmp_path)
-        assert machine.run() == Verdict.PASS
+        assert machine.run() == Verdict.FAIL
         assert any("missing status field" in e for e in machine._state.infra_errors)
         assert not result_path.exists()
 
@@ -588,7 +588,7 @@ class TestCIMutationResultNotSticky:
         result_path.write_text("42")
 
         machine = self._machine(tmp_path)
-        assert machine.run() == Verdict.PASS
+        assert machine.run() == Verdict.FAIL
         assert any("not a JSON object" in e for e in machine._state.infra_errors)
         assert not result_path.exists()
 
