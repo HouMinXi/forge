@@ -116,11 +116,13 @@ def _isolate_user_config(monkeypatch):
 
 
 @pytest.fixture(autouse=True, scope="session")
-def _git_isolation():
+def _git_isolation(tmp_path_factory):
     """Block git from discovering the real repo .git via directory walk-up."""
     repo_root = Path(__file__).resolve().parent.parent
     original = os.environ.get("GIT_CEILING_DIRECTORIES")
-    os.environ["GIT_CEILING_DIRECTORIES"] = str(repo_root.parent)
+    os.environ["GIT_CEILING_DIRECTORIES"] = os.pathsep.join(
+        (str(repo_root.parent), str(tmp_path_factory.getbasetemp()))
+    )
     yield
     if original is None:
         os.environ.pop("GIT_CEILING_DIRECTORIES", None)
