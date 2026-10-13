@@ -408,6 +408,7 @@ def native_transport(monkeypatch, api_format, usage_case, rejected=False):
     cache = {"prompt_tokens_details": {"cached_tokens": 0}} if openai else {"cache_read_input_tokens": 0}
     reports = {
         "absent": None, "null": None,
+        "invalid": {in_key: -1, out_key: False, **{key: None for key in cache}},
         "partial": {in_key: 11},
         "output-only": {out_key: 5},
         "primary": {in_key: 11, out_key: 5},
@@ -478,6 +479,76 @@ def test_factory_native_parser_usage(monkeypatch, tmp_path, api_format, usage_ca
     assert cost["total_input_tokens"] == 3 * (expected_input or 0)
     assert cost["total_output_tokens"] == 3 * (expected_output or 0)
     assert cost["total_cached_tokens"] == 0
+
+
+@pytest.mark.parametrize("api_format", ["cli", "openai", "anthropic", "vertex"])
+@pytest.mark.parametrize("usage_case", ["absent", "null", "invalid"])
+@pytest.mark.parametrize("measured_zero", [False, True])
+@pytest.mark.parametrize("grouped", [False, True])
+def test_factory_native_duration_without_tokens(
+    monkeypatch, tmp_path, api_format, usage_case, measured_zero, grouped,
+):
+    from code_forge import llm_invoke as invoke
+    import time
+
+    backend = native_transport(monkeypatch, api_format, usage_case)
+    if measured_zero:
+        monkeypatch.setattr(invoke, "time", SimpleNamespace(monotonic=lambda: 1234.0))
+    else:
+        transport_owner = invoke.subprocess if api_format == "cli" else invoke.urllib.request
+        transport_name = "Popen" if api_format == "cli" else "urlopen"
+        original_transport = getattr(transport_owner, transport_name)
+
+        def delayed_transport(*args, **kwargs):
+            time.sleep(0.001)
+            return original_transport(*args, **kwargs)
+
+        monkeypatch.setattr(transport_owner, transport_name, delayed_transport)
+
+    real_invoke = invoke.llm_invoke
+    measurements = {role: [] for role in ROLES}
+    lock = threading.Lock()
+
+    def observe_result(prompt, **kwargs):
+        result = real_invoke(prompt, **kwargs)
+        assert result.usage.known_fields == frozenset()
+        assert result.duration_s == 0.0 if measured_zero else result.duration_s > 0.0
+        index = next(i for i, role in enumerate((
+            "structural code reviewer", "senior engineer", "adversarial QE",
+        )) if role in prompt)
+        with lock:
+            measurements[ROLES[index]].append(result.duration_s)
+        return result
+
+    monkeypatch.setattr(invoke, "llm_invoke", observe_result)
+    if grouped:
+        provider = build_grouped_l1_provider("real", [
+            {"name": name, "resolved": resolved()} for name in ("first", "second")
+        ], backend=backend, max_attempts=1)
+    else:
+        provider = build_l1_provider("real", resolved(), backend=backend, max_attempts=1)
+    machine = make_machine(tmp_path, provider)
+    machine._execute_round(0)
+    path = tmp_path / ".code-forge/state.json"
+    cost = json.loads(path.read_text())["cost"]
+    expected_count = 6 if grouped else 3
+    assert len(cost["per_pass"]) == expected_count
+    assert all(len(values) == (2 if grouped else 1) for values in measurements.values())
+    for index, row in enumerate(cost["per_pass"]):
+        role = ROLES[index % 3]
+        expected_duration = measurements[role][index // 3]
+        assert row["pass_name"] == role
+        assert row["duration_s"] == expected_duration
+        assert row["input"] is None and row["output"] is None and row["cached"] is None
+        assert row["available"] is False
+        if grouped:
+            assert row["group"] == ("first", "second")[index // 3]
+    assert load_state(path).cost_per_pass == cost["per_pass"]
+    assert (cost["total_input_tokens"], cost["total_output_tokens"], cost["total_cached_tokens"]) == (0, 0, 0)
+    if api_format == "cli":
+        assert cost["total_duration_s"] == sum(sum(values) for values in measurements.values())
+    else:
+        assert cost["total_duration_s"] > 0.0
 
 
 @pytest.mark.parametrize("api_format", ["openai", "anthropic", "vertex"])
