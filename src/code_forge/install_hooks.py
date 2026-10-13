@@ -111,23 +111,39 @@ def check_hooks_path_override(
         return None
 
 
-def resolve_forge_path() -> str:
-    """Resolve absolute code-forge path for hook embedding.
+_NO_FORGE_INVOCATION = (
+    "Cannot resolve code-forge path: 'code-forge' not on PATH and sys.executable is not valid"
+)
+_INVOCATION_DETAIL_LIMIT = 240
 
-    Returns:
-        Absolute path string that will be embedded in hook.
-        For single executable: "/usr/local/bin/code-forge gate-check"
-        For python module: "/usr/bin/python3 -m code_forge gate-check"
 
-    Raises:
-        RuntimeError: if no valid code-forge executable path found
-    """
+class _ForgeInvocationResolution(NamedTuple):
+    invocation: str | None
+    status: str
+    detail: str
+
+
+def _invocation_detail(text: str) -> str:
+    """Bound only new diagnostic detail, never compatibility log messages."""
+    flat = " ".join(text.split())
+    if len(flat) > _INVOCATION_DETAIL_LIMIT:
+        return flat[: _INVOCATION_DETAIL_LIMIT - 3] + "..."
+    return flat
+
+
+def _interpreter_invocation() -> str | None:
+    if sys.executable and os.access(sys.executable, os.X_OK):
+        return "%s -m code_forge gate-check" % shlex.quote(sys.executable)
+    return None
+
+
+def _resolve_forge_invocation() -> _ForgeInvocationResolution:
+    """Retain probe provenance without changing the installer's fallback."""
     logger = logging.getLogger("code_forge")
-
-    # Try shutil.which('code-forge') first
+    status = "fallback_no_primary"
+    detail = "no executable code-forge on PATH"
     forge_exe = shutil.which("code-forge")
     if forge_exe is not None and os.access(forge_exe, os.X_OK):
-        # Run liveness check
         try:
             result = subprocess.run(
                 [forge_exe, "--version"],
@@ -139,31 +155,51 @@ def resolve_forge_path() -> str:
                 check=False,
             )
             if result.returncode == 0 and result.stdout.strip().startswith("code-forge "):
-                return "%s gate-check" % shlex.quote(forge_exe)
+                # Preserve the successful-primary short circuit: do not touch
+                # sys.executable or probe interpreter access here.
+                return _ForgeInvocationResolution(
+                    "%s gate-check" % shlex.quote(forge_exe), "primary_ok", ""
+                )
             else:
                 logger.warning(
                     "code-forge at %s failed --version check; falling back to sys.executable",
                     forge_exe,
                 )
+                if result.returncode != 0:
+                    status = "primary_exit_failure"
+                    detail = "PATH executable --version exited with status %s" % result.returncode
+                else:
+                    status = "primary_invalid_output"
+                    detail = "PATH executable --version returned invalid version output"
         except subprocess.TimeoutExpired:
             logger.warning(
                 "code-forge at %s --version timed out; falling back to sys.executable",
                 forge_exe,
             )
+            status = "primary_timeout"
+            detail = "PATH executable --version timed out"
         except (OSError, subprocess.SubprocessError) as e:
             logger.warning(
                 "code-forge at %s --version raised %s; falling back to sys.executable",
                 forge_exe,
                 e,
             )
+            status = "primary_os_error" if isinstance(e, OSError) else "primary_subprocess_error"
+            detail = "PATH executable --version raised %s: %s" % (type(e).__name__, e)
 
-    # Fallback to sys.executable + ' -m code_forge'
-    if sys.executable and os.access(sys.executable, os.X_OK):
-        return "%s -m code_forge gate-check" % shlex.quote(sys.executable)
+    invocation = _interpreter_invocation()
+    if invocation is None and status == "fallback_no_primary":
+        status = "no_usable_invocation"
+        detail = _NO_FORGE_INVOCATION
+    return _ForgeInvocationResolution(invocation, status, _invocation_detail(detail))
 
-    raise RuntimeError(
-        "Cannot resolve code-forge path: 'code-forge' not on PATH and sys.executable is not valid"
-    )
+
+def resolve_forge_path() -> str:
+    """Resolve the same preferred executable/fallback used by install-hooks."""
+    resolution = _resolve_forge_invocation()
+    if resolution.invocation is not None:
+        return resolution.invocation
+    raise RuntimeError(_NO_FORGE_INVOCATION)
 
 
 # Non-ASCII grep patterns for two-mode check (ai-smell and strict).
@@ -602,13 +638,14 @@ class HookInputs(NamedTuple):
     planning_leak_guard: bool
 
 
-def collect_hook_inputs(cwd: Path) -> HookInputs:
-    """Read the hook generator inputs for a repo.
+class _HookConfig(NamedTuple):
+    presubmit_entries: list[dict] | None
+    non_ascii_mode: str
+    planning_leak_guard: bool
 
-    Raises:
-        ValueError: if gate.yaml presubmit config is malformed
-        RuntimeError: if no code-forge executable can be resolved
-    """
+
+def _collect_hook_config(cwd: Path) -> _HookConfig:
+    """Read configuration before any executable resolution, as installation does."""
     presubmit_entries = None
     non_ascii_mode = "ai-smell"
     try:
@@ -617,18 +654,20 @@ def collect_hook_inputs(cwd: Path) -> HookInputs:
         if "presubmit" in gate_config:
             presubmit_entries = gate_config["presubmit"]
     except FileNotFoundError:
-        # No gate.yaml is valid: no presubmit entries, default non_ascii mode
         pass
 
-    # Forge's own repo gets the planning-leak guard: .planning/ and
-    # CLAUDE.md must never enter its history.
     is_forge_repo = (cwd / "src" / "code_forge" / "__init__.py").is_file()
+    return _HookConfig(presubmit_entries, non_ascii_mode, is_forge_repo)
 
+
+def collect_hook_inputs(cwd: Path) -> HookInputs:
+    """Read configuration and then resolve the installation's invocation."""
+    config = _collect_hook_config(cwd)
     return HookInputs(
         forge_invocation=resolve_forge_path(),
-        presubmit_entries=presubmit_entries,
-        non_ascii_mode=non_ascii_mode,
-        planning_leak_guard=is_forge_repo,
+        presubmit_entries=config.presubmit_entries,
+        non_ascii_mode=config.non_ascii_mode,
+        planning_leak_guard=config.planning_leak_guard,
     )
 
 
