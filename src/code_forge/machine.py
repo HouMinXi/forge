@@ -403,7 +403,7 @@ class StateMachine:
         self._round_output_tokens: int = 0
         self._round_cached_tokens: int = 0
         self._round_duration: float = 0.0
-        self._pass_counter: int = 0
+        self._round_pass_usage: list[dict] | None = None
         self._advisories: list[AdvisoryFinding] = []
         self._preexisting_buf: list[AdvisoryFinding] = []
         # Cycle numbers of the receipts THIS run wrote (round 0 -> cycle
@@ -1635,6 +1635,8 @@ class StateMachine:
         self._falsify_protocol_findings = []
         self._falsify_failed_findings = []
         l1_candidates, l1_excerpts, usage, duration = self._observe_phase("l1", self.l1_provider)
+        pass_usage = getattr(self.l1_provider, "pass_usage", None)
+        self._round_pass_usage = None if pass_usage is None else [dict(row) for row in pass_usage]
         # Accumulate round-level token usage (H3: applied after round ends)
         self._round_input_tokens += usage.input_tokens
         self._round_output_tokens += usage.output_tokens
@@ -2588,28 +2590,31 @@ class StateMachine:
         # CLI-08 H3: accumulate cost AFTER full round (L0+L1+L2+E2E done).
         # B7: "pass" = 1-3 within round (qodo/expert/adversarial),
         #     "cycle" = round_index.
+        from .state import _PASS_NAMES
+
         self._state.cost_total_input += self._round_input_tokens
         self._state.cost_total_output += self._round_output_tokens
         self._state.cost_total_cached += self._round_cached_tokens
         self._state.cost_total_duration += self._round_duration
-        for i in range(3):
-            self._pass_counter += 1
+        pass_usage = self._round_pass_usage
+        if pass_usage is None:
+            pass_usage = [
+                {"pass_name": role, "input": None, "output": None, "cached": None,
+                 "duration_s": None, "available": False}
+                for role in _PASS_NAMES
+            ]
+        for row in pass_usage:
             self._state.cost_per_pass.append(
-                {
-                    "pass": i + 1,
-                    "cycle": round_index,
-                    "input": self._round_input_tokens // 3,
-                    "output": self._round_output_tokens // 3,
-                    "cached": self._round_cached_tokens // 3,
-                    "duration_s": round(self._round_duration / 3.0, 3),
-                }
+                dict(row, **{"pass": _PASS_NAMES.index(row["pass_name"]) + 1,
+                             "cycle": round_index})
             )
-        self._state.cost_passes = self._pass_counter
+        self._state.cost_passes = len(self._state.cost_per_pass)
         # Reset round accumulators for next round.
         self._round_input_tokens = 0
         self._round_output_tokens = 0
         self._round_cached_tokens = 0
         self._round_duration = 0.0
+        self._round_pass_usage = None
         self._publish_l1_receipts(
             round_index, l1_findings, l1_excerpts, exec_evidence=self._state.exec_evidence
         )

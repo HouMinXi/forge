@@ -35,6 +35,9 @@ from .errors import CliError
 from .json_cut import json_cut_at_eof, json_cut_inside_string
 
 
+_USAGE_FIELDS = ("input_tokens", "output_tokens", "cached_input_tokens")
+
+
 @dataclass(frozen=True)
 class Usage:
     """Token usage from LLM response."""
@@ -47,6 +50,7 @@ class Usage:
     # so cached_input_tokens is the field that reveals a hit -- without
     # it, a fully-cached call is indistinguishable from an empty prompt.
     cached_input_tokens: int = 0
+    known_fields: frozenset[str] = dataclasses.field(default=frozenset(_USAGE_FIELDS), compare=False)
 
 
 @dataclass(frozen=True)
@@ -54,7 +58,7 @@ class LLMResult:
     """LLM invocation result with cost metadata."""
 
     content: Any
-    usage: Usage = Usage()
+    usage: Usage = Usage(known_fields=frozenset())
     duration_s: float = 0.0
     is_truncated: bool = False
 
@@ -71,6 +75,7 @@ class LLMInvokeError(Exception):
         retry_after: float | None = None,
         kind: str = "",
         usage: Usage | None = None,
+        observed_usage: Usage | None = None,
     ):
         super().__init__(message)
         self.exit_code = exit_code
@@ -82,6 +87,7 @@ class LLMInvokeError(Exception):
         # Only acquired response metadata is available on a failure;
         # None distinguishes unavailable usage from a known zero count.
         self.usage = usage
+        self.observed_usage = observed_usage if observed_usage is not None else usage
         # Machine-readable failure class for dispatch decisions.
         # The api dispatch sets one of: "truncated",
         # "empty", "stub_model", "no_json", "conn", "credentials",
@@ -206,45 +212,42 @@ _CLI_TIMEOUT_CAP_S = 300  # CLI subprocesses cap; only applies when no explicit 
 _API_TIMEOUT_CAP_S = 600  # API backends cap; prevents 30-minute hangs on dead endpoints
 
 
-def _cached_tokens_from(usage_data) -> int:
-    """Prompt-cache hit count from either usage dialect.
-
-    openai: usage.prompt_tokens_details.cached_tokens (nested).
-    anthropic/vertex: usage.cache_read_input_tokens (flat).
-    Every value is null-guarded: gateways exist that emit a key with
-    null, and an unguarded .get would smuggle None into an int field.
-    """
-    if not usage_data:
-        return 0
+def _observed_usage(usage_data: dict, api_format: str) -> Usage:
+    """Keep aggregate integers separate from which counts the response reported."""
+    usage_data = usage_data if isinstance(usage_data, dict) else {}
+    if api_format == "openai":
+        counts = [usage_data.get("prompt_tokens"), usage_data.get("completion_tokens")]
+    else:
+        counts = [usage_data.get("input_tokens"), usage_data.get("output_tokens")]
     if "prompt_tokens" in usage_data:
-        details = usage_data.get("prompt_tokens_details") or {}
-        # openai nests the hit count; deepseek reports it flat
-        # (prompt_cache_hit_tokens, with prompt_tokens = hit + miss).
-        return details.get("cached_tokens") or usage_data.get("prompt_cache_hit_tokens") or 0
-    return usage_data.get("cache_read_input_tokens") or 0
+        details = usage_data.get("prompt_tokens_details")
+        cache_reports = (
+            details.get("cached_tokens") if isinstance(details, dict) else None,
+            usage_data.get("prompt_cache_hit_tokens"),
+        )
+    else:
+        cache_reports = (usage_data.get("cache_read_input_tokens"),)
+    valid_cache_reports = [value for value in cache_reports if type(value) is int and value >= 0]
+    counts.append(next((value for value in valid_cache_reports if value > 0),
+                       0 if valid_cache_reports else None))
+    valid = [type(value) is int and value >= 0 for value in counts]
+    return Usage(
+        *(value if known else 0 for value, known in zip(counts, valid, strict=True)),
+        known_fields=frozenset(name for name, known in zip(_USAGE_FIELDS, valid, strict=True) if known),
+    )
 
 
 def _response_error_usage(usage_data: dict, api_format: str) -> Usage | None:
-    """Keep valid acquired failure counts without making malformed siblings numeric."""
-    if api_format == "openai":
-        counts = [usage_data.get("prompt_tokens"), usage_data.get("completion_tokens")]
-        # Match the existing cache dialect admission: a prompt_tokens key
-        # selects the OpenAI nested/flat fields, even when its value is null.
-        details = usage_data.get("prompt_tokens_details")
-        cached = details.get("cached_tokens") if isinstance(details, dict) else None
-        flat = usage_data.get("prompt_cache_hit_tokens")
-        if type(cached) is not int or cached <= 0:
-            if type(flat) is int and flat >= 0:
-                cached = flat
-        counts.append(cached if "prompt_tokens" in usage_data else None)
-    else:
-        counts = [
-            usage_data.get(key) for key in ("input_tokens", "output_tokens", "cache_read_input_tokens")
-        ]
-    valid = [type(value) is int and value >= 0 for value in counts]
-    if not any(valid):
-        return None
-    return Usage(*(value if known else 0 for value, known in zip(counts, valid, strict=True)))
+    """A partial primary report cannot stand in for a complete error Usage."""
+    usage = _observed_usage(usage_data, api_format)
+    return usage if {"input_tokens", "output_tokens"} <= usage.known_fields else None
+
+
+def _sum_usage(first: Usage, second: Usage) -> Usage:
+    return Usage(
+        *(getattr(first, name) + getattr(second, name) for name in _USAGE_FIELDS),
+        known_fields=first.known_fields & second.known_fields,
+    )
 
 
 def _request_headers(base: dict, backend: "BackendConfig") -> dict:
@@ -1452,11 +1455,7 @@ def llm_invoke(
         )
         result = LLMResult(
             content=repaired,
-            usage=Usage(
-                input_tokens=result.usage.input_tokens + extra.input_tokens,
-                output_tokens=result.usage.output_tokens + extra.output_tokens,
-                cached_input_tokens=(result.usage.cached_input_tokens + extra.cached_input_tokens),
-            ),
+            usage=_sum_usage(result.usage, extra),
             duration_s=result.duration_s + extra_s,
             is_truncated=result.is_truncated,
         )
@@ -1608,11 +1607,7 @@ def _invoke_cli(
 
     return LLMResult(
         content=content,
-        usage=Usage(
-            input_tokens=usage_data.get("input_tokens", 0),
-            output_tokens=usage_data.get("output_tokens", 0),
-            cached_input_tokens=_cached_tokens_from(usage_data),
-        ),
+        usage=_observed_usage(usage_data, "cli"),
         duration_s=duration,
     )
 
@@ -1748,7 +1743,7 @@ def _repair_missing_excerpts(
             )
     except LLMInvokeError as exc:
         duration = max(exc.duration_s, time.monotonic() - repair_start)
-        return parsed, exc.usage if exc.usage is not None else Usage(), duration
+        return parsed, exc.observed_usage if exc.observed_usage is not None else Usage(known_fields=frozenset()), duration
     excerpts = _excerpts_from(follow.content)
     if not excerpts:
         return parsed, follow.usage, follow.duration_s
@@ -1851,10 +1846,6 @@ def _continue_truncated(
             breaker.record_truncation()
         if not isinstance(truncated.content, str):
             return None
-        if backend.format == "openai":
-            in_key, out_key = "prompt_tokens", "completion_tokens"
-        else:
-            in_key, out_key = "input_tokens", "output_tokens"
         # A truncated response whose partial is already a complete
         # forge envelope needs no continuation: the length stop landed
         # after the JSON closed, or on trailing prose. Parse the
@@ -1869,11 +1860,7 @@ def _continue_truncated(
                 expected_keys=expected_keys,
             )
         if _is_forge_envelope(parsed_partial, expected_keys):
-            return parsed_partial, Usage(
-                input_tokens=((truncated.usage_data or {}).get(in_key, 0)),
-                output_tokens=((truncated.usage_data or {}).get(out_key, 0)),
-                cached_input_tokens=_cached_tokens_from(truncated.usage_data),
-            )
+            return parsed_partial, _observed_usage(truncated.usage_data, backend.format)
         if not truncated.content.strip() or "{" not in truncated.content:
             return None
         # The tail re-enters a prompt as fenced data; strip the fence
@@ -1959,16 +1946,9 @@ def _continue_truncated(
             if not _is_forge_envelope(parsed, expected_keys):
                 last_failure = "combined output is not a forge envelope"
                 continue
-            return parsed, Usage(
-                input_tokens=(
-                    (truncated.usage_data or {}).get(in_key, 0) + (usage_c or {}).get(in_key, 0)
-                ),
-                output_tokens=(
-                    (truncated.usage_data or {}).get(out_key, 0) + (usage_c or {}).get(out_key, 0)
-                ),
-                cached_input_tokens=(
-                    _cached_tokens_from(truncated.usage_data) + _cached_tokens_from(usage_c)
-                ),
+            return parsed, _sum_usage(
+                _observed_usage(truncated.usage_data, backend.format),
+                _observed_usage(usage_c, backend.format),
             )
     except TruncationBreakerError:
         raise
@@ -2056,15 +2036,7 @@ def _retry_with_more_headroom(
     if not _is_forge_envelope(parsed, expected_keys):
         return None
 
-    if backend.format == "openai":
-        in_key, out_key = "prompt_tokens", "completion_tokens"
-    else:
-        in_key, out_key = "input_tokens", "output_tokens"
-    return parsed, Usage(
-        input_tokens=(usage_data or {}).get(in_key, 0),
-        output_tokens=(usage_data or {}).get(out_key, 0),
-        cached_input_tokens=_cached_tokens_from(usage_data),
-    )
+    return parsed, _observed_usage(usage_data, backend.format)
 
 
 def _invoke_api(
@@ -2145,11 +2117,6 @@ def _invoke_api(
                         api_key,
                         timeout_s,
                     )
-                    usage = Usage(
-                        input_tokens=usage_data.get("prompt_tokens", 0),
-                        output_tokens=usage_data.get("completion_tokens", 0),
-                        cached_input_tokens=_cached_tokens_from(usage_data),
-                    )
                 elif backend.format == "anthropic":
                     content, usage_data = _invoke_anthropic(
                         prompt,
@@ -2157,24 +2124,15 @@ def _invoke_api(
                         api_key,
                         timeout_s,
                     )
-                    usage = Usage(
-                        input_tokens=usage_data.get("input_tokens", 0),
-                        output_tokens=usage_data.get("output_tokens", 0),
-                        cached_input_tokens=_cached_tokens_from(usage_data),
-                    )
                 elif backend.format == "vertex":
                     content, usage_data = _invoke_vertex(
                         prompt,
                         backend,
                         timeout_s,
                     )
-                    usage = Usage(
-                        input_tokens=usage_data.get("input_tokens", 0),
-                        output_tokens=usage_data.get("output_tokens", 0),
-                        cached_input_tokens=_cached_tokens_from(usage_data),
-                    )
                 else:
                     raise LLMInvokeError("unsupported api format: %r" % backend.format)
+                usage = _observed_usage(usage_data, backend.format)
                 # All three formats can hand back a response whose content
                 # field is present but unusable -- null, empty, or not a
                 # string at all.  A backend loose enough to send null is
@@ -2209,6 +2167,7 @@ def _invoke_api(
                         ),
                         kind="empty",
                         usage=_response_error_usage(usage_data, backend.format),
+                        observed_usage=usage,
                         duration_s=time.monotonic() - start,
                     )
                 # Strip fences and parse JSON inside the retry loop; fall
@@ -2272,6 +2231,7 @@ def _invoke_api(
                             kind="no_json",
                             retryable=_no_json_retryable(finish_reason),
                             usage=_response_error_usage(usage_data, backend.format),
+                            observed_usage=usage,
                         ) from exc
             except TimeoutError as exc:
                 raise LLMInvokeError(
@@ -2377,11 +2337,7 @@ def _invoke_api(
     duration = time.monotonic() - start
 
     if initial_syntax_usage is not None:
-        usage = Usage(
-            input_tokens=initial_syntax_usage.input_tokens + usage.input_tokens,
-            output_tokens=initial_syntax_usage.output_tokens + usage.output_tokens,
-            cached_input_tokens=(initial_syntax_usage.cached_input_tokens + usage.cached_input_tokens),
-        )
+        usage = _sum_usage(initial_syntax_usage, usage)
     return LLMResult(content=parsed_content, usage=usage, duration_s=duration)
 
 
