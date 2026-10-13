@@ -336,6 +336,7 @@ class _L1Call:
         self._body = body
         self.attempted_excerpts: list[dict] = []
         self.raw_observations: list[dict] = []
+        self.pass_usage: list[dict] | None = None
         self.unavailable_rejected_passes: set[str] = set()
         self.acquisition_failures: list[StateFinding] = []
         self.is_stub_l1 = False
@@ -345,6 +346,7 @@ class _L1Call:
         return bool(self.unavailable_rejected_passes)
 
     def __call__(self) -> tuple:
+        self.pass_usage = None
         self.raw_observations = []
         self.acquisition_failures = []
         self.unavailable_rejected_passes = set()
@@ -403,6 +405,7 @@ def build_l1_provider(
     if engine == "stub":
 
         def _stub_body(call) -> tuple:
+            call.pass_usage = []
             return ([], [], Usage(), 0.0)
 
         # Trusted setup marker: the user explicitly asked for no L1
@@ -425,6 +428,7 @@ def build_l1_provider(
     )
 
     def _provider(call) -> tuple:
+        call.pass_usage = []
         diff_text = resolved.git_diff or ""
         # Attempted evidence for THIS invocation: raw reviewer responses
         # whose excerpts failed validation, tagged with the loop-owned
@@ -551,6 +555,26 @@ def build_l1_provider(
 
         for i, (pass_name, _role) in enumerate(pass_configs):
             pr = pass_results[i]
+            observed_usage = (
+                pr.observed_usage if isinstance(pr, LLMInvokeError) else
+                pr.usage if not isinstance(pr, Exception) else None
+            )
+            known_fields = getattr(observed_usage, "known_fields", (
+                {"input_tokens", "output_tokens", "cached_input_tokens"} if observed_usage is not None else set()
+            ))
+            available = {"input_tokens", "output_tokens", "cached_input_tokens"} <= known_fields
+            call.pass_usage.append({
+                "pass_name": pass_name,
+                "input": observed_usage.input_tokens if "input_tokens" in known_fields else None,
+                "output": observed_usage.output_tokens if "output_tokens" in known_fields else None,
+                "cached": observed_usage.cached_input_tokens if "cached_input_tokens" in known_fields else None,
+                "duration_s": pr.duration_s if known_fields else None,
+                "available": available,
+            })
+            if observed_usage is not None:
+                total_input += observed_usage.input_tokens
+                total_output += observed_usage.output_tokens
+                total_cached += observed_usage.cached_input_tokens
 
             if isinstance(pr, LLMInvokeError):
                 if isinstance(pr, InvalidJSONResponseError):
@@ -614,9 +638,6 @@ def build_l1_provider(
 
             result = pr
             response = result.content
-            total_input += result.usage.input_tokens
-            total_output += result.usage.output_tokens
-            total_cached += result.usage.cached_input_tokens
             total_duration += result.duration_s
 
             original_exact_dict = type(response) is dict
@@ -829,6 +850,7 @@ def build_grouped_l1_provider(
     ]
 
     def _composite(call):
+        call.pass_usage = []
         from .llm_invoke import Usage  # lazy, same as _provider
         from .reviewer_json import _dedup_by_fingerprint  # lazy, same as _provider
 
@@ -842,6 +864,7 @@ def build_grouped_l1_provider(
         total_duration = 0.0
         for scope, provider in providers:
             findings, excerpts, usage, duration = provider()
+            call.pass_usage.extend(dict(row, group=scope.name) for row in provider.pass_usage)
             call.acquisition_failures.extend(provider.acquisition_failures)
             all_findings.extend(_dedup_by_fingerprint(findings, seen))
             all_excerpts.extend(excerpts)
