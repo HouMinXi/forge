@@ -568,7 +568,7 @@ def build_l1_provider(
                 "input": observed_usage.input_tokens if "input_tokens" in known_fields else None,
                 "output": observed_usage.output_tokens if "output_tokens" in known_fields else None,
                 "cached": observed_usage.cached_input_tokens if "cached_input_tokens" in known_fields else None,
-                "duration_s": pr.duration_s if known_fields else None,
+                "duration_s": pr.duration_s if not isinstance(pr, Exception) or known_fields else None,
                 "available": available,
             })
             if observed_usage is not None:
