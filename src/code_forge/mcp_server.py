@@ -18,7 +18,9 @@ passed as cwd to all CLI subprocesses; cli.py is unchanged.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import math
 import os
 import signal
 import sys
@@ -843,6 +845,96 @@ async def _run_cli_budgeted(
 # -- result formatting --
 
 
+_MAX_SARIF_REPORT_CHARS = 8 * 1024 * 1024
+_MAX_SARIF_PROJECTION_DEPTH = 64
+
+
+def _sarif_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate SARIF key")
+        result[key] = value
+    return result
+
+
+def _sarif_float(value):
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("nonfinite SARIF number")
+    return number
+
+
+def _sarif_projection_depth_ok(findings: list[dict], audit: list[dict] | None) -> bool:
+    """Count dictionary/list levels, including each projected list root.
+
+    Iterators keep traversal space bounded by depth, independent of width.
+    """
+    stack = [(iter((findings, audit)), 0)]
+    while stack:
+        children, depth = stack[-1]
+        try:
+            value = next(children)
+        except StopIteration:
+            stack.pop()
+            continue
+        if type(value) is dict:
+            values = value.values()
+        elif type(value) is list:
+            values = value
+        else:
+            continue
+        if depth >= _MAX_SARIF_PROJECTION_DEPTH:
+            return False
+        stack.append((iter(values), depth + 1))
+    return True
+
+
+def _sarif_result_projection(stdout: str) -> tuple[int | None, list[dict] | None, list[dict] | None]:
+    """Read presentation from one CLI SARIF document, never review authority.
+
+    The 8 MiB-character cutoff bounds only this optional parsing. Original
+    output is retained unchanged; unsupported reports remain uncounted.
+    Each projected list includes at most 64 dictionary/list levels so the
+    full MCP response envelope retains ample serialization depth headroom.
+    """
+    unknown = (None, None, None)
+    if type(stdout) is not str or len(stdout) > _MAX_SARIF_REPORT_CHARS:
+        return unknown
+    try:
+        document = json.loads(stdout, object_pairs_hook=_sarif_object,
+                              parse_float=_sarif_float, parse_constant=_sarif_float)
+        if type(document) is not dict or document.get("version") != "2.1.0":
+            return unknown
+        runs = document.get("runs")
+        if type(runs) is not list or len(runs) != 1 or type(runs[0]) is not dict:
+            return unknown
+        run = runs[0]
+        tool = run.get("tool")
+        if type(tool) is not dict or type(tool.get("driver")) is not dict:
+            return unknown
+        if tool["driver"].get("name") != "code-forge":
+            return unknown
+        findings = run.get("results")
+        if type(findings) is not list or any(type(row) is not dict for row in findings):
+            return unknown
+        properties = run.get("properties", {})
+        if type(properties) is not dict:
+            return unknown
+        audit = properties.get("receiptAudit")
+        if "receiptAudit" in properties and (
+            type(audit) is not list or any(type(row) is not dict for row in audit)
+        ):
+            return unknown
+        if not _sarif_projection_depth_ok(findings, audit):
+            return unknown
+        # Escaped unpaired surrogates can parse but cannot reach MCP UTF-8.
+        json.dumps((findings, audit), ensure_ascii=False, allow_nan=False).encode("utf-8")
+        return len(findings), findings, audit
+    except (ValueError, TypeError, UnicodeError, RecursionError):
+        return unknown
+
+
 def _make_result(
     stdout: str,
     exit_code: int,
@@ -858,10 +950,13 @@ def _make_result(
     output = stdout
     if exit_code != 0 and stderr.strip():
         output = stdout + "\n--- stderr ---\n" + stderr
+    findings_count, findings, receipt_audit = _sarif_result_projection(stdout)
     structured = ForgeResult(
         verdict=exit_to_verdict(exit_code),
         exit_code=exit_code,
-        findings_count=None,
+        findings_count=findings_count,
+        findings=findings,
+        receipt_audit=receipt_audit,
         duration_s=round(elapsed, 2),
         output=output,
     )
@@ -1340,10 +1435,13 @@ async def forge_job_status(job_id: str) -> CallToolResult:
         stderr = r.get("stderr", "")
         if (status == "failed" or r.get("exit_code", 0) != 0) and stderr.strip():
             output = output + "\n--- stderr ---\n" + stderr
+        findings_count, findings, receipt_audit = _sarif_result_projection(r.get("stdout", ""))
         forge_result = ForgeResult(
             verdict=r.get("verdict", "UNKNOWN(-1)"),
             exit_code=r.get("exit_code", -1),
-            findings_count=None,
+            findings_count=findings_count,
+            findings=findings,
+            receipt_audit=receipt_audit,
             duration_s=r.get("duration_s", 0.0),
             output=output,
         )
