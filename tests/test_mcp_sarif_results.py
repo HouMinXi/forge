@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+import hashlib
 import json
 import socket
 from unittest.mock import Mock
@@ -401,3 +402,96 @@ async def test_unprojected_depth_does_not_refuse_shallow_findings(monkeypatch, r
     assert data["receipt_audit"] == document["runs"][0]["properties"]["receiptAudit"]
     assert data["output"] == stdout
     assert full_wire_result(result)
+
+
+def genuine_width_report(budget):
+    finding = StateFinding("width", "width-fp", "L1", Disposition.CONFIRMED,
+                           "a.py", [1, 1], "w")
+    document = build_sarif_log(
+        State(mode=Mode.CI, verdict=Verdict.FAIL, findings=[finding]), {}, "probe"
+    )
+    row = json.dumps(document["runs"][0]["results"][0], separators=(",", ":"))
+    assert len(row) == 290
+    prefix = '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"code-forge"}},"results":['
+    suffix = ']}]}'
+    count = (budget - len(prefix) - len(suffix) + 1) // (len(row) + 1)
+    return prefix + ((row + ',') * (count - 1)) + row + suffix, count
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ROUTES)
+async def test_wide_genuine_report_keeps_sdk_response_serializable(monkeypatch, route):
+    stdout, count = genuine_width_report(8 * 1024 * 1024)
+    assert count == 28826 and len(stdout) == 8388448
+    assert hashlib.sha256(stdout.encode()).hexdigest() == (
+        "a2b42a26f34ef08342996a4eef2691e9d39053b70196fafd3a5a4101fd492346"
+    )
+    result, data = await consume(monkeypatch, route, stdout)
+    # Assert refusal before entering the serializer that aborted on this input.
+    assert data["findings_count"] is None, "wide optional metadata must remain uncounted"
+    assert data["findings"] is None and data["receipt_audit"] is None
+    assert data["output"] == stdout
+    wire = full_wire_result(result)
+    wire_data = wire["structuredContent"]
+    if route != "inline":
+        wire_data = wire_data["result"]
+    assert wire_data["output"] == stdout
+    assert wire_data["findings_count"] is None
+    assert wire_data["findings"] is None and wire_data["receipt_audit"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ROUTES)
+async def test_genuine_rows_near_character_cap_retain_projection(monkeypatch, route):
+    stdout, count = genuine_width_report(1024 * 1024)
+    assert 1024 * 1024 - 291 < len(stdout) <= 1024 * 1024
+    result, data = await consume(monkeypatch, route, stdout)
+    assert data["findings_count"] == count
+    assert data["findings"] == json.loads(stdout)["runs"][0]["results"]
+    assert data["receipt_audit"] is None and data["output"] == stdout
+    wire = full_wire_result(result)
+    wire_data = wire["structuredContent"]
+    if route != "inline":
+        wire_data = wire_data["result"]
+    assert wire_data["findings_count"] == count
+    assert wire_data["findings"] == data["findings"]
+    assert wire_data["output"] == stdout
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("section", ["results", "receiptAudit", "nested"])
+async def test_shallow_container_breadth_at_character_cap(monkeypatch, route, section):
+    # Structural stress fixtures: empty dictionaries are not genuine SARIF rows.
+    prefix = '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"code-forge"}},'
+    if section == "results":
+        prefix += '"results":['
+        suffix = ']}]}'
+    elif section == "receiptAudit":
+        prefix += '"results":[],"properties":{"receiptAudit":['
+        suffix = ']}}]}'
+    else:
+        prefix += '"results":[{"properties":{"nested":['
+        suffix = ']}}]}]}'
+    count = (1024 * 1024 - len(prefix) - len(suffix) + 1) // 3
+    stdout = prefix + ('{},' * (count - 1)) + '{}' + suffix
+    stdout += ' ' * (1024 * 1024 - len(stdout))
+    assert len(stdout) == 1024 * 1024 and count > 349000
+    result, data = await consume(monkeypatch, route, stdout)
+    assert data["findings_count"] == (count if section == "results" else 1 if section == "nested" else 0)
+    if section == "receiptAudit":
+        assert data["findings"] == [] and len(data["receipt_audit"]) == count
+    elif section == "nested":
+        assert len(data["findings"][0]["properties"]["nested"]) == count
+        assert data["receipt_audit"] is None
+    else:
+        assert len(data["findings"]) == count and data["receipt_audit"] is None
+    assert data["output"] == stdout
+    wire = full_wire_result(result)
+    wire_data = wire["structuredContent"]
+    if route != "inline":
+        wire_data = wire_data["result"]
+    assert wire_data["findings_count"] == data["findings_count"]
+    assert wire_data["findings"] == data["findings"]
+    assert wire_data["receipt_audit"] == data["receipt_audit"]
+    assert wire_data["output"] == stdout
