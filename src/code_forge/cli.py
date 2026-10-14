@@ -21,6 +21,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 from . import __version__
+from .assertion_outcome import (
+    AssertionKind, AssertionOutcome, AssertionStage, AssertionStatus, legacy_progress_outcome,
+)
 from .runner import capture_tool_version
 from .sarif import build_sarif_log, format_summary
 
@@ -92,6 +95,8 @@ def _emit_ci_output(
     backend_name: Optional[str] = None,
     backend_model: Optional[str] = None,
     manifest: Optional[Any] = None,
+    *,
+    assertion_outcome: AssertionOutcome | None = None,
 ) -> None:
     """Emit SARIF to stdout and summary to stderr in CI mode.
 
@@ -119,10 +124,14 @@ def _emit_ci_output(
         backend_model=backend_model,
         advisories=advisories or None,
         manifest=manifest,
+        assertion_outcome=assertion_outcome,
     )
     print(json.dumps(log_dict), file=sys.stdout)
     print(
-        format_summary(final_state, advisory_count=len(advisories), manifest=manifest),
+        format_summary(
+            final_state, advisory_count=len(advisories), manifest=manifest,
+            assertion_outcome=assertion_outcome,
+        ),
         file=sys.stderr,
     )
     if post_emit_hook is not None:
@@ -1298,6 +1307,7 @@ def _run_test_assertion_review(
     backend: Optional[BackendConfig] = None,
     *,
     on_outcome: Optional[Callable[[str], None]] = None,
+    on_result: Optional[Callable[[AssertionOutcome], None]] = None,
 ) -> list:
     """Return advisory findings, optionally reporting the check's outcome.
 
@@ -1316,66 +1326,72 @@ def _run_test_assertion_review(
     from .reviewer_json import validate_reviewer_json, _json_to_state_findings
     from .diff import get_changed_files
 
-    changed = get_changed_files(diff_text)
-    # Test file heuristic -- precise, not "test" in f.lower():
-    # Matches /tests/ path component, tests/ prefix, test_ filename prefix,
-    # or _test. filename suffix. Does NOT match "contest.py", "protest.py", etc.
-    test_files = [
-        f
-        for f in changed
-        if "/tests/" in f
-        or f.startswith("tests/")
-        or "test_" in f.split("/")[-1]
-        or "_test." in f.split("/")[-1]
-    ]
-    if not test_files:
-        if on_outcome is not None:
-            on_outcome("skipped: no test files")
-        return []
-
-    from .diff import annotated_diff_prompt_block
-
-    prompt = (
-        "You are a test-assertion reviewer. Review this diff for test quality.\n"
-        "Check: assertion completeness, edge case coverage, mock accuracy, "
-        "assertion specificity.\n"
-        'Return JSON: {"findings": [{"file": "...", "line": N, '
-        '"severity": "P0"|"P1"|"P2"|"P3", '
-        '"description": "..."}], '
-        '"code_excerpts": [{"file": "...", "start_line": N, '
-        '"end_line": M, "content": "..."}]}\n'
-        "Each diff hunk MUST have at least one code_excerpt.\n" + annotated_diff_prompt_block(diff_text)
-    )
-    # H-R3-01: llm_invoke MUST be inside the try block so that
-    # network/timeout/auth errors are caught and fail-open.
+    findings: list = []
+    stage = AssertionStage.PREPARATION
     try:
-        result = llm_invoke(prompt, backend=backend)
-        validated = validate_reviewer_json(result.content)
-        findings = _json_to_state_findings(
-            validated,
-            "test-assertion",
-            backend=backend.name if backend else None,
-        )
-        if on_outcome is not None:
-            on_outcome("done")
-        return findings
+        changed = get_changed_files(diff_text)
+        # Match test paths and filenames without treating contest.py as a test.
+        test_files = [
+            f for f in changed
+            if "/tests/" in f or f.startswith("tests/")
+            or "test_" in f.split("/")[-1] or "_test." in f.split("/")[-1]
+        ]
+        if not test_files:
+            outcome = AssertionOutcome(
+                AssertionStatus.NOT_APPLICABLE, 0,
+                AssertionStage.ELIGIBILITY, AssertionKind.NO_TEST_FILES,
+            )
+        else:
+            from .diff import annotated_diff_prompt_block
+
+            prompt = (
+                "You are a test-assertion reviewer. Review this diff for test quality.\n"
+                "Check: assertion completeness, edge case coverage, mock accuracy, "
+                "assertion specificity.\n"
+                'Return JSON: {"findings": [{"file": "...", "line": N, '
+                '"severity": "P0"|"P1"|"P2"|"P3", '
+                '"description": "..."}], '
+                '"code_excerpts": [{"file": "...", "start_line": N, '
+                '"end_line": M, "content": "..."}]}\n'
+                "Each diff hunk MUST have at least one code_excerpt.\n" + annotated_diff_prompt_block(diff_text)
+            )
+            stage = AssertionStage.INVOCATION
+            result = llm_invoke(prompt, backend=backend)
+            stage = AssertionStage.VALIDATION
+            validated = validate_reviewer_json(result.content)
+            stage = AssertionStage.CONVERSION
+            findings = _json_to_state_findings(
+                validated, "test-assertion", backend=backend.name if backend else None,
+            )
+            outcome = AssertionOutcome(
+                AssertionStatus.COMPLETED_FINDINGS if findings else AssertionStatus.COMPLETED_EMPTY,
+                len(findings),
+            )
     # Let memory exhaustion abort the review rather than degrade it; an empty
     # finding list is indistinguishable from a genuinely clean assertion review.
     except MemoryError:
         raise
     except Exception as exc:  # noqa: BLE001 - degradation path, review fails open
-        timed_out = isinstance(exc, TimeoutError) or (
-            isinstance(exc, LLMInvokeError) and exc.is_timeout
+        timed_out = stage is AssertionStage.INVOCATION and (
+            isinstance(exc, TimeoutError) or (isinstance(exc, LLMInvokeError) and exc.is_timeout)
         )
-        if on_outcome is not None:
-            on_outcome("failed: timeout" if timed_out else "failed: error")
-        return []
+        findings = []
+        outcome = AssertionOutcome(
+            AssertionStatus.FAILED, None, stage,
+            AssertionKind.TIMEOUT if timed_out else AssertionKind.ERROR,
+        )
+    # Notification errors belong to the caller, not the model's failure path.
+    if on_outcome is not None:
+        on_outcome(outcome.legacy_outcome())
+    if on_result is not None:
+        on_result(outcome)
+    return findings
 
 
 def _run_test_assertion_phase(
     diff_text: str,
     backend: Optional[BackendConfig] = None,
-) -> None:
+) -> AssertionOutcome | None:
     """Show the full post-review phase, including advisory output."""
     from . import progress
 
@@ -1383,19 +1399,30 @@ def _run_test_assertion_phase(
     progress.emit("test-assertion phase start")
     outcome = "aborted"
     findings: list = []
-    reported_outcomes: list[str] = []
+    results: list[AssertionOutcome] = []
+    legacy_results: list[str] = []
+    result: AssertionOutcome | None = None
     try:
         findings = _run_test_assertion_review(
-            diff_text, backend, on_outcome=reported_outcomes.append
+            diff_text, backend, on_outcome=legacy_results.append, on_result=results.append,
         )
         for finding in findings:
             sys.stderr.write("[test-assertion] %s\n" % finding.description)
-        outcome = reported_outcomes[0] if reported_outcomes else "unreported"
+        if len(results) == 1 and type(results[0]) is AssertionOutcome:
+            candidate = results[0]
+            if candidate.finding_count == len(findings) or (candidate.finding_count is None and not findings):
+                result = candidate
+        legacy = legacy_progress_outcome(legacy_results[0]) if len(legacy_results) == 1 else "unreported"
+        outcome = result.legacy_outcome() if result is not None else legacy
     finally:
+        diagnostic = ""
+        if result is not None and result.stage is not None:
+            diagnostic = " stage=%s kind=%s" % (result.stage.value, result.kind.value)
         progress.emit(
-            "test-assertion phase %s: findings=%d elapsed=%.1fs"
-            % (outcome, len(findings), time.monotonic() - started)
+            "test-assertion phase %s: findings=%d elapsed=%.1fs%s"
+            % (outcome, len(findings), time.monotonic() - started, diagnostic)
         )
+    return result
 
 
 def _handle_smoke_run(args, cwd: Path) -> int:
@@ -4429,6 +4456,13 @@ def _run(args, env, cwd: Path) -> Verdict:
                 ctx_whole_file=bool(_whole_file),
                 ctx_canary=_load_canary_config(args, gate_data) is not None,
             )
+            # Keep advice and the final state reload in the same review lock.
+            assertion_outcome = (
+                _run_test_assertion_phase(resolved.git_diff, backend)
+                if resolved.git_diff else AssertionOutcome(
+                    AssertionStatus.SKIPPED, None, AssertionStage.ELIGIBILITY, AssertionKind.NO_GIT_DIFF,
+                )
+            )
             # SARIF emission in CI mode, inside lock scope.
             if mode == Mode.CI:
                 _emit_ci_output(
@@ -4437,14 +4471,12 @@ def _run(args, env, cwd: Path) -> Verdict:
                     backend_name=(backend.name if backend.type == "api" else None),
                     backend_model=(backend.model if backend.type == "api" else None),
                     manifest=_manifest_a,
+                    assertion_outcome=assertion_outcome,
                 )
     except LLMInvokeError as exc:
         # re-wrap LLMInvokeError as CliError
         raise CliError("backend %s: %s" % (backend.name, exc)) from exc
 
-    # Advisory findings stay outside the receipt gate on this outlet too.
-    if resolved.git_diff:
-        _run_test_assertion_phase(resolved.git_diff, backend)
     return verdict
 
 

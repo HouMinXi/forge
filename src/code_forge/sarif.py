@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .basis import derive_basis
+from .assertion_outcome import AssertionOutcome
 from .disposition import Disposition
 from .manifest import EnvManifest, ManifestTier
 from .state import (
@@ -75,6 +76,8 @@ def build_sarif_log(
     backend_model: Optional[str] = None,
     advisories: Optional[list] = None,
     manifest: Optional[EnvManifest | dict[str, Any]] = None,
+    *,
+    assertion_outcome: AssertionOutcome | None = None,
 ) -> dict[str, Any]:
     """Build SARIF 2.1.0 log dict.
 
@@ -138,6 +141,8 @@ def build_sarif_log(
         run.setdefault("properties", {})["manifest"] = manifest_dict
     if getattr(state, "exec_evidence", None) is not None:
         run.setdefault("properties", {})["exec_evidence"] = state.exec_evidence
+    if assertion_outcome is not None:
+        run.setdefault("properties", {})["testAssertion"] = AssertionOutcome.to_metadata(assertion_outcome)
     return {
         "$schema": SARIF_SCHEMA_URI,
         "version": SARIF_VERSION,
@@ -329,6 +334,8 @@ def format_summary(
     state: State,
     advisory_count: int = 0,
     manifest: Optional[EnvManifest | ManifestTier | str | dict[str, Any]] = None,
+    *,
+    assertion_outcome: AssertionOutcome | None = None,
 ) -> str:
     """One-line stderr summary per LAYER0-07.
 
@@ -408,4 +415,9 @@ def format_summary(
         exec_status = exec_ev.get("status", "")
         if exec_status:
             line += " exec=%s" % exec_status
+    if assertion_outcome is not None:
+        metadata = AssertionOutcome.to_metadata(assertion_outcome)
+        line += " test_assertion=%s" % metadata["status"]
+        if "stage" in metadata:
+            line += " stage=%s kind=%s" % (metadata["stage"], metadata["kind"])
     return line
