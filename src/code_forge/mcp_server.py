@@ -845,7 +845,7 @@ async def _run_cli_budgeted(
 # -- result formatting --
 
 
-_MAX_SARIF_REPORT_CHARS = 8 * 1024 * 1024
+_MAX_SARIF_REPORT_CHARS = 1024 * 1024
 _MAX_SARIF_PROJECTION_DEPTH = 64
 
 
@@ -893,8 +893,10 @@ def _sarif_projection_depth_ok(findings: list[dict], audit: list[dict] | None) -
 def _sarif_result_projection(stdout: str) -> tuple[int | None, list[dict] | None, list[dict] | None]:
     """Read presentation from one CLI SARIF document, never review authority.
 
-    The 8 MiB-character cutoff bounds only this optional parsing. Original
-    output is retained unchanged; unsupported reports remain uncounted.
+    The 1 MiB-character cutoff limits optional parsing and structured copies
+    made by the MCP serializer. Wide reports can otherwise exhaust memory
+    despite shallow nesting. Original output is retained unchanged;
+    unsupported reports remain uncounted.
     Each projected list includes at most 64 dictionary/list levels so the
     full MCP response envelope retains ample serialization depth headroom.
     """
