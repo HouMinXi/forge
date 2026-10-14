@@ -126,10 +126,10 @@ def _resolve_git(
 
     head = head_spec if head_spec is not None else GitRefBaseline(WORKING)
     if head.ref == WORKING:
-        diff = working_tree_diff(baseline_spec.ref, paths, cwd)
+        diff = working_tree_diff(base_sha, paths, cwd)
         head_sha = resolve_git_ref("HEAD", cwd)
     elif head.ref == INDEX:
-        diff = cached_diff(baseline_spec.ref, paths, cwd)
+        diff = cached_diff(base_sha, paths, cwd)
         head_sha = resolve_git_ref("HEAD", cwd)
     else:
         head_sha = resolve_git_ref(head.ref, cwd)
