@@ -133,7 +133,7 @@ def _resolve_git(
         head_sha = resolve_git_ref("HEAD", cwd)
     else:
         head_sha = resolve_git_ref(head.ref, cwd)
-        diff = git_diff(baseline_spec.ref, head.ref, paths, cwd)
+        diff = git_diff(base_sha, head_sha, paths, cwd)
 
     return ResolvedReview(
         source_files=paths,
@@ -192,7 +192,7 @@ def _resolve_empty(
             head_sha = resolve_git_ref("HEAD", cwd)
         else:
             head_sha = resolve_git_ref(head_spec.ref, cwd)
-            diff = git_diff(empty_tree_sha, head_spec.ref, paths, cwd)
+            diff = git_diff(empty_tree_sha, head_sha, paths, cwd)
         return ResolvedReview(
             source_files=paths,
             baseline_content=None,
