@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Real-Git controls for resolved COMMIT diff operands.
+"""Real-Git controls for captured COMMIT and pseudo-head base operands.
 
 Source-only candidate: execution belongs to the admitted qualification owner.
-The three moving-ref cases keep the diff helper real; only the capture boundary
-is interposed. These controls do not establish immutable measurement authority.
+Moving-ref cases keep the diff helper real; only the capture boundary is
+interposed. These controls do not establish immutable measurement authority.
 """
 
 from __future__ import annotations
@@ -366,3 +366,246 @@ def test_committed_resolution_uses_linked_worktree_cwd(repo, tmp_path):
         assert _oid(linked, "HEAD") == repo.reviewed
     finally:
         _git(repo.root, "worktree", "remove", "--force", str(linked))
+
+
+# These cases exercise live pseudo-head consumers. The clean fixture permits
+# an independent commit-to-commit oracle only after its target state is proved.
+_PSEUDO_HEAD_CASES = [
+    pytest.param(GitRefBaseline("WORKING"), "WORKING", id="explicit-working"),
+    pytest.param(GitRefBaseline("INDEX"), "INDEX", id="index"),
+    pytest.param(None, "WORKING", id="default-working"),
+]
+_FIXTURE_TRACKED_PATHS = ("calc.py", "other.py")
+
+
+def _clean_pseudo_state(repo, expected_base_ref):
+    """Prove clean HEAD/index/worktree equivalence; ignore index cache bytes."""
+    head = _oid(repo.root, "HEAD")
+    assert head == repo.moved
+    assert _oid(repo.root, _BASE_REF) == expected_base_ref
+    assert _oid(repo.root, _HEAD_REF) == repo.reviewed
+    assert _git(
+        repo.root, "status", "--porcelain=v1", "--untracked-files=all",
+    ) == ""
+
+    index_entries = []
+    for entry in _git(
+        repo.root, "ls-files", "--stage", "-z", "--", *_FIXTURE_TRACKED_PATHS,
+    ).split("\0"):
+        if entry:
+            metadata, path = entry.split("\t", 1)
+            mode, oid, stage = metadata.split()
+            index_entries.append((mode, oid, stage, path))
+
+    tree_entries = []
+    for entry in _git(
+        repo.root, "ls-tree", "-z", repo.moved, "--", *_FIXTURE_TRACKED_PATHS,
+    ).split("\0"):
+        if entry:
+            metadata, path = entry.split("\t", 1)
+            mode, kind, oid = metadata.split()
+            assert kind == "blob"
+            tree_entries.append((mode, oid, "0", path))
+
+    assert tuple(entry[3] for entry in tree_entries) == _FIXTURE_TRACKED_PATHS
+    assert index_entries == tree_entries
+    working_bytes = tuple(
+        (path, (repo.root / path).read_bytes()) for path in _FIXTURE_TRACKED_PATHS
+    )
+    # The fixture writes ASCII LF-only regular files; text=True in _git does
+    # not alter these known bytes. The oracle never reads production helpers.
+    committed_bytes = tuple(
+        (path, _git(repo.root, "show", repo.moved + ":" + path).encode("utf-8"))
+        for path in _FIXTURE_TRACKED_PATHS
+    )
+    assert working_bytes == committed_bytes
+    return head, tuple(index_entries), working_bytes
+
+
+def _assert_pseudo_metadata(result, repo, target_kind, paths, *, empty=False):
+    assert result.mode_hint == "git" and result.baseline_content is None
+    assert (result.base_sha, result.head_sha) == (
+        _EMPTY_TREE if empty else repo.base, repo.moved,
+    )
+    assert result.target_kind == target_kind
+    assert result.source_files == paths
+    assert result.diff_paths == tuple(str(path) for path in paths)
+
+
+@pytest.mark.parametrize("head_spec,target_kind", _PSEUDO_HEAD_CASES)
+def test_pseudo_diff_keeps_captured_base_after_ref_move(
+    repo, monkeypatch, head_spec, target_kind,
+):
+    before = _clean_pseudo_state(repo, repo.base)
+    expected = _expected_diff(repo.root, repo.base, repo.moved)
+    moved = _expected_diff(repo.root, repo.moved, repo.moved)
+    assert expected and moved == "" and expected != moved
+    assert "-value = 'base'" in expected
+    assert "+value = 'moved'" in expected
+    events = _move_after_capture(monkeypatch, repo, _BASE_REF)
+
+    result = baseline.resolve_baseline(
+        GitRefBaseline(_BASE_REF), head_spec, _PATHS, repo.root,
+    )
+
+    assert events == [(
+        repo.base, (repo.base, repo.reviewed), (repo.moved, repo.reviewed),
+    )]
+    assert _clean_pseudo_state(repo, repo.moved) == before
+    _assert_pseudo_metadata(result, repo, target_kind, _PATHS)
+    assert _expected_diff(repo.root, _BASE_REF, repo.moved) == moved
+    entry = "default-WORKING" if head_spec is None else target_kind
+    assert result.git_diff == expected, (
+        entry + " resolved base operand was looked up again"
+    )
+
+
+@pytest.mark.parametrize("head_spec,target_kind", _PSEUDO_HEAD_CASES)
+def test_pseudo_diff_matches_captured_base_without_ref_move(
+    repo, head_spec, target_kind,
+):
+    before = _clean_pseudo_state(repo, repo.base)
+    expected = _expected_diff(repo.root, repo.base, repo.moved)
+    assert expected
+    assert "-value = 'base'" in expected
+    assert "+value = 'moved'" in expected
+
+    result = baseline.resolve_baseline(
+        GitRefBaseline(_BASE_REF), head_spec, _PATHS, repo.root,
+    )
+
+    assert _clean_pseudo_state(repo, repo.base) == before
+    _assert_pseudo_metadata(result, repo, target_kind, _PATHS)
+    assert result.git_diff == expected
+
+
+@pytest.mark.parametrize("head_spec,target_kind", _PSEUDO_HEAD_CASES)
+def test_pseudo_diff_honors_stable_base_replacement(repo, head_spec, target_kind):
+    before = _clean_pseudo_state(repo, repo.base)
+    _git(repo.root, "replace", repo.base, repo.reviewed)
+    assert _oid(repo.root, "refs/replace/" + repo.base) == repo.reviewed
+    expected = _expected_diff(repo.root, repo.base, repo.moved)
+    without_replacement = _expected_diff(
+        repo.root, repo.base, repo.moved, replacements=False,
+    )
+    assert expected and without_replacement and expected != without_replacement
+    assert "-value = 'reviewed'" in expected
+    assert "-value = 'base'" in without_replacement
+
+    result = baseline.resolve_baseline(
+        GitRefBaseline(_BASE_REF), head_spec, _PATHS, repo.root,
+    )
+
+    assert _clean_pseudo_state(repo, repo.base) == before
+    assert _oid(repo.root, "refs/replace/" + repo.base) == repo.reviewed
+    _assert_pseudo_metadata(result, repo, target_kind, _PATHS)
+    assert result.git_diff == expected
+
+
+@pytest.mark.parametrize("empty,head_spec", [
+    pytest.param(False, GitRefBaseline("WORKING"), id="explicit-working"),
+    pytest.param(False, None, id="default-working"),
+    pytest.param(True, GitRefBaseline("WORKING"), id="empty-working"),
+])
+def test_working_uses_live_unstaged_and_untracked_content(repo, empty, head_spec):
+    source = repo.root / "calc.py"
+    source.write_text("value = 'staged-for-working'\n", encoding="utf-8")
+    _git(repo.root, "add", "calc.py")
+    source.write_text("value = 'working-final'\n", encoding="utf-8")
+    (repo.root / "untracked.py").write_text(
+        "untracked_only = True\n", encoding="utf-8",
+    )
+    paths = [Path(".")]
+
+    result = baseline.resolve_baseline(
+        EmptyBaseline() if empty else GitRefBaseline(_BASE_REF),
+        head_spec, paths, repo.root,
+    )
+
+    _assert_pseudo_metadata(result, repo, "WORKING", paths, empty=empty)
+    assert "+value = 'working-final'" in result.git_diff
+    assert "+untracked_only = True" in result.git_diff
+    assert "staged-for-working" not in result.git_diff
+    assert "+value = 'moved'" not in result.git_diff
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_index_excludes_unstaged_and_in_scope_untracked_content(repo, empty):
+    source = repo.root / "calc.py"
+    source.write_text("value = 'index-stage'\n", encoding="utf-8")
+    _git(repo.root, "add", "calc.py")
+    source.write_text("value = 'working-only'\n", encoding="utf-8")
+    (repo.root / "untracked.py").write_text(
+        "untracked_only = True\n", encoding="utf-8",
+    )
+    paths = [Path(".")]
+
+    result = baseline.resolve_baseline(
+        EmptyBaseline() if empty else GitRefBaseline(_BASE_REF),
+        GitRefBaseline("INDEX"), paths, repo.root,
+    )
+
+    _assert_pseudo_metadata(result, repo, "INDEX", paths, empty=empty)
+    assert "+value = 'index-stage'" in result.git_diff
+    assert "working-only" not in result.git_diff
+    assert "untracked_only" not in result.git_diff
+    assert "untracked.py" not in result.git_diff
+
+
+@pytest.mark.parametrize("head_spec,target_kind", _PSEUDO_HEAD_CASES)
+def test_pseudo_diff_failure_propagates_without_ref_retry(
+    repo, monkeypatch, head_spec, target_kind,
+):
+    # Deliberate propagation injection, separate from real-Git movement proof.
+    real_resolve = baseline.resolve_git_ref
+    selected_name = "working_tree_diff" if target_kind == "WORKING" else "cached_diff"
+    sibling_name = "cached_diff" if target_kind == "WORKING" else "working_tree_diff"
+    real_sibling = getattr(baseline, sibling_name)
+    resolutions = []
+    diff_calls = []
+    sibling_calls = []
+    failure = BaselineResolutionError("injected pseudo post-resolution diff failure")
+
+    def observe_resolution(ref, cwd):
+        resolutions.append(ref)
+        return real_resolve(ref, cwd)
+
+    def fail_diff(base, paths, cwd):
+        diff_calls.append((base, tuple(paths), cwd))
+        raise failure
+
+    def observe_sibling(base, paths, cwd):
+        sibling_calls.append((base, tuple(paths), cwd))
+        return real_sibling(base, paths, cwd)
+
+    monkeypatch.setattr(baseline, "resolve_git_ref", observe_resolution)
+    monkeypatch.setattr(baseline, selected_name, fail_diff)
+    monkeypatch.setattr(baseline, sibling_name, observe_sibling)
+
+    with pytest.raises(BaselineResolutionError) as caught:
+        baseline.resolve_baseline(
+            GitRefBaseline(_BASE_REF), head_spec, _PATHS, repo.root,
+        )
+
+    assert caught.value is failure
+    assert resolutions == [_BASE_REF]
+    assert diff_calls == [(repo.base, tuple(_PATHS), repo.root)]
+    assert sibling_calls == []
+
+
+@pytest.mark.parametrize("head_spec,target_kind", _PSEUDO_HEAD_CASES)
+@pytest.mark.parametrize("kind", ["missing", "tree", "blob"])
+def test_invalid_pseudo_base_refs_keep_resolution_failure(
+    repo, head_spec, target_kind, kind,
+):
+    if kind == "missing":
+        invalid = "refs/heads/does-not-exist"
+    elif kind == "tree":
+        invalid = _oid(repo.root, repo.base + "^{tree}")
+    else:
+        invalid = _oid(repo.root, repo.base + ":calc.py")
+
+    with pytest.raises(BaselineResolutionError, match="does not resolve"):
+        baseline.resolve_baseline(
+            GitRefBaseline(invalid), head_spec, _PATHS, repo.root,
+        )
