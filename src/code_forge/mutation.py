@@ -800,6 +800,76 @@ def mutation_source_guard_matches(guard: MutationSourceGuard | None, *, source_r
         return False
 
 
+def is_native_mutation_runner(runner, *, source_root: Path) -> bool:
+    """Recognize only the canonical runner and its exact source-bound factory."""
+    from functools import partial
+
+    if runner is run_mutation:
+        return True
+    if type(runner) is partial and runner.func is run_mutation:
+        if not runner.args and set(runner.keywords) == {"cwd"}:
+            try:
+                return Path(runner.keywords["cwd"]).resolve() == source_root.resolve()
+            except (OSError, ValueError, TypeError):
+                return False
+    return False
+
+
+def executable_review_sources(source_files: list[Path], git_diff: str | None, source_root: Path) -> list[Path]:
+    """Project semantic scope onto entries with a reviewed post-image."""
+    if git_diff is None:
+        return source_files
+    from .diff import get_removed_files
+
+    removed = {os.path.abspath(source_root / path) for path in get_removed_files(git_diff)}
+    return [path for path in source_files if os.path.abspath(source_root / path) not in removed]
+
+
+def mutation_review_admission_error(
+    *, target_kind: str | None, git_diff: str | None, source_files: list[Path],
+    source_root: Path, config_root: Path, runner, ci_detached: bool = False,
+) -> str | None:
+    """Reject unsupported staged native work without discovering/running tools."""
+    if target_kind != "INDEX" or not git_diff:
+        return None
+    native = is_native_mutation_runner(runner, source_root=source_root)
+    detached = ci_detached and shutil.which("mutmut") is not None
+    if not native and not detached:
+        return None
+    from .gate_check import load_gate_config
+    from .mutation_dispatch import group_by_adapter
+
+    files = executable_review_sources(source_files, git_diff, source_root)
+    py_files = group_by_adapter([str(path) for path in files]).get("python-mutmut", [])
+    if not py_files:
+        return None
+    try:
+        test = load_gate_config(config_root / ".code-forge/gate.yaml")["test"]
+    except (OSError, ValueError, TypeError):
+        return None
+    try:
+        root = Path(os.path.abspath(source_root))
+        py_files = [_lexical_source(path, root).as_posix() for path in py_files]
+    except ValueError:
+        return None
+    skip, include = _globs_from_gate_yaml(source_root)
+    selected = native and any(not _is_test_path(path, skip, include, source_root) for path in py_files)
+    if detached:
+        detached_skip = test.get("mutation_skip_globs")
+        detached_include = test.get("mutation_include_globs")
+        selected = selected or any(not _is_test_path(
+            path, skip if detached_skip is None else detached_skip,
+            include if detached_include is None else detached_include, source_root,
+        ) for path in py_files)
+    if not selected:
+        return None
+    return (
+        "INDEX source is unsupported for native mutation review; "
+        "rerun with --head WORKING to review physical current files, "
+        "or use a static/non-native review path"
+    )
+
+
 def _mutation_inventory(repo_root: str, py_files: list[str]) -> tuple[dict[str, str], dict[str, str]]:
     inventory: dict[str, str] = {}
     digests = {}

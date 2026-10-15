@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sys
 import threading
 import time
@@ -58,7 +57,10 @@ from .ledger import (
     append_row as ledger_append,
 )
 from .llm_invoke import FalsifyProtocolError, InvalidJSONResponseError, LLMInvokeError, Usage
-from .mutation import launch_detached_mutation, capture_mutation_source_guard, mutation_source_guard_matches
+from .mutation import (
+    launch_detached_mutation, capture_mutation_source_guard, mutation_source_guard_matches,
+    executable_review_sources, is_native_mutation_runner, mutation_review_admission_error,
+)
 from .mutation_findings import (
     apply_mutation_ledger_dispositions,
     decode_mutation_survivor_details,
@@ -472,6 +474,11 @@ class StateMachine:
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
+        admission_error = mutation_review_admission_error(
+            target_kind=self.resolved_review.target_kind, git_diff=self.resolved_review.git_diff,
+            source_files=self._source_files(), source_root=self._source_root(), config_root=self.cwd,
+            runner=self.l2_runner, ci_detached=self.mode == Mode.CI,
+        )
         self._acquisition_receipts = ()
         self._acquisition_authority = None
         progress.reset()
@@ -480,6 +487,14 @@ class StateMachine:
         self._state.mode = self.mode
         self._state.source_hash = self.source_hash
         self._state.baseline_spec_repr = self.baseline_spec_repr
+        if admission_error:
+            self._state.verdict = Verdict.FAIL
+            self._state.converged = False
+            if admission_error not in self._state.infra_errors:
+                self._state.infra_errors.append(admission_error)
+            self._persist_state()
+            progress.emit(admission_error)
+            return Verdict.FAIL
         if self._state.env_manifest is None and self.cwd and self.cwd.exists():
             from .manifest import extract_manifest
 
@@ -1882,18 +1897,10 @@ class StateMachine:
         # Unmapped suffixes still skip without a gate.yaml.
         from .mutation_dispatch import adapter_for_path
 
-        from functools import partial
         from .mutation import run_mutation, _mutation_outcome
 
         evidence = {}
-        native = self.l2_runner is run_mutation
-        if type(self.l2_runner) is partial and self.l2_runner.func is run_mutation:
-            bound = self.l2_runner.keywords
-            if not self.l2_runner.args and set(bound) == {"cwd"}:
-                try:
-                    native = Path(bound["cwd"]).resolve() == self._source_root().resolve()
-                except (OSError, ValueError, TypeError):
-                    native = False
+        native = is_native_mutation_runner(self.l2_runner, source_root=self._source_root())
 
         needs_baseline = any(adapter_for_path(f) for f in diff_files)
         baseline_cmd: list[str] = []
@@ -4047,19 +4054,4 @@ class StateMachine:
 
     def _executable_source_files(self) -> list[Path]:
         """Project semantic scope onto entries with a reviewed post-image."""
-        source_files = self._source_files()
-        if self.resolved_review.git_diff is None:
-            return source_files
-        from .diff import get_removed_files
-
-        removed_paths = {
-            os.path.abspath(self._source_root() / path)
-            for path in get_removed_files(self.resolved_review.git_diff)
-        }
-        # Match lexically without following removed symlinks or testing file
-        # existence, so positive-path missing and permission errors survive.
-        return [
-            path
-            for path in source_files
-            if os.path.abspath(self._source_root() / path) not in removed_paths
-        ]
+        return executable_review_sources(self._source_files(), self.resolved_review.git_diff, self._source_root())

@@ -3983,6 +3983,17 @@ def _run(args, env, cwd: Path) -> Verdict:
         print("code-forge: no changes to review", file=sys.stderr)
         return Verdict.PASS
 
+    if outlet == "subprocess" and resolved.target_kind == "INDEX":
+        from .mutation import mutation_review_admission_error
+
+        admission_error = mutation_review_admission_error(
+            target_kind=resolved.target_kind, git_diff=resolved.git_diff,
+            source_files=resolved.source_files, source_root=cwd, config_root=cwd,
+            runner=build_l2_runner(cwd=cwd), ci_detached=mode == Mode.CI,
+        )
+        if admission_error:
+            raise CliError(admission_error)
+
     # Step 5: source identity (B3: keyword args on mode_hint)
     if resolved.mode_hint == "git":
         source_hash = compute_source_hash(git_diff=resolved.git_diff or "")
