@@ -8,25 +8,53 @@ record of every terminal disposition (FIXED / DISPROVED / DUPLICATE /
 ESCAPED). Rows carry base/head SHAs so Phase 44 can re-extract the
 reviewed diff for downstream case generation.
 
-Atomicity: each append is one single write(2) call preceded by
-open(O_APPEND). On Linux, writes <= PIPE_BUF (4096 bytes) are
-guaranteed atomic at the syscall level. Ledger rows are well under
-1 KB, so concurrent appends will not interleave.
+Cooperating writers serialize final-byte observation and append with a
+process guard and a same-file OS lock, using one read/write descriptor.
+Only a non-LF tail receives a separator; original bytes are never repaired.
+Lock waiting has a single one-second cooperative budget, not a deadline for
+filesystem calls or total append latency. Effective filesystem locking must
+be qualified on each platform; no PIPE_BUF guarantee applies to regular files.
+
+Read/write access is required, including for an empty ledger. Windows locks
+byte zero, which can temporarily deny readers access to that byte, and writes
+new rows in binary LF format. Readers remain unlocked and strict consumers
+still reject old corruption. Unrelated closes can defeat process-owned flock
+emulation; hostile/older writers, weak network locks and undetected path races
+are outside this guarantee. Stable symlink aliases are supported, not hardened.
+There is no fsync or exactly-once promise: a failed append may leave bytes,
+and callers must not automatically replay it. Existing LOCAL caller exceptions
+can skip subsequent state persistence; this writer does not change that behavior.
+The writer requires native CPython RLock ownership support and fails closed
+before filesystem creation otherwise. Cleanup covers operation-raised exceptions,
+not arbitrary asynchronous delivery before the final guard cleanup invocation or
+between raw descriptor acquisition and its Python assignment; those interruptions
+can retain resources and require process restart.
 """
 
 from __future__ import annotations
 
+import _thread
+import errno
 import hashlib
 import json
+import os
+import stat
 import subprocess
 import sys
+import threading
+import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, fields
 from enum import Enum
 from pathlib import Path
-from typing import Final, Iterator
+from types import BuiltinMethodType
+from typing import Callable, Final, Iterator
 
 _TRUNCATION_MARKER = "... [truncated]"
 _MAX_EVIDENCE_LEN = 500
+_LEDGER_APPEND_LOCK = threading.RLock()
+_LEDGER_LOCK_TIMEOUT_SECONDS = 1.0
+_LEDGER_LOCK_POLL_SECONDS = 0.01
 
 
 def _truncate_evidence(text: str) -> str:
@@ -119,21 +147,207 @@ def _ledger_path(cwd: Path) -> Path:
     return cwd / ".code-forge" / "ledger.jsonl"
 
 
-def append_row(cwd: Path, row: LedgerRow) -> None:
-    """Append one row to `<cwd>/.code-forge/ledger.jsonl`.
+def _ledger_guard_backend() -> tuple[Callable, Callable, Callable]:
+    """Bind qualified native ownership operations before filesystem creation."""
+    guard = _LEDGER_APPEND_LOCK
+    if sys.implementation.name != "cpython" or type(guard) is not getattr(_thread, "RLock", None):
+        raise OSError("ledger: native process locking unavailable")
+    try:
+        methods = (guard.acquire, guard._is_owned, guard.release)
+    except AttributeError as exc:
+        raise OSError("ledger: native process locking unavailable") from exc
+    if any(not isinstance(method, BuiltinMethodType) or method.__self__ is not guard for method in methods):
+        raise OSError("ledger: native process locking unavailable")
+    return methods
 
-    Creates `.code-forge/` if missing. Single write per row, atomic
-    under Linux PIPE_BUF for the row sizes we emit. Truncates evidence
-    to <= 500 chars with an explicit marker (D-07, D-21).
+
+def _ledger_lock_backend() -> tuple[str, Callable, int, int]:
+    """Select a lazy, nonblocking OS lock before creating filesystem objects."""
+    try:
+        if os.name == "posix":
+            import fcntl
+
+            function = fcntl.flock
+            modes = (fcntl.LOCK_EX, fcntl.LOCK_NB, fcntl.LOCK_UN)
+            if not callable(function) or any(type(mode) is not int for mode in modes):
+                raise OSError("ledger: locking unavailable")
+            return "posix", function, modes[0] | modes[1], modes[2]
+        if os.name == "nt":
+            import msvcrt
+
+            function = msvcrt.locking
+            modes = (msvcrt.LK_NBLCK, msvcrt.LK_UNLCK, os.O_BINARY)
+            if not callable(function) or any(type(mode) is not int for mode in modes):
+                raise OSError("ledger: locking unavailable")
+            return "nt", function, modes[0], modes[1]
+    except (ImportError, AttributeError) as exc:
+        raise OSError("ledger: locking unavailable") from exc
+    raise OSError("ledger: locking unavailable")
+
+
+@contextmanager
+def _locked_ledger_writer(
+    path: Path,
+    backend: tuple[str, Callable, int, int],
+    guard_backend: tuple[Callable, Callable, Callable] | None = None,
+) -> Iterator[int]:
+    """Own guard, descriptor and OS lock through unlock and the close attempt.
+
+    One deadline covers both acquisitions. Only OS acquisition contention is
+    retried. Close is attempted once, even on cancellation; cleanup failures
+    remain visible without replacing an earlier exception. Forking while the
+    process guard is held can cause a safe timeout; no fork recovery is added.
     """
-    path = _ledger_path(cwd)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    platform, lock, acquire_mode, release_mode = backend
+    acquire, is_owned, release = _ledger_guard_backend() if guard_backend is None else guard_backend
+    if is_owned():
+        raise TimeoutError("ledger: lock acquisition timed out")
+    deadline = time.monotonic() + _LEDGER_LOCK_TIMEOUT_SECONDS
+    fd = None
+    locked = False
+    primary = None
+    unlock_error = None
+    close_error = None
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not acquire(timeout=remaining):
+            raise TimeoutError("ledger: lock acquisition timed out")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("ledger: lock acquisition timed out")
+        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
+        if platform == "nt":
+            flags |= os.O_BINARY
+        fd = os.open(path, flags, 0o666)
+        _check_ledger_identity(path, fd)
+        while True:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("ledger: lock acquisition timed out")
+            if platform == "nt":
+                os.lseek(fd, 0, os.SEEK_SET)
+            try:
+                if platform == "nt":
+                    lock(fd, acquire_mode, 1)
+                else:
+                    lock(fd, acquire_mode)
+            except OSError as exc:
+                contention = (errno.EACCES,) if platform == "nt" else (
+                    errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES
+                )
+                if exc.errno != errno.EINTR and exc.errno not in contention:
+                    raise
+            else:
+                locked = True
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("ledger: lock acquisition timed out")
+            time.sleep(min(_LEDGER_LOCK_POLL_SECONDS, remaining))
+        if time.monotonic() >= deadline:
+            raise TimeoutError("ledger: lock acquisition timed out")
+        _check_ledger_identity(path, fd)
+        yield fd
+    except BaseException as exc:
+        primary = exc
+        raise
+    finally:
+        try:
+            try:
+                if locked:
+                    if platform == "nt":
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        lock(fd, release_mode, 1)
+                    else:
+                        lock(fd, release_mode)
+            except BaseException as exc:  # noqa: BLE001 - cleanup must survive cancellation
+                unlock_error = exc
+            finally:
+                try:
+                    if fd is not None:
+                        os.close(fd)
+                except BaseException as exc:  # noqa: BLE001 - retain the primary failure
+                    close_error = exc
+        finally:
+            if is_owned():
+                release()
+        failure = primary if primary is not None else unlock_error
+        if failure is None:
+            failure = close_error
+        if failure is not None:
+            # Bounded, literal notes avoid formatting arbitrary exception objects
+            # and leave cause/context/suppression untouched, even for reused errors.
+            # A diagnostic allocation failure must never replace the real failure.
+            try:
+                if unlock_error is not None:
+                    BaseException.add_note(failure, "ledger: OS unlock failed during cleanup")
+                if close_error is not None:
+                    BaseException.add_note(failure, "ledger: descriptor close failed during cleanup")
+                if unlock_error is not None or close_error is not None:
+                    BaseException.__setattr__(
+                        failure, "_ledger_cleanup_errors", (unlock_error, close_error)
+                    )
+            except BaseException:  # noqa: BLE001, S110 - diagnostics must not mask failure
+                pass
+            if primary is None:
+                raise failure
+
+
+def _check_ledger_identity(path: Path, fd: int) -> os.stat_result:
+    """Fail closed unless descriptor and current path name the same regular file."""
+    current = os.fstat(fd)
+    named = os.stat(path)
+    if (
+        not stat.S_ISREG(current.st_mode)
+        or not stat.S_ISREG(named.st_mode)
+        or not current.st_ino
+        or not named.st_ino
+        or (current.st_dev, current.st_ino) != (named.st_dev, named.st_ino)
+    ):
+        raise OSError("ledger: file identity unavailable or changed")
+    return current
+
+
+def _ledger_append_separator(fd: int, size: int) -> bytes:
+    """Inspect exactly one final byte, without parsing or modifying old bytes."""
+    if size == 0:
+        return b""
+    os.lseek(fd, size - 1, os.SEEK_SET)
+    tail = os.read(fd, 1)
+    if len(tail) != 1:
+        raise OSError("ledger: incomplete tail read")
+    return b"" if tail == b"\n" else b"\n"
+
+
+def append_row(cwd: Path, row: LedgerRow) -> None:
+    """Append one row, preserving all original bytes and strict-reader authority.
+
+    Requires read/write access and qualified same-file locking. Contention may
+    raise TimeoutError after one cooperative second. Windows byte-zero locks
+    may deny concurrent readers access; there is no unlocked fallback.
+    Evidence retains its <= 500-character conversion (D-07, D-21). Exactly one
+    unbuffered write adds a conditional LF and the serialized row. A short write
+    fails without retry or rollback. Unlock/close failures also prevent success,
+    even when the row has already been written; no power-loss durability is added.
+    Native ownership support is required; same-thread reentry fails promptly.
+    Arbitrary cancellation before cleanup invocation or descriptor assignment is
+    outside the bounded cleanup guarantee and can require process restart.
+    """
     payload = asdict(row)
     payload["terminal_state"] = row.terminal_state.value
     payload["evidence_class"] = _truncate_evidence(row.evidence_class)
-    line = json.dumps(payload, separators=(",", ":")) + "\n"
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(line)
+    line = (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
+    backend = _ledger_lock_backend()
+    guard_backend = _ledger_guard_backend()
+    path = _ledger_path(cwd)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _locked_ledger_writer(path, backend, guard_backend) as fd:
+        before = _check_ledger_identity(path, fd)
+        separator = _ledger_append_separator(fd, before.st_size)
+        data = separator + line
+        if _check_ledger_identity(path, fd).st_size != before.st_size:
+            raise OSError("ledger: size changed before append")
+        if os.write(fd, data) != len(data):
+            raise OSError("ledger: incomplete append")
+        _check_ledger_identity(path, fd)
 
 
 _SUPPRESSIBLE_TERMINAL_STATES: Final[frozenset[str]] = frozenset(
