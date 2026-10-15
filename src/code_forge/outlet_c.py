@@ -181,6 +181,10 @@ def _run_chunk(
                     attempted_item = dict(raw_data)
                     attempted_item["pass_name"] = pass_name
                     attempted.append(attempted_item)
+                    if rejection_state is not None:
+                        rejection_state.record_excerpt_rejection(
+                            e, pass_name, attempted_item, diff_text=chunk_diff
+                        )
                 # Same split as the other two legs: a candidate whose
                 # evidence was rejected still survives as audit data
                 # rather than vanishing with the excerpt.

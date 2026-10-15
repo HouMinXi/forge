@@ -388,6 +388,77 @@ def _capture_earned_cycle(
     }, result
 
 
+def _validate_evidence_rejection(
+    cwd: Path, diff_sha256: str, diff_text: str | None, row: dict,
+    *, receipt_records: tuple[_ReceiptRecord, ...] | None = None,
+) -> VerifyResult:
+    """Recheck a non-earning ordinary rejection against its exact retained audit."""
+    from .receipt import _attempted_artifact_path
+    from .reviewer_json import (
+        ExcerptEvidenceError, require_l1_excerpt_evidence, validate_reviewer_json,
+    )
+    from .state import _PASS_NAMES
+
+    refused = VerifyResult(False, "rejected evidence audit does not establish a pure rejection", 1, 0)
+    if (
+        type(diff_text) is not str or not diff_text
+        or row.get("source_hash") != diff_sha256
+        or row.get("reviewed_repositories") is not None
+        or row.get("dispositions") != {}
+    ):
+        return refused
+    cycle = row["round"] + 1
+    entries = row["evidence_rejections"]
+    rejected_roles = {entry["pass_name"] for entry in entries}
+    directory = cwd / ".code-forge" / "receipts"
+    try:
+        if receipt_records is None:
+            receipt_records = _load_receipt_records(directory)
+        selected = [record[2] for record in receipt_records if record[2]["cycle"] == cycle]
+        if len(selected) != 3 or {receipt["pass"] for receipt in selected} != {1, 2, 3}:
+            return refused
+        for receipt in selected:
+            role = _PASS_NAMES[receipt["pass"] - 1]
+            if (
+                receipt["diff_sha256"] != diff_sha256
+                or "reviewed_repositories" in receipt
+                or receipt["findings"] != [] or receipt["findings_count"] != 0
+                or receipt.get("excerpt_validation_errors")
+                or receipt.get("pass_status") != ("incomplete" if role in rejected_roles else "completed")
+                or (role in rejected_roles and receipt["code_excerpts"] != [])
+                or (role not in rejected_roles and _requires_l1_excerpts(diff_text) and not receipt["code_excerpts"])
+                or validate_excerpts_against_diff(diff_text, receipt["code_excerpts"], cwd=cwd)
+            ):
+                return refused
+        for entry in entries:
+            role = entry["pass_name"]
+            path = _attempted_artifact_path(directory, cycle, role, entry["attempt_index"])
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != entry["artifact_sha256"]:
+                return refused
+            audit = json.loads(raw)
+            if (
+                type(audit) is not dict
+                or set(audit) != {"attempted", "cycle", "pass_name", "payload"}
+                or audit["attempted"] is not True
+                or type(audit["cycle"]) is not int or audit["cycle"] != cycle
+                or audit["pass_name"] != role
+                or type(audit["payload"]) is not dict
+                or audit["payload"].get("pass_name") != role
+                or audit["payload"].get("findings") != []
+            ):
+                return refused
+            try:
+                validated = validate_reviewer_json(copy.deepcopy(audit["payload"]))
+                require_l1_excerpt_evidence(validated, diff_text)
+            except ExcerptEvidenceError:
+                continue
+            return refused
+    except (CorruptedReceiptError, OSError, ValueError, RecursionError):
+        return refused
+    return VerifyResult(True, "typed rejected audit revalidated without earning credit", 1, 1)
+
+
 def _validate_earned_state(
     state,
     cwd: Path,
@@ -428,6 +499,13 @@ def _validate_earned_state(
             return VerifyResult(False, "latest host attempt is still pending", 1, 0)
     except CorruptedStateError as exc:
         return VerifyResult(False, f"unavailable earned proof: {exc}", 1, 0)
+    for row in own_history:
+        if is_host_round(row) and row["clean_credit_action"] == "evidence_rejected":
+            result = _validate_evidence_rejection(
+                cwd, diff_sha256, diff_text, row, receipt_records=receipt_records
+            )
+            if not result.passed:
+                return result
     for original in window["cycles"]:
         current, result = _capture_earned_cycle(
             cwd,

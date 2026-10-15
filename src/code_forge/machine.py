@@ -110,6 +110,16 @@ class _AcquisitionSnapshot:
     markers: tuple[StateFinding, ...]
 
 
+@dataclass(frozen=True)
+class _RejectionSnapshot:
+    producer: object
+    token: object
+    cycle: int
+    source_hash: str
+    observations: tuple
+    attempts: list
+
+
 class TimeoutBreaker(Exception):
     """Raised when a run provably cannot converge and should stop early.
 
@@ -429,6 +439,10 @@ class StateMachine:
         self._hold_confirmed_fingerprints: list[str] = []
         self._acquisition_receipts: tuple[tuple[int, int, str, str], ...] = ()
         self._acquisition_authority: _AcquisitionSnapshot | None = None
+        self._rejection_authority: _RejectionSnapshot | None = None
+        self._rejected_evidence_entries: tuple[tuple[str, int, str], ...] = ()
+        self._rejection_receipt_digests: tuple[tuple[int, str], ...] = ()
+        self._rejection_written_outcomes: tuple[tuple[int, int, str], ...] = ()
         self._attempt_snapshot: dict | None = None
         self._attempt_findings: list[StateFinding] | None = None
         self._other_source_state: State | None = None
@@ -1187,7 +1201,10 @@ class StateMachine:
         row["clean_credit_action"] = "unavailable"
         self._persist_state()
 
-    def _finish_host_attempt(self, action: str, fixpoint: _FixpointResult | None) -> None:
+    def _finish_host_attempt(
+        self, action: str, fixpoint: _FixpointResult | None,
+        *, evidence_rejections: list[dict] | None = None,
+    ) -> None:
         if self._host_attempt_round is None:
             return
         rows = [row for row in self._state.round_history if row["round"] == self._host_attempt_round]
@@ -1220,6 +1237,8 @@ class StateMachine:
         )
         if fixpoint is not None:
             row["fixpoint"] = fixpoint.name
+        if evidence_rejections is not None:
+            row["evidence_rejections"] = evidence_rejections
         self._host_attempt_round = None
         if action == "reset":
             self._hold_confirmed_fingerprints = []
@@ -1438,15 +1457,17 @@ class StateMachine:
                     if self._capacity_incomplete(captured):
                         capacity_gate_error = error
             if gate_errors:
+                rejected_evidence = self._pure_evidence_rejections(_fp)
                 self._finish_host_attempt(
                     (
-                        "interrupted"
+                        "evidence_rejected" if rejected_evidence else "interrupted"
                         if _fp == _FixpointResult.INCOMPLETE or self._acquisition_markers
                         else "unavailable"
                     )
                     if _fp in (_FixpointResult.CLEAN, _FixpointResult.INCOMPLETE)
                     else "reset",
                     _fp,
+                    evidence_rejections=rejected_evidence,
                 )
                 for err in gate_errors:
                     if err == capacity_gate_error:
@@ -2288,6 +2309,131 @@ class StateMachine:
                 return False
         return True
 
+    def _capture_evidence_rejections(self, candidates: list[StateFinding]) -> None:
+        """Freeze the real invocation before falsification or caller hooks."""
+        from .factories import _L1Call
+
+        self._rejection_authority = None
+        if type(self.l1_provider) is not _L1Call or candidates:
+            return
+        producer = self.l1_provider
+        self._rejection_authority = _RejectionSnapshot(
+            producer, producer._excerpt_invocation, self._state.round + 1,
+            self.source_hash, producer._excerpt_rejections, producer.attempted_excerpts,
+        )
+
+    def _current_evidence_rejections(self) -> _RejectionSnapshot | None:
+        from .factories import _ExcerptRejection, _L1Call, _admissible_raw_value
+        from .state import _PASS_NAMES
+
+        snapshot = self._rejection_authority
+        producer = self.l1_provider
+        if (
+            type(snapshot) is not _RejectionSnapshot or type(producer) is not _L1Call
+            or snapshot.producer is not producer or snapshot.token is not producer._excerpt_invocation
+            or snapshot.cycle != self._state.round + 1 or snapshot.source_hash != self.source_hash
+            or self.reviewed_repositories is not None
+            or type(snapshot.observations) is not tuple or not snapshot.observations
+            or snapshot.observations is not producer._excerpt_rejections
+            or type(snapshot.attempts) is not list or snapshot.attempts is not producer.attempted_excerpts
+            or len(snapshot.attempts) != len(snapshot.observations)
+            or producer.acquisition_failures or producer.raw_observations
+            or producer.unavailable_rejected_passes
+        ):
+            return None
+        diff_text = self._receipt_diff()
+        for observation, attempt in zip(snapshot.observations, snapshot.attempts, strict=True):
+            if (
+                type(observation) is not _ExcerptRejection or observation.owner_token is not snapshot.token
+                or type(attempt) is not dict or observation.original is not attempt
+                or observation.pass_name not in _PASS_NAMES or attempt.get("pass_name") != observation.pass_name
+                or observation.diff_text != diff_text or attempt.get("findings") != []
+                or not _admissible_raw_value(attempt)
+                or json.dumps(attempt, sort_keys=True, separators=(",", ":")) != observation.payload_json
+            ):
+                return None
+        return snapshot
+
+    def _bind_evidence_rejections(self) -> None:
+        """Bind typed observations only to the actual successful writer output."""
+        from .receipt import _attempted_artifact_path
+        from .state import _PASS_NAMES
+        from .verify import _validate_evidence_rejection
+
+        snapshot = self._current_evidence_rejections()
+        if (
+            snapshot is None or self._raw_observations_last_round
+            or self._unavailable_rejected_passes_last_round
+            or len(self._attempted_last_round) != len(snapshot.attempts)
+            or any(a is not b for a, b in zip(self._attempted_last_round, snapshot.attempts, strict=True))
+        ):
+            return
+        roles = {observation.pass_name for observation in snapshot.observations}
+        expected = tuple((snapshot.cycle, number, "incomplete" if role in roles else "completed")
+                         for number, role in enumerate(_PASS_NAMES, 1))
+        if self._written_pass_outcomes != expected:
+            return
+        directory = self.cwd / ".code-forge" / "receipts"
+        try:
+            entries = []
+            for index, observation in enumerate(snapshot.observations):
+                raw = _attempted_artifact_path(directory, snapshot.cycle, observation.pass_name, index).read_bytes()
+                audit = json.loads(raw)
+                if json.dumps(audit["payload"], sort_keys=True, separators=(",", ":")) != observation.payload_json:
+                    return
+                entries.append((observation.pass_name, index, hashlib.sha256(raw).hexdigest()))
+            row = self._rejection_row(entries)
+            if not _validate_evidence_rejection(self.cwd, self.source_hash, self._receipt_diff(), row).passed:
+                return
+            digests = tuple((number, hashlib.sha256((directory / f"receipt-c{snapshot.cycle}p{number}.json").read_bytes()).hexdigest())
+                            for number in (1, 2, 3))
+        except (OSError, ValueError, KeyError, TypeError, RecursionError):
+            return
+        self._rejected_evidence_entries = tuple(entries)
+        self._rejection_receipt_digests = digests
+        self._rejection_written_outcomes = self._written_pass_outcomes
+
+    def _rejection_row(self, entries) -> dict:
+        return {
+            "round": self._state.round, "source_hash": self.source_hash,
+            "reviewed_repositories": self.reviewed_repositories, "dispositions": {},
+            "evidence_rejections": [
+                {"pass_name": role, "attempt_index": index, "artifact_sha256": digest}
+                for role, index, digest in entries
+            ],
+        }
+
+    def _pure_evidence_rejections(self, fixpoint: _FixpointResult) -> list[dict] | None:
+        from .verify import _validate_evidence_rejection
+
+        snapshot = self._current_evidence_rejections()
+        if (
+            self.mode != Mode.LOCAL or fixpoint is not _FixpointResult.CLEAN
+            or snapshot is None
+            or not self._rejected_evidence_entries or len(self._rejection_receipt_digests) != 3
+            or self._written_pass_outcomes != self._rejection_written_outcomes
+            or len(self._attempted_last_round) != len(snapshot.attempts)
+            or any(a is not b for a, b in zip(self._attempted_last_round, snapshot.attempts, strict=True))
+            or self._state.findings or self._acquisition_markers
+            or self._falsify_protocol_findings or self._falsify_failed_findings
+            or self._last_receipt_write_errors or self._raw_observations_last_round
+            or self._unavailable_rejected_passes_last_round
+            or self._attempt_snapshot is None or self._attempt_snapshot.get("dispositions") != {}
+            or any(value != "returned" for value in self._phase_status.values())
+        ):
+            return None
+        directory = self.cwd / ".code-forge" / "receipts"
+        try:
+            if any(hashlib.sha256((directory / f"receipt-c{self._state.round + 1}p{number}.json").read_bytes()).hexdigest() != digest
+                   for number, digest in self._rejection_receipt_digests):
+                return None
+        except OSError:
+            return None
+        row = self._rejection_row(self._rejected_evidence_entries)
+        if not _validate_evidence_rejection(self.cwd, self.source_hash, self._receipt_diff(), row).passed:
+            return None
+        return row["evidence_rejections"]
+
     def _current_acquisition(self) -> _AcquisitionSnapshot | None:
         """Validate current membership without rereading mutable eligibility."""
         from .factories import _L1Call
@@ -2457,6 +2603,7 @@ class StateMachine:
                             raise ValueError("writer completion snapshot invalid")
                         statuses.append((round_index + 1, number, receipt["pass_status"]))
                     self._written_pass_outcomes = tuple(statuses)
+                    self._bind_evidence_rejections()
             except (ValueError, OSError, RecursionError):
                 self._written_pass_outcomes = ()
 
@@ -2476,6 +2623,10 @@ class StateMachine:
         self._acquisition_markers = []
         self._acquisition_receipts = ()
         self._acquisition_authority = None
+        self._rejection_authority = None
+        self._rejected_evidence_entries = ()
+        self._rejection_receipt_digests = ()
+        self._rejection_written_outcomes = ()
         self._state.converged = False
         self._state.round = round_index
         self._mutation_timeout_emitted = set()
@@ -2628,6 +2779,7 @@ class StateMachine:
             if self._host_attempt_round is not None:
                 self._phase_findings[name] = result[0] if name == "l1" else result
             if name == "l1":
+                self._capture_evidence_rejections(result[0])
                 self._capture_acquisition_markers(result[0])
                 self._capture_acquisition_receipts()
             if self._host_attempt_round is not None:

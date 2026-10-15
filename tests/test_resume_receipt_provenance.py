@@ -3902,3 +3902,451 @@ def test_host_execution_requires_the_current_pending_reservation(review_workspac
     assert path.read_bytes() == before
     assert machine._phase_findings == {}
     assert machine._state.consecutive_clean_rounds == 2
+
+
+def test_rejected_excerpt_preserves_verified_prefix_and_resumes_fresh_cycle(
+    review_workspace, monkeypatch
+):
+    root = review_workspace
+    diff = _owned_git_diff(root)
+    source_hash = compute_source_hash(git_diff=diff)
+    diff_files = verify.parse_diff_files(diff)
+
+    def context():
+        values = {}
+        for name, args in (
+            ("head", ("rev-parse", "HEAD")),
+            ("index", ("ls-files", "--stage")),
+            ("diff", ("diff", "HEAD", "--unified=3")),
+        ):
+            values[name] = subprocess.run(
+                ["git", "-c", "core.hooksPath=/dev/null", *args],
+                cwd=root, capture_output=True, text=True, check=True, timeout=5,
+            ).stdout
+        values["source"] = (root / "control.ts").read_bytes()
+        return values
+
+    assert _machine(root, monkeypatch, rounds=2, diff=diff).run() != Verdict.PASS
+    initial = load_state(root / ".code-forge" / "state.json")
+    assert initial.consecutive_clean_rounds == 2
+    proof = copy.deepcopy(initial.earned_clean_window)
+    original = {path: path.read_bytes() for path in _receipts(root)}
+    assert len(original) == 6
+    subject = context()
+    assert subject["diff"] == diff
+
+    def rejected_payload(machine, prompt):
+        body = copy.deepcopy(VALID)
+        if machine._state.round == 2 and "adversarial" in prompt.rsplit("You are a ", 1)[-1]:
+            body["code_excerpts"][0]["content"] = "const value = 2;\n"
+        return body
+
+    failed = _machine(root, monkeypatch, payload=rejected_payload, rounds=1, diff=diff)
+    assert failed.run() is Verdict.FAIL
+    state = load_state(root / ".code-forge" / "state.json")
+    assert state.consecutive_clean_rounds == 2 and state.earned_clean_window == proof
+    assert context() == subject
+    assert {path: path.read_bytes() for path in original} == original
+    attempted = list((root / ".code-forge" / "receipts" / "attempted").glob("attempted-c3p3-*.json"))
+    assert len(attempted) == 1
+    rejected_audit = attempted[0].read_bytes()
+    independently_verified = []
+    for cycle, expected in zip((1, 2), proof["cycles"], strict=True):
+        entry, result = verify._capture_earned_cycle(
+            root, source_hash, diff_files, cycle=cycle, diff_text=diff,
+        )
+        assert result.passed, result.reason
+        assert entry == expected
+        independently_verified.append(cycle)
+    entry, rejected = verify._capture_earned_cycle(
+        root, source_hash, diff_files, cycle=3, diff_text=diff,
+    )
+    assert entry is None and not rejected.passed
+    assert "completed status" in rejected.reason
+    print(json.dumps({
+        "old_cycles_verified_after_rejection": independently_verified,
+        "failed_cycle_earned": False, "old_receipt_bytes_unchanged": True,
+        "actual_target_context_unchanged": context() == subject,
+    }, sort_keys=True))
+    dispatches = []
+
+    def healthy_payload(machine, prompt):
+        dispatches.append(machine._state.round + 1)
+        return VALID
+
+    recovered = _machine(root, monkeypatch, payload=healthy_payload, rounds=1, diff=diff)
+    verdict = recovered.run()
+    print(json.dumps({"fresh_healthy_verdict": verdict.value,
+                      "fresh_healthy_dispatches": dispatches}, sort_keys=True))
+    assert verdict is Verdict.PASS, "valid old proof must permit a genuinely fresh healthy cycle"
+    assert dispatches == [4, 4, 4]
+    final = load_state(root / ".code-forge" / "state.json")
+    assert final.consecutive_clean_rounds == 3 and final.converged
+    assert [item["cycle"] for item in final.earned_clean_window["cycles"]] == [1, 2, 4]
+    assert {path: path.read_bytes() for path in original} == original
+    assert attempted[0].read_bytes() == rejected_audit
+    assert context() == subject
+    result = verify.run_verify(root, source_hash, diff_files, diff_text=diff)
+    assert result.passed, result.reason
+
+
+def _pure_rejected_machine(root, monkeypatch, *, hook=None, all_roles=False, missing=False):
+    def payload(active, prompt):
+        body = copy.deepcopy(VALID)
+        if all_roles or "adversarial" in prompt.rsplit("You are a ", 1)[-1]:
+            if missing:
+                body["code_excerpts"] = []
+            else:
+                body["code_excerpts"][0]["content"] = "const value = 2;\n"
+        return body
+
+    return _machine(root, monkeypatch, rounds=1, payload=payload, hook=hook)
+
+
+@pytest.mark.parametrize("missing", [False, True])
+@pytest.mark.parametrize("all_roles", [False, True])
+@pytest.mark.parametrize("prefix", [0, 2])
+def test_typed_rejection_audit_preserves_only_verified_prefix(
+    review_workspace, monkeypatch, missing, all_roles, prefix
+):
+    root = review_workspace
+    if prefix:
+        _machine(root, monkeypatch, rounds=prefix).run()
+    machine = _pure_rejected_machine(root, monkeypatch, all_roles=all_roles, missing=missing)
+    assert machine.run() is Verdict.FAIL
+    state = load_state(root / ".code-forge" / "state.json")
+    row = state.round_history[-1]
+    assert row["clean_credit_action"] == "evidence_rejected"
+    assert row["fixpoint"] == "CLEAN" and not row["reset_observed"]
+    assert all(value == "returned" for value in row["phase_status"].values())
+    assert state.consecutive_clean_rounds == prefix
+    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == list(range(1, prefix + 1))
+    assert len(row["evidence_rejections"]) == (3 if all_roles else 1)
+    from code_forge.receipt import _attempted_artifact_path
+
+    for entry in row["evidence_rejections"]:
+        path = _attempted_artifact_path(
+            root / ".code-forge" / "receipts", prefix + 1, entry["pass_name"], entry["attempt_index"]
+        )
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == entry["artifact_sha256"]
+    assert not _verify(root).passed
+    resumed = _machine(root, monkeypatch, rounds=1)
+    assert (resumed.run() is Verdict.PASS) is bool(prefix)
+    assert resumed._state.consecutive_clean_rounds == prefix + 1
+    assert [entry["cycle"] for entry in resumed._state.earned_clean_window["cycles"]] == [
+        *range(1, prefix + 1), prefix + 2,
+    ]
+
+
+def test_rejected_latest_attempt_cannot_spend_an_already_sufficient_window(
+    review_workspace, monkeypatch
+):
+    root = review_workspace
+    assert _machine(root, monkeypatch, rounds=3, threshold=4).run() is not Verdict.PASS
+    assert _pure_rejected_machine(root, monkeypatch).run() is Verdict.FAIL
+    state = load_state(root / ".code-forge" / "state.json")
+    assert state.consecutive_clean_rounds == 3
+    assert state.round_history[-1]["clean_credit_action"] == "evidence_rejected"
+    assert not _verify(root, required_cycles=3).passed
+    assert _machine(root, monkeypatch, rounds=1).run() is Verdict.PASS
+    assert _verify(root).passed
+
+
+@pytest.mark.parametrize("damage", [
+    "invocation", "observation-copy", "observation-empty", "attempt-copy", "attempt-payload",
+    "attempt-extra", "attempt-list-copy", "writer-attempt-copy", "raw-observation", "status-snapshot",
+    "audit-bytes", "receipt-bytes", "receipt-missing", "provider-mimic",
+])
+def test_rejected_evidence_requires_unchanged_call_and_writer_membership(
+    review_workspace, monkeypatch, damage
+):
+    root = review_workspace
+    _machine(root, monkeypatch, rounds=2).run()
+    machine = _pure_rejected_machine(root, monkeypatch)
+
+    def tamper(index):
+        provider = machine.l1_provider
+        if damage == "invocation":
+            provider._excerpt_invocation = object()
+        elif damage == "observation-copy":
+            provider._excerpt_rejections = tuple(list(provider._excerpt_rejections))
+        elif damage == "observation-empty":
+            provider._excerpt_rejections = ()
+        elif damage == "attempt-copy":
+            provider.attempted_excerpts[0] = copy.deepcopy(provider.attempted_excerpts[0])
+        elif damage == "attempt-payload":
+            provider.attempted_excerpts[0]["host_extra"] = True
+        elif damage == "attempt-extra":
+            provider.attempted_excerpts.append(copy.deepcopy(provider.attempted_excerpts[0]))
+        elif damage == "attempt-list-copy":
+            provider.attempted_excerpts = list(provider.attempted_excerpts)
+        elif damage == "writer-attempt-copy":
+            machine._attempted_last_round[0] = copy.deepcopy(machine._attempted_last_round[0])
+        elif damage == "raw-observation":
+            provider.raw_observations.append({"pass_name": "adversarial"})
+        elif damage == "status-snapshot":
+            machine._written_pass_outcomes = ()
+        elif damage == "audit-bytes":
+            path = next((root / ".code-forge" / "receipts" / "attempted").glob("*.json"))
+            path.write_bytes(path.read_bytes() + b"\n")
+        elif damage == "receipt-bytes":
+            path = root / ".code-forge" / "receipts" / f"receipt-c{index + 1}p1.json"
+            path.write_bytes(path.read_bytes() + b"\n")
+        elif damage == "receipt-missing":
+            (root / ".code-forge" / "receipts" / f"receipt-c{index + 1}p1.json").unlink()
+        else:
+            machine.l1_provider = type("Mimic", (), dict(vars(provider)))()
+
+    machine.post_round_hook = tamper
+    assert machine.run() is Verdict.FAIL
+    assert machine._state.round_history[-1]["clean_credit_action"] == "unavailable"
+    assert "evidence_rejections" not in machine._state.round_history[-1]
+    assert _machine(root, monkeypatch, rounds=1).run() is Verdict.FAIL
+    assert not _verify(root).passed
+
+
+@pytest.mark.parametrize("damage", [
+    "error", "legacy-return", "missing-audit", "audit-payload", "bad-status", "bad-literal",
+])
+def test_rejected_evidence_does_not_exempt_writer_or_sibling_failure(
+    review_workspace, monkeypatch, damage
+):
+    import code_forge.receipt as receipt_module
+
+    root = review_workspace
+    _machine(root, monkeypatch, rounds=2).run()
+    original = receipt_module.write_receipts
+
+    def writer(**kwargs):
+        if damage == "error":
+            raise OSError("owned rejected-audit write failure")
+        written = original(**kwargs)
+        if damage == "legacy-return":
+            return None
+        if damage == "missing-audit":
+            next((kwargs["receipts_dir"] / "attempted").glob("*.json")).unlink()
+        if damage == "audit-payload":
+            path = next((kwargs["receipts_dir"] / "attempted").glob("*.json"))
+            audit = json.loads(path.read_bytes())
+            audit["payload"]["host_extra"] = True
+            path.write_text(json.dumps(audit))
+        if damage in ("bad-status", "bad-literal"):
+            path = written[0]
+            receipt = json.loads(path.read_bytes())
+            if damage == "bad-status":
+                receipt["pass_status"] = "schema_fail"
+            else:
+                receipt["code_excerpts"][0]["content"] = "forged literal\n"
+            path.write_text(json.dumps(receipt))
+        return written
+
+    monkeypatch.setattr(receipt_module, "write_receipts", writer)
+    machine = _pure_rejected_machine(root, monkeypatch)
+    assert machine.run() is Verdict.FAIL
+    assert machine._state.round_history[-1]["clean_credit_action"] == "unavailable"
+    assert machine._state.consecutive_clean_rounds == 2
+    assert _machine(root, monkeypatch, rounds=1).run() is Verdict.FAIL
+
+
+@pytest.mark.parametrize("damage", [
+    "missing", "bytes", "healthy-rehashed", "schema-rehashed", "candidate-rehashed",
+    "group-rehashed", "role-rehashed", "cycle-rehashed", "completed", "sibling-literal", "old-proof",
+    "snapshot-product", "receipt-missing", "receipt-malformed",
+])
+def test_rejected_audit_is_revalidated_before_a_fresh_dispatch(
+    review_workspace, monkeypatch, damage
+):
+    from code_forge.receipt import _attempted_artifact_path
+
+    root = review_workspace
+    _machine(root, monkeypatch, rounds=2).run()
+    assert _pure_rejected_machine(root, monkeypatch).run() is Verdict.FAIL
+    path = root / ".code-forge" / "state.json"
+    state = load_state(path)
+    row = state.round_history[-1]
+    assert row["clean_credit_action"] == "evidence_rejected"
+    entry = row["evidence_rejections"][0]
+    audit_path = _attempted_artifact_path(
+        root / ".code-forge" / "receipts", 3, entry["pass_name"], entry["attempt_index"]
+    )
+    if damage == "snapshot-product":
+        row["dispositions"] = {"candidate": "UNCERTAIN"}
+        save_state(state, path)
+    elif damage == "receipt-missing":
+        (root / ".code-forge" / "receipts" / "receipt-c3p1.json").unlink()
+    elif damage == "missing":
+        audit_path.unlink()
+    elif damage == "bytes":
+        audit_path.write_bytes(audit_path.read_bytes() + b"\n")
+    elif damage.endswith("rehashed"):
+        audit = json.loads(audit_path.read_bytes())
+        if damage == "healthy-rehashed":
+            audit["payload"] = dict(copy.deepcopy(VALID), pass_name="adversarial")
+        elif damage == "schema-rehashed":
+            audit["payload"].pop("code_excerpts")
+        elif damage == "candidate-rehashed":
+            audit["payload"]["findings"] = [{"file": "control.ts", "line": 2,
+                                           "severity": "P1", "description": "candidate"}]
+        elif damage == "group-rehashed":
+            audit["group_scope"] = {"name": "forged", "diff_sha256": SOURCE_HASH,
+                                    "source_files": ["control.ts"]}
+        elif damage == "role-rehashed":
+            audit["pass_name"] = "qodo"
+        else:
+            audit["cycle"] = 2
+        audit_path.write_text(json.dumps(audit))
+        entry["artifact_sha256"] = hashlib.sha256(audit_path.read_bytes()).hexdigest()
+        save_state(state, path)
+    else:
+        receipt_path = root / ".code-forge" / "receipts" / (
+            "receipt-c1p1.json" if damage == "old-proof" else
+            "receipt-c3p3.json" if damage == "completed" else "receipt-c3p1.json"
+        )
+        receipt = json.loads(receipt_path.read_bytes())
+        if damage == "receipt-malformed":
+            receipt.pop("findings")
+        elif damage == "completed":
+            receipt["pass_status"] = "completed"
+        elif damage == "sibling-literal":
+            receipt["code_excerpts"][0]["content"] = "forged literal\n"
+        else:
+            receipt["timestamp"] += " "
+        receipt_path.write_text(json.dumps(receipt))
+    before = path.read_bytes()
+    dispatches = []
+    resumed = _machine(root, monkeypatch, rounds=1, payload=lambda *args: dispatches.append(True) or VALID)
+    assert resumed.run() is Verdict.FAIL
+    assert dispatches == [] and path.read_bytes() == before
+    assert not _verify(root).passed
+
+
+def test_outlet_c_actual_full_diff_typed_catch_preserves_recoverable_prefix(
+    review_workspace, monkeypatch
+):
+    from code_forge import outlet_c
+
+    root = review_workspace
+    _machine(root, monkeypatch, rounds=2).run()
+    captured = []
+
+    def construct(**kwargs):
+        kwargs.update(l0_runner=lambda *args: ([], []), l2_runner=lambda *args, **kw: ([], []))
+        machine = StateMachine(**kwargs)
+        machine._state.env_manifest = {}
+        captured.append(machine)
+        return machine
+
+    def spawn(role, diff):
+        assert diff == DIFF
+        body = copy.deepcopy(VALID)
+        if role == "adversarial":
+            body["code_excerpts"] = []
+        return json.dumps(body)
+
+    monkeypatch.setattr(outlet_c, "StateMachine", construct)
+    monkeypatch.setenv("FORGE_DIFF_CHUNK_THRESHOLD_KB", "100")
+    verdict = outlet_c.run_outlet_c(
+        ResolvedReview([Path("control.ts")], None, DIFF, "git"), SOURCE_HASH, root, spawn,
+        falsifier=StubFalsifier(), max_total_rounds=1, registry={},
+    )
+    assert verdict is Verdict.FAIL
+    assert captured[0]._state.round_history[-1]["clean_credit_action"] == "evidence_rejected"
+    assert _machine(root, monkeypatch, rounds=1).run() is Verdict.PASS
+
+
+def test_grouped_typed_rejection_has_no_unproved_global_scope_authority(
+    review_workspace, monkeypatch
+):
+    root = review_workspace
+    _machine(root, monkeypatch, rounds=2).run()
+    machine = _pure_rejected_machine(root, monkeypatch)
+    machine.l1_provider = build_grouped_l1_provider(
+        "auto", [{"name": name, "resolved": machine.resolved_review} for name in ("first", "second")],
+        backend=BackendConfig(name="owned-offline", type="api", format="openai",
+                              model="offline", base_url="http://127.0.0.1:1"), max_attempts=1,
+    )
+    assert machine.run() is Verdict.FAIL
+    assert machine._state.round_history[-1]["clean_credit_action"] == "unavailable"
+    assert _machine(root, monkeypatch, rounds=1).run() is Verdict.FAIL
+
+
+def test_outlet_c_actual_chunk_scope_does_not_borrow_full_diff_authority(
+    review_workspace, monkeypatch
+):
+    from code_forge import outlet_c
+
+    root = review_workspace
+    other_diff = DIFF.replace("control.ts", "other.ts")
+    full_diff = DIFF + other_diff
+    (root / "other.ts").write_text(CONTENT)
+    both = copy.deepcopy(VALID)
+    both["code_excerpts"].append(dict(both["code_excerpts"][0], file="other.ts"))
+    _machine(root, monkeypatch, rounds=2, diff=full_diff, payload=lambda *args: both).run()
+    captured = []
+    calls = []
+
+    def construct(**kwargs):
+        kwargs.update(l0_runner=lambda *args: ([], []), l2_runner=lambda *args, **kw: ([], []))
+        machine = StateMachine(**kwargs)
+        machine._state.env_manifest = {}
+        captured.append(machine)
+        return machine
+
+    def spawn(role, chunk):
+        assert chunk in (DIFF, other_diff) and chunk != full_diff
+        calls.append((role, chunk))
+        body = copy.deepcopy(VALID)
+        if chunk == other_diff:
+            body["code_excerpts"][0]["file"] = "other.ts"
+        if chunk == DIFF and role == "adversarial":
+            body["code_excerpts"] = []
+        return json.dumps(body)
+
+    monkeypatch.setattr(outlet_c, "StateMachine", construct)
+    monkeypatch.setenv("FORGE_DIFF_CHUNK_THRESHOLD_KB", "-1")
+    verdict = outlet_c.run_outlet_c(
+        ResolvedReview([Path("control.ts"), Path("other.ts")], None, full_diff, "git"),
+        compute_source_hash(git_diff=full_diff), root, spawn,
+        falsifier=StubFalsifier(), max_total_rounds=1, registry={},
+    )
+    assert verdict is Verdict.FAIL and len(calls) == 6
+    machine = captured[0]
+    assert machine._state.round_history[-1]["clean_credit_action"] == "unavailable"
+    assert machine._state.consecutive_clean_rounds == 2
+    assert _machine(root, monkeypatch, rounds=1, diff=full_diff).run() is Verdict.FAIL
+
+
+def test_rejected_excerpt_cannot_hide_a_real_product_reset(review_workspace, monkeypatch):
+    root = review_workspace
+    _machine(root, monkeypatch, rounds=2).run()
+    machine = _pure_rejected_machine(root, monkeypatch)
+    machine.autofixer = NoChangeAutoFixer()
+    machine.l0_runner = lambda *args: ([StateFinding(
+        "actual-product", "actual-product", "L0", Disposition.CONFIRMED,
+        "control.ts", [2, 2], "P1: actual product defect",
+    )], [])
+    assert machine.run() is Verdict.FAIL
+    row = machine._state.round_history[-1]
+    assert row["clean_credit_action"] == "reset" and row["reset_observed"]
+    assert "evidence_rejections" not in row
+    assert machine._state.consecutive_clean_rounds == 0
+    assert machine._state.earned_clean_window["cycles"] == []
+    assert _machine(root, monkeypatch, rounds=1).run() is not Verdict.PASS
+
+
+def test_reused_real_call_clears_rejection_authority_before_healthy_work(
+    review_workspace, monkeypatch
+):
+    root = review_workspace
+    _machine(root, monkeypatch, rounds=2).run()
+    rejected = _pure_rejected_machine(root, monkeypatch)
+    assert rejected.run() is Verdict.FAIL
+    provider = rejected.l1_provider
+    previous_token = provider._excerpt_invocation
+    assert len(provider._excerpt_rejections) == 1
+    recovered = _machine(root, monkeypatch, rounds=1)
+    recovered.l1_provider = provider
+    assert recovered.run() is Verdict.PASS
+    assert provider._excerpt_invocation is not previous_token
+    assert provider._excerpt_rejections == () and provider.attempted_excerpts == []
+    assert rejected._current_evidence_rejections() is None
