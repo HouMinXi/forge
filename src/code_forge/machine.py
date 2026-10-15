@@ -2536,7 +2536,7 @@ class StateMachine:
                 disposition=Disposition.CONFIRMED,
                 file="<receipt-evidence>",
                 line_range=[0, 0],
-                description=error,
+                description=str(error),
                 diagnostic_kind=diagnostic_kind,
             )
         )
