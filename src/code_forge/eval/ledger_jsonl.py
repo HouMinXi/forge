@@ -15,8 +15,8 @@ project before:
   parses as valid JSON right up until it does not.
 
 * **A crash must not poison the resume.** A worker SIGKILLed mid-write
-  leaves a torn trailing line. That line is truncated on load and its
-  entry treated as never-run, which is the honest reading -- the entry
+  leaves a torn trailing line. Reads ignore it and the next append removes
+  it. Its entry is treated as never-run, which is the honest reading -- the entry
   did not finish.
 
 * **SKIPPED is not done.** ``scorer.py`` excludes SKIPPED from the
@@ -74,21 +74,65 @@ class ResumeKey:
         )
 
 
+def _prepare_append(fd: int) -> bytes:
+    """Repair only an unterminated suffix, while the caller holds LOCK_EX.
+
+    Scan in bounded chunks, then parse only the suffix. Like read_records,
+    there is no record-size limit; memory scales with the final record,
+    not the whole ledger. Unexpected read/decode/parser errors must escape
+    before any bytes are changed.
+    """
+    end = os.lseek(fd, 0, os.SEEK_END)
+    if not end:
+        return b""
+    last = os.pread(fd, 1, end - 1)
+    if len(last) != 1:
+        raise OSError("short read while checking ledger tail")
+    if last == b"\n":
+        return b""
+
+    start = end
+    chunks: list[bytes] = []
+    while start:
+        offset = max(0, start - 65536)
+        chunk = os.pread(fd, start - offset, offset)
+        if len(chunk) != start - offset:
+            raise OSError("short read while scanning ledger tail")
+        newline = chunk.rfind(b"\n")
+        if newline >= 0:
+            chunks.append(chunk[newline + 1:])
+            start = offset + newline + 1
+            break
+        chunks.append(chunk)
+        start = offset
+    tail = b"".join(reversed(chunks)).decode("utf-8")
+    try:
+        json.loads(tail)
+    except json.JSONDecodeError:
+        os.ftruncate(fd, start)
+        return b""
+    return b"\n"
+
+
 def append_record(path: Path, record: dict) -> None:
     """Append one JSON record as a single line, atomically.
 
-    The lock is held across the write and the flush so a concurrent
+    The lock is held across tail repair, the write and the flush so a concurrent
     writer cannot land between the payload and its newline. O_APPEND
     makes the kernel place the write at the current end of file even if
     another process extended it since this one opened the descriptor.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    line = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
-            os.write(fd, line.encode("utf-8"))
+            payload = _prepare_append(fd) + line
+            if os.write(fd, payload) != len(payload):
+                # Leave the partial tail for the next append to recover,
+                # but never report a short write as a successful record.
+                raise OSError("short write while appending ledger record")
             os.fsync(fd)
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -99,9 +143,9 @@ def append_record(path: Path, record: dict) -> None:
 def read_records(path: Path) -> tuple[list[dict], bool]:
     """Read all complete records; report whether a torn line was dropped.
 
-    Returns (records, truncated). A trailing line without its newline, or
-    one that fails to parse, is discarded: the process writing it did not
-    finish, so the entry did not finish either.
+    Returns (records, truncated), without changing the file. An unterminated
+    trailing line is discarded only if it fails to parse; valid JSON is
+    retained even without a newline. Complete malformed lines still raise.
 
     Only the LAST line can legitimately be torn. A parse failure earlier
     in the file means something else corrupted it, and that is raised
