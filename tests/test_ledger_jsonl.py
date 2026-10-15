@@ -13,6 +13,8 @@ actual kill, which is the property being claimed.
 
 from __future__ import annotations
 
+import fcntl
+import json
 import os
 import signal
 import subprocess
@@ -303,3 +305,193 @@ class TestKilledRunResumes:
         ids = [r["entry_id"] for r in resumed]
         assert len(ids) == len(set(ids)), "duplicates after resume: %s" % ids
         assert set(ids) == {r["entry_id"] for r in ref_recs}, "resumed set differs from a clean run"
+
+
+class TestAppendRepairsTail:
+    @pytest.mark.parametrize("tail_kind", ["valid", "torn", "torn_only", "whitespace"])
+    def test_load_append_reload(self, tmp_path, tail_kind):
+        p = tmp_path / "l.jsonl"
+        first = make_record(_key("first"), "PASS")
+        last = make_record(_key("last"), "HOLD")
+        # Preserve formatting, CRLF, blank lines and multibyte UTF-8 exactly.
+        prefix = (json.dumps(first, indent=None) + "\r\n\n").encode()
+        prefix += b' \t\n'
+        complete = json.dumps(make_record(_key("caf\u00e9"), "PASS"), ensure_ascii=False).encode()
+        if tail_kind == "valid":
+            original = prefix + complete + b" \r\t"
+            expected_ids = {"first", "caf\u00e9"}
+            preserved = original + b"\n"
+        else:
+            prefix = b"" if tail_kind == "torn_only" else prefix
+            tail = b" \t\r" if tail_kind == "whitespace" else b'{"entry_id":"unfinished'
+            original = prefix + tail
+            expected_ids = set() if tail_kind == "torn_only" else {"first"}
+            preserved = prefix
+        p.write_bytes(original)
+        before, truncated = load_state(p)
+        assert {k.entry_id for k in before} == expected_ids
+        assert truncated is (tail_kind != "valid")
+        assert p.read_bytes() == original, "loading must remain read-only"
+        append_record(p, last)
+        expected_line = (json.dumps(last, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        assert p.read_bytes() == preserved + expected_line
+        after, truncated = load_state(p)
+        assert {k.entry_id for k in after} == expected_ids | {"last"}
+        assert truncated is False
+
+    @pytest.mark.parametrize("original", [b"", b"\n", b"{}\n", b"{}\r\n"])
+    def test_empty_and_terminated_fast_path(self, tmp_path, monkeypatch, original):
+        p = tmp_path / "l.jsonl"
+        p.write_bytes(original)
+        def unexpected_parse(*args, **kwargs):
+            pytest.fail("terminated ledger should not be parsed on append")
+        monkeypatch.setattr(json, "loads", unexpected_parse)
+        append_record(p, {"new": 1})
+        assert p.read_bytes() == original + b'{"new":1}\n'
+
+    @pytest.mark.parametrize("tail", [b"null", b"42", b"[]", b'"text"', b"{} \r\t"])
+    def test_valid_json_values_are_preserved(self, tmp_path, tail):
+        p = tmp_path / "l.jsonl"
+        p.write_bytes(tail)
+        append_record(p, {"new": 1})
+        assert p.read_bytes() == tail + b'\n{"new":1}\n'
+        records, truncated = read_records(p)
+        assert records == [json.loads(tail), {"new": 1}]
+        assert truncated is False
+
+    @pytest.mark.parametrize("tail", [b'{"x":"\xff"}', b'{"x":"\xe2\x82'])
+    def test_invalid_utf8_is_untouched(self, tmp_path, tail):
+        p = tmp_path / "l.jsonl"
+        original = b"{}\n" + tail
+        p.write_bytes(original)
+        with pytest.raises(UnicodeDecodeError):
+            append_record(p, {"new": 1})
+        assert p.read_bytes() == original
+
+    @pytest.mark.parametrize("tail", [b"", b'{"torn":', b"{}"])
+    def test_complete_line_corruption_is_not_repaired(self, tmp_path, tail):
+        p = tmp_path / "l.jsonl"
+        prefix = b"not json\n"
+        p.write_bytes(prefix + tail)
+        append_record(p, {"new": 1})
+        assert p.read_bytes().startswith(prefix)
+        with pytest.raises(ValueError, match="corrupt at line 1"):
+            read_records(p)
+
+    @pytest.mark.parametrize("size", [65534, 65535, 65536, 65537, 131073])
+    @pytest.mark.parametrize("valid", [True, False])
+    def test_suffix_crosses_scan_boundaries(self, tmp_path, size, valid):
+        p = tmp_path / "l.jsonl"
+        prefix = b'{"prefix":1}\n'
+        tail = b'{"padding":"' + b"x" * size + (b'"}' if valid else b"")
+        p.write_bytes(prefix + tail)
+        append_record(p, {"new": 1})
+        assert p.read_bytes() == prefix + (tail + b"\n" if valid else b"") + b'{"new":1}\n'
+
+    def test_serialization_failure_precedes_repair(self, tmp_path):
+        p = tmp_path / "l.jsonl"
+        original = b'{}\n{"torn":'
+        p.write_bytes(original)
+        with pytest.raises(TypeError):
+            append_record(p, {"bad": object()})
+        assert p.read_bytes() == original
+
+    @pytest.mark.parametrize("failure", ["decode", "read", "short_read"])
+    def test_unexpected_failures_precede_mutation(self, tmp_path, monkeypatch, failure):
+        p = tmp_path / "l.jsonl"
+        original = b'{}\n{"torn":'
+        p.write_bytes(original)
+        def fail(*args, **kwargs):
+            if failure == "short_read":
+                return b""
+            raise RuntimeError("injected failure")
+        monkeypatch.setattr(json if failure == "decode" else os,
+                            "loads" if failure == "decode" else "pread", fail)
+        with pytest.raises((RuntimeError, OSError)):
+            append_record(p, {"new": 1})
+        assert p.read_bytes() == original
+
+    def test_short_write_does_not_report_success(self, tmp_path, monkeypatch):
+        p = tmp_path / "l.jsonl"
+        p.write_bytes(b"{}")
+        real_write = os.write
+        def short_write(fd, data):
+            return real_write(fd, data[:2])
+        monkeypatch.setattr(os, "write", short_write)
+        with pytest.raises(OSError, match="short write"):
+            append_record(p, {"new": 1})
+        assert p.read_bytes() == b"{}\n{"
+        monkeypatch.setattr(os, "write", real_write)
+        append_record(p, {"retry": 1})
+        assert read_records(p) == ([{}, {"retry": 1}], False)
+
+    def test_tail_repair_write_and_fsync_share_one_locked_descriptor(self, tmp_path, monkeypatch):
+        p = tmp_path / "l.jsonl"
+        p.write_bytes(b'{}\n{"torn":')
+        locked = set()
+        events = []
+        real_flock = fcntl.flock
+        def flock(fd, operation):
+            if operation == fcntl.LOCK_EX:
+                real_flock(fd, operation)
+                locked.add(fd)
+            else:
+                assert fd in locked
+                locked.remove(fd)
+                real_flock(fd, operation)
+        monkeypatch.setattr(fcntl, "flock", flock)
+        for name in ("pread", "ftruncate", "write", "fsync"):
+            real = getattr(os, name)
+            def checked(fd, *args, _name=name, _real=real):
+                assert fd in locked, _name + " ran outside LOCK_EX"
+                events.append((_name, fd))
+                return _real(fd, *args)
+            monkeypatch.setattr(os, name, checked)
+        append_record(p, {"new": 1})
+        assert not locked
+        assert len({fd for _, fd in events}) == 1
+        assert [name for name, _ in events][-3:] == ["ftruncate", "write", "fsync"]
+
+    def test_valid_tail_separator_and_record_use_one_write(self, tmp_path, monkeypatch):
+        p = tmp_path / "l.jsonl"
+        p.write_bytes(b"{}")
+        writes = []
+        real_write = os.write
+        def write(fd, data):
+            writes.append(data)
+            return real_write(fd, data)
+        monkeypatch.setattr(os, "write", write)
+        append_record(p, {"new": 1})
+        assert writes == [b'\n{"new":1}\n']
+
+    @pytest.mark.parametrize("valid", [True, False])
+    def test_parallel_appends_repair_tail_once(self, tmp_path, valid):
+        p = tmp_path / "l.jsonl"
+        initial = make_record(_key("initial"), "PASS")
+        p.write_bytes(json.dumps(initial).encode() if valid else b'{"entry_id":')
+        src = Path(__file__).resolve().parents[1] / "src"
+        prog = textwrap.dedent(
+            """
+            import sys
+            sys.path.insert(0, %r)
+            from pathlib import Path
+            from code_forge.eval.ledger_jsonl import ResumeKey, append_record, make_record
+            append_record(Path(sys.argv[1]),
+                          make_record(ResumeKey(sys.argv[2], 1, "real", "b"), "PASS"))
+            """ % str(src)
+        )
+        procs = []
+        try:
+            procs.extend(subprocess.Popen([sys.executable, "-c", prog, str(p), str(i)]) for i in range(8))
+            for proc in procs:
+                assert proc.wait(timeout=30) == 0
+        finally:
+            for proc in procs:
+                if proc.poll() is None:
+                    proc.kill()
+                proc.wait(timeout=30)
+        records, truncated = read_records(p)
+        ids = [r["entry_id"] for r in records]
+        assert set(ids) == {str(i) for i in range(8)} | ({"initial"} if valid else set())
+        assert len(ids) == len(set(ids))
+        assert truncated is False
