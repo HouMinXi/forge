@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Callable
@@ -325,6 +326,15 @@ def build_e2e_checker() -> Callable:
     return run_e2e_check
 
 
+@dataclass(frozen=True)
+class _ExcerptRejection:
+    owner_token: object
+    pass_name: str
+    original: dict
+    payload_json: str
+    diff_text: str
+
+
 class _L1Call:
     """A review pass that is called like a function and keeps its own audit.
 
@@ -340,12 +350,36 @@ class _L1Call:
         self.unavailable_rejected_passes: set[str] = set()
         self.acquisition_failures: list[StateFinding] = []
         self.is_stub_l1 = False
+        self._excerpt_invocation = object()
+        self._excerpt_rejections: tuple[_ExcerptRejection, ...] = ()
+
+    def record_excerpt_rejection(
+        self, error: Exception, pass_name: str, attempted: dict, *, diff_text: str
+    ) -> None:
+        """Observe only the actual typed catch, bound to its retained payload."""
+        from .reviewer_json import ExcerptEvidenceError
+        from .state import _PASS_NAMES
+
+        if (
+            not isinstance(error, ExcerptEvidenceError)
+            or pass_name not in _PASS_NAMES
+            or type(attempted) is not dict
+            or not _admissible_raw_value(attempted)
+        ):
+            return
+        self._excerpt_rejections += (_ExcerptRejection(
+            self._excerpt_invocation, pass_name, attempted,
+            json.dumps(attempted, sort_keys=True, separators=(",", ":")), diff_text,
+        ),)
 
     @property
     def unavailable_rejected_evidence(self) -> bool:
         return bool(self.unavailable_rejected_passes)
 
     def __call__(self) -> tuple:
+        self._excerpt_invocation = object()
+        self._excerpt_rejections = ()
+        self.attempted_excerpts = []
         self.pass_usage = None
         self.raw_observations = []
         self.acquisition_failures = []
@@ -690,6 +724,9 @@ def build_l1_provider(
                         attempted = dict(raw_data)
                         attempted["pass_name"] = pass_name
                         all_attempted.append(attempted)
+                        call.record_excerpt_rejection(
+                            exc, pass_name, attempted, diff_text=diff_text
+                        )
                     elif original_exact_dict or parsed_dict_seen:
                         call.unavailable_rejected_passes.add(pass_name)
                 if raw_data is None and raw_snapshot is not _RAW_RESPONSE_REFUSED:

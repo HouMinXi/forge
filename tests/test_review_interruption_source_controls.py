@@ -1,8 +1,8 @@
-"""Issue 70: offline characterization of CURRENT review-interruption behavior.
+"""Offline controls for review interruptions and rejected evidence.
 
-Source inspected: ba7d0849b0755699b841d1d2a058222a00af8238. This module is
+Source base: 295885b3b484e15082140e65b1afaa5959bfd2be. This module is
 portable control SOURCE, not evidence that it has been collected or executed.
-Reconciled with accepted post-67 main; runtime qualification remains unperformed.
+Execution and native qualification require their separate runtime reports.
 
 The reviewer transport sequence is constructed at llm_invoke._invoke_api;
 exception fields match current emitting sites, but their transport constructors
@@ -14,9 +14,9 @@ state serialization and cli._emit_ci_output are real. Receipt proof is produced
 and checked by those consumers; no receipt or verifier success is fabricated.
 
 Current outcomes deliberately differ: invoke failures preserve prior credit but
-remain product-visible; schema/coverage reset; evidence rejection leaves a
-numeric count whose history cannot be restored. These are characterization
-assertions, not approval of a new diagnostic or source-binding policy.
+remain product-visible; schema/coverage reset. Pure typed excerpt rejection
+preserves an individually reverified prefix while earning no new cycle; literal
+damage and unknown execution still refuse automatic inherited credit.
 """
 
 import contextlib
@@ -43,7 +43,7 @@ from code_forge.source import compute_source_hash
 from code_forge.state import Mode, Verdict, load_state, save_state
 
 
-SOURCE_PIN = "ba7d0849b0755699b841d1d2a058222a00af8238"
+SOURCE_PIN = "295885b3b484e15082140e65b1afaa5959bfd2be"
 ROLES = ("qodo", "expert", "adversarial")
 CONTENT = {
     "control.ts": "const context = 1;\nconst value = 2;\nconst end = 3;\n",
@@ -73,8 +73,8 @@ ACQUISITION_CASES = [
 EVIDENCE_CASES = [
     ("schema", "schema_fail", "reset", 0, 2, "FAIL", "schema-fail"),
     ("coverage", "incomplete", "reset", 0, 1, "ESCALATED", "incomplete-coverage"),
-    ("missing-excerpts", "incomplete", "unavailable", 2, 1, "FAIL", None),
-    ("excerpt-line-count", "incomplete", "unavailable", 2, 1, "FAIL", None),
+    ("missing-excerpts", "incomplete", "evidence_rejected", 2, 1, "FAIL", None),
+    ("excerpt-line-count", "incomplete", "evidence_rejected", 2, 1, "FAIL", None),
     ("literal", "schema_fail", "unavailable", 2, 1, "FAIL", None),
 ]
 
@@ -452,6 +452,10 @@ def test_current_schema_coverage_and_evidence_rejection_have_distinct_accounting
     if action == "reset":
         assert _restore_result(root).passed  # valid empty proof, not old credit
         _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+    elif action == "evidence_rejected":
+        assert latest["evidence_rejections"]
+        assert _restore_result(root).passed
+        _recover(root, monkeypatch, original, [1, 2, 4])
     else:
         result = _restore_result(root)
         assert not result.passed and "unavailable host attempt" in result.reason

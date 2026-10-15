@@ -150,6 +150,14 @@ def _warn_on_fabricated_excerpts(
             )
 
 
+def _attempted_artifact_path(
+    receipts_dir: Path, cycle: int, pass_name: str, attempt_index: int
+) -> Path:
+    """Use the writer's existing ordinal and pass mapping for audit artifacts."""
+    pass_num = _PASS_NAMES.index(pass_name) + 1 if pass_name in _PASS_NAMES else 0
+    return receipts_dir / "attempted" / ("attempted-c%dp%d-%d.json" % (cycle, pass_num, attempt_index))
+
+
 def write_receipts(
     receipts_dir: Path,
     round_index: int,
@@ -376,8 +384,8 @@ def write_receipts(
                     "diff_sha256": scope.diff_sha256,
                     "source_files": list(scope.source_files),
                 }
-            pass_num = _PASS_NAMES.index(pname) + 1 if pname in _PASS_NAMES else 0
-            fname = "attempted-c%dp%d-%d.json" % (cycle, pass_num, idx)
-            (attempted_dir / fname).write_text(json.dumps(art, indent=2), encoding="utf-8")
+            _attempted_artifact_path(receipts_dir, cycle, pname, idx).write_text(
+                json.dumps(art, indent=2), encoding="utf-8"
+            )
 
     return written

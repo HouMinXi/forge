@@ -416,7 +416,7 @@ def validate_earned_clean_window(window: dict) -> None:
 
 def is_host_round(row: dict) -> bool:
     """Presence of any authority field prevents legacy interpretation."""
-    return bool(HOST_ROUND_FIELDS.intersection(row))
+    return bool(HOST_ROUND_FIELDS.intersection(row)) or "evidence_rejections" in row
 
 
 def validate_round_history(history: list[dict], round_index: int | None = None) -> None:
@@ -436,8 +436,37 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
         if not HOST_ROUND_FIELDS.issubset(row):
             raise CorruptedStateError("incomplete host round authority")
         action = row["clean_credit_action"]
-        if action not in ("pending", "earned", "interrupted", "reset", "unavailable"):
+        if action not in (
+            "pending", "earned", "interrupted", "reset", "unavailable", "evidence_rejected"
+        ):
             raise CorruptedStateError("invalid host clean credit action")
+        if action == "evidence_rejected":
+            rejections = row.get("evidence_rejections")
+            if not isinstance(rejections, list) or not rejections:
+                raise CorruptedStateError("invalid evidence rejection list")
+            identities = set()
+            for rejection in rejections:
+                if not isinstance(rejection, dict) or set(rejection) != {
+                    "pass_name", "attempt_index", "artifact_sha256"
+                }:
+                    raise CorruptedStateError("invalid evidence rejection identity")
+                name = rejection["pass_name"]
+                index = rejection["attempt_index"]
+                digest = rejection["artifact_sha256"]
+                if (
+                    name not in _PASS_NAMES
+                    or type(index) is not int
+                    or index < 0
+                    or not isinstance(digest, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                ):
+                    raise CorruptedStateError("invalid evidence rejection identity")
+                identity = (name, index)
+                if identity in identities:
+                    raise CorruptedStateError("duplicate evidence rejection identity")
+                identities.add(identity)
+        elif "evidence_rejections" in row:
+            raise CorruptedStateError("evidence rejection authority has incompatible action")
         protocol_failures = row.get("falsify_protocol_failures", [])
         if (
             not isinstance(protocol_failures, list)
@@ -512,13 +541,13 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             or any(fp not in row["dispositions"] for fp in protocol_failures)
         ):
             raise CorruptedStateError("falsifier protocol failure lacks L1 observation")
-        if action == "earned" and (
+        if action in ("earned", "evidence_rejected") and (
             not all(value == "returned" for value in phases.values())
             or failures
             or row["reset_observed"]
             or row.get("fixpoint") != "CLEAN"
         ):
-            raise CorruptedStateError("earned host round lacks CLEAN observation")
+            raise CorruptedStateError(f"{action} host round lacks CLEAN observation")
         if action == "interrupted" and (
             phases["l1"] != "returned"
             or row["reset_observed"]
@@ -536,7 +565,7 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             or row.get("fixpoint") not in ("RESET", "CYCLE_RESTART")
         ):
             raise CorruptedStateError("reset host round lacks reset observation")
-        if action in ("earned", "interrupted", "reset") and "dispositions" not in row:
+        if action in ("earned", "interrupted", "reset", "evidence_rejected") and "dispositions" not in row:
             raise CorruptedStateError("finalized host round lacks product snapshot")
     if round_index is not None and (
         type(round_index) is not int
@@ -587,7 +616,7 @@ def earned_history_cycles(state: State, source_hash: str, manifest: dict | None)
                 earned.append(row["round"] + 1)
             elif action == "reset":
                 earned.clear()
-            elif action not in ("interrupted", "pending") and earned:
+            elif action not in ("interrupted", "pending", "evidence_rejected") and earned:
                 if action == "unavailable" and all(
                     value == "not_run" for value in row["phase_status"].values()
                 ):
