@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Unsupported staged native subjects stop before review work starts."""
+"""Unsupported staged/committed native subjects stop before review work starts."""
 from functools import partial
 from pathlib import Path
 import shutil
@@ -59,6 +59,15 @@ def reviewed(project, kind="INDEX", paths=None):
                             paths or [Path("calc.py")], project.root)
 
 
+def committed_review(project, paths=None):
+    git(project.root, "commit", "-m", "Change owned fixture")
+    review = reviewed(project, "HEAD", paths)
+    assert review.target_kind == "COMMIT" and review.git_diff
+    assert review.base_sha == project.base != review.head_sha
+    assert git(project.root, "rev-parse", "HEAD~1") == project.base
+    return review
+
+
 def make_machine(project, tmp_path, *, mode=Mode.LOCAL, runner=None, review=None):
     state_root = tmp_path / "state"
     state_root.mkdir()
@@ -74,10 +83,12 @@ def make_machine(project, tmp_path, *, mode=Mode.LOCAL, runner=None, review=None
         calls.append("L1")
         raise ReachedWork("review work reached before unsupported-source rejection")
 
+    review = review or reviewed(project)
     sm = machine.StateMachine(
         mode=mode, falsifier=StubFalsifier(), autofixer=StubAutoFixer(), revert_fn=lambda _f: None,
-        resolved_review=review or reviewed(project), source_hash="index-admission-fixture",
-        baseline_spec_repr="HEAD->INDEX", cwd=state_root, source_root=project.root,
+        resolved_review=review, source_hash="index-admission-fixture",
+        baseline_spec_repr="HEAD~1->HEAD" if review.target_kind == "COMMIT" else "HEAD->INDEX",
+        cwd=state_root, source_root=project.root,
         registry={}, l0_runner=l0, l1_provider=l1,
         l2_runner=mutation.run_mutation if runner is None else runner,
         advisory_runners=[], max_total_rounds=1, coverage_l1_active=False,
@@ -95,12 +106,16 @@ def prohibit_native(monkeypatch, calls):
     monkeypatch.setattr(machine, "launch_detached_mutation", forbidden)
 
 
+@pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
 @pytest.mark.parametrize("mode,runner_kind", [
     (Mode.LOCAL, "direct"), (Mode.LOCAL, "factory"),
     (Mode.LOCAL, "direct-without-PATH"), (Mode.LOCAL, "partial-without-PATH"),
     (Mode.CI, "direct"), (Mode.CI, "detached-custom"),
 ])
-def test_native_index_is_rejected_before_any_round(project, tmp_path, monkeypatch, mode, runner_kind):
+def test_native_index_is_rejected_before_any_round(project, tmp_path, monkeypatch, mode, runner_kind, target_kind):
+    review = committed_review(project) if target_kind == "COMMIT" else reviewed(project)
+    head_before = git(project.root, "rev-parse", "HEAD")
+    staged_before = git(project.root, "show", ":calc.py")
     if runner_kind == "factory":
         runner = factories.build_l2_runner(cwd=project.root)
         assert type(runner) is partial and runner.func is mutation.run_mutation
@@ -113,7 +128,7 @@ def test_native_index_is_rejected_before_any_round(project, tmp_path, monkeypatc
         runner = mutation.run_mutation
     if "without-PATH" in runner_kind:
         monkeypatch.setattr(shutil, "which", lambda *_a, **_kw: None)
-    sm, calls = make_machine(project, tmp_path, mode=mode, runner=runner)
+    sm, calls = make_machine(project, tmp_path, mode=mode, runner=runner, review=review)
     prohibit_native(monkeypatch, calls)
     prior = State(source_hash=sm.source_hash, verdict=Verdict.PASS, converged=True)
     prior.round_history = [{"round": 7, "retained_prior_audit": "original"}]
@@ -125,25 +140,30 @@ def test_native_index_is_rejected_before_any_round(project, tmp_path, monkeypatc
         verdict = sm.run()
     except ReachedWork:
         verdict = None
-    assert verdict is Verdict.FAIL, "native INDEX must fail admission before reaching L0/L1"
-    assert calls == [], "unsupported INDEX must not execute review/native work"
+    assert verdict is Verdict.FAIL, "native snapshot must fail admission before reaching L0/L1"
+    assert calls == [], "unsupported snapshot must not execute review/native work"
     saved = load_state(path)
     assert saved.verdict is Verdict.FAIL and saved.converged is False
-    assert any("INDEX" in error and "WORKING" in error for error in saved.infra_errors)
-    assert saved.source_hash == sm.source_hash and saved.baseline_spec_repr == "HEAD->INDEX"
+    assert any(target_kind in error and "WORKING" in error for error in saved.infra_errors)
+    if target_kind == "COMMIT":
+        assert "--baseline HEAD~1 --head WORKING" in saved.infra_errors[0]
+    assert saved.source_hash == sm.source_hash and saved.baseline_spec_repr == sm.baseline_spec_repr
     assert saved.round_history == (prior.round_history if mode is Mode.LOCAL else [])
     assert saved.consecutive_clean_rounds == 0
     assert (sm.cwd / "prior-state.json").read_bytes() == before
     assert not (sm.cwd / ".code-forge/receipts").exists()
     assert not (sm.cwd / ".code-forge/mutation-result.json").exists()
-    assert sm.resolved_review.target_kind == "INDEX"
+    assert sm.resolved_review.target_kind == target_kind
     assert "+    return 2" in sm.resolved_review.git_diff
     assert project.source.read_text() == "def value():\n    return 2\n"
+    assert git(project.root, "rev-parse", "HEAD") == head_before
+    assert git(project.root, "show", ":calc.py") == staged_before
 
 
+@pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
 @pytest.mark.parametrize("variant", ["unstaged", "index-moved", "assume-unchanged", "skip-worktree", "include-override"])
-def test_index_refusal_does_not_depend_on_accidental_byte_equality(project, tmp_path, monkeypatch, variant):
-    review = reviewed(project)
+def test_index_refusal_does_not_depend_on_accidental_byte_equality(project, tmp_path, monkeypatch, variant, target_kind):
+    review = committed_review(project) if target_kind == "COMMIT" else reviewed(project)
     if variant == "index-moved":
         project.source.write_text("def value():\n    return 3\n", encoding="utf-8")
         git(project.root, "add", "--", "calc.py")
@@ -156,24 +176,27 @@ def test_index_refusal_does_not_depend_on_accidental_byte_equality(project, tmp_
         project.source.write_text("def value():\n    return 3\n", encoding="utf-8")
     staged_before = git(project.root, "show", ":calc.py")
     physical_before = project.source.read_bytes()
+    head_before = git(project.root, "rev-parse", "HEAD")
     sm, calls = make_machine(project, tmp_path, review=review)
     prohibit_native(monkeypatch, calls)
     try:
         verdict = sm.run()
     except ReachedWork:
         verdict = None
-    assert verdict is Verdict.FAIL, "explicit INDEX contract must reject hidden/moved physical subjects"
+    assert verdict is Verdict.FAIL, "snapshot contract must reject hidden/moved physical subjects"
     assert calls == []
     assert git(project.root, "show", ":calc.py") == staged_before
     assert project.source.read_bytes() == physical_before
-    assert sm.resolved_review is review and review.target_kind == "INDEX"
+    assert git(project.root, "rev-parse", "HEAD") == head_before
+    assert sm.resolved_review is review and review.target_kind == target_kind
 
 
+@pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
 @pytest.mark.parametrize("case", [
     "WORKING", "COMMIT", "unknown", "custom", "extra-partial", "foreign-partial", "positional-partial",
     "factory-unavailable", "CI-no-native", "no-python", "other-adapter", "tests-only", "deleted-only", "configured-skip", "invalid-config",
 ])
-def test_non_native_or_unselected_subject_keeps_its_normal_boundary(project, tmp_path, monkeypatch, case):
+def test_non_native_or_unselected_subject_keeps_its_normal_boundary(project, tmp_path, monkeypatch, case, target_kind):
     runner = mutation.run_mutation
     mode = Mode.LOCAL
     review = reviewed(project)
@@ -211,6 +234,8 @@ def test_non_native_or_unselected_subject_keeps_its_normal_boundary(project, tmp
         (project.root / ".code-forge/gate.yaml").write_text(yaml.safe_dump(project.gate), encoding="utf-8")
     elif case == "invalid-config":
         project.gate = {"test": {"command": []}}
+    if target_kind == "COMMIT" and case not in {"WORKING", "COMMIT", "unknown"}:
+        review = committed_review(project, paths=review.source_files)
     sm, calls = make_machine(project, tmp_path, mode=mode, runner=runner, review=review)
     prohibit_native(monkeypatch, calls)
     with pytest.raises(ReachedWork, match="review work reached"):
@@ -218,7 +243,7 @@ def test_non_native_or_unselected_subject_keeps_its_normal_boundary(project, tmp
     assert calls == ["L0", "L1"]
 
 
-def configure_cli(project, monkeypatch, *, outlet="subprocess"):
+def configure_cli(project, monkeypatch, *, outlet="subprocess", committed=False, mode="ci"):
     from code_forge import outlet_resolver
     monkeypatch.chdir(project.root)
     monkeypatch.setattr(outlet_resolver, "resolve_outlet", lambda *_a, **_kw: outlet)
@@ -230,26 +255,34 @@ def configure_cli(project, monkeypatch, *, outlet="subprocess"):
     monkeypatch.setattr(cli, "_check_backend_credentials", lambda *_a, **_kw: None)
     tools = project.root / "owned-tools.yaml"
     tools.write_text("tools: {}\n", encoding="utf-8")
+    selection = ["--committed"] if committed else ["--baseline", project.base, "--head", "INDEX"]
     return ["forge", "review", "--allow-main", "--backend", "owned", "--registry", str(tools),
-            "--mode", "ci", "--baseline", project.base, "--head", "INDEX", "calc.py"]
+            "--mode", mode, *selection, "calc.py"]
 
 
-def test_cli_index_refuses_before_enrichment_and_mcp_preserves_error(project, monkeypatch, capsys):
+@pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
+@pytest.mark.parametrize("mode", ["local", "ci"])
+def test_cli_index_refuses_before_enrichment_and_mcp_preserves_error(project, monkeypatch, capsys, target_kind, mode):
     from code_forge.mcp_server import _make_result
-    args = configure_cli(project, monkeypatch)
+    if target_kind == "COMMIT":
+        committed_review(project)
+    args = configure_cli(project, monkeypatch, committed=target_kind == "COMMIT", mode=mode)
     calls = []
+    prohibit_native(monkeypatch, calls)
 
     def enrichment(*_a, **_kw):
         calls.append("enrichment")
-        raise ReachedWork("enrichment reached before INDEX admission")
+        raise ReachedWork("enrichment reached before snapshot admission")
 
     monkeypatch.setattr(cli, "_assemble_post_image", enrichment)
     monkeypatch.setattr(sys, "argv", args)
     exit_code = cli.main()
     output = capsys.readouterr()
-    assert exit_code == 2, "native INDEX must return actionable CLI_ERROR before model enrichment"
+    assert exit_code == 2, "native snapshot must return actionable CLI_ERROR before model enrichment"
     assert calls == [] and output.out == ""
-    assert "INDEX" in output.err and "WORKING" in output.err
+    assert target_kind in output.err and "WORKING" in output.err
+    if target_kind == "COMMIT":
+        assert "--baseline HEAD~1 --head WORKING" in output.err
     assert "unsupported" in output.err.lower()
     projected = _make_result(output.out, exit_code, 0.0, output.err)
     assert projected.structuredContent["exit_code"] == 2
@@ -257,9 +290,12 @@ def test_cli_index_refuses_before_enrichment_and_mcp_preserves_error(project, mo
     assert not (project.root / ".code-forge/receipts").exists()
 
 
+@pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
 @pytest.mark.parametrize("outlet", ["subagent", "inline"])
-def test_cli_static_outlets_keep_index_admitted(project, monkeypatch, outlet):
-    args = configure_cli(project, monkeypatch, outlet=outlet)
+def test_cli_static_outlets_keep_index_admitted(project, monkeypatch, outlet, target_kind):
+    if target_kind == "COMMIT":
+        committed_review(project)
+    args = configure_cli(project, monkeypatch, outlet=outlet, committed=target_kind == "COMMIT")
     observed = []
     if outlet == "inline":
         def inline(*_a, **_kw):
@@ -273,10 +309,11 @@ def test_cli_static_outlets_keep_index_admitted(project, monkeypatch, outlet):
         monkeypatch.setattr(cli, "_dispatch_subagent", subagent)
     monkeypatch.setattr(sys, "argv", args)
     assert cli.main() == 5
-    assert observed == (["inline"] if outlet == "inline" else ["INDEX"])
+    assert observed == (["inline"] if outlet == "inline" else [target_kind])
 
 
-def test_actual_outlet_c_retains_its_no_native_index_seam(project):
+@pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
+def test_actual_outlet_c_retains_its_no_native_index_seam(project, target_kind):
     from code_forge.outlet_c import run_outlet_c
     observed = []
 
@@ -287,7 +324,8 @@ def test_actual_outlet_c_retains_its_no_native_index_seam(project):
         observed.append("reviewer-boundary")
         raise StaticBoundary("static reviewer boundary")
 
+    review = committed_review(project) if target_kind == "COMMIT" else reviewed(project)
     with pytest.raises(StaticBoundary, match="static reviewer boundary"):
-        run_outlet_c(reviewed(project), "static-index", project.root, spawn,
+        run_outlet_c(review, "static-snapshot", project.root, spawn,
                      falsifier=StubFalsifier(), max_total_rounds=1)
     assert observed == ["reviewer-boundary"]

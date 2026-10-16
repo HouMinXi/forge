@@ -3983,7 +3983,7 @@ def _run(args, env, cwd: Path) -> Verdict:
         print("code-forge: no changes to review", file=sys.stderr)
         return Verdict.PASS
 
-    if outlet == "subprocess" and resolved.target_kind == "INDEX":
+    if outlet == "subprocess" and resolved.target_kind in {"INDEX", "COMMIT"}:
         from .mutation import mutation_review_admission_error
 
         admission_error = mutation_review_admission_error(
