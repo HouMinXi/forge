@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import errno
 import json
 import os
 import select
@@ -135,6 +136,21 @@ class _OwnedTree:
                         fd = os.pidfd_open(pid)
                     except ProcessLookupError:
                         continue
+                    except OSError as exc:
+                        # #113: an exiting child whose thread-group task is
+                        # already gone gives EINVAL, not ESRCH. Skip it like
+                        # ESRCH only if /proc confirms it is gone, a zombie,
+                        # dead, or a different process; otherwise fail closed.
+                        if exc.errno != errno.EINVAL:
+                            raise
+                        gone = _identity(pid)
+                        if (
+                            gone is None
+                            or gone.state in ("Z", "X", "x")
+                            or gone.start_ticks != identity.start_ticks
+                        ):
+                            continue
+                        raise
                     current = _identity(pid)
                     if (
                         current is None
