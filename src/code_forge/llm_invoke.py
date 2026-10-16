@@ -1461,9 +1461,19 @@ def llm_invoke(
     return result
 
 
-# Largest prompt passed as a single argv string (#108): half of Linux
-# MAX_ARG_STRLEN (131072), leaving room for the environment and other args.
+# Largest prompt passed as a single argv string (#108). POSIX: half of
+# Linux MAX_ARG_STRLEN (131072 bytes). Windows: CreateProcess caps the whole
+# command line at 32767 UTF-16 units, so stay well below that.
 CLI_ARGV_PROMPT_LIMIT = 65536
+CLI_ARGV_PROMPT_LIMIT_WINDOWS = 16384
+# Binaries known to read the prompt from stdin when -p has no prompt
+# argument. auto mode only uses stdin for these; a custom proxy must opt in
+# with prompt_via: stdin, so it never silently receives an empty prompt.
+_STDIN_PROMPT_BINARIES = frozenset({"claude", "claude.exe"})
+
+
+def _argv_prompt_limit() -> int:
+    return CLI_ARGV_PROMPT_LIMIT_WINDOWS if os.name == "nt" else CLI_ARGV_PROMPT_LIMIT
 
 
 def _invoke_cli(
@@ -1489,11 +1499,27 @@ def _invoke_cli(
     # still one argv string.
     prompt_bytes = prompt.encode("utf-8")
     via = getattr(backend, "prompt_via", "auto") or "auto"
-    use_stdin = via == "stdin" or (via == "auto" and len(prompt_bytes) > CLI_ARGV_PROMPT_LIMIT)
+    limit = _argv_prompt_limit()
+    too_big = len(prompt_bytes) > limit
+    known_stdin = os.path.basename(binary_name).lower() in _STDIN_PROMPT_BINARIES
+    use_stdin = via == "stdin" or (via == "auto" and too_big and known_stdin)
+    if via == "auto" and too_big and not use_stdin:
+        raise LLMInvokeError(
+            "prompt is %d bytes, over the %d-byte argv limit for cli backend %r; "
+            "%s is not known to read the prompt from stdin. If it reads stdin "
+            "when -p has no prompt argument, set prompt_via: stdin on the backend."
+            % (len(prompt_bytes), limit, backend.name, binary_name),
+            exit_code=-1,
+            stderr="prompt exceeds argv limit",
+            duration_s=0.0,
+        )
     cmd = [binary, "-p"] if use_stdin else [binary, "-p", prompt]
     if effective_model:
         cmd.extend(["--model", effective_model])
     cmd.extend(["--output-format", "json"])
+    if use_stdin and known_stdin:
+        # Documented claude print-mode option for plain-text stdin input.
+        cmd.extend(["--input-format", "text"])
 
     # Build child env: unset then set, or None to inherit parent env
     if backend.env_unset or backend.env_set:

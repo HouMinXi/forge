@@ -312,7 +312,7 @@
           "type": "string",
           "description": "CLI binary name or path. For type=cli only. Default: 'claude'."
         },
-        "prompt_via": {"type": "string", "enum": ["auto", "argv", "stdin"], "description": "type=cli only. How the prompt reaches the CLI: auto (default) passes it as the -p argument up to 65536 bytes and on stdin above; argv or stdin forces one. See docs/configuration.md (#108)."},
+        "prompt_via": {"type": "string", "enum": ["auto", "argv", "stdin"], "description": "type=cli only. How the prompt reaches the CLI: auto (default) passes it as the -p argument up to 65536 bytes (16384 on Windows); above that it uses stdin for the claude binary and errors for other commands; stdin or argv forces one. See docs/configuration.md (#108)."},
         "model": {
           "type": "string",
           "description": "Model ID. Optional for both types. Omit to use session default."

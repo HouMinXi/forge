@@ -39,8 +39,10 @@ def fake_cli(tmp_path, monkeypatch):
     return out
 
 
-def _backend(**kw):
-    return BackendConfig(name="cli-test", type="cli", command="fake-cli", model="m", **kw)
+def _backend(command="claude", **kw):
+    # which() is patched, so "claude" resolves to the fake recorder; the name
+    # is what auto mode uses to decide whether stdin is known to work.
+    return BackendConfig(name="cli-test", type="cli", command=command, model="m", **kw)
 
 
 @pytest.mark.parametrize("size", [131_073, 200_000, 1_000_001])
@@ -52,7 +54,7 @@ def test_prompt_over_max_arg_strlen_succeeds(fake_cli, size):
     assert seen["via"] == "stdin"
     assert seen["len"] == len(prompt.encode())
     assert seen["head"] == prompt[:20] and seen["tail"] == prompt[-20:]
-    assert seen["argv"] == ["-p", "--model", "--output-format"]
+    assert seen["argv"] == ["-p", "--model", "--output-format", "--input-format"]
 
 
 def test_small_prompt_keeps_argv(fake_cli):
@@ -90,3 +92,56 @@ def test_prompt_via_config():
     assert cfg.prompt_via == "auto"
     with pytest.raises(CliError):
         load_backend_configs({"backends": {"c": {"type": "cli", "command": "x", "prompt_via": "file"}}})
+
+
+def test_custom_proxy_auto_large_prompt_fails_loudly(fake_cli, monkeypatch):
+    calls = []
+    monkeypatch.setattr(invoke.subprocess, "Popen", lambda *a, **k: calls.append(a) or pytest.fail("spawned"))
+    with pytest.raises(invoke.LLMInvokeError) as caught:
+        invoke._invoke_cli("x" * 200_000, _backend(command="/usr/local/bin/my-proxy"), timeout_s=60)
+    assert "prompt_via: stdin" in str(caught.value)
+    assert calls == []
+
+
+def test_custom_proxy_opted_into_stdin_gets_prompt_without_input_format(fake_cli):
+    prompt = "y" * 200_000
+    invoke._invoke_cli(prompt, _backend(command="my-proxy", prompt_via="stdin"), timeout_s=60)
+    seen = json.loads(fake_cli.read_text())
+    assert seen["via"] == "stdin" and seen["len"] == len(prompt)
+    assert seen["argv"] == ["-p", "--model", "--output-format"]
+
+
+def test_custom_proxy_small_prompt_unchanged(fake_cli):
+    invoke._invoke_cli("short", _backend(command="my-proxy"), timeout_s=60)
+    assert json.loads(fake_cli.read_text())["via"] == "argv"
+
+
+def test_windows_threshold(monkeypatch):
+    assert invoke._argv_prompt_limit() == invoke.CLI_ARGV_PROMPT_LIMIT
+    monkeypatch.setattr(invoke.os, "name", "nt")
+    assert invoke._argv_prompt_limit() == invoke.CLI_ARGV_PROMPT_LIMIT_WINDOWS == 16384
+
+
+def test_windows_mid_size_prompt_uses_stdin_for_claude(fake_cli, monkeypatch):
+    monkeypatch.setattr(invoke, "_argv_prompt_limit", lambda: invoke.CLI_ARGV_PROMPT_LIMIT_WINDOWS)
+    invoke._invoke_cli("z" * 20_000, _backend(), timeout_s=60)
+    assert json.loads(fake_cli.read_text())["via"] == "stdin"
+
+
+@pytest.mark.parametrize("value", [["stdin"], {"a": 1}, 3, True])
+def test_prompt_via_non_string_is_a_config_error(value):
+    from code_forge.backend import load_backend_configs
+    from code_forge.errors import CliError
+
+    with pytest.raises(CliError, match="invalid prompt_via"):
+        load_backend_configs({"backends": {"c": {"type": "cli", "command": "x", "prompt_via": value}}})
+
+
+def test_prompt_via_rejected_on_api_backend():
+    from code_forge.backend import load_backend_configs
+    from code_forge.errors import CliError
+
+    entry = {"type": "api", "format": "openai", "base_url": "https://example.invalid/v1",
+             "api_key_env": "K", "model": "m", "prompt_via": "stdin"}
+    with pytest.raises(CliError, match="only valid on cli"):
+        load_backend_configs({"backends": {"a": entry}})

@@ -60,26 +60,34 @@ def test_a_large_prompt_is_sent_on_stdin(monkeypatch):
     _install_binary(monkeypatch, "/opt/my bin/cli")
 
     prompt = "x" * (invoke.CLI_ARGV_PROMPT_LIMIT + 1)
-    invoke._invoke_cli(prompt, _backend(model="sonnet 4"), timeout_s=5)
+    invoke._invoke_cli(prompt, _backend(model="sonnet 4", command="claude"), timeout_s=5)
 
     assert popen.call_args.args[0] == [
         "/opt/my bin/cli", "-p", "--model", "sonnet 4", "--output-format", "json",
+        "--input-format", "text",
     ]
     assert popen.call_args.kwargs["stdin"] == subprocess.PIPE
     assert proc.communicate.call_args.kwargs["input"] == prompt
 
 
-def test_a_large_prompt_without_a_model_omits_the_model_flag(monkeypatch):
-    popen = Mock(side_effect=OSError("boom"))
+def test_a_large_stdin_prompt_without_a_model_omits_the_model_flag(monkeypatch):
+    proc = Mock(spec=subprocess.Popen)
+    proc.communicate.return_value = (json.dumps({"type": "result", "result": "{}"}), "")
+    proc.returncode = 0
+    popen = Mock(return_value=proc)
     monkeypatch.setattr(invoke, "subprocess", SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, TimeoutExpired=subprocess.TimeoutExpired))
     monkeypatch.setattr(invoke, "time", SimpleNamespace(monotonic=lambda: 0.0))
     monkeypatch.setattr(invoke, "_resolve_model", lambda: "")
-    _install_binary(monkeypatch, "/usr/bin/cli")
+    _install_binary(monkeypatch, "/usr/bin/claude")
 
-    with pytest.raises(invoke.LLMInvokeError):
-        invoke._invoke_cli("x" * 1_000_001, _backend(model=""), timeout_s=5)
+    prompt = "x" * 1_000_001
+    invoke._invoke_cli(prompt, _backend(command="claude", model=""), timeout_s=5)
 
-    assert popen.call_args.args[0] == ["/usr/bin/cli", "-p", "--output-format", "json"]
+    assert popen.call_args.args[0] == [
+        "/usr/bin/claude", "-p", "--output-format", "json", "--input-format", "text",
+    ]
+    assert popen.call_args.kwargs["stdin"] == subprocess.PIPE
+    assert proc.communicate.call_args.kwargs["input"] == prompt
 
 
 def test_a_short_prompt_is_passed_as_an_argument(monkeypatch):

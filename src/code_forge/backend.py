@@ -513,6 +513,8 @@ def _parse_provider_fields(entry: dict, name: str) -> dict:
     # Reject cli-only env fields on api/vertex
     if "env" in entry:
         raise CliError("backend %r: 'env' field is only valid on cli backends" % name)
+    if "prompt_via" in entry:
+        raise CliError("backend %r: 'prompt_via' field is only valid on cli backends" % name)
     if "env_unset" in entry:
         raise CliError(
             "backend %r: 'env_unset' is an internal field name, "
@@ -660,7 +662,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
     env_kw = _parse_cli_env(entry, name)
 
     prompt_via = entry.get("prompt_via", "auto")
-    if prompt_via not in VALID_PROMPT_VIA:
+    if type(prompt_via) is not str or prompt_via not in VALID_PROMPT_VIA:
         raise CliError(
             "backend %r (cli): invalid prompt_via %r (expected: %s)"
             % (name, prompt_via, "|".join(sorted(VALID_PROMPT_VIA)))
