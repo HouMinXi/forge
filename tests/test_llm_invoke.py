@@ -158,7 +158,8 @@ class TestLLMInvoke:
             cmd = mock_popen.call_args[0][0]
             assert "opus-4-7" in cmd
 
-    def test_large_prompt_uses_shell_command(self):
+    def test_large_prompt_is_sent_on_stdin(self):
+        # #108: no single argv element may approach MAX_ARG_STRLEN (131072).
         large_prompt = "x" * 1_100_000
         mock_proc = _make_mock_proc(stdout='{"ok": true}')
 
@@ -166,8 +167,11 @@ class TestLLMInvoke:
             result = llm_invoke(large_prompt, backend=DEFAULT_BACKEND)
         assert result.content == {"ok": True}
         cmd = mock_popen.call_args[0][0]
-        assert cmd[0] == "sh"
-        assert cmd[1] == "-c"
+        assert "claude" in cmd[0] and cmd[1] == "-p"
+        assert large_prompt not in cmd
+        assert all(len(str(arg)) < 131072 for arg in cmd)
+        assert mock_popen.call_args.kwargs["stdin"] is subprocess.PIPE
+        assert mock_proc.communicate.call_args.kwargs["input"] == large_prompt
 
     def test_strips_markdown_fences(self):
         mock_proc = _make_mock_proc(stdout='```json\n{"key": "value"}\n```')
