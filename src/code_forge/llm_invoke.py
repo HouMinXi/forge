@@ -1466,14 +1466,20 @@ def llm_invoke(
 # command line at 32767 UTF-16 units, so stay well below that.
 CLI_ARGV_PROMPT_LIMIT = 65536
 CLI_ARGV_PROMPT_LIMIT_WINDOWS = 16384
+# .cmd/.bat run through cmd.exe, whose command line cap is 8191 characters.
+CLI_ARGV_PROMPT_LIMIT_WINDOWS_BATCH = 4096
 # Binaries known to read the prompt from stdin when -p has no prompt
 # argument. auto mode only uses stdin for these; a custom proxy must opt in
 # with prompt_via: stdin, so it never silently receives an empty prompt.
-_STDIN_PROMPT_BINARIES = frozenset({"claude", "claude.exe"})
+_STDIN_PROMPT_BINARIES = frozenset({"claude", "claude.exe", "claude.cmd"})
 
 
-def _argv_prompt_limit() -> int:
-    return CLI_ARGV_PROMPT_LIMIT_WINDOWS if os.name == "nt" else CLI_ARGV_PROMPT_LIMIT
+def _argv_prompt_limit(binary: str = "") -> int:
+    if os.name != "nt":
+        return CLI_ARGV_PROMPT_LIMIT
+    if binary.lower().endswith((".cmd", ".bat")):
+        return CLI_ARGV_PROMPT_LIMIT_WINDOWS_BATCH
+    return CLI_ARGV_PROMPT_LIMIT_WINDOWS
 
 
 def _invoke_cli(
@@ -1499,7 +1505,7 @@ def _invoke_cli(
     # still one argv string.
     prompt_bytes = prompt.encode("utf-8")
     via = getattr(backend, "prompt_via", "auto") or "auto"
-    limit = _argv_prompt_limit()
+    limit = _argv_prompt_limit(binary)
     too_big = len(prompt_bytes) > limit
     known_stdin = os.path.basename(binary_name).lower() in _STDIN_PROMPT_BINARIES
     use_stdin = via == "stdin" or (via == "auto" and too_big and known_stdin)

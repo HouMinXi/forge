@@ -123,7 +123,7 @@ def test_windows_threshold(monkeypatch):
 
 
 def test_windows_mid_size_prompt_uses_stdin_for_claude(fake_cli, monkeypatch):
-    monkeypatch.setattr(invoke, "_argv_prompt_limit", lambda: invoke.CLI_ARGV_PROMPT_LIMIT_WINDOWS)
+    monkeypatch.setattr(invoke, "_argv_prompt_limit", lambda binary="": invoke.CLI_ARGV_PROMPT_LIMIT_WINDOWS)
     invoke._invoke_cli("z" * 20_000, _backend(), timeout_s=60)
     assert json.loads(fake_cli.read_text())["via"] == "stdin"
 
@@ -145,3 +145,29 @@ def test_prompt_via_rejected_on_api_backend():
              "api_key_env": "K", "model": "m", "prompt_via": "stdin"}
     with pytest.raises(CliError, match="only valid on cli"):
         load_backend_configs({"backends": {"a": entry}})
+
+
+def test_windows_batch_threshold(monkeypatch):
+    monkeypatch.setattr(invoke.os, "name", "nt")
+    assert invoke._argv_prompt_limit(r"C:\npm\claude.cmd") == invoke.CLI_ARGV_PROMPT_LIMIT_WINDOWS_BATCH
+    assert invoke._argv_prompt_limit(r"C:\tools\proxy.BAT") == invoke.CLI_ARGV_PROMPT_LIMIT_WINDOWS_BATCH
+    assert invoke._argv_prompt_limit(r"C:\bin\claude.exe") == invoke.CLI_ARGV_PROMPT_LIMIT_WINDOWS
+    assert invoke.CLI_ARGV_PROMPT_LIMIT_WINDOWS_BATCH < 8191
+
+
+def test_claude_cmd_is_known_stdin_reader(fake_cli):
+    prompt = "c" * 200_000
+    invoke._invoke_cli(prompt, _backend(command="claude.cmd"), timeout_s=60)
+    seen = json.loads(fake_cli.read_text())
+    assert seen["via"] == "stdin" and seen["len"] == len(prompt)
+    assert "--input-format" in seen["argv"]
+
+
+def test_prompt_via_null_means_default_like_other_fields():
+    # Same as other optional backend fields (e.g. timeout_s: null -> default).
+    from code_forge.backend import load_backend_configs
+
+    (cfg,) = load_backend_configs({"backends": {"c": {"type": "cli", "command": "x", "prompt_via": None}}})
+    assert cfg.prompt_via == "auto"
+    (other,) = load_backend_configs({"backends": {"c": {"type": "cli", "command": "x", "timeout_s": None}}})
+    assert other.timeout_s == 0

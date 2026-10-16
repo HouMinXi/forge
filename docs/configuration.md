@@ -319,6 +319,20 @@ backends:
 
 `prompt_via` is only valid on `type: cli` backends.
 
+Notes:
+
+- Auto-stdin recognizes the binary names `claude`, `claude.exe` and
+  `claude.cmd`. A wrapper such as `npx claude`, or a renamed script, is not
+  recognized; set `prompt_via: stdin` for it.
+- On Windows a `.cmd`/`.bat` command runs through `cmd.exe`, whose command
+  line limit is 8191 characters, so the argument threshold there is 4096 bytes.
+- Known limitation (Windows): argument quoting can grow a prompt full of
+  quotes or backslashes up to about 2x. In rare cases a prompt under the
+  threshold can still exceed the command-line limit. Use `prompt_via: stdin`
+  if you hit it.
+- `prompt_via: null` means the default (`auto`), like other optional
+  backend fields.
+
 **Behavior note (#108).** Before this change, every prompt under 1 MB was
 passed as an argument, and anything over ~128 KB failed on Linux. Custom
 `type: cli` proxies now get a clear error for prompts over the threshold
