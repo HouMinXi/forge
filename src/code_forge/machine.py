@@ -1706,13 +1706,40 @@ class StateMachine:
             progress.emit("falsify %d/%d: %s:%s (%s)" % (i, total, f.file, f.line_range, f.fingerprint))
             t_falsify = time.monotonic()
             try:
-                f.disposition = self.falsifier.falsify(f)
-                from .verify import bound_excerpt_disposition
+                returned = self.falsifier.falsify(f)
+                from .verify import bound_excerpt_disposition, finding_excerpt_binding
 
                 f.disposition = bound_excerpt_disposition(
-                    f.disposition,
+                    returned,
                     getattr(f, "excerpt", None),
                 )
+                if returned is Disposition.CONFIRMED and f.disposition is Disposition.CONFIRMED:
+                    bound = finding_excerpt_binding(
+                        self.resolved_review.git_diff,
+                        f.file,
+                        f.line_range[0] if f.line_range else 0,
+                        f.excerpt,
+                        cwd=self.cwd,
+                    )
+                    if bound is False:
+                        f.disposition = Disposition.UNCERTAIN
+                if returned is Disposition.CONFIRMED and f.disposition is not Disposition.CONFIRMED:
+                    # Issue #46: the falsifier confirmed the defect but the
+                    # host could not bind finding-owned evidence. That is
+                    # incomplete evidence, not semantic uncertainty, so it
+                    # must not be scored like an ordinary UNCERTAIN that CI
+                    # lets PASS. Route it like other unusable adjudications.
+                    f.error = (
+                        "falsifier returned CONFIRMED; host downgraded: "
+                        "finding-owned excerpt missing or not bound to "
+                        f"{f.file}:{f.line_range}"
+                    )
+                    with _lock:
+                        falsify_infra_failures.append(f.fingerprint)
+                        self._falsify_failed_findings.append(f)
+                        self._state.infra_errors.append(
+                            f"falsify evidence incomplete on {f.fingerprint}: {f.error}"
+                        )
                 progress.emit(
                     "falsify %d/%d: done %s (%.1fs)"
                     % (i, total, f.disposition, time.monotonic() - t_falsify)

@@ -1382,6 +1382,42 @@ def bound_excerpt_disposition(disposition, excerpt):
     return disposition
 
 
+def finding_excerpt_binding(diff_text, file, line, excerpt, *, cwd=None):
+    """Check a finding's own excerpt against the frozen reviewed source.
+
+    True: the excerpt quotes contiguous post-image lines of the finding's
+    own file and those lines cover the finding's line. False: missing,
+    blank, wrong-file, invented or not covering the line. None: no frozen
+    diff to bind against (non-git/stub reviews); callers keep the older
+    non-blank rule there. Envelope code_excerpts never count here.
+    """
+    if not diff_text:
+        return None
+    if not isinstance(excerpt, str) or not excerpt.strip():
+        return False
+    try:
+        line = int(line)
+    except (TypeError, ValueError):
+        return False
+    post_image, _hunks, _exempt = _diff_validation_context(diff_text, cwd=cwd)
+    if not post_image:
+        # A diff with no content hunks has no frozen source to bind to.
+        return None
+    source = post_image.get(file)
+    if not source or line < 1:
+        return False
+    quoted = excerpt.rstrip("\n").split("\n")
+    n = len(quoted)
+    for start in range(max(1, line - n + 1), line + 1):
+        if all(
+            source.get(start + k) is not None
+            and source[start + k].rstrip() == quoted[k].rstrip()
+            for k in range(n)
+        ):
+            return True
+    return False
+
+
 def is_indent_stripped(err: str) -> bool:
     """True when err names an indent-stripped quote.
 
