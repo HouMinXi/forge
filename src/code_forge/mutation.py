@@ -829,8 +829,8 @@ def mutation_review_admission_error(
     *, target_kind: str | None, git_diff: str | None, source_files: list[Path],
     source_root: Path, config_root: Path, runner, ci_detached: bool = False,
 ) -> str | None:
-    """Reject unsupported staged native work without discovering/running tools."""
-    if target_kind != "INDEX" or not git_diff:
+    """Reject unsupported staged/committed native work before it starts."""
+    if target_kind not in {"INDEX", "COMMIT"} or not git_diff:
         return None
     native = is_native_mutation_runner(runner, source_root=source_root)
     detached = ci_detached and shutil.which("mutmut") is not None
@@ -863,6 +863,13 @@ def mutation_review_admission_error(
         ) for path in py_files)
     if not selected:
         return None
+    if target_kind == "COMMIT":
+        return (
+            "COMMIT source is unsupported for native mutation review; "
+            "choose an explicit baseline with --head WORKING to review physical current files "
+            "(for the last commit: --baseline HEAD~1 --head WORKING), "
+            "or use a static/non-native review path"
+        )
     return (
         "INDEX source is unsupported for native mutation review; "
         "rerun with --head WORKING to review physical current files, "
