@@ -1716,20 +1716,21 @@ class StateMachine:
                     getattr(f, "excerpt", None),
                 )
                 if returned is Disposition.CONFIRMED and f.disposition is Disposition.CONFIRMED:
-                    diff_text, local_path = self.resolved_review.git_diff, f.file
+                    diff_text, local_path, root = self.resolved_review.git_diff, f.file, self.cwd
                     scope = getattr(self.falsifier, "evidence_scope", None)
                     if callable(scope):
                         # Cross-repo: bind "label@rev/path" against the
-                        # owning repository's own diff, label stripped.
+                        # owning repository's own diff and root, label stripped.
                         owned = scope(f)
                         if owned is not None:
-                            diff_text, local_path = owned
+                            diff_text, local_path, owned_root = owned
+                            root = owned_root or self.cwd
                     bound = finding_excerpt_binding(
                         diff_text,
                         local_path,
                         f.line_range[0] if f.line_range else 0,
                         f.excerpt,
-                        cwd=self.cwd,
+                        cwd=root,
                     )
                     if bound is False:
                         f.disposition = Disposition.UNCERTAIN

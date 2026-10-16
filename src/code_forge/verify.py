@@ -590,6 +590,55 @@ def _restore_earned_window(
         return VerifyResult(False, f"unavailable inherited clean proof: {exc}", 1, 0)
 
 
+def _evidence_downgrade_refusal(cwd: Path, diff_sha256: str) -> VerifyResult | None:
+    """Issue #46: refuse while the reviewed source still has an unresolved
+    host evidence downgrade, on every verify path (default selection,
+    explicit cycles, require_convergence=False).
+
+    Reads state.json as raw JSON so schema/load quirks cannot hide it.
+    Explicit outcomes for the non-matching cases:
+      - no state.json: nothing recorded for this source; no refusal here.
+      - state for a different source_hash: its findings are not about this
+        diff; no refusal here (other gates own freshness).
+      - unreadable/non-object state.json: refused -- a downgrade cannot be
+        ruled out (fail closed).
+    Only the latest persisted findings count: a downgrade a later round no
+    longer reports is superseded and does not block.
+    """
+    path = cwd / ".code-forge" / "state.json"
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return VerifyResult(False, f"unavailable earned state: unreadable state.json (evidence downgrade check): {exc}", 1, 0)
+    try:
+        data = json.loads(raw)
+    except (ValueError, RecursionError) as exc:
+        return VerifyResult(False, f"unavailable earned state: malformed state.json (evidence downgrade check): {exc}", 1, 0)
+    if type(data) is not dict:
+        return VerifyResult(False, "unavailable earned state: malformed state.json: not an object (evidence downgrade check)", 1, 0)
+    if data.get("source_hash") != diff_sha256:
+        return None
+    findings = data.get("findings")
+    if not isinstance(findings, list):
+        return None
+    downgraded = [
+        f.get("fingerprint")
+        for f in findings
+        if isinstance(f, dict) and f.get("evidence_downgrade") and f.get("disposition") == "UNCERTAIN"
+    ]
+    if downgraded:
+        return VerifyResult(
+            False,
+            "host evidence downgrade: falsifier-CONFIRMED finding(s) lack bound "
+            f"finding-owned evidence: {downgraded}",
+            1,
+            0,
+        )
+    return None
+
+
 def _select_default_earned_cycles(
     cwd: Path,
     diff_sha256: str,
@@ -619,18 +668,6 @@ def _select_default_earned_cycles(
             return None
         if state.source_hash != diff_sha256:
             return None
-        downgraded = [
-            f.fingerprint for f in state.findings
-            if getattr(f, "evidence_downgrade", None) and f.disposition.value == "UNCERTAIN"
-        ]
-        if downgraded:
-            return VerifyResult(
-                False,
-                "host evidence downgrade: falsifier-CONFIRMED finding(s) lack bound "
-                f"finding-owned evidence: {downgraded}",
-                1,
-                0,
-            )
         if state.earned_clean_window is None:
             if modern or state._earned_window_present:
                 return VerifyResult(False, "modern history requires an earned clean window", 1, 0)
@@ -1429,7 +1466,8 @@ def finding_excerpt_binding(diff_text, file, line, excerpt, *, cwd=None):
     own file (path normalized by normalize_finding_path) and, when the
     finding names a line >= 1, those lines cover it. A file-level finding
     (line missing/0) binds when the quote matches contiguous post-image
-    lines anywhere in that file's frozen evidence window. Comparison is
+    lines that overlap at least one diff hunk of that file; a negative
+    line is invalid. Comparison is
     NFC-normalized and ignores trailing whitespace only (so a
     trailing-whitespace-only edit is not distinguishable); leading
     indentation must match. False: missing, blank, wrong-file, invented
@@ -1448,14 +1486,20 @@ def finding_excerpt_binding(diff_text, file, line, excerpt, *, cwd=None):
         line = int(line or 0)
     except (TypeError, ValueError):
         line = 0
-    post_image, _hunks, _exempt = _diff_validation_context(diff_text, cwd=cwd)
+    if line < 0:
+        return False
+    post_image, hunk_map, _exempt = _diff_validation_context(diff_text, cwd=cwd)
     if not post_image:
         # A diff with no content hunks has no frozen source to bind to.
         return None
+    # Diff-side paths are NFC-normalized too (macOS writes NFD names).
+    post_image = {unicodedata.normalize("NFC", k): v for k, v in post_image.items()}
+    hunk_map = {unicodedata.normalize("NFC", k): v for k, v in hunk_map.items()}
     path = normalize_finding_path(file, post_image, cwd=cwd)
     source = post_image.get(path) if path is not None else None
     if not source:
         return False
+    hunks = hunk_map.get(path) or []
 
     def norm(text):
         return unicodedata.normalize("NFC", text).rstrip()
@@ -1464,6 +1508,11 @@ def finding_excerpt_binding(diff_text, file, line, excerpt, *, cwd=None):
     n = len(quoted)
     starts = range(max(1, line - n + 1), line + 1) if line >= 1 else sorted(source)
     for start in starts:
+        if line < 1 and not any(
+            h["start"] <= start + n - 1 and start <= h["end"] for h in hunks
+        ):
+            # File-level quote must touch a hunk line, not just context.
+            continue
         if all(
             source.get(start + k) is not None and norm(source[start + k]) == quoted[k]
             for k in range(n)
@@ -1551,6 +1600,9 @@ def _run_verify_impl(
     cp = 0
     if not isinstance(require_convergence, bool):
         return VerifyResult(False, "require_convergence must be a boolean", 1, cp)
+    downgrade = _evidence_downgrade_refusal(cwd, diff_sha256)
+    if downgrade is not None:
+        return downgrade
     repository_manifest = None
     if reviewed_repositories is not None:
         from .receipt_scope import repository_scope
