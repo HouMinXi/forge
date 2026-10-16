@@ -1737,23 +1737,31 @@ class StateMachine:
                     % (i, total, time.monotonic() - t_falsify)
                 )
             except LLMInvokeError as exc:
-                # The backend could not answer, so there is no verdict.
-                # UNCERTAIN keeps the finding unadjudicated (the
-                # disposition vocabulary is not this fix's to change),
-                # but the round is marked infra-blocked so the guard
-                # below can stop a run whose backend stays down instead
-                # of resetting the clean-round counter forever.
+                # No usable verdict was acquired. Describe the observed
+                # cause without changing failure routing or clean credit.
+                if exc.is_timeout:
+                    failure = "backend timed out"
+                elif exc.kind == "conn":
+                    failure = "backend unavailable"
+                elif exc.kind == "truncated":
+                    failure = "response truncated"
+                elif exc.kind in ("empty", "bad_body", "sse_body"):
+                    failure = "unusable response"
+                elif exc.kind == "credentials":
+                    failure = "credential failure"
+                else:
+                    failure = "invocation failed"
                 f.disposition = Disposition.UNCERTAIN
-                f.error = f"falsify() backend unavailable: {exc}"
+                f.error = f"falsify() {failure}: {exc}"
                 with _lock:
                     falsify_infra_failures.append(f.fingerprint)
                     self._falsify_failed_findings.append(f)
                     self._state.infra_errors.append(
-                        f"falsify backend unavailable on {f.fingerprint}: {exc}"
+                        f"falsify {failure} on {f.fingerprint}: {exc}"
                     )
                 progress.emit(
-                    "falsify %d/%d: backend unavailable (%.1fs)"
-                    % (i, total, time.monotonic() - t_falsify)
+                    "falsify %d/%d: %s (%.1fs)"
+                    % (i, total, failure, time.monotonic() - t_falsify)
                 )
             except RuntimeError as exc:
                 f.disposition = Disposition.UNCERTAIN

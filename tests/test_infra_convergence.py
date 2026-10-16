@@ -103,7 +103,7 @@ class TestFalsifyInfraDoesNotSilentlyReset:
         sm._run_l1_phase()
 
         joined = " ".join(sm._state.infra_errors)
-        assert "falsify backend unavailable" in joined, (
+        assert "falsify invocation failed" in joined, (
             "an unreachable backend must be recorded as an infrastructure "
             "error, not absorbed as a semantic verdict"
         )
@@ -113,7 +113,7 @@ class TestFalsifyInfraDoesNotSilentlyReset:
         findings, _ = sm._run_l1_phase()
 
         assert findings[0].error is not None
-        assert "backend unavailable" in findings[0].error
+        assert "invocation failed" in findings[0].error
 
     def test_three_consecutive_infra_rounds_stop_the_run(self, tmp_path):
         sm = _machine(tmp_path)

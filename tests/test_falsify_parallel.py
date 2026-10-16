@@ -124,12 +124,12 @@ def test_every_error_arm_still_routes(tmp_path):
     assert d["fp-1"].disposition == Disposition.UNCERTAIN
     assert d["fp-1"].error.startswith("falsify() protocol violation:")
     assert d["fp-2"].disposition == Disposition.UNCERTAIN
-    assert d["fp-2"].error.startswith("falsify() backend unavailable:")
+    assert d["fp-2"].error.startswith("falsify() invocation failed:")
     assert d["fp-3"].disposition == Disposition.UNCERTAIN
     assert d["fp-3"].error.startswith("falsify() raised:")
     infra = "\n".join(sm._state.infra_errors)
     assert "protocol violation on fp-1" in infra
-    assert "backend unavailable on fp-2" in infra
+    assert "invocation failed on fp-2" in infra
     assert "falsify exception on fp-3" in infra
 
 
