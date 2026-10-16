@@ -96,6 +96,56 @@ def test_other_files_are_named_when_the_diff_uses_crlf():
     assert "SECRET_OTHER_FILE_LINE" not in p
 
 
+@pytest.mark.parametrize(
+    "sibling_git,anchored_git,reverse",
+    [(False, True, False), (False, True, True), (False, False, False), (True, True, False)],
+    ids=["plain-then-git", "git-then-plain", "all-plain", "all-git"],
+)
+def test_prompt_names_traditional_sibling_without_projecting_its_hunks(
+    sibling_git, anchored_git, reverse
+):
+    sibling = (
+        ("diff --git a/value.py b/value.py\n" if sibling_git else "")
+        + "--- a/value.py\n+++ b/value.py\n@@ -1 +1 @@\n"
+        "-SIBLING_SENTINEL = 1\n+SIBLING_SENTINEL = 2\n"
+    )
+    anchored = (
+        ("diff --git a/tests/test_case.py b/tests/test_case.py\n" if anchored_git else "")
+        + "--- a/tests/test_case.py\n+++ b/tests/test_case.py\n@@ -1 +1 @@\n"
+        "-assert read_value() == 1\n+assert read_value() == 2\n"
+    )
+    packet = anchored + sibling if reverse else sibling + anchored
+    prompt = _capture(RealFalsifier(diff_text=packet), _finding(file="tests/test_case.py", lr=(1, 1)))
+    assert "\nvalue.py\n" in prompt
+    assert "SIBLING_SENTINEL" not in prompt
+    assert ("[+   1] +assert read_value() == 2" in prompt) is anchored_git
+
+
+@pytest.mark.parametrize(
+    "metadata,path",
+    [
+        ("diff --git a/mode.py b/mode.py\nold mode 100644\nnew mode 100755\n", "mode.py"),
+        ("diff --git a/old.py b/new.py\nsimilarity index 100%\n"
+         "rename from old.py\nrename to new.py\n", "new.py"),
+        ("diff --git a/old.py b/copy.py\nsimilarity index 100%\n"
+         "copy from old.py\ncopy to copy.py\n", "copy.py"),
+        ("diff --git a/data.bin b/data.bin\n"
+         "Binary files a/data.bin and b/data.bin differ\n", "data.bin"),
+    ],
+    ids=["mode", "rename", "copy", "binary"],
+)
+@pytest.mark.parametrize("reverse", [False, True], ids=["metadata-first", "traditional-first"])
+def test_prompt_names_traditional_sibling_beside_metadata(metadata, path, reverse):
+    plain = (
+        "--- a/plain.py\n+++ b/plain.py\n@@ -1 +1 @@\n"
+        "-SIBLING_SENTINEL = 1\n+SIBLING_SENTINEL = 2\n"
+    )
+    packet = plain + metadata if reverse else metadata + plain
+    prompt = _capture(RealFalsifier(diff_text=packet), _finding(file=path, lr=(1, 1)))
+    assert "\nplain.py\n" in prompt
+    assert "SIBLING_SENTINEL" not in prompt
+
+
 def test_prompt_tells_the_judge_which_direction_the_change_went():
     """The rubric line that turns 'the behaviour changed' into a question
     about THIS diff's direction. Without it the judge confirms a correct
