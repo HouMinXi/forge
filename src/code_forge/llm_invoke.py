@@ -17,7 +17,6 @@ import json
 import logging
 import os
 import random
-import shlex
 import shutil
 import subprocess
 import threading
@@ -1462,6 +1461,27 @@ def llm_invoke(
     return result
 
 
+# Largest prompt passed as a single argv string (#108). POSIX: half of
+# Linux MAX_ARG_STRLEN (131072 bytes). Windows: CreateProcess caps the whole
+# command line at 32767 UTF-16 units, so stay well below that.
+CLI_ARGV_PROMPT_LIMIT = 65536
+CLI_ARGV_PROMPT_LIMIT_WINDOWS = 16384
+# .cmd/.bat run through cmd.exe, whose command line cap is 8191 characters.
+CLI_ARGV_PROMPT_LIMIT_WINDOWS_BATCH = 4096
+# Binaries known to read the prompt from stdin when -p has no prompt
+# argument. auto mode only uses stdin for these; a custom proxy must opt in
+# with prompt_via: stdin, so it never silently receives an empty prompt.
+_STDIN_PROMPT_BINARIES = frozenset({"claude", "claude.exe", "claude.cmd"})
+
+
+def _argv_prompt_limit(binary: str = "") -> int:
+    if os.name != "nt":
+        return CLI_ARGV_PROMPT_LIMIT
+    if binary.lower().endswith((".cmd", ".bat")):
+        return CLI_ARGV_PROMPT_LIMIT_WINDOWS_BATCH
+    return CLI_ARGV_PROMPT_LIMIT_WINDOWS
+
+
 def _invoke_cli(
     prompt: str,
     backend: BackendConfig,
@@ -1477,26 +1497,35 @@ def _invoke_cli(
     # Resolve model: use backend.model if set, else fallback to FORGE_LLM_MODEL
     effective_model = backend.model or _resolve_model()
 
-    # Large prompt handling: write to temp file for prompts > 1MB
-    import tempfile as _tf
-
-    prompt_file = None
-    if len(prompt.encode("utf-8")) > 1_000_000:
-        fd, prompt_file = _tf.mkstemp(suffix=".txt", prefix="forge-llm-")
-        os.write(fd, prompt.encode("utf-8"))
-        os.close(fd)
-        model_part = " --model %s" % shlex.quote(effective_model) if effective_model else ""
-        cmd = [
-            "sh",
-            "-c",
-            '%s -p "$(cat %s)"%s --output-format json'
-            % (shlex.quote(binary), shlex.quote(prompt_file), model_part),
-        ]
-    else:
-        cmd = [binary, "-p", prompt]
-        if effective_model:
-            cmd.extend(["--model", effective_model])
-        cmd.extend(["--output-format", "json"])
+    # Prompt delivery (#108). Linux caps ONE argv string at MAX_ARG_STRLEN
+    # (32 pages = 131072 bytes) regardless of ARG_MAX, so a large prompt
+    # as the -p positional fails execve with E2BIG. Above the limit the
+    # prompt goes on stdin with no prompt argument (`<prompt | cli -p ...`).
+    # A sh -c "$(cat file)" wrapper does not help: the substitution is
+    # still one argv string.
+    prompt_bytes = prompt.encode("utf-8")
+    via = getattr(backend, "prompt_via", "auto") or "auto"
+    limit = _argv_prompt_limit(binary)
+    too_big = len(prompt_bytes) > limit
+    known_stdin = os.path.basename(binary_name).lower() in _STDIN_PROMPT_BINARIES
+    use_stdin = via == "stdin" or (via == "auto" and too_big and known_stdin)
+    if via == "auto" and too_big and not use_stdin:
+        raise LLMInvokeError(
+            "prompt is %d bytes, over the %d-byte argv limit for cli backend %r; "
+            "%s is not known to read the prompt from stdin. If it reads stdin "
+            "when -p has no prompt argument, set prompt_via: stdin on the backend."
+            % (len(prompt_bytes), limit, backend.name, binary_name),
+            exit_code=-1,
+            stderr="prompt exceeds argv limit",
+            duration_s=0.0,
+        )
+    cmd = [binary, "-p"] if use_stdin else [binary, "-p", prompt]
+    if effective_model:
+        cmd.extend(["--model", effective_model])
+    cmd.extend(["--output-format", "json"])
+    if use_stdin and known_stdin:
+        # Documented claude print-mode option for plain-text stdin input.
+        cmd.extend(["--input-format", "text"])
 
     # Build child env: unset then set, or None to inherit parent env
     if backend.env_unset or backend.env_set:
@@ -1511,6 +1540,7 @@ def _invoke_cli(
     try:
         proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.PIPE if use_stdin else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -1521,11 +1551,6 @@ def _invoke_cli(
         )
     except OSError as exc:
         duration = time.monotonic() - start
-        if prompt_file:
-            try:
-                os.unlink(prompt_file)
-            except OSError:  # cleanup best-effort; do not mask Popen error
-                pass
         raise LLMInvokeError(
             "LLM subprocess failed: %s" % exc,
             exit_code=-1,
@@ -1537,7 +1562,10 @@ def _invoke_cli(
     _active_proc = proc
     try:
         try:
-            stdout_data, stderr_data = proc.communicate(timeout=timeout_s)
+            if use_stdin:
+                stdout_data, stderr_data = proc.communicate(input=prompt, timeout=timeout_s)
+            else:
+                stdout_data, stderr_data = proc.communicate(timeout=timeout_s)
         except subprocess.TimeoutExpired as exc:
             _kill_tree(proc)
             duration = time.monotonic() - start
@@ -1550,11 +1578,6 @@ def _invoke_cli(
             ) from exc
     finally:
         _active_proc = None
-        if prompt_file:
-            try:
-                os.unlink(prompt_file)
-            except OSError:  # cleanup best-effort; do not mask in-flight error
-                pass
 
     duration = time.monotonic() - start
 

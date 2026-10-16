@@ -284,6 +284,60 @@ The proxy binary must accept the same arguments and produce the same
 output format as `claude -p`. No API key is needed in gate.yaml -- the
 proxy handles its own authentication.
 
+**CLI prompt contract.** code-forge runs one of two command shapes:
+
+- `<command> -p <prompt> [--model M] --output-format json` (prompt as an argument)
+- `<command> -p [--model M] --output-format json` with the whole prompt
+  written to **stdin** and no prompt argument (for the default `claude`
+  binary, `--input-format text` is added; the claude CLI reference lists it
+  as the print-mode input format option)
+
+One command-line argument is limited by the OS: 131072 bytes on Linux
+(`MAX_ARG_STRLEN`; it fails with `Argument list too long`), and the whole
+command line is limited to 32767 characters on Windows. A review prompt
+embeds the post-image of each changed file, so one large changed file is
+enough to cross the limit (#108). code-forge passes prompts as an argument
+up to 65536 bytes (16384 on Windows). Choose the behavior above that with
+`prompt_via`:
+
+```yaml
+backends:
+  my-proxy:
+    type: cli
+    command: /usr/local/bin/my-llm-proxy
+    prompt_via: stdin   # auto (default) | argv | stdin
+```
+
+- `auto` (default): small prompts go as an argument. Larger prompts go on
+  stdin **only for the `claude` binary**. For any other `command`, a larger
+  prompt fails with an error asking you to set `prompt_via: stdin`.
+  code-forge never launches a custom proxy without the prompt.
+- `stdin`: always send the prompt on stdin. Use this for a proxy that reads
+  the prompt from stdin when `-p` has no prompt argument.
+- `argv`: always pass the prompt as an argument. Large prompts then fail at
+  the OS limit.
+
+`prompt_via` is only valid on `type: cli` backends.
+
+Notes:
+
+- Auto-stdin recognizes the binary names `claude`, `claude.exe` and
+  `claude.cmd`. A wrapper such as `npx claude`, or a renamed script, is not
+  recognized; set `prompt_via: stdin` for it.
+- On Windows a `.cmd`/`.bat` command runs through `cmd.exe`, whose command
+  line limit is 8191 characters, so the argument threshold there is 4096 bytes.
+- Known limitation (Windows): argument quoting can grow a prompt full of
+  quotes or backslashes up to about 2x. In rare cases a prompt under the
+  threshold can still exceed the command-line limit. Use `prompt_via: stdin`
+  if you hit it.
+- `prompt_via: null` means the default (`auto`), like other optional
+  backend fields.
+
+**Behavior note (#108).** Before this change, every prompt under 1 MB was
+passed as an argument, and anything over ~128 KB failed on Linux. Custom
+`type: cli` proxies now get a clear error for prompts over the threshold
+until they opt in with `prompt_via: stdin`. Smaller prompts are unchanged.
+
 **API outlet with a proxy URL** (`type: api`): Point `base_url` at a
 proxy server that implements the OpenAI or Anthropic API format:
 
@@ -429,7 +483,7 @@ wrong endpoint.
 
 Some assistants log in with OAuth / a subscription session rather than an API
 key, and their CLIs do not speak code-forge's CLI contract
-(`-p <prompt> --output-format json`), so they cannot be a `type: cli` backend
+(`-p <prompt> --output-format json`, or the prompt on stdin with `prompt_via: stdin`), so they cannot be a `type: cli` backend
 directly. The portable way to review with them is a local bridge: run a small
 proxy that holds the tool's authenticated session and exposes an OpenAI- or
 Anthropic-compatible endpoint on `localhost`. code-forge then consumes it as an
