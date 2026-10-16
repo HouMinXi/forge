@@ -2,8 +2,8 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """MCP stdio server exposing forge review tools to IDE clients.
 
-Six tools: forge_review, forge_gate_check, forge_init, forge_trust,
-forge_resolve_outlet, forge_job_status. Runs as a local subprocess
+Seven tools: forge_review, forge_gate_check, forge_init, forge_trust,
+forge_resolve_outlet, forge_job_status, forge_server_status. Runs as a local subprocess
 of the IDE via stdio transport.
 
 Workspace resolution (ADR-0006, ADR-0009): the server locates the
@@ -18,6 +18,7 @@ passed as cwd to all CLI subprocesses; cli.py is unchanged.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -26,9 +27,11 @@ import signal
 import sys
 import tempfile
 import time
+import uuid
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, AsyncIterator
 
@@ -54,6 +57,7 @@ from mcp.types import (
     ToolAnnotations,
 )
 
+import code_forge
 from code_forge.llm_invoke import effective_invoke_timeout_s
 from code_forge.mcp_jobs import (
     ForgeJobRef,
@@ -558,7 +562,8 @@ mcp = _ForgeFastMCP(
         "under project backends. "
         "Use forge_review to review git diffs, "
         "forge_gate_check for pre-commit gating, forge_resolve_outlet to "
-        "diagnose backend configuration."
+        "diagnose backend configuration, and forge_server_status to inspect "
+        "this server's source identity even when a source change blocks other tools."
     ),
     lifespan=lifespan,
 )
@@ -575,17 +580,19 @@ mcp = _ForgeFastMCP(
 # future mcp 1.x renames _tool_manager (import-time crash, suite RED).
 # Upstream FR for middleware support would let us drop this entirely.
 _original_tc = mcp._tool_manager.call_tool
+_package_import_file = Path(code_forge.__file__).absolute()
+_loaded_package_dir = _package_import_file.resolve().parent
+_server_instance_id = uuid.uuid4().hex
+_module_loaded_at = datetime.now(timezone.utc).isoformat()
 
 
 def _package_dir() -> Path:
-    """Directory the running code was imported from.
+    """Directory currently reached through the captured package import path.
 
     An editable install points this at the git checkout, so a pull changes
     the files under it while this process keeps the old modules loaded.
     """
-    import code_forge
-
-    return Path(code_forge.__file__).resolve().parent
+    return _package_import_file.resolve().parent
 
 
 def _source_digest() -> str:
@@ -594,8 +601,6 @@ def _source_digest() -> str:
     Covers the modules a tool call imports lazily, not just this one, so a
     symbol added in any of them shows up as a drift.
     """
-    import hashlib
-
     digest = hashlib.blake2b(digest_size=16)
     root = _package_dir()
     for path in sorted(root.rglob("*.py")):
@@ -619,7 +624,8 @@ def _refuse_if_source_moved() -> None:
 
 
 async def _null_coerce_call_tool(name, arguments, **kw):
-    _refuse_if_source_moved()
+    if name != "forge_server_status":
+        _refuse_if_source_moved()
     if name in {"forge_review", "forge_gate_check"}:
         _validate_timeout(arguments.get("timeout_s"))
     for k, v in list(arguments.items()):
@@ -629,6 +635,60 @@ async def _null_coerce_call_tool(name, arguments, **kw):
 
 
 mcp._tool_manager.call_tool = _null_coerce_call_tool
+
+
+@mcp.tool(
+    name="forge_server_status",
+    description="Inspect this server's loaded and current source identity without starting work.",
+    annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True),
+)
+async def forge_server_status() -> CallToolResult:
+    """Describe this module instance without importing or executing changed code.
+
+    The loaded digest is a package snapshot taken at module initialization,
+    not a Git commit or proof that every module was imported. The instance
+    token and timestamp describe that initialization, not OS process birth.
+    package_path is the loaded physical root, literal unless
+    package_path_is_escaped is true: then
+    surrogate characters use backslash escapes for display, and
+    package_path_bytes_hex preserves the exact filesystem bytes.
+    """
+    source_error_type = None
+    try:
+        current_digest = _source_digest()
+    except (OSError, UnicodeEncodeError) as exc:
+        current_digest = None
+        source_state = "unreadable"
+        source_error_type = type(exc).__name__
+        reason = "Cannot inspect package source. Restore readable source and reconnect this MCP connection."
+    else:
+        if current_digest == _loaded_digest:
+            source_state = "unchanged"
+            reason = "Package source matches this server's module-load snapshot."
+        else:
+            source_state = "changed"
+            reason = "Package source changed. Reconnect this MCP connection after the source update completes."
+    package_path = str(_loaded_package_dir)
+    display_path = package_path.encode("utf-8", "backslashreplace").decode("utf-8")
+    path_is_escaped = display_path != package_path
+    status = {
+        "package_path": display_path,
+        "package_path_is_escaped": path_is_escaped,
+        "package_path_bytes_hex": os.fsencode(package_path).hex() if path_is_escaped else None,
+        "loaded_digest": _loaded_digest,
+        "current_digest": current_digest,
+        "source_state": source_state,
+        "reconnect_required": source_state != "unchanged",
+        "reason": reason,
+        "process_id": os.getpid(),
+        "server_instance_id": _server_instance_id,
+        "module_loaded_at": _module_loaded_at,
+        "source_error_type": source_error_type,
+    }
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(status, indent=2))],
+        structuredContent=status,
+    )
 
 
 # -- pre-flight helper --

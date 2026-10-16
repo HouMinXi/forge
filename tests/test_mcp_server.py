@@ -68,9 +68,9 @@ def _no_gate_yaml_outlet():
 # -- tool registration --
 
 
-def test_tool_list_contains_six_tools():
+def test_tool_list_contains_seven_tools():
     tools = mcp._tool_manager._tools
-    assert len(tools) == 6
+    assert len(tools) == 7
     assert set(tools.keys()) == {
         "forge_review",
         "forge_gate_check",
@@ -78,12 +78,22 @@ def test_tool_list_contains_six_tools():
         "forge_trust",
         "forge_resolve_outlet",
         "forge_job_status",
+        "forge_server_status",
     }
 
 
 def test_tool_annotations_resolve_outlet_readonly():
     tool = mcp._tool_manager._tools["forge_resolve_outlet"]
     assert tool.annotations.readOnlyHint is True
+
+
+def test_server_status_is_readonly_and_takes_no_arguments():
+    tool = mcp._tool_manager._tools["forge_server_status"]
+    assert tool.annotations.readOnlyHint is True
+    assert tool.annotations.destructiveHint is False
+    assert tool.annotations.idempotentHint is True
+    assert tool.parameters.get("properties", {}) == {}
+    assert not tool.parameters.get("required")
 
 
 def test_tool_annotations_init_idempotent():
