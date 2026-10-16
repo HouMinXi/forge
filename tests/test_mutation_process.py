@@ -1785,3 +1785,55 @@ def test_evidence_binder_first_control_precedence(pending_type, diagnostic_type,
         assert pending.marker and pending.cleanup_complete is False
         assert pending.cleanup_evidence_error is diagnostic
     assert fired == [site]
+
+
+def _einval_discover(monkeypatch, recheck_state):
+    """#113: pidfd_open gives EINVAL for a PID whose thread-group task is gone."""
+    import errno
+
+    tree = process._OwnedTree()
+    exiting = process._Identity(999, tree.owner.pid, 100, "S")
+    alive = process._Identity(998, tree.owner.pid, 200, "S")
+    reads = {999: [exiting, None if recheck_state is None else process._Identity(999, tree.owner.pid, 100, recheck_state)],
+             998: [alive, alive]}
+    monkeypatch.setattr(process, "_children", lambda item: [999, 998] if item == tree.owner else [])
+    monkeypatch.setattr(process, "_identity", lambda pid: reads[pid].pop(0) if len(reads[pid]) > 1 else reads[pid][0])
+
+    def pidfd_open(pid):
+        if pid == 999:
+            raise OSError(errno.EINVAL, "Invalid argument")
+        return 456
+
+    monkeypatch.setattr(os, "pidfd_open", pidfd_open)
+    monkeypatch.setattr(process, "_pidfd_ready", lambda _: False)
+    return tree
+
+
+@pytest.mark.parametrize("recheck_state", [None, "Z", "X"])
+def test_pidfd_einval_for_exiting_child_is_skipped(monkeypatch, recheck_state):
+    tree = _einval_discover(monkeypatch, recheck_state)
+    tree.discover()
+    assert 999 not in tree.fds and 999 not in tree.identities
+    assert tree.fds == {998: 456}
+
+
+def test_pidfd_einval_for_still_running_child_fails_closed(monkeypatch):
+    tree = _einval_discover(monkeypatch, "S")
+    with pytest.raises(OSError):
+        tree.discover()
+
+
+def test_pidfd_other_oserror_still_raises(monkeypatch):
+    import errno
+
+    tree = process._OwnedTree()
+    child = process._Identity(999, tree.owner.pid, 100, "S")
+    monkeypatch.setattr(process, "_children", lambda item: [999] if item == tree.owner else [])
+    monkeypatch.setattr(process, "_identity", lambda pid: child)
+
+    def pidfd_open(pid):
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(os, "pidfd_open", pidfd_open)
+    with pytest.raises(PermissionError):
+        tree.discover()
