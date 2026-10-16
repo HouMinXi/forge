@@ -284,6 +284,33 @@ The proxy binary must accept the same arguments and produce the same
 output format as `claude -p`. No API key is needed in gate.yaml -- the
 proxy handles its own authentication.
 
+**CLI prompt contract.** code-forge runs one of two command shapes:
+
+- small prompts (up to 65536 bytes): `<command> -p <prompt> [--model M] --output-format json`
+- large prompts: `<command> -p [--model M] --output-format json`, with the
+  whole prompt written to **stdin** and no prompt argument
+
+Linux limits a single command-line argument to 131072 bytes
+(`MAX_ARG_STRLEN`), so a large prompt cannot be passed as an argument
+(it fails with `Argument list too long`). A review prompt embeds the
+post-image of each changed file, so a diff touching one large file is
+enough to cross the limit (#108). A proxy binary must therefore read the
+prompt from stdin when `-p` is not followed by a prompt argument. The
+claude CLI documents piped input for `-p` (`cat file | claude -p ...`).
+For a CLI that cannot read stdin, or one that should always use it, set
+`prompt_via` on the backend:
+
+```yaml
+backends:
+  my-proxy:
+    type: cli
+    command: /usr/local/bin/my-llm-proxy
+    prompt_via: auto   # auto (default) | argv | stdin
+```
+
+`argv` always passes the prompt as an argument, so large prompts fail at
+the OS limit. `stdin` always uses stdin.
+
 **API outlet with a proxy URL** (`type: api`): Point `base_url` at a
 proxy server that implements the OpenAI or Anthropic API format:
 
@@ -429,7 +456,7 @@ wrong endpoint.
 
 Some assistants log in with OAuth / a subscription session rather than an API
 key, and their CLIs do not speak code-forge's CLI contract
-(`-p <prompt> --output-format json`), so they cannot be a `type: cli` backend
+(`-p <prompt> --output-format json`, or the prompt on stdin for large prompts), so they cannot be a `type: cli` backend
 directly. The portable way to review with them is a local bridge: run a small
 proxy that holds the tool's authenticated session and exposes an OpenAI- or
 Anthropic-compatible endpoint on `localhost`. code-forge then consumes it as an

@@ -7,11 +7,7 @@ that rewrote either one still passed.
 """
 
 import json
-import os
-import shlex
 import subprocess
-import tempfile
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -27,30 +23,6 @@ def _backend(command="forge-test-cli", model="m"):
 
 def _install_binary(monkeypatch, path):
     monkeypatch.setattr(invoke, "shutil", SimpleNamespace(which=lambda name: path))
-
-
-def _shell_prompt(script, binary, path):
-    """Run the built shell command and return the text it passed to -p.
-
-    The binary is replaced by a recorder. The check runs in a fresh
-    interpreter, because this process installs a signal handler at import
-    that a forked shell would inherit.
-    """
-    recorder = Path(path).parent / "recorder.sh"
-    out_path = Path(path).parent / "out.txt"
-    recorder.write_text(
-        "#!/bin/sh\nprintf '%%s' \"$2\" > %s\n" % shlex.quote(str(out_path)),
-        encoding="utf-8",
-    )
-    recorder.chmod(0o700)
-    target = Path(path)
-    target.write_text("payload with spaces", encoding="utf-8")
-    quoted_binary = shlex.quote(binary)
-    assert script.startswith(quoted_binary), script
-    swapped = shlex.quote(str(recorder)) + script[len(quoted_binary):]
-    rc = os.spawnvp(os.P_WAIT, "sh", ["sh", "-c", swapped])  # noqa: S606 - quoted command, checks shell delivery
-    assert rc == 0, rc
-    return out_path.read_text(encoding="utf-8"), target.read_text(encoding="utf-8")
 
 
 def test_missing_binary_names_the_command(monkeypatch):
@@ -76,89 +48,38 @@ def test_default_binary_name_is_claude(monkeypatch):
     assert seen == ["claude"]
 
 
-def test_a_large_prompt_is_read_from_a_temp_file(monkeypatch, tmp_path):
-    """Over 1 MB the prompt is written to a file and the shell reads it back.
-
-    The command has to quote the binary, the file, and the model, or a
-    space in any of them splits the command.
-    """
-    written = {}
-
-    def fake_mkstemp(suffix, prefix):
-        target = tmp_path / "prompt file.txt"
-        target.write_bytes(b"")
-        written["path"] = str(target)
-        return 7, str(target)
-
-    def fake_write(fd, data):
-        assert fd == 7
-        written["data"] = data
-        return len(data)
-
-    closed = []
-    removed = []
-    popen = Mock(side_effect=OSError("boom"))
-
-    def remember_close(fd):
-        closed.append(fd)
-
-    def remember_unlink(path):
-        removed.append(path)
-
-    monkeypatch.setattr(tempfile, "mkstemp", fake_mkstemp)
-    monkeypatch.setattr(invoke.os, "write", fake_write)
-    monkeypatch.setattr(invoke.os, "close", remember_close)
-    monkeypatch.setattr(invoke.os, "unlink", remember_unlink)
+def test_a_large_prompt_is_sent_on_stdin(monkeypatch):
+    # #108: no single argv string may exceed MAX_ARG_STRLEN, so a large
+    # prompt goes on stdin with -p and no prompt argument.
+    proc = Mock(spec=subprocess.Popen)
+    proc.communicate.return_value = (json.dumps({"type": "result", "result": "{}"}), "")
+    proc.returncode = 0
+    popen = Mock(return_value=proc)
     monkeypatch.setattr(invoke, "subprocess", SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, TimeoutExpired=subprocess.TimeoutExpired))
     monkeypatch.setattr(invoke, "time", SimpleNamespace(monotonic=lambda: 0.0))
     _install_binary(monkeypatch, "/opt/my bin/cli")
 
-    prompt = "x" * 1_000_001
-    with pytest.raises(invoke.LLMInvokeError):
-        invoke._invoke_cli(prompt, _backend(model="sonnet 4"), timeout_s=5)
+    prompt = "x" * (invoke.CLI_ARGV_PROMPT_LIMIT + 1)
+    invoke._invoke_cli(prompt, _backend(model="sonnet 4"), timeout_s=5)
 
-    assert written["data"] == prompt.encode("utf-8")
-    shell, flag, script = popen.call_args.args[0]
-    assert (shell, flag) == ("sh", "-c")
-    # Run the built command with the binary swapped for a recorder, so the
-    # assertion checks what the shell actually delivers, not the text of
-    # the command.
-    delivered, expected = _shell_prompt(script, "/opt/my bin/cli", written["path"])
-    assert delivered == expected
-    assert closed == [7]
-    assert removed == [written["path"]]
+    assert popen.call_args.args[0] == [
+        "/opt/my bin/cli", "-p", "--model", "sonnet 4", "--output-format", "json",
+    ]
+    assert popen.call_args.kwargs["stdin"] == subprocess.PIPE
+    assert proc.communicate.call_args.kwargs["input"] == prompt
 
 
-def test_a_large_prompt_without_a_model_omits_the_model_flag(monkeypatch, tmp_path):
-    def fake_mkstemp(suffix, prefix):
-        return 7, str(tmp_path / "prompt.txt")
-
+def test_a_large_prompt_without_a_model_omits_the_model_flag(monkeypatch):
     popen = Mock(side_effect=OSError("boom"))
-
-    def discard_write(fd, data):
-        return len(data)
-
-    def discard(value):
-        return None
-
-    def no_model():
-        return ""
-
-    monkeypatch.setattr(tempfile, "mkstemp", fake_mkstemp)
-    monkeypatch.setattr(invoke.os, "write", discard_write)
-    monkeypatch.setattr(invoke.os, "close", discard)
-    monkeypatch.setattr(invoke.os, "unlink", discard)
     monkeypatch.setattr(invoke, "subprocess", SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, TimeoutExpired=subprocess.TimeoutExpired))
     monkeypatch.setattr(invoke, "time", SimpleNamespace(monotonic=lambda: 0.0))
-    monkeypatch.setattr(invoke, "_resolve_model", no_model)
+    monkeypatch.setattr(invoke, "_resolve_model", lambda: "")
     _install_binary(monkeypatch, "/usr/bin/cli")
 
     with pytest.raises(invoke.LLMInvokeError):
         invoke._invoke_cli("x" * 1_000_001, _backend(model=""), timeout_s=5)
 
-    script = popen.call_args.args[0][2]
-    assert "--model" not in script
-    assert script.endswith("--output-format json")
+    assert popen.call_args.args[0] == ["/usr/bin/cli", "-p", "--output-format", "json"]
 
 
 def test_a_short_prompt_is_passed_as_an_argument(monkeypatch):

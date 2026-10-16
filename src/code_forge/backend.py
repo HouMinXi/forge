@@ -46,6 +46,7 @@ VALID_BACKEND_TYPES = {"api", "cli"}
 VALID_API_FORMATS = {"openai", "anthropic", "vertex"}
 VALID_THINKING_TYPES = {"enabled", "adaptive", "disabled"}
 VALID_OUTCAP_KEYS = {"max_tokens", "max_completion_tokens"}
+VALID_PROMPT_VIA = {"auto", "argv", "stdin"}
 
 # Keys managed by typed BackendConfig fields or protocol structure.
 # Users must not override these through the generic params dict.
@@ -242,6 +243,9 @@ class BackendConfig:
     env_unset: Tuple[str, ...] = ()  # var names to remove from child env
     env_set: Tuple[Tuple[str, str], ...] = ()  # (name, value) pairs to set
     output_token_limit: int = 0  # 0 = unknown; >0 = known maximum, including retries
+    # CLI prompt delivery (#108): "auto" = argv up to CLI_ARGV_PROMPT_LIMIT
+    # bytes, stdin above; "argv" / "stdin" force one transport.
+    prompt_via: str = "auto"
 
 
 # -- DEFAULT_BACKEND -------------------------------------------------
@@ -655,6 +659,13 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
 
     env_kw = _parse_cli_env(entry, name)
 
+    prompt_via = entry.get("prompt_via", "auto")
+    if prompt_via not in VALID_PROMPT_VIA:
+        raise CliError(
+            "backend %r (cli): invalid prompt_via %r (expected: %s)"
+            % (name, prompt_via, "|".join(sorted(VALID_PROMPT_VIA)))
+        )
+
     command = entry.get("command", "")
     return BackendConfig(
         name=name,
@@ -666,6 +677,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
         command=command,
         default=is_default,
         max_tokens=max_tokens,
+        prompt_via=prompt_via,
         **env_kw,
     )
 
