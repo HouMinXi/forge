@@ -1530,9 +1530,10 @@ def _invoke_cli(
     _active_proc = proc
     try:
         try:
-            stdout_data, stderr_data = proc.communicate(
-                input=prompt if use_stdin else None, timeout=timeout_s
-            )
+            if use_stdin:
+                stdout_data, stderr_data = proc.communicate(input=prompt, timeout=timeout_s)
+            else:
+                stdout_data, stderr_data = proc.communicate(timeout=timeout_s)
         except subprocess.TimeoutExpired as exc:
             _kill_tree(proc)
             duration = time.monotonic() - start
