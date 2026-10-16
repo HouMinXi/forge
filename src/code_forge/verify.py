@@ -590,6 +590,55 @@ def _restore_earned_window(
         return VerifyResult(False, f"unavailable inherited clean proof: {exc}", 1, 0)
 
 
+def _evidence_downgrade_refusal(cwd: Path, diff_sha256: str) -> VerifyResult | None:
+    """Issue #46: refuse while the reviewed source still has an unresolved
+    host evidence downgrade, on every verify path (default selection,
+    explicit cycles, require_convergence=False).
+
+    Reads state.json as raw JSON so schema/load quirks cannot hide it.
+    Explicit outcomes for the non-matching cases:
+      - no state.json: nothing recorded for this source; no refusal here.
+      - state for a different source_hash: its findings are not about this
+        diff; no refusal here (other gates own freshness).
+      - unreadable/non-object state.json: refused -- a downgrade cannot be
+        ruled out (fail closed).
+    Only the latest persisted findings count: a downgrade a later round no
+    longer reports is superseded and does not block.
+    """
+    path = cwd / ".code-forge" / "state.json"
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return VerifyResult(False, f"unavailable earned state: unreadable state.json (evidence downgrade check): {exc}", 1, 0)
+    try:
+        data = json.loads(raw)
+    except (ValueError, RecursionError) as exc:
+        return VerifyResult(False, f"unavailable earned state: malformed state.json (evidence downgrade check): {exc}", 1, 0)
+    if type(data) is not dict:
+        return VerifyResult(False, "unavailable earned state: malformed state.json: not an object (evidence downgrade check)", 1, 0)
+    if data.get("source_hash") != diff_sha256:
+        return None
+    findings = data.get("findings")
+    if not isinstance(findings, list):
+        return None
+    downgraded = [
+        f.get("fingerprint")
+        for f in findings
+        if isinstance(f, dict) and f.get("evidence_downgrade") and f.get("disposition") == "UNCERTAIN"
+    ]
+    if downgraded:
+        return VerifyResult(
+            False,
+            "host evidence downgrade: falsifier-CONFIRMED finding(s) lack bound "
+            f"finding-owned evidence: {downgraded}",
+            1,
+            0,
+        )
+    return None
+
+
 def _select_default_earned_cycles(
     cwd: Path,
     diff_sha256: str,
@@ -1382,6 +1431,96 @@ def bound_excerpt_disposition(disposition, excerpt):
     return disposition
 
 
+def normalize_finding_path(file, known, *, cwd=None):
+    """Map a reviewer-written path onto a key of ``known`` (post-image paths).
+
+    Accepts the exact path, then strips cosmetic prefixes models emit:
+    "./", git's "a/"/"b/", and an absolute path under cwd. Only returns a
+    path that exists in ``known``; never guesses between candidates.
+    """
+    import unicodedata
+
+    if not isinstance(file, str) or not file:
+        return None
+    raw = unicodedata.normalize("NFC", file.strip().replace("\\", "/"))
+    candidates = [raw]
+    if cwd is not None and raw.startswith("/"):
+        root = str(Path(cwd).resolve()).rstrip("/") + "/"
+        if raw.startswith(root):
+            candidates.append(raw[len(root):])
+    stripped = raw
+    while stripped.startswith("./"):
+        stripped = stripped[2:]
+    candidates.append(stripped)
+    candidates.extend(stripped[2:] for prefix in ("a/", "b/") if stripped.startswith(prefix))
+    for candidate in candidates:
+        if candidate in known:
+            return candidate
+    return None
+
+
+def finding_excerpt_binding(diff_text, file, line, excerpt, *, cwd=None):
+    """Check a finding's own excerpt against the frozen reviewed source.
+
+    True: the excerpt quotes contiguous post-image lines of the finding's
+    own file (path normalized by normalize_finding_path) and, when the
+    finding names a line >= 1, those lines cover it. A file-level finding
+    (line missing/0) binds when the quote matches contiguous post-image
+    lines that overlap at least one diff hunk of that file; a negative
+    line is invalid. Comparison is
+    NFC-normalized and ignores trailing whitespace only (so a
+    trailing-whitespace-only edit is not distinguishable); leading
+    indentation must match. False: missing, blank, wrong-file, invented
+    or not covering the line. None: no frozen diff content to bind
+    against (non-git/stub reviews, deletion/binary-only diffs); callers
+    keep the older non-blank rule there. Envelope code_excerpts never
+    count here.
+    """
+    import unicodedata
+
+    if not diff_text:
+        return None
+    if not isinstance(excerpt, str) or not excerpt.strip():
+        return False
+    try:
+        line = int(line or 0)
+    except (TypeError, ValueError):
+        line = 0
+    if line < 0:
+        return False
+    post_image, hunk_map, _exempt = _diff_validation_context(diff_text, cwd=cwd)
+    if not post_image:
+        # A diff with no content hunks has no frozen source to bind to.
+        return None
+    # Diff-side paths are NFC-normalized too (macOS writes NFD names).
+    post_image = {unicodedata.normalize("NFC", k): v for k, v in post_image.items()}
+    hunk_map = {unicodedata.normalize("NFC", k): v for k, v in hunk_map.items()}
+    path = normalize_finding_path(file, post_image, cwd=cwd)
+    source = post_image.get(path) if path is not None else None
+    if not source:
+        return False
+    hunks = hunk_map.get(path) or []
+
+    def norm(text):
+        return unicodedata.normalize("NFC", text).rstrip()
+
+    quoted = [norm(q) for q in excerpt.replace("\r\n", "\n").rstrip("\n").split("\n")]
+    n = len(quoted)
+    starts = range(max(1, line - n + 1), line + 1) if line >= 1 else sorted(source)
+    for start in starts:
+        if line < 1 and not any(
+            h["start"] <= start + n - 1 and start <= h["end"] for h in hunks
+        ):
+            # File-level quote must touch a hunk line, not just context.
+            continue
+        if all(
+            source.get(start + k) is not None and norm(source[start + k]) == quoted[k]
+            for k in range(n)
+        ):
+            return True
+    return False
+
+
 def is_indent_stripped(err: str) -> bool:
     """True when err names an indent-stripped quote.
 
@@ -1461,6 +1600,9 @@ def _run_verify_impl(
     cp = 0
     if not isinstance(require_convergence, bool):
         return VerifyResult(False, "require_convergence must be a boolean", 1, cp)
+    downgrade = _evidence_downgrade_refusal(cwd, diff_sha256)
+    if downgrade is not None:
+        return downgrade
     repository_manifest = None
     if reviewed_repositories is not None:
         from .receipt_scope import repository_scope

@@ -1041,6 +1041,7 @@ class StateMachine:
             or coverage_gaps > 0
             or self._acquisition_markers
             or self._state.rounds_with_falsify_infra > 0
+            or self._state.rounds_with_evidence_incomplete > 0
             or self._mutation_bound_failure
             else Verdict.PENDING if bound_launch_pending else Verdict.PASS
         )
@@ -1680,6 +1681,7 @@ class StateMachine:
         self._round_duration += duration
         l1_findings: list[StateFinding] = []
         falsify_infra_failures: list[str] = []
+        evidence_incomplete: list[str] = []
         total = len(l1_candidates)
         # Candidates are independent (one finding in, one verdict out),
         # and each real falsify call is ~60 s of model time, so they run
@@ -1706,13 +1708,48 @@ class StateMachine:
             progress.emit("falsify %d/%d: %s:%s (%s)" % (i, total, f.file, f.line_range, f.fingerprint))
             t_falsify = time.monotonic()
             try:
-                f.disposition = self.falsifier.falsify(f)
-                from .verify import bound_excerpt_disposition
+                returned = self.falsifier.falsify(f)
+                from .verify import bound_excerpt_disposition, finding_excerpt_binding
 
                 f.disposition = bound_excerpt_disposition(
-                    f.disposition,
+                    returned,
                     getattr(f, "excerpt", None),
                 )
+                if returned is Disposition.CONFIRMED and f.disposition is Disposition.CONFIRMED:
+                    diff_text, local_path, root = self.resolved_review.git_diff, f.file, self.cwd
+                    scope = getattr(self.falsifier, "evidence_scope", None)
+                    if callable(scope):
+                        # Cross-repo: bind "label@rev/path" against the
+                        # owning repository's own diff and root, label stripped.
+                        owned = scope(f)
+                        if owned is not None:
+                            diff_text, local_path, owned_root = owned
+                            root = owned_root or self.cwd
+                    bound = finding_excerpt_binding(
+                        diff_text,
+                        local_path,
+                        f.line_range[0] if f.line_range else 0,
+                        f.excerpt,
+                        cwd=root,
+                    )
+                    if bound is False:
+                        f.disposition = Disposition.UNCERTAIN
+                if returned is Disposition.CONFIRMED and f.disposition is not Disposition.CONFIRMED:
+                    # Issue #46: the falsifier DID adjudicate CONFIRMED; the
+                    # host could not bind finding-owned evidence. That is
+                    # incomplete evidence, not semantic uncertainty and not
+                    # falsifier infra. Raw verdict is not promoted; it is
+                    # recorded so CI cannot PASS and verify refuses.
+                    f.evidence_downgrade = (
+                        "falsifier returned CONFIRMED; host downgraded: "
+                        "finding-owned excerpt missing or not bound to "
+                        f"{f.file}:{f.line_range}"
+                    )
+                    with _lock:
+                        evidence_incomplete.append(f.fingerprint)
+                        self._state.infra_errors.append(
+                            f"evidence incomplete on {f.fingerprint}: {f.evidence_downgrade}"
+                        )
                 progress.emit(
                     "falsify %d/%d: done %s (%.1fs)"
                     % (i, total, f.disposition, time.monotonic() - t_falsify)
@@ -1791,7 +1828,36 @@ class StateMachine:
                 # which preserves the re-raise arm's semantics.
                 l1_findings.extend(pool.map(_one, items))
         self._check_falsify_can_still_converge(falsify_infra_failures)
+        self._check_evidence_can_still_converge(evidence_incomplete)
         return (l1_findings, l1_excerpts)
+
+    def _check_evidence_can_still_converge(self, downgraded: list[str]) -> None:
+        """Stop a run whose reviewers keep omitting bound finding evidence.
+
+        Issue #46. Unlike _check_falsify_can_still_converge, the falsifier
+        did adjudicate here; the host rejected the finding's own excerpt.
+        """
+        if not downgraded:
+            self._state.rounds_with_evidence_incomplete = 0
+            return
+        self._state.rounds_with_evidence_incomplete += 1
+        self._state.infra_errors.append(
+            "round %d: %d falsifier-CONFIRMED finding(s) lack bound finding-owned "
+            "evidence: %s" % (self._state.round, len(downgraded), downgraded)
+        )
+        if self._state.rounds_with_evidence_incomplete >= 3:
+            self._state.verdict = Verdict.FAIL
+            self._state.converged = False
+            self._persist_state()
+            raise TimeoutBreaker(
+                "%d consecutive rounds where the falsifier CONFIRMED finding(s) "
+                "but the host could not bind each finding's own excerpt to the "
+                "reviewed source (latest: %d finding(s)). These are probable real "
+                "defects with incomplete evidence, not falsifier failures. Inspect "
+                "the findings' evidence_downgrade and the reviewer's per-finding "
+                "excerpt output before retrying."
+                % (self._state.rounds_with_evidence_incomplete, len(downgraded))
+            )
 
     def _check_falsify_can_still_converge(self, infra_failures: list[str]) -> None:
         """Stop a run whose falsifier keeps failing to adjudicate.

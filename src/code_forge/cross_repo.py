@@ -95,10 +95,21 @@ def _recovery_parents(source_roots: set[Path]) -> dict[Path, Path]:
 class RepositoryFalsifier:
     """Route qualified L1 findings without widening any falsifier diff."""
 
-    def __init__(self, primary, repositories):
+    def __init__(self, primary, repositories, diffs=None, roots=None):
         self.primary = primary
         self.repositories = repositories
+        self.diffs = diffs or {}
+        self.roots = roots or {}
         self._diff_text = getattr(primary, "_diff_text", None)
+
+    def evidence_scope(self, finding):
+        """(owning repo diff, repo-local path, owning repo root or None) for
+        binding a finding's own excerpt, or None when the identity is not a
+        reviewed repository."""
+        identity, _separator, path = finding.file.partition("/")
+        if identity not in self.repositories:
+            return None
+        return self.diffs.get(identity), path, self.roots.get(identity)
 
     def falsify(self, finding):
         from dataclasses import replace
@@ -462,6 +473,14 @@ def run_cross_repo(
                                 "%s@%s" % (e["label"], repository_manifest[e["label"]]): repo_falsifiers[
                                     e["label"]
                                 ]
+                                for e in repo_entries
+                            },
+                            {
+                                "%s@%s" % (e["label"], repository_manifest[e["label"]]): e["diff"]
+                                for e in repo_entries
+                            },
+                            {
+                                "%s@%s" % (e["label"], repository_manifest[e["label"]]): Path(e["repo_path"])
                                 for e in repo_entries
                             },
                         )

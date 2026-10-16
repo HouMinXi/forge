@@ -40,7 +40,7 @@ _VALID_SEVERITIES = {"P0", "P1", "P2", "P3"}
 REVIEW_JSON_CONTRACT = (
     'Return JSON: {"findings": [{"file": "...", "line": N, '
     '"severity": "P0"|"P1"|"P2"|"P3", '
-    '"description": "..."}], '
+    '"description": "...", "excerpt": "..."}], '
     '"code_excerpts": [{"file": "...", "start_line": N, '
     '"end_line": M, "content": "..."}]}\n'
     "Reply with the JSON object only -- no markdown code fences, no "
@@ -60,6 +60,9 @@ REVIEW_JSON_CONTRACT = (
     "change, a caller in another file -- goes in an optional "
     '"context_quotes": [{"file": "...", "content": "..."}] instead. It '
     "carries no line numbers because it asserts nothing about them.\n"
+    "Each finding MUST carry its own \"excerpt\": the verbatim post-image "
+    "source line(s) of that finding's file, contiguous and including its "
+    "\"line\". Root code_excerpts do not count as a finding's evidence.\n"
     "start_line and end_line are post-image line numbers of the new file; "
     "the @@ header's old-side start is not a source line.\n"
 )
