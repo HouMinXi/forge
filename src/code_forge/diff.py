@@ -420,13 +420,24 @@ def split_diff_for_files(diff_text: str, members: list[str]) -> str:
 def changed_files_in_order(diff_text: str) -> list[str]:
     """Paths a unified diff touches, in diff order, without duplicates.
 
-    Reads the path the same way ``split_diff_for_files`` does, so a diff
-    that parser accepts is a diff this lists. Pure additions and deletions
-    both count; a section with no recoverable path does not.
+    Parsed members use their own frame's identity, including traditional
+    unified diffs. Incomplete Git frames retain their recoverable
+    paths. Pure additions and deletions both count.
     """
     if not diff_text:
         return []
     seen: list[str] = []
+    parsed = _diff_files(diff_text)
+    if parsed:
+        # Parsing frames separately keeps Git metadata off traditional siblings.
+        for _, section in iter_diff_sections(diff_text):
+            for entry in _diff_files(section):
+                path = patched_file_path(entry)
+                if path and path not in seen:
+                    seen.append(path)
+        return seen
+
+    # Incomplete hunks can still carry a recoverable Git file identity.
     current: list[str] = []
     for line in StringIO(diff_text):
         if line.startswith("diff --git "):
