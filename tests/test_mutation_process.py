@@ -2,6 +2,7 @@
 
 import io
 import asyncio
+import errno
 import inspect
 import json
 import fcntl
@@ -589,7 +590,6 @@ def test_distribution_authority_refuses_wrong_namespace_and_identity(tmp_path, m
 
 @pytest.mark.parametrize("change", ["in-place", "parent-replace"])
 def test_pin_read_retains_descriptor_and_named_origin_identity(tmp_path, monkeypatch, change):
-    import errno
     from code_forge import _mutation_imports as imports
 
     directory = tmp_path / "origin"
@@ -622,7 +622,6 @@ def test_pin_read_retains_descriptor_and_named_origin_identity(tmp_path, monkeyp
 
 
 def test_pin_read_refuses_symlink_leaf_and_preserves_target(tmp_path):
-    import errno
     from code_forge import _mutation_imports as imports
 
     foreign = tmp_path / "foreign.py"
@@ -1787,14 +1786,12 @@ def test_evidence_binder_first_control_precedence(pending_type, diagnostic_type,
     assert fired == [site]
 
 
-def _einval_discover(monkeypatch, recheck_state):
+def _einval_discover(monkeypatch, recheck_state, recheck_ticks=100):
     """#113: pidfd_open gives EINVAL for a PID whose thread-group task is gone."""
-    import errno
-
     tree = process._OwnedTree()
     exiting = process._Identity(999, tree.owner.pid, 100, "S")
     alive = process._Identity(998, tree.owner.pid, 200, "S")
-    reads = {999: [exiting, None if recheck_state is None else process._Identity(999, tree.owner.pid, 100, recheck_state)],
+    reads = {999: [exiting, None if recheck_state is None else process._Identity(999, tree.owner.pid, recheck_ticks, recheck_state)],
              998: [alive, alive]}
     monkeypatch.setattr(process, "_children", lambda item: [999, 998] if item == tree.owner else [])
     monkeypatch.setattr(process, "_identity", lambda pid: reads[pid].pop(0) if len(reads[pid]) > 1 else reads[pid][0])
@@ -1823,9 +1820,16 @@ def test_pidfd_einval_for_still_running_child_fails_closed(monkeypatch):
         tree.discover()
 
 
-def test_pidfd_other_oserror_still_raises(monkeypatch):
-    import errno
+def test_pidfd_einval_then_pid_reused_is_skipped(monkeypatch):
+    # Same PID, different start time, running: the original child is gone and
+    # the PID now belongs to another process, so it must not be adopted.
+    tree = _einval_discover(monkeypatch, "S", recheck_ticks=101)
+    tree.discover()
+    assert 999 not in tree.fds and 999 not in tree.identities
+    assert tree.fds == {998: 456}
 
+
+def test_pidfd_other_oserror_still_raises(monkeypatch):
     tree = process._OwnedTree()
     child = process._Identity(999, tree.owner.pid, 100, "S")
     monkeypatch.setattr(process, "_children", lambda item: [999] if item == tree.owner else [])
