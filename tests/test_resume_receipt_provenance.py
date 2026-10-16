@@ -1011,7 +1011,7 @@ def test_duplicate_receipts_keep_each_pass_falsifier_result(
     "reply, error_text",
     [
         ("not JSON", "protocol violation"),
-        (llm_invoke.LLMInvokeError("owned outage"), "backend unavailable"),
+        (llm_invoke.LLMInvokeError("owned outage"), "invocation failed"),
         (RuntimeError("owned failure"), "raised"),
     ],
     ids=["protocol", "backend", "runtime"],

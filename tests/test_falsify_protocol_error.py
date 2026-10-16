@@ -29,12 +29,13 @@ from code_forge.falsify_real import RealFalsifier
 from code_forge.llm_invoke import (
     FalsifyProtocolError,
     InvalidJSONResponseError,
+    LLMInvokeError,
     LLMResult,
     Usage,
     llm_invoke,
 )
 from code_forge.machine import TimeoutBreaker
-from code_forge.state import StateFinding, Verdict, load_state
+from code_forge.state import StateFinding, Verdict, load_state, reporting_product_findings, save_state
 
 
 def _finding() -> StateFinding:
@@ -118,9 +119,8 @@ def test_protocol_error_attributed_in_state(tmp_path):
     assert not any("backend unavailable" in e for e in sm._state.infra_errors)
 
 
-def test_backend_outage_still_attributed_as_unavailable(tmp_path):
-    """The other arm keeps its wording; the two causes stay distinguishable."""
-    from code_forge.llm_invoke import LLMInvokeError
+def test_untyped_failure_does_not_claim_a_backend_outage(tmp_path):
+    """Message prose alone cannot establish that the backend was unavailable."""
     from tests.test_runtime_machine import _make_sm
 
     sm = _make_sm(tmp_path)
@@ -132,7 +132,7 @@ def test_backend_outage_still_attributed_as_unavailable(tmp_path):
         sm._run_l1_phase()
     assert f.disposition == Disposition.UNCERTAIN
     assert f.error is not None
-    assert f.error.startswith("falsify() backend unavailable:")
+    assert f.error.startswith("falsify() invocation failed:")
     assert not any("protocol violation" in e for e in sm._state.infra_errors)
 
 
@@ -151,7 +151,10 @@ def local_falsifier_api(monkeypatch):
             replies["requests"].append(request)
             body = json.dumps(
                 {
-                    "choices": [{"message": {"content": replies["content"]}, "finish_reason": "stop"}],
+                    "choices": [{
+                        "message": {"content": replies["content"]},
+                        "finish_reason": replies.get("finish_reason", "stop"),
+                    }],
                     "usage": {
                         "prompt_tokens": 17,
                         "completion_tokens": 9,
@@ -159,6 +162,8 @@ def local_falsifier_api(monkeypatch):
                     },
                 }
             ).encode()
+            if "body" in replies:
+                body = replies["body"]
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -202,6 +207,125 @@ def _real_machine(tmp_path, backend):
 
     sm.l1_provider = candidates
     return sm
+
+
+@pytest.mark.parametrize(
+    "content, raw_body, finish, label, requests",
+    [
+        ("", None, "stop", "unusable response", 1),
+        (None, b"{}", "stop", "invocation failed", 1),
+        (None, b"<html>not JSON</html>", "stop", "unusable response", 1),
+        (None, b"data: {}\n\n", "stop", "unusable response", 1),
+        ("partial text", None, "length", "response truncated", 1),
+        ('{"verdict":"DIS', None, "length", "response truncated", 3),
+    ],
+    ids=["empty", "missing-envelope", "bad-body", "sse-body", "truncated", "exhausted"],
+)
+def test_received_failures_keep_routing_and_name_the_observation(
+    tmp_path, monkeypatch, local_falsifier_api, content, raw_body, finish, label, requests
+):
+    backend, replies = local_falsifier_api
+    replies["content"] = content
+    replies["finish_reason"] = finish
+    if raw_body is not None:
+        replies["body"] = raw_body
+    monkeypatch.setattr("code_forge.falsify_real.llm_invoke", partial(llm_invoke, max_attempts=1))
+    events = []
+    monkeypatch.setattr("code_forge.machine.progress.emit", events.append)
+    with pytest.raises(LLMInvokeError) as caught:
+        RealFalsifier(backend).falsify(_finding())
+    original = str(caught.value)
+    assert len(replies["requests"]) == requests
+    if requests == 3:
+        assert "continuation exhausted after 2 attempts" in original
+        prompts = [request["messages"][0]["content"] for request in replies["requests"]]
+        assert prompts[0] != prompts[1] == prompts[2]
+        assert '<partial>\n{"verdict":"DIS\n</partial>' in prompts[1]
+
+    sm = _real_machine(tmp_path, backend)
+    findings, _ = sm._run_l1_phase()
+    finding = findings[0]
+    assert len(replies["requests"]) == 2 * requests
+    assert finding.error == f"falsify() {label}: {original}"
+    assert f"falsify {label} on fp-1: {original}" in sm._state.infra_errors
+    assert any(event.startswith(f"falsify 1/1: {label} (") for event in events)
+    assert finding.disposition == Disposition.UNCERTAIN
+    assert sm._falsify_protocol_findings == []
+    assert sm._falsify_failed_findings == [finding]
+    assert sm._state.rounds_with_falsify_infra == 1
+    assert sm._state.consecutive_clean_rounds == 0
+    assert not sm._state.converged
+
+    sm._state.findings = findings
+    state_path = tmp_path / ".code-forge" / "state.json"
+    save_state(sm._state, state_path)
+    persisted = load_state(state_path)
+    assert persisted.findings[0].error == finding.error
+    assert persisted.infra_errors == sm._state.infra_errors
+    assert persisted.rounds_with_falsify_infra == 1
+    assert reporting_product_findings(persisted.findings) == persisted.findings
+    assert not persisted.converged
+
+
+@pytest.mark.parametrize(
+    "kind, is_timeout, message, label",
+    [
+        ("", True, "body deadline", "backend timed out"),
+        ("conn", True, "connect deadline", "backend timed out"),
+        ("conn", False, "received empty JSON", "backend unavailable"),
+        ("credentials", False, "missing local key", "credential failure"),
+        ("", False, "connection refused; truncated no_json", "invocation failed"),
+        ("future-kind", False, "backend timed out", "invocation failed"),
+        ("empty", False, "connection refused", "unusable response"),
+    ],
+)
+def test_failure_label_uses_fields_without_changing_the_exception(
+    tmp_path, monkeypatch, kind, is_timeout, message, label
+):
+    error = LLMInvokeError(message, kind=kind, is_timeout=is_timeout, retryable=False)
+    original = dict(vars(error))
+    events = []
+    monkeypatch.setattr("code_forge.machine.progress.emit", events.append)
+    sm = _real_machine(tmp_path, MagicMock())
+    with patch("code_forge.falsify_real.llm_invoke", side_effect=error):
+        findings, _ = sm._run_l1_phase()
+    finding = findings[0]
+    assert finding.error == f"falsify() {label}: {message}"
+    assert f"falsify {label} on fp-1: {message}" in sm._state.infra_errors
+    assert any(event.startswith(f"falsify 1/1: {label} (") for event in events)
+    assert vars(error) == original
+    assert finding.disposition == Disposition.UNCERTAIN
+    assert sm._falsify_protocol_findings == []
+    assert sm._falsify_failed_findings == [finding]
+    assert sm._state.rounds_with_falsify_infra == 1
+
+
+def test_received_failure_breaker_and_recovery_keep_existing_policy(
+    tmp_path, monkeypatch, local_falsifier_api
+):
+    backend, replies = local_falsifier_api
+    monkeypatch.setattr("code_forge.falsify_real.llm_invoke", partial(llm_invoke, max_attempts=1))
+    sm = _real_machine(tmp_path, backend)
+    replies["content"] = ""
+    sm._run_l1_phase()
+    sm._run_l1_phase()
+    assert sm._state.rounds_with_falsify_infra == 2
+    replies["content"] = '{"verdict":"DISMISSED","reasoning":"diff is correct"}'
+    findings, _ = sm._run_l1_phase()
+    assert findings[0].disposition == Disposition.DISMISSED
+    assert sm._state.rounds_with_falsify_infra == 0
+    assert sm._falsify_protocol_findings == sm._falsify_failed_findings == []
+    replies["content"] = ""
+    sm._run_l1_phase()
+    sm._run_l1_phase()
+    with pytest.raises(TimeoutBreaker, match="could not adjudicate"):
+        sm._run_l1_phase()
+    persisted = load_state(tmp_path / ".code-forge" / "state.json")
+    assert persisted.rounds_with_falsify_infra == 3
+    assert persisted.verdict == Verdict.FAIL
+    assert persisted.consecutive_clean_rounds == 0
+    assert not persisted.converged
+    assert len(replies["requests"]) == 6
 
 
 @pytest.mark.parametrize(
