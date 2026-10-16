@@ -143,6 +143,10 @@ class StateFinding:
     # Why the falsifier reached its verdict. Empty when no falsifier ran.
     # A dismissed finding without this cannot be audited later.
     falsify_reasoning: str | None = None
+    # Issue #46: set when the falsifier returned CONFIRMED but the host
+    # could not bind this finding's own excerpt to the reviewed source.
+    # Distinct from falsifier infra failure; blocks CI PASS and verify.
+    evidence_downgrade: str | None = None
     # Set at trusted acquisition or verified completeness boundaries only.
     diagnostic_kind: FindingDiagnosticKind | None = None
     provider_failure: dict | None = None
@@ -355,6 +359,8 @@ class State:
     # Rounds where the falsifier could not reach its backend. Persisted
     # for the same reason as the field above.
     rounds_with_falsify_infra: int = 0  # Current failure also blocks CI PASS.
+    # Consecutive rounds with host evidence downgrades (#46); blocks CI PASS.
+    rounds_with_evidence_incomplete: int = 0
     # 08-02 additions: cost tracking fields (CLI-08)
     cost_total_input: int = 0
     cost_total_output: int = 0
@@ -663,6 +669,7 @@ def _finding_from_dict(d: dict) -> StateFinding:
         severity=d.get("severity"),
         excerpt=d.get("excerpt"),
         falsify_reasoning=d.get("falsify_reasoning"),
+        evidence_downgrade=d.get("evidence_downgrade"),
         diagnostic_kind=(
             None if d.get("diagnostic_kind") is None
             else FindingDiagnosticKind(d["diagnostic_kind"])
@@ -770,6 +777,7 @@ def load_state(path: Path) -> State | None:
         validate_round_history(state.round_history, state.round)
     state.rounds_with_failed_pass = data.get("rounds_with_failed_pass", 0)
     state.rounds_with_falsify_infra = data.get("rounds_with_falsify_infra", 0)
+    state.rounds_with_evidence_incomplete = data.get("rounds_with_evidence_incomplete", 0)
 
     # 08-02 additions: backward-compat defaults for pre-08-02 state.json.
     cost_data = data.get("cost", {})
@@ -807,6 +815,7 @@ def _finding_to_dict(f: StateFinding) -> dict:
         "severity": f.severity,
         "excerpt": f.excerpt,
         "falsify_reasoning": f.falsify_reasoning,
+        "evidence_downgrade": f.evidence_downgrade,
         "diagnostic_kind": None if f.diagnostic_kind is None else f.diagnostic_kind.value,
         "provider_failure": f.provider_failure,
     }
@@ -870,6 +879,7 @@ def save_state(state: State, path: Path) -> None:
         "consecutive_clean_rounds": state.consecutive_clean_rounds,
         "rounds_with_failed_pass": state.rounds_with_failed_pass,
         "rounds_with_falsify_infra": state.rounds_with_falsify_infra,
+        "rounds_with_evidence_incomplete": state.rounds_with_evidence_incomplete,
         "cost": {
             "total_input_tokens": state.cost_total_input,
             "total_output_tokens": state.cost_total_output,

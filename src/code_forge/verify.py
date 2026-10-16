@@ -619,6 +619,18 @@ def _select_default_earned_cycles(
             return None
         if state.source_hash != diff_sha256:
             return None
+        downgraded = [
+            f.fingerprint for f in state.findings
+            if getattr(f, "evidence_downgrade", None) and f.disposition.value == "UNCERTAIN"
+        ]
+        if downgraded:
+            return VerifyResult(
+                False,
+                "host evidence downgrade: falsifier-CONFIRMED finding(s) lack bound "
+                f"finding-owned evidence: {downgraded}",
+                1,
+                0,
+            )
         if state.earned_clean_window is None:
             if modern or state._earned_window_present:
                 return VerifyResult(False, "modern history requires an earned clean window", 1, 0)
@@ -1382,36 +1394,78 @@ def bound_excerpt_disposition(disposition, excerpt):
     return disposition
 
 
+def normalize_finding_path(file, known, *, cwd=None):
+    """Map a reviewer-written path onto a key of ``known`` (post-image paths).
+
+    Accepts the exact path, then strips cosmetic prefixes models emit:
+    "./", git's "a/"/"b/", and an absolute path under cwd. Only returns a
+    path that exists in ``known``; never guesses between candidates.
+    """
+    import unicodedata
+
+    if not isinstance(file, str) or not file:
+        return None
+    raw = unicodedata.normalize("NFC", file.strip().replace("\\", "/"))
+    candidates = [raw]
+    if cwd is not None and raw.startswith("/"):
+        root = str(Path(cwd).resolve()).rstrip("/") + "/"
+        if raw.startswith(root):
+            candidates.append(raw[len(root):])
+    stripped = raw
+    while stripped.startswith("./"):
+        stripped = stripped[2:]
+    candidates.append(stripped)
+    candidates.extend(stripped[2:] for prefix in ("a/", "b/") if stripped.startswith(prefix))
+    for candidate in candidates:
+        if candidate in known:
+            return candidate
+    return None
+
+
 def finding_excerpt_binding(diff_text, file, line, excerpt, *, cwd=None):
     """Check a finding's own excerpt against the frozen reviewed source.
 
     True: the excerpt quotes contiguous post-image lines of the finding's
-    own file and those lines cover the finding's line. False: missing,
-    blank, wrong-file, invented or not covering the line. None: no frozen
-    diff to bind against (non-git/stub reviews); callers keep the older
-    non-blank rule there. Envelope code_excerpts never count here.
+    own file (path normalized by normalize_finding_path) and, when the
+    finding names a line >= 1, those lines cover it. A file-level finding
+    (line missing/0) binds when the quote matches contiguous post-image
+    lines anywhere in that file's frozen evidence window. Comparison is
+    NFC-normalized and ignores trailing whitespace only (so a
+    trailing-whitespace-only edit is not distinguishable); leading
+    indentation must match. False: missing, blank, wrong-file, invented
+    or not covering the line. None: no frozen diff content to bind
+    against (non-git/stub reviews, deletion/binary-only diffs); callers
+    keep the older non-blank rule there. Envelope code_excerpts never
+    count here.
     """
+    import unicodedata
+
     if not diff_text:
         return None
     if not isinstance(excerpt, str) or not excerpt.strip():
         return False
     try:
-        line = int(line)
+        line = int(line or 0)
     except (TypeError, ValueError):
-        return False
+        line = 0
     post_image, _hunks, _exempt = _diff_validation_context(diff_text, cwd=cwd)
     if not post_image:
         # A diff with no content hunks has no frozen source to bind to.
         return None
-    source = post_image.get(file)
-    if not source or line < 1:
+    path = normalize_finding_path(file, post_image, cwd=cwd)
+    source = post_image.get(path) if path is not None else None
+    if not source:
         return False
-    quoted = excerpt.rstrip("\n").split("\n")
+
+    def norm(text):
+        return unicodedata.normalize("NFC", text).rstrip()
+
+    quoted = [norm(q) for q in excerpt.replace("\r\n", "\n").rstrip("\n").split("\n")]
     n = len(quoted)
-    for start in range(max(1, line - n + 1), line + 1):
+    starts = range(max(1, line - n + 1), line + 1) if line >= 1 else sorted(source)
+    for start in starts:
         if all(
-            source.get(start + k) is not None
-            and source[start + k].rstrip() == quoted[k].rstrip()
+            source.get(start + k) is not None and norm(source[start + k]) == quoted[k]
             for k in range(n)
         ):
             return True
