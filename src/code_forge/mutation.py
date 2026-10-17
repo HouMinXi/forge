@@ -465,6 +465,32 @@ def _build_mutmut_config(
     return "\n".join(lines) + "\n"
 
 
+_CHILD_ENV_PLUGIN = "mutation_child_env.py"
+
+
+def _plant_child_env_plugin(repo_root: Path | str) -> None:
+    """Put the child-env plugin where mutmut's pytest can import it.
+
+    pytest runs with its rootdir inside mutants/, so a pytest.ini there adds
+    that directory to sys.path and ``-p mutation_child_env`` loads the copy.
+    Both files are removed with the rest of mutants/ when the run ends.
+    """
+    mirror = Path(repo_root) / "mutants"
+    mirror.mkdir(exist_ok=True)
+    source = Path(__file__).with_name(_CHILD_ENV_PLUGIN)
+    (mirror / _CHILD_ENV_PLUGIN).write_bytes(source.read_bytes())
+    # mutmut creates mutants/ empty and only writes the files it copies, so
+    # this ini is ours to create. Refusing an existing one avoids splicing a
+    # new section onto whatever a project already put there.
+    ini = mirror / "pytest.ini"
+    if ini.exists():
+        raise FileExistsError("mutants/pytest.ini already exists; refusing to overwrite it")
+    ini.write_text(
+        "[pytest]\npythonpath = .\naddopts = -p mutation_child_env\n",
+        encoding="utf-8",
+    )
+
+
 def _pyproject_has_tool_mutmut(text: str) -> bool:
     """True when mutmut 3.x would take [tool.mutmut] over setup.cfg."""
     try:
@@ -1478,6 +1504,17 @@ def _run_mutation(
             cwd=cwd,
         )
         _workspace.install_configs(config_content.encode("utf-8"), _scoped_pyproject)
+
+        # mutmut sets MUTANT_UNDER_TEST for its trampoline and the value is
+        # inherited by every subprocess a test starts. The trampoline then
+        # looks for mutmut's configuration in that child's working directory.
+        # A test that runs the mutated code from outside the mirror has none,
+        # so stats collection dies before the code under test runs. The plugin
+        # removes the variable once pytest has started; the trampoline keeps a
+        # process-local copy, so measurement inside pytest is unaffected.
+        # mutmut creates mutants/ itself and only writes the files it copies,
+        # so a plugin and a pytest.ini planted here survive.
+        _plant_child_env_plugin(repo_root)
 
         # mutmut 3.x rewrites sys.path itself (inserts mutants/src, then
         # chdir into mutants/ before pytest.main). Pointing PYTHONPATH at
