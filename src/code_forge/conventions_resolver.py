@@ -819,12 +819,24 @@ def _extract_rust_names(
 
 
 def _run_git_object_probe(repo_path: Path, *args: str) -> subprocess.CompletedProcess:
-    """Read local objects without allowing a promisor remote to fetch gaps."""
-    return subprocess.run(
-        ["git", "--no-lazy-fetch", "-C", str(repo_path), *args],
-        env={**os.environ, "GIT_NO_LAZY_FETCH": "1"},
-        capture_output=True, timeout=5, check=False,
+    """Read local objects without allowing a promisor remote to fetch gaps.
+
+    ``--no-lazy-fetch`` arrived with Git 2.48. Older Git rejects it with exit
+    129, which callers treat as "cannot prove". The environment variable set
+    below has the same effect on those versions, so drop the switch and retry
+    once instead of abandoning the proof.
+    """
+    env = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
+    command = ["git", "--no-lazy-fetch", "-C", str(repo_path), *args]
+    result = subprocess.run(
+        command, env=env, capture_output=True, timeout=5, check=False,
     )
+    if result.returncode == 129:
+        result = subprocess.run(
+            ["git", "-C", str(repo_path), *args],
+            env=env, capture_output=True, timeout=5, check=False,
+        )
+    return result
 
 
 def _tracked_convention_files(repo_path: Path, commit_hash: str) -> set[Path]:
@@ -1091,14 +1103,23 @@ def _scan_matches_commit(
 
 
 def _passive_git_listing(repo_path: Path, *args: str) -> subprocess.CompletedProcess:
-    """Read the index without callbacks or a missing-object fetch."""
-    return subprocess.run(
-        ["git", "--no-lazy-fetch", "-C", str(repo_path),
-         "-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}",
-         "ls-files", *args],
-        env={**os.environ, "GIT_NO_LAZY_FETCH": "1"},
-        capture_output=True, timeout=5, check=False,
+    """Read the index without callbacks or a missing-object fetch.
+
+    See ``_run_git_object_probe`` for why a 129 is retried without the switch.
+    """
+    env = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
+    base = ["git", "-C", str(repo_path),
+            "-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}",
+            "ls-files", *args]
+    result = subprocess.run(
+        ["git", "--no-lazy-fetch", *base[1:]],
+        env=env, capture_output=True, timeout=5, check=False,
     )
+    if result.returncode == 129:
+        result = subprocess.run(
+            base, env=env, capture_output=True, timeout=5, check=False,
+        )
+    return result
 
 
 def _git_index_has_ordinary_entries(repo_path: Path) -> bool:

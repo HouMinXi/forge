@@ -23,6 +23,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _CLEANUP_SECONDS = 5.0
+# Slack for the owner to finish teardown and write its report after its own
+# deadline. Each cleanup poll can run long on a tree of thousands of test
+# descendants, so a few seconds is not enough (#116). 30s is a heuristic,
+# not a bound: a report that still arrives late is rescued in
+# run_owned_command when it says timed_out with cleanup complete.
+_OWNER_REPORT_SLACK = 30.0
 _TERM_SECONDS = 0.25
 _POLL_SECONDS = 0.01
 
@@ -377,7 +383,7 @@ def run_owned_command(
         try:
             raw, diagnostic = helper.communicate(
                 json.dumps({"request": request, "authority": authority}).encode("utf-8"),
-                timeout=timeout + _CLEANUP_SECONDS + 5,
+                timeout=timeout + 2 * _CLEANUP_SECONDS + _OWNER_REPORT_SLACK,
             )
         except BaseException as exc:  # noqa: BLE001 - every interruption drains the private owner
             interruption = exc
@@ -402,7 +408,17 @@ def run_owned_command(
                 f"mutation owner failed to report cleanup: {diagnostic.decode('utf-8', 'replace')}",
                 cleanup_complete=False,
             ) from exc
-        if interruption is None and report.get("cancelled"):
+        if (
+            isinstance(interruption, subprocess.TimeoutExpired)
+            and report.get("timed_out") is True
+            and report["cleanup_complete"]
+        ):
+            # #116: the owner hit its own command deadline and finished
+            # teardown, but its report arrived after our outer wait. That is
+            # the command's timeout, not an owner communication failure.
+            # (_supervise sets timed_out and cancelled mutually exclusively.)
+            interruption = None
+        elif interruption is None and report.get("cancelled"):
             interruption = KeyboardInterrupt("mutation command was cancelled")
         if not report["cleanup_complete"]:
             remaining = ", ".join(

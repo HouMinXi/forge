@@ -1023,8 +1023,54 @@ def _loads_model_json(text: str):
     (qodo especially) emit a raw LF or TAB in excerpt content. strict=True
     then raises Invalid control character and the whole pass is an INFRA
     error. The HTTP/SSE envelope that wraps the model text stays strict.
+
+    A model quoting source also writes the source's own quotes into the
+    string unescaped. json.loads stops at the first one and names the
+    character where it stopped. Escape that quote and parse again, and
+    repeat while each attempt fails at a quote. A failure somewhere else
+    is a real syntax error and is raised unchanged.
     """
-    return json.loads(text, strict=False)
+    candidate = text
+    for _ in range(candidate.count('"')):
+        try:
+            return json.loads(candidate, strict=False)
+        except json.JSONDecodeError as exc:
+            quote_at = _error_is_at_quote(candidate, exc)
+            if quote_at is None:
+                raise
+            candidate = _escape_at(candidate, quote_at)
+    return json.loads(candidate, strict=False)
+
+
+def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
+    pos = exc.pos
+    if not isinstance(pos, int):
+        return None
+    for quote_at in range(min(pos, len(text)) - 1, -1, -1):
+        if text[quote_at] != '"':
+            continue
+        if _quote_is_escaped(text, quote_at):
+            continue
+        return quote_at
+    return None
+
+
+def _quote_is_escaped(text: str, quote_at: int) -> bool:
+    """A quote is escaped only when an odd run of backslashes precedes it.
+
+    Two backslashes are an escaped backslash, so the quote after them is
+    raw. One backslash escapes the quote.
+    """
+    count = 0
+    index = quote_at - 1
+    while index >= 0 and text[index] == "\\":
+        count += 1
+        index -= 1
+    return count % 2 == 1
+
+
+def _escape_at(text: str, position: int) -> str:
+    return text[:position] + '\\' + text[position:]
 
 
 # A model that finished the reply still produced unparseable JSON.
