@@ -333,38 +333,57 @@ _FAILURE_EVIDENCE_KEYS = ("publication_error", "cancellation_type", "cleanup_err
 _MUTANT_PHASE_KEYS = ("results_sha256", "metadata_sha256")
 
 
+def _clean_mutation_skip_kind(
+    findings: list, infra: list[str], evidence: dict, *, source_unchanged: bool,
+) -> str | None:
+    """Classify a native carrier that measured nothing, or return None.
+
+    No mutant ran, so there is no bound measurement to decode; such a carrier
+    is a DISMISSED skip, not an invalid measurement. Kinds:
+
+    - ``"baseline-timeout"`` (#120): ``mutation-baseline-timeout`` skips, infra
+      lines equal to their descriptions.
+    - ``"baseline-failed"`` (#127): ``mutation-flaky`` skips (the baseline ran
+      and failed, or its runner could not start), same infra rule.
+    - ``"not-applicable"`` (#127): only ``mutation-no-adapter`` /
+      ``mutation-tests-only`` skips and no infra lines at all.
+
+    The mixed-language ``mutation-other-adapter`` note (no infra line of its
+    own) may accompany either baseline kind. Anything else -- a changed source,
+    a measurement that claims completion, mutant-phase evidence, survivors,
+    mixed kinds, extra or reordered infra errors, or any cleanup / cancellation
+    / process-failure marker -- returns None and still fails closed.
+    """
+    if not source_unchanged or evidence.get("completed_measurement") is True or not findings:
+        return None
+    if any(f.id != "MUTATION_SKIPPED" or f.disposition is not Disposition.DISMISSED for f in findings):
+        return None
+    if any(key in evidence for key in _FAILURE_EVIDENCE_KEYS + _MUTANT_PHASE_KEYS):
+        return None
+    if evidence.get("inventory", {}) != {}:
+        return None
+    # Same default as decode_mutation_survivor_details: run_mutation records
+    # cleanup_complete only on a failed teardown, so absent means complete.
+    # Requiring an explicit True would make these exemptions unreachable.
+    if evidence.get("cancelled", False) is not False or evidence.get("cleanup_complete", True) is not True:
+        return None
+    kinds = {f.fingerprint for f in findings}
+    if kinds <= {"mutation-no-adapter", "mutation-tests-only"}:
+        return "not-applicable" if list(infra) == [] else None
+    for fingerprint, kind in (("mutation-baseline-timeout", "baseline-timeout"),
+                              ("mutation-flaky", "baseline-failed")):
+        primary = [f for f in findings if f.fingerprint == fingerprint]
+        if primary and kinds <= {fingerprint, "mutation-other-adapter"}:
+            return kind if list(infra) == [f.description for f in primary] else None
+    return None
+
+
 def _is_clean_baseline_timeout_skip(
     findings: list, infra: list[str], evidence: dict, *, source_unchanged: bool,
 ) -> bool:
-    """#120: the runner stopped at a cleanly classified baseline timeout.
-
-    No mutant ran, so there is no bound measurement to decode; that is a
-    DISMISSED skip, not an invalid measurement. Allowed alongside it: the
-    mixed-language ``mutation-other-adapter`` note (no infra line of its own).
-    Anything else -- a changed source, a measurement that claims completion,
-    mutant-phase evidence, survivors, extra or reordered infra errors, or any
-    cleanup / cancellation / process-failure marker -- still fails closed.
-    """
-    if not source_unchanged or evidence.get("completed_measurement") is True:
-        return False
-    timeouts = [f for f in findings if f.fingerprint == "mutation-baseline-timeout"]
-    if not timeouts:
-        return False
-    allowed = {"mutation-baseline-timeout", "mutation-other-adapter"}
-    if any(f.id != "MUTATION_SKIPPED" or f.fingerprint not in allowed
-           or f.disposition is not Disposition.DISMISSED for f in findings):
-        return False
-    if list(infra) != [f.description for f in timeouts]:
-        return False
-    if any(key in evidence for key in _FAILURE_EVIDENCE_KEYS + _MUTANT_PHASE_KEYS):
-        return False
-    if evidence.get("inventory", {}) != {}:
-        return False
-    # Same default as decode_mutation_survivor_details: run_mutation records
-    # cleanup_complete only on a failed teardown, so absent means complete.
-    # Requiring an explicit True would make this exemption unreachable.
-    return evidence.get("cancelled", False) is False and evidence.get("cleanup_complete", True) is True
-
+    """#120: the runner stopped at a cleanly classified baseline timeout."""
+    kind = _clean_mutation_skip_kind(findings, infra, evidence, source_unchanged=source_unchanged)
+    return kind == "baseline-timeout"
 
 
 def _baseline_timeout_reason(findings: list) -> str:
@@ -379,6 +398,21 @@ def _baseline_timeout_reason(findings: list) -> str:
             if match:
                 return "CI: mutation not measured: baseline tests timed out after %ss" % match.group(1)
     return "CI: mutation not measured: baseline tests timed out"
+
+
+def _baseline_failed_reason(findings: list) -> str:
+    """CI failure reason for a clean baseline-failure skip (#127)."""
+    for finding in findings:
+        if finding.fingerprint == "mutation-flaky":
+            detail = re.sub(r"^run \d+: ", "", finding.description).split("; ")[0].strip()
+            if detail:
+                return "CI: mutation not measured: " + detail[:300]
+    return "CI: mutation not measured: baseline failed"
+
+
+def _ci_skip_reason(kind: str, findings: list) -> str:
+    return _baseline_timeout_reason(findings) if kind == "baseline-timeout" else _baseline_failed_reason(findings)
+
 
 @dataclass
 class StateMachine:
@@ -957,7 +991,20 @@ class StateMachine:
         py_files = grouped.get("python-mutmut", [])
         other_adapters = [key for key in grouped if key and key != "python-mutmut"]
 
-        if py_files and shutil.which("mutmut") is not None:
+        # #131: signals that can only stay FAIL (suppression cannot clear
+        # them, unlike a CONFIRMED count). A detached run cannot change the
+        # verdict, so do not spend a full baseline + mutation run on it.
+        ci_already_failed = (
+            self._mutation_bound_failure
+            or bool(self._acquisition_markers)
+            or self._state.rounds_with_falsify_infra > 0
+            or self._state.rounds_with_evidence_incomplete > 0
+        )
+        if py_files and shutil.which("mutmut") is not None and ci_already_failed:
+            self._state.infra_errors.append(
+                "CI: detached mutation not launched: verdict is already FAIL"
+            )
+        elif py_files and shutil.which("mutmut") is not None:
             mutation_timeout = None
             try:
                 from .gate_check import load_gate_config
@@ -2101,24 +2148,31 @@ class StateMachine:
                     notes = [f for f in decoded if f.id.startswith("mutation-timeout-")]
                     self._mutation_timeout_objects = {id(f) for f in notes}
                     l2_findings.extend(notes)
-                elif not _is_clean_baseline_timeout_skip(
-                    l2_findings, l2_infra, evidence, source_unchanged=bool(source_before and source_after),
-                ):
-                    self._mutation_bound_failure = True
-                    self._state.infra_errors.append("L2: invalid bound mutation measurement")
-                elif self.mode == Mode.CI:
-                    # User policy (#120/#122): CI must not pass without mutation
-                    # evidence. Fail, naming the real cause. LOCAL keeps the
-                    # DISMISSED skip.
-                    self._mutation_bound_failure = True
-                    self._state.infra_errors.append(_baseline_timeout_reason(l2_findings))
+                else:
+                    kind = _clean_mutation_skip_kind(
+                        l2_findings, l2_infra, evidence, source_unchanged=bool(source_before and source_after),
+                    )
+                    if kind is None:
+                        self._mutation_bound_failure = True
+                        self._state.infra_errors.append("L2: invalid bound mutation measurement")
+                    elif kind != "not-applicable" and self.mode == Mode.CI:
+                        # User policy (#120/#122, #127): CI must not pass without
+                        # mutation evidence. Fail, naming the real cause. LOCAL
+                        # keeps the DISMISSED skip; "mutation does not apply"
+                        # is a clean skip in both modes.
+                        self._mutation_bound_failure = True
+                        self._state.infra_errors.append(_ci_skip_reason(kind, l2_findings))
             elif self.mode == Mode.CI and any(
-                f.id == "MUTATION_SKIPPED" and f.fingerprint == "mutation-baseline-timeout" for f in l2_findings
+                f.id == "MUTATION_SKIPPED" and f.fingerprint in ("mutation-baseline-timeout", "mutation-flaky")
+                for f in l2_findings
             ):
-                # #124: the CI baseline-timeout policy is runner-independent; a
-                # custom/injected runner's timeout skip carries no evidence either.
+                # #124/#127: the CI baseline policy is runner-independent; a
+                # custom/injected runner's baseline skip carries no evidence either.
                 self._mutation_bound_failure = True
-                self._state.infra_errors.append(_baseline_timeout_reason(l2_findings))
+                timed_out = any(f.fingerprint == "mutation-baseline-timeout" for f in l2_findings)
+                self._state.infra_errors.append(
+                    _ci_skip_reason("baseline-timeout" if timed_out else "baseline-failed", l2_findings)
+                )
             self._mutation_measurement_eligible = native and decoded is not None
             if native and not self._mutation_measurement_eligible and any(is_mutation_survivor(f) for f in l2_findings):
                 if not source_before or not mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root()):

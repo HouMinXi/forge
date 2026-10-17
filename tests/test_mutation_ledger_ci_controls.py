@@ -944,6 +944,13 @@ def test_ci_launch_capture_binds_context_without_executing_payload(ci_project, c
         assert len(p.commands) == before
     if direct == "unproved":
         assert len(unproved_calls) == 1 and "_evidence" not in unproved_calls[0][1]
+    if direct == "failed-native":
+        # #131: the failed native measurement already latched FAIL, so the
+        # wasted detached relaunch is skipped and says why.
+        assert p.launches == []
+        assert "CI: detached mutation not launched: verdict is already FAIL" in saved.infra_errors
+        assert not any(row.evidence_class == "clean_pass" for row in iter_rows(p.root, strict=True))
+        return
     assert len(p.launches) == 1
     argv, kwargs = p.launches[0]
     assert argv[:2] == [sys.executable, "-c"]
@@ -1488,9 +1495,14 @@ def test_ci_completed_bound_result_does_not_erase_current_failure(ci_project, ca
     text = capsys.readouterr().err
     saved = _saved(p, Verdict.FAIL)
     assert machine._mutation_measurement_eligible is False
-    assert len(p.launches) == 1
-    _assert_captured_running_marker(p, result)
-    assert result.read_bytes() != original_bytes
+    if blocker == "failed-native":
+        # #131: a latched native failure skips the redundant detached launch.
+        assert p.launches == []
+        assert "CI: detached mutation not launched: verdict is already FAIL" in saved.infra_errors
+    else:
+        assert len(p.launches) == 1
+        _assert_captured_running_marker(p, result)
+        assert result.read_bytes() != original_bytes
     assert "mutation: 0 unresolved of 1 original survivors" in text
     _assert_timeouts(saved.findings, [_identity(1)])
     assert text.count(_timeout_text(_identity(1))) == 1
@@ -1761,3 +1773,130 @@ def test_local_baseline_timeout_stays_a_dismissed_skip(ci_project, native):
     assert not any(e.startswith("CI: mutation not measured") for e in errors)
     assert not any("invalid bound mutation measurement" in e for e in errors)
     assert machine._mutation_bound_failure is False
+
+
+def _failing_baseline(monkeypatch, p):
+    inner = mutation.run_owned_command
+
+    def command(argv, **kwargs):
+        if list(argv) == BASELINE:
+            p.stages.append("baseline")
+            return subprocess.CompletedProcess(list(argv), 1, "FAILED tests/test_x.py::test_y\n", "")
+        return inner(argv, **kwargs)
+
+    monkeypatch.setattr(mutation, "run_owned_command", command)
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_failed_baseline_names_the_cause_not_invalid_bound(ci_project, monkeypatch, mode):
+    """#127: a baseline that ran and failed is a mutation-flaky skip. CI FAILs
+    naming the baseline failure; LOCAL keeps the skip; neither logs the false
+    'invalid bound mutation measurement'."""
+    p = ci_project
+    _failing_baseline(monkeypatch, p)
+    machine = _machine(p, runner=mutation.run_mutation) if mode is Mode.CI else _local_machine(p, runner=mutation.run_mutation)
+    verdict = machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert "baseline" in p.stages and "run" not in p.stages
+    assert any(f.fingerprint == "mutation-flaky" and f.disposition is Disposition.DISMISSED for f in saved.findings)
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    reasons = [e for e in saved.infra_errors if e.startswith("CI: mutation not measured")]
+    if mode is Mode.CI:
+        assert verdict is Verdict.FAIL
+        assert len(reasons) == 1 and "baseline failed" in reasons[0] and "returncode 1" in reasons[0]
+    else:
+        assert verdict is not Verdict.FAIL and reasons == []
+        assert machine._mutation_bound_failure is False
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_no_adapter_diff_is_a_clean_skip_in_both_modes(ci_project, monkeypatch, mode):
+    """#127: a diff with no registered mutation adapter (docs/config only) is
+    'mutation does not apply': a clean skip, no invalid-bound error, no latch."""
+    p = ci_project
+    machine = _machine(p, runner=mutation.run_mutation) if mode is Mode.CI else _local_machine(p, runner=mutation.run_mutation)
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("notes.unmapped-ext")])
+    findings = machine._run_l2_phase()
+    assert [f.fingerprint for f in findings] == ["mutation-no-adapter"]
+    assert "baseline" not in p.stages
+    assert not any("invalid bound mutation measurement" in e for e in machine._state.infra_errors)
+    assert not any(e.startswith("CI: mutation not measured") for e in machine._state.infra_errors)
+    assert machine._mutation_bound_failure is False
+
+
+@pytest.mark.parametrize("findings,infra,expected", [
+    ([("mutation-no-adapter", "no registered mutation adapter for this diff")], [], "not-applicable"),
+    ([("mutation-tests-only", "diff is tests-only; nothing to mutate")], [], "not-applicable"),
+    ([("mutation-no-adapter", "x")], ["x"], None),
+    ([("mutation-flaky", "run 1: baseline failed (returncode 1)")], ["run 1: baseline failed (returncode 1)"], "baseline-failed"),
+    ([("mutation-flaky", "a"), ("mutation-other-adapter", "o")], ["a"], "baseline-failed"),
+    ([("mutation-flaky", "a")], [], None),
+    ([("mutation-flaky", "a"), ("mutation-baseline-timeout", "b")], ["a", "b"], None),
+    ([("mutation-flaky", "a"), ("mutation-no-adapter", "n")], ["a"], None),
+    ([("mutation-other-adapter", "o")], [], None),
+    ([("mutation-baseline-timeout", "t")], ["t"], "baseline-timeout"),
+])
+def test_clean_mutation_skip_kind(findings, infra, expected):
+    from code_forge.machine import _clean_mutation_skip_kind
+
+    objs = [_skip(fingerprint=fp, description=d) for fp, d in findings]
+    evidence = {"inventory": {}}
+    assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=True) == expected
+    if expected is not None:
+        assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=False) is None
+        assert _clean_mutation_skip_kind(objs, infra, {**evidence, "cleanup_error": "x"}, source_unchanged=True) is None
+        assert _clean_mutation_skip_kind(objs, infra, {"inventory": {"m": "killed"}}, source_unchanged=True) is None
+
+
+def test_baseline_failed_reason_text():
+    from code_forge.machine import _baseline_failed_reason
+
+    desc = "run 1: baseline failed (returncode 1: tests/a.py::t); stdout: lots"
+    assert _baseline_failed_reason([_skip(fingerprint="mutation-flaky", description=desc)]) == \
+        "CI: mutation not measured: baseline failed (returncode 1: tests/a.py::t)"
+    assert _baseline_failed_reason([]) == "CI: mutation not measured: baseline failed"
+
+
+def test_ci_latched_failure_skips_detached_launch(ci_project):
+    """#131: once L2 latched a CI failure (here a clean baseline timeout), the
+    verdict is a guaranteed FAIL; no detached mutation run is launched."""
+    p = ci_project
+    _discover_mutmut(p)
+    p.baseline_hook = _baseline_timeout
+    machine = _machine(p, runner=mutation.run_mutation)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert p.launches == []
+    assert "CI: detached mutation not launched: verdict is already FAIL" in saved.infra_errors
+    assert any(e.startswith("CI: mutation not measured: baseline tests timed out") for e in saved.infra_errors)
+    assert not (p.state / ".code-forge/mutation-result.json").exists()
+
+
+def test_ci_unlatched_run_still_launches_detached_mutation(ci_project):
+    """Control for #131: without a latched failure the detached run launches."""
+    p = ci_project
+    _discover_mutmut(p)
+    machine = _machine(p)
+    machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert len(p.launches) == 1
+    assert "CI: detached mutation not launched: verdict is already FAIL" not in saved.infra_errors
+
+
+def test_ci_live_running_marker_with_latched_failure_is_fail_not_pending(ci_project):
+    """#130 P3: a live, valid running marker would be PENDING, but a failure
+    latched by this run's L2 phase makes the CI verdict FAIL, not PENDING."""
+    p = ci_project
+    data = {"status": "running", "pid": os.getpid(), "started_at": time.time(),
+            "survivor_details_version": 1, "review_context": _context(p),
+            "infra_errors": [], "baseline_passed": False,
+            "completed_measurement": False, "survivors": [], "survivor_details": [],
+            "inventory": {}, "skipped": []}
+    result = _put_result(p, data)
+    p.baseline_hook = _baseline_timeout
+    machine = _machine(p, runner=mutation.run_mutation)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert machine._mutation_bound_failure is True
+    assert "CI: bound mutation measurement still running" in saved.infra_errors
+    assert result.exists()
