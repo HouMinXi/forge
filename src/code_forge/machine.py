@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 import threading
 import time
@@ -364,6 +365,20 @@ def _is_clean_baseline_timeout_skip(
     # Requiring an explicit True would make this exemption unreachable.
     return evidence.get("cancelled", False) is False and evidence.get("cleanup_complete", True) is True
 
+
+
+def _baseline_timeout_reason(findings: list) -> str:
+    """CI failure reason for a clean baseline-timeout skip (#120).
+
+    The seconds come from the skip itself (the effective deadline the baseline
+    guard used), so a null/absent ``timeout_seconds`` never prints "Nones".
+    """
+    for finding in findings:
+        if finding.fingerprint == "mutation-baseline-timeout":
+            match = re.search(r"timed out after (\d+(?:\.\d+)?)s", finding.description)
+            if match:
+                return "CI: mutation not measured: baseline tests timed out after %ss" % match.group(1)
+    return "CI: mutation not measured: baseline tests timed out"
 
 @dataclass
 class StateMachine:
@@ -2096,9 +2111,7 @@ class StateMachine:
                     # evidence. Fail, naming the real cause. LOCAL keeps the
                     # DISMISSED skip.
                     self._mutation_bound_failure = True
-                    self._state.infra_errors.append(
-                        "CI: mutation not measured: baseline tests timed out after %ss" % baseline_timeout
-                    )
+                    self._state.infra_errors.append(_baseline_timeout_reason(l2_findings))
             self._mutation_measurement_eligible = native and decoded is not None
             if native and not self._mutation_measurement_eligible and any(is_mutation_survivor(f) for f in l2_findings):
                 if not source_before or not mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root()):

@@ -1656,3 +1656,32 @@ def test_baseline_timeout_exemption_allows_mixed_language_note():
     assert _is_clean_baseline_timeout_skip(
         findings, [findings[0].description], {"cleanup_complete": True}, source_unchanged=True,
     ) is True
+
+
+def test_ci_baseline_timeout_reason_uses_effective_deadline_when_config_is_null(ci_project):
+    """#122 re-review: a null test.timeout_seconds must not print 'after Nones'."""
+    p = ci_project
+    for directory in (p.root, p.state):
+        path = directory / ".code-forge/gate.yaml"
+        gate = json.loads(path.read_text())
+        gate["test"]["timeout_seconds"] = None
+        path.write_text(json.dumps(gate), encoding="utf-8")
+        record_trust(path, gate)
+    p.baseline_hook = _baseline_timeout
+    machine = _machine(p, runner=mutation.run_mutation)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    # The gate loader rejects a null timeout_seconds before any baseline runs;
+    # either way no reason may carry a literal "None" deadline.
+    assert not any("Nones" in e or "after None" in e for e in saved.infra_errors)
+
+
+@pytest.mark.parametrize("description,expected", [
+    ("run 1: baseline tests timed out after 900s", "CI: mutation not measured: baseline tests timed out after 900s"),
+    ("run 1: baseline tests timed out after 12.5s; stdout: x", "CI: mutation not measured: baseline tests timed out after 12.5s"),
+    ("run 1: baseline tests timed out after Nones", "CI: mutation not measured: baseline tests timed out"),
+])
+def test_baseline_timeout_reason_text(description, expected):
+    from code_forge.machine import _baseline_timeout_reason
+
+    assert _baseline_timeout_reason([_skip(description=description)]) == expected
