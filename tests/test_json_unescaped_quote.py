@@ -19,6 +19,12 @@ def test_unescaped_quote_inside_a_string_is_repaired():
     assert parsed["description"] == 'split("SYNC_NEED = ", 1) returns the tail'
 
 
+def test_repair_keeps_a_later_numeric_field():
+    raw = '{"note": "split("X", 1) tail", "count": 42}'
+    parsed = _loads_model_json(raw)
+    assert parsed == {"note": 'split("X", 1) tail', "count": 42}
+
+
 def test_a_quote_that_ends_the_string_stays():
     raw = '{"description": "plain text", "count": 2}'
     assert _loads_model_json(raw) == {"description": "plain text", "count": 2}

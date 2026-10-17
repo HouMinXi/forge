@@ -1025,81 +1025,38 @@ def _loads_model_json(text: str):
     error. The HTTP/SSE envelope that wraps the model text stays strict.
 
     A model quoting source also writes the source's own quotes into the
-    string unescaped. json.loads stops at the first one. Repair that case
-    and parse again; anything still broken raises as before.
+    string unescaped. json.loads stops at the first one and names the
+    character where it stopped. Escape that quote and parse again, and
+    repeat while each attempt fails at a quote. A failure somewhere else
+    is a real syntax error and is raised unchanged.
     """
-    try:
-        return json.loads(text, strict=False)
-    except json.JSONDecodeError:
-        repaired = _escape_unescaped_quotes(text)
-        if repaired == text:
-            raise
-        return json.loads(repaired, strict=False)
+    candidate = text
+    for _ in range(candidate.count('"')):
+        try:
+            return json.loads(candidate, strict=False)
+        except json.JSONDecodeError as exc:
+            quote_at = _error_is_at_quote(candidate, exc)
+            if quote_at is None:
+                raise
+            candidate = _escape_at(candidate, quote_at)
+    return json.loads(candidate, strict=False)
 
 
-def _escape_unescaped_quotes(text: str) -> str:
-    """Escape a quote that sits inside a string and cannot end it.
-
-    A quote ends its string only when the next non-space character is a
-    comma, colon, closing brace or bracket, or the text ends. Anything else
-    is source content the model forgot to escape.
-    """
-    out: list[str] = []
-    in_string = False
-    escaped = False
-    for index, char in enumerate(text):
-        if escaped:
-            out.append(char)
-            escaped = False
+def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
+    pos = exc.pos
+    if not isinstance(pos, int):
+        return None
+    for quote_at in range(min(pos, len(text)) - 1, -1, -1):
+        if text[quote_at] != '"':
             continue
-        if char == "\\" and in_string:
-            out.append(char)
-            escaped = True
+        if text[quote_at - 1:quote_at] == "\\":
             continue
-        if char == '"':
-            if in_string and not _quote_can_end_string(text, index + 1):
-                out.append('\\"')
-                continue
-            in_string = not in_string
-        out.append(char)
-    return "".join(out)
+        return quote_at
+    return None
 
 
-def _quote_can_end_string(text: str, start: int) -> bool:
-    """A quote ends its string only when what follows parses as structure.
-
-    A comma or colon counts only when the next token starts a value or a key.
-    Otherwise the quote is source content the model left unescaped.
-    """
-    index = start
-    length = len(text)
-    while index < length and text[index] in " \t\r\n":
-        index += 1
-    if index >= length:
-        return True
-    char = text[index]
-    if char in "}]":
-        return True
-    if char == ",":
-        return _starts_value_or_key(text, index + 1)
-    if char == ":":
-        return _starts_value(text, index + 1)
-    return False
-
-
-def _skip_space(text: str, index: int) -> int:
-    while index < len(text) and text[index] in " \t\r\n":
-        index += 1
-    return index
-
-
-def _starts_value(text: str, index: int) -> bool:
-    index = _skip_space(text, index)
-    return index < len(text) and text[index] == '"'
-
-
-def _starts_value_or_key(text: str, index: int) -> bool:
-    return _starts_value(text, index)
+def _escape_at(text: str, position: int) -> str:
+    return text[:position] + '\\' + text[position:]
 
 
 # A model that finished the reply still produced unparseable JSON.
