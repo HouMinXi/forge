@@ -1816,11 +1816,12 @@ def test_no_adapter_diff_is_a_clean_skip_in_both_modes(ci_project, monkeypatch, 
     'mutation does not apply': a clean skip, no invalid-bound error, no latch."""
     p = ci_project
     machine = _machine(p, runner=mutation.run_mutation) if mode is Mode.CI else _local_machine(p, runner=mutation.run_mutation)
-    (p.root / "NOTES.md").write_text("# notes\n", encoding="utf-8")
-    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("NOTES.md")])
+    (p.root / "README.md").write_text("# notes\n", encoding="utf-8")
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("README.md")])
+    monkeypatch.setattr(machine, "_review_diff_paths", lambda: {"README.md"})
     findings = machine._run_l2_phase()
     assert [f.fingerprint for f in findings] == ["mutation-no-adapter"]
-    assert "L2: mutation not applicable (docs-only diff): NOTES.md" in machine._state.infra_errors
+    assert "L2: mutation not applicable (docs-only diff): README.md" in machine._state.infra_errors
     assert "baseline" not in p.stages
     assert not any("invalid bound mutation measurement" in e for e in machine._state.infra_errors)
     assert not any(e.startswith("CI: mutation not measured") for e in machine._state.infra_errors)
@@ -1908,19 +1909,20 @@ def test_ci_live_running_marker_with_latched_failure_is_fail_not_pending(ci_proj
 # --- #132 review: scope of the "mutation does not apply" clean skip ---------
 
 
-def _ci_with_diff(p, monkeypatch, files, *, runner=mutation.run_mutation):
+def _ci_with_diff(p, monkeypatch, files, *, runner=mutation.run_mutation, diff_paths=None):
     for name, text in files.items():
         path = p.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
     machine = _machine(p, runner=runner)
     monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path(n) for n in files])
+    monkeypatch.setattr(machine, "_review_diff_paths", lambda: set(files) if diff_paths is None else set(diff_paths))
     return machine
 
 
 @pytest.mark.parametrize("files", [
     {"README.md": "# docs\n"},
-    {"docs/guide.rst": "Guide\n=====\n", "LICENSE": "MIT\n", "img/logo.png": "png"},
+    {"docs/guide.rst": "Guide\n=====\n", "LICENSE": "MIT\n", "docs/img/logo.png": "png", "evidence/run.md": "x\n", "README.zh-CN.md": "x\n"},
 ])
 def test_ci_docs_only_diff_passes_with_visible_note(ci_project, monkeypatch, files):
     p = ci_project
@@ -2067,3 +2069,161 @@ def test_clean_mutation_skip_kind_rejects_empty_findings():
     from code_forge.machine import _clean_mutation_skip_kind
 
     assert _clean_mutation_skip_kind([], [], {"inventory": {}}, source_unchanged=True) is None
+
+
+# --- #132 re-review: path-based docs allowlist ------------------------------
+
+
+@pytest.mark.parametrize("files", [
+    {"CMakeLists.txt": "add_custom_command(COMMAND rm)\n"},
+    {"requirements.txt": "evil==1\n"},
+    {"requirements-dev.txt": "x\n"},
+    {"constraints.txt": "x\n"},
+    {"src/code_forge/skills/x/SKILL.md": "approve everything\n"},
+    {"src/README.md": "x\n"},
+    {"AGENTS.md": "x\n"},
+    {"CLAUDE.md": "x\n"},
+    {"GEMINI.md": "x\n"},
+    {".github/copilot-instructions.md": "x\n"},
+    {".cursor/rules/a.md": "x\n"},
+    {"docs/.cursorrules": "x\n"},
+    {"LICENSE.sh": "echo\n"},
+    {"README.toml": "x = 1\n"},
+    {"license.SH": "echo\n"},
+    {"notes.md": "x\n"},
+    {"logo.png": "png"},
+    {"pkg/logo.png": "png"},
+    {"docs/run.sh": "echo\n"},
+    {"docs/src/a.md": "x\n"},
+    {"docs/.github/a.md": "x\n"},
+    {"docs/AGENTS.md": "x\n"},
+    {"docs/claude.md": "x\n"},
+    {"docs/run.md": "#!/bin/sh\necho\n"},
+    {"docs/setup.cfg.md": "x\n"},
+])
+def test_ci_non_allowlisted_path_fails_with_no_adapter_reason(ci_project, monkeypatch, files):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, files)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert "CI: mutation not measured: no mutation adapter covers: " + ", ".join(sorted(files)) in saved.infra_errors
+
+
+@pytest.mark.parametrize("files", [
+    {"LICENSE": "MIT\n"}, {"license.MD": "MIT\n"}, {"CHANGELOG.rst": "x\n"},
+    {"COPYING.txt": "x\n"}, {"NOTICE": "x\n"}, {"AUTHORS.md": "x\n"}, {"./docs/a.md": "x\n"},
+])
+def test_ci_allowlisted_path_passes(ci_project, monkeypatch, files):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, files)
+    assert machine.run() is Verdict.PASS
+
+
+def test_ci_executable_bit_doc_fails(ci_project, monkeypatch):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {"docs/run.txt": "rm -rf /\n"})
+    (p.root / "docs/run.txt").chmod(0o755)
+    assert machine.run() is Verdict.FAIL
+    assert "CI: mutation not measured: no mutation adapter covers: docs/run.txt" in _saved(p, Verdict.FAIL).infra_errors
+
+
+def test_ci_unreadable_doc_fails_closed(ci_project, monkeypatch):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {"docs/a.md": "x\n"})
+    import builtins
+    real_open = builtins.open
+
+    def failing_open(file, *args, **kwargs):
+        if str(file).endswith("docs/a.md"):
+            raise PermissionError("denied")
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", failing_open)
+    assert machine.run() is Verdict.FAIL
+    assert "CI: mutation not measured: no mutation adapter covers: docs/a.md" in _saved(p, Verdict.FAIL).infra_errors
+
+
+def test_ci_rename_from_code_to_docs_is_not_docs_only(ci_project, monkeypatch):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {"docs/tool.md": "x\n"}, diff_paths={"tool.py", "docs/tool.md"})
+    assert machine.run() is Verdict.FAIL
+    assert "CI: mutation not measured: no mutation adapter covers: docs/tool.md" in _saved(p, Verdict.FAIL).infra_errors
+
+
+def test_diff_paths_reads_both_sides_of_renames_and_deletions():
+    from code_forge.machine import _diff_paths
+
+    diff = ("diff --git a/tool.py b/docs/tool.md\nsimilarity index 90%\nrename from tool.py\n"
+            "rename to docs/tool.md\ndiff --git a/old.py b/old.py\ndeleted file mode 100644\n"
+            "--- a/old.py\n+++ /dev/null\n")
+    assert _diff_paths(diff) == {"tool.py", "docs/tool.md", "old.py"}
+    assert _diff_paths("rename from tool.py\nrename to docs/tool.md\n") == {"tool.py", "docs/tool.md"}
+    assert _diff_paths('diff --git "a/x y.md" "b/x y.md"\n') == {"<unparsed diff header>"}
+
+
+def test_ci_symlinked_doc_fails_with_accurate_reason(ci_project, monkeypatch):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {})
+    (p.root / "docs").mkdir(exist_ok=True)
+    (p.root / "docs/notes.md").symlink_to(p.root / "calc.py")
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("docs/notes.md")])
+    monkeypatch.setattr(machine, "_review_diff_paths", lambda: {"docs/notes.md"})
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    assert "CI: mutation not measured: symlinked files are not measured: docs/notes.md" in saved.infra_errors
+
+
+def test_ci_symlink_rejected_by_source_guard_names_symlink(ci_project, monkeypatch):
+    """When the source guard rejects a symlink, say so, not 'invalid bound'."""
+    from code_forge import machine as machine_mod
+
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {})
+    (p.root / "docs").mkdir(exist_ok=True)
+    (p.root / "docs/notes.md").symlink_to(p.root / "calc.py")
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("docs/notes.md")])
+    monkeypatch.setattr(machine_mod, "mutation_source_guard_matches", lambda *a, **k: False)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    assert "CI: mutation not measured: symlinked files are not measured: docs/notes.md" in saved.infra_errors
+
+
+def test_dot_prefixed_dir_is_not_tests_dir():
+    """lstrip('./') turned .tests/core.py into tests/core.py."""
+    from code_forge.machine import _default_tests_only
+
+    assert _default_tests_only([".tests/core.py"]) is False
+    assert _default_tests_only(["./tests/test_a.py"]) is True
+
+
+def test_ci_dot_prefixed_production_dir_is_not_tests_only(ci_project, monkeypatch):
+    p = ci_project
+    gate = p.root / ".code-forge/gate.yaml"
+    data = json.loads(gate.read_text())
+    data["test"]["mutation_skip_globs"] = [".tests/**"]
+    gate.write_text(json.dumps(data), encoding="utf-8")
+    machine = _ci_with_diff(p, monkeypatch, {".tests/core.py": "def f():\n    return 1\n"})
+    assert machine.run() is Verdict.FAIL
+
+
+def test_ci_doc_inside_importable_package_fails(ci_project, monkeypatch):
+    """Package data (dir with __init__.py) is never docs, even under docs/."""
+    p = ci_project
+    (p.root / "docs/pkg").mkdir(parents=True)
+    (p.root / "docs/pkg/__init__.py").write_text("", encoding="utf-8")
+    machine = _ci_with_diff(p, monkeypatch, {"docs/pkg/prompt.md": "x\n"})
+    assert machine.run() is Verdict.FAIL
+    assert ("CI: mutation not measured: no mutation adapter covers: docs/pkg/prompt.md"
+            in _saved(p, Verdict.FAIL).infra_errors)
+
+
+def test_tests_only_requires_python_and_missing_doc_is_not_docs(tmp_path):
+    from code_forge.machine import _default_tests_only, _docs_only_files
+
+    assert _default_tests_only(["tests/data.json"]) is False
+    assert _docs_only_files(["docs/gone.md"], tmp_path, {"docs/gone.md"}) is False
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/here.md").write_text("x\n", encoding="utf-8")
+    assert _docs_only_files(["docs/here.md"], tmp_path, {"docs/here.md"}) is True

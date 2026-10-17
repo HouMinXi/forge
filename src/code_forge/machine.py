@@ -383,44 +383,130 @@ def _clean_mutation_skip_kind(
 # (noted) mutation skip; when False it FAILs like any other unmeasured diff.
 CI_DOCS_ONLY_MUTATION_SKIP_PASSES = True
 
-# Conservative allowlist of non-executable files. Anything else -- unknown
-# suffix, extensionless or shebang file, Makefile/Dockerfile, workflow YAML,
-# gate.yaml -- is not "docs-only".
-_DOCS_SUFFIXES = frozenset({
-    ".md", ".markdown", ".rst", ".txt", ".adoc", ".asciidoc",
-    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".bmp",
+# Path-based allowlist (#132 re-review). Only these count as docs:
+#   * docs/** and evidence/** with a doc suffix (images allowed there too);
+#   * top-level README*/LICENSE*/CHANGELOG*/COPYING*/NOTICE*/AUTHORS* with no
+#     suffix or a whole doc suffix (LICENSE.sh is not docs).
+# Always excluded: package source/data (src/**, any dir with __init__.py),
+# build/dependency files, agent-instruction and other review-input files,
+# executable-bit, shebang, symlinked or unreadable files.
+_DOC_SUFFIXES = frozenset({".md", ".markdown", ".rst", ".txt", ".adoc", ".asciidoc"})
+_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".bmp"})
+_DOC_DIRS = frozenset({"docs", "evidence"})
+_TOP_LEVEL_DOC_STEMS = ("README", "LICENSE", "LICENCE", "CHANGELOG", "COPYING", "NOTICE", "AUTHORS")
+_NEVER_DOC_DIRS = frozenset({"src", ".github", ".cursor", ".code-forge"})
+# Lower-cased names read by forge as review input (conventions_resolver) or
+# as build/dependency inputs (detect.py, manifest.py).
+_NEVER_DOC_NAMES = frozenset({
+    "agents.md", "claude.md", "gemini.md", "copilot-instructions.md",
+    ".cursorrules", ".windsurfrules", "cmakelists.txt", "pyproject.toml",
+    "manifest.in", "pipfile", "makefile", "dockerfile", "package.json",
 })
-_DOCS_NAMES = frozenset({
-    "LICENSE", "LICENCE", "COPYING", "NOTICE", "AUTHORS", "CONTRIBUTORS",
-    "CHANGELOG", "CHANGES", "README",
-})
+_NEVER_DOC_PREFIXES = ("requirements", "constraints", "setup.")
 
 
-def _docs_only_files(paths: list[str], root) -> bool:
-    """True only if every path is an allowlisted non-executable doc/image."""
+def _normalized_rel(raw: str) -> str | None:
+    from pathlib import PurePosixPath
+
+    text = raw.replace("\\", "/")
+    while text.startswith("./"):
+        text = text.removeprefix("./")
+    path = PurePosixPath(text)
+    if path.is_absolute() or ".." in path.parts or not path.parts:
+        return None
+    return path.as_posix()
+
+
+def _docs_path_allowed(rel: str) -> bool:
+    """Lexical allowlist check; no filesystem access."""
+    from pathlib import PurePosixPath
+
+    path = PurePosixPath(rel)
+    parts = path.parts
+    name = path.name
+    lower = name.lower()
+    suffix = path.suffix.lower()
+    if any(part in _NEVER_DOC_DIRS for part in parts[:-1]) or lower in _NEVER_DOC_NAMES:
+        return False
+    if lower.startswith(_NEVER_DOC_PREFIXES):
+        return False
+    if len(parts) > 1:
+        return parts[0] in _DOC_DIRS and (suffix in _DOC_SUFFIXES or suffix in _IMAGE_SUFFIXES)
+    upper = name.upper()
+    for stem in _TOP_LEVEL_DOC_STEMS:
+        if upper == stem or (upper.startswith(stem) and upper[len(stem)] in ".-_"):
+            return suffix == "" and "." not in name or suffix in _DOC_SUFFIXES
+    return False
+
+
+def _diff_paths(git_diff: str) -> set[str]:
+    """Both sides of every file in a unified git diff (catches renames and
+    deletions: tool.py -> tool.md is not a docs-only change)."""
+    paths: set[str] = set()
+    for line in (git_diff or "").splitlines():
+        if line.startswith(("rename from ", "rename to ")):
+            paths.add(line.split(" ", 2)[2].strip())
+        elif line.startswith("diff --git "):
+            match = re.match(r"^diff --git a/(\S+) b/(\S+)$", line)
+            # Quoted or space-containing headers fail closed.
+            paths.update(match.groups() if match else ("<unparsed diff header>",))
+    return paths
+
+
+def _docs_only_files(paths: list[str], root, diff_paths=()) -> bool:
+    """True only if every changed path is on the docs allowlist and every
+    post-image is a regular, non-executable, readable, non-shebang file."""
+    import os
+    import stat
     from pathlib import Path
 
     if not paths:
         return False
-    for raw in paths:
-        path = Path(raw)
-        name = path.name
-        if path.suffix.lower() in _DOCS_SUFFIXES:
-            pass
-        elif name in _DOCS_NAMES or name.split(".")[0] in _DOCS_NAMES and path.suffix.lower() in ("", ".md", ".txt", ".rst"):
-            pass
-        else:
+    for raw in sorted(diff_paths):
+        rel = _normalized_rel(raw)
+        if rel is None or not _docs_path_allowed(rel):
             return False
-        full = path if path.is_absolute() else Path(root) / path
+    root_path = Path(root)
+    for raw in paths:
+        rel = _normalized_rel(raw) if not Path(raw).is_absolute() else None
+        if rel is None:
+            try:
+                rel = _normalized_rel(Path(raw).relative_to(root_path).as_posix())
+            except ValueError:
+                return False
+        if rel is None or not _docs_path_allowed(rel):
+            return False
+        # Anything importable is package source/data, whatever its suffix.
+        parent = root_path / rel
+        for ancestor in list(parent.parents)[:-1]:
+            if ancestor == root_path or root_path not in ancestor.parents:
+                break
+            if (ancestor / "__init__.py").exists():
+                return False
+        full = root_path / rel
         try:
+            info = os.lstat(full)
+            if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o111:
+                return False
             with open(full, "rb") as handle:
                 if handle.read(2) == b"#!":
                     return False
-        except FileNotFoundError:
-            pass  # deleted docs file
         except OSError:
             return False
     return True
+
+
+def _symlinked_files(paths: list[str], root) -> list[str]:
+    from pathlib import Path
+
+    out = []
+    for raw in paths:
+        try:
+            if (Path(root) / raw).is_symlink():
+                out.append(raw)
+        except OSError:
+            out.append(raw)
+    return sorted(out)
 
 
 def _default_tests_only(paths: list[str]) -> bool:
@@ -435,7 +521,9 @@ def _default_tests_only(paths: list[str]) -> bool:
     if not paths:
         return False
     for raw in paths:
-        posix = PurePosixPath(raw.replace("\\", "/")).as_posix().lstrip("./")
+        posix = _normalized_rel(raw)
+        if posix is None:
+            return False
         if PurePosixPath(posix).name == "conftest.py" or not posix.endswith(".py"):
             return False
         if not any(p.fullmatch(posix) or p.match(posix) for p in patterns):
@@ -2228,7 +2316,16 @@ class StateMachine:
                     )
                     if kind is None:
                         self._mutation_bound_failure = True
-                        self._state.infra_errors.append("L2: invalid bound mutation measurement")
+                        linked = _symlinked_files(diff_files, self._source_root())
+                        if linked:
+                            # #132 P3: fail closed, but name the real cause.
+                            prefix = "CI" if self.mode == Mode.CI else "L2"
+                            self._state.infra_errors.append(
+                                f"{prefix}: mutation not measured: symlinked files are not measured: "
+                                + ", ".join(linked)
+                            )
+                        else:
+                            self._state.infra_errors.append("L2: invalid bound mutation measurement")
                     elif kind == "not-applicable":
                         self._apply_not_applicable_policy(l2_findings, diff_files)
                     elif self.mode == Mode.CI:
@@ -2259,16 +2356,25 @@ class StateMachine:
             self._state.infra_errors.append(f"L2 runner failed: {exc}")
             return []
 
+    def _review_diff_paths(self) -> set[str]:
+        """Every path on either side of the reviewed diff (renames, deletions)."""
+        return _diff_paths(self.resolved_review.git_diff or "")
+
     def _apply_not_applicable_policy(self, findings: list, diff_files: list[str]) -> None:
         """#127/#132: decide whether a measured-nothing "does not apply" skip
         is clean. Always leaves a visible infra line naming the files."""
         shown = ", ".join(sorted(diff_files)[:10]) + (" ..." if len(diff_files) > 10 else "")
         fingerprints = {f.fingerprint for f in findings}
-        if fingerprints == {"mutation-tests-only"}:
+        linked = _symlinked_files(diff_files, self._source_root())
+        if linked:
+            clean, why, shown = False, "symlinked files are not measured", ", ".join(linked)
+        elif fingerprints == {"mutation-tests-only"}:
             clean = _default_tests_only(diff_files)
             why = "diff is tests-only" if clean else "configured skip globs or conftest.py leave nothing to mutate"
         else:
-            clean = CI_DOCS_ONLY_MUTATION_SKIP_PASSES and _docs_only_files(diff_files, self._source_root())
+            clean = CI_DOCS_ONLY_MUTATION_SKIP_PASSES and _docs_only_files(
+                diff_files, self._source_root(), self._review_diff_paths(),
+            )
             why = "docs-only diff" if clean else "no mutation adapter covers"
         if clean or self.mode != Mode.CI:
             self._mutation_not_applicable = clean
