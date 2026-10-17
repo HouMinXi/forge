@@ -326,6 +326,29 @@ class _ReceiptGateFailure(str):
         return value
 
 
+
+
+_FAILURE_EVIDENCE_KEYS = ("publication_error", "cancellation_type", "cleanup_error", "process_failure")
+
+
+def _is_clean_baseline_timeout_skip(findings: list, infra: list[str], evidence: dict) -> bool:
+    """#120: the runner stopped at a cleanly classified baseline timeout.
+
+    No mutant ran, so there is no bound measurement to decode; that is a
+    DISMISSED skip, not an invalid measurement. Anything else -- a measurement
+    that claims completion, survivors, extra infra errors, or any cleanup /
+    cancellation / process-failure marker -- still fails closed.
+    """
+    if not findings or evidence.get("completed_measurement") is True:
+        return False
+    if any(f.id != "MUTATION_SKIPPED" or f.fingerprint != "mutation-baseline-timeout"
+           or f.disposition is not Disposition.DISMISSED for f in findings):
+        return False
+    if list(infra) != [f.description for f in findings]:
+        return False
+    if any(key in evidence for key in _FAILURE_EVIDENCE_KEYS):
+        return False
+    return evidence.get("cancelled", False) is False and evidence.get("cleanup_complete", True) is True
 @dataclass
 class StateMachine:
     """Forge state machine. Constructor wires dependencies; .run() executes.
@@ -2047,7 +2070,7 @@ class StateMachine:
                     notes = [f for f in decoded if f.id.startswith("mutation-timeout-")]
                     self._mutation_timeout_objects = {id(f) for f in notes}
                     l2_findings.extend(notes)
-                else:
+                elif not _is_clean_baseline_timeout_skip(l2_findings, l2_infra, evidence):
                     self._mutation_bound_failure = True
                     self._state.infra_errors.append("L2: invalid bound mutation measurement")
             self._mutation_measurement_eligible = native and decoded is not None

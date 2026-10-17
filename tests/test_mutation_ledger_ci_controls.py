@@ -1540,3 +1540,73 @@ def test_ci_refused_bound_result_returns_before_redundant_launch(ci_project, cap
         survivor = _one(saved.findings, "mutant-" + _identity(2))
         assert survivor.disposition is Disposition.CONFIRMED
         assert "mutation: 1 unresolved of 1 original survivors" in text
+
+
+def _baseline_timeout():
+    raise subprocess.TimeoutExpired(BASELINE, 900)
+
+
+def test_ci_baseline_timeout_skip_is_not_an_invalid_bound_measurement(ci_project):
+    """#120: a correctly classified baseline timeout has no mutant results.
+    It must stay a DISMISSED skip and must not be recorded as an invalid bound
+    measurement or latch _mutation_bound_failure (which forces CI FAIL)."""
+    p = ci_project
+    p.baseline_hook = _baseline_timeout
+    machine = _machine(p, runner=mutation.run_mutation)
+    verdict = machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    skips = [f for f in saved.findings if f.fingerprint == "mutation-baseline-timeout"]
+    assert skips and all(f.disposition is Disposition.DISMISSED for f in skips)
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    assert machine._mutation_bound_failure is False
+    assert machine._mutation_measurement_eligible is False
+    # Pre-#120 this latched _mutation_bound_failure and CI returned FAIL.
+    assert verdict is Verdict.PASS and saved.verdict is Verdict.PASS
+    assert "run" not in p.stages
+
+
+def test_ci_undecodable_native_measurement_still_fails_closed(ci_project):
+    """Control for #120: a measurement that ran but cannot be decoded still latches."""
+    p = ci_project
+    p.codes, p.statuses = (1,), ("killed",)
+    p.fault = "run-error"
+    machine = _machine(p, runner=mutation.run_mutation)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert machine._mutation_bound_failure is True
+    assert any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+
+
+def _skip(fingerprint="mutation-baseline-timeout", ident="MUTATION_SKIPPED"):
+    return StateFinding(id=ident, fingerprint=fingerprint, source="MUTANT",
+                        disposition=Disposition.DISMISSED, file="", line_range=[],
+                        description="run 1: baseline tests timed out after 900s")
+
+
+@pytest.mark.parametrize("case", [
+    "survivor", "other-skip", "extra-infra", "completed", "cleanup_error",
+    "process_failure", "cancellation_type", "publication_error", "cancelled", "cleanup-incomplete", "empty",
+])
+def test_baseline_timeout_exemption_is_narrow(case):
+    from code_forge.machine import _is_clean_baseline_timeout_skip
+
+    findings, evidence = [_skip()], {}
+    infra = [findings[0].description]
+    assert _is_clean_baseline_timeout_skip(findings, infra, evidence) is True
+    if case == "survivor":
+        findings = findings + [_skip(fingerprint="mutant:x", ident="mutant-x")]
+    elif case == "other-skip":
+        findings = [_skip(fingerprint="mutation-flaky")]
+    elif case == "extra-infra":
+        infra = infra + ["mutmut crashed"]
+    elif case == "completed":
+        evidence["completed_measurement"] = True
+    elif case == "cancelled":
+        evidence["cancelled"] = True
+    elif case == "cleanup-incomplete":
+        evidence["cleanup_complete"] = False
+    elif case == "empty":
+        findings, infra = [], []
+    else:
+        evidence[case] = "x"
+    assert _is_clean_baseline_timeout_skip(findings, infra, evidence) is False
