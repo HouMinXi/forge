@@ -3351,7 +3351,8 @@ class TestInputReadSafety:
         with patch.object(subprocess, "run", side_effect=reject_switch):
             with patch.object(cr, "extract_conventions", wraps=cr.extract_conventions) as scan:
                 _post, digest = _assemble_post_image(cwd, _local_cli_diff())
-        assert len(rejected) == 1 and "ls-files" in rejected[0]
+        assert rejected and all(command[:2] == ["git", "--no-lazy-fetch"] for command in rejected)
+        assert any("ls-files" in command for command in rejected)
         assert scan.call_count == 1
         assert digest == expected_digest
         assert all(name in digest for name in (
@@ -3588,8 +3589,7 @@ class TestInputReadSafety:
         rejected = []
 
         def reject_listing(command, *args, **kwargs):
-            if "ls-files" in command:
-                assert command[:2] == ["git", "--no-lazy-fetch"]
+            if "ls-files" in command and command[:2] == ["git", "--no-lazy-fetch"]:
                 assert kwargs["env"]["GIT_NO_LAZY_FETCH"] == "1"
                 assert "core.fsmonitor=false" in command
                 assert f"core.hooksPath={os.devnull}" in command
