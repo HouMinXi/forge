@@ -415,8 +415,8 @@ def run_owned_command(
         ):
             # #116: the owner hit its own command deadline and finished
             # teardown, but its report arrived after our outer wait. That is
-            # the command's timeout, not an owner communication failure. A
-            # "cancelled" flag here comes from our own drain SIGTERM.
+            # the command's timeout, not an owner communication failure.
+            # (_supervise sets timed_out and cancelled mutually exclusively.)
             interruption = None
         elif interruption is None and report.get("cancelled"):
             interruption = KeyboardInterrupt("mutation command was cancelled")

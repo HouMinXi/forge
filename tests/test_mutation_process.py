@@ -1871,9 +1871,8 @@ def _slow_owner(monkeypatch, report):
     return owner
 
 
-@pytest.mark.parametrize("cancelled", [False, True])  # True: our drain SIGTERM reached the owner
-def test_late_owner_timeout_report_stays_a_baseline_timeout(monkeypatch, cancelled):
-    owner = _slow_owner(monkeypatch, {"cleanup_complete": True, "timed_out": True, "cancelled": cancelled,
+def test_late_owner_timeout_report_stays_a_baseline_timeout(monkeypatch):
+    owner = _slow_owner(monkeypatch, {"cleanup_complete": True, "timed_out": True, "cancelled": False,
                                       "owned": [], "stdout": "", "stderr": ""})
     with pytest.raises(subprocess.TimeoutExpired) as caught:
         process.run_owned_command(["pytest"], timeout=900)
