@@ -1905,4 +1905,5 @@ def test_outer_deadline_covers_owner_cleanup_and_report(monkeypatch):
         process.run_owned_command(["pytest"], timeout=900)
     # Both cleanup() calls share one _CLEANUP_SECONDS window, but each poll can
     # run long on a large tree; the outer wait must leave real slack (#116).
-    assert owner.timeouts[0] >= 900 + 2 * process._CLEANUP_SECONDS + 30
+    assert owner.timeouts[0] == 900 + 2 * process._CLEANUP_SECONDS + process._OWNER_REPORT_SLACK
+    assert owner.timeouts[0] >= 900 + 40

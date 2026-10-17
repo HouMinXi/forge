@@ -25,7 +25,9 @@ from pathlib import Path
 _CLEANUP_SECONDS = 5.0
 # Slack for the owner to finish teardown and write its report after its own
 # deadline. Each cleanup poll can run long on a tree of thousands of test
-# descendants, so a few seconds is not enough (#116).
+# descendants, so a few seconds is not enough (#116). 30s is a heuristic,
+# not a bound: a report that still arrives late is rescued in
+# run_owned_command when it says timed_out with cleanup complete.
 _OWNER_REPORT_SLACK = 30.0
 _TERM_SECONDS = 0.25
 _POLL_SECONDS = 0.01
