@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 import threading
 import time
@@ -325,6 +326,59 @@ class _ReceiptGateFailure(str):
         value.verification = verification
         return value
 
+
+_FAILURE_EVIDENCE_KEYS = ("publication_error", "cancellation_type", "cleanup_error", "process_failure")
+# Present only once mutants were generated or run; a baseline-stage skip has
+# none (run_mutation pre-seeds "inventory" as empty, so that one must be empty).
+_MUTANT_PHASE_KEYS = ("results_sha256", "metadata_sha256")
+
+
+def _is_clean_baseline_timeout_skip(
+    findings: list, infra: list[str], evidence: dict, *, source_unchanged: bool,
+) -> bool:
+    """#120: the runner stopped at a cleanly classified baseline timeout.
+
+    No mutant ran, so there is no bound measurement to decode; that is a
+    DISMISSED skip, not an invalid measurement. Allowed alongside it: the
+    mixed-language ``mutation-other-adapter`` note (no infra line of its own).
+    Anything else -- a changed source, a measurement that claims completion,
+    mutant-phase evidence, survivors, extra or reordered infra errors, or any
+    cleanup / cancellation / process-failure marker -- still fails closed.
+    """
+    if not source_unchanged or evidence.get("completed_measurement") is True:
+        return False
+    timeouts = [f for f in findings if f.fingerprint == "mutation-baseline-timeout"]
+    if not timeouts:
+        return False
+    allowed = {"mutation-baseline-timeout", "mutation-other-adapter"}
+    if any(f.id != "MUTATION_SKIPPED" or f.fingerprint not in allowed
+           or f.disposition is not Disposition.DISMISSED for f in findings):
+        return False
+    if list(infra) != [f.description for f in timeouts]:
+        return False
+    if any(key in evidence for key in _FAILURE_EVIDENCE_KEYS + _MUTANT_PHASE_KEYS):
+        return False
+    if evidence.get("inventory", {}) != {}:
+        return False
+    # Same default as decode_mutation_survivor_details: run_mutation records
+    # cleanup_complete only on a failed teardown, so absent means complete.
+    # Requiring an explicit True would make this exemption unreachable.
+    return evidence.get("cancelled", False) is False and evidence.get("cleanup_complete", True) is True
+
+
+
+def _baseline_timeout_reason(findings: list) -> str:
+    """CI failure reason for a clean baseline-timeout skip (#120).
+
+    The seconds come from the skip itself (the effective deadline the baseline
+    guard used), so a null/absent ``timeout_seconds`` never prints "Nones".
+    """
+    for finding in findings:
+        if finding.fingerprint == "mutation-baseline-timeout":
+            match = re.search(r"timed out after (\d+(?:\.\d+)?)s", finding.description)
+            if match:
+                return "CI: mutation not measured: baseline tests timed out after %ss" % match.group(1)
+    return "CI: mutation not measured: baseline tests timed out"
 
 @dataclass
 class StateMachine:
@@ -2047,9 +2101,17 @@ class StateMachine:
                     notes = [f for f in decoded if f.id.startswith("mutation-timeout-")]
                     self._mutation_timeout_objects = {id(f) for f in notes}
                     l2_findings.extend(notes)
-                else:
+                elif not _is_clean_baseline_timeout_skip(
+                    l2_findings, l2_infra, evidence, source_unchanged=bool(source_before and source_after),
+                ):
                     self._mutation_bound_failure = True
                     self._state.infra_errors.append("L2: invalid bound mutation measurement")
+                elif self.mode == Mode.CI:
+                    # User policy (#120/#122): CI must not pass without mutation
+                    # evidence. Fail, naming the real cause. LOCAL keeps the
+                    # DISMISSED skip.
+                    self._mutation_bound_failure = True
+                    self._state.infra_errors.append(_baseline_timeout_reason(l2_findings))
             self._mutation_measurement_eligible = native and decoded is not None
             if native and not self._mutation_measurement_eligible and any(is_mutation_survivor(f) for f in l2_findings):
                 if not source_before or not mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root()):

@@ -30,6 +30,7 @@ from copy import deepcopy
 from dataclasses import replace
 import hashlib
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -1540,3 +1541,151 @@ def test_ci_refused_bound_result_returns_before_redundant_launch(ci_project, cap
         survivor = _one(saved.findings, "mutant-" + _identity(2))
         assert survivor.disposition is Disposition.CONFIRMED
         assert "mutation: 1 unresolved of 1 original survivors" in text
+
+
+def _baseline_timeout():
+    raise subprocess.TimeoutExpired(BASELINE, 900)
+
+
+def test_ci_baseline_timeout_fails_with_accurate_reason(ci_project):
+    """#120 + user policy decision on #122: in CI a baseline timeout means no
+    mutation evidence, so CI FAILs -- with a reason naming the baseline
+    timeout, never 'invalid bound mutation measurement'."""
+    p = ci_project
+    p.baseline_hook = _baseline_timeout
+    machine = _machine(p, runner=mutation.run_mutation)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    skips = [f for f in saved.findings if f.fingerprint == "mutation-baseline-timeout"]
+    assert skips and all(f.disposition is Disposition.DISMISSED for f in skips)
+    reasons = [e for e in saved.infra_errors if e.startswith("CI: mutation not measured: baseline tests timed out")]
+    seconds = re.search(r"timed out after (\d+)s", skips[0].description).group(1)
+    assert reasons == [f"CI: mutation not measured: baseline tests timed out after {seconds}s"]
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    assert machine._mutation_measurement_eligible is False
+    assert "run" not in p.stages
+
+
+def test_ci_undecodable_native_measurement_still_fails_closed(ci_project):
+    """Control for #120: a measurement that ran but cannot be decoded still latches."""
+    p = ci_project
+    p.codes, p.statuses = (1,), ("killed",)
+    p.fault = "run-error"
+    machine = _machine(p, runner=mutation.run_mutation)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert machine._mutation_bound_failure is True
+    assert any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+
+
+def _skip(fingerprint="mutation-baseline-timeout", ident="MUTATION_SKIPPED",
+          disposition=Disposition.DISMISSED, description="run 1: baseline tests timed out after 900s"):
+    return StateFinding(id=ident, fingerprint=fingerprint, source="MUTANT",
+                        disposition=disposition, file="", line_range=[], description=description)
+
+
+_OTHER = "diff also has files for other adapters"
+_TWO = "run 2: baseline tests timed out after 900s"
+
+
+@pytest.mark.parametrize("case", [
+    "survivor", "other-skip", "extra-infra", "completed", "cleanup_error",
+    "process_failure", "cancellation_type", "publication_error", "cancelled",
+    "cleanup-incomplete", "cleanup-none", "empty", "source-changed",
+    "inventory", "inventory-not-dict", "results_sha256", "metadata_sha256",
+    "confirmed", "uncertain", "wrong-id", "infra-duplicated", "infra-reordered",
+    "two-skips-one-infra", "other-adapter-only", "other-adapter-with-infra",
+])
+def test_baseline_timeout_exemption_is_narrow(case):
+    from code_forge.machine import _is_clean_baseline_timeout_skip
+
+    findings, evidence, unchanged = [_skip()], {"cleanup_complete": True, "inventory": {}}, True
+    infra = [findings[0].description]
+    assert _is_clean_baseline_timeout_skip(findings, infra, evidence, source_unchanged=True) is True
+    if case == "survivor":
+        findings = findings + [_skip(fingerprint="mutant:x", ident="mutant-x")]
+    elif case == "other-skip":
+        findings = [_skip(fingerprint="mutation-flaky")]
+    elif case == "extra-infra":
+        infra = infra + ["mutmut crashed"]
+    elif case == "completed":
+        evidence["completed_measurement"] = True
+    elif case == "cancelled":
+        evidence["cancelled"] = True
+    elif case == "cleanup-incomplete":
+        evidence["cleanup_complete"] = False
+    elif case == "cleanup-none":
+        evidence["cleanup_complete"] = None
+    elif case == "empty":
+        findings, infra = [], []
+    elif case == "source-changed":
+        unchanged = False
+    elif case == "inventory-not-dict":
+        evidence["inventory"] = ["x"]
+    elif case in ("inventory", "results_sha256", "metadata_sha256"):
+        evidence[case] = {"x": "killed"} if case == "inventory" else "abc"
+    elif case == "confirmed":
+        findings = [_skip(disposition=Disposition.CONFIRMED)]
+    elif case == "uncertain":
+        findings = [_skip(disposition=Disposition.UNCERTAIN)]
+    elif case == "wrong-id":
+        findings = [_skip(ident="MUTATION_ERROR")]
+    elif case == "infra-duplicated":
+        infra = infra * 2
+    elif case == "infra-reordered":
+        findings = [_skip(), _skip(description=_TWO)]
+        infra = [_TWO, findings[0].description]
+    elif case == "two-skips-one-infra":
+        findings = [_skip(), _skip(description=_TWO)]
+    elif case == "other-adapter-only":
+        findings, infra = [_skip(fingerprint="mutation-other-adapter", description=_OTHER)], []
+    elif case == "other-adapter-with-infra":
+        findings = findings + [_skip(fingerprint="mutation-other-adapter", description=_OTHER)]
+        infra = infra + [_OTHER]
+    else:
+        evidence[case] = "x"
+    assert _is_clean_baseline_timeout_skip(findings, infra, evidence, source_unchanged=unchanged) is False
+
+
+def test_baseline_timeout_exemption_allows_mixed_language_note():
+    """#122 review: a mixed-language diff adds a DISMISSED mutation-other-adapter
+    note (no infra line); the clean baseline timeout is still a skip."""
+    from code_forge.machine import _is_clean_baseline_timeout_skip
+
+    findings = [_skip(), _skip(fingerprint="mutation-other-adapter", description=_OTHER)]
+    assert _is_clean_baseline_timeout_skip(
+        findings, [findings[0].description], {"cleanup_complete": True}, source_unchanged=True,
+    ) is True
+
+
+def test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline(ci_project):
+    """A null test.timeout_seconds is refused by the gate loader: no baseline
+    runs, so no baseline-timeout reason can be formatted from it."""
+    p = ci_project
+    for directory in (p.root, p.state):
+        path = directory / ".code-forge/gate.yaml"
+        gate = json.loads(path.read_text())
+        gate["test"]["timeout_seconds"] = None
+        path.write_text(json.dumps(gate), encoding="utf-8")
+        record_trust(path, gate)
+    p.baseline_hook = _baseline_timeout
+    machine = _machine(p, runner=mutation.run_mutation)
+    machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert any("'test.timeout_seconds' must be an integer" in e for e in saved.infra_errors)
+    assert "baseline" not in p.stages
+    assert not any(e.startswith("CI: mutation not measured") for e in saved.infra_errors)
+
+
+@pytest.mark.parametrize("description,expected", [
+    ("run 1: baseline tests timed out after 900s", "CI: mutation not measured: baseline tests timed out after 900s"),
+    ("run 1: baseline tests timed out after 12.5s; stdout: x", "CI: mutation not measured: baseline tests timed out after 12.5s"),
+    ("run 1: baseline tests timed out after Nones", "CI: mutation not measured: baseline tests timed out"),
+    ("run 1: baseline tests timed out", "CI: mutation not measured: baseline tests timed out"),
+    (None, "CI: mutation not measured: baseline tests timed out"),
+])
+def test_baseline_timeout_reason_text(description, expected):
+    from code_forge.machine import _baseline_timeout_reason
+
+    findings = [] if description is None else [_skip(description=description)]
+    assert _baseline_timeout_reason(findings) == expected
