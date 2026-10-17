@@ -378,6 +378,71 @@ def _clean_mutation_skip_kind(
     return None
 
 
+# Single switch for the owner's pending docs-only policy (#127/#132): when
+# True, a CI diff made only of allowlisted non-executable files is a clean
+# (noted) mutation skip; when False it FAILs like any other unmeasured diff.
+CI_DOCS_ONLY_MUTATION_SKIP_PASSES = True
+
+# Conservative allowlist of non-executable files. Anything else -- unknown
+# suffix, extensionless or shebang file, Makefile/Dockerfile, workflow YAML,
+# gate.yaml -- is not "docs-only".
+_DOCS_SUFFIXES = frozenset({
+    ".md", ".markdown", ".rst", ".txt", ".adoc", ".asciidoc",
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".bmp",
+})
+_DOCS_NAMES = frozenset({
+    "LICENSE", "LICENCE", "COPYING", "NOTICE", "AUTHORS", "CONTRIBUTORS",
+    "CHANGELOG", "CHANGES", "README",
+})
+
+
+def _docs_only_files(paths: list[str], root) -> bool:
+    """True only if every path is an allowlisted non-executable doc/image."""
+    from pathlib import Path
+
+    if not paths:
+        return False
+    for raw in paths:
+        path = Path(raw)
+        name = path.name
+        if path.suffix.lower() in _DOCS_SUFFIXES:
+            pass
+        elif name in _DOCS_NAMES or name.split(".")[0] in _DOCS_NAMES and path.suffix.lower() in ("", ".md", ".txt", ".rst"):
+            pass
+        else:
+            return False
+        full = path if path.is_absolute() else Path(root) / path
+        try:
+            with open(full, "rb") as handle:
+                if handle.read(2) == b"#!":
+                    return False
+        except FileNotFoundError:
+            pass  # deleted docs file
+        except OSError:
+            return False
+    return True
+
+
+def _default_tests_only(paths: list[str]) -> bool:
+    """Tests-only by the built-in globs, ignoring any configured skip globs
+    (the reviewed tree's gate.yaml is untrusted) and never counting
+    conftest.py, whose fixtures change every test (#132 review)."""
+    from pathlib import PurePosixPath
+
+    from .mutation import _DEFAULT_MUTATION_SKIP_GLOBS, _glob_to_regex
+
+    patterns = [_glob_to_regex(g) for g in _DEFAULT_MUTATION_SKIP_GLOBS if not g.endswith("conftest.py")]
+    if not paths:
+        return False
+    for raw in paths:
+        posix = PurePosixPath(raw.replace("\\", "/")).as_posix().lstrip("./")
+        if PurePosixPath(posix).name == "conftest.py" or not posix.endswith(".py"):
+            return False
+        if not any(p.fullmatch(posix) or p.match(posix) for p in patterns):
+            return False
+    return True
+
+
 def _is_clean_baseline_timeout_skip(
     findings: list, infra: list[str], evidence: dict, *, source_unchanged: bool,
 ) -> bool:
@@ -541,6 +606,7 @@ class StateMachine:
         self._mutation_source_subject = None
         self._mutation_source_guard = None
         self._mutation_bound_failure = False
+        self._mutation_not_applicable = False
         self._mutation_timeout_objects: set[int] = set()
         self._mutation_timeout_emitted: set[str] = set()
 
@@ -1003,6 +1069,13 @@ class StateMachine:
         if py_files and shutil.which("mutmut") is not None and ci_already_failed:
             self._state.infra_errors.append(
                 "CI: detached mutation not launched: verdict is already FAIL"
+            )
+        elif py_files and shutil.which("mutmut") is not None and self._mutation_not_applicable:
+            # #132 review: a clean tests-only skip must stay clean end to end;
+            # the detached producer would only report "nothing to mutate" as
+            # an error and turn the next run into a misleading FAIL.
+            self._state.infra_errors.append(
+                "CI: detached mutation not launched: mutation not applicable to this diff"
             )
         elif py_files and shutil.which("mutmut") is not None:
             mutation_timeout = None
@@ -2059,6 +2132,7 @@ class StateMachine:
         """
         self._mutation_measurement_eligible = False
         self._mutation_bound_failure = False
+        self._mutation_not_applicable = False
         self._mutation_timeout_objects = set()
         source_before = False
         if self.mode in (Mode.LOCAL, Mode.CI):
@@ -2155,7 +2229,9 @@ class StateMachine:
                     if kind is None:
                         self._mutation_bound_failure = True
                         self._state.infra_errors.append("L2: invalid bound mutation measurement")
-                    elif kind != "not-applicable" and self.mode == Mode.CI:
+                    elif kind == "not-applicable":
+                        self._apply_not_applicable_policy(l2_findings, diff_files)
+                    elif self.mode == Mode.CI:
                         # User policy (#120/#122, #127): CI must not pass without
                         # mutation evidence. Fail, naming the real cause. LOCAL
                         # keeps the DISMISSED skip; "mutation does not apply"
@@ -2182,6 +2258,24 @@ class StateMachine:
             self._mutation_bound_failure = native
             self._state.infra_errors.append(f"L2 runner failed: {exc}")
             return []
+
+    def _apply_not_applicable_policy(self, findings: list, diff_files: list[str]) -> None:
+        """#127/#132: decide whether a measured-nothing "does not apply" skip
+        is clean. Always leaves a visible infra line naming the files."""
+        shown = ", ".join(sorted(diff_files)[:10]) + (" ..." if len(diff_files) > 10 else "")
+        fingerprints = {f.fingerprint for f in findings}
+        if fingerprints == {"mutation-tests-only"}:
+            clean = _default_tests_only(diff_files)
+            why = "diff is tests-only" if clean else "configured skip globs or conftest.py leave nothing to mutate"
+        else:
+            clean = CI_DOCS_ONLY_MUTATION_SKIP_PASSES and _docs_only_files(diff_files, self._source_root())
+            why = "docs-only diff" if clean else "no mutation adapter covers"
+        if clean or self.mode != Mode.CI:
+            self._mutation_not_applicable = clean
+            self._state.infra_errors.append(f"L2: mutation not applicable ({why}): {shown}")
+            return
+        self._mutation_bound_failure = True
+        self._state.infra_errors.append(f"CI: mutation not measured: {why}: {shown}")
 
     def _run_e2e_phase(self) -> list[StateFinding]:
         """E2e coverage phase. Runs after L2.

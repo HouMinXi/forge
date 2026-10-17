@@ -950,6 +950,7 @@ def test_ci_launch_capture_binds_context_without_executing_payload(ci_project, c
         assert p.launches == []
         assert "CI: detached mutation not launched: verdict is already FAIL" in saved.infra_errors
         assert not any(row.evidence_class == "clean_pass" for row in iter_rows(p.root, strict=True))
+        assert not (p.state / ".code-forge/mutation-result.json").exists()
         return
     assert len(p.launches) == 1
     argv, kwargs = p.launches[0]
@@ -1815,9 +1816,11 @@ def test_no_adapter_diff_is_a_clean_skip_in_both_modes(ci_project, monkeypatch, 
     'mutation does not apply': a clean skip, no invalid-bound error, no latch."""
     p = ci_project
     machine = _machine(p, runner=mutation.run_mutation) if mode is Mode.CI else _local_machine(p, runner=mutation.run_mutation)
-    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("notes.unmapped-ext")])
+    (p.root / "NOTES.md").write_text("# notes\n", encoding="utf-8")
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("NOTES.md")])
     findings = machine._run_l2_phase()
     assert [f.fingerprint for f in findings] == ["mutation-no-adapter"]
+    assert "L2: mutation not applicable (docs-only diff): NOTES.md" in machine._state.infra_errors
     assert "baseline" not in p.stages
     assert not any("invalid bound mutation measurement" in e for e in machine._state.infra_errors)
     assert not any(e.startswith("CI: mutation not measured") for e in machine._state.infra_errors)
@@ -1900,3 +1903,167 @@ def test_ci_live_running_marker_with_latched_failure_is_fail_not_pending(ci_proj
     assert machine._mutation_bound_failure is True
     assert "CI: bound mutation measurement still running" in saved.infra_errors
     assert result.exists()
+
+
+# --- #132 review: scope of the "mutation does not apply" clean skip ---------
+
+
+def _ci_with_diff(p, monkeypatch, files, *, runner=mutation.run_mutation):
+    for name, text in files.items():
+        path = p.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    machine = _machine(p, runner=runner)
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path(n) for n in files])
+    return machine
+
+
+@pytest.mark.parametrize("files", [
+    {"README.md": "# docs\n"},
+    {"docs/guide.rst": "Guide\n=====\n", "LICENSE": "MIT\n", "img/logo.png": "png"},
+])
+def test_ci_docs_only_diff_passes_with_visible_note(ci_project, monkeypatch, files):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, files)
+    assert machine.run() is Verdict.PASS
+    saved = _saved(p, Verdict.PASS)
+    notes = [e for e in saved.infra_errors if e.startswith("L2: mutation not applicable (docs-only diff)")]
+    assert notes == ["L2: mutation not applicable (docs-only diff): " + ", ".join(sorted(files))]
+    assert machine._mutation_bound_failure is False
+
+
+def test_ci_docs_only_switch_off_fails(ci_project, monkeypatch):
+    """The owner's pending policy is one switch."""
+    from code_forge import machine as machine_mod
+
+    monkeypatch.setattr(machine_mod, "CI_DOCS_ONLY_MUTATION_SKIP_PASSES", False)
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {"README.md": "# docs\n"})
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert "CI: mutation not measured: no mutation adapter covers: README.md" in saved.infra_errors
+
+
+@pytest.mark.parametrize("files", [
+    {"deploy.sh": "#!/bin/sh\nrm -rf \"$X\"/\n"},
+    {"bin/forge-tool": "#!/usr/bin/env python3\nimport os\nos.system('x')\n"},
+    {"notes.txt": "#!/bin/sh\necho hi\n"},
+    {"Main.java": "class Main {}\n"},
+    {"Makefile": "all:\n\ttrue\n"},
+    {"Dockerfile": "FROM scratch\n"},
+    {".github/workflows/ci.yml": "on: push\n"},
+    {"README.md": "# docs\n", "deploy.sh": "#!/bin/sh\n"},
+])
+def test_ci_unmeasured_code_without_adapter_fails_with_accurate_reason(ci_project, monkeypatch, files):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, files)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert "CI: mutation not measured: no mutation adapter covers: " + ", ".join(sorted(files)) in saved.infra_errors
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+
+
+def test_ci_gate_yaml_only_diff_fails(ci_project, monkeypatch):
+    p = ci_project
+    machine = _machine(p, runner=mutation.run_mutation)
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path(".code-forge/gate.yaml")])
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert any(e.startswith("CI: mutation not measured: no mutation adapter covers") for e in saved.infra_errors)
+
+
+def test_local_unmeasured_shebang_file_stays_a_skip_with_note(ci_project, monkeypatch):
+    p = ci_project
+    (p.root / "deploy.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    machine = _local_machine(p, runner=mutation.run_mutation)
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("deploy.sh")])
+    machine._run_l2_phase()
+    assert machine._mutation_bound_failure is False
+    assert "L2: mutation not applicable (no mutation adapter covers): deploy.sh" in machine._state.infra_errors
+
+
+def test_ci_tests_only_diff_is_clean_end_to_end_without_launch(ci_project, monkeypatch):
+    """#132 P2-2: tests-only must not launch the detached run (its producer
+    reports 'nothing to mutate' as an error -> FAIL invalid bound next run)."""
+    p = ci_project
+    _discover_mutmut(p)
+    machine = _ci_with_diff(p, monkeypatch, {"tests/test_calc.py": "def test_x():\n    assert True\n"})
+    assert machine.run() is Verdict.PASS
+    saved = _saved(p, Verdict.PASS)
+    assert p.launches == []
+    assert "CI: detached mutation not launched: mutation not applicable to this diff" in saved.infra_errors
+    assert "L2: mutation not applicable (diff is tests-only): tests/test_calc.py" in saved.infra_errors
+    assert not (p.state / ".code-forge/mutation-result.json").exists()
+
+
+@pytest.mark.parametrize("trusted", [False, True])
+def test_ci_reviewed_tree_skip_globs_cannot_make_code_tests_only(ci_project, monkeypatch, trusted):
+    p = ci_project
+    gate = p.root / ".code-forge/gate.yaml"
+    data = json.loads(gate.read_text())
+    data["test"]["mutation_skip_globs"] = ["calc.py"]
+    gate.write_text(json.dumps(data), encoding="utf-8")
+    if trusted:
+        record_trust(gate, data)
+    machine = _machine(p, runner=mutation.run_mutation)
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("calc.py")])
+    findings = machine._run_l2_phase()
+    if [f.fingerprint for f in findings] != ["mutation-tests-only"]:
+        pytest.skip("skip globs not honoured by this runner path")
+    assert machine._mutation_bound_failure is True
+    assert ("CI: mutation not measured: configured skip globs or conftest.py leave nothing to mutate: calc.py"
+            in machine._state.infra_errors)
+
+
+def test_ci_conftest_only_diff_is_not_tests_only(ci_project, monkeypatch):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {"tests/conftest.py": "import pytest\n"})
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert ("CI: mutation not measured: configured skip globs or conftest.py leave nothing to mutate: tests/conftest.py"
+            in saved.infra_errors)
+    assert p.launches == []
+
+
+@pytest.mark.parametrize("signal", ["acquisition", "falsify_infra", "evidence_incomplete"])
+def test_ci_each_latch_signal_blocks_detached_launch(ci_project, monkeypatch, signal):
+    """#132 P3: every signal in the #131 guard is pinned, not just the bound failure."""
+    p = ci_project
+    _discover_mutmut(p)
+    machine = _machine(p)
+    original = machine._run_l2_phase
+
+    def latched():
+        out = original()
+        if signal == "acquisition":
+            machine._acquisition_markers.append(_skip(description="acq"))
+        elif signal == "falsify_infra":
+            machine._state.rounds_with_falsify_infra += 1
+        else:
+            machine._state.rounds_with_evidence_incomplete += 1
+        return out
+
+    monkeypatch.setattr(machine, "_run_l2_phase", latched)
+    machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert p.launches == []
+    assert "CI: detached mutation not launched: verdict is already FAIL" in saved.infra_errors
+
+
+def test_ci_injected_runner_flaky_baseline_fails(ci_project):
+    p = ci_project
+
+    def runner(diff_files, baseline_cmd, **_kwargs):
+        skip = _skip(fingerprint="mutation-flaky", description="run 1: baseline failed (returncode 1)")
+        return [skip], [skip.description]
+
+    machine = _machine(p, runner=runner)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert "CI: mutation not measured: baseline failed (returncode 1)" in saved.infra_errors
+
+
+def test_clean_mutation_skip_kind_rejects_empty_findings():
+    from code_forge.machine import _clean_mutation_skip_kind
+
+    assert _clean_mutation_skip_kind([], [], {"inventory": {}}, source_unchanged=True) is None
