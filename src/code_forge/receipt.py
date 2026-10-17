@@ -175,6 +175,7 @@ def write_receipts(
     reviewed_repositories: dict[str, str] | None = None,
     unavailable_rejected_passes: set[str] | None = None,
     raw_observations: list[dict] | None = None,
+    pending_raw_responses: list[dict] | None = None,
 ) -> list[Path]:
     """Write 3 receipt files (one per pass) for a round."""
     unavailable_passes: set[str] = set()
@@ -364,6 +365,15 @@ def write_receipts(
     # reads them as accepted code_excerpts; never repaired.
     # Diagnostics share artifact storage without supplying completion authority.
     artifact_payloads = [*(attempted_excerpts or []), *(raw_observations or [])]
+    # Only this writer's physical rejection publishes pending accepted text.
+    # Keep prior artifact ordinals and all existing authority lanes unchanged.
+    artifact_payloads.extend(
+        response for response in pending_raw_responses or []
+        if isinstance(response, dict)
+        and type(response.get("pass_name")) is str
+        and response["pass_name"] in excerpt_validation_errors
+        and type(response.get("raw_response")) is str
+    )
     if artifact_payloads:
         attempted_dir = receipts_dir / "attempted"
         attempted_dir.mkdir(parents=True, exist_ok=True)
