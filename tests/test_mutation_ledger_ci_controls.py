@@ -1689,3 +1689,75 @@ def test_baseline_timeout_reason_text(description, expected):
 
     findings = [] if description is None else [_skip(description=description)]
     assert _baseline_timeout_reason(findings) == expected
+
+
+def _local_machine(project, *, runner):
+    machine = _machine(project, runner=runner)
+    machine.mode = Mode.LOCAL
+    machine._state.mode = Mode.LOCAL
+    return machine
+
+
+def _injected_timeout_runner(calls):
+    def runner(diff_files, baseline_cmd, *, baseline_timeout, **_kwargs):
+        calls.append(baseline_timeout)
+        skip = _skip(description=f"run 1: baseline tests timed out after {baseline_timeout}s")
+        return [skip], [skip.description]
+    return runner
+
+
+def test_ci_injected_runner_baseline_timeout_fails_with_accurate_reason(ci_project):
+    """#124: the CI baseline-timeout policy is runner-independent."""
+    p = ci_project
+    calls = []
+    machine = _machine(p, runner=_injected_timeout_runner(calls))
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert calls, "injected runner must have been called"
+    reasons = [e for e in saved.infra_errors if e.startswith("CI: mutation not measured")]
+    assert reasons == [f"CI: mutation not measured: baseline tests timed out after {calls[0]}s"]
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    skips = [f for f in saved.findings if f.fingerprint == "mutation-baseline-timeout"]
+    assert skips and all(f.disposition is Disposition.DISMISSED for f in skips)
+
+
+def test_ci_injected_runner_other_skip_is_unchanged(ci_project):
+    """Control for #124: only the baseline timeout changes policy."""
+    p = ci_project
+
+    def runner(diff_files, baseline_cmd, **_kwargs):
+        return [_skip(fingerprint="mutation-tests-only", description="only tests changed")], []
+
+    machine = _machine(p, runner=runner)
+    machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert not any(e.startswith("CI: mutation not measured") for e in saved.infra_errors)
+    assert machine._mutation_bound_failure is False
+
+
+@pytest.mark.parametrize("native", [True, False])
+def test_local_baseline_timeout_stays_a_dismissed_skip(ci_project, native):
+    """#129: LOCAL keeps a clean baseline timeout as a DISMISSED skip; the CI
+    failure must not leak into LOCAL."""
+    p = ci_project
+    calls = []
+    if native:
+        p.baseline_hook = _baseline_timeout
+        runner = mutation.run_mutation
+    else:
+        runner = _injected_timeout_runner(calls)
+    machine = _local_machine(p, runner=runner)
+    verdict = machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert saved.mode is Mode.LOCAL
+    assert verdict is not Verdict.FAIL
+    skips = [f for f in saved.findings if f.fingerprint == "mutation-baseline-timeout"]
+    assert skips and all(f.disposition is Disposition.DISMISSED for f in skips)
+    if native:
+        assert "baseline" in p.stages and "run" not in p.stages
+    else:
+        assert calls
+    errors = saved.infra_errors
+    assert not any(e.startswith("CI: mutation not measured") for e in errors)
+    assert not any("invalid bound mutation measurement" in e for e in errors)
+    assert machine._mutation_bound_failure is False

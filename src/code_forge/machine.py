@@ -2112,6 +2112,13 @@ class StateMachine:
                     # DISMISSED skip.
                     self._mutation_bound_failure = True
                     self._state.infra_errors.append(_baseline_timeout_reason(l2_findings))
+            elif self.mode == Mode.CI and any(
+                f.id == "MUTATION_SKIPPED" and f.fingerprint == "mutation-baseline-timeout" for f in l2_findings
+            ):
+                # #124: the CI baseline-timeout policy is runner-independent; a
+                # custom/injected runner's timeout skip carries no evidence either.
+                self._mutation_bound_failure = True
+                self._state.infra_errors.append(_baseline_timeout_reason(l2_findings))
             self._mutation_measurement_eligible = native and decoded is not None
             if native and not self._mutation_measurement_eligible and any(is_mutation_survivor(f) for f in l2_findings):
                 if not source_before or not mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root()):
