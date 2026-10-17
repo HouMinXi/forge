@@ -395,7 +395,8 @@
         "timeout_s": {
           "type": "integer",
           "minimum": 0,
-          "description": "Per-request timeout in seconds. 0 uses the default timeout chain. A single review pass has been measured above 400s, so a small value here kills the run on the clock."
+          "maximum": 86400,
+          "description": "Per-request timeout in seconds (at most 86400). 0 uses the default timeout chain. A single review pass has been measured above 400s, so a small value here kills the run on the clock."
         },
         "params": {
           "type": "object",

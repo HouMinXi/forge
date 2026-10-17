@@ -73,3 +73,40 @@ def test_cli_timeout_reaches_subprocess_communicate(monkeypatch):
     monkeypatch.setattr(invoke, "_invoke_cli", fake_cli)
     invoke.llm_invoke("p", backend=_load(CLI, timeout_s=2400), expected_keys=frozenset({"ok"}))
     assert seen["timeout_s"] == 2400
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_timeout_s_max_boundary_accepted(kind):
+    from code_forge.backend import MAX_BACKEND_TIMEOUT_S
+
+    assert MAX_BACKEND_TIMEOUT_S == 86400
+    assert _load(KINDS[kind], timeout_s=86400).timeout_s == 86400
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("bad", [86401, 2147484, 10**12])
+def test_timeout_s_above_max_is_a_named_config_error(kind, bad):
+    # Large values overflow subprocess/select timeouts (OverflowError leaves the CLI child running).
+    with pytest.raises(CliError, match=r"backend 'b'.*timeout_s.*86400"):
+        _load(KINDS[kind], timeout_s=bad)
+
+
+def test_schema_declares_the_same_maximum():
+    import json
+    from importlib.resources import files
+
+    schema = json.loads(files("code_forge").joinpath("gate.schema.json").read_text(encoding="utf-8"))
+    found = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if isinstance(node.get("timeout_s"), dict) and "Per-request timeout" in node["timeout_s"].get("description", ""):
+                found.append(node["timeout_s"])
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(schema)
+    assert found and all(t.get("maximum") == 86400 for t in found)

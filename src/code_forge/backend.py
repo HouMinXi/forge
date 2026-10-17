@@ -457,16 +457,24 @@ def check_output_token_limit(limit: int, cap: int, name: str, fail: Callable) ->
         raise fail("backend %r: output token cap %s exceeds output_token_limit %s" % (name, cap, limit))
 
 
+# One day. Far above any measured review pass, and far below the point where
+# subprocess/select timeouts overflow (OverflowError above ~2147483s).
+MAX_BACKEND_TIMEOUT_S = 86400
+
+
 def _parse_timeout_s(entry: dict, name: str) -> int:
     """Validate a backend's timeout_s once, for every backend type (#106).
 
-    Exact int >= 0 (0 = not configured; null was already stripped to absent).
+    Exact int in 0..MAX_BACKEND_TIMEOUT_S (0 = not configured; null was already stripped to absent).
     bool, str, float (even 30.0) and containers are refused with a named
     error, matching the schema's integer type.
     """
     value = entry.get("timeout_s", 0)
-    if type(value) is not int or value < 0:
-        raise CliError("backend %r: timeout_s must be a nonnegative integer (seconds), got %r" % (name, value))
+    if type(value) is not int or not 0 <= value <= MAX_BACKEND_TIMEOUT_S:
+        raise CliError(
+            "backend %r: timeout_s must be an integer from 0 to %d (seconds), got %r"
+            % (name, MAX_BACKEND_TIMEOUT_S, value)
+        )
     return value
 
 

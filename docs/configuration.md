@@ -178,8 +178,8 @@ cap above. Positive `timeout_s` values configured on the backend take priority
 over this environment variable and are not limited by the implicit backend-type
 cap. This applies to `type: cli` backends too: before #106 a cli backend's
 `timeout_s` was silently dropped, so cli calls stayed capped at 300s.
-`timeout_s` must be a nonnegative integer on every backend type; `0` or null
-means not configured. Behavior change: a non-integer value (for example `30.0`,
+`timeout_s` must be an integer from 0 to 86400 (one day) on every backend
+type; `0` or null means not configured. Behavior change: a non-integer value (for example `30.0`,
 `"600"` or `true`), which api backends used to accept silently, is now a
 config error naming the backend.
 This setting bounds each model invocation, not the total MCP CLI run.
