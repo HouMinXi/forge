@@ -30,6 +30,7 @@ from copy import deepcopy
 from dataclasses import replace
 import hashlib
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -1546,22 +1547,22 @@ def _baseline_timeout():
     raise subprocess.TimeoutExpired(BASELINE, 900)
 
 
-def test_ci_baseline_timeout_skip_is_not_an_invalid_bound_measurement(ci_project):
-    """#120: a correctly classified baseline timeout has no mutant results.
-    It must stay a DISMISSED skip and must not be recorded as an invalid bound
-    measurement or latch _mutation_bound_failure (which forces CI FAIL)."""
+def test_ci_baseline_timeout_fails_with_accurate_reason(ci_project):
+    """#120 + user policy decision on #122: in CI a baseline timeout means no
+    mutation evidence, so CI FAILs -- with a reason naming the baseline
+    timeout, never 'invalid bound mutation measurement'."""
     p = ci_project
     p.baseline_hook = _baseline_timeout
     machine = _machine(p, runner=mutation.run_mutation)
-    verdict = machine.run()
-    saved = load_state(p.state / ".code-forge/state.json")
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
     skips = [f for f in saved.findings if f.fingerprint == "mutation-baseline-timeout"]
     assert skips and all(f.disposition is Disposition.DISMISSED for f in skips)
+    reasons = [e for e in saved.infra_errors if e.startswith("CI: mutation not measured: baseline tests timed out")]
+    seconds = re.search(r"timed out after (\d+)s", skips[0].description).group(1)
+    assert reasons == [f"CI: mutation not measured: baseline tests timed out after {seconds}s"]
     assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
-    assert machine._mutation_bound_failure is False
     assert machine._mutation_measurement_eligible is False
-    # Pre-#120 this latched _mutation_bound_failure and CI returned FAIL.
-    assert verdict is Verdict.PASS and saved.verdict is Verdict.PASS
     assert "run" not in p.stages
 
 

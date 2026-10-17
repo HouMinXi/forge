@@ -2091,6 +2091,14 @@ class StateMachine:
                 ):
                     self._mutation_bound_failure = True
                     self._state.infra_errors.append("L2: invalid bound mutation measurement")
+                elif self.mode == Mode.CI:
+                    # User policy (#120/#122): CI must not pass without mutation
+                    # evidence. Fail, naming the real cause. LOCAL keeps the
+                    # DISMISSED skip.
+                    self._mutation_bound_failure = True
+                    self._state.infra_errors.append(
+                        "CI: mutation not measured: baseline tests timed out after %ss" % baseline_timeout
+                    )
             self._mutation_measurement_eligible = native and decoded is not None
             if native and not self._mutation_measurement_eligible and any(is_mutation_survivor(f) for f in l2_findings):
                 if not source_before or not mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root()):
