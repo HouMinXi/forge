@@ -1841,3 +1841,68 @@ def test_pidfd_other_oserror_still_raises(monkeypatch):
     monkeypatch.setattr(os, "pidfd_open", pidfd_open)
     with pytest.raises(PermissionError):
         tree.discover()
+
+
+class _SlowOwner:
+    """Fake helper whose report arrives after the outer communicate deadline (#116)."""
+
+    def __init__(self, report):
+        self.report = report
+        self.pid = 4242
+        self.timeouts = []
+        self.signals = []
+
+    def communicate(self, data=None, timeout=None):
+        self.timeouts.append(timeout)
+        if len(self.timeouts) == 1:
+            raise subprocess.TimeoutExpired("owner", timeout)
+        return json.dumps(self.report).encode(), b""
+
+    def send_signal(self, sig):
+        self.signals.append(sig)
+
+
+def _slow_owner(monkeypatch, report):
+    from code_forge import _mutation_imports as imports
+
+    owner = _SlowOwner(report)
+    monkeypatch.setattr(imports, "prepare_owner", lambda *_: {"control": True})
+    monkeypatch.setattr(process.subprocess, "Popen", lambda *a, **k: owner)
+    return owner
+
+
+@pytest.mark.parametrize("cancelled", [False, True])  # True: our drain SIGTERM reached the owner
+def test_late_owner_timeout_report_stays_a_baseline_timeout(monkeypatch, cancelled):
+    owner = _slow_owner(monkeypatch, {"cleanup_complete": True, "timed_out": True, "cancelled": cancelled,
+                                      "owned": [], "stdout": "", "stderr": ""})
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        process.run_owned_command(["pytest"], timeout=900)
+    assert not isinstance(caught.value, process.MutationProcessError)
+    assert caught.value.timeout == 900
+    assert caught.value.ownership["timed_out"] is True
+    assert owner.signals == [signal.SIGTERM]
+
+
+def test_late_owner_timeout_with_incomplete_cleanup_is_not_masked(monkeypatch):
+    _slow_owner(monkeypatch, {"cleanup_complete": False, "timed_out": True, "cancelled": False,
+                              "owned": [{"pid": 9, "start_ticks": 1, "remaining": True}],
+                              "stdout": "", "stderr": ""})
+    with pytest.raises(process.MutationProcessError, match="did not finish cleanup"):
+        process.run_owned_command(["pytest"], timeout=900)
+
+
+def test_late_owner_without_timeout_report_is_still_a_communication_failure(monkeypatch):
+    _slow_owner(monkeypatch, {"cleanup_complete": True, "timed_out": False, "cancelled": True,
+                              "owned": [], "returncode": 0, "stdout": "", "stderr": ""})
+    with pytest.raises(process.MutationProcessError, match="communication failed"):
+        process.run_owned_command(["pytest"], timeout=900)
+
+
+def test_outer_deadline_covers_owner_cleanup_and_report(monkeypatch):
+    owner = _slow_owner(monkeypatch, {"cleanup_complete": True, "timed_out": True, "cancelled": False,
+                                      "owned": [], "stdout": "", "stderr": ""})
+    with pytest.raises(subprocess.TimeoutExpired):
+        process.run_owned_command(["pytest"], timeout=900)
+    # Both cleanup() calls share one _CLEANUP_SECONDS window, but each poll can
+    # run long on a large tree; the outer wait must leave real slack (#116).
+    assert owner.timeouts[0] >= 900 + 2 * process._CLEANUP_SECONDS + 30
