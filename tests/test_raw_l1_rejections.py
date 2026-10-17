@@ -1290,9 +1290,10 @@ def test_diagnostic_writer_parameter_compatibility(tmp_path, option):
     import inspect
     from code_forge.receipt import write_receipts
 
-    assert list(inspect.signature(write_receipts).parameters)[-2:] == [
+    assert list(inspect.signature(write_receipts).parameters)[-3:] == [
         "unavailable_rejected_passes",
         "raw_observations",
+        "pending_raw_responses",
     ], "writer must expose a separate additive diagnostic channel"
     base = [tmp_path / "receipts", 0, [], "offline", [], tmp_path]
     old_optional = [None, None, None, {"tier": "declared"}, None, None, None, None]

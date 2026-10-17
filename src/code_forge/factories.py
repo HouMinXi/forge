@@ -346,6 +346,7 @@ class _L1Call:
         self._body = body
         self.attempted_excerpts: list[dict] = []
         self.raw_observations: list[dict] = []
+        self.pending_raw_responses: list[dict] = []
         self.pass_usage: list[dict] | None = None
         self.unavailable_rejected_passes: set[str] = set()
         self.acquisition_failures: list[StateFinding] = []
@@ -382,6 +383,7 @@ class _L1Call:
         self.attempted_excerpts = []
         self.pass_usage = None
         self.raw_observations = []
+        self.pending_raw_responses = []
         self.acquisition_failures = []
         self.unavailable_rejected_passes = set()
         result = self._body(self)
@@ -826,6 +828,12 @@ def build_l1_provider(
                     )
                     continue
 
+            # Retain accepted text until the writer checks physical source.
+            # This pending lane does not carry rejection/completion authority.
+            raw_response = getattr(result, "raw_response", None)
+            if type(raw_response) is str:
+                call.pending_raw_responses.append({"raw_response": raw_response, "pass_name": pass_name})
+
             all_candidates.extend(
                 _dedup_by_fingerprint(
                     _json_to_state_findings(
@@ -910,6 +918,9 @@ def build_grouped_l1_provider(
             )
             call.raw_observations.extend(
                 GroupedReviewAttempt(observation, scope) for observation in provider.raw_observations
+            )
+            call.pending_raw_responses.extend(
+                GroupedReviewAttempt(response, scope) for response in provider.pending_raw_responses
             )
             call.unavailable_rejected_passes.update(provider.unavailable_rejected_passes)
             total_input += usage.input_tokens

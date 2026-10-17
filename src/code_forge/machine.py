@@ -431,6 +431,7 @@ class StateMachine:
         self._excerpts_last_round: list[dict] = []
         self._attempted_last_round: list[dict] = []
         self._raw_observations_last_round: list[dict] = []
+        self._pending_raw_responses_last_round: list[dict] = []
         self._unavailable_rejected_passes_last_round: set[str] = set()
         self._host_attempt_round: int | None = None
         self._phase_status = {name: "not_run" for name in ROUND_PHASES}
@@ -2666,6 +2667,7 @@ class StateMachine:
                 exec_evidence=exec_evidence,
                 attempted_excerpts=self._attempted_last_round,
                 raw_observations=self._raw_observations_last_round,
+                pending_raw_responses=self._pending_raw_responses_last_round,
                 reviewed_repositories=self.reviewed_repositories,
                 unavailable_rejected_passes=self._unavailable_rejected_passes_last_round,
             )
@@ -2721,10 +2723,14 @@ class StateMachine:
         # genuine StateFindings so they block and reset cycle counters.
         rulepack_findings = self._observe_phase("rulepack", self._run_rulepack_blocking_phase)
         self._raw_observations_last_round = []
+        self._pending_raw_responses_last_round = []
         self._unavailable_rejected_passes_last_round = set()
         l1_findings, l1_excerpts = self._run_l1_phase()
         self._raw_observations_last_round = list(
             getattr(self.l1_provider, "raw_observations", None) or []
+        )
+        self._pending_raw_responses_last_round = list(
+            getattr(self.l1_provider, "pending_raw_responses", None) or []
         )
         unavailable_passes = getattr(self.l1_provider, "unavailable_rejected_passes", set())
         if type(unavailable_passes) is not set:

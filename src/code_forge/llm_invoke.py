@@ -60,6 +60,8 @@ class LLMResult:
     usage: Usage = Usage(known_fields=frozenset())
     duration_s: float = 0.0
     is_truncated: bool = False
+    # Exact acquired text, unavailable for synthesized repair/continuation results.
+    raw_response: str | None = dataclasses.field(default=None, repr=False, compare=False)
 
 
 class LLMInvokeError(Exception):
@@ -2361,7 +2363,7 @@ def _invoke_api(
 
     if initial_syntax_usage is not None:
         usage = _sum_usage(initial_syntax_usage, usage)
-    return LLMResult(content=parsed_content, usage=usage, duration_s=duration)
+    return LLMResult(content=parsed_content, usage=usage, duration_s=duration, raw_response=raw_content)
 
 
 def _parse_response_body(raw: bytes, backend_name: str) -> dict:
