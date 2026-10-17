@@ -1577,22 +1577,30 @@ def test_ci_undecodable_native_measurement_still_fails_closed(ci_project):
     assert any("invalid bound mutation measurement" in e for e in saved.infra_errors)
 
 
-def _skip(fingerprint="mutation-baseline-timeout", ident="MUTATION_SKIPPED"):
+def _skip(fingerprint="mutation-baseline-timeout", ident="MUTATION_SKIPPED",
+          disposition=Disposition.DISMISSED, description="run 1: baseline tests timed out after 900s"):
     return StateFinding(id=ident, fingerprint=fingerprint, source="MUTANT",
-                        disposition=Disposition.DISMISSED, file="", line_range=[],
-                        description="run 1: baseline tests timed out after 900s")
+                        disposition=disposition, file="", line_range=[], description=description)
+
+
+_OTHER = "diff also has files for other adapters"
+_TWO = "run 2: baseline tests timed out after 900s"
 
 
 @pytest.mark.parametrize("case", [
     "survivor", "other-skip", "extra-infra", "completed", "cleanup_error",
-    "process_failure", "cancellation_type", "publication_error", "cancelled", "cleanup-incomplete", "empty",
+    "process_failure", "cancellation_type", "publication_error", "cancelled",
+    "cleanup-incomplete", "cleanup-none", "empty", "source-changed",
+    "inventory", "inventory-not-dict", "results_sha256", "metadata_sha256",
+    "confirmed", "uncertain", "wrong-id", "infra-duplicated", "infra-reordered",
+    "two-skips-one-infra", "other-adapter-only", "other-adapter-with-infra",
 ])
 def test_baseline_timeout_exemption_is_narrow(case):
     from code_forge.machine import _is_clean_baseline_timeout_skip
 
-    findings, evidence = [_skip()], {}
+    findings, evidence, unchanged = [_skip()], {"cleanup_complete": True, "inventory": {}}, True
     infra = [findings[0].description]
-    assert _is_clean_baseline_timeout_skip(findings, infra, evidence) is True
+    assert _is_clean_baseline_timeout_skip(findings, infra, evidence, source_unchanged=True) is True
     if case == "survivor":
         findings = findings + [_skip(fingerprint="mutant:x", ident="mutant-x")]
     elif case == "other-skip":
@@ -1605,8 +1613,45 @@ def test_baseline_timeout_exemption_is_narrow(case):
         evidence["cancelled"] = True
     elif case == "cleanup-incomplete":
         evidence["cleanup_complete"] = False
+    elif case == "cleanup-none":
+        evidence["cleanup_complete"] = None
     elif case == "empty":
         findings, infra = [], []
+    elif case == "source-changed":
+        unchanged = False
+    elif case == "inventory-not-dict":
+        evidence["inventory"] = ["x"]
+    elif case in ("inventory", "results_sha256", "metadata_sha256"):
+        evidence[case] = {"x": "killed"} if case == "inventory" else "abc"
+    elif case == "confirmed":
+        findings = [_skip(disposition=Disposition.CONFIRMED)]
+    elif case == "uncertain":
+        findings = [_skip(disposition=Disposition.UNCERTAIN)]
+    elif case == "wrong-id":
+        findings = [_skip(ident="MUTATION_ERROR")]
+    elif case == "infra-duplicated":
+        infra = infra * 2
+    elif case == "infra-reordered":
+        findings = [_skip(), _skip(description=_TWO)]
+        infra = [_TWO, findings[0].description]
+    elif case == "two-skips-one-infra":
+        findings = [_skip(), _skip(description=_TWO)]
+    elif case == "other-adapter-only":
+        findings, infra = [_skip(fingerprint="mutation-other-adapter", description=_OTHER)], []
+    elif case == "other-adapter-with-infra":
+        findings = findings + [_skip(fingerprint="mutation-other-adapter", description=_OTHER)]
+        infra = infra + [_OTHER]
     else:
         evidence[case] = "x"
-    assert _is_clean_baseline_timeout_skip(findings, infra, evidence) is False
+    assert _is_clean_baseline_timeout_skip(findings, infra, evidence, source_unchanged=unchanged) is False
+
+
+def test_baseline_timeout_exemption_allows_mixed_language_note():
+    """#122 review: a mixed-language diff adds a DISMISSED mutation-other-adapter
+    note (no infra line); the clean baseline timeout is still a skip."""
+    from code_forge.machine import _is_clean_baseline_timeout_skip
+
+    findings = [_skip(), _skip(fingerprint="mutation-other-adapter", description=_OTHER)]
+    assert _is_clean_baseline_timeout_skip(
+        findings, [findings[0].description], {"cleanup_complete": True}, source_unchanged=True,
+    ) is True
