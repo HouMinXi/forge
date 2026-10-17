@@ -25,6 +25,12 @@ def test_repair_keeps_a_later_numeric_field():
     assert parsed == {"note": 'split("X", 1) tail', "count": 42}
 
 
+def test_escaped_backslash_does_not_hide_a_raw_quote():
+    raw = '{"note": "path\\\\"C:\\\\""}'
+    parsed = _loads_model_json(raw)
+    assert parsed == {"note": 'path\\"C:\\"'}
+
+
 def test_a_quote_that_ends_the_string_stays():
     raw = '{"description": "plain text", "count": 2}'
     assert _loads_model_json(raw) == {"description": "plain text", "count": 2}

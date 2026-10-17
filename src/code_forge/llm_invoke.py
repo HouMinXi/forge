@@ -1049,10 +1049,24 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
     for quote_at in range(min(pos, len(text)) - 1, -1, -1):
         if text[quote_at] != '"':
             continue
-        if text[quote_at - 1:quote_at] == "\\":
+        if _quote_is_escaped(text, quote_at):
             continue
         return quote_at
     return None
+
+
+def _quote_is_escaped(text: str, quote_at: int) -> bool:
+    """A quote is escaped only when an odd run of backslashes precedes it.
+
+    Two backslashes are an escaped backslash, so the quote after them is
+    raw. One backslash escapes the quote.
+    """
+    count = 0
+    index = quote_at - 1
+    while index >= 0 and text[index] == "\\":
+        count += 1
+        index -= 1
+    return count % 2 == 1
 
 
 def _escape_at(text: str, position: int) -> str:
