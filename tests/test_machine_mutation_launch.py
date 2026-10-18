@@ -65,12 +65,15 @@ class TestAsyncMutationLaunch:
         monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/" + name)
         monkeypatch.setattr(
             "code_forge.gate_check.load_gate_config",
-            lambda p: {"test": {"command": ["pytest", "-q"]}},
+            lambda p, **_k: {"test": {"command": ["pytest", "-q"]}},
         )
         monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
 
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir(exist_ok=True)
+        # load_gate_config is patched; the safe read still needs a regular file.
+        (tmp_path / ".code-forge").mkdir(exist_ok=True)
+        (tmp_path / ".code-forge" / "gate.yaml").touch()
         sm = _make_ci_sm(tmp_path)
         sm._run_ci()
 
@@ -171,10 +174,13 @@ class TestAsyncMutationLaunch:
         monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/" + name)
         monkeypatch.setattr(
             "code_forge.gate_check.load_gate_config",
-            lambda p: {"test": {"command": ["pytest", "-q"]}},
+            lambda p, **_k: {"test": {"command": ["pytest", "-q"]}},
         )
         monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
 
+        # load_gate_config is patched; the safe read still needs a regular file.
+        (tmp_path / ".code-forge").mkdir(exist_ok=True)
+        (tmp_path / ".code-forge" / "gate.yaml").touch()
         sm = _make_ci_sm(tmp_path)
         verdict = sm._run_ci()
 
@@ -282,10 +288,13 @@ class TestAsyncMutationLaunch:
         monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/" + name)
         monkeypatch.setattr(
             "code_forge.gate_check.load_gate_config",
-            lambda p: {"test": {"command": ["pytest", "-q"]}},
+            lambda p, **_k: {"test": {"command": ["pytest", "-q"]}},
         )
         monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
 
+        # load_gate_config is patched; the safe read still needs a regular file.
+        (tmp_path / ".code-forge").mkdir(exist_ok=True)
+        (tmp_path / ".code-forge" / "gate.yaml").touch()
         sm = _make_ci_sm(tmp_path)
         sm._run_ci()
 
@@ -313,10 +322,13 @@ class TestAsyncMutationLaunch:
         monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/" + name)
         monkeypatch.setattr(
             "code_forge.gate_check.load_gate_config",
-            lambda p: {"test": {"command": ["pytest", "-q"]}},
+            lambda p, **_k: {"test": {"command": ["pytest", "-q"]}},
         )
         monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
 
+        # load_gate_config is patched; the safe read still needs a regular file.
+        (tmp_path / ".code-forge").mkdir(exist_ok=True)
+        (tmp_path / ".code-forge" / "gate.yaml").touch()
         sm = _make_ci_sm(tmp_path)
         sm._run_ci()
 
@@ -364,7 +376,7 @@ class TestAlsoCopyReachesTheMirror:
         monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
         monkeypatch.setattr(
             "code_forge.gate_check.load_gate_config",
-            lambda p: {"test": {"command": ["pytest", "-q"], "also_copy": ["scripts/"]}},
+            lambda p, **_k: {"test": {"command": ["pytest", "-q"], "also_copy": ["scripts/"]}},
         )
 
         def fake_launch(
@@ -385,6 +397,9 @@ class TestAlsoCopyReachesTheMirror:
 
         monkeypatch.setattr("code_forge.machine.launch_detached_mutation", fake_launch)
 
+        # load_gate_config is patched; the safe read still needs a regular file.
+        (tmp_path / ".code-forge").mkdir(exist_ok=True)
+        (tmp_path / ".code-forge" / "gate.yaml").touch()
         sm = _make_ci_sm(tmp_path)
         sm._run_ci()
 

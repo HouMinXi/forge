@@ -4,6 +4,7 @@ Every machine here uses the real CLI wiring: ``StateMachine(cwd=repo)`` with
 no ``source_root``, so the config root *is* the reviewed tree.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -411,3 +412,78 @@ def test_invalid_baseline_never_falls_back_to_a_valid_working_copy(tmp_path):
     _write_gate(repo, PR_CMD)  # valid, differing working copy
     with pytest.raises(ValueError):
         load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=bad)
+
+
+# --- PR #142 re-review: the outside config root must not lead back into the tree ---
+
+def _evil_outside(tmp_path, repo, kind):
+    outside = tmp_path / "evil-config"
+    outside.mkdir()
+    if kind == "dir":
+        (outside / ".code-forge").symlink_to(repo / ".code-forge", target_is_directory=True)
+    else:
+        (outside / ".code-forge").mkdir()
+        (outside / ".code-forge" / "gate.yaml").symlink_to(repo / GATE)
+    return outside
+
+
+@pytest.mark.parametrize("kind", ["dir", "file"])
+def test_ci_outside_root_symlinked_into_the_tree_is_refused(tmp_path, kind):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)  # in-tree gate holds PR_CMD
+    machine = _machine(repo, base, mode=Mode.CI)
+    machine.test_config_root = _evil_outside(tmp_path, repo, kind)
+    assert _l2_calls(machine) == []
+    assert any("is a symlink; an outside test config root must hold a regular" in e
+               for e in machine._state.infra_errors), machine._state.infra_errors
+
+
+def test_outside_root_resolving_into_the_tree_is_refused(tmp_path):
+    """Pins the outside-root realpath check behind the islink checks: a
+    config root path that is itself a symlink to a directory in the tree."""
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    _write_gate(repo / "cfg", PR_CMD)
+    link = tmp_path / "linked-config"
+    link.symlink_to(repo / "cfg", target_is_directory=True)
+    with pytest.raises(UntrustedGateConfigError, match="resolves into the reviewed checkout"):
+        load_trusted_gate_config(config_root=link, source_root=repo, base_sha=base, allow_untracked=False)
+
+
+def test_outside_read_does_not_follow_a_symlink_swapped_in_after_the_checks(tmp_path, monkeypatch):
+    """O_NOFOLLOW closes the check-then-open race: even if islink/realpath
+    are fooled, the open itself refuses the symlink."""
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    outside = _evil_outside(tmp_path, repo, "file")
+    monkeypatch.setattr("code_forge.gate_check.os.path.islink", lambda _p: False)
+    monkeypatch.setattr("code_forge.gate_check.os.path.realpath", lambda p, *_a, **_k: str(tmp_path / "elsewhere" / Path(p).name))
+    with pytest.raises(UntrustedGateConfigError, match="symlink or not a regular path"):
+        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+
+
+def test_in_tree_realpath_check_catches_a_link_the_islink_check_missed(tmp_path, monkeypatch):
+    """Pins the in-tree realpath check (the surviving re-review mutant)."""
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    (repo / GATE).unlink()
+    _write_gate(repo / "cfg", PR_CMD)
+    (repo / GATE).symlink_to(repo / "cfg" / ".code-forge" / "gate.yaml")
+    monkeypatch.setattr("code_forge.gate_check.os.path.islink", lambda _p: False)
+    with pytest.raises(UntrustedGateConfigError, match="outside its own path in the checkout"):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
+
+
+def test_in_tree_untracked_read_does_not_follow_a_late_symlink(tmp_path, monkeypatch):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    (repo / GATE).unlink()
+    _write_gate(repo / "cfg", PR_CMD)
+    (repo / GATE).symlink_to(repo / "cfg" / ".code-forge" / "gate.yaml")
+    monkeypatch.setattr("code_forge.gate_check.os.path.islink", lambda _p: False)
+    monkeypatch.setattr("code_forge.gate_check.os.path.realpath", lambda p, *_a, **_k: os.fspath(p))
+    with pytest.raises(UntrustedGateConfigError, match="symlink or not a regular path"):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
+
+
+def test_outside_gate_that_is_not_a_regular_file_is_refused(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    outside = tmp_path / "odd-config"
+    (outside / ".code-forge" / "gate.yaml").mkdir(parents=True)
+    with pytest.raises(UntrustedGateConfigError, match="is not a regular file"):
+        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base)

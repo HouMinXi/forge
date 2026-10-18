@@ -278,6 +278,68 @@ def _refuse_linked_gate(source_root, base_sha: str | None) -> bool:
     return index_entries.get(".code-forge/gate.yaml", "").startswith("100")
 
 
+def _read_gate_nofollow(root) -> str:
+    """Read ``<root>/.code-forge/gate.yaml`` without following a symlink at
+    either component: ``.code-forge`` is opened dir-relative with O_NOFOLLOW
+    and gate.yaml likewise, then fstat'd as a regular file. That closes the
+    check-then-open race of an islink/realpath test followed by open()."""
+    import errno
+    import stat
+
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    fds = []
+    try:
+        try:
+            fds.append(os.open(str(root), os.O_RDONLY | directory))
+            fds.append(os.open(".code-forge", os.O_RDONLY | directory | nofollow, dir_fd=fds[-1]))
+            fds.append(os.open("gate.yaml", os.O_RDONLY | nofollow, dir_fd=fds[-1]))
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, errno.ENOTDIR, errno.EMLINK):
+                raise UntrustedGateConfigError(
+                    f"{root}/.code-forge/gate.yaml: .code-forge or gate.yaml is a symlink or not a "
+                    "regular path; review-time test config is only read from a regular file"
+                ) from exc
+            raise
+        info = os.fstat(fds[-1])
+        if not stat.S_ISREG(info.st_mode):
+            raise UntrustedGateConfigError(f"{root}/.code-forge/gate.yaml is not a regular file")
+        with os.fdopen(fds.pop(), "r", encoding="utf-8") as handle:
+            return handle.read()
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+def _load_gate_nofollow(root) -> dict:
+    import io
+
+    text = _read_gate_nofollow(root)
+    return load_gate_config(
+        Path(root) / ".code-forge" / "gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
+    )
+
+
+def _load_outside_gate(config_root, source_root) -> dict:
+    """An explicit config root outside the checkout: refuse a symlinked
+    .code-forge/gate.yaml or one whose real path lands inside the checkout,
+    then read it with O_NOFOLLOW."""
+    root = Path(config_root)
+    for rel in (".code-forge", ".code-forge/gate.yaml"):
+        if os.path.islink(root / rel):
+            raise UntrustedGateConfigError(
+                f"{root / rel} is a symlink; an outside test config root must hold a regular "
+                ".code-forge/gate.yaml"
+            )
+    real = Path(os.path.realpath(root / ".code-forge" / "gate.yaml"))
+    checkout = Path(os.path.realpath(source_root))
+    if real == checkout or checkout in real.parents:
+        raise UntrustedGateConfigError(
+            f"test config root {root} resolves into the reviewed checkout ({real})"
+        )
+    return _load_gate_nofollow(root)
+
+
 def load_trusted_gate_config(
     *, config_root, source_root, base_sha: str | None, allow_untracked: bool = True,
 ) -> dict:
@@ -303,7 +365,7 @@ def load_trusted_gate_config(
     import io
 
     if config_root_is_outside_review(config_root, source_root):
-        return load_gate_config(Path(config_root) / ".code-forge" / "gate.yaml")
+        return _load_outside_gate(config_root, source_root)
     working = Path(source_root) / ".code-forge" / "gate.yaml"
     in_git = any((d / ".git").exists() for d in (Path(source_root).resolve(), *Path(source_root).resolve().parents))
     if not in_git:
@@ -329,7 +391,7 @@ def load_trusted_gate_config(
     # LOCAL: a gate.yaml git does not track (gitignored or never added) is
     # the user's own setup, not part of the reviewed diff (#143 tracks the
     # WORKING-tree agent risk).
-    return load_gate_config(working)
+    return _load_gate_nofollow(source_root)
 
 
 _CI_UNTRACKED = (

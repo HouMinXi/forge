@@ -198,6 +198,7 @@ def test_invalid_deadline_never_reaches_runner(tmp_path, configured):
     data = yaml.safe_load(gate.read_text())
     data["test"]["timeout_seconds"] = configured
     gate.write_text(yaml.safe_dump(data))
+    outside_config_root(tmp_path)  # refresh the CI copy
     calls = []
 
     def runner(*args, **kwargs):
