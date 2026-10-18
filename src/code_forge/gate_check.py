@@ -227,6 +227,18 @@ class UntrackedGateRefused(UntrustedGateConfigError):
     measure with, so CI FAILs rather than skipping mutation."""
 
 
+class GateNotFound(FileNotFoundError):
+    """No gate.yaml anywhere CI could trust: none in the checkout, none from
+    an explicit outside config root. CI FAILs on it (mutation unmeasured);
+    LOCAL keeps treating it as not configured."""
+
+
+GATE_NOT_FOUND_NOT_MEASURED = (
+    "mutation not measured -- no gate.yaml found; add .code-forge/gate.yaml "
+    "or use --test-config-root"
+)
+
+
 UNTRACKED_GATE_NOT_MEASURED = (
     "mutation not measured -- untracked gate.yaml in checkout is not trusted; "
     "commit it or use --test-config-root"
@@ -468,6 +480,10 @@ def load_trusted_gate_config(
             raise
         except UntrustedGateConfigError as exc:
             raise OutsideConfigRootRefused(str(exc)) from exc
+        except GateNotFound:
+            raise
+        except FileNotFoundError as exc:
+            raise GateNotFound(f"no .code-forge/gate.yaml in the test config root {config_root}") from exc
     working = Path(source_root) / ".code-forge" / "gate.yaml"
     in_git = any((d / ".git").exists() for d in (Path(source_root).resolve(), *Path(source_root).resolve().parents))
     if not in_git:
@@ -500,7 +516,7 @@ def _refuse_untracked_gate(working: Path) -> None:
     """CI (#160): an untracked in-tree gate.yaml is refused; with no gate.yaml
     at all the caller's usual not-found handling applies."""
     if not os.path.lexists(working):
-        raise FileNotFoundError(f"no .code-forge/gate.yaml in the checkout ({working})")
+        raise GateNotFound(f"no .code-forge/gate.yaml in the checkout ({working})")
     raise UntrackedGateRefused(_CI_UNTRACKED)
 
 
