@@ -246,20 +246,21 @@ def test_review_forwards_skip_globs_from_gate_config():
         and node.func.id == "launch_detached_mutation"
     )
     forwarded = {keyword.arg: keyword.value for keyword in launch.keywords}
-    for key in ("mutation_skip_globs", "mutation_include_globs"):
-        assert any(
+    # #134/#139: the globs come from the trusted source (baseline revision or
+    # an outside config), never straight from the reviewed tree's test_config.
+    trusted_targets = set()
+    for node in ast.walk(ci):
+        if (
             isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == key for target in node.targets)
             and isinstance(node.value, ast.Call)
             and isinstance(node.value.func, ast.Attribute)
-            and isinstance(node.value.func.value, ast.Name)
-            and node.value.func.value.id == "test_config"
-            and node.value.func.attr == "get"
-            and len(node.value.args) == 1
-            and isinstance(node.value.args[0], ast.Constant)
-            and node.value.args[0].value == key
-            for node in ast.walk(ci)
-        ), f"machine.py never reads {key} out of gate.yaml"
+            and node.value.func.attr == "_trusted_mutation_globs"
+        ):
+            for target in node.targets:
+                if isinstance(target, ast.Tuple):
+                    trusted_targets.update(elt.id for elt in target.elts if isinstance(elt, ast.Name))
+    for key in ("mutation_skip_globs", "mutation_include_globs"):
+        assert key in trusted_targets, f"machine.py never resolves {key} from trusted config"
         assert isinstance(forwarded.get(key), ast.Name) and forwarded[key].id == key, (
             f"{key} is read but not passed to launch_detached_mutation"
         )

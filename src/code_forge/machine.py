@@ -816,6 +816,7 @@ class StateMachine:
             target_kind=self.resolved_review.target_kind, git_diff=self.resolved_review.git_diff,
             source_files=self._source_files(), source_root=self._source_root(), config_root=self.cwd,
             runner=self.l2_runner, ci_detached=self.mode == Mode.CI,
+            base_sha=self.resolved_review.base_sha,
         )
         self._acquisition_receipts = ()
         self._acquisition_authority = None
@@ -1278,8 +1279,7 @@ class StateMachine:
                 mutation_max_children = test_config.get("mutation_max_children")
                 mem_mb = test_config.get("mutation_memory_limit_mb")
                 mutation_memory_limit = int(mem_mb) * 1024**2 if mem_mb is not None else None
-                mutation_skip_globs = test_config.get("mutation_skip_globs")
-                mutation_include_globs = test_config.get("mutation_include_globs")
+                mutation_skip_globs, mutation_include_globs = self._trusted_mutation_globs(test_config)
                 mutation_timeout = test_config.get("mutation_timeout_seconds")
             except FileNotFoundError as exc:
                 baseline_cmd = None
@@ -2318,6 +2318,15 @@ class StateMachine:
                 % (self._state.rounds_with_failed_pass, failed)
             )
 
+    def _trusted_mutation_globs(self, test_config: dict):
+        """#134: globs from an explicit outside config, else the baseline revision."""
+        from .mutation import trusted_mutation_globs
+
+        return trusted_mutation_globs(
+            config_root=self.cwd, source_root=self._source_root(),
+            base_sha=self.resolved_review.base_sha, config_test=test_config,
+        )
+
     def _preflight_mutation_workspace(self) -> None:
         """#138: refuse before round 1 when the native mutation workspace
         holds an orphan container, so no LLM passes are spent on a run whose
@@ -2392,9 +2401,8 @@ class StateMachine:
                 max_children = config["test"].get("mutation_max_children")
                 memory_mb = config["test"].get("mutation_memory_limit_mb")
                 memory_limit_bytes = memory_mb * 1024**2 if memory_mb is not None else None
-                # #134: trusted (config-root) globs only, never the reviewed tree's.
-                skip_globs = config["test"].get("mutation_skip_globs")
-                include_globs = config["test"].get("mutation_include_globs")
+                # #134: never the reviewed tree's own globs.
+                skip_globs, include_globs = self._trusted_mutation_globs(config["test"])
             except Exception as exc:  # noqa: BLE001
                 self._mutation_bound_failure = native
                 self._state.infra_errors.append(

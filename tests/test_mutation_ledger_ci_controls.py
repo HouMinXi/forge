@@ -2647,3 +2647,189 @@ def test_production_module_named_like_test_is_not_tests_only(ci_project, monkeyp
     machine = _ci_with_diff(p, monkeypatch, {path: "def helper():\n    return 1\n"})
     findings = machine._run_l2_phase()
     assert "mutation-tests-only" not in [f.fingerprint for f in findings]
+
+
+# --- #139 review P2: globs from the baseline revision, CLI wiring -----------
+
+
+def _cli_wired(p, *, mode=Mode.CI, review=None):
+    """The CLI's real wiring: config root == source root == reviewed tree."""
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+    machine.cwd = p.root
+    machine.source_root = None
+    if mode is Mode.LOCAL:
+        machine.mode = Mode.LOCAL
+        machine._state.mode = Mode.LOCAL
+    return machine
+
+
+def _spy_skip_globs(monkeypatch):
+    import inspect
+
+    seen = []
+    real = mutation._run_mutation
+
+    def spy(*args, **kwargs):
+        bound = inspect.signature(real).bind(*args, **kwargs)
+        seen.append((bound.arguments["mutation_skip_globs"], bound.arguments["mutation_include_globs"]))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(mutation, "_run_mutation", spy)
+    return seen
+
+
+def _set_root_globs(p, skip, *, commit=False):
+    gate = p.root / ".code-forge/gate.yaml"
+    data = json.loads(gate.read_text())
+    data["test"]["mutation_skip_globs"] = skip
+    gate.write_text(json.dumps(data), encoding="utf-8")
+    if commit:
+        _git(p.root, "add", "-f", ".code-forge/gate.yaml")
+        _git(p.root, "-c", "user.name=CI Control", "-c", "user.email=ci-control@example.invalid",
+             "commit", "-qm", "baseline globs")
+    return gate
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_pr_edit_to_skip_globs_does_not_apply_in_its_own_review(ci_project, monkeypatch, mode):
+    """A PR that adds calc.py to mutation_skip_globs: calc.py is still mutated."""
+    p = ci_project
+    _set_root_globs(p, ["calc.py"])
+    seen = _spy_skip_globs(monkeypatch)
+    machine = _cli_wired(p, mode=mode)
+    findings = machine._run_l2_phase()
+    assert seen == [(None, None)]
+    assert "mutation-tests-only" not in [f.fingerprint for f in findings]
+
+
+def test_baseline_skip_globs_are_honoured_as_opt_out(ci_project, monkeypatch):
+    p = ci_project
+    _set_root_globs(p, ["calc.py"], commit=True)
+    seen = _spy_skip_globs(monkeypatch)
+    machine = _cli_wired(p, review=_review(p))
+    findings = machine._run_l2_phase()
+    assert seen == [(["calc.py"], None)]
+    assert [f.fingerprint for f in findings] == ["mutation-tests-only"]
+
+
+def test_pr_cannot_override_baseline_globs_either(ci_project, monkeypatch):
+    p = ci_project
+    gate = _set_root_globs(p, ["other/**"], commit=True)
+    data = json.loads(gate.read_text())
+    data["test"]["mutation_skip_globs"] = ["calc.py"]
+    gate.write_text(json.dumps(data), encoding="utf-8")
+    seen = _spy_skip_globs(monkeypatch)
+    _cli_wired(p, review=_review(p))._run_l2_phase()
+    assert seen == [(["other/**"], None)]
+
+
+def test_ci_detached_launch_uses_baseline_globs(ci_project, monkeypatch):
+    from code_forge import machine as machine_mod
+
+    p = ci_project
+    _set_root_globs(p, ["calc.py"])
+    _discover_mutmut(p)
+    captured = {}
+
+    def fake_launch(*args, **kwargs):
+        captured.update(kwargs)
+        return False
+
+    monkeypatch.setattr(machine_mod, "launch_detached_mutation", fake_launch)
+    machine = _cli_wired(p)
+    monkeypatch.setattr(machine, "_run_l2_phase", lambda: [])
+    machine.run()
+    assert captured, "detached launch must have been attempted"
+    assert captured["mutation_skip_globs"] is None
+
+
+def test_trusted_mutation_globs_sources(tmp_path):
+    from code_forge.mutation import trusted_mutation_globs
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-q")
+    (root / "a.py").write_text("x = 1\n")
+    _git(root, "add", "a.py")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@e.invalid", "commit", "-qm", "a")
+    no_gate = _git(root, "rev-parse", "HEAD")
+    (root / ".code-forge").mkdir()
+    (root / ".code-forge/gate.yaml").write_text("test:\n  mutation_skip_globs: [a.py]\n  mutation_include_globs: [b.py]\n")
+    _git(root, "add", "-f", ".code-forge/gate.yaml")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@e.invalid", "commit", "-qm", "g")
+    with_gate = _git(root, "rev-parse", "HEAD")
+    (root / ".code-forge/gate.yaml").write_text(": [ not yaml")
+    _git(root, "add", "-f", ".code-forge/gate.yaml")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@e.invalid", "commit", "-qm", "bad")
+    bad = _git(root, "rev-parse", "HEAD")
+    worktree_test = {"mutation_skip_globs": ["edited.py"]}
+    same = dict(config_root=root, source_root=root, config_test=worktree_test)
+    assert trusted_mutation_globs(base_sha=with_gate, **same) == (["a.py"], ["b.py"])
+    assert trusted_mutation_globs(base_sha=no_gate, **same) == (None, None)
+    assert trusted_mutation_globs(base_sha=bad, **same) == (None, None)
+    assert trusted_mutation_globs(base_sha=None, **same) == (None, None)
+    assert trusted_mutation_globs(base_sha="0" * 40, **same) == (None, None)
+    # A config root that contains the reviewed tree is not "outside" it.
+    sub = root / "pkg"
+    sub.mkdir()
+    assert trusted_mutation_globs(config_root=root, source_root=sub, base_sha=None,
+                                  config_test=worktree_test) == (None, None)
+    outside = tmp_path / "state"
+    outside.mkdir()
+    assert trusted_mutation_globs(config_root=outside, source_root=root, base_sha=with_gate,
+                                  config_test=worktree_test) == (["edited.py"], None)
+
+
+def test_admission_uses_baseline_globs(ci_project, monkeypatch):
+    """INDEX/COMMIT admission decides selection from the same trusted globs."""
+    p = ci_project
+    _set_root_globs(p, ["calc.py"])
+    calls = []
+    real = mutation.trusted_mutation_globs
+
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(mutation, "trusted_mutation_globs", spy)
+    review = _review(p)
+    mutation.mutation_review_admission_error(
+        target_kind="COMMIT", git_diff=review.git_diff, source_files=[p.root / "calc.py"],
+        source_root=p.root, config_root=p.root, runner=mutation.run_mutation, base_sha=review.base_sha,
+    )
+    assert calls and calls[0]["base_sha"] == review.base_sha
+    assert real(**calls[0]) == (None, None)
+
+
+def test_baseline_globs_of_wrong_type_fall_back_to_defaults(ci_project):
+    from code_forge.mutation import trusted_mutation_globs
+
+    p = ci_project
+    gate = p.root / ".code-forge/gate.yaml"
+    data = json.loads(gate.read_text())
+    data["test"]["mutation_skip_globs"] = "calc.py"
+    data["test"]["mutation_include_globs"] = [1]
+    gate.write_text(json.dumps(data), encoding="utf-8")
+    _git(p.root, "add", "-f", ".code-forge/gate.yaml")
+    _git(p.root, "-c", "user.name=t", "-c", "user.email=t@e.invalid", "commit", "-qm", "bad types")
+    base = _git(p.root, "rev-parse", "HEAD")
+    assert trusted_mutation_globs(config_root=p.root, source_root=p.root, base_sha=base) == (None, None)
+
+
+def test_machine_admission_receives_review_baseline(ci_project, monkeypatch):
+    from code_forge import machine as machine_mod
+
+    p = ci_project
+    seen = {}
+
+    def spy(**kwargs):
+        seen.update(kwargs)
+        return "stop here"
+
+    monkeypatch.setattr(machine_mod, "mutation_review_admission_error", spy)
+    machine = _cli_wired(p)
+    try:
+        machine.run()
+    except Exception:  # noqa: BLE001 - only the captured arguments matter
+        pass
+    assert seen["base_sha"] == machine.resolved_review.base_sha and seen["base_sha"]

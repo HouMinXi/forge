@@ -3990,6 +3990,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             target_kind=resolved.target_kind, git_diff=resolved.git_diff,
             source_files=resolved.source_files, source_root=cwd, config_root=cwd,
             runner=build_l2_runner(cwd=cwd), ci_detached=mode == Mode.CI,
+            base_sha=resolved.base_sha,
         )
         if admission_error:
             raise CliError(admission_error)

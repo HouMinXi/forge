@@ -805,9 +805,60 @@ def executable_review_sources(source_files: list[Path], git_diff: str | None, so
     return [path for path in source_files if os.path.abspath(source_root / path) not in removed]
 
 
+def _valid_globs(value) -> list[str] | None:
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return value
+    return None
+
+
+def trusted_mutation_globs(
+    *, config_root, source_root, base_sha: str | None, config_test: dict | None = None,
+) -> tuple[list[str] | None, list[str] | None]:
+    """Mutation skip/include globs from a source the reviewed change cannot edit (#134).
+
+    - An explicit config root outside the reviewed tree (disjoint paths) is
+      trusted: its already-loaded ``test`` block is used.
+    - Otherwise (the CLI's real wiring: config root == source root == the
+      reviewed tree) the globs come from the review baseline revision's
+      ``.code-forge/gate.yaml`` via ``git show <base>:./.code-forge/gate.yaml``.
+      A change's own edit to the globs therefore takes effect only once it
+      is the baseline of a later review.
+    - No baseline, no gate file at the baseline, or an unreadable one: the
+      built-in defaults (None, None).
+    """
+    config = Path(os.path.abspath(config_root))
+    source = Path(os.path.abspath(source_root))
+    disjoint = config != source and config not in source.parents and source not in config.parents
+    if disjoint:
+        test = config_test or {}
+        return _valid_globs(test.get("mutation_skip_globs")), _valid_globs(test.get("mutation_include_globs"))
+    if not base_sha:
+        return (None, None)
+    try:
+        shown = subprocess.run(
+            ["git", "show", f"{base_sha}:./.code-forge/gate.yaml"],
+            cwd=source, capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return (None, None)
+    if shown.returncode != 0:
+        return (None, None)
+    try:
+        import yaml
+
+        raw = yaml.safe_load(shown.stdout)
+    except Exception:  # noqa: BLE001 - an unreadable baseline gate means defaults
+        return (None, None)
+    test = raw.get("test") if isinstance(raw, dict) else None
+    if not isinstance(test, dict):
+        return (None, None)
+    return _valid_globs(test.get("mutation_skip_globs")), _valid_globs(test.get("mutation_include_globs"))
+
+
 def mutation_review_admission_error(
     *, target_kind: str | None, git_diff: str | None, source_files: list[Path],
     source_root: Path, config_root: Path, runner, ci_detached: bool = False,
+    base_sha: str | None = None,
 ) -> str | None:
     """Reject unsupported staged/committed native work before it starts."""
     if target_kind not in {"INDEX", "COMMIT"} or not git_diff:
@@ -832,15 +883,12 @@ def mutation_review_admission_error(
         py_files = [_lexical_source(path, root).as_posix() for path in py_files]
     except ValueError:
         return None
-    skip, include = test.get("mutation_skip_globs"), test.get("mutation_include_globs")
+    skip, include = trusted_mutation_globs(
+        config_root=config_root, source_root=source_root, base_sha=base_sha, config_test=test,
+    )
     selected = native and any(not _is_test_path(path, skip, include, source_root) for path in py_files)
     if detached:
-        detached_skip = test.get("mutation_skip_globs")
-        detached_include = test.get("mutation_include_globs")
-        selected = selected or any(not _is_test_path(
-            path, skip if detached_skip is None else detached_skip,
-            include if detached_include is None else detached_include, source_root,
-        ) for path in py_files)
+        selected = selected or any(not _is_test_path(path, skip, include, source_root) for path in py_files)
     if not selected:
         return None
     if target_kind == "COMMIT":
