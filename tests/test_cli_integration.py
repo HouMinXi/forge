@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._outside_gate import outside_gate_root
 from code_forge import EXIT_CLI_ERROR, EXIT_FAIL, EXIT_PASS, EXIT_TIMEOUT
 from code_forge.cli import main
 
@@ -292,7 +293,8 @@ class TestReviewAutoDetect:
             monkeypatch.setattr(
                 sys,
                 "argv",
-                ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
+                ["code-forge", "--falsification-engine", "stub", "--mode", "ci",
+                 "--test-config-root", str(outside_gate_root(repo)), "a.py"],  # #160
             )
             monkeypatch.setattr(
                 "code_forge.outlet_resolver.resolve_outlet",
@@ -347,7 +349,8 @@ class TestReviewAutoDetect:
             monkeypatch.setattr(
                 sys,
                 "argv",
-                ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
+                ["code-forge", "--falsification-engine", "stub", "--mode", "ci",
+                 "--test-config-root", str(outside_gate_root(repo)), "a.py"],  # #160
             )
             monkeypatch.setattr(
                 "code_forge.outlet_resolver.resolve_outlet",

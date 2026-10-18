@@ -1268,7 +1268,10 @@ class StateMachine:
             )
         elif py_files and shutil.which("mutmut") is not None:
             mutation_timeout = None
-            from .gate_check import UNTRACKED_GATE_NOT_MEASURED, OutsideConfigRootRefused, UntrackedGateRefused
+            from .gate_check import (
+                GATE_NOT_FOUND_NOT_MEASURED, UNTRACKED_GATE_NOT_MEASURED, GateNotFound, OutsideConfigRootRefused,
+                UntrackedGateRefused,
+            )
 
             try:
                 config = self._load_trusted_gate_config()
@@ -1311,6 +1314,17 @@ class StateMachine:
                 self._state.infra_errors.append(
                     f"CI: mutation not measured -- trusted test config refused: {exc}"
                 )
+            except GateNotFound:
+                # User policy: CI with no gate.yaml at all measured nothing.
+                baseline_cmd = None
+                baseline_timeout = 120
+                also_copy = None
+                mutation_max_children = None
+                mutation_memory_limit = None
+                mutation_skip_globs = None
+                mutation_include_globs = None
+                self._mutation_bound_failure = True
+                self._state.infra_errors.append(f"CI: {GATE_NOT_FOUND_NOT_MEASURED}")
             except FileNotFoundError as exc:
                 baseline_cmd = None
                 baseline_timeout = 120
@@ -2463,7 +2477,10 @@ class StateMachine:
         baseline_cmd: list[str] = []
 
         if needs_baseline:
-            from .gate_check import UNTRACKED_GATE_NOT_MEASURED, OutsideConfigRootRefused, UntrackedGateRefused
+            from .gate_check import (
+                GATE_NOT_FOUND_NOT_MEASURED, UNTRACKED_GATE_NOT_MEASURED, GateNotFound, OutsideConfigRootRefused,
+                UntrackedGateRefused,
+            )
 
             try:
                 config = self._load_trusted_gate_config()
@@ -2476,6 +2493,16 @@ class StateMachine:
                 memory_limit_bytes = memory_mb * 1024**2 if memory_mb is not None else None
                 # #134: never the reviewed tree's own globs.
                 skip_globs, include_globs = self._trusted_mutation_globs(config["test"])
+            except GateNotFound as exc:
+                if self.mode is Mode.CI:
+                    self._mutation_bound_failure = True
+                    self._state.infra_errors.append(f"CI: {GATE_NOT_FOUND_NOT_MEASURED}")
+                else:
+                    self._mutation_bound_failure = native
+                    self._state.infra_errors.append(
+                        f"L2: gate.yaml missing or test.command not configured: {exc}"
+                    )
+                return []
             except UntrackedGateRefused:
                 # #160: only raised in CI (allow_untracked=False).
                 self._mutation_bound_failure = True

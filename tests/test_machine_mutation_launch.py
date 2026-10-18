@@ -191,9 +191,9 @@ class TestAsyncMutationLaunch:
         assert verdict == Verdict.PENDING, f"expected PENDING to defer to next round, got {verdict!r}"
 
     def test_missing_gate_yaml_records_specific_error(self, tmp_path, monkeypatch):
-        """When gate.yaml does not exist at all, the infra_error must
-        say 'gate.yaml not found', not the generic 'test.command not
-        configured' message.
+        """When gate.yaml does not exist at all, CI FAILs (mutation not
+        measured) with a reason naming the missing gate.yaml, not the generic
+        'test.command not configured' message.
 
         Bug-injection: change the FileNotFoundError message back to the
         generic one -> this test FAILS because the message no longer
@@ -206,10 +206,13 @@ class TestAsyncMutationLaunch:
         sm = _make_ci_sm(tmp_path)
         sm._run_ci()
 
-        assert any("gate.yaml not found" in e for e in sm._state.infra_errors), (
-            "missing gate.yaml should produce a specific 'not found' error, "
-            f"got infra_errors={sm._state.infra_errors!r}"
-        )
+        # User policy: CI with no gate.yaml at all measured nothing, so FAIL
+        # with a reason that says so (not the generic config-error text).
+        assert (
+            "CI: mutation not measured -- no gate.yaml found; add .code-forge/gate.yaml "
+            "or use --test-config-root"
+        ) in sm._state.infra_errors, sm._state.infra_errors
+        assert sm._mutation_bound_failure is True
 
     def test_launch_creates_parent_directory_for_result_file(self, tmp_path, monkeypatch):
         """launch_detached_mutation must mkdir the parent of result_path
