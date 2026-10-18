@@ -267,7 +267,13 @@ def test_standalone_head_read_error_preserves_current_survivor(ci_project, monke
 
 
 def test_guard_entries_refuses_same_tick_same_size_rewrite(ci_project, monkeypatch):
-    """Stat fields are frozen here, as on a coarse-timestamp kernel."""
+    """A same-size rewrite that no stat field shows must still be refused.
+
+    On a coarse-timestamp kernel the rewrite can land in the same tick, so
+    every stat field matches. Freeze lstat and model the per-read bytes
+    directly, so the result does not depend on the box's timestamp
+    granularity or on when the rewrite happens.
+    """
     root = ci_project.root
     path = root / "record.py"
     path.write_bytes(SOURCE_A)
@@ -275,13 +281,14 @@ def test_guard_entries_refuses_same_tick_same_size_rewrite(ci_project, monkeypat
     original_lstat = Path.lstat
     monkeypatch.setattr(Path, "lstat", lambda self, *a, **kw: frozen if self == path else original_lstat(self, *a, **kw))
     original_read = mutation._read_inventory_file
+    reads = []
 
-    def rewrite(asked):
-        raw = original_read(asked)
-        if asked == path:
-            asked.write_bytes(SOURCE_B)
-        return raw
+    def rewritten_between_reads(asked):
+        if asked != path:
+            return original_read(asked)
+        reads.append(asked)
+        return SOURCE_A if len(reads) == 1 else SOURCE_B
 
-    monkeypatch.setattr(mutation, "_read_inventory_file", rewrite)
+    monkeypatch.setattr(mutation, "_read_inventory_file", rewritten_between_reads)
     with pytest.raises(ValueError, match="source changed during endpoint capture"):
         mutation._guard_entries(root, ("record.py",))
