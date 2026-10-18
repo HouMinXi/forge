@@ -90,6 +90,13 @@ setting and the cap derived from the backend for that call only. It controls
 the total CLI run, not an individual LLM invocation. It also cannot extend the
 MCP client's own request timeout, which is configured by the client.
 
+Without either override, the job cap is the backend's invoke timeout plus 600
+seconds of grace, plus the mutation-baseline budget when `.code-forge/gate.yaml`
+configures `test.command`: 3 × `test.timeout_seconds` (default 120), because
+the baseline guard can run the test command up to three times. With
+`timeout_seconds: 2400`, for example, a CLI backend with the default 300 s
+invoke timeout gets 300 + 600 + 7200 = 8100 s.
+
 ## Troubleshooting
 
 ### Zombie processes after /mcp reconnect

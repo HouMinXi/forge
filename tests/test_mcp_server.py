@@ -2702,3 +2702,75 @@ async def test_a_ref_that_looks_like_a_flag_stays_a_value():
         await forge_review(baseline="--allow-main")
         args = list(mock_cli.call_args[0])
         assert args[args.index("--baseline") + 1] == "--allow-main"
+
+
+# --- #128: the job cap includes the gate's mutation-baseline budget ----------
+
+
+def _cap_with_gate(tmp_path, gate_text):
+    if gate_text is not None:
+        (tmp_path / ".code-forge").mkdir()
+        (tmp_path / ".code-forge" / "gate.yaml").write_text(gate_text, encoding="utf-8")
+    be = _make_backend(backend_type="cli", timeout_s=0)  # CLI default 300
+    with (
+        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
+        patch("code_forge.backend.resolve_backend", return_value=be),
+        patch.dict(os.environ, {}, clear=False),
+    ):
+        os.environ.pop("FORGE_MCP_JOB_TIMEOUT_S", None)
+        return _job_cap_s(tmp_path)
+
+
+@pytest.mark.parametrize("gate_text,expected", [
+    ("test:\n  command: [pytest]\n  timeout_seconds: 2400\n", 900.0 + 3 * 2400),
+    ("test:\n  command: [pytest]\n", 900.0 + 3 * 120),
+    ("test:\n  command: [pytest]\n  timeout_seconds: true\n", 900.0 + 3 * 120),
+    ("test:\n  command: [pytest]\n  timeout_seconds: -5\n", 900.0 + 3 * 120),
+    ("test:\n  command: [pytest]\n  timeout_seconds: '2400'\n", 900.0 + 3 * 120),
+    ("test:\n  timeout_seconds: 2400\n", 900.0),
+    ("backends: {}\n", 900.0),
+    ("[unclosed\n", 900.0),
+    (None, 900.0),
+], ids=["explicit", "default", "bool", "negative", "string", "no-command", "no-test", "bad-yaml", "absent"])
+def test_job_cap_s_scales_with_baseline_budget(tmp_path, gate_text, expected):
+    assert _cap_with_gate(tmp_path, gate_text) == expected
+
+
+def test_job_cap_s_baseline_budget_ignores_backend_trust_filter(tmp_path):
+    """An untrusted repo's _load_gate_backends returns ({}, {}); the cap still
+    sees test.timeout_seconds (it only lengthens a time budget)."""
+    gate = "test:\n  command: [pytest]\n  timeout_seconds: 2400\n"
+    assert _cap_with_gate(tmp_path, gate) > 3 * 2400
+
+
+def test_job_cap_s_env_override_still_wins_over_baseline_budget(tmp_path):
+    (tmp_path / ".code-forge").mkdir()
+    (tmp_path / ".code-forge" / "gate.yaml").write_text(
+        "test:\n  command: [pytest]\n  timeout_seconds: 2400\n", encoding="utf-8")
+    with patch.dict(os.environ, {"FORGE_MCP_JOB_TIMEOUT_S": "50"}):
+        assert _job_cap_s(tmp_path) == 50.0
+
+
+def test_baseline_budget_tracks_guard_run_count(tmp_path, monkeypatch):
+    from code_forge import baseline_guard
+
+    monkeypatch.setattr(baseline_guard, "BASELINE_MAX_RUNS", 5)
+    gate = "test:\n  command: [pytest]\n  timeout_seconds: 100\n"
+    assert _cap_with_gate(tmp_path, gate) == 900.0 + 500
+
+
+def test_baseline_guard_runs_at_most_baseline_max_runs(monkeypatch):
+    import subprocess
+
+    from code_forge import baseline_guard
+
+    calls = []
+
+    def execute(argv, **kwargs):
+        calls.append(1)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(baseline_guard, "BASELINE_MAX_RUNS", 2)
+    assert baseline_guard._run_baseline_guard(
+        ["true"], {}, "/private", allow_strip_retry=False, run_command=execute)[0] == "passed"
+    assert len(calls) == 2
