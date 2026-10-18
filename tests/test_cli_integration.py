@@ -8,6 +8,7 @@ pipeline without needing real git repos (except where noted).
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from unittest.mock import patch
@@ -57,6 +58,24 @@ def _write_tools_yaml(repo_path):
     tools_yaml.write_text("tools: {}\n")
 
 
+def _write_measured_gate(repo_path):
+    """Committed gate plus a test that kills every mutant of ``f``: CI
+    trusts only a baseline gate and FAILs an unmeasured L2 (not measured =>
+    FAIL), so a clean CI PASS needs a real, measured L2."""
+    forge_dir = repo_path / ".code-forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "gate.yaml").write_text(
+        "test:\n  command: [%s, -m, pytest, -q, -p, no:cacheprovider, test_a.py]\n" % json.dumps(sys.executable)
+    )
+    (repo_path / "test_a.py").write_text("from a import f\n\n\ndef test_f():\n    assert f() == 1\n")
+
+
+def _write_measured_change(repo_path):
+    """A clean change the gate's test_a.py kills every mutant of (mutmut
+    mutates functions only); docstrings keep pylint happy."""
+    (repo_path / "a.py").write_text('"""Clean module."""\n\n\ndef f():\n    """One."""\n    return 1\n')
+
+
 def _write_py_file(repo_path, name="a.py"):
     """Write a minimal Python file."""
     f = repo_path / name
@@ -73,6 +92,7 @@ class TestGitRepoPassCI:
         _git_init_repo(repo)
         _write_tools_yaml(repo)
         _write_py_file(repo)
+        _write_measured_gate(repo)
         subprocess.run(
             ["git", "add", "-A"],
             cwd=str(repo),
@@ -86,8 +106,7 @@ class TestGitRepoPassCI:
             check=True,
         )
         # Modify file to create a diff.
-        # Module docstring + UPPER_CASE constant keeps pylint happy.
-        (repo / "a.py").write_text('"""Clean module."""\nX = 1\n')
+        _write_measured_change(repo)
 
         monkeypatch.setattr(
             sys,
@@ -139,6 +158,7 @@ class TestSandboxWarning:
         _git_init_repo(repo)
         _write_tools_yaml(repo)
         _write_py_file(repo)
+        _write_measured_gate(repo)
         subprocess.run(
             ["git", "add", "-A"],
             cwd=str(repo),
@@ -151,7 +171,7 @@ class TestSandboxWarning:
             capture_output=True,
             check=True,
         )
-        (repo / "a.py").write_text("# modified\n")
+        _write_measured_change(repo)
 
         monkeypatch.setattr(
             sys,
@@ -252,6 +272,7 @@ class TestReviewAutoDetect:
         repo.mkdir()
         _git_init_repo(repo)
         _write_py_file(repo)
+        _write_measured_gate(repo)
         subprocess.run(
             ["git", "add", "-A"],
             cwd=str(repo),
@@ -264,7 +285,7 @@ class TestReviewAutoDetect:
             capture_output=True,
             check=True,
         )
-        (repo / "a.py").write_text("# modified\n")
+        _write_measured_change(repo)
 
         def fake_detect_and_init(project_root, quiet=False, **kwargs):
             forge_dir = project_root / ".code-forge"
@@ -327,6 +348,7 @@ class TestReviewAutoDetect:
             "    file_patterns: ['*.py']\n"
         )
         _write_py_file(repo)
+        _write_measured_gate(repo)
         subprocess.run(
             ["git", "add", "-A"],
             cwd=str(repo),
@@ -339,7 +361,7 @@ class TestReviewAutoDetect:
             capture_output=True,
             check=True,
         )
-        (repo / "a.py").write_text("# modified\n")
+        _write_measured_change(repo)
 
         with patch(
             "code_forge.detect.detect_and_init",
@@ -585,6 +607,10 @@ class TestCostSummaryStderr:
         assert "passes" in cost
         assert "per_pass" in cost
 
+    @pytest.mark.skipif(
+        shutil.which("claude") is None,
+        reason="the cost line needs a real L1 pass through the claude CLI backend",
+    )
     def test_cost_summary_shows_na_for_stub_engine(
         self,
         tmp_path,
@@ -597,6 +623,7 @@ class TestCostSummaryStderr:
         _git_init_repo(repo)
         _write_tools_yaml(repo)
         _write_py_file(repo)
+        _write_measured_gate(repo)
         subprocess.run(
             ["git", "add", "-A"],
             cwd=str(repo),
@@ -609,7 +636,7 @@ class TestCostSummaryStderr:
             capture_output=True,
             check=True,
         )
-        (repo / "a.py").write_text("# clean\nx = 1\n")
+        _write_measured_change(repo)
 
         isolated_process_state.setattr(
             sys,
