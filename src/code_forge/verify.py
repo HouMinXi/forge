@@ -2074,9 +2074,19 @@ def _run_verify_impl(
                     ))
     if unresolved:
         cycle, number, _, _ = unresolved[0]
+        reason = f"unresolved unverified product finding c{cycle}p{number} -- convergence not established"
+        if incomplete:
+            # #50: a pass that did not complete (e.g. status=schema_fail) is the
+            # primary diagnostic; name it first. Verdict, failure_kind and the
+            # recorded unresolved findings are unchanged (routing-neutral).
+            first = incomplete[0]
+            reason = (
+                f"pass did not complete: c{first['cycle']}p{first['pass']} status={first['pass_status']}; "
+                + reason
+            )
         return VerifyResult(
             False,
-            f"unresolved unverified product finding c{cycle}p{number} -- convergence not established",
+            reason,
             8,
             cp,
             incomplete_passes=tuple(sorted({r["pass"] for r in incomplete})),
