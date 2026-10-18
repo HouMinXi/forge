@@ -2941,3 +2941,27 @@ def test_cli_test_config_root_option_and_env(ci_project, monkeypatch, capsys):
     assert code == 2 and not seen and "must be outside the reviewed checkout" in capsys.readouterr().err
     code, seen = _cli_admission_args(p, monkeypatch, "--test-config-root", str(p.root.parent / "nowhere"))
     assert code == 2 and not seen and "no .code-forge/gate.yaml there" in capsys.readouterr().err
+
+
+def test_cli_test_config_root_flag_beats_env(ci_project, monkeypatch, capsys):
+    p = ci_project
+    _discover_mutmut(p)
+    _git(p.root, "add", "calc.py")
+    env_root = _outside_ci_config(p, monkeypatch)
+    flag_root = p.root.parent / (p.root.name + "-flag-config")
+    (flag_root / ".code-forge").mkdir(parents=True)
+    (flag_root / ".code-forge/gate.yaml").write_bytes((env_root / ".code-forge/gate.yaml").read_bytes())
+    _, seen = _cli_admission_args(p, monkeypatch, "--test-config-root", str(flag_root))
+    assert seen["config_root"] == flag_root != env_root, capsys.readouterr().err
+
+
+def test_cli_test_config_root_symlink_into_checkout_is_refused(ci_project, monkeypatch, capsys):
+    p = ci_project
+    _discover_mutmut(p)
+    _git(p.root, "add", "calc.py")
+    monkeypatch.delenv("FORGE_TEST_CONFIG_ROOT", raising=False)
+    link = p.root.parent / (p.root.name + "-link-config")
+    link.symlink_to(p.root, target_is_directory=True)
+    capsys.readouterr()
+    code, seen = _cli_admission_args(p, monkeypatch, "--test-config-root", str(link))
+    assert code == 2 and not seen and "must be outside the reviewed checkout" in capsys.readouterr().err

@@ -522,3 +522,87 @@ def test_outside_gate_that_is_not_a_regular_file_is_refused(tmp_path):
     (outside / ".code-forge" / "gate.yaml").mkdir(parents=True)
     with pytest.raises(UntrustedGateConfigError, match="is not a regular file"):
         load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base)
+
+
+# --- #144: git listings fail closed; #145: untracked/ignored hardlinks; H5 ---
+
+from code_forge import gate_check  # noqa: E402
+
+
+def _fail_git(monkeypatch, *prefix):
+    real = gate_check._git_out
+
+    def fake(source_root, *args):
+        if args[: len(prefix)] == prefix and (prefix != ("ls-files", "-z") or "-o" not in args):
+            return subprocess.CompletedProcess(["git", *args], 128, "", "fatal: detected dubious ownership\n")
+        return real(source_root, *args)
+
+    monkeypatch.setattr(gate_check, "_git_out", fake)
+
+
+def _tracked_evil_hardlink(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    evil = repo / "evil.yaml"
+    evil.write_text(yaml.safe_dump({"test": {"command": PR_CMD}}), encoding="utf-8")
+    _git(repo, "add", "evil.yaml")
+    outside = tmp_path / "evil-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    os.link(evil, outside / ".code-forge" / "gate.yaml")
+    return repo, base, outside
+
+
+@pytest.mark.parametrize("prefix", [("ls-files", "-z"), ("ls-files", "-z", "-o")])
+def test_inode_listing_failure_refuses_the_outside_root(tmp_path, monkeypatch, prefix):
+    repo, base, outside = _tracked_evil_hardlink(tmp_path)
+    _fail_git(monkeypatch, *prefix)
+    with pytest.raises(UntrustedGateConfigError, match=r"failed \(exit 128\): fatal: detected dubious ownership"):
+        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+
+
+def test_index_listing_failure_refuses_a_staged_first_ever_gate_in_local(tmp_path, monkeypatch):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=True)
+    _fail_git(monkeypatch, "ls-files", "-s")
+    with pytest.raises(UntrustedGateConfigError, match=r"git ls-files -s failed \(exit 128\)"):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
+
+
+def test_baseline_tree_listing_failure_refuses(tmp_path, monkeypatch):
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    _fail_git(monkeypatch, "ls-tree")
+    with pytest.raises(UntrustedGateConfigError, match=r"git ls-tree .* failed \(exit 128\)"):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
+
+
+@pytest.mark.parametrize("ignored", [False, True])
+def test_ci_outside_root_hardlinked_to_an_untracked_file_is_refused(tmp_path, ignored):
+    """#145: untracked and gitignored checkout files are in the refuse set too."""
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    evil = repo / "evil.yaml"
+    evil.write_text(yaml.safe_dump({"test": {"command": PR_CMD}}), encoding="utf-8")
+    if ignored:
+        (repo / ".gitignore").write_text("evil.yaml\n", encoding="utf-8")
+    outside = tmp_path / "evil-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    os.link(evil, outside / ".code-forge" / "gate.yaml")
+    machine = _machine(repo, base, mode=Mode.CI)
+    machine.test_config_root = outside
+    assert _l2_calls(machine) == []
+    assert any("is a hardlink of a file in the reviewed checkout" in e
+               for e in machine._state.infra_errors), machine._state.infra_errors
+
+
+@pytest.mark.parametrize("where", ["root-untracked", "root-tracked", "code-forge-dir"])
+def test_checkout_symlink_to_a_legit_outside_gate_does_not_taint_it(tmp_path, where):
+    """H5/H6: inodes are taken without following symlinks, so a checkout
+    symlink pointing at the operator's outside gate does not refuse it."""
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    outside = tmp_path / "ci-config"
+    _write_gate(outside, BASE_CMD, timeout=5)
+    target = outside / ".code-forge" / "gate.yaml"
+    link = repo / (".code-forge/outside-link.yaml" if where == "code-forge-dir" else "outside-link.yaml")
+    link.symlink_to(target)
+    if where == "root-tracked":
+        _git(repo, "add", "outside-link.yaml")
+    machine = _machine(repo, base, mode=Mode.CI)
+    machine.test_config_root = outside
+    assert _l2_calls(machine) == [(BASE_CMD, 5)], machine._state.infra_errors

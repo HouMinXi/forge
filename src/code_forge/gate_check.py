@@ -235,6 +235,20 @@ def _git_out(source_root, *args) -> subprocess.CompletedProcess:
         raise UntrustedGateConfigError(f"cannot inspect .code-forge/gate.yaml with git: {exc}") from exc
 
 
+def _git_ok(source_root, *args) -> subprocess.CompletedProcess:
+    """_git_out that fails closed (#144): a listing git could not produce is
+    not an empty listing, so any non-zero exit makes the gate untrusted."""
+    result = _git_out(source_root, *args)
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip().splitlines()
+        raise UntrustedGateConfigError(
+            f"git {' '.join(args[:2])} failed (exit {result.returncode})"
+            + (f": {detail[-1]}" if detail else "")
+            + "; cannot verify .code-forge/gate.yaml, refusing it"
+        )
+    return result
+
+
 def _gate_entries(listing: str) -> dict[str, str]:
     """{path: mode} for the gate path components in ls-files -s / ls-tree output."""
     entries = {}
@@ -251,11 +265,11 @@ def _refuse_linked_gate(source_root, base_sha: str | None) -> bool:
     leaves the checkout or lands elsewhere. Returns whether the gate file is
     tracked in the index as a regular file."""
     root = Path(source_root)
-    index = _git_out(root, "ls-files", "-s", "--", *_GATE_PATHS)
-    listings = [("index", _gate_entries(index.stdout) if index.returncode == 0 else {})]
+    index = _git_ok(root, "ls-files", "-s", "--", *_GATE_PATHS)
+    listings = [("index", _gate_entries(index.stdout))]
     if base_sha:
-        tree = _git_out(root, "ls-tree", base_sha, "--", *_GATE_PATHS)
-        listings.append(("review baseline", _gate_entries(tree.stdout) if tree.returncode == 0 else {}))
+        tree = _git_ok(root, "ls-tree", base_sha, "--", *_GATE_PATHS)
+        listings.append(("review baseline", _gate_entries(tree.stdout)))
     for where, entries in listings:
         for path, mode in entries.items():
             if mode in _LINK_MODES:
@@ -293,31 +307,20 @@ def _regular_file_inode(path) -> tuple[int, int] | None:
 
 def _checkout_regular_file_inodes(source_root) -> frozenset[tuple[int, int]]:
     """Inodes of regular files under the checkout that an outside gate.yaml
-    must not hardlink. Uses ``git ls-files -z`` (tracked paths, no tree walk)
-    plus a shallow, non-following scan of ``.code-forge/`` (often gitignored).
-    Directories cannot be hardlinked on Linux."""
+    must not hardlink: tracked files (``git ls-files -z``) plus untracked and
+    ignored ones (``git ls-files -z -o``, #145), so no recursive walk of our
+    own. Paths are stat'ed without following symlinks, so a checkout symlink
+    to a legitimate outside gate does not taint it. Any git failure refuses
+    (#144). Directories cannot be hardlinked on Linux."""
     root = Path(source_root)
     inodes: set[tuple[int, int]] = set()
-    listed = _git_out(root, "ls-files", "-z")
-    if listed.returncode == 0:
-        for rel in listed.stdout.split("\0"):
+    for args in (("ls-files", "-z"), ("ls-files", "-z", "-o")):
+        for rel in _git_ok(root, *args).stdout.split("\0"):
             if not rel or rel.endswith("/"):
                 continue
             inode = _regular_file_inode(root / rel)
             if inode is not None:
                 inodes.add(inode)
-    forge = root / ".code-forge"
-    if forge.is_dir() and not forge.is_symlink():
-        try:
-            with os.scandir(forge) as scan:
-                for entry in scan:
-                    if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
-                        continue
-                    inode = _regular_file_inode(entry.path)
-                    if inode is not None:
-                        inodes.add(inode)
-        except OSError:
-            pass
     return frozenset(inodes)
 
 
