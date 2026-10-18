@@ -4,8 +4,10 @@ Both need to know whether the configured test command can start, and
 both retry once after dropping a virtualenv that shadows the runner.
 """
 
+import glob
 import os
 import re
+import shutil
 import subprocess
 
 from code_forge.disposition import Disposition
@@ -71,6 +73,43 @@ def _session_ran(stdout: str) -> bool:
     """True when stdout shows a pytest session got going (node results, a
     summary count, a collected count or the session banner)."""
     return _SESSION_EVIDENCE.search(stdout) is not None
+
+
+def _venv_has_runner(baseline_cmd: list[str], run_env: dict[str, str]) -> bool:
+    """True when the inherited virtualenv itself provides the runner (#244).
+
+    Output text alone (``No module named pytest``) or a FileNotFoundError
+    raised somewhere in an owned launch is not proof that the venv lacks the
+    runner. Stripping a venv that does have it hands the baseline to the
+    system interpreter, whose own "No module named pytest" then hides the
+    real cause and leaves mutation unmeasured. Checked on disk, so no extra
+    process is started: the configured interpreter must resolve into
+    VIRTUAL_ENV and the runner module (or binary) must be installed there.
+    """
+    venv = run_env.get("VIRTUAL_ENV")
+    if not venv or not baseline_cmd or not os.path.isdir(venv):
+        return False
+    venv_real = os.path.realpath(venv)
+    runner = baseline_cmd[0]
+    resolved = runner if os.sep in runner else shutil.which(runner, path=run_env.get("PATH"))
+    if resolved is None:
+        return False
+    resolved_dir = os.path.dirname(os.path.abspath(resolved))
+    if os.path.commonpath([os.path.realpath(resolved_dir), venv_real]) != venv_real:
+        return False
+    if os.path.basename(runner).startswith("python") and "-m" in baseline_cmd:
+        index = baseline_cmd.index("-m")
+        if index + 1 >= len(baseline_cmd):
+            return False
+        top = baseline_cmd[index + 1].split(".", 1)[0]
+        site_dirs = glob.glob(os.path.join(venv, "lib", "python*", "site-packages"))
+        site_dirs += glob.glob(os.path.join(venv, "Lib", "site-packages"))
+        return any(
+            os.path.isfile(os.path.join(site, top, "__init__.py"))
+            or os.path.isfile(os.path.join(site, top + ".py"))
+            for site in site_dirs
+        )
+    return os.path.isfile(resolved)
 
 
 def _strip_venv_from_env(env: dict[str, str]) -> dict[str, str]:
@@ -197,7 +236,8 @@ def _run_baseline_guard(
     returned, findings and infra_errors are populated with the reason.
     When "needs_strip_retry" is returned, findings and infra_errors are
     empty (the caller should strip the env and call again with
-    allow_strip_retry=False).
+    allow_strip_retry=False). It is only offered when the inherited env
+    does not verifiably have the runner (_venv_has_runner, #244).
     """
     suffix = ""
     if not allow_strip_retry:
@@ -223,6 +263,7 @@ def _run_baseline_guard(
                 allow_strip_retry
                 and "VIRTUAL_ENV" in run_env
                 and _is_runner_missing(baseline_cmd, None, exc)
+                and not _venv_has_runner(baseline_cmd, run_env)
             ):
                 return ("needs_strip_retry", [], [])
             desc = f"run {run_num}: runner could not start{suffix}" + _output_detail(str(exc), None)
@@ -257,6 +298,7 @@ def _run_baseline_guard(
                     allow_strip_retry
                     and "VIRTUAL_ENV" in run_env
                     and runner_missing
+                    and not _venv_has_runner(baseline_cmd, run_env)
                 ):
                     return ("needs_strip_retry", [], [])
                 unavailable = _is_runner_startup_failure(baseline_cmd, result)
