@@ -323,9 +323,9 @@ def test_ci_refused_trusted_packs_fail_the_verdict(tmp_path, semgrep, monkeypatc
     assert any(e.startswith("CI: trusted rule packs refused:") for e in m._state.infra_errors)
 
 
-def test_ci_refused_baseline_pack_keeps_the_infra_note_only(tmp_path, semgrep):
-    """Scope of #157: only an operator-configured outside root FAILs CI; a
-    baseline pack refusal (symlink in the baseline) keeps its infra note."""
+def test_ci_refused_baseline_pack_fails_the_verdict(tmp_path, semgrep, monkeypatch):
+    """#189 (user decision): a content-caused baseline pack refusal (symlink in
+    the baseline) also leaves rulepacks_blocking unmeasured; CI FAILs."""
     repo, base = _repo(tmp_path, pack_at_base=False)
     elsewhere = tmp_path / "elsewhere"
     _write_pack(elsewhere)
@@ -335,7 +335,11 @@ def test_ci_refused_baseline_pack_keeps_the_infra_note_only(tmp_path, semgrep):
     _git(repo, "commit", "-qm", "link")
     m = _machine(repo, _git(repo, "rev-parse", "HEAD"))
     assert _blocking(m) == []
-    assert m._trusted_config_refusal is None
+    assert m._trusted_config_refusal.startswith("trusted rule packs refused:")
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
+    assert m._run_ci().name == "FAIL", m._state.infra_errors
+    assert any(e.startswith("CI: trusted rule packs refused:") for e in m._state.infra_errors)
 
 
 def test_duplicated_local_pack_name_still_blocks(tmp_path, semgrep):
