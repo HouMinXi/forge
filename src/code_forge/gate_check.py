@@ -359,7 +359,56 @@ def _refuse_linked_gate(source_root, base_sha: str | None) -> bool:
     return index_entries.get(".code-forge/gate.yaml", "").startswith("100")
 
 
-def _read_gate_nofollow(root, *, refuse_hardlinks: bool = False) -> str:
+def _regular_file_inode(path) -> tuple[int, int] | None:
+    """(st_dev, st_ino) of a regular file, without following a final symlink."""
+    import stat
+
+    try:
+        info = os.stat(path, follow_symlinks=False)
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    return (info.st_dev, info.st_ino)
+
+
+def _checkout_regular_file_inodes(source_root) -> frozenset[tuple[int, int]]:
+    """Inodes of regular files under the checkout that an outside gate.yaml
+    must not hardlink. Uses ``git ls-files -z`` (tracked paths, no tree walk)
+    plus a shallow, non-following scan of ``.code-forge/`` (often gitignored).
+    Directories cannot be hardlinked on Linux."""
+    root = Path(source_root)
+    inodes: set[tuple[int, int]] = set()
+    listed = _git_out(root, "ls-files", "-z")
+    if listed.returncode == 0:
+        for rel in listed.stdout.split("\0"):
+            if not rel or rel.endswith("/"):
+                continue
+            inode = _regular_file_inode(root / rel)
+            if inode is not None:
+                inodes.add(inode)
+    forge = root / ".code-forge"
+    if forge.is_dir() and not forge.is_symlink():
+        try:
+            with os.scandir(forge) as scan:
+                for entry in scan:
+                    if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                        continue
+                    inode = _regular_file_inode(entry.path)
+                    if inode is not None:
+                        inodes.add(inode)
+        except OSError:
+            pass
+    return frozenset(inodes)
+
+
+def _read_gate_nofollow(
+    root,
+    *,
+    refuse_hardlinks: bool = False,
+    refuse_inodes: frozenset[tuple[int, int]] | None = None,
+    expected_sha256: str | None = None,
+) -> str:
     """Read ``<root>/.code-forge/gate.yaml`` without following a symlink at
     either component: ``.code-forge`` is opened dir-relative with O_NOFOLLOW
     and gate.yaml likewise, then fstat'd as a regular file. That closes the
@@ -370,8 +419,15 @@ def _read_gate_nofollow(root, *, refuse_hardlinks: bool = False) -> str:
     ignored, in a nested repo or a submodule (#145, #147) -- always has a
     second link, so no listing or walk of the checkout is needed (#149).
     Symlinks and realpath catch the other lead-backs; directories cannot be
-    hardlinked."""
+    hardlinked.
+
+    ``refuse_inodes`` (optional) is a set of (st_dev, st_ino) the opened fd
+    must not match (see ``_checkout_regular_file_inodes``).
+
+    ``expected_sha256`` (optional, #167): the digest the bytes read here --
+    the bytes that are then parsed -- must have; otherwise refuse."""
     import errno
+    import hashlib
     import stat
 
     nofollow = getattr(os, "O_NOFOLLOW", 0)
@@ -392,23 +448,44 @@ def _read_gate_nofollow(root, *, refuse_hardlinks: bool = False) -> str:
         info = os.fstat(fds[-1])
         if not stat.S_ISREG(info.st_mode):
             raise UntrustedGateConfigError(f"{root}/.code-forge/gate.yaml is not a regular file")
+        if refuse_inodes and (info.st_dev, info.st_ino) in refuse_inodes:
+            raise UntrustedGateConfigError(
+                f"{root}/.code-forge/gate.yaml is a hardlink of a file in the reviewed checkout; "
+                "an outside test config root must hold its own regular gate.yaml"
+            )
         if refuse_hardlinks and info.st_nlink > 1:
             raise UntrustedGateConfigError(
                 f"{root}/.code-forge/gate.yaml has {info.st_nlink} hard links; an outside test "
                 "config root must hold its own single-link gate.yaml (a hardlink may be a file "
                 "in the reviewed checkout)"
             )
-        with os.fdopen(fds.pop(), "r", encoding="utf-8") as handle:
-            return handle.read()
+        with os.fdopen(fds.pop(), "rb") as handle:
+            data = handle.read()
+        if expected_sha256 is not None:
+            actual = hashlib.sha256(data).hexdigest()
+            if actual != expected_sha256:
+                raise UntrustedGateConfigError(
+                    f"untracked .code-forge/gate.yaml changed during this review (sha256 "
+                    f"{expected_sha256[:12]} at start, {actual[:12]} when parsed); refusing it"
+                )
+        return data.decode("utf-8")
     finally:
         for fd in fds:
             os.close(fd)
 
 
-def _load_gate_nofollow(root, *, refuse_hardlinks: bool = False) -> dict:
+def _load_gate_nofollow(
+    root,
+    *,
+    refuse_hardlinks: bool = False,
+    refuse_inodes: frozenset[tuple[int, int]] | None = None,
+    expected_sha256: str | None = None,
+) -> dict:
     import io
 
-    text = _read_gate_nofollow(root, refuse_hardlinks=refuse_hardlinks)
+    text = _read_gate_nofollow(
+        root, refuse_hardlinks=refuse_hardlinks, refuse_inodes=refuse_inodes, expected_sha256=expected_sha256,
+    )
     return load_gate_config(
         Path(root) / ".code-forge" / "gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
     )
@@ -486,6 +563,7 @@ def _load_outside_gate(config_root, source_root) -> dict:
 
 def load_trusted_gate_config(
     *, config_root, source_root, base_sha: str | None, allow_untracked: bool = True,
+    expected_sha256: str | None = None,
 ) -> dict:
     """gate.yaml for review-time ``test.*`` reads and mutation globs, from a
     source the reviewed change cannot edit (#140).
@@ -505,6 +583,9 @@ def load_trusted_gate_config(
     this change) raises FileNotFoundError; an invalid trusted file raises
     ValueError. Callers already treat these as a missing/invalid config, so
     nothing from the reviewed tree runs.
+
+    ``expected_sha256`` (#167): for a checked-out file used as-is, the digest
+    pinned at the start of the review; the bytes actually parsed must match.
     """
     import io
 
@@ -531,6 +612,8 @@ def load_trusted_gate_config(
         if not allow_untracked:
             _refuse_untracked_gate(working)
         # Not a git checkout: nothing is under review control, no git to ask.
+        if expected_sha256 is not None:
+            return _load_gate_nofollow(source_root, expected_sha256=expected_sha256)
         return load_gate_config(working)
     tracked = _refuse_linked_gate(source_root, base_sha)
     if base_sha:
@@ -557,7 +640,7 @@ def load_trusted_gate_config(
     # LOCAL: a gate.yaml git does not track (gitignored or never added) is
     # the user's own setup, not part of the reviewed diff (#143 tracks the
     # WORKING-tree agent risk).
-    return _load_gate_nofollow(source_root)
+    return _load_gate_nofollow(source_root, expected_sha256=expected_sha256)
 
 
 def _refuse_untracked_gate(working: Path) -> None:

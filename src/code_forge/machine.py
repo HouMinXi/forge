@@ -2461,6 +2461,15 @@ class StateMachine:
         """#134/#140: globs by the same trusted-config rule as every test.* key."""
         from .mutation import trusted_mutation_globs
 
+        if getattr(self, "_untracked_gate_pin", None) is not None:
+            # #167: a pinned untracked gate was already read, digest-checked
+            # and parsed; use that block rather than reading the file again.
+            from .mutation import _valid_globs
+
+            return (
+                _valid_globs(test_config.get("mutation_skip_globs")),
+                _valid_globs(test_config.get("mutation_include_globs")),
+            )
         notes: list[str] = []
         globs = trusted_mutation_globs(
             config_root=self._test_config_root(), source_root=self._source_root(),
@@ -2514,9 +2523,11 @@ class StateMachine:
         if not getattr(self, "_untracked_gate_pinned", False):
             self._pin_untracked_gate()
         self._check_untracked_gate_pin()
+        pin = getattr(self, "_untracked_gate_pin", None)
         config = load_trusted_gate_config(
             config_root=self._test_config_root(), source_root=self._source_root(),
             base_sha=self.resolved_review.base_sha, allow_untracked=self.mode is not Mode.CI,
+            expected_sha256=pin[1] if pin is not None else None,  # #167: parse the pinned bytes
         )
         self._check_untracked_gate_pin()
         return config
@@ -2597,14 +2608,26 @@ class StateMachine:
 
     def _check_untracked_gate_pin(self) -> None:
         """#143: refuse an untracked gate.yaml whose content changed after the
-        review started (e.g. by an agent between rounds)."""
+        review started (e.g. by an agent between rounds).
+
+        #166: the pinned state is re-derived on every check, so a gate that
+        becomes "untracked, used as-is" only after the first load (created
+        mid-review, or unstaged with ``git rm --cached``) is refused too."""
         from .gate_check import UntrustedGateConfigError
 
+        if not getattr(self, "_untracked_gate_pinned", False):
+            return
         pin = getattr(self, "_untracked_gate_pin", None)
+        current = self._untracked_gate_path()
         if pin is None:
+            if current is not None:
+                raise UntrustedGateConfigError(
+                    "untracked .code-forge/gate.yaml appeared during this review (it was not "
+                    "in use when the review started); refusing it"
+                )
             return
         gate, digest = pin
-        now = self._gate_digest(gate)
+        now = self._gate_digest(current) if current is not None else None
         if now != digest:
             raise UntrustedGateConfigError(
                 f"untracked .code-forge/gate.yaml changed during this review (sha256 "
