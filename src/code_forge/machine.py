@@ -333,38 +333,237 @@ _FAILURE_EVIDENCE_KEYS = ("publication_error", "cancellation_type", "cleanup_err
 _MUTANT_PHASE_KEYS = ("results_sha256", "metadata_sha256")
 
 
+def _clean_mutation_skip_kind(
+    findings: list, infra: list[str], evidence: dict, *, source_unchanged: bool,
+) -> str | None:
+    """Classify a native carrier that measured nothing, or return None.
+
+    No mutant ran, so there is no bound measurement to decode; such a carrier
+    is a DISMISSED skip, not an invalid measurement. Kinds:
+
+    - ``"baseline-timeout"`` (#120): ``mutation-baseline-timeout`` skips, infra
+      lines equal to their descriptions.
+    - ``"baseline-failed"`` (#127): ``mutation-flaky`` skips (the baseline ran
+      and failed, or its runner could not start), same infra rule.
+    - ``"not-applicable"`` (#127): only ``mutation-no-adapter`` /
+      ``mutation-tests-only`` skips and no infra lines at all.
+
+    The mixed-language ``mutation-other-adapter`` note (no infra line of its
+    own) may accompany either baseline kind. Anything else -- a changed source,
+    a measurement that claims completion, mutant-phase evidence, survivors,
+    mixed kinds, extra or reordered infra errors, or any cleanup / cancellation
+    / process-failure marker -- returns None and still fails closed.
+    """
+    if not source_unchanged or evidence.get("completed_measurement") is True or not findings:
+        return None
+    if any(f.id != "MUTATION_SKIPPED" or f.disposition is not Disposition.DISMISSED for f in findings):
+        return None
+    if any(key in evidence for key in _FAILURE_EVIDENCE_KEYS + _MUTANT_PHASE_KEYS):
+        return None
+    if evidence.get("inventory", {}) != {}:
+        return None
+    # Same default as decode_mutation_survivor_details: run_mutation records
+    # cleanup_complete only on a failed teardown, so absent means complete.
+    # Requiring an explicit True would make these exemptions unreachable.
+    if evidence.get("cancelled", False) is not False or evidence.get("cleanup_complete", True) is not True:
+        return None
+    kinds = {f.fingerprint for f in findings}
+    if kinds <= {"mutation-no-adapter", "mutation-tests-only"}:
+        return "not-applicable" if list(infra) == [] else None
+    for fingerprint, kind in (("mutation-baseline-timeout", "baseline-timeout"),
+                              ("mutation-flaky", "baseline-failed")):
+        primary = [f for f in findings if f.fingerprint == fingerprint]
+        if primary and kinds <= {fingerprint, "mutation-other-adapter"}:
+            return kind if list(infra) == [f.description for f in primary] else None
+    return None
+
+
+# Single switch for the owner's pending docs-only policy (#127/#132): when
+# True, a CI diff made only of allowlisted non-executable files is a clean
+# (noted) mutation skip; when False it FAILs like any other unmeasured diff.
+CI_DOCS_ONLY_MUTATION_SKIP_PASSES = True
+
+# Path-based allowlist (#132 re-review). This layer only decides WHERE a
+# docs file may live; WHAT counts as a doc (suffix, exec bit, script
+# signature) is delegated to the specified classifier
+# mutation_engines/classify.py:classify_path, so there is one definition:
+#   * docs/** and evidence/**: anything classify_path exempts (Markdown,
+#     plain text, raster images);
+#   * top-level README*/LICENSE*/CHANGELOG*/COPYING*/NOTICE*/AUTHORS*:
+#     Markdown or plain text per classify_path (no images), or extensionless.
+# Always excluded: package source/data (src/**, any dir with __init__.py),
+# build/dependency files, agent-instruction and other review-input files,
+# symlinked, non-regular or unreadable files.
+_DOC_DIRS = frozenset({"docs", "evidence"})
+_TOP_LEVEL_DOC_STEMS = ("README", "LICENSE", "LICENCE", "CHANGELOG", "COPYING", "NOTICE", "AUTHORS")
+_NEVER_DOC_DIRS = frozenset({"src", ".github", ".cursor", ".code-forge"})
+# Lower-cased names read by forge as review input (conventions_resolver) or
+# as build/dependency inputs (detect.py, manifest.py).
+_NEVER_DOC_NAMES = frozenset({
+    "agents.md", "claude.md", "gemini.md", "copilot-instructions.md",
+    ".cursorrules", ".windsurfrules", "cmakelists.txt", "pyproject.toml",
+    "manifest.in", "pipfile", "makefile", "dockerfile", "package.json",
+})
+_NEVER_DOC_PREFIXES = ("requirements", "constraints", "setup.")
+
+
+def _normalized_rel(raw: str) -> str | None:
+    from pathlib import PurePosixPath
+
+    text = raw.replace("\\", "/")
+    while text.startswith("./"):
+        text = text.removeprefix("./")
+    path = PurePosixPath(text)
+    if path.is_absolute() or ".." in path.parts or not path.parts:
+        return None
+    return path.as_posix()
+
+
+def _classified_doc_rule(rel: str, mode: int, content: bytes) -> str | None:
+    """classify_path's exempt rule for *rel*, or None if it is uncovered.
+
+    classify_path rejects any name without an extension, but extensionless
+    LICENSE/NOTICE/AUTHORS-style top-level files are plain text by
+    convention. Only for those (already admitted by the path layer) is the
+    name classified as if it were ``<name>.txt``; the exec-bit and script
+    signature checks still come from classify_path. classify.py itself is
+    not widened.
+    """
+    from pathlib import PurePosixPath
+
+    from .mutation_engines.classify import CATEGORY_EXEMPT, classify_path
+
+    name = PurePosixPath(rel).name
+    probe = rel + ".txt" if "/" not in rel and "." not in name else rel
+    try:
+        result = classify_path(probe, mode, content)
+    except ValueError:
+        return None
+    return result.rule if result.category == CATEGORY_EXEMPT else None
+
+
+def _docs_path_allowed(rel: str) -> bool:
+    """Lexical allowlist check; no filesystem access."""
+    from pathlib import PurePosixPath
+
+    from .mutation_engines.classify import RULE_DOC_MARKDOWN, RULE_DOC_TEXT
+
+    path = PurePosixPath(rel)
+    parts = path.parts
+    lower = path.name.lower()
+    if any(part in _NEVER_DOC_DIRS for part in parts[:-1]) or lower in _NEVER_DOC_NAMES:
+        return False
+    if lower.startswith(_NEVER_DOC_PREFIXES):
+        return False
+    rule = _classified_doc_rule(rel, 0o644, b"")
+    if len(parts) > 1:
+        return parts[0] in _DOC_DIRS and rule is not None
+    upper = path.name.upper()
+    for stem in _TOP_LEVEL_DOC_STEMS:
+        if upper == stem or (upper.startswith(stem) and upper[len(stem)] in ".-_"):
+            return rule in (RULE_DOC_MARKDOWN, RULE_DOC_TEXT)
+    return False
+
+
+def _diff_paths(git_diff: str) -> set[str]:
+    """Both sides of every file in a unified git diff (catches renames and
+    deletions: tool.py -> tool.md is not a docs-only change)."""
+    paths: set[str] = set()
+    for line in (git_diff or "").splitlines():
+        if line.startswith(("rename from ", "rename to ")):
+            paths.add(line.split(" ", 2)[2].strip())
+        elif line.startswith("diff --git "):
+            match = re.match(r"^diff --git a/(\S+) b/(\S+)$", line)
+            # Quoted or space-containing headers fail closed.
+            paths.update(match.groups() if match else ("<unparsed diff header>",))
+    return paths
+
+
+def _docs_only_files(paths: list[str], root, diff_paths=()) -> bool:
+    """True only if every changed path is on the docs allowlist and every
+    post-image is a regular, non-executable, readable, non-shebang file."""
+    import os
+    import stat
+    from pathlib import Path
+
+    if not paths:
+        return False
+    for raw in sorted(diff_paths):
+        rel = _normalized_rel(raw)
+        if rel is None or not _docs_path_allowed(rel):
+            return False
+    root_path = Path(root)
+    for raw in paths:
+        rel = _normalized_rel(raw) if not Path(raw).is_absolute() else None
+        if rel is None:
+            try:
+                rel = _normalized_rel(Path(raw).relative_to(root_path).as_posix())
+            except ValueError:
+                return False
+        if rel is None or not _docs_path_allowed(rel):
+            return False
+        # Anything importable is package source/data, whatever its suffix.
+        parent = root_path / rel
+        for ancestor in list(parent.parents)[:-1]:
+            if ancestor == root_path or root_path not in ancestor.parents:
+                break
+            if (ancestor / "__init__.py").exists():
+                return False
+        full = root_path / rel
+        try:
+            info = os.lstat(full)
+            if not stat.S_ISREG(info.st_mode):
+                return False
+            with open(full, "rb") as handle:
+                content = handle.read()
+        except OSError:
+            return False
+        if _classified_doc_rule(rel, info.st_mode, content) is None:
+            return False
+    return True
+
+
+def _symlinked_files(paths: list[str], root) -> list[str]:
+    from pathlib import Path
+
+    out = []
+    for raw in paths:
+        try:
+            if (Path(root) / raw).is_symlink():
+                out.append(raw)
+        except OSError:
+            out.append(raw)
+    return sorted(out)
+
+
+def _default_tests_only(paths: list[str]) -> bool:
+    """Tests-only by the built-in globs, ignoring any configured skip globs
+    (the reviewed tree's gate.yaml is untrusted) and never counting
+    conftest.py, whose fixtures change every test (#132 review)."""
+    from pathlib import PurePosixPath
+
+    from .mutation import _DEFAULT_MUTATION_SKIP_GLOBS, _glob_to_regex
+
+    patterns = [_glob_to_regex(g) for g in _DEFAULT_MUTATION_SKIP_GLOBS if not g.endswith("conftest.py")]
+    if not paths:
+        return False
+    for raw in paths:
+        posix = _normalized_rel(raw)
+        if posix is None:
+            return False
+        if PurePosixPath(posix).name == "conftest.py" or not posix.endswith(".py"):
+            return False
+        if not any(p.fullmatch(posix) or p.match(posix) for p in patterns):
+            return False
+    return True
+
+
 def _is_clean_baseline_timeout_skip(
     findings: list, infra: list[str], evidence: dict, *, source_unchanged: bool,
 ) -> bool:
-    """#120: the runner stopped at a cleanly classified baseline timeout.
-
-    No mutant ran, so there is no bound measurement to decode; that is a
-    DISMISSED skip, not an invalid measurement. Allowed alongside it: the
-    mixed-language ``mutation-other-adapter`` note (no infra line of its own).
-    Anything else -- a changed source, a measurement that claims completion,
-    mutant-phase evidence, survivors, extra or reordered infra errors, or any
-    cleanup / cancellation / process-failure marker -- still fails closed.
-    """
-    if not source_unchanged or evidence.get("completed_measurement") is True:
-        return False
-    timeouts = [f for f in findings if f.fingerprint == "mutation-baseline-timeout"]
-    if not timeouts:
-        return False
-    allowed = {"mutation-baseline-timeout", "mutation-other-adapter"}
-    if any(f.id != "MUTATION_SKIPPED" or f.fingerprint not in allowed
-           or f.disposition is not Disposition.DISMISSED for f in findings):
-        return False
-    if list(infra) != [f.description for f in timeouts]:
-        return False
-    if any(key in evidence for key in _FAILURE_EVIDENCE_KEYS + _MUTANT_PHASE_KEYS):
-        return False
-    if evidence.get("inventory", {}) != {}:
-        return False
-    # Same default as decode_mutation_survivor_details: run_mutation records
-    # cleanup_complete only on a failed teardown, so absent means complete.
-    # Requiring an explicit True would make this exemption unreachable.
-    return evidence.get("cancelled", False) is False and evidence.get("cleanup_complete", True) is True
-
+    """#120: the runner stopped at a cleanly classified baseline timeout."""
+    kind = _clean_mutation_skip_kind(findings, infra, evidence, source_unchanged=source_unchanged)
+    return kind == "baseline-timeout"
 
 
 def _baseline_timeout_reason(findings: list) -> str:
@@ -379,6 +578,21 @@ def _baseline_timeout_reason(findings: list) -> str:
             if match:
                 return "CI: mutation not measured: baseline tests timed out after %ss" % match.group(1)
     return "CI: mutation not measured: baseline tests timed out"
+
+
+def _baseline_failed_reason(findings: list) -> str:
+    """CI failure reason for a clean baseline-failure skip (#127)."""
+    for finding in findings:
+        if finding.fingerprint == "mutation-flaky":
+            detail = re.sub(r"^run \d+: ", "", finding.description).split("; ")[0].strip()
+            if detail:
+                return "CI: mutation not measured: " + detail[:300]
+    return "CI: mutation not measured: baseline failed"
+
+
+def _ci_skip_reason(kind: str, findings: list) -> str:
+    return _baseline_timeout_reason(findings) if kind == "baseline-timeout" else _baseline_failed_reason(findings)
+
 
 @dataclass
 class StateMachine:
@@ -507,6 +721,7 @@ class StateMachine:
         self._mutation_source_subject = None
         self._mutation_source_guard = None
         self._mutation_bound_failure = False
+        self._mutation_not_applicable = False
         self._mutation_timeout_objects: set[int] = set()
         self._mutation_timeout_emitted: set[str] = set()
 
@@ -957,7 +1172,27 @@ class StateMachine:
         py_files = grouped.get("python-mutmut", [])
         other_adapters = [key for key in grouped if key and key != "python-mutmut"]
 
-        if py_files and shutil.which("mutmut") is not None:
+        # #131: signals that can only stay FAIL (suppression cannot clear
+        # them, unlike a CONFIRMED count). A detached run cannot change the
+        # verdict, so do not spend a full baseline + mutation run on it.
+        ci_already_failed = (
+            self._mutation_bound_failure
+            or bool(self._acquisition_markers)
+            or self._state.rounds_with_falsify_infra > 0
+            or self._state.rounds_with_evidence_incomplete > 0
+        )
+        if py_files and shutil.which("mutmut") is not None and ci_already_failed:
+            self._state.infra_errors.append(
+                "CI: detached mutation not launched: verdict is already FAIL"
+            )
+        elif py_files and shutil.which("mutmut") is not None and self._mutation_not_applicable:
+            # #132 review: a clean tests-only skip must stay clean end to end;
+            # the detached producer would only report "nothing to mutate" as
+            # an error and turn the next run into a misleading FAIL.
+            self._state.infra_errors.append(
+                "CI: detached mutation not launched: mutation not applicable to this diff"
+            )
+        elif py_files and shutil.which("mutmut") is not None:
             mutation_timeout = None
             try:
                 from .gate_check import load_gate_config
@@ -2012,6 +2247,7 @@ class StateMachine:
         """
         self._mutation_measurement_eligible = False
         self._mutation_bound_failure = False
+        self._mutation_not_applicable = False
         self._mutation_timeout_objects = set()
         source_before = False
         if self.mode in (Mode.LOCAL, Mode.CI):
@@ -2101,24 +2337,42 @@ class StateMachine:
                     notes = [f for f in decoded if f.id.startswith("mutation-timeout-")]
                     self._mutation_timeout_objects = {id(f) for f in notes}
                     l2_findings.extend(notes)
-                elif not _is_clean_baseline_timeout_skip(
-                    l2_findings, l2_infra, evidence, source_unchanged=bool(source_before and source_after),
-                ):
-                    self._mutation_bound_failure = True
-                    self._state.infra_errors.append("L2: invalid bound mutation measurement")
-                elif self.mode == Mode.CI:
-                    # User policy (#120/#122): CI must not pass without mutation
-                    # evidence. Fail, naming the real cause. LOCAL keeps the
-                    # DISMISSED skip.
-                    self._mutation_bound_failure = True
-                    self._state.infra_errors.append(_baseline_timeout_reason(l2_findings))
+                else:
+                    kind = _clean_mutation_skip_kind(
+                        l2_findings, l2_infra, evidence, source_unchanged=bool(source_before and source_after),
+                    )
+                    if kind is None:
+                        self._mutation_bound_failure = True
+                        linked = _symlinked_files(diff_files, self._source_root())
+                        if linked:
+                            # #132 P3: fail closed, but name the real cause.
+                            prefix = "CI" if self.mode == Mode.CI else "L2"
+                            self._state.infra_errors.append(
+                                f"{prefix}: mutation not measured: symlinked files are not measured: "
+                                + ", ".join(linked)
+                            )
+                        else:
+                            self._state.infra_errors.append("L2: invalid bound mutation measurement")
+                    elif kind == "not-applicable":
+                        self._apply_not_applicable_policy(l2_findings, diff_files)
+                    elif self.mode == Mode.CI:
+                        # User policy (#120/#122, #127): CI must not pass without
+                        # mutation evidence. Fail, naming the real cause. LOCAL
+                        # keeps the DISMISSED skip; "mutation does not apply"
+                        # is a clean skip in both modes.
+                        self._mutation_bound_failure = True
+                        self._state.infra_errors.append(_ci_skip_reason(kind, l2_findings))
             elif self.mode == Mode.CI and any(
-                f.id == "MUTATION_SKIPPED" and f.fingerprint == "mutation-baseline-timeout" for f in l2_findings
+                f.id == "MUTATION_SKIPPED" and f.fingerprint in ("mutation-baseline-timeout", "mutation-flaky")
+                for f in l2_findings
             ):
-                # #124: the CI baseline-timeout policy is runner-independent; a
-                # custom/injected runner's timeout skip carries no evidence either.
+                # #124/#127: the CI baseline policy is runner-independent; a
+                # custom/injected runner's baseline skip carries no evidence either.
                 self._mutation_bound_failure = True
-                self._state.infra_errors.append(_baseline_timeout_reason(l2_findings))
+                timed_out = any(f.fingerprint == "mutation-baseline-timeout" for f in l2_findings)
+                self._state.infra_errors.append(
+                    _ci_skip_reason("baseline-timeout" if timed_out else "baseline-failed", l2_findings)
+                )
             self._mutation_measurement_eligible = native and decoded is not None
             if native and not self._mutation_measurement_eligible and any(is_mutation_survivor(f) for f in l2_findings):
                 if not source_before or not mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root()):
@@ -2128,6 +2382,33 @@ class StateMachine:
             self._mutation_bound_failure = native
             self._state.infra_errors.append(f"L2 runner failed: {exc}")
             return []
+
+    def _review_diff_paths(self) -> set[str]:
+        """Every path on either side of the reviewed diff (renames, deletions)."""
+        return _diff_paths(self.resolved_review.git_diff or "")
+
+    def _apply_not_applicable_policy(self, findings: list, diff_files: list[str]) -> None:
+        """#127/#132: decide whether a measured-nothing "does not apply" skip
+        is clean. Always leaves a visible infra line naming the files."""
+        shown = ", ".join(sorted(diff_files)[:10]) + (" ..." if len(diff_files) > 10 else "")
+        fingerprints = {f.fingerprint for f in findings}
+        linked = _symlinked_files(diff_files, self._source_root())
+        if linked:
+            clean, why, shown = False, "symlinked files are not measured", ", ".join(linked)
+        elif fingerprints == {"mutation-tests-only"}:
+            clean = _default_tests_only(diff_files)
+            why = "diff is tests-only" if clean else "configured skip globs or conftest.py leave nothing to mutate"
+        else:
+            clean = CI_DOCS_ONLY_MUTATION_SKIP_PASSES and _docs_only_files(
+                diff_files, self._source_root(), self._review_diff_paths(),
+            )
+            why = "docs-only diff" if clean else "no mutation adapter covers"
+        if clean or self.mode != Mode.CI:
+            self._mutation_not_applicable = clean
+            self._state.infra_errors.append(f"L2: mutation not applicable ({why}): {shown}")
+            return
+        self._mutation_bound_failure = True
+        self._state.infra_errors.append(f"CI: mutation not measured: {why}: {shown}")
 
     def _run_e2e_phase(self) -> list[StateFinding]:
         """E2e coverage phase. Runs after L2.
