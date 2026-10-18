@@ -807,7 +807,7 @@ def _cycle_response_hashes(receipts: list[dict], cycle: int) -> dict | None:
         if receipt.get("cycle") != cycle:
             continue
         value = receipt.get("reviewer_response_sha256")
-        if not isinstance(value, str) or len(value) != 64:
+        if not isinstance(value, str) or len(value) != 64 or value.strip("0123456789abcdef"):
             return None
         hashes[receipt.get("pass")] = value
     return hashes or None

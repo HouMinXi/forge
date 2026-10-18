@@ -4097,6 +4097,17 @@ class TestResponseHashReuse:
         r = self._run(tmp_path, lambda c, p: None if (c, p) == (3, 1) else "fresh %d %d" % (c, p))
         assert not r.passed and "Jaccard" in r.reason
 
+    @pytest.mark.parametrize("bad", ["short", "g" * 64, "A" * 64, " " + "a" * 63])
+    def test_non_hex_hash_keeps_jaccard_failure(self, tmp_path, bad):
+        rd = tmp_path / ".code-forge" / "receipts"
+        assert self._run(tmp_path, lambda c, p: "fresh %d %d" % (c, p)).passed
+        for path in rd.glob("receipt-c3p*.json"):
+            data = json.loads(path.read_text())
+            data["reviewer_response_sha256"] = bad
+            path.write_text(json.dumps(data))
+        r = run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        assert not r.passed and "Jaccard" in r.reason
+
     def test_malformed_hash_keeps_jaccard_failure(self, tmp_path):
         rd = tmp_path / ".code-forge" / "receipts"
         r = self._run(tmp_path, lambda c, p: "fresh %d %d" % (c, p))
