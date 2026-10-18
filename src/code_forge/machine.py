@@ -666,6 +666,14 @@ def _ci_skip_reason(kind: str, findings: list) -> str:
     return "CI: mutation not measured: " + kind
 
 
+def _gate_ci_reason(exc: BaseException) -> str:
+    """CI wording for a missing/untrusted test gate (#160, #178)."""
+    reason = getattr(exc, "ci_reason", None)
+    if isinstance(reason, str):
+        return reason
+    return f"mutation not measured -- {exc}"
+
+
 @dataclass
 class StateMachine:
     """Forge state machine. Constructor wires dependencies; .run() executes.
@@ -1277,7 +1285,7 @@ class StateMachine:
         elif py_files and shutil.which("mutmut") is not None:
             mutation_timeout = None
             from .gate_check import (
-                GATE_NOT_FOUND_NOT_MEASURED, UNTRACKED_GATE_NOT_MEASURED, GateNotFound, OutsideConfigRootRefused,
+                UNTRACKED_GATE_NOT_MEASURED, GateNotFound, OutsideConfigRootRefused, OutsideGateInvalid,
                 UntrackedGateRefused,
             )
 
@@ -1322,8 +1330,10 @@ class StateMachine:
                 self._state.infra_errors.append(
                     f"CI: mutation not measured -- trusted test config refused: {exc}"
                 )
-            except GateNotFound:
-                # User policy: CI with no gate.yaml at all measured nothing.
+            except (GateNotFound, OutsideGateInvalid) as exc:
+                # User policy: CI with no trusted gate.yaml (none at all, only
+                # one added by this change #178, or an outside root's that is
+                # missing or invalid) measured nothing: FAIL with the reason.
                 baseline_cmd = None
                 baseline_timeout = 120
                 also_copy = None
@@ -1332,7 +1342,7 @@ class StateMachine:
                 mutation_skip_globs = None
                 mutation_include_globs = None
                 self._mutation_bound_failure = True
-                self._state.infra_errors.append(f"CI: {GATE_NOT_FOUND_NOT_MEASURED}")
+                self._state.infra_errors.append(f"CI: {_gate_ci_reason(exc)}")
             except FileNotFoundError as exc:
                 baseline_cmd = None
                 baseline_timeout = 120
@@ -2530,7 +2540,7 @@ class StateMachine:
 
         if needs_baseline:
             from .gate_check import (
-                GATE_NOT_FOUND_NOT_MEASURED, UNTRACKED_GATE_NOT_MEASURED, GateNotFound, OutsideConfigRootRefused,
+                UNTRACKED_GATE_NOT_MEASURED, GateNotFound, OutsideConfigRootRefused, OutsideGateInvalid,
                 UntrackedGateRefused,
             )
 
@@ -2545,10 +2555,10 @@ class StateMachine:
                 memory_limit_bytes = memory_mb * 1024**2 if memory_mb is not None else None
                 # #134: never the reviewed tree's own globs.
                 skip_globs, include_globs = self._trusted_mutation_globs(config["test"])
-            except GateNotFound as exc:
+            except (GateNotFound, OutsideGateInvalid) as exc:
                 if self.mode is Mode.CI:
                     self._mutation_bound_failure = True
-                    self._state.infra_errors.append(f"CI: {GATE_NOT_FOUND_NOT_MEASURED}")
+                    self._state.infra_errors.append(f"CI: {_gate_ci_reason(exc)}")
                 else:
                     self._mutation_bound_failure = native
                     self._state.infra_errors.append(
