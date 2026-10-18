@@ -540,6 +540,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="suppress ANSI color codes in output",
     )
     review_parser.add_argument(
+        "--test-config-root",
+        default=None,
+        metavar="DIR",
+        help=(
+            "directory holding .code-forge/gate.yaml for test.* and mutation globs, outside "
+            "the reviewed checkout (env FORGE_TEST_CONFIG_ROOT); e.g. a CI secret written there"
+        ),
+    )
+    review_parser.add_argument(
         "--allow-main",
         action="store_true",
         default=False,
@@ -3684,6 +3693,30 @@ def _startup_banner_line(
     return line
 
 
+def _test_config_root(args, env, cwd: Path) -> Path | None:
+    """--test-config-root / FORGE_TEST_CONFIG_ROOT (#140): an explicit gate
+    config outside the reviewed checkout, so CI need not track gate.yaml."""
+    raw = getattr(args, "test_config_root", None)
+    if not isinstance(raw, str):
+        raw = None  # absent on programmatic callers' namespaces
+    raw = raw or env.get("FORGE_TEST_CONFIG_ROOT") or None
+    if raw is None:
+        return None
+    from .gate_check import config_root_is_outside_review
+
+    root = Path(raw).expanduser()
+    if not root.is_absolute():
+        root = cwd / root
+    if not (root / ".code-forge" / "gate.yaml").is_file():
+        raise CliError(f"--test-config-root {root}: no .code-forge/gate.yaml there")
+    if not config_root_is_outside_review(os.path.realpath(root), os.path.realpath(cwd)):
+        raise CliError(
+            f"--test-config-root {root} must be outside the reviewed checkout {cwd}; "
+            "a config inside it can be edited by the change under review"
+        )
+    return root
+
+
 def _run(args, env, cwd: Path) -> Verdict:
     """Main pipeline body. Returns Verdict."""
     _wall_t0 = time.monotonic()
@@ -3983,14 +4016,16 @@ def _run(args, env, cwd: Path) -> Verdict:
         print("code-forge: no changes to review", file=sys.stderr)
         return Verdict.PASS
 
+    test_config_root = _test_config_root(args, env, cwd)
     if outlet == "subprocess" and resolved.target_kind in {"INDEX", "COMMIT"}:
         from .mutation import mutation_review_admission_error
 
         admission_error = mutation_review_admission_error(
             target_kind=resolved.target_kind, git_diff=resolved.git_diff,
-            source_files=resolved.source_files, source_root=cwd, config_root=cwd,
+            source_files=resolved.source_files, source_root=cwd,
+            config_root=test_config_root or cwd,
             runner=build_l2_runner(cwd=cwd), ci_detached=mode == Mode.CI,
-            base_sha=resolved.base_sha,
+            base_sha=resolved.base_sha, allow_untracked=mode != Mode.CI,
         )
         if admission_error:
             raise CliError(admission_error)
@@ -4440,6 +4475,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     try:
         with ForgeLock(lock_path):
             verdict = _run_hold_loop(
+                test_config_root=test_config_root,
                 mode=mode,
                 falsifier=falsifier,
                 autofixer=autofixer,
@@ -4494,6 +4530,7 @@ def _run(args, env, cwd: Path) -> Verdict:
 
 def _run_hold_loop(
     *,
+    test_config_root=None,
     mode,
     falsifier,
     autofixer,
@@ -4554,6 +4591,7 @@ def _run_hold_loop(
             source_hash=source_hash,
             baseline_spec_repr=baseline_repr,
             cwd=cwd,
+            test_config_root=test_config_root,
             registry=registry,
             max_total_rounds=max_rounds,
             max_fix_attempts=max_fix_attempts,

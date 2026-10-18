@@ -74,6 +74,11 @@ def test_ci_config_reaches_generated_payload(
     monkeypatch.setattr(factories.shutil, "which", lambda name: "/tools/mutmut")
     machine = _machine(tmp_path, configured)
     machine.mode = Mode.CI
+    # #140: CI takes the gate from an explicit config root outside the checkout.
+    outside = tmp_path.parent / (tmp_path.name + "-ci-config")
+    (outside / ".code-forge").mkdir(parents=True, exist_ok=True)
+    (outside / ".code-forge/gate.yaml").write_bytes((tmp_path / ".code-forge/gate.yaml").read_bytes())
+    machine.test_config_root = outside
     monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
     payloads = []
     real_popen = subprocess.Popen

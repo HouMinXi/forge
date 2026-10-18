@@ -21,6 +21,7 @@ from code_forge.fixval import FixvalCandidate, FixvalStatus, run_fixval
 from code_forge.machine import StateMachine
 from code_forge.registry import ToolConfig
 from code_forge.state import Mode
+from tests.ci_gate import outside_config_root
 
 
 def _git(repo, *args):
@@ -75,6 +76,7 @@ def _machine(repo, diff, files, **kwargs):
         source_hash="fixture",
         baseline_spec_repr="HEAD..INDEX",
         cwd=repo,
+        test_config_root=kwargs.pop("test_config_root", outside_config_root(repo)),
         registry=kwargs.pop("registry", {}),
         **kwargs,
     )
@@ -1016,7 +1018,7 @@ def test_advisory_rulepack_cannot_rescan_retained_deletion(tmp_path, monkeypatch
     machine = _machine(tmp_path, diff, files, advisory_runners=[advisory])
     monkeypatch.setattr(
         "code_forge.gate_check.load_gate_config",
-        lambda _: {
+        lambda _, **_k: {
             "rulepacks": ["fixture"],
             "rulepacks_blocking": ["no-document-write"],
         },
@@ -2602,7 +2604,7 @@ def test_fixval_keeps_leading_plain_production_in_mixed_packet(
         monkeypatch.setattr(machine, "_write_ledger_rows", lambda: None)
         monkeypatch.setattr(machine, "_persist_state", lambda: None)
         monkeypatch.setattr(
-            "code_forge.gate_check.load_gate_config", lambda _: {"test": {"command": command}}
+            "code_forge.gate_check.load_trusted_gate_config", lambda **_k: {"test": {"command": command}}
         )
         machine._finalize_local_terminal()
         assert machine._state.verdict.value == "FAIL"
@@ -2768,7 +2770,7 @@ def test_mode_only_frame_excludes_following_plain_test(tmp_path, monkeypatch, en
         monkeypatch.setattr(machine, "_write_ledger_rows", lambda: None)
         monkeypatch.setattr(machine, "_persist_state", lambda: None)
         monkeypatch.setattr(
-            "code_forge.gate_check.load_gate_config", lambda _: {"test": {"command": command}}
+            "code_forge.gate_check.load_trusted_gate_config", lambda **_k: {"test": {"command": command}}
         )
         machine._finalize_local_terminal()
         assert machine._state.verdict.value == "FAIL"

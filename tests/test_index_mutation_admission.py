@@ -257,6 +257,13 @@ def configure_cli(project, monkeypatch, *, outlet="subprocess", committed=False,
     tools = project.root / "owned-tools.yaml"
     tools.write_text("tools: {}\n", encoding="utf-8")
     selection = ["--committed"] if committed else ["--baseline", project.base, "--head", "INDEX"]
+    if mode == "ci":
+        # #140: CI never trusts an untracked in-tree gate.yaml; supply the
+        # fixture gate from a config root outside the checkout.
+        outside = project.root.parent / (project.root.name + "-ci-config")
+        (outside / ".code-forge").mkdir(parents=True, exist_ok=True)
+        (outside / ".code-forge/gate.yaml").write_bytes((project.root / ".code-forge/gate.yaml").read_bytes())
+        monkeypatch.setenv("FORGE_TEST_CONFIG_ROOT", str(outside))
     return ["forge", "review", "--allow-main", "--backend", "owned", "--registry", str(tools),
             "--mode", mode, *selection, "calc.py"]
 

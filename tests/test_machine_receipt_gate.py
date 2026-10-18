@@ -24,6 +24,7 @@ from code_forge.llm_invoke import LLMResult, Usage
 from code_forge.machine import StateMachine
 from code_forge.source import compute_source_hash
 from code_forge.state import Mode, Verdict
+from tests.ci_gate import outside_config_root
 
 DIFF = (
     "diff --git a/control.ts b/control.ts\n"
@@ -261,6 +262,7 @@ def _run(
         source_hash=sha,
         baseline_spec_repr="receipt gate test",
         cwd=cwd,
+        test_config_root=outside_config_root(cwd),
         registry={},
         l0_runner=lambda *a: ([], []),
         l1_provider=provider,
@@ -569,6 +571,7 @@ def test_stale_window_cannot_vouch_for_bad_current_run(tmp_path):
         source_hash=sha,
         baseline_spec_repr="stale-window test",
         cwd=cwd,
+        test_config_root=outside_config_root(cwd),
         registry={},
         l0_runner=lambda *a: ([], []),
         l1_provider=provider,
@@ -646,6 +649,7 @@ def test_valid_current_run_passes_with_stale_high_cycles(tmp_path):
         source_hash=sha,
         baseline_spec_repr="stale-valid test",
         cwd=cwd,
+        test_config_root=outside_config_root(cwd),
         registry={},
         l0_runner=lambda *a: ([], []),
         l1_provider=provider,
@@ -741,6 +745,7 @@ def _acquired_case(
         source_hash=compute_source_hash(git_diff=ACQUIRED_DIFF),
         baseline_spec_repr="acquired receipts",
         cwd=tmp_path,
+        test_config_root=outside_config_root(tmp_path),
         registry={},
         l0_runner=lambda *a: ([], []),
         l1_provider=provider,
