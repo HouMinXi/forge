@@ -45,6 +45,15 @@ def _change(rd, cycle=2, perspective=1, **changes):
     path.write_text(json.dumps(data))
 
 
+def _incomplete_with_reported_siblings(rd, cycle=2):
+    """c{cycle}p1 errored; its siblings report completion. Since 0635024 a
+    sibling that omits pass_status makes the cycle fail as "status missing"
+    instead, so the incomplete-pass reason needs explicit siblings."""
+    for perspective in (2, 3):
+        _change(rd, cycle, perspective, pass_status="completed")
+    _change(rd, cycle, 1, pass_status="error")
+
+
 def _verify(root, **kwargs):
     kwargs.setdefault("diff_text", DIFF)
     return run_verify(root, SHA, parse_diff_files(DIFF), **kwargs)
@@ -231,7 +240,7 @@ def test_hardened_failure_names_the_exact_check(tmp_path, case, reason, check, p
     elif case == "content":
         _change(rd, code_excerpts=[dict(EXCERPT, end_line=1, content="forged")])
     elif case == "pass-status":
-        _change(rd, pass_status="error")
+        _incomplete_with_reported_siblings(rd)
     _failure(_verify(tmp_path), reason, check, passed)
 
 
@@ -412,12 +421,27 @@ def test_deletion_hunk_does_not_skip_later_unwitnessed_hunk(tmp_path):
 def test_legacy_incomplete_pass_keeps_all_previous_check_coordinates(tmp_path):
     rd = _setup(tmp_path)
     (tmp_path / "mod.py").write_text("a\nb\nc\nd\ne\n")
-    _change(rd, pass_status="error")
+    _incomplete_with_reported_siblings(rd)
     _failure(
         _verify(tmp_path, hardened=False),
         "pass did not complete: c2p1 status=error -- that pass contributed no review, so the cycle cannot attest",
         8,
         7,
+    )
+
+
+@pytest.mark.parametrize("hardened, passed", [(False, 7), (True, 6)])
+def test_incomplete_pass_with_unreported_sibling_names_the_missing_status(tmp_path, hardened, passed):
+    """0635024: a legacy sibling that omits pass_status cannot attest an
+    incomplete cycle; the failure names that sibling, same coordinates."""
+    rd = _setup(tmp_path)
+    (tmp_path / "mod.py").write_text("a\nb\nc\nd\ne\n")
+    _change(rd, pass_status="error")
+    _failure(
+        _verify(tmp_path, hardened=hardened),
+        "pass completion status missing: c2p2 -- incomplete cycle cannot attest",
+        8,
+        passed,
     )
 
 
