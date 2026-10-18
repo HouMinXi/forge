@@ -25,11 +25,17 @@ def test_hardlink_refusal_still_fires(tmp_path):
     assert _read_gate_nofollow(root) == GATE  # only refused when asked
 
 
-def test_inode_refusal_still_fires(tmp_path):
-    root = _root(tmp_path)
-    info = os.stat(root / ".code-forge" / "gate.yaml")
-    with pytest.raises(UntrustedGateConfigError, match="hardlink of a file in the reviewed checkout"):
-        _read_gate_nofollow(root, refuse_inodes=frozenset({(info.st_dev, info.st_ino)}))
+def test_checkout_inode_scan_stays_removed():
+    """#206: main removed the checkout inode scan (9702852, #149/#154: a git
+    call and checkout walk per outside load); st_nlink > 1 replaces it."""
+    import inspect
+
+    from code_forge import gate_check
+
+    assert not hasattr(gate_check, "_checkout_regular_file_inodes")
+    assert not hasattr(gate_check, "_regular_file_inode")
+    for fn in (_read_gate_nofollow, _load_gate_nofollow):
+        assert "refuse_inodes" not in inspect.signature(fn).parameters
 
 
 def test_sha256_pin_still_fires_and_matching_pin_parses(tmp_path):
