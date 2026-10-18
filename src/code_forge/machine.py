@@ -1277,7 +1277,7 @@ class StateMachine:
         elif py_files and shutil.which("mutmut") is not None:
             mutation_timeout = None
             from .gate_check import (
-                UNTRACKED_GATE_NOT_MEASURED, GateNotFound, OutsideConfigRootRefused, OutsideGateInvalid,
+                UNTRACKED_GATE_NOT_MEASURED, BaselineGateInvalid, GateNotFound, OutsideConfigRootRefused, OutsideGateInvalid,
                 UntrackedGateRefused,
             )
 
@@ -1322,7 +1322,7 @@ class StateMachine:
                 self._state.infra_errors.append(
                     f"CI: mutation not measured -- trusted test config refused: {exc}"
                 )
-            except (GateNotFound, OutsideGateInvalid) as exc:
+            except (GateNotFound, OutsideGateInvalid, BaselineGateInvalid) as exc:  # #191/#199
                 # User policy: CI with no trusted gate.yaml (none at all, only
                 # one added by this change #178, or an outside root's that is
                 # missing or invalid) measured nothing: FAIL with the reason.
@@ -2488,7 +2488,7 @@ class StateMachine:
 
         if needs_baseline:
             from .gate_check import (
-                UNTRACKED_GATE_NOT_MEASURED, GateNotFound, OutsideConfigRootRefused, OutsideGateInvalid,
+                UNTRACKED_GATE_NOT_MEASURED, BaselineGateInvalid, GateNotFound, OutsideConfigRootRefused, OutsideGateInvalid,
                 UntrackedGateRefused,
             )
 
@@ -2503,7 +2503,7 @@ class StateMachine:
                 memory_limit_bytes = memory_mb * 1024**2 if memory_mb is not None else None
                 # #134: never the reviewed tree's own globs.
                 skip_globs, include_globs = self._trusted_mutation_globs(config["test"])
-            except (GateNotFound, OutsideGateInvalid) as exc:
+            except (GateNotFound, OutsideGateInvalid, BaselineGateInvalid) as exc:  # #191/#199
                 if self.mode is Mode.CI:
                     self._mutation_bound_failure = True
                     self._state.infra_errors.append(f"CI: {_gate_ci_reason(exc)}")
