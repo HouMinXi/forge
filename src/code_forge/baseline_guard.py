@@ -206,24 +206,21 @@ def _without_ignored_exceptions(lines: list[str]) -> list[str]:
     These are printed for errors in __del__ or at shutdown, for example the
     multiprocessing ResourceTracker's ``ChildProcessError: [Errno 10]`` under
     a subreaper. The run's exit status never depends on them, so they must not
-    be reported as the baseline failure cause.
+    be reported as the baseline failure cause. A report is its header, an
+    optional traceback (header plus indented frames), and one final
+    exception line, which is dropped with or without a traceback (#185).
     """
     kept: list[str] = []
     skipping = False
-    in_traceback = False
     for line in lines:
         if re.match(r"Exception ignored\b", line):
-            skipping, in_traceback = True, False
+            skipping = True
             continue
         if skipping:
-            if line.startswith("Traceback (most recent call last):"):
-                in_traceback = True
-                continue
-            if in_traceback and (not line or line[0].isspace()):
+            if line.startswith("Traceback (most recent call last):") or (line and line[0].isspace()):
                 continue
             skipping = False
-            if in_traceback:
-                continue  # the report's final exception line
+            continue  # the report's final exception line
         kept.append(line)
     return kept
 
@@ -239,10 +236,12 @@ def _output_detail(stderr: str | bytes | None, stdout: str | bytes | None) -> st
     for label, value in (("stderr", stderr), ("stdout", stdout)):
         if isinstance(value, bytes):
             value = value.decode("utf-8", errors="replace")
-        normalized = " ".join((value or "").split())
+        # #185: every excerpt (short, fallback, or selected) comes from the
+        # stream without interpreter "Exception ignored" reports.
+        lines = _without_ignored_exceptions((value or "").splitlines())
+        normalized = " ".join(" ".join(lines).split())
         excerpt = normalized[:200]
         if len(normalized) > 200:
-            lines = _without_ignored_exceptions((value or "").splitlines())
             for priority, pattern in enumerate((
                 r"^E\s+(?!\[\s*\d+%\]\s*$)\S",
                 r"^(?:[\w.]*(?:Error|Exception)|SystemExit|KeyboardInterrupt):(?:\s|$)",
