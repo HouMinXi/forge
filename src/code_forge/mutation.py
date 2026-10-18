@@ -112,10 +112,14 @@ def _mutation_outcome(
     return outcome
 
 
+# #135: test code is identified by a tests/ directory, not by file name. A
+# module like pkg/test_helpers.py or pkg/api_test.py is production code and
+# must be mutated (and must not make a diff "tests-only"). A singular test/
+# directory stays production (see test_mutation_venv case2/case5). Repos that keep tests elsewhere say so in
+# the trusted gate.yaml mutation_skip_globs.
 _DEFAULT_MUTATION_SKIP_GLOBS = [
     "tests/**",
-    "**/test_*.py",
-    "**/*_test.py",
+    "**/tests/**",
     "**/conftest.py",
 ]
 
@@ -201,8 +205,8 @@ def _is_test_path(
     """True for a path that should be excluded from mutation.
 
     Include globs take precedence over skip globs.
-    When skip_globs is None, defaults to top-level tests/ and
-    test_*.py, *_test.py, conftest.py files.
+    When skip_globs is None, defaults to files under a tests/
+    directory and conftest.py files (#135: never by file name alone).
     """
     effective_skips = _DEFAULT_MUTATION_SKIP_GLOBS if skip_globs is None else skip_globs
     effective_includes = [] if include_globs is None else include_globs
@@ -216,56 +220,6 @@ def _is_test_path(
             return True
 
     return False
-
-
-def _globs_from_gate_yaml(
-    cwd: Path,
-) -> tuple[list[str] | None, list[str] | None]:
-    """Read mutation skip/include globs from .code-forge/gate.yaml if present.
-
-    Returns (skip_globs, include_globs). Either side is None when the key
-    is omitted or the file cannot be loaded. load_gate_config is the
-    preferred path so type errors surface the same as also_copy; a
-    best-effort YAML parse is the fallback when the file is incomplete
-    (review worktrees often carry a partial gate.yaml).
-    """
-    gate_yaml = cwd / ".code-forge" / "gate.yaml"
-    if not gate_yaml.is_file():
-        return (None, None)
-    try:
-        from .gate_check import load_gate_config
-
-        gate_cfg = load_gate_config(gate_yaml)
-        test_cfg = gate_cfg.get("test", {})
-        return (
-            test_cfg.get("mutation_skip_globs"),
-            test_cfg.get("mutation_include_globs"),
-        )
-    except (OSError, ValueError, TypeError, ImportError):
-        pass
-    try:
-        import yaml
-    except ImportError:
-        return (None, None)
-    try:
-        with open(gate_yaml, encoding="utf-8") as fh:
-            raw = yaml.safe_load(fh)
-    except (OSError, yaml.YAMLError):
-        return (None, None)
-    if not isinstance(raw, dict):
-        return (None, None)
-    test_cfg = raw.get("test", {})
-    if not isinstance(test_cfg, dict):
-        return (None, None)
-    skip = test_cfg.get("mutation_skip_globs")
-    include = test_cfg.get("mutation_include_globs")
-    if skip is not None and (not isinstance(skip, list) or not all(isinstance(e, str) for e in skip)):
-        skip = None
-    if include is not None and (
-        not isinstance(include, list) or not all(isinstance(e, str) for e in include)
-    ):
-        include = None
-    return (skip, include)
 
 
 # Resource guards for the mutmut subprocess tree. mutmut >=3.4 defaults
@@ -878,7 +832,7 @@ def mutation_review_admission_error(
         py_files = [_lexical_source(path, root).as_posix() for path in py_files]
     except ValueError:
         return None
-    skip, include = _globs_from_gate_yaml(source_root)
+    skip, include = test.get("mutation_skip_globs"), test.get("mutation_include_globs")
     selected = native and any(not _is_test_path(path, skip, include, source_root) for path in py_files)
     if detached:
         detached_skip = test.get("mutation_skip_globs")
@@ -1280,12 +1234,9 @@ def _run_mutation(
 
     repo_root = os.path.abspath(cwd)
 
-    if mutation_skip_globs is None or mutation_include_globs is None:
-        file_skip, file_include = _globs_from_gate_yaml(cwd)
-        if mutation_skip_globs is None:
-            mutation_skip_globs = file_skip
-        if mutation_include_globs is None:
-            mutation_include_globs = file_include
+    # #134: globs come only from the caller's trusted configuration. The
+    # reviewed tree's own .code-forge/gate.yaml is never consulted here: a
+    # change could otherwise exclude its own production files from mutation.
 
     # Empty files: no work
     if not diff_files:

@@ -132,7 +132,8 @@ def test_relative_root_uses_native_repository_relative_selection(
         root = Path("owned-source")
     canonical = mutation._lexical_source(str(source), Path(os.path.abspath(root))).as_posix()
     assert canonical == name
-    skip, include = mutation._globs_from_gate_yaml(root)
+    skip = project.gate["test"].get("mutation_skip_globs")
+    include = project.gate["test"].get("mutation_include_globs")
     selected = selection in {"production", "include-override"}
     assert (not mutation._is_test_path(canonical, skip, include, root)) is selected
     if route == "exact-partial":
