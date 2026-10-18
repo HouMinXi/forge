@@ -35,6 +35,13 @@ _CLEANUP_MAX_SECONDS = 30.0
 # not a bound: a report that still arrives late is rescued in
 # run_owned_command when it says timed_out with cleanup complete.
 _OWNER_REPORT_SLACK = 30.0
+# #190: after an interruption the owner must still leave its run loop (one
+# reap+discover poll over the whole tree), run cleanup for up to
+# _CLEANUP_MAX_SECONDS (whose last poll may end after that deadline), and
+# serialize its report. That is the same post-deadline work the normal wait
+# covers with _OWNER_REPORT_SLACK, so the drain gets the same slack instead of
+# a 2s margin that reported "did not finish cleanup" for owners that finish.
+_INTERRUPT_DRAIN_SECONDS = _CLEANUP_MAX_SECONDS + _OWNER_REPORT_SLACK
 _TERM_SECONDS = 0.25
 _POLL_SECONDS = 0.01
 
@@ -413,7 +420,7 @@ def run_owned_command(
             except ProcessLookupError:
                 pass
             try:
-                raw, diagnostic = helper.communicate(timeout=_CLEANUP_MAX_SECONDS + 2)
+                raw, diagnostic = helper.communicate(timeout=_INTERRUPT_DRAIN_SECONDS)
             except Exception as cleanup_exc:  # noqa: BLE001 - ordinary drain failures need cleanup evidence
                 raise MutationProcessError(
                     f"mutation owner {helper.pid} did not finish cleanup",

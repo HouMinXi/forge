@@ -73,7 +73,7 @@ def test_owner_keeps_original_cancellation_and_secondary_cleanup(monkeypatch, ex
         assert cancellation.cleanup_error
         assert "mutation cleanup failed" in cancellation.__notes__[0]
     if len(calls) == 2:
-        assert calls[1]["timeout"] == process._CLEANUP_MAX_SECONDS + 2
+        assert calls[1]["timeout"] == process._INTERRUPT_DRAIN_SECONDS
 
 
 def test_owner_keeps_original_when_success_metadata_is_interrupted(monkeypatch):
@@ -1205,3 +1205,42 @@ def test_public_selection_dispatch_keeps_authoritative_control(tmp_path, monkeyp
     assert first.cleanup_evidence_error is second
     assert workspaces and workspaces[0].cleanup_complete is False
     assert evidence["cancelled"] and not evidence["baseline_passed"] and not evidence["completed_measurement"]
+
+
+def test_interrupt_drain_gets_the_owner_report_slack():
+    """#190: the post-interrupt drain covers the full cleanup window plus the
+    same report slack as the normal wait, never a 2s margin."""
+    from code_forge import _mutation_process as process
+
+    assert process._INTERRUPT_DRAIN_SECONDS == process._CLEANUP_MAX_SECONDS + process._OWNER_REPORT_SLACK
+    assert process._INTERRUPT_DRAIN_SECONDS - process._CLEANUP_MAX_SECONDS >= process._OWNER_REPORT_SLACK
+
+
+def test_slow_but_finishing_owner_drain_is_not_a_cleanup_error(monkeypatch):
+    """#190: an owner that needs more than the old 2s margin after its cleanup
+    window (but within the report slack) completes without a cleanup_error."""
+    cancellation = KeyboardInterrupt("CALLER_CANCELLED")
+    report = {"cleanup_complete": True, "cancelled": True, "owned": []}
+    needed = process._CLEANUP_MAX_SECONDS + 10  # 10s past the window
+
+    class Owner:
+        pid = 123
+        calls = 0
+
+        def communicate(self, *args, **kwargs):
+            Owner.calls += 1
+            if Owner.calls == 1:
+                raise cancellation
+            if kwargs["timeout"] < needed:
+                raise subprocess.TimeoutExpired("owner", kwargs["timeout"])
+            return json.dumps(report).encode(), b""
+
+        def send_signal(self, signum):
+            pass
+
+    monkeypatch.setattr(process.subprocess, "Popen", lambda *_a, **_k: Owner())
+    with pytest.raises(KeyboardInterrupt) as caught:
+        process.run_owned_command(["fixture"], timeout=1)
+    assert caught.value is cancellation
+    assert caught.value.cleanup_complete is True
+    assert not getattr(caught.value, "cleanup_error", None)

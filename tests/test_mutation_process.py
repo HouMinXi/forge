@@ -1122,7 +1122,7 @@ def test_owner_report_and_wrapper_cancellation_are_fail_closed(monkeypatch, case
         if case == "owner-stuck":
             assert isinstance(captured.value.cleanup_error, process.MutationProcessError)
     if len(calls) == 2:
-        assert calls[1][1]["timeout"] == process._CLEANUP_MAX_SECONDS + 2
+        assert calls[1][1]["timeout"] == process._INTERRUPT_DRAIN_SECONDS
 
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
