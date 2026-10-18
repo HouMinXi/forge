@@ -30,6 +30,7 @@ from copy import deepcopy
 from dataclasses import replace
 import hashlib
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -943,6 +944,14 @@ def test_ci_launch_capture_binds_context_without_executing_payload(ci_project, c
         assert len(p.commands) == before
     if direct == "unproved":
         assert len(unproved_calls) == 1 and "_evidence" not in unproved_calls[0][1]
+    if direct == "failed-native":
+        # #131: the failed native measurement already latched FAIL, so the
+        # wasted detached relaunch is skipped and says why.
+        assert p.launches == []
+        assert "CI: detached mutation not launched: verdict is already FAIL" in saved.infra_errors
+        assert not any(row.evidence_class == "clean_pass" for row in iter_rows(p.root, strict=True))
+        assert not (p.state / ".code-forge/mutation-result.json").exists()
+        return
     assert len(p.launches) == 1
     argv, kwargs = p.launches[0]
     assert argv[:2] == [sys.executable, "-c"]
@@ -1487,9 +1496,14 @@ def test_ci_completed_bound_result_does_not_erase_current_failure(ci_project, ca
     text = capsys.readouterr().err
     saved = _saved(p, Verdict.FAIL)
     assert machine._mutation_measurement_eligible is False
-    assert len(p.launches) == 1
-    _assert_captured_running_marker(p, result)
-    assert result.read_bytes() != original_bytes
+    if blocker == "failed-native":
+        # #131: a latched native failure skips the redundant detached launch.
+        assert p.launches == []
+        assert "CI: detached mutation not launched: verdict is already FAIL" in saved.infra_errors
+    else:
+        assert len(p.launches) == 1
+        _assert_captured_running_marker(p, result)
+        assert result.read_bytes() != original_bytes
     assert "mutation: 0 unresolved of 1 original survivors" in text
     _assert_timeouts(saved.findings, [_identity(1)])
     assert text.count(_timeout_text(_identity(1))) == 1
@@ -1540,3 +1554,751 @@ def test_ci_refused_bound_result_returns_before_redundant_launch(ci_project, cap
         survivor = _one(saved.findings, "mutant-" + _identity(2))
         assert survivor.disposition is Disposition.CONFIRMED
         assert "mutation: 1 unresolved of 1 original survivors" in text
+
+
+def _baseline_timeout():
+    raise subprocess.TimeoutExpired(BASELINE, 900)
+
+
+def test_ci_baseline_timeout_fails_with_accurate_reason(ci_project):
+    """#120 + user policy decision on #122: in CI a baseline timeout means no
+    mutation evidence, so CI FAILs -- with a reason naming the baseline
+    timeout, never 'invalid bound mutation measurement'."""
+    p = ci_project
+    p.baseline_hook = _baseline_timeout
+    machine = _machine(p, runner=mutation.run_mutation)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    skips = [f for f in saved.findings if f.fingerprint == "mutation-baseline-timeout"]
+    assert skips and all(f.disposition is Disposition.DISMISSED for f in skips)
+    reasons = [e for e in saved.infra_errors if e.startswith("CI: mutation not measured: baseline tests timed out")]
+    seconds = re.search(r"timed out after (\d+)s", skips[0].description).group(1)
+    assert reasons == [f"CI: mutation not measured: baseline tests timed out after {seconds}s"]
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    assert machine._mutation_measurement_eligible is False
+    assert "run" not in p.stages
+
+
+def test_ci_undecodable_native_measurement_still_fails_closed(ci_project):
+    """Control for #120: a measurement that ran but cannot be decoded still latches."""
+    p = ci_project
+    p.codes, p.statuses = (1,), ("killed",)
+    p.fault = "run-error"
+    machine = _machine(p, runner=mutation.run_mutation)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert machine._mutation_bound_failure is True
+    assert any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+
+
+def _skip(fingerprint="mutation-baseline-timeout", ident="MUTATION_SKIPPED",
+          disposition=Disposition.DISMISSED, description="run 1: baseline tests timed out after 900s"):
+    return StateFinding(id=ident, fingerprint=fingerprint, source="MUTANT",
+                        disposition=disposition, file="", line_range=[], description=description)
+
+
+_OTHER = "diff also has files for other adapters"
+_TWO = "run 2: baseline tests timed out after 900s"
+
+
+@pytest.mark.parametrize("case", [
+    "survivor", "other-skip", "extra-infra", "completed", "cleanup_error",
+    "process_failure", "cancellation_type", "publication_error", "cancelled",
+    "cleanup-incomplete", "cleanup-none", "empty", "source-changed",
+    "inventory", "inventory-not-dict", "results_sha256", "metadata_sha256",
+    "confirmed", "uncertain", "wrong-id", "infra-duplicated", "infra-reordered",
+    "two-skips-one-infra", "other-adapter-only", "other-adapter-with-infra",
+])
+def test_baseline_timeout_exemption_is_narrow(case):
+    from code_forge.machine import _is_clean_baseline_timeout_skip
+
+    findings, evidence, unchanged = [_skip()], {"cleanup_complete": True, "inventory": {}}, True
+    infra = [findings[0].description]
+    assert _is_clean_baseline_timeout_skip(findings, infra, evidence, source_unchanged=True) is True
+    if case == "survivor":
+        findings = findings + [_skip(fingerprint="mutant:x", ident="mutant-x")]
+    elif case == "other-skip":
+        findings = [_skip(fingerprint="mutation-flaky")]
+    elif case == "extra-infra":
+        infra = infra + ["mutmut crashed"]
+    elif case == "completed":
+        evidence["completed_measurement"] = True
+    elif case == "cancelled":
+        evidence["cancelled"] = True
+    elif case == "cleanup-incomplete":
+        evidence["cleanup_complete"] = False
+    elif case == "cleanup-none":
+        evidence["cleanup_complete"] = None
+    elif case == "empty":
+        findings, infra = [], []
+    elif case == "source-changed":
+        unchanged = False
+    elif case == "inventory-not-dict":
+        evidence["inventory"] = ["x"]
+    elif case in ("inventory", "results_sha256", "metadata_sha256"):
+        evidence[case] = {"x": "killed"} if case == "inventory" else "abc"
+    elif case == "confirmed":
+        findings = [_skip(disposition=Disposition.CONFIRMED)]
+    elif case == "uncertain":
+        findings = [_skip(disposition=Disposition.UNCERTAIN)]
+    elif case == "wrong-id":
+        findings = [_skip(ident="MUTATION_ERROR")]
+    elif case == "infra-duplicated":
+        infra = infra * 2
+    elif case == "infra-reordered":
+        findings = [_skip(), _skip(description=_TWO)]
+        infra = [_TWO, findings[0].description]
+    elif case == "two-skips-one-infra":
+        findings = [_skip(), _skip(description=_TWO)]
+    elif case == "other-adapter-only":
+        findings, infra = [_skip(fingerprint="mutation-other-adapter", description=_OTHER)], []
+    elif case == "other-adapter-with-infra":
+        findings = findings + [_skip(fingerprint="mutation-other-adapter", description=_OTHER)]
+        infra = infra + [_OTHER]
+    else:
+        evidence[case] = "x"
+    assert _is_clean_baseline_timeout_skip(findings, infra, evidence, source_unchanged=unchanged) is False
+
+
+def test_baseline_timeout_exemption_allows_mixed_language_note():
+    """#122 review: a mixed-language diff adds a DISMISSED mutation-other-adapter
+    note (no infra line); the clean baseline timeout is still a skip."""
+    from code_forge.machine import _is_clean_baseline_timeout_skip
+
+    findings = [_skip(), _skip(fingerprint="mutation-other-adapter", description=_OTHER)]
+    assert _is_clean_baseline_timeout_skip(
+        findings, [findings[0].description], {"cleanup_complete": True}, source_unchanged=True,
+    ) is True
+
+
+def test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline(ci_project):
+    """A null test.timeout_seconds is refused by the gate loader: no baseline
+    runs, so no baseline-timeout reason can be formatted from it."""
+    p = ci_project
+    for directory in (p.root, p.state):
+        path = directory / ".code-forge/gate.yaml"
+        gate = json.loads(path.read_text())
+        gate["test"]["timeout_seconds"] = None
+        path.write_text(json.dumps(gate), encoding="utf-8")
+        record_trust(path, gate)
+    p.baseline_hook = _baseline_timeout
+    machine = _machine(p, runner=mutation.run_mutation)
+    machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert any("'test.timeout_seconds' must be an integer" in e for e in saved.infra_errors)
+    assert "baseline" not in p.stages
+    assert not any(e.startswith("CI: mutation not measured") for e in saved.infra_errors)
+
+
+@pytest.mark.parametrize("description,expected", [
+    ("run 1: baseline tests timed out after 900s", "CI: mutation not measured: baseline tests timed out after 900s"),
+    ("run 1: baseline tests timed out after 12.5s; stdout: x", "CI: mutation not measured: baseline tests timed out after 12.5s"),
+    ("run 1: baseline tests timed out after Nones", "CI: mutation not measured: baseline tests timed out"),
+    ("run 1: baseline tests timed out", "CI: mutation not measured: baseline tests timed out"),
+    (None, "CI: mutation not measured: baseline tests timed out"),
+])
+def test_baseline_timeout_reason_text(description, expected):
+    from code_forge.machine import _baseline_timeout_reason
+
+    findings = [] if description is None else [_skip(description=description)]
+    assert _baseline_timeout_reason(findings) == expected
+
+
+def _local_machine(project, *, runner):
+    machine = _machine(project, runner=runner)
+    machine.mode = Mode.LOCAL
+    machine._state.mode = Mode.LOCAL
+    return machine
+
+
+def _injected_timeout_runner(calls):
+    def runner(diff_files, baseline_cmd, *, baseline_timeout, **_kwargs):
+        calls.append(baseline_timeout)
+        skip = _skip(description=f"run 1: baseline tests timed out after {baseline_timeout}s")
+        return [skip], [skip.description]
+    return runner
+
+
+def test_ci_injected_runner_baseline_timeout_fails_with_accurate_reason(ci_project):
+    """#124: the CI baseline-timeout policy is runner-independent."""
+    p = ci_project
+    calls = []
+    machine = _machine(p, runner=_injected_timeout_runner(calls))
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert calls, "injected runner must have been called"
+    reasons = [e for e in saved.infra_errors if e.startswith("CI: mutation not measured")]
+    assert reasons == [f"CI: mutation not measured: baseline tests timed out after {calls[0]}s"]
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    skips = [f for f in saved.findings if f.fingerprint == "mutation-baseline-timeout"]
+    assert skips and all(f.disposition is Disposition.DISMISSED for f in skips)
+
+
+def test_ci_injected_runner_other_skip_is_unchanged(ci_project):
+    """Control for #124: only the baseline timeout changes policy."""
+    p = ci_project
+
+    def runner(diff_files, baseline_cmd, **_kwargs):
+        return [_skip(fingerprint="mutation-tests-only", description="only tests changed")], []
+
+    machine = _machine(p, runner=runner)
+    machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert not any(e.startswith("CI: mutation not measured") for e in saved.infra_errors)
+    assert machine._mutation_bound_failure is False
+
+
+@pytest.mark.parametrize("native", [True, False])
+def test_local_baseline_timeout_stays_a_dismissed_skip(ci_project, native):
+    """#129: LOCAL keeps a clean baseline timeout as a DISMISSED skip; the CI
+    failure must not leak into LOCAL."""
+    p = ci_project
+    calls = []
+    if native:
+        p.baseline_hook = _baseline_timeout
+        runner = mutation.run_mutation
+    else:
+        runner = _injected_timeout_runner(calls)
+    machine = _local_machine(p, runner=runner)
+    verdict = machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert saved.mode is Mode.LOCAL
+    assert verdict is not Verdict.FAIL
+    skips = [f for f in saved.findings if f.fingerprint == "mutation-baseline-timeout"]
+    assert skips and all(f.disposition is Disposition.DISMISSED for f in skips)
+    if native:
+        assert "baseline" in p.stages and "run" not in p.stages
+    else:
+        assert calls
+    errors = saved.infra_errors
+    assert not any(e.startswith("CI: mutation not measured") for e in errors)
+    assert not any("invalid bound mutation measurement" in e for e in errors)
+    assert machine._mutation_bound_failure is False
+
+
+def _failing_baseline(monkeypatch, p):
+    inner = mutation.run_owned_command
+
+    def command(argv, **kwargs):
+        if list(argv) == BASELINE:
+            p.stages.append("baseline")
+            return subprocess.CompletedProcess(list(argv), 1, "FAILED tests/test_x.py::test_y\n", "")
+        return inner(argv, **kwargs)
+
+    monkeypatch.setattr(mutation, "run_owned_command", command)
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_failed_baseline_names_the_cause_not_invalid_bound(ci_project, monkeypatch, mode):
+    """#127: a baseline that ran and failed is a mutation-flaky skip. CI FAILs
+    naming the baseline failure; LOCAL keeps the skip; neither logs the false
+    'invalid bound mutation measurement'."""
+    p = ci_project
+    _failing_baseline(monkeypatch, p)
+    machine = _machine(p, runner=mutation.run_mutation) if mode is Mode.CI else _local_machine(p, runner=mutation.run_mutation)
+    verdict = machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert "baseline" in p.stages and "run" not in p.stages
+    assert any(f.fingerprint == "mutation-flaky" and f.disposition is Disposition.DISMISSED for f in saved.findings)
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    reasons = [e for e in saved.infra_errors if e.startswith("CI: mutation not measured")]
+    if mode is Mode.CI:
+        assert verdict is Verdict.FAIL
+        assert len(reasons) == 1 and "baseline failed" in reasons[0] and "returncode 1" in reasons[0]
+    else:
+        assert verdict is not Verdict.FAIL and reasons == []
+        assert machine._mutation_bound_failure is False
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_no_adapter_diff_is_a_clean_skip_in_both_modes(ci_project, monkeypatch, mode):
+    """#127: a diff with no registered mutation adapter (docs/config only) is
+    'mutation does not apply': a clean skip, no invalid-bound error, no latch."""
+    p = ci_project
+    machine = _machine(p, runner=mutation.run_mutation) if mode is Mode.CI else _local_machine(p, runner=mutation.run_mutation)
+    (p.root / "README.md").write_text("# notes\n", encoding="utf-8")
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("README.md")])
+    monkeypatch.setattr(machine, "_review_diff_paths", lambda: {"README.md"})
+    findings = machine._run_l2_phase()
+    assert [f.fingerprint for f in findings] == ["mutation-no-adapter"]
+    assert "L2: mutation not applicable (docs-only diff): README.md" in machine._state.infra_errors
+    assert "baseline" not in p.stages
+    assert not any("invalid bound mutation measurement" in e for e in machine._state.infra_errors)
+    assert not any(e.startswith("CI: mutation not measured") for e in machine._state.infra_errors)
+    assert machine._mutation_bound_failure is False
+
+
+@pytest.mark.parametrize("findings,infra,expected", [
+    ([("mutation-no-adapter", "no registered mutation adapter for this diff")], [], "not-applicable"),
+    ([("mutation-tests-only", "diff is tests-only; nothing to mutate")], [], "not-applicable"),
+    ([("mutation-no-adapter", "x")], ["x"], None),
+    ([("mutation-flaky", "run 1: baseline failed (returncode 1)")], ["run 1: baseline failed (returncode 1)"], "baseline-failed"),
+    ([("mutation-flaky", "a"), ("mutation-other-adapter", "o")], ["a"], "baseline-failed"),
+    ([("mutation-flaky", "a")], [], None),
+    ([("mutation-flaky", "a"), ("mutation-baseline-timeout", "b")], ["a", "b"], None),
+    ([("mutation-flaky", "a"), ("mutation-no-adapter", "n")], ["a"], None),
+    ([("mutation-other-adapter", "o")], [], None),
+    ([("mutation-baseline-timeout", "t")], ["t"], "baseline-timeout"),
+])
+def test_clean_mutation_skip_kind(findings, infra, expected):
+    from code_forge.machine import _clean_mutation_skip_kind
+
+    objs = [_skip(fingerprint=fp, description=d) for fp, d in findings]
+    evidence = {"inventory": {}}
+    assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=True) == expected
+    if expected is not None:
+        assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=False) is None
+        assert _clean_mutation_skip_kind(objs, infra, {**evidence, "cleanup_error": "x"}, source_unchanged=True) is None
+        assert _clean_mutation_skip_kind(objs, infra, {"inventory": {"m": "killed"}}, source_unchanged=True) is None
+
+
+def test_baseline_failed_reason_text():
+    from code_forge.machine import _baseline_failed_reason
+
+    desc = "run 1: baseline failed (returncode 1: tests/a.py::t); stdout: lots"
+    assert _baseline_failed_reason([_skip(fingerprint="mutation-flaky", description=desc)]) == \
+        "CI: mutation not measured: baseline failed (returncode 1: tests/a.py::t)"
+    assert _baseline_failed_reason([]) == "CI: mutation not measured: baseline failed"
+
+
+def test_ci_latched_failure_skips_detached_launch(ci_project):
+    """#131: once L2 latched a CI failure (here a clean baseline timeout), the
+    verdict is a guaranteed FAIL; no detached mutation run is launched."""
+    p = ci_project
+    _discover_mutmut(p)
+    p.baseline_hook = _baseline_timeout
+    machine = _machine(p, runner=mutation.run_mutation)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert p.launches == []
+    assert "CI: detached mutation not launched: verdict is already FAIL" in saved.infra_errors
+    assert any(e.startswith("CI: mutation not measured: baseline tests timed out") for e in saved.infra_errors)
+    assert not (p.state / ".code-forge/mutation-result.json").exists()
+
+
+def test_ci_unlatched_run_still_launches_detached_mutation(ci_project):
+    """Control for #131: without a latched failure the detached run launches."""
+    p = ci_project
+    _discover_mutmut(p)
+    machine = _machine(p)
+    machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert len(p.launches) == 1
+    assert "CI: detached mutation not launched: verdict is already FAIL" not in saved.infra_errors
+
+
+def test_ci_live_running_marker_with_latched_failure_is_fail_not_pending(ci_project):
+    """#130 P3: a live, valid running marker would be PENDING, but a failure
+    latched by this run's L2 phase makes the CI verdict FAIL, not PENDING."""
+    p = ci_project
+    data = {"status": "running", "pid": os.getpid(), "started_at": time.time(),
+            "survivor_details_version": 1, "review_context": _context(p),
+            "infra_errors": [], "baseline_passed": False,
+            "completed_measurement": False, "survivors": [], "survivor_details": [],
+            "inventory": {}, "skipped": []}
+    result = _put_result(p, data)
+    p.baseline_hook = _baseline_timeout
+    machine = _machine(p, runner=mutation.run_mutation)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert machine._mutation_bound_failure is True
+    assert "CI: bound mutation measurement still running" in saved.infra_errors
+    assert result.exists()
+
+
+# --- #132 review: scope of the "mutation does not apply" clean skip ---------
+
+
+def _ci_with_diff(p, monkeypatch, files, *, runner=mutation.run_mutation, diff_paths=None):
+    for name, text in files.items():
+        path = p.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    machine = _machine(p, runner=runner)
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path(n) for n in files])
+    monkeypatch.setattr(machine, "_review_diff_paths", lambda: set(files) if diff_paths is None else set(diff_paths))
+    return machine
+
+
+@pytest.mark.parametrize("files", [
+    {"README.md": "# docs\n"},
+    {"docs/guide.md": "Guide\n=====\n", "LICENSE": "MIT\n", "docs/img/logo.png": "png", "evidence/run.md": "x\n", "README.zh-CN.md": "x\n"},
+])
+def test_ci_docs_only_diff_passes_with_visible_note(ci_project, monkeypatch, files):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, files)
+    assert machine.run() is Verdict.PASS
+    saved = _saved(p, Verdict.PASS)
+    notes = [e for e in saved.infra_errors if e.startswith("L2: mutation not applicable (docs-only diff)")]
+    assert notes == ["L2: mutation not applicable (docs-only diff): " + ", ".join(sorted(files))]
+    assert machine._mutation_bound_failure is False
+
+
+def test_ci_docs_only_switch_off_fails(ci_project, monkeypatch):
+    """The owner's pending policy is one switch."""
+    from code_forge import machine as machine_mod
+
+    monkeypatch.setattr(machine_mod, "CI_DOCS_ONLY_MUTATION_SKIP_PASSES", False)
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {"README.md": "# docs\n"})
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert "CI: mutation not measured: no mutation adapter covers: README.md" in saved.infra_errors
+
+
+@pytest.mark.parametrize("files", [
+    {"deploy.sh": "#!/bin/sh\nrm -rf \"$X\"/\n"},
+    {"bin/forge-tool": "#!/usr/bin/env python3\nimport os\nos.system('x')\n"},
+    {"notes.txt": "#!/bin/sh\necho hi\n"},
+    {"Main.java": "class Main {}\n"},
+    {"Makefile": "all:\n\ttrue\n"},
+    {"Dockerfile": "FROM scratch\n"},
+    {".github/workflows/ci.yml": "on: push\n"},
+    {"README.md": "# docs\n", "deploy.sh": "#!/bin/sh\n"},
+])
+def test_ci_unmeasured_code_without_adapter_fails_with_accurate_reason(ci_project, monkeypatch, files):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, files)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert "CI: mutation not measured: no mutation adapter covers: " + ", ".join(sorted(files)) in saved.infra_errors
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+
+
+def test_ci_gate_yaml_only_diff_fails(ci_project, monkeypatch):
+    p = ci_project
+    machine = _machine(p, runner=mutation.run_mutation)
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path(".code-forge/gate.yaml")])
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert any(e.startswith("CI: mutation not measured: no mutation adapter covers") for e in saved.infra_errors)
+
+
+def test_local_unmeasured_shebang_file_stays_a_skip_with_note(ci_project, monkeypatch):
+    p = ci_project
+    (p.root / "deploy.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    machine = _local_machine(p, runner=mutation.run_mutation)
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("deploy.sh")])
+    machine._run_l2_phase()
+    assert machine._mutation_bound_failure is False
+    assert "L2: mutation not applicable (no mutation adapter covers): deploy.sh" in machine._state.infra_errors
+
+
+def test_ci_tests_only_diff_is_clean_end_to_end_without_launch(ci_project, monkeypatch):
+    """#132 P2-2: tests-only must not launch the detached run (its producer
+    reports 'nothing to mutate' as an error -> FAIL invalid bound next run)."""
+    p = ci_project
+    _discover_mutmut(p)
+    machine = _ci_with_diff(p, monkeypatch, {"tests/test_calc.py": "def test_x():\n    assert True\n"})
+    assert machine.run() is Verdict.PASS
+    saved = _saved(p, Verdict.PASS)
+    assert p.launches == []
+    assert "CI: detached mutation not launched: mutation not applicable to this diff" in saved.infra_errors
+    assert "L2: mutation not applicable (diff is tests-only): tests/test_calc.py" in saved.infra_errors
+    assert not (p.state / ".code-forge/mutation-result.json").exists()
+
+
+@pytest.mark.parametrize("trusted", [False, True])
+def test_ci_reviewed_tree_skip_globs_cannot_make_code_tests_only(ci_project, monkeypatch, trusted):
+    p = ci_project
+    gate = p.root / ".code-forge/gate.yaml"
+    data = json.loads(gate.read_text())
+    data["test"]["mutation_skip_globs"] = ["calc.py"]
+    gate.write_text(json.dumps(data), encoding="utf-8")
+    if trusted:
+        record_trust(gate, data)
+    machine = _machine(p, runner=mutation.run_mutation)
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("calc.py")])
+    findings = machine._run_l2_phase()
+    if [f.fingerprint for f in findings] != ["mutation-tests-only"]:
+        pytest.skip("skip globs not honoured by this runner path")
+    assert machine._mutation_bound_failure is True
+    assert ("CI: mutation not measured: configured skip globs or conftest.py leave nothing to mutate: calc.py"
+            in machine._state.infra_errors)
+
+
+def test_ci_conftest_only_diff_is_not_tests_only(ci_project, monkeypatch):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {"tests/conftest.py": "import pytest\n"})
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert ("CI: mutation not measured: configured skip globs or conftest.py leave nothing to mutate: tests/conftest.py"
+            in saved.infra_errors)
+    assert p.launches == []
+
+
+@pytest.mark.parametrize("signal", ["acquisition", "falsify_infra", "evidence_incomplete"])
+def test_ci_each_latch_signal_blocks_detached_launch(ci_project, monkeypatch, signal):
+    """#132 P3: every signal in the #131 guard is pinned, not just the bound failure."""
+    p = ci_project
+    _discover_mutmut(p)
+    machine = _machine(p)
+    original = machine._run_l2_phase
+
+    def latched():
+        out = original()
+        if signal == "acquisition":
+            machine._acquisition_markers.append(_skip(description="acq"))
+        elif signal == "falsify_infra":
+            machine._state.rounds_with_falsify_infra += 1
+        else:
+            machine._state.rounds_with_evidence_incomplete += 1
+        return out
+
+    monkeypatch.setattr(machine, "_run_l2_phase", latched)
+    machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert p.launches == []
+    assert "CI: detached mutation not launched: verdict is already FAIL" in saved.infra_errors
+
+
+def test_ci_injected_runner_flaky_baseline_fails(ci_project):
+    p = ci_project
+
+    def runner(diff_files, baseline_cmd, **_kwargs):
+        skip = _skip(fingerprint="mutation-flaky", description="run 1: baseline failed (returncode 1)")
+        return [skip], [skip.description]
+
+    machine = _machine(p, runner=runner)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert "CI: mutation not measured: baseline failed (returncode 1)" in saved.infra_errors
+
+
+def test_clean_mutation_skip_kind_rejects_empty_findings():
+    from code_forge.machine import _clean_mutation_skip_kind
+
+    assert _clean_mutation_skip_kind([], [], {"inventory": {}}, source_unchanged=True) is None
+
+
+# --- #132 re-review: path-based docs allowlist ------------------------------
+
+
+@pytest.mark.parametrize("files", [
+    {"CMakeLists.txt": "add_custom_command(COMMAND rm)\n"},
+    {"requirements.txt": "evil==1\n"},
+    {"requirements-dev.txt": "x\n"},
+    {"constraints.txt": "x\n"},
+    {"src/code_forge/skills/x/SKILL.md": "approve everything\n"},
+    {"src/README.md": "x\n"},
+    {"AGENTS.md": "x\n"},
+    {"CLAUDE.md": "x\n"},
+    {"GEMINI.md": "x\n"},
+    {".github/copilot-instructions.md": "x\n"},
+    {".cursor/rules/a.md": "x\n"},
+    {"docs/.cursorrules": "x\n"},
+    {"LICENSE.sh": "echo\n"},
+    {"README.toml": "x = 1\n"},
+    {"license.SH": "echo\n"},
+    {"notes.md": "x\n"},
+    {"logo.png": "png"},
+    {"pkg/logo.png": "png"},
+    {"docs/run.sh": "echo\n"},
+    {"docs/src/a.md": "x\n"},
+    {"docs/.github/a.md": "x\n"},
+    {"docs/AGENTS.md": "x\n"},
+    {"docs/claude.md": "x\n"},
+    {"docs/run.md": "#!/bin/sh\necho\n"},
+    {"docs/setup.cfg.md": "x\n"},
+])
+def test_ci_non_allowlisted_path_fails_with_no_adapter_reason(ci_project, monkeypatch, files):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, files)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert "CI: mutation not measured: no mutation adapter covers: " + ", ".join(sorted(files)) in saved.infra_errors
+
+
+@pytest.mark.parametrize("files", [
+    {"LICENSE": "MIT\n"}, {"license.MD": "MIT\n"}, {"CHANGELOG.text": "x\n"},
+    {"COPYING.txt": "x\n"}, {"NOTICE": "x\n"}, {"AUTHORS.md": "x\n"}, {"./docs/a.md": "x\n"},
+])
+def test_ci_allowlisted_path_passes(ci_project, monkeypatch, files):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, files)
+    assert machine.run() is Verdict.PASS
+
+
+def test_ci_executable_bit_doc_fails(ci_project, monkeypatch):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {"docs/run.txt": "rm -rf /\n"})
+    (p.root / "docs/run.txt").chmod(0o755)
+    assert machine.run() is Verdict.FAIL
+    assert "CI: mutation not measured: no mutation adapter covers: docs/run.txt" in _saved(p, Verdict.FAIL).infra_errors
+
+
+def test_ci_unreadable_doc_fails_closed(ci_project, monkeypatch):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {"docs/a.md": "x\n"})
+    import builtins
+    real_open = builtins.open
+
+    def failing_open(file, *args, **kwargs):
+        if str(file).endswith("docs/a.md"):
+            raise PermissionError("denied")
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", failing_open)
+    assert machine.run() is Verdict.FAIL
+    assert "CI: mutation not measured: no mutation adapter covers: docs/a.md" in _saved(p, Verdict.FAIL).infra_errors
+
+
+def test_ci_rename_from_code_to_docs_is_not_docs_only(ci_project, monkeypatch):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {"docs/tool.md": "x\n"}, diff_paths={"tool.py", "docs/tool.md"})
+    assert machine.run() is Verdict.FAIL
+    assert "CI: mutation not measured: no mutation adapter covers: docs/tool.md" in _saved(p, Verdict.FAIL).infra_errors
+
+
+def test_diff_paths_reads_both_sides_of_renames_and_deletions():
+    from code_forge.machine import _diff_paths
+
+    diff = ("diff --git a/tool.py b/docs/tool.md\nsimilarity index 90%\nrename from tool.py\n"
+            "rename to docs/tool.md\ndiff --git a/old.py b/old.py\ndeleted file mode 100644\n"
+            "--- a/old.py\n+++ /dev/null\n")
+    assert _diff_paths(diff) == {"tool.py", "docs/tool.md", "old.py"}
+    assert _diff_paths("rename from tool.py\nrename to docs/tool.md\n") == {"tool.py", "docs/tool.md"}
+    assert _diff_paths('diff --git "a/x y.md" "b/x y.md"\n') == {"<unparsed diff header>"}
+
+
+def test_ci_symlinked_doc_fails_with_accurate_reason(ci_project, monkeypatch):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {})
+    (p.root / "docs").mkdir(exist_ok=True)
+    (p.root / "docs/notes.md").symlink_to(p.root / "calc.py")
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("docs/notes.md")])
+    monkeypatch.setattr(machine, "_review_diff_paths", lambda: {"docs/notes.md"})
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    assert "CI: mutation not measured: symlinked files are not measured: docs/notes.md" in saved.infra_errors
+
+
+def test_ci_symlink_rejected_by_source_guard_names_symlink(ci_project, monkeypatch):
+    """When the source guard rejects a symlink, say so, not 'invalid bound'."""
+    from code_forge import machine as machine_mod
+
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {})
+    (p.root / "docs").mkdir(exist_ok=True)
+    (p.root / "docs/notes.md").symlink_to(p.root / "calc.py")
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("docs/notes.md")])
+    monkeypatch.setattr(machine_mod, "mutation_source_guard_matches", lambda *a, **k: False)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    assert "CI: mutation not measured: symlinked files are not measured: docs/notes.md" in saved.infra_errors
+
+
+def test_dot_prefixed_dir_is_not_tests_dir():
+    """lstrip('./') turned .tests/core.py into tests/core.py."""
+    from code_forge.machine import _default_tests_only
+
+    assert _default_tests_only([".tests/core.py"]) is False
+    assert _default_tests_only(["./tests/test_a.py"]) is True
+
+
+def test_ci_dot_prefixed_production_dir_is_not_tests_only(ci_project, monkeypatch):
+    p = ci_project
+    gate = p.root / ".code-forge/gate.yaml"
+    data = json.loads(gate.read_text())
+    data["test"]["mutation_skip_globs"] = [".tests/**"]
+    gate.write_text(json.dumps(data), encoding="utf-8")
+    machine = _ci_with_diff(p, monkeypatch, {".tests/core.py": "def f():\n    return 1\n"})
+    assert machine.run() is Verdict.FAIL
+
+
+def test_ci_doc_inside_importable_package_fails(ci_project, monkeypatch):
+    """Package data (dir with __init__.py) is never docs, even under docs/."""
+    p = ci_project
+    (p.root / "docs/pkg").mkdir(parents=True)
+    (p.root / "docs/pkg/__init__.py").write_text("", encoding="utf-8")
+    machine = _ci_with_diff(p, monkeypatch, {"docs/pkg/prompt.md": "x\n"})
+    assert machine.run() is Verdict.FAIL
+    assert ("CI: mutation not measured: no mutation adapter covers: docs/pkg/prompt.md"
+            in _saved(p, Verdict.FAIL).infra_errors)
+
+
+def test_tests_only_requires_python_and_missing_doc_is_not_docs(tmp_path):
+    from code_forge.machine import _default_tests_only, _docs_only_files
+
+    assert _default_tests_only(["tests/data.json"]) is False
+    assert _docs_only_files(["docs/gone.md"], tmp_path, {"docs/gone.md"}) is False
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/here.md").write_text("x\n", encoding="utf-8")
+    assert _docs_only_files(["docs/here.md"], tmp_path, {"docs/here.md"}) is True
+
+
+# --- forge P3 on #132: one docs policy, delegated to classify_path ---------
+
+
+@pytest.mark.parametrize("files", [
+    {"evidence/a.svg": "<svg><script>x</script></svg>"},
+    {"docs/a.rst": "Title\n=====\n"},
+    {"docs/a.adoc": "= T\n"},
+    {"docs/a.gif": "GIF89a"},
+    {"docs/a.ico": "x"},
+    {"docs/a.bmp": "BM"},
+    {"CHANGELOG.rst": "x\n"},
+    {"README.png": "png"},
+])
+def test_ci_formats_classify_path_does_not_exempt_fail(ci_project, monkeypatch, files):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, files)
+    assert machine.run() is Verdict.FAIL
+    assert ("CI: mutation not measured: no mutation adapter covers: " + ", ".join(sorted(files))
+            in _saved(p, Verdict.FAIL).infra_errors)
+
+
+_PARITY_NAMES = [
+    "docs/a.md", "docs/a.MARKDOWN", "docs/a.txt", "docs/a.text", "docs/a.png", "docs/a.JPG",
+    "docs/a.jpeg", "docs/a.webp", "docs/a.svg", "docs/a.rst", "docs/a.adoc", "docs/a.gif",
+    "docs/a.ico", "docs/a.bmp", "docs/a.sh", "docs/a", "docs/.md", "evidence/a.svg",
+    "evidence/r.md", "README.md", "README.rst", "LICENSE.txt", "LICENSE.sh", "CHANGELOG.adoc",
+    "NOTICE.text", "AUTHORS.svg",
+]
+_PARITY_FILES = [(0o644, b"plain\n"), (0o755, b"plain\n"), (0o644, b"#!/bin/sh\n"), (0o700, b"#!x")]
+
+
+@pytest.mark.parametrize("rel", _PARITY_NAMES)
+@pytest.mark.parametrize("mode,content", _PARITY_FILES)
+def test_docs_predicate_never_exempts_what_classify_path_rejects(tmp_path, rel, mode, content):
+    from code_forge.machine import _docs_only_files
+    from code_forge.mutation_engines.classify import CATEGORY_EXEMPT, classify_path
+
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    path.chmod(mode)
+    exempt = _docs_only_files([rel], tmp_path, {rel})
+    if classify_path(rel, mode, content).category != CATEGORY_EXEMPT:
+        assert exempt is False
+    elif rel.startswith(("docs/", "evidence/")) or rel.split(".")[-1].lower() in {"md", "txt", "text", "markdown"}:
+        assert exempt is True
+
+
+@pytest.mark.parametrize("mode,content,expected", [
+    (0o644, b"MIT\n", True), (0o755, b"MIT\n", False), (0o644, b"#!/bin/sh\n", False),
+])
+def test_extensionless_top_level_doc_still_gets_classify_checks(tmp_path, mode, content, expected):
+    """Narrow path-layer exception: classify_path rejects every extensionless
+    name, so LICENSE is classified as LICENSE.txt; exec bit/shebang still apply."""
+    from code_forge.machine import _docs_only_files
+
+    (tmp_path / "LICENSE").write_bytes(content)
+    (tmp_path / "LICENSE").chmod(mode)
+    assert _docs_only_files(["LICENSE"], tmp_path, {"LICENSE"}) is expected
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/LICENSE").write_bytes(b"MIT\n")
+    assert _docs_only_files(["docs/LICENSE"], tmp_path, {"docs/LICENSE"}) is False
+
+
+def test_deleted_non_doc_under_docs_is_not_docs_only(tmp_path):
+    """The other side of the diff is checked lexically via classify_path."""
+    from code_forge.machine import _docs_only_files
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/a.md").write_text("x\n", encoding="utf-8")
+    assert _docs_only_files(["docs/a.md"], tmp_path, {"docs/a.md"}) is True
+    assert _docs_only_files(["docs/a.md"], tmp_path, {"docs/a.md", "docs/tool.py"}) is False
+    assert _docs_only_files(["docs/a.md"], tmp_path, {"docs/a.md", "docs/old.svg"}) is False

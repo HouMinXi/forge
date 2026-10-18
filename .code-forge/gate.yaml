@@ -555,7 +555,7 @@ backends:
       x-omniroute-no-cache: "true"
 test:
   command: [python3, -m, pytest, -q, --ignore=tests/test_cli_integration.py]
-  timeout_seconds: 900
+  timeout_seconds: 2400
   # mutmut mirrors only source_paths, so a test that opens a file by
   # path finds nothing under mutants/. Each entry below was added after
   # a real mutation-gate failure: scripts/ (test_analyse_arms.py),

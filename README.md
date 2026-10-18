@@ -515,6 +515,11 @@ For running this gate in CI rather than as a local hook, see
      timeout_seconds: 900
    ```
 
+   `timeout_seconds` also bounds the mutation baseline run. In CI mode a
+   baseline that exceeds it means no mutation evidence, so the review FAILs
+   with `CI: mutation not measured: baseline tests timed out after Ns`
+   (LOCAL mode records a dismissed skip instead).
+
    `command[0]` must be a known runner (`python3`, `python`, `pytest`, `cargo`,
    `go`, `make`, `npm`, `npx`, `node`); no shell metacharacters are allowed.
 
