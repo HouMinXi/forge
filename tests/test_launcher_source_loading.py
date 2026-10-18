@@ -3206,3 +3206,15 @@ def test_ownership_relative_empty_package_keeps_original_containment(launcher, t
     empty.mkdir()
     monkeypatch.chdir(empty)
     launcher._competing_ownership(Path("."), selected_launcher, info, distributions)
+
+
+@pytest.mark.parametrize("has_sig", [True, False])
+def test_pth_decoding_follows_the_interpreters_site_not_its_version(launcher, monkeypatch, has_sig):
+    """A 3.12 patch release can carry the 3.13 utf-8-sig .pth decoding
+    (3.12.15 does); the launcher must mirror site.addpackage itself."""
+    import types
+
+    consts = ("utf-8-sig",) if has_sig else ("locale",)
+    fake = types.SimpleNamespace(__code__=types.SimpleNamespace(co_consts=consts))
+    monkeypatch.setattr(launcher.site, "addpackage", fake)
+    assert launcher._site_decodes_pth_as_utf8_sig() is has_sig
