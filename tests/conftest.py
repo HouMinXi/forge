@@ -237,26 +237,54 @@ def pytest_configure(config):
     # session-unique committer identity in the reflog, so the .git guard can
     # tell the suite's ref changes from other sessions sharing the repository.
     isolation.setenv(_SESSION_IDENTITY_ENV, f"forge-suite-{uuid.uuid4().hex}@suite.invalid")
-    isolation.setenv("GIT_COMMITTER_NAME", "forge test suite")
+    isolation.setenv("GIT_COMMITTER_NAME", _SUITE_COMMITTER_NAME)
 
 
 _SESSION_IDENTITY_ENV = "GIT_COMMITTER_EMAIL"
 _git_failure_key = pytest.StashKey[str]()
 
 
-def _ref_made_by(repo_root, ref, identity):
-    """True unless the ref's newest reflog entry names another identity.
+_SUITE_COMMITTER_NAME = "forge test suite"
 
-    Without a session identity, a reflog, or a remaining ref (a deletion
-    removes its reflog), the change cannot be attributed and stays the suite's.
+
+def _last_writer(repo_root, ref):
+    """(name, email) of the ref's newest reflog entry, or None."""
+    try:
+        out = _git_output(repo_root, "log", "-g", "-1", "--format=%gn%x00%ge", ref, "--").strip()
+    except subprocess.CalledProcessError:
+        return None
+    if not out or "\0" not in out:
+        return None
+    name, email = out.split("\0", 1)
+    return name, email
+
+
+def _writer_is_other(writer, identity):
+    """Another session wrote it: neither our session email nor our committer
+    name (#196 P3: a test that overrides only GIT_COMMITTER_EMAIL and writes
+    the real repository is still this suite's)."""
+    if writer is None or not identity:
+        return False
+    name, email = writer
+    return bool(email) and email != identity and name != _SUITE_COMMITTER_NAME
+
+
+def _ref_made_by(repo_root, ref, identity, writers_before=None):
+    """True unless the change is attributable to another session.
+
+    A remaining ref is judged by its newest reflog entry. A deleted ref has
+    no reflog left (#196): it is another session's when it existed at
+    sessionstart and its last writer then was another session (the suite
+    cannot reach the real repository to delete it; GIT_CEILING_DIRECTORIES
+    and the GIT_* scrub block discovery). Anything unattributable stays the
+    suite's.
     """
     if not identity:
         return True
-    try:
-        email = _git_output(repo_root, "log", "-g", "-1", "--format=%ge", ref, "--").strip()
-    except subprocess.CalledProcessError:
-        return True
-    return not email or email == identity
+    writer = _last_writer(repo_root, ref)
+    if writer is None and writers_before is not None:
+        writer = writers_before.get(ref)
+    return not _writer_is_other(writer, identity)
 
 
 def pytest_sessionstart(session):
@@ -267,6 +295,12 @@ def pytest_sessionstart(session):
         return
     snap = _snapshot_git_state(repo_root)
     snap["identity"] = os.environ.get(_SESSION_IDENTITY_ENV, "")
+    # #196: remember who last wrote each branch, for refs deleted mid-run.
+    snap["writers"] = {
+        line.split(" ", 1)[0]: _last_writer(repo_root, line.split(" ", 1)[0])
+        for line in snap["refs_heads"].splitlines()
+        if line
+    }
     session.config.stash[_git_snapshot_key] = snap
 
 
@@ -280,7 +314,10 @@ def pytest_sessionfinish(session, exitstatus):
     diffs = []
 
     own, foreign = _branch_changes(before, after)
-    others = {ref for ref in own if not _ref_made_by(repo_root, ref, before.get("identity"))}
+    others = {
+        ref for ref in own
+        if not _ref_made_by(repo_root, ref, before.get("identity"), before.get("writers"))
+    }
     own, foreign = own - others, foreign | others
     for ref in sorted(foreign):
         sys.stderr.write(f"note: {ref} changed in another session's worktree\n")

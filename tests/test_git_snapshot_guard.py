@@ -318,3 +318,41 @@ def test_guard_failure_is_printed_in_the_terminal_summary(suite_guard):
     config = SimpleNamespace(stash={suite_guard._git_failure_key: "FATAL: Test suite modified real .git state!\n"})
     suite_guard.pytest_terminal_summary(reporter, 1, config)
     assert any("FATAL: Test suite modified real .git state!" in str(w) for w in written)
+
+
+def test_sessionfinish_notes_branch_deleted_by_another_session(repository, tmp_path, monkeypatch, capsys, suite_guard):
+    """#196: a branch another session last wrote and then deletes mid-run
+    (no reflog left) is a note, not a failure."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "other-session@example.invalid")
+    _git(repository, "branch", "victim")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    suite_guard.pytest_sessionstart(session)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "other-session@example.invalid")
+    _git(repository, "branch", "-D", "victim")
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert getattr(session, "exitstatus", 0) == 0
+    assert "refs/heads/victim changed in another session" in capsys.readouterr().err
+
+
+def test_sessionfinish_rejects_deleting_a_branch_this_session_wrote(repository, tmp_path, monkeypatch, suite_guard):
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    _git(repository, "branch", "mine")
+    suite_guard.pytest_sessionstart(session)
+    _git(repository, "branch", "-D", "mine")
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert session.exitstatus == 1
+
+
+def test_sessionfinish_rejects_test_overriding_only_the_committer_email(repository, tmp_path, monkeypatch, suite_guard):
+    """#196 P3: the suite's committer name still marks the write as ours."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    monkeypatch.setenv("GIT_COMMITTER_NAME", suite_guard._SUITE_COMMITTER_NAME)
+    suite_guard.pytest_sessionstart(session)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "a-test-of-its-own@example.invalid")
+    _git(repository, "branch", "stray")
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert session.exitstatus == 1
+    assert "+refs/heads/stray" in session.config.stash[suite_guard._git_failure_key]
