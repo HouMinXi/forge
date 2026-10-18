@@ -4629,7 +4629,9 @@ class StateMachine:
 
         names = gate_config.get("rulepacks", []) or []
         builtin = set(discover_packs(dest, local_root=dest / "none"))
-        local = [n for n in names if n not in builtin] if isinstance(names, list) else []
+        # #177: a name listed twice is copied once (a second mkdir would
+        # refuse every trusted pack and drop all blocking findings).
+        local = list(dict.fromkeys(n for n in names if n not in builtin)) if isinstance(names, list) else []
         if not local:
             return dest
         try:
