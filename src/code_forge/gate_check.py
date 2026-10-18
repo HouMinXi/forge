@@ -346,13 +346,29 @@ def _read_gate_nofollow(root, *, refuse_hardlinks: bool = False) -> str:
             os.close(fd)
 
 
-def _load_gate_nofollow(root, *, refuse_hardlinks: bool = False) -> dict:
+def _parse_validated(label, text: str) -> dict:
     import io
 
+    return load_gate_config(label, fs_open=lambda *_a, **_k: io.StringIO(text))
+
+
+def _parse_raw(label, text: str) -> dict:
+    """Top-level gate.yaml mapping without the ``test`` section requirement
+    (#141: review-time keys such as ``ledger`` or ``rulepacks_blocking``)."""
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML in {label}: {exc}") from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{label} must be a mapping, got {type(data).__name__}")  # noqa: TRY004
+    return data
+
+
+def _load_gate_nofollow(root, *, refuse_hardlinks: bool = False, parse=_parse_validated) -> dict:
     text = _read_gate_nofollow(root, refuse_hardlinks=refuse_hardlinks)
-    return load_gate_config(
-        Path(root) / ".code-forge" / "gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
-    )
+    return parse(Path(root) / ".code-forge" / "gate.yaml", text)
 
 
 def _refuse_checkout_alias(root: Path, source_root) -> None:
@@ -400,7 +416,7 @@ def _refuse_checkout_alias(root: Path, source_root) -> None:
         )
 
 
-def _load_outside_gate(config_root, source_root) -> dict:
+def _load_outside_gate(config_root, source_root, parse=_parse_validated) -> dict:
     """An explicit config root outside the checkout: refuse a symlinked
     .code-forge/gate.yaml or one whose real path lands inside the checkout,
     refuse a gate.yaml with more than one hard link, and read with O_NOFOLLOW.
@@ -422,11 +438,26 @@ def _load_outside_gate(config_root, source_root) -> dict:
             f"test config root {root} resolves into the reviewed checkout ({real})"
         )
     _refuse_checkout_alias(root, source_root)
-    return _load_gate_nofollow(root, refuse_hardlinks=True)
+    return _load_gate_nofollow(root, refuse_hardlinks=True, parse=parse)
+
+
+def load_trusted_gate_data(
+    *, config_root, source_root, base_sha: str | None, allow_untracked: bool = True,
+) -> dict:
+    """#141: the raw top-level gate.yaml mapping from the same trusted source
+    as :func:`load_trusted_gate_config` (outside root, review baseline, or a
+    LOCAL untracked file), without demanding a ``test`` section. Raises the
+    same errors; callers of review-time switches treat FileNotFoundError and
+    UntrustedGateConfigError as "no trusted gate.yaml" (built-in defaults)."""
+    return load_trusted_gate_config(
+        config_root=config_root, source_root=source_root, base_sha=base_sha,
+        allow_untracked=allow_untracked, _parse=_parse_raw,
+    )
 
 
 def load_trusted_gate_config(
     *, config_root, source_root, base_sha: str | None, allow_untracked: bool = True,
+    _parse=_parse_validated,
 ) -> dict:
     """gate.yaml for review-time ``test.*`` reads and mutation globs, from a
     source the reviewed change cannot edit (#140).
@@ -447,11 +478,9 @@ def load_trusted_gate_config(
     ValueError. Callers already treat these as a missing/invalid config, so
     nothing from the reviewed tree runs.
     """
-    import io
-
     if config_root_is_outside_review(config_root, source_root):
         try:
-            return _load_outside_gate(config_root, source_root)
+            return _load_outside_gate(config_root, source_root, parse=_parse)
         except OutsideConfigRootRefused:
             raise
         except UntrustedGateConfigError as exc:
@@ -462,15 +491,15 @@ def load_trusted_gate_config(
         if not allow_untracked:
             raise UntrustedGateConfigError(_CI_UNTRACKED)
         # Not a git checkout: nothing is under review control, no git to ask.
-        return load_gate_config(working)
+        if _parse is _parse_validated:
+            return load_gate_config(working)
+        with open(working, encoding="utf-8") as handle:
+            return _parse(working, handle.read())
     tracked = _refuse_linked_gate(source_root, base_sha)
     if base_sha:
         shown = _git_out(source_root, "show", f"{base_sha}:./.code-forge/gate.yaml")
         if shown.returncode == 0:
-            text = shown.stdout
-            return load_gate_config(
-                "<baseline>:.code-forge/gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
-            )
+            return _parse("<baseline>:.code-forge/gate.yaml", shown.stdout)
     if tracked:
         raise FileNotFoundError(
             f"no .code-forge/gate.yaml at review baseline {(base_sha or 'unknown')[:12]}; a gate.yaml "
@@ -481,7 +510,7 @@ def load_trusted_gate_config(
     # LOCAL: a gate.yaml git does not track (gitignored or never added) is
     # the user's own setup, not part of the reviewed diff (#143 tracks the
     # WORKING-tree agent risk).
-    return _load_gate_nofollow(source_root)
+    return _load_gate_nofollow(source_root, parse=_parse)
 
 
 _CI_UNTRACKED = (

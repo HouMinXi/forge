@@ -380,7 +380,9 @@ def test_advisory_for_a_gate_only_edit(tmp_path, monkeypatch):
     notes = _run_until_admission(_with_diff(_machine(repo, base), repo, base), monkeypatch)
     assert len(notes) == 1
     assert notes[0].description == (
-        "test.* and mutation globs from this change's gate.yaml were not applied; other keys: see #141"
+        "test.*, mutation globs, ledger, rulepacks/rulepacks_blocking, pinned_paths and "
+        "style_downgrade from this change's gate.yaml were not applied (they take effect "
+        "once on the review baseline)"
     )
 
 
