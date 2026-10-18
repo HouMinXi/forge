@@ -423,6 +423,31 @@ def test_scrubbed_env_write_is_a_documented_note(repository, tmp_path, monkeypat
     assert "#201" in suite_guard._ref_made_by.__doc__
 
 
+def test_scrubbed_env_bare_git_from_repo_cwd_is_a_documented_note(
+    repository, tmp_path, monkeypatch, capsys, suite_guard
+):
+    """#201 addendum: scrubbing GIT_* drops GIT_CEILING_DIRECTORIES too, so a
+    bare ``git branch`` (no -C) from the repo-root cwd reaches the real
+    repository. It is still only a note (documented in _ref_made_by)."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    monkeypatch.setenv("GIT_COMMITTER_NAME", suite_guard._SUITE_COMMITTER_NAME)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(repository.parent))
+    suite_guard.pytest_sessionstart(session)
+    scrubbed = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    assert "GIT_CEILING_DIRECTORIES" not in scrubbed
+    scrubbed.update(HOME=str(tmp_path), GIT_CONFIG_NOSYSTEM="1")
+    subprocess.run(
+        ["git", "-c", "user.name=box", "-c", "user.email=box@example.invalid", "branch", "bare-scrubbed"],
+        env=scrubbed, cwd=str(repository), check=True, capture_output=True,
+    )
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert getattr(session, "exitstatus", 0) == 0
+    assert "refs/heads/bare-scrubbed changed in another session" in capsys.readouterr().err
+    doc = suite_guard._ref_made_by.__doc__
+    assert "bare ``git branch x``" in doc and "names the real repository explicitly" not in doc
+
+
 def test_guard_failure_follows_pytests_summary_in_a_real_session(tmp_path):
     """#184/#201: in a real pytest run the guard reports inside pytest's
     terminal summary (after the test results, before the final stats line)

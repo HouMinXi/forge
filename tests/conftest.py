@@ -276,11 +276,11 @@ def _ref_made_by(repo_root, ref, identity, writers_before=None, remaining=()):
     A remaining ref is judged by its newest reflog entry. A deleted ref has
     no reflog left (#196): it is treated as another session's when it existed
     at sessionstart and its last writer then was another session. Accepted
-    trade-off: GIT_CEILING_DIRECTORIES and the GIT_* scrub only stop *implicit*
-    discovery of the real repository; a test that names it explicitly
-    (``git -C <repo> branch -D <foreign branch>``) and deletes a branch another
-    session last wrote is reported as a note, not caught. Anything that
-    cannot be attributed stays the suite's (fatal).
+    trade-off: a test that reaches the real repository (``git -C <repo>``, or
+    a bare git command from the repo-root cwd under a ``GIT_*``-scrubbed env,
+    see below) and deletes a branch another session last wrote is reported as
+    a note, not caught. Anything that cannot be attributed stays the suite's
+    (fatal).
 
     Known gap (#201, accepted under #184 option 2): a write made from inside
     the suite through an environment that drops every ``GIT_*`` variable
@@ -288,9 +288,10 @@ def _ref_made_by(repo_root, ref, identity, writers_before=None, remaining=()):
     default identity, which is indistinguishable from another session's, so
     it is reported as a note. Git records nothing else per process in the
     reflog (no pid, no session marker), and the guard cannot install hooks in
-    the shared repository it is guarding. Reaching this still needs a test
-    bug that names the real repository explicitly; implicit discovery is
-    blocked by GIT_CEILING_DIRECTORIES.
+    the shared repository it is guarding. Naming the real repository is not
+    required: scrubbing ``GIT_*`` also drops GIT_CEILING_DIRECTORIES, and
+    pytest's default cwd is the repository root, so a bare ``git branch x``
+    run with the scrubbed env writes the real repository and is only noted.
     """
     if not identity:
         return True
