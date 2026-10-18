@@ -27,6 +27,17 @@ def ignored_sigint():
         signal.signal(signal.SIGINT, previous)
 
 
+@pytest.fixture
+def default_sigint():
+    """Explicit precondition: independent of how pytest itself was launched
+    (#225 not required) and restored so no swap leaks into later tests."""
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
 def _child(**kwargs):
     return subprocess.run([sys.executable, "-c", PROBE], capture_output=True, text=True, **kwargs).stdout.strip()
 
@@ -60,12 +71,15 @@ def test_non_main_thread_falls_back_to_preexec(ignored_sigint, module):
 
 
 @pytest.mark.parametrize("module", MODULES)
-def test_no_change_when_sigint_is_not_ignored(module):
-    before = signal.getsignal(signal.SIGINT)
+def test_no_change_when_sigint_is_not_ignored(default_sigint, module):
     assert module.child_sigint_options() == {}
-    assert signal.getsignal(signal.SIGINT) is before
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
 
 
-@pytest.mark.parametrize("module", ["_mutation_process.py", "_gate_pytest.py", "exec_falsify.py"])
-def test_child_test_spawn_sites_use_the_reset(module):
-    assert (SRC / module).read_text(encoding="utf-8").count("**child_sigint_options()") == 1
+@pytest.mark.parametrize(
+    ("module", "count"),
+    [("_mutation_process.py", 1), ("_gate_pytest.py", 1), ("exec_falsify.py", 1), ("fixval.py", 2)],
+)
+def test_child_test_spawn_sites_use_the_reset(module, count):
+    # fixval: the reverted-candidate test run and the overfit run (#238).
+    assert (SRC / module).read_text(encoding="utf-8").count("**child_sigint_options()") == count
