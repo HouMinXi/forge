@@ -73,7 +73,7 @@ def test_owner_keeps_original_cancellation_and_secondary_cleanup(monkeypatch, ex
         assert cancellation.cleanup_error
         assert "mutation cleanup failed" in cancellation.__notes__[0]
     if len(calls) == 2:
-        assert calls[1]["timeout"] == process._CLEANUP_SECONDS + 2
+        assert calls[1]["timeout"] == process._CLEANUP_MAX_SECONDS + 2
 
 
 def test_owner_keeps_original_when_success_metadata_is_interrupted(monkeypatch):

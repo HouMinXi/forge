@@ -23,6 +23,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _CLEANUP_SECONDS = 5.0
+# #121: each cleanup poll walks the whole tree, so a fixed 5s can run out on
+# thousands of test descendants and turn a plain timeout into a cleanup
+# error. The budget grows with the discovered tree, capped; the outer waits
+# in run_owned_command use the cap so they stay in step.
+_CLEANUP_PER_PROCESS_SECONDS = 0.01
+_CLEANUP_MAX_SECONDS = 30.0
 # Slack for the owner to finish teardown and write its report after its own
 # deadline. Each cleanup poll can run long on a tree of thousands of test
 # descendants, so a few seconds is not enough (#116). 30s is a heuristic,
@@ -106,6 +112,11 @@ def _pidfd_ready(fd: int) -> bool:
     return any(mask & select.POLLIN for _, mask in events)
 
 
+def _cleanup_budget(processes: int) -> float:
+    """Cleanup budget for a tree of ``processes`` discovered descendants."""
+    return min(_CLEANUP_MAX_SECONDS, _CLEANUP_SECONDS + _CLEANUP_PER_PROCESS_SECONDS * processes)
+
+
 class _OwnedTree:
     def __init__(self):
         self.owner = _identity(os.getpid())
@@ -117,6 +128,7 @@ class _OwnedTree:
         self.fds: dict[int, int] = {}
         self.reaped: dict[int, int] = {}
         self.cleanup_deadline: float | None = None
+        self.cleanup_started: float | None = None
 
     def discover(self) -> None:
         pending = [self.owner]
@@ -221,15 +233,24 @@ class _OwnedTree:
         except ProcessLookupError:
             pass
 
+    def _extend_cleanup_deadline(self) -> None:
+        """Grow the shared deadline with the discovered tree (#121). A deadline
+        set from outside (no cleanup_started) stays fixed."""
+        if self.cleanup_started is not None:
+            self.cleanup_deadline = max(
+                self.cleanup_deadline or 0.0, self.cleanup_started + _cleanup_budget(len(self.identities))
+            )
+
     def cleanup(self, driver: subprocess.Popen) -> bool:
         started = time.monotonic()
         if self.cleanup_deadline is None:
-            self.cleanup_deadline = started + _CLEANUP_SECONDS
-        deadline = self.cleanup_deadline
+            self.cleanup_started = started
+            self._extend_cleanup_deadline()
         terminated: set[int] = set()
         empty_polls = 0
-        while time.monotonic() < deadline:
+        while time.monotonic() < self.cleanup_deadline:
             self.discover()
+            self._extend_cleanup_deadline()
             self.reap(driver)
             live = self.live()
             for pid in live:
@@ -383,7 +404,7 @@ def run_owned_command(
         try:
             raw, diagnostic = helper.communicate(
                 json.dumps({"request": request, "authority": authority}).encode("utf-8"),
-                timeout=timeout + 2 * _CLEANUP_SECONDS + _OWNER_REPORT_SLACK,
+                timeout=timeout + 2 * _CLEANUP_MAX_SECONDS + _OWNER_REPORT_SLACK,
             )
         except BaseException as exc:  # noqa: BLE001 - every interruption drains the private owner
             interruption = exc
@@ -392,7 +413,7 @@ def run_owned_command(
             except ProcessLookupError:
                 pass
             try:
-                raw, diagnostic = helper.communicate(timeout=_CLEANUP_SECONDS + 2)
+                raw, diagnostic = helper.communicate(timeout=_CLEANUP_MAX_SECONDS + 2)
             except Exception as cleanup_exc:  # noqa: BLE001 - ordinary drain failures need cleanup evidence
                 raise MutationProcessError(
                     f"mutation owner {helper.pid} did not finish cleanup",
