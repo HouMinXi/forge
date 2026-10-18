@@ -336,8 +336,12 @@ class RulepackRunner:
         repo_root: Path,
         *,
         execution_root: Path | None = None,
+        gate_config: dict | None = None,
     ) -> list[AdvisoryFinding]:
         """Run active rule packs and return advisory findings.
+
+        ``gate_config`` (#141): an already-trusted gate.yaml mapping; when
+        given, the reviewed tree's gate.yaml is not read for the pack list.
 
         Also writes the matrix artifact to .code-forge/rulepack-matrix.json
         when active packs are configured.
@@ -350,7 +354,8 @@ class RulepackRunner:
 
         repo_root = Path(repo_root)
         try:
-            gate_config = load_gate_config(repo_root / ".code-forge" / "gate.yaml")
+            if gate_config is None:
+                gate_config = load_gate_config(repo_root / ".code-forge" / "gate.yaml")
         except Exception as exc:  # noqa: BLE001
             msg = "rulepack: failed to load gate.yaml: %s" % exc
             self.infra_errors.append(msg)
