@@ -753,3 +753,117 @@ def test_bind_mount_alias_of_the_checkout_is_refused(tmp_path, case):
     else:
         assert out.stdout.startswith("REFUSED"), out.stdout
         assert "bind mount alias" in out.stdout
+
+
+# --- #157: a PR-committed .code-forge symlink must not make the outside root an alias;
+#     a refused trusted config in CI must FAIL, not PASS with mutation skipped ----
+
+OUTSIDE_CMD = [sys.executable, "-c", "print('outside')"]
+
+
+def _pr_symlinks_code_forge_to(repo, target):
+    import shutil
+
+    shutil.rmtree(repo / ".code-forge")
+    (repo / ".code-forge").symlink_to(target, target_is_directory=True)
+
+
+def _outside_root(tmp_path):
+    outside = tmp_path / "forge-config"
+    _write_gate(outside, OUTSIDE_CMD, timeout=7)
+    return outside
+
+
+def test_checkout_code_forge_symlinked_to_the_outside_root_is_not_an_alias(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    outside = _outside_root(tmp_path)
+    _pr_symlinks_code_forge_to(repo, outside / ".code-forge")
+    cfg = load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+    assert cfg["test"]["command"] == OUTSIDE_CMD
+
+
+def _ci_run(machine, monkeypatch):
+    monkeypatch.setattr(mutation.shutil, "which", lambda name: "/tools/mutmut")
+    monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
+    launched = []
+
+    def launch(*args, **kwargs):
+        launched.append((args, kwargs))
+        return True
+
+    monkeypatch.setattr("code_forge.machine.launch_detached_mutation", launch, raising=False)
+    monkeypatch.setattr(mutation, "launch_detached_mutation", launch, raising=False)
+    try:
+        verdict = machine._run_ci()
+    except Exception as exc:  # noqa: BLE001
+        verdict = exc
+    return verdict, launched
+
+
+def test_ci_symlinked_checkout_code_forge_still_launches_with_the_outside_root(tmp_path, monkeypatch):
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    outside = _outside_root(tmp_path)
+    _pr_symlinks_code_forge_to(repo, outside / ".code-forge")
+    machine = _machine(repo, base, mode=Mode.CI)
+    machine.cwd, machine.source_root = outside, repo
+    _verdict, launched = _ci_run(machine, monkeypatch)
+    assert "print('outside')" in repr(launched), (launched, machine._state.infra_errors)
+    assert not [e for e in machine._state.infra_errors if "refused" in e or "alias" in e]
+
+
+@pytest.mark.parametrize("refusal", ["symlinked-root-code-forge", "hardlinked-gate"])
+def test_ci_refused_outside_config_root_fails_with_the_reason(tmp_path, monkeypatch, refusal):
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    outside = tmp_path / "forge-config"
+    outside.mkdir()
+    if refusal == "symlinked-root-code-forge":
+        elsewhere = _outside_root(tmp_path / "elsewhere")
+        (outside / ".code-forge").symlink_to(elsewhere / ".code-forge", target_is_directory=True)
+    else:
+        (outside / ".code-forge").mkdir()
+        os.link(repo / GATE, outside / GATE)
+    machine = _machine(repo, base, mode=Mode.CI)
+    machine.cwd, machine.source_root = outside, repo
+    verdict, launched = _ci_run(machine, monkeypatch)
+    assert launched == []
+    assert verdict == Verdict.FAIL, (verdict, machine._state.infra_errors)
+    assert any("CI: mutation not measured -- trusted test config refused:" in e
+               for e in machine._state.infra_errors), machine._state.infra_errors
+
+
+@pytest.mark.parametrize("mode,expected", [(Mode.CI, True), (Mode.LOCAL, False)])
+def test_l2_refused_trusted_config_is_a_bound_failure_in_ci(tmp_path, mode, expected):
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    outside = tmp_path / "forge-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    os.link(repo / GATE, outside / GATE)  # refused: st_nlink > 1
+    machine = _machine(repo, base, mode=mode)
+    machine.cwd, machine.source_root = outside, repo
+    assert _l2_calls(machine) == []
+    assert machine._mutation_bound_failure is expected
+    assert any("L2: mutation not measured -- trusted test config refused:" in e
+               for e in machine._state.infra_errors), machine._state.infra_errors
+
+
+def test_outside_refusal_is_the_subclass_and_in_tree_refusal_is_not(tmp_path):
+    from code_forge.gate_check import OutsideConfigRootRefused, UntrustedGateConfigError
+
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    with pytest.raises(UntrustedGateConfigError) as in_tree:
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base, allow_untracked=False)
+    assert not isinstance(in_tree.value, OutsideConfigRootRefused)
+    outside = tmp_path / "forge-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    os.link(repo / GATE, outside / GATE)
+    with pytest.raises(OutsideConfigRootRefused):
+        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+
+
+def test_ci_untracked_in_tree_gate_keeps_the_infra_skip(tmp_path):
+    """Scope of #157: only an operator-configured outside root FAILs CI; the
+    in-tree untracked refusal keeps its existing infra note (not a bound failure)."""
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    machine = _machine(repo, base, mode=Mode.CI)
+    assert _l2_calls(machine) == []
+    assert machine._mutation_bound_failure is False
+    assert any("L2: gate.yaml missing or test.command not configured" in e for e in machine._state.infra_errors)

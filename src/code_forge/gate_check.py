@@ -221,6 +221,14 @@ class UntrustedGateConfigError(ValueError):
     """The in-tree gate.yaml cannot be trusted for review-time ``test.*`` reads."""
 
 
+class OutsideConfigRootRefused(UntrustedGateConfigError):
+    """An explicit outside test config root failed a trust check (#157).
+
+    Unlike the in-tree refusals (an untracked gate in CI, a change-added
+    gate), the operator configured this root, so CI treats a refusal as a
+    failure (nothing measured) rather than a skipped phase."""
+
+
 _GATE_PATHS = (".code-forge", ".code-forge/gate.yaml")
 _LINK_MODES = {"120000": "a symlink", "160000": "a submodule"}
 
@@ -357,13 +365,17 @@ def _refuse_checkout_alias(root: Path, source_root) -> None:
     Residual (needs mount control to set up, out of scope): some *other*
     checkout subdirectory bind-mounted onto the outside root; detecting that
     would need a walk of the checkout."""
-    # #155: directory identity, so resolve/follow symlinks on both sides; an
-    # lstat of a symlinked source_root would record the link, not the checkout.
+    # #155: resolve source_root (a symlinked source_root would otherwise record
+    # the link, not the checkout), then lstat its entries (#157). The config
+    # side follows: an outside root's .code-forge symlink is refused earlier.
     checkout = Path(source_root).resolve()
     checkout_ids = set()
     for rel in ("", ".code-forge"):
         try:
-            info = os.stat(checkout / rel)
+            # #157: lstat the resolved checkout's own entries. Following a
+            # PR-committed .code-forge symlink would record its target (e.g.
+            # the operator's outside config) and refuse a legitimate root.
+            info = os.stat(checkout / rel, follow_symlinks=False)
         except OSError:
             continue
         checkout_ids.add((info.st_dev, info.st_ino))
@@ -438,7 +450,12 @@ def load_trusted_gate_config(
     import io
 
     if config_root_is_outside_review(config_root, source_root):
-        return _load_outside_gate(config_root, source_root)
+        try:
+            return _load_outside_gate(config_root, source_root)
+        except OutsideConfigRootRefused:
+            raise
+        except UntrustedGateConfigError as exc:
+            raise OutsideConfigRootRefused(str(exc)) from exc
     working = Path(source_root) / ".code-forge" / "gate.yaml"
     in_git = any((d / ".git").exists() for d in (Path(source_root).resolve(), *Path(source_root).resolve().parents))
     if not in_git:
