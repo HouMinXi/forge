@@ -57,3 +57,23 @@ def test_malformed_structure_still_raises():
 )
 def test_ordinary_json_parses_unchanged(raw, expected):
     assert _loads_model_json(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"verdict":"DISMISSED" "reasoning":"missing comma"}',
+        '{"findings":[{"ok": true},,{"ok": false}]}',
+        '{"second":1,,"marker":2}',
+        '{"findings": [{"file": "a.py", "description": "x"}], UNQUOTED: true}',
+        r'{"description":"calls.\q end"}',
+    ],
+)
+def test_structural_errors_are_raised_unchanged(raw):
+    """The repair only escapes a raw content quote. A missing or doubled
+    delimiter, a bare key or a bad escape is a real syntax error: escaping
+    some earlier quote would corrupt valid structure (8c886b6 walked back
+    across ``}``/``]``/``:`` and past non-delimiter errors)."""
+    with pytest.raises(json.JSONDecodeError) as caught:
+        _loads_model_json(raw)
+    assert caught.value.doc == raw

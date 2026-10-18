@@ -1046,11 +1046,28 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
     pos = exc.pos
     if not isinstance(pos, int):
         return None
+    if not exc.msg.startswith("Expecting "):
+        # A stray content quote only ever surfaces as a delimiter/name
+        # error; "Invalid \escape", control characters or an unterminated
+        # string are not quote problems.
+        return None
     for quote_at in range(min(pos, len(text)) - 1, -1, -1):
+        if text[quote_at] in "}]:":
+            # A raw content quote is followed only by more content before
+            # json gives up; a closer or a key separator between the stop
+            # and the quote means the error is structural (``},,``,
+            # ``], KEY``, ``1,,``). Escaping an earlier quote would corrupt
+            # valid structure instead of repairing content.
+            return None
         if text[quote_at] != '"':
             continue
         if _quote_is_escaped(text, quote_at):
             continue
+        gap = text[quote_at + 1:pos]
+        if pos < len(text) and text[pos] == '"' and gap and not gap.strip():
+            # String, whitespace, string: a missing ``,`` between two
+            # members/elements (``"DISMISSED" "reasoning"``), not content.
+            return None
         return quote_at
     return None
 
