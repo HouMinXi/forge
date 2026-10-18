@@ -674,6 +674,36 @@ def _gate_ci_reason(exc: BaseException) -> str:
     return f"mutation not measured -- {exc}"
 
 
+def _swap_untracked_gate_record(gate: Path, digest: str) -> str | None:
+    """#143: record ``digest`` as the last-seen content of the untracked gate
+    at ``gate`` (keyed by realpath, in the user's code-forge config dir, which
+    no repo can carry) and return the previously recorded digest. Best
+    effort: an unreadable or unwritable store records nothing."""
+    import json
+    import os
+
+    from .trust import _config_dir
+
+    store = _config_dir() / "untracked-gates.json"
+    key = os.path.realpath(gate)
+    try:
+        data = json.loads(store.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    previous = data.get(key) if isinstance(data.get(key), str) else None
+    data[key] = digest
+    try:
+        store.parent.mkdir(parents=True, exist_ok=True)
+        tmp = store.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, store)
+    except OSError:
+        pass
+    return previous
+
+
 @dataclass
 class StateMachine:
     """Forge state machine. Constructor wires dependencies; .run() executes.
@@ -832,6 +862,10 @@ class StateMachine:
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
         self._note_gate_yaml_edit()
+        # #143: the untracked-gate pin is taken on this run's first gate load
+        # (that path already uses git; review start must spawn nothing).
+        self._untracked_gate_pin = None
+        self._untracked_gate_pinned = False
         admission_error = mutation_review_admission_error(
             target_kind=self.resolved_review.target_kind, git_diff=self.resolved_review.git_diff,
             source_files=self._source_files(), source_root=self._source_root(),
@@ -2477,10 +2511,105 @@ class StateMachine:
         from .gate_check import load_trusted_gate_config
 
         self._note_gate_yaml_edit()
-        return load_trusted_gate_config(
+        if not getattr(self, "_untracked_gate_pinned", False):
+            self._pin_untracked_gate()
+        self._check_untracked_gate_pin()
+        config = load_trusted_gate_config(
             config_root=self._test_config_root(), source_root=self._source_root(),
             base_sha=self.resolved_review.base_sha, allow_untracked=self.mode is not Mode.CI,
         )
+        self._check_untracked_gate_pin()
+        return config
+
+    def _untracked_gate_path(self) -> Path | None:
+        """#143: the in-tree .code-forge/gate.yaml when a LOCAL review uses it
+        as-is: config root is the reviewed tree, the file exists, and git has
+        it neither in the index nor at the review baseline (or no git)."""
+        import subprocess
+
+        from .gate_check import config_root_is_outside_review
+
+        if self.mode is Mode.CI or config_root_is_outside_review(
+            self._test_config_root(), self._source_root(),
+        ):
+            return None
+        root = Path(self._source_root())
+        gate = root / ".code-forge" / "gate.yaml"
+        if not gate.is_file():
+            return None
+
+        def git(*args):
+            try:
+                return subprocess.run(
+                    ["git", *args], cwd=str(root), capture_output=True, timeout=10, check=False,
+                ).returncode
+            except (OSError, subprocess.TimeoutExpired):
+                return None
+
+        if not any((d / ".git").exists() for d in (root.resolve(), *root.resolve().parents)):
+            return gate  # not a git checkout (no subprocess): the file is used as-is
+        listed = git("ls-files", "--error-unmatch", "--", ".code-forge/gate.yaml")
+        if listed == 0:
+            return None  # tracked: baseline copy or refused, never used as-is
+        base = self.resolved_review.base_sha
+        if base and git("cat-file", "-e", f"{base}:./.code-forge/gate.yaml") == 0:
+            return None  # the baseline copy is used
+        return gate
+
+    @staticmethod
+    def _gate_digest(path: Path) -> str | None:
+        import hashlib
+
+        try:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    def _pin_untracked_gate(self) -> None:
+        """#143: on the run's first gate load, pin the digest of an untracked in-tree
+        gate.yaml (LOCAL), add a visible note that it is in use, and flag it
+        when its content differs from the one seen by the previous review of
+        this checkout. The file is outside every reviewed diff, so the agent
+        under review could edit it without the edit appearing anywhere."""
+        from .advisory import AdvisoryFinding
+
+        self._untracked_gate_pin = None
+        self._untracked_gate_pinned = True
+        gate = self._untracked_gate_path()
+        if gate is None:
+            return
+        digest = self._gate_digest(gate)
+        if digest is None:
+            return
+        self._untracked_gate_pin = (gate, digest)
+        previous = _swap_untracked_gate_record(gate, digest)
+        changed = previous is not None and previous != digest
+        self._advisories.append(AdvisoryFinding(
+            id="UNTRACKED_GATE_CHANGED" if changed else "UNTRACKED_GATE_IN_USE",
+            axis="config", file=".code-forge/gate.yaml",
+            description=(
+                f"untracked .code-forge/gate.yaml (sha256 {digest[:12]}) supplies test.* for this "
+                "review; it is in no reviewed diff, so check it was not edited by the change "
+                "under review"
+                + (f" -- CHANGED since the previous review (was {previous[:12]})" if changed else "")
+            ),
+        ))
+
+    def _check_untracked_gate_pin(self) -> None:
+        """#143: refuse an untracked gate.yaml whose content changed after the
+        review started (e.g. by an agent between rounds)."""
+        from .gate_check import UntrustedGateConfigError
+
+        pin = getattr(self, "_untracked_gate_pin", None)
+        if pin is None:
+            return
+        gate, digest = pin
+        now = self._gate_digest(gate)
+        if now != digest:
+            raise UntrustedGateConfigError(
+                f"untracked .code-forge/gate.yaml changed during this review (sha256 "
+                f"{digest[:12]} at start, now {(now or 'unreadable')[:12]}); refusing it"
+            )
 
     def _note_gate_yaml_edit(self) -> None:
         """Advisory (once) when the change touches .code-forge/gate.yaml or the
