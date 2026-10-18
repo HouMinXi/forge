@@ -2495,11 +2495,30 @@ def test_local_orphan_appearing_mid_run_still_stops_after_that_round(ci_project)
         return original(index)
 
     machine._execute_round = counted
-    with pytest.raises(TimeoutBreaker, match="mutation workspace needs manual recovery \\(not an LLM timeout"):
+    with pytest.raises(TimeoutBreaker, match="mutation workspace needs manual recovery \\(not an LLM timeout") as caught:
         machine.run()
+    container = p.root / ".code-forge" / "mutation-empty-config"
+    assert str(container) in str(caught.value)
     assert len(rounds) == 1
     saved = load_state(p.state / ".code-forge/state.json")
+    assert saved.verdict is Verdict.FAIL
     assert not any(e.startswith("tiered-reset") for e in saved.infra_errors)
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    assert container.is_dir()
+
+
+@pytest.mark.parametrize("status", ["survived", "killed", "caught by type check", "timeout"])
+def test_local_results_timeout_with_measured_inventory_is_not_clean(ci_project, monkeypatch, status):
+    """#137 P2: mutants already measured (real final statuses from
+    _mutation_inventory) must not be dismissed by a results timeout."""
+    p = ci_project
+    extra = {"metadata_sha256": "m", "inventory": {"calc.x__mutmut_1": status}}
+    monkeypatch.setattr(mutation, "_run_mutation",
+                        _native_skip_runner("mutation-results-timeout", "mutmut results timed out", [], extra))
+    machine = _local_machine(p, runner=mutation.run_mutation)
+    machine._run_l2_phase()
+    assert machine._mutation_bound_failure is True
+    assert "L2: invalid bound mutation measurement" in machine._state.infra_errors
 
 
 def test_orphan_marker_text_inside_other_infra_line_does_not_stop(ci_project, monkeypatch):
