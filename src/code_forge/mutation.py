@@ -41,7 +41,7 @@ from typing import Literal, NotRequired, TypedDict
 from ._mutation_process import (
     MutationProcessError, _bind_cancellation_evidence, limit_address_space, run_owned_command,
 )
-from ._mutation_workspace import MutationWorkspace, MutationWorkspaceError
+from ._mutation_workspace import MutationWorkspace, MutationWorkspaceError, OrphanMutationContainerError
 from .disposition import Disposition
 from .errors import BaselineResolutionError
 from .mutation_config import DEFAULT_MUTATION_TIMEOUT, validate_mutation_timeout
@@ -1057,6 +1057,9 @@ def _mutation_command_error(phase: str, result: subprocess.CompletedProcess) -> 
     )
 
 
+OTHER_ADAPTER_INFRA = "diff has no Python files; other adapters are registered but not invoked here"
+
+
 def run_mutation(
     diff_files: list[str],
     baseline_cmd: list[str],
@@ -1087,6 +1090,9 @@ def run_mutation(
     def failed(exc):
         nonlocal outcome
         message = str(exc)
+        if isinstance(exc, OrphanMutationContainerError):
+            # #136: structured marker; the machine never matches free text.
+            evidence["workspace_orphan"] = {"path": str(exc.path), "message": message}
         findings = outcome[0] + [_process_error(message)]
         infra = outcome[1] + [message]
         evidence["baseline_passed"] = False
@@ -1268,7 +1274,7 @@ def _run_mutation(
         if other:
             description = other_adapter_note(diff_files, root=cwd)
             fingerprint = "mutation-other-adapter"
-            infra = "diff has no Python files; other adapters are registered but not invoked here"
+            infra = OTHER_ADAPTER_INFRA
         else:
             description = "no registered mutation adapter for this diff"
             fingerprint = "mutation-no-adapter"

@@ -29,6 +29,10 @@ class OrphanMutationContainerError(MutationWorkspaceError):
     Deterministic: it repeats every round until a person moves the path.
     """
 
+    def __init__(self, message: str, path):
+        super().__init__(message)
+        self.path = path
+
 
 def _node_identity(info: os.stat_result) -> tuple[int, int]:
     return info.st_dev, info.st_ino
@@ -235,7 +239,8 @@ class MutationWorkspace:
                     raise OrphanMutationContainerError(
                         f"{ORPHAN_CONTAINER_MARKER}: {path}; it is not removed automatically "
                         "because another run may own it. Recovery: make sure no code-forge run "
-                        f"is active on this worktree, then move {path} aside and retry"
+                        f"is active on this worktree, then move {path} aside and retry",
+                        path,
                     )
             self.original_snapshot = self._cache_snapshot("mutants")
             cache = self._stat("mutants")
@@ -285,6 +290,9 @@ class MutationWorkspace:
                 message += "; config_backup=" + str(self.root / ".code-forge" / self.config_backup)
             self._close_fds()
             self.acquired = False
+            if isinstance(exc, OrphanMutationContainerError) and message == str(exc):
+                # Keep the type (and its path) so callers need no text match.
+                raise
             raise MutationWorkspaceError(message) from exc
 
     def _rename(self, source: str, target: str):

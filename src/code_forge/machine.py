@@ -58,7 +58,7 @@ from .ledger import (
     append_row as ledger_append,
 )
 from .llm_invoke import FalsifyProtocolError, InvalidJSONResponseError, LLMInvokeError, Usage
-from ._mutation_workspace import ORPHAN_CONTAINER_MARKER
+from .mutation import OTHER_ADAPTER_INFRA as _OTHER_ADAPTER_INFRA
 from .mutation import (
     launch_detached_mutation, capture_mutation_source_guard, mutation_source_guard_matches,
     executable_review_sources, is_native_mutation_runner, mutation_review_admission_error,
@@ -395,14 +395,15 @@ def _clean_mutation_skip_kind(
             return None
         if phase == "results" and ("results_sha256" not in evidence or inventory != {}):
             return None
-        # "generated": mutants exist but results never arrived; any inventory.
-        if phase == "generated" and "results_sha256" in evidence:
+        # "generated": results never arrived. The inventory holds only final
+        # statuses (survived/killed/caught by type check/timeout), so any
+        # entry is a measurement that must take the strict path (#137 P2).
+        if phase == "generated" and ("results_sha256" in evidence or inventory != {}):
             return None
         return kind
     return None
 
 
-_OTHER_ADAPTER_INFRA = "diff has no Python files; other adapters are registered but not invoked here"
 
 # fingerprint -> (kind, infra rule, allowed mutant-phase evidence). #120/#127/#133.
 _SKIP_KINDS = {
@@ -627,6 +628,22 @@ def _baseline_failed_reason(findings: list) -> str:
             if detail:
                 return "CI: mutation not measured: " + detail[:300]
     return "CI: mutation not measured: baseline failed"
+
+
+def _workspace_orphan_message(evidence: dict, infra: list[str]) -> str | None:
+    """#136: the orphan-container refusal, by structured marker only.
+
+    run_mutation records ``workspace_orphan`` when it catches an
+    OrphanMutationContainerError; the message must also be an exact infra
+    line. Text inside other infra lines (runner or test output) never counts.
+    """
+    marker = evidence.get("workspace_orphan")
+    if not isinstance(marker, dict):
+        return None
+    message = marker.get("message")
+    if not isinstance(message, str) or message not in infra:
+        return None
+    return message
 
 
 def _ci_skip_reason(kind: str, findings: list) -> str:
@@ -1786,7 +1803,8 @@ class StateMachine:
                 self._state.converged = False
                 self._persist_state()
                 raise TimeoutBreaker(
-                    "mutation workspace needs manual recovery: " + self._mutation_workspace_blocker
+                    "stopped: mutation workspace needs manual recovery (not an LLM timeout; "
+                    "raising FORGE_LLM_TIMEOUT_S will not help): " + self._mutation_workspace_blocker
                 )
 
             _fp = self._fixpoint_reached()
@@ -2405,7 +2423,7 @@ class StateMachine:
                     if kind is None:
                         self._mutation_bound_failure = True
                         linked = _symlinked_files(diff_files, self._source_root())
-                        orphan = next((e for e in l2_infra if ORPHAN_CONTAINER_MARKER in e), None)
+                        orphan = _workspace_orphan_message(evidence, l2_infra)
                         if orphan is not None:
                             # #136: name the orphan and its manual recovery; the
                             # local loop stops after this round instead of

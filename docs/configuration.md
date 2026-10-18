@@ -780,6 +780,7 @@ Common backend errors and their solutions:
 | "Implicit \`claude -p\` is disabled" | No backend configured; implicit fallback refused | Add a `backends` section to gate.yaml, or set `FORGE_OUTLET=inline` |
 | "LLM subprocess failed" | CLI binary not found or crashed | Verify the `command` path exists and is executable (`which claude` or `which <proxy>`) |
 | "schema validation failed" | Backend returned valid JSON but wrong structure | Verify the backend supports the API format specified by `format` in gate.yaml |
+| Exit 6 with "stopped: mutation workspace needs manual recovery … orphan mutation container has no completed ownership record: `<path>`" | A `.code-forge/mutation-empty-config` or `mutation-empty-mirror` folder was left behind with no ownership record (e.g. a run's `mutation-owner.lock` was removed). This is not an LLM timeout | Make sure no code-forge run is active on this worktree, then move the named folder aside (with its stale `mutation-owner.lock`, if any) and retry. forge never deletes it automatically |
 | "lock busy" | Another code-forge process is running on this project | Wait for it to finish, or check for stuck processes (`ps aux \| grep code-forge`) |
 | Exit code 6 (TIMEOUT) | 5 consecutive L1 timeouts tripped the circuit breaker | The backend cannot keep up. Reduce diff size, raise `FORGE_LLM_TIMEOUT_S`, or switch to a faster (non-reasoning) backend |
 

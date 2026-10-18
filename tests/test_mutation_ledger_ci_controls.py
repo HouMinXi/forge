@@ -2319,11 +2319,15 @@ _OTHER_INFRA = "diff has no Python files; other adapters are registered but not 
     ([("mutation-unavailable", "u")], ["u"], {}, None),
     ([("mutation-unavailable", "u")], [], {"metadata_sha256": "m"}, None),
     ([("mutation-probe-timeout", "probe timed out")], [], {}, "probe-timeout"),
-    ([("mutation-probe-timeout", "p")], [], {"inventory": {"m": "x"}}, None),
+    ([("mutation-probe-timeout", "p")], [], {"inventory": {"calc.x__mutmut_1": "killed"}}, None),
     ([("mutation-no-mutants", "none")], [], {"results_sha256": "r", "metadata_sha256": "m"}, "no-mutants"),
     ([("mutation-no-mutants", "none")], [], {}, None),
-    ([("mutation-no-mutants", "none")], [], {"results_sha256": "r", "inventory": {"m": "x"}}, None),
-    ([("mutation-results-timeout", "t")], [], {"metadata_sha256": "m", "inventory": {"m": "x"}}, "results-timeout"),
+    ([("mutation-no-mutants", "none")], [], {"results_sha256": "r", "inventory": {"calc.x__mutmut_1": "survived"}}, None),
+    ([("mutation-results-timeout", "t")], [], {"metadata_sha256": "m"}, "results-timeout"),
+    ([("mutation-results-timeout", "t")], [], {"metadata_sha256": "m", "inventory": {"calc.x__mutmut_1": "survived"}}, None),
+    ([("mutation-results-timeout", "t")], [], {"inventory": {"calc.x__mutmut_1": "killed"}}, None),
+    ([("mutation-results-timeout", "t")], [], {"inventory": {"calc.x__mutmut_1": "caught by type check"}}, None),
+    ([("mutation-results-timeout", "t")], [], {"inventory": {"calc.x__mutmut_1": "timeout"}}, None),
     ([("mutation-results-timeout", "t")], [], {"results_sha256": "r"}, None),
     ([("mutation-results-timeout", "t")], ["t"], {}, None),
     ([("mutation-unavailable", "u"), ("mutation-probe-timeout", "p")], [], {}, None),
@@ -2376,7 +2380,7 @@ _NATIVE_133 = [
     ("mutation-no-mutants", "mutmut generated no mutants; no mutation measurement was made", [],
      {"results_sha256": "r", "metadata_sha256": "m"}, "CI: mutation not measured: mutmut generated no mutants"),
     ("mutation-results-timeout", "mutmut results timed out", [],
-     {"metadata_sha256": "m", "inventory": {"calc.x__mutmut_1": "pending"}},
+     {"metadata_sha256": "m"},
      "CI: mutation not measured: mutmut results timed out"),
     ("mutation-other-adapter", "app.ts: ts adapter registered", [_OTHER_INFRA], {},
      "CI: mutation not measured: other-language adapters are not invoked by this run: app.ts: ts adapter registered"),
@@ -2441,7 +2445,7 @@ def test_local_orphan_container_stops_after_one_round(ci_project):
         return original(index)
 
     machine._execute_round = counted
-    with pytest.raises(TimeoutBreaker, match="mutation workspace needs manual recovery") as caught:
+    with pytest.raises(TimeoutBreaker, match="mutation workspace needs manual recovery \\(not an LLM timeout") as caught:
         machine.run()
     assert str(container) in str(caught.value)
     assert len(rounds) == 1
@@ -2450,3 +2454,46 @@ def test_local_orphan_container_stops_after_one_round(ci_project):
     assert not any(e.startswith("tiered-reset") for e in saved.infra_errors)
     assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
     assert container.is_dir()
+
+
+
+@pytest.mark.parametrize("status", ["survived", "killed", "caught by type check", "timeout"])
+def test_local_results_timeout_with_measured_inventory_is_not_clean(ci_project, monkeypatch, status):
+    """#137 P2: mutants already measured (real final statuses from
+    _mutation_inventory) must not be dismissed by a results timeout."""
+    p = ci_project
+    extra = {"metadata_sha256": "m", "inventory": {"calc.x__mutmut_1": status}}
+    monkeypatch.setattr(mutation, "_run_mutation",
+                        _native_skip_runner("mutation-results-timeout", "mutmut results timed out", [], extra))
+    machine = _local_machine(p, runner=mutation.run_mutation)
+    machine._run_l2_phase()
+    assert machine._mutation_bound_failure is True
+    assert "L2: invalid bound mutation measurement" in machine._state.infra_errors
+
+
+def test_orphan_marker_text_inside_other_infra_line_does_not_stop(ci_project, monkeypatch):
+    """#137 P3: only the structured marker counts, not matching text."""
+    p = ci_project
+    noisy = ("pytest output: E   orphan mutation container has no completed ownership record: "
+             "/x; it is not removed automatically")
+
+    def inner(*_args, _evidence=None, **_kwargs):
+        err = _skip(fingerprint="mutation-evidence-error", description=noisy)
+        err.id = "MUTATION_ERROR"
+        return [err], [noisy]
+
+    monkeypatch.setattr(mutation, "_run_mutation", inner)
+    machine = _local_machine(p, runner=mutation.run_mutation)
+    machine._run_l2_phase()
+    assert machine._mutation_workspace_blocker is None
+    assert "L2: invalid bound mutation measurement" in machine._state.infra_errors
+
+
+def test_orphan_error_records_structured_marker(ci_project):
+    p = ci_project
+    container = _orphan(p)
+    evidence = {}
+    mutation.run_mutation(["calc.py"], list(BASELINE), cwd=p.root, _evidence=evidence)
+    marker = evidence["workspace_orphan"]
+    assert marker["path"] == str(container)
+    assert marker["message"].startswith("orphan mutation container has no completed ownership record: ")
