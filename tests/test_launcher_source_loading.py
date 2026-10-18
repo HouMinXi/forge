@@ -324,6 +324,23 @@ def test_metadata_open_replacement_symlink_refuses_before_read(launcher, tmp_pat
     assert reads == []
 
 
+def _wait_for_timestamp_tick(path, limit=3.0):
+    import time
+
+    start = os.stat(path).st_mtime_ns
+    probe = path.with_name(path.name + ".tick")
+    deadline = time.monotonic() + limit
+    try:
+        while time.monotonic() < deadline:
+            probe.write_bytes(b"")
+            if os.stat(probe).st_mtime_ns != start:
+                return
+            time.sleep(0.001)
+    finally:
+        probe.unlink(missing_ok=True)
+    pytest.fail("filesystem timestamp clock did not advance")
+
+
 @pytest.mark.parametrize("change", ["append", "replace", "rewrite", "symlink"])
 def test_metadata_reader_refuses_file_changes(launcher, tmp_path, monkeypatch, change):
     path = tmp_path / "METADATA"
@@ -340,6 +357,11 @@ def test_metadata_reader_refuses_file_changes(launcher, tmp_path, monkeypatch, c
                 with path.open("ab") as stream:
                     stream.write(b"growth\n")
             elif change == "rewrite":
+                # File timestamps come from the kernel's coarse clock (a
+                # jiffy, ~4 ms): a same-size rewrite inside the same tick
+                # keeps every stat field and is out of the stat identity's
+                # reach. Model a rewrite after the clock moved.
+                _wait_for_timestamp_tick(path)
                 path.write_bytes(b"modified\n")
             else:
                 replacement = tmp_path / "replacement"
