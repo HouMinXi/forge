@@ -208,6 +208,73 @@ def load_gate_config(
     return data
 
 
+def config_root_is_outside_review(config_root, source_root) -> bool:
+    """True when the gate config root and the reviewed tree are disjoint."""
+    import os
+
+    config = Path(os.path.abspath(config_root))
+    source = Path(os.path.abspath(source_root))
+    return config != source and config not in source.parents and source not in config.parents
+
+
+def load_trusted_gate_config(*, config_root, source_root, base_sha: str | None) -> dict:
+    """gate.yaml for review-time ``test.*`` reads, from a source the reviewed
+    change cannot edit (#140; same rule as #139's mutation globs).
+
+    - An explicit config root outside the reviewed tree: its gate.yaml.
+    - Otherwise (the CLI wiring: config root == reviewed tree): the review
+      baseline revision's ``.code-forge/gate.yaml`` via ``git show``. A change's
+      own edits to ``test.command`` & co. apply only once on the baseline.
+    - Not at the baseline and not tracked by git at all (gitignored, never
+      added, or no git checkout; not part of any reviewed change): the
+      checked-out file.
+
+    Raises FileNotFoundError when there is no trusted gate.yaml (a tracked
+    gate.yaml with no baseline copy, e.g. a first-ever gate.yaml added by
+    this very change) and ValueError when the trusted file is invalid -- the same errors callers already handle
+    for a missing/invalid config, so nothing from the reviewed tree runs.
+    """
+    import io
+    import subprocess
+
+    if config_root_is_outside_review(config_root, source_root):
+        return load_gate_config(Path(config_root) / ".code-forge" / "gate.yaml")
+    working = Path(source_root) / ".code-forge" / "gate.yaml"
+    if not any((d / ".git").exists() for d in (Path(source_root).resolve(), *Path(source_root).resolve().parents)):
+        # Not a git checkout: nothing is under review control, no git to ask.
+        return load_gate_config(working)
+    if base_sha:
+        try:
+            shown = subprocess.run(
+                ["git", "show", f"{base_sha}:./.code-forge/gate.yaml"],
+                cwd=str(source_root), capture_output=True, text=True, encoding="utf-8", timeout=10, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise FileNotFoundError(f"cannot read baseline .code-forge/gate.yaml: {exc}") from exc
+        if shown.returncode == 0:
+            text = shown.stdout
+            return load_gate_config(
+                "<baseline>:.code-forge/gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
+            )
+    # Not at the baseline. A gate.yaml git does not track at all (gitignored
+    # or never added: the common local setup, or one provisioned by CI) is not
+    # part of any reviewed change, so the checked-out file is used. A tracked
+    # one is being added by the change itself: refuse it (first-ever gate).
+    try:
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", ".code-forge/gate.yaml"],
+            cwd=str(source_root), capture_output=True, text=True, encoding="utf-8", timeout=10, check=False,
+        ).returncode == 0
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise FileNotFoundError(f"cannot inspect .code-forge/gate.yaml tracking: {exc}") from exc
+    if tracked:
+        raise FileNotFoundError(
+            f"no .code-forge/gate.yaml at review baseline {(base_sha or 'unknown')[:12]}; a gate.yaml "
+            "added by the reviewed change takes effect once it is on the baseline"
+        )
+    return load_gate_config(working)
+
+
 def validate_exec_falsify_config(section: object) -> None:
     """Validate exec_falsify section of gate.yaml (Phase 53a).
 

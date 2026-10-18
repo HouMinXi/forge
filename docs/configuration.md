@@ -53,6 +53,31 @@ scripts/forge-provider.py trust  # audit every gate.yaml on the host
 
 ---
 
+### Trusted `test.*` configuration (review time)
+
+During `code-forge review`, every `test.*` key (`command`, `timeout_seconds`,
+`env`, `also_copy`, `mutation_timeout_seconds`, `mutation_max_children`,
+`mutation_memory_limit_mb`, `mutation_skip_globs`/`mutation_include_globs`)
+is read from a source the reviewed change cannot edit. This covers L2 mutation
+(inline and the CI detached launch), FIXVAL and INDEX/COMMIT admission.
+`trust` records hash only the `backends` block, so they do not cover `test.*`.
+
+| Situation | gate.yaml used |
+|---|---|
+| Config root outside the reviewed tree | that config root's `.code-forge/gate.yaml` |
+| gate.yaml exists at the review baseline commit | the **baseline** copy (`git show <base>:.code-forge/gate.yaml`) |
+| gate.yaml not tracked by git (gitignored, never added, provisioned by CI) or no git checkout | the checked-out file, since it is not part of any reviewed change |
+| gate.yaml tracked but absent at the baseline (first-ever gate.yaml added by the change) | none; refused as a missing config, so nothing from the change runs |
+
+**A PR's edit to `test.*` takes effect only once it is on the baseline.**
+The PR that changes `test.command` is reviewed with the old command; after it
+merges, later reviews use the new one. An invalid baseline gate.yaml is
+reported as an invalid config. It never falls back to the reviewed copy.
+A change that edits `.code-forge/gate.yaml` gets a `GATE_YAML_EDIT_NOT_APPLIED`
+advisory saying its `test.*` settings were not used for this review.
+`code-forge commit` and `mutation-check` run on your own checkout and still
+read the working file.
+
 ## Environment Variables
 
 ### FORGE_BACKEND
@@ -774,23 +799,24 @@ China), also raise `FORGE_LLM_TIMEOUT_S` to account for network latency
 These globs decide which changed files are *not* mutated (skip) and which are
 mutated despite a skip match (include wins).
 
-**Where they are read from (#134).** A review never uses the globs from the
-tree it is reviewing:
+**Where they are read from (#134, #140).** The globs follow exactly the same
+rule as every other `test.*` key; see "Trusted `test.*` configuration" above:
 
 - When the gate config root is a separate checkout outside the reviewed tree,
   that config's globs are used.
 - Otherwise (the normal CLI case: you run `code-forge review` in the reviewed
   worktree), the globs come from the **review baseline revision**, i.e.
   `git show <baseline>:.code-forge/gate.yaml`.
-- No baseline, no `.code-forge/gate.yaml` at the baseline, or an unreadable
-  one: the built-in defaults below.
+- A gate.yaml that git does not track at all (gitignored, provisioned by CI)
+  is used as-is, the same file that supplies `test.command`.
+- No trusted gate.yaml (none anywhere, or a first-ever one added by the change
+  itself): the built-in defaults below.
+- A trusted gate.yaml that is unreadable or invalid: the built-in defaults,
+  plus an `L2: mutation globs: ...` infra note so the fallback is visible.
 
 So **a change to these globs takes effect only in reviews whose baseline
 already contains it.** A PR that adds its own files to `mutation_skip_globs`
 still has those files mutated in its own review.
-
-(The other `test.*` keys, including `test.command`, are still read from the
-checked-out tree; that older exposure is tracked in #140.)
 
 **Defaults (#135).** Test code is identified by directory, not file name:
 

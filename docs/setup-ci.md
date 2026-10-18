@@ -59,7 +59,7 @@ forge uses the exit code as the gate signal:
 | 3 | BUSY (lock held) or PENDING (manual continuation required) |
 | 4 | ESCALATED (review escalated for human decision) |
 | 5 | DELEGATED (inline outlet -- review not enforced by CLI) |
-| 6 | TIMEOUT (also a LOCAL circuit-breaker stop, e.g. mutation workspace needing manual recovery; see configuration.md Backend Troubleshooting) |
+| 6 | TIMEOUT (also a LOCAL circuit-breaker stop, e.g. mutation workspace needing manual recovery: `stopped before round 1: mutation workspace needs manual recovery (not an LLM timeout; raising FORGE_LLM_TIMEOUT_S will not help): orphan mutation container has no completed ownership record: <path>; ...` when found before any review pass; see configuration.md Backend Troubleshooting) |
 | 7 | UNRELIABLE (canary check failed -- reviewer missed planted defects) |
 
 A CI step fails the job on any non-zero, which is what you want for a gate.

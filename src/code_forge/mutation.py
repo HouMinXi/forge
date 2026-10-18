@@ -813,45 +813,39 @@ def _valid_globs(value) -> list[str] | None:
 
 def trusted_mutation_globs(
     *, config_root, source_root, base_sha: str | None, config_test: dict | None = None,
+    notes: list[str] | None = None,
 ) -> tuple[list[str] | None, list[str] | None]:
-    """Mutation skip/include globs from a source the reviewed change cannot edit (#134).
+    """Mutation skip/include globs from a source the reviewed change cannot edit
+    (#134), by the same rule as every other ``test.*`` key (#140): see
+    ``gate_check.load_trusted_gate_config``.
 
-    - An explicit config root outside the reviewed tree (disjoint paths) is
-      trusted: its already-loaded ``test`` block is used.
-    - Otherwise (the CLI's real wiring: config root == source root == the
-      reviewed tree) the globs come from the review baseline revision's
-      ``.code-forge/gate.yaml`` via ``git show <base>:./.code-forge/gate.yaml``.
-      A change's own edit to the globs therefore takes effect only once it
-      is the baseline of a later review.
-    - No baseline, no gate file at the baseline, or an unreadable one: the
+    - An explicit config root outside the reviewed tree: its already-loaded
+      ``test`` block (``config_test``) when given.
+    - Otherwise the trusted gate.yaml: the review baseline's copy, or an
+      untracked/gitignored checked-out file that no reviewed change can edit.
+    - No trusted gate.yaml (none at all, or one the change itself adds): the
       built-in defaults (None, None).
+    - A trusted gate.yaml that cannot be read or is invalid: the defaults,
+      and a note is appended to ``notes`` so the fallback is visible.
     """
-    config = Path(os.path.abspath(config_root))
-    source = Path(os.path.abspath(source_root))
-    disjoint = config != source and config not in source.parents and source not in config.parents
-    if disjoint:
-        test = config_test or {}
-        return _valid_globs(test.get("mutation_skip_globs")), _valid_globs(test.get("mutation_include_globs"))
-    if not base_sha:
-        return (None, None)
-    try:
-        shown = subprocess.run(
-            ["git", "show", f"{base_sha}:./.code-forge/gate.yaml"],
-            cwd=source, capture_output=True, text=True, timeout=10, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return (None, None)
-    if shown.returncode != 0:
-        return (None, None)
-    try:
-        import yaml
+    from .gate_check import config_root_is_outside_review, load_trusted_gate_config
 
-        raw = yaml.safe_load(shown.stdout)
-    except Exception:  # noqa: BLE001 - an unreadable baseline gate means defaults
-        return (None, None)
-    test = raw.get("test") if isinstance(raw, dict) else None
-    if not isinstance(test, dict):
-        return (None, None)
+    if config_test is not None and config_root_is_outside_review(config_root, source_root):
+        test = config_test
+    else:
+        try:
+            test = load_trusted_gate_config(
+                config_root=config_root, source_root=source_root, base_sha=base_sha,
+            ).get("test") or {}
+        except FileNotFoundError:
+            return (None, None)
+        except (OSError, ValueError, TypeError) as exc:
+            if notes is not None:
+                notes.append(
+                    "mutation globs: trusted .code-forge/gate.yaml is unreadable or invalid "
+                    f"({exc}); using the default test-path globs"
+                )
+            return (None, None)
     return _valid_globs(test.get("mutation_skip_globs")), _valid_globs(test.get("mutation_include_globs"))
 
 
@@ -867,7 +861,7 @@ def mutation_review_admission_error(
     detached = ci_detached and shutil.which("mutmut") is not None
     if not native and not detached:
         return None
-    from .gate_check import load_gate_config
+    from .gate_check import load_trusted_gate_config
     from .mutation_dispatch import group_by_adapter
 
     files = executable_review_sources(source_files, git_diff, source_root)
@@ -875,7 +869,9 @@ def mutation_review_admission_error(
     if not py_files:
         return None
     try:
-        test = load_gate_config(config_root / ".code-forge/gate.yaml")["test"]
+        test = load_trusted_gate_config(
+            config_root=config_root, source_root=source_root, base_sha=base_sha,
+        )["test"]
     except (OSError, ValueError, TypeError):
         return None
     try:

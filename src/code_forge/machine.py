@@ -1264,9 +1264,7 @@ class StateMachine:
         elif py_files and shutil.which("mutmut") is not None:
             mutation_timeout = None
             try:
-                from .gate_check import load_gate_config
-
-                config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
+                config = self._load_trusted_gate_config()
                 baseline_cmd = config["test"]["command"]
                 test_config = config.get("test", {})
                 baseline_timeout = test_config.get("timeout_seconds", 120)
@@ -2319,13 +2317,16 @@ class StateMachine:
             )
 
     def _trusted_mutation_globs(self, test_config: dict):
-        """#134: globs from an explicit outside config, else the baseline revision."""
+        """#134/#140: globs by the same trusted-config rule as every test.* key."""
         from .mutation import trusted_mutation_globs
 
-        return trusted_mutation_globs(
+        notes: list[str] = []
+        globs = trusted_mutation_globs(
             config_root=self.cwd, source_root=self._source_root(),
-            base_sha=self.resolved_review.base_sha, config_test=test_config,
+            base_sha=self.resolved_review.base_sha, config_test=test_config, notes=notes,
         )
+        self._state.infra_errors.extend(f"L2: {note}" for note in notes)
+        return globs
 
     def _preflight_mutation_workspace(self) -> None:
         """#138: refuse before round 1 when the native mutation workspace
@@ -2356,6 +2357,32 @@ class StateMachine:
             "stopped before round 1: mutation workspace needs manual recovery (not an LLM "
             "timeout; raising FORGE_LLM_TIMEOUT_S will not help): " + message
         )
+
+    def _load_trusted_gate_config(self) -> dict:
+        """#140: gate.yaml for test.* (command, timeouts, env, also_copy,
+        mutation limits/globs) from an outside config root or the review
+        baseline, never from the tree under review."""
+        from .advisory import AdvisoryFinding
+        from .gate_check import config_root_is_outside_review, load_trusted_gate_config
+
+        config = load_trusted_gate_config(
+            config_root=self.cwd, source_root=self._source_root(),
+            base_sha=self.resolved_review.base_sha,
+        )
+        if (
+            ".code-forge/gate.yaml" in _diff_paths(self.resolved_review.git_diff or "")
+            and not config_root_is_outside_review(self.cwd, self._source_root())
+            and not any(a.id == "GATE_YAML_EDIT_NOT_APPLIED" for a in self._advisories)
+        ):
+            self._advisories.append(AdvisoryFinding(
+                id="GATE_YAML_EDIT_NOT_APPLIED", axis="config", file=".code-forge/gate.yaml",
+                description=(
+                    "this change edits .code-forge/gate.yaml; its test.* settings were not "
+                    "used for this review (the review baseline's are) and take effect once "
+                    "the change is on the baseline"
+                ),
+            ))
+        return config
 
     def _run_l2_phase(self) -> list[StateFinding]:
         """L2 mutation phase. Runs after L1.
@@ -2391,9 +2418,7 @@ class StateMachine:
 
         if needs_baseline:
             try:
-                from .gate_check import load_gate_config
-
-                config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
+                config = self._load_trusted_gate_config()
                 baseline_cmd = config["test"]["command"]
                 baseline_timeout = config["test"].get("timeout_seconds", 120)
                 mutation_timeout = config["test"].get("mutation_timeout_seconds")
@@ -3664,9 +3689,7 @@ class StateMachine:
 
         # FixvalCandidate: run the gate
         try:
-            from .gate_check import load_gate_config
-
-            config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
+            config = self._load_trusted_gate_config()
             test_cmd = config["test"]["command"]
         except Exception as exc:  # noqa: BLE001
             self._state.infra_errors.append(

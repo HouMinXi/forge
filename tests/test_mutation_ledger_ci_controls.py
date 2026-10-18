@@ -2697,6 +2697,14 @@ def _spy_skip_globs(monkeypatch):
     return seen
 
 
+def _track_gate(p):
+    """Commit the fixture gate.yaml so the review baseline carries it (#140:
+    an untracked gate.yaml is not part of any change and is used as-is)."""
+    _git(p.root, "add", "-f", ".code-forge/gate.yaml")
+    _git(p.root, "-c", "user.name=CI Control", "-c", "user.email=ci-control@example.invalid",
+         "commit", "-qm", "track gate")
+
+
 def _set_root_globs(p, skip, *, commit=False):
     gate = p.root / ".code-forge/gate.yaml"
     data = json.loads(gate.read_text())
@@ -2713,9 +2721,10 @@ def _set_root_globs(p, skip, *, commit=False):
 def test_pr_edit_to_skip_globs_does_not_apply_in_its_own_review(ci_project, monkeypatch, mode):
     """A PR that adds calc.py to mutation_skip_globs: calc.py is still mutated."""
     p = ci_project
+    _track_gate(p)
     _set_root_globs(p, ["calc.py"])
     seen = _spy_skip_globs(monkeypatch)
-    machine = _cli_wired(p, mode=mode)
+    machine = _cli_wired(p, mode=mode, review=_review(p))
     findings = machine._run_l2_phase()
     assert seen == [(None, None)]
     assert "mutation-tests-only" not in [f.fingerprint for f in findings]
@@ -2746,6 +2755,7 @@ def test_ci_detached_launch_uses_baseline_globs(ci_project, monkeypatch):
     from code_forge import machine as machine_mod
 
     p = ci_project
+    _track_gate(p)
     _set_root_globs(p, ["calc.py"])
     _discover_mutmut(p)
     captured = {}
@@ -2755,7 +2765,7 @@ def test_ci_detached_launch_uses_baseline_globs(ci_project, monkeypatch):
         return False
 
     monkeypatch.setattr(machine_mod, "launch_detached_mutation", fake_launch)
-    machine = _cli_wired(p)
+    machine = _cli_wired(p, review=_review(p))
     monkeypatch.setattr(machine, "_run_l2_phase", lambda: [])
     machine.run()
     assert captured, "detached launch must have been attempted"
@@ -2773,7 +2783,9 @@ def test_trusted_mutation_globs_sources(tmp_path):
     _git(root, "-c", "user.name=t", "-c", "user.email=t@e.invalid", "commit", "-qm", "a")
     no_gate = _git(root, "rev-parse", "HEAD")
     (root / ".code-forge").mkdir()
-    (root / ".code-forge/gate.yaml").write_text("test:\n  mutation_skip_globs: [a.py]\n  mutation_include_globs: [b.py]\n")
+    (root / ".code-forge/gate.yaml").write_text(
+        "test:\n  command: [pytest]\n  mutation_skip_globs: [a.py]\n  mutation_include_globs: [b.py]\n"
+    )
     _git(root, "add", "-f", ".code-forge/gate.yaml")
     _git(root, "-c", "user.name=t", "-c", "user.email=t@e.invalid", "commit", "-qm", "g")
     with_gate = _git(root, "rev-parse", "HEAD")
@@ -2802,6 +2814,7 @@ def test_trusted_mutation_globs_sources(tmp_path):
 def test_admission_uses_baseline_globs(ci_project, monkeypatch):
     """INDEX/COMMIT admission decides selection from the same trusted globs."""
     p = ci_project
+    _track_gate(p)
     _set_root_globs(p, ["calc.py"])
     calls = []
     real = mutation.trusted_mutation_globs
@@ -2852,3 +2865,28 @@ def test_machine_admission_receives_review_baseline(ci_project, monkeypatch):
     except Exception:  # noqa: BLE001 - only the captured arguments matter
         pass
     assert seen["base_sha"] == machine.resolved_review.base_sha and seen["base_sha"]
+
+
+def test_cli_admission_receives_review_baseline(ci_project, monkeypatch, capsys):
+    """#139 forge P3: the real `code-forge review` entry passes the resolved
+    review baseline to admission, so admission reads the baseline gate.yaml."""
+    p = ci_project
+    _discover_mutmut(p)
+    _git(p.root, "add", "calc.py")
+    seen = {}
+
+    def spy(**kwargs):
+        seen.update(kwargs)
+        return "admission stop (test)"
+
+    monkeypatch.setattr(mutation, "mutation_review_admission_error", spy)
+    monkeypatch.chdir(p.root)
+    argv = ["code-forge", "review", "--mode", "ci", "--falsification-engine", "stub",
+            "--baseline", "HEAD", "--head", "INDEX", "--allow-main", "calc.py"]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+    err = capsys.readouterr().err
+    assert seen, err
+    assert seen["base_sha"] == _git(p.root, "rev-parse", "HEAD")
+    assert seen["config_root"] == seen["source_root"] == p.root
+    assert "admission stop (test)" in err
