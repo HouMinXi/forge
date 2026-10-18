@@ -2714,12 +2714,14 @@ def _idle_with_gate(tmp_path, gate_text, monkeypatch):
 
 @pytest.mark.parametrize("gate_text,expected", [
     ("test:\n  command: [pytest]\n  timeout_seconds: 2400\n", 2400.0 + 600),
-    ("test:\n  command: [pytest]\n  timeout_seconds: 60\n", 900.0),  # invoke 300 dominates
+    # #183: an unset mutation_timeout_seconds is mutmut's real default, 600.
+    ("test:\n  command: [pytest]\n  timeout_seconds: 60\n", 600.0 + 600),
+    ("test:\n  command: [pytest]\n  timeout_seconds: 60\n  mutation_timeout_seconds: 100\n", 900.0),  # invoke 300 dominates
     ("test:\n  command: [pytest]\n  timeout_seconds: 600\n  mutation_timeout_seconds: 1800\n", 1800.0 + 600),
     ("test:\n  timeout_seconds: 2400\n", 900.0),
     ("backends: {}\n", 900.0),
     (None, 900.0),
-], ids=["explicit", "invoke-dominates", "mutation-step", "no-command", "no-test", "absent"])
+], ids=["explicit", "default-mutation-step", "invoke-dominates", "mutation-step", "no-command", "no-test", "absent"])
 def test_job_idle_s_covers_one_silent_test_step(tmp_path, monkeypatch, gate_text, expected):
     assert _idle_with_gate(tmp_path, gate_text, monkeypatch) == expected
 

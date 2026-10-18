@@ -535,13 +535,16 @@ def _trusted_test_block(workspace: Path) -> dict:
 def _silent_step_s(workspace: Path) -> int:
     """Longest single test step that may print no progress (#128/#165):
     one run of test.command (test.timeout_seconds, default 120) or the
-    mutant execution (test.mutation_timeout_seconds), read from the trusted
+    mutant execution (test.mutation_timeout_seconds, default 600), read from the trusted
     gate. 0 when no test command is configured (no baseline)."""
     test = _trusted_test_block(workspace)
     if not test.get("command"):
         return 0
     steps = []
-    for key, default in (("timeout_seconds", 120), ("mutation_timeout_seconds", 0)):
+    from .mutation_config import DEFAULT_MUTATION_TIMEOUT
+
+    # #183: an unset mutation timeout runs mutmut with its real default.
+    for key, default in (("timeout_seconds", 120), ("mutation_timeout_seconds", DEFAULT_MUTATION_TIMEOUT)):
         value = test.get(key, default)
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             value = default
