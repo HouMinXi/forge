@@ -706,7 +706,10 @@ def _swap_untracked_gate_record(gate: Path, digest: str) -> str | None:
 
 # #141: review-time gate.yaml keys read from the trusted gate (baseline /
 # outside config root), never from the tree under review.
-_REVIEW_GATE_KEYS = ("ledger", "rulepacks", "rulepacks_blocking", "pinned_paths", "style_downgrade")
+_REVIEW_GATE_KEYS = (
+    "ledger", "rulepacks", "rulepacks_blocking", "rulepack_timeout_seconds", "pinned_paths",
+    "style_downgrade",
+)
 
 
 @dataclass

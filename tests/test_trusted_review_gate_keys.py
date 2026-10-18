@@ -243,3 +243,21 @@ def test_source_root_wiring_passes_the_trusted_gate_to_the_runner(tmp_path):
         findings = m._run_rulepack_blocking_phase()
     assert runner.seen["rulepacks_blocking"] == ["rule-a"]
     assert len(findings) == 1
+
+
+@pytest.mark.parametrize("base_t,pr_t,expected", [
+    (900, 900, 900),  # #175: the trusted timeout reaches the runner
+    (900, 5, 900),  # a PR-only edit does not
+    (None, 5, None),  # nor does a PR-added one
+])
+def test_trusted_rulepack_timeout_reaches_the_runner(tmp_path, base_t, pr_t, expected):
+    def gate(t):
+        return {"rulepacks": ["testpack"], "rulepacks_blocking": ["rule-a"]} | (
+            {"rulepack_timeout_seconds": t} if t is not None else {}
+        )
+
+    repo, base = _repo(tmp_path, gate(base_t), gate(pr_t))
+    runner = _FakeRunner()
+    with patch("code_forge.rulepack.RulepackRunner", lambda: runner):
+        _machine(repo, base)._run_rulepack_blocking_phase()
+    assert runner.seen.get("rulepack_timeout_seconds") == expected
