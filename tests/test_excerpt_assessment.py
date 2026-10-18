@@ -817,3 +817,24 @@ def test_deleted_only_file_keeps_exemption_without_source_credit():
     result = _assess(diff, exc)
     assert result.status is ExcerptStatus.VALID
     assert result.proven_lines == frozenset()
+
+
+def test_two_omitted_trailing_blank_lines_are_untrusted_not_invalid():
+    from code_forge.verify import ExcerptStatus
+
+    diff = _diff(["def plant():", "    return mirror", "", ""])
+    exc = _exc(1, 4, "def plant():\n    return mirror")
+    assessment = _assess(diff, exc)
+    assert assessment.status is ExcerptStatus.UNTRUSTED
+    assert assessment.proven_lines == frozenset({1, 2})
+    assert assessment.diagnostic == "excerpt mod.py:1-4 declares 4 lines but carries 2"
+
+
+def test_two_omitted_lines_stay_invalid_when_the_tail_has_content():
+    from code_forge.verify import ExcerptStatus
+
+    diff = _diff(["def plant():", "    return mirror", "    cleanup()", ""])
+    exc = _exc(1, 4, "def plant():\n    return mirror")
+    assessment = _assess(diff, exc)
+    assert assessment.status is ExcerptStatus.INVALID
+    assert assessment.proven_lines == frozenset()
