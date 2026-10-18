@@ -800,6 +800,31 @@ _CLOSED_DISPOSITIONS = frozenset(
 )
 
 
+def _cycle_response_hashes(receipts: list[dict], cycle: int) -> dict | None:
+    """pass -> reviewer_response_sha256 for one cycle; None if any is missing."""
+    hashes = {}
+    for receipt in receipts:
+        if receipt.get("cycle") != cycle:
+            continue
+        value = receipt.get("reviewer_response_sha256")
+        if not isinstance(value, str) or len(value) != 64:
+            return None
+        hashes[receipt.get("pass")] = value
+    return hashes or None
+
+
+def _fresh_reviewer_responses(receipts: list[dict], a: int, b: int) -> bool:
+    """#222: high excerpt overlap is honest re-quoting only when both cycles
+    carry a response hash on every receipt and no pass reused its answer.
+    A missing hash (legacy receipts) keeps the plain Jaccard verdict."""
+    first, second = _cycle_response_hashes(receipts, a), _cycle_response_hashes(receipts, b)
+    if first is None or second is None:
+        return False
+    if set(first.values()) & set(second.values()):
+        return False
+    return True
+
+
 def _open_findings(items: list) -> list:
     """Findings that still count as an open product defect.
 
@@ -1913,7 +1938,10 @@ def _run_verify_impl(
 
         # 7. Jaccard overlap > 0.8 = rubber stamp.
         # NOTE: identical excerpts across cycles will cause Jaccard > 0.8.
-        # This is CORRECT -- it detects rubber-stamping.
+        # That alone fails, unless every receipt of both cycles carries a
+        # reviewer_response_sha256 and no hash repeats across them (#222):
+        # an honest re-review of a small diff re-quotes the same lines with a
+        # freshly produced answer. Reused or copied answers still fail.
         # Known limitation: when neither cycle has an open finding
         # (empty list, or every finding DISMISSED/FIXED), the skip
         # below causes Jaccard to never trigger, so identical-excerpt
@@ -1941,7 +1969,7 @@ def _run_verify_impl(
                     cp,
                 )
             j = _jaccard(cov_a, cov_b)
-            if j > 0.8:
+            if j > 0.8 and not _fresh_reviewer_responses(receipts, a, b):
                 return VerifyResult(False, f"Jaccard overlap {j:.2f} > 0.8 c{a}-c{b}", 7, cp)
         cp += 1
 

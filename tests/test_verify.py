@@ -4035,3 +4035,89 @@ def test_a_finding_without_a_line_does_not_inflate_coverage(tmp_path):
         diff_text=diff, required_cycles=1, respect_floor=False,
     )
     assert result.passed, result.reason
+
+
+# -- #222: reviewer_response_sha256 separates honest re-quoting from reuse --
+
+from code_forge.receipt import normalized_response_sha256  # noqa: E402
+
+
+def _stamp_hashes(rd, answer):
+    """Give every receipt a response hash from ``answer(cycle, pass)``; None drops it."""
+    for path in rd.glob("receipt-c*p*.json"):
+        data = json.loads(path.read_text())
+        text = answer(data["cycle"], data["pass"])
+        if text is None:
+            data.pop("reviewer_response_sha256", None)
+        else:
+            data["reviewer_response_sha256"] = normalized_response_sha256(text)
+        path.write_text(json.dumps(data))
+
+
+class TestResponseHashReuse:
+    # #193 shape: one unfixed CONFIRMED finding whose persisted description and
+    # excerpts are byte-identical every cycle, so overlap is 1.00.
+    FINDING = [{"severity": "L2", "note": "same persisted description", "disposition": "CONFIRMED"}]
+
+    def _run(self, tmp_path, answer):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        sha = _sha(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=self.FINDING)
+        if answer is not None:
+            _stamp_hashes(rd, answer)
+        return run_verify(tmp_path, sha, parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+
+    def test_honest_requote_with_fresh_answers_passes(self, tmp_path):
+        r = self._run(tmp_path, lambda c, p: '{"verdict": "CONFIRMED", "reasoning": "cycle %d pass %d"}' % (c, p))
+        assert r.passed, r.reason
+
+    def test_copy_paste_answers_fail(self, tmp_path):
+        r = self._run(tmp_path, lambda c, p: '{"verdict": "CONFIRMED", "reasoning": "pass %d"}' % p)
+        assert not r.passed and r.reason.startswith("Jaccard overlap 1.00 > 0.8")
+
+    def test_whitespace_reformatted_copy_still_fails(self, tmp_path):
+        layouts = {
+            1: '{"verdict": "CONFIRMED", "reasoning": "same  answer"}',
+            2: '```json\n{\n  "reasoning": "same answer\\n",\n  "verdict":   "CONFIRMED"\n}\n```',
+            3: '  {"reasoning":"same\\tanswer","verdict":"CONFIRMED"}  ',
+        }
+        r = self._run(tmp_path, lambda c, p: layouts[c])
+        assert not r.passed and "Jaccard" in r.reason
+
+    def test_one_reused_pass_fails(self, tmp_path):
+        r = self._run(tmp_path, lambda c, p: "reused" if p == 2 else "fresh %d %d" % (c, p))
+        assert not r.passed and "Jaccard" in r.reason
+
+    def test_legacy_receipts_without_hash_keep_jaccard_failure(self, tmp_path):
+        r = self._run(tmp_path, None)
+        assert not r.passed and r.reason.startswith("Jaccard overlap 1.00 > 0.8")
+
+    def test_one_missing_hash_keeps_jaccard_failure(self, tmp_path):
+        r = self._run(tmp_path, lambda c, p: None if (c, p) == (3, 1) else "fresh %d %d" % (c, p))
+        assert not r.passed and "Jaccard" in r.reason
+
+    def test_malformed_hash_keeps_jaccard_failure(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        r = self._run(tmp_path, lambda c, p: "fresh %d %d" % (c, p))
+        assert r.passed
+        for path in rd.glob("receipt-c3p*.json"):
+            data = json.loads(path.read_text())
+            data["reviewer_response_sha256"] = "short"
+            path.write_text(json.dumps(data))
+        r = run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        assert not r.passed and "Jaccard" in r.reason
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "same"),
+    [
+        ('{"a": "x  y", "b": 1}', '{\n "b": 1,\n "a": "x y"\n}', True),
+        ('{"a": "x"}', '```json\n{"a": "x"}\n```', True),
+        ("plain  text\nanswer", "plain text answer", True),
+        ('{"a": "x y"}', '{"a": "x z"}', False),
+        ("plain text", "plain texts", False),
+    ],
+)
+def test_normalized_response_sha256(left, right, same):
+    assert (normalized_response_sha256(left) == normalized_response_sha256(right)) is same

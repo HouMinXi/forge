@@ -8,6 +8,7 @@ to .code-forge/receipts/receipt-cNpM.json.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -156,6 +157,52 @@ def _attempted_artifact_path(
     """Use the writer's existing ordinal and pass mapping for audit artifacts."""
     pass_num = _PASS_NAMES.index(pass_name) + 1 if pass_name in _PASS_NAMES else 0
     return receipts_dir / "attempted" / ("attempted-c%dp%d-%d.json" % (cycle, pass_num, attempt_index))
+
+
+def _normalize_response_value(value):
+    if isinstance(value, str):
+        return " ".join(value.split())
+    if isinstance(value, list):
+        return [_normalize_response_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_response_value(item) for key, item in value.items()}
+    return value
+
+
+def normalized_response_sha256(raw: str) -> str:
+    """SHA-256 of a reviewer response with layout normalized away (#222).
+
+    JSON (bare or in a ```json fence) is re-serialized with sorted keys and
+    whitespace collapsed inside strings; anything else has all whitespace
+    runs collapsed. Reformatting a reused response therefore keeps its hash.
+    """
+    text = raw.strip()
+    if text.startswith("```"):
+        body = text.split("\n", 1)[1] if "\n" in text else ""
+        text = body.rsplit("```", 1)[0].strip()
+    try:
+        canonical = json.dumps(
+            _normalize_response_value(json.loads(text)),
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        )
+    except (ValueError, TypeError):
+        canonical = " ".join(raw.split())
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _pass_response_sha256(pending_raw_responses: list | None, pass_name: str) -> str | None:
+    hashes = sorted(
+        normalized_response_sha256(item["raw_response"])
+        for item in pending_raw_responses or []
+        if isinstance(item, dict)
+        and item.get("pass_name") == pass_name
+        and type(item.get("raw_response")) is str
+    )
+    if not hashes:
+        return None
+    if len(hashes) == 1:
+        return hashes[0]
+    return hashlib.sha256("\n".join(hashes).encode("ascii")).hexdigest()
 
 
 def write_receipts(
@@ -348,6 +395,10 @@ def write_receipts(
             ),
         }
 
+        # #222: per-cycle evidence that this pass's answer was produced fresh.
+        response_sha = _pass_response_sha256(pending_raw_responses, pass_name)
+        if response_sha is not None:
+            receipt["reviewer_response_sha256"] = response_sha
         if pass_name in excerpt_validation_errors:
             receipt["excerpt_validation_errors"] = excerpt_validation_errors[pass_name]
         if repository_manifest is not None:
