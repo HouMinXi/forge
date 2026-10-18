@@ -1403,6 +1403,7 @@ def _run_mutation(
     run_env = os.environ.copy()
     pythonpath = os.path.join(repo_root, "src")
     run_env["PYTHONPATH"] = pythonpath
+    retry_cause: list[str] = []
     # mutmut runs pytest in its own process and inherits this env. The
     # review service's PATH leads with the forge venv, so project tools
     # (kextractlinux and the like) are invisible. When the baseline runner
@@ -1419,6 +1420,7 @@ def _run_mutation(
             run_env,
             repo_root,
             allow_strip_retry=True,
+            retry_cause=retry_cause,
             timeout=baseline_timeout,
             run_command=run_owned_command,
         )
@@ -1430,6 +1432,7 @@ def _run_mutation(
                 run_env,
                 repo_root,
                 allow_strip_retry=False,
+            first_attempt=retry_cause[0] if retry_cause else None,
                 timeout=baseline_timeout,
                 run_command=run_owned_command,
             )

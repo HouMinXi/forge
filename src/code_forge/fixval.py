@@ -381,12 +381,14 @@ def run_fixval(
     run_env = os.environ.copy()
     pythonpath = os.path.join(repo_root, "src")
     run_env["PYTHONPATH"] = pythonpath
+    retry_cause: list[str] = []
 
     status, guard_findings, guard_infra = _run_baseline_guard(
         scoped_cmd,
         run_env,
         repo_root,
         allow_strip_retry=True,
+        retry_cause=retry_cause,
     )
     if status == "needs_strip_retry":
         run_env = _strip_venv_from_env(run_env)
@@ -396,6 +398,7 @@ def run_fixval(
             run_env,
             repo_root,
             allow_strip_retry=False,
+        first_attempt=retry_cause[0] if retry_cause else None,
         )
     if status == "skip":
         return FixvalResult(

@@ -219,6 +219,8 @@ def _run_baseline_guard(
     allow_strip_retry: bool,
     timeout: int = 120,
     run_command=None,
+    retry_cause: list[str] | None = None,
+    first_attempt: str | None = None,
 ) -> tuple[str, list[StateFinding], list[str]]:
     """Run the baseline three times and report the observed failure cause.
 
@@ -238,10 +240,21 @@ def _run_baseline_guard(
     empty (the caller should strip the env and call again with
     allow_strip_retry=False). It is only offered when the inherited env
     does not verifiably have the runner (_venv_has_runner, #244).
+
+    retry_cause, when given, receives the first attempt's observed failure
+    whenever "needs_strip_retry" is returned. Pass it back as first_attempt
+    on the retry so a retry skip reports the original cause too (#244).
     """
     suffix = ""
     if not allow_strip_retry:
         suffix = " (after env retry)"
+    if first_attempt:
+        suffix += f" [first attempt: {first_attempt}]"
+
+    def _strip(cause: str):
+        if retry_cause is not None:
+            retry_cause.append(cause)
+        return ("needs_strip_retry", [], [])
 
     execute = subprocess.run if run_command is None else run_command
 
@@ -265,7 +278,7 @@ def _run_baseline_guard(
                 and _is_runner_missing(baseline_cmd, None, exc)
                 and not _venv_has_runner(baseline_cmd, run_env)
             ):
-                return ("needs_strip_retry", [], [])
+                return _strip(f"run {run_num}: runner could not start" + _output_detail(str(exc), None))
             desc = f"run {run_num}: runner could not start{suffix}" + _output_detail(str(exc), None)
             finding = StateFinding(
                 id="MUTATION_SKIPPED",
@@ -300,7 +313,10 @@ def _run_baseline_guard(
                     and runner_missing
                     and not _venv_has_runner(baseline_cmd, run_env)
                 ):
-                    return ("needs_strip_retry", [], [])
+                    return _strip(
+                        f"run {run_num}: returncode {result.returncode}"
+                        + _output_detail(result.stderr, result.stdout)
+                    )
                 unavailable = _is_runner_startup_failure(baseline_cmd, result)
                 reason = "baseline runner unavailable" if unavailable else "baseline failed"
                 nodes = _failed_nodes(result.stdout)
