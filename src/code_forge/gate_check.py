@@ -462,6 +462,29 @@ def load_trusted_gate_data(
     )
 
 
+def trusted_gate_data_or_error(
+    *, config_root, source_root, base_sha: str | None, allow_untracked: bool = True,
+) -> "dict | Exception":
+    """#150: :func:`load_trusted_gate_data` for advisory/context switches.
+
+    "No trusted gate" (none at the baseline, a change-added one, a refused or
+    untracked-in-CI one) is ``{}``: the built-in defaults. An existing trusted
+    gate that cannot be read or parsed is returned as the exception, not
+    ``{}``: treating it as empty would let a consumer re-enable something
+    the operator disabled (see context_sources._gate_cfg). Never falls back
+    to the reviewed tree's copy."""
+    try:
+        data = load_trusted_gate_data(
+            config_root=config_root, source_root=source_root, base_sha=base_sha,
+            allow_untracked=allow_untracked,
+        )
+    except (FileNotFoundError, UntrustedGateConfigError):
+        return {}
+    except (OSError, ValueError) as exc:
+        return exc
+    return data if isinstance(data, dict) else {}
+
+
 def load_trusted_gate_config(
     *, config_root, source_root, base_sha: str | None, allow_untracked: bool = True,
     _parse=_parse_validated,

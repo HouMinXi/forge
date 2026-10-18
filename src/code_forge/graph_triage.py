@@ -615,8 +615,12 @@ class GraphTriageRunner:
         repo_root: Path,
         *,
         config_root: Optional[Path] = None,
+        gate_config: Optional[dict] = None,
     ) -> list[AdvisoryFinding]:
         """Run graph triage on the given diff.
+
+        ``gate_config`` (#150): an already-trusted gate.yaml mapping; when
+        given, no gate.yaml file is read for ``graph_triage.*``.
 
         Args:
             diff_text: unified diff of the changes under review.
@@ -647,9 +651,27 @@ class GraphTriageRunner:
         # section) would discard the entire config including
         # graph_triage.enabled: false, causing the backend auto-detect
         # to re-enable a subsystem the user explicitly disabled.
-        gate_config: dict = {}
+        trusted = gate_config
+        gate_config = {}
         if self._backend_selection is not None:
             gate_config = self._backend_selection[1]
+        elif trusted is not None:
+            # #150: the trusted mapping (or the error loading it) replaces
+            # the file read; it is validated like load_gate_config would.
+            try:
+                if isinstance(trusted, Exception):
+                    raise trusted
+                from .gate_check import validate_graph_triage
+
+                if "graph_triage" in trusted:
+                    validate_graph_triage(trusted["graph_triage"])
+                gate_config = trusted
+            except (ValueError, OSError) as exc:
+                msg = "GraphTriageRunner: configuration_error: %s" % exc
+                self.acquisition_outcome = SemAcquisition("configuration_error", diagnostic=str(exc))
+                self.infra_errors.append(msg)
+                print(msg, file=sys.stderr)
+                return []
         else:
             gate_path = (repo_root if config_root is None else config_root) / ".code-forge/gate.yaml"
             try:

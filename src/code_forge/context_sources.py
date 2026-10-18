@@ -121,6 +121,9 @@ class GraphTriageSource:
     # each hold-cycle's GraphTriageRunner._cached_findings from this so
     # sem/graph.db is queried once per review, not once per round.
     findings_cache: Optional[list] = None
+    # #150: an already-trusted gate.yaml mapping (from the review baseline or
+    # an outside config root). None keeps the legacy read of repo_root's copy.
+    gate_config: Optional[object] = None  # dict, or the Exception loading it
     acquisition_outcome: Optional[SemAcquisition] = field(default=None, init=False)
     _backend_selection: Optional[tuple[Optional[tuple[str, str]], dict]] = field(
         default=None, init=False, repr=False
@@ -130,12 +133,23 @@ class GraphTriageSource:
         from .graph_triage import _detect_backend
 
         self._backend_selection = None
-        gate_config = _gate_cfg(self.repo_root)
+        gate_config = self._trusted_gate_cfg() if self.gate_config is not None else _gate_cfg(self.repo_root)
         backend = _detect_backend(self.repo_root, gate_config)
         self._backend_selection = (backend, gate_config)
         if backend is None or backend[0] != "graphdb":
             return None
         return _graphdb_head_sha(Path(backend[1]))
+
+    def _trusted_gate_cfg(self) -> dict:
+        """#150: the trusted mapping, validated like _gate_cfg; a load error
+        propagates so gather() records it (no acquisition on defaults)."""
+        from .gate_check import validate_graph_triage
+
+        if isinstance(self.gate_config, Exception):
+            raise self.gate_config
+        if "graph_triage" in self.gate_config:
+            validate_graph_triage(self.gate_config["graph_triage"])
+        return self.gate_config
 
     def facts(self, changed_files: list[str], diff_text: str) -> list[FactRow]:
         from .graph_triage import GraphTriageRunner
@@ -144,7 +158,8 @@ class GraphTriageSource:
         self.acquisition_outcome = None
         runner = GraphTriageRunner()
         runner._backend_selection = self._backend_selection
-        findings = runner.run(diff_text, self.repo_root)
+        trusted = {} if self.gate_config is None else {"gate_config": self.gate_config}
+        findings = runner.run(diff_text, self.repo_root, **trusted)
         self.acquisition_outcome = getattr(runner, "acquisition_outcome", None)
         if runner.infra_errors:
             raise RuntimeError("; ".join(runner.infra_errors))
@@ -157,13 +172,14 @@ class GraphTriageSource:
         from .graph_triage import GraphTriageRunner
 
         source_name = self.name
+        trusted_config = self.gate_config
 
         class SourceRunner(GraphTriageRunner):
             def run(runner, diff_text: str, repo_root: Path):
                 runner.infra_errors.clear()
                 if runner._cached_findings is not None:
                     return runner._cached_findings
-                source = GraphTriageSource(repo_root, name=source_name)
+                source = GraphTriageSource(repo_root, name=source_name, gate_config=trusted_config)
                 result = gather(
                     [source],
                     get_changed_files(diff_text),
@@ -1021,8 +1037,12 @@ class KnowledgeSource:
         )]
 
 
-def knowledge_enabled(repo_root):
+def knowledge_enabled(repo_root, gate_data: Optional[object] = None):
     """True only when gate.yaml sets knowledge.enabled.
+
+    ``gate_data`` (#150): an already-trusted gate.yaml mapping. When given,
+    the reviewed tree's file is not read, so a change under review cannot
+    turn on knowledge-service queries for its own review.
 
     Reads the file directly. load_gate_config demands a test section,
     which a review config does not have, so the switch would never be
@@ -1031,11 +1051,16 @@ def knowledge_enabled(repo_root):
     """
     import yaml
 
-    path = Path(repo_root) / ".code-forge" / "gate.yaml"
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        return False
+    if isinstance(gate_data, Exception):
+        return False  # opt-in: an unreadable trusted gate is off
+    if gate_data is not None:
+        data = gate_data
+    else:
+        path = Path(repo_root) / ".code-forge" / "gate.yaml"
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            return False
     if not isinstance(data, dict):
         return False
     kb = data.get("knowledge")
