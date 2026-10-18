@@ -23,6 +23,7 @@ from code_forge.user_config import (
 from code_forge.mcp_server import (
     _check_backend,
     _job_cap_s,
+    _job_idle_s,
     _make_result,
     _make_simple_result,
     _resolve_workspace,
@@ -888,8 +889,9 @@ async def test_forge_gate_check_timeout_returns_job_ref():
         ),
         patch(
             "code_forge.mcp_server._job_cap_s",
-            return_value=900.0,
+            return_value=None,
         ),
+        patch("code_forge.mcp_server._job_idle_s", return_value=900.0),
         patch("code_forge.mcp_server.start_job", return_value="test-job-id") as mock_start,
     ):
         result = await forge_gate_check()
@@ -902,7 +904,8 @@ async def test_forge_gate_check_timeout_returns_job_ref():
             tempfile_path=None,
             focus_tempfile_path=None,
             stderr_log_path="/tmp/fake.log",
-            max_lifetime_s=900.0,
+            max_lifetime_s=None,
+            idle_timeout_s=900.0,
         )
 
 
@@ -2334,7 +2337,7 @@ async def test_null_coercion_coerces_none_to_empty_string():
     assert received_args.get("other") == "val", "Non-None value was corrupted"
 
 
-# _job_cap_s direct tests
+# _job_cap_s / _job_idle_s direct tests (#165)
 
 
 def _make_backend(backend_type="cli", timeout_s=0, name="test"):
@@ -2343,96 +2346,67 @@ def _make_backend(backend_type="cli", timeout_s=0, name="test"):
     return BackendConfig(name=name, type=backend_type, model="", timeout_s=timeout_s)
 
 
-def test_job_cap_s_backend_explicit_timeout():
+def _idle_with_backend(be, workspace=Path("/tmp")):
+    with (
+        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
+        patch("code_forge.backend.resolve_backend", return_value=be),
+        patch("code_forge.mcp_server._silent_step_s", return_value=0),
+    ):
+        return _job_idle_s(workspace)
+
+
+def test_job_idle_s_backend_explicit_timeout():
     """Backend with timeout_s=1800 -> 1800 + 600 = 2400.0."""
-    be = _make_backend(timeout_s=1800)
-    with (
-        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
-        patch("code_forge.backend.resolve_backend", return_value=be),
-        patch.dict(os.environ, {}, clear=False),
-    ):
-        os.environ.pop("FORGE_MCP_JOB_TIMEOUT_S", None)
-        assert _job_cap_s(Path("/tmp")) == 2400.0
+    assert _idle_with_backend(_make_backend(timeout_s=1800)) == 2400.0
 
 
-def test_job_cap_s_api_backend_default_timeout():
+def test_job_idle_s_api_backend_default_timeout():
     """API backend with no explicit timeout -> API cap 600 + 600 = 1200.0."""
-    be = _make_backend(backend_type="api", timeout_s=0)
-    with (
-        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
-        patch("code_forge.backend.resolve_backend", return_value=be),
-        patch.dict(os.environ, {}, clear=False),
-    ):
-        os.environ.pop("FORGE_MCP_JOB_TIMEOUT_S", None)
-        assert _job_cap_s(Path("/tmp")) == 1200.0
+    assert _idle_with_backend(_make_backend(backend_type="api", timeout_s=0)) == 1200.0
 
 
-def test_job_cap_s_cli_backend_default_timeout():
+def test_job_idle_s_cli_backend_default_timeout():
     """CLI backend with no explicit timeout -> CLI cap 300 + 600 = 900.0."""
-    be = _make_backend(backend_type="cli", timeout_s=0)
-    with (
-        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
-        patch("code_forge.backend.resolve_backend", return_value=be),
-        patch.dict(os.environ, {}, clear=False),
-    ):
-        os.environ.pop("FORGE_MCP_JOB_TIMEOUT_S", None)
-        assert _job_cap_s(Path("/tmp")) == 900.0
+    assert _idle_with_backend(_make_backend(backend_type="cli", timeout_s=0)) == 900.0
 
 
-def test_job_cap_s_env_override_wins():
-    """FORGE_MCP_JOB_TIMEOUT_S=50 -> 50.0, ignoring derived value."""
-    with patch.dict(os.environ, {"FORGE_MCP_JOB_TIMEOUT_S": "50"}):
-        assert _job_cap_s(Path("/tmp")) == 50.0
-
-
-def test_job_cap_s_env_junk_falls_back(caplog):
-    """FORGE_MCP_JOB_TIMEOUT_S=junk -> derived CLI 900.0 + warning."""
-    be = _make_backend(backend_type="cli", timeout_s=0)
-    with (
-        patch.dict(os.environ, {"FORGE_MCP_JOB_TIMEOUT_S": "junk"}),
-        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
-        patch("code_forge.backend.resolve_backend", return_value=be),
-    ):
-        import logging
-
-        with caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"):
-            result = _job_cap_s(Path("/tmp"))
-    assert result == 900.0
-    assert any("not an int" in r.message for r in caplog.records)
-
-
-def test_job_cap_s_env_negative_falls_back(caplog):
-    """FORGE_MCP_JOB_TIMEOUT_S=-1 -> derived CLI 900.0 + warning."""
-    be = _make_backend(backend_type="cli", timeout_s=0)
-    with (
-        patch.dict(os.environ, {"FORGE_MCP_JOB_TIMEOUT_S": "-1"}),
-        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
-        patch("code_forge.backend.resolve_backend", return_value=be),
-    ):
-        import logging
-
-        with caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"):
-            result = _job_cap_s(Path("/tmp"))
-    assert result == 900.0
-    assert any("not positive" in r.message for r in caplog.records)
-
-
-def test_job_cap_s_resolution_failure_falls_back(caplog):
+def test_job_idle_s_resolution_failure_falls_back(caplog):
     """Broken gate.yaml -> DEFAULT_BACKEND (CLI, no timeout) -> 900.0 + warning."""
     import logging
 
     with (
-        patch(
-            "code_forge.cli._load_gate_backends",
-            side_effect=RuntimeError("broken yaml"),
-        ),
-        patch.dict(os.environ, {}, clear=False),
+        patch("code_forge.cli._load_gate_backends", side_effect=RuntimeError("broken yaml")),
+        patch("code_forge.mcp_server._silent_step_s", return_value=0),
         caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"),
     ):
-        os.environ.pop("FORGE_MCP_JOB_TIMEOUT_S", None)
-        result = _job_cap_s(Path("/tmp"))
+        result = _job_idle_s(Path("/tmp"))
     assert result == 900.0
     assert any("falling back" in r.message for r in caplog.records)
+
+
+def test_job_cap_s_none_by_default():
+    """#165: no derived total cap; only an explicit one."""
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("FORGE_MCP_JOB_TIMEOUT_S", None)
+        assert _job_cap_s(Path("/tmp")) is None
+
+
+def test_job_cap_s_env_override_wins():
+    """FORGE_MCP_JOB_TIMEOUT_S=50 -> 50.0 hard cap."""
+    with patch.dict(os.environ, {"FORGE_MCP_JOB_TIMEOUT_S": "50"}):
+        assert _job_cap_s(Path("/tmp")) == 50.0
+
+
+@pytest.mark.parametrize("raw,message", [("junk", "not an int"), ("-1", "not positive"), ("0", "not positive")])
+def test_job_cap_s_bad_env_means_no_total_cap(caplog, raw, message):
+    import logging
+
+    with (
+        patch.dict(os.environ, {"FORGE_MCP_JOB_TIMEOUT_S": raw}),
+        caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"),
+    ):
+        assert _job_cap_s(Path("/tmp")) is None
+    assert any(message in r.message for r in caplog.records)
 
 
 # -- Phase 41: contract_spec wiring in sampling path --
@@ -2704,59 +2678,81 @@ async def test_a_ref_that_looks_like_a_flag_stays_a_value():
         assert args[args.index("--baseline") + 1] == "--allow-main"
 
 
-# --- #128: the job cap includes the gate's mutation-baseline budget ----------
+# --- #128/#165: the idle window covers one silent test step from the trusted gate
 
 
-def _cap_with_gate(tmp_path, gate_text):
+def _git_repo(path):
+    import subprocess
+
+    path.mkdir(parents=True, exist_ok=True)
+    for args in (["init", "-q"], ["config", "user.email", "t@example.invalid"], ["config", "user.name", "t"]):
+        subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
+    return path
+
+
+def _commit_gate(repo, gate_text):
+    import subprocess
+
+    (repo / ".code-forge").mkdir(exist_ok=True)
+    (repo / ".code-forge" / "gate.yaml").write_text(gate_text, encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "gate"], cwd=repo, check=True, capture_output=True)
+
+
+def _idle_with_gate(tmp_path, gate_text, monkeypatch):
+    monkeypatch.delenv("FORGE_TEST_CONFIG_ROOT", raising=False)
+    repo = _git_repo(tmp_path / "repo")
     if gate_text is not None:
-        (tmp_path / ".code-forge").mkdir()
-        (tmp_path / ".code-forge" / "gate.yaml").write_text(gate_text, encoding="utf-8")
+        _commit_gate(repo, gate_text)
     be = _make_backend(backend_type="cli", timeout_s=0)  # CLI default 300
     with (
         patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
         patch("code_forge.backend.resolve_backend", return_value=be),
-        patch.dict(os.environ, {}, clear=False),
     ):
-        os.environ.pop("FORGE_MCP_JOB_TIMEOUT_S", None)
-        return _job_cap_s(tmp_path)
+        return _job_idle_s(repo)
 
 
 @pytest.mark.parametrize("gate_text,expected", [
-    ("test:\n  command: [pytest]\n  timeout_seconds: 2400\n", 900.0 + 3 * 2400),
-    ("test:\n  command: [pytest]\n", 900.0 + 3 * 120),
-    ("test:\n  command: [pytest]\n  timeout_seconds: true\n", 900.0 + 3 * 120),
-    ("test:\n  command: [pytest]\n  timeout_seconds: -5\n", 900.0 + 3 * 120),
-    ("test:\n  command: [pytest]\n  timeout_seconds: '2400'\n", 900.0 + 3 * 120),
+    ("test:\n  command: [pytest]\n  timeout_seconds: 2400\n", 2400.0 + 600),
+    ("test:\n  command: [pytest]\n  timeout_seconds: 60\n", 900.0),  # invoke 300 dominates
+    ("test:\n  command: [pytest]\n  timeout_seconds: 600\n  mutation_timeout_seconds: 1800\n", 1800.0 + 600),
     ("test:\n  timeout_seconds: 2400\n", 900.0),
     ("backends: {}\n", 900.0),
-    ("[unclosed\n", 900.0),
     (None, 900.0),
-], ids=["explicit", "default", "bool", "negative", "string", "no-command", "no-test", "bad-yaml", "absent"])
-def test_job_cap_s_scales_with_baseline_budget(tmp_path, gate_text, expected):
-    assert _cap_with_gate(tmp_path, gate_text) == expected
+], ids=["explicit", "invoke-dominates", "mutation-step", "no-command", "no-test", "absent"])
+def test_job_idle_s_covers_one_silent_test_step(tmp_path, monkeypatch, gate_text, expected):
+    assert _idle_with_gate(tmp_path, gate_text, monkeypatch) == expected
 
 
-def test_job_cap_s_baseline_budget_ignores_backend_trust_filter(tmp_path):
-    """An untrusted repo's _load_gate_backends returns ({}, {}); the cap still
-    sees test.timeout_seconds (it only lengthens a time budget)."""
-    gate = "test:\n  command: [pytest]\n  timeout_seconds: 2400\n"
-    assert _cap_with_gate(tmp_path, gate) > 3 * 2400
-
-
-def test_job_cap_s_env_override_still_wins_over_baseline_budget(tmp_path):
-    (tmp_path / ".code-forge").mkdir()
-    (tmp_path / ".code-forge" / "gate.yaml").write_text(
+def test_job_idle_s_reads_the_outside_test_config_root(tmp_path, monkeypatch):
+    """P3 of #165: FORGE_TEST_CONFIG_ROOT supplies test.*, no in-tree gate."""
+    outside = tmp_path / "cfg"
+    (outside / ".code-forge").mkdir(parents=True)
+    (outside / ".code-forge" / "gate.yaml").write_text(
         "test:\n  command: [pytest]\n  timeout_seconds: 2400\n", encoding="utf-8")
-    with patch.dict(os.environ, {"FORGE_MCP_JOB_TIMEOUT_S": "50"}):
-        assert _job_cap_s(tmp_path) == 50.0
+    repo = _git_repo(tmp_path / "repo")
+    monkeypatch.setenv("FORGE_TEST_CONFIG_ROOT", str(outside))
+    be = _make_backend(backend_type="cli", timeout_s=0)
+    with (
+        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
+        patch("code_forge.backend.resolve_backend", return_value=be),
+    ):
+        assert _job_idle_s(repo) == 3000.0
 
 
-def test_baseline_budget_tracks_guard_run_count(tmp_path, monkeypatch):
-    from code_forge import baseline_guard
-
-    monkeypatch.setattr(baseline_guard, "BASELINE_MAX_RUNS", 5)
-    gate = "test:\n  command: [pytest]\n  timeout_seconds: 100\n"
-    assert _cap_with_gate(tmp_path, gate) == 900.0 + 500
+def test_job_idle_s_ignores_an_uncommitted_edit_of_a_tracked_gate(tmp_path, monkeypatch):
+    """The trusted (baseline) copy sizes the window, not the reviewed working copy."""
+    monkeypatch.delenv("FORGE_TEST_CONFIG_ROOT", raising=False)
+    repo = _git_repo(tmp_path / "repo")
+    _commit_gate(repo, "test:\n  command: [pytest]\n  timeout_seconds: 1200\n")
+    (repo / ".code-forge" / "gate.yaml").write_text(
+        "test:\n  command: [pytest]\n  timeout_seconds: 99999\n", encoding="utf-8")
+    be = _make_backend(backend_type="cli", timeout_s=0)
+    with (
+        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
+        patch("code_forge.backend.resolve_backend", return_value=be),
+    ):
+        assert _job_idle_s(repo) == 1800.0
 
 
 def test_baseline_guard_runs_at_most_baseline_max_runs(monkeypatch):
@@ -2774,3 +2770,14 @@ def test_baseline_guard_runs_at_most_baseline_max_runs(monkeypatch):
     assert baseline_guard._run_baseline_guard(
         ["true"], {}, "/private", allow_strip_retry=False, run_command=execute)[0] == "passed"
     assert len(calls) == 2
+
+
+def test_silent_step_is_zero_without_a_test_command():
+    """No test.command -> no baseline -> no silent test step to wait for."""
+    from code_forge.mcp_server import _silent_step_s
+
+    with patch("code_forge.mcp_server._trusted_test_block", return_value={"timeout_seconds": 2400}):
+        assert _silent_step_s(Path("/tmp")) == 0
+    with patch("code_forge.mcp_server._trusted_test_block",
+               return_value={"command": ["pytest"], "timeout_seconds": 2400}):
+        assert _silent_step_s(Path("/tmp")) == 2400
