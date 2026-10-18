@@ -190,7 +190,13 @@ def _run_baseline_guard(
 
     execute = subprocess.run if run_command is None else run_command
 
+    from . import progress
+
     for run_num in range(1, BASELINE_MAX_RUNS + 1):
+        # #165: one progress line per run. Each run is bounded by one test
+        # timeout, so an inactivity watchdog sized to that timeout (the MCP
+        # job's idle window) never sees a healthy 3-run guard as hung.
+        progress.emit(f"baseline: run {run_num}/{BASELINE_MAX_RUNS}")
         try:
             result = execute(
                 baseline_cmd,

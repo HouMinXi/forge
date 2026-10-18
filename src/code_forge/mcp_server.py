@@ -1379,6 +1379,8 @@ async def forge_review(
     # mutate the server process environment.
     child_env: dict[str, str] | None = {**os.environ, "FORGE_ALLOW_MAIN": "1"} if allow_main else None
     cap = _job_cap_s(workspace, backend) if timeout_s is None else timeout_s
+    # #165 P3: reading the gate/config can block; keep it off the event loop.
+    idle_s = await asyncio.to_thread(_job_idle_s, workspace, backend) if timeout_s is None else None
     return await _dispatch_cli(
         cli_args,
         workspace,
@@ -1386,7 +1388,7 @@ async def forge_review(
         contract=contract or None,
         focus=focus or None,
         env=child_env,
-        **({"timeout_s": timeout_s} if timeout_s is not None else {"idle_s": _job_idle_s(workspace, backend)}),
+        **({"timeout_s": timeout_s} if timeout_s is not None else {"idle_s": idle_s}),
     )
 
 
@@ -1426,9 +1428,11 @@ async def forge_gate_check(
         cli_args.extend(["--backend", backend])
 
     cap = _job_cap_s(workspace, backend) if timeout_s is None else timeout_s
+    # #165 P3: reading the gate/config can block; keep it off the event loop.
+    idle_s = await asyncio.to_thread(_job_idle_s, workspace, backend) if timeout_s is None else None
     return await _dispatch_cli(
         cli_args, workspace, cap,
-        **({"timeout_s": timeout_s} if timeout_s is not None else {"idle_s": _job_idle_s(workspace, backend)}),
+        **({"timeout_s": timeout_s} if timeout_s is not None else {"idle_s": idle_s}),
     )
 
 
