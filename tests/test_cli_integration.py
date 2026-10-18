@@ -8,7 +8,6 @@ pipeline without needing real git repos (except where noted).
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 from unittest.mock import patch
@@ -607,17 +606,14 @@ class TestCostSummaryStderr:
         assert "passes" in cost
         assert "per_pass" in cost
 
-    @pytest.mark.skipif(
-        shutil.which("claude") is None,
-        reason="the cost line needs a real L1 pass through the claude CLI backend",
-    )
-    def test_cost_summary_shows_na_for_stub_engine(
+    def test_cost_summary_shows_na_without_token_data(
         self,
         tmp_path,
         capsys,
         isolated_process_state,
     ):
-        """Stub engine (no token data) prints 'N/A' cost line, not silence."""
+        """A completed L1 pass without token data (a CLI backend) prints the
+        'N/A' cost line, not silence. Hermetic: llm_invoke is stubbed (#233)."""
         repo = tmp_path / "repo"
         repo.mkdir()
         _git_init_repo(repo)
@@ -643,8 +639,6 @@ class TestCostSummaryStderr:
             "argv",
             [
                 "code-forge",
-                "--falsification-engine",
-                "stub",
                 "--mode",
                 "ci",
                 "a.py",
@@ -653,18 +647,25 @@ class TestCostSummaryStderr:
         isolated_process_state.chdir(repo)
 
         from code_forge.cli import main as _main
+        from code_forge.llm_invoke import LLMResult
+
+        # #233: hermetic L1. Each pass completes with a clean review and no
+        # token data (empty known_fields), as a CLI backend reports -- no
+        # real claude binary, no paid call.
+        def clean_review(prompt, *args, **kwargs):
+            return LLMResult(content={"findings": [], "code_excerpts": []})
 
         with patch(
             "code_forge.outlet_resolver.resolve_outlet",
             return_value="subprocess",
-        ):
+        ), patch("code_forge.llm_invoke.llm_invoke", side_effect=clean_review) as l1:
             _main()
 
+        assert l1.call_count >= 1, "the cost line must come from a completed L1 pass"
         captured = capsys.readouterr()
         # stub engine has no token data: cost line shows N/A so CLI users
         # always know a review ran (same visibility contract as API users).
-        assert "code-forge: cost:" in captured.err
-        assert "N/A" in captured.err
+        assert "code-forge: cost: tokens: N/A (cli backend), 3 passes" in captured.err
 
 
 # ---------------------------------------------------------------------------
