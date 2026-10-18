@@ -55,6 +55,11 @@ SHELL_METACHARACTERS = set("|;&$><`")
 _INTERRUPT_BANNER = re.compile(r"!{3,}\s*KeyboardInterrupt\s*!{3,}")
 
 
+class GateWithoutTestSection(ValueError):
+    """A well-formed gate.yaml mapping with no ``test`` section: mutation is
+    not configured (a review-keys-only gate), as opposed to a malformed file."""
+
+
 def load_gate_config(
     config_path: str | Path,
     fs_open=open,
@@ -81,7 +86,7 @@ def load_gate_config(
         raise ValueError("Invalid YAML in gate.yaml: %s" % e) from e
 
     if not isinstance(data, dict) or "test" not in data:
-        raise ValueError(
+        raise (GateWithoutTestSection if isinstance(data, dict) else ValueError)(
             "gate.yaml needs an active 'test' section for the commit gate. "
             "Add:\n"
             "test:\n"
@@ -231,10 +236,33 @@ class GateNotFound(FileNotFoundError):
     an explicit outside config root. CI FAILs on it (mutation unmeasured);
     LOCAL keeps treating it as not configured."""
 
+    @property
+    def ci_reason(self) -> str:
+        return GATE_NOT_FOUND_NOT_MEASURED
+
+
+class GateNotOnBaseline(GateNotFound):
+    """#178: a tracked gate.yaml with no copy at the review baseline (a
+    first-ever gate added by the change). Still no trusted gate: CI FAILs."""
+
+    @property
+    def ci_reason(self) -> str:
+        return GATE_NOT_ON_BASELINE_NOT_MEASURED
+
+
+class OutsideGateInvalid(ValueError):
+    """The operator's outside config root has a gate.yaml that cannot be read
+    or validated. CI FAILs with this reason (user policy), never skip+PASS."""
+
 
 GATE_NOT_FOUND_NOT_MEASURED = (
     "mutation not measured -- no gate.yaml found; add .code-forge/gate.yaml "
     "or use --test-config-root"
+)
+
+GATE_NOT_ON_BASELINE_NOT_MEASURED = (
+    "mutation not measured -- gate.yaml is not on the review baseline yet (added by "
+    "this change); it takes effect once it is on the baseline, or use --test-config-root"
 )
 
 
@@ -483,6 +511,12 @@ def load_trusted_gate_config(
             raise
         except FileNotFoundError as exc:
             raise GateNotFound(f"no .code-forge/gate.yaml in the test config root {config_root}") from exc
+        except GateWithoutTestSection:
+            raise  # well-formed, mutation simply not configured: unchanged
+        except (OSError, ValueError) as exc:
+            raise OutsideGateInvalid(
+                f"invalid .code-forge/gate.yaml in the test config root {config_root}: {exc}"
+            ) from exc
     working = Path(source_root) / ".code-forge" / "gate.yaml"
     in_git = any((d / ".git").exists() for d in (Path(source_root).resolve(), *Path(source_root).resolve().parents))
     if not in_git:
@@ -499,7 +533,7 @@ def load_trusted_gate_config(
                 "<baseline>:.code-forge/gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
             )
     if tracked:
-        raise FileNotFoundError(
+        raise GateNotOnBaseline(
             f"no .code-forge/gate.yaml at review baseline {(base_sha or 'unknown')[:12]}; a gate.yaml "
             "added by the reviewed change takes effect once it is on the baseline"
         )
