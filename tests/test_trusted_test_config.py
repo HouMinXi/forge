@@ -691,6 +691,11 @@ import os, subprocess, sys
 from pathlib import Path
 from code_forge.gate_check import UntrustedGateConfigError, load_trusted_gate_config
 case, repo, base, scratch = sys.argv[1], Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4])
+source = repo
+if case.endswith("-via-symlink"):  # #155: a symlinked source_root (programmatic callers)
+    source = scratch / "checkout-link"
+    source.symlink_to(repo, target_is_directory=True)
+    case = case[: -len("-via-symlink")]
 if case == "root-alias":
     alias = scratch / "alias"
     alias.mkdir()
@@ -706,7 +711,7 @@ else:  # control: a legitimate outside root, same namespace
     (config_root / ".code-forge" / "gate.yaml").write_text(
         "test:\n  command: [legit]\n", encoding="utf-8")
 try:
-    cfg = load_trusted_gate_config(config_root=config_root, source_root=repo, base_sha=base,
+    cfg = load_trusted_gate_config(config_root=config_root, source_root=source, base_sha=base,
                                    allow_untracked=False)
 except UntrustedGateConfigError as exc:
     print("REFUSED", exc)
@@ -725,7 +730,10 @@ def _unshare_available():
 
 
 @pytest.mark.skipif(not _unshare_available(), reason="unprivileged user/mount namespaces unavailable")
-@pytest.mark.parametrize("case", ["root-alias", "forge-alias", "control"])
+@pytest.mark.parametrize("case", [
+    "root-alias", "forge-alias", "control",
+    "root-alias-via-symlink", "forge-alias-via-symlink", "control-via-symlink",
+])
 def test_bind_mount_alias_of_the_checkout_is_refused(tmp_path, case):
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)  # PR-controlled tree gate
     (repo / "cfg" / ".code-forge").mkdir(parents=True)
@@ -740,7 +748,7 @@ def test_bind_mount_alias_of_the_checkout_is_refused(tmp_path, case):
         env={**os.environ, "PYTHONPATH": str(Path(gate_check.__file__).parents[1])},
     )
     assert out.returncode == 0, out.stderr
-    if case == "control":
+    if case.startswith("control"):
         assert out.stdout.startswith("LOADED ['legit']"), out.stdout
     else:
         assert out.stdout.startswith("REFUSED"), out.stdout

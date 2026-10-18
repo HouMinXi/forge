@@ -357,10 +357,13 @@ def _refuse_checkout_alias(root: Path, source_root) -> None:
     Residual (needs mount control to set up, out of scope): some *other*
     checkout subdirectory bind-mounted onto the outside root; detecting that
     would need a walk of the checkout."""
+    # #155: directory identity, so resolve/follow symlinks on both sides; an
+    # lstat of a symlinked source_root would record the link, not the checkout.
+    checkout = Path(source_root).resolve()
     checkout_ids = set()
     for rel in ("", ".code-forge"):
         try:
-            info = os.stat(Path(source_root) / rel, follow_symlinks=False)
+            info = os.stat(checkout / rel)
         except OSError:
             continue
         checkout_ids.add((info.st_dev, info.st_ino))
@@ -376,7 +379,7 @@ def _refuse_checkout_alias(root: Path, source_root) -> None:
                 "is the same directory, e.g. a bind mount alias)"
             )
     try:
-        info = os.stat(Path(root) / ".code-forge", follow_symlinks=False)
+        info = os.stat(resolved / ".code-forge")
     except OSError:
         return
     if (info.st_dev, info.st_ino) in checkout_ids:
