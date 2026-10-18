@@ -200,3 +200,91 @@ def test_missing_git_binary_still_pins_an_existing_gate(untracked, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", no_git)
     assert _machine(repo, base)._untracked_gate_path() == repo / GATE
+
+
+# --- #166: a gate that becomes "untracked, used as-is" after the first load ---
+
+
+def test_gate_created_mid_review_is_refused(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    (repo / GATE).unlink()  # no gate when the review starts
+    m = _machine(repo, base)
+    assert _l2_calls(m) == []
+    _write_gate(repo, PR_CMD, timeout=999)  # the agent writes one between rounds
+    assert _l2_calls(m) == []
+    assert any("appeared during this review" in e for e in m._state.infra_errors), m._state.infra_errors
+
+
+def test_gate_unstaged_mid_review_is_refused(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=True)  # staged: refused
+    m = _machine(repo, base)
+    assert _l2_calls(m) == []
+    _git(repo, "rm", "-q", "--cached", str(GATE))  # the agent unstages it
+    assert _l2_calls(m) == []
+    assert any("appeared during this review" in e for e in m._state.infra_errors), m._state.infra_errors
+
+
+def test_pinned_gate_that_becomes_tracked_is_refused(untracked):
+    repo, base = untracked
+    m = _started(repo, base)
+    _git(repo, "add", str(GATE))  # no longer used as-is
+    with pytest.raises(UntrustedGateConfigError, match="changed during this review"):
+        m._check_untracked_gate_pin()
+
+
+def test_no_gate_throughout_is_not_refused(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    (repo / GATE).unlink()
+    m = _machine(repo, base)
+    _l2_calls(m)
+    _l2_calls(m)
+    assert not any("during this review" in e for e in m._state.infra_errors)
+
+
+# --- #167: the bytes parsed are the bytes pinned; globs are not re-read ---
+
+
+def test_swap_during_load_restored_afterwards_is_refused(untracked, monkeypatch):
+    repo, base = untracked
+    m = _started(repo, base)
+    original = (repo / GATE).read_bytes()
+    real = gate_check.load_trusted_gate_config
+
+    def swapping(**kw):
+        _write_gate(repo, BASE_CMD, timeout=1)
+        try:
+            return real(**kw)
+        finally:
+            (repo / GATE).write_bytes(original)
+
+    monkeypatch.setattr(gate_check, "load_trusted_gate_config", swapping)
+    with pytest.raises(UntrustedGateConfigError, match="when parsed"):
+        m._load_trusted_gate_config()
+
+
+def test_mutation_globs_come_from_the_loaded_block_not_a_reread(untracked, monkeypatch):
+    import yaml
+
+    repo, base = untracked
+    m = _started(repo, base)
+    config = m._load_trusted_gate_config()
+    (repo / GATE).write_text(yaml.safe_dump({"test": {
+        "command": PR_CMD, "timeout_seconds": 999, "mutation_skip_globs": ["src/**"],
+    }}))  # edited after the post-load check
+    reads = []
+    monkeypatch.setattr(gate_check, "load_trusted_gate_config", lambda **kw: reads.append(kw) or {})
+    assert m._trusted_mutation_globs(config["test"]) == (None, None)
+    assert reads == []
+
+
+def test_pinned_globs_are_taken_from_the_loaded_block(untracked):
+    import yaml
+
+    repo, base = untracked
+    (repo / GATE).write_text(yaml.safe_dump({"test": {
+        "command": PR_CMD, "timeout_seconds": 999,
+        "mutation_skip_globs": ["a/**"], "mutation_include_globs": ["b/**"],
+    }}))
+    m = _started(repo, base)
+    config = m._load_trusted_gate_config()
+    assert m._trusted_mutation_globs(config["test"]) == (["a/**"], ["b/**"])

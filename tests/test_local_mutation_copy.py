@@ -92,7 +92,7 @@ def test_none_option_keeps_strict_runner_contract(tmp_path, monkeypatch):
     machine = make_machine(tmp_path, "absent", runner)
     monkeypatch.setattr(
         "code_forge.gate_check.load_gate_config",
-        lambda path: {"test": {"command": ["pytest"], "also_copy": None}},
+        lambda path, **_kw: {"test": {"command": ["pytest"], "also_copy": None}},
     )
     assert machine._run_l2_phase() == []
     assert calls == [120]
