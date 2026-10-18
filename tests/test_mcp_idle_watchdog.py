@@ -8,6 +8,7 @@ applies only when one is explicitly set.
 
 import asyncio
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -68,3 +69,39 @@ async def test_explicit_total_cap_still_applies_while_progressing(tmp_path, monk
     assert job["result"]["stderr"].startswith("job exceeded 1s cap")
     assert job["result"]["duration_s"] < 4
     assert proc.returncode is not None
+
+
+_SRC = str(Path(__file__).resolve().parents[1] / "src")
+
+# A passing 3-run baseline guard whose total silent time (3 x 0.4s) is longer
+# than the idle window (0.6s), while each single run fits inside it.
+_GUARD_CHILD = (
+    "import sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "from code_forge.baseline_guard import _run_baseline_guard\n"
+    "cmd = [sys.executable, '-c', 'import time; time.sleep(0.4)']\n"
+    "status, _f, _i = _run_baseline_guard(cmd, {}, '.', allow_strip_retry=False)\n"
+    "sys.exit(0 if status == 'passed' else 3)\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_passing_three_run_baseline_guard_is_not_killed(tmp_path, monkeypatch):
+    """#165 re-review: the guard emits one progress line per run, so the
+    watchdog sized to one run never kills a healthy 3-run baseline."""
+    monkeypatch.setattr(mcp_jobs, "_WATCHDOG_POLL_S", 0.05)
+    src = _SRC
+    log = tmp_path / "stderr.log"
+    handle = open(log, "wb")  # noqa: SIM115 - the child owns it
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", _GUARD_CHILD, src,
+        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=handle,
+    )
+    handle.close()
+    task = asyncio.create_task(proc.communicate())
+    job_id = mcp_jobs.start_job(task, proc, stderr_log_path=str(log), idle_timeout_s=0.6)
+    job = mcp_jobs.get_job(job_id)
+    await asyncio.wait_for(asyncio.shield(job["wait_task"]), timeout=20)
+    assert job["status"] == "completed", job["result"]
+    assert job["result"]["exit_code"] == 0
+    assert job["result"]["duration_s"] > 0.6
