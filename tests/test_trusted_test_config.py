@@ -1151,3 +1151,34 @@ def test_ci_inline_l2_invalid_baseline_gate_fails_with_the_reason(tmp_path, text
     assert machine._mutation_bound_failure is True
     assert any(e.startswith("CI: mutation not measured -- invalid gate.yaml at review baseline")
                for e in machine._state.infra_errors), machine._state.infra_errors
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_ci_refused_trusted_gate_data_fails_even_without_mutation(tmp_path, monkeypatch, mode):
+    """#157 on #141: the review-time keys (rulepacks_blocking, ledger, ...) from a
+    refused outside root must not silently default in CI; mutmut is absent here,
+    so only the gate-data refusal can turn the verdict."""
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    outside = tmp_path / "forge-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    os.link(repo / GATE, outside / GATE)  # refused: st_nlink > 1
+    machine = _machine(repo, base, mode=mode)
+    machine.cwd, machine.source_root = outside, repo
+    machine._trusted_gate_cache = None
+    machine._resolve_trusted_gate_data()
+    if mode is Mode.LOCAL:
+        assert machine._trusted_config_refusal is None
+        return
+    monkeypatch.setattr(mutation.shutil, "which", lambda name: None)
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
+    verdict = machine._run_ci()
+    assert verdict == Verdict.FAIL, machine._state.infra_errors
+    assert any(e.startswith("CI: trusted gate config refused:") for e in machine._state.infra_errors)
+
+
+def test_ci_untracked_in_tree_gate_data_is_not_a_refusal_failure(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    machine = _machine(repo, base, mode=Mode.CI)
+    assert machine._resolve_trusted_gate_data() == {}
+    assert machine._trusted_config_refusal is None

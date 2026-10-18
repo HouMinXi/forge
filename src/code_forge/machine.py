@@ -839,6 +839,9 @@ class StateMachine:
         self._mutation_source_subject = None
         self._mutation_source_guard = None
         self._mutation_bound_failure = False
+        # #157: CI refusal of the trusted gate (outside root / untracked);
+        # the CI verdict FAILs with this reason instead of using defaults.
+        self._trusted_config_refusal: str | None = None
         self._mutation_not_applicable = False
         self._mutation_workspace_blocker: str | None = None
         self._mutation_timeout_objects: set[int] = set()
@@ -873,6 +876,7 @@ class StateMachine:
         # #141: resolve the trusted gate once, up front, so review cycles do
         # no git I/O for ledger / rulepack / suppression switches.
         self._trusted_gate_cache = None
+        self._trusted_config_refusal = None
         self._trusted_gate_cache = self._resolve_trusted_gate_data()
         admission_error = mutation_review_admission_error(
             target_kind=self.resolved_review.target_kind, git_diff=self.resolved_review.git_diff,
@@ -1506,8 +1510,13 @@ class StateMachine:
             or self._state.rounds_with_evidence_incomplete > 0
             or self._mutation_bound_failure
             or self._l2_infra_error is not None
+            or self._trusted_config_refusal is not None
             else Verdict.PENDING if bound_launch_pending else Verdict.PASS
         )
+        if self._trusted_config_refusal is not None:
+            note = f"CI: {self._trusted_config_refusal}"
+            if note not in self._state.infra_errors:
+                self._state.infra_errors.append(note)
         if coverage_gaps > 0 and confirmed == 0:
             self._state.infra_errors.append(
                 "coverage: %d in-scope file(s) had no review layer "
@@ -2659,7 +2668,7 @@ class StateMachine:
         baseline, a change-added one, a linked/untracked one in CI) means
         built-in defaults, never the reviewed tree's copy. A malformed
         trusted file raises ValueError for the caller's fail-open path."""
-        from .gate_check import UntrustedGateConfigError, load_trusted_gate_data
+        from .gate_check import OutsideConfigRootRefused, UntrustedGateConfigError, load_trusted_gate_data
 
         self._note_gate_yaml_edit()
         try:
@@ -2675,11 +2684,21 @@ class StateMachine:
                 expected_sha256=pin[1] if pin is not None else None,
             )
             self._check_untracked_gate_pin()
+        except OutsideConfigRootRefused as exc:
+            # #157: the operator's outside root was refused; CI FAILs on it.
+            if self.mode is Mode.CI:
+                self._note_trusted_config_refusal(f"trusted gate config refused: {exc}")
+            return {}
         except (FileNotFoundError, UntrustedGateConfigError):
             return {}
         except (OSError, ValueError) as exc:
             return exc
         return {k: data[k] for k in _REVIEW_GATE_KEYS if k in data}
+
+    def _note_trusted_config_refusal(self, reason: str) -> None:
+        """#157: remember the first CI refusal; _run_ci FAILs with it."""
+        if getattr(self, "_trusted_config_refusal", None) is None:
+            self._trusted_config_refusal = reason
 
     def _note_gate_yaml_edit(self) -> None:
         """Advisory (once) when the change touches .code-forge/gate.yaml or the
