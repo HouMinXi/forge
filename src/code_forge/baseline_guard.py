@@ -45,6 +45,10 @@ def _is_runner_missing(
         m_idx = baseline_cmd.index("-m")
         if m_idx + 1 < len(baseline_cmd):
             runner_module = baseline_cmd[m_idx + 1]
+            if _session_ran(result.stdout or ""):
+                # #126: the runner started; the text came from a test's own
+                # output (e.g. a child interpreter), not a missing runner.
+                return False
             combined = (result.stdout or "") + (result.stderr or "")
             if (f"No module named '{runner_module}'") in combined:
                 return True
@@ -52,6 +56,21 @@ def _is_runner_missing(
                 return True
 
     return False
+
+
+_SESSION_EVIDENCE = re.compile(
+    r"^(?:FAILED|ERROR) \S+"
+    r"|\b\d+ (?:passed|failed|errors?|skipped|xfailed|xpassed|deselected)\b"
+    r"|^collected \d+ items?\b"
+    r"|^=+ test session starts =+$",
+    re.MULTILINE,
+)
+
+
+def _session_ran(stdout: str) -> bool:
+    """True when stdout shows a pytest session got going (node results, a
+    summary count, a collected count or the session banner)."""
+    return _SESSION_EVIDENCE.search(stdout) is not None
 
 
 def _strip_venv_from_env(env: dict[str, str]) -> dict[str, str]:
