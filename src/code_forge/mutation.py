@@ -710,7 +710,10 @@ def _guard_entries(root: Path, paths: tuple[str, ...]) -> tuple[tuple[str, int |
         raw = _read_inventory_file(path)
         after = path.lstat()
         fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns", "st_nlink")
-        if any(getattr(before, field) != getattr(after, field) for field in fields):
+        # Coarse kernel timestamps (~4 ms) can hide a same-size rewrite from
+        # every stat field, so confirm the bytes too.
+        if (any(getattr(before, field) != getattr(after, field) for field in fields)
+                or _read_inventory_file(path) != raw):
             raise ValueError("mutation source changed during endpoint capture")
         if any((node.lstat().st_dev, node.lstat().st_ino, node.lstat().st_mode) != (dev, ino, mode)
                for node, dev, ino, mode in parents):

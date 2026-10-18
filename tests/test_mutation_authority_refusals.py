@@ -264,3 +264,24 @@ def test_standalone_head_read_error_preserves_current_survivor(ci_project, monke
     assert "1 survivor(s) found" in output.err
     assert "mutation-check: PASS" not in output.err
     assert p.launches == [] and len(p.measurements) == 2
+
+
+def test_guard_entries_refuses_same_tick_same_size_rewrite(ci_project, monkeypatch):
+    """Stat fields are frozen here, as on a coarse-timestamp kernel."""
+    root = ci_project.root
+    path = root / "record.py"
+    path.write_bytes(SOURCE_A)
+    frozen = path.lstat()
+    original_lstat = Path.lstat
+    monkeypatch.setattr(Path, "lstat", lambda self, *a, **kw: frozen if self == path else original_lstat(self, *a, **kw))
+    original_read = mutation._read_inventory_file
+
+    def rewrite(asked):
+        raw = original_read(asked)
+        if asked == path:
+            asked.write_bytes(SOURCE_B)
+        return raw
+
+    monkeypatch.setattr(mutation, "_read_inventory_file", rewrite)
+    with pytest.raises(ValueError, match="source changed during endpoint capture"):
+        mutation._guard_entries(root, ("record.py",))
