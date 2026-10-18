@@ -786,6 +786,7 @@ def test_cache_only_response_usage_remains_available(response_usage_http, api_fo
     # bbdda80: a partial report is observed usage, never the complete error Usage.
     assert caught.value.usage is None
     assert caught.value.observed_usage == invoke.Usage(0, 0, cached)
+    assert caught.value.observed_usage.known_fields == frozenset({"cached_input_tokens"})
 
 
 @pytest.mark.parametrize("api_format", ["openai", "anthropic", "vertex"])
@@ -825,6 +826,7 @@ def test_failed_response_normalizes_partial_usage(
     # bbdda80: a partial report is observed usage, never the complete error Usage.
     assert caught.value.usage is None
     assert caught.value.observed_usage == invoke.Usage(0, 7, 4)
+    assert caught.value.observed_usage.known_fields == frozenset({"output_tokens", "cached_input_tokens"})
     if kind == "no_json":
         assert caught.value.raw_response == content
 
@@ -860,8 +862,14 @@ def test_failed_response_invalid_only_or_valid_cache(response_usage_http, api_fo
     assert len(requests) == 1 and not packets and caught.value.kind == "empty"
     # bbdda80: a partial report is observed usage, never the complete error Usage.
     assert caught.value.usage is None
+    observed = caught.value.observed_usage
     if expected is not None:
-        assert caught.value.observed_usage == expected
+        assert observed == expected
+        assert observed.known_fields == frozenset({"cached_input_tokens"})
+    else:
+        # #207: invalid-only counters are observed as nothing known.
+        assert observed == invoke.Usage(0, 0, 0)
+        assert observed.known_fields == frozenset()
 
 
 @pytest.mark.parametrize("content", [None, "complete prose"])
@@ -997,6 +1005,7 @@ def test_openai_failure_retains_actual_flat_cache_dialect(
     # bbdda80: a partial report is observed usage, never the complete error Usage.
     assert caught.value.usage is None
     assert caught.value.observed_usage == invoke.Usage(0, 0, expected)
+    assert caught.value.observed_usage.known_fields == frozenset({"cached_input_tokens"})
 
 
 @pytest.mark.parametrize("api_format", ["openai", "anthropic", "vertex"])
