@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._outside_gate import outside_gate_root
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import GitRefBaseline, ResolvedReview, resolve_baseline
 from code_forge.factories import build_l1_provider
@@ -63,6 +64,7 @@ def _machine(tmp_path, mode=Mode.LOCAL, provider=None):
         source_hash=compute_source_hash(git_diff=DIFF),
         baseline_spec_repr="uncertainty fixture",
         cwd=tmp_path,
+        test_config_root=outside_gate_root(tmp_path),  # #160
         registry={},
         l0_runner=lambda *args: ([], []),
         l1_provider=provider or (lambda: ([], [], Usage(), 0.0)),
@@ -454,6 +456,7 @@ def _salvaged_duplicate_machine(root, monkeypatch, *, distinct=False):
             source_hash=source_hash,
             baseline_spec_repr="owned scratch INDEX",
             cwd=root,
+            test_config_root=outside_gate_root(root),  # #160
             registry={},
             l0_runner=lambda *args: ([], []),
             l1_provider=build_l1_provider("auto", resolved, backend=None, max_attempts=1),

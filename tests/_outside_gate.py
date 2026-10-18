@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def outside_gate_root(root) -> Path:
-    """Copy ``root/.code-forge/gate.yaml`` (if any) into a sibling directory
+    """Copy ``root/.code-forge/gate.yaml`` (or a minimal ``{}`` gate) into a sibling directory
     outside the checkout and return that directory, for ``test_config_root``.
     Re-copies on every call, so a test that edits the in-tree gate and builds
     a new machine sees the edit."""
@@ -17,6 +17,8 @@ def outside_gate_root(root) -> Path:
     target = outside / ".code-forge" / "gate.yaml"
     if gate.is_file():
         shutil.copyfile(gate, target)
-    elif target.exists():
-        target.unlink()
+    else:
+        # CI FAILs with no gate.yaml at all; fixtures that do not care about
+        # mutation get a minimal one (no test.command => mutation skipped).
+        target.write_text("{}\n", encoding="utf-8")
     return outside
