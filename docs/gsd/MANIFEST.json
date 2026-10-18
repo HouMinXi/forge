@@ -1,0 +1,1880 @@
+{
+  "schema_version": 1,
+  "publication_date": "2026-10-18",
+  "source_state_last_updated": "2026-10-16",
+  "observed_public_base": "9db1877d2cdb8e9814cd0956150e0d316eeafae7",
+  "source_observed_at_utc": "2026-10-18T15:11:33.806201+00:00",
+  "source_relative_root": ".planning/",
+  "published_root": "docs/gsd/",
+  "status": "dated documentation snapshot; no phase or design acceptance added",
+  "coverage": {
+    "source_backed_documents": 33,
+    "public_files": 35,
+    "phase59_plans": 18,
+    "phase59_support": 9,
+    "phase60_preparation_documents": 2,
+    "phase60_formal_plans": 0
+  },
+  "entries": [
+    {
+      "source_path": "PROJECT.md",
+      "published_path": "docs/gsd/PROJECT.md",
+      "source_sha256": "9b8d5f519e519b6b65bff34a4dd85de1206db596dfe43d715dbd0ea53e874875",
+      "source_size": 17607,
+      "source_mtime_utc": "2026-10-04T18:25:22.925815+00:00",
+      "published_sha256": "d93a3214467b98e0cb0ae6cb0a0e848cb649ec0f0fb4f4e67f89e6b835c9c0af",
+      "published_size": 17940,
+      "transformations": [
+        {
+          "category": "dated-publication-banner"
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/research/bounded-review-investigation/research/SUMMARY.md",
+        ".planning/takeover/CURRENT-DELIVERIES.md",
+        ".planning/takeover/gsd-continuation-20261004/RECONCILIATION.md"
+      ],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": [
+        "20261004",
+        "3a4a3ac",
+        "59c1c51"
+      ]
+    },
+    {
+      "source_path": "REQUIREMENTS.md",
+      "published_path": "docs/gsd/REQUIREMENTS.md",
+      "source_sha256": "7ac0e63ccd6a4e3ce8687884e89ee04799ef894237354be687c3068a006f5c0d",
+      "source_size": 15986,
+      "source_mtime_utc": "2026-10-04T18:25:22.926419+00:00",
+      "published_sha256": "940350e29d2ccee9966b882cd2905f7eb6d8e828935705fe20f2e95039bc486e",
+      "published_size": 16385,
+      "transformations": [
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "archival-status-formatting",
+          "occurrences": 33,
+          "operation": "Wrap each historical list checkbox marker in backticks; marker state and text unchanged.",
+          "inverse": "Remove the wrapping backticks from these list checkbox markers."
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/research/bounded-review-investigation/research/SUMMARY.md"
+      ],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [],
+      "historical_short_hex_identifiers_unverified": [
+        "0309c55",
+        "59c1c51",
+        "60336c9",
+        "888333a",
+        "8f745dd",
+        "93ad344",
+        "95c06ce",
+        "ab7db19",
+        "b8e8837",
+        "eb97c2c"
+      ]
+    },
+    {
+      "source_path": "ROADMAP.md",
+      "published_path": "docs/gsd/ROADMAP.md",
+      "source_sha256": "1c42372e7335588c10a539ae12a383d2b35fa72d9a380089c408e0d6bdb3dfa2",
+      "source_size": 89933,
+      "source_mtime_utc": "2026-10-06T17:56:39.518720+00:00",
+      "published_sha256": "826318110b591cff3c66fc66c6a019cf68680c1e48da583c2be3273a4c50e1db",
+      "published_size": 90563,
+      "transformations": [
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "archival-status-formatting",
+          "occurrences": 144,
+          "operation": "Wrap each historical list checkbox marker in backticks; marker state and text unchanged.",
+          "inverse": "Remove the wrapping backticks from these list checkbox markers."
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/charter_review_decomposition.md",
+        ".planning/charter_review_pipeline_gaps.md",
+        ".planning/eval/phase-59/line-a-decision.md",
+        ".planning/milestones/",
+        ".planning/milestones/v2.1-dynamic-gate/",
+        ".planning/milestones/v2.2-ROADMAP.md",
+        ".planning/milestones/v2.3-ROADMAP.md",
+        ".planning/milestones/v2.5-ROADMAP.md",
+        ".planning/phases/36-api-backend-onboarding/36-MCP-USABILITY-FINDINGS.md",
+        ".planning/phases/41-sampling-fix",
+        ".planning/phases/43.1-review-pipeline-gaps/",
+        ".planning/phases/phase-48/",
+        ".planning/plans/2026-09-04-phase-59-judgment-and-evidence.md",
+        ".planning/reports/phase-58-depth-and-ablation.md",
+        ".planning/research/bounded-review-investigation/research/SUMMARY.md",
+        ".planning/reviews/phase57-*.md",
+        ".planning/reviews/router-onboarding-20260820.txt",
+        ".planning/takeover/gsd-continuation-20261004/RECONCILIATION.md",
+        ".planning/todos/pending/stream-ttft-truncation-continuation-20260816.md"
+      ],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [],
+      "historical_short_hex_identifiers_unverified": [
+        "02e9160",
+        "07d0381",
+        "0a85662",
+        "0ae6730",
+        "14328bb",
+        "14b3985",
+        "154bec4",
+        "15bff3a",
+        "1991a89",
+        "19b58a2",
+        "20260725",
+        "20260816",
+        "20260820",
+        "20261004",
+        "2181707",
+        "24ed2e0",
+        "25b063e",
+        "2ab151f",
+        "2d2c932",
+        "2edb9d4",
+        "32bb8f6",
+        "39c3a39",
+        "3a4a3ac",
+        "4104e37",
+        "4708691",
+        "47d8c647",
+        "4acbabb",
+        "4b060bd",
+        "4d707e7",
+        "5116f4e",
+        "5805a5f",
+        "59ab53b",
+        "59c1c51",
+        "5c8e001",
+        "60336c9",
+        "67d2d93",
+        "68b2dd9",
+        "695f739",
+        "6abb6fb",
+        "6bf1682",
+        "6e34dbc",
+        "6fb427e",
+        "73b54e3",
+        "74adbf2",
+        "7b0ddcf",
+        "7ba18fe",
+        "8383a9f",
+        "8953d54",
+        "89a091f",
+        "89bdb4d",
+        "8bd01bc",
+        "93ad344",
+        "95c06ce",
+        "965c247",
+        "98f1ddd",
+        "9a2acdc",
+        "9b9bdb5",
+        "9f96fd5",
+        "a18844a",
+        "a191718",
+        "a255e86",
+        "a47d888",
+        "a7c58d2",
+        "ab7db19",
+        "af378f9",
+        "b272751",
+        "b2a7a3b",
+        "b76983e",
+        "b8e8837",
+        "bd3eb01",
+        "c053fb2",
+        "c0f2b3d",
+        "c515db7",
+        "c72ff06",
+        "ca0d860",
+        "cbc0fbd",
+        "ce12a0e",
+        "d79ef45",
+        "d87125a",
+        "da4b854",
+        "db4b51c",
+        "dc2f54b",
+        "dd6d40f",
+        "dec413e",
+        "e236e51",
+        "e50b375",
+        "eb97c2c",
+        "f53bf84",
+        "f56350b",
+        "f9bf18c",
+        "fda0a42",
+        "fef0ec0",
+        "ff2f4ea"
+      ]
+    },
+    {
+      "source_path": "STATE.md",
+      "published_path": "docs/gsd/STATE-2026-10-18.md",
+      "source_sha256": "173de5eea8589b2c8624e95d90ecbfb723f2e9f83bc67c3c5b1281b111895323",
+      "source_size": 200428,
+      "source_mtime_utc": "2026-10-16T11:04:47.772053+00:00",
+      "published_sha256": "269ac54a748a22caf7c8d263cfc4b5f32f2010378f71d29a1eb9913fbf50bee7",
+      "published_size": 2591,
+      "transformations": [
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "state-formal-extraction",
+          "source_line_ranges": [
+            [
+              1,
+              17
+            ],
+            [
+              82,
+              86
+            ]
+          ],
+          "omitted": "runtime-history archive and operational evidence"
+        }
+      ],
+      "planning_references_not_in_bundle": [],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [],
+      "historical_short_hex_identifiers_unverified": [
+        "6230111818"
+      ]
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-01-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-01-PLAN.md",
+      "source_sha256": "3f160d8d37a1d548446fe11a0b56f27716aacd7760724750f7492e91e1c3eebd",
+      "source_size": 42405,
+      "source_mtime_utc": "2026-10-05T10:31:31.036963+00:00",
+      "published_sha256": "51da40adc6302a61cc1e7d925bb7d1c3a32aed840362cafab942482625c4bce4",
+      "published_size": 42776,
+      "transformations": [
+        {
+          "category": "private-controller-path",
+          "replacement": "[PRIVATE_CONTROLLER_CHECKOUT]",
+          "occurrences": 10
+        },
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/execution/59-01/",
+        ".planning/phases/59-judgment-and-evidence/inputs/raw-rejection-historical-plan.md",
+        ".planning/takeover/phase59-01-observation-amendment-20261005-sol/",
+        ".planning/takeover/phase59-01-observation-amendment-20261005-sol/AMENDMENT-REQUIRED.md",
+        ".planning/takeover/phase59-01-observation-amendment-20261005-sol/DECLINED-DICT-PAIR.json",
+        ".planning/takeover/phase59-01-observation-amendment-20261005-sol/OUTLET-C-GRAPH.json",
+        ".planning/takeover/phase59-01-observation-amendment-20261005-sol/OUTLET-C-PAIR.json",
+        ".planning/takeover/phase59-01-observation-amendment-20261005-sol/RECOVERY-PAIR.json",
+        ".planning/takeover/phase59-01-pass-status-amendment-20261005-sol/AMENDMENT-REQUIRED.md",
+        ".planning/takeover/phase59-01-pass-status-amendment-20261005-sol/WRITER-CALLERS.json",
+        ".planning/takeover/raw-l1-audit-stage-delivery/entry-ground-sol-r1/EXECUTION-ADDENDUM.md",
+        ".planning/takeover/raw-observation-r1-attestation-20261005-sol/FINDING-AND-CONTRACT.md",
+        ".planning/takeover/raw-observation-r1-attestation-20261005-sol/PAIRS.json"
+      ],
+      "unresolved_execution_context_references": [
+        ".planning/phases/59-judgment-and-evidence/inputs/raw-rejection-historical-plan.md",
+        ".planning/takeover/raw-l1-audit-stage-delivery/entry-ground-sol-r1/EXECUTION-ADDENDUM.md",
+        "[PRIVATE_CONTROLLER_CHECKOUT]/.planning/takeover/phase59-01-observation-amendment-20261005-sol/AMENDMENT-REQUIRED.md",
+        "[PRIVATE_CONTROLLER_CHECKOUT]/.planning/takeover/phase59-01-observation-amendment-20261005-sol/DECLINED-DICT-PAIR.json",
+        "[PRIVATE_CONTROLLER_CHECKOUT]/.planning/takeover/phase59-01-observation-amendment-20261005-sol/OUTLET-C-GRAPH.json",
+        "[PRIVATE_CONTROLLER_CHECKOUT]/.planning/takeover/phase59-01-observation-amendment-20261005-sol/OUTLET-C-PAIR.json",
+        "[PRIVATE_CONTROLLER_CHECKOUT]/.planning/takeover/phase59-01-observation-amendment-20261005-sol/RECOVERY-PAIR.json",
+        "[PRIVATE_CONTROLLER_CHECKOUT]/.planning/takeover/phase59-01-pass-status-amendment-20261005-sol/AMENDMENT-REQUIRED.md",
+        "[PRIVATE_CONTROLLER_CHECKOUT]/.planning/takeover/phase59-01-pass-status-amendment-20261005-sol/WRITER-CALLERS.json",
+        "[PRIVATE_CONTROLLER_CHECKOUT]/.planning/takeover/raw-observation-r1-attestation-20261005-sol/FINDING-AND-CONTRACT.md",
+        "[PRIVATE_CONTROLLER_CHECKOUT]/.planning/takeover/raw-observation-r1-attestation-20261005-sol/PAIRS.json",
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/factories.py",
+        "src/code_forge/llm_invoke.py",
+        "src/code_forge/machine.py",
+        "src/code_forge/outlet_c.py",
+        "src/code_forge/receipt.py",
+        "tests/test_machine_receipt_gate.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": [
+        "20261005",
+        "b2a5e541"
+      ]
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-02-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-02-PLAN.md",
+      "source_sha256": "fda41ed1e7f2a5fbc390578c577488150f558e1fd0b3c2d86aa061eacaa684e3",
+      "source_size": 14053,
+      "source_mtime_utc": "2026-10-09T21:11:04.727408+00:00",
+      "published_sha256": "4081e1f6e6ad7b87ab3b18691cc4383c552620c5de4669cdf8052f4dd70ba808",
+      "published_size": 14585,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 4
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 2
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-02-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/acceptance-recovery/COPIED-EVIDENCE.json",
+        ".planning/phases/59-judgment-and-evidence/acceptance-recovery/RECOVERY.md",
+        ".planning/phases/59-judgment-and-evidence/acceptance-recovery/RESULTS.json",
+        ".planning/phases/59-judgment-and-evidence/acceptance-recovery/evidence/PRIVATE_HOST_A/2026-09-04-phase-59-judgment-and-evidence.md",
+        ".planning/phases/59-judgment-and-evidence/acceptance-recovery/evidence/PRIVATE_HOST_A/line-a-decision.md",
+        ".planning/phases/59-judgment-and-evidence/closeout/BINDING.json",
+        ".planning/phases/59-judgment-and-evidence/execution/59-02/",
+        ".planning/phases/59-judgment-and-evidence/inputs/PROVENANCE.json",
+        ".planning/reports/phase-58-depth-and-ablation.md"
+      ],
+      "unresolved_execution_context_references": [
+        ".planning/phases/59-judgment-and-evidence/acceptance-recovery/RECOVERY.md",
+        ".planning/phases/59-judgment-and-evidence/acceptance-recovery/RESULTS.json",
+        ".planning/phases/59-judgment-and-evidence/inputs/PROVENANCE.json",
+        ".planning/reports/phase-58-depth-and-ablation.md",
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-03-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-03-PLAN.md",
+      "source_sha256": "72484c2071f97056c580fec895e8b71b0650c7b71ea4471b18e224406ec34a6b",
+      "source_size": 22484,
+      "source_mtime_utc": "2026-10-15T04:52:21.487865+00:00",
+      "published_sha256": "cf0a81d40dde82c14a3b60ab5518e333374f848e1071a0ee903ac6bb11c8dcea",
+      "published_size": 23021,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-03-CONTRACT.md",
+            ".planning/phases/59-judgment-and-evidence/59-03-SOURCE-ADDENDUM.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 10
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-03-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/execution/59-03/"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/llm_invoke.py",
+        "src/code_forge/receipt.py",
+        "src/code_forge/verify.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e",
+        "77fb4ea399112bbbcb792d7b339914dda26fb241",
+        "9ab32562074f8268b667b65ebd3cc97498c1aae9",
+        "e53beb29e80e0d7f182e11e148b40e6998d69866"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-04-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-04-PLAN.md",
+      "source_sha256": "f351623e84d13885540d97150beae0ddf8490e166ba82655d85ba1e863d9925f",
+      "source_size": 16272,
+      "source_mtime_utc": "2026-10-06T19:13:41.413781+00:00",
+      "published_sha256": "5f6994a68e90c7c0e422e61c8bfb25fd92cfa035306973615122039b95cb88ec",
+      "published_size": 16808,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-03-CONTRACT.md",
+            ".planning/phases/59-judgment-and-evidence/59-03-SOURCE-ADDENDUM.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 10
+        },
+        {
+          "category": "source-final-newline-normalization",
+          "occurrences": 1,
+          "original_terminal_newlines": 2,
+          "published_terminal_newlines": 1
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-04-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/execution/59-04/"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/backend.py",
+        "src/code_forge/invocation_audit.py",
+        "src/code_forge/source.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-05-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-05-PLAN.md",
+      "source_sha256": "b729233a0182b025c1e67dbb3401e26046fa7078e581f952e99bfda196381ce5",
+      "source_size": 17550,
+      "source_mtime_utc": "2026-10-06T19:13:41.415618+00:00",
+      "published_sha256": "58fd47284e67646a86c9005166896ab1382c0870b06a5f2b0e3fd26019b4de15",
+      "published_size": 18086,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-03-CONTRACT.md",
+            ".planning/phases/59-judgment-and-evidence/59-03-SOURCE-ADDENDUM.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 10
+        },
+        {
+          "category": "source-final-newline-normalization",
+          "occurrences": 1,
+          "original_terminal_newlines": 2,
+          "published_terminal_newlines": 1
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-05-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/execution/59-05/"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/investigation.py",
+        "src/code_forge/invocation_audit.py",
+        "src/code_forge/llm_invoke.py",
+        "tests/test_invoke_api_usage_contract.py",
+        "tests/test_llm_invoke_usage_contract.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-06-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-06-PLAN.md",
+      "source_sha256": "1c3cf501118b83da2cf96ff3e872a927a102647fefa75dbab0197f7f25e4bc10",
+      "source_size": 13880,
+      "source_mtime_utc": "2026-10-04T19:32:04.442449+00:00",
+      "published_sha256": "a074919b7be0d5ffb0e2fdb051871f3f371b68e8fc65a8aac9ab46cb8a20fe45",
+      "published_size": 14369,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        },
+        {
+          "category": "source-final-newline-normalization",
+          "occurrences": 1,
+          "original_terminal_newlines": 2,
+          "published_terminal_newlines": 1
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-06-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/execution/59-06/"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/cross_repo.py",
+        "src/code_forge/factories.py",
+        "src/code_forge/falsify_real.py",
+        "src/code_forge/reviewer_json.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-07-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-07-PLAN.md",
+      "source_sha256": "87a0a4cd43aa50883d915a63129191b9b57140ea3d52e35debdd469f5bbb54d3",
+      "source_size": 12516,
+      "source_mtime_utc": "2026-10-04T19:32:04.489450+00:00",
+      "published_sha256": "9408d603f298db2375e5ddacfddf2bdc65837897f51d543361afd04ce96b8802",
+      "published_size": 13005,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        },
+        {
+          "category": "source-final-newline-normalization",
+          "occurrences": 1,
+          "original_terminal_newlines": 2,
+          "published_terminal_newlines": 1
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-07-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/execution/59-07/"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/advisory.py",
+        "src/code_forge/contract_loader.py",
+        "src/code_forge/daemon_state.py",
+        "src/code_forge/runtime.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-08-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-08-PLAN.md",
+      "source_sha256": "7b7a8c8e4da91cf17cf7697acd81a4e4b8a572d584a067f41a484aa9da4f8f5a",
+      "source_size": 15709,
+      "source_mtime_utc": "2026-10-04T19:47:26.816447+00:00",
+      "published_sha256": "86158366693b086e6e16be62e62f0e45d7aef926ba4213ccefd221292d04e6fd",
+      "published_size": 16199,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-08-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/execution/59-08/"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/cli.py",
+        "src/code_forge/context_sources.py",
+        "src/code_forge/machine.py",
+        "src/code_forge/receipt.py",
+        "tests/test_cli_grouping_wiring.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-09-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-09-PLAN.md",
+      "source_sha256": "9a5bf51c0811f1972d24a175b03fe34f1e359930e073d3e302f9602d3560346b",
+      "source_size": 13868,
+      "source_mtime_utc": "2026-10-04T19:47:26.865448+00:00",
+      "published_sha256": "bc1159d8d88ca497bc39cda36da81afd129fca81d77870f96b5c6121dd43dc78",
+      "published_size": 14358,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-09-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/execution/59-09/"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/baseline.py",
+        "src/code_forge/context_sources.py",
+        "src/code_forge/investigation.py",
+        "src/code_forge/snapshot.py",
+        "src/code_forge/source.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-10-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-10-PLAN.md",
+      "source_sha256": "4bf4c629dc73c4ecff3abdea1d9af7e694485dac77e2d2ac577dae0cac547cce",
+      "source_size": 12998,
+      "source_mtime_utc": "2026-10-04T19:36:27.362020+00:00",
+      "published_sha256": "69432d27c87b5a1d2b27e78c650deee8f4480fe024cb03d8c69687d658f7e0f8",
+      "published_size": 13487,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        },
+        {
+          "category": "source-final-newline-normalization",
+          "occurrences": 1,
+          "original_terminal_newlines": 2,
+          "published_terminal_newlines": 1
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-10-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/execution/59-10/"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/context_sources.py",
+        "src/code_forge/dead_code.py",
+        "src/code_forge/graph_triage.py",
+        "src/code_forge/investigation_snapshot.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-11-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-11-PLAN.md",
+      "source_sha256": "ad00fd8a667135529facf5b3be36ef4654208d46585c86fce7cc236bcf1308cc",
+      "source_size": 16063,
+      "source_mtime_utc": "2026-10-04T19:47:26.913448+00:00",
+      "published_sha256": "7be02754e1707bc44b0902061532c4954e660c8d387a784a3488ad60431c46f5",
+      "published_size": 16573,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 2
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-11-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/execution/59-11/",
+        ".planning/phases/59-judgment-and-evidence/research-evidence/EXISTING-BOUNDARY-RESULT.json"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/llm_invoke.py",
+        "src/code_forge/proc.py",
+        "src/code_forge/reviewer_json.py",
+        "src/code_forge/verify.py",
+        "tests/test_exec_falsify.py",
+        "tests/test_mcp_jobs.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-12-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-12-PLAN.md",
+      "source_sha256": "9c7fe3e7668555d7d06be746615303e4ef74700fe5371ed01745e9ba9f8bfc6a",
+      "source_size": 14658,
+      "source_mtime_utc": "2026-10-04T19:39:27.277148+00:00",
+      "published_sha256": "225df096106a3e8a20ac268fa9b7c9692bb821d31e847edd04dbb130c4976f58",
+      "published_size": 15147,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        },
+        {
+          "category": "source-final-newline-normalization",
+          "occurrences": 1,
+          "original_terminal_newlines": 2,
+          "published_terminal_newlines": 1
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-12-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/execution/59-12/"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/investigation.py",
+        "src/code_forge/investigation_recipe.py",
+        "src/code_forge/investigation_snapshot.py",
+        "src/code_forge/llm_invoke.py",
+        "src/code_forge/reviewer_json.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-13-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-13-PLAN.md",
+      "source_sha256": "c6645e692d662f3fa828e5b3271e2ab24ed058b9b8c6b81ef62471e06481435e",
+      "source_size": 15134,
+      "source_mtime_utc": "2026-10-04T19:39:27.323148+00:00",
+      "published_sha256": "91875c3616ec8c4d1ac6903ea59ccf23afb3290a4624bd670eb72a73748e51fe",
+      "published_size": 15623,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        },
+        {
+          "category": "source-final-newline-normalization",
+          "occurrences": 1,
+          "original_terminal_newlines": 2,
+          "published_terminal_newlines": 1
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-13-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/execution/59-13/"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/cli.py",
+        "src/code_forge/factories.py",
+        "src/code_forge/investigation_adapter.py",
+        "src/code_forge/investigation_recipe.py",
+        "src/code_forge/investigation_snapshot.py",
+        "tests/test_review_run_public.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-14-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-14-PLAN.md",
+      "source_sha256": "fc43f067671c78ba08929990f500290fa27e226c2b2d8ed739080b190036a36d",
+      "source_size": 13644,
+      "source_mtime_utc": "2026-10-04T19:39:27.370149+00:00",
+      "published_sha256": "c2ac265d8a83a54d8c83cb9b830348850064748a3b076fb24fc90189bd7e72e5",
+      "published_size": 14133,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        },
+        {
+          "category": "source-final-newline-normalization",
+          "occurrences": 1,
+          "original_terminal_newlines": 2,
+          "published_terminal_newlines": 1
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-14-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/execution/59-14/"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/mcp_jobs.py",
+        "src/code_forge/mcp_server.py",
+        "src/code_forge/proc.py",
+        "tests/test_investigation_public_path.py",
+        "tests/test_mcp_jobs.py",
+        "tests/test_mcp_server.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-15-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-15-PLAN.md",
+      "source_sha256": "96277ad995ae3858fcb42591eb23dae9533943deaafa1b85857a5fb096d3fbbc",
+      "source_size": 13729,
+      "source_mtime_utc": "2026-10-04T19:43:37.909487+00:00",
+      "published_sha256": "a8c528d960b0ad83c3ef12613f6a5e6c133ec8972bdd983e0d758919f5212f92",
+      "published_size": 14218,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        },
+        {
+          "category": "source-final-newline-normalization",
+          "occurrences": 1,
+          "original_terminal_newlines": 2,
+          "published_terminal_newlines": 1
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-15-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/closeout/BINDING.json",
+        ".planning/phases/59-judgment-and-evidence/execution/59-15/"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "src/code_forge/cli.py",
+        "src/code_forge/context_sources.py",
+        "src/code_forge/eval/ledger_jsonl.py",
+        "src/code_forge/eval/pool.py",
+        "src/code_forge/eval/runner.py",
+        "src/code_forge/eval/scorer.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-16-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-16-PLAN.md",
+      "source_sha256": "f52013075f0706783d5da71293d309c3bdefa0439b407f9373dde467ba445dfb",
+      "source_size": 12214,
+      "source_mtime_utc": "2026-10-04T19:43:37.950487+00:00",
+      "published_sha256": "4a42694f23faaf047ab27c72a24636708fa0ab604da79dd41342b870f8ba6ce3",
+      "published_size": 12714,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        },
+        {
+          "category": "source-final-newline-normalization",
+          "occurrences": 1,
+          "original_terminal_newlines": 2,
+          "published_terminal_newlines": 1
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-16-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/acceptance-recovery/evidence/PRIVATE_HOST_A/2026-09-04-phase-59-judgment-and-evidence.md",
+        ".planning/phases/59-judgment-and-evidence/closeout/BINDING.json",
+        ".planning/phases/59-judgment-and-evidence/execution/59-16/",
+        ".planning/reports/phase-58-depth-and-ablation.md"
+      ],
+      "unresolved_execution_context_references": [
+        ".planning/phases/59-judgment-and-evidence/closeout/BINDING.json",
+        ".planning/reports/phase-58-depth-and-ablation.md",
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "scripts/analyse_arms.py",
+        "tests/test_analyse_arms.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-17-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-17-PLAN.md",
+      "source_sha256": "2c368101616fd58c1518a9dd7e5155bf4a8a59ef9ae7fc8d7a2b8e9f90793d2c",
+      "source_size": 20562,
+      "source_mtime_utc": "2026-10-05T02:15:19.954539+00:00",
+      "published_sha256": "2a032fb8bb4ed8b42e052ac51cbfcce37e3f2c9e44545e048a0b34fc528c5d8c",
+      "published_size": 21063,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md"
+          ],
+          "occurrences": 8
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/eval/run_58_3.sh",
+        ".planning/phases/59-judgment-and-evidence/59-17-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/acceptance-recovery/RECOVERY.md",
+        ".planning/phases/59-judgment-and-evidence/acceptance-recovery/RESULTS.json",
+        ".planning/phases/59-judgment-and-evidence/acceptance-recovery/evidence/PRIVATE_HOST_A/2026-09-04-phase-59-judgment-and-evidence.md",
+        ".planning/phases/59-judgment-and-evidence/closeout/ACCEPTANCE.json",
+        ".planning/phases/59-judgment-and-evidence/closeout/BINDING.json",
+        ".planning/phases/59-judgment-and-evidence/closeout/phase-59-judgment-and-evidence.md",
+        ".planning/phases/59-judgment-and-evidence/closeout/run_acceptance.py",
+        ".planning/phases/59-judgment-and-evidence/execution/59-17/",
+        ".planning/reports/phase-58-depth-and-ablation.md"
+      ],
+      "unresolved_execution_context_references": [
+        ".planning/eval/run_58_3.sh",
+        ".planning/phases/59-judgment-and-evidence/acceptance-recovery/RECOVERY.md",
+        ".planning/phases/59-judgment-and-evidence/closeout/BINDING.json",
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "scripts/analyse_arms.py",
+        "scripts/run_falsify_calibration.py",
+        "tests/calibration/falsify/expected.json"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-18-PLAN.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-18-PLAN.md",
+      "source_sha256": "31b1a75463130ceee0c82eea3e031a81a4fd181decf21502bc4e4bd4b83031ca",
+      "source_size": 15129,
+      "source_mtime_utc": "2026-10-04T19:47:27.007450+00:00",
+      "published_sha256": "e38fbb25f6ffa47939a51ccdf3601bc6793753ea2b1ee899bdc4485f353fd0a7",
+      "published_size": 15638,
+      "transformations": [
+        {
+          "category": "private-gsd-install-path",
+          "replacement": "[PRIVATE_GSD_INSTALL]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "included-context-navigation",
+          "references": [
+            ".planning/PROJECT.md",
+            ".planning/REQUIREMENTS.md",
+            ".planning/ROADMAP.md",
+            ".planning/STATE.md",
+            ".planning/phases/59-judgment-and-evidence/59-CONTEXT.md",
+            ".planning/phases/59-judgment-and-evidence/59-PATTERNS.md",
+            ".planning/phases/59-judgment-and-evidence/59-RESEARCH.md",
+            ".planning/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md",
+            ".planning/phases/59-judgment-and-evidence/59-VALIDATION.md"
+          ],
+          "occurrences": 9
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59-judgment-and-evidence/59-18-SUMMARY.md",
+        ".planning/phases/59-judgment-and-evidence/closeout/ACCEPTANCE.json",
+        ".planning/phases/59-judgment-and-evidence/closeout/run_acceptance.py",
+        ".planning/phases/59-judgment-and-evidence/execution/59-18/",
+        ".planning/phases/59-judgment-and-evidence/qualification/RESULTS.json"
+      ],
+      "unresolved_execution_context_references": [
+        ".planning/phases/59-judgment-and-evidence/closeout/ACCEPTANCE.json",
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md",
+        "scripts/validate_judgment_acceptance.py",
+        "tests/test_investigation_mcp.py",
+        "tests/test_investigation_public_path.py",
+        "tests/test_phase59_closeout.py"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-01-SUMMARY.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-01-SUMMARY.md",
+      "source_sha256": "6498669967f1364837676a0fe2c4b04dcc98968d6725a5244862a08b2761fb4a",
+      "source_size": 3731,
+      "source_mtime_utc": "2026-10-07T13:50:53.895104+00:00",
+      "published_sha256": "f164643ba34cb35d000cd3191ba1a72d37e99f51c49f87ba67a278d45ce8971f",
+      "published_size": 4070,
+      "transformations": [
+        {
+          "category": "dated-publication-banner"
+        }
+      ],
+      "planning_references_not_in_bundle": [],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [
+        "9427e3a40bc5eeae007658161b7439571bbca818",
+        "9983f5e1f1623cf58d1fd4901f3fa9defbd88244"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-03-CONTRACT.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-03-CONTRACT.md",
+      "source_sha256": "d773d733fd0f9ea1d44527eddf420805a9749c95ac0577d97c695e4a1fc2d302",
+      "source_size": 37260,
+      "source_mtime_utc": "2026-10-06T19:13:41.407917+00:00",
+      "published_sha256": "9da4fffbd341181721c0ae203eed61dc61f3fcc56f2132ec387186c37656d770",
+      "published_size": 37599,
+      "transformations": [
+        {
+          "category": "dated-publication-banner"
+        }
+      ],
+      "planning_references_not_in_bundle": [],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-03-SOURCE-ADDENDUM.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-03-SOURCE-ADDENDUM.md",
+      "source_sha256": "affc68878a376829a4378e770dfefbf32171f1621440e5ed14a35109cb5cc632",
+      "source_size": 9477,
+      "source_mtime_utc": "2026-10-06T19:13:41.412045+00:00",
+      "published_sha256": "38daf5fd89eadebdfaff9215b2137ae0c61b28b576ac7bd4cedf6d225a098648",
+      "published_size": 9816,
+      "transformations": [
+        {
+          "category": "dated-publication-banner"
+        }
+      ],
+      "planning_references_not_in_bundle": [],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [
+        "9ab32562074f8268b667b65ebd3cc97498c1aae9"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-CONTEXT.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-CONTEXT.md",
+      "source_sha256": "1dc6d1d989e8b20fdbfb1eecb72ccdb4448e8e6f8dd8ee07d170cfca2feef04e",
+      "source_size": 10137,
+      "source_mtime_utc": "2026-10-07T15:51:53.789976+00:00",
+      "published_sha256": "23effc365fb49885563c392051eb4d47cc34ebc7de4d17326ca5a6061063cc92",
+      "published_size": 10476,
+      "transformations": [
+        {
+          "category": "dated-publication-banner"
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/takeover/phase59-after301-root/",
+        ".planning/takeover/phase59-three-outlet/"
+      ],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e",
+        "37e9a66f4f2341168a371b41d9e439c25d97cb59",
+        "9ab32562074f8268b667b65ebd3cc97498c1aae9"
+      ],
+      "historical_short_hex_identifiers_unverified": [
+        "20261004",
+        "3a4a3ac"
+      ]
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-EXECUTION-PROGRESS.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-EXECUTION-PROGRESS.md",
+      "source_sha256": "03c2cda19a2a790ef7ea31e39bf41f3119721cb88d622e0fd01ac40e9afa9773",
+      "source_size": 124921,
+      "source_mtime_utc": "2026-10-08T03:02:40.276968+00:00",
+      "published_sha256": "a87ce2d2e0d2d5fba781b33a8e8dc5292f9328d58225e502363085d07d71e7f7",
+      "published_size": 125999,
+      "transformations": [
+        {
+          "category": "private-controller-path",
+          "replacement": "[PRIVATE_CONTROLLER_CHECKOUT]",
+          "occurrences": 18
+        },
+        {
+          "category": "private-other-worktree-path",
+          "replacement": "[PRIVATE_OTHER_CHECKOUT]",
+          "occurrences": 2
+        },
+        {
+          "category": "private-canonical-path",
+          "replacement": "[PRIVATE_CANONICAL_CHECKOUT]",
+          "occurrences": 5
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 54
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 48
+        },
+        {
+          "category": "dated-publication-banner"
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/",
+        ".planning/evidence/takeover-current23-20261005",
+        ".planning/evidence/takeover-current23-20261005/{ADOPTION.json,LEDGER-BEFORE.json}",
+        ".planning/evidence/takeover-current92-headroom8-20261005",
+        ".planning/phases/59-judgment-and-evidence/execution/59-01/amended-r1/",
+        ".planning/takeover-preserved",
+        ".planning/takeover-preserved/",
+        ".planning/takeover-preserved/issue280-detached-test-lifetime-installed-corrected-v3/ef4d01fee7fd5f0a919049b9809bca3555eea3f1/",
+        ".planning/takeover-preserved/mr304-falsify-diagnostics/proof/root/",
+        ".planning/takeover-preserved/mr306-mutation-disappearance/proof/",
+        ".planning/takeover-preserved/mr307-installed-directory-alias/proof/",
+        ".planning/takeover-preserved/mr309-mutation-infra-authority/owned-checkout.tar.gz",
+        ".planning/takeover-preserved/mr309-mutation-infra-authority/proof/",
+        ".planning/takeover-preserved/phase59-after307-native-cli-20261007/proof/",
+        ".planning/takeover-preserved/phase59-after307-native-mcp-20261007/closeout/EVIDENCE-INDEX.json",
+        ".planning/takeover-preserved/phase59-after309-falsify-mcp-20261007/proof/",
+        ".planning/takeover-preserved/phase59-after309-graph-local-20261007/proof/",
+        ".planning/takeover-preserved/phase59-after309-graph-mcp-20261007/proof/",
+        ".planning/takeover-preserved/phase59-after309-outlet-c-ci-20261007/proof/",
+        ".planning/takeover-preserved/phase59-after309-outlet-c-local-20261007/proof/",
+        ".planning/takeover-preserved/phase59-after309-recorder-ci-20261007/proof/",
+        ".planning/takeover-preserved/physical-lf274-installed/9ab32562074f8268b667b65ebd3cc97498c1aae9/actual-v3-20261005/{host}",
+        ".planning/takeover/",
+        ".planning/takeover/PRIVATE_HOST_B-absorbed12-hygiene-ground-20261005-luna/root-qualified-consumer-scan-20261005/{RESULT.json,stdout}",
+        ".planning/takeover/baseline-timeout-fixture-stage-delivery/operations-bound-final-20261006-sol/{DELIVERY-ACCEPTANCE.json,parent-smoke/RESULT.json,adoption/accepted-dual-host/PARENT-ADOPTION-ACCEPTANCE.json,installed/{PRIVATE_HOST_A,PRIVATE_HOST_B}-actual-readback/{body-result/RESULT.json,body-result/junit.xml,outer/OUTER.json},publication/OPTIONAL-CI-DISPOSITION.json,issue-readback/{284-closed,284-comment,286-comment,243-comment,CURRENT-OPEN-ISSUES}.json}",
+        ".planning/takeover/context-history-locale-close-root/",
+        ".planning/takeover/issue277-stage-delivery/operations-bound-r2-20261005-sol/",
+        ".planning/takeover/issue280-stage-delivery/operations-bound-final-20261005-sol/",
+        ".planning/takeover/issue281-stage-delivery/operations-bound-final-20261006-sol/",
+        ".planning/takeover/mcp-timeout-delivery-root/",
+        ".planning/takeover/phase59-after301-root/",
+        ".planning/takeover/phase59-after301-root/graph-trailing-blank-contract-sol/",
+        ".planning/takeover/phase59-after301-stage/mutation-authority",
+        ".planning/takeover/phase59-issue308-native-cli/env/bin/code-forge",
+        ".planning/takeover/phase59-issue308-native-cli/intent.txt",
+        ".planning/takeover/quiet-recovery-stage-delivery/operations-corrected-final-20261006-sol/{DELIVERY-ACCEPTANCE.json,parent-smoke/RESULT.json,adoption/accepted-dual-host/PARENT-ADOPTION-ACCEPTANCE.json,installed/{PRIVATE_HOST_A,PRIVATE_HOST_B}-actual-readback/{body-result/RESULT.json,body-result/junit.xml,outer/OUTER.json},publication/OPTIONAL-CI-DISPOSITION.json,MISSING-TEMPLATE-STOP.json,delivery-support-supplement-20261006-sol/FROZEN.json,installed/INPUT-APPROVAL-PROVENANCE.json,issue-readback/{285,261,243}-comment.json,POST-DELIVERY-HYGIENE.json,OWN-BRANCH-RETIREMENT.json}"
+      ],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [
+        "01e589931b4646e410697c008c06dc15c5bac212",
+        "0fdfe3aecdf293ddc2faef0d8f96ec003d3dca52",
+        "1190584ca0bb1522d189b8d1203ad1244c6dc2ba",
+        "12b735fcefac91685dc231b1cd1434588b194a8e",
+        "2a142f552ff34ff128e1b8e77c18a179f87c6f8d",
+        "2bb986005f9c808efbf6c76bca59199df26be47f",
+        "2f1e6a7d4af2d1fa94301ef6440d5f4e2842a960",
+        "34c6321de094ba0f951a86810159e129c5a91991",
+        "37e9a66f4f2341168a371b41d9e439c25d97cb59",
+        "3c2c6ce0fa012cbee8fe02e117749f12085c2ae5",
+        "4039b3d5b1574a7ac4434a524704e2e2ad33a63e",
+        "43c8f703fdd7780de4422cbb6d4ca96e9d871c5b",
+        "686cec01aaca71f6604de9c3f31ff23317cb2e35",
+        "7c8a9f540cb37007785deaeab090f6d0a7dff7e8",
+        "7d3011ad947e6e7c38e55df0fbe76c2823ee41f8",
+        "8032cb9bb4d3aed66c859848691a104b84c5dcb3",
+        "830320569a69201ae60f217e5ef4f9da05cad829",
+        "8f6eb1c0b56ed5b917e42138a3b483bed4457e01",
+        "9427e3a40bc5eeae007658161b7439571bbca818",
+        "9ab32562074f8268b667b65ebd3cc97498c1aae9",
+        "9bc92098b2964d91588e40049bc7925e92e1855e",
+        "9fa8d19966d9373f015fba28199b78b01293d0c6",
+        "a521426d5b13a768da9f0a91052a0756aa3287a9",
+        "a55c5cf95b654abf7071b858629ce07af40a49f6",
+        "a5c14829d7ddc834afec9b3cfae5249e85aa6e4f",
+        "aa5b225f0e3b45c4fad8900b1c683295c4702bcb",
+        "bfb0ccaa49680b8c232be9cb0f2f74c80fffa8cd",
+        "cb808ebe10695e93764b3b903a2558e7af3ced46",
+        "d8b0d105a7f5cbbaab63efa7680ecb86918fc27b",
+        "d9833bfbb7b88e08bbfdd37cfbc27d696b30eb87",
+        "dac1f5c71670119e5579e4c28473991df636f090",
+        "e092e8e06e09dd4a3786428f5dd56da80b51b286",
+        "eaa2872a61b3bcb563619203f67ae3d92dadb690",
+        "ef4d01fee7fd5f0a919049b9809bca3555eea3f1",
+        "f39d3554e598528031f13e59e288e45dcec83869",
+        "fa7a1bdbd94e4713ce47121cce89504c2fcffd6a",
+        "fafe03d761f833abb95ef85cc52eff985d88a7d7",
+        "ff8340b92bdb4063b509b0a09d37d105605d2c9a"
+      ],
+      "historical_short_hex_identifiers_unverified": [
+        "0dfb85ff",
+        "1b218011",
+        "20261001",
+        "20261005",
+        "20261006",
+        "20261007",
+        "4039b3d",
+        "494717624",
+        "5120c08",
+        "67b1b151",
+        "686cec01",
+        "798debfd1a5c",
+        "7d076cce",
+        "8032cb9",
+        "832312d3",
+        "84cecbd1",
+        "969581597019",
+        "a4adf203",
+        "a7deb902",
+        "bd77cf58",
+        "bfb0ccaa",
+        "ee2db191",
+        "fb68d589",
+        "ff8340b"
+      ]
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-PATTERNS.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-PATTERNS.md",
+      "source_sha256": "7116f170e6514e847b89505f3fc664166d53ec5e82d492cca12217279d18e47b",
+      "source_size": 41927,
+      "source_mtime_utc": "2026-10-04T19:02:53.172178+00:00",
+      "published_sha256": "58d6363b6c50410057700590e5ba1ebbe7458688646aa0d3ec7f893fce12aaaa",
+      "published_size": 42269,
+      "transformations": [
+        {
+          "category": "private-canonical-path",
+          "replacement": "[PRIVATE_CANONICAL_CHECKOUT]",
+          "occurrences": 1
+        },
+        {
+          "category": "private-home-path",
+          "replacement": "[PRIVATE_HOME]",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        }
+      ],
+      "planning_references_not_in_bundle": [],
+      "unresolved_execution_context_references": [
+        "dataclass(frozen=True)"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e",
+        "3451e2e63acdcb466559c018b6590cda52626eb5"
+      ],
+      "historical_short_hex_identifiers_unverified": [
+        "3a4a3ac"
+      ]
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-RESEARCH.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-RESEARCH.md",
+      "source_sha256": "313a12e1d5ee77b30c3931cbf3d30e8ab677ade81f96c4058f545487a43cd941",
+      "source_size": 80121,
+      "source_mtime_utc": "2026-10-04T19:11:01.248583+00:00",
+      "published_sha256": "53d7c7b1a776765ffa99b2777aab491a7e17689d36987c4797917090156c4976",
+      "published_size": 80478,
+      "transformations": [
+        {
+          "category": "private-controller-path",
+          "replacement": "[PRIVATE_CONTROLLER_CHECKOUT]",
+          "occurrences": 1
+        },
+        {
+          "category": "private-home-path",
+          "replacement": "[PRIVATE_HOME]",
+          "occurrences": 1
+        },
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 2
+        },
+        {
+          "category": "private-host-b",
+          "replacement": "PRIVATE_HOST_B",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/config.json",
+        ".planning/research/bounded-review-investigation/research/SUMMARY.md",
+        ".planning/takeover/gsd-continuation-20261004/RECONCILIATION.md",
+        ".planning/takeover/gsd-continuation-20261004/issue261-current.json"
+      ],
+      "unresolved_execution_context_references": [
+        "dataclass(frozen=True)"
+      ],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": [
+        "12b735f",
+        "20261004",
+        "3a4a3ac"
+      ]
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md",
+      "source_sha256": "b852ebb78e8ce71cae440ceba5e5b30f00892f13ab4958d40d73126017bcb8f5",
+      "source_size": 2727,
+      "source_mtime_utc": "2026-10-05T01:46:44.068334+00:00",
+      "published_sha256": "7a74526434d7d081223429f3b6602bae9588dd2355fab30b5c904fe7ea2b2493",
+      "published_size": 3066,
+      "transformations": [
+        {
+          "category": "dated-publication-banner"
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/takeover/continuation-fixes-20261004-root/SOURCE-AUDIT.json"
+      ],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [
+        "12b735fcefac91685dc231b1cd1434588b194a8e"
+      ],
+      "historical_short_hex_identifiers_unverified": [
+        "20261004"
+      ]
+    },
+    {
+      "source_path": "phases/59-judgment-and-evidence/59-VALIDATION.md",
+      "published_path": "docs/gsd/phases/59-judgment-and-evidence/59-VALIDATION.md",
+      "source_sha256": "47a09bce0f1c5e3f1f6bb2d069d3772c05d52f9b00f1185c4edfd862c8e19342",
+      "source_size": 10467,
+      "source_mtime_utc": "2026-10-06T19:13:41.419514+00:00",
+      "published_sha256": "d8f991e971674aa97796cb4d9748bded6e5d9d13cff30c056fbae1f18471f207",
+      "published_size": 10841,
+      "transformations": [
+        {
+          "category": "private-host-a",
+          "replacement": "PRIVATE_HOST_A",
+          "occurrences": 1
+        },
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "archival-status-formatting",
+          "occurrences": 12,
+          "operation": "Wrap each historical list checkbox marker in backticks; marker state and text unchanged.",
+          "inverse": "Remove the wrapping backticks from these list checkbox markers."
+        }
+      ],
+      "planning_references_not_in_bundle": [],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/60-full-checkout-corpus-and-comparison/preparation-20261010/PLAN.md",
+      "published_path": "docs/gsd/phases/60-full-checkout-corpus-and-comparison/preparation-20261010/PLAN.md",
+      "source_sha256": "0970c5c2211165cf7edd2e31852d55b70000456aa171f77ae4dde5c358e19969",
+      "source_size": 3235,
+      "source_mtime_utc": "2026-10-10T03:35:31.207792+00:00",
+      "published_sha256": "dbc659468ff49b8589a52d1b9e2b92146c48f58cc77e7b44bc34fb8659e89c44",
+      "published_size": 3587,
+      "transformations": [
+        {
+          "category": "dated-publication-banner"
+        },
+        {
+          "category": "archival-status-formatting",
+          "occurrences": 5,
+          "operation": "Wrap each historical list checkbox marker in backticks; marker state and text unchanged.",
+          "inverse": "Remove the wrapping backticks from these list checkbox markers."
+        }
+      ],
+      "planning_references_not_in_bundle": [],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/60-full-checkout-corpus-and-comparison/preparation-20261010/PREPARATION-PROPOSAL.md",
+      "published_path": "docs/gsd/phases/60-full-checkout-corpus-and-comparison/preparation-20261010/PREPARATION-PROPOSAL.md",
+      "source_sha256": "78439bc86473da399e2b432a6ab0c28d2a41c5ab7e0fcffd82adbf11857d4210",
+      "source_size": 9523,
+      "source_mtime_utc": "2026-10-10T03:33:51.374042+00:00",
+      "published_sha256": "f4674b2679c48199fd0bcf3575b4b0084064d5a30ab1d183db20f067ac96c1d6",
+      "published_size": 9865,
+      "transformations": [
+        {
+          "category": "dated-publication-banner"
+        }
+      ],
+      "planning_references_not_in_bundle": [],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [
+        "8724ea0099a430bdd8db50fd7fce06ca008f49c0",
+        "aac5ec576b94c4e4ba90b38eddc8e24cb1d52b54",
+        "c104f840cc67f8b6eec6f759ebc8b2693d585d4a"
+      ],
+      "historical_short_hex_identifiers_unverified": []
+    }
+  ]
+}
