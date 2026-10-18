@@ -1911,7 +1911,7 @@ def _normal_cli_review(root, monkeypatch):
     result = cli.main()
     # fab4976: admission builds the runner too (early refusal), so the seam
     # is bound once per use, every time to the fixture cwd.
-    assert bound and set(bound) == {root}, "normal caller L2 seam was not bound to actual fixture cwd"
+    assert bound == [root, root], "normal caller L2 seam was not bound to actual fixture cwd"
     return result
 
 
