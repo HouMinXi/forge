@@ -221,6 +221,17 @@ class UntrustedGateConfigError(ValueError):
     """The in-tree gate.yaml cannot be trusted for review-time ``test.*`` reads."""
 
 
+class UntrackedGateRefused(UntrustedGateConfigError):
+    """CI refused an untracked in-tree gate.yaml (#160): nothing trusted to
+    measure with, so CI FAILs rather than skipping mutation."""
+
+
+UNTRACKED_GATE_NOT_MEASURED = (
+    "mutation not measured -- untracked gate.yaml in checkout is not trusted; "
+    "commit it or use --test-config-root"
+)
+
+
 class OutsideConfigRootRefused(UntrustedGateConfigError):
     """An explicit outside test config root failed a trust check (#157).
 
@@ -460,7 +471,7 @@ def load_trusted_gate_config(
     in_git = any((d / ".git").exists() for d in (Path(source_root).resolve(), *Path(source_root).resolve().parents))
     if not in_git:
         if not allow_untracked:
-            raise UntrustedGateConfigError(_CI_UNTRACKED)
+            _refuse_untracked_gate(working)
         # Not a git checkout: nothing is under review control, no git to ask.
         return load_gate_config(working)
     tracked = _refuse_linked_gate(source_root, base_sha)
@@ -477,11 +488,19 @@ def load_trusted_gate_config(
             "added by the reviewed change takes effect once it is on the baseline"
         )
     if not allow_untracked:
-        raise UntrustedGateConfigError(_CI_UNTRACKED)
+        _refuse_untracked_gate(working)
     # LOCAL: a gate.yaml git does not track (gitignored or never added) is
     # the user's own setup, not part of the reviewed diff (#143 tracks the
     # WORKING-tree agent risk).
     return _load_gate_nofollow(source_root)
+
+
+def _refuse_untracked_gate(working: Path) -> None:
+    """CI (#160): an untracked in-tree gate.yaml is refused; with no gate.yaml
+    at all the caller's usual not-found handling applies."""
+    if not os.path.lexists(working):
+        raise FileNotFoundError(f"no .code-forge/gate.yaml in the checkout ({working})")
+    raise UntrackedGateRefused(_CI_UNTRACKED)
 
 
 _CI_UNTRACKED = (

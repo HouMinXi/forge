@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._outside_gate import outside_gate_root
 from code_forge import llm_invoke, verify
 from code_forge.autofix import NoChangeAutoFixer, StubAutoFixer
 from code_forge.backend import BackendConfig
@@ -97,6 +98,7 @@ def _machine(root, monkeypatch, *, payload=None, rounds=3, threshold=3, hook=Non
         max_total_rounds=rounds,
         clean_round_threshold=threshold,
         post_round_hook=hook,
+        test_config_root=outside_gate_root(root),  # #160: CI does not trust an untracked in-tree gate
     )
     machine._state.env_manifest = {}
     holder["machine"] = machine

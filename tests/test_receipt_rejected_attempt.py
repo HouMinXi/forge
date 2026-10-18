@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from tests._outside_gate import outside_gate_root
 from code_forge.autofix import StubAutoFixer
 from code_forge.backend import BackendConfig
 from code_forge.baseline import ResolvedReview
@@ -124,6 +125,7 @@ def test_machine_cannot_borrow_other_pass_evidence(tmp_path, monkeypatch, mode, 
         source_hash=compute_source_hash(git_diff=DIFF),
         baseline_spec_repr="rejected-evidence",
         cwd=tmp_path,
+        test_config_root=outside_gate_root(tmp_path),  # #160
         registry={},
         l0_runner=lambda *args: ([], []),
         l1_provider=provider,
@@ -232,6 +234,7 @@ def _initial_review(
         source_hash=source_hash,
         baseline_spec_repr="initial-rejection",
         cwd=tmp_path,
+        test_config_root=outside_gate_root(tmp_path),  # #160
         registry={},
         l0_runner=lambda *args: ([], []),
         l1_provider=provider,
