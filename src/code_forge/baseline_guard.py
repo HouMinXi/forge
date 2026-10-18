@@ -200,6 +200,34 @@ def _traceback_summary(lines: list[str]) -> str | None:
     return summary
 
 
+def _without_ignored_exceptions(lines: list[str]) -> list[str]:
+    """Drop interpreter "Exception ignored ..." reports (unraisable hooks).
+
+    These are printed for errors in __del__ or at shutdown, for example the
+    multiprocessing ResourceTracker's ``ChildProcessError: [Errno 10]`` under
+    a subreaper. The run's exit status never depends on them, so they must not
+    be reported as the baseline failure cause.
+    """
+    kept: list[str] = []
+    skipping = False
+    in_traceback = False
+    for line in lines:
+        if re.match(r"Exception ignored\b", line):
+            skipping, in_traceback = True, False
+            continue
+        if skipping:
+            if line.startswith("Traceback (most recent call last):"):
+                in_traceback = True
+                continue
+            if in_traceback and (not line or line[0].isspace()):
+                continue
+            skipping = False
+            if in_traceback:
+                continue  # the report's final exception line
+        kept.append(line)
+    return kept
+
+
 def _output_detail(stderr: str | bytes | None, stdout: str | bytes | None) -> str:
     """Prefer diagnostic lines in long output, capped at 200 per stream.
 
@@ -214,7 +242,7 @@ def _output_detail(stderr: str | bytes | None, stdout: str | bytes | None) -> st
         normalized = " ".join((value or "").split())
         excerpt = normalized[:200]
         if len(normalized) > 200:
-            lines = (value or "").splitlines()
+            lines = _without_ignored_exceptions((value or "").splitlines())
             for priority, pattern in enumerate((
                 r"^E\s+(?!\[\s*\d+%\]\s*$)\S",
                 r"^(?:[\w.]*(?:Error|Exception)|SystemExit|KeyboardInterrupt):(?:\s|$)",
