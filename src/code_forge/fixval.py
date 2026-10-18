@@ -29,6 +29,7 @@ from pathlib import Path
 
 import unidiff
 
+from . import progress
 from .advisory import AdvisoryFinding
 from ._fixval_transaction import FixvalTransaction, TransactionError
 from .disposition import Disposition
@@ -254,6 +255,9 @@ def _transaction_block(message: str, recovery: str) -> FixvalResult:
 
 
 def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root) -> FixvalResult:
+    # #183: each bounded FIXVAL test run starts with a progress line, so the
+    # MCP job's inactivity watchdog never sees two runs as one silent span.
+    progress.emit("fixval: reverted-fix run")
     result = subprocess.run(
         scoped_cmd,
         env=run_env,
@@ -617,6 +621,7 @@ def run_overfit_guard(
             scoped_cmd = test_cmd + candidate.test_files
             run_env = os.environ.copy()
             run_env["PYTHONPATH"] = os.path.join(str(cwd), "src")
+            progress.emit("fixval: overfit run")  # #183
             result = subprocess.run(
                 scoped_cmd,
                 env=run_env,
