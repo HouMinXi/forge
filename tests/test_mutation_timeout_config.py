@@ -13,7 +13,7 @@ from code_forge.baseline import ResolvedReview
 from code_forge.falsify import StubFalsifier
 from code_forge.machine import StateMachine
 from code_forge.state import Mode
-from tests.mutation_result_fixture import write_inventory
+from tests.mutation_result_fixture import working_review, write_inventory
 
 
 def _machine(root, mutation_timeout=None):
@@ -58,6 +58,8 @@ def test_local_config_reaches_mutmut_command(tmp_path, monkeypatch, configured, 
         output = write_inventory(tmp_path, "src/pkg/mod.py") if "results" in command else ""
         return subprocess.CompletedProcess(command, 0, output, "")
 
+    # #208: a native measurement needs a real WORKING review (e89d226).
+    machine.resolved_review = working_review(tmp_path, "src/pkg/mod.py")
     monkeypatch.setattr(mutation, "run_owned_command", execute)
     assert machine._run_l2_phase() == []
     runs = [timeout for command, timeout in seen if command[:2] == ["mutmut", "run"]]
