@@ -3735,6 +3735,9 @@ class StateMachine:
         try:
             config = self._load_trusted_gate_config()
             test_cmd = config["test"]["command"]
+            # The same deadline L2 gives the baseline; FIXVAL used to fall
+            # back to 120s and time out on a full suite every time.
+            fixval_baseline_timeout = config["test"].get("timeout_seconds", 120)
         except Exception as exc:  # noqa: BLE001
             self._state.infra_errors.append(
                 f"FIXVAL: gate.yaml missing or test.command not configured: {exc}"
@@ -3758,6 +3761,7 @@ class StateMachine:
             self._source_root(),
             commit_message,
             diff_text,
+            baseline_timeout=fixval_baseline_timeout,
             **preservation,
         )
 

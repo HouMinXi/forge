@@ -575,6 +575,7 @@ def run_fixval(
     diff_text: str | None,
     *,
     recovery_parent: Path | None = None,
+    baseline_timeout: int = 120,
 ) -> FixvalResult:
     """Run FIXVAL gate on a candidate diff.
 
@@ -593,6 +594,9 @@ def run_fixval(
         commit_message: for waiver trailer parsing.
         diff_text: unified diff text (same source as classify).
         recovery_parent: optional preservation parent outside participating source roots.
+        baseline_timeout: per-run deadline for the baseline guard, from the
+            trusted gate's test.timeout_seconds (a full-suite command needs
+            far more than the 120s default).
 
     Returns:
         FixvalResult with status, findings, advisories, block_message.
@@ -658,6 +662,7 @@ def run_fixval(
         repo_root,
         allow_strip_retry=True,
         retry_cause=retry_cause,
+        timeout=baseline_timeout,
     )
     env_retry = None
     if status == "needs_strip_retry":
@@ -670,6 +675,7 @@ def run_fixval(
             repo_root,
             allow_strip_retry=False,
             first_attempt=retry_cause[0] if retry_cause else None,
+            timeout=baseline_timeout,
         )
 
     def noted(result: FixvalResult) -> FixvalResult:
