@@ -65,7 +65,7 @@ in its own review. This covers L2 mutation
 
 | Situation | gate.yaml used |
 |---|---|
-| Config root outside the reviewed tree (`--test-config-root DIR` / `FORGE_TEST_CONFIG_ROOT`, must be outside the checkout) | that config root's `.code-forge/gate.yaml` |
+| Config root outside the reviewed tree (`--test-config-root DIR` / `FORGE_TEST_CONFIG_ROOT`, must be outside the checkout) | that config root's `.code-forge/gate.yaml`; refused if it is a symlink, has more than one hard link, or the root (or a parent, or its `.code-forge`) is the checkout under another path, such as a bind mount. A bind mount of some other checkout subdirectory onto the root is not detected (that needs mount control) |
 | gate.yaml exists at the review baseline commit | the **baseline** copy (`git show <base>:.code-forge/gate.yaml`) |
 | `.code-forge` or `.code-forge/gate.yaml` is a symlink or submodule (index, baseline tree or checkout), or its real path is elsewhere | none; refused as an untrusted config |
 | gate.yaml tracked but absent at the baseline (first-ever gate.yaml added by the change) | none; refused as a missing config, so nothing from the change runs |

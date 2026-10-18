@@ -347,6 +347,44 @@ def _load_gate_nofollow(root, *, refuse_hardlinks: bool = False) -> dict:
     )
 
 
+def _refuse_checkout_alias(root: Path, source_root) -> None:
+    """#153: refuse a config root that is the checkout under another path.
+    A bind mount is neither a symlink nor a hardlink, so realpath and nlink
+    miss it. Compare (st_dev, st_ino) of the checkout root and its
+    .code-forge with the config root, every parent of it, and its
+    .code-forge.
+
+    Residual (needs mount control to set up, out of scope): some *other*
+    checkout subdirectory bind-mounted onto the outside root; detecting that
+    would need a walk of the checkout."""
+    checkout_ids = set()
+    for rel in ("", ".code-forge"):
+        try:
+            info = os.stat(Path(source_root) / rel, follow_symlinks=False)
+        except OSError:
+            continue
+        checkout_ids.add((info.st_dev, info.st_ino))
+    resolved = Path(root).resolve()
+    for directory in (resolved, *resolved.parents):
+        try:
+            info = os.stat(directory)
+        except OSError:
+            continue
+        if (info.st_dev, info.st_ino) in checkout_ids:
+            raise UntrustedGateConfigError(
+                f"test config root {root} is the reviewed checkout under another path ({directory} "
+                "is the same directory, e.g. a bind mount alias)"
+            )
+    try:
+        info = os.stat(Path(root) / ".code-forge", follow_symlinks=False)
+    except OSError:
+        return
+    if (info.st_dev, info.st_ino) in checkout_ids:
+        raise UntrustedGateConfigError(
+            f"test config root {root}: its .code-forge is the reviewed checkout's (bind mount alias)"
+        )
+
+
 def _load_outside_gate(config_root, source_root) -> dict:
     """An explicit config root outside the checkout: refuse a symlinked
     .code-forge/gate.yaml or one whose real path lands inside the checkout,
@@ -368,6 +406,7 @@ def _load_outside_gate(config_root, source_root) -> dict:
         raise UntrustedGateConfigError(
             f"test config root {root} resolves into the reviewed checkout ({real})"
         )
+    _refuse_checkout_alias(root, source_root)
     return _load_gate_nofollow(root, refuse_hardlinks=True)
 
 
