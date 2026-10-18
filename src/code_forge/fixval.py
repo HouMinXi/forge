@@ -435,7 +435,7 @@ def run_fixval(
     try:
         fd, patch_path = tempfile.mkstemp(prefix=".fixval-revert-", suffix=".patch")
     except OSError as exc:
-        return _transaction_block("cannot allocate revert patch: %s" % exc, repo_root)
+        return noted(_transaction_block("cannot allocate revert patch: %s" % exc, repo_root))
     transaction = None
     forward_applied = False
     errors = []

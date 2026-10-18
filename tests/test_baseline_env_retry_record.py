@@ -1,6 +1,7 @@
 """#246: an env-strip retry is recorded even when the retry passes."""
 
 import subprocess
+import sys
 
 import pytest
 
@@ -91,3 +92,105 @@ def test_fixval_advises_a_passing_strip_retry(private_project, monkeypatch, retr
     assert "VIRTUAL_ENV /private-venv" in notes[0].description
     assert "first attempt: run 1: returncode 11" in notes[0].description
     assert "No module named pytest" in notes[0].description
+
+
+def strip_then_pass(seen_envs):
+    """First guard call asks for the strip (and records its cause); the retry passes."""
+
+    def guard(cmd, env, root, *, allow_strip_retry, retry_cause=None, first_attempt=None, **_kw):
+        seen_envs.append(dict(env))
+        if allow_strip_retry:
+            retry_cause.append("run 1: returncode 11; stderr: No module named pytest")
+            return ("needs_strip_retry", [], [])
+        return ("passed", [], [])
+
+    return guard
+
+
+def git_fix_project(root, test_body):
+    def git(*argv):
+        subprocess.run(["git", *argv], cwd=root, check=True, capture_output=True)
+
+    git("init")
+    git("config", "user.email", "test@test.com")
+    git("config", "user.name", "Test")
+    (root / "src").mkdir()
+    (root / "tests").mkdir()
+    code, test = root / "src/calc.py", root / "tests/test_calc.py"
+    code.write_text("def add(a, b):\n    return 0\n")
+    test.write_text("def test_add():\n    pass\n")
+    git("add", ".")
+    git("commit", "-m", "initial")
+    code.write_text("def add(a, b):\n    return a + b\n")
+    test.write_text(test_body)
+    diff = subprocess.run(["git", "diff"], cwd=root, check=True, capture_output=True, text=True).stdout
+    return diff, code
+
+
+@pytest.mark.parametrize(
+    ("check", "status"),
+    [("assert add(1, 2) == 3", "PASS"), ("assert True", "BLOCK")],
+    ids=["pass", "hollow-block"],
+)
+def test_fixval_full_run_after_passing_strip_retry_carries_advisory(tmp_path, monkeypatch, check, status):
+    in_private_venv(monkeypatch)
+    monkeypatch.delenv("FIXVAL_WAIVER", raising=False)
+    seen = []
+    monkeypatch.setattr(fixval, "_run_baseline_guard", strip_then_pass(seen))
+    diff, code = git_fix_project(tmp_path, "def test_add():\n    %s\n" % check)
+    test_cmd = [sys.executable, "-c", "import sys; sys.path.insert(0, 'src'); from calc import add; " + check]
+    candidate = fixval.FixvalCandidate(["tests/test_calc.py"], ["src/calc.py"])
+    result = fixval.run_fixval(candidate, test_cmd, tmp_path, "fix: add", diff)
+    assert result.status == getattr(fixval.FixvalStatus, status)
+    if status == "BLOCK":
+        assert [f.id for f in result.findings] == ["FIXVAL_HOLLOW"]
+    assert "VIRTUAL_ENV" in seen[0] and "VIRTUAL_ENV" not in seen[1]
+    notes = [a for a in result.advisories if a.id == "FIXVAL_BASELINE_ENV_RETRY"]
+    assert len(notes) == 1
+    assert "VIRTUAL_ENV /private-venv" in notes[0].description
+    assert "first attempt: run 1: returncode 11; stderr: No module named pytest" in notes[0].description
+    assert "return a + b" in code.read_text()  # the fix was restored
+
+
+def test_fixval_patch_allocation_failure_after_strip_retry_carries_advisory(private_project, monkeypatch):  # noqa: F811
+    in_private_venv(monkeypatch)
+    monkeypatch.setattr(fixval, "_run_baseline_guard", strip_then_pass([]))
+
+    def no_space(*_a, **_k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(fixval.tempfile, "mkstemp", no_space)
+    candidate = fixval.FixvalCandidate(["tests/test_mod.py"], ["src/pkg/mod.py"])
+    result = fixval.run_fixval(candidate, CMD, private_project, "fix: record strip", PATCH)
+    assert result.status == fixval.FixvalStatus.BLOCK
+    assert "cannot allocate revert patch" in result.block_message
+    assert [a.id for a in result.advisories] == ["FIXVAL_BASELINE_ENV_RETRY"]
+    assert "first attempt: run 1: returncode 11" in result.advisories[0].description
+
+
+@pytest.mark.parametrize("retried", [True, False], ids=["strip", "no-strip"])
+def test_mutation_check_prints_env_retry_note(tmp_path, monkeypatch, capsys, retried):
+    from code_forge.cli import _build_parser, _run_mutation_check
+
+    diff_path = tmp_path / "empty.diff"
+    diff_path.write_text("", encoding="utf-8")
+
+    def measured(**kwargs):
+        if retried:
+            kwargs["_evidence"]["baseline_env_retry"] = {
+                "first_attempt": "run 1: returncode 11; stderr: No module named pytest",
+                "stripped_virtual_env": "/private-venv",
+            }
+        return [], []
+
+    monkeypatch.setattr("code_forge.mutation.run_mutation", measured)
+    args = _build_parser().parse_args(["mutation-check", "--diff", str(diff_path)])
+    assert _run_mutation_check(args, cwd=tmp_path) == 0
+    notes = [line for line in capsys.readouterr().err.splitlines() if "NOTE: baseline env-strip retry" in line]
+    if not retried:
+        assert notes == []
+        return
+    assert notes == [
+        "code-forge: mutation-check: NOTE: baseline env-strip retry: VIRTUAL_ENV /private-venv and its PATH "
+        "entry were dropped; first attempt: run 1: returncode 11; stderr: No module named pytest"
+    ]
