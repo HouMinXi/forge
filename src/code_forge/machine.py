@@ -3790,6 +3790,7 @@ class StateMachine:
                 ),
                 test_cmd,
                 self._source_root(),
+                timeout=fixval_baseline_timeout,
             )
             self._advisories.extend(overfit_advisories)
 
