@@ -278,11 +278,29 @@ def _refuse_linked_gate(source_root, base_sha: str | None) -> bool:
     return index_entries.get(".code-forge/gate.yaml", "").startswith("100")
 
 
-def _read_gate_nofollow(root) -> str:
+def _regular_file_inode(path) -> tuple[int, int] | None:
+    """(st_dev, st_ino) of a regular file, without following a final symlink."""
+    import stat
+
+    try:
+        info = os.stat(path, follow_symlinks=False)
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    return (info.st_dev, info.st_ino)
+
+
+def _read_gate_nofollow(root, *, refuse_inodes: frozenset[tuple[int, int]] | None = None) -> str:
     """Read ``<root>/.code-forge/gate.yaml`` without following a symlink at
     either component: ``.code-forge`` is opened dir-relative with O_NOFOLLOW
     and gate.yaml likewise, then fstat'd as a regular file. That closes the
-    check-then-open race of an islink/realpath test followed by open()."""
+    check-then-open race of an islink/realpath test followed by open().
+
+    ``refuse_inodes`` (optional) is a set of (st_dev, st_ino) the opened fd
+    must not match -- used by an outside config root to refuse a hardlink of
+    the in-tree gate.yaml (symlinks and realpath already catch the other
+    lead-backs; directories cannot be hardlinked)."""
     import errno
     import stat
 
@@ -295,7 +313,7 @@ def _read_gate_nofollow(root) -> str:
             fds.append(os.open(".code-forge", os.O_RDONLY | directory | nofollow, dir_fd=fds[-1]))
             fds.append(os.open("gate.yaml", os.O_RDONLY | nofollow, dir_fd=fds[-1]))
         except OSError as exc:
-            if exc.errno in (errno.ELOOP, errno.ENOTDIR, errno.EMLINK):
+            if getattr(exc, "errno", None) in (errno.ELOOP, errno.ENOTDIR, errno.EMLINK):
                 raise UntrustedGateConfigError(
                     f"{root}/.code-forge/gate.yaml: .code-forge or gate.yaml is a symlink or not a "
                     "regular path; review-time test config is only read from a regular file"
@@ -304,6 +322,11 @@ def _read_gate_nofollow(root) -> str:
         info = os.fstat(fds[-1])
         if not stat.S_ISREG(info.st_mode):
             raise UntrustedGateConfigError(f"{root}/.code-forge/gate.yaml is not a regular file")
+        if refuse_inodes and (info.st_dev, info.st_ino) in refuse_inodes:
+            raise UntrustedGateConfigError(
+                f"{root}/.code-forge/gate.yaml is a hardlink of a file in the reviewed checkout; "
+                "an outside test config root must hold its own regular gate.yaml"
+            )
         with os.fdopen(fds.pop(), "r", encoding="utf-8") as handle:
             return handle.read()
     finally:
@@ -311,10 +334,10 @@ def _read_gate_nofollow(root) -> str:
             os.close(fd)
 
 
-def _load_gate_nofollow(root) -> dict:
+def _load_gate_nofollow(root, *, refuse_inodes: frozenset[tuple[int, int]] | None = None) -> dict:
     import io
 
-    text = _read_gate_nofollow(root)
+    text = _read_gate_nofollow(root, refuse_inodes=refuse_inodes)
     return load_gate_config(
         Path(root) / ".code-forge" / "gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
     )
@@ -323,7 +346,12 @@ def _load_gate_nofollow(root) -> dict:
 def _load_outside_gate(config_root, source_root) -> dict:
     """An explicit config root outside the checkout: refuse a symlinked
     .code-forge/gate.yaml or one whose real path lands inside the checkout,
-    then read it with O_NOFOLLOW."""
+    refuse a hardlink of the in-tree gate.yaml, then read with O_NOFOLLOW.
+
+    Directories cannot be hardlinked on Linux (link(2) returns EPERM), so a
+    .code-forge directory hardlink is not a case to handle. Refusing every
+    inode under the checkout would need a tree walk; matching the in-tree
+    gate.yaml inode is the cheap required check (the PR-controlled file)."""
     root = Path(config_root)
     for rel in (".code-forge", ".code-forge/gate.yaml"):
         if os.path.islink(root / rel):
@@ -337,7 +365,11 @@ def _load_outside_gate(config_root, source_root) -> dict:
         raise UntrustedGateConfigError(
             f"test config root {root} resolves into the reviewed checkout ({real})"
         )
-    return _load_gate_nofollow(root)
+    refuse: set[tuple[int, int]] = set()
+    in_tree = _regular_file_inode(Path(source_root) / ".code-forge" / "gate.yaml")
+    if in_tree is not None:
+        refuse.add(in_tree)
+    return _load_gate_nofollow(root, refuse_inodes=frozenset(refuse))
 
 
 def load_trusted_gate_config(

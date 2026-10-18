@@ -421,6 +421,9 @@ def _evil_outside(tmp_path, repo, kind):
     outside.mkdir()
     if kind == "dir":
         (outside / ".code-forge").symlink_to(repo / ".code-forge", target_is_directory=True)
+    elif kind == "hardlink":
+        (outside / ".code-forge").mkdir()
+        os.link(repo / GATE, outside / ".code-forge" / "gate.yaml")
     else:
         (outside / ".code-forge").mkdir()
         (outside / ".code-forge" / "gate.yaml").symlink_to(repo / GATE)
@@ -435,6 +438,21 @@ def test_ci_outside_root_symlinked_into_the_tree_is_refused(tmp_path, kind):
     assert _l2_calls(machine) == []
     assert any("is a symlink; an outside test config root must hold a regular" in e
                for e in machine._state.infra_errors), machine._state.infra_errors
+
+
+def test_ci_outside_root_hardlinked_to_the_tree_gate_is_refused(tmp_path):
+    """#142 re-review: a hardlink shares inode with the in-tree gate, so
+    islink/realpath/O_NOFOLLOW all pass -- refuse by (st_dev, st_ino)."""
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    machine = _machine(repo, base, mode=Mode.CI)
+    machine.test_config_root = _evil_outside(tmp_path, repo, "hardlink")
+    assert _l2_calls(machine) == []
+    assert any("is a hardlink of a file in the reviewed checkout" in e
+               for e in machine._state.infra_errors), machine._state.infra_errors
+    # Directories cannot be hardlinked (link(2) returns EPERM on Linux), so a
+    # .code-forge directory hardlink is not a case: only the file matters.
+    with pytest.raises(OSError):
+        os.link(repo / ".code-forge", tmp_path / "dir-hardlink")
 
 
 def test_outside_root_resolving_into_the_tree_is_refused(tmp_path):
