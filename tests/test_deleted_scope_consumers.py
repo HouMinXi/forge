@@ -582,7 +582,9 @@ def _terminal_fixture(repo, state, diff, files, monkeypatch):
         "test:\n  command: "
         + json.dumps(
             [
-                "/usr/bin/python3",
+                # #47: the interpreter running this suite has pytest; the
+                # system python3 may not (the mutation baseline box does not).
+                sys.executable,
                 "-B",
                 "-m",
                 "pytest",
@@ -1095,7 +1097,7 @@ print(json.dumps([run_tools({{'inspect':config(cmd)}}, ['live.js'], cwd=cwd)
     for cmd, cwd in [('inspect',Path({str(repo)!r})), ('bin/inspect',Path({str(repo)!r})), ('inspect',None)]]))
 """
     result = subprocess.run(
-        ["/usr/bin/python3", "-B", "-c", program],
+        [sys.executable, "-B", "-c", program],  # #47: imports code_forge and its dependencies
         cwd=launcher,
         env={**os.environ, "PATH": "bin", "PYTHONPATH": str(source), "PYTHONDONTWRITEBYTECODE": "1"},
         capture_output=True,
@@ -1921,7 +1923,7 @@ def test_diff_producer_binary_packet_reaches_real_fixval(tmp_path, monkeypatch, 
     }
     result = run_fixval(
         candidate,
-        ["/usr/bin/python3", "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q"],
+        [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q"],  # #47
         tmp_path,
         "",
         packet,
