@@ -303,3 +303,36 @@ def test_outside_packs_root_that_is_a_bind_mount_alias_is_refused(tmp_path):
     )
     assert out.returncode == 0, out.stderr
     assert out.stdout.startswith("REFUSED") and "bind mount alias" in out.stdout, out.stdout
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_ci_refused_trusted_packs_fail_the_verdict(tmp_path, semgrep, monkeypatch, mode):
+    """#157 on #150: a refused pack root leaves blocking rules unmeasured; CI must
+    FAIL with the reason rather than PASS with the phase skipped."""
+    m = _outside_with(tmp_path, _hardlink_rules)
+    m.mode = mode
+    m._trusted_gate_cache = {k: GATE[k] for k in ("rulepacks", "rulepacks_blocking")}
+    assert _blocking(m) == []
+    if mode is Mode.LOCAL:
+        assert m._trusted_config_refusal is None
+        return
+    assert m._trusted_config_refusal.startswith("trusted rule packs refused:")
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
+    assert m._run_ci().name == "FAIL", m._state.infra_errors
+    assert any(e.startswith("CI: trusted rule packs refused:") for e in m._state.infra_errors)
+
+
+def test_ci_refused_baseline_pack_keeps_the_infra_note_only(tmp_path, semgrep):
+    """Scope of #157: only an operator-configured outside root FAILs CI; a
+    baseline pack refusal (symlink in the baseline) keeps its infra note."""
+    repo, base = _repo(tmp_path, pack_at_base=False)
+    elsewhere = tmp_path / "elsewhere"
+    _write_pack(elsewhere)
+    (repo / ".code-forge" / "packs").mkdir()
+    (repo / PACK).symlink_to(elsewhere / PACK, target_is_directory=True)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "link")
+    m = _machine(repo, _git(repo, "rev-parse", "HEAD"))
+    assert _blocking(m) == []
+    assert m._trusted_config_refusal is None
