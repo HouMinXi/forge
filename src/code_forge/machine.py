@@ -727,6 +727,9 @@ class StateMachine:
     ctx_whole_file: bool = False
     ctx_canary: bool = False
     source_root: Path | None = field(default=None, kw_only=True)
+    # #140: an explicit gate config root outside the reviewed checkout
+    # (--test-config-root / FORGE_TEST_CONFIG_ROOT); None means self.cwd.
+    test_config_root: Path | None = field(default=None, kw_only=True)
     recovery_parent: Path | None = field(default=None, kw_only=True)
     _state: State = field(default_factory=State, init=False)
 
@@ -812,11 +815,13 @@ class StateMachine:
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
+        self._note_gate_yaml_edit()
         admission_error = mutation_review_admission_error(
             target_kind=self.resolved_review.target_kind, git_diff=self.resolved_review.git_diff,
-            source_files=self._source_files(), source_root=self._source_root(), config_root=self.cwd,
+            source_files=self._source_files(), source_root=self._source_root(),
+            config_root=self._test_config_root(),
             runner=self.l2_runner, ci_detached=self.mode == Mode.CI,
-            base_sha=self.resolved_review.base_sha,
+            base_sha=self.resolved_review.base_sha, allow_untracked=self.mode is not Mode.CI,
         )
         self._acquisition_receipts = ()
         self._acquisition_authority = None
@@ -2322,8 +2327,9 @@ class StateMachine:
 
         notes: list[str] = []
         globs = trusted_mutation_globs(
-            config_root=self.cwd, source_root=self._source_root(),
+            config_root=self._test_config_root(), source_root=self._source_root(),
             base_sha=self.resolved_review.base_sha, config_test=test_config, notes=notes,
+            allow_untracked=self.mode is not Mode.CI,
         )
         self._state.infra_errors.extend(f"L2: {note}" for note in notes)
         return globs
@@ -2358,31 +2364,44 @@ class StateMachine:
             "timeout; raising FORGE_LLM_TIMEOUT_S will not help): " + message
         )
 
+    def _test_config_root(self) -> Path:
+        return self.test_config_root if self.test_config_root is not None else self.cwd
+
     def _load_trusted_gate_config(self) -> dict:
         """#140: gate.yaml for test.* (command, timeouts, env, also_copy,
         mutation limits/globs) from an outside config root or the review
-        baseline, never from the tree under review."""
-        from .advisory import AdvisoryFinding
-        from .gate_check import config_root_is_outside_review, load_trusted_gate_config
+        baseline, never from the tree under review. CI never trusts an
+        untracked in-tree gate.yaml."""
+        from .gate_check import load_trusted_gate_config
 
-        config = load_trusted_gate_config(
-            config_root=self.cwd, source_root=self._source_root(),
-            base_sha=self.resolved_review.base_sha,
+        self._note_gate_yaml_edit()
+        return load_trusted_gate_config(
+            config_root=self._test_config_root(), source_root=self._source_root(),
+            base_sha=self.resolved_review.base_sha, allow_untracked=self.mode is not Mode.CI,
         )
+
+    def _note_gate_yaml_edit(self) -> None:
+        """Advisory (once) when the change touches .code-forge/gate.yaml or the
+        .code-forge path itself (symlink/submodule swaps included) while the
+        config root is the reviewed tree: those edits are not applied."""
+        from .advisory import AdvisoryFinding
+        from .gate_check import config_root_is_outside_review
+
+        paths = _diff_paths(self.resolved_review.git_diff or "")
+        touched = any(p in (".code-forge", ".code-forge/gate.yaml") for p in paths)
         if (
-            ".code-forge/gate.yaml" in _diff_paths(self.resolved_review.git_diff or "")
-            and not config_root_is_outside_review(self.cwd, self._source_root())
-            and not any(a.id == "GATE_YAML_EDIT_NOT_APPLIED" for a in self._advisories)
+            not touched
+            or config_root_is_outside_review(self._test_config_root(), self._source_root())
+            or any(a.id == "GATE_YAML_EDIT_NOT_APPLIED" for a in self._advisories)
         ):
-            self._advisories.append(AdvisoryFinding(
-                id="GATE_YAML_EDIT_NOT_APPLIED", axis="config", file=".code-forge/gate.yaml",
-                description=(
-                    "this change edits .code-forge/gate.yaml; its test.* settings were not "
-                    "used for this review (the review baseline's are) and take effect once "
-                    "the change is on the baseline"
-                ),
-            ))
-        return config
+            return
+        self._advisories.append(AdvisoryFinding(
+            id="GATE_YAML_EDIT_NOT_APPLIED", axis="config", file=".code-forge/gate.yaml",
+            description=(
+                "test.* and mutation globs from this change's gate.yaml were not applied; "
+                "other keys: see #141"
+            ),
+        ))
 
     def _run_l2_phase(self) -> list[StateFinding]:
         """L2 mutation phase. Runs after L1.

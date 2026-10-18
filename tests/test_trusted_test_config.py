@@ -196,20 +196,6 @@ def test_loader_units(tmp_path):
     assert load_trusted_gate_config(config_root=plain, source_root=plain, base_sha=None)["test"]["command"] == BASE_CMD
 
 
-def test_change_that_edits_gate_yaml_gets_a_visible_note(tmp_path):
-    repo, base = _repo(tmp_path, gate_at_base=True)
-    _write_gate(repo, PR_CMD)
-    machine = _machine(repo, base)
-    machine.resolved_review = ResolvedReview(
-        source_files=machine.resolved_review.source_files, baseline_content=None,
-        git_diff=_git(repo, "diff", base), mode_hint="git", base_sha=base,
-    )
-    _l2_calls(machine)
-    _l2_calls(machine)
-    notes = [a for a in machine._advisories if a.id == "GATE_YAML_EDIT_NOT_APPLIED"]
-    assert len(notes) == 1 and "take effect once the change is on the baseline" in notes[0].description
-
-
 def test_no_note_when_gate_yaml_is_not_in_the_diff(tmp_path):
     repo, base = _repo(tmp_path, gate_at_base=True)
     machine = _machine(repo, base)
@@ -284,3 +270,144 @@ def test_exit_6_docs_row_quotes_the_exact_preflight_message(tmp_path, monkeypatc
         if line.startswith("| 6 |")
     )
     assert "`" + documented in row, (documented, row)
+
+
+# --- PR #142 review: P2-A (symlink/submodule), P2-B (CI untracked), P3s ---
+
+from code_forge.gate_check import UntrustedGateConfigError  # noqa: E402
+
+NOTE_ID = "GATE_YAML_EDIT_NOT_APPLIED"
+
+
+def _with_diff(machine, repo, base):
+    _git(repo, "add", "-A")
+    machine.resolved_review = ResolvedReview(
+        source_files=machine.resolved_review.source_files, baseline_content=None,
+        git_diff=_git(repo, "diff", "--cached", base), mode_hint="git", base_sha=base,
+    )
+    return machine
+
+
+def _symlinked_gate_repo(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    (repo / GATE).unlink()
+    (repo / ".code-forge").rmdir()
+    _write_gate(repo / "cfg", PR_CMD, timeout=999)
+    (repo / ".code-forge").symlink_to("cfg")
+    _git(repo, "add", "-A")
+    return repo, base
+
+
+def test_symlinked_code_forge_dir_does_not_bypass_first_ever_refusal(tmp_path):
+    repo, base = _symlinked_gate_repo(tmp_path)
+    machine = _machine(repo, base)
+    assert _l2_calls(machine) == []
+    assert any("is a symlink in the index" in e for e in machine._state.infra_errors), machine._state.infra_errors
+
+
+def test_untracked_symlinked_code_forge_dir_is_refused(tmp_path):
+    repo, base = _symlinked_gate_repo(tmp_path)
+    _git(repo, "rm", "-q", "--cached", ".code-forge")
+    with pytest.raises(UntrustedGateConfigError, match="symlink in the checkout"):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
+
+
+def test_symlinked_gate_file_is_refused_even_with_a_baseline_gate(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    _write_gate(repo / "cfg", PR_CMD)
+    (repo / GATE).unlink()
+    (repo / GATE).symlink_to("../cfg/.code-forge/gate.yaml")
+    _git(repo, "add", "-A")
+    with pytest.raises(UntrustedGateConfigError, match=r"\.code-forge/gate\.yaml is a symlink in the index"):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
+
+
+def test_submodule_at_code_forge_is_refused(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{base},.code-forge")
+    with pytest.raises(UntrustedGateConfigError, match="is a submodule in the index"):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
+
+
+def test_symlink_in_the_baseline_tree_is_refused(tmp_path):
+    repo, _ = _symlinked_gate_repo(tmp_path)
+    _git(repo, "commit", "-qm", "symlinked gate dir")
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "rm", "-q", "--cached", ".code-forge")  # index no longer shows it
+    (repo / ".code-forge").unlink()
+    with pytest.raises(UntrustedGateConfigError, match="symlink in the review baseline"):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=head)
+
+
+def test_ci_refuses_an_untracked_in_tree_gate_for_test_and_globs(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    machine = _machine(repo, base, mode=Mode.CI)
+    assert _l2_calls(machine) == []
+    assert any("CI does not trust an untracked in-tree gate.yaml" in e and "--test-config-root" in e
+               for e in machine._state.infra_errors), machine._state.infra_errors
+    notes = []
+    assert mutation.trusted_mutation_globs(
+        config_root=repo, source_root=repo, base_sha=base, notes=notes, allow_untracked=False,
+    ) == (None, None)
+    assert notes and "CI does not trust" in notes[0]
+    # LOCAL keeps the untracked behaviour (#143 tracks the WORKING risk)
+    assert _l2_calls(_machine(repo, base)) == [(PR_CMD, 999)]
+
+
+def test_ci_uses_an_explicit_outside_test_config_root(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    outside = tmp_path / "ci-config"
+    _write_gate(outside, BASE_CMD, timeout=5)
+    machine = _machine(repo, base, mode=Mode.CI)
+    machine.test_config_root = outside
+    assert _l2_calls(machine) == [(BASE_CMD, 5)]
+
+
+def _run_until_admission(machine, monkeypatch):
+    monkeypatch.setattr("code_forge.machine.mutation_review_admission_error", lambda **k: "stop")
+    try:
+        machine.run()
+    except Exception:  # noqa: BLE001 -- only the advisory matters here
+        pass
+    return [a for a in machine._advisories if a.id == NOTE_ID]
+
+
+def test_advisory_for_a_gate_only_edit(tmp_path, monkeypatch):
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    (repo / "src" / "pkg" / "mod.py").write_text("x = 1\n", encoding="utf-8")  # gate-only diff
+    _write_gate(repo, PR_CMD)
+    notes = _run_until_admission(_with_diff(_machine(repo, base), repo, base), monkeypatch)
+    assert len(notes) == 1
+    assert notes[0].description == (
+        "test.* and mutation globs from this change's gate.yaml were not applied; other keys: see #141"
+    )
+
+
+def test_advisory_for_a_first_ever_gate_and_the_symlink_case(tmp_path, monkeypatch):
+    repo, base = _repo(tmp_path / "a", gate_at_base=False, tracked=True)
+    assert len(_run_until_admission(_with_diff(_machine(repo, base), repo, base), monkeypatch)) == 1
+    repo, base = _symlinked_gate_repo(tmp_path / "b")
+    assert len(_run_until_admission(_with_diff(_machine(repo, base), repo, base), monkeypatch)) == 1
+
+
+def test_advisory_once_and_not_for_an_outside_config_root(tmp_path, monkeypatch):
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    _write_gate(repo, PR_CMD)
+    machine = _with_diff(_machine(repo, base), repo, base)
+    _l2_calls(machine)
+    assert len(_run_until_admission(machine, monkeypatch)) == 1  # once across run + L2
+    outside = tmp_path / "cfg"
+    _write_gate(outside, BASE_CMD)
+    machine = _with_diff(_machine(repo, base), repo, base)
+    machine.test_config_root = outside
+    assert _run_until_admission(machine, monkeypatch) == []
+
+
+def test_invalid_baseline_never_falls_back_to_a_valid_working_copy(tmp_path):
+    repo, _ = _repo(tmp_path, gate_at_base=True)
+    (repo / GATE).write_text("test: {command: 5}\n", encoding="utf-8")
+    _git(repo, "commit", "-qam", "broken gate")
+    bad = _git(repo, "rev-parse", "HEAD")
+    _write_gate(repo, PR_CMD)  # valid, differing working copy
+    with pytest.raises(ValueError):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=bad)

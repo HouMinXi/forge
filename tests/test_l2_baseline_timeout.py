@@ -13,6 +13,7 @@ from code_forge.baseline import ResolvedReview
 from code_forge.falsify import StubFalsifier
 from code_forge.machine import StateMachine
 from code_forge.state import Mode
+from tests.ci_gate import outside_config_root
 
 
 def make_machine(tmp_path, command, timeout=None):
@@ -38,6 +39,7 @@ def make_machine(tmp_path, command, timeout=None):
         source_hash="timeout-probe",
         baseline_spec_repr="empty",
         cwd=tmp_path,
+        test_config_root=outside_config_root(tmp_path),
         registry={},
         l2_runner=factories.build_l2_runner(cwd=tmp_path),
     )

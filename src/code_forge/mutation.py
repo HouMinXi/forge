@@ -813,7 +813,7 @@ def _valid_globs(value) -> list[str] | None:
 
 def trusted_mutation_globs(
     *, config_root, source_root, base_sha: str | None, config_test: dict | None = None,
-    notes: list[str] | None = None,
+    notes: list[str] | None = None, allow_untracked: bool = True,
 ) -> tuple[list[str] | None, list[str] | None]:
     """Mutation skip/include globs from a source the reviewed change cannot edit
     (#134), by the same rule as every other ``test.*`` key (#140): see
@@ -836,6 +836,7 @@ def trusted_mutation_globs(
         try:
             test = load_trusted_gate_config(
                 config_root=config_root, source_root=source_root, base_sha=base_sha,
+                allow_untracked=allow_untracked,
             ).get("test") or {}
         except FileNotFoundError:
             return (None, None)
@@ -852,7 +853,7 @@ def trusted_mutation_globs(
 def mutation_review_admission_error(
     *, target_kind: str | None, git_diff: str | None, source_files: list[Path],
     source_root: Path, config_root: Path, runner, ci_detached: bool = False,
-    base_sha: str | None = None,
+    base_sha: str | None = None, allow_untracked: bool = True,
 ) -> str | None:
     """Reject unsupported staged/committed native work before it starts."""
     if target_kind not in {"INDEX", "COMMIT"} or not git_diff:
@@ -871,6 +872,7 @@ def mutation_review_admission_error(
     try:
         test = load_trusted_gate_config(
             config_root=config_root, source_root=source_root, base_sha=base_sha,
+            allow_untracked=allow_untracked,
         )["test"]
     except (OSError, ValueError, TypeError):
         return None
@@ -881,6 +883,7 @@ def mutation_review_admission_error(
         return None
     skip, include = trusted_mutation_globs(
         config_root=config_root, source_root=source_root, base_sha=base_sha, config_test=test,
+        allow_untracked=allow_untracked,
     )
     selected = native and any(not _is_test_path(path, skip, include, source_root) for path in py_files)
     if detached:

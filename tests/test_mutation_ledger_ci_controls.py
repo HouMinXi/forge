@@ -398,6 +398,16 @@ def _assert_timeouts(findings, identities):
         assert not is_mutation_survivor(note)
 
 
+def _outside_ci_config(project, monkeypatch):
+    """#140: CI never trusts an untracked in-tree gate.yaml; the real CLI gets
+    the fixture gate through FORGE_TEST_CONFIG_ROOT outside the checkout."""
+    outside = project.root.parent / (project.root.name + "-ci-config")
+    (outside / ".code-forge").mkdir(parents=True, exist_ok=True)
+    (outside / ".code-forge/gate.yaml").write_bytes((project.root / ".code-forge/gate.yaml").read_bytes())
+    monkeypatch.setenv("FORGE_TEST_CONFIG_ROOT", str(outside))
+    return outside
+
+
 def _cli(project, monkeypatch, capsys):
     _discover_mutmut(project)
     # Advisory model transport only. Runtime parsing and reporting remain real.
@@ -408,6 +418,7 @@ def _cli(project, monkeypatch, capsys):
 
     monkeypatch.setattr("code_forge.runtime.llm_invoke", advisory_transport)
     monkeypatch.chdir(project.root)
+    _outside_ci_config(project, monkeypatch)
     monkeypatch.setattr(sys, "argv", list(REVIEW_ARGV))
     parsed = cli._build_parser().parse_args(REVIEW_ARGV[1:])
     assert (parsed.subcommand, parsed.mode, parsed.falsification_engine) == ("review", "ci", "stub")
@@ -2890,3 +2901,43 @@ def test_cli_admission_receives_review_baseline(ci_project, monkeypatch, capsys)
     assert seen["base_sha"] == _git(p.root, "rev-parse", "HEAD")
     assert seen["config_root"] == seen["source_root"] == p.root
     assert "admission stop (test)" in err
+
+
+def _cli_admission_args(p, monkeypatch, *extra):
+    seen = {}
+
+    def spy(**kwargs):
+        seen.update(kwargs)
+        return "admission stop (test)"
+
+    monkeypatch.setattr(mutation, "mutation_review_admission_error", spy)
+    monkeypatch.chdir(p.root)
+    monkeypatch.setattr(sys, "argv", [
+        "code-forge", "review", "--mode", "ci", "--falsification-engine", "stub",
+        "--baseline", "HEAD", "--head", "INDEX", "--allow-main", *extra, "calc.py",
+    ])
+    return cli.main(), seen
+
+
+def test_cli_test_config_root_option_and_env(ci_project, monkeypatch, capsys):
+    """#142 P2-B: CI supplies the gate from outside the checkout via
+    --test-config-root DIR or FORGE_TEST_CONFIG_ROOT; inside is refused."""
+    p = ci_project
+    _discover_mutmut(p)
+    _git(p.root, "add", "calc.py")
+    outside = _outside_ci_config(p, monkeypatch)
+    _, seen = _cli_admission_args(p, monkeypatch)  # env var
+    assert seen["config_root"] == outside and seen["allow_untracked"] is False, capsys.readouterr().err
+    monkeypatch.delenv("FORGE_TEST_CONFIG_ROOT")
+    _, seen = _cli_admission_args(p, monkeypatch, "--test-config-root", str(outside))
+    assert seen["config_root"] == outside
+    _, seen = _cli_admission_args(p, monkeypatch)  # neither: the checkout itself
+    assert seen["config_root"] == p.root
+    inside = p.root / "cfg"
+    (inside / ".code-forge").mkdir(parents=True)
+    (inside / ".code-forge/gate.yaml").write_bytes((p.root / ".code-forge/gate.yaml").read_bytes())
+    capsys.readouterr()
+    code, seen = _cli_admission_args(p, monkeypatch, "--test-config-root", str(inside))
+    assert code == 2 and not seen and "must be outside the reviewed checkout" in capsys.readouterr().err
+    code, seen = _cli_admission_args(p, monkeypatch, "--test-config-root", str(p.root.parent / "nowhere"))
+    assert code == 2 and not seen and "no .code-forge/gate.yaml there" in capsys.readouterr().err

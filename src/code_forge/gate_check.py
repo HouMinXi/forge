@@ -217,62 +217,127 @@ def config_root_is_outside_review(config_root, source_root) -> bool:
     return config != source and config not in source.parents and source not in config.parents
 
 
-def load_trusted_gate_config(*, config_root, source_root, base_sha: str | None) -> dict:
-    """gate.yaml for review-time ``test.*`` reads, from a source the reviewed
-    change cannot edit (#140; same rule as #139's mutation globs).
+class UntrustedGateConfigError(ValueError):
+    """The in-tree gate.yaml cannot be trusted for review-time ``test.*`` reads."""
+
+
+_GATE_PATHS = (".code-forge", ".code-forge/gate.yaml")
+_LINK_MODES = {"120000": "a symlink", "160000": "a submodule"}
+
+
+def _git_out(source_root, *args) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            ["git", *args], cwd=str(source_root), capture_output=True, text=True,
+            encoding="utf-8", timeout=10, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise UntrustedGateConfigError(f"cannot inspect .code-forge/gate.yaml with git: {exc}") from exc
+
+
+def _gate_entries(listing: str) -> dict[str, str]:
+    """{path: mode} for the gate path components in ls-files -s / ls-tree output."""
+    entries = {}
+    for line in listing.splitlines():
+        meta, _, path = line.partition("\t")
+        if path in _GATE_PATHS and meta.split():
+            entries[path] = meta.split()[0]
+    return entries
+
+
+def _refuse_linked_gate(source_root, base_sha: str | None) -> bool:
+    """Refuse a symlink or submodule at .code-forge or .code-forge/gate.yaml
+    (index, baseline tree or filesystem), and a gate path whose realpath
+    leaves the checkout or lands elsewhere. Returns whether the gate file is
+    tracked in the index as a regular file."""
+    root = Path(source_root)
+    index = _git_out(root, "ls-files", "-s", "--", *_GATE_PATHS)
+    listings = [("index", _gate_entries(index.stdout) if index.returncode == 0 else {})]
+    if base_sha:
+        tree = _git_out(root, "ls-tree", base_sha, "--", *_GATE_PATHS)
+        listings.append(("review baseline", _gate_entries(tree.stdout) if tree.returncode == 0 else {}))
+    for where, entries in listings:
+        for path, mode in entries.items():
+            if mode in _LINK_MODES:
+                raise UntrustedGateConfigError(
+                    f"{path} is {_LINK_MODES[mode]} in the {where}; review-time test config is "
+                    "only read from a regular .code-forge/gate.yaml"
+                )
+    for rel in _GATE_PATHS:
+        if os.path.islink(root / rel):
+            raise UntrustedGateConfigError(
+                f"{rel} is a symlink in the checkout; review-time test config is only read "
+                "from a regular .code-forge/gate.yaml"
+            )
+    real = os.path.relpath(os.path.realpath(root / ".code-forge" / "gate.yaml"), os.path.realpath(root))
+    if Path(real).as_posix() != ".code-forge/gate.yaml":
+        raise UntrustedGateConfigError(
+            f".code-forge/gate.yaml resolves to {real}, outside its own path in the checkout"
+        )
+    index_entries = listings[0][1]
+    return index_entries.get(".code-forge/gate.yaml", "").startswith("100")
+
+
+def load_trusted_gate_config(
+    *, config_root, source_root, base_sha: str | None, allow_untracked: bool = True,
+) -> dict:
+    """gate.yaml for review-time ``test.*`` reads and mutation globs, from a
+    source the reviewed change cannot edit (#140).
 
     - An explicit config root outside the reviewed tree: its gate.yaml.
     - Otherwise (the CLI wiring: config root == reviewed tree): the review
       baseline revision's ``.code-forge/gate.yaml`` via ``git show``. A change's
-      own edits to ``test.command`` & co. apply only once on the baseline.
-    - Not at the baseline and not tracked by git at all (gitignored, never
-      added, or no git checkout; not part of any reviewed change): the
-      checked-out file.
+      own edits apply only once on the baseline.
+    - Not at the baseline and not tracked by git at all: the checked-out file,
+      but only when ``allow_untracked`` (LOCAL). CI refuses it: CI must supply
+      the gate from the baseline or an explicit outside config root.
 
-    Raises FileNotFoundError when there is no trusted gate.yaml (a tracked
-    gate.yaml with no baseline copy, e.g. a first-ever gate.yaml added by
-    this very change) and ValueError when the trusted file is invalid -- the same errors callers already handle
-    for a missing/invalid config, so nothing from the reviewed tree runs.
+    A symlink or submodule at ``.code-forge`` or ``.code-forge/gate.yaml`` (in
+    the index, the baseline tree or the checkout), or a gate path whose
+    realpath goes elsewhere, raises UntrustedGateConfigError (a ValueError).
+    A tracked gate.yaml with no baseline copy (a first-ever gate.yaml added by
+    this change) raises FileNotFoundError; an invalid trusted file raises
+    ValueError. Callers already treat these as a missing/invalid config, so
+    nothing from the reviewed tree runs.
     """
     import io
-    import subprocess
 
     if config_root_is_outside_review(config_root, source_root):
         return load_gate_config(Path(config_root) / ".code-forge" / "gate.yaml")
     working = Path(source_root) / ".code-forge" / "gate.yaml"
-    if not any((d / ".git").exists() for d in (Path(source_root).resolve(), *Path(source_root).resolve().parents)):
+    in_git = any((d / ".git").exists() for d in (Path(source_root).resolve(), *Path(source_root).resolve().parents))
+    if not in_git:
+        if not allow_untracked:
+            raise UntrustedGateConfigError(_CI_UNTRACKED)
         # Not a git checkout: nothing is under review control, no git to ask.
         return load_gate_config(working)
+    tracked = _refuse_linked_gate(source_root, base_sha)
     if base_sha:
-        try:
-            shown = subprocess.run(
-                ["git", "show", f"{base_sha}:./.code-forge/gate.yaml"],
-                cwd=str(source_root), capture_output=True, text=True, encoding="utf-8", timeout=10, check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise FileNotFoundError(f"cannot read baseline .code-forge/gate.yaml: {exc}") from exc
+        shown = _git_out(source_root, "show", f"{base_sha}:./.code-forge/gate.yaml")
         if shown.returncode == 0:
             text = shown.stdout
             return load_gate_config(
                 "<baseline>:.code-forge/gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
             )
-    # Not at the baseline. A gate.yaml git does not track at all (gitignored
-    # or never added: the common local setup, or one provisioned by CI) is not
-    # part of any reviewed change, so the checked-out file is used. A tracked
-    # one is being added by the change itself: refuse it (first-ever gate).
-    try:
-        tracked = subprocess.run(
-            ["git", "ls-files", "--error-unmatch", "--", ".code-forge/gate.yaml"],
-            cwd=str(source_root), capture_output=True, text=True, encoding="utf-8", timeout=10, check=False,
-        ).returncode == 0
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise FileNotFoundError(f"cannot inspect .code-forge/gate.yaml tracking: {exc}") from exc
     if tracked:
         raise FileNotFoundError(
             f"no .code-forge/gate.yaml at review baseline {(base_sha or 'unknown')[:12]}; a gate.yaml "
             "added by the reviewed change takes effect once it is on the baseline"
         )
+    if not allow_untracked:
+        raise UntrustedGateConfigError(_CI_UNTRACKED)
+    # LOCAL: a gate.yaml git does not track (gitignored or never added) is
+    # the user's own setup, not part of the reviewed diff (#143 tracks the
+    # WORKING-tree agent risk).
     return load_gate_config(working)
+
+
+_CI_UNTRACKED = (
+    "CI: .code-forge/gate.yaml is not at the review baseline, and CI does not trust an "
+    "untracked in-tree gate.yaml (anything in the checkout may come from the change under "
+    "review). Commit gate.yaml so it is on the baseline, or pass --test-config-root DIR "
+    "(FORGE_TEST_CONFIG_ROOT) pointing outside the checkout"
+)
 
 
 def validate_exec_falsify_config(section: object) -> None:

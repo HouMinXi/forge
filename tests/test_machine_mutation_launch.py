@@ -27,6 +27,7 @@ from code_forge.baseline import ResolvedReview
 from code_forge.falsify import StubFalsifier
 from code_forge.machine import StateMachine
 from code_forge.state import Mode, Verdict
+from tests.ci_gate import outside_config_root
 
 
 def _make_ci_sm(tmp_path):
@@ -44,6 +45,7 @@ def _make_ci_sm(tmp_path):
         source_hash="abc",
         baseline_spec_repr="empty",
         cwd=tmp_path,
+        test_config_root=outside_config_root(tmp_path),
         registry={},
         l0_runner=lambda reg, files: ([], []),
     )

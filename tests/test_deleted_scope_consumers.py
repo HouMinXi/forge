@@ -21,6 +21,7 @@ from code_forge.fixval import FixvalCandidate, FixvalStatus, run_fixval
 from code_forge.machine import StateMachine
 from code_forge.registry import ToolConfig
 from code_forge.state import Mode
+from tests.ci_gate import outside_config_root
 
 
 def _git(repo, *args):
@@ -75,6 +76,7 @@ def _machine(repo, diff, files, **kwargs):
         source_hash="fixture",
         baseline_spec_repr="HEAD..INDEX",
         cwd=repo,
+        test_config_root=kwargs.pop("test_config_root", outside_config_root(repo)),
         registry=kwargs.pop("registry", {}),
         **kwargs,
     )

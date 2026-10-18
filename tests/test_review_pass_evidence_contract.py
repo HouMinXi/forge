@@ -23,6 +23,7 @@ from code_forge.reviewer_json import validate_reviewer_json
 from code_forge.source import compute_source_hash
 from code_forge.state import Mode, Verdict
 from code_forge.verify import parse_diff_files, run_verify
+from tests.ci_gate import outside_config_root
 
 CONTENT = "const value = 2;\n"
 
@@ -70,6 +71,7 @@ def machine_for(tmp_path, mode, provider, diff, files):
         source_hash=compute_source_hash(git_diff=diff),
         baseline_spec_repr="review-pass-evidence-control",
         cwd=tmp_path,
+        test_config_root=outside_config_root(tmp_path),
         registry={},
         l0_runner=lambda *a: ([], []),
         l1_provider=provider,
