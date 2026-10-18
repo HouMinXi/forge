@@ -360,3 +360,27 @@ def test_baseline_show_timeout_is_a_reported_refusal(tmp_path, semgrep, monkeypa
     m = _machine(repo, base)
     assert _blocking(m) == [] and semgrep == []
     assert any("timed out" in e and "refusing pack mypack" in e for e in m._state.infra_errors), m._state.infra_errors
+
+
+@pytest.mark.parametrize("failure", ["timeout", "exit"])
+def test_ci_baseline_pack_read_failure_fails_the_verdict(tmp_path, semgrep, monkeypatch, failure):
+    """#189: a git show timeout or failure on a baseline pack leaves
+    rulepacks_blocking unmeasured; CI FAILs with that reason, never PASS."""
+    repo, base = _repo(tmp_path)
+    real = gate_check.subprocess.run
+
+    def run(argv, **kw):
+        if argv[:2] == ["git", "show"] and "packs" in argv[2]:
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired(argv, 10)
+            return subprocess.CompletedProcess(argv, 128, b"", b"fatal: transient")
+        return real(argv, **kw)
+
+    monkeypatch.setattr(gate_check.subprocess, "run", run)
+    m = _machine(repo, base)
+    assert _blocking(m) == []
+    assert m._trusted_config_refusal.startswith("trusted rule packs refused:")
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
+    assert m._run_ci().name == "FAIL", m._state.infra_errors
+    assert any(e.startswith("CI: trusted rule packs refused:") for e in m._state.infra_errors)

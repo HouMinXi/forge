@@ -229,6 +229,13 @@ class OutsideConfigRootRefused(UntrustedGateConfigError):
     failure (nothing measured) rather than a skipped phase."""
 
 
+class BaselinePackReadFailed(UntrustedGateConfigError):
+    """Reading a baseline rule pack failed for an infrastructure reason
+    (git show timeout or non-zero exit) (#189). The pack was not judged
+    untrustworthy, it was not read; CI treats the unmeasured blocking rules
+    as a failure."""
+
+
 _GATE_PATHS = (".code-forge", ".code-forge/gate.yaml")
 _LINK_MODES = {"120000": "a symlink", "160000": "a submodule"}
 
@@ -1555,11 +1562,11 @@ def _baseline_pack_files(source_root, base_sha: str, name: str) -> dict[str, byt
             )
         except subprocess.TimeoutExpired as exc:
             # #177: a reported refusal (infra error), not a crash of the round.
-            raise UntrustedGateConfigError(
+            raise BaselinePackReadFailed(
                 f"git show {base_sha}:./{path} timed out after {exc.timeout}s; refusing pack {name}"
             ) from exc
         if shown.returncode != 0:
-            raise UntrustedGateConfigError(
+            raise BaselinePackReadFailed(
                 f"git show {base_sha}:./{path} failed (exit {shown.returncode}); refusing pack {name}"
             )
         files[fname] = shown.stdout
