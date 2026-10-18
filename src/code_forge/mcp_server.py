@@ -451,7 +451,9 @@ def _backend_names_for(workspace: Path) -> list[str]:
 def _job_cap_s(workspace: Path, backend_name: str = "") -> float:
     """Compute the wall-clock cap for a background MCP job.
 
-    Returns effective_invoke_timeout_s(backend) + 600s grace.
+    Returns effective_invoke_timeout_s(backend) + 600s grace + the gate's
+    mutation-baseline budget (BASELINE_MAX_RUNS * test.timeout_seconds when
+    a test command is configured; see _baseline_budget_s).
     When FORGE_MCP_JOB_TIMEOUT_S is set and positive, it wins.
     Falls back to derived value on junk env.
     """
@@ -501,7 +503,34 @@ def _job_cap_s(workspace: Path, backend_name: str = "") -> float:
         )
         backend = _DEFAULT
 
-    return float(effective_invoke_timeout_s(backend) + 600)
+    return float(effective_invoke_timeout_s(backend) + 600 + _baseline_budget_s(workspace))
+
+
+def _baseline_budget_s(workspace: Path) -> int:
+    """Worst-case mutation-baseline wall time for one round (#128).
+
+    The baseline guard runs the gate's test command up to BASELINE_MAX_RUNS
+    times, each bounded by test.timeout_seconds (default 120). Without a
+    test command there is no baseline, so 0. Read straight from gate.yaml:
+    it only lengthens a time budget, so the backend trust filter does not
+    apply; an unreadable file or a bad value falls back to the default.
+    """
+    import yaml
+
+    from code_forge.baseline_guard import BASELINE_MAX_RUNS
+
+    try:
+        with open(workspace / ".code-forge" / "gate.yaml", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+    except (OSError, yaml.YAMLError, UnicodeDecodeError):
+        return 0
+    test = data.get("test") if isinstance(data, dict) else None
+    if not isinstance(test, dict) or not test.get("command"):
+        return 0
+    timeout = test.get("timeout_seconds", 120)
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
+        timeout = 120
+    return BASELINE_MAX_RUNS * timeout
 
 
 @asynccontextmanager
