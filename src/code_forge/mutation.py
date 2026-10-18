@@ -1432,7 +1432,7 @@ def _run_mutation(
                 run_env,
                 repo_root,
                 allow_strip_retry=False,
-            first_attempt=retry_cause[0] if retry_cause else None,
+                first_attempt=retry_cause[0] if retry_cause else None,
                 timeout=baseline_timeout,
                 run_command=run_owned_command,
             )

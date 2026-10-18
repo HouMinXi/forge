@@ -398,7 +398,7 @@ def run_fixval(
             run_env,
             repo_root,
             allow_strip_retry=False,
-        first_attempt=retry_cause[0] if retry_cause else None,
+            first_attempt=retry_cause[0] if retry_cause else None,
         )
     if status == "skip":
         return FixvalResult(

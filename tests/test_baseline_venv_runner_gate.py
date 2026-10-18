@@ -70,3 +70,31 @@ def test_interpreter_outside_venv_is_not_vouched_for(tmp_path):
     env = _venv(tmp_path, True)
     assert not _venv_has_runner(["/usr/bin/python3", "-m", "pytest"], env)
     assert os.path.isdir(env["VIRTUAL_ENV"])
+
+
+def test_missing_explicit_venv_runner_strips_and_retry_reports_first_cause(tmp_path):
+    env = _venv(tmp_path, True)
+    runner = os.path.join(env["VIRTUAL_ENV"], "bin", "pytest")  # absent from the venv bin
+    assert not _venv_has_runner([runner, "-q"], env)
+    errors = iter([
+        FileNotFoundError(2, "first-start-failure", runner),
+        FileNotFoundError(2, "retry-start-failure", runner),
+    ])
+
+    def run(*_a, **_k):
+        raise next(errors)
+
+    cause = []
+    status, findings, infra = _run_baseline_guard(
+        [runner, "-q"], env, str(tmp_path), allow_strip_retry=True, run_command=run, retry_cause=cause
+    )
+    assert (status, findings, infra) == ("needs_strip_retry", [], [])
+    status, findings, _ = _run_baseline_guard(
+        [runner, "-q"], {"PATH": "/usr/bin"}, str(tmp_path), allow_strip_retry=False,
+        run_command=run, first_attempt=cause[0],
+    )
+    assert status == "skip"
+    description = findings[0].description
+    assert "(after env retry)" in description and "retry-start-failure" in description
+    assert "[first attempt: run 1: runner could not start; stderr: " in description
+    assert "first-start-failure" in description
