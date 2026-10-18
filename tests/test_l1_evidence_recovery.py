@@ -783,7 +783,9 @@ def test_cache_only_response_usage_remains_available(response_usage_http, api_fo
     with pytest.raises(invoke.LLMInvokeError) as caught:
         invoke._invoke_api("owned cached response", backend, 3, max_attempts=1)
     assert len(requests) == 1 and not packets and caught.value.kind == "empty"
-    assert caught.value.usage == invoke.Usage(0, 0, cached)
+    # bbdda80: a partial report is observed usage, never the complete error Usage.
+    assert caught.value.usage is None
+    assert caught.value.observed_usage == invoke.Usage(0, 0, cached)
 
 
 @pytest.mark.parametrize("api_format", ["openai", "anthropic", "vertex"])
@@ -820,7 +822,9 @@ def test_failed_response_normalizes_partial_usage(
     with pytest.raises(invoke.LLMInvokeError) as caught:
         invoke._invoke_api("owned partial usage", backend, 3, max_attempts=1)
     assert len(requests) == 1 and not packets and caught.value.kind == kind
-    assert caught.value.usage == invoke.Usage(0, 7, 4)
+    # bbdda80: a partial report is observed usage, never the complete error Usage.
+    assert caught.value.usage is None
+    assert caught.value.observed_usage == invoke.Usage(0, 7, 4)
     if kind == "no_json":
         assert caught.value.raw_response == content
 
@@ -854,7 +858,10 @@ def test_failed_response_invalid_only_or_valid_cache(response_usage_http, api_fo
         invoke._invoke_api("owned invalid counters", backend, 3, max_attempts=1)
     expected = invoke.Usage(0, 0, cached) if type(cached) is int and cached >= 0 else None
     assert len(requests) == 1 and not packets and caught.value.kind == "empty"
-    assert caught.value.usage == expected
+    # bbdda80: a partial report is observed usage, never the complete error Usage.
+    assert caught.value.usage is None
+    if expected is not None:
+        assert caught.value.observed_usage == expected
 
 
 @pytest.mark.parametrize("content", [None, "complete prose"])
@@ -987,7 +994,9 @@ def test_openai_failure_retains_actual_flat_cache_dialect(
     with pytest.raises(invoke.LLMInvokeError) as caught:
         invoke._invoke_api("owned flat cache", backend, 3, max_attempts=1)
     assert len(requests) == 1 and not packets and caught.value.kind == "empty"
-    assert caught.value.usage == invoke.Usage(0, 0, expected)
+    # bbdda80: a partial report is observed usage, never the complete error Usage.
+    assert caught.value.usage is None
+    assert caught.value.observed_usage == invoke.Usage(0, 0, expected)
 
 
 @pytest.mark.parametrize("api_format", ["openai", "anthropic", "vertex"])
