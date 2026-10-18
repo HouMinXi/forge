@@ -125,6 +125,7 @@ class TestRunMutation:
         assert "Python-only" not in findings[0].description
         assert "other adapters" in infra[0]
 
+    @pytest.mark.skipif(shutil.which("pwsh") is None, reason="needs pwsh on PATH (the ps-mutant probe reports it missing)")
     def test_powershell_diff_names_psmutant(self):
         findings, _infra = run_mutation(["scripts/build.ps1"], ["pytest"])
         assert "ps-mutant" in findings[0].description

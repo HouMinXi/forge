@@ -6,6 +6,8 @@ ps-mutant) never ran. These tests pin the suffix-to-adapter map and
 the skip text the gate shows when no adapter owns the file.
 """
 
+import shutil
+
 import pytest
 
 from code_forge.mutation_dispatch import adapter_for_path, dispatch_label
@@ -309,6 +311,7 @@ def test_note_names_a_missing_binary(monkeypatch):
     assert tool_part == "stryker missing, gremlins missing"
 
 
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="needs pwsh on PATH (the ps-mutant probe reports it missing)")
 def test_note_includes_the_run_when_a_root_is_given(tmp_path, monkeypatch):
     from code_forge.mutation_dispatch import other_adapter_note
 
