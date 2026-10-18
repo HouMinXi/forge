@@ -2302,3 +2302,151 @@ def test_deleted_non_doc_under_docs_is_not_docs_only(tmp_path):
     assert _docs_only_files(["docs/a.md"], tmp_path, {"docs/a.md"}) is True
     assert _docs_only_files(["docs/a.md"], tmp_path, {"docs/a.md", "docs/tool.py"}) is False
     assert _docs_only_files(["docs/a.md"], tmp_path, {"docs/a.md", "docs/old.svg"}) is False
+
+
+# --- #133: remaining no-measurement skips get accurate reasons ---------------
+
+_OTHER_INFRA = "diff has no Python files; other adapters are registered but not invoked here"
+
+
+@pytest.mark.parametrize("findings,infra,evidence,expected", [
+    ([("mutation-other-adapter", "ts: adapter registered")], [_OTHER_INFRA], {}, "other-adapter-only"),
+    ([("mutation-other-adapter", "ts")], [], {}, None),
+    ([("mutation-other-adapter", "ts")], [_OTHER_INFRA, "x"], {}, None),
+    ([("mutation-other-adapter", "ts")], [_OTHER_INFRA], {"results_sha256": "a"}, None),
+    ([("mutation-unavailable", "mutmut not installed (soft dependency)")], [], {}, "unavailable"),
+    ([("mutation-unavailable", "u"), ("mutation-other-adapter", "o")], [], {}, "unavailable"),
+    ([("mutation-unavailable", "u")], ["u"], {}, None),
+    ([("mutation-unavailable", "u")], [], {"metadata_sha256": "m"}, None),
+    ([("mutation-probe-timeout", "probe timed out")], [], {}, "probe-timeout"),
+    ([("mutation-probe-timeout", "p")], [], {"inventory": {"m": "x"}}, None),
+    ([("mutation-no-mutants", "none")], [], {"results_sha256": "r", "metadata_sha256": "m"}, "no-mutants"),
+    ([("mutation-no-mutants", "none")], [], {}, None),
+    ([("mutation-no-mutants", "none")], [], {"results_sha256": "r", "inventory": {"m": "x"}}, None),
+    ([("mutation-results-timeout", "t")], [], {"metadata_sha256": "m", "inventory": {"m": "x"}}, "results-timeout"),
+    ([("mutation-results-timeout", "t")], [], {"results_sha256": "r"}, None),
+    ([("mutation-results-timeout", "t")], ["t"], {}, None),
+    ([("mutation-unavailable", "u"), ("mutation-probe-timeout", "p")], [], {}, None),
+    ([("mutation-no-adapter", "n")], [], {"results_sha256": "r"}, None),
+])
+def test_clean_mutation_skip_kind_133(findings, infra, evidence, expected):
+    from code_forge.machine import _clean_mutation_skip_kind
+
+    objs = [_skip(fingerprint=fp, description=d) for fp, d in findings]
+    full = {"inventory": {}, **evidence}
+    assert _clean_mutation_skip_kind(objs, infra, full, source_unchanged=True) == expected
+
+
+@pytest.mark.parametrize("kind,fingerprint,description,expected", [
+    ("unavailable", "mutation-unavailable", "mutmut not installed (soft dependency)",
+     "CI: mutation not measured: mutmut not installed (soft dependency)"),
+    ("probe-timeout", "mutation-probe-timeout",
+     "mutmut import probe timed out in baseline test env; not the same as mutmut missing",
+     "CI: mutation not measured: mutmut import probe timed out in baseline test env"),
+    ("no-mutants", "mutation-no-mutants", "mutmut generated no mutants; no mutation measurement was made",
+     "CI: mutation not measured: mutmut generated no mutants"),
+    ("results-timeout", "mutation-results-timeout", "mutmut results timed out",
+     "CI: mutation not measured: mutmut results timed out"),
+    ("other-adapter-only", "mutation-other-adapter", "app.ts: ts adapter registered",
+     "CI: mutation not measured: other-language adapters are not invoked by this run: app.ts: ts adapter registered"),
+])
+def test_ci_skip_reason_133(kind, fingerprint, description, expected):
+    from code_forge.machine import _ci_skip_reason
+
+    findings = [_skip(fingerprint="mutation-other-adapter", description="o"),
+                _skip(fingerprint=fingerprint, description=description)]
+    if kind == "other-adapter-only":
+        findings = findings[1:]
+    assert _ci_skip_reason(kind, findings) == expected
+
+
+def _native_skip_runner(fingerprint, description, infra, evidence_extra):
+    """A native-identity runner: patches run_mutation's inner result."""
+    def inner(*_args, _evidence=None, **_kwargs):
+        _evidence.update(evidence_extra)
+        return [_skip(fingerprint=fingerprint, description=description)], list(infra)
+    return inner
+
+
+_NATIVE_133 = [
+    ("mutation-unavailable", "mutmut not installed (soft dependency)", [], {},
+     "CI: mutation not measured: mutmut not installed (soft dependency)"),
+    ("mutation-probe-timeout", "mutmut import probe timed out in baseline test env; x", [], {},
+     "CI: mutation not measured: mutmut import probe timed out in baseline test env"),
+    ("mutation-no-mutants", "mutmut generated no mutants; no mutation measurement was made", [],
+     {"results_sha256": "r", "metadata_sha256": "m"}, "CI: mutation not measured: mutmut generated no mutants"),
+    ("mutation-results-timeout", "mutmut results timed out", [],
+     {"metadata_sha256": "m", "inventory": {"calc.x__mutmut_1": "pending"}},
+     "CI: mutation not measured: mutmut results timed out"),
+    ("mutation-other-adapter", "app.ts: ts adapter registered", [_OTHER_INFRA], {},
+     "CI: mutation not measured: other-language adapters are not invoked by this run: app.ts: ts adapter registered"),
+]
+
+
+@pytest.mark.parametrize("fingerprint,description,infra,extra,reason", _NATIVE_133)
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_native_133_skips_have_accurate_reason(ci_project, monkeypatch, mode, fingerprint, description, infra, extra, reason):
+    p = ci_project
+    monkeypatch.setattr(mutation, "_run_mutation", _native_skip_runner(fingerprint, description, infra, extra))
+    machine = (_machine(p, runner=mutation.run_mutation) if mode is Mode.CI
+               else _local_machine(p, runner=mutation.run_mutation))
+    findings = machine._run_l2_phase()
+    assert [f.fingerprint for f in findings] == [fingerprint]
+    errors = machine._state.infra_errors
+    assert not any("invalid bound mutation measurement" in e for e in errors)
+    if mode is Mode.CI:
+        assert machine._mutation_bound_failure is True
+        assert reason in errors
+    else:
+        assert machine._mutation_bound_failure is False
+        assert not any(e.startswith("CI: mutation not measured") for e in errors)
+        assert all(f.disposition is Disposition.DISMISSED for f in findings)
+
+
+# --- #136: orphan mutation container -----------------------------------------
+
+
+def _orphan(p, kind="config"):
+    container = p.root / ".code-forge" / f"mutation-empty-{kind}"
+    container.mkdir()
+    return container
+
+
+@pytest.mark.parametrize("kind", ["config", "mirror"])
+def test_ci_orphan_container_fails_with_path_and_recovery(ci_project, kind):
+    p = ci_project
+    container = _orphan(p, kind)
+    machine = _machine(p, runner=mutation.run_mutation)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    reasons = [e for e in saved.infra_errors
+               if e.startswith("L2: mutation not measured: orphan mutation container")]
+    assert len(reasons) == 1
+    assert str(container) in reasons[0] and "aside" in reasons[0]
+    assert container.is_dir(), "orphan must never be deleted automatically"
+
+
+def test_local_orphan_container_stops_after_one_round(ci_project):
+    from code_forge.machine import TimeoutBreaker
+
+    p = ci_project
+    container = _orphan(p)
+    machine = _local_machine(p, runner=mutation.run_mutation)
+    rounds = []
+    original = machine._execute_round
+
+    def counted(index):
+        rounds.append(index)
+        return original(index)
+
+    machine._execute_round = counted
+    with pytest.raises(TimeoutBreaker, match="mutation workspace needs manual recovery") as caught:
+        machine.run()
+    assert str(container) in str(caught.value)
+    assert len(rounds) == 1
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert saved.verdict is Verdict.FAIL
+    assert not any(e.startswith("tiered-reset") for e in saved.infra_errors)
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    assert container.is_dir()

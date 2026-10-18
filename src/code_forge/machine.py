@@ -58,6 +58,7 @@ from .ledger import (
     append_row as ledger_append,
 )
 from .llm_invoke import FalsifyProtocolError, InvalidJSONResponseError, LLMInvokeError, Usage
+from ._mutation_workspace import ORPHAN_CONTAINER_MARKER
 from .mutation import (
     launch_detached_mutation, capture_mutation_source_guard, mutation_source_guard_matches,
     executable_review_sources, is_native_mutation_runner, mutation_review_admission_error,
@@ -348,8 +349,16 @@ def _clean_mutation_skip_kind(
     - ``"not-applicable"`` (#127): only ``mutation-no-adapter`` /
       ``mutation-tests-only`` skips and no infra lines at all.
 
+    - ``"other-adapter-only"`` (#133): only a ``mutation-other-adapter`` note
+      with exactly its own infra line. Ambiguous (real code in another
+      language), so CI still FAILs, with an accurate reason.
+    - ``"unavailable"`` / ``"probe-timeout"`` / ``"no-mutants"`` /
+      ``"results-timeout"`` (#133): one skip kind, no infra lines; only
+      no-mutants may carry results evidence (with an empty inventory) and only
+      results-timeout may carry generated-mutant evidence.
+
     The mixed-language ``mutation-other-adapter`` note (no infra line of its
-    own) may accompany either baseline kind. Anything else -- a changed source,
+    own) may accompany any single skip kind. Anything else -- a changed source,
     a measurement that claims completion, mutant-phase evidence, survivors,
     mixed kinds, extra or reordered infra errors, or any cleanup / cancellation
     / process-failure marker -- returns None and still fails closed.
@@ -358,9 +367,7 @@ def _clean_mutation_skip_kind(
         return None
     if any(f.id != "MUTATION_SKIPPED" or f.disposition is not Disposition.DISMISSED for f in findings):
         return None
-    if any(key in evidence for key in _FAILURE_EVIDENCE_KEYS + _MUTANT_PHASE_KEYS):
-        return None
-    if evidence.get("inventory", {}) != {}:
+    if any(key in evidence for key in _FAILURE_EVIDENCE_KEYS):
         return None
     # Same default as decode_mutation_survivor_details: run_mutation records
     # cleanup_complete only on a failed teardown, so absent means complete.
@@ -368,14 +375,46 @@ def _clean_mutation_skip_kind(
     if evidence.get("cancelled", False) is not False or evidence.get("cleanup_complete", True) is not True:
         return None
     kinds = {f.fingerprint for f in findings}
+    mutant_phase = any(key in evidence for key in _MUTANT_PHASE_KEYS)
+    inventory = evidence.get("inventory", {})
     if kinds <= {"mutation-no-adapter", "mutation-tests-only"}:
-        return "not-applicable" if list(infra) == [] else None
-    for fingerprint, kind in (("mutation-baseline-timeout", "baseline-timeout"),
-                              ("mutation-flaky", "baseline-failed")):
+        ok = list(infra) == [] and not mutant_phase and inventory == {}
+        return "not-applicable" if ok else None
+    if kinds == {"mutation-other-adapter"}:
+        # #133: other-language code with a registered but uninvoked adapter.
+        ok = list(infra) == [_OTHER_ADAPTER_INFRA] and not mutant_phase and inventory == {}
+        return "other-adapter-only" if ok else None
+    for fingerprint, (kind, infra_rule, phase) in _SKIP_KINDS.items():
         primary = [f for f in findings if f.fingerprint == fingerprint]
-        if primary and kinds <= {fingerprint, "mutation-other-adapter"}:
-            return kind if list(infra) == [f.description for f in primary] else None
+        if not primary or not kinds <= {fingerprint, "mutation-other-adapter"}:
+            continue
+        expected = [f.description for f in primary] if infra_rule == "descriptions" else []
+        if list(infra) != expected:
+            return None
+        if phase == "none" and (mutant_phase or inventory != {}):
+            return None
+        if phase == "results" and ("results_sha256" not in evidence or inventory != {}):
+            return None
+        # "generated": mutants exist but results never arrived; any inventory.
+        if phase == "generated" and "results_sha256" in evidence:
+            return None
+        return kind
     return None
+
+
+_OTHER_ADAPTER_INFRA = "diff has no Python files; other adapters are registered but not invoked here"
+
+# fingerprint -> (kind, infra rule, allowed mutant-phase evidence). #120/#127/#133.
+_SKIP_KINDS = {
+    "mutation-baseline-timeout": ("baseline-timeout", "descriptions", "none"),
+    "mutation-flaky": ("baseline-failed", "descriptions", "none"),
+    "mutation-unavailable": ("unavailable", "empty", "none"),
+    "mutation-probe-timeout": ("probe-timeout", "empty", "none"),
+    "mutation-no-mutants": ("no-mutants", "empty", "results"),
+    "mutation-results-timeout": ("results-timeout", "empty", "generated"),
+}
+_SKIP_KIND_FINGERPRINT = {kind: fp for fp, (kind, _r, _p) in _SKIP_KINDS.items()}
+_SKIP_KIND_FINGERPRINT["other-adapter-only"] = "mutation-other-adapter"
 
 
 # Single switch for the owner's pending docs-only policy (#127/#132): when
@@ -591,7 +630,18 @@ def _baseline_failed_reason(findings: list) -> str:
 
 
 def _ci_skip_reason(kind: str, findings: list) -> str:
-    return _baseline_timeout_reason(findings) if kind == "baseline-timeout" else _baseline_failed_reason(findings)
+    if kind == "baseline-timeout":
+        return _baseline_timeout_reason(findings)
+    if kind == "baseline-failed":
+        return _baseline_failed_reason(findings)
+    fingerprint = _SKIP_KIND_FINGERPRINT[kind]
+    for finding in findings:
+        if finding.fingerprint == fingerprint and finding.description.strip():
+            detail = finding.description.strip().split("; ")[0][:300]
+            if kind == "other-adapter-only":
+                detail = "other-language adapters are not invoked by this run: " + detail
+            return "CI: mutation not measured: " + detail
+    return "CI: mutation not measured: " + kind
 
 
 @dataclass
@@ -722,6 +772,7 @@ class StateMachine:
         self._mutation_source_guard = None
         self._mutation_bound_failure = False
         self._mutation_not_applicable = False
+        self._mutation_workspace_blocker: str | None = None
         self._mutation_timeout_objects: set[int] = set()
         self._mutation_timeout_emitted: set[str] = set()
 
@@ -1728,6 +1779,15 @@ class StateMachine:
             self._persist_state()
             self._start_host_execution()
             self._execute_round(round_index)
+            if self._mutation_workspace_blocker is not None:
+                # #136: a deterministic workspace blocker cannot clear by
+                # itself; stop with persisted non-PASS rather than loop.
+                self._state.verdict = Verdict.FAIL
+                self._state.converged = False
+                self._persist_state()
+                raise TimeoutBreaker(
+                    "mutation workspace needs manual recovery: " + self._mutation_workspace_blocker
+                )
 
             _fp = self._fixpoint_reached()
             if _fp == _FixpointResult.CYCLE_RESTART:
@@ -2248,6 +2308,7 @@ class StateMachine:
         self._mutation_measurement_eligible = False
         self._mutation_bound_failure = False
         self._mutation_not_applicable = False
+        self._mutation_workspace_blocker = None
         self._mutation_timeout_objects = set()
         source_before = False
         if self.mode in (Mode.LOCAL, Mode.CI):
@@ -2344,7 +2405,14 @@ class StateMachine:
                     if kind is None:
                         self._mutation_bound_failure = True
                         linked = _symlinked_files(diff_files, self._source_root())
-                        if linked:
+                        orphan = next((e for e in l2_infra if ORPHAN_CONTAINER_MARKER in e), None)
+                        if orphan is not None:
+                            # #136: name the orphan and its manual recovery; the
+                            # local loop stops after this round instead of
+                            # tier-resetting until the round cap.
+                            self._mutation_workspace_blocker = orphan
+                            self._state.infra_errors.append("L2: mutation not measured: " + orphan)
+                        elif linked:
                             # #132 P3: fail closed, but name the real cause.
                             prefix = "CI" if self.mode == Mode.CI else "L2"
                             self._state.infra_errors.append(

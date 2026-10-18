@@ -87,6 +87,16 @@ def _foreign_container(root):
     return container
 
 
+def _orphan_message(root):
+    """#136: the refusal names the orphan path and the manual recovery."""
+    path = root / ".code-forge" / "mutation-empty-mirror"
+    return (
+        f"orphan mutation container has no completed ownership record: {path}; it is not "
+        "removed automatically because another run may own it. Recovery: make sure no "
+        f"code-forge run is active on this worktree, then move {path} aside and retry"
+    )
+
+
 def test_owned_preflight_refusal_has_no_executed_authority(tmp_path):
     container = _foreign_container(tmp_path)
     original = container.stat()
@@ -102,7 +112,7 @@ def test_owned_preflight_refusal_has_no_executed_authority(tmp_path):
     command.assert_not_called()
     assert len(findings) == 1
     finding = findings[0]
-    message = "foreign mutation container has no completed ownership record"
+    message = _orphan_message(tmp_path)
     assert finding.id == "MUTATION_ERROR"
     assert finding.fingerprint == "mutation-evidence-error"
     assert finding.disposition == Disposition.CONFIRMED
@@ -159,7 +169,7 @@ def test_detached_owned_preflight_preserves_error_contract(tmp_path, run_detache
     baseline.assert_not_called()
     command.assert_not_called()
     data = json.loads(result_path.read_text())
-    message = "foreign mutation container has no completed ownership record"
+    message = _orphan_message(tmp_path)
     assert data["status"] == "error"
     assert data["baseline_passed"] is False
     assert data["survivors"] == []
