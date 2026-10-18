@@ -518,7 +518,8 @@ def _trusted_test_block(workspace: Path) -> dict:
     try:
         head = subprocess.run(
             ["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=str(workspace),
-            capture_output=True, text=True, timeout=10, check=False, stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, encoding="utf-8", timeout=10, check=False,
+            stdin=subprocess.DEVNULL,
         ).stdout.strip() or None
     except (OSError, subprocess.TimeoutExpired):
         head = None
