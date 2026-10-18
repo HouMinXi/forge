@@ -390,3 +390,61 @@ def test_real_pytest_run_printing_runner_text_under_venv_is_not_retried(tmp_path
     assert len(calls) == 1 and "No module named pytest" in calls[0].stdout
     assert "1 failed, 1 passed" in calls[0].stdout
     assert status == "skip" and "baseline failed" in findings[0].description
+
+
+# --- #164: runner text printed by a test that then crashed (-q -s) -----------
+
+
+def _completed(stdout, stderr, code=3):
+    import subprocess
+
+    return subprocess.CompletedProcess(["python", "-m", "pytest"], code, stdout, stderr)
+
+
+def test_runner_text_on_stdout_from_a_crashed_quiet_session_is_not_runner_missing():
+    from code_forge.baseline_guard import _is_runner_missing
+
+    # python -m pytest -q -s; a test prints the text, then os._exit(3).
+    result = _completed("/usr/bin/python3: No module named pytest\n", "")
+    assert _is_runner_missing(["python", "-m", "pytest", "-q", "-s"], result, None) is False
+
+
+def test_runner_text_on_stderr_without_a_session_is_runner_missing():
+    from code_forge.baseline_guard import _is_runner_missing
+
+    for text in ("/venv/bin/python: No module named pytest\n", "No module named 'pytest'\n"):
+        assert _is_runner_missing(["python", "-m", "pytest"], _completed("", text, 1), None) is True
+
+
+def test_progress_line_counts_as_session_evidence():
+    from code_forge.baseline_guard import _is_runner_missing, _session_ran
+
+    assert _session_ran("..F.s                                    [ 40%]\n")
+    assert _session_ran(".....  [100%]\n")
+    assert not _session_ran("loading [config]\n")
+    # A session that printed progress, then a test wrote the text to stderr and crashed.
+    result = _completed(".....  [ 50%]\n", "No module named pytest\n")
+    assert _is_runner_missing(["python", "-m", "pytest", "-q"], result, None) is False
+
+
+def test_crashed_quiet_session_end_to_end_is_not_a_strip_retry(tmp_path):
+    """The issue's probe through the real guard and a real pytest child."""
+    import sys
+
+    import os
+
+    from code_forge.baseline_guard import _run_baseline_guard
+
+    (tmp_path / "test_crash.py").write_text(
+        "import os\n"
+        "def test_crash():\n"
+        "    print('/usr/bin/python3: No module named pytest', flush=True)\n"
+        "    os._exit(3)\n",
+        encoding="utf-8",
+    )
+    env = {**os.environ, "VIRTUAL_ENV": str(tmp_path / "venv")}
+    outcome = _run_baseline_guard(
+        [sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "test_crash.py"],
+        env, str(tmp_path), timeout=60, allow_strip_retry=True,
+    )
+    assert outcome[0] != "needs_strip_retry"
