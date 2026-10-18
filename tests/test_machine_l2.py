@@ -286,8 +286,15 @@ class TestL2RunnerException:
             l0_runner=mock_l0,
             l2_runner=mock_l2,
         )
-        verdict = machine.run()
-        assert verdict == Verdict.PASS
+        # #114 (user decision, option 2): an L2 runner crash is a mutation
+        # infra error. It earns no clean credit, and a crash in every round
+        # ends the run with the dedicated breaker, not a PASS.
+        from code_forge.machine import TimeoutBreaker
+
+        with pytest.raises(TimeoutBreaker, match="mutation infrastructure error"):
+            machine.run()
+        assert machine._state.verdict == Verdict.FAIL
+        assert machine._state.consecutive_clean_rounds == 0
         assert any("L2 runner failed" in e for e in machine._state.infra_errors)
 
 
