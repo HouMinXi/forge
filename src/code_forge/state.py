@@ -89,6 +89,9 @@ class FindingDiagnosticKind(str, Enum):
 
     PROVIDER_CAPACITY = "provider-capacity"
     CAPACITY_INCOMPLETE = "capacity-incomplete"
+    # #114: the L2 mutation layer failed for infrastructure reasons. No
+    # clean credit for the round, but not a product defect either.
+    MUTATION_INFRA = "mutation-infra"
 
 
 @dataclass
@@ -249,9 +252,23 @@ def is_provider_diagnostic(finding: StateFinding) -> bool:
     )
 
 
+def is_mutation_infra_diagnostic(finding: StateFinding) -> bool:
+    """#114: the host-typed L2 infrastructure error (never a product finding)."""
+    return (
+        type(finding.diagnostic_kind) is FindingDiagnosticKind
+        and finding.diagnostic_kind is FindingDiagnosticKind.MUTATION_INFRA
+        and finding.id == "MUTATION_ERROR"
+        and finding.fingerprint == "mutation-evidence-error"
+        and finding.source == "INFRA"
+    )
+
+
 def reporting_product_findings(findings: list[StateFinding]) -> list[StateFinding]:
     """Shared product projection; raw findings remain available for diagnosis."""
-    return [f for f in findings if not is_receipt_audit(f) and not is_provider_diagnostic(f)]
+    return [
+        f for f in findings
+        if not is_receipt_audit(f) and not is_provider_diagnostic(f) and not is_mutation_infra_diagnostic(f)
+    ]
 
 
 def derive_pass_outcomes(
@@ -359,6 +376,7 @@ class State:
     # Rounds where the falsifier could not reach its backend. Persisted
     # for the same reason as the field above.
     rounds_with_falsify_infra: int = 0  # Current failure also blocks CI PASS.
+    rounds_with_mutation_infra: int = 0  # #114: consecutive L2 infra rounds; blocks CI PASS.
     # Consecutive rounds with host evidence downgrades (#46); blocks CI PASS.
     rounds_with_evidence_incomplete: int = 0
     # 08-02 additions: cost tracking fields (CLI-08)
@@ -777,6 +795,7 @@ def load_state(path: Path) -> State | None:
         validate_round_history(state.round_history, state.round)
     state.rounds_with_failed_pass = data.get("rounds_with_failed_pass", 0)
     state.rounds_with_falsify_infra = data.get("rounds_with_falsify_infra", 0)
+    state.rounds_with_mutation_infra = data.get("rounds_with_mutation_infra", 0)
     state.rounds_with_evidence_incomplete = data.get("rounds_with_evidence_incomplete", 0)
 
     # 08-02 additions: backward-compat defaults for pre-08-02 state.json.
@@ -879,6 +898,7 @@ def save_state(state: State, path: Path) -> None:
         "consecutive_clean_rounds": state.consecutive_clean_rounds,
         "rounds_with_failed_pass": state.rounds_with_failed_pass,
         "rounds_with_falsify_infra": state.rounds_with_falsify_infra,
+        "rounds_with_mutation_infra": state.rounds_with_mutation_infra,
         "rounds_with_evidence_incomplete": state.rounds_with_evidence_incomplete,
         "cost": {
             "total_input_tokens": state.cost_total_input,
