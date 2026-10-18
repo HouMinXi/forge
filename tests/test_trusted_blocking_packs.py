@@ -336,3 +336,27 @@ def test_ci_refused_baseline_pack_keeps_the_infra_note_only(tmp_path, semgrep):
     m = _machine(repo, _git(repo, "rev-parse", "HEAD"))
     assert _blocking(m) == []
     assert m._trusted_config_refusal is None
+
+
+def test_duplicated_local_pack_name_still_blocks(tmp_path, semgrep):
+    # #177: rulepacks: [mypack, mypack] used to refuse every trusted pack.
+    repo, base = _repo(tmp_path, gate=dict(GATE, rulepacks=["mypack", "mypack"]))
+    m = _machine(repo, base)
+    assert _blocking(m), m._state.infra_errors
+    assert not any("refused" in e for e in m._state.infra_errors), m._state.infra_errors
+
+
+def test_baseline_show_timeout_is_a_reported_refusal(tmp_path, semgrep, monkeypatch):
+    # #177: a git show timeout while reading a pack is an infra error, not a crash.
+    repo, base = _repo(tmp_path)
+    real = gate_check.subprocess.run
+
+    def run(argv, **kw):
+        if argv[:2] == ["git", "show"] and "packs" in argv[2]:
+            raise subprocess.TimeoutExpired(argv, 10)
+        return real(argv, **kw)
+
+    monkeypatch.setattr(gate_check.subprocess, "run", run)
+    m = _machine(repo, base)
+    assert _blocking(m) == [] and semgrep == []
+    assert any("timed out" in e and "refusing pack mypack" in e for e in m._state.infra_errors), m._state.infra_errors

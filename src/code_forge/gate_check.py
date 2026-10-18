@@ -1548,10 +1548,16 @@ def _baseline_pack_files(source_root, base_sha: str, name: str) -> dict[str, byt
         path = f"{pack}/{fname}"
         if path not in modes:
             continue  # load_pack reports the missing file
-        shown = subprocess.run(
-            ["git", "show", f"{base_sha}:./{path}"], cwd=str(source_root),
-            capture_output=True, timeout=10, check=False,
-        )
+        try:
+            shown = subprocess.run(
+                ["git", "show", f"{base_sha}:./{path}"], cwd=str(source_root),
+                capture_output=True, timeout=10, check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # #177: a reported refusal (infra error), not a crash of the round.
+            raise UntrustedGateConfigError(
+                f"git show {base_sha}:./{path} timed out after {exc.timeout}s; refusing pack {name}"
+            ) from exc
         if shown.returncode != 0:
             raise UntrustedGateConfigError(
                 f"git show {base_sha}:./{path} failed (exit {shown.returncode}); refusing pack {name}"
