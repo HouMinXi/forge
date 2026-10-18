@@ -455,6 +455,23 @@ def test_ci_outside_root_hardlinked_to_the_tree_gate_is_refused(tmp_path):
         os.link(repo / ".code-forge", tmp_path / "dir-hardlink")
 
 
+def test_ci_outside_root_hardlinked_to_a_pr_added_file_is_refused(tmp_path):
+    """A PR adds evil.yaml (valid gate content) elsewhere and hardlinks it
+    into the outside root -- refuse any checkout inode, not only gate.yaml."""
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    evil = repo / "evil.yaml"
+    evil.write_text(yaml.safe_dump({"test": {"command": PR_CMD, "timeout_seconds": 999}}), encoding="utf-8")
+    _git(repo, "add", "evil.yaml")
+    outside = tmp_path / "evil-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    os.link(evil, outside / ".code-forge" / "gate.yaml")
+    machine = _machine(repo, base, mode=Mode.CI)
+    machine.test_config_root = outside
+    assert _l2_calls(machine) == []
+    assert any("is a hardlink of a file in the reviewed checkout" in e
+               for e in machine._state.infra_errors), machine._state.infra_errors
+
+
 def test_outside_root_resolving_into_the_tree_is_refused(tmp_path):
     """Pins the outside-root realpath check behind the islink checks: a
     config root path that is itself a symlink to a directory in the tree."""

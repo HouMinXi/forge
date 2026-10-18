@@ -291,6 +291,36 @@ def _regular_file_inode(path) -> tuple[int, int] | None:
     return (info.st_dev, info.st_ino)
 
 
+def _checkout_regular_file_inodes(source_root) -> frozenset[tuple[int, int]]:
+    """Inodes of regular files under the checkout that an outside gate.yaml
+    must not hardlink. Uses ``git ls-files -z`` (tracked paths, no tree walk)
+    plus a shallow, non-following scan of ``.code-forge/`` (often gitignored).
+    Directories cannot be hardlinked on Linux."""
+    root = Path(source_root)
+    inodes: set[tuple[int, int]] = set()
+    listed = _git_out(root, "ls-files", "-z")
+    if listed.returncode == 0:
+        for rel in listed.stdout.split("\0"):
+            if not rel or rel.endswith("/"):
+                continue
+            inode = _regular_file_inode(root / rel)
+            if inode is not None:
+                inodes.add(inode)
+    forge = root / ".code-forge"
+    if forge.is_dir() and not forge.is_symlink():
+        try:
+            with os.scandir(forge) as scan:
+                for entry in scan:
+                    if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                        continue
+                    inode = _regular_file_inode(entry.path)
+                    if inode is not None:
+                        inodes.add(inode)
+        except OSError:
+            pass
+    return frozenset(inodes)
+
+
 def _read_gate_nofollow(root, *, refuse_inodes: frozenset[tuple[int, int]] | None = None) -> str:
     """Read ``<root>/.code-forge/gate.yaml`` without following a symlink at
     either component: ``.code-forge`` is opened dir-relative with O_NOFOLLOW
@@ -299,8 +329,8 @@ def _read_gate_nofollow(root, *, refuse_inodes: frozenset[tuple[int, int]] | Non
 
     ``refuse_inodes`` (optional) is a set of (st_dev, st_ino) the opened fd
     must not match -- used by an outside config root to refuse a hardlink of
-    the in-tree gate.yaml (symlinks and realpath already catch the other
-    lead-backs; directories cannot be hardlinked)."""
+    any regular file under the checkout (symlinks and realpath already catch
+    the other lead-backs; directories cannot be hardlinked)."""
     import errno
     import stat
 
@@ -346,12 +376,13 @@ def _load_gate_nofollow(root, *, refuse_inodes: frozenset[tuple[int, int]] | Non
 def _load_outside_gate(config_root, source_root) -> dict:
     """An explicit config root outside the checkout: refuse a symlinked
     .code-forge/gate.yaml or one whose real path lands inside the checkout,
-    refuse a hardlink of the in-tree gate.yaml, then read with O_NOFOLLOW.
+    refuse a hardlink of any regular file under the checkout, then read with
+    O_NOFOLLOW.
 
     Directories cannot be hardlinked on Linux (link(2) returns EPERM), so a
-    .code-forge directory hardlink is not a case to handle. Refusing every
-    inode under the checkout would need a tree walk; matching the in-tree
-    gate.yaml inode is the cheap required check (the PR-controlled file)."""
+    .code-forge directory hardlink is not a case. Checkout inodes come from
+    ``git ls-files -z`` plus a shallow ``.code-forge/`` scan -- no recursive
+    walk of the tree."""
     root = Path(config_root)
     for rel in (".code-forge", ".code-forge/gate.yaml"):
         if os.path.islink(root / rel):
@@ -365,11 +396,7 @@ def _load_outside_gate(config_root, source_root) -> dict:
         raise UntrustedGateConfigError(
             f"test config root {root} resolves into the reviewed checkout ({real})"
         )
-    refuse: set[tuple[int, int]] = set()
-    in_tree = _regular_file_inode(Path(source_root) / ".code-forge" / "gate.yaml")
-    if in_tree is not None:
-        refuse.add(in_tree)
-    return _load_gate_nofollow(root, refuse_inodes=frozenset(refuse))
+    return _load_gate_nofollow(root, refuse_inodes=_checkout_regular_file_inodes(source_root))
 
 
 def load_trusted_gate_config(
