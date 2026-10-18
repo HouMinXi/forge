@@ -1532,3 +1532,33 @@ def test_cache_snapshot_detects_races_with_frozen_timestamps(tmp_path, monkeypat
     with pytest.raises(MutationWorkspaceError, match="changed while snapshotting"):
         workspace.acquire()
     assert changed and workspace.lock_fd is None
+
+
+def test_cache_snapshot_detects_same_size_rewrite_with_frozen_fstat(tmp_path, monkeypatch):
+    """#239: an in-place same-size rewrite within one timestamp tick leaves
+    every fstat field unchanged; the bytes must still be confirmed."""
+    cache = _cache(tmp_path)
+    workspace = MutationWorkspace(str(tmp_path))
+    target = cache / "cached/original.bin"
+    original_fstat, original_read = os.fstat, os.read
+    frozen = {}
+    changed = []
+
+    def fstat(fd):
+        info = original_fstat(fd)
+        return frozen.setdefault((info.st_dev, info.st_ino), info)
+
+    def race_read(fd, size):
+        value = original_read(fd, size)
+        if value and not changed and original_fstat(fd).st_ino == target.stat().st_ino:
+            data = target.read_bytes()
+            with open(target, "r+b") as handle:  # same inode, same size
+                handle.write(bytes(len(data)))
+            changed.append(True)
+        return value
+
+    monkeypatch.setattr(os, "fstat", fstat)
+    monkeypatch.setattr(os, "read", race_read)
+    with pytest.raises(MutationWorkspaceError, match="cache bytes changed while snapshotting"):
+        workspace.acquire()
+    assert changed and workspace.lock_fd is None
