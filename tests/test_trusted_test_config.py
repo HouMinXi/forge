@@ -1093,3 +1093,59 @@ def test_ci_outside_gate_without_a_test_section_is_not_malformed(tmp_path):
     (outside / GATE).write_text("rulepacks: []\n", encoding="utf-8")
     with pytest.raises(GateWithoutTestSection):
         load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+
+
+def _baseline_gate(tmp_path, text):
+    repo, _ = _repo(tmp_path, gate_at_base=True)
+    (repo / GATE).write_text(text, encoding="utf-8")
+    _git(repo, "commit", "-qam", "baseline gate")
+    return repo, _git(repo, "rev-parse", "HEAD")
+
+
+_INVALID = ["test: [unclosed\n", "test: {timeout_seconds: 5}\n", "- just\n- a list\n"]
+
+
+@pytest.mark.parametrize("text", _INVALID, ids=["yaml", "no-command", "not-mapping"])
+def test_invalid_baseline_gate_is_typed(tmp_path, text):
+    """#191: an invalid trusted baseline gate is BaselineGateInvalid."""
+    from code_forge.gate_check import BaselineGateInvalid
+
+    repo, base = _baseline_gate(tmp_path, text)
+    with pytest.raises(BaselineGateInvalid, match="invalid gate.yaml at review baseline"):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
+
+
+def test_baseline_gate_without_test_section_stays_not_configured(tmp_path):
+    """User decision: a gate with no test section is not malformed."""
+    from code_forge.gate_check import BaselineGateInvalid
+
+    repo, base = _baseline_gate(tmp_path, "rulepacks: []\n")
+    with pytest.raises(ValueError) as error:
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
+    assert not isinstance(error.value, BaselineGateInvalid)
+
+
+@pytest.mark.parametrize("text,verdict", [*((t, "FAIL") for t in _INVALID[:2]), ("rulepacks: []\n", "PASS")],
+                         ids=["yaml", "no-command", "no-test-section"])
+def test_ci_invalid_baseline_gate_fails_like_an_outside_root(tmp_path, monkeypatch, text, verdict):
+    """#191: CI FAILs with the reason; mutation was not measured."""
+    repo, base = _baseline_gate(tmp_path, text)
+    machine = _machine(repo, base, mode=Mode.CI)
+    monkeypatch.setattr(mutation.shutil, "which", lambda name: "/tools/mutmut")
+    monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
+    assert machine._run_ci().name == verdict, machine._state.infra_errors
+    if verdict == "FAIL":
+        assert any(e.startswith("CI: mutation not measured -- invalid gate.yaml at review baseline")
+                   for e in machine._state.infra_errors), machine._state.infra_errors
+
+
+@pytest.mark.parametrize("text", _INVALID, ids=["yaml", "no-command", "not-mapping"])
+def test_ci_inline_l2_invalid_baseline_gate_fails_with_the_reason(tmp_path, text):
+    """#199: the inline L2 path FAILs with the accurate reason too, with a
+    non-native runner (no reliance on `native`)."""
+    repo, base = _baseline_gate(tmp_path, text)
+    machine = _machine(repo, base, mode=Mode.CI)
+    assert _l2_calls(machine) == []
+    assert machine._mutation_bound_failure is True
+    assert any(e.startswith("CI: mutation not measured -- invalid gate.yaml at review baseline")
+               for e in machine._state.infra_errors), machine._state.infra_errors
