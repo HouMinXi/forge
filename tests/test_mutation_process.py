@@ -1122,7 +1122,7 @@ def test_owner_report_and_wrapper_cancellation_are_fail_closed(monkeypatch, case
         if case == "owner-stuck":
             assert isinstance(captured.value.cleanup_error, process.MutationProcessError)
     if len(calls) == 2:
-        assert calls[1][1]["timeout"] == process._CLEANUP_SECONDS + 2
+        assert calls[1][1]["timeout"] == process._INTERRUPT_DRAIN_SECONDS
 
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
@@ -1902,7 +1902,79 @@ def test_outer_deadline_covers_owner_cleanup_and_report(monkeypatch):
                                       "owned": [], "stdout": "", "stderr": ""})
     with pytest.raises(subprocess.TimeoutExpired):
         process.run_owned_command(["pytest"], timeout=900)
-    # Both cleanup() calls share one _CLEANUP_SECONDS window, but each poll can
+    # Both cleanup() calls share one (tree-scaled, capped) cleanup window, but each poll can
     # run long on a large tree; the outer wait must leave real slack (#116).
-    assert owner.timeouts[0] == 900 + 2 * process._CLEANUP_SECONDS + process._OWNER_REPORT_SLACK
+    assert owner.timeouts[0] == 900 + 2 * process._CLEANUP_MAX_SECONDS + process._OWNER_REPORT_SLACK
     assert owner.timeouts[0] >= 900 + 40
+
+
+# --- #121: cleanup budget scales with the discovered tree, capped ------------
+
+
+@pytest.mark.parametrize("n,budget", [(0, 5.0), (1, 5.01), (1000, 15.0), (3000, 30.0), (100000, 30.0)])
+def test_cleanup_budget_scales_with_tree_and_is_capped(n, budget):
+    assert process._cleanup_budget(n) == pytest.approx(budget)
+
+
+def _slow_tree(monkeypatch, processes, finish_at, poll_cost=1.0):
+    """A tree of ``processes`` fake descendants whose polls each cost
+    ``poll_cost`` seconds; everything is gone once time reaches ``finish_at``."""
+    tree = process._OwnedTree()
+    now = {"t": 0.0}
+
+    def monotonic():
+        return now["t"]
+
+    def discover():
+        now["t"] += poll_cost
+        for pid in range(10_000, 10_000 + processes):
+            tree.identities.setdefault(pid, tree.owner)
+
+    monkeypatch.setattr(process.time, "monotonic", monotonic)
+    monkeypatch.setattr(process.time, "sleep", lambda _: None)
+    monkeypatch.setattr(tree, "discover", discover)
+    monkeypatch.setattr(tree, "reap", lambda driver: None)
+    monkeypatch.setattr(tree, "live", lambda: [] if now["t"] >= finish_at else [1])
+    monkeypatch.setattr(tree, "signal", lambda pid, sig: None)
+    monkeypatch.setattr(process, "_children", lambda _: [] if now["t"] >= finish_at else [1])
+    return tree, type("Driver", (), {"returncode": 0})()
+
+
+def test_large_slow_tree_finishes_cleanup_past_the_base_budget(monkeypatch):
+    tree, driver = _slow_tree(monkeypatch, processes=3000, finish_at=12.0)
+    assert tree.cleanup(driver)
+    assert tree.cleanup_deadline == pytest.approx(process._CLEANUP_MAX_SECONDS)
+
+
+def test_small_tree_keeps_the_base_budget(monkeypatch):
+    tree, driver = _slow_tree(monkeypatch, processes=0, finish_at=12.0)
+    assert not tree.cleanup(driver)
+    assert tree.cleanup_deadline == pytest.approx(process._CLEANUP_SECONDS)
+
+
+def test_cleanup_deadline_grows_as_discovery_grows(monkeypatch):
+    tree, driver = _slow_tree(monkeypatch, processes=0, finish_at=99.0)
+    real_discover = tree.discover
+    calls = {"n": 0}
+
+    def discover():
+        real_discover()
+        calls["n"] += 1
+        if calls["n"] == 2:  # a burst of descendants appears mid-cleanup
+            for pid in range(20_000, 21_000):
+                tree.identities[pid] = tree.owner
+
+    monkeypatch.setattr(tree, "discover", discover)
+    assert not tree.cleanup(driver)
+    assert tree.cleanup_deadline == pytest.approx(process._cleanup_budget(1000))
+
+
+def test_preset_cleanup_deadline_is_not_extended(monkeypatch):
+    tree, driver = _slow_tree(monkeypatch, processes=3000, finish_at=12.0)
+    tree.cleanup_deadline = 3.0
+    assert not tree.cleanup(driver)
+    assert tree.cleanup_deadline == 3.0
+
+
+def test_outer_waits_cover_the_largest_cleanup_budget():
+    assert process._cleanup_budget(10**9) <= process._CLEANUP_MAX_SECONDS
