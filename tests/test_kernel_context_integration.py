@@ -172,7 +172,7 @@ def test_grouped_and_fallback_reuse_one_snapshot(pipeline, monkeypatch, grouped)
     )
     monkeypatch.setattr(
         "code_forge.diff_grouping.group_diff",
-        lambda *a: SimpleNamespace(groups=groups, cross_group_edges=[]),
+        lambda *a, **kw: SimpleNamespace(groups=groups, cross_group_edges=[]),
     )
     original = KernelContextSource._read_config
     reads = []
