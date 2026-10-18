@@ -379,6 +379,29 @@ def test_reflog_query_timeout_degrades_to_the_suites_change(repository, tmp_path
     assert session.exitstatus == 1
 
 
+def test_lookup_timeout_on_existing_ref_ignores_saved_foreign_writer(repository, tmp_path, monkeypatch, suite_guard):
+    """#43: the sessionstart writer stands in only for a ref that is gone.
+    An existing ref another session wrote at start, then moved by the suite,
+    whose reflog lookup times out at finish, stays the suite's (fatal)."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "other-session@example.invalid")
+    _git(repository, "branch", "shared")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    suite_guard.pytest_sessionstart(session)
+    assert session.config.stash[suite_guard._git_snapshot_key]["writers"]["refs/heads/shared"][1] == "other-session@example.invalid"
+    _git(repository, "update-ref", "refs/heads/shared", _git(repository, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit-tree", "-p", "HEAD", "-m", "x", "HEAD^{tree}"))
+    real = suite_guard._git_output
+
+    def slow(root, *args):
+        if args[:2] == ("log", "-g"):
+            raise subprocess.TimeoutExpired(["git", *args], 10)
+        return real(root, *args)
+
+    monkeypatch.setattr(suite_guard, "_git_output", slow)
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert session.exitstatus == 1
+
+
 def test_scrubbed_env_write_is_a_documented_note(repository, tmp_path, monkeypatch, capsys, suite_guard):
     """#201 pin: a branch written with every GIT_* variable dropped carries no
     session marker, so it is attributed to another session (documented gap in

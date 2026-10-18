@@ -270,7 +270,7 @@ def _writer_is_other(writer, identity):
     return bool(email) and email != identity and name != _SUITE_COMMITTER_NAME
 
 
-def _ref_made_by(repo_root, ref, identity, writers_before=None):
+def _ref_made_by(repo_root, ref, identity, writers_before=None, remaining=()):
     """True unless the change is attributable to another session.
 
     A remaining ref is judged by its newest reflog entry. A deleted ref has
@@ -295,7 +295,9 @@ def _ref_made_by(repo_root, ref, identity, writers_before=None):
     if not identity:
         return True
     writer = _last_writer(repo_root, ref)
-    if writer is None and writers_before is not None:
+    # #43: the sessionstart writer stands in only for a ref that is truly gone.
+    # A lookup failure on a ref that still exists leaves the writer unknown.
+    if writer is None and writers_before is not None and ref not in remaining:
         writer = writers_before.get(ref)
     return not _writer_is_other(writer, identity)
 
@@ -327,9 +329,10 @@ def pytest_sessionfinish(session, exitstatus):
     diffs = []
 
     own, foreign = _branch_changes(before, after)
+    remaining = {line.split(" ", 1)[0] for line in after["refs_heads"].splitlines() if line}
     others = {
         ref for ref in own
-        if not _ref_made_by(repo_root, ref, before.get("identity"), before.get("writers"))
+        if not _ref_made_by(repo_root, ref, before.get("identity"), before.get("writers"), remaining)
     }
     own, foreign = own - others, foreign | others
     for ref in sorted(foreign):
