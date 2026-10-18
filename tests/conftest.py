@@ -12,6 +12,17 @@ from pathlib import Path
 
 import pytest
 
+# A shell that backgrounds a command without job control (`cmd &`, nohup)
+# hands it SIGINT=SIG_IGN, and Python keeps that instead of installing
+# default_int_handler. llm_invoke chains to the disposition it finds at import
+# and rightly honours SIG_IGN, so every test that raises SIGINT and expects
+# KeyboardInterrupt fails in such a run. Restore the interactive default before
+# any code_forge module is imported.
+import signal as _signal
+
+if _signal.getsignal(_signal.SIGINT) == _signal.SIG_IGN:
+    _signal.signal(_signal.SIGINT, _signal.default_int_handler)
+
 import code_forge.mutation
 
 _git_snapshot_key = pytest.StashKey[dict]()
