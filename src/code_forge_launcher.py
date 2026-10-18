@@ -460,13 +460,14 @@ def _manifest(dist: metadata.Distribution, site_root: Path) -> tuple[Path, list[
 
 def _site_decodes_pth_as_utf8_sig() -> bool:
     """Whether this interpreter's ``site`` reads .pth files as UTF-8 (BOM
-    stripped) with a locale fallback. That is 3.13+, and also later 3.12
-    patch releases that backported it (3.12.15 does), so the version number
-    alone is wrong. Mirror the running interpreter's own ``site.addpackage``."""
+    stripped) with a locale fallback. Every 3.13+ release does (3.15 moved the
+    decode out of ``site.addpackage``, so no bytecode probe there). On 3.12
+    only later patch releases backported it (3.12.15 does), so probe that
+    interpreter's own ``site.addpackage`` (#232)."""
+    if sys.version_info >= (3, 13):
+        return True
     code = getattr(getattr(site, "addpackage", None), "__code__", None)
-    if code is None:
-        return sys.version_info >= (3, 13)
-    return "utf-8-sig" in code.co_consts
+    return code is not None and "utf-8-sig" in code.co_consts
 
 
 def _editable_layout(

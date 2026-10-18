@@ -3208,13 +3208,22 @@ def test_ownership_relative_empty_package_keeps_original_containment(launcher, t
     launcher._competing_ownership(Path("."), selected_launcher, info, distributions)
 
 
-@pytest.mark.parametrize("has_sig", [True, False])
-def test_pth_decoding_follows_the_interpreters_site_not_its_version(launcher, monkeypatch, has_sig):
-    """A 3.12 patch release can carry the 3.13 utf-8-sig .pth decoding
-    (3.12.15 does); the launcher must mirror site.addpackage itself."""
+@pytest.mark.parametrize(
+    ("version", "has_sig", "expected"),
+    [
+        ((3, 12, 15), True, True),  # backported patch release
+        ((3, 12, 3), False, False),  # pre-backport 3.12: locale decoding
+        ((3, 13, 5), False, True),  # 3.13+: always utf-8-sig
+        ((3, 15, 0), False, True),  # 3.15 moved the decode out of addpackage (#232)
+    ],
+)
+def test_pth_decoding_by_version_with_312_bytecode_probe(launcher, monkeypatch, version, has_sig, expected):
+    """3.13+ always decodes .pth as utf-8-sig; only 3.12 needs the
+    site.addpackage probe, because 3.12.15 backported it."""
     import types
 
     consts = ("utf-8-sig",) if has_sig else ("locale",)
     fake = types.SimpleNamespace(__code__=types.SimpleNamespace(co_consts=consts))
     monkeypatch.setattr(launcher.site, "addpackage", fake)
-    assert launcher._site_decodes_pth_as_utf8_sig() is has_sig
+    monkeypatch.setattr(launcher, "sys", types.SimpleNamespace(version_info=version))
+    assert launcher._site_decodes_pth_as_utf8_sig() is expected
