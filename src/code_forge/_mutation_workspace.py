@@ -16,8 +16,22 @@ from pathlib import Path
 from ._mutation_process import _identity
 
 
+ORPHAN_CONTAINER_MARKER = "orphan mutation container has no completed ownership record"
+
+
 class MutationWorkspaceError(RuntimeError):
     pass
+
+
+class OrphanMutationContainerError(MutationWorkspaceError):
+    """A mutation container exists with no ownership record (#136).
+
+    Deterministic: it repeats every round until a person moves the path.
+    """
+
+    def __init__(self, message: str, path):
+        super().__init__(message)
+        self.path = path
 
 
 def _node_identity(info: os.stat_result) -> tuple[int, int]:
@@ -221,8 +235,12 @@ class MutationWorkspace:
                     fd = self._open_container(kind, self.containers[kind], empty=True)
                     os.close(fd)
                 elif self._folder_stat(self._container_name(kind)) is not None:
-                    raise MutationWorkspaceError(
-                        "foreign mutation container has no completed ownership record"
+                    path = self.root / ".code-forge" / self._container_name(kind)
+                    raise OrphanMutationContainerError(
+                        f"{ORPHAN_CONTAINER_MARKER}: {path}; it is not removed automatically "
+                        "because another run may own it. Recovery: make sure no code-forge run "
+                        f"is active on this worktree, then move {path} aside and retry",
+                        path,
                     )
             self.original_snapshot = self._cache_snapshot("mutants")
             cache = self._stat("mutants")
@@ -272,6 +290,9 @@ class MutationWorkspace:
                 message += "; config_backup=" + str(self.root / ".code-forge" / self.config_backup)
             self._close_fds()
             self.acquired = False
+            if isinstance(exc, OrphanMutationContainerError) and message == str(exc):
+                # Keep the type (and its path) so callers need no text match.
+                raise
             raise MutationWorkspaceError(message) from exc
 
     def _rename(self, source: str, target: str):
