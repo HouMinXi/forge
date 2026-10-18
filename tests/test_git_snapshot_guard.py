@@ -377,3 +377,62 @@ def test_reflog_query_timeout_degrades_to_the_suites_change(repository, tmp_path
     assert suite_guard._last_writer(repository, "refs/heads/other") is None
     suite_guard.pytest_sessionfinish(session, 0)
     assert session.exitstatus == 1
+
+
+def test_scrubbed_env_write_is_a_documented_note(repository, tmp_path, monkeypatch, capsys, suite_guard):
+    """#201 pin: a branch written with every GIT_* variable dropped carries no
+    session marker, so it is attributed to another session (documented gap in
+    _ref_made_by). If this ever becomes fatal, update the docstring."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    monkeypatch.setenv("GIT_COMMITTER_NAME", suite_guard._SUITE_COMMITTER_NAME)
+    suite_guard.pytest_sessionstart(session)
+    scrubbed = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    scrubbed.update(HOME=str(tmp_path), GIT_CONFIG_NOSYSTEM="1")
+    subprocess.run(
+        ["git", "-C", str(repository), "-c", "user.name=box", "-c", "user.email=box@example.invalid",
+         "branch", "scrubbed"],
+        env=scrubbed, check=True, capture_output=True,
+    )
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert getattr(session, "exitstatus", 0) == 0
+    assert "refs/heads/scrubbed changed in another session" in capsys.readouterr().err
+    assert "#201" in suite_guard._ref_made_by.__doc__
+
+
+def test_guard_failure_follows_pytests_summary_in_a_real_session(tmp_path):
+    """#184/#201: in a real pytest run the guard reports inside pytest's
+    terminal summary (after the test results, before the final stats line)
+    and the process exits 1."""
+    import shutil
+    import sys
+
+    root = tmp_path / "proj"
+    (root / "tests").mkdir(parents=True)
+    shutil.copy(Path(__file__).with_name("conftest.py"), root / "tests" / "conftest.py")
+    (root / "tests" / "test_stray.py").write_text(
+        "import subprocess, pathlib\n"
+        "def test_writes_real_repo():\n"
+        "    root = pathlib.Path(__file__).resolve().parents[1]\n"
+        "    subprocess.run(['git', '-C', str(root), 'branch', 'stray'], check=True)\n",
+        encoding="utf-8",
+    )
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(HOME=str(tmp_path), GIT_CONFIG_NOSYSTEM="1")
+    for args in (["init", "-q"], ["-c", "user.name=T", "-c", "user.email=t@e.invalid", "commit", "-q",
+                                  "--allow-empty", "-m", "base"]):
+        subprocess.run(["git", "-C", str(root), *args], env=env, check=True, capture_output=True)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    out = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist", "tests"],
+        cwd=root, env=env, capture_output=True, text=True, timeout=120,
+    )
+    text = out.stdout + out.stderr
+    assert out.returncode == 1, text
+    assert "1 passed" in out.stdout, text
+    assert "+refs/heads/stray" in out.stdout, text
+    # Hook order: the test outcome is reported first, the guard's section is
+    # printed from pytest_terminal_summary (no sys.exit cut-off), and pytest's
+    # final stats line still follows it.
+    section = out.stdout.index("real .git state changed")
+    assert out.stdout.index("[100%]") < section < out.stdout.rindex("1 passed"), text

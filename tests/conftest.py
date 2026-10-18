@@ -281,6 +281,16 @@ def _ref_made_by(repo_root, ref, identity, writers_before=None):
     (``git -C <repo> branch -D <foreign branch>``) and deletes a branch another
     session last wrote is reported as a note, not caught. Anything that
     cannot be attributed stays the suite's (fatal).
+
+    Known gap (#201, accepted under #184 option 2): a write made from inside
+    the suite through an environment that drops every ``GIT_*`` variable
+    (the session's committer name and email included) records the box's
+    default identity, which is indistinguishable from another session's, so
+    it is reported as a note. Git records nothing else per process in the
+    reflog (no pid, no session marker), and the guard cannot install hooks in
+    the shared repository it is guarding. Reaching this still needs a test
+    bug that names the real repository explicitly; implicit discovery is
+    blocked by GIT_CEILING_DIRECTORIES.
     """
     if not identity:
         return True
