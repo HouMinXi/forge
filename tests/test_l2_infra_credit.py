@@ -168,3 +168,33 @@ def test_source_drift_still_resets_preserved_window(tmp_path):
     drifted.max_total_rounds = 1
     drifted.run()
     assert drifted._state.consecutive_clean_rounds == 1
+
+
+@pytest.mark.parametrize("with_infra", [False, True], ids=["no-infra", "infra"])
+def test_l2_infra_does_not_exempt_a_falsifier_protocol_violation(tmp_path, with_infra):
+    """#188: a protocol-violation UNCERTAIN finding still resets the window in a
+    round that also had an L2 infra error (the mixed round of #114)."""
+    from code_forge.falsify import Falsifier
+    from code_forge.llm_invoke import FalsifyProtocolError, Usage
+
+    class ProtoFalsifier(Falsifier):
+        def falsify(self, finding):
+            raise FalsifyProtocolError("invalid verdict", raw={})
+
+    m = _machine(tmp_path, Script([[], [], [_infra] if with_infra else [], [], [], [], [], []]), threshold=4)
+    m.falsifier = ProtoFalsifier()
+    calls = {"n": 0}
+
+    def provider():
+        calls["n"] += 1
+        if calls["n"] == 3:
+            f = StateFinding(id="f1", fingerprint="fp-1", source="L1", disposition=Disposition.CONFIRMED,
+                             file="calc.py", line_range=[1, 2], description="off by one")
+            f.excerpt = "def minimum(a, b):\n"
+            return [f], [], Usage(), 0.0
+        return [], [], Usage(), 0.0
+
+    m.l1_provider = provider
+    verdict = m.run()
+    assert str(getattr(verdict, "value", verdict)) == "PENDING"
+    assert [r.get("fixpoint") for r in m._state.round_history] == ["CLEAN", "CLEAN", "RESET"]

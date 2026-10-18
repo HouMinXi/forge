@@ -3616,12 +3616,15 @@ class StateMachine:
         protocol_ids = {id(finding) for finding in self._falsify_protocol_findings}
         if any(id(finding) not in protocol_ids for finding in self._falsify_failed_findings):
             return _FixpointResult.RESET
-        incomplete = (bool(protocol_ids) and self._host_attempt_round is not None) or incomplete_l2
+        protocol_incomplete = bool(protocol_ids) and self._host_attempt_round is not None
+        # #188: an L2 infra error only downgrades CLEAN to INCOMPLETE; it never
+        # exempts an unadjudicated protocol-violation finding from the reset.
+        incomplete = protocol_incomplete or incomplete_l2
         for f in product_findings:
             if is_receipt_audit(f):
                 continue
             if f.disposition == Disposition.UNCERTAIN:
-                if incomplete and id(f) in protocol_ids:
+                if protocol_incomplete and id(f) in protocol_ids:
                     continue
                 return _FixpointResult.RESET
 
@@ -3691,6 +3694,9 @@ class StateMachine:
                 f.diagnostic_kind is FindingDiagnosticKind.CAPACITY_INCOMPLETE
                 and is_provider_diagnostic(f)
             )
+            # #188: a mutation-infra diagnostic is not a product finding and
+            # must not keep UNCERTAIN findings out of HOLD.
+            and not is_mutation_infra_diagnostic(f)
             for f in self._state.findings
         )
         return has_uncertain and not has_unfixed_confirmed
