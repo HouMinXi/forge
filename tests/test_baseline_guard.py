@@ -319,7 +319,8 @@ def test_exact_startup_diagnostic_identifies_configured_module(module, prefix, q
 
 @pytest.mark.parametrize("stdout,stderr", [
     ("", "No module named pytest_project_helper"),
-    ("FAILED tests/test_probe.py::test_runner\nNo module named pytest", ""),
+    ("", "/usr/bin/python3: No module named pytest\n"),
+    ("", "No module named 'pytest'"),
 ])
 def test_existing_retry_eligibility_is_preserved_for_runner_text(stdout, stderr):
     result = subprocess.CompletedProcess([], 1, stdout, stderr)
@@ -328,3 +329,64 @@ def test_existing_retry_eligibility_is_preserved_for_runner_text(stdout, stderr)
         ["python3", "-m", "pytest"], {"VIRTUAL_ENV": ""}, "/private", allow_strip_retry=True,
         run_command=lambda *_a, **_k: result,
     ) == ("needs_strip_retry", [], [])
+
+
+# --- #126: runner text inside a session that ran is not "runner missing" ------
+
+_SUMMARY = "198 failed, 26650 passed, 172 skipped in 1300.44s"
+
+
+@pytest.mark.parametrize("stdout,stderr", [
+    (f"FAILED tests/test_probe.py::test_runner\nNo module named pytest\n{_SUMMARY}\n", ""),
+    (f"E   /usr/bin/python3: No module named 'pytest'\n{_SUMMARY}\n", ""),
+    ("ERROR tests/test_probe.py - boom\n", "No module named pytest"),
+    ("collected 3 items\n", "/usr/bin/python3: No module named pytest\n"),
+    ("============================= test session starts ==============================\n",
+     "No module named pytest"),
+    ("No module named pytest\n1 failed in 0.01s\n", ""),
+], ids=["failed-node+summary", "quoted+summary", "error-node", "collected", "banner", "summary-only"])
+def test_session_output_with_runner_text_is_not_a_strip_retry(stdout, stderr):
+    result = subprocess.CompletedProcess([], 1, stdout, stderr)
+    calls = []
+
+    def execute(*_a, **_k):
+        calls.append(1)
+        return result
+
+    assert _is_runner_missing(["python3", "-m", "pytest"], result, None) is False
+    status, findings, infra = _run_baseline_guard(
+        ["python3", "-m", "pytest"], {"VIRTUAL_ENV": "/venv"}, "/private", allow_strip_retry=True,
+        run_command=execute,
+    )
+    assert len(calls) == 1
+    assert status == "skip" and infra == [findings[0].description]
+    assert "baseline failed" in findings[0].description
+    assert "after env retry" not in findings[0].description
+
+
+def test_real_pytest_run_printing_runner_text_under_venv_is_not_retried(tmp_path):
+    test = tmp_path / "test_probe.py"
+    test.write_text(
+        "import subprocess, sys\n"
+        "def test_child_module():\n"
+        "    child = subprocess.run([sys.executable, '-I', '-S', '-m', 'pytest'], capture_output=True, text=True)\n"
+        "    assert child.returncode == 0, child.stderr\n"
+        "def test_ok():\n"
+        "    pass\n"
+    )
+    env = {**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTHONDONTWRITEBYTECODE": "1",
+           "VIRTUAL_ENV": str(tmp_path / "venv")}
+    calls = []
+
+    def execute(argv, **kwargs):
+        result = subprocess.run(argv, **kwargs)
+        calls.append(result)
+        return result
+
+    status, findings, infra = _run_baseline_guard(
+        [sys.executable, "-B", "-m", "pytest", "-q", str(test)], env, str(tmp_path),
+        allow_strip_retry=True, timeout=30, run_command=execute,
+    )
+    assert len(calls) == 1 and "No module named pytest" in calls[0].stdout
+    assert "1 failed, 1 passed" in calls[0].stdout
+    assert status == "skip" and "baseline failed" in findings[0].description
