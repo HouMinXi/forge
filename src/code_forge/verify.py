@@ -1038,8 +1038,14 @@ def assess_excerpt_evidence(
     claimed = exc_end - exc_start + 1
     actual_lines = excerpt_lines(text)
     count_error = f"excerpt {location} declares {claimed} lines but carries {len(actual_lines)}"
+    # One line of slack is coordinate jitter. Two short is still a miscount
+    # unless a frozen source is present to prove the omitted lines are blank.
     if not excerpt_line_count_matches(text, claimed):
-        return ExcerptAssessment(invalid, count_error)
+        two_short_with_source = (
+            post_image is not None and claimed == len(actual_lines) + 2
+        )
+        if not two_short_with_source:
+            return ExcerptAssessment(invalid, count_error)
     if hunk_map is None:
         return ExcerptAssessment(valid)
     exempt = exempt_files or []
@@ -1061,11 +1067,19 @@ def assess_excerpt_evidence(
         actual_lines = actual_lines[1:]
     body_start = exc_start
     short_by_one = claimed == len(actual_lines) + 1
+    short_by_two = claimed == len(actual_lines) + 2
     blank_spent = False
-    if short_by_one:
+    if short_by_one or short_by_two:
         tail = file_lines.get(exc_end)
         head = file_lines.get(exc_start)
         tail_blank = tail is not None and not tail.strip()
+        penultimate = file_lines.get(exc_end - 1) if short_by_two else None
+        two_blank_tail = (
+            short_by_two
+            and tail_blank
+            and penultimate is not None
+            and not penultimate.strip()
+        )
         head_blank = head is not None and not head.strip()
         prefix = {exc_start + i: line for i, line in enumerate(actual_lines)}
         exact_prefix = all(
@@ -1077,6 +1091,19 @@ def assess_excerpt_evidence(
         )
         # Keep carried blanks at their declared coordinates. Only a known
         # omitted tail can explain the count; indentation stays untrusted.
+        # Two omitted lines are accepted only when both are blank source
+        # lines at the end of the declared range and the carried lines match
+        # verbatim. A content gap of two stays invalid.
+        if short_by_two and exact_prefix and two_blank_tail:
+            return _anchored_assessment(
+                untrusted,
+                count_error,
+                prefix,
+                hunks,
+                location,
+            )
+        if short_by_two:
+            return ExcerptAssessment(invalid, count_error)
         if (exact_prefix or indent_prefix) and tail is not None:
             trusted_blank = tail_blank and exact_prefix
             missing = (
