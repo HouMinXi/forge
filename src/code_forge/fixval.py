@@ -33,7 +33,12 @@ from .advisory import AdvisoryFinding
 from ._fixval_transaction import FixvalTransaction, TransactionError
 from .disposition import Disposition
 from .diff import iter_diff_sections, patched_file_path
-from code_forge.baseline_guard import _run_baseline_guard, _strip_venv_from_env
+from code_forge.baseline_guard import (
+    _run_baseline_guard,
+    _strip_venv_from_env,
+    env_retry_note,
+    env_retry_record,
+)
 from .state import StateFinding
 
 _logger = logging.getLogger("code_forge")
@@ -390,7 +395,9 @@ def run_fixval(
         allow_strip_retry=True,
         retry_cause=retry_cause,
     )
+    env_retry = None
     if status == "needs_strip_retry":
+        env_retry = env_retry_record(retry_cause[0] if retry_cause else None, run_env)
         run_env = _strip_venv_from_env(run_env)
         run_env["PYTHONPATH"] = pythonpath
         status, guard_findings, guard_infra = _run_baseline_guard(
@@ -400,12 +407,29 @@ def run_fixval(
             allow_strip_retry=False,
             first_attempt=retry_cause[0] if retry_cause else None,
         )
+
+    def noted(result: FixvalResult) -> FixvalResult:
+        # #246: a strip retry is reported whatever its outcome, so a pass
+        # under the stripped env stays attributable.
+        if env_retry is not None:
+            result.advisories.append(
+                AdvisoryFinding(
+                    id="FIXVAL_BASELINE_ENV_RETRY",
+                    axis="FIXVAL",
+                    file="",
+                    line_range=[],
+                    description=env_retry_note(env_retry),
+                    attribution="fixval-baseline-env-retry",
+                )
+            )
+        return result
+
     if status == "skip":
-        return FixvalResult(
+        return noted(FixvalResult(
             status=FixvalStatus.SKIPPED,
             findings=guard_findings,
             advisories=[],
-        )
+        ))
 
     # Write patch to temp file
     try:
@@ -509,8 +533,8 @@ def run_fixval(
             interrupted.add_note("FIXVAL recovery: %s (%s)" % (recovery, "; ".join(errors)))
         raise interrupted
     if errors:
-        return _transaction_block("; ".join(errors), recovery)
-    return outcome
+        return noted(_transaction_block("; ".join(errors), recovery))
+    return noted(outcome)
 
 
 class _VariableRenamer(ast.NodeTransformer):

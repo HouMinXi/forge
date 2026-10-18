@@ -112,6 +112,26 @@ def _venv_has_runner(baseline_cmd: list[str], run_env: dict[str, str]) -> bool:
     return os.path.isfile(resolved)
 
 
+def env_retry_record(first_attempt: str | None, inherited_env: dict[str, str]) -> dict[str, str | None]:
+    """What an env-strip retry changed, kept whatever the retry's outcome (#246).
+
+    A retry that passes otherwise leaves no trace that the baseline (and the
+    measurement after it) ran without the inherited virtualenv, nor of the
+    first attempt's cause.
+    """
+    return {
+        "first_attempt": first_attempt,
+        "stripped_virtual_env": inherited_env.get("VIRTUAL_ENV"),
+    }
+
+
+def env_retry_note(record: dict[str, str | None]) -> str:
+    return (
+        "baseline env-strip retry: VIRTUAL_ENV %s and its PATH entry were dropped; first attempt: %s"
+        % (record.get("stripped_virtual_env") or "(unset)", record.get("first_attempt") or "(not recorded)")
+    )
+
+
 def _strip_venv_from_env(env: dict[str, str]) -> dict[str, str]:
     """Return a copy of env with VIRTUAL_ENV removed and its bin dir
     stripped from PATH."""

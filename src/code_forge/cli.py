@@ -4836,6 +4836,10 @@ def _run_mutation_check(args, cwd: Path) -> int:
         mutation_include_globs=test_config.get("mutation_include_globs"),
         _evidence=evidence,
     )
+    if "baseline_env_retry" in evidence:
+        from .baseline_guard import env_retry_note
+
+        print("code-forge: mutation-check: NOTE: %s" % env_retry_note(evidence["baseline_env_retry"]), file=sys.stderr)
     same_head = args.diff is None and review_head is not None and captured_head() == review_head
     same_source = mutation_source_guard_matches(source_guard, source_root=cwd)
     if args.diff is None and not same_source:

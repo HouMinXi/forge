@@ -33,7 +33,7 @@ import re
 import shutil
 import stat
 import subprocess
-from code_forge.baseline_guard import _run_baseline_guard, _strip_venv_from_env
+from code_forge.baseline_guard import _run_baseline_guard, _strip_venv_from_env, env_retry_record
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, NotRequired, TypedDict
@@ -74,6 +74,7 @@ class MutationOutcome(TypedDict):
     survivor_details: list[dict]
     completed_measurement: bool
     review_context: dict | None
+    baseline_env_retry: NotRequired[dict]
 
 
 def _mutation_outcome(
@@ -104,7 +105,7 @@ def _mutation_outcome(
     # Preserve failure/cleanup metadata for the bound consumer. Dropping a
     # failed cleanup marker would manufacture a successful canonical carrier.
     for key in ("publication_error", "cancellation_type", "cleanup_error", "process_failure",
-                "cancelled", "cleanup_complete"):
+                "cancelled", "cleanup_complete", "baseline_env_retry"):
         if key in evidence:
             outcome[key] = evidence[key]
     if review_context is not None:
@@ -1425,6 +1426,9 @@ def _run_mutation(
             run_command=run_owned_command,
         )
         if status == "needs_strip_retry":
+            # #246: record the strip before retrying so a passing retry (and
+            # the measurement under the stripped env) is still attributable.
+            evidence["baseline_env_retry"] = env_retry_record(retry_cause[0] if retry_cause else None, run_env)
             run_env = _strip_venv_from_env(run_env)
             run_env["PYTHONPATH"] = pythonpath
             status, guard_findings, guard_infra = _run_baseline_guard(

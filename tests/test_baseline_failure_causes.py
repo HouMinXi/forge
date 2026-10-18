@@ -137,7 +137,9 @@ def test_fixval_cause_survives_findings_only_skip(private_project, monkeypatch, 
         result = fixval.run_fixval(candidate, CMD, root, "fix: preserve cause", PATCH)
         assert result.status == fixval.FixvalStatus.SKIPPED
         assert_cause(result.findings)
-        assert result.advisories == [] and result.block_message == ""
+        # #246: a strip retry is advised whatever its outcome.
+        assert [a.id for a in result.advisories] == (["FIXVAL_BASELINE_ENV_RETRY"] if retry else [])
+        assert result.block_message == ""
     assert_calls(calls, root, retry, healthy, 120)
     assert (root / "src/pkg/mod.py").read_text() == "value = 1\n"
     assert not list(root.glob(".fixval*"))
