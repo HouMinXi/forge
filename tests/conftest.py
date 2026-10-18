@@ -251,7 +251,8 @@ def _last_writer(repo_root, ref):
     """(name, email) of the ref's newest reflog entry, or None."""
     try:
         out = _git_output(repo_root, "log", "-g", "-1", "--format=%gn%x00%ge", ref, "--").strip()
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        # Unknown writer: the change stays the suite's (fatal), never a crash.
         return None
     if not out or "\0" not in out:
         return None
@@ -273,11 +274,13 @@ def _ref_made_by(repo_root, ref, identity, writers_before=None):
     """True unless the change is attributable to another session.
 
     A remaining ref is judged by its newest reflog entry. A deleted ref has
-    no reflog left (#196): it is another session's when it existed at
-    sessionstart and its last writer then was another session (the suite
-    cannot reach the real repository to delete it; GIT_CEILING_DIRECTORIES
-    and the GIT_* scrub block discovery). Anything unattributable stays the
-    suite's.
+    no reflog left (#196): it is treated as another session's when it existed
+    at sessionstart and its last writer then was another session. Accepted
+    trade-off: GIT_CEILING_DIRECTORIES and the GIT_* scrub only stop *implicit*
+    discovery of the real repository; a test that names it explicitly
+    (``git -C <repo> branch -D <foreign branch>``) and deletes a branch another
+    session last wrote is reported as a note, not caught. Anything that
+    cannot be attributed stays the suite's (fatal).
     """
     if not identity:
         return True

@@ -356,3 +356,24 @@ def test_sessionfinish_rejects_test_overriding_only_the_committer_email(reposito
     suite_guard.pytest_sessionfinish(session, 0)
     assert session.exitstatus == 1
     assert "+refs/heads/stray" in session.config.stash[suite_guard._git_failure_key]
+
+
+def test_reflog_query_timeout_degrades_to_the_suites_change(repository, tmp_path, monkeypatch, suite_guard):
+    """A hung reflog query neither crashes the session nor hides a change:
+    the writer is unknown, so the change stays fatal."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    suite_guard.pytest_sessionstart(session)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "other-session@example.invalid")
+    _git(repository, "branch", "other")
+    real = suite_guard._git_output
+
+    def slow(root, *args):
+        if args[:2] == ("log", "-g"):
+            raise subprocess.TimeoutExpired(["git", *args], 10)
+        return real(root, *args)
+
+    monkeypatch.setattr(suite_guard, "_git_output", slow)
+    assert suite_guard._last_writer(repository, "refs/heads/other") is None
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert session.exitstatus == 1
