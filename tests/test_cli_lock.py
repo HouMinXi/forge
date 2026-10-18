@@ -5,7 +5,7 @@
 import sys
 from unittest.mock import patch
 
-from code_forge import EXIT_BUSY, EXIT_PASS
+from code_forge import EXIT_BUSY, EXIT_FAIL, EXIT_PASS
 from code_forge.cli import main
 from code_forge.lock import ForgeLockBusy
 
@@ -65,6 +65,9 @@ class TestLockReleasedOnExit:
         forge_dir = repo / ".code-forge"
         forge_dir.mkdir(parents=True, exist_ok=True)
         (forge_dir / "tools.yaml").write_text("tools: {}\n")
+        # #104: the lock is under test, not the verdict. Exempt a.py from the
+        # coverage rule (no linter is configured) so the run can PASS.
+        (forge_dir / "coverage.yaml").write_text("version: 1\nexempt_patterns:\n  - a.py\n")
         (repo / "a.py").write_text("# initial\n")
         subprocess.run(
             ["git", "add", "-A"],
@@ -89,9 +92,16 @@ class TestLockReleasedOnExit:
             "code_forge.outlet_resolver.resolve_outlet",
             lambda *a, **kw: "subprocess",
         )
+        # #104: an empty tools.yaml triggers toolchain auto-detection, which
+        # fails when no linter is on PATH. Keep the test hermetic.
+        monkeypatch.setattr("code_forge.detect.detect_and_init", lambda *a, **kw: None)
         monkeypatch.chdir(str(repo))
         exit_code = main()
-        assert exit_code == EXIT_PASS
+        # This is a lock test, not a verdict test. In CI the run may FAIL for
+        # unrelated policy reasons (e.g. #146/#178: no gate.yaml on the
+        # baseline means mutation is not measured); the lock must be released
+        # either way.
+        assert exit_code in (EXIT_PASS, EXIT_FAIL), exit_code
 
         state_path = forge_dir / "state.json"
         lock_path = forge_dir / "code-forge.lock"
@@ -129,6 +139,9 @@ class TestLockReleasedOnException:
         forge_dir = repo / ".code-forge"
         forge_dir.mkdir(parents=True, exist_ok=True)
         (forge_dir / "tools.yaml").write_text("tools: {}\n")
+        # #104: the lock is under test, not the verdict. Exempt a.py from the
+        # coverage rule (no linter is configured) so the run can PASS.
+        (forge_dir / "coverage.yaml").write_text("version: 1\nexempt_patterns:\n  - a.py\n")
         (repo / "a.py").write_text("# initial\n")
         subprocess.run(
             ["git", "add", "-A"],
@@ -153,6 +166,9 @@ class TestLockReleasedOnException:
             "code_forge.outlet_resolver.resolve_outlet",
             lambda *a, **kw: "subprocess",
         )
+        # #104: an empty tools.yaml triggers toolchain auto-detection, which
+        # fails when no linter is on PATH. Keep the test hermetic.
+        monkeypatch.setattr("code_forge.detect.detect_and_init", lambda *a, **kw: None)
         monkeypatch.chdir(str(repo))
 
         # Inject crash inside the lock scope.
