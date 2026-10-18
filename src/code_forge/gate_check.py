@@ -229,7 +229,7 @@ def _git_out(source_root, *args) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(
             ["git", *args], cwd=str(source_root), capture_output=True, text=True,
-            encoding="utf-8", timeout=10, check=False,
+            encoding="utf-8", errors="surrogateescape", timeout=10, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise UntrustedGateConfigError(f"cannot inspect .code-forge/gate.yaml with git: {exc}") from exc
@@ -242,7 +242,7 @@ def _git_ok(source_root, *args) -> subprocess.CompletedProcess:
     if result.returncode != 0:
         detail = (result.stderr or "").strip().splitlines()
         raise UntrustedGateConfigError(
-            f"git {' '.join(args[:2])} failed (exit {result.returncode})"
+            f"git {' '.join(a for a in args if a != '--')} failed (exit {result.returncode})"
             + (f": {detail[-1]}" if detail else "")
             + "; cannot verify .code-forge/gate.yaml, refusing it"
         )
@@ -292,48 +292,18 @@ def _refuse_linked_gate(source_root, base_sha: str | None) -> bool:
     return index_entries.get(".code-forge/gate.yaml", "").startswith("100")
 
 
-def _regular_file_inode(path) -> tuple[int, int] | None:
-    """(st_dev, st_ino) of a regular file, without following a final symlink."""
-    import stat
-
-    try:
-        info = os.stat(path, follow_symlinks=False)
-    except OSError:
-        return None
-    if not stat.S_ISREG(info.st_mode):
-        return None
-    return (info.st_dev, info.st_ino)
-
-
-def _checkout_regular_file_inodes(source_root) -> frozenset[tuple[int, int]]:
-    """Inodes of regular files under the checkout that an outside gate.yaml
-    must not hardlink: tracked files (``git ls-files -z``) plus untracked and
-    ignored ones (``git ls-files -z -o``, #145), so no recursive walk of our
-    own. Paths are stat'ed without following symlinks, so a checkout symlink
-    to a legitimate outside gate does not taint it. Any git failure refuses
-    (#144). Directories cannot be hardlinked on Linux."""
-    root = Path(source_root)
-    inodes: set[tuple[int, int]] = set()
-    for args in (("ls-files", "-z"), ("ls-files", "-z", "-o")):
-        for rel in _git_ok(root, *args).stdout.split("\0"):
-            if not rel or rel.endswith("/"):
-                continue
-            inode = _regular_file_inode(root / rel)
-            if inode is not None:
-                inodes.add(inode)
-    return frozenset(inodes)
-
-
-def _read_gate_nofollow(root, *, refuse_inodes: frozenset[tuple[int, int]] | None = None) -> str:
+def _read_gate_nofollow(root, *, refuse_hardlinks: bool = False) -> str:
     """Read ``<root>/.code-forge/gate.yaml`` without following a symlink at
     either component: ``.code-forge`` is opened dir-relative with O_NOFOLLOW
     and gate.yaml likewise, then fstat'd as a regular file. That closes the
     check-then-open race of an islink/realpath test followed by open().
 
-    ``refuse_inodes`` (optional) is a set of (st_dev, st_ino) the opened fd
-    must not match -- used by an outside config root to refuse a hardlink of
-    any regular file under the checkout (symlinks and realpath already catch
-    the other lead-backs; directories cannot be hardlinked)."""
+    ``refuse_hardlinks`` (an outside config root): refuse an opened file with
+    ``st_nlink > 1``. A hardlink of a checkout file -- tracked, untracked,
+    ignored, in a nested repo or a submodule (#145, #147) -- always has a
+    second link, so no listing or walk of the checkout is needed (#149).
+    Symlinks and realpath catch the other lead-backs; directories cannot be
+    hardlinked."""
     import errno
     import stat
 
@@ -355,10 +325,11 @@ def _read_gate_nofollow(root, *, refuse_inodes: frozenset[tuple[int, int]] | Non
         info = os.fstat(fds[-1])
         if not stat.S_ISREG(info.st_mode):
             raise UntrustedGateConfigError(f"{root}/.code-forge/gate.yaml is not a regular file")
-        if refuse_inodes and (info.st_dev, info.st_ino) in refuse_inodes:
+        if refuse_hardlinks and info.st_nlink > 1:
             raise UntrustedGateConfigError(
-                f"{root}/.code-forge/gate.yaml is a hardlink of a file in the reviewed checkout; "
-                "an outside test config root must hold its own regular gate.yaml"
+                f"{root}/.code-forge/gate.yaml has {info.st_nlink} hard links; an outside test "
+                "config root must hold its own single-link gate.yaml (a hardlink may be a file "
+                "in the reviewed checkout)"
             )
         with os.fdopen(fds.pop(), "r", encoding="utf-8") as handle:
             return handle.read()
@@ -367,10 +338,10 @@ def _read_gate_nofollow(root, *, refuse_inodes: frozenset[tuple[int, int]] | Non
             os.close(fd)
 
 
-def _load_gate_nofollow(root, *, refuse_inodes: frozenset[tuple[int, int]] | None = None) -> dict:
+def _load_gate_nofollow(root, *, refuse_hardlinks: bool = False) -> dict:
     import io
 
-    text = _read_gate_nofollow(root, refuse_inodes=refuse_inodes)
+    text = _read_gate_nofollow(root, refuse_hardlinks=refuse_hardlinks)
     return load_gate_config(
         Path(root) / ".code-forge" / "gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
     )
@@ -379,13 +350,11 @@ def _load_gate_nofollow(root, *, refuse_inodes: frozenset[tuple[int, int]] | Non
 def _load_outside_gate(config_root, source_root) -> dict:
     """An explicit config root outside the checkout: refuse a symlinked
     .code-forge/gate.yaml or one whose real path lands inside the checkout,
-    refuse a hardlink of any regular file under the checkout, then read with
-    O_NOFOLLOW.
+    refuse a gate.yaml with more than one hard link, and read with O_NOFOLLOW.
 
     Directories cannot be hardlinked on Linux (link(2) returns EPERM), so a
-    .code-forge directory hardlink is not a case. Checkout inodes come from
-    ``git ls-files -z`` plus a shallow ``.code-forge/`` scan -- no recursive
-    walk of the tree."""
+    .code-forge directory hardlink is not a case. No git call and no walk of
+    the checkout: the nlink check covers every hardlink location."""
     root = Path(config_root)
     for rel in (".code-forge", ".code-forge/gate.yaml"):
         if os.path.islink(root / rel):
@@ -399,7 +368,7 @@ def _load_outside_gate(config_root, source_root) -> dict:
         raise UntrustedGateConfigError(
             f"test config root {root} resolves into the reviewed checkout ({real})"
         )
-    return _load_gate_nofollow(root, refuse_inodes=_checkout_regular_file_inodes(source_root))
+    return _load_gate_nofollow(root, refuse_hardlinks=True)
 
 
 def load_trusted_gate_config(

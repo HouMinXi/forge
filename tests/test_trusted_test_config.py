@@ -447,7 +447,7 @@ def test_ci_outside_root_hardlinked_to_the_tree_gate_is_refused(tmp_path):
     machine = _machine(repo, base, mode=Mode.CI)
     machine.test_config_root = _evil_outside(tmp_path, repo, "hardlink")
     assert _l2_calls(machine) == []
-    assert any("is a hardlink of a file in the reviewed checkout" in e
+    assert any("hard links; an outside test config root must hold its own single-link" in e
                for e in machine._state.infra_errors), machine._state.infra_errors
     # Directories cannot be hardlinked (link(2) returns EPERM on Linux), so a
     # .code-forge directory hardlink is not a case: only the file matters.
@@ -468,7 +468,7 @@ def test_ci_outside_root_hardlinked_to_a_pr_added_file_is_refused(tmp_path):
     machine = _machine(repo, base, mode=Mode.CI)
     machine.test_config_root = outside
     assert _l2_calls(machine) == []
-    assert any("is a hardlink of a file in the reviewed checkout" in e
+    assert any("hard links; an outside test config root must hold its own single-link" in e
                for e in machine._state.infra_errors), machine._state.infra_errors
 
 
@@ -533,7 +533,7 @@ def _fail_git(monkeypatch, *prefix):
     real = gate_check._git_out
 
     def fake(source_root, *args):
-        if args[: len(prefix)] == prefix and (prefix != ("ls-files", "-z") or "-o" not in args):
+        if args[: len(prefix)] == prefix:
             return subprocess.CompletedProcess(["git", *args], 128, "", "fatal: detected dubious ownership\n")
         return real(source_root, *args)
 
@@ -551,25 +551,17 @@ def _tracked_evil_hardlink(tmp_path):
     return repo, base, outside
 
 
-@pytest.mark.parametrize("prefix", [("ls-files", "-z"), ("ls-files", "-z", "-o")])
-def test_inode_listing_failure_refuses_the_outside_root(tmp_path, monkeypatch, prefix):
-    repo, base, outside = _tracked_evil_hardlink(tmp_path)
-    _fail_git(monkeypatch, *prefix)
-    with pytest.raises(UntrustedGateConfigError, match=r"failed \(exit 128\): fatal: detected dubious ownership"):
-        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
-
-
 def test_index_listing_failure_refuses_a_staged_first_ever_gate_in_local(tmp_path, monkeypatch):
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=True)
     _fail_git(monkeypatch, "ls-files", "-s")
-    with pytest.raises(UntrustedGateConfigError, match=r"git ls-files -s failed \(exit 128\)"):
+    with pytest.raises(UntrustedGateConfigError, match=r"git ls-files -s \.code-forge \.code-forge/gate\.yaml failed \(exit 128\): fatal: detected dubious ownership"):
         load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
 
 
 def test_baseline_tree_listing_failure_refuses(tmp_path, monkeypatch):
     repo, base = _repo(tmp_path, gate_at_base=True)
     _fail_git(monkeypatch, "ls-tree")
-    with pytest.raises(UntrustedGateConfigError, match=r"git ls-tree .* failed \(exit 128\)"):
+    with pytest.raises(UntrustedGateConfigError, match=r"git ls-tree [0-9a-f]{40} \.code-forge \.code-forge/gate\.yaml failed \(exit 128\)"):
         load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
 
 
@@ -587,7 +579,7 @@ def test_ci_outside_root_hardlinked_to_an_untracked_file_is_refused(tmp_path, ig
     machine = _machine(repo, base, mode=Mode.CI)
     machine.test_config_root = outside
     assert _l2_calls(machine) == []
-    assert any("is a hardlink of a file in the reviewed checkout" in e
+    assert any("hard links; an outside test config root must hold its own single-link" in e
                for e in machine._state.infra_errors), machine._state.infra_errors
 
 
@@ -606,3 +598,87 @@ def test_checkout_symlink_to_a_legit_outside_gate_does_not_taint_it(tmp_path, wh
     machine = _machine(repo, base, mode=Mode.CI)
     machine.test_config_root = outside
     assert _l2_calls(machine) == [(BASE_CMD, 5)], machine._state.infra_errors
+
+
+# --- #147/#148/#149: nlink refusal, no checkout scan, full git args ---
+
+def _ci_with_outside_link(repo, base, source):
+    outside = repo.parent / "evil-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    os.link(source, outside / ".code-forge" / "gate.yaml")
+    machine = _machine(repo, base, mode=Mode.CI)
+    machine.test_config_root = outside
+    return machine
+
+
+def _evil_yaml(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump({"test": {"command": PR_CMD}}), encoding="utf-8")
+    return path
+
+
+def _assert_hardlink_refused(machine):
+    assert _l2_calls(machine) == []
+    assert any("hard links; an outside test config root must hold its own single-link" in e
+               for e in machine._state.infra_errors), machine._state.infra_errors
+
+
+def test_ci_outside_root_hardlinked_into_a_nested_untracked_repo_is_refused(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    sub = repo / "sub"
+    sub.mkdir()
+    _git(sub, "init", "-q")
+    _assert_hardlink_refused(_ci_with_outside_link(repo, base, _evil_yaml(sub / "e.yaml")))
+
+
+def test_ci_outside_root_hardlinked_into_a_submodule_work_tree_is_refused(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    vend = repo / "vend"
+    vend.mkdir()
+    _git(vend, "init", "-q")
+    _git(vend, "config", "user.email", "t@example.invalid")
+    _git(vend, "config", "user.name", "t")
+    _evil_yaml(vend / "e.yaml")
+    _git(vend, "add", "e.yaml")
+    _git(vend, "commit", "-qm", "v")
+    head = _git(vend, "rev-parse", "HEAD")
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{head},vend")
+    assert "160000" in _git(repo, "ls-files", "-s", "vend")
+    _assert_hardlink_refused(_ci_with_outside_link(repo, base, vend / "e.yaml"))
+
+
+def test_ci_outside_gate_with_a_second_link_outside_the_checkout_is_refused(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    _assert_hardlink_refused(_ci_with_outside_link(repo, base, _evil_yaml(tmp_path / "elsewhere" / "g.yaml")))
+
+
+def test_single_link_outside_gate_loads_without_any_checkout_listing(tmp_path, monkeypatch):
+    """#149: the outside root needs no git listing of the checkout at all."""
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    outside = tmp_path / "ci-config"
+    _write_gate(outside, BASE_CMD, timeout=7)
+    monkeypatch.setattr(gate_check, "_git_out", lambda *a, **k: pytest.fail(f"git called: {a}"))
+    assert load_trusted_gate_config(
+        config_root=outside, source_root=repo, base_sha=base, allow_untracked=False,
+    )["test"]["command"] == BASE_CMD
+
+
+def test_non_utf8_untracked_name_does_not_refuse_a_legit_outside_root(tmp_path):
+    """#148: a non-UTF-8 untracked file name in the checkout is harmless."""
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    with open(os.path.join(os.fsencode(repo), b"caf\xe9.txt"), "wb") as handle:
+        handle.write(b"x")
+    outside = tmp_path / "ci-config"
+    _write_gate(outside, BASE_CMD, timeout=5)
+    machine = _machine(repo, base, mode=Mode.CI)
+    machine.test_config_root = outside
+    assert _l2_calls(machine) == [(BASE_CMD, 5)], machine._state.infra_errors
+
+
+def test_git_output_with_a_non_utf8_path_does_not_raise(tmp_path):
+    """#148: _git_out decodes with surrogateescape."""
+    repo, _ = _repo(tmp_path, gate_at_base=False, tracked=False)
+    with open(os.path.join(os.fsencode(repo), b"caf\xe9.txt"), "wb") as handle:
+        handle.write(b"x")
+    out = gate_check._git_out(repo, "ls-files", "-z", "-o")
+    assert out.returncode == 0 and os.fsencode("caf\udce9.txt") in os.fsencode(out.stdout)
