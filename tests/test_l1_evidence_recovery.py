@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import code_forge.llm_invoke as invoke
+from tests._outside_gate import outside_gate_root
 from code_forge.backend import BackendConfig
 from code_forge.baseline import ResolvedReview
 from code_forge.cli import _make_subagent_spawn
@@ -198,6 +199,7 @@ def test_recovery_uses_real_publication_and_gate(monkeypatch, tmp_path, kind, mo
         source_hash=compute_source_hash(git_diff=DIFF),
         baseline_spec_repr="owned recovery",
         cwd=tmp_path,
+        test_config_root=outside_gate_root(tmp_path),  # #160
         registry={},
         l0_runner=lambda *a: ([], []),
         l1_provider=provider,
@@ -570,6 +572,7 @@ def test_billed_failed_repair_persists_cost_without_acceptance(
         source_hash=compute_source_hash(git_diff=DIFF),
         baseline_spec_repr="billed incomplete review",
         cwd=tmp_path,
+        test_config_root=outside_gate_root(tmp_path),  # #160
         registry={},
         l0_runner=lambda *a: ([], []),
         l1_provider=provider,
@@ -594,6 +597,7 @@ def test_billed_failed_repair_persists_cost_without_acceptance(
             source_hash=compute_source_hash(git_diff=DIFF),
             baseline_repr="billed incomplete review",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             max_rounds=1,
             max_fix_attempts=1,
