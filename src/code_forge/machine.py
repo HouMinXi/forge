@@ -21,6 +21,7 @@ import json
 import re
 import sys
 import threading
+import tempfile
 import time
 import traceback
 from collections.abc import Callable
@@ -4328,6 +4329,32 @@ class StateMachine:
         # L1-CONFIRMED strengthening; the EXEC finding above carries the
         # verdict-blocking failure independently.
 
+    def _trusted_packs_root(self, gate_config: dict, dest: Path) -> Path | None:
+        """#150: repo-local packs that can block come from the trusted root
+        (outside config root or review baseline), copied into ``dest``; the
+        reviewed tree's ``.code-forge/packs`` is never used. Built-in packs
+        need no copy (and no git). None (with an infra error) when the
+        trusted copy cannot be verified."""
+        from .gate_check import UntrustedGateConfigError, materialize_trusted_packs
+        from .rulepack import discover_packs
+
+        names = gate_config.get("rulepacks", []) or []
+        builtin = set(discover_packs(dest, local_root=dest / "none"))
+        local = [n for n in names if n not in builtin] if isinstance(names, list) else []
+        if not local:
+            return dest
+        try:
+            root, notes = materialize_trusted_packs(
+                config_root=self._test_config_root(), source_root=self._source_root(),
+                base_sha=self.resolved_review.base_sha, allow_untracked=self.mode is not Mode.CI,
+                names=local, dest=dest,
+            )
+        except (OSError, UntrustedGateConfigError) as exc:
+            self._state.infra_errors.append(f"rulepack: trusted packs refused: {exc}")
+            return None
+        self._state.infra_errors.extend(notes)
+        return root
+
     def _run_rulepack_blocking_phase(self) -> list[StateFinding]:
         """Pre-convergence bridge for blocking-promoted rulepack rules.
 
@@ -4349,15 +4376,23 @@ class StateMachine:
 
         runner = RulepackRunner()
         runner.source_files = list(self._executable_source_files())
-        if self.source_root is None:
-            advisories = runner.run(self.resolved_review.git_diff or "", self.cwd, gate_config=gate_config)
-        else:
-            advisories = runner.run(
-                self.resolved_review.git_diff or "",
-                self.cwd,
-                execution_root=self._source_root(),
-                gate_config=gate_config,
-            )
+        with tempfile.TemporaryDirectory(prefix="forge-trusted-packs-") as packs_dir:
+            packs_root = self._trusted_packs_root(gate_config, Path(packs_dir))
+            if packs_root is None:
+                return []
+            if self.source_root is None:
+                advisories = runner.run(
+                    self.resolved_review.git_diff or "", self.cwd,
+                    gate_config=gate_config, packs_root=packs_root,
+                )
+            else:
+                advisories = runner.run(
+                    self.resolved_review.git_diff or "",
+                    self.cwd,
+                    execution_root=self._source_root(),
+                    gate_config=gate_config,
+                    packs_root=packs_root,
+                )
         self._state.infra_errors.extend(runner.infra_errors)
 
         findings: list[StateFinding] = []
