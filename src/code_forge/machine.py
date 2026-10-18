@@ -4624,7 +4624,7 @@ class StateMachine:
         reviewed tree's ``.code-forge/packs`` is never used. Built-in packs
         need no copy (and no git). None (with an infra error) when the
         trusted copy cannot be verified."""
-        from .gate_check import UntrustedGateConfigError, materialize_trusted_packs
+        from .gate_check import OutsideConfigRootRefused, UntrustedGateConfigError, materialize_trusted_packs
         from .rulepack import discover_packs
 
         names = gate_config.get("rulepacks", []) or []
@@ -4640,6 +4640,9 @@ class StateMachine:
             )
         except (OSError, UntrustedGateConfigError) as exc:
             self._state.infra_errors.append(f"rulepack: trusted packs refused: {exc}")
+            if self.mode is Mode.CI and isinstance(exc, OutsideConfigRootRefused):
+                # #157: blocking rules unmeasured; CI FAILs, not PASS-with-skip.
+                self._note_trusted_config_refusal(f"trusted rule packs refused: {exc}")
             return None
         self._state.infra_errors.extend(notes)
         return root

@@ -1694,6 +1694,26 @@ def materialize_trusted_packs(
     *, config_root, source_root, base_sha: str | None, allow_untracked: bool,
     names, dest,
 ) -> tuple[Path, list[str]]:
+    """See :func:`_materialize_trusted_packs`. A refusal of an explicit
+    outside config root's packs raises OutsideConfigRootRefused (#157)."""
+    outside = config_root_is_outside_review(config_root, source_root)
+    try:
+        return _materialize_trusted_packs(
+            config_root=config_root, source_root=source_root, base_sha=base_sha,
+            allow_untracked=allow_untracked, names=names, dest=dest,
+        )
+    except OutsideConfigRootRefused:
+        raise
+    except (UntrustedGateConfigError, OSError) as exc:
+        if outside:
+            raise OutsideConfigRootRefused(str(exc)) from exc
+        raise
+
+
+def _materialize_trusted_packs(
+    *, config_root, source_root, base_sha: str | None, allow_untracked: bool,
+    names, dest,
+) -> tuple[Path, list[str]]:
     """Copy the named repo-local rule packs from a source the reviewed change
     cannot edit into ``dest/<name>/`` and return ``(dest, notes)``.
 
