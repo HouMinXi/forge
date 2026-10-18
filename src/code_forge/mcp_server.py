@@ -760,6 +760,7 @@ async def _run_cli_simple(*args: str, workspace: Path) -> tuple[str, str, int]:
         proc = await asyncio.create_subprocess_exec(
             "code-forge",
             *args,
+            stdin=asyncio.subprocess.DEVNULL,  # #111: not the MCP stdio protocol pipe
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(workspace),
@@ -855,6 +856,7 @@ async def _run_cli_budgeted(
         proc = await asyncio.create_subprocess_exec(
             "code-forge",
             *args,
+            stdin=asyncio.subprocess.DEVNULL,  # #111: not the MCP stdio protocol pipe
             stdout=asyncio.subprocess.PIPE,
             stderr=stderr_fh,
             cwd=str(workspace),

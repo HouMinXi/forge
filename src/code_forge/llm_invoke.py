@@ -1588,7 +1588,9 @@ def _invoke_cli(
     try:
         proc = subprocess.Popen(
             cmd,
-            stdin=subprocess.PIPE if use_stdin else None,
+            # #111: never inherit forge's stdin (e.g. the MCP stdio pipe);
+            # a CLI in print mode would read or block on it.
+            stdin=subprocess.PIPE if use_stdin else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

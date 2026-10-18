@@ -55,7 +55,7 @@ def test_a_large_prompt_is_sent_on_stdin(monkeypatch):
     proc.communicate.return_value = (json.dumps({"type": "result", "result": "{}"}), "")
     proc.returncode = 0
     popen = Mock(return_value=proc)
-    monkeypatch.setattr(invoke, "subprocess", SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, TimeoutExpired=subprocess.TimeoutExpired))
+    monkeypatch.setattr(invoke, "subprocess", SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, DEVNULL=subprocess.DEVNULL, TimeoutExpired=subprocess.TimeoutExpired))
     monkeypatch.setattr(invoke, "time", SimpleNamespace(monotonic=lambda: 0.0))
     _install_binary(monkeypatch, "/opt/my bin/cli")
 
@@ -75,7 +75,7 @@ def test_a_large_stdin_prompt_without_a_model_omits_the_model_flag(monkeypatch):
     proc.communicate.return_value = (json.dumps({"type": "result", "result": "{}"}), "")
     proc.returncode = 0
     popen = Mock(return_value=proc)
-    monkeypatch.setattr(invoke, "subprocess", SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, TimeoutExpired=subprocess.TimeoutExpired))
+    monkeypatch.setattr(invoke, "subprocess", SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, DEVNULL=subprocess.DEVNULL, TimeoutExpired=subprocess.TimeoutExpired))
     monkeypatch.setattr(invoke, "time", SimpleNamespace(monotonic=lambda: 0.0))
     monkeypatch.setattr(invoke, "_resolve_model", lambda: "")
     _install_binary(monkeypatch, "/usr/bin/claude")
@@ -92,7 +92,7 @@ def test_a_large_stdin_prompt_without_a_model_omits_the_model_flag(monkeypatch):
 
 def test_a_short_prompt_is_passed_as_an_argument(monkeypatch):
     popen = Mock(side_effect=OSError("boom"))
-    monkeypatch.setattr(invoke, "subprocess", SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, TimeoutExpired=subprocess.TimeoutExpired))
+    monkeypatch.setattr(invoke, "subprocess", SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, DEVNULL=subprocess.DEVNULL, TimeoutExpired=subprocess.TimeoutExpired))
     monkeypatch.setattr(invoke, "time", SimpleNamespace(monotonic=lambda: 0.0))
     _install_binary(monkeypatch, "/usr/bin/cli")
 
@@ -108,7 +108,7 @@ def test_popen_failure_names_the_os_error(monkeypatch):
     cause = OSError("exec format error")
     popen = Mock(side_effect=cause)
     clock = Mock(side_effect=[10.0, 10.5])
-    monkeypatch.setattr(invoke, "subprocess", SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, TimeoutExpired=subprocess.TimeoutExpired))
+    monkeypatch.setattr(invoke, "subprocess", SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, DEVNULL=subprocess.DEVNULL, TimeoutExpired=subprocess.TimeoutExpired))
     monkeypatch.setattr(invoke, "time", SimpleNamespace(monotonic=clock))
     _install_binary(monkeypatch, "/usr/bin/cli")
 
@@ -131,7 +131,7 @@ def test_nonzero_exit_names_the_code(monkeypatch):
     clock = Mock(side_effect=[10.0, 12.0])
     monkeypatch.setattr(
         invoke, "subprocess",
-        SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, TimeoutExpired=subprocess.TimeoutExpired),
+        SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, DEVNULL=subprocess.DEVNULL, TimeoutExpired=subprocess.TimeoutExpired),
     )
     monkeypatch.setattr(invoke, "time", SimpleNamespace(monotonic=clock))
     monkeypatch.setattr(invoke, "_active_proc", None)
@@ -155,7 +155,7 @@ def test_non_json_stdout_keeps_the_parse_error(monkeypatch):
     popen = Mock(return_value=proc)
     monkeypatch.setattr(
         invoke, "subprocess",
-        SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, TimeoutExpired=subprocess.TimeoutExpired),
+        SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, DEVNULL=subprocess.DEVNULL, TimeoutExpired=subprocess.TimeoutExpired),
     )
     monkeypatch.setattr(invoke, "time", SimpleNamespace(monotonic=lambda: 0.0))
     monkeypatch.setattr(invoke, "_active_proc", None)
@@ -184,7 +184,7 @@ def test_a_stream_of_events_uses_the_last_result(monkeypatch):
     popen = Mock(return_value=proc)
     monkeypatch.setattr(
         invoke, "subprocess",
-        SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, TimeoutExpired=subprocess.TimeoutExpired),
+        SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, DEVNULL=subprocess.DEVNULL, TimeoutExpired=subprocess.TimeoutExpired),
     )
     monkeypatch.setattr(invoke, "time", SimpleNamespace(monotonic=lambda: 0.0))
     monkeypatch.setattr(invoke, "_active_proc", None)

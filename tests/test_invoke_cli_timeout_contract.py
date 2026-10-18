@@ -27,6 +27,7 @@ def test_timeout_preserves_budget_and_diagnostics(monkeypatch):
         SimpleNamespace(
             Popen=popen,
             PIPE=subprocess.PIPE,
+            DEVNULL=subprocess.DEVNULL,
             TimeoutExpired=subprocess.TimeoutExpired,
         ),
     )
@@ -75,6 +76,7 @@ def test_real_cli_timeout_reaps_local_child(tmp_path, monkeypatch):
         SimpleNamespace(
             Popen=start_child,
             PIPE=subprocess.PIPE,
+            DEVNULL=subprocess.DEVNULL,
             TimeoutExpired=subprocess.TimeoutExpired,
         ),
     )
