@@ -77,3 +77,26 @@ def test_structural_errors_are_raised_unchanged(raw):
     with pytest.raises(json.JSONDecodeError) as caught:
         _loads_model_json(raw)
     assert caught.value.doc == raw
+
+
+@pytest.mark.parametrize(
+    ("raw", "field", "expected"),
+    [
+        ('{"verdict":"CONFIRMED","description":"returns "}" when the list is empty"}',
+         "description", 'returns "}" when the list is empty'),
+        ('{"description":"closes with "]" here","line":3}', "description", 'closes with "]" here'),
+    ],
+)
+def test_quoted_closer_token_inside_a_value_is_repaired(raw, field, expected):
+    """#234: a description quoting ``"}"`` was repaired on main (8c886b6) and
+    must stay repaired under the bounded walk-back."""
+    assert _loads_model_json(raw)[field] == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ['{"a":"x"}"junk"', '{"a":"x"}"', '{"a":"x"} "b"'],
+)
+def test_trailing_data_after_a_complete_object_still_raises(raw):
+    with pytest.raises(json.JSONDecodeError):
+        _loads_model_json(raw)

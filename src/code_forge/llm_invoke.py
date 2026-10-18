@@ -1046,6 +1046,20 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
     pos = exc.pos
     if not isinstance(pos, int):
         return None
+    if (
+        exc.msg.startswith("Extra data")
+        and 2 <= pos < len(text)
+        and text[pos] == '"'
+        and text[pos - 1] in "}]"
+        and text[pos - 2] == '"'
+        and not _quote_is_escaped(text, pos - 2)
+    ):
+        # A content token such as ``"}"`` inside a string value: json ends
+        # the string at its first quote, the closer ends the object, and the
+        # token's second quote is "extra". Escape the first one; the loop
+        # then repairs the second through the ordinary path (#234). Real
+        # trailing data still fails closed on a later attempt.
+        return pos - 2
     if not exc.msg.startswith("Expecting "):
         # A stray content quote only ever surfaces as a delimiter/name
         # error; "Invalid \escape", control characters or an unterminated
