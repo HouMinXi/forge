@@ -383,15 +383,17 @@ def _clean_mutation_skip_kind(
 # (noted) mutation skip; when False it FAILs like any other unmeasured diff.
 CI_DOCS_ONLY_MUTATION_SKIP_PASSES = True
 
-# Path-based allowlist (#132 re-review). Only these count as docs:
-#   * docs/** and evidence/** with a doc suffix (images allowed there too);
-#   * top-level README*/LICENSE*/CHANGELOG*/COPYING*/NOTICE*/AUTHORS* with no
-#     suffix or a whole doc suffix (LICENSE.sh is not docs).
+# Path-based allowlist (#132 re-review). This layer only decides WHERE a
+# docs file may live; WHAT counts as a doc (suffix, exec bit, script
+# signature) is delegated to the specified classifier
+# mutation_engines/classify.py:classify_path, so there is one definition:
+#   * docs/** and evidence/**: anything classify_path exempts (Markdown,
+#     plain text, raster images);
+#   * top-level README*/LICENSE*/CHANGELOG*/COPYING*/NOTICE*/AUTHORS*:
+#     Markdown or plain text per classify_path (no images), or extensionless.
 # Always excluded: package source/data (src/**, any dir with __init__.py),
 # build/dependency files, agent-instruction and other review-input files,
-# executable-bit, shebang, symlinked or unreadable files.
-_DOC_SUFFIXES = frozenset({".md", ".markdown", ".rst", ".txt", ".adoc", ".asciidoc"})
-_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".bmp"})
+# symlinked, non-regular or unreadable files.
 _DOC_DIRS = frozenset({"docs", "evidence"})
 _TOP_LEVEL_DOC_STEMS = ("README", "LICENSE", "LICENCE", "CHANGELOG", "COPYING", "NOTICE", "AUTHORS")
 _NEVER_DOC_DIRS = frozenset({"src", ".github", ".cursor", ".code-forge"})
@@ -417,25 +419,49 @@ def _normalized_rel(raw: str) -> str | None:
     return path.as_posix()
 
 
+def _classified_doc_rule(rel: str, mode: int, content: bytes) -> str | None:
+    """classify_path's exempt rule for *rel*, or None if it is uncovered.
+
+    classify_path rejects any name without an extension, but extensionless
+    LICENSE/NOTICE/AUTHORS-style top-level files are plain text by
+    convention. Only for those (already admitted by the path layer) is the
+    name classified as if it were ``<name>.txt``; the exec-bit and script
+    signature checks still come from classify_path. classify.py itself is
+    not widened.
+    """
+    from pathlib import PurePosixPath
+
+    from .mutation_engines.classify import CATEGORY_EXEMPT, classify_path
+
+    name = PurePosixPath(rel).name
+    probe = rel + ".txt" if "/" not in rel and "." not in name else rel
+    try:
+        result = classify_path(probe, mode, content)
+    except ValueError:
+        return None
+    return result.rule if result.category == CATEGORY_EXEMPT else None
+
+
 def _docs_path_allowed(rel: str) -> bool:
     """Lexical allowlist check; no filesystem access."""
     from pathlib import PurePosixPath
 
+    from .mutation_engines.classify import RULE_DOC_MARKDOWN, RULE_DOC_TEXT
+
     path = PurePosixPath(rel)
     parts = path.parts
-    name = path.name
-    lower = name.lower()
-    suffix = path.suffix.lower()
+    lower = path.name.lower()
     if any(part in _NEVER_DOC_DIRS for part in parts[:-1]) or lower in _NEVER_DOC_NAMES:
         return False
     if lower.startswith(_NEVER_DOC_PREFIXES):
         return False
+    rule = _classified_doc_rule(rel, 0o644, b"")
     if len(parts) > 1:
-        return parts[0] in _DOC_DIRS and (suffix in _DOC_SUFFIXES or suffix in _IMAGE_SUFFIXES)
-    upper = name.upper()
+        return parts[0] in _DOC_DIRS and rule is not None
+    upper = path.name.upper()
     for stem in _TOP_LEVEL_DOC_STEMS:
         if upper == stem or (upper.startswith(stem) and upper[len(stem)] in ".-_"):
-            return suffix == "" and "." not in name or suffix in _DOC_SUFFIXES
+            return rule in (RULE_DOC_MARKDOWN, RULE_DOC_TEXT)
     return False
 
 
@@ -486,12 +512,13 @@ def _docs_only_files(paths: list[str], root, diff_paths=()) -> bool:
         full = root_path / rel
         try:
             info = os.lstat(full)
-            if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o111:
+            if not stat.S_ISREG(info.st_mode):
                 return False
             with open(full, "rb") as handle:
-                if handle.read(2) == b"#!":
-                    return False
+                content = handle.read()
         except OSError:
+            return False
+        if _classified_doc_rule(rel, info.st_mode, content) is None:
             return False
     return True
 

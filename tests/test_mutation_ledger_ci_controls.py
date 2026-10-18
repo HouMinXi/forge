@@ -1922,7 +1922,7 @@ def _ci_with_diff(p, monkeypatch, files, *, runner=mutation.run_mutation, diff_p
 
 @pytest.mark.parametrize("files", [
     {"README.md": "# docs\n"},
-    {"docs/guide.rst": "Guide\n=====\n", "LICENSE": "MIT\n", "docs/img/logo.png": "png", "evidence/run.md": "x\n", "README.zh-CN.md": "x\n"},
+    {"docs/guide.md": "Guide\n=====\n", "LICENSE": "MIT\n", "docs/img/logo.png": "png", "evidence/run.md": "x\n", "README.zh-CN.md": "x\n"},
 ])
 def test_ci_docs_only_diff_passes_with_visible_note(ci_project, monkeypatch, files):
     p = ci_project
@@ -2110,7 +2110,7 @@ def test_ci_non_allowlisted_path_fails_with_no_adapter_reason(ci_project, monkey
 
 
 @pytest.mark.parametrize("files", [
-    {"LICENSE": "MIT\n"}, {"license.MD": "MIT\n"}, {"CHANGELOG.rst": "x\n"},
+    {"LICENSE": "MIT\n"}, {"license.MD": "MIT\n"}, {"CHANGELOG.text": "x\n"},
     {"COPYING.txt": "x\n"}, {"NOTICE": "x\n"}, {"AUTHORS.md": "x\n"}, {"./docs/a.md": "x\n"},
 ])
 def test_ci_allowlisted_path_passes(ci_project, monkeypatch, files):
@@ -2227,3 +2227,78 @@ def test_tests_only_requires_python_and_missing_doc_is_not_docs(tmp_path):
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs/here.md").write_text("x\n", encoding="utf-8")
     assert _docs_only_files(["docs/here.md"], tmp_path, {"docs/here.md"}) is True
+
+
+# --- forge P3 on #132: one docs policy, delegated to classify_path ---------
+
+
+@pytest.mark.parametrize("files", [
+    {"evidence/a.svg": "<svg><script>x</script></svg>"},
+    {"docs/a.rst": "Title\n=====\n"},
+    {"docs/a.adoc": "= T\n"},
+    {"docs/a.gif": "GIF89a"},
+    {"docs/a.ico": "x"},
+    {"docs/a.bmp": "BM"},
+    {"CHANGELOG.rst": "x\n"},
+    {"README.png": "png"},
+])
+def test_ci_formats_classify_path_does_not_exempt_fail(ci_project, monkeypatch, files):
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, files)
+    assert machine.run() is Verdict.FAIL
+    assert ("CI: mutation not measured: no mutation adapter covers: " + ", ".join(sorted(files))
+            in _saved(p, Verdict.FAIL).infra_errors)
+
+
+_PARITY_NAMES = [
+    "docs/a.md", "docs/a.MARKDOWN", "docs/a.txt", "docs/a.text", "docs/a.png", "docs/a.JPG",
+    "docs/a.jpeg", "docs/a.webp", "docs/a.svg", "docs/a.rst", "docs/a.adoc", "docs/a.gif",
+    "docs/a.ico", "docs/a.bmp", "docs/a.sh", "docs/a", "docs/.md", "evidence/a.svg",
+    "evidence/r.md", "README.md", "README.rst", "LICENSE.txt", "LICENSE.sh", "CHANGELOG.adoc",
+    "NOTICE.text", "AUTHORS.svg",
+]
+_PARITY_FILES = [(0o644, b"plain\n"), (0o755, b"plain\n"), (0o644, b"#!/bin/sh\n"), (0o700, b"#!x")]
+
+
+@pytest.mark.parametrize("rel", _PARITY_NAMES)
+@pytest.mark.parametrize("mode,content", _PARITY_FILES)
+def test_docs_predicate_never_exempts_what_classify_path_rejects(tmp_path, rel, mode, content):
+    from code_forge.machine import _docs_only_files
+    from code_forge.mutation_engines.classify import CATEGORY_EXEMPT, classify_path
+
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    path.chmod(mode)
+    exempt = _docs_only_files([rel], tmp_path, {rel})
+    if classify_path(rel, mode, content).category != CATEGORY_EXEMPT:
+        assert exempt is False
+    elif rel.startswith(("docs/", "evidence/")) or rel.split(".")[-1].lower() in {"md", "txt", "text", "markdown"}:
+        assert exempt is True
+
+
+@pytest.mark.parametrize("mode,content,expected", [
+    (0o644, b"MIT\n", True), (0o755, b"MIT\n", False), (0o644, b"#!/bin/sh\n", False),
+])
+def test_extensionless_top_level_doc_still_gets_classify_checks(tmp_path, mode, content, expected):
+    """Narrow path-layer exception: classify_path rejects every extensionless
+    name, so LICENSE is classified as LICENSE.txt; exec bit/shebang still apply."""
+    from code_forge.machine import _docs_only_files
+
+    (tmp_path / "LICENSE").write_bytes(content)
+    (tmp_path / "LICENSE").chmod(mode)
+    assert _docs_only_files(["LICENSE"], tmp_path, {"LICENSE"}) is expected
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/LICENSE").write_bytes(b"MIT\n")
+    assert _docs_only_files(["docs/LICENSE"], tmp_path, {"docs/LICENSE"}) is False
+
+
+def test_deleted_non_doc_under_docs_is_not_docs_only(tmp_path):
+    """The other side of the diff is checked lexically via classify_path."""
+    from code_forge.machine import _docs_only_files
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/a.md").write_text("x\n", encoding="utf-8")
+    assert _docs_only_files(["docs/a.md"], tmp_path, {"docs/a.md"}) is True
+    assert _docs_only_files(["docs/a.md"], tmp_path, {"docs/a.md", "docs/tool.py"}) is False
+    assert _docs_only_files(["docs/a.md"], tmp_path, {"docs/a.md", "docs/old.svg"}) is False
