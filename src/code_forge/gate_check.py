@@ -1708,6 +1708,8 @@ def materialize_trusted_packs(
     outside = config_root_is_outside_review(config_root, source_root)
     root = Path(source_root)
     in_git = any((d / ".git").exists() for d in (root.resolve(), *root.resolve().parents))
+    if outside:
+        _refuse_checkout_alias(Path(config_root), source_root)  # #153: bind-mount alias
     for name in names:
         if not isinstance(name, str) or not _PACK_NAME.match(name):
             notes.append(f"rulepack {name!r}: not a valid pack name")
