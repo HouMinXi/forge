@@ -22,6 +22,10 @@ from code_forge.gate_check import load_trusted_gate_config
 from code_forge.machine import StateMachine
 from code_forge.state import Mode, Verdict
 
+UNTRACKED_REASON = (
+    "CI: mutation not measured -- untracked gate.yaml in checkout is not trusted; "
+    "commit it or use --test-config-root"
+)
 BASE_CMD = [sys.executable, "-c", "print('baseline')"]
 PR_CMD = [sys.executable, "-c", "print('changed by the PR')"]
 GATE = Path(".code-forge") / "gate.yaml"
@@ -346,8 +350,8 @@ def test_ci_refuses_an_untracked_in_tree_gate_for_test_and_globs(tmp_path):
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
     machine = _machine(repo, base, mode=Mode.CI)
     assert _l2_calls(machine) == []
-    assert any("CI does not trust an untracked in-tree gate.yaml" in e and "--test-config-root" in e
-               for e in machine._state.infra_errors), machine._state.infra_errors
+    assert machine._mutation_bound_failure is True  # #160: unmeasured => CI FAIL
+    assert UNTRACKED_REASON in machine._state.infra_errors, machine._state.infra_errors
     notes = []
     assert mutation.trusted_mutation_globs(
         config_root=repo, source_root=repo, base_sha=base, notes=notes, allow_untracked=False,
@@ -861,11 +865,43 @@ def test_outside_refusal_is_the_subclass_and_in_tree_refusal_is_not(tmp_path):
         load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
 
 
-def test_ci_untracked_in_tree_gate_keeps_the_infra_skip(tmp_path):
-    """Scope of #157: only an operator-configured outside root FAILs CI; the
-    in-tree untracked refusal keeps its existing infra note (not a bound failure)."""
+def test_ci_untracked_in_tree_gate_is_a_bound_failure(tmp_path):
+    """#160: an untracked in-tree gate in CI FAILs (mutation unmeasured)."""
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
     machine = _machine(repo, base, mode=Mode.CI)
     assert _l2_calls(machine) == []
-    assert machine._mutation_bound_failure is False
-    assert any("L2: gate.yaml missing or test.command not configured" in e for e in machine._state.infra_errors)
+    assert machine._mutation_bound_failure is True
+    assert UNTRACKED_REASON in machine._state.infra_errors, machine._state.infra_errors
+
+
+@pytest.mark.parametrize("git", [True, False], ids=["git", "non-git"])
+def test_ci_detached_untracked_gate_fails_with_the_reason(tmp_path, monkeypatch, git):
+    if git:
+        repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    else:
+        repo, base = tmp_path / "plain", None
+        (repo / "src" / "pkg").mkdir(parents=True)
+        (repo / "src" / "pkg" / "mod.py").write_text("x = 2\n", encoding="utf-8")
+        _write_gate(repo, PR_CMD)
+    machine = _machine(repo, base, mode=Mode.CI)
+    verdict, launched = _ci_run(machine, monkeypatch)
+    assert launched == []
+    assert verdict == Verdict.FAIL, (verdict, machine._state.infra_errors)
+    assert UNTRACKED_REASON in machine._state.infra_errors
+
+
+@pytest.mark.parametrize("git", [True, False], ids=["git", "non-git"])
+def test_ci_absent_gate_keeps_the_not_found_path(tmp_path, git):
+    """#160 scope: no gate.yaml at all is 'not found', not an untracked refusal."""
+    if git:
+        repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+        os.unlink(repo / GATE)
+    else:
+        repo, base = tmp_path / "plain", None
+        repo.mkdir()
+    with pytest.raises(FileNotFoundError):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base, allow_untracked=False)
+    if git:
+        machine = _machine(repo, base, mode=Mode.CI)
+        assert _l2_calls(machine) == []
+        assert machine._mutation_bound_failure is False

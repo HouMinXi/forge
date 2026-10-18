@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._outside_gate import outside_gate_root
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
@@ -49,6 +50,7 @@ def _machine(tmp_path, mode=Mode.CI, diff=DIFF):
         source_hash="h",
         baseline_spec_repr="empty",
         cwd=tmp_path,
+        test_config_root=outside_gate_root(tmp_path),  # #160
         registry={},
         l0_runner=lambda registry, files: ([], []),
     )
@@ -280,7 +282,8 @@ def _ci_run(tmp_path, payload, verdict):
             mode=Mode.CI, falsifier=Fixed(verdict), autofixer=StubAutoFixer(),
             revert_fn=lambda f: None, resolved_review=resolved,
             source_hash=compute_source_hash(git_diff=TS_DIFF), baseline_spec_repr="issue46",
-            cwd=tmp_path, registry={}, l0_runner=lambda *a: ([], []), l1_provider=provider,
+            cwd=tmp_path, test_config_root=outside_gate_root(tmp_path),  # #160
+            registry={}, l0_runner=lambda *a: ([], []), l1_provider=provider,
             l2_runner=lambda *a, **kw: ([], []), e2e_runner=lambda *a: ([], []),
             max_total_rounds=3, clean_round_threshold=3,
         )
@@ -421,7 +424,8 @@ def _local_run(tmp_path, payloads, verdict, rounds=6):
             mode=Mode.LOCAL, falsifier=Fixed(verdict), autofixer=StubAutoFixer(),
             revert_fn=lambda f: None, resolved_review=resolved,
             source_hash=compute_source_hash(git_diff=TS_DIFF), baseline_spec_repr="issue46",
-            cwd=tmp_path, registry={}, l0_runner=lambda *a: ([], []), l1_provider=provider,
+            cwd=tmp_path, test_config_root=outside_gate_root(tmp_path),  # #160
+            registry={}, l0_runner=lambda *a: ([], []), l1_provider=provider,
             l2_runner=lambda *a, **kw: ([], []), e2e_runner=lambda *a: ([], []),
             max_total_rounds=rounds, clean_round_threshold=3,
         )
