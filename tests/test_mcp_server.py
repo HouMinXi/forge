@@ -306,6 +306,7 @@ async def test_run_cli_simple_assembles_args():
         mock_exec.assert_called_once_with(
             "code-forge",
             "resolve-outlet",
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(_resolve_workspace()),
