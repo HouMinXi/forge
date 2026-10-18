@@ -112,10 +112,14 @@ def _mutation_outcome(
     return outcome
 
 
+# #135: test code is identified by a tests/ directory, not by file name. A
+# module like pkg/test_helpers.py or pkg/api_test.py is production code and
+# must be mutated (and must not make a diff "tests-only"). A singular test/
+# directory stays production (see test_mutation_venv case2/case5). Repos that keep tests elsewhere say so in
+# the trusted gate.yaml mutation_skip_globs.
 _DEFAULT_MUTATION_SKIP_GLOBS = [
     "tests/**",
-    "**/test_*.py",
-    "**/*_test.py",
+    "**/tests/**",
     "**/conftest.py",
 ]
 
@@ -201,8 +205,8 @@ def _is_test_path(
     """True for a path that should be excluded from mutation.
 
     Include globs take precedence over skip globs.
-    When skip_globs is None, defaults to top-level tests/ and
-    test_*.py, *_test.py, conftest.py files.
+    When skip_globs is None, defaults to files under a tests/
+    directory and conftest.py files (#135: never by file name alone).
     """
     effective_skips = _DEFAULT_MUTATION_SKIP_GLOBS if skip_globs is None else skip_globs
     effective_includes = [] if include_globs is None else include_globs
@@ -216,56 +220,6 @@ def _is_test_path(
             return True
 
     return False
-
-
-def _globs_from_gate_yaml(
-    cwd: Path,
-) -> tuple[list[str] | None, list[str] | None]:
-    """Read mutation skip/include globs from .code-forge/gate.yaml if present.
-
-    Returns (skip_globs, include_globs). Either side is None when the key
-    is omitted or the file cannot be loaded. load_gate_config is the
-    preferred path so type errors surface the same as also_copy; a
-    best-effort YAML parse is the fallback when the file is incomplete
-    (review worktrees often carry a partial gate.yaml).
-    """
-    gate_yaml = cwd / ".code-forge" / "gate.yaml"
-    if not gate_yaml.is_file():
-        return (None, None)
-    try:
-        from .gate_check import load_gate_config
-
-        gate_cfg = load_gate_config(gate_yaml)
-        test_cfg = gate_cfg.get("test", {})
-        return (
-            test_cfg.get("mutation_skip_globs"),
-            test_cfg.get("mutation_include_globs"),
-        )
-    except (OSError, ValueError, TypeError, ImportError):
-        pass
-    try:
-        import yaml
-    except ImportError:
-        return (None, None)
-    try:
-        with open(gate_yaml, encoding="utf-8") as fh:
-            raw = yaml.safe_load(fh)
-    except (OSError, yaml.YAMLError):
-        return (None, None)
-    if not isinstance(raw, dict):
-        return (None, None)
-    test_cfg = raw.get("test", {})
-    if not isinstance(test_cfg, dict):
-        return (None, None)
-    skip = test_cfg.get("mutation_skip_globs")
-    include = test_cfg.get("mutation_include_globs")
-    if skip is not None and (not isinstance(skip, list) or not all(isinstance(e, str) for e in skip)):
-        skip = None
-    if include is not None and (
-        not isinstance(include, list) or not all(isinstance(e, str) for e in include)
-    ):
-        include = None
-    return (skip, include)
 
 
 # Resource guards for the mutmut subprocess tree. mutmut >=3.4 defaults
@@ -851,9 +805,60 @@ def executable_review_sources(source_files: list[Path], git_diff: str | None, so
     return [path for path in source_files if os.path.abspath(source_root / path) not in removed]
 
 
+def _valid_globs(value) -> list[str] | None:
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return value
+    return None
+
+
+def trusted_mutation_globs(
+    *, config_root, source_root, base_sha: str | None, config_test: dict | None = None,
+) -> tuple[list[str] | None, list[str] | None]:
+    """Mutation skip/include globs from a source the reviewed change cannot edit (#134).
+
+    - An explicit config root outside the reviewed tree (disjoint paths) is
+      trusted: its already-loaded ``test`` block is used.
+    - Otherwise (the CLI's real wiring: config root == source root == the
+      reviewed tree) the globs come from the review baseline revision's
+      ``.code-forge/gate.yaml`` via ``git show <base>:./.code-forge/gate.yaml``.
+      A change's own edit to the globs therefore takes effect only once it
+      is the baseline of a later review.
+    - No baseline, no gate file at the baseline, or an unreadable one: the
+      built-in defaults (None, None).
+    """
+    config = Path(os.path.abspath(config_root))
+    source = Path(os.path.abspath(source_root))
+    disjoint = config != source and config not in source.parents and source not in config.parents
+    if disjoint:
+        test = config_test or {}
+        return _valid_globs(test.get("mutation_skip_globs")), _valid_globs(test.get("mutation_include_globs"))
+    if not base_sha:
+        return (None, None)
+    try:
+        shown = subprocess.run(
+            ["git", "show", f"{base_sha}:./.code-forge/gate.yaml"],
+            cwd=source, capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return (None, None)
+    if shown.returncode != 0:
+        return (None, None)
+    try:
+        import yaml
+
+        raw = yaml.safe_load(shown.stdout)
+    except Exception:  # noqa: BLE001 - an unreadable baseline gate means defaults
+        return (None, None)
+    test = raw.get("test") if isinstance(raw, dict) else None
+    if not isinstance(test, dict):
+        return (None, None)
+    return _valid_globs(test.get("mutation_skip_globs")), _valid_globs(test.get("mutation_include_globs"))
+
+
 def mutation_review_admission_error(
     *, target_kind: str | None, git_diff: str | None, source_files: list[Path],
     source_root: Path, config_root: Path, runner, ci_detached: bool = False,
+    base_sha: str | None = None,
 ) -> str | None:
     """Reject unsupported staged/committed native work before it starts."""
     if target_kind not in {"INDEX", "COMMIT"} or not git_diff:
@@ -878,15 +883,12 @@ def mutation_review_admission_error(
         py_files = [_lexical_source(path, root).as_posix() for path in py_files]
     except ValueError:
         return None
-    skip, include = _globs_from_gate_yaml(source_root)
+    skip, include = trusted_mutation_globs(
+        config_root=config_root, source_root=source_root, base_sha=base_sha, config_test=test,
+    )
     selected = native and any(not _is_test_path(path, skip, include, source_root) for path in py_files)
     if detached:
-        detached_skip = test.get("mutation_skip_globs")
-        detached_include = test.get("mutation_include_globs")
-        selected = selected or any(not _is_test_path(
-            path, skip if detached_skip is None else detached_skip,
-            include if detached_include is None else detached_include, source_root,
-        ) for path in py_files)
+        selected = selected or any(not _is_test_path(path, skip, include, source_root) for path in py_files)
     if not selected:
         return None
     if target_kind == "COMMIT":
@@ -1280,12 +1282,9 @@ def _run_mutation(
 
     repo_root = os.path.abspath(cwd)
 
-    if mutation_skip_globs is None or mutation_include_globs is None:
-        file_skip, file_include = _globs_from_gate_yaml(cwd)
-        if mutation_skip_globs is None:
-            mutation_skip_globs = file_skip
-        if mutation_include_globs is None:
-            mutation_include_globs = file_include
+    # #134: globs come only from the caller's trusted configuration. The
+    # reviewed tree's own .code-forge/gate.yaml is never consulted here: a
+    # change could otherwise exclude its own production files from mutation.
 
     # Empty files: no work
     if not diff_files:

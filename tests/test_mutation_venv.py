@@ -889,25 +889,33 @@ class TestMutationSkipIncludeGlobs:
         assert "framework/test" not in content
         assert "select_package" not in content
 
-    def test_run_mutation_honors_skip_globs_from_gate_yaml(self, tmp_path):
-        """gate.yaml skip list is the shared source for review and mutation-check."""
+    def test_run_mutation_ignores_reviewed_tree_gate_yaml_skip_globs(self, tmp_path):
+        """#134: the reviewed tree's own gate.yaml must not exclude its code."""
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         (gate_dir / "gate.yaml").write_text(
-            'test:\n  command: [pytest, -q]\n  mutation_skip_globs: ["lib/test/**"]\n',
+            'test:\n  command: [pytest, -q]\n  mutation_skip_globs: ["lib/**"]\n',
             encoding="utf-8",
         )
+        with patch("code_forge.mutation._run_baseline_guard") as mock_guard:
+            mock_guard.return_value = ("skip", [], ["baseline stub"])
+            findings, _infra = run_mutation(
+                diff_files=["lib/select.py"], baseline_cmd=["pytest", "tests/"], cwd=tmp_path,
+            )
+        assert not any("tests-only" in f.description for f in findings)
+
+    def test_run_mutation_honors_explicit_trusted_skip_globs(self, tmp_path):
+        """Callers pass globs from their trusted config explicitly."""
         findings, _infra = run_mutation(
-            diff_files=["lib/test/select_package.py"],
-            baseline_cmd=["pytest", "tests/"],
-            cwd=tmp_path,
+            diff_files=["lib/select.py"], baseline_cmd=["pytest", "tests/"], cwd=tmp_path,
+            mutation_skip_globs=["lib/**"],
         )
         assert len(findings) == 1
         assert findings[0].id == "MUTATION_SKIPPED"
         assert "tests-only" in findings[0].description
 
     def test_run_mutation_include_overrides_gate_yaml_skip(self, tmp_path):
-        """Include globs from gate.yaml beat skip globs on the same path."""
+        """Include globs beat skip globs on the same path (explicit trusted globs, #134)."""
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         (gate_dir / "gate.yaml").write_text(
@@ -939,7 +947,44 @@ class TestMutationSkipIncludeGlobs:
                 diff_files=["lib/test/select_package.py"],
                 baseline_cmd=["pytest"],
                 cwd=tmp_path,
+                mutation_skip_globs=["lib/test/**"],
+                mutation_include_globs=["lib/test/select_package.py"],
             )
             assert not any(
                 f.id == "MUTATION_SKIPPED" and "tests-only" in f.description for f in findings
             )
+
+
+def test_mutation_check_passes_its_config_globs_explicitly(tmp_path):
+    """#134: mutation-check runs on the user's own checkout and passes that
+    config's globs explicitly; run_mutation no longer reads gate.yaml."""
+    import argparse
+    from unittest.mock import patch
+
+    from code_forge.cli import _run_mutation_check
+
+    (tmp_path / ".code-forge").mkdir()
+    (tmp_path / ".code-forge/gate.yaml").write_text(
+        'test:\n  command: [pytest, -q]\n  mutation_skip_globs: ["lib/**"]\n'
+        '  mutation_include_globs: ["lib/keep.py"]\n',
+        encoding="utf-8",
+    )
+    diff = tmp_path / "x.diff"
+    diff.write_text(
+        "diff --git a/lib/x.py b/lib/x.py\n--- a/lib/x.py\n+++ b/lib/x.py\n@@ -1 +1 @@\n-a\n+b\n",
+        encoding="utf-8",
+    )
+    seen = {}
+
+    def fake(**kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("stop after capture")
+
+    args = argparse.Namespace(subcommand="mutation-check", diff=str(diff), timeout=10, paths=None)
+    with patch("code_forge.mutation.run_mutation", side_effect=fake):
+        try:
+            _run_mutation_check(args, cwd=tmp_path)
+        except RuntimeError:
+            pass
+    assert seen["mutation_skip_globs"] == ["lib/**"]
+    assert seen["mutation_include_globs"] == ["lib/keep.py"]

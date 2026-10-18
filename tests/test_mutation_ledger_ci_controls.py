@@ -2000,6 +2000,8 @@ def test_ci_tests_only_diff_is_clean_end_to_end_without_launch(ci_project, monke
 
 @pytest.mark.parametrize("trusted", [False, True])
 def test_ci_reviewed_tree_skip_globs_cannot_make_code_tests_only(ci_project, monkeypatch, trusted):
+    """#134: the reviewed tree's gate.yaml (trust-recorded or not) is never
+    a source of mutation globs; calc.py stays production code."""
     p = ci_project
     gate = p.root / ".code-forge/gate.yaml"
     data = json.loads(gate.read_text())
@@ -2007,11 +2009,37 @@ def test_ci_reviewed_tree_skip_globs_cannot_make_code_tests_only(ci_project, mon
     gate.write_text(json.dumps(data), encoding="utf-8")
     if trusted:
         record_trust(gate, data)
+    seen = {}
+    real = mutation._run_mutation
+
+    def spy(*args, **kwargs):
+        import inspect
+
+        bound = inspect.signature(real).bind(*args, **kwargs)
+        seen["skip"] = bound.arguments["mutation_skip_globs"]
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(mutation, "_run_mutation", spy)
     machine = _machine(p, runner=mutation.run_mutation)
     monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("calc.py")])
     findings = machine._run_l2_phase()
-    if [f.fingerprint for f in findings] != ["mutation-tests-only"]:
-        pytest.skip("skip globs not honoured by this runner path")
+    assert "mutation-tests-only" not in [f.fingerprint for f in findings]
+    assert seen and seen["skip"] is None
+
+
+def test_ci_trusted_config_skip_globs_reach_the_runner(ci_project, monkeypatch):
+    """#134: globs from the trusted config root are passed explicitly; the
+    machine still refuses a configured-glob tests-only clean skip (#132)."""
+    p = ci_project
+    gate = p.state / ".code-forge/gate.yaml"
+    data = json.loads(gate.read_text())
+    data["test"]["mutation_skip_globs"] = ["calc.py"]
+    gate.write_text(json.dumps(data), encoding="utf-8")
+    record_trust(gate, data)
+    machine = _machine(p, runner=mutation.run_mutation)
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("calc.py")])
+    findings = machine._run_l2_phase()
+    assert [f.fingerprint for f in findings] == ["mutation-tests-only"]
     assert machine._mutation_bound_failure is True
     assert ("CI: mutation not measured: configured skip globs or conftest.py leave nothing to mutate: calc.py"
             in machine._state.infra_errors)
@@ -2431,22 +2459,45 @@ def test_ci_orphan_container_fails_with_path_and_recovery(ci_project, kind):
     assert container.is_dir(), "orphan must never be deleted automatically"
 
 
-def test_local_orphan_container_stops_after_one_round(ci_project):
+def test_local_orphan_container_refused_before_round_1(ci_project):
+    """#138: the orphan is found before any round, so no L1 pass runs."""
     from code_forge.machine import TimeoutBreaker
 
     p = ci_project
     container = _orphan(p)
+    lock = p.root / ".code-forge/mutation-owner.lock"
+    machine = _local_machine(p, runner=mutation.run_mutation)
+    rounds = []
+    machine._execute_round = rounds.append
+    with pytest.raises(TimeoutBreaker, match="stopped before round 1: mutation workspace needs manual recovery") as caught:
+        machine.run()
+    assert str(container) in str(caught.value)
+    assert rounds == []
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert saved.verdict is Verdict.FAIL
+    assert any(e.startswith("L2: mutation not measured: orphan mutation container") for e in saved.infra_errors)
+    assert container.is_dir() and not lock.exists(), "preflight is read-only"
+
+
+def test_local_orphan_appearing_mid_run_still_stops_after_that_round(ci_project):
+    """The in-round #136 stop remains for an orphan created after preflight."""
+    from code_forge.machine import TimeoutBreaker
+
+    p = ci_project
     machine = _local_machine(p, runner=mutation.run_mutation)
     rounds = []
     original = machine._execute_round
 
     def counted(index):
         rounds.append(index)
+        if len(rounds) == 1:
+            _orphan(p)
         return original(index)
 
     machine._execute_round = counted
     with pytest.raises(TimeoutBreaker, match="mutation workspace needs manual recovery \\(not an LLM timeout") as caught:
         machine.run()
+    container = p.root / ".code-forge" / "mutation-empty-config"
     assert str(container) in str(caught.value)
     assert len(rounds) == 1
     saved = load_state(p.state / ".code-forge/state.json")
@@ -2454,7 +2505,6 @@ def test_local_orphan_container_stops_after_one_round(ci_project):
     assert not any(e.startswith("tiered-reset") for e in saved.infra_errors)
     assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
     assert container.is_dir()
-
 
 
 @pytest.mark.parametrize("status", ["survived", "killed", "caught by type check", "timeout"])
@@ -2497,3 +2547,308 @@ def test_orphan_error_records_structured_marker(ci_project):
     marker = evidence["workspace_orphan"]
     assert marker["path"] == str(container)
     assert marker["message"].startswith("orphan mutation container has no completed ownership record: ")
+
+
+
+def test_orphan_marker_message_must_be_an_exact_infra_line(ci_project, monkeypatch):
+    """#137 forge P3: the structured marker alone is not enough; its message
+    must also be an exact infra line."""
+    p = ci_project
+    message = "orphan mutation container has no completed ownership record: /x; it is not removed"
+
+    def inner(*_args, _evidence=None, **_kwargs):
+        _evidence["workspace_orphan"] = {"path": "/x", "message": message}
+        err = _skip(fingerprint="mutation-evidence-error", description=message + " (wrapped)")
+        err.id = "MUTATION_ERROR"
+        return [err], [message + " (wrapped)"]
+
+    monkeypatch.setattr(mutation, "_run_mutation", inner)
+    machine = _local_machine(p, runner=mutation.run_mutation)
+    machine._run_l2_phase()
+    assert machine._mutation_workspace_blocker is None
+    assert "L2: invalid bound mutation measurement" in machine._state.infra_errors
+
+
+def test_orphan_marker_with_exact_infra_line_stops(ci_project, monkeypatch):
+    """Control for the test above."""
+    p = ci_project
+    message = "orphan mutation container has no completed ownership record: /x; it is not removed"
+
+    def inner(*_args, _evidence=None, **_kwargs):
+        _evidence["workspace_orphan"] = {"path": "/x", "message": message}
+        err = _skip(fingerprint="mutation-evidence-error", description=message)
+        err.id = "MUTATION_ERROR"
+        return [err], [message]
+
+    monkeypatch.setattr(mutation, "_run_mutation", inner)
+    machine = _local_machine(p, runner=mutation.run_mutation)
+    machine._run_l2_phase()
+    assert machine._mutation_workspace_blocker == message
+
+
+# --- #138: read-only orphan preflight -----------------------------------------
+
+
+def _ws(tmp_path):
+    (tmp_path / ".code-forge").mkdir()
+    return tmp_path / ".code-forge"
+
+
+def test_find_orphan_container_cases(tmp_path):
+    from code_forge._mutation_workspace import find_orphan_container
+
+    folder = _ws(tmp_path)
+    assert find_orphan_container(tmp_path) is None
+    container = folder / "mutation-empty-config"
+    container.mkdir()
+    assert find_orphan_container(tmp_path) == container  # no journal at all
+    lock = folder / "mutation-owner.lock"
+    lock.write_text(json.dumps({"phase": "complete", "token": "t"}))
+    assert find_orphan_container(tmp_path) == container  # complete, unrecorded
+    lock.write_text(json.dumps({"phase": "complete", "empty_containers": {"config": [1, 2]}}))
+    assert find_orphan_container(tmp_path) is None  # recorded: owned
+    lock.write_text(json.dumps({"phase": "incomplete", "empty_containers": {}}))
+    assert find_orphan_container(tmp_path) is None  # acquire() reports its own error
+    lock.write_text("not json")
+    assert find_orphan_container(tmp_path) is None
+    lock.write_text("")
+    assert find_orphan_container(tmp_path) is None
+    before = lock.read_bytes()
+    assert container.is_dir() and lock.read_bytes() == before
+
+
+def test_find_orphan_container_skips_a_live_lease(tmp_path):
+    import fcntl
+
+    from code_forge._mutation_workspace import find_orphan_container
+
+    folder = _ws(tmp_path)
+    (folder / "mutation-empty-mirror").mkdir()
+    lock = folder / "mutation-owner.lock"
+    lock.write_text(json.dumps({"phase": "complete"}))
+    fd = os.open(lock, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert find_orphan_container(tmp_path) is None
+    finally:
+        os.close(fd)
+    assert find_orphan_container(tmp_path) == folder / "mutation-empty-mirror"
+
+
+def test_preflight_skips_non_python_diff_and_custom_runner(ci_project, monkeypatch):
+    p = ci_project
+    _orphan(p)
+    machine = _local_machine(p, runner=mutation.run_mutation)
+    monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("README.md")])
+    machine._preflight_mutation_workspace()  # no raise: no Python work
+    custom = _local_machine(p, runner=lambda *a, **k: ([], []))
+    custom._preflight_mutation_workspace()  # no raise: not the native workspace
+
+
+# --- #135: test code by directory, not by name --------------------------------
+
+
+@pytest.mark.parametrize("path,expected", [
+    ("pkg/test_helpers.py", False), ("pkg/api_test.py", False), ("test_calc.py", False),
+    ("framework/test/select.py", False), ("tests/test_calc.py", True),
+    ("pkg/tests/test_x.py", True), ("conftest.py", True), ("pkg/conftest.py", True),
+])
+def test_default_test_paths_are_directory_based(path, expected):
+    assert mutation._is_test_path(path) is expected
+
+
+@pytest.mark.parametrize("path", ["pkg/test_helpers.py", "pkg/api_test.py"])
+def test_production_module_named_like_test_is_not_tests_only(ci_project, monkeypatch, path):
+    from code_forge.machine import _default_tests_only
+
+    assert _default_tests_only([path]) is False
+    p = ci_project
+    machine = _ci_with_diff(p, monkeypatch, {path: "def helper():\n    return 1\n"})
+    findings = machine._run_l2_phase()
+    assert "mutation-tests-only" not in [f.fingerprint for f in findings]
+
+
+# --- #139 review P2: globs from the baseline revision, CLI wiring -----------
+
+
+def _cli_wired(p, *, mode=Mode.CI, review=None):
+    """The CLI's real wiring: config root == source root == reviewed tree."""
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+    machine.cwd = p.root
+    machine.source_root = None
+    if mode is Mode.LOCAL:
+        machine.mode = Mode.LOCAL
+        machine._state.mode = Mode.LOCAL
+    return machine
+
+
+def _spy_skip_globs(monkeypatch):
+    import inspect
+
+    seen = []
+    real = mutation._run_mutation
+
+    def spy(*args, **kwargs):
+        bound = inspect.signature(real).bind(*args, **kwargs)
+        seen.append((bound.arguments["mutation_skip_globs"], bound.arguments["mutation_include_globs"]))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(mutation, "_run_mutation", spy)
+    return seen
+
+
+def _set_root_globs(p, skip, *, commit=False):
+    gate = p.root / ".code-forge/gate.yaml"
+    data = json.loads(gate.read_text())
+    data["test"]["mutation_skip_globs"] = skip
+    gate.write_text(json.dumps(data), encoding="utf-8")
+    if commit:
+        _git(p.root, "add", "-f", ".code-forge/gate.yaml")
+        _git(p.root, "-c", "user.name=CI Control", "-c", "user.email=ci-control@example.invalid",
+             "commit", "-qm", "baseline globs")
+    return gate
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_pr_edit_to_skip_globs_does_not_apply_in_its_own_review(ci_project, monkeypatch, mode):
+    """A PR that adds calc.py to mutation_skip_globs: calc.py is still mutated."""
+    p = ci_project
+    _set_root_globs(p, ["calc.py"])
+    seen = _spy_skip_globs(monkeypatch)
+    machine = _cli_wired(p, mode=mode)
+    findings = machine._run_l2_phase()
+    assert seen == [(None, None)]
+    assert "mutation-tests-only" not in [f.fingerprint for f in findings]
+
+
+def test_baseline_skip_globs_are_honoured_as_opt_out(ci_project, monkeypatch):
+    p = ci_project
+    _set_root_globs(p, ["calc.py"], commit=True)
+    seen = _spy_skip_globs(monkeypatch)
+    machine = _cli_wired(p, review=_review(p))
+    findings = machine._run_l2_phase()
+    assert seen == [(["calc.py"], None)]
+    assert [f.fingerprint for f in findings] == ["mutation-tests-only"]
+
+
+def test_pr_cannot_override_baseline_globs_either(ci_project, monkeypatch):
+    p = ci_project
+    gate = _set_root_globs(p, ["other/**"], commit=True)
+    data = json.loads(gate.read_text())
+    data["test"]["mutation_skip_globs"] = ["calc.py"]
+    gate.write_text(json.dumps(data), encoding="utf-8")
+    seen = _spy_skip_globs(monkeypatch)
+    _cli_wired(p, review=_review(p))._run_l2_phase()
+    assert seen == [(["other/**"], None)]
+
+
+def test_ci_detached_launch_uses_baseline_globs(ci_project, monkeypatch):
+    from code_forge import machine as machine_mod
+
+    p = ci_project
+    _set_root_globs(p, ["calc.py"])
+    _discover_mutmut(p)
+    captured = {}
+
+    def fake_launch(*args, **kwargs):
+        captured.update(kwargs)
+        return False
+
+    monkeypatch.setattr(machine_mod, "launch_detached_mutation", fake_launch)
+    machine = _cli_wired(p)
+    monkeypatch.setattr(machine, "_run_l2_phase", lambda: [])
+    machine.run()
+    assert captured, "detached launch must have been attempted"
+    assert captured["mutation_skip_globs"] is None
+
+
+def test_trusted_mutation_globs_sources(tmp_path):
+    from code_forge.mutation import trusted_mutation_globs
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-q")
+    (root / "a.py").write_text("x = 1\n")
+    _git(root, "add", "a.py")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@e.invalid", "commit", "-qm", "a")
+    no_gate = _git(root, "rev-parse", "HEAD")
+    (root / ".code-forge").mkdir()
+    (root / ".code-forge/gate.yaml").write_text("test:\n  mutation_skip_globs: [a.py]\n  mutation_include_globs: [b.py]\n")
+    _git(root, "add", "-f", ".code-forge/gate.yaml")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@e.invalid", "commit", "-qm", "g")
+    with_gate = _git(root, "rev-parse", "HEAD")
+    (root / ".code-forge/gate.yaml").write_text(": [ not yaml")
+    _git(root, "add", "-f", ".code-forge/gate.yaml")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@e.invalid", "commit", "-qm", "bad")
+    bad = _git(root, "rev-parse", "HEAD")
+    worktree_test = {"mutation_skip_globs": ["edited.py"]}
+    same = dict(config_root=root, source_root=root, config_test=worktree_test)
+    assert trusted_mutation_globs(base_sha=with_gate, **same) == (["a.py"], ["b.py"])
+    assert trusted_mutation_globs(base_sha=no_gate, **same) == (None, None)
+    assert trusted_mutation_globs(base_sha=bad, **same) == (None, None)
+    assert trusted_mutation_globs(base_sha=None, **same) == (None, None)
+    assert trusted_mutation_globs(base_sha="0" * 40, **same) == (None, None)
+    # A config root that contains the reviewed tree is not "outside" it.
+    sub = root / "pkg"
+    sub.mkdir()
+    assert trusted_mutation_globs(config_root=root, source_root=sub, base_sha=None,
+                                  config_test=worktree_test) == (None, None)
+    outside = tmp_path / "state"
+    outside.mkdir()
+    assert trusted_mutation_globs(config_root=outside, source_root=root, base_sha=with_gate,
+                                  config_test=worktree_test) == (["edited.py"], None)
+
+
+def test_admission_uses_baseline_globs(ci_project, monkeypatch):
+    """INDEX/COMMIT admission decides selection from the same trusted globs."""
+    p = ci_project
+    _set_root_globs(p, ["calc.py"])
+    calls = []
+    real = mutation.trusted_mutation_globs
+
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(mutation, "trusted_mutation_globs", spy)
+    review = _review(p)
+    mutation.mutation_review_admission_error(
+        target_kind="COMMIT", git_diff=review.git_diff, source_files=[p.root / "calc.py"],
+        source_root=p.root, config_root=p.root, runner=mutation.run_mutation, base_sha=review.base_sha,
+    )
+    assert calls and calls[0]["base_sha"] == review.base_sha
+    assert real(**calls[0]) == (None, None)
+
+
+def test_baseline_globs_of_wrong_type_fall_back_to_defaults(ci_project):
+    from code_forge.mutation import trusted_mutation_globs
+
+    p = ci_project
+    gate = p.root / ".code-forge/gate.yaml"
+    data = json.loads(gate.read_text())
+    data["test"]["mutation_skip_globs"] = "calc.py"
+    data["test"]["mutation_include_globs"] = [1]
+    gate.write_text(json.dumps(data), encoding="utf-8")
+    _git(p.root, "add", "-f", ".code-forge/gate.yaml")
+    _git(p.root, "-c", "user.name=t", "-c", "user.email=t@e.invalid", "commit", "-qm", "bad types")
+    base = _git(p.root, "rev-parse", "HEAD")
+    assert trusted_mutation_globs(config_root=p.root, source_root=p.root, base_sha=base) == (None, None)
+
+
+def test_machine_admission_receives_review_baseline(ci_project, monkeypatch):
+    from code_forge import machine as machine_mod
+
+    p = ci_project
+    seen = {}
+
+    def spy(**kwargs):
+        seen.update(kwargs)
+        return "stop here"
+
+    monkeypatch.setattr(machine_mod, "mutation_review_admission_error", spy)
+    machine = _cli_wired(p)
+    try:
+        machine.run()
+    except Exception:  # noqa: BLE001 - only the captured arguments matter
+        pass
+    assert seen["base_sha"] == machine.resolved_review.base_sha and seen["base_sha"]

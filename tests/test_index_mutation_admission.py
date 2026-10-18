@@ -222,7 +222,8 @@ def test_non_native_or_unselected_subject_keeps_its_normal_boundary(project, tmp
         monkeypatch.setattr(shutil, "which", lambda *_a, **_kw: None)
         runner = factories.build_l2_runner(cwd=project.root)
     elif case in {"no-python", "other-adapter", "tests-only"}:
-        path = {"no-python": "note.txt", "other-adapter": "script.ts", "tests-only": "test_calc.py"}[case]
+        path = {"no-python": "note.txt", "other-adapter": "script.ts", "tests-only": "tests/test_calc.py"}[case]
+        (project.root / path).parent.mkdir(parents=True, exist_ok=True)
         (project.root / path).write_text("value = 2\n", encoding="utf-8")
         git(project.root, "add", "--", path)
         review = reviewed(project, paths=[Path(path)])

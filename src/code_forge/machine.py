@@ -816,6 +816,7 @@ class StateMachine:
             target_kind=self.resolved_review.target_kind, git_diff=self.resolved_review.git_diff,
             source_files=self._source_files(), source_root=self._source_root(), config_root=self.cwd,
             runner=self.l2_runner, ci_detached=self.mode == Mode.CI,
+            base_sha=self.resolved_review.base_sha,
         )
         self._acquisition_receipts = ()
         self._acquisition_authority = None
@@ -1278,8 +1279,7 @@ class StateMachine:
                 mutation_max_children = test_config.get("mutation_max_children")
                 mem_mb = test_config.get("mutation_memory_limit_mb")
                 mutation_memory_limit = int(mem_mb) * 1024**2 if mem_mb is not None else None
-                mutation_skip_globs = test_config.get("mutation_skip_globs")
-                mutation_include_globs = test_config.get("mutation_include_globs")
+                mutation_skip_globs, mutation_include_globs = self._trusted_mutation_globs(test_config)
                 mutation_timeout = test_config.get("mutation_timeout_seconds")
             except FileNotFoundError as exc:
                 baseline_cmd = None
@@ -1762,6 +1762,7 @@ class StateMachine:
             ]
             self._hold_confirmed_fingerprints = self._confirmed_hold_fingerprints()
         start = self._continuation_round_index()
+        self._preflight_mutation_workspace()
         for round_index in range(start, start + self.max_total_rounds):
             self._begin_host_attempt(round_index)
             if check_escalated_frozen(self._state):
@@ -2317,6 +2318,45 @@ class StateMachine:
                 % (self._state.rounds_with_failed_pass, failed)
             )
 
+    def _trusted_mutation_globs(self, test_config: dict):
+        """#134: globs from an explicit outside config, else the baseline revision."""
+        from .mutation import trusted_mutation_globs
+
+        return trusted_mutation_globs(
+            config_root=self.cwd, source_root=self._source_root(),
+            base_sha=self.resolved_review.base_sha, config_test=test_config,
+        )
+
+    def _preflight_mutation_workspace(self) -> None:
+        """#138: refuse before round 1 when the native mutation workspace
+        holds an orphan container, so no LLM passes are spent on a run whose
+        every L2 phase would stop on it. Read-only; deletes nothing."""
+        if self.l2_runner is None or not is_native_mutation_runner(
+            self.l2_runner, source_root=self._source_root(),
+        ):
+            return
+        from ._mutation_workspace import find_orphan_container, orphan_container_message
+        from .mutation_dispatch import group_by_adapter
+
+        try:
+            files = [str(f) for f in self._executable_source_files()]
+        except Exception:  # noqa: BLE001 - the L2 phase reports scope errors itself
+            return
+        if not group_by_adapter(files).get("python-mutmut"):
+            return  # the native workspace is only leased for Python work
+        path = find_orphan_container(self._source_root())
+        if path is None:
+            return
+        message = orphan_container_message(path)
+        self._state.infra_errors.append("L2: mutation not measured: " + message)
+        self._state.verdict = Verdict.FAIL
+        self._state.converged = False
+        self._persist_state()
+        raise TimeoutBreaker(
+            "stopped before round 1: mutation workspace needs manual recovery (not an LLM "
+            "timeout; raising FORGE_LLM_TIMEOUT_S will not help): " + message
+        )
+
     def _run_l2_phase(self) -> list[StateFinding]:
         """L2 mutation phase. Runs after L1.
 
@@ -2361,6 +2401,8 @@ class StateMachine:
                 max_children = config["test"].get("mutation_max_children")
                 memory_mb = config["test"].get("mutation_memory_limit_mb")
                 memory_limit_bytes = memory_mb * 1024**2 if memory_mb is not None else None
+                # #134: never the reviewed tree's own globs.
+                skip_globs, include_globs = self._trusted_mutation_globs(config["test"])
             except Exception as exc:  # noqa: BLE001
                 self._mutation_bound_failure = native
                 self._state.infra_errors.append(
@@ -2373,12 +2415,15 @@ class StateMachine:
             also_copy = None
             max_children = None
             memory_limit_bytes = None
+            skip_globs = include_globs = None
 
         if needs_baseline:
             progress.emit("mutation: running baseline")
         else:
             progress.emit("mutation: checking applicability")
         proof_kwargs = {"_evidence": evidence} if native else {}
+        if native:
+            proof_kwargs.update(mutation_skip_globs=skip_globs, mutation_include_globs=include_globs)
         if self.l2_runner is run_mutation:
             proof_kwargs["cwd"] = self._source_root()
         try:

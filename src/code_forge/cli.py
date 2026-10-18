@@ -3990,6 +3990,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             target_kind=resolved.target_kind, git_diff=resolved.git_diff,
             source_files=resolved.source_files, source_root=cwd, config_root=cwd,
             runner=build_l2_runner(cwd=cwd), ci_detached=mode == Mode.CI,
+            base_sha=resolved.base_sha,
         )
         if admission_error:
             raise CliError(admission_error)
@@ -4793,6 +4794,8 @@ def _run_mutation_check(args, cwd: Path) -> int:
         also_copy=test_config.get("also_copy"),
         max_children=test_config.get("mutation_max_children"),
         memory_limit_bytes=memory_mb * 1024**2 if memory_mb is not None else None,
+        mutation_skip_globs=test_config.get("mutation_skip_globs"),
+        mutation_include_globs=test_config.get("mutation_include_globs"),
         _evidence=evidence,
     )
     same_head = args.diff is None and review_head is not None and captured_head() == review_head

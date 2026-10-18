@@ -769,6 +769,48 @@ China), also raise `FORGE_LLM_TIMEOUT_S` to account for network latency
 
 ---
 
+## Mutation scope: `test.mutation_skip_globs` / `test.mutation_include_globs`
+
+These globs decide which changed files are *not* mutated (skip) and which are
+mutated despite a skip match (include wins).
+
+**Where they are read from (#134).** A review never uses the globs from the
+tree it is reviewing:
+
+- When the gate config root is a separate checkout outside the reviewed tree,
+  that config's globs are used.
+- Otherwise (the normal CLI case: you run `code-forge review` in the reviewed
+  worktree), the globs come from the **review baseline revision**, i.e.
+  `git show <baseline>:.code-forge/gate.yaml`.
+- No baseline, no `.code-forge/gate.yaml` at the baseline, or an unreadable
+  one: the built-in defaults below.
+
+So **a change to these globs takes effect only in reviews whose baseline
+already contains it.** A PR that adds its own files to `mutation_skip_globs`
+still has those files mutated in its own review.
+
+(The other `test.*` keys, including `test.command`, are still read from the
+checked-out tree; that older exposure is tracked in #140.)
+
+**Defaults (#135).** Test code is identified by directory, not file name:
+
+```yaml
+- "tests/**"
+- "**/tests/**"
+- "**/conftest.py"
+```
+
+Behaviour change: root-level `test_*.py` / `*_test.py` files, in-package
+modules such as `pkg/test_helpers.py`, and anything under a singular `test/`
+directory are now treated as production code. They are mutated, and a diff
+made only of them is not "tests-only". To opt out, list them in
+`mutation_skip_globs` and land that on the baseline first, e.g.:
+
+```yaml
+test:
+  mutation_skip_globs: ["tests/**", "**/tests/**", "**/conftest.py", "test/**", "test_*.py"]
+```
+
 ## Backend Troubleshooting
 
 Common backend errors and their solutions:

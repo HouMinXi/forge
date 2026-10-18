@@ -19,6 +19,68 @@ from ._mutation_process import _identity
 ORPHAN_CONTAINER_MARKER = "orphan mutation container has no completed ownership record"
 
 
+def orphan_container_message(path) -> str:
+    return (
+        f"{ORPHAN_CONTAINER_MARKER}: {path}; it is not removed automatically "
+        "because another run may own it. Recovery: make sure no code-forge run "
+        f"is active on this worktree, then move {path} aside and retry"
+    )
+
+
+def find_orphan_container(root) -> Path | None:
+    """Read-only preflight (#138): the first mutation container acquire()
+    would refuse as orphaned, or None.
+
+    Mirrors acquire(): a container is orphaned when no lock journal exists,
+    or the journal is complete and does not record it. Takes only a shared,
+    non-blocking flock to read; a held lock (a live run) or an unfinished /
+    unreadable journal returns None and is left to acquire() to report.
+    Never creates, deletes or modifies anything.
+    """
+    import fcntl
+
+    folder = Path(root) / ".code-forge"
+    present = []
+    for kind in ("mirror", "config"):
+        path = folder / ("mutation-empty-" + kind)
+        try:
+            os.lstat(path)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return None
+        present.append((kind, path))
+    if not present:
+        return None
+    try:
+        fd = os.open(folder / "mutation-owner.lock", os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return present[0][1]
+    except OSError:
+        return None
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError:
+            return None  # a live run holds the lease
+        raw = os.read(fd, 1024 * 1024)
+    finally:
+        os.close(fd)
+    try:
+        journal = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(journal, dict) or journal.get("phase") != "complete":
+        return None
+    stored = journal.get("empty_containers", {})
+    if not isinstance(stored, dict):
+        return None
+    for kind, path in present:
+        if stored.get(kind) is None:
+            return path
+    return None
+
+
 class MutationWorkspaceError(RuntimeError):
     pass
 
@@ -236,12 +298,7 @@ class MutationWorkspace:
                     os.close(fd)
                 elif self._folder_stat(self._container_name(kind)) is not None:
                     path = self.root / ".code-forge" / self._container_name(kind)
-                    raise OrphanMutationContainerError(
-                        f"{ORPHAN_CONTAINER_MARKER}: {path}; it is not removed automatically "
-                        "because another run may own it. Recovery: make sure no code-forge run "
-                        f"is active on this worktree, then move {path} aside and retry",
-                        path,
-                    )
+                    raise OrphanMutationContainerError(orphan_container_message(path), path)
             self.original_snapshot = self._cache_snapshot("mutants")
             cache = self._stat("mutants")
             self.original_identity = None if cache is None else _node_identity(cache)
