@@ -409,6 +409,26 @@ class TestGetDigest:
         assert status.complete is False
 
 
+def _await_ctime_tick(*paths):
+    """#110: the kernel stamps ctime from a coarse clock (one tick, ~1-4 ms),
+    so a move+restore inside one tick leaves (dev, ino, ctime) unchanged and
+    the walk's directory/file stamps cannot see it. Wait until a fresh ctime
+    is past every given path's current one, so the injected move below is
+    observable and the test checks the detection deterministically instead of
+    racing the clock."""
+    import tempfile
+    import time
+
+    floor = max(os.stat(p, follow_symlinks=False).st_ctime_ns for p in paths)
+    probe_dir = Path(paths[0]).parent
+    with tempfile.NamedTemporaryFile(dir=probe_dir) as probe:
+        deadline = time.monotonic() + 5
+        while os.fstat(probe.fileno()).st_ctime_ns <= floor:
+            assert time.monotonic() < deadline, "ctime clock did not advance"
+            time.sleep(0.001)
+            os.fchmod(probe.fileno(), 0o600)
+
+
 class TestExtractPythonPublicNames:
     def test_walk_rejects_root_move_restore_during_yield(self, tmp_path):
         from code_forge import conventions
@@ -424,6 +444,7 @@ class TestExtractPythonPublicNames:
             walk = conventions._walk_source(root, root, root_fd, status)
             first = next(walk)
             assert "api.py" in first[2]
+            _await_ctime_tick(root)
             root.rename(parked)
             parked.rename(root)
             assert list(walk) == []
@@ -443,6 +464,7 @@ class TestExtractPythonPublicNames:
 
         def move_at_walk_end(*args, **kwargs):
             yield from original_fwalk(*args, **kwargs)
+            _await_ctime_tick(root)
             root.rename(parked)
             parked.rename(root)
             moves.append(True)
@@ -477,6 +499,7 @@ class TestExtractPythonPublicNames:
             for dirpath, dirs, files, fd in original_fwalk(*args, **kwargs):
                 yield dirpath, dirs, files, fd
                 if Path(dirpath).name == "sub" and not moves:
+                    _await_ctime_tick(nested, nested.parent)
                     nested.rename(parked)
                     parked.rename(nested)
                     moves.append(True)
@@ -509,6 +532,7 @@ class TestExtractPythonPublicNames:
             for path, _dirs, files in walk:
                 if path == str(nested):
                     assert "api.py" in files
+                    _await_ctime_tick(nested)
                     nested.rename(parked)
                     parked.rename(nested)
             assert status.complete is False
@@ -531,6 +555,7 @@ class TestExtractPythonPublicNames:
         def hide_after_listing(*args, **kwargs):
             for dirpath, dirs, files, fd in original_fwalk(*args, **kwargs):
                 if "api.py" in files and not moves:
+                    _await_ctime_tick(root)
                     source.rename(hidden)
                     moves.append(1)
                 yield dirpath, dirs, files, fd
