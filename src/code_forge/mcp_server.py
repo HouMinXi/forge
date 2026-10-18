@@ -448,37 +448,36 @@ def _backend_names_for(workspace: Path) -> list[str]:
     return list(merge_backends(project_backends, user_backends).keys())
 
 
-def _job_cap_s(workspace: Path, backend_name: str = "") -> float:
-    """Compute the wall-clock cap for a background MCP job.
+def _job_cap_s(workspace: Path | None = None, backend_name: str = "") -> float | None:
+    """Explicit wall-clock cap for a background MCP job, or None (#165).
 
-    Returns effective_invoke_timeout_s(backend) + 600s grace + the gate's
-    mutation-baseline budget (BASELINE_MAX_RUNS * test.timeout_seconds when
-    a test command is configured; see _baseline_budget_s).
-    When FORGE_MCP_JOB_TIMEOUT_S is set and positive, it wins.
-    Falls back to derived value on junk env.
+    A LOCAL review runs the mutation baseline every round and may take up to
+    FORGE_MAX_TOTAL_ROUNDS rounds, so no derived total fits every review.
+    A job is bounded by an inactivity watchdog instead (see _job_idle_s);
+    a total cap applies only when FORGE_MCP_JOB_TIMEOUT_S is set and
+    positive (or a per-call timeout_s is given). Junk env is ignored.
     """
-    # Env override takes priority
     env_raw = os.environ.get("FORGE_MCP_JOB_TIMEOUT_S")
-    if env_raw is not None:
-        try:
-            env_val = int(env_raw)
-            if env_val > 0:
-                return float(env_val)
-            log.warning(
-                "FORGE_MCP_JOB_TIMEOUT_S=%r is not positive; falling back to derived cap",
-                env_raw,
-            )
-        except ValueError:
-            log.warning(
-                "FORGE_MCP_JOB_TIMEOUT_S=%r is not an int; falling back to derived cap",
-                env_raw,
-            )
+    if env_raw is None:
+        return None
+    try:
+        env_val = int(env_raw)
+    except ValueError:
+        log.warning("FORGE_MCP_JOB_TIMEOUT_S=%r is not an int; no total cap", env_raw)
+        return None
+    if env_val > 0:
+        return float(env_val)
+    log.warning("FORGE_MCP_JOB_TIMEOUT_S=%r is not positive; no total cap", env_raw)
+    return None
 
-    # Resolve the BackendConfig to get the effective invoke timeout.
+
+def _job_idle_s(workspace: Path, backend_name: str = "") -> float:
+    """Inactivity window for a background MCP job (#165): the longest step
+    that may print nothing, plus 600s grace. A step is one LLM invoke
+    (effective_invoke_timeout_s(backend)) or one silent test run from the
+    trusted gate (see _silent_step_s). Progress lines reset the window, so
+    a review of any number of rounds is never cut off while it advances."""
     # Lazy import avoids circular dependency (mcp_server <-> cli).
-    # Note: _load_gate_backends does sync file I/O (reading gate.yaml).
-    # This is acceptable because _job_cap_s is called only on the rare
-    # timeout-cap path, not on every request.
     from code_forge import cli as _cli
     from code_forge.backend import (
         DEFAULT_BACKEND as _DEFAULT,
@@ -503,34 +502,50 @@ def _job_cap_s(workspace: Path, backend_name: str = "") -> float:
         )
         backend = _DEFAULT
 
-    return float(effective_invoke_timeout_s(backend) + 600 + _baseline_budget_s(workspace))
+    return float(max(effective_invoke_timeout_s(backend), _silent_step_s(workspace)) + 600)
 
 
-def _baseline_budget_s(workspace: Path) -> int:
-    """Worst-case mutation-baseline wall time for one round (#128).
+def _trusted_test_block(workspace: Path) -> dict:
+    """test.* from the gate the review itself will use (#165): an outside
+    FORGE_TEST_CONFIG_ROOT, else the HEAD (review baseline) copy, else an
+    untracked in-tree file -- via gate_check.load_trusted_gate_config, not
+    the reviewed tree's working copy. {} when none or unreadable."""
+    import subprocess
 
-    The baseline guard runs the gate's test command up to BASELINE_MAX_RUNS
-    times, each bounded by test.timeout_seconds (default 120). Without a
-    test command there is no baseline, so 0. Read straight from gate.yaml:
-    it only lengthens a time budget, so the backend trust filter does not
-    apply; an unreadable file or a bad value falls back to the default.
-    """
-    import yaml
+    from code_forge.gate_check import load_trusted_gate_config
 
-    from code_forge.baseline_guard import BASELINE_MAX_RUNS
-
+    root = os.environ.get("FORGE_TEST_CONFIG_ROOT") or str(workspace)
     try:
-        with open(workspace / ".code-forge" / "gate.yaml", encoding="utf-8") as handle:
-            data = yaml.safe_load(handle)
-    except (OSError, yaml.YAMLError, UnicodeDecodeError):
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=str(workspace),
+            capture_output=True, text=True, timeout=10, check=False, stdin=subprocess.DEVNULL,
+        ).stdout.strip() or None
+    except (OSError, subprocess.TimeoutExpired):
+        head = None
+    try:
+        test = load_trusted_gate_config(
+            config_root=Path(root), source_root=workspace, base_sha=head,
+        ).get("test")
+    except Exception:  # noqa: BLE001 - only sizes a time window
+        return {}
+    return test if isinstance(test, dict) else {}
+
+
+def _silent_step_s(workspace: Path) -> int:
+    """Longest single test step that may print no progress (#128/#165):
+    one run of test.command (test.timeout_seconds, default 120) or the
+    mutant execution (test.mutation_timeout_seconds), read from the trusted
+    gate. 0 when no test command is configured (no baseline)."""
+    test = _trusted_test_block(workspace)
+    if not test.get("command"):
         return 0
-    test = data.get("test") if isinstance(data, dict) else None
-    if not isinstance(test, dict) or not test.get("command"):
-        return 0
-    timeout = test.get("timeout_seconds", 120)
-    if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
-        timeout = 120
-    return BASELINE_MAX_RUNS * timeout
+    steps = []
+    for key, default in (("timeout_seconds", 120), ("mutation_timeout_seconds", 0)):
+        value = test.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            value = default
+        steps.append(value)
+    return max(steps)
 
 
 @asynccontextmanager
@@ -1129,11 +1144,12 @@ def _unlink(path: str | None) -> None:
 async def _dispatch_cli(
     cli_args: list[str],
     workspace: Path,
-    cap: float,
+    cap: float | None,
     contract: str | None = None,
     focus: str | None = None,
     env: dict[str, str] | None = None,
     timeout_s: float | None = None,
+    idle_s: float | None = None,
 ) -> CallToolResult:
     """Shared CLI-subprocess dispatch with contract+focus tmpfile lifecycle.
 
@@ -1195,6 +1211,7 @@ async def _dispatch_cli(
             stderr_log_path=stderr_path,
             max_lifetime_s=cap if deadline is None else max(0.0, deadline - time.monotonic()),
             **({"deadline": deadline} if deadline is not None else {}),
+            **({"idle_timeout_s": idle_s} if deadline is None and idle_s is not None else {}),
         )
     except Exception:
         _unlink(contract_tmp)
@@ -1392,7 +1409,7 @@ async def forge_review(
         contract=contract or None,
         focus=focus or None,
         env=child_env,
-        **({"timeout_s": timeout_s} if timeout_s is not None else {}),
+        **({"timeout_s": timeout_s} if timeout_s is not None else {"idle_s": _job_idle_s(workspace, backend)}),
     )
 
 
@@ -1433,7 +1450,8 @@ async def forge_gate_check(
 
     cap = _job_cap_s(workspace, backend) if timeout_s is None else timeout_s
     return await _dispatch_cli(
-        cli_args, workspace, cap, **({"timeout_s": timeout_s} if timeout_s is not None else {})
+        cli_args, workspace, cap,
+        **({"timeout_s": timeout_s} if timeout_s is not None else {"idle_s": _job_idle_s(workspace, backend)}),
     )
 
 
