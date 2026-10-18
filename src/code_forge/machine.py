@@ -1268,6 +1268,8 @@ class StateMachine:
             )
         elif py_files and shutil.which("mutmut") is not None:
             mutation_timeout = None
+            from .gate_check import OutsideConfigRootRefused
+
             try:
                 config = self._load_trusted_gate_config()
                 baseline_cmd = config["test"]["command"]
@@ -1284,6 +1286,20 @@ class StateMachine:
                 mutation_memory_limit = int(mem_mb) * 1024**2 if mem_mb is not None else None
                 mutation_skip_globs, mutation_include_globs = self._trusted_mutation_globs(test_config)
                 mutation_timeout = test_config.get("mutation_timeout_seconds")
+            except OutsideConfigRootRefused as exc:
+                # #157: a refused outside test config root: mutation cannot be
+                # measured; CI must FAIL with the reason, not PASS with a skip.
+                baseline_cmd = None
+                baseline_timeout = 120
+                also_copy = None
+                mutation_max_children = None
+                mutation_memory_limit = None
+                mutation_skip_globs = None
+                mutation_include_globs = None
+                self._mutation_bound_failure = True
+                self._state.infra_errors.append(
+                    f"CI: mutation not measured -- trusted test config refused: {exc}"
+                )
             except FileNotFoundError as exc:
                 baseline_cmd = None
                 baseline_timeout = 120
@@ -2436,6 +2452,8 @@ class StateMachine:
         baseline_cmd: list[str] = []
 
         if needs_baseline:
+            from .gate_check import OutsideConfigRootRefused
+
             try:
                 config = self._load_trusted_gate_config()
                 baseline_cmd = config["test"]["command"]
@@ -2447,6 +2465,13 @@ class StateMachine:
                 memory_limit_bytes = memory_mb * 1024**2 if memory_mb is not None else None
                 # #134: never the reviewed tree's own globs.
                 skip_globs, include_globs = self._trusted_mutation_globs(config["test"])
+            except OutsideConfigRootRefused as exc:
+                # #157: refused, not missing. CI must FAIL (mutation unmeasured).
+                self._mutation_bound_failure = native or self.mode is Mode.CI
+                self._state.infra_errors.append(
+                    f"L2: mutation not measured -- trusted test config refused: {exc}"
+                )
+                return []
             except Exception as exc:  # noqa: BLE001
                 self._mutation_bound_failure = native
                 self._state.infra_errors.append(

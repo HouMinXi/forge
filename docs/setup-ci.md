@@ -108,7 +108,13 @@ from the change under review. Supply the gate in one of two ways:
 ```
 
 (`FORGE_TEST_CONFIG_ROOT` works too.) A `--test-config-root` inside the checkout
-is refused. Otherwise CI stops L2 with "CI does not trust an untracked in-tree
+is refused. So is one that leads back into it another way: a symlinked
+`.code-forge` or gate.yaml, a gate.yaml with more than one hard link, or the
+checkout (or its `.code-forge`) reached through a bind mount at another path.
+One case is not detected: bind-mounting some *other* checkout subdirectory onto
+the config root. That needs mount control on the runner, and spotting it would
+mean walking the checkout, so keep the config root a plain directory the
+checked-out code cannot write. Otherwise CI stops L2 with "CI does not trust an untracked in-tree
 gate.yaml". Backends are configured as before (a trusted `backends:` block or
 your user config); without one the review fails closed with "No review backend
 configured". Upload `review.sarif` to code scanning if you want inline
