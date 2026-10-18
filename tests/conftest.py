@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import uuid
 from pathlib import Path
 
 import pytest
@@ -232,6 +233,30 @@ def pytest_configure(config):
     for name in tuple(os.environ):
         if name.startswith("GIT_"):
             isolation.delenv(name, raising=False)
+    # #184: every ref update made through this suite's environment records a
+    # session-unique committer identity in the reflog, so the .git guard can
+    # tell the suite's ref changes from other sessions sharing the repository.
+    isolation.setenv(_SESSION_IDENTITY_ENV, f"forge-suite-{uuid.uuid4().hex}@suite.invalid")
+    isolation.setenv("GIT_COMMITTER_NAME", "forge test suite")
+
+
+_SESSION_IDENTITY_ENV = "GIT_COMMITTER_EMAIL"
+_git_failure_key = pytest.StashKey[str]()
+
+
+def _ref_made_by(repo_root, ref, identity):
+    """True unless the ref's newest reflog entry names another identity.
+
+    Without a session identity, a reflog, or a remaining ref (a deletion
+    removes its reflog), the change cannot be attributed and stays the suite's.
+    """
+    if not identity:
+        return True
+    try:
+        email = _git_output(repo_root, "log", "-g", "-1", "--format=%ge", ref, "--").strip()
+    except subprocess.CalledProcessError:
+        return True
+    return not email or email == identity
 
 
 def pytest_sessionstart(session):
@@ -240,7 +265,9 @@ def pytest_sessionstart(session):
     # A broken .git marker still reaches Git and must fail rather than be ignored.
     if not os.path.lexists(repo_root / ".git"):
         return
-    session.config.stash[_git_snapshot_key] = _snapshot_git_state(repo_root)
+    snap = _snapshot_git_state(repo_root)
+    snap["identity"] = os.environ.get(_SESSION_IDENTITY_ENV, "")
+    session.config.stash[_git_snapshot_key] = snap
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -253,6 +280,8 @@ def pytest_sessionfinish(session, exitstatus):
     diffs = []
 
     own, foreign = _branch_changes(before, after)
+    others = {ref for ref in own if not _ref_made_by(repo_root, ref, before.get("identity"))}
+    own, foreign = own - others, foreign | others
     for ref in sorted(foreign):
         sys.stderr.write(f"note: {ref} changed in another session's worktree\n")
 
@@ -305,5 +334,13 @@ def pytest_sessionfinish(session, exitstatus):
             + "\n".join(diffs)
             + "\n\nReal .git has been altered. Clean up before continuing.\n"
         )
-        sys.stderr.write(msg)
-        sys.exit(1)
+        # #184: fail the session, but let pytest print its summary first.
+        session.config.stash[_git_failure_key] = msg
+        session.exitstatus = 1
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    msg = config.stash.get(_git_failure_key, None)
+    if msg:
+        terminalreporter.write_sep("=", "real .git state changed", red=True)
+        terminalreporter.write(msg)
