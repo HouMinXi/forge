@@ -82,7 +82,7 @@ Invoke the same ID validation from public entry_level_summary so direct callers 
 
 ### 4.2 Ledger loader
 
-Read bytes once, strict UTF-8 decode, then enumerate text.split("\\n"), start=1. The enumeration value is the original physical LF coordinate. Whitespace-only segments are omitted from records but never removed before enumeration. A complete final JSON row with no LF is accepted. CRLF works through JSON whitespace handling; bare CR does not create a new coordinate.
+Read bytes once, strict UTF-8 decode, then use `enumerate(text.split("\n"), start=1)` (one LF delimiter). The enumeration value is the original physical LF coordinate. Whitespace-only segments are omitted from records but never removed before enumeration. A complete final JSON row with no LF is accepted. CRLF works through JSON whitespace handling; bare CR does not create a new coordinate.
 
 Use json.loads with an object_pairs_hook that rejects duplicate keys at every nesting level, and parse_constant rejecting NaN, Infinity, and -Infinity. Each parsed record must be a dict; each entry_id must be a nonempty str. Reject duplicate entry_id anywhere in the entire arm, including outside the requested set. Track first occurrence and report both physical locations.
 
@@ -155,8 +155,8 @@ Metric terms:
 - precision: numerator=TP, denominator=TP+FP; refs are TP and FP rows, merged in selected order.
 - recall: numerator=TP, denominator=TP+FN; refs are TP and FN rows, in selected order.
 - f1: numerator=2*TP, denominator=2*TP+FP+FN; refs are TP/FN/FP rows, in selected order. Its value is None if either precision or recall is undefined, even if the raw F1 count denominator is nonzero.
-- If both P and R are defined and zero, F1 is Fraction(0, 1).
-- Other defined F1 is exactly Fraction(2*TP, 2*TP+FP+FN).
+- If both P and R are defined and zero, F1 is Fraction(0, 1). This is a result invariant, not a requirement for a separate zero branch.
+- Whenever both base metrics are defined, including the defined-zero case, F1 may be computed directly as Fraction(2*TP, 2*TP+FP+FN). A branch-free count formula is allowed.
 - The raw numerator/denominator fields retain unreduced counts; Fraction stores the reduced exact ratio.
 - TN remains visible in counts and classification even though it contributes to none of these metric denominators.
 - No wall-time or runs/caught/finding_* field enters these metrics, and no SE is estimated.
@@ -273,14 +273,14 @@ Source selectors remain UNBOUND until actual reviewed candidate bytes exist. Bin
 - N04 enumerate before blank filtering -> C12/C13 raw coordinate mismatch.
 - N05 renderer physical_lines[row_index] composition -> separate C12/C14 citation mismatch, not only helper metrics.
 - N06 exclusion partition, completeness flag, diagnostic prefix, delta suppression/exit -> C02/C03 individually attributable changed decisions.
-- N07 precision/recall denominators and F1 undefined/zero branches -> C01/C15/C16 exact numeric assertions.
+- N07 precision/recall denominators and F1 undefined/defined-zero invariants -> C01/C15/C16 exact numeric assertions. For defined-zero F1, bind an exact-site non-equivalent fault that returns undefined instead of zero; C16 must detect the changed value/output. Removing a redundant zero branch can be equivalent because the remaining count formula still returns zero. Record that deletion as equivalent with its algebraic and source rationale, never as RED, then use the separate non-equivalent invariant witness. See PBR-FINDING-DISPOSITIONS.md for the narrow frozen-N07 override.
 - N08 removal/truncation of full metric refs -> C14 missing exact original location.
 - N09 validation-before-emission and exit2/exit1 dispatch -> subprocess C05/C10/C02 empty-stdout/exit assertions.
 - N10 fixed provenance/B4 labels -> C18/C20 exact false/dropped-label assertion.
 - N11 strict-only dispatch or legacy semantic change -> C21 default behavior and invalid flags.
 - N12 quote seams (row, metric citation, path, backend, unknown outcome, structured error, argparse error) -> each C24 variant catches actual unescaped control text; a generic snapshot mismatch alone is not enough.
 
-Restore exact candidate bytes after each separate omission. Collection/startup errors do not qualify RED. Changed-line execution and actual GREEN restoration remain later evidence obligations, not deliverables of this design.
+Before each separate non-equivalent omission or mutation, copy every affected uncommitted candidate file to a named owned temporary backup outside the mutation targets, record target/backup paths and candidate hashes, and verify the saved bytes before cutting. Restore only from those backups in a try/finally transaction once the bounded owned witness is no longer running; forbid git restore and all HEAD/index-based mutation recovery. Verify restored hashes before the restored-positive test or further cuts, review or publication. Retain backups and raw results. If an interruption bypasses finally or restoration is uncertain, stop and recover the candidate from its verified backups before continuing; preserve foreign files. Record equivalent deletions explicitly and do not manufacture RED or claim them as qualifying witnesses. Collection/startup errors do not qualify RED. Changed-line execution and actual GREEN restoration remain later evidence obligations, not deliverables of this design.
 
 ## 9. Pending admission, verification, and stopping conditions
 

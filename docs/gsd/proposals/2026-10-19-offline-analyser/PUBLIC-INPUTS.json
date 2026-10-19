@@ -248,5 +248,48 @@
       "sha256": "9d8083d1c61756c90ed7307ea8906b5266fce1516a13431404ca7f99515177bf",
       "git_blob": "7d38159c8c6608f4939b0abd55dacdead7b774f5"
     }
-  ]
+  ],
+  "prior_published_proposal": {
+    "commit": "a62cdfa30432361ff3603abd74c7d5506b4447d4",
+    "url": "https://github.com/HouMinXi/forge/tree/a62cdfa30432361ff3603abd74c7d5506b4447d4/docs/gsd/proposals/2026-10-19-offline-analyser",
+    "manifest_sha256": "245540e29c19371920114718e798bfc2237e3ce5c7082b11a3444d9966ac00da",
+    "bytes": 216042,
+    "files": 18
+  },
+  "pbr_baseline": {
+    "status": "COMPLETE_WITH_B0_H0_M1_L2",
+    "report_sha256": "6922d8115cd28a49aa624e580933be2cf9341fe7baf938567fccb4f77930c6c0",
+    "private_methodology_sha256": "9c9fa4ed73f259696603ea48f7d41a2adbea6bd65b908a679b29cbaf1e07e793",
+    "private_methodology_included": false,
+    "first_successor_recheck": "COMPLETE_B0_H0_M1_L0"
+  },
+  "review_time_source_observation": {
+    "commit": "0ec35ee3c1c1fd8a24f460672ad19233a5265e4f",
+    "role": "INERT_SOURCE_CURRENCY_ONLY",
+    "four_scoped_preimages_match": true,
+    "ownership_and_runtime_requalified": false
+  },
+  "prior_reviewed_successor": {
+    "manifest_sha256": "5a60cd280a6828d504a0b589dc09c7a5b400e8dc42141e138aeba715ae939095",
+    "files": 19,
+    "bytes": 227215,
+    "published": false,
+    "full_recheck_report_sha256": "961ff2c181bbc6f4879a75c8cae6f928d368addb5f52830668f6200f1fad3b4c",
+    "full_recheck_result": "B0_H0_M1_L0_PBR_M02_ONLY",
+    "prior_three_findings": "VERIFIED_CLOSED",
+    "core_and_applicable_empirical_passes": "COMPLETE"
+  },
+  "current_revision": {
+    "purpose": "PBR_M02_VERIFIED_BACKUP_FINALLY_RESTORE_HASH_PROTOCOL",
+    "complete_source_only_recheck": "COMPLETE_B0_H0_M0_L0",
+    "reviewed_core_manifest_sha256": "5fcd84bffa7a80a7440eaedd74e63e27c996f07feb660958d71f6495934a5672",
+    "review_report_file": "PBR-STAGE1-RECHECK.md",
+    "review_report_sha256": "e2bb8d2e63d2447dd4204921acdd430e0fd699eacef1c027578d4129ef8c1a4a",
+    "core_passes_and_applicable_empirical_checks": "ALL_COMPLETED",
+    "cross_ai_stage2": "PENDING",
+    "source_graph": "NOT_RUN",
+    "full_methodology_and_execution_admission": "HOLD",
+    "private_methodology_included": false
+  },
+  "review_status_precedence": "README.md and PBR-STAGE1-RECHECK.md record the later result and supersede only pre-recheck pending-status wording in the unchanged reviewed core; no substantive requirement or gate is waived."
 }

@@ -1,17 +1,23 @@
 {
-  "status": "PROPOSED_NOT_FORMALLY_ADMITTED_DOCUMENTARY_AND_PACKAGING_RECHECK_COMPLETE",
+  "status": "STAGE1_SOURCE_ONLY_CLEAN_STAGE2_PENDING_NOT_FORMALLY_ADMITTED",
   "repository_prefix": "docs/gsd/proposals/2026-10-19-offline-analyser/",
   "date_utc": "2026-10-19",
+  "prior_published_commit": "a62cdfa30432361ff3603abd74c7d5506b4447d4",
+  "prior_published_manifest_sha256": "245540e29c19371920114718e798bfc2237e3ce5c7082b11a3444d9966ac00da",
+  "reviewed_core_manifest_sha256": "5fcd84bffa7a80a7440eaedd74e63e27c996f07feb660958d71f6495934a5672",
+  "review_report_sha256": "e2bb8d2e63d2447dd4204921acdd430e0fd699eacef1c027578d4129ef8c1a4a",
   "product_edits": false,
   "runtime_execution": false,
   "external_writes": false,
   "formal_admission": false,
   "execution_admission": "HOLD",
-  "pbr": "MISSING_NOT_RUN",
+  "pbr_stage1": "COMPLETE_SOURCE_ONLY_B0_H0_M0_L0",
+  "pbr_stage2": "PENDING_INDEPENDENT_CROSS_AI_CONVERGENCE",
+  "physical_source_graph": "NOT_RUN",
   "sdk": "NOT_RUN",
   "installed_checker_equivalence": "UNVERIFIED",
-  "substantive_recheck": "ZERO_REMAINING_SCOPED_DOCUMENTARY_ISSUES",
-  "packaging_review": "ZERO_REMAINING_PACKAGING_ISSUES",
+  "packaging_scope": "REPORT_ADDITION_AND_REVIEW_STATUS_PROVENANCE_ONLY",
+  "private_methodology_included": false,
   "files": [
     {
       "file": "59-16-CURRENT-SOURCE-ADDENDUM.md",
@@ -25,13 +31,13 @@
     },
     {
       "file": "59-16-PLAN-CANDIDATE.md",
-      "bytes": 18183,
-      "sha256": "bf51360a2764493cb9adee2202aed616bcabfa1b102a7d0b67cdee6735f0d7a1"
+      "bytes": 20387,
+      "sha256": "8a27233fe529b2c8d0aae8ec4913c870f04c0f79f0b50a779ebeb6edf7ad3ad6"
     },
     {
       "file": "59-VALIDATION-CANDIDATE.md",
-      "bytes": 6417,
-      "sha256": "20398f9b2d24f694f832eec47f115fbe0c7332c2fd0a5c256644ce526c4c23de"
+      "bytes": 7597,
+      "sha256": "26222e7798f434d11f9c226746b7704b962b3af24dd65b13336695c2f52f99bd"
     },
     {
       "file": "CANDIDATE-RECHECK.md",
@@ -55,8 +61,8 @@
     },
     {
       "file": "PACKAGING-DISPOSITION.json",
-      "bytes": 2236,
-      "sha256": "2b43dcec954f6d73b903508a4e88beac24c149339920f58137b0301e104ad060"
+      "bytes": 1668,
+      "sha256": "ddf937e8c96fec35cca0deece393c4815c6cd21df2068366fabbc3f59e2e69e2"
     },
     {
       "file": "PACKAGING-REVIEW.md",
@@ -65,18 +71,28 @@
     },
     {
       "file": "PATCH-DESIGN.md",
-      "bytes": 26538,
-      "sha256": "bb558d7c264a787cdf9edcc2c0b623a4ef4f5fb60d2bbe95d367cf8d7a639ef0"
+      "bytes": 28004,
+      "sha256": "5301aab0ffe172fd7d5be3f4f7cb17a0b619fc096eb9fabdf596dc36faa30167"
+    },
+    {
+      "file": "PBR-FINDING-DISPOSITIONS.md",
+      "bytes": 7985,
+      "sha256": "9985e9957f9b9fa11b0c9be9085a3b54fe609e5b2e80ce6ba597e8333c77fee9"
+    },
+    {
+      "file": "PBR-STAGE1-RECHECK.md",
+      "bytes": 13301,
+      "sha256": "e2bb8d2e63d2447dd4204921acdd430e0fd699eacef1c027578d4129ef8c1a4a"
     },
     {
       "file": "PUBLIC-INPUTS.json",
-      "bytes": 13171,
-      "sha256": "0af675a9af4b51064f4b6049c7ecf1a0f2a4c4f668eaa4e03f8c3a5f355bd56c"
+      "bytes": 15440,
+      "sha256": "97c617904b4062c5b2221c8d9351d78c2b9a9558e4828b26a03010a6a7b1c72e"
     },
     {
       "file": "README.md",
-      "bytes": 3056,
-      "sha256": "cd721e86322158022cb200f1d274d2967b4f114d7c66ebf49056665f630e84e8"
+      "bytes": 4530,
+      "sha256": "8e31e4ec11ca03f82949ad0f78771f2911f1a9c09735810d6e007c2f070806a5"
     },
     {
       "file": "RESEARCH-PLANNING-DISPOSITIONS.md",
@@ -85,8 +101,8 @@
     },
     {
       "file": "REVISION-AND-DISPOSITIONS.md",
-      "bytes": 13877,
-      "sha256": "21ca1e4bc4c85d34e7ff96c2c89c1f3d2a9e620cf1c59a573a8a98614325ffef"
+      "bytes": 14843,
+      "sha256": "45f4a1dfa72e5bf88e0a69bd8c64a60400afaef2ccbd0741928d2a2845fadde2"
     },
     {
       "file": "open-pr-overlap.json",
