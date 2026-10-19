@@ -337,7 +337,8 @@ _PYTEST_EXIT = {
 }
 _PYTEST_NAMES = frozenset({"pytest", "py.test"})
 _RUN_WRAPPERS = frozenset({"uv", "poetry", "pdm", "pipenv", "hatch"})
-_PYTHON = re.compile(r"python(\d+(\.\d+)*)?")
+_PYTHON = re.compile(r"py(thon(\d+(\.\d+)*)?)?")  # `py` is the Windows launcher
+_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 # CPython options that consume the following argument.
 _PYTHON_ARG_OPTIONS = frozenset({"-W", "-X"})
 
@@ -347,21 +348,44 @@ def _program(arg: str) -> str:
     return name[: -len(".exe")] if name.endswith(".exe") else name
 
 
+def _unwrap_runner(argv: list[str]) -> list[str]:
+    """Drop `VAR=value` prefixes, `env [opts] [VAR=value...]` and `uv run
+    [opts]` (or poetry/pdm/pipenv/hatch) in front of the real program (#267).
+    An option that takes a value (`uv run --with x`) leaves the value as the
+    program: not pytest, so the run keeps "nonzero = fails"."""
+    while argv:
+        program = _program(argv[0])
+        if _ENV_ASSIGNMENT.match(argv[0]):
+            argv = argv[1:]
+        elif program == "env":
+            argv = argv[1:]
+            while argv and (argv[0].startswith("-") or _ENV_ASSIGNMENT.match(argv[0])):
+                argv = argv[1:]
+        elif program in _RUN_WRAPPERS and argv[1:2] == ["run"]:
+            argv = argv[2:]
+            while argv and argv[0].startswith("-"):
+                argv = argv[1:]
+        else:
+            break
+    return argv
+
+
 def _runs_pytest(cmd: list[str]) -> bool:
     """Whether the runner itself is pytest, not merely an argument named so.
 
     `pytest ...`, `<venv>/bin/py.test ...`, `python -B -m pytest ...`, and
-    either behind `uv run` (or poetry/pdm/pipenv/hatch run). `make pytest`
+    either behind `uv run` (or poetry/pdm/pipenv/hatch run), `env`, a
+    `VAR=value` prefix or `coverage run`, and `py -m pytest`. `make pytest`
     and `tox -e pytest` run some other program.
     """
-    argv = [str(arg) for arg in cmd]
-    if len(argv) >= 2 and _program(argv[0]) in _RUN_WRAPPERS and argv[1] == "run":
-        argv = argv[2:]
+    argv = _unwrap_runner([str(arg) for arg in cmd])
     if not argv:
         return False
     if _program(argv[0]) in _PYTEST_NAMES:
         return True
-    if not _PYTHON.fullmatch(_program(argv[0])):
+    if _program(argv[0]) == "coverage" and argv[1:2] == ["run"]:
+        argv = argv[1:]  # `coverage run [opts] -m pytest` reads like python
+    elif not _PYTHON.fullmatch(_program(argv[0])):
         return False
     rest = iter(argv[1:])
     for arg in rest:

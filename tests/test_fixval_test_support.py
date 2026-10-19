@@ -661,3 +661,58 @@ def test_a_timed_out_hollow_retry_is_inconclusive(tmp_path, monkeypatch):
     assert result.status is FixvalStatus.BLOCK
     assert [finding.id for finding in result.findings] == ["FIXVAL_INCONCLUSIVE"]
     assert "timed out after 1s" in result.block_message
+
+
+@pytest.mark.parametrize(
+    ("cmd", "runs_pytest"),
+    [
+        # #267 Low 1: the run-wrapper unwrapping
+        (["uv", "run", "pytest", "-q"], True),
+        (["poetry", "run", "python", "-m", "pytest"], True),
+        (["pdm", "run", "pytest"], True),
+        (["pipenv", "run", "pytest"], True),
+        (["hatch", "run", "pytest"], True),
+        (["uv", "run", "make", "pytest"], False),
+        # #267 Low 2: shapes main fell back to "nonzero = fails" for
+        (["uv", "run", "--frozen", "pytest"], True),
+        (["uv", "run", "--frozen", "--no-sync", "python", "-m", "pytest"], True),
+        (["coverage", "run", "-m", "pytest"], True),
+        (["coverage", "run", "--branch", "-m", "pytest", "tests"], True),
+        (["env", "A=1", "pytest"], True),
+        (["env", "-i", "A=1", "B=2", "python", "-m", "pytest"], True),
+        (["A=1", "pytest"], True),
+        (["py", "-m", "pytest"], True),
+        (["py", "-3.12", "-m", "pytest"], True),
+        (["py.exe", "-m", "pytest"], True),
+        # still not pytest
+        (["coverage", "run", "script.py"], False),
+        (["coverage", "report"], False),
+        (["env", "make", "pytest"], False),
+        (["py", "script.py", "pytest"], False),
+        (["tox", "-e", "pytest"], False),
+        (["uv", "run"], False),
+        (["env"], False),
+    ],
+)
+def test_runs_pytest_sees_through_wrappers(cmd, runs_pytest):
+    from code_forge.fixval import _runs_pytest
+
+    assert _runs_pytest(cmd) is runs_pytest
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        ["uv", "run", "pytest"],
+        ["uv", "run", "--frozen", "pytest"],
+        ["coverage", "run", "-m", "pytest"],
+        ["env", "A=1", "pytest"],
+        ["py", "-m", "pytest"],
+    ],
+)
+def test_a_fixture_error_under_a_wrapped_pytest_is_no_witness(cmd):
+    """#267: a retry that only errors (fixture gone) is not a failed test."""
+    from code_forge.fixval import _witnessed_failure
+
+    result = subprocess.CompletedProcess(cmd, 1, QQ_ERROR, "")
+    assert _witnessed_failure(cmd, result) is False
