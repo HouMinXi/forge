@@ -1,16 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
-"""#252: only a judged test failure on the reverted code counts as FIXVAL PASS;
-signal deaths and pytest exits 2-5 are inconclusive (non-PASS, with the cause)."""
+"""#252: an unjudged reverted-code run is not FIXVAL PASS.
+
+A signal death is inconclusive for any runner. For pytest only exit 1 (tests
+failed) is a judgement; 2-5 and other codes are inconclusive (exit 2 includes
+collection errors, held under #28). Other runners keep "nonzero = fails"."""
 
 import os
-import subprocess
+import stat
 import sys
 
 import pytest
 
-from code_forge import fixval
 from code_forge.disposition import Disposition
-from code_forge.fixval import FixvalCandidate, FixvalStatus, _test_reverted_candidate, run_overfit_guard
+from code_forge.fixval import FixvalCandidate, FixvalStatus, _runs_pytest, _test_reverted_candidate, run_overfit_guard
 
 CANDIDATE = FixvalCandidate(["tests/test_mod.py"], ["src/mod.py"])
 KILL = "import os, signal; os.kill(os.getpid(), signal.%s)"
@@ -18,6 +20,15 @@ KILL = "import os, signal; os.kill(os.getpid(), signal.%s)"
 
 def _reverted(tmp_path, cmd):
     return _test_reverted_candidate(CANDIDATE, cmd, dict(os.environ), str(tmp_path))
+
+
+def _fake_pytest(tmp_path, code):
+    """A real executable named pytest that prints and exits with `code`."""
+    path = tmp_path / "bin" / "pytest"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("#!%s\nimport sys\nprint('boom')\nsys.exit(%d)\n" % (sys.executable, code))
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return [str(path), "-q"]
 
 
 def _assert_inconclusive(result, *needles):
@@ -32,57 +43,80 @@ def _assert_inconclusive(result, *needles):
 
 
 @pytest.mark.parametrize(("name", "code"), [("SIGHUP", -1), ("SIGTERM", -15), ("SIGKILL", -9)])
-def test_reverted_run_killed_by_signal_is_inconclusive(tmp_path, name, code):
+def test_reverted_run_killed_by_signal_is_inconclusive_for_any_runner(tmp_path, name, code):
     result = _reverted(tmp_path, [sys.executable, "-c", KILL % name])
     _assert_inconclusive(result, "killed by %s (exit %d)" % (name, code))
 
 
 @pytest.mark.parametrize(
     ("code", "label"),
-    [(2, "interrupted"), (3, "internal error"), (4, "usage error"), (5, "no tests collected"), (7, "not a test-failure exit")],
+    [
+        (2, "interrupted or collection error"),
+        (3, "internal error"),
+        (4, "usage error"),
+        (5, "no tests collected"),
+        (7, "not a test-failure exit"),
+    ],
 )
-def test_reverted_run_non_failure_exit_is_inconclusive(tmp_path, code, label):
-    result = _reverted(tmp_path, [sys.executable, "-c", "import sys; print('boom'); sys.exit(%d)" % code])
-    _assert_inconclusive(result, "exit %d (%s)" % (code, label), "Output: boom")
+def test_pytest_non_failure_exit_is_inconclusive(tmp_path, code, label):
+    _assert_inconclusive(_reverted(tmp_path, _fake_pytest(tmp_path, code)), "pytest exit %d (%s)" % (code, label), "Output: boom")
 
 
-def test_reverted_run_failing_test_is_pass(tmp_path):
-    assert _reverted(tmp_path, [sys.executable, "-c", "assert False"]).status == FixvalStatus.PASS
+def test_pytest_exit_1_is_pass(tmp_path):
+    assert _reverted(tmp_path, _fake_pytest(tmp_path, 1)).status == FixvalStatus.PASS
 
 
-def test_reverted_run_passing_test_is_still_hollow(tmp_path):
+@pytest.mark.parametrize("code", [1, 2, 3, 5, 7, 127])
+def test_other_runner_nonzero_exit_keeps_main_behaviour(tmp_path, code):
+    # e.g. make exits 2 for a failed recipe; only pytest's codes are interpreted.
+    result = _reverted(tmp_path, [sys.executable, "-c", "import sys; sys.exit(%d)" % code])
+    assert result.status == FixvalStatus.PASS
+
+
+def test_passing_run_is_still_hollow(tmp_path):
     result = _reverted(tmp_path, [sys.executable, "-c", "pass"])
     assert result.status == FixvalStatus.BLOCK and [f.id for f in result.findings] == ["FIXVAL_HOLLOW"]
 
 
-def _pytest(tmp_path, body):
+@pytest.mark.parametrize(
+    ("cmd", "expected"),
+    [
+        (["pytest", "-q"], True),
+        (["/venv/bin/pytest"], True),
+        (["py.test"], True),
+        (["python3", "-m", "pytest", "tests/test_x.py"], True),
+        (["uv", "run", "pytest"], True),
+        (["make", "test"], False),
+        (["python3", "-m", "unittest"], False),
+        (["python3", "tests/test_pytest_helpers.py"], False),
+        (["npm", "test"], False),
+    ],
+)
+def test_runs_pytest_detection(cmd, expected):
+    assert _runs_pytest(cmd) is expected
+
+
+def _real_pytest(tmp_path, body):
     (tmp_path / "test_probe.py").write_text(body)
     return [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist", "test_probe.py"]
 
 
-def test_real_pytest_collection_error_from_the_revert_is_pass(tmp_path):
-    # The fix added what the test imports; the revert removes it.
-    result = _reverted(tmp_path, _pytest(tmp_path, "from added_by_fix import helper\ndef test_it():\n    helper()\n"))
-    assert result.status == FixvalStatus.PASS
-
-
 def test_real_pytest_failing_test_is_pass(tmp_path):
-    assert _reverted(tmp_path, _pytest(tmp_path, "def test_it():\n    assert False\n")).status == FixvalStatus.PASS
+    assert _reverted(tmp_path, _real_pytest(tmp_path, "def test_it():\n    assert False\n")).status == FixvalStatus.PASS
+
+
+def test_real_pytest_collection_error_is_inconclusive_pending_28(tmp_path):
+    cmd = _real_pytest(tmp_path, "from added_by_fix import helper\ndef test_it():\n    helper()\n")
+    _assert_inconclusive(_reverted(tmp_path, cmd), "pytest exit 2 (interrupted or collection error)")
 
 
 def test_real_pytest_keyboard_interrupt_is_inconclusive(tmp_path):
-    result = _reverted(tmp_path, _pytest(tmp_path, "def test_it():\n    raise KeyboardInterrupt\n"))
-    _assert_inconclusive(result, "exit 2 (interrupted)")
+    cmd = _real_pytest(tmp_path, "def test_it():\n    raise KeyboardInterrupt\n")
+    _assert_inconclusive(_reverted(tmp_path, cmd), "pytest exit 2")
 
 
 def test_real_pytest_no_tests_is_inconclusive(tmp_path):
-    _assert_inconclusive(_reverted(tmp_path, _pytest(tmp_path, "x = 1\n")), "exit 5 (no tests collected)")
-
-
-def test_collection_banner_with_keyboard_interrupt_is_inconclusive(monkeypatch, tmp_path):
-    out = "!!!!! Interrupted: 1 error during collection !!!!!\nKeyboardInterrupt\n"
-    monkeypatch.setattr(fixval.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 2, out, ""))
-    _assert_inconclusive(_reverted(tmp_path, ["pytest"]), "exit 2 (interrupted)")
+    _assert_inconclusive(_reverted(tmp_path, _real_pytest(tmp_path, "x = 1\n")), "pytest exit 5 (no tests collected)")
 
 
 def _overfit(tmp_path, cmd):
@@ -95,19 +129,22 @@ def _overfit(tmp_path, cmd):
     return advisories
 
 
-@pytest.mark.parametrize(("cmd", "needle"), [
-    ([sys.executable, "-c", KILL % "SIGHUP"], "killed by SIGHUP (exit -1)"),
-    ([sys.executable, "-c", "import sys; sys.exit(5)"], "exit 5 (no tests collected)"),
-])
-def test_overfit_guard_unjudged_run_is_inconclusive_not_overfit(tmp_path, cmd, needle):
+@pytest.mark.parametrize("kind", ["signal", "pytest-exit-5"])
+def test_overfit_guard_unjudged_run_is_inconclusive_not_overfit(tmp_path, kind):
+    if kind == "signal":
+        cmd, needle = [sys.executable, "-c", KILL % "SIGHUP"], "killed by SIGHUP (exit -1)"
+    else:
+        cmd, needle = _fake_pytest(tmp_path, 5), "pytest exit 5 (no tests collected)"
     advisories = _overfit(tmp_path, cmd)
     assert [a.id for a in advisories] == ["FIXVAL_OVERFIT_INCONCLUSIVE"]
     assert needle in advisories[0].description
     assert "'value' -> 'value_renamed'" in advisories[0].description
 
 
-def test_overfit_guard_failing_test_is_overfit(tmp_path):
-    assert [a.id for a in _overfit(tmp_path, [sys.executable, "-c", "assert False"])] == ["FIXVAL_OVERFIT"]
+@pytest.mark.parametrize("runner", ["pytest", "other"])
+def test_overfit_guard_failing_test_is_overfit(tmp_path, runner):
+    cmd = _fake_pytest(tmp_path, 1) if runner == "pytest" else [sys.executable, "-c", "import sys; sys.exit(2)"]
+    assert [a.id for a in _overfit(tmp_path, cmd)] == ["FIXVAL_OVERFIT"]
 
 
 def test_overfit_guard_passing_test_is_clean(tmp_path):

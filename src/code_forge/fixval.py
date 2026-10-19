@@ -255,38 +255,39 @@ def _transaction_block(message: str, recovery: str) -> FixvalResult:
 
 
 # #252: only a judged test failure counts as "fails on the reverted code".
+# pytest's exit codes have fixed meanings; other runners' codes don't (make
+# uses 2 for a failed recipe), so they keep "nonzero = fails" except signals.
 _PYTEST_EXIT = {
-    2: "interrupted",
+    2: "interrupted or collection error",
     3: "internal error",
     4: "usage error",
     5: "no tests collected",
 }
-# A collection error caused by the revert (the test imports what the fix added)
-# is a judged failure too; pytest reports it as exit 2 with this banner.
-_COLLECTION_ERROR = re.compile(r"^!*\s*Interrupted: \d+ errors? during collection\s*!*$", re.MULTILINE)
+_PYTEST_NAMES = frozenset({"pytest", "py.test"})
 
 
-def _judged_failure(result: subprocess.CompletedProcess) -> str | None:
-    """Return None when the run judged the tests as failing, else the reason it didn't.
+def _runs_pytest(cmd: list[str]) -> bool:
+    """`pytest ...`, `python -m pytest ...`, `uv run pytest ...`."""
+    return any(os.path.basename(str(arg)) in _PYTEST_NAMES for arg in cmd)
 
-    Exit 1 is failing tests. Exit 2 counts only for a collection error with no
-    KeyboardInterrupt. A signal death or any other code never judged the test.
+
+def _judged_failure(cmd: list[str], result: subprocess.CompletedProcess) -> str | None:
+    """Return None when a nonzero run judged the tests as failing, else why not.
+
+    A signal death never judged anything. For pytest only exit 1 (tests
+    failed) is a judgement; collection errors (exit 2) stay inconclusive
+    pending #28.
     """
     code = result.returncode
-    stdout = result.stdout or ""
-    if code == 1:
-        return None
-    if code == 2 and _COLLECTION_ERROR.search(stdout) and "KeyboardInterrupt" not in stdout + (result.stderr or ""):
-        return None
     if code < 0:
         try:
             name = signal.Signals(-code).name
         except ValueError:
             name = "signal %d" % -code
         return "test run killed by %s (exit %d)" % (name, code)
-    if code in _PYTEST_EXIT:
-        return "test run exit %d (%s)" % (code, _PYTEST_EXIT[code])
-    return "test run exit %d (not a test-failure exit)" % code
+    if not _runs_pytest(cmd) or code == 1:
+        return None
+    return "pytest exit %d (%s)" % (code, _PYTEST_EXIT.get(code, "not a test-failure exit"))
 
 
 def _inconclusive_block(reason: str, result: subprocess.CompletedProcess) -> FixvalResult:
@@ -326,7 +327,7 @@ def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root) -> Fixva
         cwd=repo_root,
     )
     if result.returncode != 0:
-        reason = _judged_failure(result)
+        reason = _judged_failure(scoped_cmd, result)
         if reason is not None:
             return _inconclusive_block(reason, result)
         return FixvalResult(status=FixvalStatus.PASS, findings=[], advisories=[])
@@ -693,7 +694,7 @@ def run_overfit_guard(
             )
 
             if result.returncode != 0:
-                reason = _judged_failure(result)
+                reason = _judged_failure(scoped_cmd, result)
                 if reason is not None:
                     # #252: an unjudged run says nothing about overfitting.
                     return [
