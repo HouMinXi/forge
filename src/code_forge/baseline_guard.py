@@ -200,6 +200,65 @@ def _traceback_summary(lines: list[str]) -> str | None:
     return summary
 
 
+def _without_ignored_exceptions(lines: list[str], omitted: list[int] | None = None) -> list[str]:
+    """Drop interpreter "Exception ignored ..." reports (unraisable hooks).
+
+    These are printed for errors in __del__ or at shutdown, for example the
+    multiprocessing ResourceTracker's ``ChildProcessError: [Errno 10]`` under
+    a subreaper. The run's exit status never depends on them, so they must not
+    be reported as the baseline failure cause. A report is its header, an
+    optional traceback (header plus indented frames), and the final
+    exception line, which is dropped with or without a traceback (#185).
+    A message spanning several lines continues until a line that looks
+    like real output (_REAL_OUTPUT); those continuation lines are dropped
+    too (#182 P3).
+    """
+    kept: list[str] = []
+    state = None  # None, "report" (header/traceback), "message" (after the exception line)
+    for line in lines:
+        if re.match(r"Exception ignored\b", line):
+            state = "report"
+            continue
+        if state == "report":
+            if line.startswith("Traceback (most recent call last):") or (line and line[0].isspace()):
+                continue
+            state = "message"
+            continue  # the report's final exception line
+        if state == "message" and not _ends_ignored_message(line):
+            if omitted is not None:
+                omitted[0] += 1
+            continue  # a multi-line message's continuation (#182 P3)
+        state = None
+        kept.append(line)
+    return kept
+
+
+# A line that can't continue an ignored exception's message: real output
+# resumes. Python prints nothing after the message, so this is a heuristic;
+# it errs towards keeping anything shaped like a cause.
+_REAL_OUTPUT = re.compile(
+    r"\s*$"  # blank line
+    r"|\s"  # indented (pytest/traceback body)
+    r"|Traceback \(most recent call last\):"
+    r"|[\w./\\:-]+: "  # "<prog or path or ExcType>: message"
+    r"|No module named\b"
+    r"|E\s"  # pytest assertion detail
+    r"|(?:FAILED|ERROR|PASSED|SKIPPED|XFAIL|XPASS)\b"
+    r"|[=_]{3}|=+ "  # pytest section rules and summary
+    r"|collected \d|\[gw\d"
+    r"|INTERNALERROR>|Fatal Python error\b|Killed\b|Segmentation fault\b|Aborted\b"
+    r"|ImportError while\b|\S+ ERR!"  # pytest/interpreter/shell crashes, npm-style tools
+    r"|Bus error\b|Terminated\b|Hangup\b|Illegal instruction\b"  # more signal deaths (#263)
+    r"|\S+\s.*\[\s*\d+%\]\s*$"  # pytest progress: "tests/test_x.py ..F.  [ 40%]"
+    r"|\d+ (?:failed|passed|errors?|skipped|deselected|xfailed|xpassed|warnings?)\b"
+    r"|no tests ran\b"  # pytest count/summary lines
+)
+
+
+def _ends_ignored_message(line: str) -> bool:
+    return bool(_REAL_OUTPUT.match(line))
+
+
 def _output_detail(stderr: str | bytes | None, stdout: str | bytes | None) -> str:
     """Prefer diagnostic lines in long output, capped at 200 per stream.
 
@@ -211,10 +270,18 @@ def _output_detail(stderr: str | bytes | None, stdout: str | bytes | None) -> st
     for label, value in (("stderr", stderr), ("stdout", stdout)):
         if isinstance(value, bytes):
             value = value.decode("utf-8", errors="replace")
-        normalized = " ".join((value or "").split())
+        # #185: every excerpt (short, fallback, or selected) comes from the
+        # stream without interpreter "Exception ignored" reports.
+        omitted = [0]
+        lines = _without_ignored_exceptions((value or "").splitlines(), omitted)
+        normalized = " ".join(" ".join(lines).split())
+        if not normalized and omitted[0]:
+            # The continuation heuristic may have eaten the real cause; never
+            # leave the cause silently empty (#182 review).
+            count = omitted[0]
+            normalized = "(%d line%s after an ignored-exception report omitted)" % (count, "" if count == 1 else "s")
         excerpt = normalized[:200]
         if len(normalized) > 200:
-            lines = (value or "").splitlines()
             for priority, pattern in enumerate((
                 r"^E\s+(?!\[\s*\d+%\]\s*$)\S",
                 r"^(?:[\w.]*(?:Error|Exception)|SystemExit|KeyboardInterrupt):(?:\s|$)",
