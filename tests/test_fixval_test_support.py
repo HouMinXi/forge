@@ -576,3 +576,44 @@ def test_limitation_support_fix_that_only_removes_errors_is_hollow(tmp_path, mon
     monkeypatch.setenv("FIXVAL_WAIVER", "fixture repair; errors-only on revert")
     waived = run_fixval(classify_fixval_candidate(changed), PYTEST, tmp_path, "fix flag", diff)
     assert waived.status is FixvalStatus.WAIVED
+
+
+def _strip_then_pass(env_seen):
+    def guard(cmd, env, root, *, allow_strip_retry, retry_cause=None, first_attempt=None, **_kw):
+        env_seen.append(dict(env))
+        if allow_strip_retry:
+            retry_cause.append("run 1: returncode 11; stderr: No module named pytest")
+            return ("needs_strip_retry", [], [])
+        return ("passed", [], [])
+
+    return guard
+
+
+@pytest.mark.parametrize("decider", ["retry-pass", "retry-hollow", "first-hollow-stands"])
+def test_env_strip_advisory_is_reported_once_whichever_run_decides(tmp_path, monkeypatch, decider):
+    # #246 on top of #255: the strip-retry note goes on the final verdict,
+    # whether the first reverted run or the support-reverting retry decided
+    from code_forge import fixval
+
+    monkeypatch.setenv("VIRTUAL_ENV", "/private-venv")
+    monkeypatch.setattr(fixval, "_run_baseline_guard", _strip_then_pass([]))
+    if decider == "first-hollow-stands":
+        real = fixval._test_reverted_candidate
+
+        def retry_has_no_verdict(*args, **kwargs):
+            return None if kwargs.get("require_witness") else real(*args, **kwargs)
+
+        monkeypatch.setattr(fixval, "_test_reverted_candidate", retry_has_no_verdict)
+    other = "mkdocs.yml"
+    body = HOLLOW_TEST if decider == "retry-hollow" else GUARDED_TEST
+    diff = _support_beside_repo(tmp_path, other, body)
+    result = _run(tmp_path, diff, [other, "tests/conftest.py", "tests/test_env.py"], [other])
+    expected = {
+        "retry-pass": [],
+        "retry-hollow": ["FIXVAL_HOLLOW"],
+        "first-hollow-stands": ["FIXVAL_HOLLOW"],
+    }
+    assert [finding.id for finding in result.findings] == expected[decider]
+    notes = [a for a in result.advisories if a.id == "FIXVAL_BASELINE_ENV_RETRY"]
+    assert len(notes) == 1 and "VIRTUAL_ENV /private-venv" in notes[0].description
+    _assert_restored(tmp_path, other, body)
