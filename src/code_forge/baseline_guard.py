@@ -200,7 +200,7 @@ def _traceback_summary(lines: list[str]) -> str | None:
     return summary
 
 
-def _without_ignored_exceptions(lines: list[str]) -> list[str]:
+def _without_ignored_exceptions(lines: list[str], omitted: list[int] | None = None) -> list[str]:
     """Drop interpreter "Exception ignored ..." reports (unraisable hooks).
 
     These are printed for errors in __del__ or at shutdown, for example the
@@ -225,6 +225,8 @@ def _without_ignored_exceptions(lines: list[str]) -> list[str]:
             state = "message"
             continue  # the report's final exception line
         if state == "message" and not _ends_ignored_message(line):
+            if omitted is not None:
+                omitted[0] += 1
             continue  # a multi-line message's continuation (#182 P3)
         state = None
         kept.append(line)
@@ -244,6 +246,8 @@ _REAL_OUTPUT = re.compile(
     r"|(?:FAILED|ERROR|PASSED|SKIPPED|XFAIL|XPASS)\b"
     r"|[=_]{3}|=+ "  # pytest section rules and summary
     r"|collected \d|\[gw\d"
+    r"|INTERNALERROR>|Fatal Python error\b|Killed\b|Segmentation fault\b|Aborted\b"
+    r"|ImportError while\b|\S+ ERR!"  # pytest/interpreter/shell crashes, npm-style tools
 )
 
 
@@ -264,8 +268,13 @@ def _output_detail(stderr: str | bytes | None, stdout: str | bytes | None) -> st
             value = value.decode("utf-8", errors="replace")
         # #185: every excerpt (short, fallback, or selected) comes from the
         # stream without interpreter "Exception ignored" reports.
-        lines = _without_ignored_exceptions((value or "").splitlines())
+        omitted = [0]
+        lines = _without_ignored_exceptions((value or "").splitlines(), omitted)
         normalized = " ".join(" ".join(lines).split())
+        if not normalized and omitted[0]:
+            # The continuation heuristic may have eaten the real cause; never
+            # leave the cause silently empty (#182 review).
+            normalized = "(%d lines after an ignored-exception report omitted)" % omitted[0]
         excerpt = normalized[:200]
         if len(normalized) > 200:
             for priority, pattern in enumerate((
