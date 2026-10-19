@@ -385,6 +385,7 @@ def test_pycache_prefixes_reads_x_inside_a_cluster_of_flags():
 
 MAGIC_PY2 = b"\x03\xf3\r\n"  # 2.7
 MAGIC_PY38 = (3413).to_bytes(2, "little") + b"\r\n"
+MAGIC_PY313 = (3571).to_bytes(2, "little") + b"\r\n"
 
 
 def _compiled(source: str, path: Path) -> None:
@@ -399,7 +400,9 @@ def _added_module_checkout(root: Path, layout: str = "untracked") -> tuple[str, 
     """The fix adds src/newmod.py; a sourceless src/newmod.pyc sits beside it.
 
     untracked: this Python's bytecode of the fix (a legacy build artifact).
-    py2 / py38: another interpreter's leftover, which this Python can't import.
+    py2: a Python 2 leftover no Python 3 imports.
+    py38 / py313: another Python 3's bytecode, which a test command run by
+    that interpreter would import.
     committed-kept / committed-deleted: a shipped .pyc of the unfixed code,
     tracked in the base commit and kept or deleted by the fix.
     """
@@ -421,15 +424,15 @@ def _added_module_checkout(root: Path, layout: str = "untracked") -> tuple[str, 
     _git(root, "add", "--all")
     if layout == "untracked":
         py_compile.compile(str(root / "src/newmod.py"), cfile=str(legacy), doraise=True)
-    elif layout in ("py2", "py38"):
+    elif layout in ("py2", "py38", "py313"):
         _compiled("value = 2\n", legacy)
         data = bytearray(legacy.read_bytes())
-        data[:4] = MAGIC_PY2 if layout == "py2" else MAGIC_PY38
+        data[:4] = {"py2": MAGIC_PY2, "py38": MAGIC_PY38, "py313": MAGIC_PY313}[layout]
         legacy.write_bytes(bytes(data))
     return _git(root, "diff", "--cached", "--binary"), legacy
 
 
-@pytest.mark.parametrize("layout", ["py2", "py38", "committed-kept", "committed-deleted"])
+@pytest.mark.parametrize("layout", ["py2", "committed-kept", "committed-deleted"])
 def test_sourceless_bytecode_that_the_reverted_tree_owns_or_cannot_import_measures(
     tmp_path, monkeypatch, layout
 ):
@@ -442,9 +445,10 @@ def test_sourceless_bytecode_that_the_reverted_tree_owns_or_cannot_import_measur
     assert legacy.exists() == (layout != "committed-deleted")
 
 
-def test_sourceless_bytecode_of_an_added_module_blocks_instead_of_hollow(tmp_path, monkeypatch):
+@pytest.mark.parametrize("layout", ["untracked", "py38", "py313"])
+def test_sourceless_bytecode_of_an_added_module_blocks_instead_of_hollow(tmp_path, monkeypatch, layout):
     _launcher_env(monkeypatch)
-    diff, legacy = _added_module_checkout(tmp_path)
+    diff, legacy = _added_module_checkout(tmp_path, layout)
     stamp = legacy.read_bytes()
     candidate = FixvalCandidate(["tests/test_calc.py"], ["src/newmod.py"])
     result = run_fixval(candidate, PYTEST, tmp_path, "add newmod", diff)
@@ -560,6 +564,38 @@ def test_refusal_reads_magic_and_git_tracking(tmp_path):
     _refuse_sourceless_bytecode(str(tmp_path), ["src/b.py"])  # truncated: not importable
     (tmp_path / "src/c.pyc").mkdir()
     _refuse_sourceless_bytecode(str(tmp_path), ["src/c.py"])  # unreadable: the import fails too
+
+
+@pytest.mark.parametrize("number", [3000, 3413, 3571, 19999])
+def test_refusal_blocks_any_python3_magic_not_only_the_running_one(tmp_path, number):
+    """A .pyc from python3.13 blocks even under forge's 3.12 (#259 review)."""
+    from code_forge.fixval import _refuse_sourceless_bytecode
+    from code_forge._fixval_transaction import TransactionError
+
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/a.pyc").write_bytes(number.to_bytes(2, "little") + b"\r\nrest")
+    with pytest.raises(TransactionError, match="src/a.pyc would be imported"):
+        _refuse_sourceless_bytecode(str(tmp_path), ["src/a.py"])
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        b"\x03\xf3\r\n",  # 2.7 (62211)
+        (20121).to_bytes(2, "little") + b"\r\n",  # 1.5, lowest Python 1/2 magic
+        (19999 + 1).to_bytes(2, "little") + b"\r\n",
+        (2999).to_bytes(2, "little") + b"\r\n",
+        (3571).to_bytes(2, "little") + b"\n\r",  # bad terminator
+    ],
+)
+def test_refusal_ignores_non_python3_headers(tmp_path, header):
+    from code_forge.fixval import _refuse_sourceless_bytecode
+
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/a.pyc").write_bytes(header + b"rest")
+    _refuse_sourceless_bytecode(str(tmp_path), ["src/a.py"])
 
 
 def test_refusal_fails_closed_when_git_cannot_tell(tmp_path, monkeypatch):

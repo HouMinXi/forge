@@ -17,7 +17,6 @@ from __future__ import annotations
 import ast
 import fnmatch
 import glob
-import importlib.util
 import logging
 import os
 import re
@@ -415,14 +414,23 @@ def _is_tracked(root: str, path: str) -> bool:
 
 
 def _importable_bytecode(path: str) -> bool:
-    """Whether this Python would import the sourceless .pyc at `path`: its
-    magic number is the running interpreter's (a Python 2 or other 3.x
-    leftover fails to import, which the reverted run measures correctly)."""
+    """Whether some Python 3 could import the sourceless .pyc at `path`.
+
+    The test command may run another interpreter than forge's (python3.13
+    while forge runs 3.12), so any CPython 3 magic counts, not only the
+    running one's: a 2-byte little-endian number in 3000..19999 followed by
+    b"\\r\\n" (fail closed; future 3.x magics stay in range). Python 1/2
+    magics (20121 and up) and malformed headers are out of scope: no Python 3
+    imports them, so the reverted run measures correctly (#259).
+    """
     try:
         with open(path, "rb") as fh:
-            return fh.read(4) == importlib.util.MAGIC_NUMBER
+            header = fh.read(4)
     except OSError:
         return False  # unreadable: the import fails too
+    if header[2:] != b"\r\n":  # also rejects a truncated header
+        return False
+    return 3000 <= int.from_bytes(header[:2], "little") < 20000
 
 
 def _refuse_sourceless_bytecode(root: str, paths: Collection[str]) -> None:
@@ -432,7 +440,7 @@ def _refuse_sourceless_bytecode(root: str, paths: Collection[str]) -> None:
     Python imports that file when the source is missing, so the reverted run
     would run it instead of failing to import. It isn't a cache FIXVAL may
     delete (it can be a shipped artifact), so the revert is unmeasured. Not
-    when it can't be imported (another Python's magic), and not when it
+    when no Python 3 can import it (a Python 2 magic), and not when it
     belongs to the reverted tree (the patch restores it, or git tracks it):
     importing it then is the unfixed code, a correct measurement.
     """
