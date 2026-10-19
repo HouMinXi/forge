@@ -100,3 +100,62 @@ def test_quoted_closer_token_inside_a_value_is_repaired(raw, field, expected):
 def test_trailing_data_after_a_complete_object_still_raises(raw):
     with pytest.raises(json.JSONDecodeError):
         _loads_model_json(raw)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (
+            '{"findings":[{"description":"returns "}" here","line":1}],"code_excerpts":[]}',
+            {"findings": [{"description": 'returns "}" here', "line": 1}], "code_excerpts": []},
+        ),
+        (
+            '{"findings":[{"line":1,"description":"returns "}" here"}],"code_excerpts":[]}',
+            {"findings": [{"line": 1, "description": 'returns "}" here'}], "code_excerpts": []},
+        ),
+        (
+            '{"notes":{"items":["closes "]" here","b"]}}',
+            {"notes": {"items": ['closes "]" here', "b"]}},
+        ),
+    ],
+)
+def test_quoted_closer_token_nested_in_findings_is_repaired(raw, expected):
+    """#216 falsification P1: the real reply shape nests the description in
+    the findings array, where json reports "Expecting ',' delimiter" instead
+    of "Extra data". Base e412ade repaired it; the fix must too."""
+    assert _loads_model_json(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('{"d":"the args "foo" "bar" are swapped"}', 'the args "foo" "bar" are swapped'),
+        ('{"d":"pass "a" "b"","line":2}', 'pass "a" "b"'),
+        ('{"d":"x "a"\t"b" y"}', 'x "a"\t"b" y'),
+        ('{"d":"use "}"  "]", then stop"}', 'use "}"  "]", then stop'),
+    ],
+)
+def test_adjacent_quoted_words_inside_content_are_repaired(raw, expected):
+    """#216 falsification P2: string-whitespace-string is a missing comma only
+    when the second string is a member or element (``:``, ``,`` or a closer
+    follows it). Prose quoting two tokens side by side is content."""
+    assert _loads_model_json(raw)["d"] == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"verdict":"DISMISSED" "reasoning":"x"}',
+        '{"items":["a" "b"]}',
+        '{"items":["a" "b","c"]}',
+        '{"a":"x" "b"}',
+        '{"a":"x" "b": 1}',
+        '{"items":["a" "b", 2]}',
+        '{"items":["a" "b", true]}',
+        '{"a":"x" "b',  # truncated reply: nothing follows the second string
+    ],
+)
+def test_member_position_missing_comma_still_raises(raw):
+    with pytest.raises(json.JSONDecodeError) as caught:
+        _loads_model_json(raw)
+    assert caught.value.doc == raw
