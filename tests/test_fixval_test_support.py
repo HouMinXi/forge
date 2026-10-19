@@ -699,6 +699,8 @@ def test_a_timed_out_hollow_retry_is_inconclusive(tmp_path, monkeypatch):
         (["env", "-u", "PYTEST", "make"], False),
         (["uv", "run", "--with", "pytest", "pytest"], True),
         (["uv", "run", "--with=pytest", "pytest"], True),
+        (["uv", "run", "-p", "3.12", "pytest"], True),
+        (["uv", "run", "--python", "3.12", "pytest"], True),
         (["env", "-u", "PYTEST", "pytest"], True),
         (["coverage", "run", "--source", "src", "-m", "pytest"], True),
         (["uv", "run", "--", "pytest"], True),
