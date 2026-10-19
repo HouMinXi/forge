@@ -256,65 +256,150 @@ def test_windows_separators_are_normalised(path, support):
     assert candidate.non_test_files == (["src/calc.py"] if support else ["src/calc.py", path])
 
 
-def _docs_and_support_repo(root: Path, doc: str) -> str:
-    """A valid conftest fix that also touches a doc (#255 review, /tmp/d255)."""
+CONFTEST_FIX = ('import os\nos.environ["FORGE_FLAG"] = "1"\n', "import os\n")
+GUARDED_TEST = 'import os\n\ndef test_env():\n    assert os.environ.get("FORGE_FLAG") == "1"\n'
+HOLLOW_TEST = "def test_env():\n    assert True\n"
+
+
+def _support_beside_repo(root: Path, other: str, test_body: str) -> str:
+    """A conftest fix that also touches one other non-test file (#255 review, /tmp/d255)."""
     _git(root, "init", "-q")
     (root / "tests").mkdir()
-    (root / doc).parent.mkdir(parents=True, exist_ok=True)
-    (root / "tests/conftest.py").write_text("import os\n", encoding="utf-8")
-    (root / "tests/test_env.py").write_text("def test_env():\n    assert True\n", encoding="utf-8")
-    (root / doc).write_text("notes\n", encoding="utf-8")
+    (root / other).parent.mkdir(parents=True, exist_ok=True)
+    (root / "tests/conftest.py").write_text(CONFTEST_FIX[1], encoding="utf-8")
+    (root / "tests/test_env.py").write_text("def test_env():\n    pass\n", encoding="utf-8")
+    (root / other).write_text("notes\n", encoding="utf-8")
     _git(root, "add", "--all")
     _git(root, "commit", "-q", "-m", "base")
-    (root / "tests/conftest.py").write_text(
-        'import os\nos.environ["FORGE_FLAG"] = "1"\n', encoding="utf-8"
-    )
-    (root / "tests/test_env.py").write_text(
-        'import os\n\ndef test_env():\n    assert os.environ.get("FORGE_FLAG") == "1"\n',
-        encoding="utf-8",
-    )
-    (root / doc).write_text("notes\nflag documented\n", encoding="utf-8")
+    (root / "tests/conftest.py").write_text(CONFTEST_FIX[0], encoding="utf-8")
+    (root / "tests/test_env.py").write_text(test_body, encoding="utf-8")
+    (root / other).write_text("notes\nflag documented\n", encoding="utf-8")
     _git(root, "add", "--all")
     return _git(root, "diff", "--cached", "--binary")
 
 
-@pytest.mark.parametrize("doc", ["docs/notes.md", "CHANGELOG", "README.txt", "docs/flag.png"])
-def test_doc_change_does_not_keep_support_unreverted(tmp_path, doc):
-    diff = _docs_and_support_repo(tmp_path, doc)
-    changed = [doc, "tests/conftest.py", "tests/test_env.py"]
-    result = _run(tmp_path, diff, changed, [doc, "tests/conftest.py"])
+def _assert_restored(root: Path, other: str, test_body: str):
+    assert (root / "tests/conftest.py").read_text(encoding="utf-8") == CONFTEST_FIX[0]
+    assert (root / "tests/test_env.py").read_text(encoding="utf-8") == test_body
+    assert (root / other).read_text(encoding="utf-8") == "notes\nflag documented\n"
+    assert _git(root, "status", "--porcelain") == "".join(
+        "M  %s\n" % name for name in sorted([other, "tests/conftest.py", "tests/test_env.py"])
+    )
+
+
+OTHERS = ["docs/notes.md", "CHANGELOG", "docs/notes.rst", "README.rst", "mkdocs.yml", "src/calc.py"]
+
+
+@pytest.mark.parametrize("other", OTHERS)
+def test_conftest_fix_beside_another_change_is_pass(tmp_path, other):
+    # first run keeps conftest and passes; the retry reverts it and the test fails
+    diff = _support_beside_repo(tmp_path, other, GUARDED_TEST)
+    changed = [other, "tests/conftest.py", "tests/test_env.py"]
+    result = _run(tmp_path, diff, changed, [other])
     assert result.status is FixvalStatus.PASS, result.block_message
     assert result.findings == []
+    _assert_restored(tmp_path, other, GUARDED_TEST)
 
 
-def test_doc_beside_source_keeps_support_and_the_doc_reverted():
-    kept = _filter_non_test_patch(
-        _diff("src/calc.py", "docs/notes.md", "tests/conftest.py", "tests/test_calc.py")
+@pytest.mark.parametrize("other", ["docs/notes.rst", "mkdocs.yml"])
+def test_hollow_test_beside_conftest_and_another_change_still_blocks(tmp_path, other):
+    diff = _support_beside_repo(tmp_path, other, HOLLOW_TEST)
+    result = _run(tmp_path, diff, [other, "tests/conftest.py", "tests/test_env.py"], [other])
+    assert result.status is FixvalStatus.BLOCK
+    assert [finding.id for finding in result.findings] == ["FIXVAL_HOLLOW"]
+    # the deciding run is the retry, which reverted the conftest too
+    reverted = result.block_message.split("Reverted files:\n")[1].split("\n\n")[0]
+    assert reverted.split() == sorted(
+        [other, "tests/conftest.py"], key=[other, "tests/conftest.py"].index
     )
-    assert kept == _diff("src/calc.py", "docs/notes.md")
-    candidate = classify_fixval_candidate(
-        ["src/calc.py", "CHANGELOG", "tests/conftest.py", "tests/test_calc.py"]
+    _assert_restored(tmp_path, other, HOLLOW_TEST)
+
+
+def test_hollow_message_names_only_what_the_deciding_run_reverted(tmp_path):
+    # #254: the retry only breaks the test (fixture gone), so the first run decides
+    diff = _repo(tmp_path, HOLLOW_FIXTURE)
+    result = _run(tmp_path, diff, ["src/calc.py", *HOLLOW_FIXTURE], ["src/calc.py"])
+    reverted = result.block_message.split("Reverted files:\n")[1].split("\n\n")[0]
+    assert reverted.split() == ["src/calc.py"]
+
+
+def test_retry_timeout_is_not_pass_and_the_fix_is_restored(tmp_path, monkeypatch):
+    import subprocess as sp
+
+    from code_forge import fixval
+
+    real = fixval._test_reverted_candidate
+    calls = []
+
+    def second_times_out(*args, **kwargs):
+        calls.append(kwargs.get("require_witness"))
+        if len(calls) == 2:
+            raise sp.TimeoutExpired(args[1], 600)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(fixval, "_test_reverted_candidate", second_times_out)
+    other = "docs/notes.rst"
+    diff = _support_beside_repo(tmp_path, other, GUARDED_TEST)
+    result = _run(tmp_path, diff, [other, "tests/conftest.py", "tests/test_env.py"], [other])
+    assert calls == [False, True]
+    assert result.status is FixvalStatus.BLOCK
+    assert [finding.id for finding in result.findings] == ["FIXVAL_TRANSACTION"]
+    _assert_restored(tmp_path, other, GUARDED_TEST)
+
+
+def test_unwitnessed_retry_keeps_the_first_hollow(tmp_path, monkeypatch):
+    from code_forge import fixval
+
+    real = fixval._test_reverted_candidate
+
+    def retry_has_no_verdict(*args, **kwargs):
+        return None if kwargs.get("require_witness") else real(*args, **kwargs)
+
+    monkeypatch.setattr(fixval, "_test_reverted_candidate", retry_has_no_verdict)
+    other = "mkdocs.yml"
+    diff = _support_beside_repo(tmp_path, other, GUARDED_TEST)
+    result = _run(tmp_path, diff, [other, "tests/conftest.py", "tests/test_env.py"], [other])
+    assert [finding.id for finding in result.findings] == ["FIXVAL_HOLLOW"]
+    assert result.block_message.split("Reverted files:\n")[1].split("\n\n")[0].split() == [other]
+    _assert_restored(tmp_path, other, GUARDED_TEST)
+
+
+@pytest.mark.parametrize(
+    ("code", "stdout", "witnessed"),
+    [
+        (1, "F\n1 failed in 0.01s\n", True),
+        (1, "===== 1 failed, 2 passed, 1 error in 0.10s =====\n", True),
+        (1, "E\nERROR tests/test_a.py::test_a\n1 error in 0.00s\n", False),
+        (2, "!!! Interrupted: 1 error during collection !!!\n1 error in 0.06s\n", False),
+        (1, "==== 2 errors, 3 warnings in 1.5s ====\n", False),
+        (1, "1 failed in 0.1s\nrerun\n1 error in 0.1s\n", False),
+        (1, "10 failed in 2s\n", True),
+        (1, "0 failed, 1 error in 2s\n", False),
+        (1, "make: *** [test] Error 1\n", True),
+        (3, "", True),
+        (-9, "1 failed in 0.1s\n", False),
+        (-15, "", False),
+    ],
+)
+def test_witnessed_failure(code, stdout, witnessed):
+    import subprocess as sp
+
+    from code_forge.fixval import _witnessed_failure
+
+    assert _witnessed_failure(sp.CompletedProcess([], code, stdout, "")) is witnessed
+
+
+def test_revert_patch_projections():
+    diff = _diff("docs/notes.rst", "tests/conftest.py", "tests/helpers.py", "tests/test_calc.py")
+    assert _filter_non_test_patch(diff) == _diff("docs/notes.rst")
+    assert _filter_non_test_patch(diff, revert_support=True) == _diff(
+        "docs/notes.rst", "tests/conftest.py", "tests/helpers.py"
     )
-    assert isinstance(candidate, FixvalCandidate)
-    assert candidate.non_test_files == ["src/calc.py", "CHANGELOG"]
-
-
-@pytest.mark.parametrize("source", ["Makefile", "src/README.md", "setup.cfg", "docs/conf.py"])
-def test_non_doc_files_still_count_as_source(source):
-    kept = _filter_non_test_patch(_diff(source, "tests/conftest.py", "tests/test_calc.py"))
-    assert kept == _diff(source)
-    candidate = classify_fixval_candidate([source, "tests/conftest.py", "tests/test_calc.py"])
-    assert isinstance(candidate, FixvalCandidate)
-    assert candidate.non_test_files == [source]
-
-
-def test_rename_from_source_to_doc_is_source():
     rename = (
         "diff --git a/src/tool.py b/docs/tool.md\nsimilarity index 100%\n"
         "rename from src/tool.py\nrename to docs/tool.md\n"
     )
-    kept = _filter_non_test_patch(rename + _diff("tests/conftest.py", "tests/test_calc.py"))
-    assert kept == rename
+    assert _filter_non_test_patch(rename + _diff("tests/conftest.py", "tests/test_calc.py")) == rename
 
 
 def test_relative_classification_does_not_depend_on_cwd(tmp_path, monkeypatch):
@@ -322,3 +407,62 @@ def test_relative_classification_does_not_depend_on_cwd(tmp_path, monkeypatch):
     candidate = classify_fixval_candidate(FILES)
     assert isinstance(candidate, FixvalCandidate)
     assert candidate.non_test_files == ["src/calc.py", "test/helpers.py"]
+
+
+def test_no_retry_when_no_support_was_kept(tmp_path, monkeypatch):
+    from code_forge import fixval
+
+    real = fixval._test_reverted_candidate
+    calls = []
+
+    def counted(*args, **kwargs):
+        calls.append(kwargs.get("require_witness"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(fixval, "_test_reverted_candidate", counted)
+    hollow = {"tests/test_calc.py": "def test_calc():\n    assert True\n"}
+    diff = _repo(tmp_path, hollow)
+    result = _run(tmp_path, diff, ["src/calc.py", *hollow], ["src/calc.py"])
+    assert [finding.id for finding in result.findings] == ["FIXVAL_HOLLOW"]
+    assert calls == [False]
+
+
+@pytest.mark.parametrize("first", ["pass", "transaction-block"])
+def test_only_a_hollow_first_run_is_retried(tmp_path, monkeypatch, first):
+    from code_forge import fixval
+
+    real = fixval._test_reverted_candidate
+    calls = []
+
+    def first_run(*args, **kwargs):
+        calls.append(kwargs.get("require_witness"))
+        if first == "pass":
+            return real(*args, **kwargs)
+        return fixval._transaction_block("injected", str(tmp_path))
+
+    monkeypatch.setattr(fixval, "_test_reverted_candidate", first_run)
+    other = "docs/notes.rst"
+    diff = _support_beside_repo(tmp_path, other, GUARDED_TEST)
+    if first == "pass":  # the doc revert alone already fails the test
+        (tmp_path / "tests/test_env.py").write_text(
+            GUARDED_TEST
+            + "\n\ndef test_doc():\n    assert 'flag' in open('%s').read()\n" % (tmp_path / other),
+            encoding="utf-8",
+        )
+        _git(tmp_path, "add", "--all")
+        diff = _git(tmp_path, "diff", "--cached", "--binary")
+    result = _run(tmp_path, diff, [other, "tests/conftest.py", "tests/test_env.py"], [other])
+    assert calls == [False]
+    expected = ["FIXVAL_TRANSACTION"] if first != "pass" else []
+    assert [finding.id for finding in result.findings] == expected
+
+
+def test_first_run_collection_error_stays_pass_as_on_main(tmp_path):
+    # the test imports a name the fix adds: exit 2 on reverted code, judged as on main (#28)
+    fixed = {
+        "src/calc.py": "value = 2\n\ndef helper():\n    return value\n",
+        "tests/test_calc.py": "from calc import helper\n\ndef test_calc():\n    assert helper() == 2\n",
+    }
+    diff = _repo(tmp_path, fixed)
+    result = _run(tmp_path, diff, list(fixed), ["src/calc.py"])
+    assert result.status is FixvalStatus.PASS, result.block_message
