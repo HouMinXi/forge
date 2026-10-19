@@ -58,10 +58,14 @@ def _git(root, *args):
     )
 
 
-def test_reverted_run_timeout_is_a_skip_with_the_gate_timeout(tmp_path, monkeypatch):
-    """#187: the reverted run gets the gate timeout, and a timeout there is a
-    SKIPPED FIXVAL with the reason, not a FIXVAL_TRANSACTION BLOCK."""
+def test_reverted_run_timeout_is_inconclusive_not_pass(tmp_path, monkeypatch):
+    """#187: the reverted run gets the gate timeout. A timeout there measured
+    nothing, so it is a non-PASS FIXVAL_INCONCLUSIVE BLOCK naming the
+    timeout (not SKIPPED, which the machine turns into PASS), and not a
+    FIXVAL_TRANSACTION error; the fix is still restored."""
     import subprocess
+
+    from code_forge.disposition import Disposition
 
     mod = tmp_path / "src" / "pkg" / "mod.py"
     mod.parent.mkdir(parents=True)
@@ -77,7 +81,7 @@ def test_reverted_run_timeout_is_a_skip_with_the_gate_timeout(tmp_path, monkeypa
     def run(argv, **kw):
         if "tests/test_mod.py" in argv:
             seen.append(kw.get("timeout"))
-            raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout"), output="collected 3 items")
         return real(argv, **kw)
 
     monkeypatch.setattr(fixval.subprocess, "run", run)
@@ -86,14 +90,23 @@ def test_reverted_run_timeout_is_a_skip_with_the_gate_timeout(tmp_path, monkeypa
         candidate, ["python3", "-m", "pytest"], tmp_path, "fix", PATCH, baseline_timeout=2400,
     )
     assert seen == [2400]
-    assert result.status == fixval.FixvalStatus.SKIPPED, result
-    assert not any(f.id == "FIXVAL_TRANSACTION" for f in result.findings)
-    assert any("timed out after 2400s" in a.description for a in result.advisories)
+    assert result.status == fixval.FixvalStatus.BLOCK, result
+    assert [f.id for f in result.findings] == ["FIXVAL_INCONCLUSIVE"]
+    finding = result.findings[0]
+    assert finding.disposition == Disposition.UNCERTAIN
+    assert finding.description == result.block_message == finding.error
+    assert finding.description.startswith(
+        "FIXVAL inconclusive: reverted-code test run timed out after 2400s; "
+        "the test was not judged, so the fix is unverified"
+    )
+    assert finding.description.endswith("Output: collected 3 items")
     assert mod.read_text() == "value = 1\n"
+    assert not list(tmp_path.glob(".fixval-recovery-*"))
 
 
-def test_overfit_run_timeout_is_advisory_silence(tmp_path, monkeypatch):
-    """#187: the overfit run gets the gate timeout and never raises on it."""
+def test_overfit_run_timeout_is_an_inconclusive_advisory(tmp_path, monkeypatch):
+    """#187: the overfit run gets the gate timeout and never raises or blocks
+    on it, but says the check was not measured instead of staying silent."""
     import subprocess
 
     src = tmp_path / "src" / "module.py"
@@ -108,6 +121,9 @@ def test_overfit_run_timeout_is_advisory_silence(tmp_path, monkeypatch):
 
     monkeypatch.setattr(fixval.subprocess, "run", run)
     candidate = fixval.FixvalCandidate(["tests/test_module.py"], [str(src)])
-    assert fixval.run_overfit_guard(candidate, ["pytest"], tmp_path, timeout=2400) == []
+    advisories = fixval.run_overfit_guard(candidate, ["pytest"], tmp_path, timeout=2400)
+    assert [a.id for a in advisories] == ["FIXVAL_OVERFIT_INCONCLUSIVE"]
+    assert advisories[0].description.endswith("the test run timed out after 2400s")
+    assert "'result' -> 'result_renamed'" in advisories[0].description
     assert seen == [2400]
     assert src.read_text() == original

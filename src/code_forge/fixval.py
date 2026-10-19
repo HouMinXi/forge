@@ -333,12 +333,19 @@ def _judged_failure(cmd: list[str], result: subprocess.CompletedProcess) -> str 
     return "pytest exit %d (%s)" % (code, _PYTEST_EXIT.get(code, "not a test-failure exit"))
 
 
-def _inconclusive_block(reason: str, result: subprocess.CompletedProcess) -> FixvalResult:
-    detail = (
-        "FIXVAL inconclusive: reverted-code %s; the test was not judged, so the fix is unverified"
-        % reason
-    )
-    tail = " ".join((result.stderr or result.stdout or "").split())[-200:]
+def _timeout_output(exc: subprocess.TimeoutExpired) -> str:
+    value = exc.stderr or exc.stdout or ""
+    return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
+
+
+def _inconclusive_block(reason: str, output: str = "") -> FixvalResult:
+    """Non-PASS FIXVAL when the reverted-code run never judged the test.
+
+    Unmeasured is not PASS: machine.py turns BLOCK into a FAIL verdict, and
+    the reason says exactly why the fix is unverified.
+    """
+    detail = "FIXVAL inconclusive: reverted-code %s; the test was not judged, so the fix is unverified" % reason
+    tail = " ".join((output or "").split())[-200:]
     if tail:
         detail += ". Output: %s" % tail
     return FixvalResult(
@@ -374,28 +381,15 @@ def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root, timeout=
             **child_sigint_options(),  # #230
             cwd=repo_root,
         )
-    except subprocess.TimeoutExpired:
-        # #187: a slow reverted run is not a transaction failure. Nothing was
-        # measured, so FIXVAL is skipped with the reason; restoration still
-        # runs (and is still checked) in run_fixval's finally block.
-        return FixvalResult(
-            status=FixvalStatus.SKIPPED,
-            findings=[],
-            advisories=[
-                AdvisoryFinding(
-                    id="FIXVAL_REVERTED_TIMEOUT",
-                    axis="FIXVAL",
-                    file=candidate.test_files[0] if candidate.test_files else "",
-                    line_range=[],
-                    description="FIXVAL skipped: reverted-fix test run timed out after %ss" % timeout,
-                    attribution="fixval",
-                )
-            ],
-        )
+    except subprocess.TimeoutExpired as exc:
+        # #187: a slow reverted run is not a transaction failure, but nothing
+        # was measured, so it is not PASS either: an inconclusive BLOCK with
+        # the reason. Restoration still runs (and is checked) in run_fixval.
+        return _inconclusive_block("test run timed out after %ss" % timeout, _timeout_output(exc))
     if result.returncode != 0:
         reason = _judged_failure(scoped_cmd, result)
         if reason is not None:
-            return _inconclusive_block(reason, result)
+            return _inconclusive_block(reason, result.stderr or result.stdout or "")
         return FixvalResult(status=FixvalStatus.PASS, findings=[], advisories=[])
     block_msg = "FIXVAL: Test(s) did not fail when the fix was reverted.\n\n  Reverted files:\n"
     for filename in candidate.non_test_files:
@@ -963,9 +957,21 @@ def run_overfit_guard(
                     **child_sigint_options(),  # #230
                 )
             except subprocess.TimeoutExpired:
-                # #187: advisory only; a slow run never blocks or crashes.
-                _logger.warning("FIXVAL overfit run timed out after %ss; skipped", timeout)
-                return []
+                # #187: advisory only; a slow run never blocks or crashes,
+                # but the advisory says the check was not measured.
+                return [
+                    AdvisoryFinding(
+                        id="FIXVAL_OVERFIT_INCONCLUSIVE",
+                        axis="FIXVAL",
+                        file=py_file,
+                        line_range=[],
+                        description=(
+                            "overfit guard inconclusive: after renaming '%s' -> '%s' in %s the test run timed out after %ss"
+                            % (renamer.renamed, renamer.new_name, py_file, timeout)
+                        ),
+                        attribution="fixval-overfit-guard",
+                    ),
+                ]
 
             if result.returncode != 0:
                 reason = _judged_failure(scoped_cmd, result)
