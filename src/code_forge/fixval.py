@@ -18,6 +18,7 @@ import ast
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -253,6 +254,65 @@ def _transaction_block(message: str, recovery: str) -> FixvalResult:
     )
 
 
+# #252: only a judged test failure counts as "fails on the reverted code".
+_PYTEST_EXIT = {
+    2: "interrupted",
+    3: "internal error",
+    4: "usage error",
+    5: "no tests collected",
+}
+# A collection error caused by the revert (the test imports what the fix added)
+# is a judged failure too; pytest reports it as exit 2 with this banner.
+_COLLECTION_ERROR = re.compile(r"^!*\s*Interrupted: \d+ errors? during collection\s*!*$", re.MULTILINE)
+
+
+def _judged_failure(result: subprocess.CompletedProcess) -> str | None:
+    """Return None when the run judged the tests as failing, else the reason it didn't.
+
+    Exit 1 is failing tests. Exit 2 counts only for a collection error with no
+    KeyboardInterrupt. A signal death or any other code never judged the test.
+    """
+    code = result.returncode
+    stdout = result.stdout or ""
+    if code == 1:
+        return None
+    if code == 2 and _COLLECTION_ERROR.search(stdout) and "KeyboardInterrupt" not in stdout + (result.stderr or ""):
+        return None
+    if code < 0:
+        try:
+            name = signal.Signals(-code).name
+        except ValueError:
+            name = "signal %d" % -code
+        return "test run killed by %s (exit %d)" % (name, code)
+    if code in _PYTEST_EXIT:
+        return "test run exit %d (%s)" % (code, _PYTEST_EXIT[code])
+    return "test run exit %d (not a test-failure exit)" % code
+
+
+def _inconclusive_block(reason: str, result: subprocess.CompletedProcess) -> FixvalResult:
+    detail = "FIXVAL inconclusive: reverted-code %s; the test was not judged, so the fix is unverified" % reason
+    tail = " ".join((result.stderr or result.stdout or "").split())[-200:]
+    if tail:
+        detail += ". Output: %s" % tail
+    return FixvalResult(
+        status=FixvalStatus.BLOCK,
+        findings=[
+            StateFinding(
+                id="FIXVAL_INCONCLUSIVE",
+                fingerprint="fixval-inconclusive",
+                source="FIXVAL",
+                disposition=Disposition.UNCERTAIN,
+                file="",
+                line_range=[],
+                description=detail,
+                error=detail,
+            )
+        ],
+        advisories=[],
+        block_message=detail,
+    )
+
+
 def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root) -> FixvalResult:
     result = subprocess.run(
         scoped_cmd,
@@ -266,6 +326,9 @@ def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root) -> Fixva
         cwd=repo_root,
     )
     if result.returncode != 0:
+        reason = _judged_failure(result)
+        if reason is not None:
+            return _inconclusive_block(reason, result)
         return FixvalResult(status=FixvalStatus.PASS, findings=[], advisories=[])
     block_msg = "FIXVAL: Test(s) did not fail when the fix was reverted.\n\n  Reverted files:\n"
     for filename in candidate.non_test_files:
@@ -630,6 +693,22 @@ def run_overfit_guard(
             )
 
             if result.returncode != 0:
+                reason = _judged_failure(result)
+                if reason is not None:
+                    # #252: an unjudged run says nothing about overfitting.
+                    return [
+                        AdvisoryFinding(
+                            id="FIXVAL_OVERFIT_INCONCLUSIVE",
+                            axis="FIXVAL",
+                            file=py_file,
+                            line_range=[],
+                            description=(
+                                "overfit guard inconclusive: after renaming '%s' -> '%s' in %s the %s"
+                                % (renamer.renamed, renamer.new_name, py_file, reason)
+                            ),
+                            attribution="fixval-overfit-guard",
+                        ),
+                    ]
                 # Test failed after rename -> overfitting advisory
                 return [
                     AdvisoryFinding(
