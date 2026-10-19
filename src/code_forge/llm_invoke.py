@@ -1032,7 +1032,9 @@ def _loads_model_json(text: str):
     """
     candidate = text
     first_error: json.JSONDecodeError | None = None
-    for _ in range(text.count('"') + 1):
+    # Each attempt escapes one quote and at least two stay structural, so
+    # count - 1 attempts (the last one parsing) always suffice.
+    for _ in range(max(1, text.count('"') - 1)):
         try:
             parsed = json.loads(candidate, strict=False)
         except json.JSONDecodeError as exc:
@@ -1048,7 +1050,7 @@ def _loads_model_json(text: str):
             # "line" read as one key). Fail closed with the original error.
             raise first_error
         return parsed
-    return json.loads(candidate, strict=False)
+    raise first_error or json.JSONDecodeError("no parse within the repair budget", text, 0)
 
 
 def _has_quoted_key(value) -> bool:
@@ -1073,6 +1075,12 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
         # ordinary path (#234, #216 review). Real trailing data still fails
         # closed on a later attempt.
         return closer_quote
+    if (
+        exc.msg.startswith(("Expecting property name", "Expecting value"))
+        and pos < len(text)
+        and text[pos] == ","
+    ):
+        return None  # ",," : a doubled separator is structure, not content
     if not exc.msg.startswith("Expecting "):
         # A stray content quote only ever surfaces as a delimiter/name
         # error; "Invalid \escape", control characters or an unterminated
@@ -1137,12 +1145,43 @@ def _string_is_a_member(text: str, start: int) -> bool:
     while end < len(text) and (text[end] != '"' or _quote_is_escaped(text, end)):
         end += 1
     rest = text[end + 1 :].lstrip()
+    if _container_at(text, start) == "{":
+        # In an object the next member starts with a key, which a ':' must
+        # follow; ``" " * 4`` or ``", "`` inside a value is content (#216
+        # review 6262018713). Arrays keep the element rule below.
+        if not rest:
+            return True
+        if rest[0] != ":":
+            return False
     if not rest or rest[0] in "}]":
         return True
     if rest[0] not in ":,":
         return False
     after = rest[1:].lstrip()
     return not after or after[0] in '"{[-0123456789' or after.startswith(("true", "false", "null"))
+
+
+def _container_at(text: str, pos: int) -> str | None:
+    """The innermost ``{`` or ``[`` open at `pos`, skipping strings."""
+    stack: list[str] = []
+    in_string = False
+    index = 0
+    while index < pos:
+        char = text[index]
+        if in_string:
+            if char == "\\":
+                index += 2
+                continue
+            if char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append(char)
+        elif char in "}]" and stack:
+            stack.pop()
+        index += 1
+    return stack[-1] if stack else None
 
 
 def _quote_is_escaped(text: str, quote_at: int) -> bool:
