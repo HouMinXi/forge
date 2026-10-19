@@ -1046,22 +1046,16 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
     pos = exc.pos
     if not isinstance(pos, int):
         return None
-    if (
-        (exc.msg.startswith("Extra data") or exc.msg.startswith("Expecting ',' delimiter"))
-        and 2 <= pos < len(text)
-        and text[pos] == '"'
-        and text[pos - 1] in "}]"
-        and text[pos - 2] == '"'
-        and not _quote_is_escaped(text, pos - 2)
-    ):
-        # A content token such as ``"}"`` inside a string value: json ends
-        # the string at its first quote, the closer ends the object, and the
-        # token's second quote is "extra" at top level, or a missing ``,``
-        # when the object sits in an array/object (the findings shape).
-        # Escape the first one; the loop then repairs the second through the
-        # ordinary path (#234). Real trailing data still fails closed on a
-        # later attempt.
-        return pos - 2
+    closer_quote = _closer_token_quote(text, exc)
+    if closer_quote is not None:
+        # A content token such as ``"}"``, ``"}]"`` or ``"},"`` inside a
+        # string value: json ends the string at its first quote, the closer
+        # run ends the object/array, and what follows is "extra" at top
+        # level or a missing ``,`` when nested (the findings shape). Escape
+        # the first quote; the loop then repairs the second through the
+        # ordinary path (#234, #216 review). Real trailing data still fails
+        # closed on a later attempt.
+        return closer_quote
     if not exc.msg.startswith("Expecting "):
         # A stray content quote only ever surfaces as a delimiter/name
         # error; "Invalid \escape", control characters or an unterminated
@@ -1079,7 +1073,7 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
             continue
         if _quote_is_escaped(text, quote_at):
             continue
-        gap = text[quote_at + 1:pos]
+        gap = text[quote_at + 1 : pos]
         if (
             pos < len(text)
             and text[pos] == '"'
@@ -1096,6 +1090,25 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
     return None
 
 
+def _closer_token_quote(text: str, exc: json.JSONDecodeError) -> int | None:
+    """The opening quote of a quoted closer run (``}``, ``]``, ``,``) that
+    json stopped right after, or None."""
+    pos = exc.pos
+    if not (exc.msg.startswith("Extra data") or exc.msg.startswith("Expecting ',' delimiter")):
+        return None
+    if pos >= len(text) or text[pos] not in '"},]':
+        return None
+    # json stopped at the token's second quote or inside the closer run, so
+    # the run ends at pos - 1; the quote json closed the string with (never
+    # an escaped one) comes right before it.
+    index = pos - 1
+    while index >= 0 and text[index] in "}],":
+        index -= 1
+    if index < 0 or text[index] != '"':
+        return None
+    return index
+
+
 def _string_is_a_member(text: str, start: int) -> bool:
     """Whether the string opening at `start` sits where a member or element
     would: after optional whitespace it is followed by ``}``, ``]``, the end
@@ -1104,17 +1117,13 @@ def _string_is_a_member(text: str, start: int) -> bool:
     end = start + 1
     while end < len(text) and (text[end] != '"' or _quote_is_escaped(text, end)):
         end += 1
-    rest = text[end + 1:].lstrip()
+    rest = text[end + 1 :].lstrip()
     if not rest or rest[0] in "}]":
         return True
     if rest[0] not in ":,":
         return False
     after = rest[1:].lstrip()
-    return (
-        not after
-        or after[0] in '"{[-0123456789'
-        or after.startswith(("true", "false", "null"))
-    )
+    return not after or after[0] in '"{[-0123456789' or after.startswith(("true", "false", "null"))
 
 
 def _quote_is_escaped(text: str, quote_at: int) -> bool:
