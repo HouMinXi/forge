@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""FIXVAL child runs never read or write the checkout's bytecode (#257).
+"""FIXVAL never runs stale bytecode of the files it reverts or restores (#257).
 
 CPython and pytest validate cached bytecode by whole-second source mtime plus
 size. These tests make a revert or restore land on the fixed file's exact
@@ -81,12 +81,9 @@ def _checkout(root: Path, case: str) -> tuple[Path, str]:
 
 
 def _user_pytest(root: Path) -> subprocess.CompletedProcess:
-    """The user's own run in the checkout, writing and reading __pycache__."""
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX")
-    }
+    """The user's own run in the checkout, writing and reading bytecode
+    (under PYTHONPYCACHEPREFIX when the test set one)."""
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONDONTWRITEBYTECODE"}
     env["PYTHONPATH"] = str(root / "src")
     return subprocess.run(
         PYTEST + ["tests/test_calc.py"], cwd=root, env=env, capture_output=True, text=True, timeout=60
@@ -110,29 +107,26 @@ def _restamp(roots, source: Path) -> int:
     return count
 
 
-def _same_second_revert(monkeypatch, root: Path, source: Path):
+def _same_second_revert(monkeypatch, roots, source: Path):
     """After each revert, cached bytecode of the fixed file looks current."""
     real = FixvalTransaction.reverse
-    prefixes = []
-    real_env = fixval._isolated_bytecode_env
-
-    def recording(env, prefix):
-        prefixes.append(prefix)
-        return real_env(env, prefix)
 
     def reverse(self, *args, **kwargs):
         result = real(self, *args, **kwargs)
-        _restamp([root, *prefixes], source)
+        _restamp(roots, source)
         return result
 
-    monkeypatch.setattr(fixval, "_isolated_bytecode_env", recording)
     monkeypatch.setattr(FixvalTransaction, "reverse", reverse)
 
 
-def _fixval(root: Path, case: str, diff: str):
+def _fixval(root: Path, case: str, diff: str, cmd=PYTEST):
     name = CASES[case][0]
     candidate = FixvalCandidate(["tests/test_calc.py"], [name])
-    return run_fixval(candidate, PYTEST, root, "fix calc", diff)
+    return run_fixval(candidate, cmd, root, "fix calc", diff)
+
+
+def _pycs(root: Path) -> list[str]:
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*.pyc"))
 
 
 @pytest.mark.parametrize("case", sorted(CASES))
@@ -141,77 +135,179 @@ def test_reverted_run_does_not_execute_fixed_bytecode(tmp_path, monkeypatch, cas
     source, diff = _checkout(tmp_path, case)
     assert _user_pytest(tmp_path).returncode == 0  # the checkout now caches the fixed bytecode
     assert _restamp([tmp_path], source) >= 1
-    _same_second_revert(monkeypatch, tmp_path, source)
+    _same_second_revert(monkeypatch, [tmp_path], source)
     result = _fixval(tmp_path, case, diff)
     assert result.status is FixvalStatus.PASS, result.block_message
 
 
+def test_reverted_run_ignores_fixed_bytecode_under_an_inherited_pycache_prefix(tmp_path, monkeypatch):
+    _launcher_env(monkeypatch)
+    prefix = tmp_path / "prefix"
+    checkout = tmp_path / "repo"
+    checkout.mkdir()
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(prefix))
+    source, diff = _checkout(checkout, "module")
+    assert _user_pytest(checkout).returncode == 0
+    assert _restamp([prefix], source) >= 1 and _pycs(checkout) == []
+    _same_second_revert(monkeypatch, [prefix], source)
+    result = _fixval(checkout, "module", diff)
+    assert result.status is FixvalStatus.PASS, result.block_message
+
+
+# A runner that resets the environment still writes the reverted bytecode:
+# the cache drop after the restore is what keeps the checkout correct then.
+RESETTING = ["env", "-u", "PYTHONDONTWRITEBYTECODE", *PYTEST]
+
+
+@pytest.mark.parametrize("cmd", [PYTEST, RESETTING], ids=["pytest", "env-resetting-runner"])
 @pytest.mark.parametrize("case", sorted(CASES))
-def test_restored_checkout_runs_the_fix_not_reverted_bytecode(tmp_path, monkeypatch, case):
+def test_restored_checkout_runs_the_fix_not_reverted_bytecode(tmp_path, monkeypatch, case, cmd):
     _launcher_env(monkeypatch)
     source, diff = _checkout(tmp_path, case)
-    result = _fixval(tmp_path, case, diff)
+    result = _fixval(tmp_path, case, diff, cmd)
     assert result.status is FixvalStatus.PASS, result.block_message
     _restamp([tmp_path], source)  # the restore lands in the reverted run's second
-    assert list(tmp_path.rglob("*.pyc")) == []
+    assert not [pyc for pyc in _pycs(tmp_path) if Path(pyc).name.startswith(source.stem + ".")]
+    if cmd is PYTEST:
+        assert _pycs(tmp_path) == []  # FIXVAL's own children write no bytecode
     user = _user_pytest(tmp_path)
     assert user.returncode == 0, user.stdout
 
 
-def test_every_child_env_is_isolated_and_the_prefix_is_removed(tmp_path, monkeypatch):
+def test_untouched_caches_stay_warm(tmp_path, monkeypatch):
+    # timing guard: only the touched files' caches go; no private
+    # PYTHONPYCACHEPREFIX, which made every child recompile the stdlib and
+    # site-packages (a trivial run went 0.22s -> 0.84s)
     _launcher_env(monkeypatch)
+    source, diff = _checkout(tmp_path, "module")
+    (tmp_path / "src/other.py").write_text("x = 1\n", encoding="utf-8")
+    env = dict(os.environ, PYTHONPATH=str(tmp_path / "src"))
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
+    subprocess.run([sys.executable, "-c", "import calc, other"], cwd=tmp_path, env=env, check=True)
+    kept = [pyc for pyc in _pycs(tmp_path) if "other." in pyc]
+    stamps = {pyc: (tmp_path / pyc).stat().st_mtime_ns for pyc in kept}
+    assert kept and any("calc." in pyc for pyc in _pycs(tmp_path))
+    envs = []
     real = fixval._isolated_bytecode_env
-    prefixes = []
 
-    def recording(env, prefix):
-        assert os.path.isdir(prefix) and not os.listdir(prefix)
-        prefixes.append(prefix)
-        isolated = real(env, prefix)
-        assert isolated["PYTHONDONTWRITEBYTECODE"] == "1" and isolated["PYTHONPYCACHEPREFIX"] == prefix
-        assert "PYTHONDONTWRITEBYTECODE" not in env  # a copy, the caller's env untouched
+    def recording(env):
+        isolated = real(env)
+        envs.append(isolated)
         return isolated
 
     monkeypatch.setattr(fixval, "_isolated_bytecode_env", recording)
-    _, diff = _checkout(tmp_path, "module")
     assert _fixval(tmp_path, "module", diff).status is FixvalStatus.PASS
-    assert len(prefixes) == 1 and not os.path.exists(prefixes[0])
+    assert envs and all(
+        e["PYTHONDONTWRITEBYTECODE"] == "1" and "PYTHONPYCACHEPREFIX" not in e for e in envs
+    )
+    assert "PYTHONDONTWRITEBYTECODE" not in os.environ  # the caller's env untouched
+    assert [pyc for pyc in _pycs(tmp_path) if "calc." in pyc] == []
+    assert {pyc: (tmp_path / pyc).stat().st_mtime_ns for pyc in kept} == stamps
 
 
-def test_strip_retry_env_stays_isolated(tmp_path, monkeypatch):
+def test_every_reverted_child_env_writes_no_bytecode(tmp_path, monkeypatch):
     _launcher_env(monkeypatch)
     from code_forge import baseline_guard
 
     seen = []
-    real = baseline_guard._run_baseline_guard
+    real_guard = baseline_guard._run_baseline_guard
+    real_run = fixval._test_reverted_candidate
 
     def guard(cmd, env, *args, **kwargs):
-        seen.append((env.get("PYTHONDONTWRITEBYTECODE"), bool(env.get("PYTHONPYCACHEPREFIX"))))
+        seen.append(("guard", env.get("PYTHONDONTWRITEBYTECODE")))
         if kwargs.get("allow_strip_retry"):
             return "needs_strip_retry", [], []
-        return real(cmd, env, *args, **kwargs)
+        return real_guard(cmd, env, *args, **kwargs)
+
+    def reverted(candidate, cmd, env, *args, **kwargs):
+        seen.append(("reverted", env.get("PYTHONDONTWRITEBYTECODE")))
+        return real_run(candidate, cmd, env, *args, **kwargs)
 
     monkeypatch.setattr(fixval, "_run_baseline_guard", guard)
+    monkeypatch.setattr(fixval, "_test_reverted_candidate", reverted)
     monkeypatch.setenv("VIRTUAL_ENV", "/nonexistent-venv")
     _, diff = _checkout(tmp_path, "module")
     assert _fixval(tmp_path, "module", diff).status is FixvalStatus.PASS
-    assert seen == [("1", True), ("1", True)]
+    assert seen == [("guard", "1"), ("guard", "1"), ("reverted", "1")]
 
 
-def test_overfit_guard_child_is_isolated(tmp_path, monkeypatch):
+@pytest.mark.parametrize("when", ["before-run", "after-restore"])
+def test_cache_drop_failure_is_a_transaction_block(tmp_path, monkeypatch, when):
     _launcher_env(monkeypatch)
-    (tmp_path / "src").mkdir()
+    source, diff = _checkout(tmp_path, "module")
+    calls = []
+    real = fixval._drop_cached_bytecode
+
+    def drop(root, paths, env):
+        calls.append(list(paths))
+        if (len(calls) == 1) == (when == "before-run"):
+            raise PermissionError("pycache is read-only")
+        return real(root, paths, env)
+
+    monkeypatch.setattr(fixval, "_drop_cached_bytecode", drop)
+    result = _fixval(tmp_path, "module", diff)
+    assert calls == [["src/calc.py"], ["src/calc.py"]]
+    assert result.status is FixvalStatus.BLOCK
+    assert [finding.id for finding in result.findings] == ["FIXVAL_TRANSACTION"]
+    assert "pycache is read-only" in result.block_message
+    assert source.read_text(encoding="utf-8") == CASES["module"][2]
+
+
+def test_drop_cached_bytecode_removes_exactly_the_touched_caches(tmp_path):
+    from code_forge.fixval import _drop_cached_bytecode
+
+    prefix = tmp_path / "prefix"
+    names = [
+        "pkg/__pycache__/mod.cpython-312.pyc",
+        "pkg/__pycache__/mod.cpython-312.opt-1.pyc",
+        "tests/__pycache__/conftest.cpython-312-pytest-9.1.1.pyc",
+        "pkg/__pycache__/[x].cpython-312.pyc",
+        "pkg/__pycache__/mod2.cpython-312.pyc",
+        "pkg/__pycache__/other.cpython-312.pyc",
+        "pkg/sub/__pycache__/mod.cpython-312.pyc",
+        "pkg/__pycache__/notes.cpython-312.pyc",
+    ]
+    mirror = str(tmp_path / "pkg")[1:]
+    names_in_prefix = [
+        os.path.join(mirror, "mod.cpython-312.pyc"),
+        os.path.join(mirror, "other.cpython-312.pyc"),
+    ]
+    for name in names:
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_bytes(b"")
+    for name in names_in_prefix:
+        (prefix / name).parent.mkdir(parents=True, exist_ok=True)
+        (prefix / name).write_bytes(b"")
+    touched = ["pkg/mod.py", "tests/conftest.py", "pkg/[x].py", "pkg/notes.md", "pkg/missing.py"]
+    _drop_cached_bytecode(str(tmp_path), touched, {"PYTHONPYCACHEPREFIX": str(prefix)})
+    left = sorted(
+        str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*.pyc") if prefix not in p.parents
+    )
+    assert left == sorted(names[4:])
+    assert sorted(str(p.relative_to(prefix)) for p in prefix.rglob("*.pyc")) == [names_in_prefix[1]]
+    # a relative prefix is the children's: resolved against the checkout
+    (prefix / names_in_prefix[0]).write_bytes(b"")
+    _drop_cached_bytecode(str(tmp_path), ["pkg/mod.py"], {"PYTHONPYCACHEPREFIX": "prefix"})
+    assert not (prefix / names_in_prefix[0]).exists()
+
+
+def test_overfit_guard_drops_its_file_cache_around_the_run(tmp_path, monkeypatch):
+    _launcher_env(monkeypatch)
+    (tmp_path / "src/__pycache__").mkdir(parents=True)
     (tmp_path / "src/mod.py").write_text("def f():\n    value = 1\n    return value\n", encoding="utf-8")
+    stale = tmp_path / "src/__pycache__/mod.cpython-312.pyc"
     seen = []
 
     def run(cmd, *, env, **kwargs):
-        prefix = env["PYTHONPYCACHEPREFIX"]
-        seen.append((env["PYTHONDONTWRITEBYTECODE"], prefix, os.path.isdir(prefix)))
+        seen.append((env["PYTHONDONTWRITEBYTECODE"], "PYTHONPYCACHEPREFIX" in env, stale.exists()))
+        stale.write_bytes(b"written by a resetting runner")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
+    stale.write_bytes(b"stale")
     monkeypatch.setattr(fixval.subprocess, "run", run)
     assert (
         run_overfit_guard(FixvalCandidate(["tests/test_mod.py"], ["src/mod.py"]), ["pytest"], tmp_path)
         == []
     )
-    assert [(dont, alive) for dont, _prefix, alive in seen] == [("1", True)]
-    assert not os.path.exists(seen[0][1])
+    assert seen == [("1", False, False)]
+    assert not stale.exists()
