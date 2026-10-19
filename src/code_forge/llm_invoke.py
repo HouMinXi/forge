@@ -26,6 +26,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any, Optional
 
 from . import progress
@@ -1029,30 +1030,242 @@ def _loads_model_json(text: str):
     character where it stopped. Escape that quote and parse again, and
     repeat while each attempt fails at a quote. A failure somewhere else
     is a real syntax error and is raised unchanged.
+
+    Accepted trade-off (#216): when the content is ambiguous (a repair
+    could equally read it as more members), the loop raises instead of
+    guessing. The caller then spends its one JSON-correction retry. Some
+    replies that base repaired by luck now fail closed this way; that is
+    intended, since a wrong parse silently changes a verdict.
     """
     candidate = text
-    for _ in range(candidate.count('"')):
+    first_error: json.JSONDecodeError | None = None
+    # Positions the loop escaped (the inserted backslash), kept current as
+    # later escapes shift the text. A model's own \" is not a repair.
+    repaired: list[int] = []
+    # Each attempt escapes one quote and at least two stay structural, so
+    # count - 1 attempts (the last one parsing) always suffice.
+    for _ in range(max(1, text.count('"') - 1)):
         try:
-            return json.loads(candidate, strict=False)
+            parsed = json.loads(candidate, strict=False)
         except json.JSONDecodeError as exc:
-            quote_at = _error_is_at_quote(candidate, exc)
+            first_error = first_error or exc
+            quote_at = _error_is_at_quote(candidate, exc, repaired)
             if quote_at is None:
                 raise
             candidate = _escape_at(candidate, quote_at)
-    return json.loads(candidate, strict=False)
+            repaired = _record_escape(repaired, quote_at)
+            continue
+        if first_error is not None and _has_quoted_key(parsed):
+            # #216 review: a repair only escapes content quotes, so a key
+            # holding a raw quote means structure was escaped ("], None",
+            # "line" read as one key). Fail closed with the original error.
+            raise first_error
+        return parsed
+    raise first_error or json.JSONDecodeError("no parse within the repair budget", text, 0)
 
 
-def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
+def _record_escape(repaired: list[int], escaped_at: int) -> list[int]:
+    """Add the backslash inserted at `escaped_at`; earlier entries at or
+    after it moved one character right."""
+    return [index + (index >= escaped_at) for index in repaired] + [escaped_at]
+
+
+def _has_quoted_key(value) -> bool:
+    if isinstance(value, dict):
+        return any('"' in key or _has_quoted_key(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(_has_quoted_key(item) for item in value)
+    return False
+
+
+def _quote_before_trailing_comma(text: str, pos: int, repaired: Sequence[int]) -> int | None:
+    if not (0 <= pos < len(text)) or text[pos] != '"':
+        return None
+    before = text[:pos].rstrip()
+    if not before.endswith(","):
+        return None
+    quote_at = len(before[:-1].rstrip()) - 1
+    if quote_at < 0 or text[quote_at] != '"' or _quote_is_escaped(text, quote_at):
+        return None
+    start = _container_start(text, pos)
+    opened = _string_start(text, start, quote_at)
+    if any(start <= index < opened for index in repaired):
+        # An earlier repair in this object already chose where its strings
+        # end; the members after it parsed as structure, so the trailing
+        # ``"..",`` may be content of that earlier value. Ambiguous: raise.
+        return None
+    return quote_at
+
+
+def _error_is_at_quote(text: str, exc: json.JSONDecodeError, repaired: Sequence[int] = ()) -> int | None:
     pos = exc.pos
     if not isinstance(pos, int):
         return None
+    closer_quote = _closer_token_quote(text, exc)
+    if closer_quote is not None:
+        # A content token such as ``"}"``, ``"}]"`` or ``"},"`` inside a
+        # string value: json ends the string at its first quote, the closer
+        # run ends the object/array, and what follows is "extra" at top
+        # level or a missing ``,`` when nested (the findings shape). Escape
+        # the first quote; the loop then repairs the second through the
+        # ordinary path (#234, #216 review). Real trailing data still fails
+        # closed on a later attempt.
+        return closer_quote
+    if (
+        exc.msg.startswith(("Expecting property name", "Expecting value"))
+        and pos < len(text)
+        and text[pos] == ","
+    ):
+        return None  # ",," : a doubled separator is structure, not content
+    if exc.msg.startswith("Unterminated string"):
+        # Content ending in a quoted value and a comma (an excerpt line such
+        # as ``"name": "forge",``): json closes the string at the value's
+        # quote, takes the comma as a separator and the real closing quote
+        # opens a string that runs to the end. Escape the quote before the
+        # comma, as base did; a truncated reply then fails on the next
+        # attempt and raises the first error (#216 forge LOCAL P2).
+        return _quote_before_trailing_comma(text, pos, repaired)
+    if not exc.msg.startswith("Expecting "):
+        # A stray content quote only ever surfaces as a delimiter/name
+        # error; "Invalid \escape", control characters or an unterminated
+        # string are not quote problems.
+        return None
     for quote_at in range(min(pos, len(text)) - 1, -1, -1):
+        if text[quote_at] in "}]:":
+            # A raw content quote is followed only by more content before
+            # json gives up; a closer or a key separator between the stop
+            # and the quote means the error is structural (``},,``,
+            # ``], KEY``, ``1,,``). Escaping an earlier quote would corrupt
+            # valid structure instead of repairing content.
+            return None
         if text[quote_at] != '"':
             continue
         if _quote_is_escaped(text, quote_at):
             continue
+        gap = text[quote_at + 1 : pos]
+        if (
+            pos < len(text)
+            and text[pos] == '"'
+            and gap
+            and not gap.strip()
+            and _string_is_a_member(text, pos)
+        ):
+            # String, whitespace, string where the second string is a member
+            # or element (``:``, ``,``, a closer or the end follows it): a
+            # missing ``,`` (``"DISMISSED" "reasoning"``), not content. Prose
+            # quoting two tokens (``"foo" "bar" are``) is repaired.
+            return None
         return quote_at
     return None
+
+
+def _closer_token_quote(text: str, exc: json.JSONDecodeError) -> int | None:
+    """The opening quote of a quoted closer run (``}``/``]``, then possibly
+    ``,`` where json stopped) that json stopped right after, or None. A ``,``
+    can't sit inside the run: json would have consumed it and reported a
+    value/property-name error instead."""
+    pos = exc.pos
+    if not (exc.msg.startswith("Extra data") or exc.msg.startswith("Expecting ',' delimiter")):
+        return None
+    if pos >= len(text):
+        return None
+    # json stopped at the token's second quote or inside the closer run, so
+    # the run ends at pos - 1; the quote json closed the string with (never
+    # an escaped one) comes right before it.
+    index = pos - 1
+    while index >= 0 and text[index] in "}]":
+        index -= 1
+    if index < 0 or text[index] != '"':
+        return None
+    return index
+
+
+def _string_is_a_member(text: str, start: int) -> bool:
+    """Whether the string opening at `start` sits where a member or element
+    would: after optional whitespace it is followed by ``}``, ``]``, the end
+    of the text, or ``:``/``,`` and then the start of a JSON value. Content
+    such as ``"]", word`` has prose after its comma."""
+    end = start + 1
+    while end < len(text) and (text[end] != '"' or _quote_is_escaped(text, end)):
+        end += 1
+    rest = text[end + 1 :].lstrip()
+    if _container_at(text, start) == "{":
+        # In an object the next member starts with a key, which a ':' must
+        # follow; ``" " * 4`` or ``", "`` inside a value is content (#216
+        # review 6262018713). Arrays keep the element rule below.
+        if not rest:
+            return True
+        if rest[0] != ":":
+            return False
+    if not rest or rest[0] in "}]":
+        return True
+    if rest[0] not in ":,":
+        return False
+    after = rest[1:].lstrip()
+    return not after or after[0] in '"{[-0123456789' or after.startswith(("true", "false", "null"))
+
+
+def _container_start(text: str, pos: int) -> int:
+    """Index of the innermost ``{`` or ``[`` open at `pos` (0 if none)."""
+    stack: list[int] = []
+    in_string = False
+    index = 0
+    while index < pos:
+        char = text[index]
+        if in_string:
+            if char == "\\":
+                index += 2
+                continue
+            if char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append(index)
+        elif char in "}]" and stack:
+            stack.pop()
+        index += 1
+    return stack[-1] if stack else 0
+
+
+def _string_start(text: str, start: int, quote_at: int) -> int:
+    """Opening quote of the string that `quote_at` closes, scanning from `start`."""
+    opened = start
+    in_string = False
+    index = start
+    while index < quote_at:
+        char = text[index]
+        if in_string and char == "\\":
+            index += 2
+            continue
+        if char == '"':
+            in_string = not in_string
+            opened = index
+        index += 1
+    return opened
+
+
+def _container_at(text: str, pos: int) -> str | None:
+    """The innermost ``{`` or ``[`` open at `pos`, skipping strings."""
+    stack: list[str] = []
+    in_string = False
+    index = 0
+    while index < pos:
+        char = text[index]
+        if in_string:
+            if char == "\\":
+                index += 2
+                continue
+            if char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append(char)
+        elif char in "}]" and stack:
+            stack.pop()
+        index += 1
+    return stack[-1] if stack else None
 
 
 def _quote_is_escaped(text: str, quote_at: int) -> bool:
