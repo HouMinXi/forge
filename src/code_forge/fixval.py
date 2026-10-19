@@ -109,6 +109,28 @@ def _is_test_file(path: str) -> bool:
     return False
 
 
+def _is_test_support(path: str) -> bool:
+    """Test scaffolding that is not itself a test file (#254).
+
+    conftest.py anywhere, and any file under a tests/ directory, matching the
+    mutation defaults (tests/**, **/tests/**, **/conftest.py; a singular test/
+    stays production, #135). `path` must be repo-relative. FIXVAL keeps these
+    at their fixed state: reverting a new fixture or helper makes a hollow
+    test fail for the wrong reason and reads as PASS.
+    """
+    parts = path.replace("\\", "/").split("/")
+    return parts[-1] == "conftest.py" or "tests" in parts[:-1]
+
+
+def _relative_to_common_root(paths: list[str]) -> dict[str, str]:
+    """Absolute review paths, relative to their common root, so a checkout that
+    itself lives under a directory named tests/ is not all test support."""
+    if len(paths) > 1 and all(os.path.isabs(p) for p in paths):
+        root = os.path.commonpath(paths)
+        return {p: os.path.relpath(p, root) for p in paths}
+    return {p: p for p in paths}
+
+
 def classify_fixval_candidate(
     changed_files: list[str],
     *,
@@ -127,11 +149,12 @@ def classify_fixval_candidate(
     non_test_files: list[str] = []
     executable = None if executable_files is None else set(executable_files)
 
+    relative = _relative_to_common_root(list(changed_files))
     for f in changed_files:
         if _is_test_file(f):
             if executable is None or f in executable:
                 test_files.append(f)
-        else:
+        elif not _is_test_support(relative[f]):
             non_test_files.append(f)
 
     if test_files and non_test_files:
@@ -212,7 +235,9 @@ def _filter_non_test_patch(diff_text: str) -> str:
     def is_production(patched_file):
         src_clean = patched_file_path(patched_file, source=True) or ""
         tgt_clean = patched_file_path(patched_file) or ""
-        return not _is_test_file(src_clean) and not _is_test_file(tgt_clean)
+        return not any(
+            _is_test_file(path) or _is_test_support(path) for path in (src_clean, tgt_clean) if path
+        )
 
     if any(line.startswith("diff --git ") for line in StringIO(diff_text)):
         blocks = [(unidiff.PatchSet(block), block) for _path, block in iter_diff_sections(diff_text)]
