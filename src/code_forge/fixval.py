@@ -17,6 +17,7 @@ from __future__ import annotations
 import ast
 import fnmatch
 import glob
+import importlib.util
 import logging
 import os
 import re
@@ -320,20 +321,37 @@ def _isolated_bytecode_env(env: dict[str, str]) -> dict[str, str]:
     return isolated
 
 
+# CPython's short options that take no argument, so `X` may follow them in
+# one cluster (`-BXpycache_prefix=...`).
+_NO_ARGUMENT_FLAGS = frozenset("bBdEhiIOPqRsSuvVx")
+
+
+def _x_options(args: list[str]) -> list[str]:
+    """The values of every `-X` in `args`, also inside a cluster of flags."""
+    options = []
+    for i, arg in enumerate(args):
+        if not arg.startswith("-"):
+            continue  # `--x` ends at once: "-" is no flag
+        for j, flag in enumerate(arg[1:], start=1):
+            if flag == "X":
+                if j + 1 < len(arg):
+                    options.append(arg[j + 1 :])
+                elif i + 1 < len(args):
+                    options.append(args[i + 1])
+                break
+            if flag not in _NO_ARGUMENT_FLAGS:
+                break
+    return options
+
+
 def _pycache_prefixes(env: dict[str, str], cmd: Collection[str]) -> list[str]:
     """Every bytecode cache prefix a child may use: PYTHONPYCACHEPREFIX and
-    `-X pycache_prefix=...` in the test command (which wins over it). One set
-    by sitecustomize or a launcher script stays invisible here."""
+    `-X pycache_prefix=...` in the test command (which wins over it), in any
+    spelling (`-X p`, `-Xp`, `-BXp`). One set by an `env NAME=value` wrapper,
+    sitecustomize or a launcher script stays invisible here."""
+    key = "pycache_prefix="
     prefixes = [env.get("PYTHONPYCACHEPREFIX", "")]
-    args = list(cmd)
-    for i, arg in enumerate(args):
-        option = None
-        if arg == "-X" and i + 1 < len(args):
-            option = args[i + 1]
-        elif arg.startswith("-X") and arg != "-X":
-            option = arg[2:]
-        if option is not None and option.startswith("pycache_prefix="):
-            prefixes.append(option[len("pycache_prefix=") :])
+    prefixes += [option[len(key) :] for option in _x_options(list(cmd)) if option.startswith(key)]
     return [prefix for prefix in prefixes if prefix]
 
 
@@ -380,24 +398,61 @@ def _drop_cached_bytecode(
                     pass
 
 
+def _is_tracked(root: str, path: str) -> bool:
+    """Whether git tracks `path` in the checkout at `root`; False when that
+    can't be told (no git, not a repository), which fails closed."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z", "--", path],
+            cwd=root,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and bool(result.stdout)
+
+
+def _importable_bytecode(path: str) -> bool:
+    """Whether this Python would import the sourceless .pyc at `path`: its
+    magic number is the running interpreter's (a Python 2 or other 3.x
+    leftover fails to import, which the reverted run measures correctly)."""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(4) == importlib.util.MAGIC_NUMBER
+    except OSError:
+        return False  # unreadable: the import fails too
+
+
 def _refuse_sourceless_bytecode(root: str, paths: Collection[str]) -> None:
     """Raise TransactionError when a touched .py the revert removed (one the
     fix adds) has a sourceless `<dir>/<stem>.pyc` beside it (#259).
 
     Python imports that file when the source is missing, so the reverted run
     would run it instead of failing to import. It isn't a cache FIXVAL may
-    delete (it can be a shipped artifact), so the revert is unmeasured.
+    delete (it can be a shipped artifact), so the revert is unmeasured. Not
+    when it can't be imported (another Python's magic), and not when it
+    belongs to the reverted tree (the patch restores it, or git tracks it):
+    importing it then is the unfixed code, a correct measurement.
     """
+    touched = set(paths)
     for path in paths:
         if not path.endswith(".py"):
             continue
         source = os.path.join(root, path)
-        legacy = source[: -len(".py")] + ".pyc"
-        if not os.path.lexists(source) and os.path.lexists(legacy):
-            raise TransactionError(
-                "sourceless bytecode %s would be imported in place of reverted %s; "
-                "remove it to measure the fix" % (os.path.relpath(legacy, root), path)
-            )
+        legacy_path = path[: -len(".py")] + ".pyc"
+        legacy = os.path.join(root, legacy_path)
+        if os.path.lexists(source) or not os.path.lexists(legacy):
+            continue
+        if not _importable_bytecode(legacy):
+            continue
+        if legacy_path in touched or _is_tracked(root, legacy_path):
+            continue
+        raise TransactionError(
+            "sourceless bytecode %s would be imported in place of reverted %s; "
+            "remove it to measure the fix" % (legacy_path, path)
+        )
 
 
 def run_fixval(
