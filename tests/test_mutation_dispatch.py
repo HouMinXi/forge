@@ -311,8 +311,16 @@ def test_note_names_a_missing_binary(monkeypatch):
     assert tool_part == "stryker missing, gremlins missing"
 
 
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="needs pwsh on PATH (the ps-mutant probe reports it missing)")
 def test_note_includes_the_run_when_a_root_is_given(tmp_path, monkeypatch):
+    # Hermetic: the ps-mutant probe only checks shutil.which("pwsh") (it
+    # imports shutil locally, so patch the module); invoke is stubbed below,
+    # so pwsh need not be installed (#217 review). Other names stay real.
+    real_which = shutil.which
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name, *a, **k: "/stub/bin/pwsh" if name == "pwsh" else real_which(name, *a, **k),
+    )
     from code_forge.mutation_dispatch import other_adapter_note
 
     monkeypatch.setattr(
