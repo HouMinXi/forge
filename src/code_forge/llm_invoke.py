@@ -1047,7 +1047,7 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
     if not isinstance(pos, int):
         return None
     if (
-        exc.msg.startswith("Extra data")
+        (exc.msg.startswith("Extra data") or exc.msg.startswith("Expecting ',' delimiter"))
         and 2 <= pos < len(text)
         and text[pos] == '"'
         and text[pos - 1] in "}]"
@@ -1056,9 +1056,11 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
     ):
         # A content token such as ``"}"`` inside a string value: json ends
         # the string at its first quote, the closer ends the object, and the
-        # token's second quote is "extra". Escape the first one; the loop
-        # then repairs the second through the ordinary path (#234). Real
-        # trailing data still fails closed on a later attempt.
+        # token's second quote is "extra" at top level, or a missing ``,``
+        # when the object sits in an array/object (the findings shape).
+        # Escape the first one; the loop then repairs the second through the
+        # ordinary path (#234). Real trailing data still fails closed on a
+        # later attempt.
         return pos - 2
     if not exc.msg.startswith("Expecting "):
         # A stray content quote only ever surfaces as a delimiter/name
@@ -1078,12 +1080,41 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
         if _quote_is_escaped(text, quote_at):
             continue
         gap = text[quote_at + 1:pos]
-        if pos < len(text) and text[pos] == '"' and gap and not gap.strip():
-            # String, whitespace, string: a missing ``,`` between two
-            # members/elements (``"DISMISSED" "reasoning"``), not content.
+        if (
+            pos < len(text)
+            and text[pos] == '"'
+            and gap
+            and not gap.strip()
+            and _string_is_a_member(text, pos)
+        ):
+            # String, whitespace, string where the second string is a member
+            # or element (``:``, ``,``, a closer or the end follows it): a
+            # missing ``,`` (``"DISMISSED" "reasoning"``), not content. Prose
+            # quoting two tokens (``"foo" "bar" are``) is repaired.
             return None
         return quote_at
     return None
+
+
+def _string_is_a_member(text: str, start: int) -> bool:
+    """Whether the string opening at `start` sits where a member or element
+    would: after optional whitespace it is followed by ``}``, ``]``, the end
+    of the text, or ``:``/``,`` and then the start of a JSON value. Content
+    such as ``"]", word`` has prose after its comma."""
+    end = start + 1
+    while end < len(text) and (text[end] != '"' or _quote_is_escaped(text, end)):
+        end += 1
+    rest = text[end + 1:].lstrip()
+    if not rest or rest[0] in "}]":
+        return True
+    if rest[0] not in ":,":
+        return False
+    after = rest[1:].lstrip()
+    return (
+        not after
+        or after[0] in '"{[-0123456789'
+        or after.startswith(("true", "false", "null"))
+    )
 
 
 def _quote_is_escaped(text: str, quote_at: int) -> bool:
