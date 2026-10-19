@@ -47,42 +47,31 @@ _TERM_SECONDS = 0.25
 _POLL_SECONDS = 0.01
 
 
-# Signals a child test run must not inherit as ignored: SIGINT (#230) and
-# SIGHUP (#249, forge launched under nohup). SIGHUP is absent on Windows.
-_RESET_SIGNALS = tuple(
-    getattr(signal, name) for name in ("SIGINT", "SIGHUP") if hasattr(signal, name)
-)
+def _ignore_sigint(signum, frame) -> None:
+    """Caught no-op: the parent still ignores SIGINT, but exec resets a caught
+    signal to SIG_DFL in the child, unlike an ignored one."""
 
 
-def _ignore_inherited(signum, frame) -> None:
-    """Caught no-op: the parent still ignores the signal, but exec resets a
-    caught signal to SIG_DFL in the child, unlike an ignored one."""
+def reset_child_sigint() -> None:
+    """preexec_fn fallback: the child starts with SIGINT at its default."""
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 
-def reset_child_signals() -> None:
-    """preexec_fn fallback: the child starts with these signals at default."""
-    for signum in _RESET_SIGNALS:
-        signal.signal(signum, signal.SIG_DFL)
+def child_sigint_options() -> dict:
+    """Popen kwargs so a child test run starts with default SIGINT (#230).
 
-
-def child_signal_options() -> dict:
-    """Popen kwargs so a child test run starts with default SIGINT/SIGHUP.
-
-    An ignored signal survives exec, and subprocess only restores SIGPIPE and
-    SIGXFSZ. So forge launched from a background shell (SIGINT=SIG_IGN, #230)
-    or under nohup (SIGHUP=SIG_IGN, #249) would hand that to the user's test
-    suite. On the main thread, swap SIG_IGN for a caught no-op (same behaviour
-    for forge, reset on exec, thread-safe). Off the main thread the disposition
-    can't be changed, so fall back to preexec_fn.
+    An ignored signal survives exec, so forge launched from a background shell
+    (SIGINT=SIG_IGN) would hand that to the user's test suite and break tests
+    expecting KeyboardInterrupt. On the main thread, swap SIG_IGN for a caught
+    no-op (same behaviour for forge, reset on exec, thread-safe). Off the main
+    thread the disposition can't be changed, so fall back to preexec_fn.
     """
-    ignored = [signum for signum in _RESET_SIGNALS if signal.getsignal(signum) == signal.SIG_IGN]
-    if not ignored:
+    if signal.getsignal(signal.SIGINT) != signal.SIG_IGN:
         return {}
     if threading.current_thread() is threading.main_thread():
-        for signum in ignored:
-            signal.signal(signum, _ignore_inherited)
+        signal.signal(signal.SIGINT, _ignore_sigint)
         return {}
-    return {"preexec_fn": reset_child_signals}  # rare: non-main thread under SIG_IGN
+    return {"preexec_fn": reset_child_sigint}  # rare: non-main thread under SIG_IGN
 
 
 class MutationProcessError(RuntimeError):
@@ -370,7 +359,7 @@ def _supervise(request: dict) -> dict:
                 stdin=subprocess.DEVNULL,
                 stdout=stdout,
                 stderr=stderr,
-                **child_signal_options(),
+                **child_sigint_options(),
             )
             report["cleanup_complete"] = False
             deadline = time.monotonic() + request["timeout"]
