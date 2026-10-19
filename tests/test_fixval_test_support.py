@@ -692,6 +692,28 @@ def test_a_timed_out_hollow_retry_is_inconclusive(tmp_path, monkeypatch):
         (["tox", "-e", "pytest"], False),
         (["uv", "run"], False),
         (["env"], False),
+        # #269 review P2: a value-taking option's value is not the program
+        (["uv", "run", "--with", "pytest", "make", "test"], False),
+        (["uv", "run", "--with", "pytest", "./run_tests.sh"], False),
+        (["uv", "run", "--with", "pytest", "bash", "-c", "pytest; exit 3"], False),
+        (["env", "-u", "PYTEST", "make"], False),
+        (["uv", "run", "--with", "pytest", "pytest"], True),
+        (["uv", "run", "--with=pytest", "pytest"], True),
+        (["env", "-u", "PYTEST", "pytest"], True),
+        (["coverage", "run", "--source", "src", "-m", "pytest"], True),
+        (["uv", "run", "--", "pytest"], True),
+        # an unknown option stops unwrapping: not pytest ("nonzero = fails")
+        (["uv", "run", "--some-new-flag", "pytest"], False),
+        (["env", "--some-new-flag", "pytest"], False),
+        (["coverage", "run", "--some-new-flag", "-m", "pytest"], False),
+        # #269 review Lows
+        (["uv", "pip", "pytest"], False),
+        (["coverage", "report", "-m", "pytest"], False),
+        (["poetry", "run", "env", "A=1", "pytest"], True),
+        (["uv", "run", "env", "A=1", "coverage", "run", "-m", "pytest"], True),
+        (["./x=1", "pytest"], False),
+        (["1A=1", "pytest"], False),
+        (["A-B=1", "pytest"], False),
     ],
 )
 def test_runs_pytest_sees_through_wrappers(cmd, runs_pytest):
