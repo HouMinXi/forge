@@ -207,22 +207,48 @@ def _without_ignored_exceptions(lines: list[str]) -> list[str]:
     multiprocessing ResourceTracker's ``ChildProcessError: [Errno 10]`` under
     a subreaper. The run's exit status never depends on them, so they must not
     be reported as the baseline failure cause. A report is its header, an
-    optional traceback (header plus indented frames), and one final
+    optional traceback (header plus indented frames), and the final
     exception line, which is dropped with or without a traceback (#185).
+    A message spanning several lines continues until a line that looks
+    like real output (_REAL_OUTPUT); those continuation lines are dropped
+    too (#182 P3).
     """
     kept: list[str] = []
-    skipping = False
+    state = None  # None, "report" (header/traceback), "message" (after the exception line)
     for line in lines:
         if re.match(r"Exception ignored\b", line):
-            skipping = True
+            state = "report"
             continue
-        if skipping:
+        if state == "report":
             if line.startswith("Traceback (most recent call last):") or (line and line[0].isspace()):
                 continue
-            skipping = False
+            state = "message"
             continue  # the report's final exception line
+        if state == "message" and not _ends_ignored_message(line):
+            continue  # a multi-line message's continuation (#182 P3)
+        state = None
         kept.append(line)
     return kept
+
+
+# A line that can't continue an ignored exception's message: real output
+# resumes. Python prints nothing after the message, so this is a heuristic;
+# it errs towards keeping anything shaped like a cause.
+_REAL_OUTPUT = re.compile(
+    r"\s*$"  # blank line
+    r"|\s"  # indented (pytest/traceback body)
+    r"|Traceback \(most recent call last\):"
+    r"|[\w./\\:-]+: "  # "<prog or path or ExcType>: message"
+    r"|No module named\b"
+    r"|E\s"  # pytest assertion detail
+    r"|(?:FAILED|ERROR|PASSED|SKIPPED|XFAIL|XPASS)\b"
+    r"|[=_]{3}|=+ "  # pytest section rules and summary
+    r"|collected \d|\[gw\d"
+)
+
+
+def _ends_ignored_message(line: str) -> bool:
+    return bool(_REAL_OUTPUT.match(line))
 
 
 def _output_detail(stderr: str | bytes | None, stdout: str | bytes | None) -> str:
