@@ -69,6 +69,7 @@ def test_ordinary_json_parses_unchanged(raw, expected):
         r'{"description":"calls.\q end"}',
         '{"a": 1}]',
         '{"a": [1]}}',
+        '{"a": {"b": "x"}',  # truncated: the error sits at the end of the text
     ],
 )
 def test_structural_errors_are_raised_unchanged(raw):
@@ -201,3 +202,42 @@ def test_multi_character_closer_token_inside_a_value_is_repaired(raw, expected):
 def test_extra_closers_after_a_complete_value_still_raise(raw):
     with pytest.raises(json.JSONDecodeError):
         _loads_model_json(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # Content ", " read as a member separator: the "repair" invents keys
+        # such as '], None", "line' and drops the finding's real fields.
+        '{"reasoning": "foo, value, "", "ok", empty, value", "findings": []}',
+        '{"findings": [{"description": "returns, ",", ok, empty", "line": 42}]}',
+    ],
+)
+def test_repair_that_yields_a_key_with_a_raw_quote_fails_closed(raw):
+    """#216 review 6261799749: a repaired parse whose object keys contain a
+    raw quote came from escaping structure, not content. Raise the original
+    error instead of returning it."""
+    with pytest.raises(json.JSONDecodeError) as caught:
+        _loads_model_json(raw)
+    assert caught.value.doc == raw
+
+
+def test_quoted_json_in_a_value_is_still_repaired():
+    raw = '{"excerpt": "cfg = {"a": 1, "b": [2]}", "line": 3}'
+    assert _loads_model_json(raw) == {"excerpt": 'cfg = {"a": 1, "b": [2]}', "line": 3}
+
+
+def test_valid_json_with_a_quote_in_a_key_is_returned_unchanged():
+    assert _loads_model_json('{"a\\"b": 1}') == {'a"b': 1}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # json stops at a letter after "}": still a closer token (base
+        # repairs it; the old quote/closer-only stop check regressed it)
+        ('{"d": "x "}y z"}', {"d": 'x "}y z'}),
+    ],
+)
+def test_closer_run_edges(raw, expected):
+    assert _loads_model_json(raw) == expected
