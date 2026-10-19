@@ -57,6 +57,24 @@ def _write_tools_yaml(repo_path):
     tools_yaml.write_text("tools: {}\n")
 
 
+def _write_measured_gate(repo_path):
+    """Committed gate plus a test that kills every mutant of ``f``: CI
+    trusts only a baseline gate and FAILs an unmeasured L2 (not measured =>
+    FAIL), so a clean CI PASS needs a real, measured L2."""
+    forge_dir = repo_path / ".code-forge"
+    forge_dir.mkdir(parents=True, exist_ok=True)
+    (forge_dir / "gate.yaml").write_text(
+        "test:\n  command: [%s, -m, pytest, -q, -p, no:cacheprovider, test_a.py]\n" % json.dumps(sys.executable)
+    )
+    (repo_path / "test_a.py").write_text("from a import f\n\n\ndef test_f():\n    assert f() == 1\n")
+
+
+def _write_measured_change(repo_path):
+    """A clean change the gate's test_a.py kills every mutant of (mutmut
+    mutates functions only); docstrings keep pylint happy."""
+    (repo_path / "a.py").write_text('"""Clean module."""\n\n\ndef f():\n    """One."""\n    return 1\n')
+
+
 def _write_py_file(repo_path, name="a.py"):
     """Write a minimal Python file."""
     f = repo_path / name
@@ -73,6 +91,7 @@ class TestGitRepoPassCI:
         _git_init_repo(repo)
         _write_tools_yaml(repo)
         _write_py_file(repo)
+        _write_measured_gate(repo)
         subprocess.run(
             ["git", "add", "-A"],
             cwd=str(repo),
@@ -86,8 +105,7 @@ class TestGitRepoPassCI:
             check=True,
         )
         # Modify file to create a diff.
-        # Module docstring + UPPER_CASE constant keeps pylint happy.
-        (repo / "a.py").write_text('"""Clean module."""\nX = 1\n')
+        _write_measured_change(repo)
 
         monkeypatch.setattr(
             sys,
@@ -139,6 +157,7 @@ class TestSandboxWarning:
         _git_init_repo(repo)
         _write_tools_yaml(repo)
         _write_py_file(repo)
+        _write_measured_gate(repo)
         subprocess.run(
             ["git", "add", "-A"],
             cwd=str(repo),
@@ -151,7 +170,7 @@ class TestSandboxWarning:
             capture_output=True,
             check=True,
         )
-        (repo / "a.py").write_text("# modified\n")
+        _write_measured_change(repo)
 
         monkeypatch.setattr(
             sys,
@@ -252,6 +271,7 @@ class TestReviewAutoDetect:
         repo.mkdir()
         _git_init_repo(repo)
         _write_py_file(repo)
+        _write_measured_gate(repo)
         subprocess.run(
             ["git", "add", "-A"],
             cwd=str(repo),
@@ -264,7 +284,7 @@ class TestReviewAutoDetect:
             capture_output=True,
             check=True,
         )
-        (repo / "a.py").write_text("# modified\n")
+        _write_measured_change(repo)
 
         def fake_detect_and_init(project_root, quiet=False, **kwargs):
             forge_dir = project_root / ".code-forge"
@@ -327,6 +347,7 @@ class TestReviewAutoDetect:
             "    file_patterns: ['*.py']\n"
         )
         _write_py_file(repo)
+        _write_measured_gate(repo)
         subprocess.run(
             ["git", "add", "-A"],
             cwd=str(repo),
@@ -339,7 +360,7 @@ class TestReviewAutoDetect:
             capture_output=True,
             check=True,
         )
-        (repo / "a.py").write_text("# modified\n")
+        _write_measured_change(repo)
 
         with patch(
             "code_forge.detect.detect_and_init",
@@ -585,18 +606,20 @@ class TestCostSummaryStderr:
         assert "passes" in cost
         assert "per_pass" in cost
 
-    def test_cost_summary_shows_na_for_stub_engine(
+    def test_cost_summary_shows_na_without_token_data(
         self,
         tmp_path,
         capsys,
         isolated_process_state,
     ):
-        """Stub engine (no token data) prints 'N/A' cost line, not silence."""
+        """A completed L1 pass without token data (a CLI backend) prints the
+        'N/A' cost line, not silence. Hermetic: llm_invoke is stubbed (#233)."""
         repo = tmp_path / "repo"
         repo.mkdir()
         _git_init_repo(repo)
         _write_tools_yaml(repo)
         _write_py_file(repo)
+        _write_measured_gate(repo)
         subprocess.run(
             ["git", "add", "-A"],
             cwd=str(repo),
@@ -609,15 +632,13 @@ class TestCostSummaryStderr:
             capture_output=True,
             check=True,
         )
-        (repo / "a.py").write_text("# clean\nx = 1\n")
+        _write_measured_change(repo)
 
         isolated_process_state.setattr(
             sys,
             "argv",
             [
                 "code-forge",
-                "--falsification-engine",
-                "stub",
                 "--mode",
                 "ci",
                 "a.py",
@@ -626,18 +647,25 @@ class TestCostSummaryStderr:
         isolated_process_state.chdir(repo)
 
         from code_forge.cli import main as _main
+        from code_forge.llm_invoke import LLMResult
+
+        # #233: hermetic L1. Each pass completes with a clean review and no
+        # token data (empty known_fields), as a CLI backend reports -- no
+        # real claude binary, no paid call.
+        def clean_review(prompt, *args, **kwargs):
+            return LLMResult(content={"findings": [], "code_excerpts": []})
 
         with patch(
             "code_forge.outlet_resolver.resolve_outlet",
             return_value="subprocess",
-        ):
+        ), patch("code_forge.llm_invoke.llm_invoke", side_effect=clean_review) as l1:
             _main()
 
+        assert l1.call_count >= 1, "the cost line must come from a completed L1 pass"
         captured = capsys.readouterr()
         # stub engine has no token data: cost line shows N/A so CLI users
         # always know a review ran (same visibility contract as API users).
-        assert "code-forge: cost:" in captured.err
-        assert "N/A" in captured.err
+        assert "code-forge: cost: tokens: N/A (cli backend), 3 passes" in captured.err
 
 
 # ---------------------------------------------------------------------------
