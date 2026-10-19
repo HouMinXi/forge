@@ -83,3 +83,35 @@ def test_no_change_when_sigint_is_not_ignored(default_sigint, module):
 def test_child_test_spawn_sites_use_the_reset(module, count):
     # fixval: the reverted-candidate test run and the overfit run (#238).
     assert (SRC / module).read_text(encoding="utf-8").count("**child_sigint_options()") == count
+
+
+@pytest.fixture
+def ignored_sighup():
+    previous = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGHUP, previous)
+
+
+HUP_PROBE = "import signal; print(int(signal.getsignal(signal.SIGHUP)))"
+
+
+@pytest.mark.parametrize("thread", ["main", "worker"])
+@pytest.mark.parametrize("module", MODULES)
+def test_child_keeps_ignored_sighup(ignored_sigint, ignored_sighup, module, thread):
+    # #249 option (a): only SIGINT is reset. Under nohup the child must keep
+    # SIGHUP ignored, or a group hangup kills it mid-run (and fixval would
+    # read the signal exit as a failing test).
+    if thread == "main":
+        options = module.child_sigint_options()
+    else:
+        out = {}
+        worker = threading.Thread(target=lambda: out.update(opts=module.child_sigint_options()))
+        worker.start()
+        worker.join()
+        options = out["opts"]
+    child = subprocess.run([sys.executable, "-c", HUP_PROBE], capture_output=True, text=True, **options)
+    assert child.stdout.strip() == "1"  # SIG_IGN
+    assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
+    assert _child(**options) == DEFAULT  # SIGINT is still reset

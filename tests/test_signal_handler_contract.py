@@ -9,6 +9,9 @@ import signal
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
+
+import pytest
 
 import code_forge.llm_invoke as invoke
 
@@ -60,7 +63,6 @@ def test_cleanup_handlers_attach_to_sigint_and_sigterm():
     assert callable(sigterm)
     assert sigint is not signal.SIG_DFL
     assert sigterm is not signal.SIG_DFL
-    assert signal.getsignal(signal.SIGHUP) is signal.SIG_DFL
     saved_int = invoke._original_sigint
     saved_term = invoke._original_sigterm
     assert saved_int is not None
@@ -70,3 +72,35 @@ def test_cleanup_handlers_attach_to_sigint_and_sigterm():
     assert invoke._original_sigterm is saved_term
     assert signal.getsignal(signal.SIGINT) is sigint
     assert signal.getsignal(signal.SIGTERM) is sigterm
+
+
+_SRC = Path(__file__).resolve().parents[1] / "src"
+
+_SIGHUP_CHILD = textwrap.dedent("""
+    import signal, sys
+    signal.signal(signal.SIGHUP, getattr(signal, sys.argv[1]))
+    before = signal.getsignal(signal.SIGHUP)
+    import code_forge.llm_invoke as invoke
+    assert invoke.__file__.startswith(sys.argv[2]), invoke.__file__  # this checkout's code
+    invoke._handlers_installed = False
+    invoke._install_signal_handlers()
+    after = signal.getsignal(signal.SIGHUP)
+    assert after is before, (before, after)
+""")
+
+
+@pytest.mark.parametrize("start", ["SIG_DFL", "SIG_IGN"])
+def test_cleanup_handlers_leave_sighup_as_inherited(start):
+    # #249: compare before/after in a fresh child, so the result doesn't depend
+    # on how the suite was launched (nohup hands SIGHUP=SIG_IGN down).
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(_SRC), env.get("PYTHONPATH")]))
+    result = subprocess.run(
+        [sys.executable, "-c", _SIGHUP_CHILD, start, str(_SRC)],
+        cwd=_SRC.parent,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
