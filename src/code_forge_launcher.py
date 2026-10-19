@@ -458,6 +458,18 @@ def _manifest(dist: metadata.Distribution, site_root: Path) -> tuple[Path, list[
     return metadata_root, names
 
 
+def _site_decodes_pth_as_utf8_sig() -> bool:
+    """Whether this interpreter's ``site`` reads .pth files as UTF-8 (BOM
+    stripped) with a locale fallback. Every 3.13+ release does (3.15 moved the
+    decode out of ``site.addpackage``, so no bytecode probe there). On 3.12
+    only later patch releases backported it (3.12.15 does), so probe that
+    interpreter's own ``site.addpackage`` (#232)."""
+    if sys.version_info >= (3, 13):
+        return True
+    code = getattr(getattr(site, "addpackage", None), "__code__", None)
+    return code is not None and "utf-8-sig" in code.co_consts
+
+
 def _editable_layout(
     dist: metadata.Distribution, names: list[str], site_root: Path, checkout: Path
 ) -> Literal["static", "link-tree", "finder"]:
@@ -468,7 +480,7 @@ def _editable_layout(
     try:
         for name in paths:
             data = _file(Path(dist.locate_file(name)), within=site_root).read_bytes()
-            if sys.version_info >= (3, 13):
+            if _site_decodes_pth_as_utf8_sig():
                 try:
                     text = data.decode("utf-8-sig")
                 except UnicodeDecodeError:
