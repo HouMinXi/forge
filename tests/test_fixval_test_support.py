@@ -46,8 +46,8 @@ def _git(root: Path, *arguments: str) -> str:
     ).stdout
 
 
-def _repo(root: Path, fixed: dict[str, str]) -> str:
-    """Commit src/calc.py (value = 1), then stage the fix plus `fixed` files."""
+def _repo(root: Path, fixed: dict[str, str], base: dict[str, str] | None = None) -> str:
+    """Commit src/calc.py (value = 1) plus `base`, then stage the fix plus `fixed` files."""
     _git(root, "init", "-q")
     (root / "src").mkdir()
     (root / "tests").mkdir()
@@ -55,6 +55,9 @@ def _repo(root: Path, fixed: dict[str, str]) -> str:
     (root / "tests/test_calc.py").write_text(
         "def test_placeholder():\n    assert True\n", encoding="utf-8"
     )
+    for name, text in (base or {}).items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
     _git(root, "add", "--all")
     _git(root, "commit", "-q", "-m", "base")
     (root / "src/calc.py").write_text("value = 2\n", encoding="utf-8")
@@ -364,6 +367,13 @@ def test_unwitnessed_retry_keeps_the_first_hollow(tmp_path, monkeypatch):
     _assert_restored(tmp_path, other, GUARDED_TEST)
 
 
+PYTEST_CMD = [sys.executable, "-B", "-m", "pytest", "-q"]
+COLOR_FAILED = "\x1b[31m\x1b[1m1 failed\x1b[0m, \x1b[31m\x1b[1m1 error\x1b[0m\x1b[31m in 0.03s\x1b[0m\n"
+COLOR_ERROR = "\x1b[31m\x1b[1m1 error\x1b[0m\x1b[31m in 0.03s\x1b[0m\n"
+QQ_FAILED = "=== short test summary info ===\nFAILED tests/test_a.py::test_x - assert 0\nERROR tests/test_a.py::test_e\n"
+QQ_ERROR = "=== short test summary info ===\nERROR tests/test_a.py::test_e - RuntimeError\n"
+
+
 @pytest.mark.parametrize(
     ("code", "stdout", "witnessed"),
     [
@@ -373,20 +383,45 @@ def test_unwitnessed_retry_keeps_the_first_hollow(tmp_path, monkeypatch):
         (2, "!!! Interrupted: 1 error during collection !!!\n1 error in 0.06s\n", False),
         (1, "==== 2 errors, 3 warnings in 1.5s ====\n", False),
         (1, "1 failed in 0.1s\nrerun\n1 error in 0.1s\n", False),
+        # line-start anchor: a summary-like phrase mid-line is not the summary
+        (1, "1 error in 0.1s\nlog: retried, 2 failed in 9s window\n", False),
         (1, "10 failed in 2s\n", True),
         (1, "0 failed, 1 error in 2s\n", False),
-        (1, "make: *** [test] Error 1\n", True),
-        (3, "", True),
+        # --color=yes / PY_COLORS: colour codes are stripped before matching
+        (1, COLOR_FAILED, True),
+        (1, COLOR_ERROR, False),
+        # -qq: no closing summary; the short-summary entries decide
+        (1, QQ_FAILED, True),
+        (1, QQ_ERROR, False),
+        (1, "log line\n  FAILED indented\n", False),
+        # -rN -qq or anything unreadable: no verdict
+        (1, "", False),
+        # exit 2/3/4/5 under pytest: no verdict whatever the output says
+        (2, "1 failed in 0.1s\n", False),
+        (4, "ERROR: usage: pytest [options]\n", False),
+        (5, "no tests ran in 0.01s\n", False),
         (-9, "1 failed in 0.1s\n", False),
         (-15, "", False),
     ],
 )
-def test_witnessed_failure(code, stdout, witnessed):
+def test_witnessed_failure_under_pytest(code, stdout, witnessed):
     import subprocess as sp
 
     from code_forge.fixval import _witnessed_failure
 
-    assert _witnessed_failure(sp.CompletedProcess([], code, stdout, "")) is witnessed
+    assert _witnessed_failure(PYTEST_CMD, sp.CompletedProcess([], code, stdout, "")) is witnessed
+
+
+@pytest.mark.parametrize(
+    ("code", "witnessed"), [(1, True), (2, True), (4, True), (-9, False), (-15, False)]
+)
+def test_witnessed_failure_other_runners_keep_nonzero_fails(code, witnessed):
+    import subprocess as sp
+
+    from code_forge.fixval import _witnessed_failure
+
+    result = sp.CompletedProcess([], code, "make: *** [test] Error 1\n", "")
+    assert _witnessed_failure(["make", "pytest"], result) is witnessed
 
 
 def test_revert_patch_projections():
@@ -466,3 +501,78 @@ def test_first_run_collection_error_stays_pass_as_on_main(tmp_path):
     diff = _repo(tmp_path, fixed)
     result = _run(tmp_path, diff, list(fixed), ["src/calc.py"])
     assert result.status is FixvalStatus.PASS, result.block_message
+
+
+ADDOPT_FIXTURE = {
+    "tests/conftest.py": (
+        "import pytest\n\ndef pytest_addoption(parser):\n    parser.addoption('--forge-flag')\n\n"
+        "@pytest.fixture\ndef expected():\n    return 2\n"
+    ),
+    "tests/test_calc.py": "def test_calc(expected):\n    assert expected == 2\n",
+}
+
+
+@pytest.mark.parametrize(
+    ("fixed", "base", "extra"),
+    [
+        (HOLLOW_FIXTURE, {"pytest.ini": "[pytest]\naddopts = --color=yes\n"}, []),
+        (HOLLOW_FIXTURE, {}, ["--color=yes"]),
+        (HOLLOW_FIXTURE, {}, ["-qq"]),
+        (HOLLOW_HELPER, {}, ["-qq", "--color=yes"]),
+        # the retry lacks the conftest option: pytest exits 4 with no summary
+        (ADDOPT_FIXTURE, {"pytest.ini": "[pytest]\naddopts = --forge-flag=1\n"}, []),
+    ],
+    ids=["addopts-color", "color", "qq", "qq-color-helper", "exit-4"],
+)
+def test_unreadable_retry_keeps_the_254_hollow(tmp_path, fixed, base, extra):
+    diff = _repo(tmp_path, fixed, base)
+    candidate = classify_fixval_candidate(["src/calc.py", *fixed])
+    assert isinstance(candidate, FixvalCandidate)
+    result = run_fixval(candidate, PYTEST + extra, tmp_path, "fix calc", diff)
+    assert [finding.id for finding in result.findings] == ["FIXVAL_HOLLOW"], result.block_message
+    assert result.block_message.split("Reverted files:\n")[1].split("\n\n")[0].split() == ["src/calc.py"]
+    for name, text in fixed.items():
+        assert (tmp_path / name).read_text(encoding="utf-8") == text
+
+
+@pytest.mark.parametrize("extra", [["--color=yes"], ["-qq"]])
+def test_readable_retry_failure_is_pass_under_color_and_qq(tmp_path, extra):
+    other = "docs/notes.rst"
+    diff = _support_beside_repo(tmp_path, other, GUARDED_TEST)
+    candidate = classify_fixval_candidate([other, "tests/conftest.py", "tests/test_env.py"])
+    assert isinstance(candidate, FixvalCandidate)
+    result = run_fixval(candidate, PYTEST + extra, tmp_path, "fix env", diff)
+    assert result.status is FixvalStatus.PASS, result.block_message
+    _assert_restored(tmp_path, other, GUARDED_TEST)
+
+
+def test_limitation_support_fix_that_only_removes_errors_is_hollow(tmp_path, monkeypatch):
+    """Pinned trade-off (fail-closed): repairing a fixture that raised, beside
+    another non-test change, reads like #254's "test needs the support" and is
+    FIXVAL_HOLLOW (main: PASS). FIXVAL_WAIVER is the escape."""
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "CHANGELOG.rst").write_text("v1\n", encoding="utf-8")
+    broken = "import pytest\n\n@pytest.fixture\ndef flag():\n    raise RuntimeError('broken')\n"
+    (tmp_path / "tests/conftest.py").write_text(broken, encoding="utf-8")
+    (tmp_path / "tests/test_flag.py").write_text("def test_flag(flag):\n    pass\n", encoding="utf-8")
+    _git(tmp_path, "add", "--all")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    (tmp_path / "CHANGELOG.rst").write_text("v1\nfixed the flag fixture\n", encoding="utf-8")
+    (tmp_path / "tests/conftest.py").write_text(
+        "import pytest\n\n@pytest.fixture\ndef flag():\n    return 1\n", encoding="utf-8"
+    )
+    (tmp_path / "tests/test_flag.py").write_text(
+        "def test_flag(flag):\n    assert flag == 1\n", encoding="utf-8"
+    )
+    _git(tmp_path, "add", "--all")
+    diff = _git(tmp_path, "diff", "--cached", "--binary")
+    changed = ["CHANGELOG.rst", "tests/conftest.py", "tests/test_flag.py"]
+    result = _run(tmp_path, diff, changed, ["CHANGELOG.rst"])
+    assert [finding.id for finding in result.findings] == ["FIXVAL_HOLLOW"]
+    assert result.block_message.split("Reverted files:\n")[1].split("\n\n")[0].split() == [
+        "CHANGELOG.rst"
+    ]
+    monkeypatch.setenv("FIXVAL_WAIVER", "fixture repair; errors-only on revert")
+    waived = run_fixval(classify_fixval_candidate(changed), PYTEST, tmp_path, "fix flag", diff)
+    assert waived.status is FixvalStatus.WAIVED

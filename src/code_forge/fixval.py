@@ -434,22 +434,33 @@ def _inconclusive_block(reason: str, output: str = "") -> FixvalResult:
 # pytest's closing summary, e.g. "1 failed, 1 error in 0.12s" (may be framed by "=").
 _PYTEST_SUMMARY = re.compile(r"^[= ]*((?:\d+ [a-z]+, )*\d+ [a-z]+) in \d", re.MULTILINE)
 _PYTEST_FAILED = re.compile(r"\b[1-9]\d* failed\b")
+# Short test summary entry (still printed under -qq).
+_PYTEST_FAILED_ENTRY = re.compile(r"^FAILED ", re.MULTILINE)
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def _witnessed_failure(result: subprocess.CompletedProcess) -> bool:
+def _witnessed_failure(cmd: list[str], result: subprocess.CompletedProcess) -> bool:
     """Whether a nonzero run shows a test failing, not only breaking (#255).
 
-    With test support reverted, a test that loses a fixture or helper errors
-    at setup or collection; only a failed test witnesses that the support was
-    the fix. Without a pytest summary, keep main's "nonzero = fails"; a signal
-    death never witnessed anything.
+    Used for the retry with test support reverted: a test that loses a
+    fixture or helper errors at setup or collection, so only a failed test
+    witnesses that the support was the fix. A signal death never witnessed
+    anything. For pytest the run must exit 1 and its (colour-stripped) output
+    must show a failed test: the closing summary's "N failed", or, without a
+    summary (-qq), a short-summary FAILED entry. Anything else under pytest is
+    no verdict. Other runners keep main's "nonzero = fails".
     """
     if result.returncode < 0:
         return False
-    summaries = _PYTEST_SUMMARY.findall(result.stdout or "")
-    if not summaries:
+    if not _runs_pytest(cmd):
         return True
-    return _PYTEST_FAILED.search(summaries[-1]) is not None
+    if result.returncode != 1:
+        return False
+    output = _ANSI.sub("", result.stdout or "")
+    summaries = _PYTEST_SUMMARY.findall(output)
+    if summaries:
+        return _PYTEST_FAILED.search(summaries[-1]) is not None
+    return _PYTEST_FAILED_ENTRY.search(output) is not None
 
 
 def _test_reverted_candidate(
@@ -478,7 +489,7 @@ def _test_reverted_candidate(
     if result.returncode != 0:
         if require_witness:
             # #255 retry: only a witnessed failed test counts; else no verdict.
-            if not _witnessed_failure(result):
+            if not _witnessed_failure(scoped_cmd, result):
                 return None
             return FixvalResult(status=FixvalStatus.PASS, findings=[], advisories=[])
         reason = _judged_failure(scoped_cmd, result)
@@ -819,7 +830,15 @@ def run_fixval(
     # change (maybe only docs or config). Before calling the tests hollow,
     # revert the support as well, as before #254; that run decides.
     # A retry that only breaks the tests (a fixture or helper gone, #254)
-    # leaves the first run's HOLLOW standing; so does a run killed by a signal.
+    # leaves the first run's HOLLOW standing; so does a run killed by a signal
+    # or a pytest run with no readable failed test (see _witnessed_failure).
+    # Known limits of telling "support was the fix" from "support is needed":
+    # - fail-closed: a support fix whose absence only *errors* (repairing a
+    #   fixture that raised, a sys.path or plugin fix) beside another non-test
+    #   change stays HOLLOW (main: PASS); waive with FIXVAL_WAIVER.
+    # - as on main: a hollow test reaching new support only at call time
+    #   (an import in the test body, getfixturevalue), or a pre-existing
+    #   fixture whose value the fix changed, fails on the retry and is PASS.
     full_patch = _filter_non_test_patch(diff_text, revert_support=True)
     if full_patch == non_test_patch:
         return noted(outcome)
