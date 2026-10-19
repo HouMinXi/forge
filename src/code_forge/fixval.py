@@ -15,6 +15,7 @@ before the verdict.
 from __future__ import annotations
 
 import ast
+import fnmatch
 import glob
 import logging
 import os
@@ -319,31 +320,147 @@ def _isolated_bytecode_env(env: dict[str, str]) -> dict[str, str]:
     return isolated
 
 
-def _drop_cached_bytecode(root: str, paths: Collection[str], env: dict[str, str]) -> None:
+# CPython's short options that take no argument, so `X` may follow them in
+# one cluster (`-BXpycache_prefix=...`).
+_NO_ARGUMENT_FLAGS = frozenset("bBdEhiIOPqRsSuvVx")
+
+
+def _x_options(args: list[str]) -> list[str]:
+    """The values of every `-X` in `args`, also inside a cluster of flags."""
+    options = []
+    for i, arg in enumerate(args):
+        if not arg.startswith("-"):
+            continue  # `--x` ends at once: "-" is no flag
+        for j, flag in enumerate(arg[1:], start=1):
+            if flag == "X":
+                if j + 1 < len(arg):
+                    options.append(arg[j + 1 :])
+                elif i + 1 < len(args):
+                    options.append(args[i + 1])
+                break
+            if flag not in _NO_ARGUMENT_FLAGS:
+                break
+    return options
+
+
+def _pycache_prefixes(env: dict[str, str], cmd: Collection[str]) -> list[str]:
+    """Every bytecode cache prefix a child may use: PYTHONPYCACHEPREFIX and
+    `-X pycache_prefix=...` in the test command (which wins over it), in any
+    spelling (`-X p`, `-Xp`, `-BXp`). One set by an `env NAME=value` wrapper,
+    sitecustomize or a launcher script stays invisible here."""
+    key = "pycache_prefix="
+    prefixes = [env.get("PYTHONPYCACHEPREFIX", "")]
+    prefixes += [option[len(key) :] for option in _x_options(list(cmd)) if option.startswith(key)]
+    return [prefix for prefix in prefixes if prefix]
+
+
+def _cache_names(cache: Path) -> list[str]:
+    """Names in `cache`; [] when it doesn't exist (so nothing was cached).
+    A directory that exists but can't be listed raises: its caches can't be
+    dropped, and silently skipping them would run stale bytecode."""
+    try:
+        return os.listdir(cache)
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+
+
+def _drop_cached_bytecode(
+    root: str, paths: Collection[str], env: dict[str, str], cmd: Collection[str] = ()
+) -> None:
     """Remove cached bytecode of exactly the touched .py `paths` (#257).
 
     CPython and pytest's assertion rewriter validate a cache by whole-second
     source mtime plus size, so a same-second, same-size revert or restore
     would run the other side's bytecode. Before each reverted run and after
     each restore, `<dir>/__pycache__/<stem>.*.pyc` (CPython's and pytest's
-    `-pytest-*` one) goes, and the mirror under a PYTHONPYCACHEPREFIX the
-    children inherit. Raises OSError when a cache can't be removed.
+    `-pytest-*` one) goes, and the mirror under every cache prefix the
+    children use (`_pycache_prefixes`, relative ones from the checkout).
+    Raises OSError when a cache can't be listed or removed; only a cache
+    that is already gone is tolerated.
     """
-    prefix = env.get("PYTHONPYCACHEPREFIX")
+    prefixes = _pycache_prefixes(env, cmd)
     for path in paths:
         if not path.endswith(".py"):
             continue
         source = Path(os.path.abspath(os.path.join(root, path)))
+        mirror = str(source.parent)[len(source.anchor) :]
         caches = [source.parent / "__pycache__"]
-        if prefix:
-            parent = str(source.parent)
-            caches.append(Path(os.path.join(root, prefix), parent[len(source.anchor) :]))
+        caches += [Path(os.path.join(root, prefix), mirror) for prefix in prefixes]
+        pattern = glob.escape(source.stem) + ".*.pyc"
         for cache in caches:
-            for pyc in cache.glob(glob.escape(source.stem) + ".*.pyc"):
+            for name in _cache_names(cache):
+                if not fnmatch.fnmatchcase(name, pattern):
+                    continue
                 try:
-                    pyc.unlink()
+                    os.unlink(cache / name)
                 except FileNotFoundError:
                     pass
+
+
+def _is_tracked(root: str, path: str) -> bool:
+    """Whether git tracks `path` in the checkout at `root`; False when that
+    can't be told (no git, not a repository), which fails closed."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z", "--", path],
+            cwd=root,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and bool(result.stdout)
+
+
+def _importable_bytecode(path: str) -> bool:
+    """Whether some Python 3 could import the sourceless .pyc at `path`.
+
+    The test command may run another interpreter than forge's (python3.13
+    while forge runs 3.12), so any CPython 3 magic counts, not only the
+    running one's: a 2-byte little-endian number in 3000..19999 followed by
+    b"\\r\\n" (fail closed; future 3.x magics stay in range). Python 1/2
+    magics (20121 and up) and malformed headers are out of scope: no Python 3
+    imports them, so the reverted run measures correctly (#259).
+    """
+    try:
+        with open(path, "rb") as fh:
+            header = fh.read(4)
+    except OSError:
+        return False  # unreadable: the import fails too
+    if header[2:] != b"\r\n":  # also rejects a truncated header
+        return False
+    return 3000 <= int.from_bytes(header[:2], "little") < 20000
+
+
+def _refuse_sourceless_bytecode(root: str, paths: Collection[str]) -> None:
+    """Raise TransactionError when a touched .py the revert removed (one the
+    fix adds) has a sourceless `<dir>/<stem>.pyc` beside it (#259).
+
+    Python imports that file when the source is missing, so the reverted run
+    would run it instead of failing to import. It isn't a cache FIXVAL may
+    delete (it can be a shipped artifact), so the revert is unmeasured. Not
+    when no Python 3 can import it (a Python 2 magic), and not when it
+    belongs to the reverted tree (the patch restores it, or git tracks it):
+    importing it then is the unfixed code, a correct measurement.
+    """
+    touched = set(paths)
+    for path in paths:
+        if not path.endswith(".py"):
+            continue
+        source = os.path.join(root, path)
+        legacy_path = path[: -len(".py")] + ".pyc"
+        legacy = os.path.join(root, legacy_path)
+        if os.path.lexists(source) or not os.path.lexists(legacy):
+            continue
+        if not _importable_bytecode(legacy):
+            continue
+        if legacy_path in touched or _is_tracked(root, legacy_path):
+            continue
+        raise TransactionError(
+            "sourceless bytecode %s would be imported in place of reverted %s; "
+            "remove it to measure the fix" % (legacy_path, path)
+        )
 
 
 def run_fixval(
@@ -498,7 +615,8 @@ def run_fixval(
             errors.append("revert patch failed: %s" % revert_result.stderr[:200])
         else:
             transaction.mark_reverted()
-            _drop_cached_bytecode(repo_root, touched, run_env)
+            _refuse_sourceless_bytecode(repo_root, touched)
+            _drop_cached_bytecode(repo_root, touched, run_env, scoped_cmd)
             outcome = _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root)
     except (OSError, ValueError, TransactionError, subprocess.SubprocessError) as exc:
         errors.append(str(exc))
@@ -547,7 +665,7 @@ def run_fixval(
                         errors.append("entry restoration retry interrupted: %s" % type(retry).__name__)
             finally:
                 try:
-                    _drop_cached_bytecode(repo_root, touched, run_env)
+                    _drop_cached_bytecode(repo_root, touched, run_env, scoped_cmd)
                 except OSError as exc:
                     errors.append("bytecode cache invalidation failed: %s" % exc)
                 if sys.exception() is not None:
@@ -696,7 +814,7 @@ def run_overfit_guard(
             run_env = _isolated_bytecode_env(os.environ.copy())
             run_env["PYTHONPATH"] = os.path.join(str(cwd), "src")
             try:
-                _drop_cached_bytecode(str(cwd), [str(file_path)], run_env)
+                _drop_cached_bytecode(str(cwd), [str(file_path)], run_env, scoped_cmd)
             except OSError:
                 return []  # advisory only: unmeasured, never a stale verdict
             result = subprocess.run(
@@ -735,7 +853,7 @@ def run_overfit_guard(
             # ALWAYS restore original bytes verbatim
             file_path.write_bytes(original_bytes)
             try:
-                _drop_cached_bytecode(str(cwd), [str(file_path)], os.environ)
+                _drop_cached_bytecode(str(cwd), [str(file_path)], os.environ, scoped_cmd)
             except OSError as exc:
                 _logger.warning("FIXVAL overfit guard: cannot drop cached bytecode: %s", exc)
 
