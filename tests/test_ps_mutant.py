@@ -6,6 +6,8 @@ Survived. A timed-out mutant is counted Killed by the tool, so this
 mapper does not invent a third status.
 """
 
+import shutil
+
 import pytest
 
 from code_forge.mutation_engines.adapters.ps_mutant import map_psmutant_status
@@ -29,6 +31,15 @@ def test_unknown_status_is_not_killed():
 
 
 def test_gate_invokes_when_probe_is_available(tmp_path, monkeypatch):
+    # Hermetic: the ps-mutant probe only checks shutil.which("pwsh") (it
+    # imports shutil locally, so patch the module); invoke is stubbed below,
+    # so pwsh need not be installed (#217 review). Other names stay real.
+    real_which = shutil.which
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name, *a, **k: "/stub/bin/pwsh" if name == "pwsh" else real_which(name, *a, **k),
+    )
     from code_forge.mutation_dispatch import run_note
 
     monkeypatch.setattr(
