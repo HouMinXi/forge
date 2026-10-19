@@ -22,3 +22,38 @@ def write_inventory(root, relative, mutants=None):
         )
     )
     return "\n".join(f"{name}: {status}" for name, status in records.items())
+
+
+def working_review(root, rel, *, base="def sample():\n    return 0\n"):
+    """A real WORKING git review of ``rel`` under ``root`` (#208).
+
+    Since e89d226 a native mutation measurement is bound to a WORKING review
+    with base/head SHAs and its diff; a fixture without one fails closed as
+    "invalid bound mutation measurement". Commits ``base`` and leaves the
+    current content (created as ``return 1`` if absent) in the worktree."""
+    import subprocess
+    from pathlib import Path
+
+    from code_forge.baseline import GitRefBaseline, resolve_baseline
+
+    source = Path(root) / rel
+    if source.exists():
+        reviewed = source.read_text(encoding="utf-8")
+    else:
+        source.parent.mkdir(parents=True, exist_ok=True)
+        reviewed = base.replace("return 0", "return 1")
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false",
+             "-c", "core.hooksPath=/dev/null", *args],
+            cwd=root, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    git("init", "-q")
+    source.write_text(base, encoding="utf-8")
+    git("add", rel)
+    git("commit", "-q", "-m", "base")
+    source.write_text(reviewed, encoding="utf-8")
+    head = git("rev-parse", "HEAD")
+    return resolve_baseline(GitRefBaseline(head), GitRefBaseline("WORKING"), [Path(rel)], root)

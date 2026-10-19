@@ -14,6 +14,7 @@ from code_forge.falsify import StubFalsifier
 from code_forge.machine import StateMachine
 from code_forge.state import Mode
 from tests.ci_gate import outside_config_root
+from tests.mutation_result_fixture import working_review
 
 
 def make_machine(tmp_path, command, timeout=None):
@@ -100,6 +101,8 @@ def test_configured_deadline_stops_a_real_baseline(tmp_path, monkeypatch):
     monkeypatch.setattr(factories.shutil, "which", lambda command: "/tools/mutmut")
     command = [sys.executable, "-c", "import time; time.sleep(2); raise SystemExit(1)"]
     machine = make_machine(tmp_path, command, 1)
+    # #208: a native measurement needs a real WORKING review (e89d226).
+    machine.resolved_review = working_review(tmp_path, "src/sample.py")
     findings = machine._run_l2_phase()
     assert len(findings) == 1
     assert findings[0].fingerprint == "mutation-baseline-timeout"

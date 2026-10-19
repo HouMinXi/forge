@@ -3,7 +3,6 @@
 import configparser
 import subprocess
 import sys
-from dataclasses import replace
 
 import pytest
 import yaml
@@ -14,7 +13,7 @@ from code_forge.baseline import ResolvedReview
 from code_forge.falsify import StubFalsifier
 from code_forge.machine import StateMachine
 from code_forge.state import Mode, Verdict
-from tests.mutation_result_fixture import write_inventory
+from tests.mutation_result_fixture import working_review, write_inventory
 
 
 def make_machine(root, copy_setting, runner):
@@ -138,9 +137,10 @@ def test_local_factory_reaches_real_config_renderer(tmp_path, monkeypatch):
         output = write_inventory(tmp_path, "src/pkg/sample.py") if "results" in command else ""
         return subprocess.CompletedProcess(command, 0, output, "")
 
-    machine.resolved_review = replace(
-        machine.resolved_review, source_files=[tmp_path / "src/pkg/sample.py"]
-    )
+    # #208: since e89d226 a native measurement is bound to a real WORKING git
+    # review (base/head SHAs, diff); without one it fails closed as an
+    # invalid bound measurement. Give the renderer probe that real subject.
+    machine.resolved_review = working_review(tmp_path, "src/pkg/sample.py")
     monkeypatch.setattr(mutation, "run_owned_command", execute)
     assert machine._run_l2_phase() == []
     assert machine._state.infra_errors == []
