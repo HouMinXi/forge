@@ -1,0 +1,14 @@
+<subsystem>/<case>: <summary>
+
+<problem and rationale>
+
+Signed-off-by: Minxi Hou <houminxi@gmail.com>
+
+# Replace the subject and body placeholders before committing.
+# Explain the problem, its effect, and why this change addresses it.
+# Use English ASCII and a self-contained explanation, not a file inventory.
+# Omit plan/task/decision IDs, severity labels, and review/tool/model terms.
+# Do not add AI co-author trailers or claim checks you did not run.
+# Keep the owner sign-off only when authorized to commit as the owner.
+# Otherwise use your own actual, authorized sign-off.
+# See docs/commit-guide.md for usage and shell marker placement.
