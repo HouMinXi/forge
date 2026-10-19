@@ -124,3 +124,41 @@ def test_next_ignored_report_ends_a_multiline_message():
 def test_blank_line_ends_a_multiline_ignored_message():
     detail = _output_detail(_MULTILINE + "\nplain cause text\n", None)
     assert "plain cause text" in detail and "line2" not in detail
+
+
+_ECHILD_SHORT = "Exception ignored in: <x>\nChildProcessError: [Errno 10] No child processes\n"
+
+
+@pytest.mark.parametrize(
+    "real",
+    [
+        "INTERNALERROR> Traceback (most recent call last):",
+        "Fatal Python error: Segmentation fault",
+        "Killed",
+        "Segmentation fault (core dumped)",
+        "Aborted (core dumped)",
+        "ImportError while loading conftest '/repo/tests/conftest.py'.",
+        "npm ERR! code ELIFECYCLE",
+    ],
+)
+def test_crash_and_tool_lines_after_an_ignored_report_are_kept(real):
+    """#182 review 6261799979: these end a message; 2dad69c kept them all."""
+    for noise in (_ECHILD_SHORT, _MULTILINE):
+        detail = _output_detail(noise + real + "\n", None)
+        assert " ".join(real.split()) in detail, detail
+        assert "line2" not in detail
+
+
+def test_dropped_continuation_never_leaves_a_silently_empty_cause():
+    detail = _output_detail(_MULTILINE, None)
+    assert detail == "; stderr: (2 lines after an ignored-exception report omitted)"
+    noise_then_prose = _ECHILD_SHORT + "plain prose\nmore prose\nlast\n"
+    assert _output_detail(noise_then_prose, None) == (
+        "; stderr: (3 lines after an ignored-exception report omitted)"
+    )
+
+
+def test_no_marker_when_nothing_was_dropped_or_a_cause_remains():
+    assert _output_detail(_ECHILD_SHORT, None) == ""
+    detail = _output_detail(_MULTILINE + "E   assert 0\n", None)
+    assert "omitted" not in detail and "E assert 0" in detail
