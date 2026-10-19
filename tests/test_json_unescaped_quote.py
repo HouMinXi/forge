@@ -67,6 +67,8 @@ def test_ordinary_json_parses_unchanged(raw, expected):
         '{"second":1,,"marker":2}',
         '{"findings": [{"file": "a.py", "description": "x"}], UNQUOTED: true}',
         r'{"description":"calls.\q end"}',
+        '{"a": 1}]',
+        '{"a": [1]}}',
     ],
 )
 def test_structural_errors_are_raised_unchanged(raw):
@@ -82,8 +84,11 @@ def test_structural_errors_are_raised_unchanged(raw):
 @pytest.mark.parametrize(
     ("raw", "field", "expected"),
     [
-        ('{"verdict":"CONFIRMED","description":"returns "}" when the list is empty"}',
-         "description", 'returns "}" when the list is empty'),
+        (
+            '{"verdict":"CONFIRMED","description":"returns "}" when the list is empty"}',
+            "description",
+            'returns "}" when the list is empty',
+        ),
         ('{"description":"closes with "]" here","line":3}', "description", 'closes with "]" here'),
     ],
 )
@@ -159,3 +164,40 @@ def test_member_position_missing_comma_still_raises(raw):
     with pytest.raises(json.JSONDecodeError) as caught:
         _loads_model_json(raw)
     assert caught.value.doc == raw
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('{"d": "x "}]" y"}', {"d": 'x "}]" y'}),
+        ('{"d": "x "}," y"}', {"d": 'x "}," y'}),
+        ('{"d": "x "]}" y"}', {"d": 'x "]}" y'}),
+        (
+            '{"findings": [{"description": "x "}]" y", "line": 1}]}',
+            {"findings": [{"description": 'x "}]" y', "line": 1}]},
+        ),
+        ('{"reasoning": "ok "},"", "f": 1}', {"reasoning": 'ok "},"', "f": 1}),
+    ],
+)
+def test_multi_character_closer_token_inside_a_value_is_repaired(raw, expected):
+    """#216 review 6261541244: tokens such as ``"}]"`` and ``"},"`` were
+    repaired on base; the closer-token repair walks back over the whole run."""
+    assert _loads_model_json(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"a":"x"}}',
+        '{"a":"x"}]',
+        '{"a":"x"},',
+        '{"a":["x"]]}',
+        '[{"a":"x"}}]',
+        # Nested "}," followed by a string element is unrecoverable without
+        # guessing (base raises too): the key separator turns up far later.
+        '{"findings": [{"description": "x "}," y", "line": 1}]}',
+    ],
+)
+def test_extra_closers_after_a_complete_value_still_raise(raw):
+    with pytest.raises(json.JSONDecodeError):
+        _loads_model_json(raw)
