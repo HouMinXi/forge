@@ -304,6 +304,23 @@ def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root) -> Fixva
     )
 
 
+def _isolated_bytecode_env(env: dict[str, str], pycache_prefix: str) -> dict[str, str]:
+    """`env` for a FIXVAL child test run, kept off the checkout's bytecode (#257).
+
+    CPython and pytest's assertion rewriter validate cached bytecode by
+    whole-second source mtime plus size. A same-second, same-size revert or
+    restore (`1` -> `2`) then runs stale bytecode: the reverted run executes
+    the fixed code (a valid fix reads HOLLOW), and the restored checkout keeps
+    executing the reverted code afterwards. Children write no bytecode and
+    read caches only from a private empty prefix, so every run compiles the
+    source as it is on disk and the checkout's __pycache__ is left untouched.
+    """
+    isolated = dict(env)
+    isolated["PYTHONDONTWRITEBYTECODE"] = "1"
+    isolated["PYTHONPYCACHEPREFIX"] = pycache_prefix
+    return isolated
+
+
 def run_fixval(
     candidate: FixvalCandidate,
     test_cmd: list[str],
@@ -312,6 +329,29 @@ def run_fixval(
     diff_text: str | None,
     *,
     recovery_parent: Path | None = None,
+) -> FixvalResult:
+    """Run FIXVAL with every child test run's bytecode isolated (#257); see _run_fixval."""
+    with tempfile.TemporaryDirectory(prefix="fixval-pycache-", ignore_cleanup_errors=True) as pycache:
+        return _run_fixval(
+            candidate,
+            test_cmd,
+            cwd,
+            commit_message,
+            diff_text,
+            recovery_parent=recovery_parent,
+            pycache_prefix=pycache,
+        )
+
+
+def _run_fixval(
+    candidate: FixvalCandidate,
+    test_cmd: list[str],
+    cwd: Path,
+    commit_message: str,
+    diff_text: str | None,
+    *,
+    recovery_parent: Path | None = None,
+    pycache_prefix: str,
 ) -> FixvalResult:
     """Run FIXVAL gate on a candidate diff.
 
@@ -386,6 +426,7 @@ def run_fixval(
     run_env = os.environ.copy()
     pythonpath = os.path.join(repo_root, "src")
     run_env["PYTHONPATH"] = pythonpath
+    run_env = _isolated_bytecode_env(run_env, pycache_prefix)
     retry_cause: list[str] = []
 
     status, guard_findings, guard_infra = _run_baseline_guard(
@@ -399,7 +440,7 @@ def run_fixval(
     if status == "needs_strip_retry":
         env_retry = env_retry_record(retry_cause[0] if retry_cause else None, run_env)
         run_env = _strip_venv_from_env(run_env)
-        run_env["PYTHONPATH"] = pythonpath
+        run_env["PYTHONPATH"] = pythonpath  # the strip keeps the bytecode isolation
         status, guard_findings, guard_infra = _run_baseline_guard(
             scoped_cmd,
             run_env,
@@ -646,17 +687,20 @@ def run_overfit_guard(
             scoped_cmd = test_cmd + candidate.test_files
             run_env = os.environ.copy()
             run_env["PYTHONPATH"] = os.path.join(str(cwd), "src")
-            result = subprocess.run(
-                scoped_cmd,
-                env=run_env,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=600,
-                check=False,
-                cwd=str(cwd),
-            )
+            with tempfile.TemporaryDirectory(
+                prefix="fixval-pycache-", ignore_cleanup_errors=True
+            ) as pycache:
+                result = subprocess.run(
+                    scoped_cmd,
+                    env=_isolated_bytecode_env(run_env, pycache),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=600,
+                    check=False,
+                    cwd=str(cwd),
+                )
 
             if result.returncode != 0:
                 # Test failed after rename -> overfitting advisory
