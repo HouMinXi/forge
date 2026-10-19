@@ -344,7 +344,10 @@ def _inconclusive_block(reason: str, output: str = "") -> FixvalResult:
     Unmeasured is not PASS: machine.py turns BLOCK into a FAIL verdict, and
     the reason says exactly why the fix is unverified.
     """
-    detail = "FIXVAL inconclusive: reverted-code %s; the test was not judged, so the fix is unverified" % reason
+    detail = (
+        "FIXVAL inconclusive: reverted-code %s; the test was not judged, so the fix is unverified"
+        % reason
+    )
     tail = " ".join((output or "").split())[-200:]
     if tail:
         detail += ". Output: %s" % tail

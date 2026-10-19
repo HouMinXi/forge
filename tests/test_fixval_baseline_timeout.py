@@ -21,7 +21,17 @@ PATCH = (
 def test_guard_gets_the_configured_timeout(tmp_path, monkeypatch, retry):
     calls = []
 
-    def guard(cmd, env, root, *, allow_strip_retry, timeout=120, run_command=None):
+    def guard(
+        cmd,
+        env,
+        root,
+        *,
+        allow_strip_retry,
+        timeout=120,
+        run_command=None,
+        retry_cause=None,
+        first_attempt=None,
+    ):
         calls.append(timeout)
         if retry and allow_strip_retry:
             return ("needs_strip_retry", [], [])
@@ -30,7 +40,12 @@ def test_guard_gets_the_configured_timeout(tmp_path, monkeypatch, retry):
     monkeypatch.setattr(fixval, "_run_baseline_guard", guard)
     candidate = fixval.FixvalCandidate(["tests/test_mod.py"], ["src/pkg/mod.py"])
     result = fixval.run_fixval(
-        candidate, ["python3", "-m", "pytest"], tmp_path, "fix", PATCH, baseline_timeout=2400,
+        candidate,
+        ["python3", "-m", "pytest"],
+        tmp_path,
+        "fix",
+        PATCH,
+        baseline_timeout=2400,
     )
     assert result.status == fixval.FixvalStatus.SKIPPED
     assert calls == ([2400, 2400] if retry else [2400])
@@ -39,7 +54,17 @@ def test_guard_gets_the_configured_timeout(tmp_path, monkeypatch, retry):
 def test_default_stays_120_for_direct_callers(tmp_path, monkeypatch):
     calls = []
 
-    def guard(cmd, env, root, *, allow_strip_retry, timeout=120, run_command=None):
+    def guard(
+        cmd,
+        env,
+        root,
+        *,
+        allow_strip_retry,
+        timeout=120,
+        run_command=None,
+        retry_cause=None,
+        first_attempt=None,
+    ):
         calls.append(timeout)
         return ("skip", [], ["stop"])
 
@@ -53,8 +78,19 @@ def _git(root, *args):
     import subprocess
 
     subprocess.run(
-        ["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-        cwd=root, check=True, capture_output=True,
+        [
+            "git",
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
     )
 
 
@@ -87,7 +123,12 @@ def test_reverted_run_timeout_is_inconclusive_not_pass(tmp_path, monkeypatch):
     monkeypatch.setattr(fixval.subprocess, "run", run)
     candidate = fixval.FixvalCandidate(["tests/test_mod.py"], ["src/pkg/mod.py"])
     result = fixval.run_fixval(
-        candidate, ["python3", "-m", "pytest"], tmp_path, "fix", PATCH, baseline_timeout=2400,
+        candidate,
+        ["python3", "-m", "pytest"],
+        tmp_path,
+        "fix",
+        PATCH,
+        baseline_timeout=2400,
     )
     assert seen == [2400]
     assert result.status == fixval.FixvalStatus.BLOCK, result
