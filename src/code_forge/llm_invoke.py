@@ -26,6 +26,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any, Optional
 
 from . import progress
@@ -1029,9 +1030,18 @@ def _loads_model_json(text: str):
     character where it stopped. Escape that quote and parse again, and
     repeat while each attempt fails at a quote. A failure somewhere else
     is a real syntax error and is raised unchanged.
+
+    Accepted trade-off (#216): when the content is ambiguous (a repair
+    could equally read it as more members), the loop raises instead of
+    guessing. The caller then spends its one JSON-correction retry. Some
+    replies that base repaired by luck now fail closed this way; that is
+    intended, since a wrong parse silently changes a verdict.
     """
     candidate = text
     first_error: json.JSONDecodeError | None = None
+    # Positions the loop escaped (the inserted backslash), kept current as
+    # later escapes shift the text. A model's own \" is not a repair.
+    repaired: list[int] = []
     # Each attempt escapes one quote and at least two stay structural, so
     # count - 1 attempts (the last one parsing) always suffice.
     for _ in range(max(1, text.count('"') - 1)):
@@ -1039,10 +1049,11 @@ def _loads_model_json(text: str):
             parsed = json.loads(candidate, strict=False)
         except json.JSONDecodeError as exc:
             first_error = first_error or exc
-            quote_at = _error_is_at_quote(candidate, exc)
+            quote_at = _error_is_at_quote(candidate, exc, repaired)
             if quote_at is None:
                 raise
             candidate = _escape_at(candidate, quote_at)
+            repaired = _record_escape(repaired, quote_at)
             continue
         if first_error is not None and _has_quoted_key(parsed):
             # #216 review: a repair only escapes content quotes, so a key
@@ -1053,6 +1064,12 @@ def _loads_model_json(text: str):
     raise first_error or json.JSONDecodeError("no parse within the repair budget", text, 0)
 
 
+def _record_escape(repaired: list[int], escaped_at: int) -> list[int]:
+    """Add the backslash inserted at `escaped_at`; earlier entries at or
+    after it moved one character right."""
+    return [index + (index >= escaped_at) for index in repaired] + [escaped_at]
+
+
 def _has_quoted_key(value) -> bool:
     if isinstance(value, dict):
         return any('"' in key or _has_quoted_key(item) for key, item in value.items())
@@ -1061,7 +1078,7 @@ def _has_quoted_key(value) -> bool:
     return False
 
 
-def _quote_before_trailing_comma(text: str, pos: int) -> int | None:
+def _quote_before_trailing_comma(text: str, pos: int, repaired: Sequence[int]) -> int | None:
     if not (0 <= pos < len(text)) or text[pos] != '"':
         return None
     before = text[:pos].rstrip()
@@ -1071,7 +1088,8 @@ def _quote_before_trailing_comma(text: str, pos: int) -> int | None:
     if quote_at < 0 or text[quote_at] != '"' or _quote_is_escaped(text, quote_at):
         return None
     start = _container_start(text, pos)
-    if '\\"' in text[start : _string_start(text, start, quote_at)]:
+    opened = _string_start(text, start, quote_at)
+    if any(start <= index < opened for index in repaired):
         # An earlier repair in this object already chose where its strings
         # end; the members after it parsed as structure, so the trailing
         # ``"..",`` may be content of that earlier value. Ambiguous: raise.
@@ -1079,7 +1097,7 @@ def _quote_before_trailing_comma(text: str, pos: int) -> int | None:
     return quote_at
 
 
-def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
+def _error_is_at_quote(text: str, exc: json.JSONDecodeError, repaired: Sequence[int] = ()) -> int | None:
     pos = exc.pos
     if not isinstance(pos, int):
         return None
@@ -1106,7 +1124,7 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
         # opens a string that runs to the end. Escape the quote before the
         # comma, as base did; a truncated reply then fails on the next
         # attempt and raises the first error (#216 forge LOCAL P2).
-        return _quote_before_trailing_comma(text, pos)
+        return _quote_before_trailing_comma(text, pos, repaired)
     if not exc.msg.startswith("Expecting "):
         # A stray content quote only ever surfaces as a delimiter/name
         # error; "Invalid \escape", control characters or an unterminated

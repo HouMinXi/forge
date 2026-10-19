@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from code_forge.llm_invoke import _loads_model_json
+from code_forge.llm_invoke import _loads_model_json, _record_escape
 
 
 def test_unescaped_quote_inside_a_string_is_repaired():
@@ -339,3 +339,23 @@ def test_trailing_comma_repair_in_a_later_object_ignores_an_earlier_objects_repa
 def test_trailing_comma_repair_after_an_earlier_split_raises(raw):
     with pytest.raises(json.JSONDecodeError):
         _loads_model_json(raw)
+
+
+def test_a_correctly_escaped_model_quote_does_not_block_the_trailing_comma_repair():
+    """#216 review: only quotes the repair loop escaped mark an earlier split."""
+    raw = (
+        '{"findings": [{"file": "a.py", "line": 3, "description": "uses \\"x\\" wrongly",'
+        ' "excerpt": ""name": "forge","}]}'
+    )
+    assert _loads_model_json(raw) == {
+        "findings": [
+            {"file": "a.py", "line": 3, "description": 'uses "x" wrongly', "excerpt": '"name": "forge",'}
+        ]
+    }
+
+
+def test_recorded_escapes_follow_the_text_as_later_escapes_shift_it():
+    assert _record_escape([], 5) == [5]
+    assert _record_escape([5, 9], 5) == [6, 10, 5]
+    assert _record_escape([5, 9], 7) == [5, 10, 7]
+    assert _record_escape([5], 2) == [6, 2]
