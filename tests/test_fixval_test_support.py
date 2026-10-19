@@ -215,6 +215,11 @@ def test_absolute_path_outside_any_checkout_keeps_main_classification(tmp_path):
     candidate = classify_fixval_candidate([inside[0], paths[1], inside[1]])
     assert isinstance(candidate, FixvalCandidate)
     assert candidate.non_test_files == [inside[0], paths[1]]
+    # an unplaceable path is not a known source change: support is reverted too
+    support = [str(checkout / "tests/conftest.py"), inside[1]]
+    candidate = classify_fixval_candidate([paths[0], *support])
+    assert isinstance(candidate, FixvalCandidate)
+    assert candidate.non_test_files == [paths[0], support[0]]
 
 
 def test_relative_classification():
@@ -249,3 +254,71 @@ def test_windows_separators_are_normalised(path, support):
     candidate = classify_fixval_candidate(["src/calc.py", path, "tests/test_calc.py"])
     assert isinstance(candidate, FixvalCandidate)
     assert candidate.non_test_files == (["src/calc.py"] if support else ["src/calc.py", path])
+
+
+def _docs_and_support_repo(root: Path, doc: str) -> str:
+    """A valid conftest fix that also touches a doc (#255 review, /tmp/d255)."""
+    _git(root, "init", "-q")
+    (root / "tests").mkdir()
+    (root / doc).parent.mkdir(parents=True, exist_ok=True)
+    (root / "tests/conftest.py").write_text("import os\n", encoding="utf-8")
+    (root / "tests/test_env.py").write_text("def test_env():\n    assert True\n", encoding="utf-8")
+    (root / doc).write_text("notes\n", encoding="utf-8")
+    _git(root, "add", "--all")
+    _git(root, "commit", "-q", "-m", "base")
+    (root / "tests/conftest.py").write_text(
+        'import os\nos.environ["FORGE_FLAG"] = "1"\n', encoding="utf-8"
+    )
+    (root / "tests/test_env.py").write_text(
+        'import os\n\ndef test_env():\n    assert os.environ.get("FORGE_FLAG") == "1"\n',
+        encoding="utf-8",
+    )
+    (root / doc).write_text("notes\nflag documented\n", encoding="utf-8")
+    _git(root, "add", "--all")
+    return _git(root, "diff", "--cached", "--binary")
+
+
+@pytest.mark.parametrize("doc", ["docs/notes.md", "CHANGELOG", "README.txt", "docs/flag.png"])
+def test_doc_change_does_not_keep_support_unreverted(tmp_path, doc):
+    diff = _docs_and_support_repo(tmp_path, doc)
+    changed = [doc, "tests/conftest.py", "tests/test_env.py"]
+    result = _run(tmp_path, diff, changed, [doc, "tests/conftest.py"])
+    assert result.status is FixvalStatus.PASS, result.block_message
+    assert result.findings == []
+
+
+def test_doc_beside_source_keeps_support_and_the_doc_reverted():
+    kept = _filter_non_test_patch(
+        _diff("src/calc.py", "docs/notes.md", "tests/conftest.py", "tests/test_calc.py")
+    )
+    assert kept == _diff("src/calc.py", "docs/notes.md")
+    candidate = classify_fixval_candidate(
+        ["src/calc.py", "CHANGELOG", "tests/conftest.py", "tests/test_calc.py"]
+    )
+    assert isinstance(candidate, FixvalCandidate)
+    assert candidate.non_test_files == ["src/calc.py", "CHANGELOG"]
+
+
+@pytest.mark.parametrize("source", ["Makefile", "src/README.md", "setup.cfg", "docs/conf.py"])
+def test_non_doc_files_still_count_as_source(source):
+    kept = _filter_non_test_patch(_diff(source, "tests/conftest.py", "tests/test_calc.py"))
+    assert kept == _diff(source)
+    candidate = classify_fixval_candidate([source, "tests/conftest.py", "tests/test_calc.py"])
+    assert isinstance(candidate, FixvalCandidate)
+    assert candidate.non_test_files == [source]
+
+
+def test_rename_from_source_to_doc_is_source():
+    rename = (
+        "diff --git a/src/tool.py b/docs/tool.md\nsimilarity index 100%\n"
+        "rename from src/tool.py\nrename to docs/tool.md\n"
+    )
+    kept = _filter_non_test_patch(rename + _diff("tests/conftest.py", "tests/test_calc.py"))
+    assert kept == rename
+
+
+def test_relative_classification_does_not_depend_on_cwd(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # no .git anywhere above a relative path's parents
+    candidate = classify_fixval_candidate(FILES)
+    assert isinstance(candidate, FixvalCandidate)
+    assert candidate.non_test_files == ["src/calc.py", "test/helpers.py"]

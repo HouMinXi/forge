@@ -121,6 +121,19 @@ def _is_test_support(path: str) -> bool:
     return parts[-1] == "conftest.py" or "tests" in parts[:-1]
 
 
+def _is_doc_change(path: str) -> bool:
+    """Whether repo-relative `path` is documentation, not source (#255).
+
+    Reuses forge's docs-only definition (machine._docs_path_allowed: docs/**
+    and evidence/** Markdown, text and images, top-level README/LICENSE/
+    CHANGELOG-style files; never src/** or build inputs). Reverting a doc
+    can't fail a test, so it never justifies keeping test support unreverted.
+    """
+    from .machine import _docs_path_allowed
+
+    return _docs_path_allowed(path)
+
+
 def _repo_relative(path: str) -> str | None:
     """`path` relative to the Git checkout holding it.
 
@@ -156,21 +169,24 @@ def classify_fixval_candidate(
     non_test_files: list[str] = []
     executable = None if executable_files is None else set(executable_files)
 
-    support_files: list[str] = []
+    support_files: set[str] = set()
+    has_source = False
     for f in changed_files:
         if _is_test_file(f):
             if executable is None or f in executable:
                 test_files.append(f)
-        else:
-            relative = _repo_relative(f)
-            if relative is not None and _is_test_support(relative):
-                support_files.append(f)
-            else:
-                non_test_files.append(f)
-    # Scaffolding stays at its fixed state only beside a real production
-    # change. When it is the whole fix (a conftest guard, #225) it is the thing
-    # to revert, as before #254.
-    non_test_files = non_test_files or support_files
+            continue
+        non_test_files.append(f)
+        relative = _repo_relative(f)
+        if relative is not None and _is_test_support(relative):
+            support_files.add(f)
+        elif relative is not None and not _is_doc_change(relative):
+            has_source = True  # an unplaceable path keeps main's revert-all
+    # Scaffolding stays at its fixed state only beside a real source change.
+    # When it is the whole fix (a conftest guard, #225), or only docs come with
+    # it, it is the thing to revert, as before #254.
+    if has_source:
+        non_test_files = [f for f in non_test_files if f not in support_files]
 
     if test_files and non_test_files:
         return FixvalCandidate(
@@ -264,11 +280,18 @@ def _filter_non_test_patch(diff_text: str) -> str:
         blocks = [(unidiff.PatchSet(block), block) for _path, block in iter_diff_sections(diff_text)]
     else:
         blocks = [([entry], str(entry)) for entry in unidiff.PatchSet(diff_text)]
+
     # Diff paths are repo-relative. Scaffolding (#254) is kept at its fixed
-    # state only when a real production block is reverted alongside it.
+    # state only when a real source (not docs) block is reverted alongside it.
+    def is_source(patched_file):
+        return (
+            is_reversible(patched_file)
+            and not is_support(patched_file)
+            and not all(_is_doc_change(path) for path in paths_of(patched_file))
+        )
+
     keep_support = any(
-        entries and all(is_reversible(entry) and not is_support(entry) for entry in entries)
-        for entries, _block in blocks
+        entries and all(is_source(entry) for entry in entries) for entries, _block in blocks
     )
 
     def is_production(patched_file):
