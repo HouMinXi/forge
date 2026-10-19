@@ -782,7 +782,7 @@ def test_overfit_uses_projected_live_production_and_source_root(tmp_path, monkey
     machine = _terminal_fixture(repo, state, diff, files, monkeypatch)
     candidates = []
 
-    def accepted(candidate, *args):
+    def accepted(candidate, *args, **kwargs):
         candidates.append(candidate)
         return fixval.FixvalResult(fixval.FixvalStatus.PASS, [], [])
 
@@ -790,9 +790,9 @@ def test_overfit_uses_projected_live_production_and_source_root(tmp_path, monkey
     real_guard = fixval.run_overfit_guard
     guards = []
 
-    def guard(candidate, command, cwd):
-        guards.append((candidate, cwd))
-        return real_guard(candidate, command, cwd)
+    def guard(candidate, command, cwd, **kwargs):
+        guards.append((candidate, cwd, kwargs))
+        return real_guard(candidate, command, cwd, **kwargs)
 
     monkeypatch.setattr(fixval, "run_overfit_guard", guard)
     real_read = Path.read_bytes
@@ -804,7 +804,8 @@ def test_overfit_uses_projected_live_production_and_source_root(tmp_path, monkey
     monkeypatch.setattr(Path, "read_bytes", checked_read)
     machine._finalize_local_terminal()
     assert str(repo / "src/gone.py") in candidates[0].non_test_files
-    candidate, cwd = guards[0]
+    candidate, cwd, kwargs = guards[0]
+    assert kwargs == {"timeout": 120}  # #187: the gate timeout reaches the overfit run
     assert candidate.non_test_files == [str(repo / "src/model.py")]
     assert candidate.test_files == [str(repo / "tests/test_live.py")]
     assert cwd == repo
