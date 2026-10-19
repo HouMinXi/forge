@@ -1,0 +1,430 @@
+{
+  "checked_at": "2026-10-19T05:55Z",
+  "scope": [
+    "scripts/analyse_arms.py",
+    "tests/test_analyse_arms.py"
+  ],
+  "open_pr_count": 37,
+  "overlaps": [],
+  "open_prs": [
+    {
+      "number": 26,
+      "files": [
+        ".github/scripts/forge_ci/__init__.py",
+        ".github/scripts/forge_ci/admission.py",
+        ".github/scripts/forge_ci/controller.py",
+        ".github/scripts/forge_ci/facts.py",
+        ".github/scripts/forge_ci/launch.py",
+        ".github/scripts/forge_ci/outcomes.py",
+        ".github/scripts/forge_ci/payload.py",
+        ".github/scripts/forge_ci/probes.py",
+        ".github/scripts/forge_ci/pytest_observer.py",
+        ".github/scripts/forge_ci/setup_policy.py",
+        ".github/scripts/forge_ci/user_service.py",
+        ".github/scripts/render_linux_workflow.py",
+        ".github/tests/test_ci_admission.py",
+        ".github/tests/test_ci_controller.py",
+        ".github/tests/test_ci_facts.py",
+        ".github/tests/test_ci_launch.py",
+        ".github/tests/test_ci_outcomes.py",
+        ".github/tests/test_ci_probes.py",
+        ".github/tests/test_linux_workflow.py",
+        ".github/tests/test_namespace_observer.py",
+        ".github/tests/test_setup_policy.py",
+        ".github/tests/test_user_service.py",
+        ".github/workflows/linux-tests.yml",
+        "README.md",
+        "docs/fixval-validation.md",
+        "src/code_forge/_gate_pytest.py",
+        "src/code_forge/_mutation_process.py",
+        "src/code_forge/backend.py",
+        "src/code_forge/cli.py",
+        "src/code_forge/diff_grouping.py",
+        "src/code_forge/doctor.py",
+        "src/code_forge/e2e_check.py",
+        "src/code_forge/falsify_real.py",
+        "src/code_forge/fixval.py",
+        "src/code_forge/fixval_evidence.py",
+        "src/code_forge/fixval_terminal.py",
+        "src/code_forge/gate.schema.json",
+        "src/code_forge/gate_check.py",
+        "src/code_forge/grouped_coverage.py",
+        "src/code_forge/install_hooks.py",
+        "src/code_forge/invocation_audit.py",
+        "src/code_forge/ledger.py",
+        "src/code_forge/llm_invoke.py",
+        "src/code_forge/machine.py",
+        "src/code_forge/state.py",
+        "src/code_forge_launcher.py",
+        "tests/conftest.py",
+        "tests/test_baseline_failure_causes.py",
+        "tests/test_cli_empty_diff.py",
+        "tests/test_cli_grouping_wiring.py",
+        "tests/test_cli_integration.py",
+        "tests/test_cli_prompt_transport.py",
+        "tests/test_deleted_scope_consumers.py",
+        "tests/test_diff_grouping.py",
+        "tests/test_doctor.py",
+        "tests/test_excerpt_boundary_context.py",
+        "tests/test_falsifier_ci_integrity.py",
+        "tests/test_falsify_sees_diff.py",
+        "tests/test_fingerprint_stability.py",
+        "tests/test_fixval.py",
+        "tests/test_fixval_fail_closed.py",
+        "tests/test_fixval_integration.py",
+        "tests/test_fixval_terminal_projection.py",
+        "tests/test_gate_check.py",
+        "tests/test_gate_fail_closed.py",
+        "tests/test_git_diff_line_boundaries.py",
+        "tests/test_grouped_coverage.py",
+        "tests/test_grouped_coverage_receipts.py",
+        "tests/test_install_hooks.py",
+        "tests/test_kernel_context_integration.py",
+        "tests/test_launcher_source_loading.py",
+        "tests/test_ledger_suppression_safety.py",
+        "tests/test_machine_ledger.py",
+        "tests/test_mutation.py",
+        "tests/test_mutation_dispatch.py",
+        "tests/test_mutation_process.py",
+        "tests/test_mutation_process_bounded.py",
+        "tests/test_mutation_process_capability.py",
+        "tests/test_outlet_c.py",
+        "tests/test_provider_capacity_composition.py",
+        "tests/test_ps_mutant.py",
+        "tests/test_pytest_report_plugin.py",
+        "tests/test_raw_l1_rejections.py",
+        "tests/test_receipt_audit_reporting.py",
+        "tests/test_review_pass_evidence_contract.py",
+        "tests/test_review_uncertainty_boundary.py",
+        "tests/test_sem_acquisition_contract.py",
+        "tests/test_state_schema.py",
+        "tests/test_trust_empty_backends.py",
+        "tests/test_trust_fixture_allocation.py",
+        "tests/test_verify_result_contract.py"
+      ]
+    },
+    {
+      "number": 125,
+      "files": [
+        "pyproject.toml"
+      ]
+    },
+    {
+      "number": 151,
+      "files": [
+        "src/code_forge/gate_check.py",
+        "src/code_forge/machine.py",
+        "src/code_forge/rulepack.py",
+        "tests/test_deleted_scope_consumers.py",
+        "tests/test_machine_ledger.py",
+        "tests/test_rulepack_blocking.py",
+        "tests/test_trusted_review_gate_keys.py",
+        "tests/test_trusted_test_config.py"
+      ]
+    },
+    {
+      "number": 152,
+      "files": [
+        "src/code_forge/gate_check.py",
+        "src/code_forge/machine.py",
+        "src/code_forge/rulepack.py",
+        "tests/test_deleted_scope_consumers.py",
+        "tests/test_machine_ledger.py",
+        "tests/test_rulepack_blocking.py",
+        "tests/test_trusted_blocking_packs.py",
+        "tests/test_trusted_review_gate_keys.py",
+        "tests/test_trusted_test_config.py"
+      ]
+    },
+    {
+      "number": 156,
+      "files": [
+        "src/code_forge/gate_check.py",
+        "src/code_forge/machine.py",
+        "tests/test_gate_nofollow_checks.py",
+        "tests/test_local_mutation_copy.py",
+        "tests/test_untracked_gate_pin.py"
+      ]
+    },
+    {
+      "number": 159,
+      "files": [
+        "docs/setup-mcp.md",
+        "src/code_forge/baseline_guard.py",
+        "src/code_forge/mcp_jobs.py",
+        "src/code_forge/mcp_server.py",
+        "src/code_forge/mutation.py",
+        "tests/test_mcp_idle_watchdog.py",
+        "tests/test_mcp_server.py"
+      ]
+    },
+    {
+      "number": 168,
+      "files": [
+        "src/code_forge/machine.py",
+        "tests/test_hold_reason_stale.py"
+      ]
+    },
+    {
+      "number": 171,
+      "files": [
+        "tests/test_mutation_workspace.py"
+      ]
+    },
+    {
+      "number": 172,
+      "files": [
+        "src/code_forge/cli.py",
+        "src/code_forge/context_sources.py",
+        "src/code_forge/gate_check.py",
+        "src/code_forge/graph_triage.py",
+        "src/code_forge/machine.py",
+        "tests/test_sem_acquisition_contract.py",
+        "tests/test_trusted_advisory_context.py"
+      ]
+    },
+    {
+      "number": 173,
+      "files": [
+        "docs/setup-ci.md",
+        "src/code_forge/gate_check.py",
+        "src/code_forge/machine.py",
+        "tests/_outside_gate.py",
+        "tests/test_cli_integration.py",
+        "tests/test_exec_falsify.py",
+        "tests/test_hold_entry.py",
+        "tests/test_issue46_finding_evidence.py",
+        "tests/test_l1_evidence_recovery.py",
+        "tests/test_machine_ci.py",
+        "tests/test_machine_coverage.py",
+        "tests/test_machine_l2.py",
+        "tests/test_machine_ledger.py",
+        "tests/test_machine_mutation_launch.py",
+        "tests/test_pass_determinism.py",
+        "tests/test_receipt_rejected_attempt.py",
+        "tests/test_resume_receipt_provenance.py",
+        "tests/test_review_uncertainty_boundary.py",
+        "tests/test_trusted_test_config.py"
+      ]
+    },
+    {
+      "number": 179,
+      "files": [
+        "src/code_forge/machine.py",
+        "src/code_forge/state.py",
+        "tests/test_l2_infra_credit.py",
+        "tests/test_machine_l2.py"
+      ]
+    },
+    {
+      "number": 180,
+      "files": [
+        "src/code_forge/fixval.py",
+        "src/code_forge/machine.py",
+        "tests/test_deleted_scope_consumers.py",
+        "tests/test_fixval_baseline_timeout.py",
+        "tests/test_trusted_test_config.py"
+      ]
+    },
+    {
+      "number": 182,
+      "files": [
+        "src/code_forge/baseline_guard.py",
+        "tests/test_baseline_ignored_exceptions.py"
+      ]
+    },
+    {
+      "number": 186,
+      "files": [
+        "src/code_forge/fixval.py",
+        "tests/test_fixval_progress.py"
+      ]
+    },
+    {
+      "number": 193,
+      "files": [
+        "tests/conftest.py",
+        "tests/test_git_snapshot_guard.py"
+      ]
+    },
+    {
+      "number": 194,
+      "files": [
+        "docs/setup-ci.md",
+        "src/code_forge/gate_check.py",
+        "src/code_forge/machine.py",
+        "tests/_outside_gate.py",
+        "tests/test_cli_integration.py",
+        "tests/test_exec_falsify.py",
+        "tests/test_hold_entry.py",
+        "tests/test_issue46_finding_evidence.py",
+        "tests/test_l1_evidence_recovery.py",
+        "tests/test_machine_ci.py",
+        "tests/test_machine_coverage.py",
+        "tests/test_machine_l2.py",
+        "tests/test_machine_ledger.py",
+        "tests/test_machine_mutation_launch.py",
+        "tests/test_pass_determinism.py",
+        "tests/test_receipt_rejected_attempt.py",
+        "tests/test_resume_receipt_provenance.py",
+        "tests/test_review_uncertainty_boundary.py",
+        "tests/test_trusted_test_config.py"
+      ]
+    },
+    {
+      "number": 195,
+      "files": [
+        "src/code_forge/baseline_guard.py",
+        "tests/test_baseline_guard.py",
+        "tests/test_mutation_result_integrity.py"
+      ]
+    },
+    {
+      "number": 200,
+      "files": [
+        "src/code_forge/baseline_guard.py",
+        "tests/test_baseline_ignored_exceptions.py"
+      ]
+    },
+    {
+      "number": 210,
+      "files": [
+        "src/code_forge_launcher.py",
+        "tests/test_launcher_source_loading.py"
+      ]
+    },
+    {
+      "number": 211,
+      "files": [
+        "tests/test_launcher_source_loading.py"
+      ]
+    },
+    {
+      "number": 213,
+      "files": [
+        "tests/test_cli_integration.py"
+      ]
+    },
+    {
+      "number": 214,
+      "files": [
+        "tests/mutation_result_fixture.py",
+        "tests/test_l2_baseline_timeout.py",
+        "tests/test_local_mutation_copy.py",
+        "tests/test_mutation_timeout_config.py"
+      ]
+    },
+    {
+      "number": 216,
+      "files": [
+        "src/code_forge/llm_invoke.py",
+        "tests/test_json_unescaped_quote.py"
+      ]
+    },
+    {
+      "number": 217,
+      "files": [
+        "tests/test_mutation.py",
+        "tests/test_mutation_dispatch.py",
+        "tests/test_ps_mutant.py"
+      ]
+    },
+    {
+      "number": 220,
+      "files": [
+        "tests/test_verify_result_contract.py"
+      ]
+    },
+    {
+      "number": 223,
+      "files": [
+        "src/code_forge/mcp_jobs.py",
+        "src/code_forge/mcp_server.py",
+        "tests/test_mcp_advisory_results.py",
+        "tests/test_provider_capacity_reporting.py"
+      ]
+    },
+    {
+      "number": 227,
+      "files": [
+        "tests/conftest.py",
+        "tests/test_conftest_probe_cache_isolation.py"
+      ]
+    },
+    {
+      "number": 231,
+      "files": [
+        "src/code_forge/_gate_pytest.py",
+        "src/code_forge/_mutation_process.py",
+        "src/code_forge/exec_falsify.py",
+        "src/code_forge/fixval.py",
+        "tests/test_child_sigint_reset.py"
+      ]
+    },
+    {
+      "number": 236,
+      "files": [
+        "src/code_forge/_mutation_workspace.py",
+        "tests/test_mutation_workspace.py"
+      ]
+    },
+    {
+      "number": 237,
+      "files": [
+        "docs/receipt-format.md",
+        "src/code_forge/receipt.py",
+        "src/code_forge/verify.py",
+        "tests/test_verify.py",
+        "tests/test_writer_schema_raw_retention.py"
+      ]
+    },
+    {
+      "number": 241,
+      "files": [
+        "src/code_forge/_mutation_workspace.py",
+        "tests/test_mutation_workspace.py"
+      ]
+    },
+    {
+      "number": 243,
+      "files": [
+        "tests/test_mutation_process.py"
+      ]
+    },
+    {
+      "number": 251,
+      "files": [
+        "tests/test_child_sigint_reset.py",
+        "tests/test_signal_handler_contract.py"
+      ]
+    },
+    {
+      "number": 253,
+      "files": [
+        "src/code_forge/fixval.py",
+        "tests/test_fixval_exit_classification.py"
+      ]
+    },
+    {
+      "number": 255,
+      "files": [
+        "src/code_forge/fixval.py",
+        "tests/test_fixval_test_support.py"
+      ]
+    },
+    {
+      "number": 258,
+      "files": [
+        "src/code_forge/fixval.py",
+        "tests/test_fixval_bytecode_isolation.py"
+      ]
+    },
+    {
+      "number": 260,
+      "files": [
+        "src/code_forge/fixval.py",
+        "tests/test_fixval_bytecode_isolation.py"
+      ]
+    }
+  ]
+}

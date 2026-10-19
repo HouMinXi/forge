@@ -1,0 +1,446 @@
+{
+  "method": "Read-only GitHub connector fetch_file and non-truncated Git tree; no product execution or SDK",
+  "ref": "e9c78d47f2e1a191e7675168223c7b2bf084aa9c",
+  "tree": "930ebad4f13a17502f7702670fbb78348dbb8019",
+  "tree_entries": 1752,
+  "tree_truncated": false,
+  "context_files": [
+    {
+      "path": "docs/gsd/ROADMAP.md",
+      "git_blob": "6a561642a096043d262bb02041bb1b9346903117",
+      "url": "https://github.com/HouMinXi/forge/blob/e9c78d47f2e1a191e7675168223c7b2bf084aa9c/docs/gsd/ROADMAP.md",
+      "identical_at_preceding_ref": "e0129c083c0bbb4daee1e5440e6a3a66abfc79b8"
+    },
+    {
+      "path": "docs/gsd/PROJECT.md",
+      "git_blob": "f48006e5607e9f063b74a9d815236f35f21f52ac",
+      "url": "https://github.com/HouMinXi/forge/blob/e9c78d47f2e1a191e7675168223c7b2bf084aa9c/docs/gsd/PROJECT.md",
+      "identical_at_preceding_ref": "e0129c083c0bbb4daee1e5440e6a3a66abfc79b8"
+    },
+    {
+      "path": "docs/gsd/REQUIREMENTS.md",
+      "git_blob": "ce85f69cbb448c5632f6076df75e6b2e2f95c9f3",
+      "url": "https://github.com/HouMinXi/forge/blob/e9c78d47f2e1a191e7675168223c7b2bf084aa9c/docs/gsd/REQUIREMENTS.md",
+      "identical_at_preceding_ref": "e0129c083c0bbb4daee1e5440e6a3a66abfc79b8"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-CONTEXT.md",
+      "git_blob": "756381731b8ff78244b45023455aebedd0939f8d",
+      "url": "https://github.com/HouMinXi/forge/blob/e9c78d47f2e1a191e7675168223c7b2bf084aa9c/docs/gsd/phases/59-judgment-and-evidence/59-CONTEXT.md",
+      "identical_at_preceding_ref": "e0129c083c0bbb4daee1e5440e6a3a66abfc79b8"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-RESEARCH.md",
+      "git_blob": "629ff7cab838ed3376b9ed3808a1e77aa2c76255",
+      "url": "https://github.com/HouMinXi/forge/blob/e9c78d47f2e1a191e7675168223c7b2bf084aa9c/docs/gsd/phases/59-judgment-and-evidence/59-RESEARCH.md",
+      "identical_at_preceding_ref": "e0129c083c0bbb4daee1e5440e6a3a66abfc79b8"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-PATTERNS.md",
+      "git_blob": "901a432b9f3622f9726c318f97f17b2f230ed5ec",
+      "url": "https://github.com/HouMinXi/forge/blob/e9c78d47f2e1a191e7675168223c7b2bf084aa9c/docs/gsd/phases/59-judgment-and-evidence/59-PATTERNS.md",
+      "identical_at_preceding_ref": "e0129c083c0bbb4daee1e5440e6a3a66abfc79b8"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-VALIDATION.md",
+      "git_blob": "5adafe5a466bb6b24b2d396ea74d8f3efeb7c088",
+      "url": "https://github.com/HouMinXi/forge/blob/e9c78d47f2e1a191e7675168223c7b2bf084aa9c/docs/gsd/phases/59-judgment-and-evidence/59-VALIDATION.md",
+      "identical_at_preceding_ref": "e0129c083c0bbb4daee1e5440e6a3a66abfc79b8"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-02-PLAN.md",
+      "git_blob": "18d789bdc2f4b6a0524b3e039beb127f09af30dd",
+      "url": "https://github.com/HouMinXi/forge/blob/e9c78d47f2e1a191e7675168223c7b2bf084aa9c/docs/gsd/phases/59-judgment-and-evidence/59-02-PLAN.md",
+      "identical_at_preceding_ref": "e0129c083c0bbb4daee1e5440e6a3a66abfc79b8"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-17-PLAN.md",
+      "git_blob": "7291c18d7039ddf6af94dd9ae41d1e87431668f6",
+      "url": "https://github.com/HouMinXi/forge/blob/e9c78d47f2e1a191e7675168223c7b2bf084aa9c/docs/gsd/phases/59-judgment-and-evidence/59-17-PLAN.md",
+      "identical_at_preceding_ref": "e0129c083c0bbb4daee1e5440e6a3a66abfc79b8"
+    }
+  ],
+  "absent_public_paths": [
+    "CLAUDE.md",
+    ".planning/config.json",
+    "docs/gsd/phases/59-judgment-and-evidence/closeout/BINDING.json"
+  ],
+  "phase_catalog": [
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-01-PLAN.md",
+      "git_blob": "8b251329931af137960eed7612dd500f61a78ce5",
+      "plan": "01",
+      "wave": 1,
+      "depends_on": [],
+      "files_modified": [
+        "src/code_forge/llm_invoke.py",
+        "src/code_forge/factories.py",
+        "src/code_forge/machine.py",
+        "src/code_forge/outlet_c.py",
+        "src/code_forge/receipt.py",
+        "tests/test_raw_l1_rejections.py"
+      ],
+      "requirements": [
+        "INV-06",
+        "INV-08"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-02-PLAN.md",
+      "git_blob": "18d789bdc2f4b6a0524b3e039beb127f09af30dd",
+      "plan": "02",
+      "wave": 1,
+      "depends_on": [],
+      "files_modified": [
+        "scripts/validate_judgment_acceptance.py",
+        ".planning/phases/59-judgment-and-evidence/closeout/BINDING.json",
+        "tests/test_phase59_acceptance_binding.py"
+      ],
+      "requirements": [
+        "P59-CLOSE"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-03-PLAN.md",
+      "git_blob": "dec4d5df5fce7d0350179c6a05686654e1ec25a1",
+      "plan": "03",
+      "wave": 1,
+      "depends_on": [],
+      "files_modified": [
+        "src/code_forge/invocation_audit.py",
+        "tests/test_invocation_audit.py"
+      ],
+      "requirements": [
+        "INV-06",
+        "INV-07",
+        "INV-08"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-04-PLAN.md",
+      "git_blob": "18cf7e7f5ff048a2ad07d39fcfb6af94762973cc",
+      "plan": "04",
+      "wave": 2,
+      "depends_on": [
+        "59-03"
+      ],
+      "files_modified": [
+        "src/code_forge/investigation.py",
+        "tests/test_investigation_budget.py"
+      ],
+      "requirements": [
+        "INV-05",
+        "INV-08"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-05-PLAN.md",
+      "git_blob": "8543d339f205696eea0f1014e68bb612711b25a7",
+      "plan": "05",
+      "wave": 3,
+      "depends_on": [
+        "59-01",
+        "59-03",
+        "59-04"
+      ],
+      "files_modified": [
+        "src/code_forge/llm_invoke.py",
+        "tests/test_invocation_audit.py",
+        "tests/test_invoke_attempt_journal.py"
+      ],
+      "requirements": [
+        "INV-06",
+        "INV-07",
+        "INV-05"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-06-PLAN.md",
+      "git_blob": "987b76c360ec3505b9fe7c1731c7a4c542ba39d2",
+      "plan": "06",
+      "wave": 4,
+      "depends_on": [
+        "59-05"
+      ],
+      "files_modified": [
+        "src/code_forge/factories.py",
+        "src/code_forge/falsify_real.py",
+        "src/code_forge/cross_repo.py",
+        "tests/test_review_owner_factories.py"
+      ],
+      "requirements": [
+        "INV-06",
+        "INV-07",
+        "INV-05",
+        "INV-08"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-07-PLAN.md",
+      "git_blob": "f1b30bb94e98b072109be3b81ab7345e6cfd106f",
+      "plan": "07",
+      "wave": 4,
+      "depends_on": [
+        "59-05"
+      ],
+      "files_modified": [
+        "src/code_forge/contract_loader.py",
+        "src/code_forge/daemon_state.py",
+        "src/code_forge/runtime.py",
+        "tests/test_review_owner_advisories.py"
+      ],
+      "requirements": [
+        "INV-06",
+        "INV-07",
+        "INV-05"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-08-PLAN.md",
+      "git_blob": "610ae5d93914b6b9d852d8a5b7f3d1ebc88f649e",
+      "plan": "08",
+      "wave": 5,
+      "depends_on": [
+        "59-06",
+        "59-07"
+      ],
+      "files_modified": [
+        "src/code_forge/cli.py",
+        "src/code_forge/machine.py",
+        "src/code_forge/context_sources.py",
+        "tests/test_review_run_public.py"
+      ],
+      "requirements": [
+        "INV-05",
+        "INV-06",
+        "INV-07",
+        "INV-08",
+        "P59-CLOSE"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-09-PLAN.md",
+      "git_blob": "60c930289368e64e7a1ca0ac15ed1815d53140fa",
+      "plan": "09",
+      "wave": 3,
+      "depends_on": [
+        "59-04"
+      ],
+      "files_modified": [
+        "src/code_forge/investigation_snapshot.py",
+        "tests/test_investigation_snapshot.py"
+      ],
+      "requirements": [
+        "INV-01",
+        "INV-08"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-10-PLAN.md",
+      "git_blob": "9f22569b3d7eb5fdbbc4b2e870dd926f94515d37",
+      "plan": "10",
+      "wave": 4,
+      "depends_on": [
+        "59-09"
+      ],
+      "files_modified": [
+        "src/code_forge/investigation_snapshot.py",
+        "tests/test_investigation_calls.py"
+      ],
+      "requirements": [
+        "INV-02",
+        "INV-08"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-11-PLAN.md",
+      "git_blob": "e27cb80ba7a5cfc430f673f27ff2e287392a4184",
+      "plan": "11",
+      "wave": 4,
+      "depends_on": [
+        "59-09"
+      ],
+      "files_modified": [
+        "src/code_forge/investigation_recipe.py",
+        "src/code_forge/review_envelope_worker.py",
+        "tests/test_investigation_recipe.py"
+      ],
+      "requirements": [
+        "INV-03",
+        "INV-05",
+        "INV-08"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-12-PLAN.md",
+      "git_blob": "357cbc34666f90a182bc422f99e0fd758917a3f1",
+      "plan": "12",
+      "wave": 5,
+      "depends_on": [
+        "59-05",
+        "59-10",
+        "59-11"
+      ],
+      "files_modified": [
+        "src/code_forge/investigation_adapter.py",
+        "tests/test_investigation_protocol.py"
+      ],
+      "requirements": [
+        "INV-04",
+        "INV-01",
+        "INV-02",
+        "INV-03",
+        "INV-05",
+        "INV-08"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-13-PLAN.md",
+      "git_blob": "820f6318b368d96cbf19945578ac63a5d02d36d6",
+      "plan": "13",
+      "wave": 6,
+      "depends_on": [
+        "59-08",
+        "59-12"
+      ],
+      "files_modified": [
+        "src/code_forge/factories.py",
+        "src/code_forge/cli.py",
+        "tests/test_investigation_public_path.py"
+      ],
+      "requirements": [
+        "INV-01",
+        "INV-02",
+        "INV-03",
+        "INV-04",
+        "INV-05",
+        "INV-06",
+        "INV-07",
+        "INV-08"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-14-PLAN.md",
+      "git_blob": "671c24f27c8d2241c3c126b1aa3faad6bf3f4375",
+      "plan": "14",
+      "wave": 7,
+      "depends_on": [
+        "59-13"
+      ],
+      "files_modified": [
+        "src/code_forge/mcp_server.py",
+        "src/code_forge/mcp_jobs.py",
+        "tests/test_investigation_mcp.py"
+      ],
+      "requirements": [
+        "INV-04",
+        "INV-05",
+        "INV-06",
+        "INV-07",
+        "INV-08",
+        "INV-03"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-15-PLAN.md",
+      "git_blob": "deedee6759b5fe617f332f8680b9ce02f31716fd",
+      "plan": "15",
+      "wave": 7,
+      "depends_on": [
+        "59-13",
+        "59-02"
+      ],
+      "files_modified": [
+        "src/code_forge/eval/scorer.py",
+        "src/code_forge/eval/runner.py",
+        "src/code_forge/eval/ledger_jsonl.py",
+        "src/code_forge/cli.py",
+        "tests/test_eval_context_accounting.py"
+      ],
+      "requirements": [
+        "P59-CLOSE",
+        "INV-07"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-16-PLAN.md",
+      "git_blob": "cca9e1e46208113a36f11e36b852e901a645f2a5",
+      "plan": "16",
+      "wave": 2,
+      "depends_on": [
+        "59-02"
+      ],
+      "files_modified": [
+        "scripts/analyse_arms.py",
+        "tests/test_analyse_arms.py"
+      ],
+      "requirements": [
+        "P59-CLOSE"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-17-PLAN.md",
+      "git_blob": "7291c18d7039ddf6af94dd9ae41d1e87431668f6",
+      "plan": "17",
+      "wave": 8,
+      "depends_on": [
+        "59-02",
+        "59-15",
+        "59-16"
+      ],
+      "files_modified": [
+        "scripts/validate_judgment_acceptance.py",
+        ".planning/phases/59-judgment-and-evidence/closeout/run_acceptance.py",
+        ".planning/phases/59-judgment-and-evidence/closeout/ACCEPTANCE.json",
+        ".planning/phases/59-judgment-and-evidence/closeout/phase-59-judgment-and-evidence.md",
+        "tests/test_phase59_closeout.py"
+      ],
+      "requirements": [
+        "P59-CLOSE"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    },
+    {
+      "path": "docs/gsd/phases/59-judgment-and-evidence/59-18-PLAN.md",
+      "git_blob": "96e321cb6d2d4cbab5b00ac37bc554cbba1540ac",
+      "plan": "18",
+      "wave": 9,
+      "depends_on": [
+        "59-14",
+        "59-17"
+      ],
+      "files_modified": [
+        "tests/test_phase59_qualification.py",
+        ".planning/phases/59-judgment-and-evidence/qualification/RESULTS.json"
+      ],
+      "requirements": [
+        "P59-CLOSE",
+        "INV-01",
+        "INV-02",
+        "INV-03",
+        "INV-04",
+        "INV-05",
+        "INV-06",
+        "INV-07",
+        "INV-08"
+      ],
+      "read_extent": "lines 1-30 frontmatter only"
+    }
+  ]
+}
