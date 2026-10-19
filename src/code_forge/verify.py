@@ -1040,11 +1040,17 @@ def assess_excerpt_evidence(
     count_error = f"excerpt {location} declares {claimed} lines but carries {len(actual_lines)}"
     # One line of slack is coordinate jitter. Two short is still a miscount
     # unless a frozen source is present to prove the omitted lines are blank.
+    # Two long is the mirror case: the model pasted past its declared end.
+    # Only a frozen source can prove those extra lines are the real next
+    # lines, so the count gate lets that one case through to the byte check.
     if not excerpt_line_count_matches(text, claimed):
         two_short_with_source = (
             post_image is not None and claimed == len(actual_lines) + 2
         )
-        if not two_short_with_source:
+        two_long_with_source = (
+            post_image is not None and len(actual_lines) == claimed + 2
+        )
+        if not (two_short_with_source or two_long_with_source):
             return ExcerptAssessment(invalid, count_error)
     if hunk_map is None:
         return ExcerptAssessment(valid)
@@ -1062,6 +1068,19 @@ def assess_excerpt_evidence(
         return ExcerptAssessment(valid)
 
     file_lines = post_image.get(exc_file, {})
+    long_by_two = len(actual_lines) == claimed + 2
+    if long_by_two:
+        # The declared range is short. Accept only when every carried line,
+        # including the two past end_line, is byte-identical to the source
+        # starting at the declared start. A mismatch stays a miscount.
+        carried = {exc_start + i: line for i, line in enumerate(actual_lines)}
+        exact = all(
+            n in file_lines and _line_content_matches(line, file_lines[n])
+            for n, line in carried.items()
+        )
+        if exact:
+            return _anchored_assessment(untrusted, count_error, carried, hunks, location)
+        return ExcerptAssessment(invalid, count_error)
     long_by_one = len(actual_lines) == claimed + 1
     if long_by_one and actual_lines and not actual_lines[0].strip():
         actual_lines = actual_lines[1:]

@@ -838,3 +838,24 @@ def test_two_omitted_lines_stay_invalid_when_the_tail_has_content():
     assessment = _assess(diff, exc)
     assert assessment.status is ExcerptStatus.INVALID
     assert assessment.proven_lines == frozenset()
+
+
+def test_two_extra_lines_byte_identical_to_source_are_untrusted_not_invalid():
+    from code_forge.verify import ExcerptStatus
+
+    diff = _diff(["def parse(raw):", "    try:", "        return float(raw)", "    except ValueError as exc:", "        raise ProbeError(raw) from exc"])
+    exc = _exc(1, 3, "def parse(raw):\n    try:\n        return float(raw)\n    except ValueError as exc:\n        raise ProbeError(raw) from exc")
+    assessment = _assess(diff, exc)
+    assert assessment.status is ExcerptStatus.UNTRUSTED
+    assert assessment.proven_lines == frozenset({1, 2, 3, 4, 5})
+    assert assessment.diagnostic == "excerpt mod.py:1-3 declares 3 lines but carries 5"
+
+
+def test_two_extra_lines_stay_invalid_when_they_do_not_match_source():
+    from code_forge.verify import ExcerptStatus
+
+    diff = _diff(["def parse(raw):", "    try:", "        return float(raw)", "    except ValueError as exc:", "        raise ProbeError(raw) from exc"])
+    exc = _exc(1, 3, "def parse(raw):\n    try:\n        return float(raw)\n    except ValueError as exc:\n        return None")
+    assessment = _assess(diff, exc)
+    assert assessment.status is ExcerptStatus.INVALID
+    assert assessment.proven_lines == frozenset()
