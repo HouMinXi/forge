@@ -1,5 +1,7 @@
 """Interpreter "Exception ignored" reports are never the baseline cause."""
 
+import pytest
+
 from code_forge.baseline_guard import _output_detail
 
 _ECHILD = (
@@ -42,8 +44,9 @@ def test_report_without_traceback_drops_its_exception_line():
         "Exception ignored while calling deallocator <function ResourceTracker.__del__>:\n"
         "ChildProcessError: [Errno 10] No child processes\n"
     )
-    detail = _output_detail(noise + "x" * 300 + "\n", None)
-    assert _clean(detail) and detail.startswith("; stderr: xxx"), detail
+    real = "ModuleNotFoundError: No module named 'pkg'\n" + "x" * 300 + "\n"
+    detail = _output_detail(noise + real, None)
+    assert _clean(detail) and detail.startswith("; stderr: ModuleNotFoundError"), detail
 
 
 def test_real_cause_after_ignored_report_is_kept():
@@ -65,3 +68,59 @@ def test_real_cause_before_ignored_report_is_kept():
     )
     detail = _output_detail(real + _ECHILD + _PAD, None)
     assert "ValueError: bad" in detail
+
+
+# Real Python 3.12 unraisable output for raise RuntimeError("line1\nline2 continues")
+_MULTILINE = (
+    "Exception ignored in: <function C.__del__ at 0x7f876e444e00>\n"
+    "Traceback (most recent call last):\n"
+    '  File "/tmp/u2.py", line 7, in __del__\n'
+    '    def __del__(self): raise RuntimeError("line1\\nline2 continues")\n'
+    "                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"
+    "RuntimeError: line1\n"
+    "line2 continues\n"
+    "line3 also the message\n"
+)
+
+
+def test_multiline_ignored_message_continuation_is_dropped():
+    """#182 falsification P3: a message spanning lines leaked its continuation."""
+    detail = _output_detail(_MULTILINE, None)
+    assert "line2" not in detail and "line3" not in detail and "line1" not in detail
+
+
+@pytest.mark.parametrize(
+    "real",
+    [
+        "/usr/bin/python3: No module named pytest",
+        "No module named pytest",
+        "ModuleNotFoundError: No module named 'pkg'",
+        "E   assert 1 == 2",
+        "FAILED tests/test_mod.py::test_x - assert 1 == 2",
+        "ERROR tests/test_mod.py - ImportError",
+        "= 1 failed in 0.1s =",
+    ],
+)
+def test_output_after_a_multiline_ignored_message_is_kept(real):
+    detail = _output_detail(_MULTILINE + real + "\n", None)
+    assert " ".join(real.split()) in detail and "line2" not in detail
+
+
+def test_unrecognized_prose_right_after_an_ignored_report_is_dropped():
+    """Known limit: Python prints nothing after the message, so a plain line
+    that doesn't look like output is read as message continuation until a
+    line that does (blank, indented, ``prog: msg``, pytest markers)."""
+    noise = "Exception ignored in: <x>\nChildProcessError: [Errno 10] No child processes\n"
+    detail = _output_detail(noise + "plain prose\nE   assert 0\n", None)
+    assert "plain prose" not in detail and "E assert 0" in detail
+
+
+def test_next_ignored_report_ends_a_multiline_message():
+    detail = _output_detail(_MULTILINE + _ECHILD + "No module named pytest\n", None)
+    assert "No module named pytest" in detail
+    assert "line2" not in detail and "ChildProcessError" not in detail
+
+
+def test_blank_line_ends_a_multiline_ignored_message():
+    detail = _output_detail(_MULTILINE + "\nplain cause text\n", None)
+    assert "plain cause text" in detail and "line2" not in detail

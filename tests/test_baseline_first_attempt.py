@@ -8,7 +8,14 @@ from code_forge import fixval, mutation
 from code_forge.baseline_guard import _run_baseline_guard
 from tests.test_baseline_failure_causes import CMD, PATCH, private_project  # noqa: F401
 
-FIRST = "Exception ignored in: <function _OwnedTree.__del__>\nChildProcessError: [Errno 10] No child processes\nNo module named pytest\n"
+# The first attempt's real cause names the venv interpreter, so it can't be
+# confused with the retry's. The ECHILD unraisable report around it is noise
+# (#181/#185): it is not the cause of either attempt and must not be reported.
+FIRST_CAUSE = "/private-venv/bin/python: No module named pytest"
+FIRST = (
+    "Exception ignored in: <function _OwnedTree.__del__>\n"
+    "ChildProcessError: [Errno 10] No child processes\n" + FIRST_CAUSE + "\n"
+)
 RETRY = "/usr/bin/python3: No module named pytest\n"
 
 
@@ -23,7 +30,8 @@ def two_phase(calls):
 def assert_both_causes(description):
     assert "(after env retry)" in description
     assert "first attempt: run 1: returncode 1" in description
-    assert "No child processes" in description
+    assert "first attempt: run 1: returncode 1; stderr: %s]" % FIRST_CAUSE in description
+    assert "No child processes" not in description and "Exception ignored" not in description
     assert RETRY.strip() in description
 
 
@@ -35,7 +43,7 @@ def test_guard_hands_back_first_cause_and_reports_it_on_retry():
         CMD, env, "/", allow_strip_retry=True, run_command=run, retry_cause=cause
     )
     assert (status, findings, infra) == ("needs_strip_retry", [], [])
-    assert len(cause) == 1 and "No child processes" in cause[0]
+    assert cause == ["run 1: returncode 1; stderr: %s" % FIRST_CAUSE]
     status, findings, infra = _run_baseline_guard(
         CMD, {"PATH": "/usr/bin"}, "/", allow_strip_retry=False, run_command=run, first_attempt=cause[0]
     )
