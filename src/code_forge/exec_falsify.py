@@ -23,6 +23,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+from ._mutation_process import child_sigint_options
+
 
 class ExecStatus(str, Enum):
     """Execution falsifier outcome."""
@@ -365,6 +367,7 @@ class ExecFalsifier:
                         stderr=stderr_f,
                         start_new_session=True,
                         env=child_env,
+                        **child_sigint_options(),
                     )
                 except (OSError, ValueError, subprocess.SubprocessError) as exc:
                     return ExecEvidence(

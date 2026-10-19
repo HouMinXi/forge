@@ -33,6 +33,7 @@ import unidiff
 
 from .advisory import AdvisoryFinding
 from ._fixval_transaction import FixvalTransaction, TransactionError
+from ._mutation_process import child_sigint_options
 from .disposition import Disposition
 from .diff import changed_files_in_order, iter_diff_sections, patched_file_path
 from code_forge.baseline_guard import (
@@ -270,6 +271,7 @@ def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root) -> Fixva
         errors="replace",
         timeout=600,
         check=False,
+        **child_sigint_options(),  # #230
         cwd=repo_root,
     )
     if result.returncode != 0:
@@ -827,6 +829,7 @@ def run_overfit_guard(
                 timeout=600,
                 check=False,
                 cwd=str(cwd),
+                **child_sigint_options(),  # #230
             )
 
             if result.returncode != 0:
