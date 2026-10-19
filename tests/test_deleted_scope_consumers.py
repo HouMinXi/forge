@@ -1330,7 +1330,6 @@ def _retained_transaction_fixture(tmp_path, monkeypatch):
     [
         "reverse",
         "test_oserror",
-        "test_timeout",
         "test_cancel",
         "forward",
         "forward_cancel",
@@ -1368,11 +1367,9 @@ def test_real_fixval_transaction_error_never_passes_or_overwrites_foreign(
         is_test = "pytest" in argv
         if is_test:
             test_calls += 1
-        if is_test and test_calls == 4 and failure in {"test_oserror", "test_timeout", "test_cancel"}:
+        if is_test and test_calls == 4 and failure in {"test_oserror", "test_cancel"}:
             if failure == "test_oserror":
                 raise OSError("injected test process failure")
-            if failure == "test_timeout":
-                raise subprocess.TimeoutExpired(argv, 600)
             raise KeyboardInterrupt("injected test cancellation")
         is_reverse = argv[:3] == ["git", "apply", "-R"]
         is_forward = argv[:2] == ["git", "apply"] and not is_reverse
@@ -1487,6 +1484,42 @@ def test_real_fixval_transaction_error_never_passes_or_overwrites_foreign(
         assert not list(_recovery_paths(tmp_path))
     else:
         assert list(_recovery_paths(tmp_path))
+    assert (tmp_path / ".git/index").read_bytes() == index_before
+    assert _git(tmp_path, "diff", "--cached", "--binary") == diff
+    assert machine._source_files() == files
+
+
+def test_real_fixval_reverted_timeout_is_inconclusive_not_pass(tmp_path, monkeypatch):
+    """#187: a timed-out reverted run measured nothing. It is not a transaction
+    error (restoration completes, no recovery is retained) and not PASS: the
+    verdict is FAIL with a FIXVAL_INCONCLUSIVE finding naming the timeout."""
+    from code_forge.state import Verdict
+
+    machine, diff, files, retained_before, index_before = _retained_transaction_fixture(
+        tmp_path, monkeypatch
+    )
+    real_run = subprocess.run
+    test_calls = 0
+
+    def exercise(argv, **kwargs):
+        nonlocal test_calls
+        if "pytest" in argv:
+            test_calls += 1
+            if test_calls == 4:
+                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", exercise)
+    machine._finalize_local_terminal()
+    assert test_calls == 4
+    assert machine._state.verdict == Verdict.FAIL
+    assert not machine._state.converged
+    assert not [f for f in machine._state.findings if f.id == "FIXVAL_TRANSACTION"]
+    (finding,) = [f for f in machine._state.findings if f.id == "FIXVAL_INCONCLUSIVE"]
+    assert "reverted-code test run timed out after" in finding.description
+    assert (tmp_path / "src/model.py").read_bytes() == b"value = 2\n"
+    assert _retained_identity(tmp_path / "src/gone.py") == retained_before
+    assert not list(_recovery_paths(tmp_path))
     assert (tmp_path / ".git/index").read_bytes() == index_before
     assert _git(tmp_path, "diff", "--cached", "--binary") == diff
     assert machine._source_files() == files
