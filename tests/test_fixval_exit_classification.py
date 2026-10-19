@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """#252: an unjudged reverted-code run is not FIXVAL PASS.
 
-A signal death is inconclusive for any runner. For pytest only exit 1 (tests
-failed) is a judgement; 2-5 and other codes are inconclusive (exit 2 includes
-collection errors, held under #28). Other runners keep "nonzero = fails"."""
+A signal death is inconclusive for any runner. For pytest, exit 1 (tests
+failed) and exit 2 (interrupted or collection error) count as failing exactly as
+on main, pending #28; 3-5 and other codes are inconclusive. Other runners keep
+"nonzero = fails"."""
 
 import os
 import stat
@@ -12,7 +13,13 @@ import sys
 import pytest
 
 from code_forge.disposition import Disposition
-from code_forge.fixval import FixvalCandidate, FixvalStatus, _runs_pytest, _test_reverted_candidate, run_overfit_guard
+from code_forge.fixval import (
+    FixvalCandidate,
+    FixvalStatus,
+    _runs_pytest,
+    _test_reverted_candidate,
+    run_overfit_guard,
+)
 
 CANDIDATE = FixvalCandidate(["tests/test_mod.py"], ["src/mod.py"])
 KILL = "import os, signal; os.kill(os.getpid(), signal.%s)"
@@ -51,7 +58,6 @@ def test_reverted_run_killed_by_signal_is_inconclusive_for_any_runner(tmp_path, 
 @pytest.mark.parametrize(
     ("code", "label"),
     [
-        (2, "interrupted or collection error"),
         (3, "internal error"),
         (4, "usage error"),
         (5, "no tests collected"),
@@ -59,11 +65,16 @@ def test_reverted_run_killed_by_signal_is_inconclusive_for_any_runner(tmp_path, 
     ],
 )
 def test_pytest_non_failure_exit_is_inconclusive(tmp_path, code, label):
-    _assert_inconclusive(_reverted(tmp_path, _fake_pytest(tmp_path, code)), "pytest exit %d (%s)" % (code, label), "Output: boom")
+    _assert_inconclusive(
+        _reverted(tmp_path, _fake_pytest(tmp_path, code)),
+        "pytest exit %d (%s)" % (code, label),
+        "Output: boom",
+    )
 
 
-def test_pytest_exit_1_is_pass(tmp_path):
-    assert _reverted(tmp_path, _fake_pytest(tmp_path, 1)).status == FixvalStatus.PASS
+@pytest.mark.parametrize("code", [1, 2])
+def test_pytest_exit_1_and_2_are_pass_as_on_main(tmp_path, code):
+    assert _reverted(tmp_path, _fake_pytest(tmp_path, code)).status == FixvalStatus.PASS
 
 
 @pytest.mark.parametrize("code", [1, 2, 3, 5, 7, 127])
@@ -86,6 +97,27 @@ def test_passing_run_is_still_hollow(tmp_path):
         (["py.test"], True),
         (["python3", "-m", "pytest", "tests/test_x.py"], True),
         (["uv", "run", "pytest"], True),
+        (["poetry", "run", "python", "-m", "pytest"], True),
+        (["python3.12", "-B", "-W", "error", "-X", "dev", "-m", "pytest"], True),
+        (["python", "-mpytest"], True),
+        (["C:\\venv\\Scripts\\pytest.exe", "-q"], True),
+        (["C:\\Python312\\python.exe", "-m", "py.test"], True),
+        (["make", "pytest"], False),
+        (["tox", "-e", "pytest"], False),
+        (["uv", "pip", "pytest"], False),
+        (["uv", "run"], False),
+        (["python3", "-m", "pytest_cov"], False),
+        (["python3", "-m"], False),
+        (["python3", "run_pytest.py", "-m", "pytest"], False),
+        (["python3", "-c", "import pytest", "-m", "pytest"], False),
+        (["python3", "-c", "-m", "pytest"], False),
+        (["python3", "-mpytest_cov"], False),
+        (["C:\\Python312\\Python.EXE", "-m", "pytest"], True),
+        (["python3", "-", "-m", "pytest"], False),
+        (["python3", "-W", "-m", "pytest"], False),
+        (["pythonista", "-m", "pytest"], False),
+        (["mypytest"], False),
+        ([], False),
         (["make", "test"], False),
         (["python3", "-m", "unittest"], False),
         (["python3", "tests/test_pytest_helpers.py"], False),
@@ -98,25 +130,36 @@ def test_runs_pytest_detection(cmd, expected):
 
 def _real_pytest(tmp_path, body):
     (tmp_path / "test_probe.py").write_text(body)
-    return [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist", "test_probe.py"]
+    return [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "-p",
+        "no:xdist",
+        "test_probe.py",
+    ]
 
 
 def test_real_pytest_failing_test_is_pass(tmp_path):
-    assert _reverted(tmp_path, _real_pytest(tmp_path, "def test_it():\n    assert False\n")).status == FixvalStatus.PASS
+    assert (
+        _reverted(tmp_path, _real_pytest(tmp_path, "def test_it():\n    assert False\n")).status
+        == FixvalStatus.PASS
+    )
 
 
-def test_real_pytest_collection_error_is_inconclusive_pending_28(tmp_path):
+def test_real_pytest_import_of_name_the_fix_adds_is_pass_pending_28(tmp_path):
+    # the reverted code lacks `helper`: collection error, exit 2, counted as failing as on main
     cmd = _real_pytest(tmp_path, "from added_by_fix import helper\ndef test_it():\n    helper()\n")
-    _assert_inconclusive(_reverted(tmp_path, cmd), "pytest exit 2 (interrupted or collection error)")
-
-
-def test_real_pytest_keyboard_interrupt_is_inconclusive(tmp_path):
-    cmd = _real_pytest(tmp_path, "def test_it():\n    raise KeyboardInterrupt\n")
-    _assert_inconclusive(_reverted(tmp_path, cmd), "pytest exit 2")
+    assert _reverted(tmp_path, cmd).status == FixvalStatus.PASS
 
 
 def test_real_pytest_no_tests_is_inconclusive(tmp_path):
-    _assert_inconclusive(_reverted(tmp_path, _real_pytest(tmp_path, "x = 1\n")), "pytest exit 5 (no tests collected)")
+    _assert_inconclusive(
+        _reverted(tmp_path, _real_pytest(tmp_path, "x = 1\n")), "pytest exit 5 (no tests collected)"
+    )
 
 
 def _overfit(tmp_path, cmd):
@@ -143,7 +186,11 @@ def test_overfit_guard_unjudged_run_is_inconclusive_not_overfit(tmp_path, kind):
 
 @pytest.mark.parametrize("runner", ["pytest", "other"])
 def test_overfit_guard_failing_test_is_overfit(tmp_path, runner):
-    cmd = _fake_pytest(tmp_path, 1) if runner == "pytest" else [sys.executable, "-c", "import sys; sys.exit(2)"]
+    cmd = (
+        _fake_pytest(tmp_path, 1)
+        if runner == "pytest"
+        else [sys.executable, "-c", "import sys; sys.exit(2)"]
+    )
     assert [a.id for a in _overfit(tmp_path, cmd)] == ["FIXVAL_OVERFIT"]
 
 

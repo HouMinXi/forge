@@ -257,26 +257,61 @@ def _transaction_block(message: str, recovery: str) -> FixvalResult:
 # #252: only a judged test failure counts as "fails on the reverted code".
 # pytest's exit codes have fixed meanings; other runners' codes don't (make
 # uses 2 for a failed recipe), so they keep "nonzero = fails" except signals.
+# Exit 1 (tests failed) and exit 2 (interrupted or collection error) count as
+# failing, exactly as before #252: a test importing a name the fix adds exits
+# 2 on the reverted code. Whether collection errors are RED witnesses is #28.
+_PYTEST_JUDGED = frozenset({1, 2})
 _PYTEST_EXIT = {
-    2: "interrupted or collection error",
     3: "internal error",
     4: "usage error",
     5: "no tests collected",
 }
 _PYTEST_NAMES = frozenset({"pytest", "py.test"})
+_RUN_WRAPPERS = frozenset({"uv", "poetry", "pdm", "pipenv", "hatch"})
+_PYTHON = re.compile(r"python(\d+(\.\d+)*)?")
+# CPython options that consume the following argument.
+_PYTHON_ARG_OPTIONS = frozenset({"-W", "-X"})
+
+
+def _program(arg: str) -> str:
+    name = os.path.basename(str(arg).replace("\\", "/")).lower()
+    return name[: -len(".exe")] if name.endswith(".exe") else name
 
 
 def _runs_pytest(cmd: list[str]) -> bool:
-    """`pytest ...`, `python -m pytest ...`, `uv run pytest ...`."""
-    return any(os.path.basename(str(arg)) in _PYTEST_NAMES for arg in cmd)
+    """Whether the runner itself is pytest, not merely an argument named so.
+
+    `pytest ...`, `<venv>/bin/py.test ...`, `python -B -m pytest ...`, and
+    either behind `uv run` (or poetry/pdm/pipenv/hatch run). `make pytest`
+    and `tox -e pytest` run some other program.
+    """
+    argv = [str(arg) for arg in cmd]
+    if len(argv) >= 2 and _program(argv[0]) in _RUN_WRAPPERS and argv[1] == "run":
+        argv = argv[2:]
+    if not argv:
+        return False
+    if _program(argv[0]) in _PYTEST_NAMES:
+        return True
+    if not _PYTHON.fullmatch(_program(argv[0])):
+        return False
+    rest = iter(argv[1:])
+    for arg in rest:
+        if arg == "-m":
+            return next(rest, "") in _PYTEST_NAMES
+        if arg.startswith("-m"):
+            return arg[2:] in _PYTEST_NAMES
+        if arg in _PYTHON_ARG_OPTIONS:
+            next(rest, None)
+        elif not arg.startswith("-") or arg in ("-", "-c"):
+            return False  # a script, stdin or -c code: not `-m pytest`
+    return False
 
 
 def _judged_failure(cmd: list[str], result: subprocess.CompletedProcess) -> str | None:
     """Return None when a nonzero run judged the tests as failing, else why not.
 
-    A signal death never judged anything. For pytest only exit 1 (tests
-    failed) is a judgement; collection errors (exit 2) stay inconclusive
-    pending #28.
+    A signal death never judged anything. For pytest, exits 1 and 2 are
+    judgements (2 pending #28); 3, 4, 5 and unknown codes are not.
     """
     code = result.returncode
     if code < 0:
@@ -285,13 +320,16 @@ def _judged_failure(cmd: list[str], result: subprocess.CompletedProcess) -> str 
         except ValueError:
             name = "signal %d" % -code
         return "test run killed by %s (exit %d)" % (name, code)
-    if not _runs_pytest(cmd) or code == 1:
+    if code in _PYTEST_JUDGED or not _runs_pytest(cmd):
         return None
     return "pytest exit %d (%s)" % (code, _PYTEST_EXIT.get(code, "not a test-failure exit"))
 
 
 def _inconclusive_block(reason: str, result: subprocess.CompletedProcess) -> FixvalResult:
-    detail = "FIXVAL inconclusive: reverted-code %s; the test was not judged, so the fix is unverified" % reason
+    detail = (
+        "FIXVAL inconclusive: reverted-code %s; the test was not judged, so the fix is unverified"
+        % reason
+    )
     tail = " ".join((result.stderr or result.stdout or "").split())[-200:]
     if tail:
         detail += ". Output: %s" % tail
