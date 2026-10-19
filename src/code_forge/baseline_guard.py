@@ -248,6 +248,10 @@ _REAL_OUTPUT = re.compile(
     r"|collected \d|\[gw\d"
     r"|INTERNALERROR>|Fatal Python error\b|Killed\b|Segmentation fault\b|Aborted\b"
     r"|ImportError while\b|\S+ ERR!"  # pytest/interpreter/shell crashes, npm-style tools
+    r"|Bus error\b|Terminated\b|Hangup\b|Illegal instruction\b"  # more signal deaths (#263)
+    r"|\S+\s.*\[\s*\d+%\]\s*$"  # pytest progress: "tests/test_x.py ..F.  [ 40%]"
+    r"|\d+ (?:failed|passed|errors?|skipped|deselected|xfailed|xpassed|warnings?)\b"
+    r"|no tests ran\b"  # pytest count/summary lines
 )
 
 
@@ -274,7 +278,8 @@ def _output_detail(stderr: str | bytes | None, stdout: str | bytes | None) -> st
         if not normalized and omitted[0]:
             # The continuation heuristic may have eaten the real cause; never
             # leave the cause silently empty (#182 review).
-            normalized = "(%d lines after an ignored-exception report omitted)" % omitted[0]
+            count = omitted[0]
+            normalized = "(%d line%s after an ignored-exception report omitted)" % (count, "" if count == 1 else "s")
         excerpt = normalized[:200]
         if len(normalized) > 200:
             for priority, pattern in enumerate((
