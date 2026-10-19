@@ -10,6 +10,7 @@ the clock.
 
 import os
 from pathlib import Path
+import py_compile
 import struct
 import subprocess
 import sys
@@ -238,11 +239,11 @@ def test_cache_drop_failure_is_a_transaction_block(tmp_path, monkeypatch, when):
     calls = []
     real = fixval._drop_cached_bytecode
 
-    def drop(root, paths, env):
+    def drop(root, paths, env, cmd=()):
         calls.append(list(paths))
         if (len(calls) == 1) == (when == "before-run"):
             raise PermissionError("pycache is read-only")
-        return real(root, paths, env)
+        return real(root, paths, env, cmd)
 
     monkeypatch.setattr(fixval, "_drop_cached_bytecode", drop)
     result = _fixval(tmp_path, "module", diff)
@@ -311,3 +312,171 @@ def test_overfit_guard_drops_its_file_cache_around_the_run(tmp_path, monkeypatch
     )
     assert seen == [("1", False, False)]
     assert not stale.exists()
+
+
+# --- #259: the remaining stale-bytecode sources ---------------------------
+
+
+@pytest.mark.parametrize("form", ["separate-absolute", "joined-relative"])
+def test_reverted_run_ignores_fixed_bytecode_under_a_command_line_pycache_prefix(
+    tmp_path, monkeypatch, form
+):
+    _launcher_env(monkeypatch)
+    checkout = tmp_path / "repo"
+    checkout.mkdir()
+    prefix = checkout / ".pyc-prefix"
+    option = (
+        ["-X", "pycache_prefix=%s" % prefix]
+        if form == "separate-absolute"
+        else ["-Xpycache_prefix=.pyc-prefix"]
+    )
+    cmd = [sys.executable, *option, *PYTEST[1:]]
+    source, diff = _checkout(checkout, "module")
+    env = dict(os.environ, PYTHONPATH=str(checkout / "src"))
+    user = subprocess.run(
+        cmd + ["tests/test_calc.py"], cwd=checkout, env=env, capture_output=True, timeout=60
+    )
+    assert user.returncode == 0
+    assert _restamp([prefix], source) >= 1
+    _same_second_revert(monkeypatch, [prefix], source)
+    result = _fixval(checkout, "module", diff, cmd)
+    assert result.status is FixvalStatus.PASS, result.block_message
+    assert not list(prefix.rglob("calc.*.pyc"))
+
+
+def test_pycache_prefixes_reads_the_env_and_every_x_option():
+    from code_forge.fixval import _pycache_prefixes
+
+    cmd = [
+        "python",
+        "-X",
+        "frozen_modules=off",
+        "-X",
+        "pycache_prefix=/a",
+        "-Xpycache_prefix=b",
+        "-Xutf8",
+        "-m",
+        "pytest",
+        "-X",
+    ]
+    assert _pycache_prefixes({"PYTHONPYCACHEPREFIX": "/env"}, cmd) == ["/env", "/a", "b"]
+    assert _pycache_prefixes({}, ["pytest", "-X", "pycache_prefix="]) == []
+
+
+def _added_module_checkout(root: Path) -> tuple[str, Path]:
+    """The fix adds src/newmod.py; a sourceless src/newmod.pyc of the fix
+    sits beside it (a legacy build artifact)."""
+    _git(root, "init", "-q")
+    (root / "src").mkdir()
+    (root / "tests").mkdir()
+    (root / "tests/test_calc.py").write_text("def test_placeholder():\n    pass\n", encoding="utf-8")
+    _git(root, "add", "--all")
+    _git(root, "commit", "-q", "-m", "base")
+    (root / "src/newmod.py").write_text("value = 2\n", encoding="utf-8")
+    (root / "tests/test_calc.py").write_text(
+        "import newmod\n\ndef test_calc():\n    assert newmod.value == 2\n", encoding="utf-8"
+    )
+    _git(root, "add", "--all")
+    legacy = root / "src/newmod.pyc"
+    py_compile.compile(str(root / "src/newmod.py"), cfile=str(legacy), doraise=True)
+    return _git(root, "diff", "--cached", "--binary"), legacy
+
+
+def test_sourceless_bytecode_of_an_added_module_blocks_instead_of_hollow(tmp_path, monkeypatch):
+    _launcher_env(monkeypatch)
+    diff, legacy = _added_module_checkout(tmp_path)
+    stamp = legacy.read_bytes()
+    candidate = FixvalCandidate(["tests/test_calc.py"], ["src/newmod.py"])
+    result = run_fixval(candidate, PYTEST, tmp_path, "add newmod", diff)
+    assert result.status is FixvalStatus.BLOCK
+    assert [finding.id for finding in result.findings] == ["FIXVAL_TRANSACTION"]
+    assert "sourceless bytecode src/newmod.pyc" in result.block_message
+    assert (tmp_path / "src/newmod.py").read_text(encoding="utf-8") == "value = 2\n"
+    assert legacy.read_bytes() == stamp  # not FIXVAL's to delete
+
+
+def test_sourceless_bytecode_beside_a_kept_source_is_harmless(tmp_path, monkeypatch):
+    # the source wins over a sourceless .pyc, so a modified module measures
+    _launcher_env(monkeypatch)
+    source, diff = _checkout(tmp_path, "module")
+    py_compile.compile(str(source), cfile=str(source.with_suffix(".pyc")), doraise=True)
+    assert _fixval(tmp_path, "module", diff).status is FixvalStatus.PASS
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+@pytest.mark.parametrize("mode", [0o311, 0o555], ids=["unlistable", "read-only"])
+def test_a_pycache_that_cannot_be_dropped_is_a_transaction_block(tmp_path, monkeypatch, mode):
+    _launcher_env(monkeypatch)
+    source, diff = _checkout(tmp_path, "module")
+    assert _user_pytest(tmp_path).returncode == 0
+    _restamp([tmp_path], source)
+    _same_second_revert(monkeypatch, [tmp_path], source)
+    cache = tmp_path / "src/__pycache__"
+    cache.chmod(mode)
+    try:
+        result = _fixval(tmp_path, "module", diff)
+    finally:
+        cache.chmod(0o755)
+    assert result.status is FixvalStatus.BLOCK
+    assert [finding.id for finding in result.findings] == ["FIXVAL_TRANSACTION"]
+    assert "Permission denied" in result.block_message
+    assert source.read_text(encoding="utf-8") == CASES["module"][2]
+
+
+def test_drop_tolerates_only_an_already_missing_cache(tmp_path, monkeypatch):
+    from code_forge.fixval import _drop_cached_bytecode
+
+    cache = tmp_path / "pkg/__pycache__"
+    cache.mkdir(parents=True)
+    (cache / "mod.cpython-312.pyc").write_bytes(b"")
+    (tmp_path / "other/__pycache__").parent.mkdir()
+    (tmp_path / "other/__pycache__").write_bytes(b"")  # not a directory: nothing cached
+    _drop_cached_bytecode(str(tmp_path), ["other/mod.py", "gone/mod.py"], {})
+    real = os.unlink
+    for error in (FileNotFoundError, PermissionError, OSError):
+
+        def unlink(path, *args, error=error, **kwargs):
+            if str(path).endswith(".pyc"):
+                raise error(5, "injected", str(path))
+            return real(path, *args, **kwargs)
+
+        monkeypatch.setattr(fixval.os, "unlink", unlink)
+        if error is FileNotFoundError:  # removed concurrently: fine
+            _drop_cached_bytecode(str(tmp_path), ["pkg/mod.py"], {})
+        else:
+            with pytest.raises(error):
+                _drop_cached_bytecode(str(tmp_path), ["pkg/mod.py"], {})
+
+
+def test_restore_drops_reverted_bytecode_under_a_command_line_pycache_prefix(tmp_path, monkeypatch):
+    _launcher_env(monkeypatch)
+    prefix = tmp_path / "prefix"
+    checkout = tmp_path / "repo"
+    checkout.mkdir()
+    option = ["-X", "pycache_prefix=%s" % prefix]
+    source, diff = _checkout(checkout, "module")
+    result = _fixval(checkout, "module", diff, [*RESETTING[:3], sys.executable, *option, *PYTEST[1:]])
+    assert result.status is FixvalStatus.PASS, result.block_message
+    assert not list(prefix.rglob("calc.*.pyc"))  # the reverted run's cache went
+    env = dict(os.environ, PYTHONPATH=str(checkout / "src"))
+    user = subprocess.run(
+        [sys.executable, *option, *PYTEST[1:], "tests/test_calc.py"],
+        cwd=checkout,
+        env=env,
+        capture_output=True,
+    )
+    assert user.returncode == 0
+
+
+def test_sourceless_check_and_drop_match_exact_python_names(tmp_path):
+    from code_forge.fixval import _drop_cached_bytecode, _refuse_sourceless_bytecode
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/x.pyc").write_bytes(b"")
+    (tmp_path / "src/x..pyc").write_bytes(b"")
+    _refuse_sourceless_bytecode(str(tmp_path), ["src/xyz", "src/x.txt", "src/x.py.orig"])
+    cache = tmp_path / "src/__pycache__"
+    cache.mkdir()
+    (cache / "MOD.cpython-312.pyc").write_bytes(b"")
+    _drop_cached_bytecode(str(tmp_path), ["src/mod.py"], {})
+    assert (cache / "MOD.cpython-312.pyc").exists()
