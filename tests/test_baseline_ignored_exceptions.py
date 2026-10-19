@@ -162,3 +162,40 @@ def test_no_marker_when_nothing_was_dropped_or_a_cause_remains():
     assert _output_detail(_ECHILD_SHORT, None) == ""
     detail = _output_detail(_MULTILINE + "E   assert 0\n", None)
     assert "omitted" not in detail and "E assert 0" in detail
+
+
+@pytest.mark.parametrize(
+    "real",
+    [
+        "tests/test_x.py ..F.                                                     [ 40%]",
+        "tests/test_x.py::test_a PASSED                                           [ 50%]",
+        "tests\\test_win.py sF.x                                                  [100%]",
+        "3 failed, 10 passed in 1.2s",
+        "1 passed, 2 warnings in 0.03s",
+        "no tests ran in 0.01s",
+        "2 errors in 0.50s",
+        "===== short test summary info =====",
+    ],
+)
+def test_pytest_progress_and_summary_lines_after_an_ignored_report_are_kept(real):
+    """#182 forge LOCAL P3: these were read as message continuation."""
+    for noise in (_ECHILD_SHORT, _MULTILINE):
+        detail = _output_detail(noise + real + "\n", None)
+        assert " ".join(real.split()) in detail, detail
+        assert "line2" not in detail and "omitted" not in detail
+
+
+@pytest.mark.parametrize(
+    "real", ["Bus error (core dumped)", "Terminated", "Hangup", "Illegal instruction"]
+)
+def test_more_signal_lines_end_an_ignored_message(real):
+    """#263 item 1."""
+    for noise in (_ECHILD_SHORT, _MULTILINE):
+        detail = _output_detail(noise + real + "\n", None)
+        assert real in detail and "line2" not in detail, detail
+
+
+def test_one_omitted_line_is_singular():
+    """#263 item 2."""
+    detail = _output_detail(_ECHILD_SHORT + "plain prose\n", None)
+    assert detail == "; stderr: (1 line after an ignored-exception report omitted)"
