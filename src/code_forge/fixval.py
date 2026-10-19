@@ -114,21 +114,28 @@ def _is_test_support(path: str) -> bool:
 
     conftest.py anywhere, and any file under a tests/ directory, matching the
     mutation defaults (tests/**, **/tests/**, **/conftest.py; a singular test/
-    stays production, #135). `path` must be repo-relative. FIXVAL keeps these
-    at their fixed state: reverting a new fixture or helper makes a hollow
-    test fail for the wrong reason and reads as PASS.
+    stays production, #135). `path` must be repo-relative; backslash
+    separators are normalised.
     """
     parts = path.replace("\\", "/").split("/")
     return parts[-1] == "conftest.py" or "tests" in parts[:-1]
 
 
-def _relative_to_common_root(paths: list[str]) -> dict[str, str]:
-    """Absolute review paths, relative to their common root, so a checkout that
-    itself lives under a directory named tests/ is not all test support."""
-    if len(paths) > 1 and all(os.path.isabs(p) for p in paths):
-        root = os.path.commonpath(paths)
-        return {p: os.path.relpath(p, root) for p in paths}
-    return {p: p for p in paths}
+def _repo_relative(path: str) -> str | None:
+    """`path` relative to the Git checkout holding it.
+
+    Relative review paths already are. An absolute path is taken relative to
+    its nearest ancestor holding `.git` (a directory, or a worktree's file),
+    so a checkout that itself lives under a directory named tests/ is not all
+    scaffolding. None when no checkout is found: the caller then keeps main's
+    classification.
+    """
+    if not os.path.isabs(path):
+        return path
+    for parent in Path(path).parents:
+        if (parent / ".git").exists():
+            return Path(path).relative_to(parent).as_posix()
+    return None
 
 
 def classify_fixval_candidate(
@@ -149,13 +156,21 @@ def classify_fixval_candidate(
     non_test_files: list[str] = []
     executable = None if executable_files is None else set(executable_files)
 
-    relative = _relative_to_common_root(list(changed_files))
+    support_files: list[str] = []
     for f in changed_files:
         if _is_test_file(f):
             if executable is None or f in executable:
                 test_files.append(f)
-        elif not _is_test_support(relative[f]):
-            non_test_files.append(f)
+        else:
+            relative = _repo_relative(f)
+            if relative is not None and _is_test_support(relative):
+                support_files.append(f)
+            else:
+                non_test_files.append(f)
+    # Scaffolding stays at its fixed state only beside a real production
+    # change. When it is the whole fix (a conftest guard, #225) it is the thing
+    # to revert, as before #254.
+    non_test_files = non_test_files or support_files
 
     if test_files and non_test_files:
         return FixvalCandidate(
@@ -232,27 +247,38 @@ def _make_skipped_result(reason: str) -> FixvalResult:
 def _filter_non_test_patch(diff_text: str) -> str:
     """Project production file blocks without reserializing Git binary bodies."""
 
-    def is_production(patched_file):
-        src_clean = patched_file_path(patched_file, source=True) or ""
-        tgt_clean = patched_file_path(patched_file) or ""
-        return not any(
-            _is_test_file(path) or _is_test_support(path) for path in (src_clean, tgt_clean) if path
-        )
+    def paths_of(patched_file):
+        return [
+            path
+            for path in (patched_file_path(patched_file, source=True), patched_file_path(patched_file))
+            if path
+        ]
+
+    def is_reversible(patched_file):
+        return not any(_is_test_file(path) for path in paths_of(patched_file))
+
+    def is_support(patched_file):
+        return any(_is_test_support(path) for path in paths_of(patched_file))
 
     if any(line.startswith("diff --git ") for line in StringIO(diff_text)):
         blocks = [(unidiff.PatchSet(block), block) for _path, block in iter_diff_sections(diff_text)]
     else:
         blocks = [([entry], str(entry)) for entry in unidiff.PatchSet(diff_text)]
+    # Diff paths are repo-relative. Scaffolding (#254) is kept at its fixed
+    # state only when a real production block is reverted alongside it.
+    keep_support = any(
+        entries and all(is_reversible(entry) and not is_support(entry) for entry in entries)
+        for entries, _block in blocks
+    )
+
+    def is_production(patched_file):
+        return is_reversible(patched_file) and not (keep_support and is_support(patched_file))
+
     filtered = []
     production_paths: set[str] = set()
     test_paths: set[str] = set()
     for entries, block in blocks:
-        paths = {
-            path
-            for entry in entries
-            for path in (patched_file_path(entry, source=True), patched_file_path(entry))
-            if path
-        }
+        paths = {path for entry in entries for path in paths_of(entry)}
         if entries and all(is_production(entry) for entry in entries):
             filtered.append(block)
             production_paths.update(paths)
