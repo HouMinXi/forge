@@ -60,6 +60,9 @@ class ForgeResult(BaseModel):
     verdict: str
     exit_code: int
     findings_count: int | None = None  # None = not counted, never 0 as surrogate
+    # Why findings_count is None when the report itself was readable (#221),
+    # e.g. a capacity-incomplete review. None when the count is complete.
+    findings_count_status: str | None = None
     findings: list[dict] | None = None  # compact finding summaries for MCP
     receipt_audit: list[dict] | None = None  # metadata diagnostics, not product findings
     duration_s: float

@@ -282,7 +282,14 @@ def test_ci_real_terminal_and_mcp_report_relay(review_workspace, monkeypatch, ki
     response = asyncio.run(mcp_server.forge_job_status("owned-capacity"))
     result = response.structuredContent["result"]
     assert result["exit_code"] == 1 and result["verdict"] == "FAIL"
-    assert result["findings_count"] is None
+    if kind == "truncated":
+        # #221 decision: a capacity-incomplete FAIL's count is unknown and
+        # labelled as such -- never 0.
+        assert result["findings_count"] is None
+        assert result["findings_count_status"].startswith("unknown: capacity-incomplete")
+    else:
+        assert result["findings_count"] == 2
+        assert result["findings_count_status"] is None
     assert actual_stdout in result["output"] and summary in result["output"]
 
 

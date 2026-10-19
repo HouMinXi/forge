@@ -952,7 +952,20 @@ def _sarif_projection_depth_ok(findings: list[dict], audit: list[dict] | None) -
     return True
 
 
+_CAPACITY_INCOMPLETE_COUNT_STATUS = (
+    "unknown: capacity-incomplete review -- provider capacity cut acquisition short, "
+    "so the published results are not a complete count"
+)
+
+
 def _sarif_result_projection(stdout: str) -> tuple[int | None, list[dict] | None, list[dict] | None]:
+    """Three-field projection; see ``_sarif_projection_with_status``."""
+    return _sarif_projection_with_status(stdout)[:3]
+
+
+def _sarif_projection_with_status(
+    stdout: str,
+) -> tuple[int | None, list[dict] | None, list[dict] | None, str | None]:
     """Read presentation from one CLI SARIF document, never review authority.
 
     The 1 MiB-character cutoff limits optional parsing and structured copies
@@ -962,7 +975,7 @@ def _sarif_result_projection(stdout: str) -> tuple[int | None, list[dict] | None
     Each projected list includes at most 64 dictionary/list levels so the
     full MCP response envelope retains ample serialization depth headroom.
     """
-    unknown = (None, None, None)
+    unknown = (None, None, None, None)
     if type(stdout) is not str or len(stdout) > _MAX_SARIF_REPORT_CHARS:
         return unknown
     try:
@@ -994,7 +1007,15 @@ def _sarif_result_projection(stdout: str) -> tuple[int | None, list[dict] | None
             return unknown
         # Escaped unpaired surrogates can parse but cannot reach MCP UTF-8.
         json.dumps((findings, audit), ensure_ascii=False, allow_nan=False).encode("utf-8")
-        return len(findings), findings, audit
+        diagnostics = properties.get("providerDiagnostics")
+        if type(diagnostics) is list and any(
+            type(row) is dict and row.get("diagnostic_kind") == "capacity-incomplete"
+            for row in diagnostics
+        ):
+            # #221: a capacity-incomplete review did not acquire every pass;
+            # its result list is not a count. Unknown, labelled -- never 0.
+            return None, findings, audit, _CAPACITY_INCOMPLETE_COUNT_STATUS
+        return len(findings), findings, audit, None
     except (ValueError, TypeError, UnicodeError, RecursionError):
         return unknown
 
@@ -1014,11 +1035,12 @@ def _make_result(
     output = stdout
     if exit_code != 0 and stderr.strip():
         output = stdout + "\n--- stderr ---\n" + stderr
-    findings_count, findings, receipt_audit = _sarif_result_projection(stdout)
+    findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(stdout)
     structured = ForgeResult(
         verdict=exit_to_verdict(exit_code),
         exit_code=exit_code,
         findings_count=findings_count,
+        findings_count_status=count_status,
         findings=findings,
         receipt_audit=receipt_audit,
         duration_s=round(elapsed, 2),
@@ -1499,11 +1521,12 @@ async def forge_job_status(job_id: str) -> CallToolResult:
         stderr = r.get("stderr", "")
         if (status == "failed" or r.get("exit_code", 0) != 0) and stderr.strip():
             output = output + "\n--- stderr ---\n" + stderr
-        findings_count, findings, receipt_audit = _sarif_result_projection(r.get("stdout", ""))
+        findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(r.get("stdout", ""))
         forge_result = ForgeResult(
             verdict=r.get("verdict", "UNKNOWN(-1)"),
             exit_code=r.get("exit_code", -1),
             findings_count=findings_count,
+            findings_count_status=count_status,
             findings=findings,
             receipt_audit=receipt_audit,
             duration_s=r.get("duration_s", 0.0),
