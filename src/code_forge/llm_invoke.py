@@ -1061,6 +1061,24 @@ def _has_quoted_key(value) -> bool:
     return False
 
 
+def _quote_before_trailing_comma(text: str, pos: int) -> int | None:
+    if not (0 <= pos < len(text)) or text[pos] != '"':
+        return None
+    before = text[:pos].rstrip()
+    if not before.endswith(","):
+        return None
+    quote_at = len(before[:-1].rstrip()) - 1
+    if quote_at < 0 or text[quote_at] != '"' or _quote_is_escaped(text, quote_at):
+        return None
+    start = _container_start(text, pos)
+    if '\\"' in text[start : _string_start(text, start, quote_at)]:
+        # An earlier repair in this object already chose where its strings
+        # end; the members after it parsed as structure, so the trailing
+        # ``"..",`` may be content of that earlier value. Ambiguous: raise.
+        return None
+    return quote_at
+
+
 def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
     pos = exc.pos
     if not isinstance(pos, int):
@@ -1081,6 +1099,14 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
         and text[pos] == ","
     ):
         return None  # ",," : a doubled separator is structure, not content
+    if exc.msg.startswith("Unterminated string"):
+        # Content ending in a quoted value and a comma (an excerpt line such
+        # as ``"name": "forge",``): json closes the string at the value's
+        # quote, takes the comma as a separator and the real closing quote
+        # opens a string that runs to the end. Escape the quote before the
+        # comma, as base did; a truncated reply then fails on the next
+        # attempt and raises the first error (#216 forge LOCAL P2).
+        return _quote_before_trailing_comma(text, pos)
     if not exc.msg.startswith("Expecting "):
         # A stray content quote only ever surfaces as a delimiter/name
         # error; "Invalid \escape", control characters or an unterminated
@@ -1159,6 +1185,46 @@ def _string_is_a_member(text: str, start: int) -> bool:
         return False
     after = rest[1:].lstrip()
     return not after or after[0] in '"{[-0123456789' or after.startswith(("true", "false", "null"))
+
+
+def _container_start(text: str, pos: int) -> int:
+    """Index of the innermost ``{`` or ``[`` open at `pos` (0 if none)."""
+    stack: list[int] = []
+    in_string = False
+    index = 0
+    while index < pos:
+        char = text[index]
+        if in_string:
+            if char == "\\":
+                index += 2
+                continue
+            if char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append(index)
+        elif char in "}]" and stack:
+            stack.pop()
+        index += 1
+    return stack[-1] if stack else 0
+
+
+def _string_start(text: str, start: int, quote_at: int) -> int:
+    """Opening quote of the string that `quote_at` closes, scanning from `start`."""
+    opened = start
+    in_string = False
+    index = start
+    while index < quote_at:
+        char = text[index]
+        if in_string and char == "\\":
+            index += 2
+            continue
+        if char == '"':
+            in_string = not in_string
+            opened = index
+        index += 1
+    return opened
 
 
 def _container_at(text: str, pos: int) -> str | None:

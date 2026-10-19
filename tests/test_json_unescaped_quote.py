@@ -297,3 +297,45 @@ def test_replies_with_few_quotes_still_parse(raw, expected):
 )
 def test_the_enclosing_container_skips_strings_and_closed_brackets(raw, expected):
     assert _loads_model_json(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('{"d": "end "x","}', {"d": 'end "x",'}),
+        ('{"excerpt": "  "name": "forge","}', {"excerpt": '  "name": "forge",'}),
+        (
+            '{"findings": [{"excerpt": "    "a": 1, "b": "c","}]}',
+            {"findings": [{"excerpt": '    "a": 1, "b": "c",'}]},
+        ),
+    ],
+)
+def test_content_ending_in_a_quoted_value_and_comma_is_repaired(raw, expected):
+    """#216 forge LOCAL P2: json reports "Unterminated string" at the value's
+    closing quote; base repairs these (an excerpt line like '"name": "forge",')."""
+    assert _loads_model_json(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ['{"a": "x", "', '{"a": "x", "b', '["x", "'])
+def test_truncated_replies_still_raise(raw):
+    with pytest.raises(json.JSONDecodeError):
+        _loads_model_json(raw)
+
+
+def test_trailing_comma_repair_in_a_later_object_ignores_an_earlier_objects_repair():
+    raw = '[{"a": "x "y" z"}, {"d": "end "x","}]'
+    assert _loads_model_json(raw) == [{"a": 'x "y" z'}, {"d": 'end "x",'}]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # An earlier repair in the same container already split the content
+        # into members; the trailing '"..",' may belong to that earlier value.
+        '{"k0": ""x","name": "forge","}',
+        '["plain"name": "forge",  "a": 1, "b": "c","]',
+    ],
+)
+def test_trailing_comma_repair_after_an_earlier_split_raises(raw):
+    with pytest.raises(json.JSONDecodeError):
+        _loads_model_json(raw)
