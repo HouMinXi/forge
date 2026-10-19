@@ -422,11 +422,16 @@ class TestFailureWaiverEvidence:
         )
         source = "from pathlib import Path\ndef test_known():\n    Path('executed-before').write_text('once')\n    assert False\n"
         (tmp_path / "test_sample.py").write_text(source)
+        # runner_option stands in for pytest-xdist's --dist. Disable the real
+        # plugin when it is installed, or the duplicate option aborts pytest
+        # before any test runs.
         command = [
             "python3",
             "-B",
             "-m",
             "pytest",
+            "-p",
+            "no:xdist",
             "-p",
             "runner_option",
             "--dist=load",
