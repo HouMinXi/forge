@@ -1909,7 +1909,9 @@ def _normal_cli_review(root, monkeypatch):
     )
     monkeypatch.setenv("FORGE_OWNED_OFFLINE_KEY", "owned-offline")
     result = cli.main()
-    assert bound == [root], "normal caller L2 seam was not bound to actual fixture cwd"
+    # fab4976: admission builds the runner too (early refusal), so the seam
+    # is bound once per use, every time to the fixture cwd.
+    assert bound == [root, root], "normal caller L2 seam was not bound to actual fixture cwd"
     return result
 
 

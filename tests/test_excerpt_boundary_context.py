@@ -829,6 +829,8 @@ def test_machine_round_and_quality_use_frozen_context(candidate):
     machine._last_receipt_write_errors = []
     machine._attempted_last_round = []
     machine._excerpts_last_round = [excerpt]
+    # 93c9229: the round gate also reads the rejected-unavailable passes.
+    machine._unavailable_rejected_passes_last_round = set()
     assert machine._receipt_gate_round_errors() == []
     assert machine._downgrade_one_line_slips([], [excerpt]) == ([], [excerpt])
     # No blank separator means a quality warning, not an infrastructure error.

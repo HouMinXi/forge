@@ -172,15 +172,19 @@ def test_detached_script_forwards_resource_guards(tmp_path, run_detached_payload
             is True
         )
 
-    finding = type(
-        "F",
-        (),
-        {
-            "id": "mutant-x",
-            "source": "MUTANT",
-            "disposition": Disposition.CONFIRMED,
-        },
-    )()
+    # The payload now serializes survivor details (fingerprint, file, ...),
+    # so the stub must be a real finding, not a bare attribute bag.
+    from code_forge.state import StateFinding
+
+    finding = StateFinding(
+        id="mutant-x",
+        fingerprint="mutant:x",
+        source="MUTANT",
+        disposition=Disposition.CONFIRMED,
+        file="source.py",
+        line_range=[1, 1],
+        description="survived",
+    )
 
     def measured(**kwargs):
         kwargs["_evidence"]["baseline_passed"] = True
