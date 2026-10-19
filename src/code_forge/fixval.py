@@ -425,11 +425,13 @@ def run_fixval(
         return result
 
     if status == "skip":
-        return noted(FixvalResult(
-            status=FixvalStatus.SKIPPED,
-            findings=guard_findings,
-            advisories=[],
-        ))
+        return noted(
+            FixvalResult(
+                status=FixvalStatus.SKIPPED,
+                findings=guard_findings,
+                advisories=[],
+            )
+        )
 
     # Write patch to temp file
     try:
