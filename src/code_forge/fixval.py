@@ -15,6 +15,7 @@ before the verdict.
 from __future__ import annotations
 
 import ast
+import glob
 import logging
 import os
 import re
@@ -32,7 +33,7 @@ import unidiff
 from .advisory import AdvisoryFinding
 from ._fixval_transaction import FixvalTransaction, TransactionError
 from .disposition import Disposition
-from .diff import iter_diff_sections, patched_file_path
+from .diff import changed_files_in_order, iter_diff_sections, patched_file_path
 from code_forge.baseline_guard import (
     _run_baseline_guard,
     _strip_venv_from_env,
@@ -304,6 +305,47 @@ def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root) -> Fixva
     )
 
 
+def _isolated_bytecode_env(env: dict[str, str]) -> dict[str, str]:
+    """`env` for a FIXVAL child test run: it writes no bytecode (#257).
+
+    A copy with PYTHONDONTWRITEBYTECODE=1. The reverted run then leaves no
+    cache of the unfixed code behind to shadow the restored file. Caches of
+    the stdlib, site-packages and untouched project files stay readable, so
+    children start as fast as before (a private PYTHONPYCACHEPREFIX made
+    every child recompile all of them: a trivial run went 0.22s -> 0.84s).
+    """
+    isolated = dict(env)
+    isolated["PYTHONDONTWRITEBYTECODE"] = "1"
+    return isolated
+
+
+def _drop_cached_bytecode(root: str, paths: Collection[str], env: dict[str, str]) -> None:
+    """Remove cached bytecode of exactly the touched .py `paths` (#257).
+
+    CPython and pytest's assertion rewriter validate a cache by whole-second
+    source mtime plus size, so a same-second, same-size revert or restore
+    would run the other side's bytecode. Before each reverted run and after
+    each restore, `<dir>/__pycache__/<stem>.*.pyc` (CPython's and pytest's
+    `-pytest-*` one) goes, and the mirror under a PYTHONPYCACHEPREFIX the
+    children inherit. Raises OSError when a cache can't be removed.
+    """
+    prefix = env.get("PYTHONPYCACHEPREFIX")
+    for path in paths:
+        if not path.endswith(".py"):
+            continue
+        source = Path(os.path.abspath(os.path.join(root, path)))
+        caches = [source.parent / "__pycache__"]
+        if prefix:
+            parent = str(source.parent)
+            caches.append(Path(os.path.join(root, prefix), parent[len(source.anchor) :]))
+        for cache in caches:
+            for pyc in cache.glob(glob.escape(source.stem) + ".*.pyc"):
+                try:
+                    pyc.unlink()
+                except FileNotFoundError:
+                    pass
+
+
 def run_fixval(
     candidate: FixvalCandidate,
     test_cmd: list[str],
@@ -386,6 +428,7 @@ def run_fixval(
     run_env = os.environ.copy()
     pythonpath = os.path.join(repo_root, "src")
     run_env["PYTHONPATH"] = pythonpath
+    run_env = _isolated_bytecode_env(run_env)
     retry_cause: list[str] = []
 
     status, guard_findings, guard_infra = _run_baseline_guard(
@@ -398,7 +441,7 @@ def run_fixval(
     env_retry = None
     if status == "needs_strip_retry":
         env_retry = env_retry_record(retry_cause[0] if retry_cause else None, run_env)
-        run_env = _strip_venv_from_env(run_env)
+        run_env = _strip_venv_from_env(run_env)  # a copy: bytecode stays off
         run_env["PYTHONPATH"] = pythonpath
         status, guard_findings, guard_infra = _run_baseline_guard(
             scoped_cmd,
@@ -443,6 +486,7 @@ def run_fixval(
     errors = []
     interrupted = None
     outcome = None
+    touched = changed_files_in_order(non_test_patch)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(non_test_patch)
@@ -454,6 +498,7 @@ def run_fixval(
             errors.append("revert patch failed: %s" % revert_result.stderr[:200])
         else:
             transaction.mark_reverted()
+            _drop_cached_bytecode(repo_root, touched, run_env)
             outcome = _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root)
     except (OSError, ValueError, TransactionError, subprocess.SubprocessError) as exc:
         errors.append(str(exc))
@@ -501,6 +546,10 @@ def run_fixval(
                     except (KeyboardInterrupt, SystemExit) as retry:
                         errors.append("entry restoration retry interrupted: %s" % type(retry).__name__)
             finally:
+                try:
+                    _drop_cached_bytecode(repo_root, touched, run_env)
+                except OSError as exc:
+                    errors.append("bytecode cache invalidation failed: %s" % exc)
                 if sys.exception() is not None:
                     errors.append("entry restoration escaped: %s" % type(sys.exception()).__name__)
                 errors.extend(transaction.image_errors)
@@ -644,8 +693,12 @@ def run_overfit_guard(
         try:
             # Run test (match run_fixval: set PYTHONPATH=src/ so imports work)
             scoped_cmd = test_cmd + candidate.test_files
-            run_env = os.environ.copy()
+            run_env = _isolated_bytecode_env(os.environ.copy())
             run_env["PYTHONPATH"] = os.path.join(str(cwd), "src")
+            try:
+                _drop_cached_bytecode(str(cwd), [str(file_path)], run_env)
+            except OSError:
+                return []  # advisory only: unmeasured, never a stale verdict
             result = subprocess.run(
                 scoped_cmd,
                 env=run_env,
@@ -681,6 +734,10 @@ def run_overfit_guard(
         finally:
             # ALWAYS restore original bytes verbatim
             file_path.write_bytes(original_bytes)
+            try:
+                _drop_cached_bytecode(str(cwd), [str(file_path)], os.environ)
+            except OSError as exc:
+                _logger.warning("FIXVAL overfit guard: cannot drop cached bytecode: %s", exc)
 
     except SyntaxError:
         # Cannot parse file -> skip overfit guard
