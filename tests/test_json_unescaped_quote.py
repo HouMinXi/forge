@@ -154,7 +154,6 @@ def test_adjacent_quoted_words_inside_content_are_repaired(raw, expected):
         '{"verdict":"DISMISSED" "reasoning":"x"}',
         '{"items":["a" "b"]}',
         '{"items":["a" "b","c"]}',
-        '{"a":"x" "b"}',
         '{"a":"x" "b": 1}',
         '{"items":["a" "b", 2]}',
         '{"items":["a" "b", true]}',
@@ -240,4 +239,61 @@ def test_valid_json_with_a_quote_in_a_key_is_returned_unchanged():
     ],
 )
 def test_closer_run_edges(raw, expected):
+    assert _loads_model_json(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "excerpt",
+    [
+        'parts = line.split(" ")',
+        'print(a, " ", b)',
+        'indent = " " * 4',
+        'cfg = {"k": " "}',
+        'sep = ": "',
+    ],
+)
+def test_everyday_code_excerpts_with_quoted_strings_are_repaired(excerpt):
+    """#216 review 6262018713: the missing-comma guard must not reject
+    ordinary code that quotes short strings; main parses these."""
+    raw = '{"excerpt": "%s", "line": 7}' % excerpt
+    assert _loads_model_json(raw) == {"excerpt": excerpt, "line": 7}
+    prose = '{"description": "uses %s here", "line": 7}' % excerpt
+    if not excerpt.endswith("}"):  # '"} here' is a known fail-closed shape
+        assert _loads_model_json(prose)["description"] == "uses %s here" % excerpt
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"a": "x",, "b": "y"}',
+        '{"items": ["x",, "y"]}',
+    ],
+)
+def test_doubled_separator_after_a_string_still_raises(raw):
+    with pytest.raises(json.JSONDecodeError) as caught:
+        _loads_model_json(raw)
+    assert caught.value.doc == raw
+
+
+def test_a_top_level_string_with_the_most_repairs_parses():
+    """Every quote but the two outer ones needs escaping: the loop bound is
+    exactly enough (count - 1 attempts)."""
+    assert _loads_model_json('"a"b"c"') == 'a"b"c'
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("[1, 2]", [1, 2]), ('{"a": 1}', {"a": 1}), ("7", 7)])
+def test_replies_with_few_quotes_still_parse(raw, expected):
+    assert _loads_model_json(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # a closed array before the value: the value still sits in the object
+        ('{"x": [1], "d": "f(a, " ", 2)"}', {"x": [1], "d": 'f(a, " ", 2)'}),
+        # an escaped quote and a bracket inside an earlier string are content
+        ('{"x": "a\\"[", "d": "f(a, " ", 2)"}', {"x": 'a"[', "d": 'f(a, " ", 2)'}),
+    ],
+)
+def test_the_enclosing_container_skips_strings_and_closed_brackets(raw, expected):
     assert _loads_model_json(raw) == expected
