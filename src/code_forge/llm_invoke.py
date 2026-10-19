@@ -1031,15 +1031,32 @@ def _loads_model_json(text: str):
     is a real syntax error and is raised unchanged.
     """
     candidate = text
-    for _ in range(candidate.count('"')):
+    first_error: json.JSONDecodeError | None = None
+    for _ in range(text.count('"') + 1):
         try:
-            return json.loads(candidate, strict=False)
+            parsed = json.loads(candidate, strict=False)
         except json.JSONDecodeError as exc:
+            first_error = first_error or exc
             quote_at = _error_is_at_quote(candidate, exc)
             if quote_at is None:
                 raise
             candidate = _escape_at(candidate, quote_at)
+            continue
+        if first_error is not None and _has_quoted_key(parsed):
+            # #216 review: a repair only escapes content quotes, so a key
+            # holding a raw quote means structure was escaped ("], None",
+            # "line" read as one key). Fail closed with the original error.
+            raise first_error
+        return parsed
     return json.loads(candidate, strict=False)
+
+
+def _has_quoted_key(value) -> bool:
+    if isinstance(value, dict):
+        return any('"' in key or _has_quoted_key(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(_has_quoted_key(item) for item in value)
+    return False
 
 
 def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
@@ -1091,18 +1108,20 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError) -> int | None:
 
 
 def _closer_token_quote(text: str, exc: json.JSONDecodeError) -> int | None:
-    """The opening quote of a quoted closer run (``}``, ``]``, ``,``) that
-    json stopped right after, or None."""
+    """The opening quote of a quoted closer run (``}``/``]``, then possibly
+    ``,`` where json stopped) that json stopped right after, or None. A ``,``
+    can't sit inside the run: json would have consumed it and reported a
+    value/property-name error instead."""
     pos = exc.pos
     if not (exc.msg.startswith("Extra data") or exc.msg.startswith("Expecting ',' delimiter")):
         return None
-    if pos >= len(text) or text[pos] not in '"},]':
+    if pos >= len(text):
         return None
     # json stopped at the token's second quote or inside the closer run, so
     # the run ends at pos - 1; the quote json closed the string with (never
     # an escaped one) comes right before it.
     index = pos - 1
-    while index >= 0 and text[index] in "}],":
+    while index >= 0 and text[index] in "}]":
         index -= 1
     if index < 0 or text[index] != '"':
         return None
