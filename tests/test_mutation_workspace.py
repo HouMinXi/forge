@@ -1490,3 +1490,45 @@ def test_actual_same_root_competitor_refuses_and_different_root_can_run(tmp_path
         if caller.poll() is None:
             caller.send_signal(signal.SIGTERM)
             caller.communicate(timeout=3)
+
+
+@pytest.mark.parametrize("case", ["link-replace", "directory-change"])
+def test_cache_snapshot_detects_races_with_frozen_timestamps(tmp_path, monkeypatch, case):
+    """Directory times frozen and the inode reused, as on a coarse-timestamp kernel."""
+    cache = _cache(tmp_path)
+    workspace = MutationWorkspace(str(tmp_path))
+    original_fstat, original_stat, original_link = os.fstat, os.stat, os.readlink
+    frozen = {}
+    link_identity = {}
+
+    def fstat(fd):
+        info = original_fstat(fd)
+        if stat.S_ISDIR(info.st_mode):
+            return frozen.setdefault((info.st_dev, info.st_ino), info)
+        return info
+
+    def stat_(path, *args, **kwargs):
+        info = original_stat(path, *args, **kwargs)
+        if path == "foreign-link" and stat.S_ISLNK(info.st_mode):
+            return link_identity.setdefault("first", info)  # inode reused
+        return info
+
+    changed = []
+
+    def race_link(path, *args, **kwargs):
+        value = original_link(path, *args, **kwargs)
+        if not changed and case == "link-replace":
+            (cache / "foreign-link").unlink()
+            (cache / "foreign-link").symlink_to("other-target")
+            changed.append(True)
+        elif not changed and case == "directory-change":
+            (cache / "new-entry").write_text("added while snapshotting")
+            changed.append(True)
+        return value
+
+    monkeypatch.setattr(os, "fstat", fstat)
+    monkeypatch.setattr(os, "stat", stat_)
+    monkeypatch.setattr(os, "readlink", race_link)
+    with pytest.raises(MutationWorkspaceError, match="changed while snapshotting"):
+        workspace.acquire()
+    assert changed and workspace.lock_fd is None

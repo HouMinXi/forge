@@ -147,11 +147,18 @@ def _snapshot(fd: int) -> dict:
         current = os.stat(entry.name, dir_fd=fd, follow_symlinks=False)
         if _node_identity(current) != _node_identity(info) or current.st_mode != info.st_mode:
             raise MutationWorkspaceError("cache node identity changed while snapshotting")
+        # A replaced link can reuse the freed inode, so confirm the target too.
+        if row.get("type") == "link" and os.readlink(entry.name, dir_fd=fd) != row["target"]:
+            raise MutationWorkspaceError("cache node identity changed while snapshotting")
     directory_after = os.fstat(fd)
+    # Coarse kernel timestamps (~4 ms) can hide an added or removed entry
+    # from mtime/ctime, so compare the listing as well.
+    with os.scandir(fd) as scan:
+        names_after = sorted(item.name for item in scan)
     if (directory_before.st_mtime_ns, directory_before.st_ctime_ns) != (
         directory_after.st_mtime_ns,
         directory_after.st_ctime_ns,
-    ):
+    ) or names_after != [entry.name for entry in children]:
         raise MutationWorkspaceError("cache directory changed while snapshotting")
     return entries
 
