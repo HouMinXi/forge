@@ -617,3 +617,47 @@ def test_env_strip_advisory_is_reported_once_whichever_run_decides(tmp_path, mon
     notes = [a for a in result.advisories if a.id == "FIXVAL_BASELINE_ENV_RETRY"]
     assert len(notes) == 1 and "VIRTUAL_ENV /private-venv" in notes[0].description
     _assert_restored(tmp_path, other, body)
+
+
+def _retry_case(tmp_path, monkeypatch, retry):
+    """A HOLLOW first run, then `retry(real, args, kwargs)` for the retry call."""
+    from code_forge import fixval
+
+    real = fixval._test_reverted_candidate
+    calls = []
+
+    def spy(*args, **kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("require_witness"):
+            return retry(real, args, kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(fixval, "_test_reverted_candidate", spy)
+    other = "docs/notes.rst"
+    diff = _support_beside_repo(tmp_path, other, GUARDED_TEST)
+    candidate = classify_fixval_candidate([other, "tests/conftest.py", "tests/test_env.py"])
+    result = run_fixval(candidate, PYTEST, tmp_path, "fix calc", diff, baseline_timeout=2400)
+    _assert_restored(tmp_path, other, GUARDED_TEST)
+    return result, calls
+
+
+def test_the_hollow_retry_gets_the_gate_timeout(tmp_path, monkeypatch):
+    """#255 review Low 1: the retry is not left on the 600s default."""
+    result, calls = _retry_case(tmp_path, monkeypatch, lambda real, a, k: real(*a, **k))
+    assert [call.get("require_witness") for call in calls] == [False, True]
+    assert [call.get("timeout") for call in calls] == [2400, 2400]
+    assert result.status is FixvalStatus.PASS, result.block_message
+
+
+def test_a_timed_out_hollow_retry_is_inconclusive(tmp_path, monkeypatch):
+    """#255 review Low 2: a retry that times out reports the timeout
+    (FIXVAL_INCONCLUSIVE BLOCK), not the first run's HOLLOW or a PASS."""
+
+    def sleeps(real, args, kwargs):
+        slow = [sys.executable, "-c", "import time; time.sleep(30)"]
+        return real(args[0], slow, *args[2:], **{**kwargs, "timeout": 1})
+
+    result, _ = _retry_case(tmp_path, monkeypatch, sleeps)
+    assert result.status is FixvalStatus.BLOCK
+    assert [finding.id for finding in result.findings] == ["FIXVAL_INCONCLUSIVE"]
+    assert "timed out after 1s" in result.block_message
