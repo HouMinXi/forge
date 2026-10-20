@@ -1,5 +1,6 @@
 """A fresh invocation owns its mirror and preserves pre-existing cache state."""
 
+import hashlib
 import json
 import os
 import signal
@@ -1562,3 +1563,18 @@ def test_cache_snapshot_detects_same_size_rewrite_with_frozen_fstat(tmp_path, mo
     with pytest.raises(MutationWorkspaceError, match="cache bytes changed while snapshotting"):
         workspace.acquire()
     assert changed and workspace.lock_fd is None
+
+
+def test_cache_snapshot_hashes_a_file_larger_than_one_chunk(tmp_path):
+    """#268: both hashes of a cache file must cover every 1 MiB chunk."""
+    cache = _cache(tmp_path)
+    data = bytes(range(256)) * (10 * 1024) + b"tail"  # ~2.5 MiB, three chunks
+    (cache / "cached/large.bin").write_bytes(data)
+    workspace = MutationWorkspace(str(tmp_path))
+    workspace.acquire()
+    try:
+        row = workspace.original_snapshot["cached/large.bin"]
+        assert row["size"] == len(data)
+        assert row["sha256"] == hashlib.sha256(data).hexdigest()
+    finally:
+        workspace.release()
