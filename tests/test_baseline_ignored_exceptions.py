@@ -250,3 +250,40 @@ def test_a_new_report_header_resets_the_chain_state():
     real = 'Traceback (most recent call last):\n  File "x.py", line 1, in <module>\nValueError: real\n'
     detail = _output_detail(first + "Exception ignored in: <b>\nOSError: b\n" + real, None)
     assert "ValueError: real" in detail, detail
+
+
+_CHAIN_MARKERS = (
+    "During handling of the above exception, another exception occurred:",
+    "The above exception was the direct cause of the following exception:",
+)
+
+
+@pytest.mark.parametrize("marker", _CHAIN_MARKERS)
+@pytest.mark.parametrize("real", ["=== FAILURES ===\nE   assert 0\n", "INTERNALERROR> boom\n"])
+def test_real_output_right_after_a_chain_marker_is_kept(marker, real):
+    """#271: only a Traceback continues a chained report; anything else after
+    the marker is real output."""
+    noise = "Exception ignored in: <x>\nOSError: a\n\n%s\n\n" % marker
+    detail = _output_detail(noise + real, None)
+    assert " ".join(real.split()) in detail and "OSError" not in detail, detail
+
+
+@pytest.mark.parametrize("marker", _CHAIN_MARKERS)
+def test_omitted_count_for_a_chained_report_skips_blank_lines(marker):
+    """#271: blank lines and chain markers inside a report are not counted as
+    omitted output; only the dropped prose continuation is."""
+    noise = (
+        "Exception ignored in: <function A.__del__ at 0x1>\n"
+        "Traceback (most recent call last):\n"
+        '  File "a.py", line 3, in __del__\n'
+        "OSError: inner\n"
+        "\n"
+        "%s\n"
+        "\n"
+        "Traceback (most recent call last):\n"
+        '  File "a.py", line 4, in __del__\n'
+        "ChildProcessError: [Errno 10] No child processes\n"
+        "and a second line of the message\n"
+    ) % marker
+    detail = _output_detail(noise, None)
+    assert detail == "; stderr: (1 line after an ignored-exception report omitted)", detail
