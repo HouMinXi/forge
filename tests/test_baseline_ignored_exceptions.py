@@ -199,3 +199,54 @@ def test_one_omitted_line_is_singular():
     """#263 item 2."""
     detail = _output_detail(_ECHILD_SHORT + "plain prose\n", None)
     assert detail == "; stderr: (1 line after an ignored-exception report omitted)"
+
+
+def test_chained_ignored_report_is_dropped_entirely():
+    """#198: both tracebacks of a chained unraisable report are noise."""
+    noise = (
+        "Exception ignored in: <function ResourceTracker.__del__ at 0x1>\n"
+        "Traceback (most recent call last):\n"
+        '  File "a.py", line 1, in f\n'
+        "OSError: a\n"
+        "\n"
+        "During handling of the above exception, another exception occurred:\n"
+        "\n"
+        "Traceback (most recent call last):\n"
+        '  File "b.py", line 2, in g\n'
+        "ChildProcessError: [Errno 10] No child processes\n"
+    )
+    detail = _output_detail(noise + _PAD, None)
+    assert _clean(detail) and "OSError" not in detail, detail
+    real = "Traceback (most recent call last):\n  File \"x.py\", line 1, in <module>\nValueError: real\n"
+    assert "ValueError: real" in _output_detail(noise + real + _PAD, None)
+
+
+def test_direct_cause_chained_report_is_dropped_entirely():
+    """#198 with the ``raise ... from`` marker (#200 review 6261800220)."""
+    noise = (
+        "Exception ignored in: <function A.__del__ at 0x1>\n"
+        "Traceback (most recent call last):\n"
+        '  File "a.py", line 3, in __del__\n'
+        "ValueError: inner\n"
+        "\n"
+        "The above exception was the direct cause of the following exception:\n"
+        "\n"
+        "Traceback (most recent call last):\n"
+        '  File "a.py", line 4, in __del__\n'
+        "ChildProcessError: [Errno 10] No child processes\n"
+    )
+    detail = _output_detail(noise + "INTERNALERROR> boom\n", None)
+    assert _clean(detail) and "ValueError" not in detail and "INTERNALERROR> boom" in detail, detail
+
+
+def test_a_new_report_header_resets_the_chain_state():
+    """A blank line or chain marker seen in one report must not carry into
+    the next: its message continuation is still dropped, and a Traceback
+    after it is not mistaken for a chained part."""
+    first = "Exception ignored in: <a>\nOSError: a\n\nDuring handling of the above exception, another exception occurred:\n"
+    second = "Exception ignored in: <b>\nRuntimeError: line1\nline2 continues\n"
+    detail = _output_detail(first + second + "E   assert 0\n", None)
+    assert "line2" not in detail and "E assert 0" in detail, detail
+    real = 'Traceback (most recent call last):\n  File "x.py", line 1, in <module>\nValueError: real\n'
+    detail = _output_detail(first + "Exception ignored in: <b>\nOSError: b\n" + real, None)
+    assert "ValueError: real" in detail, detail

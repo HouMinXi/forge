@@ -213,22 +213,37 @@ def _without_ignored_exceptions(lines: list[str], omitted: list[int] | None = No
     like real output (_REAL_OUTPUT); those continuation lines are dropped
     too (#182 P3).
     """
+    chain = re.compile(
+        r"(During handling of the above exception, another exception occurred:"
+        r"|The above exception was the direct cause of the following exception:)$"
+    )
     kept: list[str] = []
     state = None  # None, "report" (header/traceback), "message" (after the exception line)
+    blank = chained = False
     for line in lines:
         if re.match(r"Exception ignored\b", line):
-            state = "report"
+            state, blank, chained = "report", False, False
             continue
         if state == "report":
             if line.startswith("Traceback (most recent call last):") or (line and line[0].isspace()):
                 continue
             state = "message"
             continue  # the report's final exception line
-        if state == "message" and not _ends_ignored_message(line):
-            if omitted is not None:
-                omitted[0] += 1
-            continue  # a multi-line message's continuation (#182 P3)
-        state = None
+        if state == "message":
+            if not line.strip():
+                blank = True  # ends a message, but a chain marker may follow (#198)
+                continue
+            if chain.match(line):
+                chained = True
+                continue
+            if chained and line.startswith("Traceback (most recent call last):"):
+                state, blank, chained = "report", False, False
+                continue
+            if not blank and not _ends_ignored_message(line):
+                if omitted is not None:
+                    omitted[0] += 1
+                continue  # a multi-line message's continuation (#182 P3)
+            state, blank, chained = None, False, False
         kept.append(line)
     return kept
 
