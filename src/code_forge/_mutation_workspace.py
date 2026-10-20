@@ -100,6 +100,16 @@ def _node_identity(info: os.stat_result) -> tuple[int, int]:
     return info.st_dev, info.st_ino
 
 
+def _fd_sha256(fd: int) -> str:
+    """Hash a file from offset 0 through an already-open fd."""
+    digest = hashlib.sha256()
+    offset = 0
+    while chunk := os.pread(fd, 1024 * 1024, offset):
+        digest.update(chunk)
+        offset += len(chunk)
+    return digest.hexdigest()
+
+
 def _snapshot(fd: int) -> dict:
     """Hash regular bytes and describe modes/types; never follow cache links."""
     directory_before = os.fstat(fd)
@@ -134,6 +144,10 @@ def _snapshot(fd: int) -> dict:
                     after.st_mtime_ns,
                     after.st_ctime_ns,
                 ):
+                    raise MutationWorkspaceError("cache bytes changed while snapshotting")
+                # Coarse timestamps (~4 ms) can hide a same-size in-place
+                # rewrite from fstat, so hash the same fd once more (#239).
+                if _fd_sha256(child) != digest.hexdigest():
                     raise MutationWorkspaceError("cache bytes changed while snapshotting")
                 row.update(type="file", size=after.st_size, sha256=digest.hexdigest())
             finally:
