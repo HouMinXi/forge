@@ -661,3 +661,99 @@ def test_a_timed_out_hollow_retry_is_inconclusive(tmp_path, monkeypatch):
     assert result.status is FixvalStatus.BLOCK
     assert [finding.id for finding in result.findings] == ["FIXVAL_INCONCLUSIVE"]
     assert "timed out after 1s" in result.block_message
+
+
+@pytest.mark.parametrize(
+    ("cmd", "runs_pytest"),
+    [
+        # #267 Low 1: the run-wrapper unwrapping
+        (["uv", "run", "pytest", "-q"], True),
+        (["poetry", "run", "python", "-m", "pytest"], True),
+        (["pdm", "run", "pytest"], True),
+        (["pipenv", "run", "pytest"], True),
+        (["hatch", "run", "pytest"], True),
+        (["uv", "run", "make", "pytest"], False),
+        # #267 Low 2: shapes main fell back to "nonzero = fails" for
+        (["uv", "run", "--frozen", "pytest"], True),
+        (["uv", "run", "--frozen", "--no-sync", "python", "-m", "pytest"], True),
+        (["coverage", "run", "-m", "pytest"], True),
+        (["coverage", "run", "--branch", "-m", "pytest", "tests"], True),
+        (["env", "A=1", "pytest"], True),
+        (["env", "-i", "A=1", "B=2", "python", "-m", "pytest"], True),
+        (["A=1", "pytest"], True),
+        (["py", "-m", "pytest"], True),
+        (["py", "-3.12", "-m", "pytest"], True),
+        (["py.exe", "-m", "pytest"], True),
+        # still not pytest
+        (["coverage", "run", "script.py"], False),
+        (["coverage", "report"], False),
+        (["env", "make", "pytest"], False),
+        (["py", "script.py", "pytest"], False),
+        (["tox", "-e", "pytest"], False),
+        (["uv", "run"], False),
+        (["env"], False),
+        # #269 review P2: a value-taking option's value is not the program
+        (["uv", "run", "--with", "pytest", "make", "test"], False),
+        (["uv", "run", "--with", "pytest", "./run_tests.sh"], False),
+        (["uv", "run", "--with", "pytest", "bash", "-c", "pytest; exit 3"], False),
+        (["env", "-u", "PYTEST", "make"], False),
+        (["uv", "run", "--with", "pytest", "pytest"], True),
+        (["uv", "run", "--with=pytest", "pytest"], True),
+        (["uv", "run", "-p", "3.12", "pytest"], True),
+        (["uv", "run", "--python", "3.12", "pytest"], True),
+        (["env", "-u", "PYTEST", "pytest"], True),
+        (["coverage", "run", "--source", "src", "-m", "pytest"], True),
+        (["uv", "run", "--", "pytest"], True),
+        # an unknown option stops unwrapping: not pytest ("nonzero = fails")
+        (["uv", "run", "--some-new-flag", "pytest"], False),
+        (["env", "--some-new-flag", "pytest"], False),
+        (["coverage", "run", "--some-new-flag", "-m", "pytest"], False),
+        # #269 review Lows
+        (["uv", "pip", "pytest"], False),
+        (["coverage", "report", "-m", "pytest"], False),
+        (["poetry", "run", "env", "A=1", "pytest"], True),
+        (["uv", "run", "env", "A=1", "coverage", "run", "-m", "pytest"], True),
+        (["./x=1", "pytest"], False),
+        (["1A=1", "pytest"], False),
+        (["A-B=1", "pytest"], False),
+    ],
+)
+def test_runs_pytest_sees_through_wrappers(cmd, runs_pytest):
+    from code_forge.fixval import _runs_pytest
+
+    assert _runs_pytest(cmd) is runs_pytest
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        ["uv", "run", "pytest"],
+        ["uv", "run", "--frozen", "pytest"],
+        ["coverage", "run", "-m", "pytest"],
+        ["env", "A=1", "pytest"],
+        ["py", "-m", "pytest"],
+    ],
+)
+def test_a_fixture_error_under_a_wrapped_pytest_is_no_witness(cmd):
+    """#267: a retry that only errors (fixture gone) is not a failed test."""
+    from code_forge.fixval import _witnessed_failure
+
+    result = subprocess.CompletedProcess(cmd, 1, QQ_ERROR, "")
+    assert _witnessed_failure(cmd, result) is False
+
+
+@pytest.mark.parametrize("cmd", [["coverage", "run", "-m", "pytest"], ["uv", "run", "pytest"]])
+def test_wrapped_pytest_exit_5_on_reverted_code_is_inconclusive(monkeypatch, cmd):
+    """#269: wrapped pytest also gets #252's exit classification; exit 5
+    (no tests collected) never judged the test, so it is not PASS."""
+    from code_forge import fixval
+
+    def no_tests_collected(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 5, "no tests ran in 0.01s\n", "")
+
+    monkeypatch.setattr(fixval.subprocess, "run", no_tests_collected)
+    candidate = classify_fixval_candidate(["src/calc.py", "tests/test_calc.py"])
+    result = fixval._test_reverted_candidate(candidate, cmd, {}, ".")
+    assert result.status is FixvalStatus.BLOCK
+    assert [finding.id for finding in result.findings] == ["FIXVAL_INCONCLUSIVE"]
+    assert "pytest exit 5 (no tests collected)" in result.block_message

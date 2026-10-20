@@ -337,7 +337,8 @@ _PYTEST_EXIT = {
 }
 _PYTEST_NAMES = frozenset({"pytest", "py.test"})
 _RUN_WRAPPERS = frozenset({"uv", "poetry", "pdm", "pipenv", "hatch"})
-_PYTHON = re.compile(r"python(\d+(\.\d+)*)?")
+_PYTHON = re.compile(r"py(thon(\d+(\.\d+)*)?)?")  # `py` is the Windows launcher
+_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")  # use with .match
 # CPython options that consume the following argument.
 _PYTHON_ARG_OPTIONS = frozenset({"-W", "-X"})
 
@@ -347,16 +348,137 @@ def _program(arg: str) -> str:
     return name[: -len(".exe")] if name.endswith(".exe") else name
 
 
+# Options each wrapper is known to take: (flags, options that consume a
+# value). Anything else stops unwrapping (#269 review).
+_UV_RUN_OPTIONS = (
+    frozenset(
+        {
+            "--frozen",
+            "--locked",
+            "--no-sync",
+            "--isolated",
+            "--no-project",
+            "--all-extras",
+            "--all-groups",
+            "--all-packages",
+            "--no-dev",
+            "--dev",
+            "--offline",
+            "--active",
+            "--no-editable",
+            "--exact",
+            "--no-cache",
+            "-q",
+            "--quiet",
+            "-v",
+            "--verbose",
+        }
+    ),
+    frozenset(
+        {
+            "--with",
+            "--with-editable",
+            "--with-requirements",
+            "-p",
+            "--python",
+            "--directory",
+            "--project",
+            "--package",
+            "--extra",
+            "--group",
+            "--only-group",
+            "--no-group",
+            "--env-file",
+            "--index",
+            "--default-index",
+            "--index-url",
+            "--extra-index-url",
+        }
+    ),
+)
+_QUIET_VERBOSE = frozenset({"-q", "--quiet", "-v", "--verbose"})
+_WRAPPER_OPTIONS = {
+    "uv": _UV_RUN_OPTIONS,
+    "poetry": (
+        _QUIET_VERBOSE | {"-n", "--no-interaction"},
+        frozenset({"-C", "--directory", "-P", "--project"}),
+    ),
+    "pdm": (_QUIET_VERBOSE, frozenset({"-p", "--project"})),
+    "pipenv": (_QUIET_VERBOSE, frozenset()),
+    "hatch": (_QUIET_VERBOSE, frozenset()),
+    "env": (frozenset({"-i", "--ignore-environment"}), frozenset({"-u", "--unset", "-C", "--chdir"})),
+    "coverage": (
+        frozenset({"--branch", "-p", "--parallel-mode", "-a", "--append", "--timid", "-L", "--pylib"}),
+        frozenset(
+            {"--source", "--rcfile", "--concurrency", "--omit", "--include", "--context", "--data-file"}
+        ),
+    ),
+}
+
+
+def _skip_options(argv: list[str], wrapper: str) -> list[str] | None:
+    """`argv` after the wrapper's leading options, or None at an option
+    it is not known to take (its value could be read as the program)."""
+    flags, valued = _WRAPPER_OPTIONS[wrapper]
+    while argv and argv[0].startswith("-") and argv[0] != "-":
+        option = argv[0]
+        if option == "--":
+            return argv[1:]
+        if wrapper == "coverage" and option == "-m":
+            return argv  # `coverage run [opts] -m module`
+        if option in flags:
+            argv = argv[1:]
+        elif option in valued:
+            argv = argv[2:]
+        elif option.startswith("--") and option.split("=", 1)[0] in valued:
+            argv = argv[1:]  # --opt=value
+        else:
+            return None
+    return argv
+
+
+def _unwrap_runner(argv: list[str]) -> list[str]:
+    """The real program behind `VAR=value` prefixes, `env [opts]
+    [VAR=value...]`, `uv run [opts]` (or poetry/pdm/pipenv/hatch run) and
+    `coverage run [opts]`, possibly nested (#267).
+
+    Each wrapper's known options are skipped with their values. An unknown
+    option gives [] (not pytest): the run then keeps "nonzero = fails", so a
+    misread option value never turns a real failure into "no witness" (#269
+    review). A subcommand other than `run` (`uv pip`, `coverage report`) is
+    returned as is, which is not pytest either. `coverage run -m x` becomes
+    `python -m x`."""
+    while argv:
+        program = _program(argv[0])
+        if _ENV_ASSIGNMENT.match(argv[0]):
+            argv = argv[1:]
+            continue
+        if program == "env":
+            rest = _skip_options(argv[1:], "env")  # the loop drops VAR=value
+        elif program in _RUN_WRAPPERS or program == "coverage":
+            if argv[1:2] != ["run"]:
+                return argv  # `uv pip`, `coverage report`: not a runner
+            rest = _skip_options(argv[2:], program)
+            if rest is not None and program == "coverage":
+                return ["python", *rest] if rest else []
+        else:
+            return argv
+        if rest is None:
+            return []
+        argv = rest
+    return argv
+
+
 def _runs_pytest(cmd: list[str]) -> bool:
     """Whether the runner itself is pytest, not merely an argument named so.
 
     `pytest ...`, `<venv>/bin/py.test ...`, `python -B -m pytest ...`, and
-    either behind `uv run` (or poetry/pdm/pipenv/hatch run). `make pytest`
-    and `tox -e pytest` run some other program.
+    either behind `uv run` (or poetry/pdm/pipenv/hatch run), `env`, a
+    `VAR=value` prefix or `coverage run`, and `py -m pytest`. `make pytest`
+    and `tox -e pytest` run some other program. A wrapper option this does
+    not know makes it answer False (see _unwrap_runner).
     """
-    argv = [str(arg) for arg in cmd]
-    if len(argv) >= 2 and _program(argv[0]) in _RUN_WRAPPERS and argv[1] == "run":
-        argv = argv[2:]
+    argv = _unwrap_runner([str(arg) for arg in cmd])
     if not argv:
         return False
     if _program(argv[0]) in _PYTEST_NAMES:
