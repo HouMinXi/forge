@@ -25,6 +25,7 @@ import yaml
 
 from .exit_codes import EXIT_FAIL, EXIT_PASS
 from ._gate_pytest import (
+    child_sigint_options,
     compare_failed_nodes,
     prepare_pytest_capture,
     read_pytest_evidence,
@@ -1372,6 +1373,7 @@ def run_gate_check(
                 cwd=str(test_cwd),
                 timeout=timeout,
                 check=False,
+                **child_sigint_options(),  # #273
             )
         test_returncode = test_result.returncode
         test_stdout = test_result.stdout

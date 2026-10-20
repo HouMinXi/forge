@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 
+from code_forge._gate_pytest import child_sigint_options
 from code_forge.disposition import Disposition
 from code_forge.state import StateFinding
 
@@ -358,7 +359,14 @@ def _run_baseline_guard(
             retry_cause.append(cause)
         return ("needs_strip_retry", [], [])
 
-    execute = subprocess.run if run_command is None else run_command
+    if run_command is None:
+        # #273: the default runner (fixval's guard) resets an inherited
+        # SIGINT=SIG_IGN like every other child test spawn (#230).
+        def execute(cmd, **kwargs):
+            return subprocess.run(cmd, **kwargs, **child_sigint_options())
+
+    else:
+        execute = run_command
 
     for run_num in range(1, 4):
         try:

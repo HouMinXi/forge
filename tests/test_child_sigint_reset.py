@@ -78,10 +78,19 @@ def test_no_change_when_sigint_is_not_ignored(default_sigint, module):
 
 @pytest.mark.parametrize(
     ("module", "count"),
-    [("_mutation_process.py", 1), ("_gate_pytest.py", 1), ("exec_falsify.py", 1), ("fixval.py", 2)],
+    [
+        ("_mutation_process.py", 1),
+        ("_gate_pytest.py", 1),
+        ("exec_falsify.py", 1),
+        ("fixval.py", 2),
+        ("baseline_guard.py", 1),
+        ("gate_check.py", 1),
+    ],
 )
 def test_child_test_spawn_sites_use_the_reset(module, count):
     # fixval: the reverted-candidate test run and the overfit run (#238).
+    # baseline_guard: the default (non-owned) runner fixval's guard uses;
+    # gate_check: the non-pytest test command (#273).
     assert (SRC / module).read_text(encoding="utf-8").count("**child_sigint_options()") == count
 
 
@@ -115,3 +124,60 @@ def test_child_keeps_ignored_sighup(ignored_sigint, ignored_sighup, module, thre
     assert child.stdout.strip() == "1"  # SIG_IGN
     assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
     assert _child(**options) == DEFAULT  # SIGINT is still reset
+
+
+def test_default_baseline_guard_child_gets_default_sigint(ignored_sigint, tmp_path):
+    # #273: fixval's guard runs with run_command=None (plain subprocess.run).
+    from code_forge import baseline_guard
+
+    marker = tmp_path / "seen"
+    probe = "import signal; open(%r, 'a').write(str(signal.getsignal(signal.SIGINT)) + chr(10))"
+    probe %= str(marker)
+    status, _, infra = baseline_guard._run_baseline_guard(
+        [sys.executable, "-c", probe], {}, str(tmp_path), allow_strip_retry=False, timeout=30
+    )
+    assert status == "passed", infra
+    assert marker.read_text().splitlines() == [DEFAULT] * 3
+
+
+def test_gate_check_non_pytest_command_child_gets_default_sigint(ignored_sigint, tmp_path):
+    # #273: gate_check's non-pytest test command spawns with the reset too.
+    import os
+    from io import StringIO
+
+    import yaml
+
+    from code_forge.gate_check import run_gate_check
+
+    repo = tmp_path / "repo"
+    (repo / "src" / "demo").mkdir(parents=True)
+    (repo / "src" / "demo" / "core.py").write_text("X = 1\n")
+    marker = tmp_path / "seen"
+    (repo / "probe.py").write_text(
+        "import signal\nopen(%r, 'w').write(str(signal.getsignal(signal.SIGINT)))\n" % str(marker)
+    )
+    (repo / ".code-forge").mkdir()
+    (repo / ".code-forge" / "gate.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "test": {
+                    "command": ["python3", "probe.py"],
+                    "source_patterns": ["src/**/*.py"],
+                    "timeout_seconds": 60,
+                }
+            }
+        )
+    )
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    git("-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base")
+    git("add", "-A")
+    path = os.pathsep.join([os.path.dirname(sys.executable), os.environ.get("PATH", "")])
+    env = dict(os.environ, FORGE_ALLOW_MAIN="1", PATH=path)
+    err = StringIO()
+    run_gate_check(args=None, env=env, cwd=repo, stdout=StringIO(), stderr=err)
+    assert marker.exists(), err.getvalue()
+    assert marker.read_text() == DEFAULT
