@@ -109,6 +109,35 @@ def _is_test_file(path: str) -> bool:
     return False
 
 
+def _is_test_support(path: str) -> bool:
+    """Test scaffolding that is not itself a test file (#254).
+
+    conftest.py anywhere, and any file under a tests/ directory, matching the
+    mutation defaults (tests/**, **/tests/**, **/conftest.py; a singular test/
+    stays production, #135). `path` must be repo-relative; backslash
+    separators are normalised.
+    """
+    parts = path.replace("\\", "/").split("/")
+    return parts[-1] == "conftest.py" or "tests" in parts[:-1]
+
+
+def _repo_relative(path: str) -> str | None:
+    """`path` relative to the Git checkout holding it.
+
+    Relative review paths already are. An absolute path is taken relative to
+    its nearest ancestor holding `.git` (a directory, or a worktree's file),
+    so a checkout that itself lives under a directory named tests/ is not all
+    scaffolding. None when no checkout is found: the caller then keeps main's
+    classification.
+    """
+    if not os.path.isabs(path):
+        return path
+    for parent in Path(path).parents:
+        if (parent / ".git").exists():
+            return Path(path).relative_to(parent).as_posix()
+    return None
+
+
 def classify_fixval_candidate(
     changed_files: list[str],
     *,
@@ -127,12 +156,24 @@ def classify_fixval_candidate(
     non_test_files: list[str] = []
     executable = None if executable_files is None else set(executable_files)
 
+    support_files: set[str] = set()
+    has_source = False
     for f in changed_files:
         if _is_test_file(f):
             if executable is None or f in executable:
                 test_files.append(f)
-        else:
-            non_test_files.append(f)
+            continue
+        non_test_files.append(f)
+        relative = _repo_relative(f)
+        if relative is not None and _is_test_support(relative):
+            support_files.add(f)
+        elif relative is not None:
+            has_source = True  # an unplaceable path keeps main's revert-all
+    # Scaffolding stays at its fixed state only beside another non-test change;
+    # when it is the whole fix (a conftest guard, #225) it is reverted, as
+    # before #254. run_fixval re-checks a would-be HOLLOW with it reverted.
+    if has_source:
+        non_test_files = [f for f in non_test_files if f not in support_files]
 
     if test_files and non_test_files:
         return FixvalCandidate(
@@ -206,28 +247,48 @@ def _make_skipped_result(reason: str) -> FixvalResult:
     )
 
 
-def _filter_non_test_patch(diff_text: str) -> str:
-    """Project production file blocks without reserializing Git binary bodies."""
+def _filter_non_test_patch(diff_text: str, *, revert_support: bool = False) -> str:
+    """Project production file blocks without reserializing Git binary bodies.
 
-    def is_production(patched_file):
-        src_clean = patched_file_path(patched_file, source=True) or ""
-        tgt_clean = patched_file_path(patched_file) or ""
-        return not _is_test_file(src_clean) and not _is_test_file(tgt_clean)
+    Test support (#254) is left out beside any other non-test block, unless
+    `revert_support` asks for main's revert-everything-but-tests projection.
+    """
+
+    def paths_of(patched_file):
+        return [
+            path
+            for path in (patched_file_path(patched_file, source=True), patched_file_path(patched_file))
+            if path
+        ]
+
+    def is_reversible(patched_file):
+        return not any(_is_test_file(path) for path in paths_of(patched_file))
+
+    def is_support(patched_file):
+        return any(_is_test_support(path) for path in paths_of(patched_file))
 
     if any(line.startswith("diff --git ") for line in StringIO(diff_text)):
         blocks = [(unidiff.PatchSet(block), block) for _path, block in iter_diff_sections(diff_text)]
     else:
         blocks = [([entry], str(entry)) for entry in unidiff.PatchSet(diff_text)]
+
+    # Diff paths are repo-relative. Scaffolding (#254) is kept at its fixed
+    # state only when another non-test block is reverted alongside it.
+    def is_source(patched_file):
+        return is_reversible(patched_file) and not is_support(patched_file)
+
+    keep_support = not revert_support and any(
+        entries and all(is_source(entry) for entry in entries) for entries, _block in blocks
+    )
+
+    def is_production(patched_file):
+        return is_reversible(patched_file) and not (keep_support and is_support(patched_file))
+
     filtered = []
     production_paths: set[str] = set()
     test_paths: set[str] = set()
     for entries, block in blocks:
-        paths = {
-            path
-            for entry in entries
-            for path in (patched_file_path(entry, source=True), patched_file_path(entry))
-            if path
-        }
+        paths = {path for entry in entries for path in paths_of(entry)}
         if entries and all(is_production(entry) for entry in entries):
             filtered.append(block)
             production_paths.update(paths)
@@ -370,7 +431,43 @@ def _inconclusive_block(reason: str, output: str = "") -> FixvalResult:
     )
 
 
-def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root, timeout=600) -> FixvalResult:
+# pytest's closing summary, e.g. "1 failed, 1 error in 0.12s" (may be framed by "=").
+_PYTEST_SUMMARY = re.compile(r"^[= ]*((?:\d+ [a-z]+, )*\d+ [a-z]+) in \d", re.MULTILINE)
+_PYTEST_FAILED = re.compile(r"\b[1-9]\d* failed\b")
+# Short test summary entry (still printed under -qq).
+_PYTEST_FAILED_ENTRY = re.compile(r"^FAILED ", re.MULTILINE)
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _witnessed_failure(cmd: list[str], result: subprocess.CompletedProcess) -> bool:
+    """Whether a nonzero run shows a test failing, not only breaking (#255).
+
+    Used for the retry with test support reverted: a test that loses a
+    fixture or helper errors at setup or collection, so only a failed test
+    witnesses that the support was the fix. A signal death never witnessed
+    anything. For pytest the run must exit 1 and its (colour-stripped) output
+    must show a failed test: the closing summary's "N failed", or, without a
+    summary (-qq), a short-summary FAILED entry. Anything else under pytest is
+    no verdict. Other runners keep main's "nonzero = fails".
+    """
+    if result.returncode < 0:
+        return False
+    if not _runs_pytest(cmd):
+        return True
+    if result.returncode != 1:
+        return False
+    output = _ANSI.sub("", result.stdout or "")
+    summaries = _PYTEST_SUMMARY.findall(output)
+    if summaries:
+        return _PYTEST_FAILED.search(summaries[-1]) is not None
+    return _PYTEST_FAILED_ENTRY.search(output) is not None
+
+
+def _test_reverted_candidate(
+    candidate, scoped_cmd, run_env, repo_root, reverted_files=None, *, require_witness=False, timeout=600
+) -> FixvalResult | None:
+    """Run the tests on reverted code. With `require_witness`, a nonzero run
+    that did not show a failing test returns None (no verdict)."""
     try:
         result = subprocess.run(
             scoped_cmd,
@@ -390,12 +487,17 @@ def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root, timeout=
         # the reason. Restoration still runs (and is checked) in run_fixval.
         return _inconclusive_block("test run timed out after %ss" % timeout, _timeout_output(exc))
     if result.returncode != 0:
+        if require_witness:
+            # #255 retry: only a witnessed failed test counts; else no verdict.
+            if not _witnessed_failure(scoped_cmd, result):
+                return None
+            return FixvalResult(status=FixvalStatus.PASS, findings=[], advisories=[])
         reason = _judged_failure(scoped_cmd, result)
         if reason is not None:
             return _inconclusive_block(reason, result.stderr or result.stdout or "")
         return FixvalResult(status=FixvalStatus.PASS, findings=[], advisories=[])
     block_msg = "FIXVAL: Test(s) did not fail when the fix was reverted.\n\n  Reverted files:\n"
-    for filename in candidate.non_test_files:
+    for filename in candidate.non_test_files if reverted_files is None else reverted_files:
         block_msg += "    %s\n" % filename
     block_msg += "\n  Tests that should have failed but passed:\n"
     for filename in candidate.test_files:
@@ -719,11 +821,64 @@ def run_fixval(
             )
         )
 
+    outcome = _reverted_run(
+        candidate, non_test_patch, scoped_cmd, run_env, cwd, recovery_parent, timeout=baseline_timeout
+    )
+    if not _is_hollow(outcome):
+        return noted(outcome)
+    # #255: test support was left at its fixed state beside another non-test
+    # change (maybe only docs or config). Before calling the tests hollow,
+    # revert the support as well, as before #254; that run decides.
+    # A retry that only breaks the tests (a fixture or helper gone, #254)
+    # leaves the first run's HOLLOW standing; so does a run killed by a signal
+    # or a pytest run with no readable failed test (see _witnessed_failure).
+    # Known limits of telling "support was the fix" from "support is needed":
+    # - fail-closed: a support fix whose absence only *errors* (repairing a
+    #   fixture that raised, a sys.path or plugin fix) beside another non-test
+    #   change stays HOLLOW (main: PASS); waive with FIXVAL_WAIVER.
+    # - as on main: a hollow test reaching new support only at call time
+    #   (an import in the test body, getfixturevalue), or a pre-existing
+    #   fixture whose value the fix changed, fails on the retry and is PASS.
+    full_patch = _filter_non_test_patch(diff_text, revert_support=True)
+    if full_patch == non_test_patch:
+        return noted(outcome)
+    retry = _reverted_run(
+        candidate,
+        full_patch,
+        scoped_cmd,
+        run_env,
+        cwd,
+        recovery_parent,
+        require_witness=True,
+        timeout=baseline_timeout,
+    )
+    return noted(outcome if retry is None else retry)
+
+
+def _is_hollow(result: FixvalResult) -> bool:
+    return [f.id for f in result.findings] == ["FIXVAL_HOLLOW"]
+
+
+def _reverted_run(
+    candidate: FixvalCandidate,
+    non_test_patch: str,
+    scoped_cmd: list[str],
+    run_env: dict[str, str],
+    cwd: Path,
+    recovery_parent: Path | None,
+    *,
+    require_witness: bool = False,
+    timeout: int = 600,
+) -> FixvalResult | None:
+    """Revert `non_test_patch`, run the scoped tests, restore the fix.
+
+    None only with `require_witness`, when the run gave no verdict."""
+    repo_root = str(cwd)
     # Write patch to temp file
     try:
         fd, patch_path = tempfile.mkstemp(prefix=".fixval-revert-", suffix=".patch")
     except OSError as exc:
-        return noted(_transaction_block("cannot allocate revert patch: %s" % exc, repo_root))
+        return _transaction_block("cannot allocate revert patch: %s" % exc, repo_root)
     transaction = None
     forward_applied = False
     errors = []
@@ -744,7 +899,13 @@ def run_fixval(
             _refuse_sourceless_bytecode(repo_root, touched)
             _drop_cached_bytecode(repo_root, touched, run_env, scoped_cmd)
             outcome = _test_reverted_candidate(
-                candidate, scoped_cmd, run_env, repo_root, timeout=baseline_timeout
+                candidate,
+                scoped_cmd,
+                run_env,
+                repo_root,
+                changed_files_in_order(non_test_patch),
+                require_witness=require_witness,
+                timeout=timeout,
             )
     except (OSError, ValueError, TransactionError, subprocess.SubprocessError) as exc:
         errors.append(str(exc))
@@ -830,8 +991,8 @@ def run_fixval(
             interrupted.add_note("FIXVAL recovery: %s (%s)" % (recovery, "; ".join(errors)))
         raise interrupted
     if errors:
-        return noted(_transaction_block("; ".join(errors), recovery))
-    return noted(outcome)
+        return _transaction_block("; ".join(errors), recovery)
+    return outcome
 
 
 class _VariableRenamer(ast.NodeTransformer):
