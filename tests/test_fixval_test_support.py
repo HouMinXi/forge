@@ -740,3 +740,20 @@ def test_a_fixture_error_under_a_wrapped_pytest_is_no_witness(cmd):
 
     result = subprocess.CompletedProcess(cmd, 1, QQ_ERROR, "")
     assert _witnessed_failure(cmd, result) is False
+
+
+@pytest.mark.parametrize("cmd", [["coverage", "run", "-m", "pytest"], ["uv", "run", "pytest"]])
+def test_wrapped_pytest_exit_5_on_reverted_code_is_inconclusive(monkeypatch, cmd):
+    """#269: wrapped pytest also gets #252's exit classification; exit 5
+    (no tests collected) never judged the test, so it is not PASS."""
+    from code_forge import fixval
+
+    def no_tests_collected(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 5, "no tests ran in 0.01s\n", "")
+
+    monkeypatch.setattr(fixval.subprocess, "run", no_tests_collected)
+    candidate = classify_fixval_candidate(["src/calc.py", "tests/test_calc.py"])
+    result = fixval._test_reverted_candidate(candidate, cmd, {}, ".")
+    assert result.status is FixvalStatus.BLOCK
+    assert [finding.id for finding in result.findings] == ["FIXVAL_INCONCLUSIVE"]
+    assert "pytest exit 5 (no tests collected)" in result.block_message
