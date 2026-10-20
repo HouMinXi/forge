@@ -333,12 +333,22 @@ def _judged_failure(cmd: list[str], result: subprocess.CompletedProcess) -> str 
     return "pytest exit %d (%s)" % (code, _PYTEST_EXIT.get(code, "not a test-failure exit"))
 
 
-def _inconclusive_block(reason: str, result: subprocess.CompletedProcess) -> FixvalResult:
+def _timeout_output(exc: subprocess.TimeoutExpired) -> str:
+    value = exc.stderr or exc.stdout or ""
+    return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
+
+
+def _inconclusive_block(reason: str, output: str = "") -> FixvalResult:
+    """Non-PASS FIXVAL when the reverted-code run never judged the test.
+
+    Unmeasured is not PASS: machine.py turns BLOCK into a FAIL verdict, and
+    the reason says exactly why the fix is unverified.
+    """
     detail = (
         "FIXVAL inconclusive: reverted-code %s; the test was not judged, so the fix is unverified"
         % reason
     )
-    tail = " ".join((result.stderr or result.stdout or "").split())[-200:]
+    tail = " ".join((output or "").split())[-200:]
     if tail:
         detail += ". Output: %s" % tail
     return FixvalResult(
@@ -360,23 +370,29 @@ def _inconclusive_block(reason: str, result: subprocess.CompletedProcess) -> Fix
     )
 
 
-def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root) -> FixvalResult:
-    result = subprocess.run(
-        scoped_cmd,
-        env=run_env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=600,
-        check=False,
-        **child_sigint_options(),  # #230
-        cwd=repo_root,
-    )
+def _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root, timeout=600) -> FixvalResult:
+    try:
+        result = subprocess.run(
+            scoped_cmd,
+            env=run_env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+            **child_sigint_options(),  # #230
+            cwd=repo_root,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # #187: a slow reverted run is not a transaction failure, but nothing
+        # was measured, so it is not PASS either: an inconclusive BLOCK with
+        # the reason. Restoration still runs (and is checked) in run_fixval.
+        return _inconclusive_block("test run timed out after %ss" % timeout, _timeout_output(exc))
     if result.returncode != 0:
         reason = _judged_failure(scoped_cmd, result)
         if reason is not None:
-            return _inconclusive_block(reason, result)
+            return _inconclusive_block(reason, result.stderr or result.stdout or "")
         return FixvalResult(status=FixvalStatus.PASS, findings=[], advisories=[])
     block_msg = "FIXVAL: Test(s) did not fail when the fix was reverted.\n\n  Reverted files:\n"
     for filename in candidate.non_test_files:
@@ -575,6 +591,7 @@ def run_fixval(
     diff_text: str | None,
     *,
     recovery_parent: Path | None = None,
+    baseline_timeout: int = 120,
 ) -> FixvalResult:
     """Run FIXVAL gate on a candidate diff.
 
@@ -593,6 +610,9 @@ def run_fixval(
         commit_message: for waiver trailer parsing.
         diff_text: unified diff text (same source as classify).
         recovery_parent: optional preservation parent outside participating source roots.
+        baseline_timeout: per-run deadline for the baseline guard, from the
+            trusted gate's test.timeout_seconds (a full-suite command needs
+            far more than the 120s default).
 
     Returns:
         FixvalResult with status, findings, advisories, block_message.
@@ -658,6 +678,7 @@ def run_fixval(
         repo_root,
         allow_strip_retry=True,
         retry_cause=retry_cause,
+        timeout=baseline_timeout,
     )
     env_retry = None
     if status == "needs_strip_retry":
@@ -670,6 +691,7 @@ def run_fixval(
             repo_root,
             allow_strip_retry=False,
             first_attempt=retry_cause[0] if retry_cause else None,
+            timeout=baseline_timeout,
         )
 
     def noted(result: FixvalResult) -> FixvalResult:
@@ -721,7 +743,9 @@ def run_fixval(
             transaction.mark_reverted()
             _refuse_sourceless_bytecode(repo_root, touched)
             _drop_cached_bytecode(repo_root, touched, run_env, scoped_cmd)
-            outcome = _test_reverted_candidate(candidate, scoped_cmd, run_env, repo_root)
+            outcome = _test_reverted_candidate(
+                candidate, scoped_cmd, run_env, repo_root, timeout=baseline_timeout
+            )
     except (OSError, ValueError, TransactionError, subprocess.SubprocessError) as exc:
         errors.append(str(exc))
     except (KeyboardInterrupt, SystemExit) as exc:
@@ -852,6 +876,7 @@ def run_overfit_guard(
     candidate: FixvalCandidate,
     test_cmd: list[str],
     cwd: Path,
+    timeout: int = 600,
 ) -> list[AdvisoryFinding]:
     """Run STING overfit guard: advisory only, never blocking.
 
@@ -921,18 +946,35 @@ def run_overfit_guard(
                 _drop_cached_bytecode(str(cwd), [str(file_path)], run_env, scoped_cmd)
             except OSError:
                 return []  # advisory only: unmeasured, never a stale verdict
-            result = subprocess.run(
-                scoped_cmd,
-                env=run_env,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=600,
-                check=False,
-                cwd=str(cwd),
-                **child_sigint_options(),  # #230
-            )
+            try:
+                result = subprocess.run(
+                    scoped_cmd,
+                    env=run_env,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout,
+                    check=False,
+                    cwd=str(cwd),
+                    **child_sigint_options(),  # #230
+                )
+            except subprocess.TimeoutExpired:
+                # #187: advisory only; a slow run never blocks or crashes,
+                # but the advisory says the check was not measured.
+                return [
+                    AdvisoryFinding(
+                        id="FIXVAL_OVERFIT_INCONCLUSIVE",
+                        axis="FIXVAL",
+                        file=py_file,
+                        line_range=[],
+                        description=(
+                            "overfit guard inconclusive: after renaming '%s' -> '%s' in %s the test run timed out after %ss"
+                            % (renamer.renamed, renamer.new_name, py_file, timeout)
+                        ),
+                        attribution="fixval-overfit-guard",
+                    ),
+                ]
 
             if result.returncode != 0:
                 reason = _judged_failure(scoped_cmd, result)

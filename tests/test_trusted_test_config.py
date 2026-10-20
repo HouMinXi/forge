@@ -137,12 +137,14 @@ def test_fixval_runs_the_baseline_test_command(tmp_path, monkeypatch):
     seen = []
 
     def fake_run_fixval(candidate, test_cmd, *args, **kwargs):
-        seen.append(test_cmd)
+        seen.append((test_cmd, kwargs.get("baseline_timeout")))
         return FixvalResult(status=FixvalStatus.PASS, findings=[], advisories=[])
 
     with patch("code_forge.fixval.run_fixval", fake_run_fixval):
         machine._finalize_local_terminal()
-    assert seen == [BASE_CMD], (machine._state.infra_errors, [f.description for f in machine._state.findings])
+    # The trusted baseline gate's command AND its timeout (111), never the
+    # PR's (999) and never the 120s default that cut off #142's FIXVAL.
+    assert seen == [(BASE_CMD, 111)], (machine._state.infra_errors, [f.description for f in machine._state.findings])
 
 
 def test_ci_detached_launch_gets_the_baseline_command(tmp_path, monkeypatch):
