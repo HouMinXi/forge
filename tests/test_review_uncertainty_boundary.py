@@ -266,14 +266,14 @@ def test_direct_prompt_can_confirm_untrusted_product():
 
 
 @pytest.mark.parametrize("with_history", [False, True])
-def test_persisted_hold_dismissal_survives_real_redetection(tmp_path, monkeypatch, with_history):
+def test_persisted_hold_dismissal_survives_real_redetection(tmp_path, monkeypatch, caplog, with_history):
     monkeypatch.delenv("FORGE_HOLD_NONINTERACTIVE", raising=False)
     product, audit = _finding(), _finding(audit=True)
     path = tmp_path / ".code-forge/state.json"
     first = _machine(tmp_path)
     state = State(source_hash=first.source_hash, findings=[audit, product])
     if with_history:
-        state.round_history = [{"dispositions": {product.fingerprint: "UNCERTAIN"}}]
+        state.round_history = [{"round": 0, "dispositions": {product.fingerprint: "UNCERTAIN"}}]
     save_state(state, path)
     restored = load_state(path)
     run_hold_ui(restored, path, input_fn=lambda prompt: "d", output_fn=lambda message: None)
@@ -288,6 +288,21 @@ def test_persisted_hold_dismissal_survives_real_redetection(tmp_path, monkeypatc
         }
     ]
     machine = _machine(tmp_path, provider=lambda: ([_finding()], excerpts, Usage(), 0.0))
+    if with_history:
+        # e759d71 (#46): a legacy round row carries no CLEAN/reset proof, so
+        # inherited clean credit is refused instead of silently trusted.
+        with caplog.at_level("WARNING", logger="code_forge"):
+            assert machine.run() is Verdict.FAIL
+        assert "legacy round lacks an explicit CLEAN/reset transition" in caplog.text
+        final = load_state(path)
+        assert final.converged is False
+        assert final.consecutive_clean_rounds == 0
+        assert (
+            next(f for f in final.findings if f.fingerprint == product.fingerprint).disposition
+            is Disposition.DISMISSED
+        )
+        assert final.round_history[: len(history)] == history
+        return
     assert machine.run() is Verdict.PASS
     final = load_state(path)
     assert final.converged is True
@@ -347,7 +362,9 @@ def test_real_provider_product_and_metadata_have_distinct_terminal_state(tmp_pat
     returned = machine.run()
     persisted = load_state(tmp_path / ".code-forge/state.json")
     assert len(calls) == 3
-    assert returned is (Verdict.PENDING if mode is Mode.LOCAL else Verdict.PASS)
+    # fafe03d (#46): the expert excerpt is rejected, so that pass is
+    # incomplete and the attempt fails in both modes.
+    assert returned is Verdict.FAIL
     assert persisted.verdict is returned
     assert persisted.converged is False
     assert persisted.consecutive_clean_rounds == 0
@@ -357,22 +374,71 @@ def test_real_provider_product_and_metadata_have_distinct_terminal_state(tmp_pat
         if not is_receipt_audit(f) and f.disposition is not Disposition.DISMISSED
     ]
     audit = [f for f in persisted.findings if is_receipt_audit(f)]
+    invalid = [f for f in persisted.findings if f.id == "RECEIPT_INVALID"]
+    products = [f for f in products if f not in invalid]
     assert len(products) == 1
     assert products[0].source == "UNTRUSTED"
     assert products[0].disposition is Disposition.UNCERTAIN
     assert len(audit) == 1
-    assert machine.active_findings == products
-    if mode is Mode.LOCAL:
-        assert persisted.hold_reason == "1 UNCERTAIN finding(s) awaiting human disposition"
-        assert persisted.round_history[-1]["fixpoint"] == "RESET"
-    else:
-        assert persisted.hold_reason is None
-        assert all(h.get("fixpoint") != "CLEAN" for h in persisted.round_history)
+    assert audit[0].id == "RECEIPT_UNTRUSTED"
+    assert len(invalid) == 1 and invalid[0].disposition is Disposition.CONFIRMED
+    assert [f for f in machine.active_findings if f not in invalid] == products
+    assert persisted.hold_reason is None
+    assert all(h.get("fixpoint") != "CLEAN" for h in persisted.round_history)
     receipts = sorted((tmp_path / ".code-forge/receipts").glob("receipt-*.json"))
     assert len(receipts) == 3
     expert = json.loads(receipts[1].read_text(encoding="utf-8"))
     assert expert["findings_count"] == 1
     assert expert["findings"][0]["basis"]["falsification_survived"] is False
+
+
+@pytest.mark.parametrize("mode", [Mode.LOCAL, Mode.CI])
+def test_well_formed_metadata_slip_keeps_pass_complete(tmp_path, monkeypatch, mode):
+    """A one-line coordinate slip is audit metadata, not a rejected pass (#46)."""
+    resolved = ResolvedReview([Path("control.ts")], None, DIFF, "git")
+    lines = CONTENT.splitlines()
+
+    def transport(prompt, **kwargs):
+        role = prompt.rsplit("You are a ", 1)[-1]
+        result = {
+            "findings": [],
+            "code_excerpts": [
+                {"file": "control.ts", "start_line": 1, "end_line": 3, "content": CONTENT}
+            ],
+        }
+        if role.startswith("senior engineer"):
+            # Lines 1-2 quoted exactly but numbered as 2-3.
+            result["code_excerpts"] = [
+                {"file": "control.ts", "start_line": 2, "end_line": 3, "content": "\n".join(lines[:2])}
+            ]
+            result["findings"] = [
+                {"file": "control.ts", "line": 2, "severity": "P1", "description": "Product candidate"}
+            ]
+        return LLMResult(result, Usage(), 0.0)
+
+    monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", transport)
+    monkeypatch.delenv("FORGE_HOLD_NONINTERACTIVE", raising=False)
+    provider = build_l1_provider("auto", resolved, backend=None, max_attempts=1)
+    machine = _machine(tmp_path, mode=mode, provider=provider)
+    returned = machine.run()
+    persisted = load_state(tmp_path / ".code-forge/state.json")
+    assert returned is (Verdict.PENDING if mode is Mode.LOCAL else Verdict.FAIL)
+    assert persisted.converged is False
+    audit = [f for f in persisted.findings if is_receipt_audit(f)]
+    assert [f.id for f in audit] == ["RECEIPT_UNTRUSTED"]
+    assert "misnumbered by -1" in audit[0].description
+    products = [f for f in persisted.findings if f.id.startswith("l1-expert-")]
+    assert len(products) == 1
+    assert products[0].source == "L1"
+    assert products[0].disposition is Disposition.UNCERTAIN
+    invalid = [f for f in persisted.findings if f.id == "RECEIPT_INVALID"]
+    receipt = json.loads((tmp_path / ".code-forge/receipts/receipt-c1p2.json").read_text())
+    if mode is Mode.LOCAL:
+        assert invalid == []
+        assert receipt["pass_status"] == "completed"
+        assert persisted.hold_reason is not None
+    else:
+        assert len(invalid) == 1
 
 
 def _salvaged_duplicate_machine(root, monkeypatch, *, distinct=False):
@@ -464,6 +530,21 @@ def _salvaged_duplicate_machine(root, monkeypatch, *, distinct=False):
     return make_machine, _json_to_state_findings({"findings": [raw]}, "expert")[0], resolved
 
 
+def _assert_incomplete_expert_pass(state, receipt):
+    """fafe03d (#46): a rejected excerpt keeps its pass incomplete.
+
+    The salvaged UNTRUSTED candidates stay visible, but the attempt cannot
+    authorize a clean cycle: RECEIPT_INVALID fails it and nothing converges.
+    """
+    assert state.verdict is Verdict.FAIL
+    assert state.converged is False
+    assert state.consecutive_clean_rounds == 0
+    assert state.earned_clean_window["cycles"] == []
+    invalid = [f for f in state.findings if f.id == "RECEIPT_INVALID"]
+    assert len(invalid) == 1 and invalid[0].disposition is Disposition.CONFIRMED
+    assert receipt["pass_status"] == "incomplete"
+
+
 @pytest.mark.parametrize("with_history", [False, True])
 @pytest.mark.parametrize("disposition", [Disposition.DISMISSED, Disposition.STYLE])
 def test_duplicate_salvage_preserves_terminal_disposition_in_all_receipts(
@@ -473,17 +554,29 @@ def test_duplicate_salvage_preserves_terminal_disposition_in_all_receipts(
     state_path = tmp_path / ".code-forge/state.json"
     source_hash = compute_source_hash(git_diff=resolved.git_diff)
     prior.disposition = Disposition.UNCERTAIN if disposition is Disposition.DISMISSED else disposition
-    history = [{"dispositions": {prior.fingerprint: "UNCERTAIN"}}] if with_history else []
+    history = [{"round": 0, "dispositions": {prior.fingerprint: "UNCERTAIN"}}] if with_history else []
     save_state(State(source_hash=source_hash, findings=[prior], round_history=history), state_path)
     if disposition is Disposition.DISMISSED:
         restored = load_state(state_path)
         run_hold_ui(restored, state_path, input_fn=lambda prompt: "d", output_fn=lambda message: None)
 
     machine = make_machine()
-    assert machine.run() is Verdict.PASS
+    assert machine.run() is Verdict.FAIL
     final = load_state(state_path)
-    assert final.converged is True
-    assert final.consecutive_clean_rounds == 3
+    if with_history:
+        # e759d71 (#46): legacy history without CLEAN/reset proof is refused
+        # before any new attempt is published; the dismissal still persists.
+        assert final.converged is False
+        assert final.round_history == history
+        assert not list((tmp_path / ".code-forge/receipts").glob("receipt-*.json"))
+        assert [f.disposition for f in final.findings if f.fingerprint == prior.fingerprint] == [
+            disposition
+        ]
+        return
+    receipt = json.loads((tmp_path / ".code-forge/receipts/receipt-c1p2.json").read_text())
+    _assert_incomplete_expert_pass(final, receipt)
+    assert machine._written_cycles == [1]
+    assert not (tmp_path / ".code-forge/receipts/receipt-c2p2.json").exists()
     assert final.round_history[: len(history)] == history
     products = [
         finding
@@ -492,28 +585,19 @@ def test_duplicate_salvage_preserves_terminal_disposition_in_all_receipts(
     ]
     assert len(products) == 1
     assert products[0].disposition is disposition
-    assert all(
-        finding.disposition is Disposition.DISMISSED
-        for finding in final.findings
-        if finding.id == "FIXVAL_SKIPPED"
-    )
-    for cycle in range(1, 4):
-        receipt = json.loads(
-            (tmp_path / ".code-forge/receipts" / f"receipt-c{cycle}p2.json").read_text()
-        )
-        assert receipt["findings_count"] == 2
-        assert [finding["disposition"] for finding in receipt["findings"]] == [disposition.value] * 2
-        assert all(
-            finding["basis"]["authority"] == "infra-unavailable" for finding in receipt["findings"]
-        )
+    # Both salvaged duplicates carry the sticky terminal disposition.
+    assert receipt["findings_count"] == 2
+    assert [finding["disposition"] for finding in receipt["findings"]] == [disposition.value] * 2
+    assert all(finding["basis"]["authority"] == "infra-unavailable" for finding in receipt["findings"])
     verification = run_verify(
         tmp_path,
         source_hash,
         parse_diff_files(resolved.git_diff),
         diff_text=resolved.git_diff,
-        required_cycles=3,
+        required_cycles=1,
+        respect_floor=False,
     )
-    assert verification.passed is True
+    assert verification.passed is False
 
 
 def test_duplicate_dismissal_keeps_distinct_unverified_candidate_open(tmp_path, monkeypatch):
@@ -523,13 +607,13 @@ def test_duplicate_dismissal_keeps_distinct_unverified_candidate_open(tmp_path, 
     state_path = tmp_path / ".code-forge/state.json"
     save_state(State(source_hash=source_hash, findings=[prior]), state_path)
     machine = make_machine()
-    assert machine.run() is Verdict.PENDING
+    assert machine.run() is Verdict.FAIL
     final = load_state(state_path)
-    assert final.converged is False
-    assert final.consecutive_clean_rounds == 0
-    assert len(final.findings) == 2
-    assert [f.disposition for f in final.findings] == [Disposition.DISMISSED, Disposition.UNCERTAIN]
     receipt = json.loads((tmp_path / ".code-forge/receipts/receipt-c1p2.json").read_text())
+    _assert_incomplete_expert_pass(final, receipt)
+    products = [f for f in final.findings if f.source == "UNTRUSTED"]
+    assert len(products) == 2
+    assert [f.disposition for f in products] == [Disposition.DISMISSED, Disposition.UNCERTAIN]
     assert receipt["findings_count"] == 3
     assert [f["disposition"] for f in receipt["findings"]] == ["DISMISSED", "DISMISSED", "UNCERTAIN"]
     verification = run_verify(
@@ -541,19 +625,18 @@ def test_duplicate_dismissal_keeps_distinct_unverified_candidate_open(tmp_path, 
         respect_floor=False,
     )
     assert verification.passed is False
-    assert (
-        verification.reason
-        == "unresolved unverified product finding c1p2 -- convergence not established"
-    )
+    assert verification.reason == "earned window has 0 cycles; verifier floor demands 1"
 
 
 def test_unresolved_duplicates_remain_visible_and_uncertain(tmp_path, monkeypatch):
     make_machine, _, resolved = _salvaged_duplicate_machine(tmp_path, monkeypatch)
     machine = make_machine()
-    assert machine.run() is Verdict.PENDING
-    assert len(machine.active_findings) == 1
-    assert machine.active_findings[0].disposition is Disposition.UNCERTAIN
+    assert machine.run() is Verdict.FAIL
+    products = [f for f in machine.active_findings if f.source == "UNTRUSTED"]
+    assert len(products) == 1
+    assert products[0].disposition is Disposition.UNCERTAIN
     receipt = json.loads((tmp_path / ".code-forge/receipts/receipt-c1p2.json").read_text())
+    _assert_incomplete_expert_pass(load_state(tmp_path / ".code-forge/state.json"), receipt)
     assert receipt["findings_count"] == 2
     assert [f["disposition"] for f in receipt["findings"]] == ["UNCERTAIN", "UNCERTAIN"]
 
@@ -561,8 +644,8 @@ def test_unresolved_duplicates_remain_visible_and_uncertain(tmp_path, monkeypatc
 def test_two_distinct_unverified_candidates_keep_separate_hold_decisions(tmp_path, monkeypatch):
     make_machine, _, _ = _salvaged_duplicate_machine(tmp_path, monkeypatch, distinct=True)
     machine = make_machine()
-    assert machine.run() is Verdict.PENDING
-    assert len(machine.active_findings) == 2
+    assert machine.run() is Verdict.FAIL
+    assert len([f for f in machine.active_findings if f.source == "UNTRUSTED"]) == 2
     state_path = tmp_path / ".code-forge/state.json"
     state = load_state(state_path)
     prompts, output = [], []
@@ -576,11 +659,14 @@ def test_two_distinct_unverified_candidates_keep_separate_hold_decisions(tmp_pat
     assert len(prompts) == 2
     assert output[0] == "HOLD: 2 UNCERTAIN finding(s) need human disposition."
     restored = load_state(state_path)
-    assert [f.disposition for f in restored.findings] == [Disposition.DISMISSED, Disposition.UNCERTAIN]
+    assert [f.disposition for f in restored.findings if f.source == "UNTRUSTED"] == [
+        Disposition.DISMISSED,
+        Disposition.UNCERTAIN,
+    ]
     resumed = make_machine()
-    assert resumed.run() is Verdict.PENDING
-    assert load_state(state_path).converged is False
+    assert resumed.run() is Verdict.FAIL
     receipt = json.loads((tmp_path / ".code-forge/receipts/receipt-c2p2.json").read_text())
+    _assert_incomplete_expert_pass(load_state(state_path), receipt)
     assert [f["disposition"] for f in receipt["findings"]] == ["DISMISSED", "DISMISSED", "UNCERTAIN"]
 
 
