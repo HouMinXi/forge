@@ -825,7 +825,7 @@ def probe(
     launcher_file,
     workspace,
     *,
-    timeout=5,
+    timeout=60,  # #278: hang guard; a loaded box can exceed 5 s for a fresh interpreter
     windows_metadata=False,
     parent_transition=False,
     empty_environment=False,
@@ -2436,7 +2436,7 @@ def test_prepare_cli_preserves_real_virtualenv_prefix_and_dependencies(launcher,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=60,  # #278: hang guard
             check=True,
         )
         write(tmp_path / (label + ".stdout"), result.stdout)
