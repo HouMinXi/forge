@@ -327,7 +327,7 @@ def write_receipts(
     if reviewer_excerpts:
         for exc in reviewer_excerpts:
             if not isinstance(exc, dict):
-                raise ValueError("reviewer_excerpt item is not a dict: %r" % (exc,))
+                raise TypeError("reviewer_excerpt item is not a dict: %r" % (exc,))
             pname = exc.get("pass_name")
             if pname not in _PASS_NAMES:
                 raise ValueError("excerpt missing or invalid trusted pass_name: %r" % (pname,))
@@ -376,7 +376,10 @@ def write_receipts(
         exec_status = exec_evidence
         exec_evidence_dict = {"status": exec_evidence}
 
-    for pass_idx, (pass_name, skill_name) in enumerate(zip(_PASS_NAMES, _SKILL_NAMES)):
+    # #276: strict, and paired before anything is written, so a pass/skill
+    # length mismatch raises instead of leaving a cycle short of a receipt.
+    pass_skills = list(zip(_PASS_NAMES, _SKILL_NAMES, strict=True))
+    for pass_idx, (pass_name, skill_name) in enumerate(pass_skills):
         pass_num = pass_idx + 1
         pass_findings = by_pass.get(pass_name, [])
 
