@@ -98,7 +98,9 @@ class TestFailureWaiverEvidence:
         env = dict(os.environ)
         env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
         command = ["python3", "-B", "-m", "pytest", "-q", *args, "test_sample.py"]
-        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT)
+        original = subprocess.run(
+            command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT
+        )
         assert original.returncode == (0 if passing else 1), original.stderr
         assert (tmp_path / "executed").read_text() == "once"
         expected = EXIT_PASS if shape in ("ordinary", "maxfail_below", "passing") else EXIT_FAIL
@@ -219,7 +221,9 @@ class TestFailureWaiverEvidence:
         env = dict(os.environ)
         env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
         command = ["python3", "-B", "-m", "pytest", "-q", "test_sample.py"]
-        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT)
+        original = subprocess.run(
+            command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT
+        )
         assert original.returncode == 1, original.stderr
         assert (tmp_path / "executed").read_text() == "once"
         if shape != "ordinary":
@@ -376,7 +380,9 @@ class TestFailureWaiverEvidence:
         env = dict(os.environ)
         env.pop("PYTHONDONTWRITEBYTECODE", None)
         env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
-        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT)
+        original = subprocess.run(
+            command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT
+        )
         bare_rejected = original.returncode == 4
         if bare_rejected:
             assert (sys.implementation.cache_tag, pytest.__version__) == ("cpython-312", "9.1.1")
@@ -409,7 +415,9 @@ class TestFailureWaiverEvidence:
             assert "unrecognized arguments" in public.stderr
             assert not (tmp_path / "executed").exists()
             command[-1] = "./" + filename
-            original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT)
+            original = subprocess.run(
+                command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT
+            )
             assert original.returncode == 1, original.stderr
             assert (filename + "::test_known").encode() in original.stdout
             assert (tmp_path / "executed").read_text() == "once"
@@ -448,7 +456,9 @@ class TestFailureWaiverEvidence:
         ]
         plugin_path = os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")])
         env = {**os.environ, "PYTHONPATH": plugin_path}
-        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT)
+        original = subprocess.run(
+            command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT
+        )
         assert original.returncode == 1, original.stderr
         assert (tmp_path / "executed-before").read_text() == "once"
         result, error = self.public(
@@ -549,7 +559,9 @@ def pytest_unconfigure(config):
         }
         env.update(extra)
         env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
-        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT)
+        original = subprocess.run(
+            command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT
+        )
         assert original.returncode == (0 if passing else 1), original.stderr
         assert (tmp_path / "executed").read_text() == "once"
         for name in ("executed", "replacement-calls", "real-unconfigure-ran"):
@@ -788,7 +800,9 @@ def pytest_unconfigure(config):
         command = ["python3", "-B", "-m", "pytest", "--version"] + [
             "test_example.py::test_known[" + str(i) + ":" + "x" * 45 + "]" for i in range(1400)
         ]
-        original = subprocess.run(command, cwd=tmp_path, capture_output=True, timeout=INNER_PYTEST_TIMEOUT, check=False)
+        original = subprocess.run(
+            command, cwd=tmp_path, capture_output=True, timeout=INNER_PYTEST_TIMEOUT, check=False
+        )
         assert original.returncode == 0
         result, error = self.public(tmp_path, "def test_known(): pass\n", {}, command=command)
         assert result == EXIT_PASS, error
@@ -797,7 +811,9 @@ def pytest_unconfigure(config):
         source = "def test_known():\n    assert False\n"
         (tmp_path / "test_sample.py").write_text(source)
         command = ["python3", "-B", "-m", "pytest", "-q", *(["--color=no"] * 10000), "test_sample.py"]
-        original = subprocess.run(command, cwd=tmp_path, capture_output=True, timeout=INNER_PYTEST_TIMEOUT, check=False)
+        original = subprocess.run(
+            command, cwd=tmp_path, capture_output=True, timeout=INNER_PYTEST_TIMEOUT, check=False
+        )
         assert original.returncode == 1
         result, error = self.public(
             tmp_path, source, {"test_sample.py::test_known": "failed"}, command=command
