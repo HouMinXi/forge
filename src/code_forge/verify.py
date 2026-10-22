@@ -800,29 +800,56 @@ _CLOSED_DISPOSITIONS = frozenset(
 )
 
 
+_RESPONSE_SHA = re.compile(r"[0-9a-f]{64}")
+_SHINGLE = re.compile(r"[0-9a-f]{16}")
+NEAR_DUPLICATE_RESPONSE_JACCARD = 0.9
+
+
 def _cycle_response_hashes(receipts: list[dict], cycle: int) -> dict | None:
-    """pass -> reviewer_response_sha256 for one cycle; None if any is missing."""
+    """pass -> (reviewer_response_sha256, shingle set) for one cycle; None if
+    any receipt lacks a valid hash or shingle list (#222, #240)."""
     hashes = {}
     for receipt in receipts:
         if receipt.get("cycle") != cycle:
             continue
         value = receipt.get("reviewer_response_sha256")
-        if not isinstance(value, str) or len(value) != 64 or value.strip("0123456789abcdef"):
+        if not isinstance(value, str) or not _RESPONSE_SHA.fullmatch(value):
             return None
-        hashes[receipt.get("pass")] = value
+        shingles = receipt.get("reviewer_response_shingles")
+        if not isinstance(shingles, list) or not all(
+            isinstance(item, str) and _SHINGLE.fullmatch(item) for item in shingles
+        ):
+            return None
+        hashes[receipt.get("pass")] = (value, frozenset(shingles))
     return hashes or None
 
 
+def _shingle_jaccard(a: frozenset, b: frozenset) -> float:
+    if not a and not b:
+        return 1.0  # two empty answers are the same answer
+    return len(a & b) / len(a | b)
+
+
 def _fresh_reviewer_responses(receipts: list[dict], a: int, b: int) -> bool:
-    """#222: high excerpt overlap is honest re-quoting only when both cycles
-    carry a response hash on every receipt and no pass reused its answer.
-    A missing hash (legacy receipts) keeps the plain Jaccard verdict."""
+    """#222/#240: high excerpt overlap is honest re-quoting only when both
+    cycles carry response evidence on every receipt, no hash repeats across
+    them, and no pair of responses (any pass to any pass) is a near
+    duplicate: token-shingle Jaccard >= NEAR_DUPLICATE_RESPONSE_JACCARD.
+
+    Known trade-off (#240 option 2): an honest re-review of the same
+    unfixed finding that comes out near-identical is read as reuse, so part
+    of the #222 false positive returns for such cycles. Missing evidence
+    (legacy receipts) keeps the plain Jaccard verdict."""
     first, second = _cycle_response_hashes(receipts, a), _cycle_response_hashes(receipts, b)
     if first is None or second is None:
         return False
-    if set(first.values()) & set(second.values()):
+    if {h for h, _ in first.values()} & {h for h, _ in second.values()}:
         return False
-    return True
+    return not any(
+        _shingle_jaccard(left, right) >= NEAR_DUPLICATE_RESPONSE_JACCARD
+        for _, left in first.values()
+        for _, right in second.values()
+    )
 
 
 def _open_findings(items: list) -> list:
@@ -1939,9 +1966,11 @@ def _run_verify_impl(
         # 7. Jaccard overlap > 0.8 = rubber stamp.
         # NOTE: identical excerpts across cycles will cause Jaccard > 0.8.
         # That alone fails, unless every receipt of both cycles carries a
-        # reviewer_response_sha256 and no hash repeats across them (#222):
+        # reviewer_response_sha256 and no hash repeats across them (#222),
+        # and no response is a near duplicate (shingle Jaccard >= 0.9, #240):
         # an honest re-review of a small diff re-quotes the same lines with a
-        # freshly produced answer. Reused or copied answers still fail.
+        # freshly produced answer. Reused, copied or lightly edited answers
+        # (nonce, one changed word) still fail.
         # Known limitation: when neither cycle has an open finding
         # (empty list, or every finding DISMISSED/FIXED), the skip
         # below causes Jaccard to never trigger, so identical-excerpt

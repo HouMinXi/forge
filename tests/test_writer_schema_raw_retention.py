@@ -362,3 +362,9 @@ def test_writer_records_normalized_response_hash_per_pass(tmp_path, no_external)
     assert rows[2]["reviewer_response_sha256"] == normalized_response_sha256('{ "verdict":"x" }')
     joined = "\n".join(sorted(normalized_response_sha256(t) for t in "ab")).encode("ascii")
     assert rows[3]["reviewer_response_sha256"] == hashlib.sha256(joined).hexdigest()
+    # #240: shingles are the union over the pass's responses; absent with the hash.
+    from code_forge.receipt import response_shingles
+
+    assert "reviewer_response_shingles" not in rows[1]
+    assert rows[2]["reviewer_response_shingles"] == sorted(response_shingles('{"verdict": "x"}'))
+    assert rows[3]["reviewer_response_shingles"] == sorted(response_shingles("a") | response_shingles("b"))

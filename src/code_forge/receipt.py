@@ -11,6 +11,7 @@ import datetime
 import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -169,25 +170,71 @@ def _normalize_response_value(value):
     return value
 
 
-def normalized_response_sha256(raw: str) -> str:
-    """SHA-256 of a reviewer response with layout normalized away (#222).
+def _canonical_response(raw: str) -> str:
+    """Layout-free form of a reviewer response (#222).
 
     JSON (bare or in a ```json fence) is re-serialized with sorted keys and
     whitespace collapsed inside strings; anything else has all whitespace
-    runs collapsed. Reformatting a reused response therefore keeps its hash.
+    runs collapsed.
     """
     text = raw.strip()
     if text.startswith("```"):
         body = text.split("\n", 1)[1] if "\n" in text else ""
         text = body.rsplit("```", 1)[0].strip()
     try:
-        canonical = json.dumps(
+        return json.dumps(
             _normalize_response_value(json.loads(text)),
-            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
         )
     except (ValueError, TypeError):
-        canonical = " ".join(raw.split())
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return " ".join(raw.split())
+
+
+def normalized_response_sha256(raw: str) -> str:
+    """SHA-256 of a reviewer response with layout normalized away (#222).
+    Reformatting a reused response therefore keeps its hash."""
+    return hashlib.sha256(_canonical_response(raw).encode("utf-8")).hexdigest()
+
+
+RESPONSE_SHINGLE_SIZE = 3
+_RESPONSE_TOKEN = re.compile(r"\w+")
+
+
+def response_shingles(raw: str) -> set[str]:
+    """Token shingles of a reviewer response for near-duplicate checks (#240).
+
+    Tokenization: the canonical response (see _canonical_response, so JSON
+    key order and layout don't matter) is casefolded, and tokens are the
+    maximal runs of Unicode word characters (regex ``\\w+``); punctuation,
+    quotes and JSON syntax separate tokens and are dropped. Shingles are the
+    overlapping windows of RESPONSE_SHINGLE_SIZE consecutive tokens; a
+    response with fewer tokens is one shingle of all of them, and an empty
+    one has none. Each shingle is stored as the first 16 hex digits of the
+    SHA-256 of its tokens joined by one space, so receipts carry no text.
+    """
+    tokens = _RESPONSE_TOKEN.findall(_canonical_response(raw).casefold())
+    if not tokens:
+        return set()
+    size = min(RESPONSE_SHINGLE_SIZE, len(tokens))
+    return {
+        hashlib.sha256(" ".join(tokens[i : i + size]).encode("utf-8")).hexdigest()[:16]
+        for i in range(len(tokens) - size + 1)
+    }
+
+
+def _pass_response_shingles(pending_raw_responses: list | None, pass_name: str) -> list[str] | None:
+    texts = [
+        item["raw_response"]
+        for item in pending_raw_responses or []
+        if isinstance(item, dict)
+        and item.get("pass_name") == pass_name
+        and type(item.get("raw_response")) is str
+    ]
+    if not texts:
+        return None
+    return sorted(set().union(*(response_shingles(t) for t in texts)))
 
 
 def _pass_response_sha256(pending_raw_responses: list | None, pass_name: str) -> str | None:
@@ -399,6 +446,8 @@ def write_receipts(
         response_sha = _pass_response_sha256(pending_raw_responses, pass_name)
         if response_sha is not None:
             receipt["reviewer_response_sha256"] = response_sha
+            # #240: near-duplicate evidence (token shingle hashes, no text).
+            receipt["reviewer_response_shingles"] = _pass_response_shingles(pending_raw_responses, pass_name)
         if pass_name in excerpt_validation_errors:
             receipt["excerpt_validation_errors"] = excerpt_validation_errors[pass_name]
         if repository_manifest is not None:
