@@ -4275,3 +4275,94 @@ def test_cycle_without_receipts_keeps_check_7_closed():
     assert verify._cycle_response_hashes(receipts, 2) is None
     assert verify._fresh_reviewer_responses(receipts, 1, 2) is False
     assert verify._fresh_reviewer_responses(receipts, 2, 1) is False
+
+
+# -- #240: containment (|A&B| / min) catches a reused answer padded with new text --
+
+_PADDING = {
+    2: (
+        "Additional context gathered this cycle covers the release notes, the migration "
+        "guide, the changelog entry for the connection pool, the benchmark harness and "
+        "its warmup phase, the deployment checklist that operators follow during rollout, "
+        "and the monitoring dashboards that track reconnect latency across regions. None "
+        "of it changes the conclusion, but it lengthens the answer considerably so that "
+        "the union of shingles grows well beyond the reused paragraph above it."
+    ),
+    3: (
+        "This cycle also walked through unrelated modules: the scheduler, the cache "
+        "warmer, the metrics exporter with its label cardinality limits, the config "
+        "loader and its environment overrides, plus the retry budget shared by the "
+        "background workers. Each was read end to end and found unaffected by the "
+        "change, which is reported here only to make the response look new while the "
+        "substance above is copied from the previous cycle verbatim."
+    ),
+}
+
+
+class TestContainment(TestResponseHashReuse):
+    def test_padding_attack_fails(self, tmp_path):
+        from code_forge import verify
+
+        texts = {1: _LONG_ANSWER, 2: _LONG_ANSWER + " " + _PADDING[2], 3: _LONG_ANSWER + " " + _PADDING[3]}
+        shingles = {c: frozenset(response_shingles(_answer(t))) for c, t in texts.items()}
+        # Jaccard alone misses the padding; containment is what catches it.
+        assert verify._shingle_jaccard(shingles[1], shingles[2]) < 0.9
+        assert verify._shingle_jaccard(shingles[2], shingles[3]) < 0.9
+        r = self._run(tmp_path, lambda c, p: _answer(texts[c] + " pass %d" % p))
+        assert not r.passed and r.reason.startswith("Jaccard overlap 1.00 > 0.8")
+
+    def test_rewritten_answers_sharing_a_quote_pass(self, tmp_path):
+        quote = "Finding: handle used after close in control.txt line 12."
+        texts = {1: _LONG_ANSWER, 2: _PADDING[2], 3: _PADDING[3]}
+        r = self._run(tmp_path, lambda c, p: _answer(quote + " " + texts[c] + " pass %d" % p))
+        assert r.passed, r.reason
+
+    def _stamp_sets(self, tmp_path, sets):
+        """Give every receipt shingles from ``sets[cycle]`` (per-pass namespaced)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        assert self._run(tmp_path, lambda c, p: "fresh %d %d" % (c, p)).passed
+        for path in rd.glob("receipt-c*p*.json"):
+            data = json.loads(path.read_text())
+            data["reviewer_response_shingles"] = ["%04x%012x" % (data["pass"], i) for i in sets[data["cycle"]]]
+            path.write_text(json.dumps(data))
+        return run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+
+    @pytest.mark.parametrize(
+        ("small", "shared", "fails"),
+        [
+            (20, 18, True),  # containment exactly 0.9 at the guard size: reuse
+            (20, 17, False),  # 0.85: fresh
+            (19, 19, False),  # fully contained but under the guard: Jaccard alone decides
+            (20, 20, True),  # guard is inclusive
+        ],
+    )
+    def test_containment_boundaries_end_to_end(self, tmp_path, small, shared, fails):
+        sets = {
+            1: range(small),
+            2: list(range(shared)) + list(range(1000, 1200 - shared)),  # 200 shingles
+            3: range(5000, 5200),
+        }
+        r = self._run_sets(tmp_path, sets)
+        assert (not r.passed and "Jaccard" in r.reason) if fails else r.passed, r.reason
+
+    def _run_sets(self, tmp_path, sets):
+        return self._stamp_sets(tmp_path, sets)
+
+
+def test_shingle_containment_unit():
+    from code_forge import verify
+
+    def ids(*ranges):
+        return frozenset("%016x" % i for r in ranges for i in r)
+
+    assert verify.NEAR_DUPLICATE_RESPONSE_CONTAINMENT == 0.9
+    assert verify.CONTAINMENT_MIN_SHINGLES == 20
+    assert verify._shingle_containment(ids(range(20)), ids(range(18), range(100, 300))) == 0.9
+    assert verify._shingle_containment(ids(range(100, 300)), ids(range(20))) == 0.0  # symmetric min
+    assert verify._shingle_containment(ids(range(19)), ids(range(19), range(100, 300))) is None
+    assert verify._shingle_containment(frozenset(), frozenset()) is None
+    assert verify._near_duplicate(ids(range(20)), ids(range(18), range(100, 300))) is True
+    assert verify._near_duplicate(ids(range(20)), ids(range(17), range(100, 300))) is False
+    assert verify._near_duplicate(ids(range(19)), ids(range(19), range(100, 300))) is False
+    assert verify._near_duplicate(ids(range(19)), ids(range(19))) is True  # Jaccard still applies
+    assert verify._near_duplicate(frozenset(), frozenset()) is True
