@@ -340,3 +340,31 @@ def test_writer_append_order_and_duplicate_text_keep_group_scope(tmp_path, no_ex
     assert [a["payload"] for a in artifacts] == [legacy, observation, *pending]
     assert [a["group_scope"]["name"] for a in artifacts[2:]] == ["one", "two"]
     assert paths[0].name == "attempted-c1p1-0.json" and paths[1].name == "attempted-c1p3-1.json"
+
+
+def test_writer_records_normalized_response_hash_per_pass(tmp_path, no_external):
+    """#222: each pass with retained accepted text records its hash; others omit it."""
+    from code_forge.receipt import normalized_response_sha256
+
+    (tmp_path / "control.txt").write_text(LINE)
+    pending = [
+        {"raw_response": '{"verdict": "x"}', "pass_name": "expert"},
+        GroupedReviewAttempt({"raw_response": "b", "pass_name": "adversarial"},
+                             ReviewGroupScope("one", "diff-one", ("control.txt",))),
+        GroupedReviewAttempt({"raw_response": "a", "pass_name": "adversarial"},
+                             ReviewGroupScope("two", "diff-two", ("control.txt",))),
+        {"raw_response": 42, "pass_name": "qodo"},
+    ]
+    paths = receipt.write_receipts(tmp_path / "receipts", 0, [], "fixture", [], tmp_path,
+        diff_text=_diff("control.txt"), manifest={"tier": "declared"}, pending_raw_responses=pending)
+    rows = {json.loads(p.read_text())["pass"]: json.loads(p.read_text()) for p in paths}
+    assert "reviewer_response_sha256" not in rows[1]
+    assert rows[2]["reviewer_response_sha256"] == normalized_response_sha256('{ "verdict":"x" }')
+    joined = "\n".join(sorted(normalized_response_sha256(t) for t in "ab")).encode("ascii")
+    assert rows[3]["reviewer_response_sha256"] == hashlib.sha256(joined).hexdigest()
+    # #240: shingles are the union over the pass's responses; absent with the hash.
+    from code_forge.receipt import response_shingles
+
+    assert "reviewer_response_shingles" not in rows[1]
+    assert rows[2]["reviewer_response_shingles"] == sorted(response_shingles('{"verdict": "x"}'))
+    assert rows[3]["reviewer_response_shingles"] == sorted(response_shingles("a") | response_shingles("b"))

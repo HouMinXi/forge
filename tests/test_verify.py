@@ -4035,3 +4035,334 @@ def test_a_finding_without_a_line_does_not_inflate_coverage(tmp_path):
         diff_text=diff, required_cycles=1, respect_floor=False,
     )
     assert result.passed, result.reason
+
+
+# -- #222: reviewer_response_sha256 separates honest re-quoting from reuse --
+
+from code_forge.receipt import normalized_response_sha256, response_shingles  # noqa: E402
+
+
+def _stamp_hashes(rd, answer):
+    """Give every receipt a response hash from ``answer(cycle, pass)``; None drops it."""
+    for path in rd.glob("receipt-c*p*.json"):
+        data = json.loads(path.read_text())
+        text = answer(data["cycle"], data["pass"])
+        if text is None:
+            data.pop("reviewer_response_sha256", None)
+            data.pop("reviewer_response_shingles", None)
+        else:
+            data["reviewer_response_sha256"] = normalized_response_sha256(text)
+            data["reviewer_response_shingles"] = sorted(response_shingles(text))
+        path.write_text(json.dumps(data))
+
+
+class TestResponseHashReuse:
+    # #193 shape: one unfixed CONFIRMED finding whose persisted description and
+    # excerpts are byte-identical every cycle, so overlap is 1.00.
+    FINDING = [{"severity": "L2", "note": "same persisted description", "disposition": "CONFIRMED"}]
+
+    def _run(self, tmp_path, answer):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        sha = _sha(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=self.FINDING)
+        if answer is not None:
+            _stamp_hashes(rd, answer)
+        return run_verify(tmp_path, sha, parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+
+    def test_honest_requote_with_fresh_answers_passes(self, tmp_path):
+        r = self._run(tmp_path, lambda c, p: '{"verdict": "CONFIRMED", "reasoning": "cycle %d pass %d"}' % (c, p))
+        assert r.passed, r.reason
+
+    def test_copy_paste_answers_fail(self, tmp_path):
+        r = self._run(tmp_path, lambda c, p: '{"verdict": "CONFIRMED", "reasoning": "pass %d"}' % p)
+        assert not r.passed and r.reason.startswith("Jaccard overlap 1.00 > 0.8")
+
+    def test_whitespace_reformatted_copy_still_fails(self, tmp_path):
+        layouts = {
+            1: '{"verdict": "CONFIRMED", "reasoning": "same  answer"}',
+            2: '```json\n{\n  "reasoning": "same answer\\n",\n  "verdict":   "CONFIRMED"\n}\n```',
+            3: '  {"reasoning":"same\\tanswer","verdict":"CONFIRMED"}  ',
+        }
+        r = self._run(tmp_path, lambda c, p: layouts[c])
+        assert not r.passed and "Jaccard" in r.reason
+
+    def test_one_reused_pass_fails(self, tmp_path):
+        r = self._run(tmp_path, lambda c, p: "reused" if p == 2 else "fresh %d %d" % (c, p))
+        assert not r.passed and "Jaccard" in r.reason
+
+    def test_legacy_receipts_without_hash_keep_jaccard_failure(self, tmp_path):
+        r = self._run(tmp_path, None)
+        assert not r.passed and r.reason.startswith("Jaccard overlap 1.00 > 0.8")
+
+    def test_one_missing_hash_keeps_jaccard_failure(self, tmp_path):
+        r = self._run(tmp_path, lambda c, p: None if (c, p) == (3, 1) else "fresh %d %d" % (c, p))
+        assert not r.passed and "Jaccard" in r.reason
+
+    @pytest.mark.parametrize("bad", ["short", "g" * 64, "A" * 64, " " + "a" * 63, "a" * 64 + "\n"])
+    def test_non_hex_hash_keeps_jaccard_failure(self, tmp_path, bad):
+        rd = tmp_path / ".code-forge" / "receipts"
+        assert self._run(tmp_path, lambda c, p: "fresh %d %d" % (c, p)).passed
+        for path in rd.glob("receipt-c3p*.json"):
+            data = json.loads(path.read_text())
+            data["reviewer_response_sha256"] = bad
+            path.write_text(json.dumps(data))
+        r = run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        assert not r.passed and "Jaccard" in r.reason
+
+    def test_malformed_hash_keeps_jaccard_failure(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        r = self._run(tmp_path, lambda c, p: "fresh %d %d" % (c, p))
+        assert r.passed
+        for path in rd.glob("receipt-c3p*.json"):
+            data = json.loads(path.read_text())
+            data["reviewer_response_sha256"] = "short"
+            path.write_text(json.dumps(data))
+        r = run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        assert not r.passed and "Jaccard" in r.reason
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "same"),
+    [
+        ('{"a": "x  y", "b": 1}', '{\n "b": 1,\n "a": "x y"\n}', True),
+        ('{"a": "x"}', '```json\n{"a": "x"}\n```', True),
+        ("plain  text\nanswer", "plain text answer", True),
+        ('{"a": "x y"}', '{"a": "x z"}', False),
+        ("plain text", "plain texts", False),
+    ],
+)
+def test_normalized_response_sha256(left, right, same):
+    assert (normalized_response_sha256(left) == normalized_response_sha256(right)) is same
+
+
+# -- #240 option 2: near-duplicate responses (shingle Jaccard >= 0.9) are reuse --
+
+_LONG_ANSWER = (
+    "The guard at line 12 still dereferences the handle after close, so a second "
+    "call reaches freed state. The fix in this diff moves the check but keeps the "
+    "same ordering, which means the original path through reopen remains reachable "
+    "whenever the retry flag is set by the caller before the timeout elapses. "
+    "Evidence is the unchanged branch in control.txt and the test that only covers "
+    "the first call. Confidence is high because the excerpt matches the reported lines."
+)
+
+
+def _answer(reasoning, **extra):
+    return json.dumps({"verdict": "CONFIRMED", "reasoning": reasoning, **extra})
+
+
+class TestNearDuplicateResponses(TestResponseHashReuse):
+    def test_nonce_copy_fails(self, tmp_path):
+        r = self._run(tmp_path, lambda c, p: _answer(_LONG_ANSWER + " pass %d" % p, nonce=str(c)))
+        assert not r.passed and r.reason.startswith("Jaccard overlap 1.00 > 0.8")
+
+    def test_one_word_change_fails(self, tmp_path):
+        words = ["high", "solid", "strong"]
+        r = self._run(tmp_path, lambda c, p: _answer(_LONG_ANSWER.replace("high", words[c - 1]) + " pass %d" % p))
+        assert not r.passed and "Jaccard" in r.reason
+
+    def test_case_change_fails(self, tmp_path):
+        r = self._run(
+            tmp_path,
+            lambda c, p: _answer((_LONG_ANSWER.upper() if c == 2 else _LONG_ANSWER) + " pass %d" % p),
+        )
+        assert not r.passed and "Jaccard" in r.reason
+
+    def test_rewritten_answers_pass(self, tmp_path):
+        texts = {
+            1: "Line 12 dereferences the handle after close; a second call hits freed state.",
+            2: "Reopen is still reachable when the retry flag is set before the timeout.",
+            3: "The only test covers the first call, so the unchanged branch stays unverified.",
+        }
+        r = self._run(tmp_path, lambda c, p: _answer(texts[c] + " (pass %d)" % p))
+        assert r.passed, r.reason
+
+    def test_honest_near_identical_rereview_fails_known_222_tradeoff(self, tmp_path):
+        # Pinned trade-off of #240 option 2: the same unfixed finding honestly
+        # re-reviewed with near-identical wording is indistinguishable from a
+        # lightly edited reused answer, so check 7 fails it again (the #222
+        # false positive returns for this case).
+        r = self._run(
+            tmp_path,
+            lambda c, p: _answer(_LONG_ANSWER.replace("12", str(12 + c)) + " pass %d" % p),
+        )
+        assert not r.passed and "Jaccard" in r.reason
+
+    @pytest.mark.parametrize(("shared", "fails"), [(9, True), (8, False)])
+    def test_threshold_is_inclusive_end_to_end(self, tmp_path, shared, fails):
+        # c1 has 10 shingles and c2 the first `shared` of them: 9 gives exactly
+        # 0.9 (reuse) and 8 gives 0.8 (fresh). c3 and other passes are disjoint.
+        rd = tmp_path / ".code-forge" / "receipts"
+        assert self._run(tmp_path, lambda c, p: "fresh %d %d" % (c, p)).passed
+        for path in rd.glob("receipt-c*p*.json"):
+            data = json.loads(path.read_text())
+            c, p = data["cycle"], data["pass"]
+            ids = range(shared) if c == 2 else range(10)
+            data["reviewer_response_shingles"] = ["%04x%04x%08x" % (p, 0 if c < 3 else 1, i) for i in ids]
+            path.write_text(json.dumps(data))
+        r = run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        assert (not r.passed and "Jaccard" in r.reason) if fails else r.passed, r.reason
+
+    def test_missing_shingles_keep_jaccard_failure(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        assert self._run(tmp_path, lambda c, p: "fresh %d %d" % (c, p)).passed
+        path = next(iter(sorted(rd.glob("receipt-c3p*.json"))))
+        data = json.loads(path.read_text())
+        del data["reviewer_response_shingles"]
+        path.write_text(json.dumps(data))
+        r = run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        assert not r.passed and "Jaccard" in r.reason
+
+    @pytest.mark.parametrize("bad", ["x", ["A" * 16], ["a" * 15], ["a" * 16 + "\n"], [1]])
+    def test_malformed_shingles_keep_jaccard_failure(self, tmp_path, bad):
+        rd = tmp_path / ".code-forge" / "receipts"
+        assert self._run(tmp_path, lambda c, p: "fresh %d %d" % (c, p)).passed
+        for path in rd.glob("receipt-c3p*.json"):
+            data = json.loads(path.read_text())
+            data["reviewer_response_shingles"] = bad
+            path.write_text(json.dumps(data))
+        r = run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        assert not r.passed and "Jaccard" in r.reason
+
+
+def test_shingle_jaccard_threshold_is_inclusive():
+    from code_forge import verify
+
+    a = frozenset("%016x" % i for i in range(10))
+    b = frozenset("%016x" % i for i in range(9)) | {"%016x" % 99}
+    nine = frozenset("%016x" % i for i in range(9))
+    assert verify._shingle_jaccard(a, nine) == 0.9
+    assert verify._shingle_jaccard(a, b) < 0.9
+    assert verify._shingle_jaccard(frozenset(), frozenset()) == 1.0
+    assert verify.NEAR_DUPLICATE_RESPONSE_JACCARD == 0.9
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "same"),
+    [
+        ('{"a": "x  y", "b": 1}', '{\n "b": 1,\n "a": "x y"\n}', True),
+        ("Plain, text!", "plain text", True),
+        ("one two three four", "one two three", False),
+        ("ab", "a b", False),
+    ],
+)
+def test_response_shingles_tokenization(left, right, same):
+    assert (response_shingles(left) == response_shingles(right)) is same
+
+
+def test_response_shingles_shape():
+    assert response_shingles("") == set()
+    assert len(response_shingles("one two")) == 1
+    shingles = response_shingles("a b c d e")
+    assert len(shingles) == 3 and all(len(s) == 16 for s in shingles)
+
+
+def test_cycle_without_receipts_keeps_check_7_closed():
+    # #237 review Low: a compared cycle with no receipts must not relax check 7.
+    from code_forge import verify
+    from code_forge.receipt import normalized_response_sha256, response_shingles
+
+    text = "fresh answer for cycle one"
+    receipts = [
+        {
+            "cycle": 1,
+            "pass": 1,
+            "reviewer_response_sha256": normalized_response_sha256(text),
+            "reviewer_response_shingles": sorted(response_shingles(text)),
+        }
+    ]
+    assert verify._cycle_response_hashes(receipts, 2) is None
+    assert verify._fresh_reviewer_responses(receipts, 1, 2) is False
+    assert verify._fresh_reviewer_responses(receipts, 2, 1) is False
+
+
+# -- #240: containment (|A&B| / min) catches a reused answer padded with new text --
+
+_PADDING = {
+    2: (
+        "Additional context gathered this cycle covers the release notes, the migration "
+        "guide, the changelog entry for the connection pool, the benchmark harness and "
+        "its warmup phase, the deployment checklist that operators follow during rollout, "
+        "and the monitoring dashboards that track reconnect latency across regions. None "
+        "of it changes the conclusion, but it lengthens the answer considerably so that "
+        "the union of shingles grows well beyond the reused paragraph above it."
+    ),
+    3: (
+        "This cycle also walked through unrelated modules: the scheduler, the cache "
+        "warmer, the metrics exporter with its label cardinality limits, the config "
+        "loader and its environment overrides, plus the retry budget shared by the "
+        "background workers. Each was read end to end and found unaffected by the "
+        "change, which is reported here only to make the response look new while the "
+        "substance above is copied from the previous cycle verbatim."
+    ),
+}
+
+
+class TestContainment(TestResponseHashReuse):
+    def test_padding_attack_fails(self, tmp_path):
+        from code_forge import verify
+
+        texts = {1: _LONG_ANSWER, 2: _LONG_ANSWER + " " + _PADDING[2], 3: _LONG_ANSWER + " " + _PADDING[3]}
+        shingles = {c: frozenset(response_shingles(_answer(t))) for c, t in texts.items()}
+        # Jaccard alone misses the padding; containment is what catches it.
+        assert verify._shingle_jaccard(shingles[1], shingles[2]) < 0.9
+        assert verify._shingle_jaccard(shingles[2], shingles[3]) < 0.9
+        r = self._run(tmp_path, lambda c, p: _answer(texts[c] + " pass %d" % p))
+        assert not r.passed and r.reason.startswith("Jaccard overlap 1.00 > 0.8")
+
+    def test_rewritten_answers_sharing_a_quote_pass(self, tmp_path):
+        quote = "Finding: handle used after close in control.txt line 12."
+        texts = {1: _LONG_ANSWER, 2: _PADDING[2], 3: _PADDING[3]}
+        r = self._run(tmp_path, lambda c, p: _answer(quote + " " + texts[c] + " pass %d" % p))
+        assert r.passed, r.reason
+
+    def _stamp_sets(self, tmp_path, sets):
+        """Give every receipt shingles from ``sets[cycle]`` (per-pass namespaced)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        assert self._run(tmp_path, lambda c, p: "fresh %d %d" % (c, p)).passed
+        for path in rd.glob("receipt-c*p*.json"):
+            data = json.loads(path.read_text())
+            data["reviewer_response_shingles"] = ["%04x%012x" % (data["pass"], i) for i in sets[data["cycle"]]]
+            path.write_text(json.dumps(data))
+        return run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+
+    @pytest.mark.parametrize(
+        ("small", "shared", "fails"),
+        [
+            (20, 18, True),  # containment exactly 0.9 at the guard size: reuse
+            (20, 17, False),  # 0.85: fresh
+            (19, 19, False),  # fully contained but under the guard: Jaccard alone decides
+            (20, 20, True),  # guard is inclusive
+        ],
+    )
+    def test_containment_boundaries_end_to_end(self, tmp_path, small, shared, fails):
+        sets = {
+            1: range(small),
+            2: list(range(shared)) + list(range(1000, 1200 - shared)),  # 200 shingles
+            3: range(5000, 5200),
+        }
+        r = self._run_sets(tmp_path, sets)
+        assert (not r.passed and "Jaccard" in r.reason) if fails else r.passed, r.reason
+
+    def _run_sets(self, tmp_path, sets):
+        return self._stamp_sets(tmp_path, sets)
+
+
+def test_shingle_containment_unit():
+    from code_forge import verify
+
+    def ids(*ranges):
+        return frozenset("%016x" % i for r in ranges for i in r)
+
+    assert verify.NEAR_DUPLICATE_RESPONSE_CONTAINMENT == 0.9
+    assert verify.CONTAINMENT_MIN_SHINGLES == 20
+    assert verify._shingle_containment(ids(range(20)), ids(range(18), range(100, 300))) == 0.9
+    assert verify._shingle_containment(ids(range(100, 300)), ids(range(20))) == 0.0  # symmetric min
+    assert verify._shingle_containment(ids(range(19)), ids(range(19), range(100, 300))) is None
+    assert verify._shingle_containment(frozenset(), frozenset()) is None
+    assert verify._near_duplicate(ids(range(20)), ids(range(18), range(100, 300))) is True
+    assert verify._near_duplicate(ids(range(20)), ids(range(17), range(100, 300))) is False
+    assert verify._near_duplicate(ids(range(19)), ids(range(19), range(100, 300))) is False
+    assert verify._near_duplicate(ids(range(19)), ids(range(19))) is True  # Jaccard still applies
+    assert verify._near_duplicate(frozenset(), frozenset()) is True

@@ -800,6 +800,85 @@ _CLOSED_DISPOSITIONS = frozenset(
 )
 
 
+_RESPONSE_SHA = re.compile(r"[0-9a-f]{64}")
+_SHINGLE = re.compile(r"[0-9a-f]{16}")
+NEAR_DUPLICATE_RESPONSE_JACCARD = 0.9
+# Containment (#240): share of the smaller answer's shingles found in the
+# other one. Catches a reused answer padded with new text, which Jaccard
+# misses because the union grows. Applied only when the smaller answer has
+# at least CONTAINMENT_MIN_SHINGLES shingles (about one paragraph), so a
+# short verdict that happens to appear inside a longer answer isn't reuse.
+NEAR_DUPLICATE_RESPONSE_CONTAINMENT = 0.9
+CONTAINMENT_MIN_SHINGLES = 20
+
+
+def _cycle_response_hashes(receipts: list[dict], cycle: int) -> dict | None:
+    """pass -> (reviewer_response_sha256, shingle set) for one cycle; None if
+    any receipt lacks a valid hash or shingle list (#222, #240)."""
+    hashes = {}
+    for receipt in receipts:
+        if receipt.get("cycle") != cycle:
+            continue
+        value = receipt.get("reviewer_response_sha256")
+        if not isinstance(value, str) or not _RESPONSE_SHA.fullmatch(value):
+            return None
+        shingles = receipt.get("reviewer_response_shingles")
+        if not isinstance(shingles, list) or not all(
+            isinstance(item, str) and _SHINGLE.fullmatch(item) for item in shingles
+        ):
+            return None
+        hashes[receipt.get("pass")] = (value, frozenset(shingles))
+    return hashes or None
+
+
+def _shingle_jaccard(a: frozenset, b: frozenset) -> float:
+    if not a and not b:
+        return 1.0  # two empty answers are the same answer
+    return len(a & b) / len(a | b)
+
+
+def _shingle_containment(a: frozenset, b: frozenset) -> float | None:
+    """|A & B| / min(|A|, |B|); None when the smaller set is under the
+    CONTAINMENT_MIN_SHINGLES guard (Jaccard alone decides then)."""
+    smaller = min(len(a), len(b))
+    if smaller < CONTAINMENT_MIN_SHINGLES:
+        return None
+    return len(a & b) / smaller
+
+
+def _near_duplicate(a: frozenset, b: frozenset) -> bool:
+    if _shingle_jaccard(a, b) >= NEAR_DUPLICATE_RESPONSE_JACCARD:
+        return True
+    containment = _shingle_containment(a, b)
+    return containment is not None and containment >= NEAR_DUPLICATE_RESPONSE_CONTAINMENT
+
+
+def _fresh_reviewer_responses(receipts: list[dict], a: int, b: int) -> bool:
+    """#222/#240: high excerpt overlap is honest re-quoting only when both
+    cycles carry response evidence on every receipt, no hash repeats across
+    them, and no pair of responses (any pass to any pass) is a near
+    duplicate: token-shingle Jaccard >= NEAR_DUPLICATE_RESPONSE_JACCARD, or
+    containment >= NEAR_DUPLICATE_RESPONSE_CONTAINMENT when the smaller
+    answer has at least CONTAINMENT_MIN_SHINGLES shingles (padding).
+
+    Known trade-off (#240 option 2): an honest re-review of the same
+    unfixed finding that comes out near-identical is read as reuse, so part
+    of the #222 false positive returns for such cycles. Containment widens
+    this: an honest re-review that repeats its earlier analysis nearly word
+    for word and adds new paragraphs also reads as reuse. Missing evidence
+    (legacy receipts) keeps the plain Jaccard verdict."""
+    first, second = _cycle_response_hashes(receipts, a), _cycle_response_hashes(receipts, b)
+    if first is None or second is None:
+        return False
+    if {h for h, _ in first.values()} & {h for h, _ in second.values()}:
+        return False
+    return not any(
+        _near_duplicate(left, right)
+        for _, left in first.values()
+        for _, right in second.values()
+    )
+
+
 def _open_findings(items: list) -> list:
     """Findings that still count as an open product defect.
 
@@ -1913,7 +1992,12 @@ def _run_verify_impl(
 
         # 7. Jaccard overlap > 0.8 = rubber stamp.
         # NOTE: identical excerpts across cycles will cause Jaccard > 0.8.
-        # This is CORRECT -- it detects rubber-stamping.
+        # That alone fails, unless every receipt of both cycles carries a
+        # reviewer_response_sha256 and no hash repeats across them (#222),
+        # and no response is a near duplicate (shingle Jaccard >= 0.9, #240):
+        # an honest re-review of a small diff re-quotes the same lines with a
+        # freshly produced answer. Reused, copied or lightly edited answers
+        # (nonce, one changed word) still fail.
         # Known limitation: when neither cycle has an open finding
         # (empty list, or every finding DISMISSED/FIXED), the skip
         # below causes Jaccard to never trigger, so identical-excerpt
@@ -1941,7 +2025,7 @@ def _run_verify_impl(
                     cp,
                 )
             j = _jaccard(cov_a, cov_b)
-            if j > 0.8:
+            if j > 0.8 and not _fresh_reviewer_responses(receipts, a, b):
                 return VerifyResult(False, f"Jaccard overlap {j:.2f} > 0.8 c{a}-c{b}", 7, cp)
         cp += 1
 
