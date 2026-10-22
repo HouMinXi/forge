@@ -129,6 +129,12 @@ def _spawn_via_parent(server_script: str, timeout: float = 10.0):
     return server_pid, stdin_w
 
 
+# #278: hang guard for "server exits after parent death". The poll returns as
+# soon as the server is gone, so a generous bound only costs time on a real
+# failure; 5-6 s was exceeded on a loaded box (2 s slow import + startup).
+PARENT_DEATH_EXIT_WAIT = 30.0
+
+
 def _wait_for_exit(pid: int, max_seconds: float = 5.0) -> bool:
     """Poll until process exits. Returns True if exited."""
     deadline = time.monotonic() + max_seconds
@@ -148,7 +154,7 @@ class TestPdeathsigRealPath:
         """GREEN: PDEATHSIG set -> server exits after parent death."""
         server_pid, stdin_w = _spawn_via_parent(_SERVER_SCRIPT)
         try:
-            exited = _wait_for_exit(server_pid, max_seconds=5.0)
+            exited = _wait_for_exit(server_pid, max_seconds=PARENT_DEATH_EXIT_WAIT)
             assert exited, (
                 "Server (pid %d) survived parent death -- "
                 "PDEATHSIG did not fire or was not handled" % server_pid
@@ -181,7 +187,7 @@ class TestPdeathsigRealPath:
         """Parent gone before the prctl call: the startup check must notice."""
         server_pid, stdin_w = _spawn_via_parent(_SERVER_SCRIPT_SLOW_IMPORT)
         try:
-            exited = _wait_for_exit(server_pid, max_seconds=6.0)
+            exited = _wait_for_exit(server_pid, max_seconds=PARENT_DEATH_EXIT_WAIT)
             assert exited, (
                 "Server (pid %d) outlived a parent that died during import -- "
                 "the parent pid was sampled after reparenting" % server_pid
