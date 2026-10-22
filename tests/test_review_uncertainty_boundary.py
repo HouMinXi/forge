@@ -548,7 +548,7 @@ def _assert_incomplete_expert_pass(state, receipt):
 @pytest.mark.parametrize("with_history", [False, True])
 @pytest.mark.parametrize("disposition", [Disposition.DISMISSED, Disposition.STYLE])
 def test_duplicate_salvage_preserves_terminal_disposition_in_all_receipts(
-    tmp_path, monkeypatch, with_history, disposition
+    tmp_path, monkeypatch, caplog, with_history, disposition
 ):
     make_machine, prior, resolved = _salvaged_duplicate_machine(tmp_path, monkeypatch)
     state_path = tmp_path / ".code-forge/state.json"
@@ -561,9 +561,11 @@ def test_duplicate_salvage_preserves_terminal_disposition_in_all_receipts(
         run_hold_ui(restored, state_path, input_fn=lambda prompt: "d", output_fn=lambda message: None)
 
     machine = make_machine()
-    assert machine.run() is Verdict.FAIL
+    with caplog.at_level("WARNING", logger="code_forge"):
+        assert machine.run() is Verdict.FAIL
     final = load_state(state_path)
     if with_history:
+        assert "legacy round lacks an explicit CLEAN/reset transition" in caplog.text
         # e759d71 (#46): legacy history without CLEAN/reset proof is refused
         # before any new attempt is published; the dismissal still persists.
         assert final.converged is False
@@ -598,6 +600,15 @@ def test_duplicate_salvage_preserves_terminal_disposition_in_all_receipts(
         respect_floor=False,
     )
     assert verification.passed is False
+    # A second invocation re-detects both duplicates; the sticky terminal
+    # disposition must carry into the later cycle's receipt as well.
+    resumed = make_machine()
+    assert resumed.run() is Verdict.FAIL
+    assert resumed._written_cycles == [2]
+    later = json.loads((tmp_path / ".code-forge/receipts/receipt-c2p2.json").read_text())
+    _assert_incomplete_expert_pass(load_state(state_path), later)
+    assert later["findings_count"] == 2
+    assert [finding["disposition"] for finding in later["findings"]] == [disposition.value] * 2
 
 
 def test_duplicate_dismissal_keeps_distinct_unverified_candidate_open(tmp_path, monkeypatch):
