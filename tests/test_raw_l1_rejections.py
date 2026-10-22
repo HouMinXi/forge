@@ -398,35 +398,51 @@ def _publish(
         )
     else:
         provider = build_l1_provider("auto", resolved, **kwargs)
-    machine = StateMachine(
-        mode=mode,
-        falsifier=StubFalsifier(),
-        autofixer=StubAutoFixer(),
-        revert_fn=lambda finding: None,
-        resolved_review=resolved,
-        source_hash=compute_source_hash(git_diff=combined_diff),
-        baseline_spec_repr="offline raw",
-        cwd=tmp_path,
-        registry={},
-        l0_runner=lambda *args: ([], []),
-        l1_provider=provider,
-        l2_runner=lambda *args, **kw: ([], []),
-        e2e_runner=lambda *args, **kw: ([], []),
-        advisory_runners=[],
-        max_total_rounds=4 if first_only else 3 if recovered or persistent else 1,
-        clean_round_threshold=3,
-    )
-    machine._state.env_manifest = {"tier": "declared", "offline_fixture": True}
-    if terminal:
-        machine._state.rounds_with_failed_pass = 2
-    active[0] = True
-    try:
+
+    def run_once():
+        machine = StateMachine(
+            mode=mode,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda finding: None,
+            resolved_review=resolved,
+            source_hash=compute_source_hash(git_diff=combined_diff),
+            baseline_spec_repr="offline raw",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=lambda *args: ([], []),
+            l1_provider=provider,
+            l2_runner=lambda *args, **kw: ([], []),
+            e2e_runner=lambda *args, **kw: ([], []),
+            advisory_runners=[],
+            max_total_rounds=4 if first_only else 3 if recovered or persistent else 1,
+            clean_round_threshold=3,
+        )
+        machine._state.env_manifest = {"tier": "declared", "offline_fixture": True}
+        if terminal:
+            machine._state.rounds_with_failed_pass = 2
+        active[0] = True
         try:
-            outcome = machine.run()
-        except TimeoutBreaker as exc:
-            outcome = exc
-    finally:
-        active[0] = False
+            try:
+                outcome = machine.run()
+            except TimeoutBreaker as exc:
+                outcome = exc
+        finally:
+            active[0] = False
+        return machine, outcome
+
+    # fafe03d/e759d71 (#46): LOCAL stops the invocation with FAIL at the
+    # first incomplete pass and keeps verified progress. Recovery and
+    # persistence are therefore observed across re-invocations, each of
+    # which must stop after exactly one new cycle while the pass is broken.
+    machine, outcome = run_once()
+    written_cycles = list(machine._written_cycles)
+    reinvoke = mode == Mode.LOCAL and not legacy and (recovered or persistent or first_only)
+    while reinvoke and outcome is Verdict.FAIL:
+        assert machine._written_cycles == [len(written_cycles)], "an incomplete pass must stop LOCAL"
+        assert len(written_cycles) < 4, "re-invocation must recover or trip the breaker"
+        machine, outcome = run_once()
+        written_cycles.extend(machine._written_cycles)
     receipts_dir = tmp_path / ".code-forge/receipts"
     attempts = [
         json.loads(path.read_text()) for path in sorted((receipts_dir / "attempted").glob("*.json"))
@@ -443,13 +459,23 @@ def _publish(
     assert not (tmp_path / "NEVER_EXECUTED").exists()
     assert counts["forbidden"] == 0
     if not recovered and not first_only:
+        failed = next(item for item in receipts if item["pass"] == NAMES.index(failed_pass) + 1)
+        assert failed["pass_status"] != "completed"
+        # e759d71 (#46): a pass whose invocation failed (error/timeout) is an
+        # incomplete pass; LOCAL refuses its receipts and stops with FAIL.
+        invocation_failed = failed["pass_status"] in ("error", "timeout")
         assert (
             isinstance(outcome, TimeoutBreaker)
             if terminal or persistent
-            else outcome == (Verdict.FAIL if legacy or mode == Mode.CI else Verdict.ESCALATED)
+            else outcome
+            == (Verdict.FAIL if legacy or mode == Mode.CI or invocation_failed else Verdict.ESCALATED)
         )
-        failed = next(item for item in receipts if item["pass"] == NAMES.index(failed_pass) + 1)
-        assert failed["pass_status"] != "completed"
+        if invocation_failed and not terminal and not persistent:
+            assert any(
+                f.id == "RECEIPT_INVALID" and "pass did not complete" in f.description
+                for f in machine._state.findings
+            )
+    machine.all_written_cycles = written_cycles
     return attempts, provider, machine, counts, prompts, outcome
 
 
@@ -756,7 +782,8 @@ def test_first_failed_then_healthy_recovery(tmp_path, monkeypatch, external_guar
         tmp_path, monkeypatch, external_guard, raw, api=True, first_only=True, grouped=grouped
     )
     assert outcome == Verdict.PASS, "raw observation must preserve four-round recovery"
-    assert machine._written_cycles == [1, 2, 3, 4]
+    assert machine.all_written_cycles == [1, 2, 3, 4]
+    assert machine._written_cycles == [2, 3, 4], "recovery resumes in a second invocation"
     assert counts["qodo"] == counts["expert"] == counts["adversarial"] == (8 if grouped else 4)
     assert len(attempts) == 1 and attempts[0]["cycle"] == 1
     assert attempts[0]["payload"] == {"raw_response": raw, "pass_name": "qodo"}
