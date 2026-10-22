@@ -4256,3 +4256,22 @@ def test_response_shingles_shape():
     assert len(response_shingles("one two")) == 1
     shingles = response_shingles("a b c d e")
     assert len(shingles) == 3 and all(len(s) == 16 for s in shingles)
+
+
+def test_cycle_without_receipts_keeps_check_7_closed():
+    # #237 review Low: a compared cycle with no receipts must not relax check 7.
+    from code_forge import verify
+    from code_forge.receipt import normalized_response_sha256, response_shingles
+
+    text = "fresh answer for cycle one"
+    receipts = [
+        {
+            "cycle": 1,
+            "pass": 1,
+            "reviewer_response_sha256": normalized_response_sha256(text),
+            "reviewer_response_shingles": sorted(response_shingles(text)),
+        }
+    ]
+    assert verify._cycle_response_hashes(receipts, 2) is None
+    assert verify._fresh_reviewer_responses(receipts, 1, 2) is False
+    assert verify._fresh_reviewer_responses(receipts, 2, 1) is False
