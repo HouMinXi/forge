@@ -29,6 +29,13 @@ from code_forge.gate_check import (
     validate_retry_config,
 )
 
+# #278: inner pytest runs are reference executions, not the subject under
+# test. Their timeouts are only a hang guard, so they stay generous: a loaded
+# box (a full-suite mutation baseline beside other agents) can push a
+# second-long pytest past 10-30 s.
+INNER_PYTEST_TIMEOUT = 120
+GATE_CLI_TIMEOUT = INNER_PYTEST_TIMEOUT + 60  # gate-check CLI wraps an inner pytest run
+
 
 class TestFailureWaiverEvidence:
     @pytest.mark.parametrize(
@@ -91,7 +98,9 @@ class TestFailureWaiverEvidence:
         env = dict(os.environ)
         env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
         command = ["python3", "-B", "-m", "pytest", "-q", *args, "test_sample.py"]
-        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=15)
+        original = subprocess.run(
+            command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT
+        )
         assert original.returncode == (0 if passing else 1), original.stderr
         assert (tmp_path / "executed").read_text() == "once"
         expected = EXIT_PASS if shape in ("ordinary", "maxfail_below", "passing") else EXIT_FAIL
@@ -212,7 +221,9 @@ class TestFailureWaiverEvidence:
         env = dict(os.environ)
         env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
         command = ["python3", "-B", "-m", "pytest", "-q", "test_sample.py"]
-        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=15)
+        original = subprocess.run(
+            command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT
+        )
         assert original.returncode == 1, original.stderr
         assert (tmp_path / "executed").read_text() == "once"
         if shape != "ordinary":
@@ -300,7 +311,7 @@ class TestFailureWaiverEvidence:
             env=env,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=GATE_CLI_TIMEOUT,
         )
 
     def test_hardlinked_reporter_keeps_public_known_failure_waiver(self, tmp_path):
@@ -369,7 +380,9 @@ class TestFailureWaiverEvidence:
         env = dict(os.environ)
         env.pop("PYTHONDONTWRITEBYTECODE", None)
         env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
-        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=15)
+        original = subprocess.run(
+            command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT
+        )
         bare_rejected = original.returncode == 4
         if bare_rejected:
             assert (sys.implementation.cache_tag, pytest.__version__) == ("cpython-312", "9.1.1")
@@ -395,14 +408,16 @@ class TestFailureWaiverEvidence:
             env=env,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=GATE_CLI_TIMEOUT,
         )
         if bare_rejected:
             assert public.returncode == EXIT_FAIL, public.stderr
             assert "unrecognized arguments" in public.stderr
             assert not (tmp_path / "executed").exists()
             command[-1] = "./" + filename
-            original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=15)
+            original = subprocess.run(
+                command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT
+            )
             assert original.returncode == 1, original.stderr
             assert (filename + "::test_known").encode() in original.stdout
             assert (tmp_path / "executed").read_text() == "once"
@@ -441,7 +456,9 @@ class TestFailureWaiverEvidence:
         ]
         plugin_path = os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")])
         env = {**os.environ, "PYTHONPATH": plugin_path}
-        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=15)
+        original = subprocess.run(
+            command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT
+        )
         assert original.returncode == 1, original.stderr
         assert (tmp_path / "executed-before").read_text() == "once"
         result, error = self.public(
@@ -542,7 +559,9 @@ def pytest_unconfigure(config):
         }
         env.update(extra)
         env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
-        original = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=30)
+        original = subprocess.run(
+            command, cwd=tmp_path, env=env, capture_output=True, timeout=INNER_PYTEST_TIMEOUT
+        )
         assert original.returncode == (0 if passing else 1), original.stderr
         assert (tmp_path / "executed").read_text() == "once"
         for name in ("executed", "replacement-calls", "real-unconfigure-ran"):
@@ -748,7 +767,7 @@ def pytest_unconfigure(config):
             cwd=tmp_path,
             env=dict(os.environ, **extra),
             capture_output=True,
-            timeout=10,
+            timeout=INNER_PYTEST_TIMEOUT,
             check=False,
         )
         assert original.returncode == (0 if success else 1)
@@ -781,7 +800,9 @@ def pytest_unconfigure(config):
         command = ["python3", "-B", "-m", "pytest", "--version"] + [
             "test_example.py::test_known[" + str(i) + ":" + "x" * 45 + "]" for i in range(1400)
         ]
-        original = subprocess.run(command, cwd=tmp_path, capture_output=True, timeout=10, check=False)
+        original = subprocess.run(
+            command, cwd=tmp_path, capture_output=True, timeout=INNER_PYTEST_TIMEOUT, check=False
+        )
         assert original.returncode == 0
         result, error = self.public(tmp_path, "def test_known(): pass\n", {}, command=command)
         assert result == EXIT_PASS, error
@@ -790,7 +811,9 @@ def pytest_unconfigure(config):
         source = "def test_known():\n    assert False\n"
         (tmp_path / "test_sample.py").write_text(source)
         command = ["python3", "-B", "-m", "pytest", "-q", *(["--color=no"] * 10000), "test_sample.py"]
-        original = subprocess.run(command, cwd=tmp_path, capture_output=True, timeout=10, check=False)
+        original = subprocess.run(
+            command, cwd=tmp_path, capture_output=True, timeout=INNER_PYTEST_TIMEOUT, check=False
+        )
         assert original.returncode == 1
         result, error = self.public(
             tmp_path, source, {"test_sample.py::test_known": "failed"}, command=command
@@ -815,7 +838,7 @@ def pytest_unconfigure(config):
     ):
         def git(*args):
             return subprocess.run(
-                ["git", *args], cwd=tmp_path, capture_output=True, text=True, timeout=2, check=True
+                ["git", *args], cwd=tmp_path, capture_output=True, text=True, timeout=30, check=True
             )
 
         inherited = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
@@ -825,7 +848,7 @@ def pytest_unconfigure(config):
                 cwd=tmp_path,
                 env=env,
                 capture_output=True,
-                timeout=2,
+                timeout=30,
                 check=False,
             )
             assert outside.returncode != 0, outside.stdout
@@ -837,7 +860,7 @@ def pytest_unconfigure(config):
         if command is None:
             command = ["python3", "-m", "pytest", "-q", *args, "test_sample.py"]
         (directory / "gate.yaml").write_text(
-            yaml.safe_dump({"test": {"command": command, "timeout_seconds": 30}})
+            yaml.safe_dump({"test": {"command": command, "timeout_seconds": INNER_PYTEST_TIMEOUT}})
         )
         if baseline is not None or write_null_baseline:
             (directory / "test_baseline.json").write_text(
@@ -896,7 +919,7 @@ def pytest_unconfigure(config):
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=30,
+            timeout=INNER_PYTEST_TIMEOUT,
             check=False,
         )
         assert original.returncode == 1, original.stderr

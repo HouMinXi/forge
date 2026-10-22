@@ -684,7 +684,7 @@ def test_integer_writer_boundary(
             env=dict(os.environ, PYTHONINTMAXSTRDIGITS="4300", PYTHONPATH=str(root / "src")),
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=120,  # #278: hang guard for the inner pytest run
         )
         assert child.returncode == 0, child.stdout + child.stderr
         assert "1 passed" in child.stdout

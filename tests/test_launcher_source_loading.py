@@ -759,7 +759,7 @@ def git(root, *args):
         env=env,
         capture_output=True,
         stdin=subprocess.DEVNULL,
-        timeout=2,
+        timeout=30,  # #278: fixture setup; `git worktree add` exceeds 2 s under load
         check=True,
     ).stdout
 

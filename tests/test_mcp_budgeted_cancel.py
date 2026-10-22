@@ -530,7 +530,13 @@ def test_sdk_fixture_fault_closes_known_child_server_and_pipes(owned_cli, tmp_pa
         os.fstat(child_fds[0])
     assert closed.value.errno == 9
     child_pid = json.loads((tmp_path / "communicating.json").read_text())["child"]
-    assert not Path("/proc", str(child_pid)).exists()
+    # #278: the CLI child is the server's child, not ours. Once the server is
+    # killed it is reparented and reaped by init asynchronously, so its /proc
+    # entry can outlive the cleanup by a moment under load. It must still go.
+    deadline = time.monotonic() + 10
+    while Path("/proc", str(child_pid)).exists():
+        assert time.monotonic() < deadline, "owned CLI child outlived the fixture cleanup"
+        time.sleep(0.01)
 
 
 @pytest.mark.parametrize("fault", ["identity", "open"])

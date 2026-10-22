@@ -18,7 +18,7 @@ def _collect(repo, label, *paths):
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=30,
+        timeout=120,  # #278: hang guard only; loaded boxes exceed 30 s
     )
     (repo / (label + ".stdout.log")).write_text(result.stdout, encoding="utf-8")
     (repo / (label + ".stderr.log")).write_text(result.stderr, encoding="utf-8")
