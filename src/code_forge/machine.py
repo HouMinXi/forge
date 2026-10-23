@@ -346,6 +346,8 @@ def _clean_mutation_skip_kind(
       lines equal to their descriptions.
     - ``"baseline-failed"`` (#127): ``mutation-flaky`` skips (the baseline ran
       and failed, or its runner could not start), same infra rule.
+    - ``"host-busy"`` (#282): ``mutation-host-busy`` skips (the host never
+      went idle, so no baseline ran), same infra rule.
     - ``"not-applicable"`` (#127): only ``mutation-no-adapter`` /
       ``mutation-tests-only`` skips and no infra lines at all.
 
@@ -409,6 +411,7 @@ def _clean_mutation_skip_kind(
 _SKIP_KINDS = {
     "mutation-baseline-timeout": ("baseline-timeout", "descriptions", "none"),
     "mutation-flaky": ("baseline-failed", "descriptions", "none"),
+    "mutation-host-busy": ("host-busy", "descriptions", "none"),
     "mutation-unavailable": ("unavailable", "empty", "none"),
     "mutation-probe-timeout": ("probe-timeout", "empty", "none"),
     "mutation-no-mutants": ("no-mutants", "empty", "results"),
@@ -2563,16 +2566,20 @@ class StateMachine:
                         self._mutation_bound_failure = True
                         self._state.infra_errors.append(_ci_skip_reason(kind, l2_findings))
             elif self.mode == Mode.CI and any(
-                f.id == "MUTATION_SKIPPED" and f.fingerprint in ("mutation-baseline-timeout", "mutation-flaky")
+                f.id == "MUTATION_SKIPPED" and f.fingerprint in ("mutation-baseline-timeout", "mutation-flaky", "mutation-host-busy")
                 for f in l2_findings
             ):
                 # #124/#127: the CI baseline policy is runner-independent; a
                 # custom/injected runner's baseline skip carries no evidence either.
                 self._mutation_bound_failure = True
-                timed_out = any(f.fingerprint == "mutation-baseline-timeout" for f in l2_findings)
-                self._state.infra_errors.append(
-                    _ci_skip_reason("baseline-timeout" if timed_out else "baseline-failed", l2_findings)
-                )
+                fingerprints = {f.fingerprint for f in l2_findings}
+                if "mutation-baseline-timeout" in fingerprints:
+                    skip_kind = "baseline-timeout"
+                elif "mutation-host-busy" in fingerprints:
+                    skip_kind = "host-busy"
+                else:
+                    skip_kind = "baseline-failed"
+                self._state.infra_errors.append(_ci_skip_reason(skip_kind, l2_findings))
             self._mutation_measurement_eligible = native and decoded is not None
             if native and not self._mutation_measurement_eligible and any(is_mutation_survivor(f) for f in l2_findings):
                 if not source_before or not mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root()):

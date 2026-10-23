@@ -1850,6 +1850,9 @@ def test_no_adapter_diff_is_a_clean_skip_in_both_modes(ci_project, monkeypatch, 
     ([("mutation-flaky", "a"), ("mutation-no-adapter", "n")], ["a"], None),
     ([("mutation-other-adapter", "o")], [], None),
     ([("mutation-baseline-timeout", "t")], ["t"], "baseline-timeout"),
+    ([("mutation-host-busy", "host not idle after 1800s: x")], ["host not idle after 1800s: x"], "host-busy"),
+    ([("mutation-host-busy", "h")], [], None),
+    ([("mutation-host-busy", "h"), ("mutation-flaky", "a")], ["h", "a"], None),
 ])
 def test_clean_mutation_skip_kind(findings, infra, expected):
     from code_forge.machine import _clean_mutation_skip_kind
@@ -2965,3 +2968,29 @@ def test_cli_test_config_root_symlink_into_checkout_is_refused(ci_project, monke
     capsys.readouterr()
     code, seen = _cli_admission_args(p, monkeypatch, "--test-config-root", str(link))
     assert code == 2 and not seen and "must be outside the reviewed checkout" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_busy_host_is_an_explicit_skip_not_a_baseline(ci_project, monkeypatch, mode):
+    """#282: a host that never goes idle runs no baseline. CI FAILs naming the
+    busy host; LOCAL keeps a DISMISSED skip plus an infra line (no clean credit)."""
+    from code_forge import host_idle
+
+    p = ci_project
+    _failing_baseline(monkeypatch, p)
+    monkeypatch.setenv("FORGE_MUTATION_IDLE_MAX_WAIT", "0.05")
+    monkeypatch.setenv("FORGE_MUTATION_IDLE_POLL", "0.01")
+    monkeypatch.setattr(host_idle, "read_signals", lambda: {"load_per_cpu": 3.0})
+    machine = _machine(p, runner=mutation.run_mutation) if mode is Mode.CI else _local_machine(p, runner=mutation.run_mutation)
+    verdict = machine.run()
+    saved = load_state(p.state / ".code-forge/state.json")
+    assert "baseline" not in p.stages
+    assert any(f.fingerprint == "mutation-host-busy" and f.disposition is Disposition.DISMISSED for f in saved.findings)
+    assert any(e.startswith("host not idle after") and "loadavg/cpu 3.00 > 0.5" in e for e in saved.infra_errors)
+    assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
+    reasons = [e for e in saved.infra_errors if e.startswith("CI: mutation not measured")]
+    if mode is Mode.CI:
+        assert verdict is Verdict.FAIL
+        assert len(reasons) == 1 and "host not idle after" in reasons[0]
+    else:
+        assert verdict is not Verdict.FAIL and reasons == []

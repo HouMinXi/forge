@@ -93,6 +93,8 @@ def run_detached_payload():
 def _skip_worktree_check(monkeypatch):
     """All tests bypass the linked-worktree enforcement gate."""
     monkeypatch.setenv("FORGE_SKIP_WORKTREE_CHECK", "1")
+    # #282: the mutation idle gate must not delay the suite's own runs.
+    monkeypatch.setenv("FORGE_MUTATION_IDLE_MAX_WAIT", "0")
 
 
 _real_config_home = pytest.StashKey[Path]()
