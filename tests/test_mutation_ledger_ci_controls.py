@@ -145,6 +145,8 @@ def ci_project(tmp_path, monkeypatch):
     for name in tuple(os.environ):
         if name.startswith(("FORGE_", "CODE_FORGE_", "GIT_")):
             monkeypatch.delenv(name, raising=False)
+    # #282: the scrub above also drops conftest's idle-gate opt-out.
+    monkeypatch.setenv("FORGE_MUTATION_IDLE_MAX_WAIT", "0")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.setenv("PATH", str(bin_dir))
