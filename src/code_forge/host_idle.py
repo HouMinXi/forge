@@ -51,8 +51,13 @@ class IdleResult:
     reasons: list[str] = field(default_factory=list)
 
     def record(self) -> dict:
-        return {"idle": self.idle, "waited_s": round(self.waited_s, 1), "samples": self.samples,
-                "last": self.last, "reasons": list(self.reasons)}
+        return {
+            "idle": self.idle,
+            "waited_s": round(self.waited_s, 1),
+            "samples": self.samples,
+            "last": self.last,
+            "reasons": list(self.reasons),
+        }
 
 
 def load_config(env: dict | None = None) -> IdleConfig:
@@ -158,7 +163,9 @@ def wait_for_idle(
             return IdleResult(True, waited, samples, signals, [])
         if waited + cfg.poll > cfg.max_wait:
             # Last reasons; a host that just went idle but has not settled is still busy.
-            return IdleResult(False, waited, samples, signals, reasons or ["not idle long enough to settle"])
+            return IdleResult(
+                False, waited, samples, signals, reasons or ["not idle long enough to settle"]
+            )
         if reasons and on_wait is not None:
             on_wait(reasons)
         sleep(cfg.poll)

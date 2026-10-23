@@ -6,7 +6,12 @@ from code_forge import host_idle, mutation
 from code_forge.host_idle import IdleConfig, IdleConfigError, busy_reasons, load_config, wait_for_idle
 
 CFG = IdleConfig(max_wait=100, poll=10, settle=3, load=0.5, psi_cpu=10, psi_mem=5, mem_avail=0.15)
-IDLE = {"load_per_cpu": 0.1, "psi_cpu_some_avg10": 1.0, "psi_mem_some_avg10": 0.0, "mem_avail_ratio": 0.5}
+IDLE = {
+    "load_per_cpu": 0.1,
+    "psi_cpu_some_avg10": 1.0,
+    "psi_mem_some_avg10": 0.0,
+    "mem_avail_ratio": 0.5,
+}
 
 
 class FakeClock:
@@ -38,10 +43,17 @@ def test_invalid_config_is_an_error(raw):
 def test_busy_reasons_each_signal_and_unavailable_ignored():
     assert busy_reasons(IDLE, CFG) == []
     assert busy_reasons({k: None for k in IDLE}, CFG) == []
-    busy = {"load_per_cpu": 0.9, "psi_cpu_some_avg10": 20.0, "psi_mem_some_avg10": 6.0, "mem_avail_ratio": 0.1}
+    busy = {
+        "load_per_cpu": 0.9,
+        "psi_cpu_some_avg10": 20.0,
+        "psi_mem_some_avg10": 6.0,
+        "mem_avail_ratio": 0.1,
+    }
     assert busy_reasons(busy, CFG) == [
-        "loadavg/cpu 0.90 > 0.5", "cpu PSI some avg10 20.0 > 10",
-        "memory PSI some avg10 6.0 > 5", "MemAvailable 10% < 15%",
+        "loadavg/cpu 0.90 > 0.5",
+        "cpu PSI some avg10 20.0 > 10",
+        "memory PSI some avg10 6.0 > 5",
+        "MemAvailable 10% < 15%",
     ]
     # Thresholds are inclusive limits.
     assert busy_reasons({"load_per_cpu": 0.5, "mem_avail_ratio": 0.15}, CFG) == []
@@ -51,14 +63,18 @@ def test_waits_for_settled_idle():
     clock = FakeClock()
     seq = iter([{"load_per_cpu": 2.0}, IDLE, {"load_per_cpu": 2.0}, IDLE, IDLE, IDLE])
     seen = []
-    result = wait_for_idle(CFG, read=lambda: next(seq), sleep=clock.sleep, clock=clock, on_wait=seen.append)
+    result = wait_for_idle(
+        CFG, read=lambda: next(seq), sleep=clock.sleep, clock=clock, on_wait=seen.append
+    )
     assert result.idle and result.samples == 6 and result.waited_s == 50
     assert len(seen) == 2
 
 
 def test_never_idle_gives_up_at_max_wait():
     clock = FakeClock()
-    result = wait_for_idle(CFG, read=lambda: {"psi_mem_some_avg10": 11.5}, sleep=clock.sleep, clock=clock)
+    result = wait_for_idle(
+        CFG, read=lambda: {"psi_mem_some_avg10": 11.5}, sleep=clock.sleep, clock=clock
+    )
     assert not result.idle and result.waited_s <= CFG.max_wait
     assert result.reasons == ["memory PSI some avg10 11.5 > 5"]
     assert result.record()["idle"] is False
@@ -67,6 +83,7 @@ def test_never_idle_gives_up_at_max_wait():
 def test_disabled_never_samples():
     def boom():
         raise AssertionError("sampled")
+
     result = wait_for_idle(load_config({"FORGE_MUTATION_IDLE_MAX_WAIT": "0"}), read=boom)
     assert result.idle and result.samples == 0
 
