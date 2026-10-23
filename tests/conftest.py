@@ -98,7 +98,25 @@ def _skip_worktree_check(monkeypatch):
 @pytest.fixture(autouse=True)
 def _disable_mutation_idle_gate(monkeypatch):
     """#282: the mutation idle gate must not delay the suite's own runs."""
+    import dataclasses
+    import os
+
+    from code_forge import host_idle
+
     monkeypatch.setenv("FORGE_MUTATION_IDLE_MAX_WAIT", "0")
+    original = host_idle.load_config
+
+    def _load_config(env=None):
+        # Tests that clear os.environ (patch.dict(clear=True), FORGE_* scrubs)
+        # would otherwise drop the opt-out and poll the real host. Only an
+        # explicitly set MAX_WAIT (a test exercising the gate) is honored.
+        cfg = original(env)
+        source = os.environ if env is None else env
+        if source.get("FORGE_MUTATION_IDLE_MAX_WAIT") in (None, ""):
+            cfg = dataclasses.replace(cfg, max_wait=0.0)
+        return cfg
+
+    monkeypatch.setattr(host_idle, "load_config", _load_config)
 
 
 _real_config_home = pytest.StashKey[Path]()
