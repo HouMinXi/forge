@@ -446,9 +446,12 @@ async def test_ready_identity_failure_disposes_known_fixture_without_pidfd_signa
     real_open = os.pidfd_open
     captured_fds = []
 
-    def capture_fd(pid):
-        fd = real_open(pid)
-        captured_fds.append(fd)
+    def capture_fd(pid, *args):
+        # Python 3.12's asyncio probes pidfd support with pidfd_open(own_pid, 0),
+        # so forward any flags; only fds for other processes are under test.
+        fd = real_open(pid, *args)
+        if pid != os.getpid():
+            captured_fds.append(fd)
         return fd
 
     async def mismatch(fixture):
