@@ -49,18 +49,18 @@
     {
       "source_path": "REQUIREMENTS.md",
       "published_path": "docs/gsd/REQUIREMENTS.md",
-      "source_sha256": "8171c326fc50dc4df3703278c4bbcb3ef313c03fb0855f51d3260d88d7609a55",
-      "source_size": 18565,
-      "source_mtime_utc": "2026-10-24T04:25:02.083995+00:00",
-      "published_sha256": "2266dfc10092e2e30c482dc86fe45cbe907244e8e5284c59cc615e8ab72fab87",
-      "published_size": 18972,
+      "source_sha256": "cad599c74bd7cd402fa695870d9c920d780809a89f265d0cdec3157466a6d4f0",
+      "source_size": 18823,
+      "source_mtime_utc": "2026-10-24T16:54:17.334946+00:00",
+      "published_sha256": "9da2ad69db759311f69d1a171b80cea74e7d79e4ab4b5de3ac7dbf7a8a41a055",
+      "published_size": 19230,
       "transformations": [
         {
           "category": "dated-publication-banner"
         },
         {
           "category": "archival-status-formatting",
-          "occurrences": 33,
+          "occurrences": 37,
           "operation": "Wrap each historical list checkbox marker in backticks; marker state and text unchanged.",
           "inverse": "Remove the wrapping backticks from these list checkbox markers."
         }
@@ -86,11 +86,11 @@
     {
       "source_path": "ROADMAP.md",
       "published_path": "docs/gsd/ROADMAP.md",
-      "source_sha256": "9b35f8daa7d5a40689db17edc0076a2a5a1da304e8b60ee65a151eb4a96f7350",
-      "source_size": 93077,
-      "source_mtime_utc": "2026-10-24T04:25:02.084415+00:00",
-      "published_sha256": "227edba19588baa2b7998d245c3268fac1938036a814e2e76af0a3ebb76d9993",
-      "published_size": 93713,
+      "source_sha256": "6b003da24ddddae4eda2011aef215aa60a37fb550eedb81f79215abb9aae3a91",
+      "source_size": 93513,
+      "source_mtime_utc": "2026-10-24T16:54:17.334180+00:00",
+      "published_sha256": "674e6495e0a65a02d07b1988716485fcdad49ebfa9b19f288c7dad35466e4381",
+      "published_size": 94149,
       "transformations": [
         {
           "category": "private-host-b",
@@ -102,7 +102,7 @@
         },
         {
           "category": "archival-status-formatting",
-          "occurrences": 144,
+          "occurrences": 147,
           "operation": "Wrap each historical list checkbox marker in backticks; marker state and text unchanged.",
           "inverse": "Remove the wrapping backticks from these list checkbox markers."
         }

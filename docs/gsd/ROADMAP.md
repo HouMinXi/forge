@@ -1117,7 +1117,7 @@ Granularity is unspecified in the inspected config. The two remaining delivery b
 - `[x]` **Phase 57: EVAL-CORPUS** - Reproducible 150-entry defect/control corpus; completed 2026-08-31.
 - `[x]` **Phase 58: DEPTH-AND-ABLATION** - Published depth and falsification-ablation observations; completed 2026-09-05.
 - `[ ]` **Phase 59: JUDGMENT-AND-EVIDENCE** - Recover outstanding acceptance and deliver bounded investigation with raw evidence and per-attempt accounting.
-- `[ ]` **Phase 59.1: REVIEW-LENSES (INSERTED)** - Opt-in, separately trusted review-lens block for the L1 prompts, default off; the on/off measurement waits for the EVAL60-01 corpus freeze.
+- `[ ]` **Phase 59.1: REVIEW-LENSES (INSERTED)** - Opt-in, separately trusted review-lens block for the L1 prompts, default off; plan 59.1-01 is delivered (PR #284, merge commit 314c7d9, 2026-10-24); the on/off measurement (59.1-02, LENS-03) still waits for the EVAL60-01 corpus freeze.
 - `[ ]` **Phase 60: FULL-CHECKOUT-CORPUS-AND-COMPARISON** - Qualify real-checkout context and measure the admitted investigation against a matched baseline.
 
 ## Phase Details
@@ -1177,13 +1177,13 @@ Within phase 59, recover old acceptance evidence alongside observability design;
   2. `review_lenses` takes effect only when its value `is True` and its own `lens_hash` is trusted; lens tags never change fingerprints, severity, `_rule_type` or legacy finding ids. [LENS-02]
   3. THIRD_PARTY_NOTICES.md ships in the wheel and sdist, and `LENS_SOURCES` records every upstream (skill, repo, path, commit). [LENS-04]
   4. The on/off comparison runs only after the EVAL60-01 corpus freeze, under gates pre-registered in the 59.1-01 plan; a failed or not-computable gate keeps the default off, and nothing EVAL60-02 has frozen changes. [LENS-03]
-**Plans**: 1 plan drafted (59.1-01), 1 to be written after the EVAL60-01 corpus freeze (59.1-02)
+**Plans**: 1/2 complete: 59.1-01 delivered; 59.1-02 to be written after the EVAL60-01 corpus freeze
 
 Plans:
-- `[ ]` 59.1-01-PLAN.md -- lenses.py, separate lens trust, Outlet A/B/C wiring with Outlet C oracle, tag stripping, third-party notices; switch off by default (LENS-01, LENS-02, LENS-04). Draft r6, not an execution admission; execution needs this change and the Task -1 gate to pass.
+- `[x]` 59.1-01-PLAN.md -- lenses.py, separate lens trust, Outlet A/B/C wiring with Outlet C oracle, tag stripping, third-party notices; switch off by default (LENS-01, LENS-02, LENS-04). Delivered PR #284, merge commit 314c7d9, 2026-10-24; evidence in 59.1-01-SUMMARY.md.
 - `[ ]` 59.1-02-PLAN.md -- LENS-03 on/off measurement; written and pre-registered after the EVAL60-01 corpus freeze (TBD)
 
-Conflict rule with 59-06 and 59-08 (both touch `factories.py` `build_l1_provider` and the `_make_subagent_spawn` area): whichever of 59.1-01, 59-06 and 59-08 merges later rebases and re-captures BOTH prompt oracles against the new base (Outlet A with `scripts/capture_l1_digests.py`, adding a new revision entry; Outlet C with a new revision of `tests/fixtures/outlet_c_prompt_digests_pre_lens.json` written by the Outlet C capture script), then re-checks every line anchor in the 59.1-01 plan and the spec. Phase 59.1 is a separate admission and does not change Phase 59 acceptance or any 59-xx plan.
+Conflict rule with 59-06 and 59-08 (both touch `factories.py` `build_l1_provider` and the `_make_subagent_spawn` area): whichever of 59.1-01, 59-06 and 59-08 merges later rebases and re-captures BOTH prompt oracles against the new base (Outlet A with `scripts/capture_l1_digests.py`, adding a new revision entry; Outlet C with a new revision of `tests/fixtures/outlet_c_prompt_digests_pre_lens.json` written by the Outlet C capture script), then re-checks every line anchor in the 59.1-01 plan and the spec. Phase 59.1 is a separate admission and does not change Phase 59 acceptance or any 59-xx plan. Status 2026-10-24: 59.1-01 has merged, so 59-06 and 59-08 now carry the rebase and re-capture obligation, and the later of those two re-captures both oracles.
 
 ### Phase 60: FULL-CHECKOUT-CORPUS-AND-COMPARISON
 
@@ -1204,7 +1204,7 @@ Conflict rule with 59-06 and 59-08 (both touch `factories.py` `build_l1_provider
 | 57. EVAL-CORPUS | Historical; count unreconciled | Complete | 2026-08-31 |
 | 58. DEPTH-AND-ABLATION | Historical; count unreconciled | Complete | 2026-09-05 |
 | 59. JUDGMENT-AND-EVIDENCE | TBD; acceptance unclosed | In progress | - |
-| 59.1. REVIEW-LENSES (INSERTED) | 59.1-01 drafted; 59.1-02 TBD | Not started | - |
+| 59.1. REVIEW-LENSES (INSERTED) | 1/2 (59.1-01 complete; 59.1-02 TBD) | In progress | - |
 | 60. FULL-CHECKOUT-CORPUS-AND-COMPARISON | TBD | Not started | - |
 
-Phase-based progress is 3/6 (50%); formal plan-based progress is unreconciled. This accounts for the existing phase 60 obligation and does not reopen completed work. Phase 50/53b remain deferred, outside this denominator. Phase 59.1 is a decimal insert and is counted in this denominator, which moves the figure from 3/5 (60%) to 3/6 (50%); 56/57/58 stay complete and 59.1 starts as not started. Active requirement coverage is 15/15 (11 for phases 59/60, 4 LENS entries for Phase 59.1), each assigned once; all 15 remain Pending in REQUIREMENTS.md.
+Phase-based progress is 3/6 (50%); formal plan-based progress is unreconciled. This accounts for the existing phase 60 obligation and does not reopen completed work. Phase 50/53b remain deferred, outside this denominator. Phase 59.1 is a decimal insert and is counted in this denominator, which moves the figure from 3/5 (60%) to 3/6 (50%); 56/57/58 stay complete. Phase 59.1 is in progress (1/2 plans; 59.1-01 delivered 2026-10-24 via PR #284) and counts as complete only when 59.1-02 closes, so phase-based progress stays 3/6 (50%). Active requirement coverage is 15/15 (11 for phases 59/60, 4 LENS entries for Phase 59.1), each assigned once; 3 are Complete (LENS-01, LENS-02, LENS-04) and 12 remain Pending in REQUIREMENTS.md.
