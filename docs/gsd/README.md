@@ -9,7 +9,7 @@ access, not current engineering acceptance, design approval or permission
 to execute historical commands.
 
 The formal v3.0 state remains **3/6 phases complete (50%)**, **Phase59 active**,
-**Phase60 pending**, and **all 15 active requirements pending** (11 for Phases 59/60, 4 LENS entries for the inserted Phase 59.1). Phases
+**Phase60 pending**, **12 of 15 active requirements pending** and **3 complete** (LENS-01, LENS-02 and LENS-04, delivered by plan 59.1-01 in PR #284, 2026-10-24; Phase 59.1 is 1/2 plans, with LENS-03 waiting on the EVAL60-01 corpus freeze). The other 11 pending requirements belong to Phases 59/60. Phases
 56/57/58 are historically complete; 50/53b remain deferred. Formal plan
 counts are unreconciled. There are **18 existing Phase59 plans** here;
 their presence is not evidence that they were admitted, implemented or
@@ -107,7 +107,7 @@ renumber Phase 60. Publishing a plan is not itself an execution admission.
 
 | Plan | Objective |
 | --- | --- |
-| [59.1-01-PLAN.md](phases/59.1-review-lenses/59.1-01-PLAN.md) | Add the opt-in, separately trusted review-lens block to the L1 review prompts and keep every off-path prompt byte-identical to 609aa51. |
+| [59.1-01-PLAN.md](phases/59.1-review-lenses/59.1-01-PLAN.md) | Add the opt-in, separately trusted review-lens block to the L1 review prompts and keep every off-path prompt byte-identical to 609aa51. Delivered 2026-10-24 (PR #284, merge commit 314c7d9). |
 
 | Support | Record |
 | --- | --- |
