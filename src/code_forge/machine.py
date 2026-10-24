@@ -4662,6 +4662,10 @@ class StateMachine:
     def _persist_state(self) -> None:
         """Write state.json to cwd/.code-forge/state.json."""
         state_path = self.cwd / ".code-forge" / "state.json"
+        if self._state.verdict in (Verdict.PASS, Verdict.FAIL, Verdict.ESCALATED):
+            # #107: a terminal verdict supersedes any earlier HOLD; a stale
+            # "awaiting human disposition" next to PASS misleads readers.
+            self._state.hold_reason = None
         try:
             save_state(self._state, state_path)
         except OSError:
