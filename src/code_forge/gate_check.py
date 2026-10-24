@@ -230,6 +230,13 @@ class OutsideConfigRootRefused(UntrustedGateConfigError):
     failure (nothing measured) rather than a skipped phase."""
 
 
+class BaselinePackReadFailed(UntrustedGateConfigError):
+    """Reading a baseline rule pack failed for an infrastructure reason
+    (git show timeout or non-zero exit) (#189). The pack was not judged
+    untrustworthy, it was not read; CI treats the unmeasured blocking rules
+    as a failure."""
+
+
 _GATE_PATHS = (".code-forge", ".code-forge/gate.yaml")
 _LINK_MODES = {"120000": "a symlink", "160000": "a submodule"}
 
@@ -347,13 +354,29 @@ def _read_gate_nofollow(root, *, refuse_hardlinks: bool = False) -> str:
             os.close(fd)
 
 
-def _load_gate_nofollow(root, *, refuse_hardlinks: bool = False) -> dict:
+def _parse_validated(label, text: str) -> dict:
     import io
 
+    return load_gate_config(label, fs_open=lambda *_a, **_k: io.StringIO(text))
+
+
+def _parse_raw(label, text: str) -> dict:
+    """Top-level gate.yaml mapping without the ``test`` section requirement
+    (#141: review-time keys such as ``ledger`` or ``rulepacks_blocking``)."""
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML in {label}: {exc}") from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{label} must be a mapping, got {type(data).__name__}")  # noqa: TRY004
+    return data
+
+
+def _load_gate_nofollow(root, *, refuse_hardlinks: bool = False, parse=_parse_validated) -> dict:
     text = _read_gate_nofollow(root, refuse_hardlinks=refuse_hardlinks)
-    return load_gate_config(
-        Path(root) / ".code-forge" / "gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
-    )
+    return parse(Path(root) / ".code-forge" / "gate.yaml", text)
 
 
 def _refuse_checkout_alias(root: Path, source_root) -> None:
@@ -401,7 +424,7 @@ def _refuse_checkout_alias(root: Path, source_root) -> None:
         )
 
 
-def _load_outside_gate(config_root, source_root) -> dict:
+def _load_outside_gate(config_root, source_root, parse=_parse_validated) -> dict:
     """An explicit config root outside the checkout: refuse a symlinked
     .code-forge/gate.yaml or one whose real path lands inside the checkout,
     refuse a gate.yaml with more than one hard link, and read with O_NOFOLLOW.
@@ -423,11 +446,26 @@ def _load_outside_gate(config_root, source_root) -> dict:
             f"test config root {root} resolves into the reviewed checkout ({real})"
         )
     _refuse_checkout_alias(root, source_root)
-    return _load_gate_nofollow(root, refuse_hardlinks=True)
+    return _load_gate_nofollow(root, refuse_hardlinks=True, parse=parse)
+
+
+def load_trusted_gate_data(
+    *, config_root, source_root, base_sha: str | None, allow_untracked: bool = True,
+) -> dict:
+    """#141: the raw top-level gate.yaml mapping from the same trusted source
+    as :func:`load_trusted_gate_config` (outside root, review baseline, or a
+    LOCAL untracked file), without demanding a ``test`` section. Raises the
+    same errors; callers of review-time switches treat FileNotFoundError and
+    UntrustedGateConfigError as "no trusted gate.yaml" (built-in defaults)."""
+    return load_trusted_gate_config(
+        config_root=config_root, source_root=source_root, base_sha=base_sha,
+        allow_untracked=allow_untracked, _parse=_parse_raw,
+    )
 
 
 def load_trusted_gate_config(
     *, config_root, source_root, base_sha: str | None, allow_untracked: bool = True,
+    _parse=_parse_validated,
 ) -> dict:
     """gate.yaml for review-time ``test.*`` reads and mutation globs, from a
     source the reviewed change cannot edit (#140).
@@ -448,11 +486,9 @@ def load_trusted_gate_config(
     ValueError. Callers already treat these as a missing/invalid config, so
     nothing from the reviewed tree runs.
     """
-    import io
-
     if config_root_is_outside_review(config_root, source_root):
         try:
-            return _load_outside_gate(config_root, source_root)
+            return _load_outside_gate(config_root, source_root, parse=_parse)
         except OutsideConfigRootRefused:
             raise
         except UntrustedGateConfigError as exc:
@@ -463,15 +499,15 @@ def load_trusted_gate_config(
         if not allow_untracked:
             raise UntrustedGateConfigError(_CI_UNTRACKED)
         # Not a git checkout: nothing is under review control, no git to ask.
-        return load_gate_config(working)
+        if _parse is _parse_validated:
+            return load_gate_config(working)
+        with open(working, encoding="utf-8") as handle:
+            return _parse(working, handle.read())
     tracked = _refuse_linked_gate(source_root, base_sha)
     if base_sha:
         shown = _git_out(source_root, "show", f"{base_sha}:./.code-forge/gate.yaml")
         if shown.returncode == 0:
-            text = shown.stdout
-            return load_gate_config(
-                "<baseline>:.code-forge/gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
-            )
+            return _parse("<baseline>:.code-forge/gate.yaml", shown.stdout)
     if tracked:
         raise FileNotFoundError(
             f"no .code-forge/gate.yaml at review baseline {(base_sha or 'unknown')[:12]}; a gate.yaml "
@@ -482,7 +518,7 @@ def load_trusted_gate_config(
     # LOCAL: a gate.yaml git does not track (gitignored or never added) is
     # the user's own setup, not part of the reviewed diff (#143 tracks the
     # WORKING-tree agent risk).
-    return _load_gate_nofollow(source_root)
+    return _load_gate_nofollow(source_root, parse=_parse)
 
 
 _CI_UNTRACKED = (
@@ -1452,3 +1488,172 @@ def run_gate_check(
             return EXIT_FAIL  # BLOCK
 
     return translated
+
+
+# --- #150 (blocking part): repo-local rule packs from the trusted root ------
+
+_PACK_FILES = ("meta.yaml", "rules.yaml")
+_PACK_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _read_nofollow(root, parts: tuple[str, ...], *, refuse_hardlinks: bool) -> bytes:
+    """Read ``root/<parts...>`` opening every component dir-relative with
+    O_NOFOLLOW, then fstat the file as regular (and single-link when
+    ``refuse_hardlinks``). Raises FileNotFoundError when absent."""
+    import errno
+    import stat
+
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    shown = "/".join(parts)
+    fds = [os.open(str(root), os.O_RDONLY | directory)]
+    try:
+        try:
+            for part in parts[:-1]:
+                fds.append(os.open(part, os.O_RDONLY | directory | nofollow, dir_fd=fds[-1]))
+            fds.append(os.open(parts[-1], os.O_RDONLY | nofollow, dir_fd=fds[-1]))
+        except OSError as exc:
+            if getattr(exc, "errno", None) in (errno.ELOOP, errno.ENOTDIR, errno.EMLINK):
+                raise UntrustedGateConfigError(
+                    f"{root}/{shown}: a component is a symlink or not a regular path"
+                ) from exc
+            raise
+        info = os.fstat(fds[-1])
+        if not stat.S_ISREG(info.st_mode):
+            raise UntrustedGateConfigError(f"{root}/{shown} is not a regular file")
+        if refuse_hardlinks and info.st_nlink > 1:
+            raise UntrustedGateConfigError(
+                f"{root}/{shown} has {info.st_nlink} hard links; an outside config root must "
+                "hold its own single-link pack files"
+            )
+        with os.fdopen(fds.pop(), "rb") as handle:
+            return handle.read()
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+def _baseline_pack_files(source_root, base_sha: str, name: str) -> dict[str, bytes] | None:
+    """The pack's files at the review baseline, or None when the baseline has
+    no such pack. A symlink or submodule anywhere on the path refuses."""
+    pack = f".code-forge/packs/{name}"
+    paths = (".code-forge", ".code-forge/packs", pack, *(f"{pack}/{f}" for f in _PACK_FILES))
+    listing = _git_ok(source_root, "ls-tree", "-r", "-t", "-z", base_sha, "--", ".code-forge").stdout
+    modes = {}
+    for entry in listing.split("\0"):
+        meta, _, path = entry.partition("\t")
+        if path in paths and meta.split():
+            modes[path] = meta.split()[0]
+    for path, mode in modes.items():
+        if mode in _LINK_MODES:
+            raise UntrustedGateConfigError(
+                f"{path} is {_LINK_MODES[mode]} in the review baseline; rule packs are only "
+                "read from regular files"
+            )
+    if pack not in modes:
+        return None
+    files = {}
+    for fname in _PACK_FILES:
+        path = f"{pack}/{fname}"
+        if path not in modes:
+            continue  # load_pack reports the missing file
+        try:
+            shown = subprocess.run(
+                ["git", "show", f"{base_sha}:./{path}"], cwd=str(source_root),
+                capture_output=True, timeout=10, check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # #177: a reported refusal (infra error), not a crash of the round.
+            raise BaselinePackReadFailed(
+                f"git show {base_sha}:./{path} timed out after {exc.timeout}s; refusing pack {name}"
+            ) from exc
+        if shown.returncode != 0:
+            raise BaselinePackReadFailed(
+                f"git show {base_sha}:./{path} failed (exit {shown.returncode}); refusing pack {name}"
+            )
+        files[fname] = shown.stdout
+    return files
+
+
+def _tree_pack_files(root, name: str, *, refuse_hardlinks: bool) -> dict[str, bytes] | None:
+    files = {}
+    for fname in _PACK_FILES:
+        try:
+            files[fname] = _read_nofollow(
+                root, (".code-forge", "packs", name, fname), refuse_hardlinks=refuse_hardlinks,
+            )
+        except FileNotFoundError:
+            continue
+    return files or None
+
+
+def materialize_trusted_packs(
+    *, config_root, source_root, base_sha: str | None, allow_untracked: bool,
+    names, dest,
+) -> tuple[Path, list[str]]:
+    """See :func:`_materialize_trusted_packs`. A refusal of an explicit
+    outside config root's packs raises OutsideConfigRootRefused (#157)."""
+    outside = config_root_is_outside_review(config_root, source_root)
+    try:
+        return _materialize_trusted_packs(
+            config_root=config_root, source_root=source_root, base_sha=base_sha,
+            allow_untracked=allow_untracked, names=names, dest=dest,
+        )
+    except OutsideConfigRootRefused:
+        raise
+    except (UntrustedGateConfigError, OSError) as exc:
+        if outside:
+            raise OutsideConfigRootRefused(str(exc)) from exc
+        raise
+
+
+def _materialize_trusted_packs(
+    *, config_root, source_root, base_sha: str | None, allow_untracked: bool,
+    names, dest,
+) -> tuple[Path, list[str]]:
+    """Copy the named repo-local rule packs from a source the reviewed change
+    cannot edit into ``dest/<name>/`` and return ``(dest, notes)``.
+
+    Same trust rules as the gate (#140/#141): an outside config root's
+    ``.code-forge/packs`` (no symlink components, single-link files); otherwise the review baseline via git; a pack git does not
+    track at all is read from the checkout only when ``allow_untracked``
+    (LOCAL). A pack with no trusted copy is left out, so the caller reports
+    it as unknown -- the reviewed tree's copy is never used. ``notes`` names
+    packs left out, for the infra log."""
+    dest = Path(dest)
+    notes: list[str] = []
+    outside = config_root_is_outside_review(config_root, source_root)
+    root = Path(source_root)
+    in_git = any((d / ".git").exists() for d in (root.resolve(), *root.resolve().parents))
+    if outside:
+        _refuse_checkout_alias(Path(config_root), source_root)  # #153: bind-mount alias
+    for name in names:
+        if not isinstance(name, str) or not _PACK_NAME.match(name):
+            notes.append(f"rulepack {name!r}: not a valid pack name")
+            continue
+        files = None
+        if outside:
+            # Every component under the (outside) root is opened O_NOFOLLOW and
+            # every file must be single-link, so nothing can lead back into
+            # the checkout.
+            files = _tree_pack_files(config_root, name, refuse_hardlinks=True)
+        elif not in_git:
+            if allow_untracked:
+                files = _tree_pack_files(source_root, name, refuse_hardlinks=False)
+        else:
+            if base_sha:
+                files = _baseline_pack_files(source_root, base_sha, name)
+            if files is None and allow_untracked:
+                tracked = _git_ok(source_root, "ls-files", "-z", "--", f".code-forge/packs/{name}").stdout
+                if not tracked:
+                    files = _tree_pack_files(source_root, name, refuse_hardlinks=False)
+        if files is None:
+            notes.append(
+                f"rulepack {name}: no trusted copy (not at the review baseline or the config "
+                "root); the reviewed tree's copy is not used"
+            )
+            continue
+        (dest / name).mkdir(parents=True)
+        for fname, data in files.items():
+            (dest / name / fname).write_bytes(data)
+    return dest, notes

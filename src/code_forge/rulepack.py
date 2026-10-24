@@ -261,14 +261,14 @@ def load_pack(pack_dir: Path) -> RulepackManifest:
     )
 
 
-def discover_packs(repo_root: Path) -> dict[str, Path]:
+def discover_packs(repo_root: Path, *, local_root: Path | None = None) -> dict[str, Path]:
     """Return discovered packs: built-in overrides repo-local.
 
     Built-in path: src/code_forge/rules/packs/<name>/
     Repo-local path: .code-forge/packs/<name>/
     """
     builtin_root = Path(__file__).parent / "rules" / "packs"
-    local_root = Path(repo_root) / ".code-forge" / "packs"
+    local_root = Path(repo_root) / ".code-forge" / "packs" if local_root is None else Path(local_root)
     packs: dict[str, Path] = {}
 
     if local_root.is_dir():
@@ -285,7 +285,9 @@ def discover_packs(repo_root: Path) -> dict[str, Path]:
     return packs
 
 
-def resolve_active_packs(gate_config: dict, repo_root: Path) -> list[RulepackManifest]:
+def resolve_active_packs(
+    gate_config: dict, repo_root: Path, *, local_root: Path | None = None,
+) -> list[RulepackManifest]:
     """Resolve allowlisted packs from gate.yaml.
 
     Raises:
@@ -295,7 +297,7 @@ def resolve_active_packs(gate_config: dict, repo_root: Path) -> list[RulepackMan
     if not names:
         return []
 
-    discovered = discover_packs(repo_root)
+    discovered = discover_packs(repo_root, local_root=local_root)
     active: list[RulepackManifest] = []
     for name in names:
         if name not in discovered:
@@ -304,7 +306,7 @@ def resolve_active_packs(gate_config: dict, repo_root: Path) -> list[RulepackMan
                 % (
                     name,
                     Path(__file__).parent / "rules" / "packs",
-                    Path(repo_root) / ".code-forge" / "packs",
+                    Path(repo_root) / ".code-forge" / "packs" if local_root is None else local_root,
                 )
             )
         active.append(load_pack(discovered[name]))
@@ -336,8 +338,15 @@ class RulepackRunner:
         repo_root: Path,
         *,
         execution_root: Path | None = None,
+        gate_config: dict | None = None,
+        packs_root: Path | None = None,
     ) -> list[AdvisoryFinding]:
         """Run active rule packs and return advisory findings.
+
+        ``gate_config`` (#141): an already-trusted gate.yaml mapping; when
+        given, the reviewed tree's gate.yaml is not read for the pack list.
+        ``packs_root`` (#150): directory holding trusted repo-local packs
+        (``<packs_root>/<name>/``) in place of ``repo_root/.code-forge/packs``.
 
         Also writes the matrix artifact to .code-forge/rulepack-matrix.json
         when active packs are configured.
@@ -350,7 +359,8 @@ class RulepackRunner:
 
         repo_root = Path(repo_root)
         try:
-            gate_config = load_gate_config(repo_root / ".code-forge" / "gate.yaml")
+            if gate_config is None:
+                gate_config = load_gate_config(repo_root / ".code-forge" / "gate.yaml")
         except Exception as exc:  # noqa: BLE001
             msg = "rulepack: failed to load gate.yaml: %s" % exc
             self.infra_errors.append(msg)
@@ -359,7 +369,7 @@ class RulepackRunner:
             return []
 
         try:
-            self.packs = resolve_active_packs(gate_config, repo_root)
+            self.packs = resolve_active_packs(gate_config, repo_root, local_root=packs_root)
         except ValueError as exc:
             self.infra_errors.append(str(exc))
             self.matrix = RulepackMatrix(packs=[])
