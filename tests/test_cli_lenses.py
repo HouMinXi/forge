@@ -141,6 +141,29 @@ def test_malformed_gate_yaml_exits_nonzero_with_stderr_and_no_stdout(tmp_path, e
     assert "gate.yaml" in r.stderr
 
 
+def test_non_utf8_gate_yaml_exits_2_with_clean_message(tmp_path, env):
+    repo = tmp_path / "repo"
+    (repo / ".code-forge").mkdir(parents=True)
+    (repo / ".code-forge" / "gate.yaml").write_bytes(b"review_lenses: \xff\xfe\x80\n")
+    r = _lenses(repo, env, "--pass", "qodo")
+    assert r.returncode == 2
+    assert r.stdout == ""
+    assert "Traceback" not in r.stderr
+    assert "code-forge: lenses:" in r.stderr
+    assert "gate.yaml" in r.stderr
+
+
+def test_unreadable_gate_yaml_path_exits_2_with_clean_message(tmp_path, env):
+    repo = tmp_path / "repo"
+    (repo / ".code-forge" / "gate.yaml").mkdir(parents=True)
+    r = _lenses(repo, env, "--pass", "qodo")
+    assert r.returncode == 2
+    assert r.stdout == ""
+    assert "Traceback" not in r.stderr
+    assert "code-forge: lenses:" in r.stderr
+    assert "gate.yaml" in r.stderr
+
+
 def _store_state(cfg: Path) -> dict:
     return {
         str(p.relative_to(cfg)): (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)

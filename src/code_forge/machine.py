@@ -4153,7 +4153,8 @@ class StateMachine:
                 )
                 continue
             if style_keywords:
-                desc_lower = f.description.lower()
+                # Attribution tags are not part of the finding text.
+                desc_lower = strip_lens_tag(f.description).lower()
                 for kw in style_keywords:
                     if kw.lower() in desc_lower:
                         f.disposition = Disposition.STYLE

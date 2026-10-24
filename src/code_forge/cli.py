@@ -5400,6 +5400,9 @@ def _run_lenses(args, cwd: Path) -> int:
     except CliError as exc:
         print("code-forge: lenses: %s" % exc, file=sys.stderr)
         return EXIT_CLI_ERROR
+    except (OSError, UnicodeDecodeError) as exc:
+        print("code-forge: lenses: cannot read gate.yaml: %s" % exc, file=sys.stderr)
+        return EXIT_CLI_ERROR
     if enabled:
         sys.stdout.write(LENS_BLOCK + selection_line(args.lens_pass))
         sys.stdout.flush()

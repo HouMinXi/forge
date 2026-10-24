@@ -771,6 +771,32 @@ def test_ci_style_downgrade_keywords(tmp_path):
     assert any("style_downgrade: downgraded" in err for err in machine._state.infra_errors)
 
 
+def _style_kw_verdict(tmp_path, keyword, description):
+    _prep_local_state(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
+    gate_file.write_text("style_downgrade:\n  keywords:\n    - '%s'\n" % keyword, encoding="utf-8")
+    finding = _make_finding("fp-lens-kw", disp=Disposition.CONFIRMED, description=description)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    return verdict, finding.disposition
+
+
+def test_ci_style_downgrade_keyword_ignores_lens_tag(tmp_path):
+    """A lens tag is attribution only: a keyword inside the tag must not downgrade."""
+    body = "real defect in the parser"
+    untagged = _style_kw_verdict(tmp_path / "a", "lens:l2", "[expert] " + body)
+    tagged = _style_kw_verdict(tmp_path / "b", "lens:l2", "[expert] [lens:L2] " + body)
+    assert tagged == untagged == (Verdict.FAIL, Disposition.CONFIRMED)
+
+
+def test_ci_style_downgrade_keyword_still_matches_tagged_body(tmp_path):
+    """A keyword in the description body downgrades a tagged finding like an untagged one."""
+    body = "trailing indentation is not standard"
+    untagged = _style_kw_verdict(tmp_path / "a", "indentation", "[expert] " + body)
+    tagged = _style_kw_verdict(tmp_path / "b", "indentation", "[expert] [lens:L2] " + body)
+    assert tagged == untagged == (Verdict.PASS, Disposition.STYLE)
+
+
 def test_ci_style_downgrade_does_not_affect_non_matching(tmp_path):
     """CONFIRMED finding with no matching pass_name or keyword → stays CONFIRMED, FAIL."""
     _prep_local_state(tmp_path)
