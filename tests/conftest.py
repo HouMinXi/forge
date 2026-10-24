@@ -115,6 +115,18 @@ def _isolate_trust_store(tmp_path_factory, monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_probe_cache(tmp_path_factory, monkeypatch):
+    """Keep backend probe results out of the real ``~/.cache/code-forge``.
+
+    ``backend._default_cache_dir`` reads ``XDG_CACHE_HOME`` when called, so a
+    test that probes a backend would otherwise write the developer's real
+    ``backend_probe_cache.json`` and later runs (tests or real reviews) would
+    read that stale entry. Tests that set the variable themselves override this.
+    """
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path_factory.mktemp("probe-cache")))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_user_config(monkeypatch):
     """Prevent user-level backends from leaking into tests.
 
