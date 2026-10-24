@@ -423,6 +423,7 @@ def build_l1_provider(
     reviewed_repositories: dict[str, str] | None = None,
     retry_timeout: bool = False,
     pass_stagger_s: float = 0.0,
+    review_lenses: bool = False,
 ) -> "_L1Call":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
 
@@ -435,6 +436,9 @@ def build_l1_provider(
         graph_impact_context: blast-radius impact table for reviewer context.
         contract_spec: cross-repo contract reference for reviewer context.
         manifest_spec: rendered environment manifest block for reviewer context.
+        review_lenses: when True, the lens block follows the JSON contract and
+            each pass ends with its lens selection line. The caller passes the
+            trusted switch (cli._load_trusted_review_lenses); False adds nothing.
     """
     from .llm_invoke import Usage
 
@@ -493,6 +497,10 @@ def build_l1_provider(
         annotated_diff = annotated_diff_prompt_block(diff_text)
 
         shared = REVIEW_JSON_CONTRACT
+        if review_lenses:
+            from .lenses import LENS_BLOCK
+
+            shared += LENS_BLOCK
         if manifest_spec:
             shared += "\n" + manifest_spec.strip() + "\n"
         if post_image:
@@ -522,6 +530,12 @@ def build_l1_provider(
         prompts = [
             shared + "\nYou are a " + role + ". Review this diff.\n" for _pn, role in pass_configs
         ]
+        if review_lenses:
+            # The selection line is the only per-pass lens byte, so it goes
+            # after the role sentence and the shared prefix stays shared.
+            from .lenses import selection_line
+
+            prompts = [p + selection_line(pn) for p, (pn, _role) in zip(prompts, pass_configs, strict=True)]
 
         # -- Execute passes ---------------------------------------------
         # CLI backends use a module-global _active_proc that is not

@@ -17,6 +17,7 @@ from typing import Callable, Optional
 from .advisory import AdvisoryFinding
 from .diff import extract_changed_lines
 from .git import git_blame
+from .lenses import strip_lens_tag
 from .state import StateFinding
 
 # ---------------------------------------------------------------------------
@@ -259,7 +260,7 @@ class LegacyRunner:
             intent = _classify_intent(blame_entry.get("subject", ""), source_lines, line_no)
 
             # Build finding ID.
-            rule_hint = sf.description[:16].replace(" ", "_")
+            rule_hint = strip_lens_tag(sf.description)[:16].replace(" ", "_")
             finding_id = "legacy:%s:%d:%s" % (blame_key, line_no, rule_hint)
 
             # Build description.

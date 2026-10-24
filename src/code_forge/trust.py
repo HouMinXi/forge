@@ -171,7 +171,12 @@ def record_trust(
     key = str(gate_yaml_path.resolve())
     current_hash = hash_backends_block(gate_data)
     focus_hash = hash_focus_text(gate_data)
-    store[key] = {**store.get(key, {}), "hash": current_hash, "focus_hash": focus_hash}
+    store[key] = {
+        **store.get(key, {}),
+        "hash": current_hash,
+        "focus_hash": focus_hash,
+        "lens_hash": hash_lenses_flag(gate_data),
+    }
     _save_trust_store(store, config_dir)
 
 
@@ -400,3 +405,61 @@ def is_trusted_focus(gate_yaml_path: Path, gate_data: dict) -> bool:
     if entry is None:
         return False
     return entry.get("focus_hash") == current
+
+
+# -- Review lenses trust (switch hashing) ----------------------------------
+
+
+def hash_lenses_flag(gate_data: dict) -> str:
+    """Hash gate.yaml's review_lenses switch for trust verification.
+
+    Returns "" unless the value is exactly True, so every existing trust
+    record stays valid while the switch is off or absent. The hash is a fixed
+    constant: it authorizes the switch, not the lens text, so a package update
+    that edits the text does not invalidate trust.
+    """
+    if gate_data.get("review_lenses") is not True:
+        return ""
+    return hashlib.sha256(b"code-forge:review_lenses:true").hexdigest()
+
+
+def _stored_lens_hash(gate_yaml_path: Path) -> Optional[str]:
+    """Read the stored lens_hash without touching the store (no migration)."""
+    entry = _load_trust_store().get(str(gate_yaml_path.resolve()))
+    if not isinstance(entry, dict):
+        return None
+    stored = entry.get("lens_hash")
+    return stored if isinstance(stored, str) else None
+
+
+def is_trusted_lenses(gate_yaml_path: Path, gate_data: dict) -> bool:
+    """Check whether gate.yaml's review_lenses switch is trusted.
+
+    Returns True when the switch is not on (nothing to authorize). Callers
+    must still require the value to be exactly True. Read-only.
+    """
+    current = hash_lenses_flag(gate_data)
+    if not current:
+        return True
+    return _stored_lens_hash(gate_yaml_path) == current
+
+
+def lens_trust_state(gate_yaml_path: Path, gate_data: dict) -> str:
+    """One-line state for `code-forge trust --status`. Read-only.
+
+    Deliberately does not call trust_status, which may rewrite the store when
+    it migrates a legacy hash.
+    """
+    value = gate_data.get("review_lenses")
+    if value is None:
+        return "off (not set)"
+    if not isinstance(value, bool):
+        return "off (not a bool)"
+    if value:
+        if is_trusted_lenses(gate_yaml_path, gate_data):
+            return "on"
+        return "untrusted (run code-forge trust)"
+    enabled = hash_lenses_flag({"review_lenses": True})
+    if _stored_lens_hash(gate_yaml_path) == enabled:
+        return "off (true was trusted before; enabling needs no re-trust)"
+    return "off (re-trust after enabling)"

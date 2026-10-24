@@ -57,6 +57,7 @@ from .ledger import (
 from .ledger import (
     append_row as ledger_append,
 )
+from .lenses import strip_lens_tag
 from .llm_invoke import FalsifyProtocolError, InvalidJSONResponseError, LLMInvokeError, Usage
 from .mutation import OTHER_ADAPTER_INFRA as _OTHER_ADAPTER_INFRA
 from .mutation import (
@@ -3590,7 +3591,9 @@ class StateMachine:
         total_p3 = len(p3_findings)
 
         def _rule_type(f: StateFinding) -> str:
-            desc = f.description or ""
+            # A lens tag is attribution only: it must not move the 50-char
+            # window or split one rule into two.
+            desc = strip_lens_tag(f.description or "")
             if desc.startswith("P3:"):
                 return desc[3:].split("(")[0].strip()
             return desc[:50].strip()

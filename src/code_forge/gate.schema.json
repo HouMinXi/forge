@@ -23,6 +23,11 @@
       "type": "string",
       "description": "Areas to prioritize during review. Injected as a '## Review Focus' section in the review prompt. Requires re-running 'code-forge trust' after changing."
     },
+    "review_lenses": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, append the review-lens block to the baseline review prompts. Takes effect only after 'code-forge trust' has authorized it; absent or false leaves every prompt unchanged."
+    },
     "test": {
       "type": "object",
       "description": "Test command configuration for the R1 commit gate (code-forge gate-check).",

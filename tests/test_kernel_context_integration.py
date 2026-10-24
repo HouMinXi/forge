@@ -211,9 +211,9 @@ def test_context_cost_flips_grouping_only_when_enabled(pipeline, monkeypatch, en
     original = cli._estimate_l1_prompt_tokens
     threshold = []
 
-    def estimate(*values):
-        threshold.append(original(*values[:-1]) + 1)
-        return original(*values)
+    def estimate(*values, **keywords):
+        threshold.append(original(*values[:-1], **keywords) + 1)
+        return original(*values, **keywords)
 
     monkeypatch.setattr(cli, "_estimate_l1_prompt_tokens", estimate)
 

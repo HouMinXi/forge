@@ -70,7 +70,7 @@ py-modules = ["code_forge_launcher"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-code_forge = ["skills/**/*", "skills/**/.gitkeep", "rules/**/*", "gate.schema.json"]
+code_forge = ["skills/**/*", "skills/**/.gitkeep", "rules/**/*", "gate.schema.json", "THIRD_PARTY_NOTICES.md"]
 
 [tool.ruff]
 line-length = 105

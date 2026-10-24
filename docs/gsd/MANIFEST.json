@@ -8,10 +8,12 @@
   "published_root": "docs/gsd/",
   "status": "dated documentation snapshot; no phase or design acceptance added",
   "coverage": {
-    "source_backed_documents": 33,
-    "public_files": 35,
+    "source_backed_documents": 35,
+    "public_files": 37,
     "phase59_plans": 18,
     "phase59_support": 9,
+    "phase59_1_plans": 1,
+    "phase59_1_support": 1,
     "phase60_preparation_documents": 2,
     "phase60_formal_plans": 0
   },
@@ -1823,6 +1825,60 @@
           "occurrences": 12,
           "operation": "Wrap each historical list checkbox marker in backticks; marker state and text unchanged.",
           "inverse": "Remove the wrapping backticks from these list checkbox markers."
+        }
+      ],
+      "planning_references_not_in_bundle": [],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59.1-review-lenses/59.1-01-PLAN.md",
+      "published_path": "docs/gsd/phases/59.1-review-lenses/59.1-01-PLAN.md",
+      "source_sha256": "5e0177fec091db45635f5feb0f8ec72abfcee624d3eeb09a16318c41e7a1fe88",
+      "source_size": 85897,
+      "source_mtime_utc": "2026-10-24T04:29:02.276169+00:00",
+      "published_sha256": "5e0177fec091db45635f5feb0f8ec72abfcee624d3eeb09a16318c41e7a1fe88",
+      "published_size": 85897,
+      "transformations": [
+        {
+          "category": "authored-public-form",
+          "note": "source was authored with public placeholders and a dated banner; published bytes equal source bytes"
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59.1-review-lenses/59.1-01-SUMMARY.md",
+        ".planning/phases/59.1-review-lenses/execution/59.1-01/",
+        ".planning/phases/59.1-review-lenses/drafts/capture_outlet_c_digests.py",
+        ".planning/phases/59.1-review-lenses/drafts/capture_l1_merge_draft.py",
+        ".planning/phases/59.1-review-lenses/drafts/t19_value_level_draft.py",
+        ".planning/phases/59.1-review-lenses/drafts/sim_null_gates.py",
+        ".planning/phases/59.1-review-lenses/drafts/lenses_draft.py",
+        ".planning/phases/59.1-review-lenses/drafts/lens_block.txt",
+        ".planning/phases/59.1-review-lenses/drafts/measure_falsifier.py",
+        ".planning/phases/59.1-review-lenses/drafts/THIRD_PARTY_NOTICES.md",
+        ".planning/phases/59.1-review-lenses/drafts/sim_null_gates_result.json",
+        ".planning/phases/59.1-review-lenses/drafts/sim_null_gates_checks.json"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md"
+      ],
+      "historical_git_or_object_ids_unverified": [],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59.1-review-lenses/59.1-01-SUMMARY.md",
+      "published_path": "docs/gsd/phases/59.1-review-lenses/59.1-01-SUMMARY.md",
+      "source_sha256": "5331379ad08d18eca6e6270e2240ab8bcacfd4aac10abae127dd929889973aae",
+      "source_size": 6774,
+      "source_mtime_utc": "2026-10-24T06:10:17.467325+00:00",
+      "published_sha256": "5331379ad08d18eca6e6270e2240ab8bcacfd4aac10abae127dd929889973aae",
+      "published_size": 6774,
+      "transformations": [
+        {
+          "category": "authored-public-form",
+          "note": "source was authored with public placeholders and a dated banner; published bytes equal source bytes"
         }
       ],
       "planning_references_not_in_bundle": [],

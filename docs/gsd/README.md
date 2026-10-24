@@ -51,8 +51,8 @@ accepted. Phase60 has preparation documents only, with no formal phase plan.
 
 ## Complete document index
 
-The bundle has 35 files: this index, [MANIFEST.json](MANIFEST.json), and
-33 source-backed documents. The manifest binds every source document to its
+The bundle has 37 files: this index, [MANIFEST.json](MANIFEST.json), and
+35 source-backed documents. The manifest binds every source document to its
 original SHA-256 and its actual published-byte SHA-256. The STATE record
 binds the full original source even though only a formal extraction is public.
 
@@ -99,6 +99,19 @@ binds the full original source even though only a formal extraction is public.
 | [59-RESEARCH.md](phases/59-judgment-and-evidence/59-RESEARCH.md) | Existing bounded-investigation research |
 | [59-SOURCE-AUDIT.md](phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md) | Historical source-admission audit |
 | [59-VALIDATION.md](phases/59-judgment-and-evidence/59-VALIDATION.md) | Draft validation strategy and limits |
+
+### Phase59.1 plans
+
+Phase 59.1 is a decimal insert admitted after the 59 plans above; it does not
+renumber Phase 60. Publishing a plan is not itself an execution admission.
+
+| Plan | Objective |
+| --- | --- |
+| [59.1-01-PLAN.md](phases/59.1-review-lenses/59.1-01-PLAN.md) | Add the opt-in, separately trusted review-lens block to the L1 review prompts and keep every off-path prompt byte-identical to 609aa51. |
+
+| Support | Record |
+| --- | --- |
+| [59.1-01-SUMMARY.md](phases/59.1-review-lenses/59.1-01-SUMMARY.md) | Delivery evidence for the opt-in review lenses: oracles, injection ledger, suite counts, build listing, rollback rehearsal. |
 
 ### Phase60 preparation
 
