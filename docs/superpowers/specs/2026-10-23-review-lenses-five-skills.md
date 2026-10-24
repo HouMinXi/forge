@@ -228,7 +228,7 @@ L5 Type and guard slop: casts, any, or ignore pragmas that dodge type checks; op
 
 可运行草稿见 `/workspace/forge-review/draft/lenses_draft.py`，已自测：
 
-> 勘误（实现后）：`LENS_RE`、`lens_of`、`lens_mismatch` 已从 `lenses.py` 删除（没有生产调用方），见 59.1-01-SUMMARY。标签语法只由 `strip_lens_tag` / `_LENS_TAG_RE` 定义，测试经 `strip_lens_tag` 固定（`machine` 与 `legacy` 都调用它）。验收 4 的统计不再依赖这三个函数：测量脚本直接用标签正则 `^\[(qodo|expert|adversarial)\] \[lens:(L[1-5])\] ` 取 pass 与镜头，再用 `PASS_LENSES` 判断镜头是否属于该 pass。
+> 勘误（实现后）：`LENS_RE`、`lens_of`、`lens_mismatch` 已从 `lenses.py` 删除（没有生产调用方），见 59.1-01-SUMMARY。标签语法只由 `strip_lens_tag` / `_LENS_TAG_RE` 定义，测试经 `strip_lens_tag` 固定（三个调用点：`machine` 的规则类型、`machine` 的 style_downgrade 关键词匹配（`machine.py:4157`）、`legacy` 的规则提示）。验收 4 的统计不再依赖这三个函数：59.1-02 的测量脚本（尚未编写，由 LENS-03 / 59.1-02 编写，本计划不执行）将直接用标签正则 `^\[(qodo|expert|adversarial)\] \[lens:(L[1-5])\] ` 取 pass 与镜头，再用 `PASS_LENSES` 判断镜头是否属于该 pass。
 
 ```python
 LENS_BLOCK: str                                       # 上面的正文，常量
@@ -243,7 +243,7 @@ def strip_lens_tag(description: str) -> str               # 去掉 "[pass] " 之
 _LENS_TAG_RE = re.compile(r"^(\[[a-z]+\] )(?:\[lens:L[1-5]\] )+")   # 模型重复加标签时一次剥净
 ```
 
-（原文：`lens_of("[qodo] [lens:L2] x")` 返回 `("qodo","L2")`，"错配"由 `lens_mismatch` 按 `PASS_LENSES` 判定。已删除，现在由测量脚本按上面的勘误计算。）
+（原文：`lens_of("[qodo] [lens:L2] x")` 返回 `("qodo","L2")`，"错配"由 `lens_mismatch` 按 `PASS_LENSES` 判定。已删除；59.1-02 的测量脚本（尚未编写）将按上面的勘误计算。）
 
 ### 三个出口
 
@@ -376,7 +376,7 @@ SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，
 |T8 归属集合|`PASS_LENSES == {"qodo": ("L1",), "expert": ("L2","L5"), "adversarial": ("L3","L4")}`，块中恰好出现 L1–L5 五个编号行。两处期望都硬编码|删掉 L4 行|
 |T9 预算|`len(LENS_BLOCK.encode()) <= 1600`，并且 `max(len(selection_line(p))) <= 32`|镜头块加 30 个词|
 |T10 估算器|`_estimate_l1_prompt_tokens` 增加 `lens_text` 项，开启时比关闭时多 `(1567+17)//4 = 396`（容差 ±1）。分组预算 `cli.py:4243-4254` 使用新的估算|估算器漏掉镜头块；`lens_text` 按位置传。`cli.py:4244-4252` 的调用全是位置传参，第 7 个是 focus `""`、第 8 个是 `context_sources_text`（签名 `cli.py:1180-1189`），所以 `lens_text` 定义为仅关键字参数（`*, lens_text: str = ""`），调用处按关键字传（R4 P3-7）|
-|T11 标签语法|经 `strip_lens_tag` 固定：`strip_lens_tag("[expert] [lens:L5] x") == "[expert] x"`；无前缀、`L9`、`L0`、双空格、缺空格、`Lens` 大写、标签不在 `[pass] ` 之后都原样返回，任何输入不抛异常；`machine` 与 `legacy` 都调用同一个函数（原 `lens_of` / `lens_mismatch` 断言已随函数删除，N-12）|把正则改成匹配任意 `L\d`；只剥一个标签|
+|T11 标签语法|经 `strip_lens_tag` 固定：`strip_lens_tag("[expert] [lens:L5] x") == "[expert] x"`；无前缀、`L9`、`L0`、双空格、缺空格、`Lens` 大写、标签不在 `[pass] ` 之后都原样返回，任何输入不抛异常；`machine`（两处）与 `legacy`（一处）共三个调用点都调用同一个函数（原 `lens_of` / `lens_mismatch` 断言已随函数删除，N-12）|把正则改成匹配任意 `L\d`；只剥一个标签|
 |T12 降级负例|state 中只有 2 个 Forge cycle，外加一份人工报告文件：`earned_clean_window` 不满足，verify 失败，状态不变|让 verify 读取人工报告|
 |T13 来源|`LENS_SOURCES` 的键集合为 `{"rules","L1","L2","L3","L4","L5"}`，每个键的 (skill, path) 集合按硬编码期望比对（L1 必含 `correctness-reviewer.md`），commit 与来源表一致；`src/code_forge/THIRD_PARTY_NOTICES.md` 存在、含三条版权声明，且 wheel 与 sdist 都含该文件。构建（R4 P2-4、Q2）：对 `git archive` 出的副本在 /tmp 下跑 `UV_CACHE_DIR=/tmp/… uv build`，不在检出目录构建，不向 `.venv` 装包；记录 uv 与解析到的 setuptools 版本（box 在 609aa51 预演：uv 0.13.5、setuptools 84.2.1，wheel 与 sdist 均成功，egg-info 只出现在 /tmp 副本）。检出目录里已有可编辑安装留下的 `src/code_review_forge.egg-info`（`.gitignore:6` 忽略），所以断言为构建前后其清单与 mtime 不变、其中每个文件的 sha256 不变；构建前 `touch` 一个标记文件，构建后 `find . -path ./.git -prune -o -path ./.venv -prune -o -newer 标记 -print` 必须为空（uv 先建 sdist 再在临时目录建 wheel，单靠 `test ! -e build` 太弱）；没有 `build/`、git status 只含本次文件。临时索引 `git add -A` 会往 `.git/objects` 写松散对象，无害，记入 evidence（N-9、N-10、R3-6、R5 P2-d、N-7）|删除 L1 的 correctness-reviewer 来源；从 package-data 去掉 notices|
 |**T14** `_rule_type` 不受标签影响|同一组 P3 finding，描述分别为 `"[expert] [lens:L2] X"` 与 `"[expert] X"`，`_rule_type` 结果集合相同，`distinct_per_file`、`distinct_per_diff` 与 CYCLE_RESTART 判定相同；`"[expert] [lens:L2] [lens:L5] X"` 也剥成 `"[expert] X"`；`legacy.py:262` 的 `rule_hint` 对带标签与不带标签的描述相同；无标签描述的结果与 `609aa51` 相同（N-6、R3-9）|去掉 `_rule_type` 或 legacy 里的 `strip_lens_tag`；把正则改回只剥一个标签|
@@ -469,7 +469,7 @@ SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，
 |P1-2 覆盖说明与 JSON-only 冲突|删除覆盖说明，干净的镜头不输出；`lens_coverage` 暂不加（FU-4）|否；可选字段决定暂缓|
 |P1-3 镜头与来源语义不符|按差距表重写：L3 去掉安全，L4 去掉"谁调用"，L5 换成 deslop 的真实内容|否|
 |P1-4 oracle 与测试|T1 关闭路径不改 fixture；T2 剥离等价；T3 新增 case 并原位记录 revision；T6 参数化 TestSharedPromptPrefix；T7 角色串禁入；T10 估算器|否。补充一点：默认关意味着原有摘要无需重算|
-|P2-1 `[lens:Lx]` 约定|采用评审方案 (b)：用标签正则解析落库后的描述（实现时 `lens_of()` 已删除，由测量脚本内联），只作参考|**部分偏离**：评审给的方案 (a) 指向 `reviewer_json.py:562`，那是 `_normalize_root_finding`（533-563），每次验证都会调用（`validate_reviewer_json` 650，在 668 调用）但很少命中，不是主路径；主路径是 `_json_to_state_findings`（856-917）。**理由已按第 2 轮更正**：state 可以加法扩展（`state.py:308` "additive only, no schema_version bump per D2"，`_finding_from_dict` `state.py:651` 起用 `.get`），本版刻意不扩展，以免 receipt/state 改动面扩大。v2 中"会冲突"的说法删除|
+|P2-1 `[lens:Lx]` 约定|采用评审方案 (b)：用标签正则解析落库后的描述（实现时 `lens_of()` 已删除，将由 59.1-02 的测量脚本（尚未编写）内联），只作参考|**部分偏离**：评审给的方案 (a) 指向 `reviewer_json.py:562`，那是 `_normalize_root_finding`（533-563），每次验证都会调用（`validate_reviewer_json` 650，在 668 调用）但很少命中，不是主路径；主路径是 `_json_to_state_findings`（856-917）。**理由已按第 2 轮更正**：state 可以加法扩展（`state.py:308` "additive only, no schema_version bump per D2"，`_finding_from_dict` `state.py:651` 起用 `.get`），本版刻意不扩展，以免 receipt/state 改动面扩大。v2 中"会冲突"的说法删除|
 |P2-2 1200 B 预算|v2 实测 1593 B；v3 实测 1499 B，v4 实测 1567 B，上限仍为 ≤1600 B（T9），并计入估算器|否|
 |P2-3 布局矛盾|镜头块紧接 contract，作为静态前缀；每个 pass 的选择行放在尾部|否；选择行是补充，因为块是静态的，必须在尾部指明本 pass 用哪些镜头|
 |P2-4 归属错位|qodo=L1，expert=L2+L5，adversarial=L3+L4；L4 改名 "Impact beyond the diff"|否|
