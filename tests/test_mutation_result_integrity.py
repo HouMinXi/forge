@@ -254,9 +254,9 @@ def test_both_guard_calls_forward_the_owned_executor(tmp_path, monkeypatch):
 
     def execute(argv, **kwargs):
         seen.append(kwargs["env"])
-        return subprocess.CompletedProcess(
-            argv, 1, "No module named pytest" if len(seen) == 1 else "KNOWN_TEST_FAILURE", ""
-        )
+        if len(seen) == 1:  # a missing runner reports on stderr (#164)
+            return subprocess.CompletedProcess(argv, 1, "", "No module named pytest")
+        return subprocess.CompletedProcess(argv, 1, "KNOWN_TEST_FAILURE", "")
 
     monkeypatch.setattr(mutation, "run_owned_command", execute)
     monkeypatch.setattr(

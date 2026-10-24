@@ -52,10 +52,13 @@ def _is_runner_missing(
                 # #126: the runner started; the text came from a test's own
                 # output (e.g. a child interpreter), not a missing runner.
                 return False
-            combined = (result.stdout or "") + (result.stderr or "")
-            if (f"No module named '{runner_module}'") in combined:
+            # #164: an interpreter that cannot import the runner reports it on
+            # stderr. The same text on stdout came from a test printing it
+            # (e.g. under -q -s, before a crash cut the session short).
+            stderr = result.stderr or ""
+            if (f"No module named '{runner_module}'") in stderr:
                 return True
-            if (f"No module named {runner_module}") in combined:
+            if (f"No module named {runner_module}") in stderr:
                 return True
 
     return False
@@ -65,7 +68,8 @@ _SESSION_EVIDENCE = re.compile(
     r"^(?:FAILED|ERROR) \S+"
     r"|\b\d+ (?:passed|failed|errors?|skipped|xfailed|xpassed|deselected)\b"
     r"|^collected \d+ items?\b"
-    r"|^=+ test session starts =+$",
+    r"|^=+ test session starts =+$"
+    r"|\[ *\d{1,3}%\]$",  # #164: a pytest progress line ("..F.s  [ 40%]")
     re.MULTILINE,
 )
 
