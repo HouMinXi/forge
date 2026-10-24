@@ -300,6 +300,7 @@ SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，
 - `hash_lenses_flag` 的固定串是字面量 `code-forge:review_lenses:true` 的摘要，**不**绑定 `LENS_BLOCK` 的 sha：块文本随版本变化不要求用户重新 trust，块本身由 sha 测试（T7）与评审约束（Q5）。
 - 已知取舍（R3-7，Q5 接受）：`hash_lenses_flag` 只有 `""` 与固定串两个值。在 `true` 状态 trust 过一次以后，`true→false→true` 不需要再 trust，因为 store 里的 `lens_hash` 一直匹配。开关只在两个常量之间选，这个取舍可接受。
 - 其他写 trust 的调用方：`setup_mcp.py:223-232`（写自己的 gate.yaml，不含镜头）、`eval/runner.py:1001` 都是自动 trust，会顺带存 `lens_hash`。eval 自动 trust 的是 harness 自己生成的 gate.yaml，可能含 `review_lenses: true`，威胁模型记为 Elevation/accept（R4 P3-5）；eval 的 LENS-03 臂由临时 gate.yaml 的 `review_lenses` 切换，并纳入 `_missing_arm_settings`（`eval/runner.py:138`）的完整性检查，缺失时按 `:1004-1011` 拒跑（R3-16，LENS-03 范围）。
+- 实现备注：上一条的行为由 `tests/test_trust_lenses.py::test_auto_trust_callers_record_the_same_lens_hash` 固定（与本 spec 一致，代码无需改）。`lens_of` 与 `lens_mismatch` 实现时已删除（无调用方），标签语法只经 `strip_lens_tag` 固定。
 - 开关只在两个常量之间选择，不引入用户文本。
 - 开关状态写进 run 的元信息，供测量区分对照组（INV-07 口径）。回执 schema 不变，因为回执只存原始响应的 sha 和 shingles（`receipt.py:227-246`、`:449-453`）。
 - 与 `review_focus` 互相独立：Review Focus 仍在原位置，不合并，也不互为回退。

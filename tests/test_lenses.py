@@ -13,8 +13,6 @@ from code_forge.lenses import (
     LENS_BLOCK,
     LENS_SOURCES,
     PASS_LENSES,
-    lens_mismatch,
-    lens_of,
     selection_line,
     strip_lens_tag,
 )
@@ -82,18 +80,6 @@ def test_selection_line_rejects_unknown_pass():
 
 
 @pytest.mark.parametrize(
-    "desc, expected",
-    [
-        ("[expert] [lens:L5] x", ("expert", "L5")),
-        ("[qodo] [lens:L1] hidden failure", ("qodo", "L1")),
-        ("[adversarial] [lens:L4] y", ("adversarial", "L4")),
-    ],
-)
-def test_lens_of_parses_well_formed_tags(desc, expected):
-    assert lens_of(desc) == expected
-
-
-@pytest.mark.parametrize(
     "desc",
     [
         "x",
@@ -103,24 +89,44 @@ def test_lens_of_parses_well_formed_tags(desc, expected):
         "[expert]  [lens:L5] x",
         "[expert][lens:L5] x",
         "[expert] [Lens:L5] x",
-        "[other] [lens:L5] x",
         "[lens:L5] x",
         " [expert] [lens:L5] x",
+        "[expert] x [lens:L5] tail",
     ],
 )
-def test_lens_of_rejects_everything_else(desc):
-    assert lens_of(desc) is None
+def test_malformed_or_misplaced_tags_are_not_tags(desc):
+    """The tag grammar is whatever strip_lens_tag removes; nothing else is a tag."""
+    assert strip_lens_tag(desc) == desc
 
 
-def test_lens_mismatch_flags_only_a_wrong_pass_lens_pair():
-    assert lens_mismatch("[qodo] [lens:L2] x") is True
-    assert lens_mismatch("[expert] [lens:L1] x") is True
-    assert lens_mismatch("[adversarial] [lens:L5] x") is True
-    assert lens_mismatch("[expert] [lens:L5] x") is False
-    assert lens_mismatch("[expert] [lens:L2] x") is False
-    assert lens_mismatch("[qodo] [lens:L1] x") is False
-    assert lens_mismatch("[qodo] untagged") is False
-    assert lens_mismatch("no prefix at all") is False
+@pytest.mark.parametrize("pass_name", sorted(PASS_LENSES))
+@pytest.mark.parametrize("lens", ["L1", "L2", "L3", "L4", "L5"])
+def test_every_pass_and_lens_pair_strips_to_the_untagged_description(pass_name, lens):
+    # Attribution only: the lens a pass may tag never changes what follows the prefix.
+    assert strip_lens_tag("[%s] [lens:%s] body" % (pass_name, lens)) == "[%s] body" % pass_name
+
+
+def test_machine_and_legacy_strip_through_the_one_helper():
+    import ast
+    from pathlib import Path
+
+    from code_forge import legacy, machine
+
+    for mod in (machine, legacy):
+        tree = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
+        calls = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "strip_lens_tag"
+        ]
+        assert calls, mod.__name__
+        assert mod.strip_lens_tag is strip_lens_tag
+
+
+def test_unused_tag_parsers_are_gone():
+    assert not hasattr(lenses, "lens_of")
+    assert not hasattr(lenses, "lens_mismatch")
+    assert not hasattr(lenses, "LENS_RE")
 
 
 def test_strip_removes_one_or_many_leading_tags_and_keeps_the_pass_prefix():

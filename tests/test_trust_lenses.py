@@ -139,7 +139,7 @@ def test_d_guard_still_rejects_an_empty_gate(tmp_path, home, capsys):
     _gate(tmp_path, {"review_lenses": False})
     assert _cli(["trust"], tmp_path / "repo") != 0
     err = capsys.readouterr().err
-    assert "No backends, review_focus or review_lenses configured" in err
+    assert "No backends or review_focus configured in this gate.yaml. Configure at least one." in err
 
 
 @pytest.mark.parametrize("value", ["true", 1, "yes"])
@@ -171,8 +171,10 @@ def test_f_status_states(tmp_path, home, capsys):
     gate = _gate(tmp_path, {"backends": BACKEND})
     _trust(gate)
     err = _status(repo, capsys)
-    assert "Review lenses: off (not set)" in err
-    assert "Lens hash: (none)" in err
+    # Lenses never mentioned: the status output is what it was before lenses.
+    assert "Review lenses" not in err
+    assert "Lens hash" not in err
+    assert err.splitlines()[0] == "Trusted: True"
 
     gate.write_text(yaml.safe_dump({"backends": BACKEND, "review_lenses": "true"}))
     assert "Review lenses: off (not a bool)" in _status(repo, capsys)
@@ -239,3 +241,45 @@ def test_schema_declares_review_lenses_as_boolean_default_false():
     assert prop["type"] == "boolean"
     assert prop["default"] is False
     assert "code-forge trust" in prop["description"]
+
+
+def test_status_shows_lens_lines_when_only_a_lens_hash_is_stored(tmp_path, home, capsys):
+    repo = tmp_path / "repo"
+    gate = _gate(tmp_path, {"backends": BACKEND, "review_lenses": True})
+    _trust(gate)
+    gate.write_text(yaml.safe_dump({"backends": BACKEND}))
+    err = _status(repo, capsys)
+    assert "Lens hash: " + hash_lenses_flag({"review_lenses": True}) in err
+    assert "Review lenses: off (not set)" in err
+
+
+def test_auto_trust_callers_record_the_same_lens_hash(tmp_path, home):
+    """setup_mcp and the eval harness use record_trust, so they store lens_hash like `trust`.
+
+    The spec accepts this (eval trusts its own generated gate.yaml); this pins it.
+    """
+    import ast
+
+    from code_forge import setup_mcp
+    from code_forge.eval import runner
+
+    for mod in (setup_mcp, runner):
+        tree = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
+        names = {
+            getattr(n.func, "id", None)
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+        }
+        assert "record_trust" in names, mod.__name__
+
+    gate = _gate(tmp_path, {"backends": BACKEND, "review_lenses": True})
+    eval_dir = tmp_path / "eval-cfg" / "code-forge"
+    eval_dir.mkdir(parents=True)
+    record_trust(gate, _load(gate), config_dir=eval_dir)
+    store = json.loads((eval_dir / "trusted.json").read_text(encoding="utf-8"))
+    assert store[str(gate.resolve())]["lens_hash"] == hash_lenses_flag({"review_lenses": True})
+
+    off = _gate(tmp_path / "other", {"backends": BACKEND})
+    record_trust(off, _load(off), config_dir=eval_dir)
+    store = json.loads((eval_dir / "trusted.json").read_text(encoding="utf-8"))
+    assert store[str(off.resolve())]["lens_hash"] == ""

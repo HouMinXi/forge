@@ -1303,15 +1303,15 @@ not coverage.
 ## Checklist
 
 - [ ] Read each P0/P1 finding that was fixed -- is the fix correct, or did
-      it introduce a new issue? -- judge: pre-existing
+      it introduce a new issue? -- judge: pre-existing base checklist item, not part of the review-lens change
 - [ ] For clean passes (0 findings): spot-check 2-3 code_excerpts -- does
-      the reviewer's coverage match what actually changed? -- judge: pre-existing
+      the reviewer's coverage match what actually changed? -- judge: pre-existing base checklist item, not part of the review-lens change
 - [ ] Check test assertions: do the tests verify the actual behavior, not
-      just that code runs without error? -- judge: pre-existing
+      just that code runs without error? -- judge: pre-existing base checklist item, not part of the review-lens change
 - [ ] Check naming consistency with sibling repos (if conventions digest
-      was provided). -- judge: pre-existing
-- [ ] If [test-assertion] findings were printed to stderr, review each one. -- judge: pre-existing
-- [ ] Final judgment: "approved" or describe issues. -- judge: pre-existing
+      was provided). -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] If [test-assertion] findings were printed to stderr, review each one. -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] Final judgment: "approved" or describe issues. -- judge: pre-existing base checklist item, not part of the review-lens change
 
 ## When to Skip
 
@@ -1471,12 +1471,12 @@ Signed-off-by: Minxi Hou <houminxi@gmail.com>"  # post-review-c3
 
 Before committing, all of the following must be satisfied:
 
-- [ ] 3 consecutive clean review cycles (Steps 1-3) with zero findings -- judge: pre-existing
-- [ ] Step 3.5 false-positive verification complete (if findings were fixed) -- judge: pre-existing
-- [ ] Step 4 smoke test: PASS -- judge: pre-existing
-- [ ] Step 5 R1 test gate: PASS (or PARTIAL with stub tests generated) -- judge: pre-existing
-- [ ] Step 6 R2 mutation check: PASS (or PARTIAL if tool absent + LLM fallback done) -- judge: pre-existing
-- [ ] Step 7 R3 e2e check: PASS or SKIP (SKIP is acceptable when no cross-component change detected) -- judge: pre-existing
+- [ ] 3 consecutive clean review cycles (Steps 1-3) with zero findings -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] Step 3.5 false-positive verification complete (if findings were fixed) -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] Step 4 smoke test: PASS -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] Step 5 R1 test gate: PASS (or PARTIAL with stub tests generated) -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] Step 6 R2 mutation check: PASS (or PARTIAL if tool absent + LLM fallback done) -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] Step 7 R3 e2e check: PASS or SKIP (SKIP is acceptable when no cross-component change detected) -- judge: pre-existing base checklist item, not part of the review-lens change
 
 ## findings.json: dynamic_gate_run entry shape
 

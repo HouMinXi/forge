@@ -211,3 +211,38 @@ def test_grouped_provider_forwards_the_flag():
     assert len(on) == 3 and len(off) == 3
     assert all(LENS_BLOCK in p for p in on)
     assert not any("Review Lenses" in p for p in off)
+
+
+def test_three_sites_share_one_selection_line_and_one_estimate_helper():
+    """Outlet A, Outlet C and the token estimate all take their lens bytes from lenses.py."""
+    from code_forge.lenses import estimate_lens_text
+
+    a_on = _a_prompts(review_lenses=True)
+    c_on = _c_prompts(review_lenses=True)
+    for pass_name, a, c in zip(PASSES, a_on, c_on, strict=True):
+        assert a.endswith(selection_line(pass_name))
+        assert c.endswith(selection_line(pass_name))
+        assert a.count(LENS_BLOCK) == 1 and c.count(LENS_BLOCK) == 1
+        # Same lens bytes in both outlets, wherever each one places them.
+        assert a.count(selection_line(pass_name)) == c.count(selection_line(pass_name)) == 1
+    est = estimate_lens_text()
+    assert est.startswith(LENS_BLOCK)
+    for pass_name in PASSES:
+        assert len(est) >= len(LENS_BLOCK + selection_line(pass_name))
+    assert _estimate(lens_text=est) - _estimate() == len(est) // 4
+    assert len(LENS_BLOCK.encode()) == 1567
+
+
+def test_no_other_module_builds_lens_text():
+    """Only factories (A) and cli (C, estimate, `lenses`) may touch the helpers; nobody
+    re-spells the selection line."""
+    src = Path(cli.__file__).parent
+    callers = set()
+    for py in src.rglob("*.py"):
+        text = py.read_text(encoding="utf-8")
+        if py.name != "lenses.py":
+            assert "Lenses: " not in text, py.name
+            assert "## Review Lenses" not in text, py.name
+        if "selection_line(" in text or "estimate_lens_text(" in text:
+            callers.add(py.name)
+    assert callers == {"lenses.py", "factories.py", "cli.py"}

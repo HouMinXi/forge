@@ -2044,14 +2044,18 @@ def _run_trust(args, cwd: Path) -> int:
         )
         print("Current hash: %s" % s.current_hash, file=sys.stderr)
         print("Path: %s" % s.gate_yaml_path, file=sys.stderr)
-        print(
-            "Lens hash: %s" % (_stored_lens_hash(gate_yaml_path) or "(none)"),
-            file=sys.stderr,
-        )
-        print(
-            "Review lenses: %s" % lens_trust_state(gate_yaml_path, gd),
-            file=sys.stderr,
-        )
+        # Lens lines appear only once lenses are in play (the key is in
+        # gate.yaml or a lens hash was stored), so the output for a gate.yaml
+        # that never mentions lenses is the same as before lenses existed.
+        if "review_lenses" in gd or _stored_lens_hash(gate_yaml_path):
+            print(
+                "Lens hash: %s" % (_stored_lens_hash(gate_yaml_path) or "(none)"),
+                file=sys.stderr,
+            )
+            print(
+                "Review lenses: %s" % lens_trust_state(gate_yaml_path, gd),
+                file=sys.stderr,
+            )
         if contracts_yaml_path.is_file():
             from .contract_loader import resolve_contract_specs
 
@@ -2113,8 +2117,7 @@ def _run_trust(args, cwd: Path) -> int:
     has_lenses = gd.get("review_lenses") is True
     if not has_backends and not has_focus and not has_lenses and "kernel_context" not in gd:
         print(
-            "No backends, review_focus or review_lenses configured in this gate.yaml. "
-            "Configure at least one.",
+            "No backends or review_focus configured in this gate.yaml. Configure at least one.",
             file=sys.stderr,
         )
         return EXIT_CLI_ERROR
@@ -4329,10 +4332,9 @@ def _run(args, env, cwd: Path) -> Verdict:
 
     _group_budget = max_prompt_tokens_from_gate_config(gate_data)
     if review_lenses:
-        from .lenses import LENS_BLOCK, selection_line
+        from .lenses import estimate_lens_text
 
-        # The longest selection line (expert) bounds every pass.
-        _lens_text = LENS_BLOCK + selection_line("expert")
+        _lens_text = estimate_lens_text()
     else:
         _lens_text = ""
     _l1_est_tokens = _estimate_l1_prompt_tokens(

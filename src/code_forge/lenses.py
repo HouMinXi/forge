@@ -77,24 +77,21 @@ LENS_SOURCES: dict[str, tuple[Source, ...]] = {
 }
 
 
+# Every lens byte in a prompt comes from this module. The call sites are:
+#   Outlet A  factories.build_l1_provider  (shared prefix + selection_line last)
+#   Outlet C  cli._make_subagent_spawn     (block after the contract, selection_line last)
+#   estimate  cli._run via estimate_lens_text (token budget before Outlet A is built)
+# tests/test_lens_prompts.py pins all three to these helpers.
+
+
 def selection_line(pass_name: str) -> str:
     """Last line of a pass prompt: which lenses this pass applies."""
     return "\nLenses: " + ", ".join(PASS_LENSES[pass_name]) + ".\n"
 
 
-LENS_RE = re.compile(r"^\[(qodo|expert|adversarial)\] \[lens:(L[1-5])\] ")
-
-
-def lens_of(description: str) -> tuple[str, str] | None:
-    """Parse a stored description; pure syntax, no pass/lens policy."""
-    m = LENS_RE.match(description)
-    return (m.group(1), m.group(2)) if m else None
-
-
-def lens_mismatch(description: str) -> bool:
-    """True when the tag names a lens not assigned to the tagged pass."""
-    parsed = lens_of(description)
-    return parsed is not None and parsed[1] not in PASS_LENSES[parsed[0]]
+def estimate_lens_text() -> str:
+    """Lens bytes of the largest pass prompt, for the token budget estimate."""
+    return LENS_BLOCK + max((selection_line(p) for p in PASS_LENSES), key=len)
 
 
 _LENS_TAG_RE = re.compile(r"^(\[[a-z]+\] )(?:\[lens:L[1-5]\] )+")

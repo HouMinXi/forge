@@ -164,6 +164,26 @@ def test_unreadable_gate_yaml_path_exits_2_with_clean_message(tmp_path, env):
     assert "gate.yaml" in r.stderr
 
 
+def test_permission_denied_gate_yaml_exits_2_with_clean_message(tmp_path, env):
+    repo = _repo(tmp_path, {"review_lenses": True})
+    gate = repo / ".code-forge" / "gate.yaml"
+    gate.chmod(0)
+    try:
+        try:
+            gate.read_bytes()
+        except PermissionError:
+            pass
+        else:
+            pytest.skip("file mode is not enforced here (running as root?)")
+        r = _lenses(repo, env, "--pass", "qodo")
+    finally:
+        gate.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    assert r.returncode == 2
+    assert r.stdout == ""
+    assert "Traceback" not in r.stderr
+    assert "code-forge: lenses: cannot read gate.yaml" in r.stderr
+
+
 def _store_state(cfg: Path) -> dict:
     return {
         str(p.relative_to(cfg)): (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)
