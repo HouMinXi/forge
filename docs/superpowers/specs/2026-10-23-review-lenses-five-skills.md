@@ -228,20 +228,22 @@ L5 Type and guard slop: casts, any, or ignore pragmas that dodge type checks; op
 
 可运行草稿见 `/workspace/forge-review/draft/lenses_draft.py`，已自测：
 
+> 勘误（实现后）：`LENS_RE`、`lens_of`、`lens_mismatch` 已从 `lenses.py` 删除（没有生产调用方），见 59.1-01-SUMMARY。标签语法只由 `strip_lens_tag` / `_LENS_TAG_RE` 定义，测试经 `strip_lens_tag` 固定（`machine` 与 `legacy` 都调用它）。验收 4 的统计不再依赖这三个函数：测量脚本直接用标签正则 `^\[(qodo|expert|adversarial)\] \[lens:(L[1-5])\] ` 取 pass 与镜头，再用 `PASS_LENSES` 判断镜头是否属于该 pass。
+
 ```python
 LENS_BLOCK: str                                       # 上面的正文，常量
 PASS_LENSES: dict[str, tuple[str, ...]] = {"qodo": ("L1",), "expert": ("L2", "L5"), "adversarial": ("L3", "L4")}
 Source = tuple[str, str, str, str]                    # (skill, repo, upstream path, source_commit)
 LENS_SOURCES: dict[str, tuple[Source, ...]]           # 键为 "rules"、"L1".."L5"，每个键可有多个来源（N-10）
 def selection_line(pass_name: str) -> str
-LENS_RE = re.compile(r"^\[(qodo|expert|adversarial)\] \[lens:(L[1-5])\] ")
-def lens_of(description: str) -> tuple[str, str] | None   # 只做语法解析
-def lens_mismatch(description: str) -> bool               # 标签的镜头不属于该 pass（N-12）
+LENS_RE = re.compile(r"^\[(qodo|expert|adversarial)\] \[lens:(L[1-5])\] ")   # 已删除，见勘误
+def lens_of(description: str) -> tuple[str, str] | None   # 已删除，见勘误（原：只做语法解析）
+def lens_mismatch(description: str) -> bool               # 已删除，见勘误（原：标签的镜头不属于该 pass，N-12）
 def strip_lens_tag(description: str) -> str               # 去掉 "[pass] " 之后连续的 "[lens:Lx] "，保留 "[pass] "（N-6、R3-9）
 _LENS_TAG_RE = re.compile(r"^(\[[a-z]+\] )(?:\[lens:L[1-5]\] )+")   # 模型重复加标签时一次剥净
 ```
 
-`lens_of("[qodo] [lens:L2] x")` 仍返回 `("qodo","L2")`，这是语法上合法的解析；"错配"由 `lens_mismatch` 按 `PASS_LENSES` 判定，验收 4 的错配比例用它统计。
+（原文：`lens_of("[qodo] [lens:L2] x")` 返回 `("qodo","L2")`，"错配"由 `lens_mismatch` 按 `PASS_LENSES` 判定。已删除，现在由测量脚本按上面的勘误计算。）
 
 ### 三个出口
 
@@ -252,11 +254,11 @@ _LENS_TAG_RE = re.compile(r"^(\[[a-z]+\] )(?:\[lens:L[1-5]\] )+")   # 模型重�
 |A|紧接 `REVIEW_JSON_CONTRACT` 常量（`fac:495`）之后、`manifest_spec` 之前，属于静态共享前缀|角色句之后（`fac:522-524`），属于各 pass 的尾部|`build_l1_provider` 增加参数 `review_lenses: bool = False`|
 |C|紧接 `REVIEW_JSON_CONTRACT` 常量（`cli.py:1088` 的角色句 + 该常量）之后、manifest 之前（R3-11：此处 contract 一律指该 JSON 契约常量，不是 `--contract` 的 Design Intent）|差异块（`cli.py:1106`）之后，作为最后一行|`_make_subagent_spawn`（`cli.py:1052`）加同一参数。真实路径是 `_run`（`cli.py:3720`）→ `_dispatch_subagent`（`cli.py:3449-3462`，新增 `review_lenses: bool = False`）→ `_make_subagent_spawn`（`cli.py:3496`）：`_run` 在 `cli.py:3855-3857` 读 `yaml_focus` 处一并读开关，在 `cli.py:4068`（`yaml_focus=yaml_focus` 旁）传入 `review_lenses=review_lenses`（R4 P1）。关闭时对照 T1-C 新 oracle（R3-2）|
 |B|不新增 `passes/lenses.md`（N-5）。B 运行 `code-forge lenses --pass <p>`，把输出原样追加在该 pass 指令的**末尾**|输出本身以 `selection_line(p)` 结尾，所以每个 pass 读到的末行就是自己的选择行|新增只读子命令 `lenses`：开关有效（见下）时打印 `LENS_BLOCK + selection_line(p)`，否则什么都不打印。`SKILL.md:378-396` 三个 pass 各加一句"追加 `code-forge lenses --pass <p>` 的输出；输出为空就不加；非零退出见下方契约"|
-|C-host（R3-12）|`SKILL.md:1609` 起 "If outlet is \"subagent\" (Outlet C)"，`:1618-1625` 是宿主自己派生子代理的 C 路径，不是 B。和 B 一样取 `lenses` 子命令输出，追加在子代理提示词末尾|同 B|`SKILL.md:1618-1625` 加同一句；落库走宿主提交路径，前缀不保证，不计入 `lens_of` 统计|
+|C-host（R3-12）|`SKILL.md:1609` 起 "If outlet is \"subagent\" (Outlet C)"，`:1618-1625` 是宿主自己派生子代理的 C 路径，不是 B。和 B 一样取 `lenses` 子命令输出，追加在子代理提示词末尾|同 B|`SKILL.md:1618-1625` 加同一句；落库走宿主提交路径，前缀不保证，不计入标签统计|
 
 - B 的 pass 文件本身不改；`SKILL.md` 多出的那句在开关关闭时得到空输出，B 的实际指令不变。
 - B 只认 CLI 给出的文本，skill 不自己读 gate.yaml（N-1）。
-- B 的 pass 文件输出 markdown（`p2:76` 起），不经过 `_json_to_state_findings`。C-host（`SKILL.md:1618-1625`）的子代理虽然返回 JSON，但落库走宿主自己的提交路径，前缀是否保留没有保证。所以 `lens_of` 统计和验收 4 不含 B 与 C-host（N-5、R3-12）。
+- B 的 pass 文件输出 markdown（`p2:76` 起），不经过 `_json_to_state_findings`。C-host（`SKILL.md:1618-1625`）的子代理虽然返回 JSON，但落库走宿主自己的提交路径，前缀是否保留没有保证。所以标签统计和验收 4 不含 B 与 C-host（N-5、R3-12）。
 - B 与 C-host 每次 run 只调用一次 `lenses`（每个 pass 一次，run 开始时取齐后缓存），中途改 gate.yaml 不影响本 run；run 元信息逐 pass 记录镜头开/关（R3-8）。
 - MCP：本版**不提供** `forge_lenses` 工具，`tests/test_mcp_server.py:75-85` 的工具集合不变；MCP 宿主走 CLI（R3-14，列入 FU-7）。
 - C-host 子代理 schema 没有 code_excerpts，这是现有问题，本 spec 不修，改这一段时保留原样。
@@ -300,14 +302,14 @@ SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，
 - `hash_lenses_flag` 的固定串是字面量 `code-forge:review_lenses:true` 的摘要，**不**绑定 `LENS_BLOCK` 的 sha：块文本随版本变化不要求用户重新 trust，块本身由 sha 测试（T7）与评审约束（Q5）。
 - 已知取舍（R3-7，Q5 接受）：`hash_lenses_flag` 只有 `""` 与固定串两个值。在 `true` 状态 trust 过一次以后，`true→false→true` 不需要再 trust，因为 store 里的 `lens_hash` 一直匹配。开关只在两个常量之间选，这个取舍可接受。
 - 其他写 trust 的调用方：`setup_mcp.py:223-232`（写自己的 gate.yaml，不含镜头）、`eval/runner.py:1001` 都是自动 trust，会顺带存 `lens_hash`。eval 自动 trust 的是 harness 自己生成的 gate.yaml，可能含 `review_lenses: true`，威胁模型记为 Elevation/accept（R4 P3-5）；eval 的 LENS-03 臂由临时 gate.yaml 的 `review_lenses` 切换，并纳入 `_missing_arm_settings`（`eval/runner.py:138`）的完整性检查，缺失时按 `:1004-1011` 拒跑（R3-16，LENS-03 范围）。
-- 实现备注：上一条的行为由 `tests/test_trust_lenses.py::test_auto_trust_callers_record_the_same_lens_hash` 固定（与本 spec 一致，代码无需改）。`lens_of` 与 `lens_mismatch` 实现时已删除（无调用方），标签语法只经 `strip_lens_tag` 固定。
+- 实现备注：上一条的行为由 `tests/test_trust_lenses.py` 的 `test_setup_mcp_auto_trust_records_lens_hash`、`test_eval_harness_trust_records_lens_hash`（真实调用，期望值为字面量）固定（与本 spec 一致，代码无需改）。`lens_of` 与 `lens_mismatch` 实现时已删除（无调用方），标签语法只经 `strip_lens_tag` 固定。
 - 开关只在两个常量之间选择，不引入用户文本。
 - 开关状态写进 run 的元信息，供测量区分对照组（INV-07 口径）。回执 schema 不变，因为回执只存原始响应的 sha 和 shingles（`receipt.py:227-246`、`:449-453`）。
 - 与 `review_focus` 互相独立：Review Focus 仍在原位置，不合并，也不互为回退。
 
 ### 归属（仅供参考）
 
-- 镜头 finding 的描述以 `[lens:Lx] ` 开头。落库后是 `[pass] [lens:Lx] ...`（`reviewer_json.py:898`），由 `lens_of()` 解析。
+- 镜头 finding 的描述以 `[lens:Lx] ` 开头。落库后是 `[pass] [lens:Lx] ...`（`reviewer_json.py:898`），由 `strip_lens_tag` 剥离；统计时用勘误里的标签正则读取。
 - 前缀只用于统计：没有前缀、编号越界、镜头不属于该 pass，都不会让解析失败，不影响指纹（`reviewer_json.py:889`），不改变严重度。
 - **门禁侧唯一改动（N-6）**：`_rule_type`（`machine.py:3592-3596`）取 `desc[:50]`，标签会占掉其中 10 个字符，使 `distinct_per_file`、`distinct_per_diff` 失真。实现时 `_rule_type` 先调用 `strip_lens_tag`。只剥镜头标签，`[pass] ` 前缀保留，因此关闭路径的结果逐字节不变（T14）。
 - 第二个前缀消费者（R3-9）：`legacy.py:262` `rule_hint = sf.description[:16].replace(" ", "_")` 进 `legacy:%s:%d:%s` 的 finding_id。同样先 `strip_lens_tag`，否则开启时 16 个字符里有 10 个是标签。不带标签时结果不变（T14）。
@@ -374,7 +376,7 @@ SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，
 |T8 归属集合|`PASS_LENSES == {"qodo": ("L1",), "expert": ("L2","L5"), "adversarial": ("L3","L4")}`，块中恰好出现 L1–L5 五个编号行。两处期望都硬编码|删掉 L4 行|
 |T9 预算|`len(LENS_BLOCK.encode()) <= 1600`，并且 `max(len(selection_line(p))) <= 32`|镜头块加 30 个词|
 |T10 估算器|`_estimate_l1_prompt_tokens` 增加 `lens_text` 项，开启时比关闭时多 `(1567+17)//4 = 396`（容差 ±1）。分组预算 `cli.py:4243-4254` 使用新的估算|估算器漏掉镜头块；`lens_text` 按位置传。`cli.py:4244-4252` 的调用全是位置传参，第 7 个是 focus `""`、第 8 个是 `context_sources_text`（签名 `cli.py:1180-1189`），所以 `lens_text` 定义为仅关键字参数（`*, lens_text: str = ""`），调用处按关键字传（R4 P3-7）|
-|T11 解析器|`lens_of("[expert] [lens:L5] x") == ("expert","L5")`；无前缀、`L9`、双空格、缺空格、`Lens` 大写都返回 `None`，任何输入不抛异常；`lens_mismatch("[qodo] [lens:L2] x") is True`，`lens_mismatch("[expert] [lens:L5] x") is False`（N-12）|把正则改成匹配任意 `L\d`；让 `lens_mismatch` 恒返回 False|
+|T11 标签语法|经 `strip_lens_tag` 固定：`strip_lens_tag("[expert] [lens:L5] x") == "[expert] x"`；无前缀、`L9`、`L0`、双空格、缺空格、`Lens` 大写、标签不在 `[pass] ` 之后都原样返回，任何输入不抛异常；`machine` 与 `legacy` 都调用同一个函数（原 `lens_of` / `lens_mismatch` 断言已随函数删除，N-12）|把正则改成匹配任意 `L\d`；只剥一个标签|
 |T12 降级负例|state 中只有 2 个 Forge cycle，外加一份人工报告文件：`earned_clean_window` 不满足，verify 失败，状态不变|让 verify 读取人工报告|
 |T13 来源|`LENS_SOURCES` 的键集合为 `{"rules","L1","L2","L3","L4","L5"}`，每个键的 (skill, path) 集合按硬编码期望比对（L1 必含 `correctness-reviewer.md`），commit 与来源表一致；`src/code_forge/THIRD_PARTY_NOTICES.md` 存在、含三条版权声明，且 wheel 与 sdist 都含该文件。构建（R4 P2-4、Q2）：对 `git archive` 出的副本在 /tmp 下跑 `UV_CACHE_DIR=/tmp/… uv build`，不在检出目录构建，不向 `.venv` 装包；记录 uv 与解析到的 setuptools 版本（box 在 609aa51 预演：uv 0.13.5、setuptools 84.2.1，wheel 与 sdist 均成功，egg-info 只出现在 /tmp 副本）。检出目录里已有可编辑安装留下的 `src/code_review_forge.egg-info`（`.gitignore:6` 忽略），所以断言为构建前后其清单与 mtime 不变、其中每个文件的 sha256 不变；构建前 `touch` 一个标记文件，构建后 `find . -path ./.git -prune -o -path ./.venv -prune -o -newer 标记 -print` 必须为空（uv 先建 sdist 再在临时目录建 wheel，单靠 `test ! -e build` 太弱）；没有 `build/`、git status 只含本次文件。临时索引 `git add -A` 会往 `.git/objects` 写松散对象，无害，记入 evidence（N-9、N-10、R3-6、R5 P2-d、N-7）|删除 L1 的 correctness-reviewer 来源；从 package-data 去掉 notices|
 |**T14** `_rule_type` 不受标签影响|同一组 P3 finding，描述分别为 `"[expert] [lens:L2] X"` 与 `"[expert] X"`，`_rule_type` 结果集合相同，`distinct_per_file`、`distinct_per_diff` 与 CYCLE_RESTART 判定相同；`"[expert] [lens:L2] [lens:L5] X"` 也剥成 `"[expert] X"`；`legacy.py:262` 的 `rule_hint` 对带标签与不带标签的描述相同；无标签描述的结果与 `609aa51` 相同（N-6、R3-9）|去掉 `_rule_type` 或 legacy 里的 `strip_lens_tag`；把正则改回只剥一个标签|
@@ -406,7 +408,7 @@ SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，
    - f. "非空 run" = falsify 之后至少 1 个上报的 P0–P2 finding（去掉 UNCERTAIN，与 b 的分母同一集合），只有 P3 的 run 算空（R6 P3-5）。每个 run 到达 3 个 clean cycle 的轮数，达不到的记为配置的最大轮数。门槛：开启中位数 ≤ 关闭中位数 + 1；fix 侧按条目聚类：每个条目的净值 = "关闭无 finding、开启有 finding"的重复数 − "开启无、关闭有"的重复数，净值 > 0 与 < 0 的条目数做单侧符号检验，p ≥ 0.025；fix 侧同一位置 L5 与 pass3 相反的 finding 对数为 0（硬门槛）（N-3、N-4、R3-5）。
    - 校准（box 模拟 `draft/sim_null_gates.py`，sha256 `28ad17a4…5ded`，结果 `draft/sim_null_gates_result.json`，补充检查 `draft/sim_null_gates_checks.json`；两臂参数完全相同；150 个条目；严格过半判检出；检出概率混合 40% Beta(1,49)、30% Beta(18,2)、30% U(0.2,0.8)；每条目 λ 服从形状 k 的 gamma 分布；每格 1,000 次；bootstrap 10,000 次、种子 591）。R = 3、λ = 2：P3 均值 {0.3, 1, 3} × q {0.05, 0.2, 0.5} 九格联合通过率 0.918–0.965，目标 ≥ 0.90。λ 网格（P3 均值 1，k = 2，依次为 q = 0.05 / 0.2 / 0.5；k = 0.7 至多相差 0.056）：R = 3 时 λ = 0.5 为 0.562/0.716/0.946，λ = 1 为 0.765/0.828/0.946，λ = 2 为 0.937/0.938/0.961，λ = 3 为 0.954/0.967/0.966；R = 5 时依次 0.701/0.886/0.962、0.910/0.947/0.967、0.963/0.959/0.965、0.963/0.961/0.965；R = 7 时依次 0.842/0.950/0.952、0.957/0.954/0.956、0.972/0.979/0.962、0.969/0.969/0.969。λ 低时不过的主要是 b。有害情形（R = 3、λ = 2、q = 0.2）：每条 finding 精确率 −0.10（汇总约 −0.086，对照 0.08 的裕量）时 b 通过 0.019（R = 5 为 0.018，R = 7 为 0.017）；−0.15（汇总 −0.128）时 0.000；P3 ×1.5 时 c 通过 0.000；UNCERTAIN ×1.5 时 e 通过 0.000；fix 侧非空率 +0.10 时 f 通过 0.024（R = 5、7 为 0.000）。a 的最小可检出效应：丢 10 / 15 / 30 个高检出条目时，R = 3 下 a 通过 0.774 / 0.528 / 0.035（REVIEW-6 独立复算 0.77 / 0.549 / 0.027），R = 5 下丢 15 / 30 为 0.397 / 0.005，R = 7 下为 0.298 / 0.000。即 R = 3 时 a 能稳定抓住 150 个里丢约 30 个，丢 15 个只有一半把握；更小的损失只报告，不设门槛（R6 P3-5）。补充检查（`--checks`，每格 1,000 次，R7）：q = 0.01、k = 2、λ = 0.5/1/2/3 时，R = 3 为 0.501/0.764/0.938/0.976，R = 5 为 0.722/0.914/0.975/0.978，R = 7 为 0.853/0.962/0.983/0.982（与 q = 0.05 至多相差 0.061，出现在 R = 3、λ = 0.5）。低 λ 的牙齿（受攻击门槛的通过率，依次 a15 / b10 / f）：R = 7、λ = 0.5、q = 0.2 为 0.307 / 0.193 / 0.000；R = 5、λ = 1、q = 0.05 为 0.394 / 0.018 / 0.000；R = 3、λ = 1、q = 0.5 为 0.535 / 0.468 / 0.095；R = 3、λ = 0.5、q = 0.5 为 0.547 / 0.766 / 0.082。虚设：λ = 0.02、R = 3、q = 0.2 时无效应 0.917，b10 下 b 仍通过 0.953。b 在 q_lo 以上的牙齿（`--checks` 的 tooth_qhi，每格 10,000 次，b10 下 b 的通过率，依次 k = 2 / 0.7）：R = 3、λ = 2 时 q = 0.5 为 0.207/0.213，0.6 为 0.374/0.389，0.7 为 0.659/0.662；R = 7、λ = 0.5 时 q = 0.2 为 0.209/0.213，0.3 为 0.474/0.484，0.4 为 0.801/0.790；R = 5、λ = 1 时 q = 0.05 为 0.018/0.016，0.1 为 0.028/0.030，0.2 为 0.074/0.073；R = 3、λ = 1、q = 0.35 为 0.194/0.195；R = 3、λ = 3 时 q = 0.3 为 0.030/0.028，0.6 为 0.216/0.220。12 格里有 8 格 k = 0.7 更差。种子敏感性（tooth_seed_spread，R = 3、λ = 2、q = 0.5、k = 2，种子 1100–1109）：0.195–0.204，均值 0.201，标准差 0.0027；若门限是 0.20，10 个种子里有 2 个会通过，门限 0.192 下一个都不通过。N = 150、每格 10,000 次的预试验结果（λ_lo, q_lo, q_hi → R）：(3, 0.2, 0.3) 3；(2, 0.2, 0.3) 3（b10 最大 0.057）；(2, 0.2, 0.2) 3；(1, 0.05, 0.1) 5（无效应 0.911/0.916）；(0.5, 0.2, 0.3) 无（只有 R = 7 过无效应，0.935/0.940，但 b10 为 0.485）；(0.5, 0.05, 0.1) 无（无效应最高 0.845）；(3, 0.5, 0.6) 无（b10 0.21–0.36）；(2, 0.5, 0.6) 无（b10 0.38–0.64）；(1, 0.5, 0.6) 无（b10 0.72–0.96）；(0.5, 0.5, 0.6) 无（b10 0.95–1.00）。十次都退出 0，并记录 numpy 2.5.4 / scipy 1.18.1。
    任一条不满足就保持默认关，并把结果写回本 spec。这本身也是合法的结论。
-4. 测量报告附 `lens_of` 统计（只含 A/C，B 与 C-host 不在范围内）：带前缀的比例、`lens_mismatch` 比例、被 `_is_praise` 丢弃的带标签 finding 数、有缺陷语料上 L5 与 pass3 相反的 finding 对数（N-7）、`[lens:L4]`/`[lens:L5]` finding 中 `asserts_library_behaviour` 命中的比例及其中降为 UNCERTAIN 的条数（R3-4）、严重度 ≥P2 的 `[lens:L2]` finding 数（违反 "P3 at most"，R3-15）。只作参考，不设门槛。
+4. 测量报告附标签统计（用勘误里的标签正则与 `PASS_LENSES` 直接计算，不依赖已删除的 `lens_of`；只含 A/C，B 与 C-host 不在范围内）：带前缀的比例、错配比例（标签镜头不在该 pass 的 `PASS_LENSES` 内）、被 `_is_praise` 丢弃的带标签 finding 数、有缺陷语料上 L5 与 pass3 相反的 finding 对数（N-7）、`[lens:L4]`/`[lens:L5]` finding 中 `asserts_library_behaviour` 命中的比例及其中降为 UNCERTAIN 的条数（R3-4）、严重度 ≥P2 的 `[lens:L2]` finding 数（违反 "P3 at most"，R3-15）。只作参考，不设门槛。
 
 ## 后续项（本次不做）
 
@@ -467,7 +469,7 @@ SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，
 |P1-2 覆盖说明与 JSON-only 冲突|删除覆盖说明，干净的镜头不输出；`lens_coverage` 暂不加（FU-4）|否；可选字段决定暂缓|
 |P1-3 镜头与来源语义不符|按差距表重写：L3 去掉安全，L4 去掉"谁调用"，L5 换成 deslop 的真实内容|否|
 |P1-4 oracle 与测试|T1 关闭路径不改 fixture；T2 剥离等价；T3 新增 case 并原位记录 revision；T6 参数化 TestSharedPromptPrefix；T7 角色串禁入；T10 估算器|否。补充一点：默认关意味着原有摘要无需重算|
-|P2-1 `[lens:Lx]` 约定|采用评审方案 (b)：正则加 `lens_of()` 解析落库后的描述，只作参考|**部分偏离**：评审给的方案 (a) 指向 `reviewer_json.py:562`，那是 `_normalize_root_finding`（533-563），每次验证都会调用（`validate_reviewer_json` 650，在 668 调用）但很少命中，不是主路径；主路径是 `_json_to_state_findings`（856-917）。**理由已按第 2 轮更正**：state 可以加法扩展（`state.py:308` "additive only, no schema_version bump per D2"，`_finding_from_dict` `state.py:651` 起用 `.get`），本版刻意不扩展，以免 receipt/state 改动面扩大。v2 中"会冲突"的说法删除|
+|P2-1 `[lens:Lx]` 约定|采用评审方案 (b)：用标签正则解析落库后的描述（实现时 `lens_of()` 已删除，由测量脚本内联），只作参考|**部分偏离**：评审给的方案 (a) 指向 `reviewer_json.py:562`，那是 `_normalize_root_finding`（533-563），每次验证都会调用（`validate_reviewer_json` 650，在 668 调用）但很少命中，不是主路径；主路径是 `_json_to_state_findings`（856-917）。**理由已按第 2 轮更正**：state 可以加法扩展（`state.py:308` "additive only, no schema_version bump per D2"，`_finding_from_dict` `state.py:651` 起用 `.get`），本版刻意不扩展，以免 receipt/state 改动面扩大。v2 中"会冲突"的说法删除|
 |P2-2 1200 B 预算|v2 实测 1593 B；v3 实测 1499 B，v4 实测 1567 B，上限仍为 ≤1600 B（T9），并计入估算器|否|
 |P2-3 布局矛盾|镜头块紧接 contract，作为静态前缀；每个 pass 的选择行放在尾部|否；选择行是补充，因为块是静态的，必须在尾部指明本 pass 用哪些镜头|
 |P2-4 归属错位|qodo=L1，expert=L2+L5，adversarial=L3+L4；L4 改名 "Impact beyond the diff"|否|
@@ -498,7 +500,7 @@ SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，
 |N-9 NOTICES 不进 wheel|NOTICES 移到 `src/code_forge/THIRD_PARTY_NOTICES.md`，并加入 `pyproject.toml:73` 的 package-data；T13 检查 wheel 内容|**部分偏离**：评审提到 license-files；本稿用 package-data，理由是和 skills 的打包方式一致。（v4 更正：v3 写的"现有 setuptools>=68 就能用"不成立，基线本身就需要 ≥77，见 FU-8、R3-6）|
 |N-10 来源归属不完整|`LENS_SOURCES` 改为多来源，新增 `rules` 键；L1 补 `correctness-reviewer.md`（blob dc80945，已和上游 raw 逐字节比对）；T13 硬编码来源集合|否|
 |N-11 漏看 B 的 references|差距表逐条补上 `references/*.md` 的引用；新增 BR-8..10、CQ-12..14、CE-17..18；6 条 B-only 明确写为有意不处理，交给 FU-3|否；评审数为 5 条，TR-8 改判后为 6 条（DS-1、DS-4、TR-8、CQ-6、CQ-10、CE-13）|
-|N-12 `lens_of` 错配与类型|新增 `lens_mismatch()`；`LENS_SOURCES`、`lens_of` 补类型注解；T11|否|
+|N-12 错配与类型|原方案新增 `lens_mismatch()` 并给 `lens_of` 补注解；实现时两个函数已删除（见勘误），`LENS_SOURCES` 注解保留；T11 改经 `strip_lens_tag`|否|
 |N-13 L3 漏排除条款|L3 末尾加 "not new alternatives or ordinary dependency adds"|否|
 |N-14 文献自相矛盾|文献一节统一为"已联网核对"，列出核对内容；`plugins/` 副本问题已关闭|否|
 |N-15 `_is_praise` 子串匹配|规则 3 已删，风险不再由镜头块引入；验收 4 统计被丢弃的带标签 finding|否|

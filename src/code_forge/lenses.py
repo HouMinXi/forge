@@ -81,7 +81,9 @@ LENS_SOURCES: dict[str, tuple[Source, ...]] = {
 #   Outlet A  factories.build_l1_provider  (shared prefix + selection_line last)
 #   Outlet C  cli._make_subagent_spawn     (block after the contract, selection_line last)
 #   estimate  cli._run via estimate_lens_text (token budget before Outlet A is built)
-# tests/test_lens_prompts.py pins all three to these helpers.
+# Pins: tests/test_lens_prompts.py checks the A and C prompts and the helper
+# output; tests/test_lens_wiring_ast.py checks that _run feeds the estimate
+# from estimate_lens_text().
 
 
 def selection_line(pass_name: str) -> str:
@@ -100,7 +102,9 @@ _LENS_TAG_RE = re.compile(r"^(\[[a-z]+\] )(?:\[lens:L[1-5]\] )+")
 def strip_lens_tag(description: str) -> str:
     """Drop all leading lens tags but keep the pass prefix.
 
-    Used by machine._rule_type and the legacy rule hint so a tag is attribution
-    only and never changes a rule type or an id.
+    Every place that classifies a finding by its text goes through this (the rule
+    type in machine, the style-downgrade keyword match in machine, and the legacy
+    rule hint), so a tag is attribution only and never changes a rule type, a
+    downgrade or an id. tests/test_lenses.py pins that machine and legacy use it.
     """
     return _LENS_TAG_RE.sub(r"\1", description, count=1)

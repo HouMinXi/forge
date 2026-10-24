@@ -1835,11 +1835,11 @@
     {
       "source_path": "phases/59.1-review-lenses/59.1-01-PLAN.md",
       "published_path": "docs/gsd/phases/59.1-review-lenses/59.1-01-PLAN.md",
-      "source_sha256": "5e0177fec091db45635f5feb0f8ec72abfcee624d3eeb09a16318c41e7a1fe88",
-      "source_size": 85897,
-      "source_mtime_utc": "2026-10-24T04:29:02.276169+00:00",
-      "published_sha256": "5e0177fec091db45635f5feb0f8ec72abfcee624d3eeb09a16318c41e7a1fe88",
-      "published_size": 85897,
+      "source_sha256": "80b2a1311c5c3603ffdd3a3948df5b07be409e861fdb9d7c9779b80769fcb43a",
+      "source_size": 86312,
+      "source_mtime_utc": "2026-10-24T11:07:00.449568+00:00",
+      "published_sha256": "80b2a1311c5c3603ffdd3a3948df5b07be409e861fdb9d7c9779b80769fcb43a",
+      "published_size": 86312,
       "transformations": [
         {
           "category": "authored-public-form",

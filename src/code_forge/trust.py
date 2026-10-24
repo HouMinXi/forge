@@ -423,7 +423,7 @@ def hash_lenses_flag(gate_data: dict) -> str:
     return hashlib.sha256(b"code-forge:review_lenses:true").hexdigest()
 
 
-def _stored_lens_hash(gate_yaml_path: Path) -> Optional[str]:
+def stored_lens_hash(gate_yaml_path: Path) -> Optional[str]:
     """Read the stored lens_hash without touching the store (no migration)."""
     entry = _load_trust_store().get(str(gate_yaml_path.resolve()))
     if not isinstance(entry, dict):
@@ -441,7 +441,7 @@ def is_trusted_lenses(gate_yaml_path: Path, gate_data: dict) -> bool:
     current = hash_lenses_flag(gate_data)
     if not current:
         return True
-    return _stored_lens_hash(gate_yaml_path) == current
+    return stored_lens_hash(gate_yaml_path) == current
 
 
 def lens_trust_state(gate_yaml_path: Path, gate_data: dict) -> str:
@@ -460,6 +460,6 @@ def lens_trust_state(gate_yaml_path: Path, gate_data: dict) -> str:
             return "on"
         return "untrusted (run code-forge trust)"
     enabled = hash_lenses_flag({"review_lenses": True})
-    if _stored_lens_hash(gate_yaml_path) == enabled:
+    if stored_lens_hash(gate_yaml_path) == enabled:
         return "off (true was trusted before; enabling needs no re-trust)"
     return "off (re-trust after enabling)"

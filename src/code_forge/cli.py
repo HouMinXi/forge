@@ -1985,13 +1985,13 @@ def _run_trust(args, cwd: Path) -> int:
     """
     import yaml as _y
     from .trust import (
-        _stored_lens_hash,
         find_dangerous_fields,
         lens_trust_state,
         record_trust,
         record_trust_contracts,
         revoke_trust,
         revoke_trust_contracts,
+        stored_lens_hash,
         trust_status,
         trust_status_contracts,
     )
@@ -2047,9 +2047,10 @@ def _run_trust(args, cwd: Path) -> int:
         # Lens lines appear only once lenses are in play (the key is in
         # gate.yaml or a lens hash was stored), so the output for a gate.yaml
         # that never mentions lenses is the same as before lenses existed.
-        if "review_lenses" in gd or _stored_lens_hash(gate_yaml_path):
+        lens_hash = stored_lens_hash(gate_yaml_path)
+        if "review_lenses" in gd or lens_hash:
             print(
-                "Lens hash: %s" % (_stored_lens_hash(gate_yaml_path) or "(none)"),
+                "Lens hash: %s" % (lens_hash or "(none)"),
                 file=sys.stderr,
             )
             print(

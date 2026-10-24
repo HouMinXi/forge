@@ -83,6 +83,46 @@ def test_run_forwards_the_name_to_every_consumer():
     assert len(est[0].args) == 8  # lens_text is keyword-only, never positional
 
 
+def test_run_estimates_with_exactly_the_lens_helper_text():
+    """The estimate's lens_text is estimate_lens_text() when lenses are on, "" otherwise.
+
+    Any other value (an empty string, the bare LENS_BLOCK, a hard-coded constant)
+    would under-count the Outlet A prompt and skew the grouping decision.
+    """
+    run = _fn(_tree(), "_run")
+    est = _calls(run, "_estimate_l1_prompt_tokens")[0]
+    var = _kw(est, "lens_text")
+    assert isinstance(var, ast.Name)
+
+    def _assigns(node: ast.AST) -> list[ast.Assign]:
+        return [
+            n
+            for n in ast.walk(node)
+            if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == var.id for t in n.targets)
+        ]
+
+    assigns = _assigns(run)
+    assert len(assigns) == 2, "lens_text must be bound in exactly the on and off branch"
+    branch = next(
+        n
+        for n in ast.walk(run)
+        if isinstance(n, ast.If) and _is_name(n.test, "review_lenses") and _assigns(n)
+    )
+    (on,) = _assigns(ast.Module(body=branch.body, type_ignores=[]))
+    (off,) = _assigns(ast.Module(body=branch.orelse, type_ignores=[]))
+    assert isinstance(on.value, ast.Call)
+    assert _is_name(on.value.func, "estimate_lens_text")
+    assert not on.value.args and not on.value.keywords
+    assert isinstance(off.value, ast.Constant) and off.value.value == ""
+    imports = [
+        n
+        for n in ast.walk(branch)
+        if isinstance(n, ast.ImportFrom) and n.module == "lenses"
+    ]
+    assert [a.name for i in imports for a in i.names] == ["estimate_lens_text"]
+
+
 def test_cross_repo_never_passes_review_lenses():
     tree = ast.parse(inspect.getsource(cross_repo))
     calls = _calls(tree, "build_l1_provider")

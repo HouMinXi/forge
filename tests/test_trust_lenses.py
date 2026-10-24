@@ -253,33 +253,104 @@ def test_status_shows_lens_lines_when_only_a_lens_hash_is_stored(tmp_path, home,
     assert "Review lenses: off (not set)" in err
 
 
-def test_auto_trust_callers_record_the_same_lens_hash(tmp_path, home):
-    """setup_mcp and the eval harness use record_trust, so they store lens_hash like `trust`.
+# Literal on purpose: sha256(b"code-forge:review_lenses:true"). Not derived from
+# hash_lenses_flag, so a change to the production hash shows up here.
+LENS_ON_HASH = "4a9a3ebd219e7ddd795cf37714f44ca8a9385f5232cca4dad22c2a6e90218d52"
 
-    The spec accepts this (eval trusts its own generated gate.yaml); this pins it.
-    """
+
+def _stored(config_dir: Path, gate: Path) -> dict:
+    store = json.loads((config_dir / "trusted.json").read_text(encoding="utf-8"))
+    return store[str(gate.resolve())]
+
+
+def test_setup_mcp_auto_trust_records_lens_hash(tmp_path, home, monkeypatch):
+    from code_forge.setup_mcp import _auto_trust_gate, run_setup_mcp
+
+    # End to end: the generated gate.yaml never mentions lenses, so the stored
+    # lens hash is empty and lenses stay off.
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("FORGE_CONFIG_DIR", str(tmp_path / "user-config"))
+    assert run_setup_mcp(project, ["deepseek"]) == 0
+    gate = project / ".code-forge" / "gate.yaml"
+    entry = _stored(home / "code-forge", gate)
+    assert entry["lens_hash"] == ""
+    assert entry["hash"]
+
+    # The helper trusts exactly what it is given, lens switch included.
+    on = _gate(tmp_path / "on", {"outlet": "subprocess", "review_lenses": True})
+    _auto_trust_gate(on)
+    assert _stored(home / "code-forge", on)["lens_hash"] == LENS_ON_HASH
+    assert is_trusted_lenses(on, _load(on))
+
+
+def test_eval_harness_trust_records_lens_hash(tmp_path, monkeypatch):
+    from code_forge.eval.runner import _create_gate_yaml, _trust_eval_gate
+
+    xdg = tmp_path / "xdg"
+    trust_dir = xdg / "code-forge"
+    trust_dir.mkdir(parents=True)
+    # The default store is somewhere else: the grant must land in trust_dir.
+    elsewhere = tmp_path / "elsewhere"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(elsewhere))
+
+    # A gate.yaml that came with the diff under review is merged, then trusted.
+    repo = tmp_path / "repo"
+    (repo / ".code-forge").mkdir(parents=True)
+    (repo / ".code-forge" / "gate.yaml").write_text(
+        yaml.safe_dump({"review_lenses": True}), encoding="utf-8"
+    )
+    gate = _create_gate_yaml(repo, "harness")
+    _trust_eval_gate(gate, trust_dir)
+    assert _stored(trust_dir, gate)["lens_hash"] == LENS_ON_HASH
+    assert not (elsewhere / "code-forge" / "trusted.json").exists()
+    # The child resolves its store as $XDG_CONFIG_HOME/code-forge, i.e. trust_dir.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    assert is_trusted_lenses(gate, _load(gate))
+
+    plain_repo = tmp_path / "plain"
+    plain = _create_gate_yaml(plain_repo, "harness")
+    _trust_eval_gate(plain, trust_dir)
+    assert _stored(trust_dir, plain)["lens_hash"] == ""
+    assert hash_lenses_flag(_load(plain)) == ""  # nothing to authorize, lenses stay off
+
+
+def test_eval_run_single_trusts_through_the_helper():
+    """_run_single trusts the gate it just built through _trust_eval_gate, into trust_dir."""
+    import ast
+
+    from code_forge.eval import runner
+
+    tree = ast.parse(Path(runner.__file__).read_text(encoding="utf-8"))
+    fn = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_run_single"
+    )
+    calls = [
+        n
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "_trust_eval_gate"
+    ]
+    assert len(calls) == 1
+    assert [getattr(a, "id", None) for a in calls[0].args] == ["gate_path", "trust_dir"]
+
+
+def test_setup_mcp_run_trusts_through_the_helper():
     import ast
 
     from code_forge import setup_mcp
-    from code_forge.eval import runner
 
-    for mod in (setup_mcp, runner):
-        tree = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
-        names = {
-            getattr(n.func, "id", None)
-            for n in ast.walk(tree)
-            if isinstance(n, ast.Call)
-        }
-        assert "record_trust" in names, mod.__name__
-
-    gate = _gate(tmp_path, {"backends": BACKEND, "review_lenses": True})
-    eval_dir = tmp_path / "eval-cfg" / "code-forge"
-    eval_dir.mkdir(parents=True)
-    record_trust(gate, _load(gate), config_dir=eval_dir)
-    store = json.loads((eval_dir / "trusted.json").read_text(encoding="utf-8"))
-    assert store[str(gate.resolve())]["lens_hash"] == hash_lenses_flag({"review_lenses": True})
-
-    off = _gate(tmp_path / "other", {"backends": BACKEND})
-    record_trust(off, _load(off), config_dir=eval_dir)
-    store = json.loads((eval_dir / "trusted.json").read_text(encoding="utf-8"))
-    assert store[str(off.resolve())]["lens_hash"] == ""
+    tree = ast.parse(Path(setup_mcp.__file__).read_text(encoding="utf-8"))
+    fn = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "run_setup_mcp"
+    )
+    calls = [
+        n
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "_auto_trust_gate"
+    ]
+    assert len(calls) == 1
+    assert [getattr(a, "id", None) for a in calls[0].args] == ["gate_yaml_path"]
