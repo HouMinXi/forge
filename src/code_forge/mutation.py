@@ -33,6 +33,8 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
+from code_forge import host_idle
 from code_forge.baseline_guard import _run_baseline_guard, _strip_venv_from_env, env_retry_record
 from dataclasses import dataclass
 from pathlib import Path
@@ -1393,6 +1395,36 @@ def _run_mutation(
             )
         )
         return _with_other(findings, [])
+
+    # #282: the serial baseline flakes on a loaded host. Run it only once the
+    # host is idle; a host that never settles is an explicit skip, never a pass.
+    try:
+        idle_cfg = host_idle.load_config()
+    except host_idle.IdleConfigError as exc:
+        error = _process_error(f"mutation idle gate: {exc}")
+        return _with_other([error], [error.description])
+    announced: list[str] = []
+
+    def _announce(reasons: list[str]) -> None:
+        if not announced:
+            announced.append("yes")
+            print("code-forge: mutation: waiting for an idle host before the baseline: " + "; ".join(reasons),
+                  file=sys.stderr, flush=True)
+
+    idle = host_idle.wait_for_idle(idle_cfg, on_wait=_announce)
+    evidence["host_idle"] = idle.record()
+    if not idle.idle:
+        desc = "host not idle after %ds: %s" % (int(idle.waited_s), "; ".join(idle.reasons))
+        busy = StateFinding(
+            id="MUTATION_SKIPPED",
+            fingerprint="mutation-host-busy",
+            source="MUTANT",
+            disposition=Disposition.DISMISSED,
+            file="",
+            line_range=[],
+            description=desc,
+        )
+        return _with_other([busy], [desc])
 
     _workspace.acquire()
 
