@@ -1,0 +1,16 @@
+{
+  "cases": {
+    "C_full": {
+      "adversarial": "7a2b8ece4a31134e64546bf1758e591aae971ae912e6a7180ec9753d0cafe313",
+      "expert": "1776b05b1591a3fa45eee3fa7762d4bb99c8e60fff70fcccef3f4a89ea6ba999",
+      "qodo": "b9475fffa9d167aa2863214eb2f21255d782b9b1aecadece8f00822d4e9f2493"
+    },
+    "C_minimal": {
+      "adversarial": "f4ed580192082f6998b0ad396dff7157d1dd55b4415ebe95dbaf7bba89318293",
+      "expert": "f779ba53c4248127e8da647fa0ff255c502da4e53ba5680b0348ab27e6d63000",
+      "qodo": "fc8434ef780c4c81449e6b5378707864e730cc5cf95d17c37b0a89e807c301e5"
+    }
+  },
+  "outlet": "C",
+  "source_tree": "609aa5133076d77b4e17c77b2e82063418e8518e"
+}

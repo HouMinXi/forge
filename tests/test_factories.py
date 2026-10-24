@@ -1364,13 +1364,15 @@ class TestSharedPromptPrefix:
             provider()
         return seen
 
-    def test_passes_share_a_leading_prefix(self):
+    @pytest.mark.parametrize("review_lenses", [False, True])
+    def test_passes_share_a_leading_prefix(self, review_lenses):
         """The common prefix must cover nearly the whole prompt."""
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
         prompts = self._captured_prompts(
             resolved,
             post_image="## src/a.py\nline1\nadded\nline2\n" * 40,
             conventions_digest="snake_case for functions\n" * 10,
+            review_lenses=review_lenses,
         )
         assert len(prompts) == 3
 
@@ -1384,10 +1386,11 @@ class TestSharedPromptPrefix:
             "diverging early and no backend can cache across them" % (len(common), shortest)
         )
 
-    def test_role_sentence_is_not_at_the_start(self):
+    @pytest.mark.parametrize("review_lenses", [False, True])
+    def test_role_sentence_is_not_at_the_start(self, review_lenses):
         """Nothing pass-specific may be emitted before the shared body."""
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
-        prompts = self._captured_prompts(resolved)
+        prompts = self._captured_prompts(resolved, review_lenses=review_lenses)
 
         common = os.path.commonprefix(prompts)
         # The role NAMES are what differ; each must fall past the shared
@@ -1400,15 +1403,20 @@ class TestSharedPromptPrefix:
         assert all(t.strip() for t in tails), "a pass has an empty tail"
         assert len(set(tails)) == 3, "the three tails are not distinct"
 
-    def test_diff_body_is_inside_the_shared_prefix(self):
+    @pytest.mark.parametrize("review_lenses", [False, True])
+    def test_diff_body_is_inside_the_shared_prefix(self, review_lenses):
         """The expensive part -- the diff -- must be shared, not repeated late."""
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
-        prompts = self._captured_prompts(resolved)
+        prompts = self._captured_prompts(resolved, review_lenses=review_lenses)
 
         common = os.path.commonprefix(prompts)
         assert "src/a.py" in common, (
             "the diff body falls outside the shared prefix, so each pass re-sends it uncached"
         )
+        if review_lenses:
+            from code_forge.lenses import LENS_BLOCK
+
+            assert LENS_BLOCK in common, "the lens block must sit in the shared prefix"
 
 
 

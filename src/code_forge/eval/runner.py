@@ -886,6 +886,12 @@ def replay_entry(
     return eval_result
 
 
+def _trust_eval_gate(gate_path: Path, trust_dir: Path) -> None:
+    """Trust the harness gate.yaml in trust_dir (review_lenses hash included)."""
+    gate_data = yaml.safe_load(gate_path.read_text(encoding="utf-8"))
+    record_trust(gate_path, gate_data, config_dir=trust_dir)
+
+
 def _run_single(
     entry: CorpusEntry,
     diff_path: Path,
@@ -997,8 +1003,7 @@ def _run_single(
     # found nothing. A silent zero, not an error.
     trust_dir = xdg_dir / "code-forge"
     trust_dir.mkdir(parents=True, exist_ok=True)
-    gate_data = yaml.safe_load(gate_path.read_text(encoding="utf-8"))
-    record_trust(gate_path, gate_data, config_dir=trust_dir)
+    _trust_eval_gate(gate_path, trust_dir)
 
     timeout_s = _review_timeout_s()
     missing = _missing_arm_settings(eval_env)

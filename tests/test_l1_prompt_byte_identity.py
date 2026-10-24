@@ -59,7 +59,7 @@ TWO_ROWS = (
 PASSES = ("qodo", "expert", "adversarial")
 
 
-def _prompts(graph_ctx: str, context_sources_text: str = "") -> list[str]:
+def _prompts(graph_ctx: str, context_sources_text: str = "", review_lenses: bool = False) -> list[str]:
     out: list[str] = []
 
     def fake(prompt, **kw):
@@ -86,6 +86,7 @@ def _prompts(graph_ctx: str, context_sources_text: str = "") -> list[str]:
             focus_spec="",
             manifest_spec=MANIFEST,
             context_sources_text=context_sources_text,
+            review_lenses=review_lenses,
         )()
     assert len(out) == 3
     return out
@@ -119,6 +120,19 @@ def test_case_c_exception_is_empty():
     res = gather([_Boom()], ["f.py"], DIFF, head_sha=None)
     assert res.errors and res.rows == []
     assert _digests(_prompts(render_blast_radius(res.rows))) == ORACLE["C_exception_as_empty"]
+
+
+def test_case_a_two_rows_lenses_unchanged():
+    assert _digests(_prompts(TWO_ROWS, review_lenses=True)) == ORACLE["A_two_rows_lenses"]
+
+
+def test_case_b_empty_lenses_unchanged():
+    assert _digests(_prompts("", review_lenses=True)) == ORACLE["B_empty_lenses"]
+
+
+def test_case_c_exception_lenses_is_empty():
+    # C renders as B today (the except leaves the graph context empty).
+    assert _digests(_prompts("", review_lenses=True)) == ORACLE["C_exception_as_empty_lenses"]
 
 
 def test_case_d_rows_through_render_equal_a():

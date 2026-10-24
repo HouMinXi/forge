@@ -140,6 +140,25 @@ test:
 """
 
 
+def _auto_trust_gate(gate_yaml_path: Path) -> None:
+    """Trust the gate.yaml setup-mcp just wrote, review_lenses hash included."""
+    import yaml as _y
+
+    try:
+        with open(gate_yaml_path, "r", encoding="utf-8") as f:
+            gate_data = _y.safe_load(f) or {}
+        from .trust import record_trust
+
+        record_trust(gate_yaml_path, gate_data)
+        print("Trusted: %s" % gate_yaml_path, file=sys.stderr)
+    except Exception as exc:
+        print(
+            "Warning: gate.yaml written but trust recording failed: "
+            "%s. Run 'code-forge trust' manually." % exc,
+            file=sys.stderr,
+        )
+
+
 def run_setup_mcp(
     cwd: Path,
     backend_names: list[str],
@@ -222,21 +241,7 @@ def run_setup_mcp(
 
     # Auto-trust only what we just wrote (never blanket-trust existing files)
     if wrote_gate:
-        import yaml as _y
-
-        try:
-            with open(gate_yaml_path, "r", encoding="utf-8") as f:
-                gate_data = _y.safe_load(f) or {}
-            from .trust import record_trust
-
-            record_trust(gate_yaml_path, gate_data)
-            print("Trusted: %s" % gate_yaml_path, file=sys.stderr)
-        except Exception as exc:
-            print(
-                "Warning: gate.yaml written but trust recording failed: "
-                "%s. Run 'code-forge trust' manually." % exc,
-                file=sys.stderr,
-            )
+        _auto_trust_gate(gate_yaml_path)
 
     # Print client registration command only when user config was written
     # (so env vars match the backends that will actually be loaded).

@@ -383,17 +383,23 @@ Load passes/pass1-qodo.md and follow its instructions for this pass.
 
 Change-aware pre-review with feature-grouped walkthrough. Severity output uses P0-P3 (not the standalone skill's Red/Yellow/Green vocabulary). Anti-hallucination gate: mandatory re-read via Read tool + grep verification before reporting any finding. Large diffs (>500 lines or >10 files): split into batches, review serially. Read-only analysis only.
 
+Lenses: at run start, once, run `code-forge lenses --pass qodo` via Bash and cache its stdout. Append that text verbatim at the end of this pass's instructions; if it is empty, append nothing. If the command exits non-zero, tell the user its stderr and continue without lenses (do not STOP). If this exits 2 with 'unrecognized arguments', the installed CLI predates lenses; continue without them. A newer CLI with an older installed skill never appends lenses until `code-forge install-skill` is rerun.
+
 ### Pass 2: Expert Review
 
 Load passes/pass2-expert.md and follow its instructions for this pass.
 
 Senior engineer lens: SOLID, architecture, security. Uses P0-P3 severity natively. Loads reference checklists from references/ subdirectory (solid-checklist.md, security-checklist.md, code-quality-checklist.md, removal-plan.md). Always review-only unless state machine directs a fix.
 
+Lenses: at run start, once, run `code-forge lenses --pass expert` via Bash and cache its stdout. Append that text verbatim at the end of this pass's instructions; if it is empty, append nothing. If the command exits non-zero, tell the user its stderr and continue without lenses (do not STOP). If this exits 2 with 'unrecognized arguments', the installed CLI predates lenses; continue without them. A newer CLI with an older installed skill never appends lenses until `code-forge install-skill` is rerun.
+
 ### Pass 3: Adversarial QE
 
 Load passes/pass3-adversarial.md and follow its instructions for this pass.
 
 Red-team QE: assumes bugs exist until proven otherwise. 14 attack dimensions (correctness, edge cases, error handling, security, concurrency, API/contract, bidirectional, graceful degradation, convention adherence, performance, test quality, AI code smells, commit message accuracy, callchain analysis). Severity output uses P0-P3 (not the standalone skill's Critical/High/Medium/Low/Nit vocabulary). 3-step finding verification gate. Cross-function grep enforcement on full file.
+
+Lenses: at run start, once, run `code-forge lenses --pass adversarial` via Bash and cache its stdout. Append that text verbatim at the end of this pass's instructions; if it is empty, append nothing. If the command exits non-zero, tell the user its stderr and continue without lenses (do not STOP). If this exits 2 with 'unrecognized arguments', the installed CLI predates lenses; continue without them. A newer CLI with an older installed skill never appends lenses until `code-forge install-skill` is rerun.
 
 ## Severity Normalization
 
@@ -1297,15 +1303,15 @@ not coverage.
 ## Checklist
 
 - [ ] Read each P0/P1 finding that was fixed -- is the fix correct, or did
-      it introduce a new issue?
+      it introduce a new issue? -- judge: pre-existing base checklist item, not part of the review-lens change
 - [ ] For clean passes (0 findings): spot-check 2-3 code_excerpts -- does
-      the reviewer's coverage match what actually changed?
+      the reviewer's coverage match what actually changed? -- judge: pre-existing base checklist item, not part of the review-lens change
 - [ ] Check test assertions: do the tests verify the actual behavior, not
-      just that code runs without error?
+      just that code runs without error? -- judge: pre-existing base checklist item, not part of the review-lens change
 - [ ] Check naming consistency with sibling repos (if conventions digest
-      was provided).
-- [ ] If [test-assertion] findings were printed to stderr, review each one.
-- [ ] Final judgment: "approved" or describe issues.
+      was provided). -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] If [test-assertion] findings were printed to stderr, review each one. -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] Final judgment: "approved" or describe issues. -- judge: pre-existing base checklist item, not part of the review-lens change
 
 ## When to Skip
 
@@ -1465,12 +1471,12 @@ Signed-off-by: Minxi Hou <houminxi@gmail.com>"  # post-review-c3
 
 Before committing, all of the following must be satisfied:
 
-- [ ] 3 consecutive clean review cycles (Steps 1-3) with zero findings
-- [ ] Step 3.5 false-positive verification complete (if findings were fixed)
-- [ ] Step 4 smoke test: PASS
-- [ ] Step 5 R1 test gate: PASS (or PARTIAL with stub tests generated)
-- [ ] Step 6 R2 mutation check: PASS (or PARTIAL if tool absent + LLM fallback done)
-- [ ] Step 7 R3 e2e check: PASS or SKIP (SKIP is acceptable when no cross-component change detected)
+- [ ] 3 consecutive clean review cycles (Steps 1-3) with zero findings -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] Step 3.5 false-positive verification complete (if findings were fixed) -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] Step 4 smoke test: PASS -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] Step 5 R1 test gate: PASS (or PARTIAL with stub tests generated) -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] Step 6 R2 mutation check: PASS (or PARTIAL if tool absent + LLM fallback done) -- judge: pre-existing base checklist item, not part of the review-lens change
+- [ ] Step 7 R3 e2e check: PASS or SKIP (SKIP is acceptable when no cross-component change detected) -- judge: pre-existing base checklist item, not part of the review-lens change
 
 ## findings.json: dynamic_gate_run entry shape
 
@@ -1623,6 +1629,7 @@ When `/forge` is invoked:
         - The Step 0 findings context block (FUSE-01, same as Outlet B)
         - The instruction: "Systematically cover the whole diff risk surface"
         - The instruction to return JSON: {"findings": [{"file": "...", "line": N, "severity": "P0"|"P1"|"P2"|"P3", "description": "..."}]}
+        - The pass's lens text: at run start, once per pass, run `code-forge lenses --pass <pass>` via Bash (`qodo`, `expert` or `adversarial`) and cache its stdout. Append that text verbatim at the end of this pass's instructions; if it is empty, append nothing. If the command exits non-zero, tell the user its stderr and continue without lenses (do not STOP). If this exits 2 with 'unrecognized arguments', the installed CLI predates lenses; continue without them. A newer CLI with an older installed skill never appends lenses until `code-forge install-skill` is rerun.
       - The Agent MUST use a strong model (sonnet or opus). Haiku produces garbage
         for code review (6/6 false positives in viability re-test). If model-pin is
         empty/unset, default to sonnet.

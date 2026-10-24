@@ -329,6 +329,7 @@ def _build_parser() -> argparse.ArgumentParser:
       - verify: validate review receipts
       - detect: auto-detect toolchain, write tools.yaml
       - resolve-outlet: resolve review outlet (subprocess/inline/subagent)
+      - lenses: print the review-lens text for one pass (host-driven outlets)
       - init: generate a gate.yaml template in .code-forge/
 
     Backward compat: bare `forge` (no subcommand) defaults to `review`
@@ -754,6 +755,23 @@ def _build_parser() -> argparse.ArgumentParser:
             "backend is unreachable and no explicit override is set."
         ),
     )
+    # --- LENSES subcommand: review-lens text for host-driven outlets ---
+    lenses_parser = subparsers.add_parser(
+        "lenses",
+        help="print the review-lens text for one pass when review_lenses is on",
+        description=(
+            "Print the review-lens block plus the pass's lens selection "
+            "line to stdout when gate.yaml review_lenses is true and "
+            "trusted. Prints nothing otherwise. Read-only."
+        ),
+    )
+    lenses_parser.add_argument(
+        "--pass",
+        dest="lens_pass",
+        required=True,
+        choices=("qodo", "expert", "adversarial"),
+        help="review pass the text is for",
+    )
     doctor_parser = subparsers.add_parser(
         "doctor",
         help="Run self-check on workspace, backends, trust, and MCP. "
@@ -1056,6 +1074,7 @@ def _make_subagent_spawn(
     contract_spec: str = "",
     focus_spec: str = "",
     manifest_spec: str = "",
+    review_lenses: bool = False,
 ):
     """Factory for subagent spawn_fn. Module-level for testability.
 
@@ -1073,6 +1092,8 @@ def _make_subagent_spawn(
         contract_spec: cross-repo contract reference, may be "".
         focus_spec: review focus string, may be "".
         manifest_spec: rendered environment manifest block, may be "".
+        review_lenses: trusted switch; when True the lens block follows the
+            JSON contract and the pass's selection line ends the prompt.
     """
     _PASS_ROLES = {
         "qodo": "structural code reviewer: correctness and logic errors",
@@ -1081,11 +1102,17 @@ def _make_subagent_spawn(
     }
 
     def _spawn(pass_name: str, diff_text: str) -> str:
+        from .lenses import LENS_BLOCK, PASS_LENSES, selection_line
         from .llm_invoke import llm_invoke
         from .reviewer_json import REVIEW_JSON_CONTRACT, _requires_l1_excerpts
 
         role = _PASS_ROLES.get(pass_name, "code reviewer")
         prompt = "You are a " + role + ". Review this diff.\n" + REVIEW_JSON_CONTRACT
+        # A pass name outside the three known passes has no lens assignment,
+        # so it gets no lens bytes rather than a KeyError.
+        lens_pass = review_lenses and pass_name in PASS_LENSES
+        if lens_pass:
+            prompt += LENS_BLOCK
         if manifest_spec:
             prompt += "\n" + manifest_spec.strip() + "\n"
         if post_image:
@@ -1104,6 +1131,8 @@ def _make_subagent_spawn(
         from .diff import annotated_diff_prompt_block
 
         prompt += annotated_diff_prompt_block(diff_text)
+        if lens_pass:
+            prompt += selection_line(pass_name)
         result = llm_invoke(
             prompt, backend=backend, l1_evidence_required=_requires_l1_excerpts(diff_text)
         )
@@ -1186,6 +1215,8 @@ def _estimate_l1_prompt_tokens(
     manifest_spec: str,
     focus_spec: str,
     context_sources_text: str = "",
+    *,
+    lens_text: str = "",
 ) -> int:
     """Rough input-token estimate for one assembled L1 prompt.
 
@@ -1205,6 +1236,7 @@ def _estimate_l1_prompt_tokens(
         + len(focus_spec)
         + len(REVIEW_JSON_CONTRACT)
         + len(context_sources_text)
+        + len(lens_text)
     )
     return total // 4
 
@@ -1954,10 +1986,12 @@ def _run_trust(args, cwd: Path) -> int:
     import yaml as _y
     from .trust import (
         find_dangerous_fields,
+        lens_trust_state,
         record_trust,
         record_trust_contracts,
         revoke_trust,
         revoke_trust_contracts,
+        stored_lens_hash,
         trust_status,
         trust_status_contracts,
     )
@@ -2010,6 +2044,19 @@ def _run_trust(args, cwd: Path) -> int:
         )
         print("Current hash: %s" % s.current_hash, file=sys.stderr)
         print("Path: %s" % s.gate_yaml_path, file=sys.stderr)
+        # Lens lines appear only once lenses are in play (the key is in
+        # gate.yaml or a lens hash was stored), so the output for a gate.yaml
+        # that never mentions lenses is the same as before lenses existed.
+        lens_hash = stored_lens_hash(gate_yaml_path)
+        if "review_lenses" in gd or lens_hash:
+            print(
+                "Lens hash: %s" % (lens_hash or "(none)"),
+                file=sys.stderr,
+            )
+            print(
+                "Review lenses: %s" % lens_trust_state(gate_yaml_path, gd),
+                file=sys.stderr,
+            )
         if contracts_yaml_path.is_file():
             from .contract_loader import resolve_contract_specs
 
@@ -2068,7 +2115,8 @@ def _run_trust(args, cwd: Path) -> int:
         isinstance(backends_raw, dict) and all(v is None for v in backends_raw.values())
     )
     has_focus = isinstance(gd.get("review_focus"), str) and gd["review_focus"].strip()
-    if not has_backends and not has_focus and "kernel_context" not in gd:
+    has_lenses = gd.get("review_lenses") is True
+    if not has_backends and not has_focus and not has_lenses and "kernel_context" not in gd:
         print(
             "No backends or review_focus configured in this gate.yaml. Configure at least one.",
             file=sys.stderr,
@@ -2090,6 +2138,11 @@ def _run_trust(args, cwd: Path) -> int:
     # from a subdirectory is auditable.
     print("Trusting %s" % gate_yaml_path, file=sys.stderr)
     record_trust(gate_yaml_path, gd)
+    if has_lenses:
+        print(
+            "review_lenses: true changes the baseline review prompts for this repo.",
+            file=sys.stderr,
+        )
     if "kernel_context" in gd:
         from .trust import record_kernel_context_trust
 
@@ -2621,6 +2674,7 @@ def main() -> int:
         "verify",
         "detect",
         "resolve-outlet",
+        "lenses",
         "init",
         "trust",
         "eval",
@@ -2788,6 +2842,9 @@ def main() -> int:
 
     elif args.subcommand == "resolve-outlet":
         return _run_resolve_outlet(env=os.environ, cwd=Path.cwd())
+
+    elif args.subcommand == "lenses":
+        return _run_lenses(args, cwd=Path.cwd())
 
     elif args.subcommand == "doctor":
         from .doctor import run_doctor
@@ -3241,6 +3298,33 @@ def _load_trusted_yaml_focus(gate_yaml_path: Path, warn_fn) -> str:
     return ""
 
 
+def _load_trusted_review_lenses(gate_yaml_path: Path, warn_fn) -> bool:
+    """Return True only for a trusted ``review_lenses: true`` in gate.yaml.
+
+    Reads gate.yaml with NO backend-trust gating and authorizes the switch
+    only through its own lens_hash, so lens trust is independent of backend
+    and focus trust. Only the boolean True enables lenses; any other value is
+    ignored (with a warning when it is present but not a bool).
+    """
+    from .trust import is_trusted_lenses
+
+    lens_gd = _load_gate_yaml_raw(gate_yaml_path)
+    raw = lens_gd.get("review_lenses")
+    if raw is None:
+        return False
+    if not isinstance(raw, bool):
+        warn_fn(
+            "gate.yaml review_lenses ignored: not a bool (got %s). "
+            "Use true or false." % type(raw).__name__
+        )
+        return False
+    if raw is True and is_trusted_lenses(gate_yaml_path, lens_gd):
+        return True
+    if raw is True:
+        warn_fn("gate.yaml review_lenses ignored: not trusted. Run 'code-forge trust'.")
+    return False
+
+
 def _load_focus_file(path_str: str, warn_fn=None) -> str:
     """Load focus content from file path or stdin ('-')."""
     if path_str == "-":
@@ -3460,6 +3544,7 @@ def _dispatch_subagent(
     yaml_focus="",
     _focus_file_content="",
     allow_unsnapshotted_context: bool = False,
+    review_lenses: bool = False,
 ) -> "Verdict | None":
     """Subagent outlet dispatch. Returns Verdict if outlet=='subagent',
     None otherwise (caller continues to subprocess path)."""
@@ -3500,6 +3585,7 @@ def _dispatch_subagent(
         contract_spec=_contract_spec_c,
         focus_spec=_focus_spec_c,
         manifest_spec=_manifest_spec_c,
+        review_lenses=review_lenses,
     )
     _c_taint = TaintRunner()
     _c_runtime = RuntimeRunner(backend=backend)
@@ -3856,6 +3942,10 @@ def _run(args, env, cwd: Path) -> Verdict:
     if gate_yaml_path.is_file():
         yaml_focus = _load_trusted_yaml_focus(gate_yaml_path, warn)
 
+    # Review lenses: effective only for a trusted boolean true (its own
+    # lens_hash). Every outlet below receives this one value.
+    review_lenses = _load_trusted_review_lenses(gate_yaml_path, warn)
+
     # has_explicit_backend is True when the user passed --backend <name>
     # or assembled an inline backend via --backend-url/format/key-env/model.
     _backend_arg = getattr(args, "backend", None)
@@ -4068,6 +4158,7 @@ def _run(args, env, cwd: Path) -> Verdict:
         yaml_focus=yaml_focus,
         _focus_file_content=_focus_file_content,
         allow_unsnapshotted_context=bool(getattr(args, "allow_unsnapshotted_context", False)),
+        review_lenses=review_lenses,
     )
     if _subagent_v is not None:
         return _subagent_v
@@ -4241,6 +4332,12 @@ def _run(args, env, cwd: Path) -> Verdict:
     )
 
     _group_budget = max_prompt_tokens_from_gate_config(gate_data)
+    if review_lenses:
+        from .lenses import estimate_lens_text
+
+        _lens_text = estimate_lens_text()
+    else:
+        _lens_text = ""
     _l1_est_tokens = _estimate_l1_prompt_tokens(
         resolved.git_diff or "",
         _post_image_a,
@@ -4250,6 +4347,7 @@ def _run(args, env, cwd: Path) -> Verdict:
         _manifest_spec_a,
         "",
         _context_sources_text if kernel_cfg.enabled else "",
+        lens_text=_lens_text,
     )
     if _l1_est_tokens <= _group_budget:
         l1_provider = build_l1_provider(
@@ -4268,6 +4366,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
             retry_timeout=bool(retry_cfg.get("retry_timeout", False)),
             pass_stagger_s=float(retry_cfg.get("l1_pass_stagger_s", 0.0) or 0.0),
+            review_lenses=review_lenses,
         )
     else:
         from .graph_triage import _run_sem
@@ -4320,6 +4419,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
                 retry_timeout=bool(retry_cfg.get("retry_timeout", False)),
                 pass_stagger_s=float(retry_cfg.get("l1_pass_stagger_s", 0.0) or 0.0),
+                review_lenses=review_lenses,
             )
         else:
             import dataclasses as _dc
@@ -4374,6 +4474,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
                 retry_timeout=bool(retry_cfg.get("retry_timeout", False)),
                 pass_stagger_s=float(retry_cfg.get("l1_pass_stagger_s", 0.0) or 0.0),
+                review_lenses=review_lenses,
             )
 
     # Coverage gate inputs: L1 examines every changed file only when it
@@ -5278,6 +5379,36 @@ def _run_detect(args, cwd: Path) -> int:
             file=sys.stderr,
         )
         return EXIT_CLI_ERROR
+    return EXIT_PASS
+
+
+def _run_lenses(args, cwd: Path) -> int:
+    """Print the lens text for ``args.lens_pass`` when the switch is effective.
+
+    Read-only: gate.yaml is read from ``cwd/.code-forge`` (no workspace
+    climb) and trust is checked through ``_load_trusted_review_lenses``,
+    which never writes trusted.json. Stdout carries only the lens bytes;
+    warnings go to stderr. Off, untrusted and non-bool all exit 0 with
+    empty stdout; an unparseable gate.yaml exits non-zero.
+    """
+    from .lenses import LENS_BLOCK, selection_line
+
+    gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+
+    def _warn(msg: str) -> None:
+        print("code-forge: lenses: %s" % msg, file=sys.stderr)
+
+    try:
+        enabled = _load_trusted_review_lenses(gate_yaml_path, _warn)
+    except CliError as exc:
+        print("code-forge: lenses: %s" % exc, file=sys.stderr)
+        return EXIT_CLI_ERROR
+    except (OSError, UnicodeDecodeError) as exc:
+        print("code-forge: lenses: cannot read gate.yaml: %s" % exc, file=sys.stderr)
+        return EXIT_CLI_ERROR
+    if enabled:
+        sys.stdout.write(LENS_BLOCK + selection_line(args.lens_pass))
+        sys.stdout.flush()
     return EXIT_PASS
 
 

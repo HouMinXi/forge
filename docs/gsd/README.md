@@ -8,8 +8,8 @@ historical source bindings in these plans. This snapshot provides planning
 access, not current engineering acceptance, design approval or permission
 to execute historical commands.
 
-The formal v3.0 state remains **3/5 phases complete (60%)**, **Phase59 active**,
-**Phase60 pending**, and **all 11 active requirements pending**. Phases
+The formal v3.0 state remains **3/6 phases complete (50%)**, **Phase59 active**,
+**Phase60 pending**, and **all 15 active requirements pending** (11 for Phases 59/60, 4 LENS entries for the inserted Phase 59.1). Phases
 56/57/58 are historically complete; 50/53b remain deferred. Formal plan
 counts are unreconciled. There are **18 existing Phase59 plans** here;
 their presence is not evidence that they were admitted, implemented or
@@ -51,15 +51,15 @@ accepted. Phase60 has preparation documents only, with no formal phase plan.
 
 ## Complete document index
 
-The bundle has 35 files: this index, [MANIFEST.json](MANIFEST.json), and
-33 source-backed documents. The manifest binds every source document to its
+The bundle has 37 files: this index, [MANIFEST.json](MANIFEST.json), and
+35 source-backed documents. The manifest binds every source document to its
 original SHA-256 and its actual published-byte SHA-256. The STATE record
 binds the full original source even though only a formal extraction is public.
 
 | Core document | Role |
 | --- | --- |
 | [PROJECT.md](PROJECT.md) | Full charter and historical project decisions |
-| [REQUIREMENTS.md](REQUIREMENTS.md) | Full requirements; all 11 active entries remain pending |
+| [REQUIREMENTS.md](REQUIREMENTS.md) | Full requirements; all 15 active entries remain pending |
 | [ROADMAP.md](ROADMAP.md) | Full roadmap and preserved phase boundaries |
 | [STATE-2026-10-18.md](STATE-2026-10-18.md) | Dated extraction, source last_updated 2026-10-16 |
 
@@ -99,6 +99,19 @@ binds the full original source even though only a formal extraction is public.
 | [59-RESEARCH.md](phases/59-judgment-and-evidence/59-RESEARCH.md) | Existing bounded-investigation research |
 | [59-SOURCE-AUDIT.md](phases/59-judgment-and-evidence/59-SOURCE-AUDIT.md) | Historical source-admission audit |
 | [59-VALIDATION.md](phases/59-judgment-and-evidence/59-VALIDATION.md) | Draft validation strategy and limits |
+
+### Phase59.1 plans
+
+Phase 59.1 is a decimal insert admitted after the 59 plans above; it does not
+renumber Phase 60. Publishing a plan is not itself an execution admission.
+
+| Plan | Objective |
+| --- | --- |
+| [59.1-01-PLAN.md](phases/59.1-review-lenses/59.1-01-PLAN.md) | Add the opt-in, separately trusted review-lens block to the L1 review prompts and keep every off-path prompt byte-identical to 609aa51. |
+
+| Support | Record |
+| --- | --- |
+| [59.1-01-SUMMARY.md](phases/59.1-review-lenses/59.1-01-SUMMARY.md) | Delivery evidence for the opt-in review lenses: oracles, injection ledger, suite counts, build listing, rollback rehearsal. |
 
 ### Phase60 preparation
 

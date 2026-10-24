@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
-"""Capture the L1 prompt digests that Phase 59-B2 must preserve.
+"""Check, and extend, the L1 prompt digests that byte-identity tests use as an oracle.
 
-Run this on main BEFORE any context-sources change lands. It builds the
-L1 prompt through build_l1_provider with llm_invoke mocked, for the four
-blast-radius cases the plan names, and writes sha256 of every pass's
-prompt to tests/fixtures/l1_prompt_digests_pre_p59.json. B2's byte-
-identity test reads that file as its oracle.
+It builds the L1 prompt through build_l1_provider with llm_invoke mocked,
+for the fixed blast-radius cases below, and compares sha256 of every pass's
+prompt to tests/fixtures/l1_prompt_digests_pre_p59.json.
+
+This script never overwrites the fixture:
+
+* no flags: recompute the off-path digests (and the ``*_lenses`` digests when
+  the fixture has them) and compare. Exit 1 when anything moved, is missing
+  or is extra; a moved off-path digest needs a revision written by hand.
+* ``--lenses --reason TEXT``: append the ``*_lenses`` cases (built with
+  review_lenses=True) once, keeping source_tree and every existing case, and
+  wrap the old revision as ``previous``. Refused when lens cases exist.
 
 The inputs are fixed strings so the digests are reproducible on any
 machine with the same source tree.
 """
+
 from __future__ import annotations
 
+import argparse
+import copy
 import hashlib
 import json
 import sys
@@ -58,7 +68,7 @@ CASES = {
 }
 
 
-def capture(graph_ctx: str) -> dict[str, str]:
+def capture(graph_ctx: str, review_lenses: bool = False) -> dict[str, str]:
     prompts: list[str] = []
 
     def fake_invoke(prompt, **kw):
@@ -66,17 +76,27 @@ def capture(graph_ctx: str) -> dict[str, str]:
         return LLMResult(content={"findings": []}, usage=Usage())
 
     resolved = ResolvedReview(
-        source_files=[Path("f.py")], baseline_content=None,
-        git_diff=DIFF, mode_hint="git", base_sha="a" * 40, head_sha="b" * 40,
+        source_files=[Path("f.py")],
+        baseline_content=None,
+        git_diff=DIFF,
+        mode_hint="git",
+        base_sha="a" * 40,
+        head_sha="b" * 40,
     )
     # llm_invoke is imported inside build_l1_provider (factories.py:255),
     # so the seam is the source module, not factories.
     with patch("code_forge.llm_invoke.llm_invoke", side_effect=fake_invoke):
         provider = factories.build_l1_provider(
-            "auto", resolved, backend=None,
-            conventions_digest=CONV, post_image=POST_IMAGE,
-            graph_impact_context=graph_ctx, contract_spec=CONTRACT,
-            focus_spec=FOCUS, manifest_spec=MANIFEST,
+            "auto",
+            resolved,
+            backend=None,
+            conventions_digest=CONV,
+            post_image=POST_IMAGE,
+            graph_impact_context=graph_ctx,
+            contract_spec=CONTRACT,
+            focus_spec=FOCUS,
+            manifest_spec=MANIFEST,
+            review_lenses=review_lenses,
         )
         provider()
     assert len(prompts) == 3, "expected three L1 passes, got %d" % len(prompts)
@@ -86,23 +106,82 @@ def capture(graph_ctx: str) -> dict[str, str]:
     }
 
 
-def main() -> int:
-    out = {"source_tree": _git_head(), "cases": {}}
-    for name, ctx in CASES.items():
-        out["cases"][name] = capture(ctx)
-        print(name, out["cases"][name]["qodo"][:16], "...")
-    dest = ROOT / "tests" / "fixtures" / "l1_prompt_digests_pre_p59.json"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(out, indent=2) + "\n")
-    print("wrote", dest)
+FIXTURE = ROOT / "tests" / "fixtures" / "l1_prompt_digests_pre_p59.json"
+
+
+class DigestsMoved(RuntimeError):
+    pass
+
+
+def recompute(review_lenses: bool) -> dict[str, dict[str, str]]:
+    suffix = "_lenses" if review_lenses else ""
+    return {name + suffix: capture(ctx, review_lenses) for name, ctx in CASES.items()}
+
+
+def _split(cases: dict) -> tuple[dict, dict]:
+    off = {k: v for k, v in cases.items() if not k.endswith("_lenses")}
+    on = {k: v for k, v in cases.items() if k.endswith("_lenses")}
+    return off, on
+
+
+def check(stored: dict, recomputed_off: dict, recomputed_lens: dict) -> None:
+    off_stored, lens_stored = _split(stored["cases"])
+    if recomputed_off != off_stored:
+        raise DigestsMoved("off-path digests moved; write a revision by hand")
+    if lens_stored and recomputed_lens != lens_stored:
+        bad = sorted(
+            k
+            for k in set(lens_stored) | set(recomputed_lens)
+            if lens_stored.get(k) != recomputed_lens.get(k)
+        )
+        raise DigestsMoved("lens digests differ from a fresh review_lenses=True build: %s" % bad)
+
+
+def add_lenses(stored: dict, recomputed_off: dict, recomputed_lens: dict, reason: str) -> dict:
+    off_stored, lens_stored = _split(stored["cases"])
+    if recomputed_off != off_stored:
+        raise DigestsMoved("off-path digests moved; write a revision by hand")
+    if lens_stored:
+        raise ValueError("lens cases already present: %s" % sorted(lens_stored))
+    if not recomputed_lens or not all(k.endswith("_lenses") for k in recomputed_lens):
+        raise ValueError("expected only *_lenses cases")
+    out = copy.deepcopy(stored)
+    out["cases"].update(recomputed_lens)
+    out["revision"] = {
+        "reason": reason,
+        "added": sorted(recomputed_lens),
+        "previous": stored.get("revision"),
+    }
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--fixture", type=Path, default=FIXTURE)
+    ap.add_argument("--lenses", action="store_true", help="append the *_lenses cases once")
+    ap.add_argument("--reason", help="revision reason; required with --lenses")
+    args = ap.parse_args(argv)
+    if args.lenses and not args.reason:
+        ap.error("--lenses requires --reason")
+
+    stored = json.loads(args.fixture.read_text())
+    recomputed_off = recompute(False)
+    try:
+        if args.lenses:
+            new = add_lenses(stored, recomputed_off, recompute(True), args.reason)
+            args.fixture.write_text(json.dumps(new, indent=2) + "\n")
+            print("added", ", ".join(new["revision"]["added"]), "to", args.fixture)
+            return 0
+        lens_stored = _split(stored["cases"])[1]
+        check(stored, recomputed_off, recompute(True) if lens_stored else {})
+    except DigestsMoved as exc:
+        print("error:", exc, file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print("error:", exc, file=sys.stderr)
+        return 2
+    print("digests match", args.fixture)
     return 0
-
-
-def _git_head() -> str:
-    import subprocess
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True,
-    ).stdout.strip()
 
 
 if __name__ == "__main__":

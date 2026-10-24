@@ -8,10 +8,12 @@
   "published_root": "docs/gsd/",
   "status": "dated documentation snapshot; no phase or design acceptance added",
   "coverage": {
-    "source_backed_documents": 33,
-    "public_files": 35,
+    "source_backed_documents": 35,
+    "public_files": 37,
     "phase59_plans": 18,
     "phase59_support": 9,
+    "phase59_1_plans": 1,
+    "phase59_1_support": 1,
     "phase60_preparation_documents": 2,
     "phase60_formal_plans": 0
   },
@@ -47,11 +49,11 @@
     {
       "source_path": "REQUIREMENTS.md",
       "published_path": "docs/gsd/REQUIREMENTS.md",
-      "source_sha256": "7ac0e63ccd6a4e3ce8687884e89ee04799ef894237354be687c3068a006f5c0d",
-      "source_size": 15986,
-      "source_mtime_utc": "2026-10-04T18:25:22.926419+00:00",
-      "published_sha256": "940350e29d2ccee9966b882cd2905f7eb6d8e828935705fe20f2e95039bc486e",
-      "published_size": 16385,
+      "source_sha256": "8171c326fc50dc4df3703278c4bbcb3ef313c03fb0855f51d3260d88d7609a55",
+      "source_size": 18565,
+      "source_mtime_utc": "2026-10-24T04:25:02.083995+00:00",
+      "published_sha256": "2266dfc10092e2e30c482dc86fe45cbe907244e8e5284c59cc615e8ab72fab87",
+      "published_size": 18972,
       "transformations": [
         {
           "category": "dated-publication-banner"
@@ -84,11 +86,11 @@
     {
       "source_path": "ROADMAP.md",
       "published_path": "docs/gsd/ROADMAP.md",
-      "source_sha256": "1c42372e7335588c10a539ae12a383d2b35fa72d9a380089c408e0d6bdb3dfa2",
-      "source_size": 89933,
-      "source_mtime_utc": "2026-10-06T17:56:39.518720+00:00",
-      "published_sha256": "826318110b591cff3c66fc66c6a019cf68680c1e48da583c2be3273a4c50e1db",
-      "published_size": 90563,
+      "source_sha256": "9b35f8daa7d5a40689db17edc0076a2a5a1da304e8b60ee65a151eb4a96f7350",
+      "source_size": 93077,
+      "source_mtime_utc": "2026-10-24T04:25:02.084415+00:00",
+      "published_sha256": "227edba19588baa2b7998d245c3268fac1938036a814e2e76af0a3ebb76d9993",
+      "published_size": 93713,
       "transformations": [
         {
           "category": "private-host-b",
@@ -227,9 +229,9 @@
     {
       "source_path": "STATE.md",
       "published_path": "docs/gsd/STATE-2026-10-18.md",
-      "source_sha256": "173de5eea8589b2c8624e95d90ecbfb723f2e9f83bc67c3c5b1281b111895323",
-      "source_size": 200428,
-      "source_mtime_utc": "2026-10-16T11:04:47.772053+00:00",
+      "source_sha256": "f8817b12ce782d6a8fe9a48e2ebeacbbea94da37bd80c1c433e3d19d35ddf210",
+      "source_size": 200972,
+      "source_mtime_utc": "2026-10-19T15:28:03.460739+00:00",
       "published_sha256": "269ac54a748a22caf7c8d263cfc4b5f32f2010378f71d29a1eb9913fbf50bee7",
       "published_size": 2591,
       "transformations": [
@@ -1823,6 +1825,60 @@
           "occurrences": 12,
           "operation": "Wrap each historical list checkbox marker in backticks; marker state and text unchanged.",
           "inverse": "Remove the wrapping backticks from these list checkbox markers."
+        }
+      ],
+      "planning_references_not_in_bundle": [],
+      "unresolved_execution_context_references": [],
+      "historical_git_or_object_ids_unverified": [],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59.1-review-lenses/59.1-01-PLAN.md",
+      "published_path": "docs/gsd/phases/59.1-review-lenses/59.1-01-PLAN.md",
+      "source_sha256": "992c8d02f6303b7799d3a077f737ea8364b47239a20f735d50f8b05ca6cbbc59",
+      "source_size": 86729,
+      "source_mtime_utc": "2026-10-24T12:26:54.988267+00:00",
+      "published_sha256": "992c8d02f6303b7799d3a077f737ea8364b47239a20f735d50f8b05ca6cbbc59",
+      "published_size": 86729,
+      "transformations": [
+        {
+          "category": "authored-public-form",
+          "note": "source was authored with public placeholders and a dated banner; published bytes equal source bytes"
+        }
+      ],
+      "planning_references_not_in_bundle": [
+        ".planning/phases/59.1-review-lenses/59.1-01-SUMMARY.md",
+        ".planning/phases/59.1-review-lenses/execution/59.1-01/",
+        ".planning/phases/59.1-review-lenses/drafts/capture_outlet_c_digests.py",
+        ".planning/phases/59.1-review-lenses/drafts/capture_l1_merge_draft.py",
+        ".planning/phases/59.1-review-lenses/drafts/t19_value_level_draft.py",
+        ".planning/phases/59.1-review-lenses/drafts/sim_null_gates.py",
+        ".planning/phases/59.1-review-lenses/drafts/lenses_draft.py",
+        ".planning/phases/59.1-review-lenses/drafts/lens_block.txt",
+        ".planning/phases/59.1-review-lenses/drafts/measure_falsifier.py",
+        ".planning/phases/59.1-review-lenses/drafts/THIRD_PARTY_NOTICES.md",
+        ".planning/phases/59.1-review-lenses/drafts/sim_null_gates_result.json",
+        ".planning/phases/59.1-review-lenses/drafts/sim_null_gates_checks.json"
+      ],
+      "unresolved_execution_context_references": [
+        "[PRIVATE_GSD_INSTALL]/templates/summary.md",
+        "[PRIVATE_GSD_INSTALL]/workflows/execute-plan.md"
+      ],
+      "historical_git_or_object_ids_unverified": [],
+      "historical_short_hex_identifiers_unverified": []
+    },
+    {
+      "source_path": "phases/59.1-review-lenses/59.1-01-SUMMARY.md",
+      "published_path": "docs/gsd/phases/59.1-review-lenses/59.1-01-SUMMARY.md",
+      "source_sha256": "94fb0204b7faa96d846568cbe934148beb9f93073d0cebd8dec978a4013392a7",
+      "source_size": 14076,
+      "source_mtime_utc": "2026-10-24T12:32:56.372090+00:00",
+      "published_sha256": "94fb0204b7faa96d846568cbe934148beb9f93073d0cebd8dec978a4013392a7",
+      "published_size": 14076,
+      "transformations": [
+        {
+          "category": "authored-public-form",
+          "note": "source was authored with public placeholders and a dated banner; published bytes equal source bytes"
         }
       ],
       "planning_references_not_in_bundle": [],
