@@ -1,0 +1,38 @@
+{
+  "status": "REPORT_BEARING_PACKAGE_BOUND_FOR_METADATA_RECONCILIATION",
+  "reviewed_core_manifest_sha256": "5fcd84bffa7a80a7440eaedd74e63e27c996f07feb660958d71f6495934a5672",
+  "reviewed_core_files": 19,
+  "reviewed_core_bytes": 232857,
+  "review_report_file": "PBR-STAGE1-RECHECK.md",
+  "review_report_sha256": "e2bb8d2e63d2447dd4204921acdd430e0fd699eacef1c027578d4129ef8c1a4a",
+  "source_only_review_result": "B0_H0_M0_L0_ALL_CORE_AND_APPLICABLE_EMPIRICAL_PASSES",
+  "changes_from_reviewed_core": [
+    {
+      "file": "PBR-STAGE1-RECHECK.md",
+      "reviewed_core_sha256": null,
+      "packaged_sha256": "e2bb8d2e63d2447dd4204921acdd430e0fd699eacef1c027578d4129ef8c1a4a",
+      "change": "report addition"
+    },
+    {
+      "file": "PUBLIC-INPUTS.json",
+      "reviewed_core_sha256": "6b3ed94e4c2f2196d22d22ecef9dbc1e1e4dc19f3f2a9f64605bf8f11ab4c50e",
+      "packaged_sha256": "97c617904b4062c5b2221c8d9351d78c2b9a9558e4828b26a03010a6a7b1c72e",
+      "change": "review-status/provenance metadata only"
+    },
+    {
+      "file": "README.md",
+      "reviewed_core_sha256": "4e2eb91b639e959a278d095b1488afd50831e4e133aee831c58a97a5ea536844",
+      "packaged_sha256": "8e31e4ec11ca03f82949ad0f78771f2911f1a9c09735810d6e007c2f070806a5",
+      "change": "review-status/provenance metadata only"
+    }
+  ],
+  "substantive_plan_design_control_changes_after_review": false,
+  "frozen_controls_and_prior_reports_unchanged": true,
+  "private_methodology_included": false,
+  "cross_ai_stage2": "PENDING",
+  "source_graph": "NOT_RUN",
+  "full_methodology_and_execution_admission": "HOLD",
+  "external_writes": false,
+  "product_edits": false,
+  "runtime_execution": false
+}

@@ -1,0 +1,22 @@
+# Proposed offline analyser plan revision
+
+Status: STAGE 1 SOURCE-ONLY RECHECK CLEAN; STAGE 2 PENDING; NOT FORMALLY ADMITTED. This additive documentation bundle changes no historical plan, product source or acceptance record. It authorizes no implementation, test execution, provider use, installation, runtime, merge/adoption or historical pass.
+
+The second complete PBR rerun found B0/H0/M0/L0 across all eight core passes and applicable additional checks. [Current Stage 1 report](PBR-STAGE1-RECHECK.md) binds the reviewed 19-file core manifest 5fcd84bffa7a80a7440eaedd74e63e27c996f07feb660958d71f6495934a5672. This report-bearing package has a different manifest because it adds the report and updates only review-status/provenance metadata. For current review status, this README and that report supersede pre-recheck pending wording in the frozen core; no task, arithmetic, acceptance or admission gate is waived.
+
+## Review this exact proposal
+
+1. [PBR finding dispositions](PBR-FINDING-DISPOSITIONS.md): the initial three corrections plus the first full rerun's mutation-backup omission; narrow N07 override, current status and immutable prior-input identity. Then read [revision and dispositions](REVISION-AND-DISPOSITIONS.md) for dependency/task/must-have mapping and unchanged historical obligations.
+2. [Complete59-16 candidate](59-16-PLAN-CANDIDATE.md): three typed tasks, synthetic-only wave1/depends_on[].
+3. [Research planning delta](RESEARCH-PLANNING-DISPOSITIONS.md): apply only this replacement section to the immutable published research; measured endpoint, worker and historical qualification remain PENDING/UNKNOWN.
+4. [Exact prospective validation map](59-VALIDATION-CANDIDATE.md): allC01-C24 andN01-N12 families, task-level commands and no executed-result claim.
+5. Unchanged [source contract](59-16-CURRENT-SOURCE-ADDENDUM.md), [frozen controls](59-16-FROZEN-CONTROLS.md), [received R2 plan16](received-r2-plan16.txt), and the corrected [patch design](PATCH-DESIGN.md).
+6. [Independent original-input review](ORIGINAL-CHECKER-REPORT.md):2 blockers and1 warning in the original packet. The unchanged [candidate recheck](CANDIDATE-RECHECK.md) and [packaging review](PACKAGING-REVIEW.md) record earlier checks of the prior packet only. Their former PBR-missing statements remain historical. The baseline complete PBR found one MEDIUM and two LOW issues; its first full rerun verified those fixes and found one additional MEDIUM backup/restoration omission. The second full rerun then verified that correction and found zero issues. The earlier reports remain historical; the current Stage 1 result does not grant Stage 2 or implementation admission.
+
+All required prior inputs have exact public GitHub URLs and payload hashes in [PUBLIC-INPUTS.json](PUBLIC-INPUTS.json). New deliverables and exact copies are included in this proposal and bound by [MANIFEST.json](MANIFEST.json). The full published research is linked at its immutable commit rather than duplicated. The original report's FETCH-PROVENANCE and INPUT-SHA256SUMS references resolve to files beside it; the checksum index uses public URLs/bundled names instead of executor-local paths. No private evidence archive is required to read this proposal.
+
+## Scope and unresolved gates
+
+16A is only a conceptual label for existing59-16 synthetic capability.16B is only a conceptual label for historical use within existing59-17. No new phase or plan ID is created.59-17 remains wave8 and depends on59-02+59-15+59-16. Original>=18/20, retained12/20 and13/20 failures, source/config/labels, pre-result frozen IDs, actual three-canary20-or150 branch, B3/B4 and P59-CLOSE all remain unchanged.
+
+The earlier GSD reviews used pinned upstream GSD1.42.3 documentary methodology; they were not SDK invocations or installed customized typed-checker results. The complete user-supplied PBR methodology was received and applied to the prior head, yielding B0/H0/M1/L2. The first full rerun verified the baseline fixes and found one further MEDIUM backup/restoration omission. The second complete rerun verified the correction and returned B0/H0/M0/L0 in the source-only scope. Stage 2 independent cross-AI convergence remains pending. The private methodology text is not published. Independent full-plan convergence, operative precedence/admission, ownership acknowledgment and all runtime/native-review/CI/adoption/acceptance remain unestablished. The clean Stage 1 result does not close those gates; physical source-graph qualification also remains unperformed.
