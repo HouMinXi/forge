@@ -1870,11 +1870,11 @@
     {
       "source_path": "phases/59.1-review-lenses/59.1-01-SUMMARY.md",
       "published_path": "docs/gsd/phases/59.1-review-lenses/59.1-01-SUMMARY.md",
-      "source_sha256": "4cb976cc6b64870a44a9d26e9c2e2d4ec18f662fe71cca77712d312928f70c12",
-      "source_size": 13344,
-      "source_mtime_utc": "2026-10-24T12:26:54.986897+00:00",
-      "published_sha256": "4cb976cc6b64870a44a9d26e9c2e2d4ec18f662fe71cca77712d312928f70c12",
-      "published_size": 13344,
+      "source_sha256": "94fb0204b7faa96d846568cbe934148beb9f93073d0cebd8dec978a4013392a7",
+      "source_size": 14076,
+      "source_mtime_utc": "2026-10-24T12:32:56.372090+00:00",
+      "published_sha256": "94fb0204b7faa96d846568cbe934148beb9f93073d0cebd8dec978a4013392a7",
+      "published_size": 14076,
       "transformations": [
         {
           "category": "authored-public-form",
