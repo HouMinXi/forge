@@ -83,6 +83,7 @@ from .state import (
     FindingDiagnosticKind,
     PassOutcome,
     is_provider_capacity,
+    is_mutation_infra_diagnostic,
     is_provider_diagnostic,
     reporting_product_findings,
     load_state,
@@ -796,6 +797,9 @@ class StateMachine:
         self._mutation_workspace_blocker: str | None = None
         self._mutation_timeout_objects: set[int] = set()
         self._mutation_timeout_emitted: set[str] = set()
+        # #114: this round's L2 infrastructure error (typed, not a product
+        # finding). None when the mutation layer worked or cleanly skipped.
+        self._l2_infra_error: str | None = None
 
     def _capture_mutation_review_source(self) -> None:
         """Retain the initial subject across autofix rounds; never refresh its guard."""
@@ -1421,6 +1425,7 @@ class StateMachine:
             or self._state.rounds_with_falsify_infra > 0
             or self._state.rounds_with_evidence_incomplete > 0
             or self._mutation_bound_failure
+            or self._l2_infra_error is not None
             else Verdict.PENDING if bound_launch_pending else Verdict.PASS
         )
         if coverage_gaps > 0 and confirmed == 0:
@@ -1944,6 +1949,7 @@ class StateMachine:
                     self._state.consecutive_clean_rounds
                 )
             self._persist_state()
+            self._check_mutation_infra_can_still_converge()
 
             if _fp == _FixpointResult.CLEAN and self._state.consecutive_clean_rounds >= _threshold:
                 self._finalize_local_terminal()
@@ -2248,6 +2254,47 @@ class StateMachine:
                 % (self._state.rounds_with_evidence_incomplete, len(downgraded))
             )
 
+    def _classify_l2_infra(self, l2_findings: list[StateFinding]) -> None:
+        """#114: type this round's L2 infrastructure error and count it.
+
+        MUTATION_ERROR (source INFRA) is the mutation layer failing, not the
+        code: it becomes a MUTATION_INFRA diagnostic. A runner exception has
+        no finding; _run_l2_phase records it in _l2_infra_error directly.
+        """
+        for finding in l2_findings:
+            if (
+                finding.id == "MUTATION_ERROR"
+                and finding.fingerprint == "mutation-evidence-error"
+                and finding.source == "INFRA"
+            ):
+                finding.diagnostic_kind = FindingDiagnosticKind.MUTATION_INFRA
+                if self._l2_infra_error is None:
+                    self._l2_infra_error = finding.description
+        if self._l2_infra_error is None:
+            self._state.rounds_with_mutation_infra = 0
+        else:
+            self._state.rounds_with_mutation_infra += 1
+
+    def _check_mutation_infra_can_still_converge(self) -> None:
+        """#114: a mutation infra error that persists ends the run.
+
+        Each such round earns nothing, so a broken mutation layer would
+        otherwise spin until the round cap. Consecutive rounds, like the
+        falsify and evidence breakers; one recovered round clears it.
+        """
+        if self._state.rounds_with_mutation_infra < 3:
+            return
+        self._state.verdict = Verdict.FAIL
+        self._state.converged = False
+        self._persist_state()
+        raise TimeoutBreaker(
+            "stopped: mutation infrastructure error in %d consecutive rounds "
+            "(not a code finding and not an LLM timeout; raising FORGE_LLM_TIMEOUT_S "
+            "will not help). Mutation was never measured, so no round could earn "
+            "clean credit. Repair the mutation environment and retry. Latest error: %s"
+            % (self._state.rounds_with_mutation_infra, self._l2_infra_error)
+        )
+
     def _check_falsify_can_still_converge(self, infra_failures: list[str]) -> None:
         """Stop a run whose falsifier keeps failing to adjudicate.
 
@@ -2428,6 +2475,7 @@ class StateMachine:
         """
         self._mutation_measurement_eligible = False
         self._mutation_bound_failure = False
+        self._l2_infra_error = None
         self._mutation_not_applicable = False
         self._mutation_workspace_blocker = None
         self._mutation_timeout_objects = set()
@@ -2581,7 +2629,8 @@ class StateMachine:
             return l2_findings
         except Exception as exc:  # noqa: BLE001
             self._mutation_bound_failure = native
-            self._state.infra_errors.append(f"L2 runner failed: {exc}")
+            self._l2_infra_error = f"L2 runner failed: {exc}"
+            self._state.infra_errors.append(self._l2_infra_error)
             return []
 
     def _review_diff_paths(self) -> set[str]:
@@ -3318,6 +3367,7 @@ class StateMachine:
                     logging.getLogger("code_forge").warning(error)
             raise
         l2_findings = self._observe_phase("l2", self._run_l2_phase)
+        self._classify_l2_infra(l2_findings)
         # A current L2 survivor needs this round's measurement and ruling.
         # Capture object identity before the helper can dismiss it so ordinary
         # carry-forward cannot override a revocation or an unproved successor.
@@ -3507,7 +3557,10 @@ class StateMachine:
         )
 
         history = self._product_history(prior=True)
-        product_findings = self._product_findings()
+        # #114: a typed L2 infra diagnostic is not a product finding. It
+        # never resets credit by itself; it only stops this round earning.
+        product_findings = [f for f in self._product_findings() if not is_mutation_infra_diagnostic(f)]
+        incomplete_l2 = self._l2_infra_error is not None
         current_disps = {f.fingerprint: f.disposition for f in product_findings}
 
         # Previous round's dispositions, for clause (b) only (a FIXED
@@ -3564,12 +3617,15 @@ class StateMachine:
         protocol_ids = {id(finding) for finding in self._falsify_protocol_findings}
         if any(id(finding) not in protocol_ids for finding in self._falsify_failed_findings):
             return _FixpointResult.RESET
-        incomplete = bool(protocol_ids) and self._host_attempt_round is not None
+        protocol_incomplete = bool(protocol_ids) and self._host_attempt_round is not None
+        # #188: an L2 infra error only downgrades CLEAN to INCOMPLETE; it never
+        # exempts an unadjudicated protocol-violation finding from the reset.
+        incomplete = protocol_incomplete or incomplete_l2
         for f in product_findings:
             if is_receipt_audit(f):
                 continue
             if f.disposition == Disposition.UNCERTAIN:
-                if incomplete and id(f) in protocol_ids:
+                if protocol_incomplete and id(f) in protocol_ids:
                     continue
                 return _FixpointResult.RESET
 
@@ -3641,6 +3697,9 @@ class StateMachine:
                 f.diagnostic_kind is FindingDiagnosticKind.CAPACITY_INCOMPLETE
                 and is_provider_diagnostic(f)
             )
+            # #188: a mutation-infra diagnostic is not a product finding and
+            # must not keep UNCERTAIN findings out of HOLD.
+            and not is_mutation_infra_diagnostic(f)
             for f in self._state.findings
         )
         return has_uncertain and not has_unfixed_confirmed
