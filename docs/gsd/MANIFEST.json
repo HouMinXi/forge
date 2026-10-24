@@ -229,9 +229,9 @@
     {
       "source_path": "STATE.md",
       "published_path": "docs/gsd/STATE-2026-10-18.md",
-      "source_sha256": "173de5eea8589b2c8624e95d90ecbfb723f2e9f83bc67c3c5b1281b111895323",
-      "source_size": 200428,
-      "source_mtime_utc": "2026-10-16T11:04:47.772053+00:00",
+      "source_sha256": "f8817b12ce782d6a8fe9a48e2ebeacbbea94da37bd80c1c433e3d19d35ddf210",
+      "source_size": 200972,
+      "source_mtime_utc": "2026-10-19T15:28:03.460739+00:00",
       "published_sha256": "269ac54a748a22caf7c8d263cfc4b5f32f2010378f71d29a1eb9913fbf50bee7",
       "published_size": 2591,
       "transformations": [
