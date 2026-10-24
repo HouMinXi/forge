@@ -39,7 +39,7 @@ class _FakeRunner:
         self.infra_errors: list[str] = []
         self.source_files = None
 
-    def run(self, diff_text, repo_root):
+    def run(self, diff_text, repo_root, **_kw):
         return list(self._advisories)
 
 
@@ -63,13 +63,13 @@ def _make_sm(tmp_path, *, advisories, blocking_ids):
         mode_hint="git",
     )
 
-    def _fake_gate_config(_path):
+    def _fake_gate_config(_self):
         return {"rulepacks": ["testpack"], "rulepacks_blocking": blocking_ids}
 
     fake_runner = _FakeRunner(advisories)
 
     with (
-        patch("code_forge.gate_check.load_gate_config", _fake_gate_config),
+        patch.object(StateMachine, "_trusted_gate_data", _fake_gate_config),
         patch("code_forge.rulepack.RulepackRunner", lambda: fake_runner),
     ):
         sm = StateMachine(

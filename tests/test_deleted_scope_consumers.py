@@ -1026,6 +1026,12 @@ def test_advisory_rulepack_cannot_rescan_retained_deletion(tmp_path, monkeypatch
             "rulepacks_blocking": ["no-document-write"],
         },
     )
+    # #141: blocking reads the trusted gate (baseline / outside root), not the tree.
+    monkeypatch.setattr(
+        StateMachine,
+        "_trusted_gate_data",
+        lambda _self: {"rulepacks": ["fixture"], "rulepacks_blocking": ["no-document-write"]},
+    )
     monkeypatch.setattr("code_forge.rulepack.resolve_active_packs", lambda *_: [pack])
     monkeypatch.setattr("code_forge.rulepack.shutil.which", lambda _: "/fixture/semgrep")
     monkeypatch.setattr(RulepackRunner, "_print_summary", lambda _: None)

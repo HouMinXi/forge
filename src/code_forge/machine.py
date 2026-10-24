@@ -662,6 +662,13 @@ def _ci_skip_reason(kind: str, findings: list) -> str:
     return "CI: mutation not measured: " + kind
 
 
+# #141: review-time gate.yaml keys read from the trusted gate (baseline /
+# outside config root), never from the tree under review.
+_REVIEW_GATE_KEYS = (
+    "ledger", "rulepacks", "rulepacks_blocking", "rulepack_timeout_seconds", "pinned_paths",
+    "style_downgrade",
+)
+
 @dataclass
 class StateMachine:
     """Forge state machine. Constructor wires dependencies; .run() executes.
@@ -792,6 +799,9 @@ class StateMachine:
         self._mutation_source_subject = None
         self._mutation_source_guard = None
         self._mutation_bound_failure = False
+        # #157: CI refusal of the trusted gate (outside root / untracked);
+        # the CI verdict FAILs with this reason instead of using defaults.
+        self._trusted_config_refusal: str | None = None
         self._mutation_not_applicable = False
         self._mutation_workspace_blocker: str | None = None
         self._mutation_timeout_objects: set[int] = set()
@@ -817,6 +827,11 @@ class StateMachine:
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
         self._note_gate_yaml_edit()
+        # #141: resolve the trusted gate once, up front, so review cycles do
+        # no git I/O for ledger / rulepack / suppression switches.
+        self._trusted_gate_cache = None
+        self._trusted_config_refusal = None
+        self._trusted_gate_cache = self._resolve_trusted_gate_data()
         admission_error = mutation_review_admission_error(
             target_kind=self.resolved_review.target_kind, git_diff=self.resolved_review.git_diff,
             source_files=self._source_files(), source_root=self._source_root(),
@@ -1421,8 +1436,13 @@ class StateMachine:
             or self._state.rounds_with_falsify_infra > 0
             or self._state.rounds_with_evidence_incomplete > 0
             or self._mutation_bound_failure
+            or self._trusted_config_refusal is not None
             else Verdict.PENDING if bound_launch_pending else Verdict.PASS
         )
+        if self._trusted_config_refusal is not None:
+            note = f"CI: {self._trusted_config_refusal}"
+            if note not in self._state.infra_errors:
+                self._state.infra_errors.append(note)
         if coverage_gaps > 0 and confirmed == 0:
             self._state.infra_errors.append(
                 "coverage: %d in-scope file(s) had no review layer "
@@ -2397,6 +2417,47 @@ class StateMachine:
             base_sha=self.resolved_review.base_sha, allow_untracked=self.mode is not Mode.CI,
         )
 
+    def _trusted_gate_data(self) -> dict:
+        """Cached result of :meth:`_resolve_trusted_gate_data` (set by run());
+        re-raises a cached ValueError so each caller keeps its fail-open path."""
+        cached = getattr(self, "_trusted_gate_cache", None)
+        if cached is None:
+            cached = self._resolve_trusted_gate_data()
+        if isinstance(cached, Exception):
+            raise cached
+        return cached
+
+    def _resolve_trusted_gate_data(self) -> dict | Exception:
+        """#141: raw gate.yaml mapping for review-time switches (ledger,
+        rulepacks_blocking, pinned_paths, style_downgrade) from the same
+        trusted source as test.*. No trusted gate.yaml (none at the
+        baseline, a change-added one, a linked/untracked one in CI) means
+        built-in defaults, never the reviewed tree's copy. A malformed
+        trusted file raises ValueError for the caller's fail-open path."""
+        from .gate_check import OutsideConfigRootRefused, UntrustedGateConfigError, load_trusted_gate_data
+
+        self._note_gate_yaml_edit()
+        try:
+            data = load_trusted_gate_data(
+                config_root=self._test_config_root(), source_root=self._source_root(),
+                base_sha=self.resolved_review.base_sha, allow_untracked=self.mode is not Mode.CI,
+            )
+        except OutsideConfigRootRefused as exc:
+            # #157: the operator's outside root was refused; CI FAILs on it.
+            if self.mode is Mode.CI:
+                self._note_trusted_config_refusal(f"trusted gate config refused: {exc}")
+            return {}
+        except (FileNotFoundError, UntrustedGateConfigError):
+            return {}
+        except (OSError, ValueError) as exc:
+            return exc
+        return {k: data[k] for k in _REVIEW_GATE_KEYS if k in data}
+
+    def _note_trusted_config_refusal(self, reason: str) -> None:
+        """#157: remember the first CI refusal; _run_ci FAILs with it."""
+        if getattr(self, "_trusted_config_refusal", None) is None:
+            self._trusted_config_refusal = reason
+
     def _note_gate_yaml_edit(self) -> None:
         """Advisory (once) when the change touches .code-forge/gate.yaml or the
         .code-forge path itself (symlink/submodule swaps included) while the
@@ -2415,8 +2476,9 @@ class StateMachine:
         self._advisories.append(AdvisoryFinding(
             id="GATE_YAML_EDIT_NOT_APPLIED", axis="config", file=".code-forge/gate.yaml",
             description=(
-                "test.* and mutation globs from this change's gate.yaml were not applied; "
-                "other keys: see #141"
+                "test.*, mutation globs, ledger, rulepacks/rulepacks_blocking, pinned_paths and "
+                "style_downgrade from this change's gate.yaml were not applied (they take effect "
+                "once on the review baseline)"
             ),
         ))
 
@@ -3970,16 +4032,13 @@ class StateMachine:
             return 0
 
         # Layer 2: gate.yaml kill-switch (tolerant raw YAML load, fail-open on parse error)
+        # #141: from the trusted gate (baseline / outside root), not the reviewed tree.
         try:
-            gate_path = self.cwd / ".code-forge" / "gate.yaml"
-            if gate_path.exists():
-                with open(gate_path, "r", encoding="utf-8") as f:
-                    gate_data = yaml.safe_load(f)
-                if isinstance(gate_data, dict):
-                    ledger_cfg = gate_data.get("ledger")
-                    if isinstance(ledger_cfg, dict) and ledger_cfg.get("enabled") is False:
-                        return 0
-        except (OSError, yaml.YAMLError, UnicodeDecodeError, AttributeError, TypeError) as exc:
+            gate_data = self._trusted_gate_data()
+            ledger_cfg = gate_data.get("ledger")
+            if isinstance(ledger_cfg, dict) and ledger_cfg.get("enabled") is False:
+                return 0
+        except (OSError, ValueError, yaml.YAMLError, UnicodeDecodeError, AttributeError, TypeError) as exc:
             msg = f"CI: gate.yaml ledger kill-switch read failed (fail-open, ledger enabled): {exc}"
             self._state.infra_errors.append(msg)
             print(msg, file=sys.stderr)
@@ -4085,23 +4144,20 @@ class StateMachine:
         style_pass_names: list[str] = []
         style_keywords: list[str] = []
         try:
-            gate_path = self.cwd / ".code-forge" / "gate.yaml"
-            if gate_path.exists():
-                with open(gate_path, "r", encoding="utf-8") as f:
-                    gate_data = yaml.safe_load(f)
-                if isinstance(gate_data, dict):
-                    pp = gate_data.get("pinned_paths", [])
-                    if isinstance(pp, list):
-                        pinned_paths = [str(p) for p in pp if isinstance(p, str)]
-                    sd = gate_data.get("style_downgrade", {})
-                    if isinstance(sd, dict):
-                        pn = sd.get("pass_names", [])
-                        if isinstance(pn, list):
-                            style_pass_names = [str(s) for s in pn if isinstance(s, str)]
-                        kw = sd.get("keywords", [])
-                        if isinstance(kw, list):
-                            style_keywords = [str(k) for k in kw if isinstance(k, str)]
-        except (OSError, yaml.YAMLError, UnicodeDecodeError, AttributeError, TypeError) as exc:
+            gate_data = self._trusted_gate_data()  # #141
+            if isinstance(gate_data, dict):
+                pp = gate_data.get("pinned_paths", [])
+                if isinstance(pp, list):
+                    pinned_paths = [str(p) for p in pp if isinstance(p, str)]
+                sd = gate_data.get("style_downgrade", {})
+                if isinstance(sd, dict):
+                    pn = sd.get("pass_names", [])
+                    if isinstance(pn, list):
+                        style_pass_names = [str(s) for s in pn if isinstance(s, str)]
+                    kw = sd.get("keywords", [])
+                    if isinstance(kw, list):
+                        style_keywords = [str(k) for k in kw if isinstance(k, str)]
+        except (OSError, ValueError, yaml.YAMLError, UnicodeDecodeError, AttributeError, TypeError) as exc:
             msg = f"CI: gate.yaml read for suppression failed (fail-open): {exc}"
             self._state.infra_errors.append(msg)
             print(msg, file=sys.stderr)
@@ -4289,11 +4345,10 @@ class StateMachine:
         source=RULEPACK and disposition=CONFIRMED, causing them to block
         the review verdict and reset the cycle counter.
         """
-        from .gate_check import load_gate_config
         from .rulepack import RulepackRunner
 
         try:
-            gate_config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
+            gate_config = self._trusted_gate_data()  # #141: not the reviewed tree's copy
         except Exception:  # noqa: BLE001 - no config means no rulepack, by design
             return []
 
@@ -4304,12 +4359,13 @@ class StateMachine:
         runner = RulepackRunner()
         runner.source_files = list(self._executable_source_files())
         if self.source_root is None:
-            advisories = runner.run(self.resolved_review.git_diff or "", self.cwd)
+            advisories = runner.run(self.resolved_review.git_diff or "", self.cwd, gate_config=gate_config)
         else:
             advisories = runner.run(
                 self.resolved_review.git_diff or "",
                 self.cwd,
                 execution_root=self._source_root(),
+                gate_config=gate_config,
             )
         self._state.infra_errors.extend(runner.infra_errors)
 
