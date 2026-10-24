@@ -173,10 +173,9 @@ def test_sessionfinish_rejects_shared_hook_drift(
         hook.unlink()
     else:
         hook.write_text("changed\n", encoding="utf-8")
-    with pytest.raises(SystemExit) as error:
-        suite_guard.pytest_sessionfinish(session, 0)
-    assert error.value.code == 1
-    assert f"pre-commit ({change})" in capsys.readouterr().err
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert session.exitstatus == 1
+    assert f"pre-commit ({change})" in session.config.stash[suite_guard._git_failure_key]
 
 
 def _suite_checkout(repository, tmp_path, monkeypatch, suite_guard):
@@ -262,7 +261,226 @@ def test_sessionfinish_rejects_branch_the_suite_could_have_made(
         _git(repository, "branch", "stray")
     else:
         _git(repository, "worktree", "add", "--quiet", "-b", "stray", str(scratch / "wt"))
-    with pytest.raises(SystemExit) as error:
-        suite_guard.pytest_sessionfinish(session, 0)
-    assert error.value.code == 1
-    assert "+refs/heads/stray" in capsys.readouterr().err
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert session.exitstatus == 1
+    assert "+refs/heads/stray" in session.config.stash[suite_guard._git_failure_key]
+
+
+_SUITE_ID = "forge-suite-under-test@suite.invalid"
+
+
+@pytest.mark.parametrize("change", ["created", "moved"])
+def test_sessionfinish_rejects_branch_carrying_the_session_identity(
+    repository, tmp_path, monkeypatch, suite_guard, change,
+):
+    """#184: a ref update the reflog attributes to this session is fatal."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    if change == "moved":
+        _git(repository, "branch", "stray")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    suite_guard.pytest_sessionstart(session)
+    if change == "created":
+        _git(repository, "branch", "stray")
+    else:
+        _git(repository, "update-ref", "refs/heads/stray", _git(repository, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit-tree", "-p", "HEAD", "-m", "x", "HEAD^{tree}"))
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert session.exitstatus == 1
+    assert "refs/heads/stray" in session.config.stash[suite_guard._git_failure_key]
+
+
+@pytest.mark.parametrize("change", ["created", "moved"])
+def test_sessionfinish_notes_branch_made_by_another_identity(
+    repository, tmp_path, monkeypatch, capsys, suite_guard, change,
+):
+    """#184: another session's branch that is not checked out anywhere (a
+    created branch plus its tracking config) is a note, not a failure."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    if change == "moved":
+        _git(repository, "branch", "other")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    suite_guard.pytest_sessionstart(session)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "other-session@example.invalid")
+    if change == "created":
+        _git(repository, "branch", "other")
+    else:
+        _git(repository, "update-ref", "refs/heads/other", _git(repository, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit-tree", "-p", "HEAD", "-m", "x", "HEAD^{tree}"))
+    _git(repository, "config", "branch.other.remote", "origin")
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert getattr(session, "exitstatus", 0) == 0
+    assert suite_guard._git_failure_key not in session.config.stash
+    assert "refs/heads/other changed in another session" in capsys.readouterr().err
+
+
+def test_guard_failure_is_printed_in_the_terminal_summary(suite_guard):
+    """#184: the failure is reported after pytest's own summary, not by sys.exit."""
+    written = []
+    reporter = SimpleNamespace(write_sep=lambda *a, **k: written.append(a), write=written.append)
+    config = SimpleNamespace(stash={suite_guard._git_failure_key: "FATAL: Test suite modified real .git state!\n"})
+    suite_guard.pytest_terminal_summary(reporter, 1, config)
+    assert any("FATAL: Test suite modified real .git state!" in str(w) for w in written)
+
+
+def test_sessionfinish_notes_branch_deleted_by_another_session(repository, tmp_path, monkeypatch, capsys, suite_guard):
+    """#196: a branch another session last wrote and then deletes mid-run
+    (no reflog left) is a note, not a failure."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "other-session@example.invalid")
+    _git(repository, "branch", "victim")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    suite_guard.pytest_sessionstart(session)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "other-session@example.invalid")
+    _git(repository, "branch", "-D", "victim")
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert getattr(session, "exitstatus", 0) == 0
+    assert "refs/heads/victim changed in another session" in capsys.readouterr().err
+
+
+def test_sessionfinish_rejects_deleting_a_branch_this_session_wrote(repository, tmp_path, monkeypatch, suite_guard):
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    _git(repository, "branch", "mine")
+    suite_guard.pytest_sessionstart(session)
+    _git(repository, "branch", "-D", "mine")
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert session.exitstatus == 1
+
+
+def test_sessionfinish_rejects_test_overriding_only_the_committer_email(repository, tmp_path, monkeypatch, suite_guard):
+    """#196 P3: the suite's committer name still marks the write as ours."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    monkeypatch.setenv("GIT_COMMITTER_NAME", suite_guard._SUITE_COMMITTER_NAME)
+    suite_guard.pytest_sessionstart(session)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "a-test-of-its-own@example.invalid")
+    _git(repository, "branch", "stray")
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert session.exitstatus == 1
+    assert "+refs/heads/stray" in session.config.stash[suite_guard._git_failure_key]
+
+
+def test_reflog_query_timeout_degrades_to_the_suites_change(repository, tmp_path, monkeypatch, suite_guard):
+    """A hung reflog query neither crashes the session nor hides a change:
+    the writer is unknown, so the change stays fatal."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    suite_guard.pytest_sessionstart(session)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "other-session@example.invalid")
+    _git(repository, "branch", "other")
+    real = suite_guard._git_output
+
+    def slow(root, *args):
+        if args[:2] == ("log", "-g"):
+            raise subprocess.TimeoutExpired(["git", *args], 10)
+        return real(root, *args)
+
+    monkeypatch.setattr(suite_guard, "_git_output", slow)
+    assert suite_guard._last_writer(repository, "refs/heads/other") is None
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert session.exitstatus == 1
+
+
+def test_lookup_timeout_on_existing_ref_ignores_saved_foreign_writer(repository, tmp_path, monkeypatch, suite_guard):
+    """#43: the sessionstart writer stands in only for a ref that is gone.
+    An existing ref another session wrote at start, then moved by the suite,
+    whose reflog lookup times out at finish, stays the suite's (fatal)."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "other-session@example.invalid")
+    _git(repository, "branch", "shared")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    suite_guard.pytest_sessionstart(session)
+    assert session.config.stash[suite_guard._git_snapshot_key]["writers"]["refs/heads/shared"][1] == "other-session@example.invalid"
+    _git(repository, "update-ref", "refs/heads/shared", _git(repository, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit-tree", "-p", "HEAD", "-m", "x", "HEAD^{tree}"))
+    real = suite_guard._git_output
+
+    def slow(root, *args):
+        if args[:2] == ("log", "-g"):
+            raise subprocess.TimeoutExpired(["git", *args], 10)
+        return real(root, *args)
+
+    monkeypatch.setattr(suite_guard, "_git_output", slow)
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert session.exitstatus == 1
+
+
+def test_scrubbed_env_write_is_a_documented_note(repository, tmp_path, monkeypatch, capsys, suite_guard):
+    """#201 pin: a branch written with every GIT_* variable dropped carries no
+    session marker, so it is attributed to another session (documented gap in
+    _ref_made_by). If this ever becomes fatal, update the docstring."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    monkeypatch.setenv("GIT_COMMITTER_NAME", suite_guard._SUITE_COMMITTER_NAME)
+    suite_guard.pytest_sessionstart(session)
+    scrubbed = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    scrubbed.update(HOME=str(tmp_path), GIT_CONFIG_NOSYSTEM="1")
+    subprocess.run(
+        ["git", "-C", str(repository), "-c", "user.name=box", "-c", "user.email=box@example.invalid",
+         "branch", "scrubbed"],
+        env=scrubbed, check=True, capture_output=True,
+    )
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert getattr(session, "exitstatus", 0) == 0
+    assert "refs/heads/scrubbed changed in another session" in capsys.readouterr().err
+    assert "#201" in suite_guard._ref_made_by.__doc__
+
+
+def test_scrubbed_env_bare_git_from_repo_cwd_is_a_documented_note(
+    repository, tmp_path, monkeypatch, capsys, suite_guard
+):
+    """#201 addendum: scrubbing GIT_* drops GIT_CEILING_DIRECTORIES too, so a
+    bare ``git branch`` (no -C) from the repo-root cwd reaches the real
+    repository. It is still only a note (documented in _ref_made_by)."""
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", _SUITE_ID)
+    monkeypatch.setenv("GIT_COMMITTER_NAME", suite_guard._SUITE_COMMITTER_NAME)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(repository.parent))
+    suite_guard.pytest_sessionstart(session)
+    scrubbed = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    assert "GIT_CEILING_DIRECTORIES" not in scrubbed
+    scrubbed.update(HOME=str(tmp_path), GIT_CONFIG_NOSYSTEM="1")
+    subprocess.run(
+        ["git", "-c", "user.name=box", "-c", "user.email=box@example.invalid", "branch", "bare-scrubbed"],
+        env=scrubbed, cwd=str(repository), check=True, capture_output=True,
+    )
+    suite_guard.pytest_sessionfinish(session, 0)
+    assert getattr(session, "exitstatus", 0) == 0
+    assert "refs/heads/bare-scrubbed changed in another session" in capsys.readouterr().err
+    doc = suite_guard._ref_made_by.__doc__
+    assert "bare ``git branch x``" in doc and "names the real repository explicitly" not in doc
+
+
+def test_guard_failure_follows_pytests_summary_in_a_real_session(tmp_path):
+    """#184/#201: in a real pytest run the guard reports inside pytest's
+    terminal summary (after the test results, before the final stats line)
+    and the process exits 1."""
+    import shutil
+    import sys
+
+    root = tmp_path / "proj"
+    (root / "tests").mkdir(parents=True)
+    shutil.copy(Path(__file__).with_name("conftest.py"), root / "tests" / "conftest.py")
+    (root / "tests" / "test_stray.py").write_text(
+        "import subprocess, pathlib\n"
+        "def test_writes_real_repo():\n"
+        "    root = pathlib.Path(__file__).resolve().parents[1]\n"
+        "    subprocess.run(['git', '-C', str(root), 'branch', 'stray'], check=True)\n",
+        encoding="utf-8",
+    )
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(HOME=str(tmp_path), GIT_CONFIG_NOSYSTEM="1")
+    for args in (["init", "-q"], ["-c", "user.name=T", "-c", "user.email=t@e.invalid", "commit", "-q",
+                                  "--allow-empty", "-m", "base"]):
+        subprocess.run(["git", "-C", str(root), *args], env=env, check=True, capture_output=True)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    out = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist", "tests"],
+        cwd=root, env=env, capture_output=True, text=True, timeout=120,
+    )
+    text = out.stdout + out.stderr
+    assert out.returncode == 1, text
+    assert "1 passed" in out.stdout, text
+    assert "+refs/heads/stray" in out.stdout, text
+    # Hook order: the test outcome is reported first, the guard's section is
+    # printed from pytest_terminal_summary (no sys.exit cut-off), and pytest's
+    # final stats line still follows it.
+    section = out.stdout.index("real .git state changed")
+    assert out.stdout.index("[100%]") < section < out.stdout.rindex("1 passed"), text

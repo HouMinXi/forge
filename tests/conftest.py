@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import uuid
 from pathlib import Path
 
 import pytest
@@ -255,6 +256,74 @@ def pytest_configure(config):
     for name in tuple(os.environ):
         if name.startswith("GIT_"):
             isolation.delenv(name, raising=False)
+    # #184: every ref update made through this suite's environment records a
+    # session-unique committer identity in the reflog, so the .git guard can
+    # tell the suite's ref changes from other sessions sharing the repository.
+    isolation.setenv(_SESSION_IDENTITY_ENV, f"forge-suite-{uuid.uuid4().hex}@suite.invalid")
+    isolation.setenv("GIT_COMMITTER_NAME", _SUITE_COMMITTER_NAME)
+
+
+_SESSION_IDENTITY_ENV = "GIT_COMMITTER_EMAIL"
+_git_failure_key = pytest.StashKey[str]()
+
+
+_SUITE_COMMITTER_NAME = "forge test suite"
+
+
+def _last_writer(repo_root, ref):
+    """(name, email) of the ref's newest reflog entry, or None."""
+    try:
+        out = _git_output(repo_root, "log", "-g", "-1", "--format=%gn%x00%ge", ref, "--").strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        # Unknown writer: the change stays the suite's (fatal), never a crash.
+        return None
+    if not out or "\0" not in out:
+        return None
+    name, email = out.split("\0", 1)
+    return name, email
+
+
+def _writer_is_other(writer, identity):
+    """Another session wrote it: neither our session email nor our committer
+    name (#196 P3: a test that overrides only GIT_COMMITTER_EMAIL and writes
+    the real repository is still this suite's)."""
+    if writer is None or not identity:
+        return False
+    name, email = writer
+    return bool(email) and email != identity and name != _SUITE_COMMITTER_NAME
+
+
+def _ref_made_by(repo_root, ref, identity, writers_before=None, remaining=()):
+    """True unless the change is attributable to another session.
+
+    A remaining ref is judged by its newest reflog entry. A deleted ref has
+    no reflog left (#196): it is treated as another session's when it existed
+    at sessionstart and its last writer then was another session. Accepted
+    trade-off: a test that reaches the real repository (``git -C <repo>``, or
+    a bare git command from the repo-root cwd under a ``GIT_*``-scrubbed env,
+    see below) and deletes a branch another session last wrote is reported as
+    a note, not caught. Anything that cannot be attributed stays the suite's
+    (fatal).
+
+    Known gap (#201, accepted under #184 option 2): a write made from inside
+    the suite through an environment that drops every ``GIT_*`` variable
+    (the session's committer name and email included) records the box's
+    default identity, which is indistinguishable from another session's, so
+    it is reported as a note. Git records nothing else per process in the
+    reflog (no pid, no session marker), and the guard cannot install hooks in
+    the shared repository it is guarding. Naming the real repository is not
+    required: scrubbing ``GIT_*`` also drops GIT_CEILING_DIRECTORIES, and
+    pytest's default cwd is the repository root, so a bare ``git branch x``
+    run with the scrubbed env writes the real repository and is only noted.
+    """
+    if not identity:
+        return True
+    writer = _last_writer(repo_root, ref)
+    # #43: the sessionstart writer stands in only for a ref that is truly gone.
+    # A lookup failure on a ref that still exists leaves the writer unknown.
+    if writer is None and writers_before is not None and ref not in remaining:
+        writer = writers_before.get(ref)
+    return not _writer_is_other(writer, identity)
 
 
 def pytest_sessionstart(session):
@@ -263,7 +332,15 @@ def pytest_sessionstart(session):
     # A broken .git marker still reaches Git and must fail rather than be ignored.
     if not os.path.lexists(repo_root / ".git"):
         return
-    session.config.stash[_git_snapshot_key] = _snapshot_git_state(repo_root)
+    snap = _snapshot_git_state(repo_root)
+    snap["identity"] = os.environ.get(_SESSION_IDENTITY_ENV, "")
+    # #196: remember who last wrote each branch, for refs deleted mid-run.
+    snap["writers"] = {
+        line.split(" ", 1)[0]: _last_writer(repo_root, line.split(" ", 1)[0])
+        for line in snap["refs_heads"].splitlines()
+        if line
+    }
+    session.config.stash[_git_snapshot_key] = snap
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -276,6 +353,12 @@ def pytest_sessionfinish(session, exitstatus):
     diffs = []
 
     own, foreign = _branch_changes(before, after)
+    remaining = {line.split(" ", 1)[0] for line in after["refs_heads"].splitlines() if line}
+    others = {
+        ref for ref in own
+        if not _ref_made_by(repo_root, ref, before.get("identity"), before.get("writers"), remaining)
+    }
+    own, foreign = own - others, foreign | others
     for ref in sorted(foreign):
         sys.stderr.write(f"note: {ref} changed in another session's worktree\n")
 
@@ -328,5 +411,13 @@ def pytest_sessionfinish(session, exitstatus):
             + "\n".join(diffs)
             + "\n\nReal .git has been altered. Clean up before continuing.\n"
         )
-        sys.stderr.write(msg)
-        sys.exit(1)
+        # #184: fail the session, but let pytest print its summary first.
+        session.config.stash[_git_failure_key] = msg
+        session.exitstatus = 1
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    msg = config.stash.get(_git_failure_key, None)
+    if msg:
+        terminalreporter.write_sep("=", "real .git state changed", red=True)
+        terminalreporter.write(msg)
