@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._outside_gate import outside_gate_root
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
@@ -84,6 +85,7 @@ def _build_machine(tmp_path, resolved, l0_findings=None, l0_infra=None):
         source_hash="src-hash",
         baseline_spec_repr="empty",
         cwd=tmp_path,
+        test_config_root=outside_gate_root(tmp_path),  # #160
         registry={},
         l0_runner=mock_l0,
     )
@@ -319,6 +321,7 @@ def _build_ci_machine(tmp_path, resolved, l0_findings=None, l0_infra=None):
         source_hash="src-hash",
         baseline_spec_repr="empty",
         cwd=tmp_path,
+        test_config_root=outside_gate_root(tmp_path),  # #160
         registry={},
         l0_runner=mock_l0,
     )
