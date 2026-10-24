@@ -1835,10 +1835,10 @@
     {
       "source_path": "phases/59.1-review-lenses/59.1-01-PLAN.md",
       "published_path": "docs/gsd/phases/59.1-review-lenses/59.1-01-PLAN.md",
-      "source_sha256": "786f526251eceafa70c69fbc29afc42e758738d9738b865fab7cc1b53d5bbef1",
+      "source_sha256": "992c8d02f6303b7799d3a077f737ea8364b47239a20f735d50f8b05ca6cbbc59",
       "source_size": 86729,
-      "source_mtime_utc": "2026-10-24T12:19:31.618150+00:00",
-      "published_sha256": "786f526251eceafa70c69fbc29afc42e758738d9738b865fab7cc1b53d5bbef1",
+      "source_mtime_utc": "2026-10-24T12:26:54.988267+00:00",
+      "published_sha256": "992c8d02f6303b7799d3a077f737ea8364b47239a20f735d50f8b05ca6cbbc59",
       "published_size": 86729,
       "transformations": [
         {
@@ -1870,11 +1870,11 @@
     {
       "source_path": "phases/59.1-review-lenses/59.1-01-SUMMARY.md",
       "published_path": "docs/gsd/phases/59.1-review-lenses/59.1-01-SUMMARY.md",
-      "source_sha256": "765e676888714761ab8a4a0b392c5d2cc3ea663dc9b92d207f0fd0c36ba941a9",
-      "source_size": 12111,
-      "source_mtime_utc": "2026-10-24T12:20:02.562867+00:00",
-      "published_sha256": "765e676888714761ab8a4a0b392c5d2cc3ea663dc9b92d207f0fd0c36ba941a9",
-      "published_size": 12111,
+      "source_sha256": "4cb976cc6b64870a44a9d26e9c2e2d4ec18f662fe71cca77712d312928f70c12",
+      "source_size": 13344,
+      "source_mtime_utc": "2026-10-24T12:26:54.986897+00:00",
+      "published_sha256": "4cb976cc6b64870a44a9d26e9c2e2d4ec18f662fe71cca77712d312928f70c12",
+      "published_size": 13344,
       "transformations": [
         {
           "category": "authored-public-form",

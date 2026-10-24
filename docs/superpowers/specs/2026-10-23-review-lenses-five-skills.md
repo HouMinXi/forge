@@ -274,7 +274,7 @@ _LENS_TAG_RE = re.compile(r"^(\[[a-z]+\] )(?:\[lens:L[1-5]\] )+")   # 模型重�
 |gate.yaml 路径|`Path.cwd() / ".code-forge" / "gate.yaml"`，与 `review`（`cli.py:3800`）、`resolve-outlet`（`cli.py:5294`）一致；**不**用 `trust` 的 `resolve_workspace`（`cli.py:1966-1969`，会上溯到祖先目录）|保证 B 取到的开关就是同一目录下 `review` 会用的开关；子目录运行时两者同为"无 gate.yaml → 关"|
 |只读|只调用 `_load_trusted_review_lenses` → `is_trusted_lenses`（同 `is_trusted_focus`，`trust.py:389-402`，不写 store）；不调用 `_load_gate_backends`、`is_trusted`（`trust.py:144-148` 会写）、`trust_status`（`trust.py:207-208` 会写）|T15 用只读 `XDG_CONFIG_HOME` 验证 store 的 mtime 与内容不变|
 
-SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，把 stderr 原样告诉用户，然后**不带镜头继续**该 pass；不 STOP（区别于 `SKILL.md:1585` 对 resolve-outlet 的 STOP）。
+SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，把 stderr 原样告诉用户，然后**不带镜头继续**该 pass；不 STOP（区别于 `SKILL.md:1586`（609aa51 行号）对 resolve-outlet 的 STOP）。
 
 版本错位（已在 609aa51 实测）：
 - 旧 CLI + 新 skill：`code-forge lenses --pass qodo` 被 `cli.py:2637-2639` 的兼容逻辑改写成 `review lenses --pass qodo`，argparse 报 `unrecognized arguments: --pass qodo`，退出 2，不会真跑 review。正因如此 `--pass` 必须是必填的具名参数。skill 按上面的回退处理。
@@ -624,7 +624,7 @@ SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，
   - `docs/gsd/REQUIREMENTS.md:27,39`、`ROADMAP.md:284,665`、`PROJECT.md:31`
   - B 的四份 references 文件及 `SKILL.md:378-396,1618-1625`
 - `/workspace/forge` 全程只读：运行时设置 `PYTHONDONTWRITEBYTECODE=1`，`git status` 干净。
-- 第 3 轮新读的行号（609aa51）：`cli.py:747-756,1052-1115,2004-2030,2065-2075,2614-2639,3228-3241,3800,5284-5320`、`trust.py:53-80,127-215,389-402`、`legacy.py:262`、`setup_mcp.py:232`、`eval/runner.py:138,995-1011`、`mcp_server.py:1449-1455`、`tests/test_mcp_server.py:75-85`、`exit_codes.py:14-16`、`SKILL.md:1585,1609,1618-1625`。
+- 第 3 轮新读的行号（609aa51）：`cli.py:747-756,1052-1115,2004-2030,2065-2075,2614-2639,3228-3241,3800,5284-5320`、`trust.py:53-80,127-215,389-402`、`legacy.py:262`、`setup_mcp.py:232`、`eval/runner.py:138,995-1011`、`mcp_server.py:1449-1455`、`tests/test_mcp_server.py:75-85`、`exit_codes.py:14-16`、`SKILL.md:1586,1609,1618-1625`。
 - 镜头块（v4）：1567 B，sha256 `bef4b26e48d60ed38afc0beda7b1429b9aa333deea06a0d9335c6fcf1b3fffa1`（v3 为 1499 B，`1cfc1814…`）。脚本已核对四项：不含角色串；不含 unproven 或 Design Intent；逐行 `asserts_library_behaviour` 都是 None；正文与 `draft/lens_block.txt` 一致。
 - 上游的 `correctness-reviewer.md` 已和 raw 逐字节比对，结果一致；`cursor/plugins` 根目录没有 LICENSE（404），许可证文本取自 `cursor-team-kit/LICENSE`。
 - 仍未核实，留待验收 3：
