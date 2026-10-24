@@ -85,10 +85,30 @@ suggested polling interval remains 10 seconds). Handoff does not restart the
 timeout. When the deadline is reached, Forge starts terminating and reaping the
 CLI process; that cleanup can take additional time.
 
-An explicit `timeout_s` overrides the server-wide `FORGE_MCP_JOB_TIMEOUT_S`
-setting and the cap derived from the backend for that call only. It controls
-the total CLI run, not an individual LLM invocation. It also cannot extend the
-MCP client's own request timeout, which is configured by the client.
+A background job has **no total wall-clock cap by default**. A LOCAL review
+runs the mutation baseline in every round and may take up to
+`FORGE_MAX_TOTAL_ROUNDS` rounds, so no fixed total fits every review. Instead,
+an inactivity watchdog kills the job when it prints no new progress (its
+stderr log, where Forge writes its `[forge]` lines, stops growing) for the
+idle window:
+
+    idle window = max(backend invoke timeout, longest silent test step) + 600 s
+
+The longest silent test step is the larger of `test.timeout_seconds` (default
+120; one run of the test command) and `test.mutation_timeout_seconds`, but only
+when a `test.command` is configured. These are read from the same trusted gate
+the review uses: `FORGE_TEST_CONFIG_ROOT` when set, otherwise the HEAD
+(baseline) copy of `.code-forge/gate.yaml`, never an uncommitted edit to it.
+With `timeout_seconds: 2400` and a CLI backend (300 s invoke timeout), the
+window is 2400 + 600 = 3000 s, and a review of any length keeps running as
+long as it reports progress within that window.
+
+A hard total cap applies only when set explicitly: `FORGE_MCP_JOB_TIMEOUT_S`
+(server-wide; a non-integer or non-positive value is ignored with a warning),
+or a per-call `timeout_s`. An explicit `timeout_s` overrides both for that call
+and replaces the watchdog with that deadline. It controls the total CLI run,
+not an individual LLM invocation. It also cannot extend the MCP client's own
+request timeout, which is configured by the client.
 
 ## Troubleshooting
 

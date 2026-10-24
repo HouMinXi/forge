@@ -1537,6 +1537,10 @@ def _run_mutation(
         # original src entry after it has built the mirror.
         children = _effective_max_children(max_children)
         address_space = _memory_limit_bytes(memory_limit_bytes)
+        # #165: progress line before the separately bounded mutant run.
+        from . import progress
+
+        progress.emit("mutation: running mutants")
         try:
             result = run_owned_command(
                 invocation + ["run", "--max-children", str(children)],
