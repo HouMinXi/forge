@@ -392,6 +392,24 @@ def test_acquire_faults_close_descriptors_and_do_not_launch_payloads(tmp_path, m
     assert workspace.root_fd is None and workspace.folder_fd is None and workspace.lock_fd is None
 
 
+def _await_ctime_tick(*paths):
+    """#103: the kernel stamps ctime from a coarse clock (one tick), and ext4
+    reuses a just-freed inode, so a change made within one tick of the
+    snapshot's stat can leave (ino, size, mtime, ctime) identical. Wait until
+    a fresh ctime is past every given path's, so the injected race below is
+    observable and the test checks detection deterministically."""
+    import tempfile
+    import time
+
+    floor = max(os.stat(p, follow_symlinks=False).st_ctime_ns for p in paths)
+    with tempfile.NamedTemporaryFile(dir=os.path.dirname(os.fspath(paths[0]))) as probe:
+        deadline = time.monotonic() + 5
+        while os.fstat(probe.fileno()).st_ctime_ns <= floor:
+            assert time.monotonic() < deadline, "ctime clock did not advance"
+            time.sleep(0.001)
+            os.fchmod(probe.fileno(), 0o600)
+
+
 @pytest.mark.parametrize(
     "case", ["directory-open", "file-open", "file-bytes", "link-replace", "directory-change"]
 )
@@ -422,10 +440,12 @@ def test_cache_snapshot_detects_actual_filesystem_races(tmp_path, monkeypatch, c
     def race_link(path, *args, **kwargs):
         value = original_link(path, *args, **kwargs)
         if not changed and case == "link-replace":
+            _await_ctime_tick(cache, cache / "foreign-link")
             (cache / "foreign-link").unlink()
             (cache / "foreign-link").symlink_to("other-target")
             changed.append(True)
         elif not changed and case == "directory-change":
+            _await_ctime_tick(cache)
             (cache / "new-entry").write_text("added while snapshotting")
             changed.append(True)
         return value
