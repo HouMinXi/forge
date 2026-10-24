@@ -112,14 +112,16 @@ def test_machine_and_legacy_strip_through_the_one_helper():
 
     from code_forge import legacy, machine
 
-    for mod in (machine, legacy):
+    # machine has two sites (the rule type and the style-downgrade keyword match),
+    # legacy has one (the rule hint); losing any site must fail here.
+    for mod, expected in ((machine, 2), (legacy, 1)):
         tree = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
         calls = [
             n
             for n in ast.walk(tree)
             if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "strip_lens_tag"
         ]
-        assert calls, mod.__name__
+        assert len(calls) == expected, (mod.__name__, len(calls))
         assert mod.strip_lens_tag is strip_lens_tag
 
 
