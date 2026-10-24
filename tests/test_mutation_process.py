@@ -1976,5 +1976,15 @@ def test_preset_cleanup_deadline_is_not_extended(monkeypatch):
     assert tree.cleanup_deadline == 3.0
 
 
-def test_outer_waits_cover_the_largest_cleanup_budget():
-    assert process._cleanup_budget(10**9) <= process._CLEANUP_MAX_SECONDS
+def test_outer_waits_cover_the_largest_cleanup_budget(monkeypatch):
+    """The real outer waits, not the cap's definition, must cover the largest
+    tree-scaled budget (#162 review: the old assertion held by construction)."""
+    largest = process._cleanup_budget(10**9)
+    owner = _slow_owner(monkeypatch, {"cleanup_complete": True, "timed_out": True, "cancelled": False,
+                                      "owned": [], "stdout": "", "stderr": ""})
+    with pytest.raises(subprocess.TimeoutExpired):
+        process.run_owned_command(["pytest"], timeout=900)
+    # Timeout path: both cleanup() calls at the largest budget, plus report slack.
+    assert owner.timeouts[0] >= 900 + 2 * largest + process._OWNER_REPORT_SLACK
+    # Interrupt path: the post-interrupt drain covers one full largest cleanup.
+    assert process._INTERRUPT_DRAIN_SECONDS >= largest + process._OWNER_REPORT_SLACK
