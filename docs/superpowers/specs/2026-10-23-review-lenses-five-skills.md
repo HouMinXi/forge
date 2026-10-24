@@ -11,7 +11,7 @@
 - 开关 `review_lenses` 默认关，只能经单独的 trust 哈希（`lens_hash`）生效。改了开关而没有重新 trust，就视为关闭。关闭时 A 与现有 oracle、C 与在 609aa51 上先采的新 oracle（T1-C）逐字节相同，B 的 pass 文件不变。
 - 镜头块不要求输出任何东西。干净的改动没有 finding；不再有"unproven:"和"name the one fact"这类逼出 finding 的句子（N-3）。
 - 实现之前必须先准入 Phase 59.1：按 Phase 24.1 的先例作为小数插入，59.1-01 不依赖 Phase 59 关闭（`depends_on: []`），但须 forge 另行批准 REQUIREMENTS/ROADMAP 准入修订（纯文档改动，不属于本 spec 与 PLAN，也未起草），并有独立评审过的 PLAN；PLAN 用 Task -1 闸门机检准入已落地，未落地就全部停止（R5 N-2）。测量（59.1-02）在 EVAL60-01 语料冻结、59.1-02 PLAN 预注册并经独立评审之后启动，不等 EVAL60-02（第 5 轮 forge 批准）；开跑前先做只跑关闭臂的预试验，测出每 run 的 P0–P2 finding 数 λ 后再定重复数 R，找不到合格的 R 就判 b 不可计算（R6 P2-1，只卡 59.1-02，不卡默认关的 59.1-01 合入）；该规则对任何输入都有确定结论：q_lo 不在 (0,1)、λ_lo < 0.5、无合格 R 或脚本非零退出，都判 b 不可计算（R7 P2-1）；预试验另测 q_hi，b 的牙齿在 (λ_lo, q_hi) 下取 k ∈ {2, 0.7} 的最坏值判定，每格 10,000 次，门限各留 2 倍蒙特卡洛标准误（无效应 ≥ 0.906，b10 ≤ 0.192），并固定 numpy 2.5.4 与 scipy 1.18.1，版本不符即不可计算（R8 P2-1、P3-2）。测量不达标就保持默认关。
-- 三个 pass、回执、clean-window 判定都不变。门禁侧改动只有 `_rule_type` 与 `legacy.py:262` 先剥掉镜头标签，保证 P3 密度判定和 legacy finding_id 不受影响（N-6、R3-9）。降级人工轮一律 UNVERIFIED，不计入三轮（FU-1）。
+- 三个 pass、回执、clean-window 判定都不变。门禁侧改动只有 `_rule_type` 与 `legacy.py:262`（609aa51 行号）先剥掉镜头标签，保证 P3 密度判定和 legacy finding_id 不受影响（N-6、R3-9）。降级人工轮一律 UNVERIFIED，不计入三轮（FU-1）。
 
 ## 来源（已核对）
 
@@ -228,7 +228,7 @@ L5 Type and guard slop: casts, any, or ignore pragmas that dodge type checks; op
 
 可运行草稿见 `/workspace/forge-review/draft/lenses_draft.py`，已自测：
 
-> 勘误（实现后）：`LENS_RE`、`lens_of`、`lens_mismatch` 已从 `lenses.py` 删除（没有生产调用方），见 59.1-01-SUMMARY。标签语法只由 `strip_lens_tag` / `_LENS_TAG_RE` 定义，测试经 `strip_lens_tag` 固定（三个调用点：`machine` 的规则类型、`machine` 的 style_downgrade 关键词匹配（`machine.py:4157`）、`legacy` 的规则提示）。验收 4 的统计不再依赖这三个函数：59.1-02 的测量脚本（尚未编写，由 LENS-03 / 59.1-02 编写，本计划不执行）将直接用标签正则 `^\[(qodo|expert|adversarial)\] \[lens:(L[1-5])\] ` 取 pass 与镜头，再用 `PASS_LENSES` 判断镜头是否属于该 pass。
+> 勘误（实现后）：`LENS_RE`、`lens_of`、`lens_mismatch` 已从 `lenses.py` 删除（没有生产调用方），见 59.1-01-SUMMARY。标签语法只由 `strip_lens_tag` / `_LENS_TAG_RE` 定义，测试经 `strip_lens_tag` 固定（三个调用点：`machine` 的规则类型、`machine` 的 `_suppress_known_findings` 里 style_downgrade 的关键词匹配、`legacy` 的 `rule_hint`）。本文其余行号均为 609aa51 基线行号，不是 head 行号。验收 4 的统计不再依赖这三个函数：59.1-02 的测量脚本（尚未编写，由 LENS-03 / 59.1-02 编写，本计划不执行）将直接用标签正则 `^\[(qodo|expert|adversarial)\] \[lens:(L[1-5])\] ` 取 pass 与镜头，再用 `PASS_LENSES` 判断镜头是否属于该 pass。
 
 ```python
 LENS_BLOCK: str                                       # 上面的正文，常量
@@ -312,7 +312,7 @@ SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，
 - 镜头 finding 的描述以 `[lens:Lx] ` 开头。落库后是 `[pass] [lens:Lx] ...`（`reviewer_json.py:898`），由 `strip_lens_tag` 剥离；统计时用勘误里的标签正则读取。
 - 前缀只用于统计：没有前缀、编号越界、镜头不属于该 pass，都不会让解析失败，不影响指纹（`reviewer_json.py:889`），不改变严重度。
 - **门禁侧唯一改动（N-6）**：`_rule_type`（`machine.py:3592-3596`）取 `desc[:50]`，标签会占掉其中 10 个字符，使 `distinct_per_file`、`distinct_per_diff` 失真。实现时 `_rule_type` 先调用 `strip_lens_tag`。只剥镜头标签，`[pass] ` 前缀保留，因此关闭路径的结果逐字节不变（T14）。
-- 第二个前缀消费者（R3-9）：`legacy.py:262` `rule_hint = sf.description[:16].replace(" ", "_")` 进 `legacy:%s:%d:%s` 的 finding_id。同样先 `strip_lens_tag`，否则开启时 16 个字符里有 10 个是标签。不带标签时结果不变（T14）。
+- 第二个前缀消费者（R3-9）：`legacy.py:262`（609aa51 行号，head 为 263）`rule_hint = sf.description[:16].replace(" ", "_")` 进 `legacy:%s:%d:%s` 的 finding_id。同样先 `strip_lens_tag`，否则开启时 16 个字符里有 10 个是标签。不带标签时结果不变（T14）。
 - 不新增 JSON 字段，理由见修订说明 P2-1。
 
 ### JSON-only 与"不逼出 finding"
@@ -521,7 +521,7 @@ SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，
 |R3-6 package-data 理由错|理由改为"与 skills 打包一致"；setuptools ≥77 列为现有缺陷 FU-8；T13 用 `python -m build --no-isolation` 并检查 wheel 与 sdist|否|
 |R3-7 非布尔值|只认 `is True`，非布尔告警；`return flag is True and is_trusted_lenses(...)`；写明 true↔false 免重新 trust 的取舍（未决问题 3）|否|
 |R3-8 B 中途改开关|每 run 开始时每 pass 调用一次并缓存；run 元信息逐 pass 记录|否|
-|R3-9 重复标签、legacy 前缀|正则改为 `(?:\[lens:L[1-5]\] )+`；`legacy.py:262` 也先剥；T14 加两例|否|
+|R3-9 重复标签、legacy 前缀|正则改为 `(?:\[lens:L[1-5]\] )+`；`legacy.py:262`（609aa51 行号）也先剥；T14 加两例|否|
 |R3-10 TR-6 依据|改为"已覆盖（逐条豁免，更保守）"，不再引 `cli.py:3012-3016`|否|
 |R3-11 contract 歧义|出口表与 T5 明写 `REVIEW_JSON_CONTRACT` 常量|否|
 |R3-12 C-host 误归 B|出口表新增 C-host 行（`SKILL.md:1609`、`:1618-1625`）|否|
@@ -684,7 +684,7 @@ SKILL.md 侧（三个 pass 段与 C-host 段同一句）：退出码非 0 时，
 - trust：守卫接受只开镜头的 gate.yaml；`trust --status` 显示镜头状态；只认 `is True`（R3-1、R3-7）。
 - 出口：新增 C-host 行；C 有了 T1-C 基线 oracle；"contract" 一律写成 `REVIEW_JSON_CONTRACT`（R3-2、R3-11、R3-12）。
 - `lenses` 子命令：补齐 stdout/stderr/退出码/路径/只读契约与 SKILL.md 回退（R3-3、R3-8）。
-- 归属：正则剥多重标签；`legacy.py:262` 同样剥（R3-9）。
+- 归属：正则剥多重标签；`legacy.py:262`（609aa51 行号）同样剥（R3-9）。
 - 测试与验收：T1-C 新增；T13、T14、T15、T16、T18 扩充或重写；验收 4 加库行为命中比例与 ≥P2 L2 计数，验收 f 加相反对为 0（R3-4、R3-5、R3-15）。
 - 后续项：新增 FU-7（MCP）、FU-8（setuptools ≥77，现有缺陷）；FU-3 承接 L5 残留。
 - 文字：TR-6 判定、N-9 理由、N-11 计数更正（R3-6、R3-10、四(d)）。
