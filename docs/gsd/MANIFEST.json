@@ -47,11 +47,11 @@
     {
       "source_path": "REQUIREMENTS.md",
       "published_path": "docs/gsd/REQUIREMENTS.md",
-      "source_sha256": "7ac0e63ccd6a4e3ce8687884e89ee04799ef894237354be687c3068a006f5c0d",
-      "source_size": 15986,
-      "source_mtime_utc": "2026-10-04T18:25:22.926419+00:00",
-      "published_sha256": "940350e29d2ccee9966b882cd2905f7eb6d8e828935705fe20f2e95039bc486e",
-      "published_size": 16385,
+      "source_sha256": "8171c326fc50dc4df3703278c4bbcb3ef313c03fb0855f51d3260d88d7609a55",
+      "source_size": 18565,
+      "source_mtime_utc": "2026-10-24T04:25:02.083995+00:00",
+      "published_sha256": "2266dfc10092e2e30c482dc86fe45cbe907244e8e5284c59cc615e8ab72fab87",
+      "published_size": 18972,
       "transformations": [
         {
           "category": "dated-publication-banner"
@@ -84,11 +84,11 @@
     {
       "source_path": "ROADMAP.md",
       "published_path": "docs/gsd/ROADMAP.md",
-      "source_sha256": "1c42372e7335588c10a539ae12a383d2b35fa72d9a380089c408e0d6bdb3dfa2",
-      "source_size": 89933,
-      "source_mtime_utc": "2026-10-06T17:56:39.518720+00:00",
-      "published_sha256": "826318110b591cff3c66fc66c6a019cf68680c1e48da583c2be3273a4c50e1db",
-      "published_size": 90563,
+      "source_sha256": "9b35f8daa7d5a40689db17edc0076a2a5a1da304e8b60ee65a151eb4a96f7350",
+      "source_size": 93077,
+      "source_mtime_utc": "2026-10-24T04:25:02.084415+00:00",
+      "published_sha256": "227edba19588baa2b7998d245c3268fac1938036a814e2e76af0a3ebb76d9993",
+      "published_size": 93713,
       "transformations": [
         {
           "category": "private-host-b",
