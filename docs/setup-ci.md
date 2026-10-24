@@ -114,8 +114,17 @@ checkout (or its `.code-forge`) reached through a bind mount at another path.
 One case is not detected: bind-mounting some *other* checkout subdirectory onto
 the config root. That needs mount control on the runner, and spotting it would
 mean walking the checkout, so keep the config root a plain directory the
-checked-out code cannot write. Otherwise CI stops L2 with "CI does not trust an untracked in-tree
-gate.yaml". Backends are configured as before (a trusted `backends:` block or
+checked-out code cannot write. Otherwise, an untracked gate.yaml in the checkout
+fails the CI run with "CI: mutation not measured -- untracked gate.yaml in
+checkout is not trusted; commit it or use --test-config-root" (mutation cannot
+be measured without a trusted test command). A refused outside config root also
+fails CI, with "trusted test config refused: <why>". With no gate.yaml at all
+(none from the baseline, none in the checkout, none in the outside config root),
+CI fails with "CI: mutation not measured -- no gate.yaml found; add
+.code-forge/gate.yaml or use --test-config-root". A docs-only diff is the one
+exception: no mutation adapter covers it, so the gate is not consulted and the
+docs-only skip still passes. LOCAL runs keep treating a missing gate.yaml as
+"not configured". Backends are configured as before (a trusted `backends:` block or
 your user config); without one the review fails closed with "No review backend
 configured". Upload `review.sarif` to code scanning if you want inline
 annotations.

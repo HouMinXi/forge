@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 
+from tests._outside_gate import outside_gate_root
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
@@ -55,6 +56,7 @@ def _make_machine(tmp_path, l0_findings=None, l0_infra=None, source_hash="abc123
         source_hash=source_hash,
         baseline_spec_repr="empty",
         cwd=tmp_path,
+        test_config_root=outside_gate_root(tmp_path),  # #160
         registry={},
         l0_runner=mock_l0,
     )

@@ -9,6 +9,7 @@ Covered files (L0 match or L1 active) and exemptions -> no gate.
 
 from pathlib import Path
 
+from tests._outside_gate import outside_gate_root
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
@@ -57,6 +58,7 @@ def _machine(
         source_hash="abc123",
         baseline_spec_repr="empty",
         cwd=tmp_path,
+        test_config_root=outside_gate_root(tmp_path),  # #160
         registry=registry or {},
         l0_runner=mock_l0,
         coverage_l1_active=l1_active,
@@ -154,6 +156,7 @@ def test_ci_default_l1_active_is_backward_compatible(tmp_path):
         source_hash="abc123",
         baseline_spec_repr="empty",
         cwd=tmp_path,
+        test_config_root=outside_gate_root(tmp_path),  # #160
         registry={},
         l0_runner=lambda r, f: ([], []),
     )

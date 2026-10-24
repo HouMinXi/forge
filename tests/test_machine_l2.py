@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import pytest
 
+from tests._outside_gate import outside_gate_root
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
@@ -63,6 +64,7 @@ class TestL2RunnerDefaultNoOp:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
         )
@@ -93,6 +95,7 @@ class TestL2RunnerConfirmedMutant:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
             l2_runner=mock_l2,
@@ -130,6 +133,7 @@ class TestMutantFindingsSkipAutofix:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
             l2_runner=mock_l2,
@@ -165,6 +169,7 @@ class TestConsecutiveSurvivorRounds:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
             l2_runner=mock_l2,
@@ -196,6 +201,7 @@ class TestConsecutiveSurvivorRounds:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
             l2_runner=mock_l2,
@@ -227,6 +233,7 @@ class TestThreeConsecutiveSurvivorRounds:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
             l2_runner=mock_l2,
@@ -256,6 +263,7 @@ class TestL2RunnerException:
         machine = StateMachine(mode=Mode.LOCAL, falsifier=StubFalsifier(), autofixer=StubAutoFixer(),
                                revert_fn=lambda _finding: None, resolved_review=_make_resolved(),
                                source_hash="abc", baseline_spec_repr="empty", cwd=tmp_path,
+ test_config_root=outside_gate_root(tmp_path),  # #160
                                registry={}, l0_runner=l0, l2_runner=l2)
         with pytest.raises(KeyboardInterrupt) as caught:
             machine.run()
@@ -282,6 +290,7 @@ class TestL2RunnerException:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
             l2_runner=mock_l2,
@@ -327,6 +336,7 @@ class TestL2SkipsBeforeRequiringGateConfig:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
             l2_runner=mock_l2,
@@ -367,6 +377,7 @@ class TestL2SkipsBeforeRequiringGateConfig:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
             l2_runner=mock_l2,
@@ -407,6 +418,7 @@ class TestCIModeReadsMutationResult:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
         )
@@ -446,6 +458,7 @@ class TestCIModeReadsMutationResult:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
         )
@@ -477,6 +490,7 @@ class TestCIMutationResultNotSticky:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
         )
@@ -663,6 +677,7 @@ class TestCISkipIsVisibleAsFinding:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
         )
@@ -692,6 +707,7 @@ class TestCISkipIsVisibleAsFinding:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
         )
@@ -720,6 +736,7 @@ class TestCISkipIsVisibleAsFinding:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
         )
@@ -753,6 +770,7 @@ class TestBugInjectTeeth:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
             l2_runner=mock_l2_toothless,
@@ -780,6 +798,7 @@ class TestBugInjectTeeth:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
             l2_runner=mock_l2_clean,

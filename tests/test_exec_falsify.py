@@ -27,6 +27,7 @@ from unittest import mock
 
 import pytest
 
+from tests._outside_gate import outside_gate_root
 from code_forge.disposition import Disposition
 from code_forge.exec_falsify import (
     ExecEvidence,
@@ -428,6 +429,7 @@ class TestExecFalsifyMachineWiring:
             source_hash="src-hash",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={
                 "mock_l0": ToolConfig(
                     name="mock_l0",
