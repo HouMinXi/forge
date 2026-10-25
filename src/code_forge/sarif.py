@@ -421,3 +421,51 @@ def format_summary(
         if "stage" in metadata:
             line += " stage=%s kind=%s" % (metadata["stage"], metadata["kind"])
     return line
+
+
+def format_classification_line(block: Any) -> str:
+    """Assemble the §5 / IC-05 stderr classification line from a wire block.
+
+    ``block`` is a ``ReportClassificationWire`` (or duck-typed equivalent).
+    Legacy ``format_summary`` bytes are never rewritten here; callers print
+    this line separately after the legacy summary (and any budget qualifier).
+    """
+    availability = getattr(block, "availability", None)
+    if availability != "available":
+        reason = getattr(block, "unavailable_reason", None) or "no-report"
+        return "code-forge: classification unavailable (%s)" % reason
+    p = getattr(block, "product_list_count", None)
+    u = getattr(block, "unresolved_candidate_count", None)
+    quarantine = getattr(block, "quarantine", None) or ()
+    q = len(quarantine)
+    if p is None:
+        u_s = "unknown" if u is None else str(u)
+        return (
+            "code-forge: classification product=unknown [not adjudicated] "
+            "unresolved=%s quarantine=%d [unverified]" % (u_s, q)
+        )
+    c = d = f = s = 0
+    o = 0
+    for rec in getattr(block, "product", None) or ():
+        fields = getattr(getattr(rec, "record", None), "fields", None) or {}
+        disp = fields.get("disposition") if isinstance(fields, dict) else None
+        if disp == "CONFIRMED":
+            c += 1
+        elif disp == "DISMISSED":
+            d += 1
+        elif disp == "FIXED":
+            f += 1
+        elif disp == "STYLE":
+            s += 1
+        if getattr(rec, "associated_diagnostics", None):
+            o += 1
+    unresolved = getattr(block, "unresolved_product_candidates", None) or ()
+    v = sum(1 for rec in unresolved if getattr(rec, "associated_diagnostics", None))
+    u_s = "unknown" if u is None else str(u)
+    return (
+        "code-forge: classification product=%s "
+        "[not adjudicated: confirmed=%d dismissed=%d fixed=%d style=%d; "
+        "with-observations=%d] unresolved=%s [uncertain; with-observations=%d] "
+        "quarantine=%d [unverified]"
+        % (p, c, d, f, s, o, u_s, v, q)
+    )

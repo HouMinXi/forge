@@ -1068,6 +1068,43 @@ def _sarif_projection_with_status(
         return unknown
 
 
+def _report_classification_from_stdout(stdout: str) -> dict[str, object]:
+    """Shared reader: parse additive report_classification from CLI SARIF stdout.
+
+    Uses the IC-01 ``parse_report_classification`` / ``wire_to_json`` helpers so
+    inline ``_make_result``, job status, and SDK serialization see the same
+    normalized block. Does not rewrite legacy findings_count fields.
+    Empty stdout → unavailable/no-report; non-JSON / non-run → rejected path.
+    """
+    from code_forge.report_presentation import (
+        parse_report_classification,
+        wire_to_json,
+    )
+
+    if type(stdout) is not str or stdout == "":
+        return wire_to_json(
+            parse_report_classification(None, legacy_report_state="empty")
+        )
+    try:
+        document = json.loads(stdout)
+    except (ValueError, TypeError):
+        return wire_to_json(
+            parse_report_classification(None, legacy_report_state="rejected")
+        )
+    if type(document) is not dict:
+        return wire_to_json(
+            parse_report_classification(None, legacy_report_state="rejected")
+        )
+    runs = document.get("runs")
+    if type(runs) is not list or not runs or type(runs[0]) is not dict:
+        return wire_to_json(
+            parse_report_classification(None, legacy_report_state="rejected")
+        )
+    return wire_to_json(
+        parse_report_classification(runs[0], legacy_report_state="accepted")
+    )
+
+
 def _make_result(
     stdout: str,
     exit_code: int,
@@ -1093,6 +1130,7 @@ def _make_result(
         receipt_audit=receipt_audit,
         duration_s=round(elapsed, 2),
         output=output,
+        report_classification=_report_classification_from_stdout(stdout),
     )
     return CallToolResult(
         content=[TextContent(type="text", text=output)],
@@ -1576,7 +1614,8 @@ async def forge_job_status(job_id: str) -> CallToolResult:
         stderr = r.get("stderr", "")
         if (status == "failed" or r.get("exit_code", 0) != 0) and stderr.strip():
             output = output + "\n--- stderr ---\n" + stderr
-        findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(r.get("stdout", ""))
+        job_stdout = r.get("stdout", "")
+        findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(job_stdout)
         forge_result = ForgeResult(
             verdict=r.get("verdict", "UNKNOWN(-1)"),
             exit_code=r.get("exit_code", -1),
@@ -1586,6 +1625,7 @@ async def forge_job_status(job_id: str) -> CallToolResult:
             receipt_audit=receipt_audit,
             duration_s=r.get("duration_s", 0.0),
             output=output,
+            report_classification=_report_classification_from_stdout(job_stdout),
         )
 
     elapsed_text = ""

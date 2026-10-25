@@ -67,6 +67,10 @@ class ForgeResult(BaseModel):
     receipt_audit: list[dict] | None = None  # metadata diagnostics, not product findings
     duration_s: float
     output: str
+    # Additive #332 report_classification block (IC-03 include routes).
+    # Optional; never rewrites legacy findings_count / findings meanings.
+    # Parsed from the same CLI SARIF stdout via the shared reader.
+    report_classification: dict[str, Any] | None = None
 
 
 class ForgeJobRef(BaseModel):
