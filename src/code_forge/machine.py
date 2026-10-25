@@ -876,11 +876,8 @@ class StateMachine:
         # #143: the untracked-gate pin is taken on this run's first gate load.
         self._untracked_gate_pin = None
         self._untracked_gate_pinned = False
-        # #141: resolve the trusted gate once, up front, so review cycles do
-        # no git I/O for ledger / rulepack / suppression switches.
         self._trusted_gate_cache = None
         self._trusted_config_refusal = None
-        self._trusted_gate_cache = self._resolve_trusted_gate_data()
         admission_error = mutation_review_admission_error(
             target_kind=self.resolved_review.target_kind, git_diff=self.resolved_review.git_diff,
             source_files=self._source_files(), source_root=self._source_root(),
@@ -888,6 +885,10 @@ class StateMachine:
             runner=self.l2_runner, ci_detached=self.mode == Mode.CI,
             base_sha=self.resolved_review.base_sha, allow_untracked=self.mode is not Mode.CI,
         )
+        # #141: resolve the trusted gate once, before the first cycle, so review
+        # cycles do no git I/O for ledger / rulepack / suppression switches. Done
+        # after the admission check: run() start itself spawns nothing (#143).
+        self._trusted_gate_cache = self._resolve_trusted_gate_data()
         self._acquisition_receipts = ()
         self._acquisition_authority = None
         progress.reset()
