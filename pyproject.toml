@@ -46,8 +46,10 @@ mcp = [
     "mcp>=1.27,<2",
 ]
 semgrep = [
-    # PATH tool and forge venv pin the 1.176.x series so
-    # declaration, PATH, and the forge venv cannot drift independently.
+    # Range of semgrep releases the semgrep-driven tests have been run
+    # against (1.176 through 1.182). The upper bound is a deliberate cap:
+    # raise it only after those tests pass on the new release. The PATH tool
+    # must fall inside this range; `forge doctor` audits the extra.
     "semgrep>=1.176,<1.183",
 ]
 # Only the corpus GENERATOR needs this -- building tests/eval/swebench from

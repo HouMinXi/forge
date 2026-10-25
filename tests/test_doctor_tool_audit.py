@@ -281,7 +281,7 @@ class TestAuditPythonDeps:
     def test_missing_package_on_path_skips(self):
         """semgrep is shelled out to, so a PATH install is enough."""
         with (
-            self._md(['semgrep>=1.176,<1.177; extra == "semgrep"'], {}),
+            self._md(['semgrep>=1.176,<1.183; extra == "semgrep"'], {}),
             patch("code_forge.doctor.shutil.which", return_value="/usr/bin/semgrep"),
         ):
             results = _audit_python_deps(extras=("semgrep",))
@@ -295,7 +295,7 @@ class TestAuditPythonDeps:
         assert "mcp" in extras
 
     def test_semgrep_pin_covers_path_install(self):
-        """Declared pin must admit the PATH tool (1.176.x)."""
+        """Declared pin must admit the PATH tool and stay capped below untested releases."""
         pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
         text = pyproject.read_text(encoding="utf-8")
         extras = text.split("[project.optional-dependencies]", 1)[1]
@@ -316,8 +316,10 @@ class TestAuditPythonDeps:
                 break
         assert req is not None, extras
         assert Version("1.176.0") in req.specifier
+        assert Version("1.176.1") in req.specifier
+        assert Version("1.182.1") in req.specifier
         assert Version("1.175.0") not in req.specifier
-        assert Version("1.177.0") not in req.specifier
+        assert Version("1.183.0") not in req.specifier
 
     def test_extras_outside_the_requested_set_are_skipped(self):
         with self._md(['google-auth>=2.35.0; extra == "vertex"'], {}):
