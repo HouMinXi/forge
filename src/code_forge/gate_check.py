@@ -256,6 +256,13 @@ class OutsideGateInvalid(ValueError):
     or validated. CI FAILs with this reason (user policy), never skip+PASS."""
 
 
+class BaselineGateInvalid(ValueError):
+    """The review baseline's gate.yaml is invalid (#191): YAML error, not a
+    mapping, or an invalid ``test`` section. The baseline is trusted, so this
+    is an operator misconfiguration; CI FAILs like OutsideGateInvalid. A
+    well-formed gate with no ``test`` section stays GateWithoutTestSection."""
+
+
 GATE_NOT_FOUND_NOT_MEASURED = (
     "mutation not measured -- no gate.yaml found; add .code-forge/gate.yaml "
     "or use --test-config-root"
@@ -530,9 +537,16 @@ def load_trusted_gate_config(
         shown = _git_out(source_root, "show", f"{base_sha}:./.code-forge/gate.yaml")
         if shown.returncode == 0:
             text = shown.stdout
-            return load_gate_config(
-                "<baseline>:.code-forge/gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
-            )
+            try:
+                return load_gate_config(
+                    "<baseline>:.code-forge/gate.yaml", fs_open=lambda *_a, **_k: io.StringIO(text),
+                )
+            except GateWithoutTestSection:
+                raise  # well-formed, mutation simply not configured
+            except ValueError as exc:
+                raise BaselineGateInvalid(
+                    f"invalid gate.yaml at review baseline {base_sha[:12]}: {exc}"
+                ) from exc
     if tracked:
         raise GateNotOnBaseline(
             f"no .code-forge/gate.yaml at review baseline {(base_sha or 'unknown')[:12]}; a gate.yaml "
