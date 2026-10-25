@@ -189,7 +189,7 @@ class _FakeRunner:
         self.source_files = None
         self.seen = None
 
-    def run(self, diff_text, repo_root, *, execution_root=None, gate_config=None):
+    def run(self, diff_text, repo_root, *, execution_root=None, gate_config=None, packs_root=None):
         self.seen = gate_config
         if "testpack" not in (gate_config or {}).get("rulepacks", []):
             return []
