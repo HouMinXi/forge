@@ -483,20 +483,34 @@ def test_actual_cli_policy_refusal_never_seeds_an_acquisition_retry(
     gate.parent.mkdir(exist_ok=True)
     gate.write_text("graph_triage:\n  enabled: false\n" if policy == "unreadable" else policy)
     reads = []
+    actual_parse = gate_check._parse_raw
 
-    def load(path):
-        reads.append(str(path))
+    # #150: context switches come from the trusted gate loader. LOCAL: this
+    # non-git checkout's own gate.yaml is the user's setup and is trusted
+    # (CI would need an outside --test-config-root for it).
+    def parse(label, text):
+        reads.append(str(label))
         if policy == "unreadable":
             raise PermissionError("controlled policy read refusal")
+        return actual_parse(label, text)
+
+    def load(path, **_kw):
+        reads.append(str(path))
         return actual_gate_loader(path)
 
+    monkeypatch.setattr(gate_check, "_parse_raw", parse)
     monkeypatch.setattr(gate_check, "load_gate_config", load)
     monkeypatch.setattr(gt.shutil, "which", lambda command: None)
     monkeypatch.delenv("CRG_DB_PATH", raising=False)
     monkeypatch.setattr(cli, "_estimate_l1_prompt_tokens", lambda *a, **kw: 0)
+    args.mode = "local"
     args.allow_unsnapshotted_context = allow
     assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PENDING
-    assert seen["source"].findings_cache is None
+    # Disabled: an honoured empty result (status "disabled"); unreadable: the
+    # source failed (None). Either way nothing was acquired or cached.
+    assert not seen["source"].findings_cache
+    outcome = seen["source"].acquisition_outcome
+    assert (outcome.status == "disabled") if policy != "unreadable" else outcome is None
     assert seen["hold"]["pre_graph_findings"] == []
     assert reads and not sem_controls["calls"]
     initial_reads = len(reads)
@@ -1063,6 +1077,14 @@ def test_actual_cli_graphdb_failure_retries_with_source_authority(
     head = "a" * 40
     args.mode = mode
     args.allow_unsnapshotted_context = allow
+    # #150: CI takes review-time switches only from a trusted gate. A
+    # non-git checkout's own gate.yaml is not one, so the operator's
+    # graph_triage policy lives in an outside --test-config-root there.
+    policy_root = root if mode == "local" else root.parent / f"{root.name}-forge-config"
+    if mode == "ci":
+        (policy_root / ".code-forge").mkdir(parents=True, exist_ok=True)
+        (policy_root / ".code-forge/gate.yaml").write_text("test:\n  command: [pytest]\n")
+        args.test_config_root = str(policy_root)
     monkeypatch.setattr(
         cli,
         "resolve_baseline",
@@ -1118,7 +1140,7 @@ def test_actual_cli_graphdb_failure_retries_with_source_authority(
                 connection.execute("update metadata set value=? where key='git_head_sha'", ("b" * 40,))
                 connection.commit()
         elif retry == "disabled":
-            gate = root / ".code-forge/gate.yaml"
+            gate = policy_root / ".code-forge/gate.yaml"
             gate.parent.mkdir(exist_ok=True)
             gate.write_text("test:\n  command: [pytest]\ngraph_triage:\n  enabled: false\n")
             monkeypatch.setattr("code_forge.gate_check.load_gate_config", actual_gate_loader)
@@ -1130,13 +1152,17 @@ def test_actual_cli_graphdb_failure_retries_with_source_authority(
     monkeypatch.setattr(cli, "build_e2e_checker", lambda: lambda *a: ([], []))
     assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PASS
     assert l2_roots == [root]
-    assert len(dispatched) == 1 and len(dispatched[0][0]) == expected
+    assert len(dispatched) == 1
+    # #143: a policy gate that is an untracked file in LOCAL also raises the
+    # UNTRACKED_GATE_IN_USE advisory; this test counts the graph findings only.
+    graph_findings = [f for f in dispatched[0][0] if f.id != "UNTRACKED_GATE_IN_USE"]
+    assert len(graph_findings) == expected
     runner, state = dispatched[0][1:]
     assert not runner.infra_errors and not state.infra_errors
     assert seen["initial_source"].findings_cache is None
     if expected:
         assert runner.acquisition_outcome.completed and runner._cached_findings
-        assert "measured" in dispatched[0][0][0].description
+        assert "measured" in graph_findings[0].description
     elif retry == "disabled":
         assert runner.acquisition_outcome.status == "disabled" and runner._cached_findings == []
     else:

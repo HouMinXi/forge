@@ -710,6 +710,7 @@ def _swap_untracked_gate_record(gate: Path, digest: str) -> str | None:
 _REVIEW_GATE_KEYS = (
     "ledger", "rulepacks", "rulepacks_blocking", "rulepack_timeout_seconds", "pinned_paths",
     "style_downgrade",
+    "graph_triage", "knowledge",  # #150: advisory/context switches
 )
 
 
@@ -4618,7 +4619,7 @@ class StateMachine:
         # L1-CONFIRMED strengthening; the EXEC finding above carries the
         # verdict-blocking failure independently.
 
-    def _trusted_packs_root(self, gate_config: dict, dest: Path) -> Path | None:
+    def _trusted_packs_root(self, gate_config: dict, dest: Path, *, blocking: bool = True) -> Path | None:
         """#150: repo-local packs that can block come from the trusted root
         (outside config root or review baseline), copied into ``dest``; the
         reviewed tree's ``.code-forge/packs`` is never used. Built-in packs
@@ -4642,7 +4643,7 @@ class StateMachine:
             )
         except (OSError, UntrustedGateConfigError) as exc:
             self._state.infra_errors.append(f"rulepack: trusted packs refused: {exc}")
-            if self.mode is Mode.CI:
+            if blocking and self.mode is Mode.CI:
                 # #157/#189: any refusal (outside root, baseline content such as
                 # a symlinked pack, or a git show timeout/failure) leaves
                 # rulepacks_blocking unmeasured; CI FAILs with the reason.
@@ -4650,6 +4651,24 @@ class StateMachine:
             return None
         self._state.infra_errors.extend(notes)
         return root
+
+    def _run_trusted_advisory_rulepack(self, runner, diff_text: str, gate_config: dict) -> list:
+        """#150: the advisory rule-pack axis with the pack list from the
+        trusted gate and repo-local pack contents copied from the trusted
+        root, as the blocking phase does. Advisory: a refused trusted copy
+        or an unreadable trusted gate is an infra note and no findings,
+        never a CI verdict change."""
+        if isinstance(gate_config, Exception):
+            self._state.infra_errors.append(f"rulepack: failed to load trusted gate.yaml: {gate_config}")
+            return []
+        with tempfile.TemporaryDirectory(prefix="forge-trusted-packs-") as packs_dir:
+            packs_root = self._trusted_packs_root(gate_config, Path(packs_dir), blocking=False)
+            if packs_root is None:
+                return []
+            kwargs = {"gate_config": gate_config, "packs_root": packs_root}
+            if self.source_root is not None:
+                kwargs["execution_root"] = self._source_root()
+            return runner.run(diff_text, self.cwd, **kwargs)
 
     def _run_rulepack_blocking_phase(self) -> list[StateFinding]:
         """Pre-convergence bridge for blocking-promoted rulepack rules.
@@ -4748,11 +4767,26 @@ class StateMachine:
                         runner._runtime_runner = candidate
                         break
         from .graph_triage import GraphTriageRunner
+        from .rulepack import RulepackRunner
+
+        # #150: advisory axes take gate.yaml keys (graph_triage.*, rulepacks)
+        # and repo-local pack contents from the trusted gate, never the
+        # reviewed tree. No trusted gate -> built-in defaults ({}).
+        # An unreadable/invalid trusted gate is passed on as the error, not
+        # {}: defaults could re-enable an axis the operator disabled.
+        try:
+            trusted_gate = self._trusted_gate_data()
+        except Exception as exc:  # noqa: BLE001 - each axis reports it
+            trusted_gate = exc
 
         for runner in self.advisory_runners:
             try:
                 if isinstance(runner, GraphTriageRunner) and type(runner).run is GraphTriageRunner.run:
-                    findings = runner.run(diff_text, self._source_root(), config_root=self.cwd)
+                    findings = runner.run(
+                        diff_text, self._source_root(), config_root=self.cwd, gate_config=trusted_gate,
+                    )
+                elif isinstance(runner, RulepackRunner) and type(runner).run is RulepackRunner.run:
+                    findings = self._run_trusted_advisory_rulepack(runner, diff_text, trusted_gate)
                 else:
                     findings = runner.run(diff_text, self.cwd)
                 self._advisories.extend(findings)

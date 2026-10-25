@@ -4231,11 +4231,20 @@ def _run(args, env, cwd: Path) -> Verdict:
     _graph_impact_context = ""
     _context_sources_text = ""
     _pre_graph_findings: list = []
-    _graph_source = GraphTriageSource(cwd)
+    # #150: context switches (graph_triage.*, knowledge.enabled) come from
+    # the trusted gate (outside config root or review baseline), never the
+    # reviewed tree; no trusted gate means the built-in defaults.
+    from .gate_check import trusted_gate_data_or_error
+
+    _trusted_ctx_gate = trusted_gate_data_or_error(
+        config_root=test_config_root or cwd, source_root=cwd,
+        base_sha=resolved.base_sha, allow_untracked=mode != Mode.CI,
+    )
+    _graph_source = GraphTriageSource(cwd, gate_config=_trusted_ctx_gate)
     _context_rows: list = []
     _kernel_source = KernelContextSource(kernel_root, kernel_cfg) if kernel_cfg.enabled else None
     _sources = [_graph_source, RemovedSymbolReaders(cwd), GitHistorySource(cwd)]
-    if knowledge_enabled(cwd):
+    if knowledge_enabled(cwd, gate_data=_trusted_ctx_gate):
         _sources.append(KnowledgeSource(client=knowledge_client, enabled=True))
     if _kernel_source is not None:
         _sources.append(_kernel_source)
@@ -4675,7 +4684,13 @@ def _run_hold_loop(
 
         _taint_runner = TaintRunner()
         _runtime_runner = RuntimeRunner(backend=backend)
-        _graph_triage_runner = GraphTriageSource(cwd).advisory_runner(
+        from .gate_check import trusted_gate_data_or_error
+
+        _trusted_ctx_gate = trusted_gate_data_or_error(  # #150
+            config_root=test_config_root or cwd, source_root=cwd,
+            base_sha=resolved.base_sha, allow_untracked=mode != Mode.CI,
+        )
+        _graph_triage_runner = GraphTriageSource(cwd, gate_config=_trusted_ctx_gate).advisory_runner(
             getattr(resolved, "head_sha", None), allow_unsnapshotted_context
         )
         _graph_triage_runner._cached_findings = pre_graph_findings
