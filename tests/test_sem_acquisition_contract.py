@@ -1152,13 +1152,17 @@ def test_actual_cli_graphdb_failure_retries_with_source_authority(
     monkeypatch.setattr(cli, "build_e2e_checker", lambda: lambda *a: ([], []))
     assert cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root) == Verdict.PASS
     assert l2_roots == [root]
-    assert len(dispatched) == 1 and len(dispatched[0][0]) == expected
+    assert len(dispatched) == 1
+    # #143: a policy gate that is an untracked file in LOCAL also raises the
+    # UNTRACKED_GATE_IN_USE advisory; this test counts the graph findings only.
+    graph_findings = [f for f in dispatched[0][0] if f.id != "UNTRACKED_GATE_IN_USE"]
+    assert len(graph_findings) == expected
     runner, state = dispatched[0][1:]
     assert not runner.infra_errors and not state.infra_errors
     assert seen["initial_source"].findings_cache is None
     if expected:
         assert runner.acquisition_outcome.completed and runner._cached_findings
-        assert "measured" in dispatched[0][0][0].description
+        assert "measured" in graph_findings[0].description
     elif retry == "disabled":
         assert runner.acquisition_outcome.status == "disabled" and runner._cached_findings == []
     else:
