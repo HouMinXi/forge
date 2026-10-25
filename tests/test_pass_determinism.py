@@ -7,6 +7,7 @@ Given same disposition ledger, repeated run yields same Verdict.
 
 from pathlib import Path
 
+from tests._outside_gate import outside_gate_root
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
@@ -51,6 +52,7 @@ class TestDeterministicVerdict:
                 source_hash="abc",
                 baseline_spec_repr="empty",
                 cwd=tmp_path,
+                test_config_root=outside_gate_root(tmp_path),  # #160
                 registry={},
                 l0_runner=lambda r, f: ([], []),
             )
@@ -69,6 +71,7 @@ class TestDeterministicVerdict:
                 source_hash="abc",
                 baseline_spec_repr="empty",
                 cwd=tmp_path,
+                test_config_root=outside_gate_root(tmp_path),  # #160
                 registry={},
                 l0_runner=lambda r, f: ([_make_finding()], []),
             )
@@ -96,6 +99,7 @@ class TestPassRequiresTerminalConfirmed:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=lambda r, f: ([_make_finding()], []),
             max_total_rounds=3,
@@ -122,6 +126,7 @@ class TestLocalPassRequiresUncertainDispositioned:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=lambda r, f: ([unc], []),
         )
@@ -140,6 +145,7 @@ class TestLocalPassRequiresUncertainDispositioned:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=lambda r, f: ([unc], []),
         )

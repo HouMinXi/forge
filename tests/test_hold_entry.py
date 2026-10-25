@@ -8,6 +8,7 @@ unfixed CONFIRMED == 0. Returns Verdict.PENDING.
 
 from pathlib import Path
 
+from tests._outside_gate import outside_gate_root
 from code_forge.autofix import FixOutcome, StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
@@ -56,6 +57,7 @@ class TestHoldEntry:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
         )
@@ -72,6 +74,7 @@ class TestHoldEntry:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
         )
         uncertain = _make_finding(fp="product-uncertain", disp=Disposition.UNCERTAIN)
@@ -137,6 +140,7 @@ class TestHoldNotEnteredWithConfirmed:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=mock_l0,
             max_total_rounds=5,
@@ -162,6 +166,7 @@ class TestCINeverHolds:
             source_hash="abc",
             baseline_spec_repr="empty",
             cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
             registry={},
             l0_runner=lambda r, f: ([unc], []),
         )

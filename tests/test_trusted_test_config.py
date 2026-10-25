@@ -22,6 +22,10 @@ from code_forge.gate_check import load_trusted_gate_config
 from code_forge.machine import StateMachine
 from code_forge.state import Mode, Verdict
 
+UNTRACKED_REASON = (
+    "CI: mutation not measured -- untracked gate.yaml in checkout is not trusted; "
+    "commit it or use --test-config-root"
+)
 BASE_CMD = [sys.executable, "-c", "print('baseline')"]
 PR_CMD = [sys.executable, "-c", "print('changed by the PR')"]
 GATE = Path(".code-forge") / "gate.yaml"
@@ -346,8 +350,8 @@ def test_ci_refuses_an_untracked_in_tree_gate_for_test_and_globs(tmp_path):
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
     machine = _machine(repo, base, mode=Mode.CI)
     assert _l2_calls(machine) == []
-    assert any("CI does not trust an untracked in-tree gate.yaml" in e and "--test-config-root" in e
-               for e in machine._state.infra_errors), machine._state.infra_errors
+    assert machine._mutation_bound_failure is True  # #160: unmeasured => CI FAIL
+    assert UNTRACKED_REASON in machine._state.infra_errors, machine._state.infra_errors
     notes = []
     assert mutation.trusted_mutation_globs(
         config_root=repo, source_root=repo, base_sha=base, notes=notes, allow_untracked=False,
@@ -861,11 +865,231 @@ def test_outside_refusal_is_the_subclass_and_in_tree_refusal_is_not(tmp_path):
         load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
 
 
-def test_ci_untracked_in_tree_gate_keeps_the_infra_skip(tmp_path):
-    """Scope of #157: only an operator-configured outside root FAILs CI; the
-    in-tree untracked refusal keeps its existing infra note (not a bound failure)."""
+def test_ci_untracked_in_tree_gate_is_a_bound_failure(tmp_path):
+    """#160: an untracked in-tree gate in CI FAILs (mutation unmeasured)."""
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
     machine = _machine(repo, base, mode=Mode.CI)
     assert _l2_calls(machine) == []
+    assert machine._mutation_bound_failure is True
+    assert UNTRACKED_REASON in machine._state.infra_errors, machine._state.infra_errors
+
+
+@pytest.mark.parametrize("git", [True, False], ids=["git", "non-git"])
+def test_ci_detached_untracked_gate_fails_with_the_reason(tmp_path, monkeypatch, git):
+    if git:
+        repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+    else:
+        repo, base = tmp_path / "plain", None
+        (repo / "src" / "pkg").mkdir(parents=True)
+        (repo / "src" / "pkg" / "mod.py").write_text("x = 2\n", encoding="utf-8")
+        _write_gate(repo, PR_CMD)
+    machine = _machine(repo, base, mode=Mode.CI)
+    verdict, launched = _ci_run(machine, monkeypatch)
+    assert launched == []
+    assert verdict == Verdict.FAIL, (verdict, machine._state.infra_errors)
+    assert UNTRACKED_REASON in machine._state.infra_errors
+
+
+NO_GATE_REASON = (
+    "CI: mutation not measured -- no gate.yaml found; add .code-forge/gate.yaml "
+    "or use --test-config-root"
+)
+
+
+def _no_gate_repo(tmp_path, git):
+    if git:
+        repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
+        os.unlink(repo / GATE)
+    else:
+        repo, base = tmp_path / "plain", None
+        (repo / "src" / "pkg").mkdir(parents=True)
+        (repo / "src" / "pkg" / "mod.py").write_text("x = 2\n", encoding="utf-8")
+    return repo, base
+
+
+@pytest.mark.parametrize("git", [True, False], ids=["git", "non-git"])
+def test_ci_no_gate_anywhere_is_gate_not_found(tmp_path, git):
+    from code_forge.gate_check import GateNotFound, UntrackedGateRefused
+
+    repo, base = _no_gate_repo(tmp_path, git)
+    with pytest.raises(GateNotFound):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base, allow_untracked=False)
+    _write_gate(repo, PR_CMD)  # present but untracked: the other refusal
+    with pytest.raises(UntrackedGateRefused):
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base, allow_untracked=False)
+
+
+@pytest.mark.parametrize("git", [True, False], ids=["git", "non-git"])
+def test_ci_no_gate_fails_with_the_reason(tmp_path, monkeypatch, git):
+    repo, base = _no_gate_repo(tmp_path, git)
+    machine = _machine(repo, base, mode=Mode.CI)
+    assert _l2_calls(machine) == []
+    assert machine._mutation_bound_failure is True
+    assert NO_GATE_REASON in machine._state.infra_errors, machine._state.infra_errors
+    machine = _machine(repo, base, mode=Mode.CI)
+    verdict, launched = _ci_run(machine, monkeypatch)
+    assert launched == [] and verdict == Verdict.FAIL, (verdict, machine._state.infra_errors)
+    assert NO_GATE_REASON in machine._state.infra_errors
+
+
+def test_ci_outside_root_without_a_gate_fails_with_the_reason(tmp_path, monkeypatch):
+    from code_forge.gate_check import GateNotFound
+
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    outside = tmp_path / "forge-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    with pytest.raises(GateNotFound):
+        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+    machine = _machine(repo, base, mode=Mode.CI)
+    machine.cwd, machine.source_root = outside, repo
+    verdict, launched = _ci_run(machine, monkeypatch)
+    assert launched == [] and verdict == Verdict.FAIL
+    assert NO_GATE_REASON in machine._state.infra_errors
+
+
+@pytest.mark.parametrize("git", [True, False], ids=["git", "non-git"])
+def test_local_no_gate_is_unchanged(tmp_path, git):
+    from code_forge.gate_check import GateNotFound
+
+    repo, base = _no_gate_repo(tmp_path, git)
+    with pytest.raises(FileNotFoundError) as missing:
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base, allow_untracked=True)
+    assert not isinstance(missing.value, GateNotFound)
+    machine = _machine(repo, base)
+    assert _l2_calls(machine) == []
+    assert machine._mutation_bound_failure is False
+    assert NO_GATE_REASON not in machine._state.infra_errors
+    assert any("L2: gate.yaml missing or test.command not configured" in e for e in machine._state.infra_errors)
+
+
+def test_local_outside_root_without_a_gate_keeps_the_old_note(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    outside = tmp_path / "forge-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    machine = _machine(repo, base)
+    machine.cwd, machine.source_root = outside, repo
+    assert _l2_calls(machine) == []
     assert machine._mutation_bound_failure is False
     assert any("L2: gate.yaml missing or test.command not configured" in e for e in machine._state.infra_errors)
+
+
+def test_ci_docs_only_diff_never_loads_the_gate(tmp_path, monkeypatch):
+    """Docs-only policy (CI_DOCS_ONLY_MUTATION_SKIP_PASSES) wins: no mutation
+    adapter covers a docs-only diff, so neither the L2 phase nor the detached
+    launch loads the gate, and the no-gate FAIL cannot fire. (The docs-only
+    PASS itself is covered by the existing #127/#132 tests.)"""
+    from code_forge import machine as machine_mod
+
+    assert machine_mod.CI_DOCS_ONLY_MUTATION_SKIP_PASSES is True
+    repo, base = _no_gate_repo(tmp_path, True)
+    (repo / "docs").mkdir()
+    (repo / "docs" / "guide.md").write_text("# hi\n", encoding="utf-8")
+    monkeypatch.setattr(
+        StateMachine, "_load_trusted_gate_config",
+        lambda self: pytest.fail("gate loaded for a docs-only diff"),
+    )
+
+    def docs_machine():
+        machine = _machine(repo, base, mode=Mode.CI, files=("docs/guide.md",))
+        machine.resolved_review = ResolvedReview(
+            source_files=[repo / "docs" / "guide.md"], baseline_content=None,
+            git_diff="--- a/docs/guide.md\n+++ b/docs/guide.md\n@@ -0,0 +1 @@\n+# hi\n",
+            mode_hint="git", base_sha=base,
+        )
+        return machine
+
+    machine = docs_machine()
+    _l2_calls(machine)
+    assert NO_GATE_REASON not in machine._state.infra_errors
+    assert machine._mutation_bound_failure is False
+    machine = docs_machine()
+    verdict, launched = _ci_run(machine, monkeypatch)
+    assert launched == [] and verdict == Verdict.PASS, (verdict, machine._state.infra_errors)
+    assert NO_GATE_REASON not in machine._state.infra_errors
+
+
+NOT_ON_BASELINE_REASON = (
+    "CI: mutation not measured -- gate.yaml is not on the review baseline yet (added by "
+    "this change); it takes effect once it is on the baseline, or use --test-config-root"
+)
+
+
+def test_ci_first_ever_tracked_gate_fails_with_its_own_reason(tmp_path, monkeypatch):
+    """#178: committing a first-ever gate.yaml must not turn CI's no-gate FAIL into PASS."""
+    from code_forge.gate_check import GateNotFound, GateNotOnBaseline
+
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=True)
+    with pytest.raises(GateNotOnBaseline) as caught:
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base, allow_untracked=False)
+    assert isinstance(caught.value, GateNotFound)
+    machine = _machine(repo, base, mode=Mode.CI)
+    assert _l2_calls(machine) == []
+    assert machine._mutation_bound_failure is True
+    assert NOT_ON_BASELINE_REASON in machine._state.infra_errors, machine._state.infra_errors
+    machine = _machine(repo, base, mode=Mode.CI)
+    verdict, launched = _ci_run(machine, monkeypatch)
+    assert launched == [] and verdict == Verdict.FAIL, (verdict, machine._state.infra_errors)
+    assert NOT_ON_BASELINE_REASON in machine._state.infra_errors
+
+
+def test_local_first_ever_tracked_gate_keeps_the_not_configured_note(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=False, tracked=True)
+    machine = _machine(repo, base)
+    assert _l2_calls(machine) == []
+    assert machine._mutation_bound_failure is False
+    assert NOT_ON_BASELINE_REASON not in machine._state.infra_errors
+
+
+@pytest.mark.parametrize("content", [
+    "test: [unclosed\n",  # not YAML
+    "- just\n- a list\n",  # not a mapping
+    "test: {command: 5}\n",  # invalid test section
+], ids=["yaml", "not-mapping", "bad-command"])
+def test_ci_invalid_outside_gate_fails_with_the_reason(tmp_path, monkeypatch, content):
+    """User policy: a malformed gate.yaml in an outside config root is a CI FAIL."""
+    from code_forge.gate_check import OutsideGateInvalid
+
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    outside = tmp_path / "forge-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    (outside / GATE).write_text(content, encoding="utf-8")
+    with pytest.raises(OutsideGateInvalid):
+        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+    for run in ("inline", "detached"):
+        machine = _machine(repo, base, mode=Mode.CI)
+        machine.cwd, machine.source_root = outside, repo
+        if run == "inline":
+            assert _l2_calls(machine) == []
+            assert machine._mutation_bound_failure is True
+        else:
+            verdict, launched = _ci_run(machine, monkeypatch)
+            assert launched == [] and verdict == Verdict.FAIL, (verdict, machine._state.infra_errors)
+        assert any(
+            e.startswith("CI: mutation not measured -- invalid .code-forge/gate.yaml in the test config root")
+            for e in machine._state.infra_errors
+        ), machine._state.infra_errors
+
+
+def test_local_invalid_outside_gate_keeps_the_old_note(tmp_path):
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    outside = tmp_path / "forge-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    (outside / GATE).write_text("test: [unclosed\n", encoding="utf-8")
+    machine = _machine(repo, base)
+    machine.cwd, machine.source_root = outside, repo
+    assert _l2_calls(machine) == []
+    assert machine._mutation_bound_failure is False
+    assert any("L2: gate.yaml missing or test.command not configured" in e for e in machine._state.infra_errors)
+
+
+def test_ci_outside_gate_without_a_test_section_is_not_malformed(tmp_path):
+    """A well-formed review-keys-only outside gate is 'mutation not configured',
+    not a malformed file: it keeps the existing not-configured note."""
+    from code_forge.gate_check import GateWithoutTestSection
+
+    repo, base = _repo(tmp_path, gate_at_base=True)
+    outside = tmp_path / "forge-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    (outside / GATE).write_text("rulepacks: []\n", encoding="utf-8")
+    with pytest.raises(GateWithoutTestSection):
+        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
