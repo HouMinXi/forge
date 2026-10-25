@@ -32,6 +32,7 @@ from pathlib import Path
 
 import unidiff
 
+from . import progress
 from .advisory import AdvisoryFinding
 from ._fixval_transaction import FixvalTransaction, TransactionError
 from ._mutation_process import child_sigint_options
@@ -590,6 +591,9 @@ def _test_reverted_candidate(
 ) -> FixvalResult | None:
     """Run the tests on reverted code. With `require_witness`, a nonzero run
     that did not show a failing test returns None (no verdict)."""
+    # #183: each bounded FIXVAL test run starts with a progress line, so the
+    # MCP job's inactivity watchdog never sees two runs as one silent span.
+    progress.emit("fixval: reverted-fix run")
     try:
         result = subprocess.run(
             scoped_cmd,
@@ -1229,6 +1233,7 @@ def run_overfit_guard(
                 _drop_cached_bytecode(str(cwd), [str(file_path)], run_env, scoped_cmd)
             except OSError:
                 return []  # advisory only: unmeasured, never a stale verdict
+            progress.emit("fixval: overfit run")  # #183
             try:
                 result = subprocess.run(
                     scoped_cmd,
