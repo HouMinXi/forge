@@ -91,17 +91,6 @@ def _build_machine(tmp_path, resolved, l0_findings=None, l0_infra=None):
     )
 
 
-def _outside_root(tmp_path):
-    return tmp_path.parent / (tmp_path.name + "-gate")
-
-
-def _outside_gate(tmp_path):
-    """#141: CI reads review-time gate keys from a trusted source; these
-    non-git fixtures supply it as an outside config root."""
-    (_outside_root(tmp_path) / ".code-forge").mkdir(parents=True, exist_ok=True)
-    return _outside_root(tmp_path) / ".code-forge" / "gate.yaml"
-
-
 def _prep_local_state(tmp_path):
     (tmp_path / ".code-forge").mkdir(parents=True, exist_ok=True)
 
@@ -335,7 +324,6 @@ def _build_ci_machine(tmp_path, resolved, l0_findings=None, l0_infra=None):
         test_config_root=outside_gate_root(tmp_path),  # #160
         registry={},
         l0_runner=mock_l0,
-        test_config_root=_outside_root(tmp_path) if _outside_root(tmp_path).is_dir() else None,
     )
 
 
@@ -449,7 +437,7 @@ def test_ci_env_kill_switch(tmp_path, monkeypatch):
 def test_ci_config_kill_switch(tmp_path):
     """Test (f): gate.yaml ledger.enabled=false suppresses CI ledger writes."""
     _prep_local_state(tmp_path)
-    gate_file = _outside_gate(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
     gate_file.write_text("ledger:\n  enabled: false\n", encoding="utf-8")
     finding = _make_finding("fp-ci-kill-cfg", disp=Disposition.CONFIRMED)
     machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
@@ -461,7 +449,7 @@ def test_ci_config_kill_switch(tmp_path):
 def test_ci_config_kill_switch_tolerant(tmp_path):
     """Test (g): Kill-switch is tolerant to review-only gate.yaml, empty gate.yaml, malformed YAML, non-utf8."""
     _prep_local_state(tmp_path)
-    gate_file = _outside_gate(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
 
     # 1. gate.yaml with no test section and ledger.enabled: false
     gate_file.write_text("mode: review\nledger:\n  enabled: false\n", encoding="utf-8")
@@ -728,7 +716,7 @@ def test_ci_suppress_missing_ledger(tmp_path):
 def test_ci_pinned_paths_suppresses_matching_file(tmp_path):
     """CONFIRMED finding whose file matches pinned_paths glob → DISMISSED, PASS."""
     _prep_local_state(tmp_path)
-    gate_file = _outside_gate(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
     gate_file.write_text(
         "pinned_paths:\n  - 'vendor/*.py'\n  - '*.generated.*'\n",
         encoding="utf-8",
@@ -755,7 +743,7 @@ def test_ci_pinned_paths_does_not_affect_non_matching(tmp_path):
 def test_ci_style_downgrade_pass_names(tmp_path):
     """CONFIRMED finding with source in style_downgrade.pass_names → STYLE, PASS."""
     _prep_local_state(tmp_path)
-    gate_file = _outside_gate(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
     gate_file.write_text(
         "style_downgrade:\n  pass_names:\n    - 'LINT'\n    - 'FORMAT'\n",
         encoding="utf-8",
@@ -770,7 +758,7 @@ def test_ci_style_downgrade_pass_names(tmp_path):
 def test_ci_style_downgrade_keywords(tmp_path):
     """CONFIRMED finding whose description contains style_downgrade keyword → STYLE, PASS."""
     _prep_local_state(tmp_path)
-    gate_file = _outside_gate(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
     gate_file.write_text(
         "style_downgrade:\n  keywords:\n    - 'indentation'\n    - 'whitespace'\n",
         encoding="utf-8",
@@ -871,7 +859,7 @@ def test_ci_pinned_paths_suppresses_coverage_gap(tmp_path):
     """A COVERAGE finding on a pinned path is also suppressed (gemini B-1):
     pinned COVERAGE gap set DISMISSED -> coverage_gaps drops -> PASS."""
     _prep_local_state(tmp_path)
-    gate_file = _outside_gate(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
     gate_file.write_text("pinned_paths:\n  - 'vendor/*.py'\n", encoding="utf-8")
     cov = _make_finding(
         "coverage:vendor/foo.py",
