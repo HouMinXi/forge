@@ -27,6 +27,19 @@ OUTPUT = " \tReview output: café\n[advisory] Phase 3 skipped\n--- stderr ---\n\
 STDERR = " \tdiagnostic with trailing whitespace \n\n"
 
 
+def _without_report_classification(payload):
+    """Drop IC-02 additive report_classification for legacy-shape compares."""
+    if not isinstance(payload, dict):
+        return payload
+    out = {}
+    for key, value in payload.items():
+        if key == "report_classification":
+            continue
+        out[key] = _without_report_classification(value) if isinstance(value, dict) else value
+    return out
+
+
+
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
     """These formatting fixtures must not contact a provider or launch a CLI."""
@@ -79,7 +92,7 @@ async def test_terminal_text_preserves_exact_structured_output(
     expected_output = OUTPUT
     if status == "failed" or exit_code != 0:
         expected_output += "\n--- stderr ---\n" + STDERR
-    assert result.structuredContent == {
+    expected = {
         "job_id": "job",
         "status": status,
         "poll_after_seconds": None,
@@ -94,6 +107,9 @@ async def test_terminal_text_preserves_exact_structured_output(
             "output": expected_output,
         },
     }
+    # IC-02 additive report_classification on ForgeResult (ignore for legacy shape).
+    assert "report_classification" in (result.structuredContent.get("result") or {})
+    assert _without_report_classification(result.structuredContent) == expected
     header = f"Job job {status}: {verdict} (exit {exit_code})"
     assert result.content[0].text == header + "\n" + result.structuredContent["result"]["output"]
     assert entry == before
@@ -122,7 +138,7 @@ def test_immediate_result_keeps_current_text_format(exit_code, verdict, stdout):
     expected_output = stdout if exit_code == 0 else stdout + "\n--- stderr ---\n" + STDERR
     assert isinstance(result, CallToolResult)
     assert result.content == [TextContent(type="text", text=expected_output)]
-    assert result.structuredContent == {
+    expected = {
         "verdict": verdict,
         "exit_code": exit_code,
         "findings_count": None,
@@ -132,6 +148,9 @@ def test_immediate_result_keeps_current_text_format(exit_code, verdict, stdout):
         "duration_s": 12.35,
         "output": expected_output,
     }
+    # IC-02 additive report_classification on immediate ForgeResult.
+    assert "report_classification" in result.structuredContent
+    assert _without_report_classification(result.structuredContent) == expected
 
 
 @pytest.mark.asyncio
