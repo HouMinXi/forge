@@ -1,0 +1,118 @@
+{
+  "status": "STAGE1_SOURCE_ONLY_CLEAN_STAGE2_PENDING_NOT_FORMALLY_ADMITTED",
+  "repository_prefix": "docs/gsd/proposals/2026-10-19-offline-analyser/",
+  "date_utc": "2026-10-19",
+  "prior_published_commit": "a62cdfa30432361ff3603abd74c7d5506b4447d4",
+  "prior_published_manifest_sha256": "245540e29c19371920114718e798bfc2237e3ce5c7082b11a3444d9966ac00da",
+  "reviewed_core_manifest_sha256": "5fcd84bffa7a80a7440eaedd74e63e27c996f07feb660958d71f6495934a5672",
+  "review_report_sha256": "e2bb8d2e63d2447dd4204921acdd430e0fd699eacef1c027578d4129ef8c1a4a",
+  "product_edits": false,
+  "runtime_execution": false,
+  "external_writes": false,
+  "formal_admission": false,
+  "execution_admission": "HOLD",
+  "pbr_stage1": "COMPLETE_SOURCE_ONLY_B0_H0_M0_L0",
+  "pbr_stage2": "PENDING_INDEPENDENT_CROSS_AI_CONVERGENCE",
+  "physical_source_graph": "NOT_RUN",
+  "sdk": "NOT_RUN",
+  "installed_checker_equivalence": "UNVERIFIED",
+  "packaging_scope": "REPORT_ADDITION_AND_REVIEW_STATUS_PROVENANCE_ONLY",
+  "private_methodology_included": false,
+  "files": [
+    {
+      "file": "59-16-CURRENT-SOURCE-ADDENDUM.md",
+      "bytes": 23913,
+      "sha256": "ecd2ca8d2495d5d83cd303111cb9114aaa5f0f5e8ee628ec5ba2aa40ed73d9c4"
+    },
+    {
+      "file": "59-16-FROZEN-CONTROLS.md",
+      "bytes": 15515,
+      "sha256": "c34edb7ed52546099383cd126a947adac7c5aaf3909a55c7527fef422834a617"
+    },
+    {
+      "file": "59-16-PLAN-CANDIDATE.md",
+      "bytes": 20387,
+      "sha256": "8a27233fe529b2c8d0aae8ec4913c870f04c0f79f0b50a779ebeb6edf7ad3ad6"
+    },
+    {
+      "file": "59-VALIDATION-CANDIDATE.md",
+      "bytes": 7597,
+      "sha256": "26222e7798f434d11f9c226746b7704b962b3af24dd65b13336695c2f52f99bd"
+    },
+    {
+      "file": "CANDIDATE-RECHECK.md",
+      "bytes": 7294,
+      "sha256": "7b1e573b676871ce8995649bcc846268553c1e2c3f6dbcbcac489c3b9a0e8336"
+    },
+    {
+      "file": "FETCH-PROVENANCE.json",
+      "bytes": 13852,
+      "sha256": "0c211f3c968060d5fb31329827353d997a70703bfefd26116e18b557257984d5"
+    },
+    {
+      "file": "INPUT-SHA256SUMS.txt",
+      "bytes": 5968,
+      "sha256": "d376b2ee6d072ba58361255577a69ded3a17aaef159c3c06b5b55986ed777c0a"
+    },
+    {
+      "file": "ORIGINAL-CHECKER-REPORT.md",
+      "bytes": 26071,
+      "sha256": "3c51ab8b5afa310295317e0afcc002ca6cf56947a24c73fc62d71dd1da79ea2d"
+    },
+    {
+      "file": "PACKAGING-DISPOSITION.json",
+      "bytes": 1668,
+      "sha256": "ddf937e8c96fec35cca0deece393c4815c6cd21df2068366fabbc3f59e2e69e2"
+    },
+    {
+      "file": "PACKAGING-REVIEW.md",
+      "bytes": 6612,
+      "sha256": "e2c98b030ef80c021016042ab9df277ec1f41f0445ac63a7981ef3b852205971"
+    },
+    {
+      "file": "PATCH-DESIGN.md",
+      "bytes": 28004,
+      "sha256": "5301aab0ffe172fd7d5be3f4f7cb17a0b619fc096eb9fabdf596dc36faa30167"
+    },
+    {
+      "file": "PBR-FINDING-DISPOSITIONS.md",
+      "bytes": 7985,
+      "sha256": "9985e9957f9b9fa11b0c9be9085a3b54fe609e5b2e80ce6ba597e8333c77fee9"
+    },
+    {
+      "file": "PBR-STAGE1-RECHECK.md",
+      "bytes": 13301,
+      "sha256": "e2bb8d2e63d2447dd4204921acdd430e0fd699eacef1c027578d4129ef8c1a4a"
+    },
+    {
+      "file": "PUBLIC-INPUTS.json",
+      "bytes": 15440,
+      "sha256": "97c617904b4062c5b2221c8d9351d78c2b9a9558e4828b26a03010a6a7b1c72e"
+    },
+    {
+      "file": "README.md",
+      "bytes": 4530,
+      "sha256": "8e31e4ec11ca03f82949ad0f78771f2911f1a9c09735810d6e007c2f070806a5"
+    },
+    {
+      "file": "RESEARCH-PLANNING-DISPOSITIONS.md",
+      "bytes": 3414,
+      "sha256": "4bf69c55be9ee382fd276c70f85b9508c7903d83d52969aedfaa2cb870c000db"
+    },
+    {
+      "file": "REVISION-AND-DISPOSITIONS.md",
+      "bytes": 14843,
+      "sha256": "45f4a1dfa72e5bf88e0a69bd8c64a60400afaef2ccbd0741928d2a2845fadde2"
+    },
+    {
+      "file": "open-pr-overlap.json",
+      "bytes": 12360,
+      "sha256": "aaf66b940b89c60bcf51551129ed6907ddcd79b6a15a51db18de1d3c18778d48"
+    },
+    {
+      "file": "received-r2-plan16.txt",
+      "bytes": 14298,
+      "sha256": "082633222362d531df514bbc5fcb9df4004db8a6acf094e7e360635ed08a101a"
+    }
+  ]
+}
