@@ -95,6 +95,7 @@ def start_job(
     stderr_log_path: str | None = None,
     max_lifetime_s: float | None = None,
     deadline: float | None = None,
+    idle_timeout_s: float | None = None,
 ) -> str:
     """Register a background job. Returns job_id (UUID4).
 
@@ -104,6 +105,10 @@ def start_job(
     max_lifetime_s: wall-clock cap for the entire job (LLM timeout +
     retry overhead + subprocess grace).  None = unbounded (legacy).
     deadline: Absolute monotonic deadline, overriding the relative cap.
+    idle_timeout_s (#165): kill the job only after its stderr log (where
+    forge writes its ``[forge]`` progress lines) has not grown for this
+    long. A multi-round review can run for hours while making progress, so
+    a total cap is applied only when explicitly configured.
     """
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {
@@ -118,6 +123,7 @@ def start_job(
         "stderr_log_path": stderr_log_path,
         "max_lifetime_s": max_lifetime_s,
         "deadline": deadline,
+        "idle_timeout_s": idle_timeout_s,
     }
     _jobs[job_id]["wait_task"] = asyncio.create_task(_wait_for_job(job_id))
     return job_id
@@ -248,6 +254,47 @@ def _read_stderr_log(log_path: str | None) -> str:
         return ""
 
 
+_WATCHDOG_POLL_S: float = 5.0
+
+
+def _log_size(path: str | None) -> int:
+    try:
+        return os.stat(path).st_size if path else -1
+    except OSError:
+        return -1
+
+
+async def _await_with_watchdog(entry: dict[str, Any], cap: float | None):
+    """#165: await comm_task; raise asyncio.TimeoutError (after cancelling
+    it, like wait_for) when the stderr log stops growing for idle_timeout_s,
+    or when the explicit total cap ``cap`` (if any) runs out."""
+    task = entry["comm_task"]
+    idle = float(entry["idle_timeout_s"])
+    path = entry.get("stderr_log_path")
+    start = time.monotonic()
+    last_size, last_progress = _log_size(path), start
+    while True:
+        now = time.monotonic()
+        waits = [last_progress + idle - now, _WATCHDOG_POLL_S]
+        if cap is not None:
+            waits.append(start + cap - now)
+        done, _ = await asyncio.wait({task}, timeout=max(0.0, min(waits)))
+        if done:
+            return task.result()
+        now = time.monotonic()
+        size = _log_size(path)
+        if size != last_size:
+            last_size, last_progress = size, now
+        if cap is not None and now - start >= cap:
+            entry["timeout_reason"] = "job exceeded %ds cap" % int(cap)
+        elif now - last_progress >= idle:
+            entry["timeout_reason"] = "job made no progress for %ds (no new forge output)" % int(idle)
+        else:
+            continue
+        task.cancel()
+        raise asyncio.TimeoutError
+
+
 async def _wait_for_job(job_id: str) -> None:
     """Await the comm_task and update job state on completion.
 
@@ -264,7 +311,9 @@ async def _wait_for_job(job_id: str) -> None:
         deadline = entry.get("deadline")
         if deadline is not None:
             cap = max(0.0, deadline - time.monotonic())
-        if cap is not None:
+        if entry.get("idle_timeout_s") is not None:
+            stdout_bytes, stderr_bytes = await _await_with_watchdog(entry, cap)
+        elif cap is not None:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 entry["comm_task"],
                 timeout=cap,
@@ -326,7 +375,7 @@ async def _wait_for_job(job_id: str) -> None:
             return
         await _terminate_and_reap(proc)
         # D-state children survive SIGKILL; proc.returncode stays None.
-        timeout_reason = (
+        timeout_reason = entry.get("timeout_reason") or (
             "job exceeded CLI deadline" if deadline is not None else "job exceeded %ds cap" % int(cap)
         )
         entry["status"] = "failed"

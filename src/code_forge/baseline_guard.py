@@ -15,6 +15,10 @@ from code_forge.disposition import Disposition
 from code_forge.state import StateFinding
 
 
+# Flake-detection runs per baseline guard, each bounded by test.timeout_seconds.
+BASELINE_MAX_RUNS = 3
+
+
 def _is_runner_missing(
     baseline_cmd: list[str],
     result: subprocess.CompletedProcess | None,
@@ -329,7 +333,7 @@ def _run_baseline_guard(
     retry_cause: list[str] | None = None,
     first_attempt: str | None = None,
 ) -> tuple[str, list[StateFinding], list[str]]:
-    """Run the baseline three times and report the observed failure cause.
+    """Run the baseline BASELINE_MAX_RUNS (3) times and report the observed failure cause.
 
     run_command optionally supplies invocation ownership. The default resolves
     subprocess.run at call time so existing callers and their probes are unchanged.
@@ -372,7 +376,13 @@ def _run_baseline_guard(
     else:
         execute = run_command
 
-    for run_num in range(1, 4):
+    from . import progress
+
+    for run_num in range(1, BASELINE_MAX_RUNS + 1):
+        # #165: one progress line per run. Each run is bounded by one test
+        # timeout, so an inactivity watchdog sized to that timeout (the MCP
+        # job's idle window) never sees a healthy 3-run guard as hung.
+        progress.emit(f"baseline: run {run_num}/{BASELINE_MAX_RUNS}")
         try:
             result = execute(
                 baseline_cmd,
