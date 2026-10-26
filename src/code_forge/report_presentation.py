@@ -13,6 +13,11 @@ Phase 1 DTO → wire mapping (actual shipped shapes, not Part B sketch):
     §3.2 local coherence. Fields absent from ReportRecord (source, anchor,
     evidence_files, is_timeout, backend, severity, excerpt, falsify_reasoning,
     diagnostic_kind, provider_failure) are emitted as JSON null.
+  ReportRecord.host_failure_kind (Phase 5 WP2, naming-domain b) is a
+    parallel report-only sibling on ProductRecord / HostDiagnostic — NOT
+    part of FIELD_INVENTORY / RecordView.fields. wire_to_json always emits
+    the key (null or freeze-set string); parsers accept a missing key as
+    None so pre-WP2 blocks still load.
   ReportRecord.channel/shape → destination list + HostDiagnostic.diagnostic
     (S1→provider-capacity; S2→capacity-incomplete; S3→receipt-audit;
     product-path S4/S5/S0 → ProductRecord associated_diagnostics mapped
@@ -27,11 +32,11 @@ Phase 1 DTO → wire mapping (actual shipped shapes, not Part B sketch):
     not emit the Part C code literals). Wire-only render /
     renderer-computation-fault are added only by §6.1 renderer-fallback.
   ReportProjection acquisition_complete/reason copied. persisted_pass_outcomes
-    is absent on Phase 1 DTO; for reasons that entail all-completed outcomes
-    (completion-not-provable-from-state, capacity-incomplete-record) the
-    serializer recovers the entailed triple. Residual: pass-outcome-not-
-    completed cannot recover which pass failed → outcomes null → available
-    block fails RA-O and takes renderer-fallback / unavailable.
+    is additive on Phase 1 DTO (IC-07-RAO WP-R1). For reasons that entail
+    all-completed outcomes (completion-not-provable-from-state,
+    capacity-incomplete-record) the serializer recovers the entailed triple.
+    For pass-outcome-not-completed, serialize emits projection.persisted_pass_outcomes
+    when present (non-null, ≥1 non-completed); when null, leave null (fail closed).
 
 No paths, callbacks, clock, publication, logging, network, or workers.
 """
@@ -47,6 +52,7 @@ from code_forge.report_projection import (
     AssociatedDiagnostic,
     ClassificationError,
     FallbackRecord,
+    HostFailureKind,
     ReportProjection,
     ReportRecord,
 )
@@ -123,6 +129,18 @@ RENDER_STAGE_CODES = frozenset({"renderer-computation-fault"})
 OBS_KINDS_HOST_EXEC = frozenset({"provider-capacity"})
 OBS_KINDS_HOST_GATE = frozenset({"capacity-incomplete", "receipt-audit"})
 OBS_KINDS_ASSOC = frozenset({"persisted-falsify-error", "persisted-evidence-downgrade"})
+# Phase 5 WP2 freeze set (subtype-include-table); parallel report-only labels.
+HOST_FAILURE_KINDS: frozenset[str] = frozenset(
+    {
+        "PROVIDER_CAPACITY",
+        "CAPACITY_INCOMPLETE",
+        "PROVIDER_TRANSPORT",
+        "PROVIDER_AUTH",
+        "PROVIDER_EMPTY",
+        "PROVIDER_PROTOCOL",
+        "RECEIPT_INVALID_GATE",
+    }
+)
 
 _MAX_SARIF_REPORT_CHARS = 1024 * 1024
 _MAX_FIELD_CONTAINER_DEPTH = 64
@@ -164,12 +182,16 @@ class RecordView:
 class ProductRecord:
     record: RecordView
     associated_diagnostics: tuple[DiagnosticObservation, ...]
+    # Parallel report-only label (Phase 5 WP2). Not a State / FIELD_INVENTORY key.
+    host_failure_kind: HostFailureKind | None = None
 
 
 @dataclass(frozen=True)
 class HostDiagnostic:
     record: RecordView
     diagnostic: DiagnosticObservation
+    # Parallel report-only label (Phase 5 WP2). Not a State / FIELD_INVENTORY key.
+    host_failure_kind: HostFailureKind | None = None
 
 
 @dataclass(frozen=True)
@@ -385,13 +407,20 @@ def wire_to_json(block: ReportClassificationWire) -> dict[str, JSONValue]:
         return {"record_index": rv.record_index, "fields": dict(rv.fields)}
 
     def product(p: ProductRecord) -> dict[str, JSONValue]:
+        # Always emit host_failure_kind (null|string) for stable schema; readers
+        # must still treat a missing key as None (pre-WP2 / old writers).
         return {
             "record": record_view(p.record),
             "associated_diagnostics": [obs(d) for d in p.associated_diagnostics],
+            "host_failure_kind": p.host_failure_kind,
         }
 
     def host(h: HostDiagnostic) -> dict[str, JSONValue]:
-        return {"record": record_view(h.record), "diagnostic": obs(h.diagnostic)}
+        return {
+            "record": record_view(h.record),
+            "diagnostic": obs(h.diagnostic),
+            "host_failure_kind": h.host_failure_kind,
+        }
 
     def fb(f: WireFallbackRecord) -> dict[str, JSONValue]:
         return {
@@ -529,6 +558,7 @@ def _product_from_report_record(r: ReportRecord) -> ProductRecord:
     return ProductRecord(
         record=_record_view_from_report_record(r),
         associated_diagnostics=tuple(_assoc_from_phase1(d) for d in r.associated_diagnostics),
+        host_failure_kind=r.host_failure_kind,
     )
 
 
@@ -536,6 +566,7 @@ def _host_from_report_record(r: ReportRecord) -> HostDiagnostic:
     return HostDiagnostic(
         record=_record_view_from_report_record(r),
         diagnostic=_host_diag_for_shape(r.shape),
+        host_failure_kind=r.host_failure_kind,
     )
 
 
@@ -586,10 +617,10 @@ def serialize_projection(
     if acq_complete is not False and acq_complete is not None:
         raise ValueError("acquisition_complete must be False or None")
     acq_reason = projection.acquisition_reason
-    # Phase 1 DTO omits persisted_pass_outcomes. When the reason entails
-    # all-completed outcomes, recover that triple so §3.2 RA-O holds without
-    # inventing pass results Phase 1 did not prove. pass-outcome-not-completed
-    # cannot be recovered (which pass failed is unknown) → outcomes stay null.
+    # Recover outcomes for RA-O coherence without inventing pass results:
+    # - completion-not-provable / capacity-incomplete → all-completed (reason entails it)
+    # - pass-outcome-not-completed → emit additive projection.persisted_pass_outcomes
+    #   when present (IC-07-RAO Option B / WP-R1); leave null if field is null (fail closed)
     if acq_reason in (
         "completion-not-provable-from-state",
         "capacity-incomplete-record",
@@ -597,6 +628,8 @@ def serialize_projection(
         outcomes: tuple[tuple[str, str], ...] | None = tuple(
             (n, "completed") for n in PASS_NAMES
         )
+    elif acq_reason == "pass-outcome-not-completed":
+        outcomes = projection.persisted_pass_outcomes
     else:
         outcomes = None
     return ReportClassificationWire(
@@ -763,8 +796,17 @@ def _validate_record_view(rv: Any, *, full_domain: bool) -> None:
     _require(src is None or type(src) is str)
 
 
+def _validate_host_failure_kind_field(obj: dict[str, Any]) -> None:
+    """Additive sibling: missing key OK (old writers); null OK; freeze-set only."""
+    if "host_failure_kind" not in obj:
+        return
+    v = obj["host_failure_kind"]
+    _require(v is None or (type(v) is str and v in HOST_FAILURE_KINDS), "host_failure_kind")
+
+
 def _validate_product(obj: Any) -> None:
     _require(type(obj) is dict)
+    _validate_host_failure_kind_field(obj)
     _validate_record_view(obj.get("record"), full_domain=True)
     diags = obj.get("associated_diagnostics")
     _require(type(diags) is list)
@@ -799,6 +841,7 @@ def _validate_product(obj: Any) -> None:
 
 def _validate_host(obj: Any, *, gate: bool) -> None:
     _require(type(obj) is dict)
+    _validate_host_failure_kind_field(obj)
     _validate_record_view(obj.get("record"), full_domain=True)
     allowed = OBS_KINDS_HOST_GATE if gate else OBS_KINDS_HOST_EXEC
     _validate_obs(obj.get("diagnostic"), allowed_kinds=allowed, assoc=False)
@@ -1064,14 +1107,29 @@ def parse_block_dict(block: dict[str, Any]) -> ReportClassificationWire:
     def load_rv(d: dict) -> RecordView:
         return RecordView(record_index=d["record_index"], fields=dict(d["fields"]))
 
+    def load_host_failure_kind(d: dict) -> HostFailureKind | None:
+        # Missing key → None (old reader / old writer compatibility).
+        if "host_failure_kind" not in d:
+            return None
+        v = d["host_failure_kind"]
+        if v is None:
+            return None
+        # validate_block_dict already restricted to freeze set when present.
+        return v  # type: ignore[return-value]
+
     def load_product(d: dict) -> ProductRecord:
         return ProductRecord(
             record=load_rv(d["record"]),
             associated_diagnostics=tuple(load_obs(x) for x in d["associated_diagnostics"]),
+            host_failure_kind=load_host_failure_kind(d),
         )
 
     def load_host(d: dict) -> HostDiagnostic:
-        return HostDiagnostic(record=load_rv(d["record"]), diagnostic=load_obs(d["diagnostic"]))
+        return HostDiagnostic(
+            record=load_rv(d["record"]),
+            diagnostic=load_obs(d["diagnostic"]),
+            host_failure_kind=load_host_failure_kind(d),
+        )
 
     def load_fb(d: dict) -> WireFallbackRecord:
         return WireFallbackRecord(
@@ -1410,4 +1468,5 @@ __all__ = [
     "SCHEMA_V1",
     "PROJECTION_SCHEMA_V1",
     "FIELD_INVENTORY",
+    "HOST_FAILURE_KINDS",
 ]

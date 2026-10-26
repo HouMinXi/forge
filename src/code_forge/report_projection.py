@@ -26,6 +26,16 @@ from code_forge.state import (
 
 Channel = Literal["product", "execution", "gate", "quarantine"]
 Shape = Literal["S0", "S1", "S2", "S3", "S4", "S5", "S4+S5"]
+# Phase 5 WP1: parallel report-only labels (naming-domain option b). Not persisted.
+HostFailureKind = Literal[
+    "PROVIDER_CAPACITY",
+    "CAPACITY_INCOMPLETE",
+    "PROVIDER_TRANSPORT",
+    "PROVIDER_AUTH",
+    "PROVIDER_EMPTY",
+    "PROVIDER_PROTOCOL",
+    "RECEIPT_INVALID_GATE",
+]
 AssocKind = Literal["falsifier-failure", "evidence-downgrade"]
 FaultStage = Literal["shape", "diagnostics", "record", "projection"]
 AcqReason = Literal[
@@ -80,6 +90,7 @@ class ReportRecord:
     description: str
     disposition: str
     associated_diagnostics: tuple[AssociatedDiagnostic, ...] = ()
+    host_failure_kind: HostFailureKind | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +128,9 @@ class ReportProjection:
     product_path_record_count: int | None
     acquisition_complete: Literal[False] | None
     acquisition_reason: AcqReason
+    # IC-07-RAO WP-R1: additive carry of already-derived pass outcomes (wire shape).
+    # Populated for pass-outcome-not-completed; None for fault / recoverable-null reasons.
+    persisted_pass_outcomes: tuple[tuple[str, str], ...] | None = None
 
 
 def _safe_str(v) -> str | None:
@@ -279,6 +293,65 @@ def _channel_for(shape: Shape, disposition: Disposition) -> Channel:
     return "product"
 
 
+
+def _receipt_fp_match(fingerprint: object) -> bool:
+    """True iff fingerprint matches receipt-[0-9a-f]{12} (no re import; isolation pin)."""
+    if type(fingerprint) is not str or not fingerprint.startswith("receipt-"):
+        return False
+    rest = fingerprint[len("receipt-"):]
+    if len(rest) != 12:
+        return False
+    return all(c in "0123456789abcdef" for c in rest)
+
+
+def _x2_receipt_invalid_geometry(f: StateFinding) -> bool:
+    """Generic X2 RECEIPT_INVALID producer geometry (id/fp/file); shape may still be S0."""
+    return (
+        type(f.id) is str
+        and f.id == "RECEIPT_INVALID"
+        and _receipt_fp_match(f.fingerprint)
+        and type(f.file) is str
+        and f.file == "<receipt-evidence>"
+    )
+
+
+def _derive_host_failure_kind(f: StateFinding, shape: Shape) -> HostFailureKind | None:
+    """Parallel report-only label. integrity ≻ capacity; X1 stays product S0.
+
+    Bound to phase5-evidence/freeze/subtype-include-table.md. No enum writes.
+    """
+    # X2 geometry first: never emit capacity labels for integrity (rule 1+6).
+    # Wave-1 S2 (CAPACITY_INCOMPLETE) shares geometry — keep CAPACITY_INCOMPLETE via shape==S2.
+    if _x2_receipt_invalid_geometry(f) and shape != "S2":
+        return "RECEIPT_INVALID_GATE"
+
+    if shape == "S1" or is_provider_capacity(f):
+        return "PROVIDER_CAPACITY"
+
+    if shape == "S2":
+        return "CAPACITY_INCOMPLETE"
+
+    # X1 LABEL-ONLY: persisted provider_failure.kind, diagnostic_kind is None, product S0.
+    if f.diagnostic_kind is not None:
+        return None
+    pf = f.provider_failure
+    if type(pf) is not dict:
+        return None
+    kind = pf.get("kind")
+    if type(kind) is not str:
+        return None
+    if kind == "conn":
+        return "PROVIDER_TRANSPORT"
+    if kind == "credentials":
+        return "PROVIDER_AUTH"
+    if kind in ("empty", "stub_model"):
+        return "PROVIDER_EMPTY"
+    if kind in ("no_json", "sse_body", "bad_body", "protocol"):
+        return "PROVIDER_PROTOCOL"
+    # truncated without typed capacity enum → None; spawn/timeout/unrecognized → None
+    return None
+
+
 def _build_record(
     index: int,
     f: StateFinding,
@@ -316,6 +389,7 @@ def _build_record(
         description=description,
         disposition=disposition,
         associated_diagnostics=diags,
+        host_failure_kind=_derive_host_failure_kind(f, shape),
     )
 
 
@@ -351,7 +425,14 @@ def _assemble(
 
 
 def _evaluate_acquisition(findings: list) -> tuple:
-    """Q1–Q4. Returns (acquisition_complete, acquisition_reason)."""
+    """Q1–Q4. Returns (acquisition_complete, acquisition_reason, persisted_pass_outcomes).
+
+    persisted_pass_outcomes is the wire list-of-pairs shape derived from
+    already-computed derive_pass_outcomes when reason is pass-outcome-not-completed;
+    None for acquisition-derivation-fault and for reasons that today legitimately
+    leave outcomes null on the Phase 1 DTO (serialize recovers all-completed).
+    Reason-selection logic is unchanged.
+    """
     try:
         outcomes = derive_pass_outcomes(findings)
         if not (
@@ -360,15 +441,16 @@ def _evaluate_acquisition(findings: list) -> tuple:
             and all(type(v) is PassOutcome for v in outcomes.values())
         ):
             raise _AcquisitionShapeError("malformed derive_pass_outcomes result")
+        wire_outcomes = tuple((n, outcomes[n].value) for n in _PASS_NAMES)
         if any(v is not PassOutcome.COMPLETED for v in outcomes.values()):
-            return False, "pass-outcome-not-completed"
+            return False, "pass-outcome-not-completed", wire_outcomes
         if any(is_provider_diagnostic(f) and not is_provider_capacity(f) for f in findings):
-            return False, "capacity-incomplete-record"
-        return None, "completion-not-provable-from-state"
+            return False, "capacity-incomplete-record", None
+        return None, "completion-not-provable-from-state", None
     except (MemoryError, RecursionError):
         raise
     except Exception:
-        return None, "acquisition-derivation-fault"
+        return None, "acquisition-derivation-fault", None
 
 
 def classify_report_records(state: State) -> ReportProjection:
@@ -398,7 +480,7 @@ def classify_report_records(state: State) -> ReportProjection:
         for i, f in enumerate(findings):
             fallbacks_by_index[i] = _fallback_record(i, f)
         # acquisition still runs
-        acq_complete, acq_reason = _evaluate_acquisition(findings)
+        acq_complete, acq_reason, acq_outcomes = _evaluate_acquisition(findings)
         return ReportProjection(
             product=(),
             unresolved_product_candidates=(),
@@ -413,6 +495,7 @@ def classify_report_records(state: State) -> ReportProjection:
             product_path_record_count=None,
             acquisition_complete=acq_complete,
             acquisition_reason=acq_reason,
+            persisted_pass_outcomes=acq_outcomes,
         )
 
     # Per-record classification
@@ -487,7 +570,7 @@ def classify_report_records(state: State) -> ReportProjection:
     errors = tuple(record_errors) + ((projection_error,) if projection_error is not None else ())
 
     # Acquisition last
-    acq_complete, acq_reason = _evaluate_acquisition(findings)
+    acq_complete, acq_reason, acq_outcomes = _evaluate_acquisition(findings)
 
     return ReportProjection(
         product=product,
@@ -503,6 +586,7 @@ def classify_report_records(state: State) -> ReportProjection:
         product_path_record_count=product_path_record_count,
         acquisition_complete=acq_complete,
         acquisition_reason=acq_reason,
+        persisted_pass_outcomes=acq_outcomes,
     )
 
 

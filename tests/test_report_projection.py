@@ -31,6 +31,7 @@ from code_forge.state import (
     PassOutcome,
     State,
     StateFinding,
+    _PASS_NAMES,
     save_state,
     load_state,
 )
@@ -494,7 +495,18 @@ def test_s4_and_s5_double_hit_one_record_two_diagnostics_counted_once(tmp_path):
 )
 def test_deferred_shapes_stay_s0_on_product_path(tmp_path, kind):
     if kind == "x1_conn":
+        # WP1: X1 LABEL-ONLY still S0 product; provider_failure makes label exercisable.
         f = _x1_invoke_fail("expert")
+        f = _sf(
+            id=f.id,
+            fingerprint=f.fingerprint,
+            source=f.source,
+            disposition=f.disposition,
+            file=f.file,
+            line_range=f.line_range,
+            description=f.description,
+            provider_failure={"kind": "conn"},
+        )
     elif kind == "x2_receipt_invalid":
         f = _x2_receipt_invalid()
     elif kind == "schema_fail":
@@ -1294,3 +1306,240 @@ def test_no_mutation_and_no_mutable_aliasing(tmp_path):
     b2 = classify_report_records(c2b)
     a2 = classify_report_records(c1b)
     assert a2 == b2 == a
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 WP1 — parallel host_failure_kind (report-only; naming-domain b)
+# 「未经独立复现」
+# ---------------------------------------------------------------------------
+
+def _x1_with_kind(kind: str, pass_name: str = "qodo") -> StateFinding:
+    return _sf(
+        id=f"l1-{pass_name}-invoke-fail",
+        fingerprint=f"invoke-fail-{pass_name}",
+        source="INFRA",
+        disposition=Disposition.CONFIRMED,
+        file="<llm-invoke>",
+        line_range=[0, 0],
+        description=f"x1 {kind}",
+        provider_failure={"kind": kind},
+        # diagnostic_kind None → not S1; stays product S0
+    )
+
+
+@pytest.mark.parametrize(
+    "pf_kind,expected",
+    [
+        ("conn", "PROVIDER_TRANSPORT"),
+        ("credentials", "PROVIDER_AUTH"),
+        ("empty", "PROVIDER_EMPTY"),
+        ("stub_model", "PROVIDER_EMPTY"),
+        ("no_json", "PROVIDER_PROTOCOL"),
+        ("sse_body", "PROVIDER_PROTOCOL"),
+        ("bad_body", "PROVIDER_PROTOCOL"),
+        ("protocol", "PROVIDER_PROTOCOL"),
+    ],
+)
+def test_wp1_x1_host_failure_kind_label_only_stays_s0_product(tmp_path, pf_kind, expected):
+    labeled = _x1_with_kind(pf_kind)
+    twin = _x1_invoke_fail("qodo")  # unlabeled twin (no provider_failure)
+    (tmp_path / "l").mkdir()
+    (tmp_path / "t").mkdir()
+    state_l = _roundtrip(tmp_path / "l", [labeled, _product_s0(id="anchor", fingerprint="a")])
+    state_t = _roundtrip(tmp_path / "t", [twin, _product_s0(id="anchor", fingerprint="a")])
+    proj_l = classify_report_records(state_l)
+    proj_t = classify_report_records(state_t)
+    bucket_l = proj_l.product + proj_l.unresolved_product_candidates
+    bucket_t = proj_t.product + proj_t.unresolved_product_candidates
+    assert len(bucket_l) == len(bucket_t) == 2
+    assert proj_l.product_list_count == proj_t.product_list_count
+    assert proj_l.product_path_record_count == proj_t.product_path_record_count
+    assert len(proj_l.execution) == 0 and len(proj_l.gate) == 0
+    rec = next(r for r in bucket_l if r.finding_id.startswith("l1-"))
+    assert rec.shape == "S0"
+    assert rec.channel == "product"
+    assert rec.host_failure_kind == expected
+    twin_rec = next(r for r in bucket_t if r.finding_id.startswith("l1-"))
+    assert twin_rec.host_failure_kind is None
+
+
+def test_wp1_x2_receipt_invalid_gate_never_capacity(tmp_path):
+    state = _roundtrip(tmp_path, [_x2_receipt_invalid()])
+    proj = classify_report_records(state)
+    bucket = proj.product + proj.unresolved_product_candidates
+    assert len(bucket) == 1
+    rec = bucket[0]
+    assert rec.shape == "S0"
+    assert rec.host_failure_kind == "RECEIPT_INVALID_GATE"
+    assert rec.host_failure_kind not in ("PROVIDER_CAPACITY", "CAPACITY_INCOMPLETE")
+    assert len(proj.execution) == 0
+
+
+def test_wp1_s1_s2_capacity_labels(tmp_path):
+    state = _roundtrip(tmp_path, [_s1_capacity("adversarial"), _s2_incomplete()])
+    proj = classify_report_records(state)
+    assert len(proj.execution) == 1
+    assert proj.execution[0].shape == "S1"
+    assert proj.execution[0].host_failure_kind == "PROVIDER_CAPACITY"
+    assert len(proj.gate) == 1
+    assert proj.gate[0].shape == "S2"
+    assert proj.gate[0].host_failure_kind == "CAPACITY_INCOMPLETE"
+
+
+def test_wp1_integrity_outranks_capacity_when_both_signals(tmp_path):
+    """X2 geometry + capacity-ish truncated signal → RECEIPT_INVALID_GATE, never capacity."""
+    f = _sf(
+        id="RECEIPT_INVALID",
+        fingerprint="receipt-deadbeef0001",
+        source="INFRA",
+        disposition=Disposition.CONFIRMED,
+        file="<receipt-evidence>",
+        line_range=[0, 0],
+        description="x2 with truncated hint",
+        provider_failure={"kind": "truncated"},
+        diagnostic_kind=FindingDiagnosticKind.PROVIDER_CAPACITY,
+        # Wrong id/file for is_provider_capacity → stays product S0; X2 geometry wins.
+    )
+    state = _roundtrip(tmp_path, [f])
+    proj = classify_report_records(state)
+    bucket = proj.product + proj.unresolved_product_candidates
+    assert len(bucket) == 1
+    rec = bucket[0]
+    assert rec.shape == "S0"
+    assert rec.host_failure_kind == "RECEIPT_INVALID_GATE"
+    assert rec.host_failure_kind != "PROVIDER_CAPACITY"
+    assert rec.host_failure_kind != "CAPACITY_INCOMPLETE"
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["no_pf", "truncated", "spawn", "timeout", "weird_kind", "hyphen_no_json"],
+)
+def test_wp1_unrecognized_or_non_label_provider_failure_kind_is_none(tmp_path, mode):
+    if mode == "no_pf":
+        f = _x1_invoke_fail("expert")
+    elif mode == "hyphen_no_json":
+        f = _x1_with_kind("no-json")
+    else:
+        f = _x1_with_kind(mode)
+    state = _roundtrip(tmp_path, [f])
+    proj = classify_report_records(state)
+    bucket = proj.product + proj.unresolved_product_candidates
+    assert len(bucket) == 1
+    assert bucket[0].shape == "S0"
+    assert bucket[0].host_failure_kind is None
+
+
+def test_wp1_s0_product_default_host_failure_kind_none(tmp_path):
+    state = _roundtrip(tmp_path, [_product_s0()])
+    proj = classify_report_records(state)
+    assert len(proj.product) == 1
+    assert proj.product[0].host_failure_kind is None
+
+
+def test_wp1_fallback_record_has_no_host_failure_kind_field():
+    names = {f.name for f in fields(FallbackRecord)}
+    assert "host_failure_kind" not in names
+
+
+# ---------------------------------------------------------------------------
+# IC-07-RAO WP-R1 — additive persisted_pass_outcomes on ReportProjection
+# 「未经独立复现」 — projection field only; serialize/prepare = WP-R2
+# ---------------------------------------------------------------------------
+
+
+def _assert_non_completed_outcomes(proj: ReportProjection) -> None:
+    assert proj.acquisition_reason == "pass-outcome-not-completed"
+    assert proj.acquisition_complete is False
+    assert proj.persisted_pass_outcomes is not None
+    assert len(proj.persisted_pass_outcomes) == len(_PASS_NAMES)
+    names = [n for n, _ in proj.persisted_pass_outcomes]
+    assert names == list(_PASS_NAMES)
+    for n, o in proj.persisted_pass_outcomes:
+        assert type(n) is str and type(o) is str
+    assert any(o != PassOutcome.COMPLETED.value for _, o in proj.persisted_pass_outcomes)
+
+
+@pytest.mark.parametrize(
+    "pf_kind,expected_label",
+    [
+        ("conn", "PROVIDER_TRANSPORT"),
+        ("credentials", "PROVIDER_AUTH"),
+        ("empty", "PROVIDER_EMPTY"),
+        ("no_json", "PROVIDER_PROTOCOL"),
+    ],
+)
+def test_wpr1_x1_persisted_pass_outcomes_non_null(tmp_path, pf_kind, expected_label):
+    """X1 LABEL-ONLY: reason unchanged; projection carries real non-completed outcomes."""
+    state = _roundtrip(tmp_path, [_x1_with_kind(pf_kind), _product_s0(id="anchor", fingerprint="a")])
+    proj = classify_report_records(state)
+    _assert_non_completed_outcomes(proj)
+    bucket = proj.product + proj.unresolved_product_candidates
+    rec = next(r for r in bucket if r.finding_id.startswith("l1-"))
+    assert rec.host_failure_kind == expected_label
+    # qodo invoke-fail → error (not timeout unless is_timeout)
+    by_name = dict(proj.persisted_pass_outcomes)
+    assert by_name["qodo"] != PassOutcome.COMPLETED.value
+
+
+def test_wpr1_s1_persisted_pass_outcomes_non_null(tmp_path):
+    """S1 PROVIDER_CAPACITY: reason unchanged; projection carries real non-completed outcomes."""
+    state = _roundtrip(tmp_path, [_s1_capacity("adversarial"), _product_s0()])
+    proj = classify_report_records(state)
+    _assert_non_completed_outcomes(proj)
+    assert len(proj.execution) == 1
+    assert proj.execution[0].host_failure_kind == "PROVIDER_CAPACITY"
+    by_name = dict(proj.persisted_pass_outcomes)
+    assert by_name["adversarial"] != PassOutcome.COMPLETED.value
+
+
+def test_wpr1_s2_capacity_incomplete_outcomes_null_on_projection(tmp_path):
+    """Recoverable all-completed reasons leave projection field null (serialize recovers in WP-R2 path)."""
+    state = _roundtrip(tmp_path, [_s2_incomplete(), _product_s0()])
+    proj = classify_report_records(state)
+    assert proj.acquisition_reason == "capacity-incomplete-record"
+    assert proj.acquisition_complete is False
+    assert proj.persisted_pass_outcomes is None
+
+
+def test_wpr1_completion_not_provable_outcomes_null_on_projection(tmp_path):
+    state = _roundtrip(tmp_path, [_product_s0()])
+    proj = classify_report_records(state)
+    assert proj.acquisition_reason == "completion-not-provable-from-state"
+    assert proj.acquisition_complete is None
+    assert proj.persisted_pass_outcomes is None
+
+
+def test_wpr1_acquisition_derivation_fault_outcomes_null(tmp_path, monkeypatch):
+    import code_forge.report_projection as rp
+
+    state = _roundtrip(tmp_path, [_product_s0()])
+
+    def boom(_findings):
+        raise RuntimeError("forced derive fault")
+
+    with monkeypatch.context() as m:
+        m.setattr(rp, "derive_pass_outcomes", boom)
+        proj = classify_report_records(state)
+    assert proj.acquisition_reason == "acquisition-derivation-fault"
+    assert proj.acquisition_complete is None
+    assert proj.persisted_pass_outcomes is None
+
+
+def test_wpr1_reason_selection_unchanged_for_x1_and_s1(tmp_path):
+    """WP-R1 must not reinterpret X1/S1 into capacity-incomplete / completion-not-provable."""
+    x1_dir = tmp_path / "x1"
+    s1_dir = tmp_path / "s1"
+    x1_dir.mkdir()
+    s1_dir.mkdir()
+    x1 = classify_report_records(_roundtrip(x1_dir, [_x1_with_kind("conn")]))
+    s1 = classify_report_records(_roundtrip(s1_dir, [_s1_capacity("adversarial")]))
+    assert x1.acquisition_reason == "pass-outcome-not-completed"
+    assert s1.acquisition_reason == "pass-outcome-not-completed"
+    assert x1.persisted_pass_outcomes is not None
+    assert s1.persisted_pass_outcomes is not None
+
+
+def test_wpr1_report_projection_has_persisted_pass_outcomes_field():
+    names = {f.name for f in fields(ReportProjection)}
+    assert "persisted_pass_outcomes" in names

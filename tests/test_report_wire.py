@@ -521,3 +521,345 @@ def test_cross_envelope_missing_results_invalid_block():
     got = parse_report_classification(run, legacy_report_state="accepted")
     assert got.availability == "unavailable"
     assert got.unavailable_reason == "invalid-block"
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 WP2 — additive host_failure_kind on product/host wire objects
+# ---------------------------------------------------------------------------
+
+
+def _sf_wp2(**kw) -> StateFinding:
+    defaults = dict(
+        id="f1",
+        fingerprint="fp1",
+        source="L1",
+        disposition=Disposition.CONFIRMED,
+        file="a.py",
+        line_range=[1],
+        description="d",
+    )
+    defaults.update(kw)
+    return StateFinding(**defaults)  # type: ignore[arg-type]
+
+
+def test_wp2_serialize_projection_emits_host_failure_kind_labels():
+    """X1/X2/S1/S2 → wire JSON carries correct host_failure_kind (「未经独立复现」).
+
+    IC-07-RAO WP-R2: X1/S1 now emit projection.persisted_pass_outcomes under
+    pass-outcome-not-completed so validate_block_dict succeeds (same bar as
+    S2/X2). Labels remain on typed wire / JSON.
+    """
+    from code_forge.state import FindingDiagnosticKind
+
+    # --- X1 LABEL-ONLY (product) ---
+    x1 = _sf_wp2(
+        id="l1-qodo-invoke-fail",
+        fingerprint="invoke-fail-qodo",
+        source="INFRA",
+        file="<llm-invoke>",
+        line_range=[0, 0],
+        description="invoke fail",
+        provider_failure={"kind": "conn"},
+    )
+    proj = classify_report_records(State(findings=[x1], mode=Mode.CI, verdict=Verdict.PASS))
+    wire = serialize_projection(proj)
+    assert len(wire.product) == 1
+    assert wire.product[0].host_failure_kind == "PROVIDER_TRANSPORT"
+    assert wire.execution == () and wire.gate == ()
+    block = wire_to_json(wire)
+    assert block["product"][0]["host_failure_kind"] == "PROVIDER_TRANSPORT"
+    assert "host_failure_kind" in block["product"][0]
+    assert "host_failure_kind" not in block["product"][0]["record"]["fields"]
+    assert wire.acquisition_reason == "pass-outcome-not-completed"
+    assert wire.persisted_pass_outcomes is not None
+    assert any(o != "completed" for _, o in wire.persisted_pass_outcomes)
+    assert validate_block_dict(block) is None
+
+    # --- S1 capacity (execution) ---
+    s1 = _sf_wp2(
+        id="l1-adversarial-invoke-fail",
+        fingerprint="invoke-fail-adversarial",
+        source="INFRA",
+        file="<llm-invoke>",
+        line_range=[0, 0],
+        description="capacity",
+        diagnostic_kind=FindingDiagnosticKind.PROVIDER_CAPACITY,
+        provider_failure={"kind": "truncated"},
+    )
+    proj = classify_report_records(State(findings=[s1], mode=Mode.CI, verdict=Verdict.PASS))
+    wire = serialize_projection(proj)
+    assert len(wire.execution) == 1
+    assert wire.execution[0].host_failure_kind == "PROVIDER_CAPACITY"
+    block = wire_to_json(wire)
+    assert block["execution"][0]["host_failure_kind"] == "PROVIDER_CAPACITY"
+    assert "host_failure_kind" in block["execution"][0]
+    assert wire.acquisition_reason == "pass-outcome-not-completed"
+    assert wire.persisted_pass_outcomes is not None
+    assert any(o != "completed" for _, o in wire.persisted_pass_outcomes)
+    assert validate_block_dict(block) is None
+
+    # --- S2 capacity-incomplete (gate) — full validate ---
+    s2 = _sf_wp2(
+        id="RECEIPT_INVALID",
+        fingerprint="receipt-abcdef012345",
+        source="INFRA",
+        file="<receipt-evidence>",
+        line_range=[0, 0],
+        description="capacity incomplete",
+        diagnostic_kind=FindingDiagnosticKind.CAPACITY_INCOMPLETE,
+    )
+    proj = classify_report_records(State(findings=[s2], mode=Mode.CI, verdict=Verdict.PASS))
+    block = wire_to_json(serialize_projection(proj))
+    assert validate_block_dict(block) is None
+    assert len(block["gate"]) == 1
+    assert block["gate"][0]["host_failure_kind"] == "CAPACITY_INCOMPLETE"
+
+    # --- X2 gate-label on product path (WP1) — full validate ---
+    x2 = _sf_wp2(
+        id="RECEIPT_INVALID",
+        fingerprint="receipt-deadbeef0001",
+        source="INFRA",
+        file="<receipt-evidence>",
+        line_range=[0, 0],
+        description="generic receipt invalid",
+    )
+    proj = classify_report_records(State(findings=[x2], mode=Mode.CI, verdict=Verdict.PASS))
+    wire = serialize_projection(proj)
+    assert len(wire.product) == 1
+    assert wire.product[0].host_failure_kind == "RECEIPT_INVALID_GATE"
+    assert wire.gate == ()
+    block = wire_to_json(wire)
+    assert validate_block_dict(block) is None
+    assert block["product"][0]["host_failure_kind"] == "RECEIPT_INVALID_GATE"
+    assert block["product"][0]["host_failure_kind"] not in (
+        "PROVIDER_CAPACITY",
+        "CAPACITY_INCOMPLETE",
+    )
+
+
+def test_wp2_parse_missing_host_failure_kind_key_succeeds():
+    """Old writer / old reader: product/host without the key still loads as None."""
+    product_block = {
+        "record": {
+            "record_index": 0,
+            "fields": _empty_fields(id="p", fingerprint="p", disposition="CONFIRMED"),
+        },
+        "associated_diagnostics": [],
+        # deliberately omit host_failure_kind
+    }
+    exec_h = {
+        "record": {"record_index": 1, "fields": _empty_fields(id="e", fingerprint="e")},
+        "diagnostic": {
+            "kind": "provider-capacity",
+            "basis": "inherited-predicate",
+            "observation_scope": "persisted-record-unbound",
+            "text": None,
+        },
+        # omit host_failure_kind
+    }
+    block = _available_empty(
+        product=[product_block],
+        execution=[exec_h],
+        gate=[],
+        product_list_count=1,
+        unresolved_candidate_count=0,
+        product_path_record_count=1,
+    )
+    assert validate_block_dict(block) is None
+    got = parse_block_dict(block)
+    assert got.availability == "available"
+    assert got.product[0].host_failure_kind is None
+    assert got.execution[0].host_failure_kind is None
+
+
+def test_wp2_parse_null_host_failure_kind_and_roundtrip():
+    product_block = {
+        "record": {
+            "record_index": 0,
+            "fields": _empty_fields(id="p", fingerprint="p", disposition="CONFIRMED"),
+        },
+        "associated_diagnostics": [],
+        "host_failure_kind": None,
+    }
+    block = _available_empty(
+        product=[product_block],
+        product_list_count=1,
+        unresolved_candidate_count=0,
+        product_path_record_count=1,
+    )
+    assert validate_block_dict(block) is None
+    got = parse_block_dict(block)
+    assert got.product[0].host_failure_kind is None
+    again = wire_to_json(got)
+    assert again["product"][0]["host_failure_kind"] is None
+    assert "host_failure_kind" in again["product"][0]
+
+
+def test_wp2_invented_subtype_rejected():
+    product_block = {
+        "record": {
+            "record_index": 0,
+            "fields": _empty_fields(id="p", fingerprint="p", disposition="CONFIRMED"),
+        },
+        "associated_diagnostics": [],
+        "host_failure_kind": "NOT_A_REAL_SUBTYPE",
+    }
+    block = _available_empty(
+        product=[product_block],
+        product_list_count=1,
+        unresolved_candidate_count=0,
+        product_path_record_count=1,
+    )
+    assert validate_block_dict(block) == "invalid-block"
+
+    exec_h = {
+        "record": {"record_index": 0, "fields": _empty_fields(id="e", fingerprint="e")},
+        "diagnostic": {
+            "kind": "provider-capacity",
+            "basis": "inherited-predicate",
+            "observation_scope": "persisted-record-unbound",
+            "text": None,
+        },
+        "host_failure_kind": "RECEIPT_SCHEMA",  # DEFER'd — not in freeze emit set
+    }
+    block2 = _available_empty(
+        product=[],
+        execution=[exec_h],
+        product_list_count=0,
+        unresolved_candidate_count=0,
+        product_path_record_count=0,
+    )
+    assert validate_block_dict(block2) == "invalid-block"
+
+
+def test_wp2_freeze_set_values_accepted_on_product_and_host():
+    from code_forge.report_presentation import HOST_FAILURE_KINDS
+
+    for label in sorted(HOST_FAILURE_KINDS):
+        product_block = {
+            "record": {
+                "record_index": 0,
+                "fields": _empty_fields(id="p", fingerprint="p", disposition="CONFIRMED"),
+            },
+            "associated_diagnostics": [],
+            "host_failure_kind": label,
+        }
+        block = _available_empty(
+            product=[product_block],
+            product_list_count=1,
+            unresolved_candidate_count=0,
+            product_path_record_count=1,
+        )
+        assert validate_block_dict(block) is None, label
+        got = parse_block_dict(block)
+        assert got.product[0].host_failure_kind == label
+
+
+def test_wp2_x1_does_not_change_host_diagnostic_kinds():
+    """X1 stays product path; no HostDiagnostic.diagnostic kind invented for X1."""
+    finding = _sf_wp2(
+        id="l1-qodo-invoke-fail",
+        fingerprint="invoke-fail-qodo",
+        source="INFRA",
+        file="<llm-invoke>",
+        line_range=[0, 0],
+        description="invoke fail",
+        provider_failure={"kind": "credentials"},
+    )
+    proj = classify_report_records(
+        State(findings=[finding], mode=Mode.CI, verdict=Verdict.PASS)
+    )
+    wire = serialize_projection(proj)
+    assert len(wire.product) == 1
+    assert wire.product[0].host_failure_kind == "PROVIDER_AUTH"
+    assert wire.execution == ()
+    assert wire.gate == ()
+    assert wire.product[0].associated_diagnostics == ()
+
+
+def test_wp2_hand_built_labeled_product_roundtrips_through_parse():
+    """Additive key on a valid available scaffold: emit → parse → re-emit."""
+    product_block = {
+        "record": {
+            "record_index": 0,
+            "fields": _empty_fields(id="p", fingerprint="p", disposition="CONFIRMED"),
+        },
+        "associated_diagnostics": [],
+        "host_failure_kind": "PROVIDER_TRANSPORT",
+    }
+    exec_h = {
+        "record": {"record_index": 1, "fields": _empty_fields(id="e", fingerprint="e")},
+        "diagnostic": {
+            "kind": "provider-capacity",
+            "basis": "inherited-predicate",
+            "observation_scope": "persisted-record-unbound",
+            "text": None,
+        },
+        "host_failure_kind": "PROVIDER_CAPACITY",
+    }
+    gate_h = {
+        "record": {"record_index": 2, "fields": _empty_fields(id="g", fingerprint="g")},
+        "diagnostic": {
+            "kind": "capacity-incomplete",
+            "basis": "inherited-predicate",
+            "observation_scope": "persisted-record-unbound",
+            "text": None,
+        },
+        "host_failure_kind": "CAPACITY_INCOMPLETE",
+    }
+    block = _available_empty(
+        product=[product_block],
+        execution=[exec_h],
+        gate=[gate_h],
+        product_list_count=1,
+        unresolved_candidate_count=0,
+        product_path_record_count=1,
+    )
+    assert validate_block_dict(block) is None
+    got = parse_block_dict(block)
+    assert got.product[0].host_failure_kind == "PROVIDER_TRANSPORT"
+    assert got.execution[0].host_failure_kind == "PROVIDER_CAPACITY"
+    assert got.gate[0].host_failure_kind == "CAPACITY_INCOMPLETE"
+    again = wire_to_json(got)
+    assert again["product"][0]["host_failure_kind"] == "PROVIDER_TRANSPORT"
+    assert again["execution"][0]["host_failure_kind"] == "PROVIDER_CAPACITY"
+    assert again["gate"][0]["host_failure_kind"] == "CAPACITY_INCOMPLETE"
+
+
+def test_wpr2_x1_s1_serialize_validates_with_real_outcomes():
+    """WP-R2: X1/S1 serialize → RA-O-valid non-null outcomes (「未经独立复现」)."""
+    from code_forge.state import FindingDiagnosticKind
+
+    x1 = _sf_wp2(
+        id="l1-qodo-invoke-fail",
+        fingerprint="invoke-fail-qodo",
+        source="INFRA",
+        file="<llm-invoke>",
+        line_range=[0, 0],
+        description="invoke fail",
+        provider_failure={"kind": "conn"},
+    )
+    proj = classify_report_records(State(findings=[x1], mode=Mode.CI, verdict=Verdict.PASS))
+    wire = serialize_projection(proj)
+    assert proj.persisted_pass_outcomes is not None
+    assert wire.persisted_pass_outcomes == proj.persisted_pass_outcomes
+    block = wire_to_json(wire)
+    assert validate_block_dict(block) is None
+    assert block["acquisition_reason"] == "pass-outcome-not-completed"
+    assert any(o != "completed" for _, o in block["persisted_pass_outcomes"])
+
+    s1 = _sf_wp2(
+        id="l1-adversarial-invoke-fail",
+        fingerprint="invoke-fail-adversarial",
+        source="INFRA",
+        file="<llm-invoke>",
+        line_range=[0, 0],
+        description="capacity",
+        diagnostic_kind=FindingDiagnosticKind.PROVIDER_CAPACITY,
+        provider_failure={"kind": "truncated"},
+    )
+    proj = classify_report_records(State(findings=[s1], mode=Mode.CI, verdict=Verdict.PASS))
+    wire = serialize_projection(proj)
+    block = wire_to_json(wire)
+    assert validate_block_dict(block) is None
+    assert block["execution"][0]["host_failure_kind"] == "PROVIDER_CAPACITY"
