@@ -35,6 +35,41 @@ OUTCOMES = [
 ]
 
 
+
+def _legacy_stderr_ok(err: str, legacy_summary: str, *, exact_first_line: bool = False) -> None:
+    """IC-05: legacy format_summary line preserved; §5 classification may follow.
+
+    When ``exact_first_line`` is True, the first stderr line must equal
+    ``legacy_summary`` byte-for-byte (no advisory suffix). Otherwise the first
+    line must start with ``legacy_summary`` (advisory ``test_assertion=`` may
+    extend the same summary line, as before Entry).
+    """
+    lines = err.splitlines()
+    assert lines, err
+    if exact_first_line:
+        assert lines[0] == legacy_summary, (lines[0], legacy_summary)
+    else:
+        assert lines[0].startswith(legacy_summary), (lines[0], legacy_summary)
+    for line in lines[1:]:
+        assert line.startswith("code-forge: classification"), line
+
+
+def _sarif_without_report_classification(doc: dict) -> dict:
+    """Return SARIF dict copy with additive IC-02 report_classification stripped."""
+    import copy
+    out = copy.deepcopy(doc)
+    for run in out.get("runs") or []:
+        props = run.get("properties")
+        if isinstance(props, dict) and "report_classification" in props:
+            props = dict(props)
+            props.pop("report_classification", None)
+            if props:
+                run["properties"] = props
+            else:
+                run.pop("properties", None)
+    return out
+
+
 @pytest.mark.parametrize("outcome", OUTCOMES)
 def test_saved_state_writer_adds_only_advisory_metadata(tmp_path, capsys, outcome):
     state = State(verdict=Verdict.PASS, mode=Mode.CI, round=3, consecutive_clean_rounds=3)
@@ -47,9 +82,12 @@ def test_saved_state_writer_adds_only_advisory_metadata(tmp_path, capsys, outcom
     actual = json.loads(output.out)
     expected = build_sarif_log(load_state(state_path), {}, cli.__version__)
     properties = actual["runs"][0].pop("properties")
+    # IC-02 additive report_classification alongside advisory metadata.
+    properties.pop("report_classification", None)
     assert properties == {"testAssertion": outcome.to_metadata()}
     assert actual == expected
-    assert output.err.startswith(format_summary(load_state(state_path)))
+    legacy = format_summary(load_state(state_path))
+    _legacy_stderr_ok(output.err, legacy)
     assert f"test_assertion={outcome.status.value}" in output.err
     if outcome.stage is not None:
         assert f"stage={outcome.stage.value} kind={outcome.kind.value}" in output.err
@@ -63,8 +101,11 @@ def test_missing_metadata_stays_absent_and_default_outputs_match(tmp_path, capsy
     save_state(state, state_path)
     cli._emit_ci_output(state_path, {})
     output = capsys.readouterr()
-    assert json.loads(output.out) == build_sarif_log(state, {}, cli.__version__)
-    assert output.err == format_summary(state) + "\n"
+    actual = json.loads(output.out)
+    expected = build_sarif_log(state, {}, cli.__version__)
+    assert _sarif_without_report_classification(actual) == expected
+    assert "report_classification" in (actual["runs"][0].get("properties") or {})
+    _legacy_stderr_ok(output.err, format_summary(state), exact_first_line=True)
     assert "testAssertion" not in output.out
     assert "test_assertion=" not in output.err
 

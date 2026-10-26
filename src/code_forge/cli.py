@@ -25,7 +25,7 @@ from .assertion_outcome import (
     AssertionKind, AssertionOutcome, AssertionStage, AssertionStatus, legacy_progress_outcome,
 )
 from .runner import capture_tool_version
-from .sarif import build_sarif_log, format_summary
+from .sarif import build_sarif_log, format_classification_line, format_summary
 
 if TYPE_CHECKING:
     from .backend import BackendConfig
@@ -107,10 +107,19 @@ def _emit_ci_output(
     When backend_name is provided (api backends), the SARIF output
     includes a tokenCost property bag in runs[0].properties.
 
+    Included ordinary single-repository CI (§7 / IC-03): after the legacy
+    SARIF + summary are prepared, the IC-01 presentation helpers attach an
+    additive ``report_classification`` property and a §5 classification
+    line is printed on stderr after the legacy summary (and any budget
+    qualifier). Deferred routes never call this function for classification.
+
     If load_state returns None -> silent return (no log warning).
     SARIF is best-effort output, NOT canonical artifact; state.json is
     canonical. Silent return matches "skip SARIF when state absent" semantics.
     """
+    from .report_presentation import prepare_legacy_report, prepare_report_views
+    from .report_projection import classify_report_records
+
     final_state = _load_state(state_path)
     if final_state is None:
         return
@@ -126,12 +135,31 @@ def _emit_ci_output(
         manifest=manifest,
         assertion_outcome=assertion_outcome,
     )
-    print(json.dumps(log_dict), file=sys.stdout)
+    legacy_summary = format_summary(
+        final_state, advisory_count=len(advisories), manifest=manifest,
+        assertion_outcome=assertion_outcome,
+    )
+    # Match presentation serializer domain (allow_nan=False) so the substrate
+    # accepts the same document the pure helpers will extend.
+    legacy_stdout = json.dumps(log_dict, ensure_ascii=False, allow_nan=False)
+    substrate = prepare_legacy_report(
+        log_dict, stdout=legacy_stdout, stderr=legacy_summary
+    )
+    if substrate.sarif_document is not None:
+        projection = classify_report_records(final_state)
+        prepared = prepare_report_views(substrate, projection)
+    else:
+        prepared = prepare_report_views(substrate, None)
+    print(prepared.stdout, file=sys.stdout)
+    # Order: legacy summary (+ optional budget qualifier in prepared.stderr)
+    # then §5 classification line. print() adds the trailing newline.
+    if prepared.stderr:
+        if prepared.stderr.endswith("\n"):
+            sys.stderr.write(prepared.stderr)
+        else:
+            print(prepared.stderr, file=sys.stderr)
     print(
-        format_summary(
-            final_state, advisory_count=len(advisories), manifest=manifest,
-            assertion_outcome=assertion_outcome,
-        ),
+        format_classification_line(prepared.report_classification),
         file=sys.stderr,
     )
     if post_emit_hook is not None:

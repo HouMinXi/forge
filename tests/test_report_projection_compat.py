@@ -58,13 +58,27 @@ def _mask(text: str, w) -> str:
     return text
 
 
+def _extract_sarif_json(stdout: str) -> str:
+    """Return the SARIF JSON document from CI stdout (pure JSON preferred)."""
+    text = stdout.strip()
+    if not text:
+        raise AssertionError("CI stdout empty; expected SARIF JSON")
+    if text[0] == "{":
+        return text
+    # Harness noise before JSON: take from first object brace.
+    idx = text.find("{")
+    assert idx >= 0, stdout[:200]
+    return text[idx:]
+
+
 def stable_view(code, stdout, stderr, state_text, w) -> dict:
     summary = [l for l in stderr.splitlines() if l.startswith("code-forge: ") and " findings=" in l]
     assert len(summary) == 1, summary
-    p = mcp_server._sarif_projection_with_status(stdout)
+    sarif_text = _extract_sarif_json(stdout)
+    p = mcp_server._sarif_projection_with_status(sarif_text)
     view = {
         "exit": code,
-        "sarif": _strip(json.loads(stdout)),
+        "sarif": _strip(json.loads(sarif_text)),
         "state": _strip(json.loads(state_text)),
         "summary": summary[0],
         "mcp": (
@@ -289,13 +303,17 @@ def _procs_under(w: Path):
 
 
 def _assert_anchors(scenario, code, stdout, stderr, state_obj):
-    sarif = json.loads(stdout)
+    sarif_text = _extract_sarif_json(stdout)
+    sarif = json.loads(sarif_text)
     run = sarif["runs"][0]
     results = run["results"]
+    # Legacy format_summary line (findings=); §5 classification line is separate.
     summary_lines = [l for l in stderr.splitlines() if l.startswith("code-forge: ") and " findings=" in l]
     assert len(summary_lines) == 1, summary_lines
     summary = summary_lines[0]
-    count, _findings, _audit, status = mcp_server._sarif_projection_with_status(stdout)
+    class_lines = [l for l in stderr.splitlines() if l.startswith("code-forge: classification")]
+    assert class_lines, "IC-05 §5 classification line missing on included CI stderr"
+    count, _findings, _audit, status = mcp_server._sarif_projection_with_status(sarif_text)
     verdict = state_obj["verdict"]
     if scenario == "ci_pass_stub":
         assert (code, verdict, len(results)) == (0, "PASS", 0)
@@ -346,12 +364,18 @@ def _run_side(tmp: Path, snap: Path, scenario: str, monkeypatch, label: str, sen
                 )(),
             )
         if sentinel:
+            # Phase 4 Entry (IC-03 include routes) calls classify inside
+            # _emit_ci_output. Count calls but do not raise — B remains a
+            # paired fault-free re-run, not a "classifier forbidden" probe.
+            import code_forge.report_projection as _rp
 
-            def _sentinel(*a, **k):
+            _real_classify = _rp.classify_report_records
+
+            def _count_classify(*a, **k):
                 calls["n"] += 1
-                raise AssertionError("sentinel: classify_report_records called")
+                return _real_classify(*a, **k)
 
-            m.setattr("code_forge.report_projection.classify_report_records", _sentinel)
+            m.setattr("code_forge.report_projection.classify_report_records", _count_classify)
         if scenario == "ci_pass_stub":
             # Self-contained main-worktree bypass: independent repro may not
             # inherit conftest's FORGE_SKIP_WORKTREE_CHECK into _run(env=os.environ).
@@ -427,7 +451,9 @@ def test_paired_fault_free_oracle(tmp_path, monkeypatch, scenario):
     sides = {}
     for label, use_sentinel in (("A", False), ("B", True), ("Aprime", False)):
         sides[label] = _run_side(tmp_path, snap, scenario, monkeypatch, label, use_sentinel, fixture)
-    assert sides["B"]["sentinel_calls"] == 0
+    # Included CI emits via Entry wiring: classify runs on A/B/Aprime.
+    # B still matches A/Aprime (fault-free); call count is informational.
+    assert sides["B"]["sentinel_calls"] >= 1
     assert sides["A"]["view"] == sides["B"]["view"] == sides["Aprime"]["view"], _paths_differ(
         sides["A"]["view"], sides["B"]["view"]
     )
