@@ -125,8 +125,20 @@ class TestRunMutation:
         assert "Python-only" not in findings[0].description
         assert "other adapters" in infra[0]
 
-    @pytest.mark.skipif(shutil.which("pwsh") is None, reason="needs pwsh on PATH (the ps-mutant probe reports it missing)")
-    def test_powershell_diff_names_psmutant(self):
+    def test_powershell_diff_names_psmutant(self, monkeypatch):
+        # Hermetic (#263): the ps-mutant probe only checks shutil.which("pwsh")
+        # and invoke is stubbed, so pwsh need not be installed. Other names
+        # stay real.
+        real_which = shutil.which
+        monkeypatch.setattr(
+            shutil,
+            "which",
+            lambda name, *a, **k: "/stub/bin/pwsh" if name == "pwsh" else real_which(name, *a, **k),
+        )
+        monkeypatch.setattr(
+            "code_forge.mutation_engines.adapters.ps_mutant.PSMutantAdapter.invoke",
+            lambda self, root: type("R", (), {"outcomes": (), "reason": "no pester"})(),
+        )
         findings, _infra = run_mutation(["scripts/build.ps1"], ["pytest"])
         assert "ps-mutant" in findings[0].description
         assert "ps-mutant available" in findings[0].description

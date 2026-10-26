@@ -273,9 +273,16 @@ _REAL_OUTPUT = re.compile(
     r"|INTERNALERROR>|Fatal Python error\b|Killed\b|Segmentation fault\b|Aborted\b"
     r"|ImportError while\b|\S+ ERR!"  # pytest/interpreter/shell crashes, npm-style tools
     r"|Bus error\b|Terminated\b|Hangup\b|Illegal instruction\b"  # more signal deaths (#263)
-    r"|\S+\s.*\[\s*\d+%\]\s*$"  # pytest progress: "tests/test_x.py ..F.  [ 40%]"
-    r"|\d+ (?:failed|passed|errors?|skipped|deselected|xfailed|xpassed|warnings?)\b"
-    r"|no tests ran\b"  # pytest count/summary lines
+    r"|!+ Interrupted:"  # pytest's collection-error banner (#263)
+    # pytest progress lines, anchored to the shapes pytest prints (#263):
+    # quiet "..F.s   [ 40%]", default "tests/x.py ..F.  [ 40%]",
+    # verbose "tests/x.py::t PASSED  [ 50%]".
+    r"|[.FEsxXR]+\s+\[\s*\d+%\]\s*$"
+    r"|\S+\s+[.FEsxXR]+\s+\[\s*\d+%\]\s*$"
+    r"|\S+::\S.*\s(?:PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\s+\[\s*\d+%\]\s*$"
+    # pytest summary counts: "3 failed, 10 passed in 1.2s" and "no tests ran in 0.01s"
+    r"|(?:\d+ (?:failed|passed|errors?|skipped|deselected|xfailed|xpassed|warnings?)(?:, )?)+ in [\d.]+s\b"
+    r"|no tests ran in [\d.]+s\b"
 )
 
 

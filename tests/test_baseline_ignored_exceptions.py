@@ -287,3 +287,55 @@ def test_omitted_count_for_a_chained_report_skips_blank_lines(marker):
     ) % marker
     detail = _output_detail(noise, None)
     assert detail == "; stderr: (1 line after an ignored-exception report omitted)", detail
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "2 errors were suppressed",
+        "1 failed attempts were logged",
+        "3 passed through the proxy",
+        "waiting [ 50%]",
+        "uploading chunk [100%]",
+    ],
+)
+def test_prose_shaped_like_a_count_or_progress_line_is_still_a_continuation(prose):
+    """#263: the count and progress patterns match pytest's exact shapes only."""
+    detail = _output_detail(_MULTILINE + prose + "\n", None)
+    assert prose not in detail, detail
+    assert detail == "; stderr: (3 lines after an ignored-exception report omitted)", detail
+
+
+@pytest.mark.parametrize(
+    "real",
+    [
+        "..F.s                                                                    [ 40%]",
+        "tests/test_x.py::test_a PASSED                                           [ 50%]",
+        "tests/test_x.py::test_b FAILED                                           [100%]",
+        "[gw0] [ 50%] PASSED tests/test_x.py::test_a",
+        "1 failed in 0.50s",
+        "1 failed, 2 passed, 1 warning in 3.20s (0:00:03)",
+        "no tests ran in 0.01s",
+        "1 deselected in 0.01s",
+    ],
+)
+def test_pytest_quiet_and_verbose_shapes_still_end_an_ignored_message(real):
+    for noise in (_ECHILD_SHORT, _MULTILINE):
+        detail = _output_detail(noise + real + "\n", None)
+        assert " ".join(real.split()) in detail, detail
+
+
+@pytest.mark.parametrize(
+    "banner",
+    [
+        "!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!",
+        "!!!!!!!!!!!!!!!!!!!! Interrupted: 2 errors during collection !!!!!!!!!!!!!!!!!!!!",
+        "!!! Interrupted: 1 error during collection !!!",
+    ],
+)
+def test_interrupted_banner_after_an_ignored_report_is_kept(banner):
+    """#263: the collection-error banner is real output, like the summary after it."""
+    for noise in (_ECHILD_SHORT, _MULTILINE):
+        detail = _output_detail(noise + banner + "\n", None)
+        assert "Interrupted:" in detail, detail
+        assert "line2" not in detail
