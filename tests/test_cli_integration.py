@@ -26,6 +26,7 @@ from code_forge.cli import _run_test_assertion_review, _make_subagent_spawn
 from code_forge.llm_invoke import LLMResult as _LLMResult, Usage as _Usage
 from unittest.mock import patch as _patch
 from code_forge.errors import CliError
+from code_forge.state import Verdict as _Verdict
 
 
 def _git_init_repo(repo_path):
@@ -804,12 +805,27 @@ class TestInlineFlagsMutualExclusion:
             lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
-        with patch(
-            "code_forge.cli.build_l1_provider",
-            side_effect=fake_build_l1_provider,
+        http_calls = []
+
+        def http_tripwire(*args, **kwargs):
+            http_calls.append((args, kwargs))
+            raise AssertionError("inline-config test must not open an HTTP connection")
+
+        # The test only checks how the inline flags build the BackendConfig.
+        # Stand in for the hold loop so no Runtime/LLM request is attempted,
+        # and trip on any HTTP transport that is still reached.
+        with (
+            patch(
+                "code_forge.cli.build_l1_provider",
+                side_effect=fake_build_l1_provider,
+            ),
+            patch("code_forge.cli._run_hold_loop", return_value=_Verdict.PENDING),
+            patch("http.client.HTTPSConnection", side_effect=http_tripwire),
+            patch("http.client.HTTPConnection", side_effect=http_tripwire),
         ):
             main()
 
+        assert http_calls == []
         b = captured_backend.get("backend")
         assert b is not None
         assert b.name == "inline"
