@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 
 from code_forge.advisory import AdvisoryFinding
@@ -591,11 +592,27 @@ class TestDaemonStateMalformedReplyIsNotClean:
         assert any("Q2Q3" in e for e in runner.infra_errors)
 
     def test_q2q3_empty_conflicts_list_is_clean(self, tmp_path):
-        runner, result = _run_with_replies(
-            tmp_path, {"external_state": ["nft mark"]}, {"conflicts": []}
-        )
+        runner, result = _run_with_replies(tmp_path, {"external_state": ["nft mark"]}, {"conflicts": []})
         assert not [f for f in result if "SKIPPED" in f.description]
         assert not any("Q1" in e or "Q2Q3" in e for e in runner.infra_errors)
+
+    @pytest.mark.parametrize("conflicts", [["not a dict"], [1, None, "x"]])
+    def test_q2q3_conflicts_with_only_non_dict_items_is_skipped(self, tmp_path, conflicts):
+        runner, result = _run_with_replies(
+            tmp_path, {"external_state": ["nft mark"]}, {"conflicts": conflicts}
+        )
+        assert [f for f in result if "SKIPPED" in f.description]
+        assert any("Q2Q3" in e for e in runner.infra_errors)
+
+    def test_q2q3_one_valid_conflict_among_junk_is_kept(self, tmp_path):
+        runner, result = _run_with_replies(
+            tmp_path,
+            {"external_state": ["nft mark"]},
+            {"conflicts": ["junk", {"subsystem": "nftables", "mutates": "mark"}]},
+        )
+        assert not [f for f in result if "SKIPPED" in f.description]
+        assert [f for f in result if f.id == "daemon-state-llm-1"]
+        assert not any("Q2Q3" in e for e in runner.infra_errors)
 
     def test_q1_non_list_external_state_is_skipped(self, tmp_path):
         runner, result = _run_with_replies(tmp_path, {"external_state": "nft mark"})

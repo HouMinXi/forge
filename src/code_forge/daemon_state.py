@@ -399,7 +399,8 @@ class DaemonStateRunner:
                 "Known static conflict rules (do NOT re-report these, "
                 "only report NEW conflicts not listed here):"
             ]
-            lines.extend("- %s" % sf.description for sf in static_findings)
+            for sf in static_findings:
+                lines.append("- %s" % sf.description)
             static_rules_text = "\n".join(lines) + "\n\n"
 
         # LLM Step 1 -- Q1 enumerate state
@@ -500,6 +501,13 @@ class DaemonStateRunner:
                     attribution="daemon-state/llm",
                 )
             )
+
+        if llm_conflicts and not llm_findings:
+            # Every entry was malformed: the reply carried conflicts we could
+            # not read, which is not the same as "no conflicts".
+            reason = "Q2Q3 response conflicts contained no valid conflict objects"
+            self.infra_errors.append("DAEMON-STATE " + reason)
+            return static_findings + [_build_skipped_finding(reason)]
 
         # static findings first, then LLM-discovered
         return static_findings + llm_findings
