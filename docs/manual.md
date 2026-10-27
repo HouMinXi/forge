@@ -214,7 +214,7 @@ backend,让 review 解析到 `subprocess`。
 
 ```bash
 code-forge review                 # review uncommitted changes (staged + unstaged)
-code-forge review --committed     # review the current branch vs its merge-base
+code-forge review --committed     # review the last commit only (HEAD~1..HEAD)
 code-forge review --whole-file PATH   # review an entire file (no diff needed)
 ```
 
