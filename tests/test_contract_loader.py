@@ -546,6 +546,7 @@ def test_summarization_failure_graceful(tmp_path, trust_dir, monkeypatch):
         "API Error: 429 rate_limit_error",
         {"other": "x"},
         {"summary": ""},
+        {"summary": "  \n"},
         {"summary": 5},
     ],
 )
