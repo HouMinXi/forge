@@ -60,7 +60,7 @@ from .factories import (
     build_e2e_checker,
     build_revert_fn,
 )
-from .git import is_git_repo
+from .git import is_git_repo, machine_diff_command
 from .hold import HoldAborted, run_hold_ui
 from .lock import ForgeLock, ForgeLockBusy
 from .machine import StateMachine, TimeoutBreaker
@@ -1555,7 +1555,7 @@ def _handle_smoke_run(args, cwd: Path) -> int:
     target = getattr(args, "target", "HEAD") or "HEAD"
     try:
         _diff = subprocess.run(
-            ["git", "diff", target],
+            machine_diff_command(target),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -2813,7 +2813,7 @@ def main() -> int:
         cwd = Path.cwd()
         try:
             diff_result = subprocess.run(
-                ["git", "diff", "HEAD"],
+                machine_diff_command("HEAD"),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -3446,7 +3446,7 @@ def _dispatch_inline_canary(
             import subprocess as _sp
 
             _diff_result = _sp.run(
-                ["git", "diff", "HEAD"],
+                machine_diff_command("HEAD", binary=False),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -5092,7 +5092,7 @@ def _run_e2e_check_cmd(args, cwd: Path) -> int:
 
         try:
             result = subprocess.run(
-                ["git", "diff", "HEAD"],
+                machine_diff_command("HEAD", binary=False),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
