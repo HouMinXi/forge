@@ -441,3 +441,41 @@ class TestTokenCostWiringCliBackend:
         run = sarif["runs"][0]
         props = run.get("properties", {})
         assert "tokenCost" not in props, "tokenCost should be absent for cli backend"
+
+
+class TestInfraErrorsSurfacedOnStderr:
+    """A non-PASS verdict must say why on stderr, not only in state.json."""
+
+    def _emit(self, state_dir, mock_registry, state):
+        state_path = state_dir / "state.json"
+        save_state(state, state_path)
+        stderr = StringIO()
+        with (
+            patch("sys.stdout", StringIO()),
+            patch("sys.stderr", stderr),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1.0"),
+        ):
+            _emit_ci_output(state_path, mock_registry)
+        return stderr.getvalue()
+
+    def test_fail_with_no_findings_names_the_reason(self, state_dir, mock_registry):
+        state = _make_state(Verdict.FAIL, [])
+        state.infra_errors = ["CI: mutation skipped -- gate.yaml not found"]
+        err = self._emit(state_dir, mock_registry, state)
+        assert "code-forge: infra: CI: mutation skipped -- gate.yaml not found" in err
+
+    def test_pass_stays_quiet(self, state_dir, mock_registry):
+        state = _make_state(Verdict.PASS, [])
+        state.infra_errors = ["Danger-score requires a diff -- skipping in non-git mode"]
+        err = self._emit(state_dir, mock_registry, state)
+        assert "infra:" not in err
+
+    def test_long_lists_and_messages_are_bounded(self, state_dir, mock_registry):
+        state = _make_state(Verdict.FAIL, [])
+        state.infra_errors = ["e%d " % i + "x" * 2000 for i in range(8)]
+        err = self._emit(state_dir, mock_registry, state)
+        infra_lines = [ln for ln in err.splitlines() if ln.startswith("code-forge: infra:")]
+        assert len(infra_lines) == 6  # 5 messages + the overflow pointer
+        assert all(len(ln) < 400 for ln in infra_lines)
+        assert "3 more" in infra_lines[-1]
+        assert "state.json" in infra_lines[-1]
