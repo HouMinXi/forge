@@ -1063,6 +1063,43 @@ async def test_forge_job_status_known_running():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stdout", ["", "partial output"], ids=["empty", "partial"])
+async def test_forge_job_status_explains_signal_killed_job(stdout):
+    with patch(
+        "code_forge.mcp_server.get_job",
+        return_value={
+            "status": "failed",
+            "result": {
+                "stdout": stdout,
+                "stderr": "",
+                "exit_code": -9,
+                "verdict": "SIGNALED(SIGKILL)",
+            },
+        },
+    ):
+        result = await forge_job_status(job_id="abc")
+    data = result.structuredContent["result"]
+    assert data["verdict"] == "SIGNALED(SIGKILL)"
+    assert "killed by SIGKILL" in data["output"]
+    assert "killed by SIGKILL" in result.content[0].text
+    if stdout:
+        assert data["output"].startswith(stdout + "\n")
+
+
+@pytest.mark.asyncio
+async def test_forge_job_status_adds_no_signal_note_for_other_verdicts():
+    with patch(
+        "code_forge.mcp_server.get_job",
+        return_value={
+            "status": "failed",
+            "result": {"stdout": "", "stderr": "", "exit_code": -9, "verdict": "TIMEOUT"},
+        },
+    ):
+        result = await forge_job_status(job_id="abc")
+    assert "killed by" not in result.structuredContent["result"]["output"]
+
+
+@pytest.mark.asyncio
 async def test_forge_job_status_unknown_raises():
     with patch("code_forge.mcp_server.get_job", return_value=None):
         with pytest.raises(ToolError, match="Unknown job_id.*may have restarted"):
