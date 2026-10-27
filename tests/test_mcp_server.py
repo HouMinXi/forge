@@ -1122,6 +1122,25 @@ async def test_forge_job_status_signal_output_is_exact(stdout, stderr, expected_
     )
 
 
+@pytest.mark.parametrize(
+    "stdout,stderr,expected_output",
+    [
+        ("", "", _KILL_NOTE),
+        ("", "  \n", _KILL_NOTE),
+        ("partial", "", "partial\n" + _KILL_NOTE),
+        ("", "boom\n", "\n--- stderr ---\nboom\n\n" + _KILL_NOTE),
+        ("partial", "boom\n", "partial\n--- stderr ---\nboom\n\n" + _KILL_NOTE),
+    ],
+    ids=["empty", "blank-stderr", "stdout", "stderr", "stdout-then-stderr-then-note"],
+)
+def test_make_result_signal_output_is_exact(stdout, stderr, expected_output):
+    # Same exact strings as the forge_job_status path: no leading newline
+    # when the output is empty, and the note comes after any stderr block.
+    result = _make_result(stdout, -9, 1.0, stderr)
+    assert result.structuredContent["output"] == expected_output
+    assert result.content[0].text == expected_output
+
+
 @pytest.mark.asyncio
 async def test_forge_job_status_real_sighup_kill_is_named():
     # A child genuinely killed by SIGHUP also has returncode -1.
