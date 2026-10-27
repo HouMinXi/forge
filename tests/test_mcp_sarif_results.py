@@ -604,3 +604,28 @@ async def test_job_status_signal_killed_result_is_labelled_no_report(monkeypatch
     result = await server.forge_job_status("job")
     status = result.structuredContent["result"]["findings_count_status"]
     assert status == NO_REPORT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stdout,expected", [
+    ("not json", UNPARSEABLE),
+    ("", NO_REPORT),
+])
+async def test_job_status_record_without_exit_code_is_not_a_signal(monkeypatch, stdout, expected):
+    # A missing exit_code is "unknown", not a signal death: non-blank
+    # unparseable stdout must stay "unparseable".
+    monkeypatch.setattr(server, "get_job", lambda job_id: {
+        "status": "completed", "result": {"stdout": stdout, "stderr": ""},
+    })
+    result = await server.forge_job_status("job")
+    assert result.structuredContent["result"]["findings_count_status"] == expected
+
+
+@pytest.mark.asyncio
+async def test_job_status_record_without_exit_code_still_counts_a_report(monkeypatch, report):
+    monkeypatch.setattr(server, "get_job", lambda job_id: {
+        "status": "completed", "result": {"stdout": json.dumps(report), "stderr": ""},
+    })
+    data = (await server.forge_job_status("job")).structuredContent["result"]
+    assert data["findings_count"] == 2
+    assert data["findings_count_status"] is None
