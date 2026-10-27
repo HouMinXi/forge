@@ -3446,7 +3446,7 @@ def _dispatch_inline_canary(
             import subprocess as _sp
 
             _diff_result = _sp.run(
-                machine_diff_command("HEAD"),
+                machine_diff_command("HEAD", binary=False),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -5092,7 +5092,7 @@ def _run_e2e_check_cmd(args, cwd: Path) -> int:
 
         try:
             result = subprocess.run(
-                machine_diff_command("HEAD"),
+                machine_diff_command("HEAD", binary=False),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

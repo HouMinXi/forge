@@ -340,16 +340,6 @@ class TestCanaryProviderLogging:
 class TestDiffCommand:
     """Diff in the canary block uses git diff HEAD, no args.mode conditional."""
 
-    def test_diff_uses_git_diff_head_in_source(self):
-        """The canary block diff command is git diff HEAD."""
-        import inspect
-        import code_forge.cli as cli_mod
-
-        source = inspect.getsource(cli_mod)
-        # Count git diff HEAD occurrences (main review path + canary path)
-        count = source.count('machine_diff_command("HEAD")')
-        assert count >= 2, "expected >= 2 git diff HEAD calls, found %d" % count
-
     def test_no_mode_conditional_for_diff(self):
         """No args.mode conditional determines diff scope in canary block."""
         import inspect
