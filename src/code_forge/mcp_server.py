@@ -62,6 +62,8 @@ from code_forge.llm_invoke import effective_invoke_timeout_s
 from code_forge.mcp_jobs import (
     ForgeJobRef,
     ForgeResult,
+    UNKNOWN_EXIT_CODE,
+    UNKNOWN_VERDICT,
     _read_stderr_tail,
     _terminate_and_reap,
     cleanup_all,
@@ -1625,8 +1627,8 @@ async def forge_job_status(job_id: str) -> CallToolResult:
         job_stdout = r.get("stdout", "")
         findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(job_stdout)
         forge_result = ForgeResult(
-            verdict=r.get("verdict", "UNKNOWN(-1)"),
-            exit_code=r.get("exit_code", -1),
+            verdict=r.get("verdict", UNKNOWN_VERDICT),
+            exit_code=r.get("exit_code", UNKNOWN_EXIT_CODE),
             findings_count=findings_count,
             findings_count_status=count_status,
             findings=findings,
