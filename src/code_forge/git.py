@@ -37,6 +37,7 @@ _MACHINE_DIFF_OPTIONS = (
     "--binary",
 )
 
+
 def machine_diff_command(target: str = "HEAD") -> list[str]:
     """Return the `git diff` argv whose output does not depend on user config.
 
