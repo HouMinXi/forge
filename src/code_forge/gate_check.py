@@ -1465,10 +1465,11 @@ def run_gate_check(
             warn("forge: FORGE_SKIP_TESTS=1, skipping tests")
             return EXIT_PASS  # Allow
 
-    # Get staged files via git diff --cached --name-only
+    # Get staged files via git diff --cached --name-only. quotePath=false keeps
+    # non-ASCII names literal; the default quoted form never matches a pattern.
     try:
         result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
+            ["git", "-c", "core.quotePath=false", "diff", "--cached", "--name-only"],
             capture_output=True,
             text=True,
             encoding="utf-8",
