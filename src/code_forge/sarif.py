@@ -243,8 +243,7 @@ def _finding_to_result(
         "level": level,
         "message": {"text": finding.description},
     }
-    if _has_source_file(finding):
-        result["locations"] = [_build_location(finding)]
+    result["locations"] = [_build_location(finding)]
     suppressions = _suppressions_for(finding.disposition)
     if suppressions is not None:
         result["suppressions"] = suppressions
@@ -252,15 +251,24 @@ def _finding_to_result(
     return result
 
 
-def _has_source_file(finding: StateFinding) -> bool:
-    """False for host diagnostics that name a sentinel, not a file.
+# GitHub code scanning rejects a whole upload when any result has no location
+# ("expected at least one location"). Host diagnostics have no source file, so
+# they are anchored to the repo's tracked gate.yaml, the config that decides
+# how the review runs. The diagnostic's own kind stays in ruleId and message.
+_HOST_DIAGNOSTIC_URI = ".code-forge/gate.yaml"
 
-    Infra findings use ``<llm-invoke>``, ``<receipt-evidence>`` and similar
-    markers, or an empty file, when there is no code to point at. Those are
-    not valid SARIF artifact URIs, so the result carries no location.
+
+def _artifact_uri(finding: StateFinding) -> str:
+    """Repo-relative URI for the finding's location.
+
+    Infra findings name a sentinel (``<llm-invoke>``, ``<receipt-evidence>``
+    and similar) or an empty file when there is no code to point at. Neither
+    is a valid SARIF artifact URI, so they use ``_HOST_DIAGNOSTIC_URI``.
     """
     file = finding.file
-    return bool(file) and not (file.startswith("<") and file.endswith(">"))
+    if not file or (file.startswith("<") and file.endswith(">")):
+        return _HOST_DIAGNOSTIC_URI
+    return file
 
 
 def _build_location(finding: StateFinding) -> dict[str, Any]:
@@ -270,7 +278,8 @@ def _build_location(finding: StateFinding) -> dict[str, Any]:
     list (02-02 _default_l0_runner sets [f.line, f.end_line]; snapshot
     reload preserves list[int]). line_range values are 1-based (per
     parsers/base.py Finding.line definition). SARIF spec uses 1-based
-    (region.startLine >= 1), so values pass through directly.
+    (region.startLine >= 1), so valid values pass through directly and
+    values below 1 are clamped to 1.
 
     Defensive guard handles malformed state.json (corrupted file, partial
     write, future schema change): empty -> startLine=1 endLine=1;
@@ -285,9 +294,13 @@ def _build_location(finding: StateFinding) -> dict[str, Any]:
     else:
         start = line_range[0]
         end = line_range[1]
+    # Host diagnostics (invoke-fail, receipt, mutation infra) carry [0, 0]
+    # because they have no source line. SARIF 2.1.0 rejects lines below 1.
+    start = max(start, 1)
+    end = max(end, 1)
     return {
         "physicalLocation": {
-            "artifactLocation": {"uri": finding.file},
+            "artifactLocation": {"uri": _artifact_uri(finding)},
             "region": {
                 "startLine": start,
                 "endLine": end,

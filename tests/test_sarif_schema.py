@@ -4,8 +4,10 @@
 
 Host diagnostics (invoke-fail, receipt, mutation infra) have no source file.
 They used to name a sentinel such as ``<llm-invoke>`` as an artifact URI and
-point at line 0. Neither is valid SARIF, so those results now carry no
-``locations`` at all.
+point at line 0. Neither is valid SARIF. GitHub code scanning also rejects the
+whole upload when a result has no location ("expected at least one location"),
+so every result keeps one: host diagnostics are anchored to the tracked
+``.code-forge/gate.yaml`` at line 1.
 """
 
 import json
@@ -70,11 +72,19 @@ def test_log_with_host_diagnostic_validates_against_schema(sentinel):
     assert errors == []
 
 
+HOST_DIAGNOSTIC_LOCATION = {
+    "physicalLocation": {
+        "artifactLocation": {"uri": ".code-forge/gate.yaml"},
+        "region": {"startLine": 1, "endLine": 1},
+    }
+}
+
+
 @pytest.mark.parametrize("sentinel", SENTINELS)
-def test_host_diagnostic_has_no_location_but_keeps_rule_and_message(sentinel):
+def test_host_diagnostic_is_anchored_to_gate_yaml_and_keeps_rule_and_message(sentinel):
     result = _results(_log([_finding("diag", sentinel, [0, 0], description="backend 429")]))["diag"]
 
-    assert "locations" not in result
+    assert result["locations"] == [HOST_DIAGNOSTIC_LOCATION]
     assert result["ruleId"] == "diag"
     assert result["message"] == {"text": "backend 429"}
     assert result["level"] == "error"
@@ -93,7 +103,52 @@ def test_real_file_finding_keeps_its_location():
     ]
 
 
-def test_no_artifact_uri_contains_angle_brackets():
+def test_coverage_finding_with_zero_lines_validates_and_keeps_its_file():
+    # coverage.py emits a real file with line_range [0, 0]; SARIF needs lines >= 1.
+    log = _log([_finding("coverage:src/a.py", "src/a.py", [0, 0], source="COVERAGE")])
+
+    errors = [e.message for e in jsonschema.Draft4Validator(SCHEMA).iter_errors(log)]
+
+    assert errors == []
+    assert _results(log)["coverage:src/a.py"]["locations"] == [
+        {
+            "physicalLocation": {
+                "artifactLocation": {"uri": "src/a.py"},
+                "region": {"startLine": 1, "endLine": 1},
+            }
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("line_range", "expected"),
+    [([0, 0], (1, 1)), ([0, 7], (1, 7)), ([-3, -1], (1, 1)), ([0], (1, 1)), ([], (1, 1))],
+)
+def test_every_finding_has_region_lines_of_at_least_one(line_range, expected):
+    result = _results(_log([_finding("real", "src/a.py", line_range, source="L0")]))["real"]
+    region = result["locations"][0]["physicalLocation"]["region"]
+
+    assert (region["startLine"], region["endLine"]) == expected
+
+
+def test_every_result_has_at_least_one_location():
+    # GitHub code scanning rejects the upload for a result without a location.
+    findings = [_finding("diag-%d" % i, s, [0, 0]) for i, s in enumerate(SENTINELS)]
+    findings.append(_finding("real", "src/a.py", [3, 4], source="L0"))
+    findings.append(_finding("coverage:src/b.py", "src/b.py", [0, 0], source="COVERAGE"))
+    log = _log(findings)
+
+    assert len(log["runs"][0]["results"]) == len(findings)
+    assert all(len(r["locations"]) >= 1 for r in log["runs"][0]["results"])
+    assert [e.message for e in jsonschema.Draft4Validator(SCHEMA).iter_errors(log)] == []
+
+
+def test_no_artifact_uri_contains_angle_brackets_or_is_empty():
     log = _log([_finding("diag-%d" % i, s, [0, 0]) for i, s in enumerate(SENTINELS)])
 
-    assert "<" not in json.dumps([r.get("locations", []) for r in log["runs"][0]["results"]])
+    uris = [
+        loc["physicalLocation"]["artifactLocation"]["uri"]
+        for r in log["runs"][0]["results"]
+        for loc in r["locations"]
+    ]
+    assert uris and all(u and "<" not in u and ">" not in u for u in uris)
