@@ -244,6 +244,8 @@ def _finding_to_result(
         "message": {"text": finding.description},
     }
     result["locations"] = [_build_location(finding)]
+    if _is_synthetic_file(finding.file):
+        props["syntheticLocation"] = True
     suppressions = _suppressions_for(finding.disposition)
     if suppressions is not None:
         result["suppressions"] = suppressions
@@ -253,22 +255,32 @@ def _finding_to_result(
 
 # GitHub code scanning rejects a whole upload when any result has no location
 # ("expected at least one location"). Host diagnostics have no source file, so
-# they are anchored to the repo's tracked gate.yaml, the config that decides
-# how the review runs. The diagnostic's own kind stays in ruleId and message.
+# they are anchored to .code-forge/gate.yaml, the config that decides how the
+# review runs. CI guarantees it is tracked (gate-check refuses an untracked
+# gate.yaml, see _CI_UNTRACKED); a local run may not have the file at all. The
+# anchor is therefore synthetic: such results carry
+# properties.syntheticLocation = true, and the diagnostic's own kind stays in
+# ruleId and message.
 _HOST_DIAGNOSTIC_URI = ".code-forge/gate.yaml"
 
 
-def _artifact_uri(finding: StateFinding) -> str:
-    """Repo-relative URI for the finding's location.
+def _is_synthetic_file(file: str) -> bool:
+    """True when ``file`` names no repository path.
 
-    Infra findings name a sentinel (``<llm-invoke>``, ``<receipt-evidence>``
-    and similar) or an empty file when there is no code to point at. Neither
-    is a valid SARIF artifact URI, so they use ``_HOST_DIAGNOSTIC_URI``.
+    Infra findings use an empty file or a sentinel (``<llm-invoke>``,
+    ``<receipt-evidence>`` and similar) when there is no code to point at.
+    ``<`` and ``>`` are not valid in a URI reference, so any value containing
+    one (including a half sentinel such as ``<x`` or ``x>``) is treated the
+    same way instead of being published unchanged.
     """
-    file = finding.file
-    if not file or (file.startswith("<") and file.endswith(">")):
+    return not file.strip() or "<" in file or ">" in file
+
+
+def _artifact_uri(finding: StateFinding) -> str:
+    """Repo-relative URI for the finding's location."""
+    if _is_synthetic_file(finding.file):
         return _HOST_DIAGNOSTIC_URI
-    return file
+    return finding.file
 
 
 def _build_location(finding: StateFinding) -> dict[str, Any]:
@@ -297,7 +309,7 @@ def _build_location(finding: StateFinding) -> dict[str, Any]:
     # Host diagnostics (invoke-fail, receipt, mutation infra) carry [0, 0]
     # because they have no source line. SARIF 2.1.0 rejects lines below 1.
     start = max(start, 1)
-    end = max(end, 1)
+    end = max(end, start)
     return {
         "physicalLocation": {
             "artifactLocation": {"uri": _artifact_uri(finding)},

@@ -122,13 +122,51 @@ def test_coverage_finding_with_zero_lines_validates_and_keeps_its_file():
 
 @pytest.mark.parametrize(
     ("line_range", "expected"),
-    [([0, 0], (1, 1)), ([0, 7], (1, 7)), ([-3, -1], (1, 1)), ([0], (1, 1)), ([], (1, 1))],
+    [
+        ([0, 0], (1, 1)),
+        ([0, 7], (1, 7)),
+        ([-3, -1], (1, 1)),
+        ([0], (1, 1)),
+        ([], (1, 1)),
+        ([5, 0], (5, 5)),
+        ([5, -2], (5, 5)),
+        ([7, 3], (7, 7)),
+        ([3, 3], (3, 3)),
+        ([4, 9], (4, 9)),
+        ([6], (6, 6)),
+    ],
 )
-def test_every_finding_has_region_lines_of_at_least_one(line_range, expected):
+def test_region_lines_are_at_least_one_and_never_inverted(line_range, expected):
     result = _results(_log([_finding("real", "src/a.py", line_range, source="L0")]))["real"]
     region = result["locations"][0]["physicalLocation"]["region"]
 
     assert (region["startLine"], region["endLine"]) == expected
+
+
+HALF_SENTINELS = ["<x", "x>", "a<b", "<>", "src/<gen>/a.py", " "]
+
+
+@pytest.mark.parametrize("file", SENTINELS + HALF_SENTINELS)
+def test_non_uri_file_values_use_the_anchor_and_are_marked_synthetic(file):
+    # A half sentinel ("<x", "x>") is not a valid URI either; it must never
+    # be emitted unchanged.
+    log = _log([_finding("diag", file, [0, 0])])
+    result = _results(log)["diag"]
+
+    assert result["locations"] == [HOST_DIAGNOSTIC_LOCATION]
+    assert result["properties"]["syntheticLocation"] is True
+    assert [e.message for e in jsonschema.Draft4Validator(SCHEMA).iter_errors(log)] == []
+
+
+@pytest.mark.parametrize(
+    ("file", "line_range", "source"),
+    [("src/a.py", [3, 4], "L0"), ("src/a.py", [0, 0], "COVERAGE"), ("a b.py", [2, 2], "L0")],
+)
+def test_real_file_results_are_not_marked_synthetic(file, line_range, source):
+    result = _results(_log([_finding("real", file, line_range, source=source)]))["real"]
+
+    assert "syntheticLocation" not in result["properties"]
+    assert result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == file
 
 
 def test_every_result_has_at_least_one_location():
