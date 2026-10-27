@@ -1853,6 +1853,63 @@ class StateMachine:
             }
             self._state._earned_window_present = True
 
+    def _is_schema_or_incomplete_coverage_finding(self, finding: StateFinding) -> bool:
+        """Q2=(iii) receipt rows only: L1 schema-fail or incomplete-coverage findings."""
+        if finding.source != "INFRA" or finding.disposition != Disposition.CONFIRMED:
+            return False
+        if finding.line_range != [0, 0]:
+            return False
+        for name in ("qodo", "expert", "adversarial"):
+            if (
+                finding.id == f"l1-{name}-schema-fail"
+                and finding.fingerprint == f"schema-fail-{name}"
+                and finding.file == "<schema-validation>"
+            ):
+                return True
+            if (
+                finding.id == f"l1-{name}-incomplete-coverage"
+                and finding.fingerprint == f"incomplete-coverage-{name}"
+                and finding.file == "<coverage-guard>"
+            ):
+                return True
+        return False
+
+    def _schema_coverage_credit_preserve(self, fixpoint: _FixpointResult | None) -> bool:
+        """Credit-side preserve for schema/coverage RESET without rewriting fixpoint rules.
+
+        When fixpoint still returns RESET/CYCLE_RESTART solely because of Q2=(iii)
+        schema-fail / incomplete-coverage findings, skip/undo `_reset_clean_credit`
+        and record clean_credit_action=preserved. Mixed product/acquisition/HOLD/
+        falsifier-transport causes keep the wipe + reset action.
+        """
+        if fixpoint not in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART):
+            return False
+        if self._acquisition_markers:
+            return False
+        if self._hold_confirmed_fingerprints:
+            return False
+        protocol_ids = {id(finding) for finding in self._falsify_protocol_findings}
+        if any(id(finding) not in protocol_ids for finding in self._falsify_failed_findings):
+            return False
+        product = [
+            finding
+            for finding in self._product_findings()
+            if not is_mutation_infra_diagnostic(finding)
+        ]
+        schema_coverage = [
+            finding for finding in product if self._is_schema_or_incomplete_coverage_finding(finding)
+        ]
+        if not schema_coverage:
+            return False
+        for finding in product:
+            if is_receipt_audit(finding):
+                continue
+            if self._is_schema_or_incomplete_coverage_finding(finding):
+                continue
+            if finding.disposition in (Disposition.CONFIRMED, Disposition.UNCERTAIN):
+                return False
+        return True
+
     def _finish_failed_host_attempt(self, primary: BaseException) -> None:
         """Retain the original error while recording only phases actually observed."""
         self._acquisition_receipts = ()
@@ -1929,8 +1986,11 @@ class StateMachine:
                 )
                 fixpoint = self._fixpoint_reached()
                 if fixpoint in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART):
-                    self._reset_clean_credit()
-                    action = "reset"
+                    if self._schema_coverage_credit_preserve(fixpoint):
+                        action = "preserved"
+                    else:
+                        self._reset_clean_credit()
+                        action = "reset"
                 elif fixpoint == _FixpointResult.INCOMPLETE or self._acquisition_markers:
                     action = "interrupted"
             self._state.verdict = Verdict.FAIL
@@ -2033,13 +2093,16 @@ class StateMachine:
                 )
 
             _fp = self._fixpoint_reached()
+            _preserve_schema_coverage = self._schema_coverage_credit_preserve(_fp)
             if _fp == _FixpointResult.CYCLE_RESTART:
-                self._reset_clean_credit()
+                if not _preserve_schema_coverage:
+                    self._reset_clean_credit()
                 self._state.infra_errors.append(
                     "tiered-reset: P2/P3-density -- restarting cycle %d" % round_index
                 )
             elif _fp == _FixpointResult.RESET:
-                self._reset_clean_credit()
+                if not _preserve_schema_coverage:
+                    self._reset_clean_credit()
 
             # Receipt acceptance gate: invalid evidence for the round just
             # written fails fast with persisted non-PASS state instead of
@@ -2067,16 +2130,18 @@ class StateMachine:
                         capacity_gate_error = error
             if gate_errors:
                 rejected_evidence = self._pure_evidence_rejections(_fp)
-                self._finish_host_attempt(
-                    (
-                        "evidence_rejected"
-                        if rejected_evidence
-                        else "interrupted"
+                if _fp in (_FixpointResult.CLEAN, _FixpointResult.INCOMPLETE):
+                    gate_action = (
+                        "evidence_rejected" if rejected_evidence else "interrupted"
                         if _fp == _FixpointResult.INCOMPLETE or self._acquisition_markers
                         else "unavailable"
                     )
-                    if _fp in (_FixpointResult.CLEAN, _FixpointResult.INCOMPLETE)
-                    else "reset",
+                elif _preserve_schema_coverage:
+                    gate_action = "preserved"
+                else:
+                    gate_action = "reset"
+                self._finish_host_attempt(
+                    gate_action,
                     _fp,
                     evidence_rejections=rejected_evidence,
                 )
@@ -2138,12 +2203,15 @@ class StateMachine:
             # it (observed 2026-09-05: five rounds on disk at clean=0
             # that were CLEAN/RESET/CLEAN/CLEAN/RESET in memory).
             if active:
-                self._finish_host_attempt(
-                    "earned"
-                    if _fp == _FixpointResult.CLEAN
-                    else ("interrupted" if _fp == _FixpointResult.INCOMPLETE else "reset"),
-                    _fp,
-                )
+                if _fp == _FixpointResult.CLEAN:
+                    finish_action = "earned"
+                elif _fp == _FixpointResult.INCOMPLETE:
+                    finish_action = "interrupted"
+                elif _preserve_schema_coverage:
+                    finish_action = "preserved"
+                else:
+                    finish_action = "reset"
+                self._finish_host_attempt(finish_action, _fp)
             elif self._state.round_history:
                 self._state.round_history[-1]["fixpoint"] = _fp.name
                 self._state.round_history[-1]["clean_rounds_after"] = (

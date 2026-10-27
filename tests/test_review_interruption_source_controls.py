@@ -14,7 +14,7 @@ state serialization and cli._emit_ci_output are real. Receipt proof is produced
 and checked by those consumers; no receipt or verifier success is fabricated.
 
 Current outcomes deliberately differ: invoke failures preserve prior credit but
-remain product-visible; schema/coverage reset. Pure typed excerpt rejection
+remain product-visible; schema/coverage preserve prior earned (preserved). Pure typed excerpt rejection
 preserves an individually reverified prefix while earning no new cycle; literal
 damage and unknown execution still refuse automatic inherited credit.
 """
@@ -71,8 +71,8 @@ ACQUISITION_CASES = [
 ]
 # Evidence: case, pass status, action, numeric count, product count, verdict, marker.
 EVIDENCE_CASES = [
-    ("schema", "schema_fail", "reset", 0, 2, "FAIL", "schema-fail"),
-    ("coverage", "incomplete", "reset", 0, 1, "ESCALATED", "incomplete-coverage"),
+    ("schema", "schema_fail", "preserved", 2, 2, "FAIL", "schema-fail"),
+    ("coverage", "incomplete", "preserved", 2, 1, "ESCALATED", "incomplete-coverage"),
     ("missing-excerpts", "incomplete", "evidence_rejected", 2, 1, "FAIL", None),
     ("excerpt-line-count", "incomplete", "evidence_rejected", 2, 1, "FAIL", None),
     ("literal", "schema_fail", "unavailable", 2, 1, "FAIL", None),
@@ -434,7 +434,7 @@ def test_current_schema_coverage_and_evidence_rejection_have_distinct_accounting
     assert not state.converged and state.consecutive_clean_rounds == count
     latest = state.round_history[-1]
     assert latest["clean_credit_action"] == action and latest["acquisition_failures"] == []
-    assert latest["reset_observed"] is (action == "reset")
+    assert latest["reset_observed"] is (action in ("reset", "preserved"))
     assert latest["clean_rounds_after"] == count
     assert state.earned_clean_window["cycles"] == ([] if action == "reset" else proof["cycles"])
     receipts = _cycle_receipts(root, 3)
@@ -452,8 +452,12 @@ def test_current_schema_coverage_and_evidence_rejection_have_distinct_accounting
     if action == "reset":
         assert _restore_result(root).passed  # valid empty proof, not old credit
         _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
-    elif action == "evidence_rejected":
-        assert latest["evidence_rejections"]
+    elif action in ("evidence_rejected", "preserved"):
+        if action == "evidence_rejected":
+            assert latest["evidence_rejections"]
+        else:
+            assert "evidence_rejections" not in latest
+            assert latest["fixpoint"] in ("RESET", "CYCLE_RESTART")
         assert _restore_result(root).passed
         _recover(root, monkeypatch, original, [1, 2, 4])
     else:

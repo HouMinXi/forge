@@ -461,7 +461,13 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             raise CorruptedStateError("incomplete host round authority")
         action = row["clean_credit_action"]
         if action not in (
-            "pending", "earned", "interrupted", "reset", "unavailable", "evidence_rejected"
+            "pending",
+            "earned",
+            "interrupted",
+            "reset",
+            "unavailable",
+            "evidence_rejected",
+            "preserved",
         ):
             raise CorruptedStateError("invalid host clean credit action")
         if action == "evidence_rejected":
@@ -589,7 +595,18 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             or row.get("fixpoint") not in ("RESET", "CYCLE_RESTART")
         ):
             raise CorruptedStateError("reset host round lacks reset observation")
-        if action in ("earned", "interrupted", "reset", "evidence_rejected") and "dispositions" not in row:
+        # Phase 6: schema_fail / incomplete-coverage may observe fixpoint RESET
+        # while credit-side skip/undo keeps the prior earned window (preserved).
+        if action == "preserved" and (
+            not row["reset_observed"]
+            or failures
+            or row.get("fixpoint") not in ("RESET", "CYCLE_RESTART")
+            or phases["l1"] != "returned"
+        ):
+            raise CorruptedStateError("preserved host round lacks schema/coverage reset observation")
+        if action in (
+            "earned", "interrupted", "reset", "evidence_rejected", "preserved"
+        ) and "dispositions" not in row:
             raise CorruptedStateError("finalized host round lacks product snapshot")
     if round_index is not None and (
         type(round_index) is not int
@@ -640,7 +657,9 @@ def earned_history_cycles(state: State, source_hash: str, manifest: dict | None)
                 earned.append(row["round"] + 1)
             elif action == "reset":
                 earned.clear()
-            elif action not in ("interrupted", "pending", "evidence_rejected") and earned:
+            elif action not in (
+                "interrupted", "pending", "evidence_rejected", "preserved"
+            ) and earned:
                 if action == "unavailable" and all(
                     value == "not_run" for value in row["phase_status"].values()
                 ):

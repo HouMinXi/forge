@@ -152,7 +152,10 @@ def test_rejected_evidence_requires_the_authority_field():
         validate_round_history([row])
 
 
-@pytest.mark.parametrize("action", ["pending", "earned", "interrupted", "reset", "unavailable"])
+@pytest.mark.parametrize(
+    "action",
+    ["pending", "earned", "interrupted", "reset", "unavailable", "preserved"],
+)
 def test_rejection_authority_is_illegal_on_other_actions(action):
     row = _row(0, "earned", 1)
     row["clean_credit_action"] = action
@@ -167,6 +170,8 @@ def test_rejection_authority_is_illegal_on_other_actions(action):
         }]
     elif action == "reset":
         row.update(reset_observed=True, clean_rounds_after=0, fixpoint="RESET")
+    elif action == "preserved":
+        row.update(reset_observed=True, clean_rounds_after=1, fixpoint="RESET")
     validate_round_history([row])
     row["evidence_rejections"] = [_rejection()]
     with pytest.raises(CorruptedStateError):
