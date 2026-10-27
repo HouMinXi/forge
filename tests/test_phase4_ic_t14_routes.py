@@ -381,5 +381,5 @@ class TestWiredF1AndSharedReader:
         # Legacy numeric count remains 0 (capacity is diagnostic, not product result).
         assert data["findings_count"] == 0
         rc = data["report_classification"]
-        # Must not claim an available adjudicated product list for capacity-only.
-        assert rc["availability"] == "unavailable"
+        # Entry 17 / RA-O S1: Include-available presentation while count stays 0.
+        assert rc["availability"] == "available"
