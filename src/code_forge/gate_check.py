@@ -1465,11 +1465,11 @@ def run_gate_check(
             warn("forge: FORGE_SKIP_TESTS=1, skipping tests")
             return EXIT_PASS  # Allow
 
-    # Get staged files via git diff --cached --name-only. quotePath=false keeps
-    # non-ASCII names literal; the default quoted form never matches a pattern.
+    # Get staged files via git diff --cached --name-only -z. NUL-separated output
+    # is never quoted, so names with non-ASCII or control characters stay literal.
     try:
         result = subprocess.run(
-            ["git", "-c", "core.quotePath=false", "diff", "--cached", "--name-only"],
+            ["git", "diff", "--cached", "--name-only", "-z"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -1482,7 +1482,7 @@ def run_gate_check(
             print("forge: error: git diff --cached failed: %s" % result.stderr.strip(), file=stderr)
             return EXIT_FAIL  # BLOCK on git error
 
-        staged_files = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+        staged_files = [name for name in result.stdout.split("\0") if name]
     except subprocess.TimeoutExpired:
         print("forge: error: git diff --cached timed out", file=stderr)
         return EXIT_FAIL
