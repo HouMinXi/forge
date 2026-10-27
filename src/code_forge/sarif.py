@@ -258,7 +258,8 @@ def _build_location(finding: StateFinding) -> dict[str, Any]:
     list (02-02 _default_l0_runner sets [f.line, f.end_line]; snapshot
     reload preserves list[int]). line_range values are 1-based (per
     parsers/base.py Finding.line definition). SARIF spec uses 1-based
-    (region.startLine >= 1), so values pass through directly.
+    (region.startLine >= 1), so valid values pass through directly and
+    values below 1 are clamped to 1.
 
     Defensive guard handles malformed state.json (corrupted file, partial
     write, future schema change): empty -> startLine=1 endLine=1;
@@ -273,6 +274,10 @@ def _build_location(finding: StateFinding) -> dict[str, Any]:
     else:
         start = line_range[0]
         end = line_range[1]
+    # Host diagnostics (invoke-fail, receipt, mutation infra) carry [0, 0]
+    # because they have no source line. SARIF 2.1.0 rejects lines below 1.
+    start = max(start, 1)
+    end = max(end, 1)
     return {
         "physicalLocation": {
             "artifactLocation": {"uri": finding.file},

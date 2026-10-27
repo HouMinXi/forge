@@ -227,6 +227,22 @@ class TestLineRangeHandling:
         assert region["startLine"] == 10
         assert region["endLine"] == 20
 
+    @pytest.mark.parametrize(
+        ("line_range", "expected"),
+        [
+            ([0, 0], (1, 1)),
+            ([0, 7], (1, 7)),
+            ([-3, -1], (1, 1)),
+            ([0], (1, 1)),
+        ],
+    )
+    def test_line_numbers_below_one_are_clamped(self, line_range, expected):
+        """Host diagnostics carry [0, 0]; SARIF 2.1.0 needs startLine >= 1."""
+        finding = _make_finding(Disposition.CONFIRMED, line_range=line_range)
+        region = _build_location(finding)["physicalLocation"]["region"]
+
+        assert (region["startLine"], region["endLine"]) == expected
+
 
 class TestAnchorHandling:
     """(h, i) anchor field handling."""
