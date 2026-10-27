@@ -290,6 +290,37 @@ class TestLLMInvoke:
                 llm_invoke("prompt", backend=DEFAULT_BACKEND, max_attempts=1)
         assert "429 rate_limit_error" in excinfo.value.stderr
 
+    @pytest.mark.parametrize(
+        "envelope, expected",
+        [
+            (
+                {"type": "result", "subtype": "error_max_turns", "is_error": True, "usage": {}},
+                "error_max_turns",
+            ),
+            (
+                {
+                    "type": "result",
+                    "subtype": "error_during_execution",
+                    "is_error": True,
+                    "result": "",
+                },
+                "error_during_execution",
+            ),
+            (
+                {"type": "result", "is_error": True, "result": None},
+                "unknown error",
+            ),
+        ],
+    )
+    def test_cli_is_error_envelope_without_result_text_raises(self, envelope, expected):
+        """An is_error envelope with no result text must still fail the call."""
+        mock_proc = _make_mock_proc(stdout=json.dumps(envelope))
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            with pytest.raises(LLMInvokeError, match="reported is_error") as excinfo:
+                llm_invoke("prompt", backend=DEFAULT_BACKEND, max_attempts=1)
+        assert expected in excinfo.value.stderr
+
     def test_cli_is_error_false_envelope_still_returns_content(self):
         envelope = json.dumps(
             {"type": "result", "is_error": False, "result": json.dumps({"findings": []})}

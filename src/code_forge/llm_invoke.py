@@ -1879,21 +1879,27 @@ def _invoke_cli(
     # Fall back to treating the full output as content when no envelope.
     usage_data: dict = {}
     content = parsed
+    if isinstance(parsed, dict) and parsed.get("type") == "result" and parsed.get("is_error") is True:
+        # The CLI reports API failures (429, auth, overload, max turns) as an
+        # exit-0 envelope. The result text, when present, is the error text,
+        # not model output; some failures carry only a subtype. Surface it as
+        # a failed call instead of handing it to callers as content.
+        raw_error = parsed.get("result")
+        if isinstance(raw_error, str) and raw_error.strip():
+            detail = raw_error
+        elif raw_error is not None and not isinstance(raw_error, str):
+            detail = json.dumps(raw_error)
+        else:
+            detail = str(parsed.get("subtype") or "unknown error")
+        raise LLMInvokeError(
+            "LLM subprocess reported is_error: %s" % detail[:500],
+            exit_code=0,
+            stderr=detail[:2000],
+            duration_s=duration,
+        )
     if isinstance(parsed, dict) and parsed.get("type") == "result" and "result" in parsed:
         usage_data = parsed.get("usage") or {}
         raw_result = parsed["result"]
-        if parsed.get("is_error") is True:
-            # The CLI reports API failures (429, auth, overload) as an
-            # exit-0 envelope whose result is the error text. That text is
-            # not model output: surface it as a failed call instead of
-            # handing it to callers as content.
-            detail = raw_result if isinstance(raw_result, str) else json.dumps(raw_result)
-            raise LLMInvokeError(
-                "LLM subprocess reported is_error: %s" % detail[:500],
-                exit_code=0,
-                stderr=detail[:2000],
-                duration_s=duration,
-            )
         if isinstance(raw_result, str):
             stripped = _strip_fences(raw_result)
             try:
