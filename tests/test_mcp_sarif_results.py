@@ -507,8 +507,8 @@ def test_oversize_report_is_labelled_not_just_uncounted(report):
 
 @pytest.mark.parametrize(
     "stdout",
-    ["", "plain CLI diagnostic", "{not json", "[]", '{"version": "2.1.0", "runs": []}'],
-    ids=["empty", "text", "truncated-json", "wrong-shape", "no-run"],
+    ["plain CLI diagnostic", "{not json", "[]", '{"version": "2.1.0", "runs": []}'],
+    ids=["text", "truncated-json", "wrong-shape", "no-run"],
 )
 def test_unparseable_report_is_labelled_not_just_uncounted(stdout):
     data = server._make_result(stdout, 0, 0).structuredContent
@@ -520,3 +520,37 @@ def test_readable_report_has_no_count_status(report):
     data = server._make_result(json.dumps(report), 1, 0).structuredContent
     assert data["findings_count"] == 2
     assert data["findings_count_status"] is None
+
+
+@pytest.mark.parametrize("stdout", ["", " \t\r\n"], ids=["empty", "whitespace"])
+@pytest.mark.parametrize("exit_code", [0, 1, 2, 6, -9])
+def test_empty_stdout_is_labelled_no_report_not_unparseable(stdout, exit_code):
+    data = server._make_result(stdout, exit_code, 0).structuredContent
+    assert data["findings_count"] is None
+    assert data["findings_count_status"].startswith("unknown: no report produced")
+    assert "unparseable" not in data["findings_count_status"]
+
+
+@pytest.mark.parametrize("exit_code", [2, 6, -9])
+def test_non_review_exit_with_text_stdout_is_labelled_no_report(exit_code):
+    # CLI_ERROR, TIMEOUT and signal-killed runs never emit a report, so a
+    # partial or diagnostic stdout must not be called an unparseable report.
+    data = server._make_result("partial output", exit_code, 0).structuredContent
+    assert data["findings_count_status"].startswith("unknown: no report produced")
+
+
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_review_exit_with_text_stdout_stays_unparseable(exit_code):
+    data = server._make_result("not a report", exit_code, 0).structuredContent
+    assert data["findings_count_status"].startswith("unknown: unparseable")
+
+
+@pytest.mark.asyncio
+async def test_job_status_signal_killed_result_is_labelled_no_report(monkeypatch):
+    monkeypatch.setattr(server, "get_job", lambda job_id: {
+        "status": "failed",
+        "result": {"stdout": "", "stderr": "", "verdict": "UNKNOWN(-9)", "exit_code": -9},
+    })
+    result = await server.forge_job_status("job")
+    status = result.structuredContent["result"]["findings_count_status"]
+    assert status.startswith("unknown: no report produced")

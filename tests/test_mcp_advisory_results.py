@@ -56,6 +56,13 @@ def offline(monkeypatch):
     spawn.assert_not_called()
 
 
+def _expected_count_status(stdout, exit_code):
+    """Non-SARIF stdout: empty or non-review exits mean no report at all."""
+    if not stdout.strip() or exit_code not in (0, 1):
+        return server._NO_REPORT_COUNT_STATUS
+    return server._UNPARSEABLE_COUNT_STATUS
+
+
 async def poll(sdk: bool) -> CallToolResult:
     if sdk:
         result = await server.mcp.call_tool("forge_job_status", {"job_id": "job"})
@@ -100,7 +107,7 @@ async def test_terminal_text_preserves_exact_structured_output(
             "verdict": verdict,
             "exit_code": exit_code,
             "findings_count": None,
-            "findings_count_status": server._UNPARSEABLE_COUNT_STATUS,
+            "findings_count_status": _expected_count_status(OUTPUT, exit_code),
             "findings": None,
             "receipt_audit": None,
             "duration_s": 12.345,
@@ -142,7 +149,7 @@ def test_immediate_result_keeps_current_text_format(exit_code, verdict, stdout):
         "verdict": verdict,
         "exit_code": exit_code,
         "findings_count": None,
-        "findings_count_status": server._UNPARSEABLE_COUNT_STATUS,
+        "findings_count_status": _expected_count_status(stdout, exit_code),
         "findings": None,
         "receipt_audit": None,
         "duration_s": 12.35,
