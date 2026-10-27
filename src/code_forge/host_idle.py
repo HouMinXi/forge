@@ -6,7 +6,8 @@ idle host removes that noise. If the host never settles within the max wait,
 the caller reports an explicit ``mutation-host-busy`` skip (never a pass).
 
 Thresholds are host properties, so they come from the environment, not
-gate.yaml. ``FORGE_MUTATION_IDLE_MAX_WAIT=0`` disables the gate.
+gate.yaml. ``FORGE_MUTATION_IDLE_MAX_WAIT=0`` disables the gate. A positive
+max wait below ``(settle - 1) * poll`` is rejected: it could never observe idle.
 """
 
 from __future__ import annotations
@@ -78,6 +79,17 @@ def load_config(env: dict | None = None) -> IdleConfig:
     if values["poll"] <= 0:
         raise IdleConfigError("FORGE_MUTATION_IDLE_POLL must be > 0")
     values["settle"] = max(1, int(values["settle"]))
+    # `settle` consecutive idle samples are `poll` apart, so the first idle
+    # verdict is (settle - 1) * poll after the start. A shorter positive wait
+    # reports "busy" on a host that is idle. Fail loudly instead.
+    minimum = (values["settle"] - 1) * values["poll"]
+    if 0 < values["max_wait"] < minimum:
+        raise IdleConfigError(
+            f"FORGE_MUTATION_IDLE_MAX_WAIT={values['max_wait']:g}s can never observe an idle host: "
+            f"with FORGE_MUTATION_IDLE_POLL={values['poll']:g}s and "
+            f"FORGE_MUTATION_IDLE_SETTLE={values['settle']} it must be at least {minimum:g}s "
+            "(0 disables the gate)"
+        )
     return IdleConfig(**values)
 
 
