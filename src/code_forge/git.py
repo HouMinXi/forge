@@ -37,6 +37,16 @@ _MACHINE_DIFF_OPTIONS = (
     "--binary",
 )
 
+def machine_diff_command(target: str = "HEAD") -> list[str]:
+    """Return the `git diff` argv whose output does not depend on user config.
+
+    The same options the review diff uses, so a caller that hashes or parses
+    `git diff <target>` agrees with it under diff.noprefix, diff.mnemonicPrefix,
+    color.ui=always, diff.external and textconv settings.
+    """
+    return ["git", "diff", *_MACHINE_DIFF_OPTIONS, target]
+
+
 # Allowlist regex for diff-spec values.
 # Permits: branch names (feature/foo), tags (v1.2.3), commit hashes
 # (abc123), HEAD references (HEAD, HEAD~1, HEAD^), remote refs

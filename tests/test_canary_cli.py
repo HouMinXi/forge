@@ -347,7 +347,7 @@ class TestDiffCommand:
 
         source = inspect.getsource(cli_mod)
         # Count git diff HEAD occurrences (main review path + canary path)
-        count = source.count('"git", "diff", "HEAD"')
+        count = source.count('machine_diff_command("HEAD")')
         assert count >= 2, "expected >= 2 git diff HEAD calls, found %d" % count
 
     def test_no_mode_conditional_for_diff(self):
