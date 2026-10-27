@@ -540,6 +540,42 @@ def test_summarization_failure_graceful(tmp_path, trust_dir, monkeypatch):
         assert result == ""
 
 
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "API Error: 429 rate_limit_error",
+        {"other": "x"},
+        {"summary": ""},
+        {"summary": 5},
+    ],
+)
+def test_unusable_summary_reply_is_not_used_or_cached(tmp_path, trust_dir, reply):
+    """A reply that is not {"summary": "<text>"} must not become the contract.
+
+    Prose, error text, a stringified dict, or an empty summary would
+    otherwise be injected into the review prompt and cached by content
+    hash, so the bad summary would outlive the transient failure.
+    """
+    from code_forge.contract_loader import load_contract_digest
+    from code_forge.trust import record_trust_contracts
+
+    repo_dir = _setup_repo_with_specs(tmp_path, "repo", [("bad.yaml", "v" * 40000)])
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {"repo": {"path": str(repo_dir), "specs": [{"path": "bad.yaml", "max_raw_size": 100}]}},
+    )
+    spec_file = repo_dir / "bad.yaml"
+    trust_contents = [(str(spec_file.resolve()), spec_file.read_bytes())]
+    record_trust_contracts(cfg_path, trust_contents, config_dir=trust_dir)
+
+    mock_result_obj = type("LLMResult", (), {"content": reply})()
+    with patch("code_forge.contract_loader.llm_invoke", return_value=mock_result_obj) as mock_llm:
+        assert load_contract_digest(cfg_path, tmp_path) == ""
+        assert load_contract_digest(cfg_path, tmp_path) == ""
+        # Not cached: the second load asked the backend again.
+        assert mock_llm.call_count == 2
+
+
 # -- Containment check tests --
 
 
