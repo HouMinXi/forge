@@ -343,7 +343,7 @@ def _build_planning_leak_guard() -> str:
     """
     return (
         "# planning-leak guard: block .planning/ and CLAUDE.md staging\n"
-        "_LEAK=$(git diff --cached --name-only | "
+        "_LEAK=$(git diff --cached --name-only -z | tr '\\0' '\\n' | "
         "grep -E '^\\.planning/|(^|/)CLAUDE\\.md$')\n"
         'if [ -n "$_LEAK" ]; then\n'
         '    echo "code-forge: BLOCKED: staged paths must never '
@@ -492,7 +492,7 @@ def generate_hook_content(
         r"|(^|/)LICENSE$|(^|/)README$|(^|/)CHANGELOG$"
         r"|(^|/)Makefile$|(^|/)Dockerfile$|(^|/)\.dockerignore$'"
         "\n"
-        "STAGED=$(git diff --cached --name-only)\n"
+        "STAGED=$(git diff --cached --name-only -z | tr '\\0' '\\n')\n"
         'if [ -z "$STAGED" ]; then exit 0; fi\n'
         'NON_MATCH=$(printf \'%s\\n\' "$STAGED" | grep -vE "$NON_CODE")\n'
         'if [ -z "$NON_MATCH" ]; then\n'
