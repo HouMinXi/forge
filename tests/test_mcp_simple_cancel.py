@@ -816,15 +816,24 @@ async def test_simple_cli_timeout_returns_labelled_timeout_and_reaps_child(cli_c
 
 
 @pytest.mark.asyncio
-async def test_forge_trust_reports_timeout_result(monkeypatch, tmp_path):
-    async def hung(*args, workspace):
-        return "", "TIMEOUT: code-forge trust did not finish within 1s and was stopped", 6
+async def test_forge_trust_reports_timeout_result(cli_child, monkeypatch):
+    # Real timeout path: the fake CLI hangs on "trust", _run_cli_simple stops
+    # and reaps it, and forge_trust surfaces the structured TIMEOUT result.
+    tmp_path, ready = cli_child
 
     async def workspace_for(ctx, project_dir=""):
         return tmp_path
 
-    monkeypatch.setattr(mcp_server, "_run_cli_simple", hung)
+    monkeypatch.setattr(mcp_server, "_SIMPLE_CLI_TIMEOUT_S", 0.5)
     monkeypatch.setattr(mcp_server, "_workspace_for", workspace_for)
+    monkeypatch.chdir(tmp_path)
+    started = time.monotonic()
     result = await mcp_server.forge_trust()
+    assert time.monotonic() - started < 30
     assert result.structuredContent["exit_code"] == 6
-    assert "TIMEOUT" in result.structuredContent["output"]
+    output = result.structuredContent["output"]
+    assert "TIMEOUT: code-forge trust did not finish within 0.5s" in output
+    assert result.content[0].text == output
+    pid = int(ready.read_text(encoding="ascii"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
