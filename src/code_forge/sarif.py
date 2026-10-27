@@ -272,32 +272,42 @@ def _is_synthetic_file(file: str) -> bool:
     ``<`` and ``>`` are not valid in a URI reference, so any value containing
     one (including a half sentinel such as ``<x`` or ``x>``) is treated the
     same way instead of being published unchanged.
+
+    Trade-off: a real path that contains ``<`` or ``>`` (for example
+    ``a>b.py``) is also treated as a sentinel and anchored to gate.yaml.
+    Publishing it would make the whole SARIF upload invalid, and such file
+    names are rare on Linux, so the rule stays this broad.
     """
     return not file.strip() or "<" in file or ">" in file
-
-
-def _artifact_uri(finding: StateFinding) -> str:
-    """Repo-relative URI for the finding's location."""
-    if _is_synthetic_file(finding.file):
-        return _HOST_DIAGNOSTIC_URI
-    return finding.file
 
 
 def _build_location(finding: StateFinding) -> dict[str, Any]:
     """Build SARIF physicalLocation.
 
-    Bounds-check line_range. Production line_range is always a 2-element
-    list (02-02 _default_l0_runner sets [f.line, f.end_line]; snapshot
-    reload preserves list[int]). line_range values are 1-based (per
+    A synthetic file (see ``_is_synthetic_file``) is anchored to
+    ``_HOST_DIAGNOSTIC_URI`` with the region pinned to startLine 1 /
+    endLine 1: the finding's own line numbers say nothing about that file.
+
+    Otherwise line_range is bounds-checked. Production line_range is always
+    a 2-element list (02-02 _default_l0_runner sets [f.line, f.end_line];
+    snapshot reload preserves list[int]). line_range values are 1-based (per
     parsers/base.py Finding.line definition). SARIF spec uses 1-based
-    (region.startLine >= 1), so valid values pass through directly and
-    values below 1 are clamped to 1.
+    (region.startLine >= 1), so start is raised to 1 when it is below 1, and
+    end is raised to start when end < start, so a region is never inverted.
+    Values already in range pass through unchanged.
 
     Defensive guard handles malformed state.json (corrupted file, partial
     write, future schema change): empty -> startLine=1 endLine=1;
     single-element -> endLine mirrors startLine; >2 elements -> first
     two used, extras silently ignored (upstream schema drift case).
     """
+    if _is_synthetic_file(finding.file):
+        return {
+            "physicalLocation": {
+                "artifactLocation": {"uri": _HOST_DIAGNOSTIC_URI},
+                "region": {"startLine": 1, "endLine": 1},
+            },
+        }
     line_range = finding.line_range
     if not line_range:
         start = end = 1
@@ -306,13 +316,13 @@ def _build_location(finding: StateFinding) -> dict[str, Any]:
     else:
         start = line_range[0]
         end = line_range[1]
-    # Host diagnostics (invoke-fail, receipt, mutation infra) carry [0, 0]
-    # because they have no source line. SARIF 2.1.0 rejects lines below 1.
+    # COVERAGE findings carry a real file with [0, 0] because they have no
+    # source line. SARIF 2.1.0 rejects lines below 1.
     start = max(start, 1)
     end = max(end, start)
     return {
         "physicalLocation": {
-            "artifactLocation": {"uri": _artifact_uri(finding)},
+            "artifactLocation": {"uri": finding.file},
             "region": {
                 "startLine": start,
                 "endLine": end,

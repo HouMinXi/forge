@@ -158,6 +158,31 @@ def test_non_uri_file_values_use_the_anchor_and_are_marked_synthetic(file):
     assert [e.message for e in jsonschema.Draft4Validator(SCHEMA).iter_errors(log)] == []
 
 
+@pytest.mark.parametrize("file", ["x>", "<x", "<llm-invoke>", ""])
+@pytest.mark.parametrize("line_range", [[3, 1], [5, 9], [0, 0], [7], []])
+def test_synthetic_anchor_region_is_pinned_to_line_one(file, line_range):
+    # The anchor is not a real file, so a finding's own line numbers must not
+    # point at some line of gate.yaml.
+    result = _results(_log([_finding("diag", file, line_range)]))["diag"]
+
+    assert result["locations"] == [HOST_DIAGNOSTIC_LOCATION]
+
+
+@pytest.mark.parametrize("file", ["a>b.py", "dir/<x>/f.py", "a<b.py"])
+def test_real_looking_path_with_angle_brackets_is_treated_as_a_sentinel(file):
+    """Known trade-off, pinned on purpose.
+
+    ``<`` and ``>`` are not valid in a URI reference, and publishing one makes
+    the SARIF upload invalid. A path containing either character is therefore
+    treated as a sentinel and anchored to gate.yaml, even though it could name
+    a real file. Such file names are rare on Linux.
+    """
+    result = _results(_log([_finding("odd", file, [4, 6])]))["odd"]
+
+    assert result["locations"] == [HOST_DIAGNOSTIC_LOCATION]
+    assert result["properties"]["syntheticLocation"] is True
+
+
 @pytest.mark.parametrize(
     ("file", "line_range", "source"),
     [("src/a.py", [3, 4], "L0"), ("src/a.py", [0, 0], "COVERAGE"), ("a b.py", [2, 2], "L0")],
