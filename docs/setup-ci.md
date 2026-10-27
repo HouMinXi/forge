@@ -80,11 +80,18 @@ Redirect stdout to capture the SARIF report. Two things make it fiddly in CI:
 
 ```yaml
       - run: git worktree add .worktrees/ci HEAD
-      - run: code-forge review --mode ci --committed > review.sarif
+      - run: code-forge review --mode ci --baseline "$(git merge-base origin/${{ github.base_ref }} HEAD)" --head WORKING > review.sarif
         working-directory: .worktrees/ci
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
 ```
+
+Do not use `--committed` here. It means `--baseline HEAD~1 --head HEAD`, so it
+reviews only the last commit of a branch, and a COMMIT source is rejected with
+exit 2 whenever native mutation applies to a Python file in the diff.
+`--head WORKING` reviews the checked-out files against the baseline, and the
+merge-base baseline covers the whole branch. The checkout needs
+`fetch-depth: 0` (or a fetch of the base branch) so that `origin/<base>` exists.
 
 `.code-forge/gate.yaml` is gitignored, so it is absent in a fresh checkout.
 In CI, review never trusts an untracked gate.yaml inside the checkout for
@@ -103,7 +110,7 @@ from the change under review. Supply the gate in one of two ways:
           printf '%s' "$FORGE_GATE_YAML" > "$RUNNER_TEMP/forge-config/.code-forge/gate.yaml"
         env:
           FORGE_GATE_YAML: ${{ secrets.FORGE_GATE_YAML }}
-      - run: code-forge review --mode ci --committed --test-config-root "$RUNNER_TEMP/forge-config" > review.sarif
+      - run: code-forge review --mode ci --baseline "$(git merge-base origin/${{ github.base_ref }} HEAD)" --head WORKING --test-config-root "$RUNNER_TEMP/forge-config" > review.sarif
         working-directory: .worktrees/ci
 ```
 
