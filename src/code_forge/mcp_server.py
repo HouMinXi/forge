@@ -58,6 +58,7 @@ from mcp.types import (
 )
 
 import code_forge
+from code_forge.exit_codes import EXIT_CLI_ERROR, EXIT_TIMEOUT
 from code_forge.llm_invoke import effective_invoke_timeout_s
 from code_forge.mcp_jobs import (
     ForgeJobRef,
@@ -1026,6 +1027,20 @@ _CAPACITY_INCOMPLETE_COUNT_STATUS = (
     "unknown: capacity-incomplete review -- provider capacity cut acquisition short, "
     "so the published results are not a complete count"
 )
+_OVERSIZE_COUNT_STATUS = (
+    "unknown: oversize report -- stdout exceeds the 1 MiB projection limit, "
+    "so findings were not counted; read the raw output"
+)
+_NO_REPORT_COUNT_STATUS = (
+    "unknown: no report produced -- the run exited without a SARIF report "
+    "(empty stdout, CLI error, timeout or killed process), so there is nothing "
+    "to count; see output and stderr"
+)
+_NO_REPORT_EXIT_CODES = frozenset({EXIT_CLI_ERROR, EXIT_TIMEOUT})
+_UNPARSEABLE_COUNT_STATUS = (
+    "unknown: unparseable report -- stdout is not a single code-forge SARIF "
+    "document, so findings were not counted; read the raw output"
+)
 
 
 def _sarif_result_projection(stdout: str) -> tuple[int | None, list[dict] | None, list[dict] | None]:
@@ -1035,19 +1050,37 @@ def _sarif_result_projection(stdout: str) -> tuple[int | None, list[dict] | None
 
 def _sarif_projection_with_status(
     stdout: str,
+    exit_code: int | None = None,
 ) -> tuple[int | None, list[dict] | None, list[dict] | None, str | None]:
     """Read presentation from one CLI SARIF document, never review authority.
 
     The 1 MiB-character cutoff limits optional parsing and structured copies
     made by the MCP serializer. Wide reports can otherwise exhaust memory
     despite shallow nesting. Original output is retained unchanged;
-    unsupported reports remain uncounted.
+    unsupported reports remain uncounted and carry a labelled status
+    (oversize / unparseable / no report) so a missing count is never silent.
+    The CLI emits its SARIF report for every terminal review state (exit 0,
+    1, 3 when CI returns PENDING, 4, 5 and 7), so a non-report stdout on
+    those codes stays "unparseable". "No report produced" applies only when
+    stdout is blank, or the exit is CLI_ERROR (2), TIMEOUT (6) or a negative
+    signal code, none of which emit one. An oversize stdout is labelled
+    oversize whatever the exit code.
     Each projected list includes at most 64 dictionary/list levels so the
     full MCP response envelope retains ample serialization depth headroom.
     """
-    unknown = (None, None, None, None)
-    if type(stdout) is not str or len(stdout) > _MAX_SARIF_REPORT_CHARS:
-        return unknown
+    no_report = (
+        type(stdout) is str and not stdout.strip()
+    ) or (
+        exit_code is not None and (exit_code < 0 or exit_code in _NO_REPORT_EXIT_CODES)
+    )
+    unknown = (
+        None, None, None,
+        _NO_REPORT_COUNT_STATUS if no_report else _UNPARSEABLE_COUNT_STATUS,
+    )
+    if type(stdout) is not str:
+        return (None, None, None, None)
+    if len(stdout) > _MAX_SARIF_REPORT_CHARS:
+        return (None, None, None, _OVERSIZE_COUNT_STATUS)
     try:
         document = json.loads(stdout, object_pairs_hook=_sarif_object,
                               parse_float=_sarif_float, parse_constant=_sarif_float)
@@ -1142,7 +1175,7 @@ def _make_result(
     output = stdout
     if exit_code != 0 and stderr.strip():
         output = stdout + "\n--- stderr ---\n" + stderr
-    findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(stdout)
+    findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(stdout, exit_code)
     structured = ForgeResult(
         verdict=exit_to_verdict(exit_code),
         exit_code=exit_code,
@@ -1639,7 +1672,7 @@ async def forge_job_status(job_id: str) -> CallToolResult:
         ) and stderr.strip():
             output = output + "\n--- stderr ---\n" + stderr
         job_stdout = r.get("stdout", "")
-        findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(job_stdout)
+        findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(job_stdout, r.get("exit_code"))
         forge_result = ForgeResult(
             verdict=r.get("verdict", "UNKNOWN(-1)"),
             exit_code=r.get("exit_code", -1),

@@ -495,3 +495,137 @@ async def test_shallow_container_breadth_at_character_cap(monkeypatch, route, se
     assert wire_data["findings"] == data["findings"]
     assert wire_data["receipt_audit"] == data["receipt_audit"]
     assert wire_data["output"] == stdout
+
+
+def test_oversize_report_is_labelled_not_just_uncounted(report):
+    stdout = json.dumps(report)
+    stdout += " " * (server._MAX_SARIF_REPORT_CHARS - len(stdout) + 1)
+    data = server._make_result(stdout, 1, 0).structuredContent
+    assert data["findings_count"] is None
+    assert data["findings_count_status"] == OVERSIZE
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    ["plain CLI diagnostic", "{not json", "[]", '{"version": "2.1.0", "runs": []}'],
+    ids=["text", "truncated-json", "wrong-shape", "no-run"],
+)
+def test_unparseable_report_is_labelled_not_just_uncounted(stdout):
+    data = server._make_result(stdout, 0, 0).structuredContent
+    assert data["findings_count"] is None
+    assert data["findings_count_status"] == UNPARSEABLE
+
+
+def test_readable_report_has_no_count_status(report):
+    data = server._make_result(json.dumps(report), 1, 0).structuredContent
+    assert data["findings_count"] == 2
+    assert data["findings_count_status"] is None
+
+
+NO_REPORT = (
+    "unknown: no report produced -- the run exited without a SARIF report "
+    "(empty stdout, CLI error, timeout or killed process), so there is nothing "
+    "to count; see output and stderr"
+)
+UNPARSEABLE = (
+    "unknown: unparseable report -- stdout is not a single code-forge SARIF "
+    "document, so findings were not counted; read the raw output"
+)
+OVERSIZE = (
+    "unknown: oversize report -- stdout exceeds the 1 MiB projection limit, "
+    "so findings were not counted; read the raw output"
+)
+# The CLI emits its SARIF report for every terminal review state: PASS 0,
+# FAIL 1, BUSY/PENDING 3 (CI returns PENDING after emitting), ESCALATED 4,
+# DELEGATED 5 and UNRELIABLE 7. CLI_ERROR 2, TIMEOUT 6 and a signal-killed
+# child (negative code) produce none. A lock-busy exit 3 also has no report,
+# but its stdout is blank, which is labelled no-report on its own.
+REPORT_EXITS = [0, 1, 3, 4, 5, 7]
+NO_REPORT_EXITS = [2, 6, -1, -9]
+
+
+def _other_driver_report(report):
+    other = deepcopy(report)
+    other["runs"][0]["tool"]["driver"]["name"] = "some-other-linter"
+    return json.dumps(other)
+
+
+@pytest.mark.parametrize("stdout", ["", " \t\r\n"], ids=["empty", "whitespace"])
+@pytest.mark.parametrize("exit_code", REPORT_EXITS + NO_REPORT_EXITS)
+def test_blank_stdout_is_no_report_for_every_exit_code(stdout, exit_code):
+    data = server._make_result(stdout, exit_code, 0).structuredContent
+    assert data["findings_count"] is None
+    assert data["findings_count_status"] == NO_REPORT
+
+
+@pytest.mark.parametrize("exit_code", NO_REPORT_EXITS)
+def test_exit_that_never_reports_labels_text_stdout_no_report(exit_code):
+    data = server._make_result("partial output", exit_code, 0).structuredContent
+    assert data["findings_count_status"] == NO_REPORT
+
+
+@pytest.mark.parametrize("exit_code", REPORT_EXITS)
+def test_report_exit_with_invalid_stdout_is_unparseable(exit_code):
+    for stdout in ("not a report", "{not json", "[]"):
+        data = server._make_result(stdout, exit_code, 0).structuredContent
+        assert data["findings_count"] is None
+        assert data["findings_count_status"] == UNPARSEABLE, (exit_code, stdout)
+
+
+@pytest.mark.parametrize("exit_code", REPORT_EXITS)
+def test_report_exit_with_foreign_sarif_is_unparseable(report, exit_code):
+    data = server._make_result(_other_driver_report(report), exit_code, 0).structuredContent
+    assert data["findings_count"] is None
+    assert data["findings_count_status"] == UNPARSEABLE
+
+
+@pytest.mark.parametrize("exit_code", REPORT_EXITS + NO_REPORT_EXITS)
+def test_valid_report_is_counted_whatever_the_exit_code(report, exit_code):
+    data = server._make_result(json.dumps(report), exit_code, 0).structuredContent
+    assert data["findings_count"] == 2
+    assert data["findings_count_status"] is None
+
+
+@pytest.mark.parametrize("exit_code", [0, 2, 6, -9])
+def test_oversize_label_wins_over_the_exit_code(report, exit_code):
+    stdout = json.dumps(report)
+    stdout += " " * (server._MAX_SARIF_REPORT_CHARS - len(stdout) + 1)
+    data = server._make_result(stdout, exit_code, 0).structuredContent
+    assert data["findings_count"] is None
+    assert data["findings_count_status"] == OVERSIZE
+
+
+@pytest.mark.asyncio
+async def test_job_status_signal_killed_result_is_labelled_no_report(monkeypatch):
+    monkeypatch.setattr(server, "get_job", lambda job_id: {
+        "status": "failed",
+        "result": {"stdout": "", "stderr": "", "verdict": "UNKNOWN(-9)", "exit_code": -9},
+    })
+    result = await server.forge_job_status("job")
+    status = result.structuredContent["result"]["findings_count_status"]
+    assert status == NO_REPORT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stdout,expected", [
+    ("not json", UNPARSEABLE),
+    ("", NO_REPORT),
+])
+async def test_job_status_record_without_exit_code_is_not_a_signal(monkeypatch, stdout, expected):
+    # A missing exit_code is "unknown", not a signal death: non-blank
+    # unparseable stdout must stay "unparseable".
+    monkeypatch.setattr(server, "get_job", lambda job_id: {
+        "status": "completed", "result": {"stdout": stdout, "stderr": ""},
+    })
+    result = await server.forge_job_status("job")
+    assert result.structuredContent["result"]["findings_count_status"] == expected
+
+
+@pytest.mark.asyncio
+async def test_job_status_record_without_exit_code_still_counts_a_report(monkeypatch, report):
+    monkeypatch.setattr(server, "get_job", lambda job_id: {
+        "status": "completed", "result": {"stdout": json.dumps(report), "stderr": ""},
+    })
+    data = (await server.forge_job_status("job")).structuredContent["result"]
+    assert data["findings_count"] == 2
+    assert data["findings_count_status"] is None
