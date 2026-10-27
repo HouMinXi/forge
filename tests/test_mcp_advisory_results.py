@@ -212,3 +212,17 @@ async def test_cancelled_poll_does_not_change_running_job(monkeypatch):
         await asyncio.gather(task, return_exceptions=True)
         await asyncio.wait_for(finished.wait(), timeout=3)
     assert entry == before
+
+
+@pytest.mark.asyncio
+async def test_stdout_lost_note_is_visible_on_exit_zero(monkeypatch):
+    note = "stdout lost: process exited at timeout boundary\n"
+    monkeypatch.setattr(server, "get_job", lambda job_id: {
+        "status": "completed",
+        "result": {"stdout": "", "stderr": note, "verdict": "UNRELIABLE",
+                   "exit_code": 0, "stdout_lost": True},
+    })
+    result = await poll(False)
+    data = result.structuredContent["result"]
+    assert data["verdict"] == "UNRELIABLE"
+    assert "stdout lost: process exited at timeout boundary" in data["output"]

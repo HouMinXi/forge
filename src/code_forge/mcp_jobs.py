@@ -365,7 +365,11 @@ async def _wait_for_job(job_id: str) -> None:
                 "stdout": "",
                 "stderr": ("stdout lost: process exited at timeout boundary\n" + stderr_tail),
                 "exit_code": proc.returncode,
-                "verdict": exit_to_verdict(proc.returncode),
+                # Exit 0 with the report lost is not a PASS: nothing was read.
+                "verdict": (
+                    "UNRELIABLE" if proc.returncode == 0 else exit_to_verdict(proc.returncode)
+                ),
+                "stdout_lost": True,
                 "duration_s": elapsed,
             }
             return
