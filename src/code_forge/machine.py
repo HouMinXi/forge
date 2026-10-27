@@ -4611,6 +4611,14 @@ class StateMachine:
                     evidence_files=[],
                 )
             )
+        if evidence.status.value == "unavailable" and evidence.exit_code is not None and evidence.exit_code < 0:
+            # A signal-killed check (OOM kill, external SIGKILL) is UNAVAILABLE,
+            # not a finding. Name the reason where the CI summary and state.json
+            # show infra errors; non-convergence is then diagnosed as category D
+            # (infrastructure). TIMEOUT and tier-gate UNAVAILABLE add no infra error.
+            note = "exec-falsify: %s (exit_code=%d)" % (evidence.reason, evidence.exit_code)
+            if note not in self._state.infra_errors:
+                self._state.infra_errors.append(note)
         self._persist_state()
         progress.emit(
             f"exec-falsify: status={evidence.status.value} duration={evidence.duration_s:.1f}s"

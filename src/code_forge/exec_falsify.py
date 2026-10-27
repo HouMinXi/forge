@@ -415,6 +415,21 @@ class ExecFalsifier:
                 stderr_tail = _read_file_tail(stderr_f, 2000)
                 ret = p.returncode
 
+                if ret < 0:
+                    # Killed by a signal (OOM kill, external SIGKILL): the
+                    # check never ran to completion, so this is an infra
+                    # failure, not verdict-blocking FAIL_BEFORE evidence.
+                    return ExecEvidence(
+                        status=ExecStatus.UNAVAILABLE,
+                        command=cmd,
+                        exit_code=ret,
+                        duration_s=duration,
+                        stdout_tail=stdout_tail,
+                        stderr_tail=stderr_tail,
+                        reason="terminated by signal %d" % -ret,
+                        environment=environment,
+                    )
+
                 if ret != 0:
                     return ExecEvidence(
                         status=ExecStatus.FAIL_BEFORE,
