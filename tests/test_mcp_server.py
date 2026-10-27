@@ -562,6 +562,14 @@ def test_make_result_merges_stderr_on_nonzero_exit():
     assert result.structuredContent["output"] == text
 
 
+def test_make_result_explains_signal_killed_child_with_empty_output():
+    result = _make_result("", -9, 1.0, "")
+    data = result.structuredContent
+    assert data["verdict"] == "SIGNALED(SIGKILL)"
+    assert "killed by SIGKILL" in data["output"]
+    assert "killed by SIGKILL" in result.content[0].text
+
+
 def test_make_result_omits_stderr_on_zero_exit():
     """Zero exit = success; stderr (warnings) should not pollute output."""
     result = _make_result("all good", 0, 1.0, stderr="deprecation warning\n")
@@ -1052,6 +1060,146 @@ async def test_forge_job_status_known_running():
     ):
         result = await forge_job_status(job_id="abc")
         assert result.structuredContent["status"] == "running"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stdout", ["", "partial output"], ids=["empty", "partial"])
+async def test_forge_job_status_explains_signal_killed_job(stdout):
+    with patch(
+        "code_forge.mcp_server.get_job",
+        return_value={
+            "status": "failed",
+            "result": {
+                "stdout": stdout,
+                "stderr": "",
+                "exit_code": -9,
+                "verdict": "SIGNALED(SIGKILL)",
+            },
+        },
+    ):
+        result = await forge_job_status(job_id="abc")
+    data = result.structuredContent["result"]
+    assert data["verdict"] == "SIGNALED(SIGKILL)"
+    assert "killed by SIGKILL" in data["output"]
+    assert "killed by SIGKILL" in result.content[0].text
+    if stdout:
+        assert data["output"].startswith(stdout + "\n")
+
+
+def _job_entry(stdout, stderr, exit_code, verdict, status="failed"):
+    return {
+        "status": status,
+        "result": {"stdout": stdout, "stderr": stderr, "exit_code": exit_code, "verdict": verdict},
+    }
+
+
+_KILL_NOTE = "code-forge was killed by SIGKILL (exit -9) before it produced a report"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stdout,stderr,expected_output",
+    [
+        ("", "", _KILL_NOTE),
+        ("", "  \n", _KILL_NOTE),
+        ("partial", "", "partial\n" + _KILL_NOTE),
+        ("", "boom\n", "\n--- stderr ---\nboom\n\n" + _KILL_NOTE),
+        ("partial", "boom\n", "partial\n--- stderr ---\nboom\n\n" + _KILL_NOTE),
+    ],
+    ids=["empty", "blank-stderr", "stdout", "stderr", "stdout-then-stderr-then-note"],
+)
+async def test_forge_job_status_signal_output_is_exact(stdout, stderr, expected_output):
+    # Exact strings: no leading newline when output is empty, and the note
+    # always comes after any appended stderr block.
+    with patch(
+        "code_forge.mcp_server.get_job",
+        return_value=_job_entry(stdout, stderr, -9, "SIGNALED(SIGKILL)"),
+    ):
+        result = await forge_job_status(job_id="abc")
+    assert result.structuredContent["result"]["output"] == expected_output
+    assert result.content[0].text == (
+        "Job abc failed: SIGNALED(SIGKILL) (exit -9)\n" + expected_output
+    )
+
+
+@pytest.mark.parametrize(
+    "stdout,stderr,expected_output",
+    [
+        ("", "", _KILL_NOTE),
+        ("", "  \n", _KILL_NOTE),
+        ("partial", "", "partial\n" + _KILL_NOTE),
+        ("", "boom\n", "\n--- stderr ---\nboom\n\n" + _KILL_NOTE),
+        ("partial", "boom\n", "partial\n--- stderr ---\nboom\n\n" + _KILL_NOTE),
+    ],
+    ids=["empty", "blank-stderr", "stdout", "stderr", "stdout-then-stderr-then-note"],
+)
+def test_make_result_signal_output_is_exact(stdout, stderr, expected_output):
+    # Same exact strings as the forge_job_status path: no leading newline
+    # when the output is empty, and the note comes after any stderr block.
+    result = _make_result(stdout, -9, 1.0, stderr)
+    assert result.structuredContent["output"] == expected_output
+    assert result.content[0].text == expected_output
+
+
+@pytest.mark.asyncio
+async def test_forge_job_status_real_sighup_kill_is_named():
+    # A child genuinely killed by SIGHUP also has returncode -1.
+    with patch(
+        "code_forge.mcp_server.get_job",
+        return_value=_job_entry("", "", -1, "SIGNALED(SIGHUP)"),
+    ):
+        result = await forge_job_status(job_id="abc")
+    assert result.structuredContent["result"]["output"] == (
+        "code-forge was killed by SIGHUP (exit -1) before it produced a report"
+    )
+
+
+@pytest.mark.asyncio
+async def test_forge_job_status_unknown_exit_is_not_called_a_signal():
+    with patch(
+        "code_forge.mcp_server.get_job",
+        return_value=_job_entry("", "oops", -1, "UNKNOWN(-1)"),
+    ):
+        result = await forge_job_status(job_id="abc")
+    data = result.structuredContent["result"]
+    assert data["verdict"] == "UNKNOWN(-1)"
+    assert data["output"] == "\n--- stderr ---\noops"
+    assert result.content[0].text == "Job abc failed: UNKNOWN(-1) (exit -1)\n\n--- stderr ---\noops"
+
+
+@pytest.mark.asyncio
+async def test_forge_job_status_missing_exit_fields_is_not_called_a_signal():
+    with patch(
+        "code_forge.mcp_server.get_job",
+        return_value={"status": "failed", "result": {"stdout": "x", "stderr": ""}},
+    ):
+        result = await forge_job_status(job_id="abc")
+    data = result.structuredContent["result"]
+    assert (data["verdict"], data["exit_code"], data["output"]) == ("UNKNOWN(-1)", -1, "x")
+
+
+@pytest.mark.asyncio
+async def test_forge_job_status_signaled_verdict_without_exit_code_gets_no_note():
+    # Without a real exit code there is no signal to name; never guess SIGHUP.
+    with patch(
+        "code_forge.mcp_server.get_job",
+        return_value={"status": "failed", "result": {"stdout": "", "stderr": "", "verdict": "SIGNALED(SIGKILL)"}},
+    ):
+        result = await forge_job_status(job_id="abc")
+    assert result.structuredContent["result"]["output"] == ""
+
+
+@pytest.mark.asyncio
+async def test_forge_job_status_adds_no_signal_note_for_other_verdicts():
+    with patch(
+        "code_forge.mcp_server.get_job",
+        return_value={
+            "status": "failed",
+            "result": {"stdout": "", "stderr": "", "exit_code": -9, "verdict": "TIMEOUT"},
+        },
+    ):
+        result = await forge_job_status(job_id="abc")
+    assert "killed by" not in result.structuredContent["result"]["output"]
 
 
 @pytest.mark.asyncio

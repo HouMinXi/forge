@@ -63,11 +63,14 @@ from code_forge.llm_invoke import effective_invoke_timeout_s
 from code_forge.mcp_jobs import (
     ForgeJobRef,
     ForgeResult,
+    UNKNOWN_EXIT_CODE,
+    UNKNOWN_VERDICT,
     _read_stderr_tail,
     _terminate_and_reap,
     cleanup_all,
     exit_to_verdict,
     get_job,
+    signal_exit_note,
     snapshot_tempfile_paths,
     start_job,
 )
@@ -1175,6 +1178,9 @@ def _make_result(
     output = stdout
     if exit_code != 0 and stderr.strip():
         output = stdout + "\n--- stderr ---\n" + stderr
+    note = signal_exit_note(exit_code)
+    if note:
+        output = output + ("\n" if output else "") + note
     findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(stdout, exit_code)
     structured = ForgeResult(
         verdict=exit_to_verdict(exit_code),
@@ -1671,11 +1677,15 @@ async def forge_job_status(job_id: str) -> CallToolResult:
             status == "failed" or r.get("exit_code", 0) != 0 or r.get("stdout_lost")
         ) and stderr.strip():
             output = output + "\n--- stderr ---\n" + stderr
+        if str(r.get("verdict", "")).startswith("SIGNALED("):
+            note = signal_exit_note(r.get("exit_code", 0))
+            if note:
+                output = output + ("\n" if output else "") + note
         job_stdout = r.get("stdout", "")
         findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(job_stdout, r.get("exit_code"))
         forge_result = ForgeResult(
-            verdict=r.get("verdict", "UNKNOWN(-1)"),
-            exit_code=r.get("exit_code", -1),
+            verdict=r.get("verdict", UNKNOWN_VERDICT),
+            exit_code=r.get("exit_code", UNKNOWN_EXIT_CODE),
             findings_count=findings_count,
             findings_count_status=count_status,
             findings=findings,

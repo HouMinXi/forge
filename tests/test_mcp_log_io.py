@@ -246,7 +246,8 @@ async def test_completed_real_log_and_inline_bytes(code, inline, tmp_path, monke
     assert entry["result"]["stdout"] == "out\ufffd"
     assert entry["result"]["stderr"] == (b"inline\xff" if inline else data).decode(errors="replace")
     assert entry["result"]["exit_code"] == (code if code is not None else -1)
-    assert entry["result"]["verdict"] == jobs.exit_to_verdict(code if code is not None else -1)
+    # No return code at all is "unknown", never a SIGHUP kill (-1 as a signal).
+    assert entry["result"]["verdict"] == {0: "PASS", 1: "FAIL", None: "UNKNOWN(-1)"}[code]
     assert proc.events == []
     assert not path.exists()
 

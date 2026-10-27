@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import time
 import uuid
 from pathlib import Path
@@ -46,9 +47,42 @@ _EXIT_TO_VERDICT: dict[int, str] = {
 }
 
 
+# A job result with no real return code (the child never reported one).
+# The number is also what SIGHUP produces (-1), so the verdict, not the number,
+# tells the two apart: only a real signal death is labelled SIGNALED(...).
+UNKNOWN_EXIT_CODE = -1
+UNKNOWN_VERDICT = "UNKNOWN(%d)" % UNKNOWN_EXIT_CODE
+
+
+def _signal_name(code: int) -> str:
+    """Name the signal behind a negative asyncio returncode (``-N`` = signal N)."""
+    try:
+        return signal.Signals(-code).name
+    except ValueError:
+        return "signal %d" % -code
+
+
 def exit_to_verdict(code: int) -> str:
-    """Map CLI exit code to human-readable verdict string."""
-    return _EXIT_TO_VERDICT.get(code, "UNKNOWN(%d)" % code)
+    """Map CLI exit code to human-readable verdict string.
+
+    A negative code is a child killed by a signal, so it is labelled with the
+    signal instead of a bare ``UNKNOWN(-9)``.
+    """
+    if code in _EXIT_TO_VERDICT:
+        return _EXIT_TO_VERDICT[code]
+    if code < 0:
+        return "SIGNALED(%s)" % _signal_name(code)
+    return "UNKNOWN(%d)" % code
+
+
+def signal_exit_note(code: int) -> str | None:
+    """One-line explanation for a signal-killed child, else None."""
+    if code >= 0:
+        return None
+    return "code-forge was killed by %s (exit %d) before it produced a report" % (
+        _signal_name(code),
+        code,
+    )
 
 
 # -- Pydantic models --
@@ -242,8 +276,8 @@ async def _record_job_failure(entry: dict[str, Any], exc: BaseException) -> None
     entry["result"] = {
         "stdout": "",
         "stderr": str(exc),
-        "exit_code": -1,
-        "verdict": "UNKNOWN(-1)",
+        "exit_code": UNKNOWN_EXIT_CODE,
+        "verdict": UNKNOWN_VERDICT,
         "duration_s": elapsed,
     }
 
@@ -326,7 +360,11 @@ async def _wait_for_job(job_id: str) -> None:
             stdout_bytes, stderr_bytes = await entry["comm_task"]
         elapsed = time.monotonic() - entry["created_at"]
         proc = entry["proc"]
-        exit_code = proc.returncode if proc.returncode is not None else -1
+        if proc.returncode is None:
+            exit_code, verdict = UNKNOWN_EXIT_CODE, UNKNOWN_VERDICT
+        else:
+            exit_code = proc.returncode
+            verdict = exit_to_verdict(exit_code)
         # stderr is None when redirected to a file (Python 3.14 verified)
         if stderr_bytes is None:
             log_path = entry.get("stderr_log_path")
@@ -341,7 +379,7 @@ async def _wait_for_job(job_id: str) -> None:
             "stdout": stdout_bytes.decode(errors="replace"),
             "stderr": stderr_text,
             "exit_code": exit_code,
-            "verdict": exit_to_verdict(exit_code),
+            "verdict": verdict,
             "duration_s": elapsed,
         }
     except asyncio.TimeoutError:
@@ -390,7 +428,7 @@ async def _wait_for_job(job_id: str) -> None:
         entry["result"] = {
             "stdout": "",
             "stderr": f"{timeout_reason}\n{stderr_tail}",
-            "exit_code": proc.returncode if proc.returncode is not None else -1,
+            "exit_code": proc.returncode if proc.returncode is not None else UNKNOWN_EXIT_CODE,
             "verdict": "TIMEOUT",
             "duration_s": elapsed,
         }
