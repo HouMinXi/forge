@@ -1499,7 +1499,7 @@ class TestGateCheckIntegration:
 
             def side_effect(*args, **kwargs):
                 if args[0][0] == "git":
-                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                    return Mock(returncode=0, stdout=b"foo.py\0", stderr="")
                 return Mock(returncode=0, stdout="", stderr="")
 
             mock_run.side_effect = side_effect
@@ -1536,7 +1536,7 @@ class TestGateCheckIntegration:
             # Mock git diff --cached
             def side_effect(*args, **kwargs):
                 if args[0][0] == "git":
-                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                    return Mock(returncode=0, stdout=b"foo.py\0", stderr="")
                 # Test command
                 return Mock(returncode=0, stdout="", stderr="")
 
@@ -1569,7 +1569,7 @@ class TestGateCheckIntegration:
             # Mock subprocess
             def side_effect(*args, **kwargs):
                 if args[0][0] == "git":
-                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                    return Mock(returncode=0, stdout=b"foo.py\0", stderr="")
                 # Test command fails
                 return Mock(returncode=1, stdout="FAILED tests/test_foo.py::test_bar\n", stderr="")
 
@@ -1599,7 +1599,7 @@ class TestGateCheckIntegration:
 
             def side_effect(*args, **kwargs):
                 if args[0][0] == "git":
-                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                    return Mock(returncode=0, stdout=b"foo.py\0", stderr="")
                 return Mock(
                     returncode=1,
                     stdout="FAILED tests/test_foo.py::test_bar\n",
@@ -1638,7 +1638,7 @@ class TestGateCheckIntegration:
 
             def side_effect(*args, **kwargs):
                 if args[0][0] == "git":
-                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                    return Mock(returncode=0, stdout=b"foo.py\0", stderr="")
                 return Mock(
                     returncode=1,
                     stdout="FAILED tests/test_foo.py::test_bar\n",
@@ -1684,7 +1684,7 @@ class TestGateCheckIntegration:
 
             def side_effect(*args, **kwargs):
                 if args[0][0] == "git":
-                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                    return Mock(returncode=0, stdout=b"foo.py\0", stderr="")
                 # Test runner exits with 4 (usage error)
                 return Mock(returncode=4, stdout="", stderr="")
 
@@ -1716,7 +1716,7 @@ class TestGateCheckIntegration:
 
             def side_effect(*args, **kwargs):
                 if args[0][0] == "git":
-                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                    return Mock(returncode=0, stdout=b"foo.py\0", stderr="")
                 # Test runner exits with 5 (no tests collected)
                 return Mock(returncode=5, stdout="", stderr="")
 
@@ -1779,7 +1779,7 @@ class TestGateCheckIntegration:
 
             def side_effect(*args, **kwargs):
                 if args[0][0] == "git":
-                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                    return Mock(returncode=0, stdout=b"foo.py\0", stderr="")
                 # Test runner not found
                 raise FileNotFoundError("python3 not found")
 

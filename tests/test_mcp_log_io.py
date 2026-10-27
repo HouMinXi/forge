@@ -131,7 +131,8 @@ async def test_responsive_log_read(branch, tmp_path, monkeypatch):
             prefix = ("job exceeded 0s cap\n" if branch == "live" else
                       "stdout lost: process exited at timeout boundary\n")
             assert result["stderr"] == prefix + path_bytes_tail(content)
-        assert result["verdict"] == ("TIMEOUT" if branch == "live" else "PASS")
+        expected_verdict = {"live": "TIMEOUT", "complete": "PASS"}.get(branch, "UNRELIABLE")
+        assert result["verdict"] == expected_verdict
         assert entry["status"] == ("failed" if branch == "live" else "completed")
         assert proc.events == (["term", "wait"] if branch == "live" else [])
         assert not path.exists()

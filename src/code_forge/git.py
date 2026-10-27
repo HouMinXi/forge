@@ -37,6 +37,23 @@ _MACHINE_DIFF_OPTIONS = (
     "--binary",
 )
 
+
+def machine_diff_command(target: str = "HEAD", *, binary: bool = True) -> list[str]:
+    """Return the `git diff` argv whose output does not depend on user config.
+
+    The same options the review diff uses, so a caller that hashes or parses
+    `git diff <target>` agrees with it under diff.noprefix, diff.mnemonicPrefix,
+    color.ui=always, diff.external and textconv settings.
+
+    ``binary`` keeps ``--binary`` so the diff text, and therefore its hash,
+    matches the review path. Callers that only hand the text to a model or a
+    text heuristic pass ``binary=False``: a binary patch is base85 noise that
+    inflates the prompt several times over.
+    """
+    options = [opt for opt in _MACHINE_DIFF_OPTIONS if binary or opt != "--binary"]
+    return ["git", "diff", *options, target]
+
+
 # Allowlist regex for diff-spec values.
 # Permits: branch names (feature/foo), tags (v1.2.3), commit hashes
 # (abc123), HEAD references (HEAD, HEAD~1, HEAD^), remote refs

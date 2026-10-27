@@ -282,6 +282,39 @@ class TestSubprocessIsolationAndCleanup:
         assert ev.status == ExecStatus.PASS_AFTER
 
 
+class TestSignalTermination:
+    def test_signal_killed_child_is_unavailable_not_fail_before(self, tmp_path):
+        """A child killed by a signal (OOM kill, external SIGKILL) is infra.
+
+        It never ran the check to completion, so it cannot be the
+        verdict-blocking FAIL_BEFORE evidence a real nonzero exit is.
+        """
+        lockfile = tmp_path / "requirements.txt"
+        lockfile.write_text("pytest\n", encoding="utf-8")
+        script = "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n"
+        falsifier = ExecFalsifier(
+            manifest=_declared_manifest(),
+            timeout_seconds=30,
+            command=[sys.executable, "-c", script],
+        )
+        ev = falsifier.run(tmp_path)
+        assert ev.status == ExecStatus.UNAVAILABLE
+        assert ev.exit_code == -9
+        assert "signal 9" in ev.reason
+
+    def test_plain_nonzero_exit_stays_fail_before(self, tmp_path):
+        lockfile = tmp_path / "requirements.txt"
+        lockfile.write_text("pytest\n", encoding="utf-8")
+        falsifier = ExecFalsifier(
+            manifest=_declared_manifest(),
+            timeout_seconds=30,
+            command=[sys.executable, "-c", "raise SystemExit(3)"],
+        )
+        ev = falsifier.run(tmp_path)
+        assert ev.status == ExecStatus.FAIL_BEFORE
+        assert ev.exit_code == 3
+
+
 class TestBoundedOutputStreaming:
     def test_stdout_and_stderr_tails_captured(self, tmp_path):
         lockfile = tmp_path / "requirements.txt"

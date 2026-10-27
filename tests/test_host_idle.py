@@ -1,5 +1,7 @@
 """#282: idle gate for the L2 mutation baseline."""
 
+import dataclasses
+
 import pytest
 
 from code_forge import host_idle, mutation
@@ -38,6 +40,74 @@ def test_invalid_config_is_an_error(raw):
         load_config({"FORGE_MUTATION_IDLE_LOAD": raw})
     with pytest.raises(IdleConfigError):
         load_config({"FORGE_MUTATION_IDLE_POLL": "0"})
+
+
+@pytest.mark.parametrize(
+    ("env", "minimum"),
+    [
+        ({"FORGE_MUTATION_IDLE_MAX_WAIT": "5"}, "30"),
+        ({"FORGE_MUTATION_IDLE_MAX_WAIT": "20"}, "30"),
+        ({"FORGE_MUTATION_IDLE_MAX_WAIT": "29.9"}, "30"),
+        ({"FORGE_MUTATION_IDLE_MAX_WAIT": "0.02", "FORGE_MUTATION_IDLE_POLL": "0.01"}, "0.03"),
+        ({"FORGE_MUTATION_IDLE_MAX_WAIT": "40", "FORGE_MUTATION_IDLE_SETTLE": "5"}, "50"),
+        ({"FORGE_MUTATION_IDLE_POLL": "1000"}, "3000"),
+    ],
+)
+def test_max_wait_too_short_to_settle_is_an_error(env, minimum):
+    """A positive wait below settle*poll cannot reliably see `settle` idle samples."""
+    with pytest.raises(IdleConfigError, match="FORGE_MUTATION_IDLE_MAX_WAIT") as caught:
+        load_config(env)
+    assert f"at least {minimum}s" in str(caught.value)
+    assert "0 disables" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"FORGE_MUTATION_IDLE_MAX_WAIT": "30"},
+        {"FORGE_MUTATION_IDLE_MAX_WAIT": "0"},
+        {"FORGE_MUTATION_IDLE_MAX_WAIT": "0", "FORGE_MUTATION_IDLE_POLL": "1000"},
+        {"FORGE_MUTATION_IDLE_MAX_WAIT": "5", "FORGE_MUTATION_IDLE_SETTLE": "1"},
+        {"FORGE_MUTATION_IDLE_MAX_WAIT": "0.05", "FORGE_MUTATION_IDLE_POLL": "0.01"},
+    ],
+)
+def test_max_wait_that_can_settle_or_disabled_is_accepted(env):
+    load_config(env)
+
+
+def test_minimum_wait_observes_idle_on_an_idle_host():
+    cfg = load_config({"FORGE_MUTATION_IDLE_MAX_WAIT": "30"})
+    clock = FakeClock()
+    result = wait_for_idle(cfg, read=lambda: IDLE, sleep=clock.sleep, clock=clock)
+    assert result.idle and result.samples == 3 and result.waited_s == 20
+
+
+_REAL_CLOCK_ENV = {"FORGE_MUTATION_IDLE_POLL": "0.05", "FORGE_MUTATION_IDLE_SETTLE": "3"}
+
+
+def test_minimum_wait_observes_idle_with_real_sleep_every_time():
+    """time.sleep overshoots, so the accepted minimum needs slack beyond (settle-1)*poll."""
+    cfg = load_config({**_REAL_CLOCK_ENV, "FORGE_MUTATION_IDLE_MAX_WAIT": "0.15"})
+    for _ in range(20):
+        result = wait_for_idle(cfg, read=lambda: IDLE)
+        assert result.idle, result.reasons
+
+
+def test_wait_equal_to_the_unslacked_floor_is_rejected_and_unreachable():
+    with pytest.raises(IdleConfigError, match="at least 0.15s"):
+        load_config({**_REAL_CLOCK_ENV, "FORGE_MUTATION_IDLE_MAX_WAIT": "0.1"})
+    # Why: with exactly (settle-1)*poll the final sample is scheduled after
+    # max_wait once sleep overshoot is counted, so an idle host reads busy.
+    cfg = dataclasses.replace(
+        load_config({**_REAL_CLOCK_ENV, "FORGE_MUTATION_IDLE_MAX_WAIT": "0.15"}), max_wait=0.1
+    )
+    for _ in range(5):
+        assert not wait_for_idle(cfg, read=lambda: IDLE).idle
+
+
+def test_single_sample_settle_needs_no_wait_floor():
+    cfg = load_config({"FORGE_MUTATION_IDLE_MAX_WAIT": "5", "FORGE_MUTATION_IDLE_SETTLE": "1"})
+    assert wait_for_idle(cfg, read=lambda: IDLE).idle
 
 
 def test_busy_reasons_each_signal_and_unavailable_ignored():

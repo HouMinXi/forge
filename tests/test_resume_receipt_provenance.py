@@ -4354,3 +4354,48 @@ def test_reused_real_call_clears_rejection_authority_before_healthy_work(
     assert provider._excerpt_invocation is not previous_token
     assert provider._excerpt_rejections == () and provider.attempted_excerpts == []
     assert rejected._current_evidence_rejections() is None
+
+
+def _run_exec_check(root, monkeypatch, command, timeout):
+    # A configured test command keeps the L2 "gate.yaml missing" infra error out of
+    # the picture, so the non-convergence category reflects the exec check alone.
+    (root / ".code-forge" / "gate.yaml").write_text(
+        "test:\n  command: [/bin/true]\n  timeout_seconds: 30\n"
+    )
+    machine = _machine(root, monkeypatch, rounds=1)
+    machine._state.env_manifest = {"tier": "declared"}
+    machine.exec_falsify = True
+    machine.exec_falsify_command = command
+    machine.exec_falsify_timeout = timeout
+    machine.run()
+    return load_state(root / ".code-forge" / "state.json")
+
+
+def test_signal_killed_exec_check_is_named_in_infra_errors_without_a_finding(
+    review_workspace, monkeypatch
+):
+    script = "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n"
+    state = _run_exec_check(
+        review_workspace, monkeypatch, ["/usr/bin/python3", "-B", "-c", script], timeout=30
+    )
+    assert state.exec_evidence["status"] == "unavailable"
+    assert state.exec_evidence["exit_code"] == -9
+    assert not any(f.source == "EXEC" for f in state.findings)
+    assert [e for e in state.infra_errors if "exec-falsify" in e and "signal 9" in e]
+    # The only infra error is the killed check, so the round-exhaustion diagnosis is
+    # D (infrastructure) rather than the default A (oscillation).
+    assert state.verdict is Verdict.ESCALATED
+    assert "ESCALATED category=D" in state.infra_errors
+
+
+def test_timed_out_exec_check_adds_no_infra_error(review_workspace, monkeypatch):
+    state = _run_exec_check(
+        review_workspace,
+        monkeypatch,
+        ["/usr/bin/python3", "-B", "-c", "import time\ntime.sleep(60)\n"],
+        timeout=1,
+    )
+    assert state.exec_evidence["status"] == "timeout"
+    assert not any(f.source == "EXEC" for f in state.findings)
+    assert not [e for e in state.infra_errors if "exec-falsify" in e]
+    assert "ESCALATED category=D" not in state.infra_errors
