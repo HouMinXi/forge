@@ -56,11 +56,15 @@ def offline(monkeypatch):
     spawn.assert_not_called()
 
 
-def _expected_count_status(stdout, exit_code):
-    """Non-SARIF stdout: empty or non-review exits mean no report at all."""
-    if not stdout.strip() or exit_code not in (0, 1):
-        return server._NO_REPORT_COUNT_STATUS
-    return server._UNPARSEABLE_COUNT_STATUS
+NO_REPORT = (
+    "unknown: no report produced -- the run exited without a SARIF report "
+    "(empty stdout, CLI error, timeout or killed process), so there is nothing "
+    "to count; see output and stderr"
+)
+UNPARSEABLE = (
+    "unknown: unparseable report -- stdout is not a single code-forge SARIF "
+    "document, so findings were not counted; read the raw output"
+)
 
 
 async def poll(sdk: bool) -> CallToolResult:
@@ -107,7 +111,7 @@ async def test_terminal_text_preserves_exact_structured_output(
             "verdict": verdict,
             "exit_code": exit_code,
             "findings_count": None,
-            "findings_count_status": _expected_count_status(OUTPUT, exit_code),
+            "findings_count_status": UNPARSEABLE,
             "findings": None,
             "receipt_audit": None,
             "duration_s": 12.345,
@@ -138,9 +142,13 @@ async def test_terminal_empty_and_whitespace_output(monkeypatch, status, verdict
     assert result.content[0].text == header + ("\n" + output if output else "")
 
 
-@pytest.mark.parametrize("exit_code,verdict", [(0, "PASS"), (1, "FAIL"), (2, "CLI_ERROR"), (6, "TIMEOUT")])
+@pytest.mark.parametrize(
+    "exit_code,verdict,advisory_status",
+    [(0, "PASS", UNPARSEABLE), (1, "FAIL", UNPARSEABLE),
+     (2, "CLI_ERROR", NO_REPORT), (6, "TIMEOUT", NO_REPORT)],
+)
 @pytest.mark.parametrize("stdout", [OUTPUT, "", " \t\n"], ids=["advisory", "empty", "whitespace"])
-def test_immediate_result_keeps_current_text_format(exit_code, verdict, stdout):
+def test_immediate_result_keeps_current_text_format(exit_code, verdict, advisory_status, stdout):
     result = server._make_result(stdout, exit_code, 12.345, STDERR)
     expected_output = stdout if exit_code == 0 else stdout + "\n--- stderr ---\n" + STDERR
     assert isinstance(result, CallToolResult)
@@ -149,7 +157,7 @@ def test_immediate_result_keeps_current_text_format(exit_code, verdict, stdout):
         "verdict": verdict,
         "exit_code": exit_code,
         "findings_count": None,
-        "findings_count_status": _expected_count_status(stdout, exit_code),
+        "findings_count_status": advisory_status if stdout == OUTPUT else NO_REPORT,
         "findings": None,
         "receipt_audit": None,
         "duration_s": 12.35,

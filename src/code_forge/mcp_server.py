@@ -58,6 +58,7 @@ from mcp.types import (
 )
 
 import code_forge
+from code_forge.exit_codes import EXIT_CLI_ERROR, EXIT_TIMEOUT
 from code_forge.llm_invoke import effective_invoke_timeout_s
 from code_forge.mcp_jobs import (
     ForgeJobRef,
@@ -1013,6 +1014,7 @@ _NO_REPORT_COUNT_STATUS = (
     "(empty stdout, CLI error, timeout or killed process), so there is nothing "
     "to count; see output and stderr"
 )
+_NO_REPORT_EXIT_CODES = frozenset({EXIT_CLI_ERROR, EXIT_TIMEOUT})
 _UNPARSEABLE_COUNT_STATUS = (
     "unknown: unparseable report -- stdout is not a single code-forge SARIF "
     "document, so findings were not counted; read the raw output"
@@ -1035,15 +1037,20 @@ def _sarif_projection_with_status(
     despite shallow nesting. Original output is retained unchanged;
     unsupported reports remain uncounted and carry a labelled status
     (oversize / unparseable / no report) so a missing count is never silent.
-    Only exit codes 0 and 1 are review outcomes that should carry a report;
-    empty stdout or any other exit code (CLI error, timeout, killed child)
-    is labelled "no report produced" instead of "unparseable".
+    The CLI emits its SARIF report for every terminal review state (exit 0,
+    1, 3 when CI returns PENDING, 4, 5 and 7), so a non-report stdout on
+    those codes stays "unparseable". "No report produced" applies only when
+    stdout is blank, or the exit is CLI_ERROR (2), TIMEOUT (6) or a negative
+    signal code, none of which emit one. An oversize stdout is labelled
+    oversize whatever the exit code.
     Each projected list includes at most 64 dictionary/list levels so the
     full MCP response envelope retains ample serialization depth headroom.
     """
     no_report = (
         type(stdout) is str and not stdout.strip()
-    ) or (exit_code is not None and exit_code not in (0, 1))
+    ) or (
+        exit_code is not None and (exit_code < 0 or exit_code in _NO_REPORT_EXIT_CODES)
+    )
     unknown = (
         None, None, None,
         _NO_REPORT_COUNT_STATUS if no_report else _UNPARSEABLE_COUNT_STATUS,
