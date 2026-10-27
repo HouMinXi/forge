@@ -307,3 +307,31 @@ def test_outcome_reporting_does_not_mutate_in_memory_state():
         build_sarif_log(state, {}, "test", assertion_outcome=outcome)
         format_summary(state, assertion_outcome=outcome)
     assert asdict(state) == original
+
+
+def test_ci_summary_names_infra_errors_behind_a_failed_verdict(tmp_path, capsys):
+    reason = "CI: mutation not measured -- untracked gate.yaml in checkout is not trusted"
+    state = State(verdict=Verdict.FAIL, mode=Mode.CI, infra_errors=[reason])
+    state_path = tmp_path / "state.json"
+    save_state(state, state_path)
+    cli._emit_ci_output(state_path, {})
+    output = capsys.readouterr()
+    assert f"code-forge: infra: {reason}" in output.err.splitlines()
+
+
+def test_ci_summary_stays_quiet_about_infra_errors_on_pass(tmp_path, capsys):
+    state = State(verdict=Verdict.PASS, mode=Mode.CI, infra_errors=["ignored"])
+    state_path = tmp_path / "state.json"
+    save_state(state, state_path)
+    cli._emit_ci_output(state_path, {})
+    assert "code-forge: infra:" not in capsys.readouterr().err
+
+
+def test_ci_summary_caps_infra_error_lines(tmp_path, capsys):
+    state = State(verdict=Verdict.FAIL, mode=Mode.CI, infra_errors=[f"e{i}" for i in range(8)])
+    state_path = tmp_path / "state.json"
+    save_state(state, state_path)
+    cli._emit_ci_output(state_path, {})
+    lines = [x for x in capsys.readouterr().err.splitlines() if x.startswith("code-forge: infra:")]
+    assert lines[-1] == "code-forge: infra: (+3 more in state.json)"
+    assert len(lines) == 6

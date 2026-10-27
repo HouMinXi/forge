@@ -88,6 +88,26 @@ def _load_advisories(path: Path) -> list:
         return []
 
 
+_INFRA_REASON_LINES = 5
+
+
+def _print_infra_reasons(state: Any) -> None:
+    """Name the infrastructure reasons behind a non-PASS CI verdict on stderr.
+
+    The counts-only summary can read FAIL with ``confirmed=0`` while the cause
+    (for example an untracked gate.yaml refused in CI) exists only in
+    state.json ``infra_errors``. Capped so a noisy run stays readable.
+    """
+    if state.verdict == Verdict.PASS or not state.infra_errors:
+        return
+    reasons = [" ".join(str(err).split()) for err in state.infra_errors]
+    for reason in reasons[:_INFRA_REASON_LINES]:
+        print(f"code-forge: infra: {reason}", file=sys.stderr)
+    extra = len(reasons) - _INFRA_REASON_LINES
+    if extra > 0:
+        print(f"code-forge: infra: (+{extra} more in state.json)", file=sys.stderr)
+
+
 def _emit_ci_output(
     state_path: Path,
     registry: dict[str, "ToolConfig"],
@@ -162,6 +182,7 @@ def _emit_ci_output(
         format_classification_line(prepared.report_classification),
         file=sys.stderr,
     )
+    _print_infra_reasons(final_state)
     if post_emit_hook is not None:
         post_emit_hook()
 
