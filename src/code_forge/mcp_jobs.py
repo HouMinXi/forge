@@ -400,6 +400,9 @@ async def _wait_for_job(job_id: str) -> None:
                     os.unlink(p)
                 except OSError:
                     pass
+        # TTL counts from completion, not creation: the idle watchdog lets a
+        # review run for hours, and its result must stay pollable afterwards.
+        entry.setdefault("finished_at", time.monotonic())
         _evict_stale()
 
 
@@ -422,6 +425,8 @@ def _read_stderr_tail(entry: dict[str, Any], max_bytes: int = 2048) -> str:
 def _evict_stale() -> None:
     """Remove terminal entries past TTL; unlink their tempfiles.
 
+    The TTL is measured from ``finished_at`` (set when the job reaches a
+    terminal state), falling back to ``created_at`` for entries without it.
     Running entries are left untouched.  Forced-death owners are:
       - the job watchdog (_wait_for_job timeout path)
       - cleanup_all() at server shutdown
@@ -429,7 +434,7 @@ def _evict_stale() -> None:
     now = time.monotonic()
     to_remove: list[str] = []
     for jid, entry in _jobs.items():
-        age = now - entry["created_at"]
+        age = now - entry.get("finished_at", entry["created_at"])
         if age <= _JOB_TTL_SECONDS:
             continue
         if entry["status"] in ("completed", "failed"):

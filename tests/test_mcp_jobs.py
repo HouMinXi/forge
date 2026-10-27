@@ -16,6 +16,7 @@ import pytest
 from code_forge.mcp_jobs import (
     ForgeJobRef,
     ForgeResult,
+    _JOB_TTL_SECONDS,
     _evict_stale,
     _jobs,
     cleanup_all,
@@ -373,6 +374,47 @@ def test_evict_stale_leaves_running_entry_untouched():
     _evict_stale()
     proc.kill.assert_not_called()
     assert "old_run" in _jobs
+
+
+@pytest.mark.asyncio
+async def test_long_running_job_result_survives_ttl_from_creation():
+    """TTL counts from completion: a job that ran longer than the TTL must
+    still be pollable right after it finishes (idle watchdog allows hours)."""
+
+    async def _comm():
+        return (b"output", b"")
+
+    task = asyncio.ensure_future(_comm())
+    proc = MagicMock()
+    proc.returncode = 0
+    job_id = start_job(task, proc)
+    # Pretend the job started longer ago than the TTL; no await in between,
+    # so _wait_for_job has not run yet.
+    _jobs[job_id]["created_at"] = time.monotonic() - 2 * _JOB_TTL_SECONDS
+    await asyncio.sleep(0.05)
+    entry = get_job(job_id)
+    assert entry is not None, "finished result evicted before the client could poll"
+    assert entry["status"] == "completed"
+    assert entry["result"]["stdout"] == "output"
+
+
+def test_evict_stale_ages_terminal_entry_from_finish_time():
+    now = time.monotonic()
+    _jobs["recent_done"] = {
+        "status": "completed",
+        "result": {"stdout": "ok"},
+        "created_at": now - 2 * _JOB_TTL_SECONDS,
+        "finished_at": now - 10,
+    }
+    _jobs["stale_done"] = {
+        "status": "completed",
+        "result": {"stdout": "ok"},
+        "created_at": now - 2 * _JOB_TTL_SECONDS,
+        "finished_at": now - _JOB_TTL_SECONDS - 10,
+    }
+    _evict_stale()
+    assert "recent_done" in _jobs
+    assert "stale_done" not in _jobs
 
 
 # -- snapshot_tempfile_paths --
