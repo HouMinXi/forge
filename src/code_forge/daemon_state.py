@@ -399,8 +399,7 @@ class DaemonStateRunner:
                 "Known static conflict rules (do NOT re-report these, "
                 "only report NEW conflicts not listed here):"
             ]
-            for sf in static_findings:
-                lines.append("- %s" % sf.description)
+            lines.extend("- %s" % sf.description for sf in static_findings)
             static_rules_text = "\n".join(lines) + "\n\n"
 
         # LLM Step 1 -- Q1 enumerate state
@@ -441,7 +440,9 @@ class DaemonStateRunner:
             return static_findings + [_build_skipped_finding(reason)]
 
         if not isinstance(state_items, list):
-            state_items = []
+            reason = "Q1 response external_state is not a list"
+            self.infra_errors.append("DAEMON-STATE " + reason)
+            return static_findings + [_build_skipped_finding(reason)]
 
         # Extract grep keywords from Q1 response
         keywords = _extract_grep_keywords(state_items)
@@ -468,14 +469,14 @@ class DaemonStateRunner:
             return static_findings + [_build_skipped_finding(reason)]
 
         # Parse Q2Q3 response
+        # A reply that is not {"conflicts": [...]} is an infra failure, not
+        # "no conflicts": mirror the Q1 handling instead of returning clean.
         q2q3_content = q2q3_result.content
-        if isinstance(q2q3_content, dict):
-            llm_conflicts = q2q3_content.get("conflicts", [])
-        else:
-            llm_conflicts = []
-
+        llm_conflicts = q2q3_content.get("conflicts") if isinstance(q2q3_content, dict) else None
         if not isinstance(llm_conflicts, list):
-            llm_conflicts = []
+            reason = "Q2Q3 response missing a conflicts list"
+            self.infra_errors.append("DAEMON-STATE " + reason)
+            return static_findings + [_build_skipped_finding(reason)]
 
         # Build LLM findings
         llm_findings: list[AdvisoryFinding] = []

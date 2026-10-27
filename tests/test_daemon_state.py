@@ -540,6 +540,69 @@ class TestDaemonStateQ1Malformed:
         assert skipped[0].axis == "DAEMON-STATE"
 
 
+def _run_with_replies(tmp_path, *contents):
+    """Run DaemonStateRunner with stub llm_invoke replies; return (runner, result)."""
+    from code_forge.daemon_state import DaemonStateRunner
+
+    gate_dir = tmp_path / ".code-forge"
+    gate_dir.mkdir()
+    (gate_dir / "gate.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "test": {"command": ["python3", "-m", "pytest"]},
+                "daemon_state": {"enabled": True, "subsystems": ["nftables"], "patterns": []},
+            }
+        )
+    )
+    replies = []
+    for content in contents:
+        reply = MagicMock()
+        reply.content = content
+        replies.append(reply)
+    with (
+        patch("code_forge.daemon_state.llm_invoke", side_effect=replies),
+        patch("code_forge.daemon_state._grep_repo", return_value=""),
+    ):
+        runner = DaemonStateRunner(backend=MagicMock())
+        result = runner.run("diff --git a/f b/f\n+nft add rule", tmp_path)
+    return runner, result
+
+
+class TestDaemonStateMalformedReplyIsNotClean:
+    """A reply that is not the expected envelope must not read as 'no conflicts'."""
+
+    def test_q2q3_prose_reply_is_skipped(self, tmp_path):
+        runner, result = _run_with_replies(
+            tmp_path, {"external_state": ["nft mark"]}, "I could not find any conflicts."
+        )
+        assert [f for f in result if "SKIPPED" in f.description]
+        assert any("Q2Q3" in e for e in runner.infra_errors)
+
+    def test_q2q3_missing_conflicts_key_is_skipped(self, tmp_path):
+        runner, result = _run_with_replies(tmp_path, {"external_state": ["nft mark"]}, {"foo": 1})
+        assert [f for f in result if "SKIPPED" in f.description]
+        assert any("Q2Q3" in e for e in runner.infra_errors)
+
+    def test_q2q3_non_list_conflicts_is_skipped(self, tmp_path):
+        runner, result = _run_with_replies(
+            tmp_path, {"external_state": ["nft mark"]}, {"conflicts": "none"}
+        )
+        assert [f for f in result if "SKIPPED" in f.description]
+        assert any("Q2Q3" in e for e in runner.infra_errors)
+
+    def test_q2q3_empty_conflicts_list_is_clean(self, tmp_path):
+        runner, result = _run_with_replies(
+            tmp_path, {"external_state": ["nft mark"]}, {"conflicts": []}
+        )
+        assert not [f for f in result if "SKIPPED" in f.description]
+        assert not any("Q1" in e or "Q2Q3" in e for e in runner.infra_errors)
+
+    def test_q1_non_list_external_state_is_skipped(self, tmp_path):
+        runner, result = _run_with_replies(tmp_path, {"external_state": "nft mark"})
+        assert [f for f in result if "SKIPPED" in f.description]
+        assert any("Q1" in e for e in runner.infra_errors)
+
+
 # ---------------------------------------------------------------------------
 # LLM failure -> SKIPPED
 # ---------------------------------------------------------------------------
