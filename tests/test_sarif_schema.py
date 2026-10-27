@@ -172,8 +172,8 @@ def test_synthetic_anchor_region_is_pinned_to_line_one(file, line_range):
 def test_real_looking_path_with_angle_brackets_is_treated_as_a_sentinel(file):
     """Known trade-off, pinned on purpose.
 
-    ``<`` and ``>`` are not valid in a URI reference, and publishing one makes
-    the SARIF upload invalid. A path containing either character is therefore
+    ``<`` and ``>`` are not a valid URI reference (RFC 3986), and GitHub code
+    scanning may reject the upload. A path containing either character is therefore
     treated as a sentinel and anchored to gate.yaml, even though it could name
     a real file. Such file names are rare on Linux.
     """

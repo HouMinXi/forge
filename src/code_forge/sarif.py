@@ -275,8 +275,9 @@ def _is_synthetic_file(file: str) -> bool:
 
     Trade-off: a real path that contains ``<`` or ``>`` (for example
     ``a>b.py``) is also treated as a sentinel and anchored to gate.yaml.
-    Publishing it would make the whole SARIF upload invalid, and such file
-    names are rare on Linux, so the rule stays this broad.
+    ``<`` and ``>`` are not a valid URI reference (RFC 3986), and GitHub code
+    scanning may reject the upload. Such file names are rare on Linux, so the
+    rule stays this broad.
     """
     return not file.strip() or "<" in file or ">" in file
 
