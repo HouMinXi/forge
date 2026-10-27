@@ -9,7 +9,7 @@ character then no longer matches the name.
 
 import subprocess
 
-from code_forge.install_hooks import _build_planning_leak_guard
+from code_forge.install_hooks import _build_planning_leak_guard, generate_hook_content
 
 
 def _git(cwd, *args):
@@ -32,3 +32,46 @@ def test_planning_leak_guard_blocks_non_ascii_planning_file(tmp_path, monkeypatc
     )
     assert result.returncode == 1
     assert "BLOCKED" in result.stderr
+
+
+def _run_hook_with_staged_file(tmp_path, monkeypatch, name):
+    """Stage ``name`` and run the generated hook with a fake ``code-forge``.
+
+    The fake binary prints a marker and fails, so a hook that reaches the
+    verify step exits 1 with the marker on stderr.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "code-forge"
+    fake.write_text("#!/bin/sh\necho FAKE-VERIFY-RAN >&2\nexit 1\n")
+    fake.chmod(0o755)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.resolve()))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    _git(repo, "init", "-q")
+    (repo / name).write_text("content\n")
+    _git(repo, "add", ".")
+    hook = generate_hook_content("code-forge gate-check", None)
+    return subprocess.run(
+        ["sh", "-c", hook],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_carveout_skips_verify_for_non_ascii_non_code_file(tmp_path, monkeypatch):
+    result = _run_hook_with_staged_file(tmp_path, monkeypatch, "caf\u00e9.md")
+    assert result.returncode == 0
+    assert "skipping verify (non-code commit)" in result.stderr
+    assert "FAKE-VERIFY-RAN" not in result.stderr
+
+
+def test_carveout_still_verifies_non_ascii_code_file(tmp_path, monkeypatch):
+    result = _run_hook_with_staged_file(tmp_path, monkeypatch, "caf\u00e9.py")
+    assert result.returncode == 1
+    assert "FAKE-VERIFY-RAN" in result.stderr
+    assert "skipping verify (non-code commit)" not in result.stderr
