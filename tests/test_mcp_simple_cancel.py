@@ -797,3 +797,34 @@ async def test_paused_child_does_not_publish_partial_readiness(cli_child):
         if proc.returncode is None:
             proc.kill()
         await asyncio.wait_for(proc.wait(), timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_simple_cli_timeout_returns_labelled_timeout_and_reaps_child(cli_child, monkeypatch):
+    tmp_path, ready = cli_child
+    monkeypatch.setattr(mcp_server, "_SIMPLE_CLI_TIMEOUT_S", 0.5)
+    monkeypatch.chdir(tmp_path)
+    started = time.monotonic()
+    stdout, stderr, exit_code = await mcp_server._run_cli_simple("wait", workspace=tmp_path)
+    assert time.monotonic() - started < 30
+    assert exit_code == 6
+    assert stdout == ""
+    assert stderr.startswith("TIMEOUT:") and "wait" in stderr
+    pid = int(ready.read_text(encoding="ascii"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+@pytest.mark.asyncio
+async def test_forge_trust_reports_timeout_result(monkeypatch, tmp_path):
+    async def hung(*args, workspace):
+        return "", "TIMEOUT: code-forge trust did not finish within 1s and was stopped", 6
+
+    async def workspace_for(ctx, project_dir=""):
+        return tmp_path
+
+    monkeypatch.setattr(mcp_server, "_run_cli_simple", hung)
+    monkeypatch.setattr(mcp_server, "_workspace_for", workspace_for)
+    result = await mcp_server.forge_trust()
+    assert result.structuredContent["exit_code"] == 6
+    assert "TIMEOUT" in result.structuredContent["output"]
