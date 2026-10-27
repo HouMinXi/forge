@@ -441,7 +441,9 @@ class DaemonStateRunner:
             return static_findings + [_build_skipped_finding(reason)]
 
         if not isinstance(state_items, list):
-            state_items = []
+            reason = "Q1 response external_state is not a list"
+            self.infra_errors.append("DAEMON-STATE " + reason)
+            return static_findings + [_build_skipped_finding(reason)]
 
         # Extract grep keywords from Q1 response
         keywords = _extract_grep_keywords(state_items)
@@ -468,14 +470,14 @@ class DaemonStateRunner:
             return static_findings + [_build_skipped_finding(reason)]
 
         # Parse Q2Q3 response
+        # A reply that is not {"conflicts": [...]} is an infra failure, not
+        # "no conflicts": mirror the Q1 handling instead of returning clean.
         q2q3_content = q2q3_result.content
-        if isinstance(q2q3_content, dict):
-            llm_conflicts = q2q3_content.get("conflicts", [])
-        else:
-            llm_conflicts = []
-
+        llm_conflicts = q2q3_content.get("conflicts") if isinstance(q2q3_content, dict) else None
         if not isinstance(llm_conflicts, list):
-            llm_conflicts = []
+            reason = "Q2Q3 response missing a conflicts list"
+            self.infra_errors.append("DAEMON-STATE " + reason)
+            return static_findings + [_build_skipped_finding(reason)]
 
         # Build LLM findings
         llm_findings: list[AdvisoryFinding] = []
@@ -499,6 +501,13 @@ class DaemonStateRunner:
                     attribution="daemon-state/llm",
                 )
             )
+
+        if llm_conflicts and not llm_findings:
+            # Every entry was malformed: the reply carried conflicts we could
+            # not read, which is not the same as "no conflicts".
+            reason = "Q2Q3 response conflicts contained no valid conflict objects"
+            self.infra_errors.append("DAEMON-STATE " + reason)
+            return static_findings + [_build_skipped_finding(reason)]
 
         # static findings first, then LLM-discovered
         return static_findings + llm_findings
