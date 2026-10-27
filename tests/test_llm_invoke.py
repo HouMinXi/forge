@@ -272,6 +272,34 @@ class TestLLMInvoke:
         assert result.usage.output_tokens == 120
         assert result.content == {"findings": []}
 
+    def test_cli_is_error_envelope_raises_instead_of_returning_text(self):
+        """exit 0 with is_error=true is a failed call, not model content."""
+        envelope = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": True,
+                "result": "API Error: 429 rate_limit_error",
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            }
+        )
+        mock_proc = _make_mock_proc(stdout=envelope)
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            with pytest.raises(LLMInvokeError, match="429 rate_limit_error") as excinfo:
+                llm_invoke("prompt", backend=DEFAULT_BACKEND, max_attempts=1)
+        assert "429 rate_limit_error" in excinfo.value.stderr
+
+    def test_cli_is_error_false_envelope_still_returns_content(self):
+        envelope = json.dumps(
+            {"type": "result", "is_error": False, "result": json.dumps({"findings": []})}
+        )
+        mock_proc = _make_mock_proc(stdout=envelope)
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            result = llm_invoke("prompt", backend=DEFAULT_BACKEND, max_attempts=1)
+        assert result.content == {"findings": []}
+
     def test_cli_streaming_event_array_extracts_result(self):
         """Streaming event-array (current claude CLI): extracts result event content."""
         events = [
