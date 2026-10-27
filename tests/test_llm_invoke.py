@@ -272,6 +272,133 @@ class TestLLMInvoke:
         assert result.usage.output_tokens == 120
         assert result.content == {"findings": []}
 
+    def test_cli_is_error_envelope_raises_instead_of_returning_text(self):
+        """exit 0 with is_error=true is a failed call, not model content."""
+        envelope = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": True,
+                "result": "API Error: 429 rate_limit_error",
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            }
+        )
+        mock_proc = _make_mock_proc(stdout=envelope)
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            with pytest.raises(LLMInvokeError, match="429 rate_limit_error") as excinfo:
+                llm_invoke("prompt", backend=DEFAULT_BACKEND, max_attempts=1)
+        assert "429 rate_limit_error" in excinfo.value.stderr
+
+    @pytest.mark.parametrize(
+        "envelope, expected",
+        [
+            (
+                {"type": "result", "subtype": "error_max_turns", "is_error": True, "usage": {}},
+                "error_max_turns",
+            ),
+            (
+                {
+                    "type": "result",
+                    "subtype": "error_during_execution",
+                    "is_error": True,
+                    "result": "",
+                },
+                "error_during_execution",
+            ),
+            (
+                {"type": "result", "is_error": True, "result": None},
+                "unknown error",
+            ),
+        ],
+    )
+    def test_cli_is_error_envelope_without_result_text_raises(self, envelope, expected):
+        """An is_error envelope with no result text must still fail the call."""
+        mock_proc = _make_mock_proc(stdout=json.dumps(envelope))
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            with pytest.raises(LLMInvokeError, match="reported is_error") as excinfo:
+                llm_invoke("prompt", backend=DEFAULT_BACKEND, max_attempts=1)
+        assert expected in excinfo.value.stderr
+
+    def test_cli_is_error_false_envelope_still_returns_content(self):
+        envelope = json.dumps(
+            {"type": "result", "is_error": False, "result": json.dumps({"findings": []})}
+        )
+        mock_proc = _make_mock_proc(stdout=envelope)
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            result = llm_invoke("prompt", backend=DEFAULT_BACKEND, max_attempts=1)
+        assert result.content == {"findings": []}
+
+    @pytest.mark.parametrize("flag", ["false", "true", 1, "yes", [True]])
+    def test_cli_non_boolean_is_error_is_not_a_failure(self, flag):
+        """Only the JSON boolean true marks a failed call; other values are content."""
+        envelope = json.dumps(
+            {"type": "result", "is_error": flag, "result": json.dumps({"findings": []})}
+        )
+        mock_proc = _make_mock_proc(stdout=envelope)
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            result = llm_invoke("prompt", backend=DEFAULT_BACKEND, max_attempts=1)
+        assert result.content == {"findings": []}
+
+    def test_cli_is_error_on_a_non_result_event_is_not_a_failure(self):
+        """is_error only counts on the result envelope, not on any dict that carries it."""
+        envelope = {"type": "assistant", "is_error": True, "message": "partial"}
+        mock_proc = _make_mock_proc(stdout=json.dumps(envelope))
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            result = llm_invoke("prompt", backend=DEFAULT_BACKEND, max_attempts=1)
+        assert result.content == envelope
+
+    @pytest.mark.parametrize(
+        "raw_result, expected",
+        [
+            ({"error": {"code": 429}}, '{"error": {"code": 429}}'),
+            (["overloaded", 529], '["overloaded", 529]'),
+        ],
+    )
+    def test_cli_is_error_non_string_result_is_reported_as_json(self, raw_result, expected):
+        envelope = {"type": "result", "subtype": "error_api", "is_error": True, "result": raw_result}
+        mock_proc = _make_mock_proc(stdout=json.dumps(envelope))
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            with pytest.raises(LLMInvokeError, match="reported is_error") as excinfo:
+                llm_invoke("prompt", backend=DEFAULT_BACKEND, max_attempts=1)
+        assert excinfo.value.stderr == expected
+
+    def test_cli_streaming_array_is_error_result_event_raises(self):
+        """The array shape is unwrapped to its last result event before the check."""
+        events = [
+            {"type": "system", "subtype": "init", "cwd": "/tmp"},
+            {"type": "result", "subtype": "success", "result": "{}", "is_error": False},
+            {
+                "type": "result",
+                "subtype": "error_during_execution",
+                "is_error": True,
+                "result": "API Error: 529 overloaded",
+            },
+        ]
+        mock_proc = _make_mock_proc(stdout=json.dumps(events))
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            with pytest.raises(LLMInvokeError, match="529 overloaded") as excinfo:
+                llm_invoke("prompt", backend=DEFAULT_BACKEND, max_attempts=1)
+        assert "529 overloaded" in excinfo.value.stderr
+
+    def test_cli_streaming_array_is_error_without_result_text_uses_subtype(self):
+        events = [
+            {"type": "system", "subtype": "init"},
+            {"type": "result", "subtype": "error_max_turns", "is_error": True},
+        ]
+        mock_proc = _make_mock_proc(stdout=json.dumps(events))
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            with pytest.raises(LLMInvokeError, match="reported is_error") as excinfo:
+                llm_invoke("prompt", backend=DEFAULT_BACKEND, max_attempts=1)
+        assert excinfo.value.stderr == "error_max_turns"
+
     def test_cli_streaming_event_array_extracts_result(self):
         """Streaming event-array (current claude CLI): extracts result event content."""
         events = [
