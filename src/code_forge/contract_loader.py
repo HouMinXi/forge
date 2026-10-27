@@ -267,9 +267,17 @@ def _summarize_spec(content_str: str, spec_name: str, backend) -> str:
         backend=backend,
         expected_keys=frozenset({"summary"}),
     )
-    if isinstance(result.content, dict):
-        return result.content.get("summary", "")
-    return str(result.content)
+    content = result.content
+    summary = content.get("summary") if isinstance(content, dict) else None
+    if not isinstance(summary, str) or not summary.strip():
+        # Prose, error text, or a dict without a usable summary is not a
+        # contract: raise so the caller warns and skips instead of
+        # injecting and caching it.
+        raise LLMInvokeError(
+            "summarization reply is not a non-empty {'summary': str} object",
+            retryable=False,
+        )
+    return summary
 
 
 # ---------------------------------------------------------------------------
