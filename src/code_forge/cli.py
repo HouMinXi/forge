@@ -88,6 +88,34 @@ def _load_advisories(path: Path) -> list:
         return []
 
 
+_INFRA_LINES_MAX = 5
+_INFRA_LINE_CHARS = 300
+
+
+def _format_infra_lines(final_state: Any) -> str:
+    """Stderr lines naming why a non-PASS run failed, from ``infra_errors``.
+
+    ``state.infra_errors`` holds the reason for failures that produce no
+    finding (no trusted gate, mutation not measured, a crashed runner). It
+    was only readable in state.json, so the SARIF and the one-line summary
+    showed a bare FAIL with zero findings. PASS stays quiet: its notes are
+    advisory. Messages are single-line and bounded; the overflow line
+    points at state.json.
+    """
+    if final_state.verdict == Verdict.PASS or not final_state.infra_errors:
+        return ""
+    errors = [" ".join(str(e).split()) for e in final_state.infra_errors]
+    errors = [e for e in errors if e]
+    lines = [
+        "code-forge: infra: " + (e if len(e) <= _INFRA_LINE_CHARS else e[: _INFRA_LINE_CHARS - 3] + "...")
+        for e in errors[:_INFRA_LINES_MAX]
+    ]
+    extra = len(errors) - _INFRA_LINES_MAX
+    if extra > 0:
+        lines.append("code-forge: infra: (%d more in .code-forge/state.json)" % extra)
+    return "\n".join(lines) + "\n" if lines else ""
+
+
 def _emit_ci_output(
     state_path: Path,
     registry: dict[str, "ToolConfig"],
@@ -162,6 +190,9 @@ def _emit_ci_output(
         format_classification_line(prepared.report_classification),
         file=sys.stderr,
     )
+    infra_lines = _format_infra_lines(final_state)
+    if infra_lines:
+        sys.stderr.write(infra_lines)
     if post_emit_hook is not None:
         post_emit_hook()
 
