@@ -48,6 +48,20 @@ def test_exit_to_verdict_all_eight():
     assert exit_to_verdict(99).startswith("UNKNOWN")
 
 
+def test_exit_to_verdict_names_the_killing_signal():
+    assert exit_to_verdict(-9) == "SIGNALED(SIGKILL)"
+    assert exit_to_verdict(-11) == "SIGNALED(SIGSEGV)"
+    assert exit_to_verdict(-200) == "SIGNALED(signal 200)"
+
+
+def test_signal_exit_note():
+    from code_forge.mcp_jobs import signal_exit_note
+
+    assert signal_exit_note(-9) == "code-forge was killed by SIGKILL (exit -9) before it produced a report"
+    assert signal_exit_note(0) is None
+    assert signal_exit_note(2) is None
+
+
 # -- Pydantic models --
 
 

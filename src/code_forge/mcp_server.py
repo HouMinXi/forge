@@ -67,6 +67,7 @@ from code_forge.mcp_jobs import (
     cleanup_all,
     exit_to_verdict,
     get_job,
+    signal_exit_note,
     snapshot_tempfile_paths,
     start_job,
 )
@@ -1120,6 +1121,9 @@ def _make_result(
     output = stdout
     if exit_code != 0 and stderr.strip():
         output = stdout + "\n--- stderr ---\n" + stderr
+    note = signal_exit_note(exit_code)
+    if note:
+        output = output + ("\n" if output else "") + note
     findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(stdout)
     structured = ForgeResult(
         verdict=exit_to_verdict(exit_code),
@@ -1614,6 +1618,10 @@ async def forge_job_status(job_id: str) -> CallToolResult:
         stderr = r.get("stderr", "")
         if (status == "failed" or r.get("exit_code", 0) != 0) and stderr.strip():
             output = output + "\n--- stderr ---\n" + stderr
+        if str(r.get("verdict", "")).startswith("SIGNALED("):
+            note = signal_exit_note(r.get("exit_code", 0))
+            if note:
+                output = output + ("\n" if output else "") + note
         job_stdout = r.get("stdout", "")
         findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(job_stdout)
         forge_result = ForgeResult(

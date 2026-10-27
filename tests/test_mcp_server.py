@@ -562,6 +562,14 @@ def test_make_result_merges_stderr_on_nonzero_exit():
     assert result.structuredContent["output"] == text
 
 
+def test_make_result_explains_signal_killed_child_with_empty_output():
+    result = _make_result("", -9, 1.0, "")
+    data = result.structuredContent
+    assert data["verdict"] == "SIGNALED(SIGKILL)"
+    assert "killed by SIGKILL" in data["output"]
+    assert "killed by SIGKILL" in result.content[0].text
+
+
 def test_make_result_omits_stderr_on_zero_exit():
     """Zero exit = success; stderr (warnings) should not pollute output."""
     result = _make_result("all good", 0, 1.0, stderr="deprecation warning\n")

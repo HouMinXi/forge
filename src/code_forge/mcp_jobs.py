@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import time
 import uuid
 from pathlib import Path
@@ -46,9 +47,35 @@ _EXIT_TO_VERDICT: dict[int, str] = {
 }
 
 
+def _signal_name(code: int) -> str:
+    """Name the signal behind a negative asyncio returncode (``-N`` = signal N)."""
+    try:
+        return signal.Signals(-code).name
+    except ValueError:
+        return "signal %d" % -code
+
+
 def exit_to_verdict(code: int) -> str:
-    """Map CLI exit code to human-readable verdict string."""
-    return _EXIT_TO_VERDICT.get(code, "UNKNOWN(%d)" % code)
+    """Map CLI exit code to human-readable verdict string.
+
+    A negative code is a child killed by a signal, so it is labelled with the
+    signal instead of a bare ``UNKNOWN(-9)``.
+    """
+    if code in _EXIT_TO_VERDICT:
+        return _EXIT_TO_VERDICT[code]
+    if code < 0:
+        return "SIGNALED(%s)" % _signal_name(code)
+    return "UNKNOWN(%d)" % code
+
+
+def signal_exit_note(code: int) -> str | None:
+    """One-line explanation for a signal-killed child, else None."""
+    if code >= 0:
+        return None
+    return "code-forge was killed by %s (exit %d) before it produced a report" % (
+        _signal_name(code),
+        code,
+    )
 
 
 # -- Pydantic models --
