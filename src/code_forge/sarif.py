@@ -242,8 +242,10 @@ def _finding_to_result(
         "ruleId": finding.fingerprint,
         "level": level,
         "message": {"text": finding.description},
-        "locations": [_build_location(finding)],
     }
+    result["locations"] = [_build_location(finding)]
+    if _is_synthetic_file(finding.file):
+        props["syntheticLocation"] = True
     suppressions = _suppressions_for(finding.disposition)
     if suppressions is not None:
         result["suppressions"] = suppressions
@@ -251,20 +253,62 @@ def _finding_to_result(
     return result
 
 
+# GitHub code scanning rejects a whole upload when any result has no location
+# ("expected at least one location"). Host diagnostics have no source file, so
+# they are anchored to .code-forge/gate.yaml, the config that decides how the
+# review runs. CI guarantees it is tracked (gate-check refuses an untracked
+# gate.yaml, see _CI_UNTRACKED); a local run may not have the file at all. The
+# anchor is therefore synthetic: such results carry
+# properties.syntheticLocation = true, and the diagnostic's own kind stays in
+# ruleId and message.
+_HOST_DIAGNOSTIC_URI = ".code-forge/gate.yaml"
+
+
+def _is_synthetic_file(file: str) -> bool:
+    """True when ``file`` names no repository path.
+
+    Infra findings use an empty file or a sentinel (``<llm-invoke>``,
+    ``<receipt-evidence>`` and similar) when there is no code to point at.
+    ``<`` and ``>`` are not valid in a URI reference, so any value containing
+    one (including a half sentinel such as ``<x`` or ``x>``) is treated the
+    same way instead of being published unchanged.
+
+    Trade-off: a real path that contains ``<`` or ``>`` (for example
+    ``a>b.py``) is also treated as a sentinel and anchored to gate.yaml.
+    ``<`` and ``>`` are not a valid URI reference (RFC 3986), and GitHub code
+    scanning may reject the upload. Such file names are rare on Linux, so the
+    rule stays this broad.
+    """
+    return not file.strip() or "<" in file or ">" in file
+
+
 def _build_location(finding: StateFinding) -> dict[str, Any]:
     """Build SARIF physicalLocation.
 
-    Bounds-check line_range. Production line_range is always a 2-element
-    list (02-02 _default_l0_runner sets [f.line, f.end_line]; snapshot
-    reload preserves list[int]). line_range values are 1-based (per
+    A synthetic file (see ``_is_synthetic_file``) is anchored to
+    ``_HOST_DIAGNOSTIC_URI`` with the region pinned to startLine 1 /
+    endLine 1: the finding's own line numbers say nothing about that file.
+
+    Otherwise line_range is bounds-checked. Production line_range is always
+    a 2-element list (02-02 _default_l0_runner sets [f.line, f.end_line];
+    snapshot reload preserves list[int]). line_range values are 1-based (per
     parsers/base.py Finding.line definition). SARIF spec uses 1-based
-    (region.startLine >= 1), so values pass through directly.
+    (region.startLine >= 1), so start is raised to 1 when it is below 1, and
+    end is raised to start when end < start, so a region is never inverted.
+    Values already in range pass through unchanged.
 
     Defensive guard handles malformed state.json (corrupted file, partial
     write, future schema change): empty -> startLine=1 endLine=1;
     single-element -> endLine mirrors startLine; >2 elements -> first
     two used, extras silently ignored (upstream schema drift case).
     """
+    if _is_synthetic_file(finding.file):
+        return {
+            "physicalLocation": {
+                "artifactLocation": {"uri": _HOST_DIAGNOSTIC_URI},
+                "region": {"startLine": 1, "endLine": 1},
+            },
+        }
     line_range = finding.line_range
     if not line_range:
         start = end = 1
@@ -273,6 +317,10 @@ def _build_location(finding: StateFinding) -> dict[str, Any]:
     else:
         start = line_range[0]
         end = line_range[1]
+    # COVERAGE findings carry a real file with [0, 0] because they have no
+    # source line. SARIF 2.1.0 rejects lines below 1.
+    start = max(start, 1)
+    end = max(end, start)
     return {
         "physicalLocation": {
             "artifactLocation": {"uri": finding.file},
