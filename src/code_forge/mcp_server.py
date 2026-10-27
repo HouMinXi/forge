@@ -1612,7 +1612,9 @@ async def forge_job_status(job_id: str) -> CallToolResult:
         r = entry["result"]
         output = r.get("stdout", "")
         stderr = r.get("stderr", "")
-        if (status == "failed" or r.get("exit_code", 0) != 0) and stderr.strip():
+        if (
+            status == "failed" or r.get("exit_code", 0) != 0 or r.get("stdout_lost")
+        ) and stderr.strip():
             output = output + "\n--- stderr ---\n" + stderr
         job_stdout = r.get("stdout", "")
         findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(job_stdout)

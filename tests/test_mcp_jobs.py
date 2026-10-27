@@ -912,7 +912,9 @@ async def test_watchdog_race_timeout_then_exit_is_not_false_timeout():
         assert entry is not None
         # Should be completed (not TIMEOUT) because proc.returncode was set
         assert entry["status"] == "completed"
-        assert entry["result"]["verdict"] == "PASS"
+        # exit 0 with the report lost must not read as a plain PASS
+        assert entry["result"]["verdict"] == "UNRELIABLE"
+        assert entry["result"]["stdout_lost"] is True
         assert entry["result"]["exit_code"] == 0
         # stdout is empty because comm_task was cancelled by wait_for
         assert entry["result"]["stdout"] == ""
