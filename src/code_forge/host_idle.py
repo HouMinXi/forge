@@ -79,13 +79,18 @@ def load_config(env: dict | None = None) -> IdleConfig:
     if values["poll"] <= 0:
         raise IdleConfigError("FORGE_MUTATION_IDLE_POLL must be > 0")
     values["settle"] = max(1, int(values["settle"]))
-    # `settle` consecutive idle samples are `poll` apart, so the first idle
-    # verdict is (settle - 1) * poll after the start. A shorter positive wait
-    # reports "busy" on a host that is idle. Fail loudly instead.
-    minimum = (values["settle"] - 1) * values["poll"]
-    if 0 < values["max_wait"] < minimum:
+    # `settle` consecutive idle samples are `poll` apart, so the last one is
+    # taken (settle - 1) * poll after the start. wait_for_idle gives up before
+    # a sleep that would pass max_wait, and time.sleep always overshoots, so a
+    # wait of exactly (settle - 1) * poll reads busy on an idle host. Require
+    # one more poll of slack: settle * poll. One sample (settle == 1) never
+    # sleeps and needs no floor.
+    minimum = values["settle"] * values["poll"] if values["settle"] > 1 else 0.0
+    # The relative epsilon keeps float products such as 3 * 0.05 from rejecting
+    # the value the message itself prints (0.15).
+    if 0 < values["max_wait"] < minimum * (1 - 1e-9):
         raise IdleConfigError(
-            f"FORGE_MUTATION_IDLE_MAX_WAIT={values['max_wait']:g}s can never observe an idle host: "
+            f"FORGE_MUTATION_IDLE_MAX_WAIT={values['max_wait']:g}s cannot reliably observe an idle host: "
             f"with FORGE_MUTATION_IDLE_POLL={values['poll']:g}s and "
             f"FORGE_MUTATION_IDLE_SETTLE={values['settle']} it must be at least {minimum:g}s "
             "(0 disables the gate)"
