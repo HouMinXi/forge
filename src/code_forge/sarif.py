@@ -242,13 +242,25 @@ def _finding_to_result(
         "ruleId": finding.fingerprint,
         "level": level,
         "message": {"text": finding.description},
-        "locations": [_build_location(finding)],
     }
+    if _has_source_file(finding):
+        result["locations"] = [_build_location(finding)]
     suppressions = _suppressions_for(finding.disposition)
     if suppressions is not None:
         result["suppressions"] = suppressions
     result["properties"] = props
     return result
+
+
+def _has_source_file(finding: StateFinding) -> bool:
+    """False for host diagnostics that name a sentinel, not a file.
+
+    Infra findings use ``<llm-invoke>``, ``<receipt-evidence>`` and similar
+    markers, or an empty file, when there is no code to point at. Those are
+    not valid SARIF artifact URIs, so the result carries no location.
+    """
+    file = finding.file
+    return bool(file) and not (file.startswith("<") and file.endswith(">"))
 
 
 def _build_location(finding: StateFinding) -> dict[str, Any]:
