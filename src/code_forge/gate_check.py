@@ -1465,23 +1465,27 @@ def run_gate_check(
             warn("forge: FORGE_SKIP_TESTS=1, skipping tests")
             return EXIT_PASS  # Allow
 
-    # Get staged files via git diff --cached --name-only
+    # Get staged files via git diff --cached --name-only -z. NUL-separated output
+    # is never quoted, so names with non-ASCII or control characters stay literal.
     try:
         result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
+            ["git", "diff", "--cached", "--name-only", "-z"],
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             check=False,
             cwd=str(cwd),
             timeout=5,
         )
         if result.returncode != 0:
-            print("forge: error: git diff --cached failed: %s" % result.stderr.strip(), file=stderr)
+            err = result.stderr.decode("utf-8", errors="replace").strip()
+            print("forge: error: git diff --cached failed: %s" % err, file=stderr)
             return EXIT_FAIL  # BLOCK on git error
 
-        staged_files = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+        # Bytes, not text mode: universal newlines would turn a trailing "\r" in a
+        # name into "\n". surrogateescape (as in mutation.py) keeps every byte
+        # sequence decodable, so a non-UTF-8 name still reaches the pattern match.
+        staged_files = [
+            name.decode("utf-8", errors="surrogateescape") for name in result.stdout.split(b"\0") if name
+        ]
     except subprocess.TimeoutExpired:
         print("forge: error: git diff --cached timed out", file=stderr)
         return EXIT_FAIL
