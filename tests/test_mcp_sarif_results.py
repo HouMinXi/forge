@@ -495,3 +495,28 @@ async def test_shallow_container_breadth_at_character_cap(monkeypatch, route, se
     assert wire_data["findings"] == data["findings"]
     assert wire_data["receipt_audit"] == data["receipt_audit"]
     assert wire_data["output"] == stdout
+
+
+def test_oversize_report_is_labelled_not_just_uncounted(report):
+    stdout = json.dumps(report)
+    stdout += " " * (server._MAX_SARIF_REPORT_CHARS - len(stdout) + 1)
+    data = server._make_result(stdout, 1, 0).structuredContent
+    assert data["findings_count"] is None
+    assert data["findings_count_status"].startswith("unknown: oversize")
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    ["", "plain CLI diagnostic", "{not json", "[]", '{"version": "2.1.0", "runs": []}'],
+    ids=["empty", "text", "truncated-json", "wrong-shape", "no-run"],
+)
+def test_unparseable_report_is_labelled_not_just_uncounted(stdout):
+    data = server._make_result(stdout, 0, 0).structuredContent
+    assert data["findings_count"] is None
+    assert data["findings_count_status"].startswith("unknown: unparseable")
+
+
+def test_readable_report_has_no_count_status(report):
+    data = server._make_result(json.dumps(report), 1, 0).structuredContent
+    assert data["findings_count"] == 2
+    assert data["findings_count_status"] is None

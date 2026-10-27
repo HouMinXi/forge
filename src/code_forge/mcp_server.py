@@ -1004,6 +1004,14 @@ _CAPACITY_INCOMPLETE_COUNT_STATUS = (
     "unknown: capacity-incomplete review -- provider capacity cut acquisition short, "
     "so the published results are not a complete count"
 )
+_OVERSIZE_COUNT_STATUS = (
+    "unknown: oversize report -- stdout exceeds the 1 MiB projection limit, "
+    "so findings were not counted; read the raw output"
+)
+_UNPARSEABLE_COUNT_STATUS = (
+    "unknown: unparseable report -- stdout is not a single code-forge SARIF "
+    "document, so findings were not counted; read the raw output"
+)
 
 
 def _sarif_result_projection(stdout: str) -> tuple[int | None, list[dict] | None, list[dict] | None]:
@@ -1019,13 +1027,16 @@ def _sarif_projection_with_status(
     The 1 MiB-character cutoff limits optional parsing and structured copies
     made by the MCP serializer. Wide reports can otherwise exhaust memory
     despite shallow nesting. Original output is retained unchanged;
-    unsupported reports remain uncounted.
+    unsupported reports remain uncounted and carry a labelled status
+    (oversize / unparseable) so a missing count is never silent.
     Each projected list includes at most 64 dictionary/list levels so the
     full MCP response envelope retains ample serialization depth headroom.
     """
-    unknown = (None, None, None, None)
-    if type(stdout) is not str or len(stdout) > _MAX_SARIF_REPORT_CHARS:
-        return unknown
+    unknown = (None, None, None, _UNPARSEABLE_COUNT_STATUS)
+    if type(stdout) is not str:
+        return (None, None, None, None)
+    if len(stdout) > _MAX_SARIF_REPORT_CHARS:
+        return (None, None, None, _OVERSIZE_COUNT_STATUS)
     try:
         document = json.loads(stdout, object_pairs_hook=_sarif_object,
                               parse_float=_sarif_float, parse_constant=_sarif_float)
