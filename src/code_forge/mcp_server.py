@@ -797,8 +797,21 @@ def _check_backend(workspace: Path) -> None:
 # -- CLI runner helpers --
 
 
-async def _run_cli_simple(*args: str, workspace: Path) -> tuple[str, str, int]:
-    """Run a CLI command and return (stdout, stderr, exit_code)."""
+# Upper bound for the short CLI commands (init, trust, resolve-outlet). A hung
+# child would otherwise hold the tool call open until the client gives up.
+_SIMPLE_CLI_TIMEOUT_S = 120.0
+
+
+async def _run_cli_simple(
+    *args: str, workspace: Path, timeout_s: float | None = None
+) -> tuple[str, str, int]:
+    """Run a CLI command and return (stdout, stderr, exit_code).
+
+    A child that outlives ``timeout_s`` (default ``_SIMPLE_CLI_TIMEOUT_S``) is
+    terminated and reaped, and the call returns exit code 6 (TIMEOUT) with a
+    ``TIMEOUT:`` message on stderr.
+    """
+    limit = _SIMPLE_CLI_TIMEOUT_S if timeout_s is None else timeout_s
     if _shutting_down or _simple_calls_closing:
         raise asyncio.CancelledError
     current_task = asyncio.current_task()
@@ -816,7 +829,16 @@ async def _run_cli_simple(*args: str, workspace: Path) -> tuple[str, str, int]:
         )
         comm_task = asyncio.create_task(proc.communicate())
         try:
-            stdout_bytes, stderr_bytes = await comm_task
+            done, _pending = await asyncio.wait({comm_task}, timeout=limit)
+            if not done:
+                await _wait_for_shielded_task(asyncio.create_task(_kill_and_reap(proc, comm_task)))
+                return (
+                    "",
+                    "TIMEOUT: code-forge %s did not finish within %gs and was stopped"
+                    % (args[0] if args else "", limit),
+                    6,
+                )
+            stdout_bytes, stderr_bytes = comm_task.result()
         except BaseException:
             # This request owns the process until communicate completes. Do not let
             # cancellation abandon the child or interrupt its shared teardown.
