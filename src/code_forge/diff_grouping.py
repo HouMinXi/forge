@@ -76,17 +76,19 @@ def _check_thresholds(engine_churn: int, integration_churn: int) -> None:
 # recovers 30-37% of the union, so a discount here is a recall cut, not an
 # economy.
 #
-# Only declarative content skips the LLM: config and docs are what the
-# deterministic L0 checks already cover. The exception is a config or docs
-# group that owns a hunk the receipt verifier requires a witness for (any hunk
-# with an added line): excerpts only come from review passes, so that group is
-# reviewed too. It stays at zero otherwise, as for a deletion-only change that
-# the verifier exempts. Source in a language this module cannot parse still
-# gets the full three passes -- no def-use edges is a limit on grouping
-# precision, not a licence to skip review. A shell script that changes process
-# lifecycle is logic-bearing by forge's own rules.
+# Declarative content gets no review pass by default: config and docs are what
+# the deterministic L0 checks already cover. That default gives way when the
+# group owns a hunk the receipt verifier requires a witness for (any hunk with
+# an added line): excerpts only come from review passes, so such a group is
+# reviewed like any other. Only a group with no required hunk, such as a
+# deletion-only change the verifier exempts, stays at zero. Source in a
+# language this module cannot parse still gets the full three passes -- no
+# def-use edges is a limit on grouping precision, not a licence to skip
+# review. A shell script that changes process lifecycle is logic-bearing by
+# forge's own rules. The passes are not token-bounded for config and docs: a
+# large required file, such as a lockfile, is reviewed in full.
 _PASSES_PER_GROUP = 3
-_NO_LLM_ROLES = frozenset({"config", "docs"})
+_ZERO_PASS_UNLESS_REQUIRED_ROLES = frozenset({"config", "docs"})
 # Role of a one-file group that review_groups adds for a required file that no
 # reviewed group carries.
 FILE_FALLBACK_ROLE = "file"
@@ -119,10 +121,13 @@ class GroupingResult:
 def required_review_files(diff_text: str) -> frozenset[str]:
     """Files owning a hunk the receipt verifier requires a witness for.
 
-    The verifier's hunk check skips a hunk with no added line and exempts
-    files with no hunks at all (binary, rename-only, removed). Everything else
-    needs an excerpt, and excerpts only come from review passes. This reads
-    the same parse the verifier reads, so the two cannot disagree.
+    The verifier's hunk check needs an excerpt for every hunk with an added
+    line. It skips a hunk with no added line, and it does not look at files
+    that have no hunk entry: binary, rename-only and mode-only files are
+    listed as exempt by `parse_diff_hunks`, and wholly removed files are
+    dropped by it without being listed. Excerpts only come from review
+    passes. This reads the same parse the verifier reads, so the two cannot
+    disagree.
     """
     hunk_map, _exempt = parse_diff_hunks(diff_text)
     return frozenset(
@@ -374,7 +379,8 @@ def build_groups(
                 members=sorted(members),
                 passes=(
                     0
-                    if role in _NO_LLM_ROLES and required_files.isdisjoint(members)
+                    if role in _ZERO_PASS_UNLESS_REQUIRED_ROLES
+                    and required_files.isdisjoint(members)
                     else _PASSES_PER_GROUP
                 ),
             )

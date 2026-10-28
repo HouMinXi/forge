@@ -355,3 +355,22 @@ def test_grouped_run_reviews_a_required_file_that_grouping_left_out(pipeline, mo
         "grouping: 2 required file(s) were in no reviewed group; reviewing each on its own: README.md, ci.yml"
         in capsys.readouterr().err
     )
+
+
+def test_grouped_run_warns_for_a_single_required_file_that_grouping_left_out(
+    pipeline, monkeypatch, capsys
+):
+    from code_forge import diff_grouping
+
+    real = diff_grouping.group_diff
+
+    def without_required(*a, **kw):
+        kw.pop("required_files")
+        return real(*a, **kw)
+
+    specs = _grouped_run(pipeline, monkeypatch, _MIXED[:2], group_diff=without_required)
+    assert sorted(spec["name"] for spec in specs) == ["file:ci.yml", "other"]
+    assert (
+        "grouping: 1 required file(s) were in no reviewed group; reviewing each on its own: ci.yml"
+        in capsys.readouterr().err
+    )

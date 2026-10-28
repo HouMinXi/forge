@@ -8,6 +8,8 @@ charter accepts (.planning/charter_review_decomposition.md), each one traceable
 to a measurement recorded there.
 """
 
+import pytest
+
 from code_forge.diff_grouping import (
     Group,
     build_edges,
@@ -519,6 +521,35 @@ class TestRequiredReviewFiles:
         after.insert(1, "added early")
         assert required_review_files(_diff("a.json", _LINES, after)) == {"a.json"}
 
+    @staticmethod
+    def _two_hunks(first_adds, second_adds):
+        """One file, two far-apart hunks; each either adds a line or deletes one."""
+        after = list(_LINES)
+        late = ("line 11", "added late") if second_adds else ("line 11", None)
+        early = ("line 02", "added early") if first_adds else ("line 02", None)
+        for anchor, new in (late, early):
+            at = after.index(anchor)
+            if new is None:
+                del after[at]
+            else:
+                after.insert(at + 1, new)
+        return _diff("a.json", _LINES, after)
+
+    def test_later_hunk_that_adds_makes_the_file_required(self):
+        from code_forge.diff_grouping import required_review_files
+
+        assert required_review_files(self._two_hunks(False, True)) == {"a.json"}
+
+    def test_earlier_hunk_that_adds_makes_the_file_required(self):
+        from code_forge.diff_grouping import required_review_files
+
+        assert required_review_files(self._two_hunks(True, False)) == {"a.json"}
+
+    def test_file_whose_hunks_all_delete_is_not_required(self):
+        from code_forge.diff_grouping import required_review_files
+
+        assert required_review_files(self._two_hunks(False, False)) == frozenset()
+
     def test_removed_file_and_empty_diff_require_nothing(self):
         from code_forge.diff_grouping import required_review_files
 
@@ -637,3 +668,24 @@ class TestFileScopedFallback:
         out, gaps = review_groups(self._grouping(code), frozenset({"src/a.py", "lost.yml"}))
         assert [g.name for g in out] == ["integration", "file:lost.yml"]
         assert gaps == ["lost.yml"]
+
+    @pytest.mark.parametrize("required", ["src/a.py", "src/b.py", "src/c.py"])
+    def test_every_member_of_a_reviewed_group_counts_as_covered(self, required):
+        from code_forge.diff_grouping import review_groups
+
+        code = Group(
+            name="integration",
+            role="integration",
+            members=["src/a.py", "src/b.py", "src/c.py"],
+            passes=3,
+        )
+        assert review_groups(self._grouping(code), frozenset({required})) == ([code], [])
+
+    def test_fallback_groups_follow_sorted_path_order(self):
+        from code_forge.diff_grouping import review_groups
+
+        paths = ["m.yml", "b.yml", "k.md", "d.json", "z.toml", "a.ini"]
+        code = Group(name="integration", role="integration", members=["src/a.py"], passes=3)
+        out, gaps = review_groups(self._grouping(code), frozenset(paths))
+        assert gaps == sorted(paths)
+        assert [g.name for g in out[1:]] == ["file:" + p for p in sorted(paths)]
