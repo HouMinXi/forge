@@ -5,6 +5,7 @@ memory+pids controllers, user namespaces and bwrap; they skip on hosts
 without those facilities.  The unavailable-mapping tests run everywhere.
 """
 
+import errno
 import os
 import shutil
 import subprocess
@@ -416,45 +417,72 @@ def test_remove_cgroup_force_rewrites_kill(tmp_path, monkeypatch):
     assert force_writes > len(writes) > 0
 
 
+def _supervisor_at(iso, path):
+    sup = object.__new__(iso.Supervisor)
+    sup.cgroup_path = str(path)
+    return sup
+
+
 def test_remove_cgroup_absent_directory_is_immediate_success(tmp_path, monkeypatch):
     """An already-removed run cgroup is a successful removal, not a 10 s retry loop.
 
     A failed start removes the cgroup once and the later teardown tries again;
     the second attempt must not wait out the deadline on a directory that is gone.
+    The clock is frozen, so a loop that swallowed the error would never reach
+    its deadline: the rmdir counter fails the test on the second call instead.
     """
     import code_forge.mutation_engines.isolate as iso
 
     sleeps = []
     monkeypatch.setattr(iso.time, "sleep", sleeps.append)
+    monkeypatch.setattr(iso.time, "monotonic", lambda: 1000.0)
+    missing = tmp_path / "never-created"
+    real_rmdir = os.rmdir
+    calls = []
 
-    sup = object.__new__(iso.Supervisor)
-    sup.cgroup_path = str(tmp_path / "never-created")
+    def counting_rmdir(path, *args, **kwargs):
+        if str(path) == str(missing):
+            calls.append(path)
+            assert len(calls) <= 2, "rmdir retried on an absent directory"
+        return real_rmdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(iso.os, "rmdir", counting_rmdir)
+    sup = _supervisor_at(iso, missing)
 
     sup._remove_cgroup(force=True)
+    assert len(calls) == 1
     sup._remove_cgroup(force=False)
+    assert len(calls) == 2  # exactly one rmdir per call
     assert sleeps == []
 
 
-def test_remove_cgroup_other_errors_are_still_retried(tmp_path, monkeypatch):
-    """A busy directory keeps the retry-until-deadline behaviour."""
+@pytest.mark.parametrize(
+    "code", [errno.ENOTEMPTY, errno.EBUSY, errno.EACCES], ids=["ENOTEMPTY", "EBUSY", "EACCES"]
+)
+def test_remove_cgroup_retries_other_oserrors_until_removed(tmp_path, monkeypatch, code):
+    """Only absence is final: ENOTEMPTY, EBUSY and EACCES keep retrying.
+
+    rmdir fails twice with the errno, then succeeds. The frozen clock keeps the
+    deadline out of the picture, so the call count shows the loop kept going.
+    """
     import code_forge.mutation_engines.isolate as iso
 
-    cgroup = tmp_path / "cg"
-    cgroup.mkdir()
-    (cgroup / "busy").write_text("x")  # rmdir fails with ENOTEMPTY
     sleeps = []
     monkeypatch.setattr(iso.time, "sleep", sleeps.append)
+    monkeypatch.setattr(iso.time, "monotonic", lambda: 1000.0)
+    cgroup = tmp_path / "cg"
+    calls = []
 
-    def fast_clock():
-        fast_clock.now += 2.0
-        return fast_clock.now
+    def flaky_rmdir(path, *args, **kwargs):
+        calls.append(path)
+        assert len(calls) <= 3, "rmdir kept being retried after it succeeded"
+        if len(calls) <= 2:
+            raise OSError(code, os.strerror(code))
 
-    fast_clock.now = 0.0
-    monkeypatch.setattr(iso.time, "monotonic", fast_clock)
-    sup = object.__new__(iso.Supervisor)
-    sup.cgroup_path = str(cgroup)
-    sup._remove_cgroup()
-    assert sleeps
+    monkeypatch.setattr(iso.os, "rmdir", flaky_rmdir)
+    _supervisor_at(iso, cgroup)._remove_cgroup()
+    assert len(calls) == 3
+    assert len(sleeps) == 2
 
 
 @requires_isolation
