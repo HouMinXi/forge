@@ -105,10 +105,10 @@ def test_unchanged_branch_selects_nothing(repo):
 
 
 def test_diff_is_taken_against_the_merge_base(repo):
-    # A commit that lands on the target branch after the topic branched must
-    # not show up as a change made by the topic.
+    # An edit that lands on the target branch after the topic branched must
+    # not show up as a change made by the topic (a two-dot diff would list it).
     _git(repo, "checkout", "-q", "main")
-    _write(repo, "landed_on_main.py")
+    _write(repo, "keep.py", "value = 3\n# main edit\n")
     _commit(repo, "main moves on")
     _git(repo, "checkout", "-q", "topic")
     _write(repo, "topic_only.py")
@@ -230,7 +230,7 @@ def test_workflow_runs_on_pull_requests_with_full_history_and_the_pinned_ruff():
     checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
     runs = [s["run"] for s in steps if "run" in s]
 
-    assert list(workflow["on"]) == ["pull_request"]
+    assert workflow["on"] == {"pull_request": {"branches": ["main"]}}
     assert checkout["with"]["fetch-depth"] == 0
     assert any("--print-requirement" in run and "pip install" in run for run in runs)
     lint = next(s for s in steps if "--base" in s.get("run", ""))

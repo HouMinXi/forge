@@ -2,7 +2,7 @@
 """Run ruff on the Python files a change touches, not on the whole tree (#105).
 
 The repository is not ruff-clean, so a repo-wide ruff run cannot gate
-anything. This script lints only the files a pull request adds, copies,
+anything. This script lints only the files a pull request adds,
 modifies or renames, using ``ruff check`` and ``ruff format --check`` with the
 repository's own configuration. Deleted files are never passed to ruff, and
 an empty selection exits 0 without calling ruff, because ``ruff check`` with
@@ -25,9 +25,10 @@ from typing import Callable, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _PYTHON_SUFFIXES = (".py", ".pyi")
-# Added, copied, modified, renamed. Deleted (D) and type-changed (T) paths are
-# excluded: a deleted file cannot be linted and a symlink swap is not source.
-_DIFF_FILTER = "ACMR"
+# With --no-renames a rename is a delete plus an add, so the new path shows up
+# as added. Deleted (D) and type-changed (T) paths are excluded: a deleted file
+# cannot be linted and a symlink swap is not source.
+_DIFF_FILTER = "AM"
 
 Runner = Callable[[Sequence[str]], int]
 
@@ -48,13 +49,22 @@ def ruff_requirement(pyproject: Path) -> str:
 def changed_python_files(base: str, head: str = "HEAD", *, cwd: Path = REPO_ROOT) -> list[str]:
     """List Python files changed between the merge base of ``base`` and ``head``."""
     output = subprocess.run(
-        ["git", "diff", "--name-only", "-z", f"--diff-filter={_DIFF_FILTER}", f"{base}...{head}"],
+        [
+            "git",
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            f"--diff-filter={_DIFF_FILTER}",
+            f"{base}...{head}",
+        ],
         cwd=cwd,
         check=True,
         capture_output=True,
     ).stdout
-    names = [name.decode("utf-8", "surrogateescape") for name in output.split(b"\0") if name]
-    return sorted(name for name in names if name.endswith(_PYTHON_SUFFIXES))
+    # -z output ends with a NUL, so the last element is empty and has no suffix.
+    names = [name.decode("utf-8", "surrogateescape") for name in output.split(b"\0")]
+    return [name for name in names if name.endswith(_PYTHON_SUFFIXES)]
 
 
 def _subprocess_runner(command: Sequence[str]) -> int:
