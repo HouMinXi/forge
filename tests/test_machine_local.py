@@ -325,6 +325,22 @@ class TestReplayStallBreaker:
         machine._state.promoted_fingerprints = {"fp-l0"}
         assert machine._stalled_on_identical_round()
 
+    def test_pending_promotion_only_considers_confirmed_l0_findings(self, tmp_path):
+        """An exhausted, unpromoted L0 finding that is no longer CONFIRMED holds nothing off.
+
+        Reachable through the predicate inputs: autofix marks a finding FIXED in
+        the same round its attempts counter sits at the cap, and the frozen map
+        then carries FIXED, not CONFIRMED. Promotion only applies to CONFIRMED
+        findings, so it must not delay the stall.
+        """
+        machine = self._l1_only_machine(tmp_path, [])
+        machine.max_fix_attempts = 3
+        machine._state.fix_attempts = {"fp-l0": 3}
+        machine._state.promoted_fingerprints = set()
+        for disposition in ("FIXED", "DISMISSED"):
+            self._freeze(machine, {"fp-l1": "CONFIRMED", "fp-l0": disposition}, l0=["fp-l0"])
+            assert machine._stalled_on_identical_round(), disposition
+
     def test_changed_or_empty_maps_are_not_a_stall(self, tmp_path):
         machine = self._l1_only_machine(tmp_path, [])
         same = {"fp-l1": "CONFIRMED"}
@@ -370,16 +386,34 @@ class TestReplayStallBreaker:
         reason = machine._stall_reason()
         assert reason.startswith(self.STALL_DIAGNOSTIC_PREFIX)
         assert reason.endswith(": fp-l1-a, fp-l1-b")
+        assert "repeated identically" in reason
+        assert "pending promotion" in reason
         for other in ("fp-fixed", "fp-dismissed", "mutation-flaky"):
             assert other not in reason
 
     def test_stall_reason_caps_the_fingerprint_list(self, tmp_path):
         machine = self._l1_only_machine(tmp_path, [])
-        self._freeze(machine, {"fp-%02d" % i: "CONFIRMED" for i in range(14)})
+        # Inserted in reverse order: the reason must still list them sorted.
+        self._freeze(machine, {"fp-%02d" % i: "CONFIRMED" for i in reversed(range(14))})
         reason = machine._stall_reason()
-        assert reason.endswith("fp-09 (+4 more)")
+        assert reason.endswith(
+            "fp-00, fp-01, fp-02, fp-03, fp-04, fp-05, fp-06, fp-07, fp-08, fp-09 (+4 more)"
+        )
         assert "fp-10" not in reason
         assert len(reason) < 300
+
+    def test_stall_reason_cap_boundary(self, tmp_path):
+        machine = self._l1_only_machine(tmp_path, [])
+        # Exactly the cap: everything is listed, no tail.
+        self._freeze(machine, {"fp-%02d" % i: "CONFIRMED" for i in reversed(range(10))})
+        reason = machine._stall_reason()
+        assert reason.endswith("fp-09")
+        assert "more" not in reason
+        # One over the cap: the 11th is counted, not listed.
+        self._freeze(machine, {"fp-%02d" % i: "CONFIRMED" for i in reversed(range(11))})
+        reason = machine._stall_reason()
+        assert reason.endswith("fp-09 (+1 more)")
+        assert "fp-10" not in reason
 
     def test_repeating_l0_autofix_success_beside_pinned_l1_still_stalls(self, tmp_path):
         """An L0 finding that is FIXED every round does not hold off the stall.

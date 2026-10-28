@@ -3993,11 +3993,15 @@ class StateMachine:
         * CONFIRMED plus UNCERTAIN together, which can neither HOLD nor
           converge, and which a response cache makes look like progress.
         * CONFIRMED only. LOCAL's autofix loop runs on L0 findings, so a
-          CONFIRMED L0 finding that still has fix budget, or whose budget is
-          spent but not yet promoted, can still move the map and is left
-          alone. CONFIRMED findings from any other layer get no autofix and
-          no promotion; repeating the round cannot change
-          them.
+          CONFIRMED L0 finding that is not yet promoted (fix budget left, or
+          spent and waiting for its promotion round) can still move the map
+          and is left alone. CONFIRMED findings from any other layer get no
+          autofix and no promotion; repeating the round cannot change them.
+
+          Known limit: the autofix loop skips L0 findings whose source is
+          MUTANT, E2E_CHECK, FIXVAL or INFRA (no fix attempt, no promotion).
+          They are still counted as "can still move the map" here, so a
+          frozen map pinned only by those still runs to the round cap.
 
         Three rounds is two confirmations of the freeze.
         """
@@ -4030,8 +4034,11 @@ class StateMachine:
             return False
         if Disposition.UNCERTAIN.value in values:
             return True
-        # CONFIRMED only. Past the pending_promotion guard every unpromoted L0
-        # finding still has fix budget, so "not promoted" is the whole test.
+        # CONFIRMED only. Past the pending_promotion guard, an unpromoted
+        # CONFIRMED L0 finding has fix budget left, so "not promoted" is the
+        # whole test. This assumes the autofix loop handles it; findings from
+        # the sources it skips (MUTANT, E2E_CHECK, FIXVAL, INFRA) never use
+        # budget or get promoted, and still count as budget left here.
         budget_left = any(fp not in self._state.promoted_fingerprints for fp in l0_confirmed)
         return not budget_left
 
@@ -4049,7 +4056,7 @@ class StateMachine:
         pinned = sorted(fp for fp, v in values.items() if v == Disposition.CONFIRMED.value)
         shown = pinned[: self._STALL_REASON_MAX_FINGERPRINTS]
         extra = len(pinned) - len(shown)
-        listing = ", ".join(shown) + (" (+%d more)" % extra if extra else "")
+        listing = ", ".join(shown) + (f" (+{extra} more)" if extra else "")
         return (
             base
             + " (CONFIRMED findings repeated identically, and no L0 autofix budget or "
