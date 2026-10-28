@@ -70,6 +70,22 @@ def test_inheriting_child_leaves_no_cache_in_checkout_copy(tmp_path):
     assert _caches(copy) == []
 
 
+def test_sanitized_launcher_checklist_is_complete():
+    """Pin the launcher list itself: a launcher dropped from the tuple is not measured.
+
+    The checklist below is written out on purpose, apart from SANITIZED_LAUNCHERS.
+    Adding a sanitized launcher means touching both places.
+    """
+    checklist = (
+        "tests/test_cli_empty_diff.py",
+        "tests/test_trust_empty_backends.py",
+        "tests/test_pytest_report_plugin.py",
+    )
+    assert SANITIZED_LAUNCHERS == checklist
+    for rel in checklist:
+        assert '"-B"' in (ROOT / rel).read_text(encoding="utf-8"), rel
+
+
 def test_sanitized_launchers_leave_no_cache_in_checkout_copy(tmp_path):
     """Run the sanitized launchers against a copy and look for caches under its src.
 
@@ -79,6 +95,7 @@ def test_sanitized_launchers_leave_no_cache_in_checkout_copy(tmp_path):
     runs without the variable, so only the launchers' own flags are measured.
     """
     copy = _copy_checkout(tmp_path / "checkout")
+    real_before = _caches(SRC)
     result = subprocess.run(
         [
             sys.executable,
@@ -90,7 +107,9 @@ def test_sanitized_launchers_leave_no_cache_in_checkout_copy(tmp_path):
             "no:cacheprovider",
             "-o",
             "addopts=",
-            *SANITIZED_LAUNCHERS,
+            "-v",
+            # Absolute paths under the copy: the run cannot fall back to the real checkout.
+            *[str(copy / rel) for rel in SANITIZED_LAUNCHERS],
         ],
         cwd=copy,
         env=_env_without_bytecode_flag(),
@@ -103,3 +122,7 @@ def test_sanitized_launchers_leave_no_cache_in_checkout_copy(tmp_path):
     assert result.returncode in (0, 1), result.stdout[-2000:] + result.stderr[-2000:]
     assert " passed" in result.stdout, result.stdout[-2000:]
     assert _caches(copy / "src") == []
+    for rel in SANITIZED_LAUNCHERS:
+        assert Path(rel).name in result.stdout, rel
+    # The real checkout must not have grown a cache either.
+    assert _caches(SRC) == real_before
