@@ -24,6 +24,13 @@ import signal as _signal
 if _signal.getsignal(_signal.SIGINT) == _signal.SIG_IGN:
     _signal.signal(_signal.SIGINT, _signal.default_int_handler)
 
+# Subprocesses the tests launch import code_forge from the checkout (PYTHONPATH
+# points at src/). Left alone they write src/**/__pycache__, which the final
+# source guard rightly rejects as an unexpected import cache. Children that
+# inherit the environment pick this up; fixtures that build their own sanitized
+# environment pass `-B` explicitly. Set before any child can start.
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+
 import code_forge.mutation
 
 _git_snapshot_key = pytest.StashKey[dict]()

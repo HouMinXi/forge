@@ -35,7 +35,7 @@ def _run_pytest(
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", PLUGIN, "-q", "--no-header", "-p", "no:cacheprovider"],
+        [sys.executable, "-B", "-m", "pytest", "-p", PLUGIN, "-q", "--no-header", "-p", "no:cacheprovider"],
         cwd=str(suite_dir),
         env=env,
         capture_output=True,
@@ -118,7 +118,7 @@ def test_disarmed_without_environment(tmp_path):
         "PYTHONPATH": SRC,
     }
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", PLUGIN, "-q", "-p", "no:cacheprovider"],
+        [sys.executable, "-B", "-m", "pytest", "-p", PLUGIN, "-q", "-p", "no:cacheprovider"],
         cwd=str(suite),
         env=env,
         capture_output=True,

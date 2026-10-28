@@ -47,7 +47,7 @@ class TestTrustEmptyBackends:
         gate = repo_with_gate / ".code-forge" / "gate.yaml"
         gate.write_text("backends: {}\n")
         result = subprocess.run(
-            [sys.executable, "-m", "code_forge.cli", "trust"],
+            [sys.executable, "-B", "-m", "code_forge.cli", "trust"],
             cwd=repo_with_gate,
             env=_make_env(repo_with_gate),
             capture_output=True,
@@ -63,7 +63,7 @@ class TestTrustEmptyBackends:
         gate = repo_with_gate / ".code-forge" / "gate.yaml"
         gate.write_text("backends:\n  dummy:\n")  # value is None
         result = subprocess.run(
-            [sys.executable, "-m", "code_forge.cli", "trust"],
+            [sys.executable, "-B", "-m", "code_forge.cli", "trust"],
             cwd=repo_with_gate,
             env=_make_env(repo_with_gate),
             capture_output=True,
@@ -86,7 +86,7 @@ class TestTrustEmptyBackends:
             "    api_key_env: DUMMY\n"
         )
         result = subprocess.run(
-            [sys.executable, "-m", "code_forge.cli", "trust"],
+            [sys.executable, "-B", "-m", "code_forge.cli", "trust"],
             cwd=repo_with_gate,
             env=_make_env(repo_with_gate),
             capture_output=True,
