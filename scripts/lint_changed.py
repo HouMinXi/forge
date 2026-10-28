@@ -100,7 +100,15 @@ def run_ruff(files: Sequence[str], runner: Runner = _subprocess_runner) -> int:
 
 
 def _base_ref(value: str) -> str:
-    """Reject a base that git could read as an option."""
+    """Reject a base that git could read as an option, or that is blank.
+
+    An empty base would turn ``{base}...HEAD`` into ``HEAD...HEAD``, an empty
+    diff, so the check would pass without linting anything.
+    """
+    if not value.strip() or value != value.strip():
+        raise argparse.ArgumentTypeError(
+            f"base must be a non-empty ref without surrounding whitespace: {value!r}"
+        )
     if value.startswith("-"):
         raise argparse.ArgumentTypeError(f"base must not start with '-': {value!r}")
     return value

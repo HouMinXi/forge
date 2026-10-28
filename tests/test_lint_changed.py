@@ -7,6 +7,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tomllib
 
 import pytest
 import yaml
@@ -86,6 +87,9 @@ def test_selects_added_modified_and_renamed_python_files_only(repo):
     _write(repo, "foo.py.bak", "x = 1\n")
     _write(repo, "stub.pyi.orig", "x: int\n")
     _write(repo, "pyfile", "x = 1\n")
+    # Suffix boundary: only a lowercase .py or .pyi counts.
+    for name in ("mod.pyx", "mod.pyw", "UPPER.PY", "UPPER.PYI", "copy", "mod_pyi"):
+        _write(repo, name, "x = 1\n")
     _commit(repo)
 
     assert lint_changed.changed_python_files("main", cwd=repo) == [
@@ -94,6 +98,21 @@ def test_selects_added_modified_and_renamed_python_files_only(repo):
         "pkg/stub.pyi",
         "renamed.py",
     ]
+
+
+def test_non_utf8_file_names_are_kept_as_surrogate_escaped_paths(repo):
+    raw = os.fsencode(repo) + b"/caf\xe9.py"
+    try:
+        with open(raw, "w", encoding="utf-8") as handle:
+            handle.write("x = 1\n")
+    except OSError:
+        pytest.skip("this filesystem rejects non-UTF-8 file names")
+    _commit(repo)
+
+    names = lint_changed.changed_python_files("main", cwd=repo)
+
+    assert names == ["caf\udce9.py"]
+    assert os.fsencode(names[0]) == b"caf\xe9.py"
 
 
 def test_deleted_python_files_are_not_selected(repo):
@@ -145,9 +164,25 @@ def test_unknown_base_ref_exits_with_git_message(repo):
 
     message = str(excinfo.value)
     assert excinfo.value.code != 0
-    assert message.startswith("lint_changed: git diff origin/does-not-exist...HEAD failed")
-    assert "fatal:" in message
+    assert re.fullmatch(
+        r"lint_changed: git diff origin/does-not-exist\.\.\.HEAD failed with exit status \d+: fatal: .+",
+        message,
+        re.DOTALL,
+    )
     assert "origin/does-not-exist" in message.split("fatal:", 1)[1]
+    assert message == message.strip()
+
+
+def test_non_utf8_git_message_is_reported_not_raised(repo):
+    base = os.fsdecode(b"no-such-ref-\xe9")
+
+    with pytest.raises(SystemExit) as excinfo:
+        lint_changed.changed_python_files(base, cwd=repo)
+
+    message = str(excinfo.value)
+    assert message.startswith("lint_changed: git diff ")
+    assert "failed with exit status" in message
+    assert "\ufffd" in message
 
 
 def test_missing_merge_base_exits_with_git_message(repo):
@@ -182,6 +217,28 @@ def test_option_like_base_is_rejected_on_the_command_line(tmp_path, capsys, temp
     assert excinfo.value.code == 2
     assert "base must not start with '-'" in capsys.readouterr().err
     assert not target.exists()
+
+
+@pytest.mark.parametrize("value", ["", " ", "\t", " main", "main ", "origin/main\n"])
+def test_blank_or_padded_base_is_rejected_on_the_command_line(capsys, monkeypatch, value):
+    # An empty base makes the range HEAD...HEAD, an empty diff: it would pass without linting.
+    monkeypatch.setattr(
+        lint_changed, "changed_python_files", lambda *a, **k: pytest.fail("must not diff a blank base")
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        lint_changed.main([f"--base={value}"])
+
+    assert excinfo.value.code == 2
+    assert "base must be a non-empty ref" in capsys.readouterr().err
+
+
+def test_blank_base_given_as_a_separate_argument_is_rejected(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        lint_changed.main(["--base", ""])
+
+    assert excinfo.value.code == 2
+    assert "base must be a non-empty ref" in capsys.readouterr().err
 
 
 class _Recorder:
@@ -278,6 +335,27 @@ def test_main_lints_the_files_changed_against_the_base(monkeypatch, base):
     assert seen == {"base": base, "files": ["a.py"]}
 
 
+def test_main_runs_ruff_through_the_default_runner(monkeypatch):
+    # The CI gate must fail when ruff fails: the default runner has to reach subprocess.
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((list(command), kwargs))
+        return subprocess.CompletedProcess(command, 1 if "format" in command else 0)
+
+    monkeypatch.setattr(lint_changed, "changed_python_files", lambda base: ["a.py", "b.pyi"])
+    monkeypatch.setattr(lint_changed.subprocess, "run", fake_run)
+
+    assert lint_changed.main(["--base", "origin/main"]) == 1
+    assert [command[3:5] for command, _ in calls] == [
+        ["check", "--force-exclude"],
+        ["format", "--check"],
+    ]
+    assert all(command[:3] == [sys.executable, "-m", "ruff"] for command, _ in calls)
+    assert all(command[-3:] == ["--", "a.py", "b.pyi"] for command, _ in calls)
+    assert all(kwargs["cwd"] == lint_changed.REPO_ROOT for _, kwargs in calls)
+
+
 def test_real_runner_returns_the_exit_status_instead_of_raising():
     assert lint_changed._subprocess_runner([sys.executable, "-c", "raise SystemExit(3)"]) == 3
 
@@ -304,78 +382,96 @@ def test_real_ruff_honours_the_exclude_list_for_explicit_paths(tmp_path):
     assert lint_changed.run_ruff(["dirty.py"], runner) != 0
 
 
-def test_main_requires_a_mode():
-    with pytest.raises(SystemExit):
+def test_repository_config_excludes_the_reconstructed_base_files():
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))
+
+    assert "tests/eval/*/base_files" in config["tool"]["ruff"]["exclude"]
+    assert any(ROOT.glob("tests/eval/*/base_files")), (
+        "the excluded pattern no longer matches a directory"
+    )
+
+
+def test_main_requires_a_mode(capsys):
+    with pytest.raises(SystemExit) as excinfo:
         lint_changed.main([])
+
+    assert excinfo.value.code == 2
+    assert "one of the arguments --base --print-requirement is required" in capsys.readouterr().err
+
+
+def test_base_and_print_requirement_are_mutually_exclusive(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        lint_changed.main(["--base", "main", "--print-requirement"])
+
+    assert excinfo.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
 
 
 def _workflow():
     return yaml.safe_load((ROOT / ".github" / "workflows" / "lint-changed.yml").read_text("utf-8"))
 
 
-def test_workflow_runs_on_pull_requests_with_full_history_and_the_pinned_ruff():
-    workflow = _workflow()
-    steps = workflow["jobs"]["lint-changed"]["steps"]
-    checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
-    runs = [s["run"] for s in steps if "run" in s]
+INSTALL_RUN = 'python -m pip install "$(python scripts/lint_changed.py --print-requirement)"'
+CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+SETUP_PYTHON = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"
 
-    assert workflow["on"] == {"pull_request": {"branches": ["main"]}}
-    assert checkout["with"]["fetch-depth"] == 0
-    assert any("--print-requirement" in run and "pip install" in run for run in runs)
-    lint = next(s for s in steps if "--base" in s.get("run", ""))
-    assert lint["env"]["BASE_REF"] == "${{ github.base_ref }}"
-    assert lint["run"].strip() == 'python scripts/lint_changed.py --base "origin/$BASE_REF"'
-
-
-def test_workflow_never_lints_the_whole_tree():
-    text = (ROOT / ".github" / "workflows" / "lint-changed.yml").read_text("utf-8")
-
-    assert "ruff check ." not in text
-    assert "ruff format ." not in text
-
-
-def _job():
-    return _workflow()["jobs"]["lint-changed"]
-
-
-def test_workflow_is_read_only_and_does_not_keep_credentials():
-    workflow = _workflow()
-    steps = _job()["steps"]
-    checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
-
-    assert workflow["permissions"] == {"contents": "read"}
-    assert "permissions" not in _job()
-    assert checkout["with"]["persist-credentials"] is False
-
-
-def test_workflow_failures_are_not_swallowed():
-    job = _job()
-
-    assert job.get("continue-on-error", False) is False
-    assert all(step.get("continue-on-error", False) is False for step in job["steps"])
-
-
-def test_workflow_actions_are_pinned_to_commit_shas():
-    uses = [step["uses"] for step in _job()["steps"] if "uses" in step]
-
-    assert len(uses) == 2
-    assert all(re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", use) for use in uses)
-
-
-def test_workflow_job_settings_are_pinned():
-    job = _job()
-    setup = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/setup-python@"))
-
-    assert job["name"] == "Lint changed Python files"
-    assert job["runs-on"] == "ubuntu-24.04"
-    assert job["timeout-minutes"] == 10
-    assert setup["with"]["python-version"] == "3.12"
-
-
-def test_workflow_cancels_superseded_runs_per_pull_request():
-    concurrency = _workflow()["concurrency"]
-
-    assert concurrency == {
+EXPECTED_WORKFLOW = {
+    "name": "Lint changed files",
+    "on": {"pull_request": {"branches": ["main"]}},
+    "permissions": {"contents": "read"},
+    "concurrency": {
         "group": "${{ github.workflow }}-${{ github.event.pull_request.number }}",
         "cancel-in-progress": True,
-    }
+    },
+    "jobs": {
+        "lint-changed": {
+            "name": "Lint changed Python files",
+            "runs-on": "ubuntu-24.04",
+            "timeout-minutes": 10,
+            "steps": [
+                {
+                    "name": "Check out source with full history",
+                    "uses": CHECKOUT,
+                    "with": {"fetch-depth": 0, "persist-credentials": False},
+                },
+                {
+                    "name": "Set up Python",
+                    "uses": SETUP_PYTHON,
+                    "with": {"python-version": "3.12"},
+                },
+                {
+                    "name": "Install the pinned ruff",
+                    "run": INSTALL_RUN,
+                },
+                {
+                    "name": "Lint files changed by this pull request",
+                    "env": {"BASE_REF": "${{ github.base_ref }}"},
+                    "run": 'python scripts/lint_changed.py --base "origin/$BASE_REF"',
+                },
+            ],
+        }
+    },
+}
+
+
+def test_workflow_is_exactly_the_reviewed_lint_job():
+    # Whole-structure equality: an extra step, key, `if`, `ref`, secret, flag or rename fails it.
+    # The comments are not parsed. The string-valued `run` entries compare after strip().
+    workflow = _workflow()
+    for step in workflow["jobs"]["lint-changed"]["steps"]:
+        if "run" in step:
+            step["run"] = step["run"].strip()
+
+    assert workflow == EXPECTED_WORKFLOW
+
+
+def test_workflow_name_is_the_one_contributing_md_refers_to():
+    assert _workflow()["name"] == "Lint changed files"
+    assert "`Lint changed files`" in (ROOT / "CONTRIBUTING.md").read_text("utf-8")
+
+
+def test_workflow_action_pins_match_the_linux_tests_workflow():
+    other = (ROOT / ".github" / "workflows" / "linux-tests.yml").read_text("utf-8")
+
+    assert f"uses: {CHECKOUT} " in other
+    assert f"uses: {SETUP_PYTHON} " in other
