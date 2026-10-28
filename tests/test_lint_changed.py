@@ -165,7 +165,7 @@ def test_unknown_base_ref_exits_with_git_message(repo):
     message = str(excinfo.value)
     assert excinfo.value.code != 0
     assert re.fullmatch(
-        r"lint_changed: git diff origin/does-not-exist\.\.\.HEAD failed with exit status \d+: fatal: .+",
+        r"lint_changed: git diff origin/does-not-exist\.\.\.HEAD failed with exit status 128: fatal: .+",
         message,
         re.DOTALL,
     )
@@ -181,7 +181,7 @@ def test_non_utf8_git_message_is_reported_not_raised(repo):
 
     message = str(excinfo.value)
     assert message.startswith("lint_changed: git diff ")
-    assert "failed with exit status" in message
+    assert "failed with exit status 128:" in message
     assert "\ufffd" in message
 
 
@@ -385,7 +385,7 @@ def test_real_ruff_honours_the_exclude_list_for_explicit_paths(tmp_path):
 def test_repository_config_excludes_the_reconstructed_base_files():
     config = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))
 
-    assert "tests/eval/*/base_files" in config["tool"]["ruff"]["exclude"]
+    assert config["tool"]["ruff"]["exclude"] == ["tests/eval/*/base_files"]
     assert any(ROOT.glob("tests/eval/*/base_files")), (
         "the excluded pattern no longer matches a directory"
     )
@@ -412,46 +412,67 @@ def _workflow():
 
 
 INSTALL_RUN = 'python -m pip install "$(python scripts/lint_changed.py --print-requirement)"'
-CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
-SETUP_PYTHON = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"
+PINNED_ACTION = re.compile(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}")
 
-EXPECTED_WORKFLOW = {
-    "name": "Lint changed files",
-    "on": {"pull_request": {"branches": ["main"]}},
-    "permissions": {"contents": "read"},
-    "concurrency": {
-        "group": "${{ github.workflow }}-${{ github.event.pull_request.number }}",
-        "cancel-in-progress": True,
-    },
-    "jobs": {
-        "lint-changed": {
-            "name": "Lint changed Python files",
-            "runs-on": "ubuntu-24.04",
-            "timeout-minutes": 10,
-            "steps": [
-                {
-                    "name": "Check out source with full history",
-                    "uses": CHECKOUT,
-                    "with": {"fetch-depth": 0, "persist-credentials": False},
-                },
-                {
-                    "name": "Set up Python",
-                    "uses": SETUP_PYTHON,
-                    "with": {"python-version": "3.12"},
-                },
-                {
-                    "name": "Install the pinned ruff",
-                    "run": INSTALL_RUN,
-                },
-                {
-                    "name": "Lint files changed by this pull request",
-                    "env": {"BASE_REF": "${{ github.base_ref }}"},
-                    "run": 'python scripts/lint_changed.py --base "origin/$BASE_REF"',
-                },
-            ],
-        }
-    },
-}
+
+def _linux_tests_pin(action):
+    """Return the one full-SHA ``uses:`` value that linux-tests.yml gives ``action``.
+
+    The lint workflow must use the same pin, so a Dependabot bump of either file alone fails.
+    """
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "linux-tests.yml").read_text("utf-8"))
+    pins = {
+        step["uses"]
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", [])
+        if step.get("uses", "").startswith(action + "@")
+    }
+    assert len(pins) == 1, f"linux-tests.yml must pin {action} exactly once, found {sorted(pins)}"
+    (pin,) = pins
+    assert PINNED_ACTION.fullmatch(pin), f"{pin} is not pinned to a full commit SHA"
+    return pin
+
+
+def _expected_workflow():
+    checkout = _linux_tests_pin("actions/checkout")
+    setup_python = _linux_tests_pin("actions/setup-python")
+    return {
+        "name": "Lint changed files",
+        "on": {"pull_request": {"branches": ["main"]}},
+        "permissions": {"contents": "read"},
+        "concurrency": {
+            "group": "${{ github.workflow }}-${{ github.event.pull_request.number }}",
+            "cancel-in-progress": True,
+        },
+        "jobs": {
+            "lint-changed": {
+                "name": "Lint changed Python files",
+                "runs-on": "ubuntu-24.04",
+                "timeout-minutes": 10,
+                "steps": [
+                    {
+                        "name": "Check out source with full history",
+                        "uses": checkout,
+                        "with": {"fetch-depth": 0, "persist-credentials": False},
+                    },
+                    {
+                        "name": "Set up Python",
+                        "uses": setup_python,
+                        "with": {"python-version": "3.12"},
+                    },
+                    {
+                        "name": "Install the pinned ruff",
+                        "run": INSTALL_RUN,
+                    },
+                    {
+                        "name": "Lint files changed by this pull request",
+                        "env": {"BASE_REF": "${{ github.base_ref }}"},
+                        "run": 'python scripts/lint_changed.py --base "origin/$BASE_REF"',
+                    },
+                ],
+            }
+        },
+    }
 
 
 def test_workflow_is_exactly_the_reviewed_lint_job():
@@ -462,7 +483,7 @@ def test_workflow_is_exactly_the_reviewed_lint_job():
         if "run" in step:
             step["run"] = step["run"].strip()
 
-    assert workflow == EXPECTED_WORKFLOW
+    assert workflow == _expected_workflow()
 
 
 def test_workflow_name_is_the_one_contributing_md_refers_to():
@@ -471,7 +492,13 @@ def test_workflow_name_is_the_one_contributing_md_refers_to():
 
 
 def test_workflow_action_pins_match_the_linux_tests_workflow():
-    other = (ROOT / ".github" / "workflows" / "linux-tests.yml").read_text("utf-8")
+    # Both files must agree on full-SHA pins, whatever Dependabot bumps them to.
+    steps = {step["name"]: step for step in _workflow()["jobs"]["lint-changed"]["steps"]}
 
-    assert f"uses: {CHECKOUT} " in other
-    assert f"uses: {SETUP_PYTHON} " in other
+    for name, action in (
+        ("Check out source with full history", "actions/checkout"),
+        ("Set up Python", "actions/setup-python"),
+    ):
+        used = steps[name]["uses"]
+        assert PINNED_ACTION.fullmatch(used), f"{used} is not pinned to a full commit SHA"
+        assert used == _linux_tests_pin(action)
