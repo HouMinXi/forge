@@ -84,7 +84,8 @@ class StartAcknowledgement:
     admitted: bool
     attempt_id: str | None
     fault: AuditFault | None
-    # True when the call may have committed state before it failed; no id is promised then.
+    # True when the call may have changed the journal or published state files before it
+    # failed; no id is promised then. Definite denials and successes are False.
     publication_uncertain: bool = False
 
 
@@ -104,7 +105,8 @@ class AcquiredAcknowledgement:
     observation_id: str | None
     ref: RawRef | None
     fault: AuditFault | None
-    # True when the call may have committed state before it failed; no id or ref is promised then.
+    # True when the call may have changed the journal or published state files before it
+    # failed; no id or ref is promised then. Definite denials and successes are False.
     publication_uncertain: bool = False
 
 
@@ -112,7 +114,8 @@ class AcquiredAcknowledgement:
 class AuditAcknowledgement:
     admitted: bool
     fault: AuditFault | None
-    # True when the call may have committed state before it failed.
+    # True when the call may have changed the journal or published state files before it
+    # failed. Definite denials and successes are False.
     publication_uncertain: bool = False
 
 
@@ -1794,6 +1797,9 @@ class AttemptRecorder:
         self._origin = None
         self._preview = False
         self._input_manifest = None
+        # State files (run directory, input manifest, freeze marker) made visible
+        # ahead of the journal event that commits them.
+        self._staged = 0
         try:
             self._context = _context(context)
             _require(isinstance(root, Path) and root.is_absolute())
@@ -1920,16 +1926,21 @@ class AttemptRecorder:
             handle = _prepare_audit_root(self.root, create=create)
             if isinstance(handle, AuditFault):
                 return self._denied(handle.code, phase, safe_attempt)
-            committed = (len(self._events), self._append_uncertain)
+            committed = self._journal_mark()
             mutated = False
 
             def measured(held):
-                # Whether the action changed the journal, measured before any denial writes its own fault.
+                # Whether the action changed the journal or staged a state file, measured
+                # before any denial writes its own fault.
                 nonlocal mutated
                 try:
                     return action(held)
                 finally:
-                    mutated = (len(self._events), self._append_uncertain) != committed
+                    mutated = self._journal_mark() != committed
+
+            def deny(code, held=None, *, preserve=False):
+                ack = self._denied(code, phase, safe_attempt, held, preserve=preserve)
+                return _replace(ack, publication_uncertain=mutated)
 
             try:
                 if self._capability is not None:
@@ -1938,28 +1949,44 @@ class AttemptRecorder:
                     try:
                         result = measured(handle)
                     except _Rejected as error:
-                        result = self._denied(
-                            error.code, phase, safe_attempt, handle, preserve=error.preserve
-                        )
+                        result = deny(error.code, handle, preserve=error.preserve)
                     except OSError:
-                        result = self._denied("persistence_error", phase, safe_attempt, handle)
-                        result = _replace(result, publication_uncertain=mutated)
+                        result = deny("persistence_error", handle)
                     except (TypeError, ValueError, OverflowError):
-                        result = self._denied("invalid_input", phase, safe_attempt, handle)
+                        result = deny("invalid_input", handle)
             except _Rejected as error:
-                result = self._denied(error.code, phase, safe_attempt)
+                result = deny(error.code)
             except OSError:
-                result = self._denied("persistence_error", phase, safe_attempt)
-                result = _replace(result, publication_uncertain=mutated)
+                result = deny("persistence_error")
             except (TypeError, ValueError, OverflowError):
-                result = self._denied("invalid_input", phase, safe_attempt)
+                result = deny("invalid_input")
             finally:
                 try:
                     handle.close()
                 except OSError:
-                    result = self._denied("persistence_error", phase, safe_attempt)
-                    result = _replace(result, publication_uncertain=mutated)
+                    result = deny("persistence_error")
             return result
+
+    def _journal_mark(self):
+        return (len(self._events), self._append_uncertain, self._staged)
+
+    def _stage(self, fd, name, data):
+        """Publish a file that replay reads as state before its journal event.
+
+        The file counts as staged once it may be visible, even if the publish raises
+        after the rename (for example a failed directory fsync).
+        """
+        try:
+            _publish(fd, name, data)
+        except OSError:
+            try:
+                visible = name in _entries(fd)
+            except OSError:
+                visible = True
+            if visible:
+                self._staged += 1
+            raise
+        self._staged += 1
 
     def _writable(self, *, allow_fault=False):
         _require(self._opened, "identity_conflict")
@@ -2007,6 +2034,7 @@ class AttemptRecorder:
             marker = _marker(event, self._owner)
             _require(len(_frame(event)) + 2 * len(marker) <= RUN_BYTES - MARKER_BYTES, "quota_refused")
             os.mkdir(run_id, 0o700, dir_fd=handle.fd)
+            self._staged += 1
             with _run_dir(handle, run_id) as fd:
                 self._append_event(handle, fd, event)
                 _publish(fd, "admission", marker)
@@ -2241,7 +2269,9 @@ class AttemptRecorder:
                 _fold(self._events + [event])
                 _inventory(handle)
                 _space(fd, self._context["run_id"], ordinary_delta=2 * len(data) + len(_frame(event)))
-                _publish(fd, "input-manifest.json", data)
+                self._stage(fd, "input-manifest.json", data)
+                # Set before the append: an append that lands and then raises still needs it.
+                # Without a journal event it is never read (see the scope manifest gate).
                 self._input_manifest = _decode_json(data)
                 self._append_event(handle, fd, event)
                 self._checked(handle, fd)
@@ -2455,7 +2485,7 @@ class AttemptRecorder:
                 )
                 _space(fd, self._context["run_id"], marker_delta=len(_frame(event)) + 2 * len(marker))
                 # A pending marker keeps the pre-admitted full envelope even if the later append tears.
-                _publish(fd, "freeze", marker)
+                self._stage(fd, "freeze", marker)
                 self._append_event(handle, fd, event)
                 os.fsync(fd)
                 os.fsync(handle.fd)
@@ -2498,8 +2528,13 @@ def maintain_audit_root(
     Tombstones retain their ordinary metadata bytes plus the 16 KiB marker reserve
     indefinitely. They consume root capacity and can eventually refuse new runs.
     Keeping the known directory avoids publishing an uncommitted final deletion.
+
+    ``publication_uncertain`` is True on a denial once a tombstone publish or a raw
+    unlink was attempted, because a failure inside those calls cannot show that nothing
+    changed. Maintenance is idempotent, so a later call finishes the work.
     """
     handle = None
+    mutated = False
     try:
         _require(callable(monotonic) and callable(utc_now))
         transaction_utc = utc_now()
@@ -2539,6 +2574,7 @@ def maintain_audit_root(
                             dict(disk["metadata"], tombstone=_decode_json(marker)), disk["events"]
                         )
                         _space(fd, run_id, marker_delta=2 * len(marker))
+                        mutated = True
                         _publish(fd, "tombstone", marker)
                         os.fsync(fd)
                     _qualified_prune(handle, fd, run_id)
@@ -2546,6 +2582,7 @@ def maintain_audit_root(
                         if name.startswith("raw-"):
                             _uuid(name[4:])
                             _read_file(fd, name)
+                            mutated = True
                             os.unlink(name, dir_fd=fd)
                     os.fsync(fd)
                     # Only a synced retained-charge marker publishes the shrink.
@@ -2558,14 +2595,19 @@ def maintain_audit_root(
                         ordinary=current["ordinary"],
                     )
                     _space(fd, run_id, marker_delta=len(retained_marker))
+                    mutated = True
                     _publish(fd, "tombstone", retained_marker, replace=True)
                     _qualified_prune(handle, fd, run_id)
             _revalidate(handle)
         result = AuditAcknowledgement(True, None)
     except _Rejected as error:
-        result = AuditAcknowledgement(False, AuditFault(error.code, "maintenance", None))
+        result = AuditAcknowledgement(
+            False, AuditFault(error.code, "maintenance", None), publication_uncertain=mutated
+        )
     except (OSError, ValueError, TypeError, KeyError):
-        result = AuditAcknowledgement(False, AuditFault("persistence_error", "maintenance", None))
+        result = AuditAcknowledgement(
+            False, AuditFault("persistence_error", "maintenance", None), publication_uncertain=mutated
+        )
     finally:
         if isinstance(handle, _RootHandle):
             try:
@@ -2573,6 +2615,7 @@ def maintain_audit_root(
             except OSError:
                 if result.admitted:
                     result = AuditAcknowledgement(
-                        False, AuditFault("persistence_error", "maintenance", None)
+                        False, AuditFault("persistence_error", "maintenance", None),
+                        publication_uncertain=mutated,
                     )
     return result

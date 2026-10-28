@@ -1914,13 +1914,14 @@ def test_uncertain_finish_raises_and_leaves_the_audit_incomplete(setup_owner, mo
     assert not summary.audit_complete and 'persistence_error' in summary.fault_codes
 
 
-def test_an_exception_escaping_the_recorder_is_reported_as_uncertain(setup_owner, monkeypatch):
+@pytest.mark.parametrize('error', [OSError('escaped'), RuntimeError('escaped'), KeyError('escaped')])
+def test_an_exception_escaping_the_recorder_is_reported_as_uncertain(setup_owner, monkeypatch, error):
     owner, root, ctx, _ = setup_owner
     lease = begin(owner)
     lease.entered('entered_api_send')
 
     def failure(*args, **kwargs):
-        raise OSError('escaped')
+        raise error
 
     monkeypatch.setattr(AttemptRecorder, 'settle_acquired', failure)
     monkeypatch.setattr(AttemptRecorder, 'publish_input_manifest', failure)
@@ -1929,3 +1930,30 @@ def test_an_exception_escaping_the_recorder_is_reported_as_uncertain(setup_owner
     assert not raw.admitted and raw.ref is None and raw.observation_id is None
     published = owner.publish_input(manifest(ctx))
     assert published.publication_uncertain is True and not published.admitted
+
+
+@pytest.mark.parametrize('uncertain', [False, True])
+def test_acquire_keeps_the_recorders_uncertainty_flag_on_a_plain_denial(
+    setup_owner, monkeypatch, uncertain
+):
+    from code_forge.invocation_audit import AuditAcknowledgement, AuditFault
+    owner, root, ctx, _ = setup_owner
+    lease = begin(owner)
+    lease.entered('entered_api_send')
+    denial = AuditAcknowledgement(
+        False, AuditFault('persistence_error', 'acquired', lease.attempt_id),
+        publication_uncertain=uncertain,
+    )
+    monkeypatch.setattr(AttemptRecorder, 'settle_acquired', lambda *args, **kwargs: denial)
+    ack = lease.acquired(layer='wire', data=b'{}', complete=True)
+    assert ack.publication_uncertain is uncertain
+    assert not ack.admitted and ack.ref is None and ack.observation_id is None
+    assert ack.fault == denial.fault
+
+
+def test_successful_acquire_is_not_marked_uncertain(setup_owner):
+    owner, root, ctx, _ = setup_owner
+    lease = begin(owner)
+    lease.entered('entered_api_send')
+    ack = lease.acquired(layer='wire', data=b'{}', complete=True)
+    assert ack.admitted and ack.fault is None and ack.publication_uncertain is False

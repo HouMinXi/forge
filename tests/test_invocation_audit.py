@@ -1,5 +1,6 @@
 """Independent expected observations for the local invocation journal."""
 
+import contextlib
 import dataclasses
 import errno
 import hashlib
@@ -6105,7 +6106,10 @@ class _CloseOnce:
 
 
 _FRAME = b'{"model":"observed"}'
-_STAGES = ["open", "manifest", "start", "acquired", "settle_acquired", "observe", "finish", "finalize", "freeze"]
+_STAGES = [
+    "open", "manifest", "start", "acquired", "settle_acquired",
+    "observe", "finish", "finalize", "freeze",
+]
 
 
 def _run_stage(disk_root, closer, stage, *, replay):
@@ -6191,7 +6195,9 @@ def test_close_failure_after_a_mutation_is_publication_uncertain(disk_root, monk
     assert not owner.snapshot().audit_complete
 
 
-@pytest.mark.parametrize("stage", ["manifest", "acquired", "settle_acquired", "observe", "finish", "finalize", "freeze"])
+@pytest.mark.parametrize(
+    "stage", ["manifest", "acquired", "settle_acquired", "observe", "finish", "finalize", "freeze"]
+)
 def test_close_failure_after_a_journal_replay_is_definitely_unpublished(disk_root, monkeypatch, stage):
     closer = _CloseOnce(monkeypatch)
     owner, ack = _run_stage(disk_root, closer, stage, replay=True)
@@ -6361,9 +6367,17 @@ def test_lock_failure_before_the_action_is_definitely_unpublished(recorder, monk
     assert audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs == ()
 
 
-@pytest.mark.parametrize("failure", [audit._Rejected("integrity_error"), ValueError("late")])
-def test_non_os_failure_after_a_mutation_and_failed_close_is_publication_uncertain(
-    recorder, monkeypatch, failure
+_LATE_FAILURES = [
+    (audit._Rejected("integrity_error"), "integrity_error"),
+    (ValueError("late"), "invalid_input"),
+    (OSError(errno.EIO, "late"), "persistence_error"),
+]
+
+
+@pytest.mark.parametrize("close_fails", [False, True])
+@pytest.mark.parametrize(("failure", "code"), _LATE_FAILURES)
+def test_failure_after_a_committed_event_is_publication_uncertain(
+    recorder, monkeypatch, failure, code, close_fails
 ):
     owner, _ = recorder
     attempt = start(owner)
@@ -6382,17 +6396,506 @@ def test_non_os_failure_after_a_mutation_and_failed_close_is_publication_uncerta
     closer = _CloseOnce(monkeypatch)
     monkeypatch.setattr(audit, "_append", append)
     monkeypatch.setattr(audit, "_revalidate", revalidate)
-    closer.arm()
+    if close_fails:
+        closer.arm()
     ack = acquire(owner, attempt, None, data=b"committed")
-    assert closer.fired == 1 and landed
+    assert closer.fired == int(close_fails) and landed
     assert ack.publication_uncertain is True and ack.ref is None and not ack.admitted
+    expected = "persistence_error" if close_fails else code
+    assert ack.fault.code == expected
 
 
-def test_non_os_failure_before_a_mutation_and_failed_close_stays_definite(recorder, monkeypatch):
+@pytest.mark.parametrize("close_fails", [False, True])
+@pytest.mark.parametrize(("failure", "code"), _LATE_FAILURES)
+def test_failure_before_any_mutation_is_definitely_unpublished(
+    recorder, monkeypatch, failure, code, close_fails
+):
+    owner, _ = recorder
+    attempt = start(owner)
+
+    def revalidate(handle):
+        raise failure
+
+    closer = _CloseOnce(monkeypatch)
+    monkeypatch.setattr(audit, "_revalidate", revalidate)
+    if close_fails:
+        closer.arm()
+    ack = acquire(owner, attempt, None, data=b"never committed")
+    monkeypatch.undo()
+    assert closer.fired == int(close_fails)
+    assert ack.publication_uncertain is False and ack.ref is None and not ack.admitted
+    assert audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs == ()
+
+
+def test_invalid_input_before_any_mutation_stays_definite(recorder, monkeypatch):
     owner, _ = recorder
     attempt = start(owner)
     closer = _CloseOnce(monkeypatch)
     closer.arm()
     ack = acquire(owner, attempt, None, data=b"x", layer="not-a-layer")
     assert closer.fired == 1
-    assert ack.publication_uncertain is False and not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is False and not ack.admitted
+    assert ack.fault.code == "persistence_error"
+
+
+def test_lock_timeout_after_the_start_append_is_publication_uncertain(recorder, monkeypatch):
+    owner, clock = recorder
+    original = audit._append
+
+    def append(fd, event):
+        original(fd, event)
+        if event["event"] == "start":
+            clock.value = 1000.0
+
+    monkeypatch.setattr(audit, "_append", append)
+    ack = owner.start(
+        context(), logical_id=LOGICAL, parent_id=None, cause="initial", backend=BACKEND,
+        request_digest=DIGEST, request_bytes=7, action_deadline=100,
+    )
+    assert ack == audit.StartAcknowledgement(
+        False, None, audit.AuditFault("lock_timeout", "start", None), publication_uncertain=True,
+    )
+    assert len(audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts) == 1
+
+
+def test_invalid_input_after_a_committed_observation_is_publication_uncertain(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+    raw = acquire(owner, attempt, None, data=_FRAME)
+    assert raw.admitted and raw.publication_uncertain is False
+    original = audit._append
+    landed = []
+
+    def append(fd, event):
+        original(fd, event)
+        landed.append(event["event"])
+
+    def revalidate(handle):
+        if landed:
+            raise ValueError("late")
+
+    monkeypatch.setattr(audit, "_append", append)
+    monkeypatch.setattr(audit, "_revalidate", revalidate)
+    ack = owner.observe_response(
+        attempt, source_observation_id=raw.observation_id, frame_offset=0, frame_length=len(_FRAME),
+        usage=usage(0, 0, 0, 0), observed_backend=None,
+    )
+    assert landed
+    assert ack.publication_uncertain is True and not ack.admitted
+    assert ack.fault.code == "invalid_input"
+
+
+def _lock_exit_failure(monkeypatch, failure):
+    original = audit._root_lock
+
+    @contextlib.contextmanager
+    def lock(handle, **kwargs):
+        with original(handle, **kwargs):
+            yield
+        raise failure
+
+    monkeypatch.setattr(audit, "_root_lock", lock)
+
+
+@pytest.mark.parametrize(("failure", "code"), _LATE_FAILURES)
+def test_lock_exit_failure_after_a_mutation_is_publication_uncertain(
+    recorder, monkeypatch, failure, code
+):
+    owner, _ = recorder
+    attempt = start(owner)
+    _lock_exit_failure(monkeypatch, failure)
+    ack = acquire(owner, attempt, None, data=b"committed")
+    monkeypatch.undo()
+    assert ack.publication_uncertain is True and ack.ref is None and not ack.admitted
+    assert ack.fault.code == code
+    assert len(audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs) == 1
+
+
+@pytest.mark.parametrize(("failure", "code"), _LATE_FAILURES)
+def test_lock_exit_failure_after_a_no_op_call_is_definite(recorder, monkeypatch, failure, code):
+    owner, _ = recorder
+    _lock_exit_failure(monkeypatch, failure)
+    ack = owner.set_frozen(False)
+    monkeypatch.undo()
+    assert ack.publication_uncertain is False and not ack.admitted and ack.fault.code == code
+
+
+# --- State files staged ahead of their journal event -----------------------------------------
+
+
+def _fail_append_before_writing(monkeypatch, name):
+    original = audit._append
+
+    def append(fd, event):
+        if event["event"] == name:
+            raise OSError(errno.EIO, "before the journal write")
+        return original(fd, event)
+
+    monkeypatch.setattr(audit, "_append", append)
+    return lambda: monkeypatch.setattr(audit, "_append", original)
+
+
+def test_freeze_marker_staged_before_a_failed_append_is_publication_uncertain(recorder, monkeypatch):
+    owner, _ = recorder
+    restore = _fail_append_before_writing(monkeypatch, "freeze")
+    ack = owner.set_frozen(True)
+    assert ack == audit.AuditAcknowledgement(
+        False, audit.AuditFault("persistence_error", "freeze", None), publication_uncertain=True,
+    )
+    assert (owner.root / RUN / "freeze").exists()
+    assert not [e for e in events(owner) if e["event"] == "freeze"]
+    restore()
+    retry = owner.set_frozen(True)
+    assert not retry.admitted and retry.publication_uncertain is False
+    assert retry.fault.code == "integrity_error"
+    assert not audit.AttemptRecorder.reopen(owner.root, RUN).audit_complete
+
+
+def test_input_manifest_staged_before_a_failed_append_is_publication_uncertain(disk_root, monkeypatch):
+    owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
+    assert owner.open().admitted
+    restore = _fail_append_before_writing(monkeypatch, "input_manifest")
+    ack = owner.publish_input_manifest(input_manifest())
+    assert ack == audit.AuditAcknowledgement(
+        False, audit.AuditFault("persistence_error", "start", None), publication_uncertain=True,
+    )
+    assert (owner.root / RUN / "input-manifest.json").exists()
+    assert not [e for e in events(owner) if e["event"] == "input_manifest"]
+    restore()
+    retry = owner.publish_input_manifest(input_manifest())
+    assert not retry.admitted and retry.publication_uncertain is False
+    assert retry.fault.code == "integrity_error"
+    started = owner.start(
+        bound_context(), logical_id=LOGICAL, parent_id=None, cause="initial", backend=BACKEND,
+        request_digest=DIGEST, request_bytes=7, action_deadline=100,
+    )
+    assert not started.admitted and started.attempt_id is None and started.publication_uncertain is False
+
+
+def test_run_directory_created_before_a_failed_append_is_publication_uncertain(disk_root, monkeypatch):
+    owner = audit.AttemptRecorder(disk_root, context=context(), monotonic=Clock(), utc_now=utc)
+    restore = _fail_append_before_writing(monkeypatch, "run_open")
+    ack = owner.open()
+    assert ack == audit.AuditAcknowledgement(
+        False, audit.AuditFault("persistence_error", "open", None), publication_uncertain=True,
+    )
+    assert (owner.root / RUN).is_dir()
+    restore()
+    retry = owner.open()
+    assert not retry.admitted and retry.fault.code == "identity_conflict"
+
+
+def test_run_directory_with_an_empty_journal_is_publication_uncertain(disk_root, monkeypatch):
+    owner = audit.AttemptRecorder(disk_root, context=context(), monotonic=Clock(), utc_now=utc)
+
+    def append(fd, event):
+        # The journal exists but holds no bytes, so the history reads back as empty.
+        os.close(os.open("journal", os.O_WRONLY | os.O_CREAT, 0o600, dir_fd=fd))
+        raise OSError(errno.EIO, "after creating the journal")
+
+    monkeypatch.setattr(audit, "_append", append)
+    ack = owner.open()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is True
+    assert (owner.root / RUN).is_dir()
+
+
+def test_quota_refusal_before_the_run_directory_is_definite(disk_root, monkeypatch):
+    owner = audit.AttemptRecorder(disk_root, context=context(), monotonic=Clock(), utc_now=utc)
+    monkeypatch.setattr(audit, "ROOT_BYTES", audit.RUN_BYTES - 1)
+    ack = owner.open()
+    assert not ack.admitted and ack.fault.code == "quota_refused"
+    assert ack.publication_uncertain is False
+    assert not (owner.root / RUN).exists()
+
+
+def _stage_call(disk_root, name):
+    owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
+    assert owner.open().admitted
+    if name == "freeze":
+        return owner, lambda: owner.set_frozen(True)
+    return owner, lambda: owner.publish_input_manifest(input_manifest())
+
+
+@pytest.mark.parametrize("name", ["freeze", "input-manifest.json"])
+def test_stage_failure_before_the_rename_is_definitely_unpublished(disk_root, monkeypatch, name):
+    owner, call = _stage_call(disk_root, name)
+    original = audit._publish
+
+    def publish(fd, entry, data, **kwargs):
+        if entry == name:
+            raise OSError(errno.EIO, "before the rename")
+        return original(fd, entry, data, **kwargs)
+
+    monkeypatch.setattr(audit, "_publish", publish)
+    ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is False
+    assert not (owner.root / RUN / name).exists()
+
+
+@pytest.mark.parametrize("name", ["freeze", "input-manifest.json"])
+def test_stage_failure_after_the_rename_is_publication_uncertain(disk_root, monkeypatch, name):
+    owner, call = _stage_call(disk_root, name)
+    original = audit._publish
+
+    def publish(fd, entry, data, **kwargs):
+        original(fd, entry, data, **kwargs)
+        if entry == name:
+            raise OSError(errno.EIO, "after the rename")
+
+    monkeypatch.setattr(audit, "_publish", publish)
+    ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is True
+    assert (owner.root / RUN / name).exists()
+
+
+# --- Definite outcomes carry no uncertainty flag ----------------------------------------------
+
+
+def test_every_success_acknowledgement_is_not_uncertain(disk_root):
+    owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
+    acks = [owner.open(), owner.publish_input_manifest(input_manifest())]
+    started = owner.start(
+        bound_context(), logical_id=LOGICAL, parent_id=None, cause="initial", backend=BACKEND,
+        request_digest=DIGEST, request_bytes=7, action_deadline=100,
+    )
+    assert isinstance(started, audit.StartAcknowledgement) and started.attempt_id is not None
+    attempt = started.attempt_id
+    raw = acquire(owner, attempt, None, data=_FRAME, identity=None)
+    settled = owner.settle_acquired(
+        attempt, layer="stdout", data=_FRAME, complete=True, usage=None,
+        dispatch_state="entered_api_send", observation_id=None,
+    )
+    observed = owner.observe_response(
+        attempt, source_observation_id=raw.observation_id, frame_offset=0, frame_length=len(_FRAME),
+        usage=usage(0, 0, 0, 0), observed_backend=None,
+    )
+    acks += [finish(owner, attempt), owner.finalize("completed"), owner.set_frozen(True)]
+    # Replays answered from the journal succeed without writing and are not uncertain either.
+    acks += [
+        owner.publish_input_manifest(input_manifest()),
+        finish(owner, attempt), owner.finalize("completed"), owner.set_frozen(True),
+        owner.set_frozen(True),
+    ]
+    every = acks + [started, raw, settled, observed]
+    assert len(every) == 14
+    assert all(ack.admitted and ack.fault is None for ack in every)
+    assert [ack.publication_uncertain for ack in every] == [False] * 14
+    assert isinstance(raw, audit.AcquiredAcknowledgement) and raw.ref is not None
+
+
+def test_definite_denial_through_start_is_not_uncertain(recorder):
+    owner, _ = recorder
+    refused = owner.start(
+        context(), logical_id=LOGICAL, parent_id=None, cause="not-a-cause", backend=BACKEND,
+        request_digest=DIGEST, request_bytes=7, action_deadline=100,
+    )
+    assert isinstance(refused, audit.StartAcknowledgement)
+    assert not refused.admitted and refused.attempt_id is None and refused.fault is not None
+    assert refused.publication_uncertain is False
+
+
+def test_definite_denial_through_acquired_is_not_uncertain(recorder):
+    owner, _ = recorder
+    attempt = start(owner)
+    bad = acquire(owner, attempt, None, data=b"x", layer="not-a-layer")
+    assert isinstance(bad, audit.AcquiredAcknowledgement)
+    assert not bad.admitted and bad.ref is None and bad.observation_id is None and bad.fault is not None
+    assert bad.publication_uncertain is False
+
+
+def _terminal_root(recorder):
+    owner, _ = recorder
+    attempt = start(owner)
+    assert acquire(owner, attempt, usage(0, 0, 0, 0), data=b"payload" * 100).admitted
+    assert finish(owner, attempt).admitted and owner.finalize("completed").admitted
+    return owner
+
+
+def _later():
+    return "2026-10-14T12:00:00Z"
+
+
+def test_maintenance_success_and_early_denials_are_not_uncertain(recorder, tmp_path):
+    owner = _terminal_root(recorder)
+    ok = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    assert ok == audit.AuditAcknowledgement(True, None) and ok.publication_uncertain is False
+    missing = audit.maintain_audit_root(
+        tmp_path / "absent", monotonic=Clock(), utc_now=_later, action_deadline=100
+    )
+    assert not missing.admitted and missing.publication_uncertain is False
+    bad_clock = audit.maintain_audit_root(
+        owner.root, monotonic=Clock(), utc_now=lambda: "not a time", action_deadline=100
+    )
+    assert not bad_clock.admitted and bad_clock.publication_uncertain is False
+
+
+def test_maintenance_failure_after_pruning_is_publication_uncertain(recorder, monkeypatch):
+    owner = _terminal_root(recorder)
+    original_sync = os.fsync
+    unlinked = []
+    original_unlink = os.unlink
+
+    def unlink(name, *args, **kwargs):
+        unlinked.append(name)
+        return original_unlink(name, *args, **kwargs)
+
+    def fail_removal_sync(fd):
+        if unlinked and os.fstat(fd).st_mode & 0o170000 == 0o040000:
+            raise OSError(errno.EIO, "removal sync")
+        return original_sync(fd)
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(os, "fsync", fail_removal_sync)
+    ack = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    monkeypatch.undo()
+    assert unlinked
+    assert not ack.admitted and ack.fault == audit.AuditFault("persistence_error", "maintenance", None)
+    assert ack.publication_uncertain is True
+
+
+@pytest.mark.parametrize(("failure", "code"), [
+    (audit._Rejected("integrity_error"), "integrity_error"),
+    (OSError(errno.EIO, "x"), "persistence_error"),
+])
+def test_maintenance_failure_after_publishing_a_tombstone_is_uncertain(
+    recorder, monkeypatch, failure, code
+):
+    owner = _terminal_root(recorder)
+    published = []
+    original = audit._publish
+
+    def publish(fd, name, data, **kwargs):
+        original(fd, name, data, **kwargs)
+        published.append(name)
+
+    def prune(handle, fd, run_id):
+        if published:
+            raise failure
+        return original_prune(handle, fd, run_id)
+
+    original_prune = audit._qualified_prune
+    monkeypatch.setattr(audit, "_publish", publish)
+    monkeypatch.setattr(audit, "_qualified_prune", prune)
+    ack = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    monkeypatch.undo()
+    assert published == ["tombstone"]
+    assert not ack.admitted and ack.fault.code == code and ack.publication_uncertain is True
+
+
+def test_maintenance_close_failure_after_pruning_is_publication_uncertain(recorder, monkeypatch):
+    owner = _terminal_root(recorder)
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    ack = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    monkeypatch.undo()
+    assert closer.fired == 1
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is True
+    assert (owner.root / RUN / "tombstone").exists()
+
+
+def test_maintenance_retained_marker_failure_after_a_partial_run_is_uncertain(
+    recorder, monkeypatch
+):
+    owner = _terminal_root(recorder)
+    original_sync = os.fsync
+    original_unlink = os.unlink
+    unlinked = []
+
+    def unlink(name, *args, **kwargs):
+        unlinked.append(name)
+        return original_unlink(name, *args, **kwargs)
+
+    def fail_removal_sync(fd):
+        if unlinked and os.fstat(fd).st_mode & 0o170000 == 0o040000:
+            raise OSError(errno.EIO, "removal sync")
+        return original_sync(fd)
+
+    with monkeypatch.context() as cuts:
+        cuts.setattr(os, "unlink", unlink)
+        cuts.setattr(os, "fsync", fail_removal_sync)
+        first = audit.maintain_audit_root(
+            owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100
+        )
+    assert not first.admitted and unlinked
+    assert not list((owner.root / RUN).glob("raw-*"))
+    original_publish = audit._publish
+
+    def publish(fd, name, data, **kwargs):
+        if kwargs.get("replace"):
+            raise OSError(errno.EIO, "retained marker")
+        return original_publish(fd, name, data, **kwargs)
+
+    monkeypatch.setattr(audit, "_publish", publish)
+    second = audit.maintain_audit_root(
+        owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100
+    )
+    monkeypatch.undo()
+    assert not second.admitted and second.fault.code == "persistence_error"
+    assert second.publication_uncertain is True
+
+
+def test_stage_failure_after_the_rename_with_an_unreadable_directory_is_uncertain(
+    disk_root, monkeypatch
+):
+    owner, call = _stage_call(disk_root, "freeze")
+    original = audit._publish
+    original_entries = audit._entries
+    renamed = []
+
+    def publish(fd, entry, data, **kwargs):
+        original(fd, entry, data, **kwargs)
+        if entry == "freeze":
+            renamed.append(entry)
+            raise OSError(errno.EIO, "after the rename")
+
+    def entries(fd):
+        if renamed:
+            raise OSError(errno.EIO, "listing")
+        return original_entries(fd)
+
+    monkeypatch.setattr(audit, "_publish", publish)
+    monkeypatch.setattr(audit, "_entries", entries)
+    ack = call()
+    monkeypatch.undo()
+    assert renamed and not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is True
+
+
+def test_maintenance_unlink_failure_after_an_earlier_tombstone_is_uncertain(recorder, monkeypatch):
+    owner = _terminal_root(recorder)
+    original_prune = audit._qualified_prune
+    state = {"published": False}
+    original_publish = audit._publish
+
+    def publish(fd, name, data, **kwargs):
+        original_publish(fd, name, data, **kwargs)
+        state["published"] = True
+
+    def prune(handle, fd, run_id):
+        if state["published"]:
+            raise audit._Rejected("integrity_error")
+        return original_prune(handle, fd, run_id)
+
+    with monkeypatch.context() as cuts:
+        cuts.setattr(audit, "_publish", publish)
+        cuts.setattr(audit, "_qualified_prune", prune)
+        first = audit.maintain_audit_root(
+            owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100
+        )
+    assert not first.admitted and state["published"]
+    assert list((owner.root / RUN).glob("raw-*"))
+
+    def unlink(name, *args, **kwargs):
+        raise OSError(errno.EIO, "unlink")
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    second = audit.maintain_audit_root(
+        owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100
+    )
+    monkeypatch.undo()
+    assert not second.admitted and second.fault.code == "persistence_error"
+    assert second.publication_uncertain is True
