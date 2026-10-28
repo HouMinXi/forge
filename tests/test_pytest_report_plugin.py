@@ -35,7 +35,18 @@ def _run_pytest(
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
-        [sys.executable, "-B", "-m", "pytest", "-p", PLUGIN, "-q", "--no-header", "-p", "no:cacheprovider"],
+        [
+            sys.executable,
+            "-B",
+            "-m",
+            "pytest",
+            "-p",
+            PLUGIN,
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+        ],
         cwd=str(suite_dir),
         env=env,
         capture_output=True,
