@@ -273,7 +273,7 @@ class TestReplayStallBreaker:
         assert len(stalls) == 1
         # The reason names the pinned fingerprints, so the reader can see what froze.
         assert "fp-l1-a" in stalls[0] and "fp-l1-b" in stalls[0]
-        assert "no autofix" in stalls[0]
+        assert "no L0 autofix budget" in stalls[0]
         # A stall is not a pass and grants no clean credit.
         assert machine._state.consecutive_clean_rounds == 0
 
@@ -305,10 +305,14 @@ class TestReplayStallBreaker:
         assert not any(e.startswith(self.STALL_DIAGNOSTIC_PREFIX) for e in machine._state.infra_errors)
         assert machine._state.round == 3  # ran every round it was given
 
-    def test_stall_predicate_confirmed_only_budget_and_promotion(self, tmp_path):
-        machine = self._l1_only_machine(tmp_path, [])
-        row = {"dispositions": {"fp-l0": "CONFIRMED", "fp-l1": "CONFIRMED"}, "l0_fingerprints": ["fp-l0"]}
+    @staticmethod
+    def _freeze(machine, dispositions, l0=()):
+        row = {"dispositions": dispositions, "l0_fingerprints": list(l0)}
         machine._state.round_history = [dict(row, round=i) for i in range(3)]
+
+    def test_confirmed_only_stall_respects_l0_budget_and_promotion(self, tmp_path):
+        machine = self._l1_only_machine(tmp_path, [])
+        self._freeze(machine, {"fp-l0": "CONFIRMED", "fp-l1": "CONFIRMED"}, l0=["fp-l0"])
         machine.max_fix_attempts = 3
 
         # Budget left on the L0 finding: autofix can still change something.
@@ -318,22 +322,76 @@ class TestReplayStallBreaker:
         machine._state.fix_attempts = {"fp-l0": 3}
         assert not machine._stalled_on_identical_round()
         # Budget spent and promoted: nothing left to change.
-        machine._state.promoted_fingerprints = ["fp-l0"]
+        machine._state.promoted_fingerprints = {"fp-l0"}
         assert machine._stalled_on_identical_round()
 
-    def test_stall_predicate_ignores_clean_and_changing_maps(self, tmp_path):
+    def test_changed_or_empty_maps_are_not_a_stall(self, tmp_path):
         machine = self._l1_only_machine(tmp_path, [])
-        same = {"dispositions": {"fp-l1": "CONFIRMED"}, "l0_fingerprints": []}
-        machine._state.round_history = [dict(same, round=i) for i in range(3)]
+        same = {"fp-l1": "CONFIRMED"}
+        self._freeze(machine, same)
         assert machine._stalled_on_identical_round()
-        machine._state.round_history[1] = {
-            "round": 1,
-            "dispositions": {"fp-l1": "DISMISSED"},
-            "l0_fingerprints": [],
-        }
+
+        # A change in any of the three rounds breaks the freeze, round 0 included.
+        for changed_round in (0, 1, 2):
+            self._freeze(machine, same)
+            machine._state.round_history[changed_round]["dispositions"] = {"fp-l1": "DISMISSED"}
+            assert not machine._stalled_on_identical_round(), changed_round
+
+        self._freeze(machine, {})
         assert not machine._stalled_on_identical_round()
-        machine._state.round_history = [dict(same, round=i, dispositions={}) for i in range(3)]
-        assert not machine._stalled_on_identical_round()
+
+    def test_frozen_map_without_confirmed_is_not_a_stall(self, tmp_path):
+        """The `CONFIRMED not in values` branch: frozen but nothing pinned."""
+        machine = self._l1_only_machine(tmp_path, [])
+        for frozen in (
+            {"fp-a": "DISMISSED"},
+            {"fp-a": "FIXED"},
+            {"fp-a": "FIXED", "fp-b": "DISMISSED"},
+        ):
+            self._freeze(machine, frozen)
+            assert not machine._stalled_on_identical_round(), frozen
+            # Same map with round 0 differing is not a stall either.
+            machine._state.round_history[0]["dispositions"] = {"fp-z": "DISMISSED"}
+            assert not machine._stalled_on_identical_round(), frozen
+
+    def test_stall_reason_lists_only_confirmed_fingerprints(self, tmp_path):
+        machine = self._l1_only_machine(tmp_path, [])
+        self._freeze(
+            machine,
+            {
+                "fp-l1-a": "CONFIRMED",
+                "fp-l1-b": "CONFIRMED",
+                "fp-fixed": "FIXED",
+                "fp-dismissed": "DISMISSED",
+                "mutation-flaky": "DISMISSED",
+            },
+        )
+        assert machine._stalled_on_identical_round()
+        reason = machine._stall_reason()
+        assert reason.startswith(self.STALL_DIAGNOSTIC_PREFIX)
+        assert reason.endswith(": fp-l1-a, fp-l1-b")
+        for other in ("fp-fixed", "fp-dismissed", "mutation-flaky"):
+            assert other not in reason
+
+    def test_stall_reason_caps_the_fingerprint_list(self, tmp_path):
+        machine = self._l1_only_machine(tmp_path, [])
+        self._freeze(machine, {"fp-%02d" % i: "CONFIRMED" for i in range(14)})
+        reason = machine._stall_reason()
+        assert reason.endswith("fp-09 (+4 more)")
+        assert "fp-10" not in reason
+        assert len(reason) < 300
+
+    def test_repeating_l0_autofix_success_beside_pinned_l1_still_stalls(self, tmp_path):
+        """An L0 finding that is FIXED every round does not hold off the stall.
+
+        The predicate only asks whether an unpromoted CONFIRMED L0 finding can
+        still change the map. A FIXED one is not CONFIRMED, so a CONFIRMED L1
+        finding beside it ends the run at round three.
+        """
+        machine = self._l1_only_machine(tmp_path, [])
+        self._freeze(machine, {"fp-l1-a": "CONFIRMED", "fp-l0": "FIXED"}, l0=["fp-l0"])
+        assert machine._stalled_on_identical_round()
+        assert machine._stall_reason().endswith(": fp-l1-a")
 
     def test_clean_rounds_are_not_a_stall(self, tmp_path):
         def mock_l0(registry, files):

@@ -3996,7 +3996,7 @@ class StateMachine:
           CONFIRMED L0 finding that still has fix budget, or whose budget is
           spent but not yet promoted, can still move the map and is left
           alone. CONFIRMED findings from any other layer get no autofix and
-          no promotion; repeating the round on the same source cannot change
+          no promotion; repeating the round cannot change
           them.
 
         Three rounds is two confirmations of the freeze.
@@ -4012,7 +4012,8 @@ class StateMachine:
             return item.value if isinstance(item, Disposition) else item
 
         confirmed = (Disposition.CONFIRMED, Disposition.CONFIRMED.value)
-        l0_confirmed = [fp for fp in history[-1].get("l0_fingerprints", []) if maps[-1].get(fp) in confirmed]
+        l0_fingerprints = history[-1].get("l0_fingerprints", [])
+        l0_confirmed = [fp for fp in l0_fingerprints if maps[-1].get(fp) in confirmed]
 
         # An exhausted L0 fix budget is promoted on the next round.
         # Let that pending state transition run before declaring a stall.
@@ -4029,27 +4030,31 @@ class StateMachine:
             return False
         if Disposition.UNCERTAIN.value in values:
             return True
-        # CONFIRMED only: stalled unless an L0 finding can still spend autofix budget.
-        budget_left = any(
-            self._state.fix_attempts.get(fp, 0) < self.max_fix_attempts
-            and fp not in self._state.promoted_fingerprints
-            for fp in l0_confirmed
-        )
+        # CONFIRMED only. Past the pending_promotion guard every unpromoted L0
+        # finding still has fix budget, so "not promoted" is the whole test.
+        budget_left = any(fp not in self._state.promoted_fingerprints for fp in l0_confirmed)
         return not budget_left
+
+    # Longest fingerprint list a stall reason spells out; the rest is counted.
+    _STALL_REASON_MAX_FINGERPRINTS = 10
 
     def _stall_reason(self) -> str:
         """Diagnostic for a stall: names what froze, so the reader need not open state.json."""
         base = "review stalled: identical disposition maps for 3 consecutive rounds"
-        last = (self._product_history()[-1].get("dispositions") or {}) if self._product_history() else {}
+        history = self._product_history()
+        last = (history[-1].get("dispositions") or {}) if history else {}
         values = {fp: (v.value if isinstance(v, Disposition) else v) for fp, v in last.items()}
         if Disposition.UNCERTAIN.value in values.values():
             return base + " (response cache in the path, or genuinely deterministic findings)"
         pinned = sorted(fp for fp, v in values.items() if v == Disposition.CONFIRMED.value)
+        shown = pinned[: self._STALL_REASON_MAX_FINGERPRINTS]
+        extra = len(pinned) - len(shown)
+        listing = ", ".join(shown) + (" (+%d more)" % extra if extra else "")
         return (
             base
-            + " (CONFIRMED findings unchanged on unchanged source, and no autofix budget or "
-            + "promotion left to change them): "
-            + ", ".join(pinned)
+            + " (CONFIRMED findings repeated identically, and no L0 autofix budget or "
+            + "pending promotion is left to change them): "
+            + listing
         )
 
     def _finalize_local_terminal(self) -> None:
