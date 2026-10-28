@@ -429,6 +429,77 @@ def _await_ctime_tick(*paths):
             os.fchmod(probe.fileno(), 0o600)
 
 
+def _walk_through_move_and_restore(tmp_path, kind, *, wait_for_tick):
+    """Move a directory or file away and back while the walk is suspended.
+
+    Returns (status.complete, ctimes before the move, ctimes after it). The
+    ctimes cover the moved path and the root directory, which are the two
+    stamps the walk compares.
+    """
+    from code_forge import conventions
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "api.py").write_text("def Selected(): pass\n")
+    target = root if kind == "dir" else root / "api.py"
+    root_fd = conventions._open_scan_root(root)
+    assert root_fd is not None
+    status = conventions._ScanStatus()
+    try:
+        walk = conventions._walk_source(root, root, root_fd, status)
+        assert "api.py" in next(walk)[2]
+
+        def ctimes():
+            return os.stat(target).st_ctime_ns, os.stat(root).st_ctime_ns
+
+        if wait_for_tick:
+            _await_ctime_tick(root, root / "api.py")
+        before = ctimes()
+        if kind == "dir":
+            root.rename(tmp_path / "parked")
+            (tmp_path / "parked").rename(root)
+        else:
+            target.rename(root / "api.saved")
+            (root / "api.saved").rename(target)
+        after = ctimes()
+        list(walk)
+    finally:
+        os.close(root_fd)
+    return status.complete, before, after
+
+
+class TestWalkCtimeTickLimit:
+    """#197: the walk cannot see a move-and-restore inside one ctime tick."""
+
+    @pytest.mark.parametrize("kind", ["dir", "file"])
+    def test_move_and_restore_after_a_tick_is_detected(self, tmp_path, kind):
+        complete, before, after = _walk_through_move_and_restore(
+            tmp_path, kind, wait_for_tick=True
+        )
+
+        assert after != before
+        assert complete is False
+
+    @pytest.mark.parametrize("kind", ["dir", "file"])
+    def test_move_and_restore_inside_one_tick_is_not_detected(self, tmp_path, kind):
+        # Whether a pair of renames lands in one tick is up to the clock, so
+        # each attempt checks the outcome that follows from what it measured:
+        # unchanged ctimes mean the walk reports complete, changed ctimes mean
+        # it reports incomplete. The limit must show up at least once; on a
+        # kernel with fine-grained ctimes it never does and the test skips.
+        unseen = 0
+        for attempt in range(100):
+            attempt_dir = tmp_path / str(attempt)
+            attempt_dir.mkdir()
+            complete, before, after = _walk_through_move_and_restore(
+                attempt_dir, kind, wait_for_tick=False
+            )
+            assert complete is (after == before)
+            unseen += after == before
+        if not unseen:
+            pytest.skip("this kernel stamps ctime finely enough to see every move")
+
+
 class TestExtractPythonPublicNames:
     def test_walk_rejects_root_move_restore_during_yield(self, tmp_path):
         from code_forge import conventions

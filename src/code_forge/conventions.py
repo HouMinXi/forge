@@ -56,6 +56,12 @@ def _file_stamp(info: os.stat_result) -> _FileStamp:
 
 
 def _directory_stamp(info: os.stat_result) -> _DirectoryStamp:
+    """Identify a directory by device, inode and ctime.
+
+    Known limit (#197): the kernel stamps ctime from a coarse clock, about one
+    tick (1-4 ms). Moving a directory away and back inside the same tick
+    leaves this stamp unchanged, so that swap cannot be seen here.
+    """
     return info.st_dev, info.st_ino, info.st_ctime_ns
 
 
@@ -480,7 +486,20 @@ def _walk_source(
     root: Path, scan_root: Path, scan_root_fd: Optional[int],
     scan_status: Optional[_ScanStatus],
 ):
-    """Walk the selected directory by descriptor when a bound root is available."""
+    """Walk the selected directory by descriptor when a bound root is available.
+
+    With a bound root, the walk compares directory and file stamps taken before
+    and after each yield and marks the scan incomplete when they differ.
+
+    Known limit (#197): both stamps include ctime, which the kernel takes from a
+    coarse clock (about one tick, 1-4 ms). A directory or file that is moved
+    away and back within one tick, with nothing else changed, has the same
+    stamp afterwards, so the scan still reports complete (a moved file's parent
+    directory has the same limit). The tests wait for a
+    tick before injecting a move (``_await_ctime_tick`` in
+    tests/test_conventions.py). Closing the gap needs a mechanism that does not
+    depend on the clock; see #197.
+    """
     onerror = scan_status.fail if scan_status is not None else None
     if scan_root_fd is None:
         yield from os.walk(str(root), onerror=onerror)
