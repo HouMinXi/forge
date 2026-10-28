@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Run ruff on the Python files a change touches, not on the whole tree (#105).
+
+The repository is not ruff-clean, so a repo-wide ruff run cannot gate
+anything. This script lints only the files a pull request adds, copies,
+modifies or renames, using ``ruff check`` and ``ruff format --check`` with the
+repository's own configuration. Deleted files are never passed to ruff, and
+an empty selection exits 0 without calling ruff, because ``ruff check`` with
+no paths lints the current directory.
+
+Usage::
+
+    python scripts/lint_changed.py --base origin/main
+    python scripts/lint_changed.py --print-requirement
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+from typing import Callable, Sequence
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+_PYTHON_SUFFIXES = (".py", ".pyi")
+# Added, copied, modified, renamed. Deleted (D) and type-changed (T) paths are
+# excluded: a deleted file cannot be linted and a symlink swap is not source.
+_DIFF_FILTER = "ACMR"
+
+Runner = Callable[[Sequence[str]], int]
+
+
+def ruff_requirement(pyproject: Path) -> str:
+    """Return the exact ``ruff==X.Y.Z`` requirement from the dev extra."""
+    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    pins = [
+        requirement
+        for requirement in data["project"]["optional-dependencies"]["dev"]
+        if requirement.startswith("ruff==")
+    ]
+    if len(pins) != 1:
+        raise SystemExit(f"expected exactly one 'ruff==' pin in the dev extra, found {pins!r}")
+    return pins[0]
+
+
+def changed_python_files(base: str, head: str = "HEAD", *, cwd: Path = REPO_ROOT) -> list[str]:
+    """List Python files changed between the merge base of ``base`` and ``head``."""
+    output = subprocess.run(
+        ["git", "diff", "--name-only", "-z", f"--diff-filter={_DIFF_FILTER}", f"{base}...{head}"],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    ).stdout
+    names = [name.decode("utf-8", "surrogateescape") for name in output.split(b"\0") if name]
+    return sorted(name for name in names if name.endswith(_PYTHON_SUFFIXES))
+
+
+def _subprocess_runner(command: Sequence[str]) -> int:
+    return subprocess.run(command, cwd=REPO_ROOT, check=False).returncode
+
+
+def run_ruff(files: Sequence[str], runner: Runner = _subprocess_runner) -> int:
+    """Run both ruff checks on ``files``; return non-zero if either fails."""
+    if not files:
+        print("lint_changed: no changed Python files; nothing to lint")
+        return 0
+    status = 0
+    for subcommand in (["check"], ["format", "--check"]):
+        # --force-exclude keeps the [tool.ruff] exclude list in force for paths
+        # given explicitly, which ruff would otherwise lint anyway.
+        command = [sys.executable, "-m", "ruff", *subcommand, "--force-exclude", "--", *files]
+        status = runner(command) or status
+    return status
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--base", help="git ref to diff against, e.g. origin/main")
+    group.add_argument(
+        "--print-requirement", action="store_true", help="print the pinned ruff requirement"
+    )
+    args = parser.parse_args(argv)
+    if args.print_requirement:
+        print(ruff_requirement(REPO_ROOT / "pyproject.toml"))
+        return 0
+    return run_ruff(changed_python_files(args.base))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

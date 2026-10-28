@@ -661,6 +661,9 @@ A backward-compatible symlink at `test-library/` points to
 
 Issues and discussion: <https://github.com/HouMinXi/forge/issues>.
 
+Lint is diff-scoped because the baseline is not ruff-clean; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 Apache-2.0
