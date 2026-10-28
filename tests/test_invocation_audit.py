@@ -7149,6 +7149,29 @@ def test_stage_rejected_after_the_temp_write_is_publication_uncertain(disk_root,
     assert ack.publication_uncertain is True
 
 
+@pytest.mark.parametrize("stem", ["freeze", "input-manifest.json", "raw-"])
+def test_stage_with_both_listings_rejected_is_publication_uncertain(disk_root, monkeypatch, stem):
+    # The check inside `_publish` rejects once the temp file exists, and so does the listing that
+    # `_stage` runs afterwards. `_stage` cannot tell what is visible, so it counts the file as staged.
+    owner, call = _stage_target(disk_root, stem)
+    original = audit._entries
+    rejected = []
+
+    def entries(fd):
+        listing = original(fd)
+        if any(e.startswith("temp-" + stem) for e in listing):
+            rejected.append(listing)
+            raise audit._Rejected("integrity_error")
+        return listing
+
+    monkeypatch.setattr(audit, "_entries", entries)
+    ack = call()
+    monkeypatch.undo()
+    assert len(rejected) >= 2  # the publish check, the stage listing, and any later check
+    assert not ack.admitted and ack.fault.code == "integrity_error"
+    assert _run_entries(owner, "temp-" + stem) and not _run_entries(owner, stem)
+    assert ack.publication_uncertain is True
+
 
 @pytest.mark.parametrize("name", ["freeze", "input-manifest.json", "raw-" + RUN])
 def test_stage_counts_only_its_own_temp_files(recorder, monkeypatch, name):
