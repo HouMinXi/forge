@@ -416,6 +416,47 @@ def test_remove_cgroup_force_rewrites_kill(tmp_path, monkeypatch):
     assert force_writes > len(writes) > 0
 
 
+def test_remove_cgroup_absent_directory_is_immediate_success(tmp_path, monkeypatch):
+    """An already-removed run cgroup is a successful removal, not a 10 s retry loop.
+
+    A failed start removes the cgroup once and the later teardown tries again;
+    the second attempt must not wait out the deadline on a directory that is gone.
+    """
+    import code_forge.mutation_engines.isolate as iso
+
+    sleeps = []
+    monkeypatch.setattr(iso.time, "sleep", sleeps.append)
+
+    sup = object.__new__(iso.Supervisor)
+    sup.cgroup_path = str(tmp_path / "never-created")
+
+    sup._remove_cgroup(force=True)
+    sup._remove_cgroup(force=False)
+    assert sleeps == []
+
+
+def test_remove_cgroup_other_errors_are_still_retried(tmp_path, monkeypatch):
+    """A busy directory keeps the retry-until-deadline behaviour."""
+    import code_forge.mutation_engines.isolate as iso
+
+    cgroup = tmp_path / "cg"
+    cgroup.mkdir()
+    (cgroup / "busy").write_text("x")  # rmdir fails with ENOTEMPTY
+    sleeps = []
+    monkeypatch.setattr(iso.time, "sleep", sleeps.append)
+
+    def fast_clock():
+        fast_clock.now += 2.0
+        return fast_clock.now
+
+    fast_clock.now = 0.0
+    monkeypatch.setattr(iso.time, "monotonic", fast_clock)
+    sup = object.__new__(iso.Supervisor)
+    sup.cgroup_path = str(cgroup)
+    sup._remove_cgroup()
+    assert sleeps
+
+
 @requires_isolation
 def test_sandbox_has_dev_null_and_proc(tmp_path):
     """pytest capture and getpid need /dev/null and /proc inside the sandbox.

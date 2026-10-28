@@ -358,6 +358,10 @@ class Supervisor:
             try:
                 os.rmdir(self.cgroup_path)
                 return
+            except FileNotFoundError:
+                # Already removed (a failed start cleans up once and the later
+                # teardown asks again): absence is a successful removal.
+                return
             except OSError:
                 if force and os.path.exists(kill_file):
                     # keep killing stragglers between rmdir retries
