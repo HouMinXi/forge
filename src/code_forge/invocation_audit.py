@@ -215,11 +215,22 @@ _EXTRA = {
     },
     "acquired": {"attempt_id", "observation_id", "layer", "ref", "complete", "usage"},
     "settled_acquired": {
-        "attempt_id", "observation_id", "layer", "ref", "complete", "usage", "dispatch_state",
+        "attempt_id",
+        "observation_id",
+        "layer",
+        "ref",
+        "complete",
+        "usage",
+        "dispatch_state",
     },
     "response_observed": {
-        "attempt_id", "observation_id", "source_observation_id", "frame_offset", "frame_length",
-        "usage", "observed_backend",
+        "attempt_id",
+        "observation_id",
+        "source_observation_id",
+        "frame_offset",
+        "frame_length",
+        "usage",
+        "observed_backend",
     },
     "input_manifest": {"sha256", "bytes", "source_hash", "snapshot_id"},
     "finish": {"attempt_id", "outcome", "error_class", "duration_s", "dispatch_state"},
@@ -393,10 +404,20 @@ def _immutable(value):
 
 
 def _manifest(value, context):
-    _closed(value, (
-        "schema_version", "run_id", "snapshot_id", "mode", "legacy_source_hash",
-        "exact_diff_sha256", "diff_bytes", "files", "repositories",
-    ))
+    _closed(
+        value,
+        (
+            "schema_version",
+            "run_id",
+            "snapshot_id",
+            "mode",
+            "legacy_source_hash",
+            "exact_diff_sha256",
+            "diff_bytes",
+            "files",
+            "repositories",
+        ),
+    )
     _require(type(value["schema_version"]) is int and value["schema_version"] == 1)
     _require(context["source_hash"] is not None)
     _uuid(value["run_id"])
@@ -415,8 +436,11 @@ def _manifest(value, context):
         _closed(row, ("path", "sha256", "bytes"))
         path = row["path"]
         _require(
-            type(path) is str and 0 < len(path.encode("utf-8")) <= 1024
-            and not path.startswith("/") and "\\" not in path and "\0" not in path
+            type(path) is str
+            and 0 < len(path.encode("utf-8")) <= 1024
+            and not path.startswith("/")
+            and "\\" not in path
+            and "\0" not in path
             and all(part not in ("", ".", "..") for part in path.split("/"))
         )
         _hash(row["sha256"])
@@ -457,8 +481,10 @@ def _manifest_contents(fd, events):
     value = _decode_json(data)
     encoded = _manifest(value, events[0]["context"])
     _require(
-        data == encoded and len(data) == event["bytes"]
-        and hashlib.sha256(data).hexdigest() == event["sha256"], "integrity_error",
+        data == encoded
+        and len(data) == event["bytes"]
+        and hashlib.sha256(data).hexdigest() == event["sha256"],
+        "integrity_error",
     )
     return value
 
@@ -469,8 +495,10 @@ def _response_projection(event, attempts, observations):
     attempt = _admit_acquired(event["attempt_id"], attempts, code="integrity_error")
     raw = observations.get(event["source_observation_id"])
     _require(
-        raw is not None and raw["event"] in ("acquired", "settled_acquired")
-        and raw["attempt_id"] == event["attempt_id"] and raw["layer"] in ("wire", "stdout"),
+        raw is not None
+        and raw["event"] in ("acquired", "settled_acquired")
+        and raw["attempt_id"] == event["attempt_id"]
+        and raw["layer"] in ("wire", "stdout"),
         "integrity_error",
     )
     offset = _number(event["frame_offset"], integer=True)
@@ -665,7 +693,9 @@ def _frame(event):
 
 
 def _owner():
-    fields_ = Path("/proc/self/stat").read_text(encoding="utf-8", errors="replace").rsplit(") ", 1)[1].split()
+    fields_ = (
+        Path("/proc/self/stat").read_text(encoding="utf-8", errors="replace").rsplit(") ", 1)[1].split()
+    )
     return {"pid": os.getpid(), "start_ticks": fields_[19], "owner_id": str(uuid.uuid4())}
 
 
@@ -1091,7 +1121,8 @@ def _disk_run(fd, run_id):
     _number(committed_ordinary, integer=True)
     _require(committed_ordinary <= RUN_BYTES - MARKER_BYTES, "integrity_error")
     referenced = {
-        "raw-" + e["ref"]["artifact_id"] for e in events
+        "raw-" + e["ref"]["artifact_id"]
+        for e in events
         if e["event"] in ("acquired", "settled_acquired")
     }
     orphan_raw |= "input-manifest.json" in names and _manifest_event(events) is None
@@ -1135,7 +1166,8 @@ def _raw_contents(fd, disk):
                 "integrity_error",
             )
     observations = {
-        event["observation_id"]: event for event in disk["events"]
+        event["observation_id"]: event
+        for event in disk["events"]
         if event["event"] in ("acquired", "settled_acquired")
     }
     for event in disk["events"]:
@@ -1480,7 +1512,8 @@ def _fold(events):
             _require(0 < _number(event["bytes"], integer=True) <= BODY_BYTES, "integrity_error")
             _require(
                 event["source_hash"] == opened["context"]["source_hash"] is not None
-                and event["snapshot_id"] == opened["context"]["snapshot_id"], "integrity_error",
+                and event["snapshot_id"] == opened["context"]["snapshot_id"],
+                "integrity_error",
             )
             manifest = event
         elif kind == "finish":
@@ -1494,7 +1527,8 @@ def _fold(events):
             observed = attempt["dispatch_observed"]
             _require(
                 observed not in ("entered_api_send", "entered_cli_launch")
-                or event["dispatch_state"] == observed, "integrity_error",
+                or event["dispatch_state"] == observed,
+                "integrity_error",
             )
             attempt["finish"] = event
         elif kind == "run_final":
@@ -1551,7 +1585,9 @@ def _summary(run_id, context, events, faults, state, complete, *, selected=None)
     if selected is not None:
         attempts = {identity: value for identity, value in attempts.items() if identity in selected}
         logical = {a["start"]["logical_id"] for a in attempts.values()}
-        observations = {identity: e for identity, e in observations.items() if e["attempt_id"] in attempts}
+        observations = {
+            identity: e for identity, e in observations.items() if e["attempt_id"] in attempts
+        }
     wall = None
     if terminal:
         opened_elapsed = events[0]["elapsed_s"]
@@ -1641,7 +1677,8 @@ def _scope(value):
     if value is None:
         return {}
     _require(
-        type(value) is dict and all(type(key) is str for key in value)
+        type(value) is dict
+        and all(type(key) is str for key in value)
         and set(value) <= {"round_index", "pass_name", "group_id", "purpose"}
     )
     for key, item in value.items():
@@ -1670,7 +1707,8 @@ def _scoped_projection(context, events, faults, state, complete, manifest, scope
         complete = False
     identity = context["run_id"] if context else run_id
     selected = {
-        key for key, attempt in attempts.items()
+        key
+        for key, attempt in attempts.items()
         if all(attempt["start"]["context"][name] == value for name, value in selector.items())
     }
     projections = []
@@ -1684,31 +1722,52 @@ def _scoped_projection(context, events, faults, state, complete, manifest, scope
             usage = response["usage"]
             if usage is not None:
                 usage = dict(usage, native_usage=_immutable(usage["native_usage"]))
-            response_rows.append(ResponseProjection(
-                response["observation_id"], response["source_observation_id"],
-                response["frame_offset"], response["frame_length"],
-                UsageObservation(**usage) if usage is not None else None,
-                BackendObservation(**response["observed_backend"])
-                if response["observed_backend"] is not None else None,
-            ))
+            response_rows.append(
+                ResponseProjection(
+                    response["observation_id"],
+                    response["source_observation_id"],
+                    response["frame_offset"],
+                    response["frame_length"],
+                    UsageObservation(**usage) if usage is not None else None,
+                    BackendObservation(**response["observed_backend"])
+                    if response["observed_backend"] is not None
+                    else None,
+                )
+            )
         refs = tuple(
             RawRef(**{f.name: event["ref"][f.name] for f in fields(RawRef)})
             for event in observations.values()
             if event["attempt_id"] == key and event["event"] in ("acquired", "settled_acquired")
         )
         summary = _summary(identity, context, events, faults, state, complete, selected={key})
-        projections.append(AttemptProjection(
-            key, start["logical_id"], start["parent_id"], start["cause"],
-            InvocationContext(**start["context"]), BackendObservation(**start["backend"]),
-            tuple(response_rows), refs, end["outcome"] if end else "unknown",
-            end["dispatch_state"] if end else attempt["dispatch_observed"] or "unknown",
-            end["duration_s"] if end else None, _immutable(summary["usage"]),
-        ))
+        projections.append(
+            AttemptProjection(
+                key,
+                start["logical_id"],
+                start["parent_id"],
+                start["cause"],
+                InvocationContext(**start["context"]),
+                BackendObservation(**start["backend"]),
+                tuple(response_rows),
+                refs,
+                end["outcome"] if end else "unknown",
+                end["dispatch_state"] if end else attempt["dispatch_observed"] or "unknown",
+                end["duration_s"] if end else None,
+                _immutable(summary["usage"]),
+            )
+        )
     final_state = state if complete else "incomplete"
     summary = _summary(identity, context, events, faults, final_state, complete, selected=selected)
     return ScopedInvocationSnapshot(
-        1, identity, final_state, complete, tuple(faults), _immutable(selector), tuple(projections),
-        _immutable(summary), _immutable(manifest) if manifest is not None else None,
+        1,
+        identity,
+        final_state,
+        complete,
+        tuple(faults),
+        _immutable(selector),
+        tuple(projections),
+        _immutable(summary),
+        _immutable(manifest) if manifest is not None else None,
     )
 
 
@@ -1868,7 +1927,8 @@ class AttemptRecorder:
             try:
                 prior = b"".join(_frame(value) for value in self._events)
                 observed = self._journal_history(
-                    handle, fd,
+                    handle,
+                    fd,
                     ((prior, self._events), (prior + _frame(event), self._events + [event])),
                 )
                 self._events = observed
@@ -2002,15 +2062,23 @@ class AttemptRecorder:
         _require(not self._append_uncertain, "integrity_error")
         _revalidate(handle)
         disk = _qualified_run(
-            handle, fd, self._context["run_id"], settlement=(allow_orphans or allow_response_faults) and not self._complete,
+            handle,
+            fd,
+            self._context["run_id"],
+            settlement=(allow_orphans or allow_response_faults) and not self._complete,
         )
         _require(not self._closed or disk["terminal"], "integrity_error")
         _require(
             disk["events"] == self._events
             and (
-                not disk["torn"] or (allow_orphans and not self._complete and disk["settleable"])
-                or (allow_response_faults and not self._complete and disk["storage_settleable"]
-                    and _native_usage_fault(self._events))
+                not disk["torn"]
+                or (allow_orphans and not self._complete and disk["settleable"])
+                or (
+                    allow_response_faults
+                    and not self._complete
+                    and disk["storage_settleable"]
+                    and _native_usage_fault(self._events)
+                )
             ),
             "integrity_error",
         )
@@ -2099,8 +2167,10 @@ class AttemptRecorder:
             )
             with _run_dir(handle, self._context["run_id"]) as fd:
                 self._checked(handle, fd)
-                _require(self._context["source_hash"] is None or _manifest_event(self._events) is not None,
-                         "integrity_error")
+                _require(
+                    self._context["source_hash"] is None or _manifest_event(self._events) is not None,
+                    "integrity_error",
+                )
                 _inventory(handle)
                 _space(fd, self._context["run_id"], ordinary_delta=len(_frame(event)))
                 self._append_event(handle, fd, event)
@@ -2128,7 +2198,11 @@ class AttemptRecorder:
         observation_id: str | None = None,
     ) -> AcquiredAcknowledgement:
         return self._capture(
-            attempt_id, layer=layer, data=data, complete=complete, usage=usage,
+            attempt_id,
+            layer=layer,
+            data=data,
+            complete=complete,
+            usage=usage,
             observation_id=observation_id,
         )
 
@@ -2144,8 +2218,14 @@ class AttemptRecorder:
         observation_id: str | None = None,
     ) -> AcquiredAcknowledgement:
         return self._capture(
-            attempt_id, layer=layer, data=data, complete=complete, usage=usage,
-            observation_id=observation_id, settlement=dispatch_state, settling=True,
+            attempt_id,
+            layer=layer,
+            data=data,
+            complete=complete,
+            usage=usage,
+            observation_id=observation_id,
+            settlement=dispatch_state,
+            settling=True,
         )
 
     def _capture(
@@ -2164,8 +2244,10 @@ class AttemptRecorder:
             self._writable(allow_fault=settling)
             if settling:
                 _vocabulary(settlement, _DISPATCH - {"not_dispatched"})
-                _require(not any(f.code in ("identity_conflict", "integrity_error") for f in self._faults),
-                         "integrity_error")
+                _require(
+                    not any(f.code in ("identity_conflict", "integrity_error") for f in self._faults),
+                    "integrity_error",
+                )
             kind = "settled_acquired" if settling else "acquired"
             _uuid(attempt_id)
             _vocabulary(layer, _LAYERS)
@@ -2180,8 +2262,10 @@ class AttemptRecorder:
                     previous is not None and previous["attempt_id"] == attempt_id, "identity_conflict"
                 )
                 _require(previous["event"] == kind, "identity_conflict")
-                _require(kind != "settled_acquired" or previous["dispatch_state"] == settlement,
-                         "integrity_error")
+                _require(
+                    kind != "settled_acquired" or previous["dispatch_state"] == settlement,
+                    "integrity_error",
+                )
                 ref = previous["ref"]
                 same = (
                     previous["layer"] == layer
@@ -2263,13 +2347,18 @@ class AttemptRecorder:
             with _run_dir(handle, self._context["run_id"]) as fd:
                 self._checked(handle, fd)
                 if previous is not None:
-                    _require(_read_file(fd, "input-manifest.json", BODY_BYTES) == data, "identity_conflict")
+                    _require(
+                        _read_file(fd, "input-manifest.json", BODY_BYTES) == data, "identity_conflict"
+                    )
                     return AuditAcknowledgement(True, None)
                 self._writable()
                 _require(not any(e["event"] == "start" for e in self._events), "identity_conflict")
                 event = self._event(
-                    "input_manifest", sha256=hashlib.sha256(data).hexdigest(), bytes=len(data),
-                    source_hash=self._context["source_hash"], snapshot_id=self._context["snapshot_id"],
+                    "input_manifest",
+                    sha256=hashlib.sha256(data).hexdigest(),
+                    bytes=len(data),
+                    source_hash=self._context["source_hash"],
+                    snapshot_id=self._context["snapshot_id"],
                 )
                 _fold(self._events + [event])
                 _inventory(handle)
@@ -2298,8 +2387,10 @@ class AttemptRecorder:
     ) -> AuditAcknowledgement:
         def action(handle):
             self._writable(allow_fault=True)
-            _require(not any(f.code in ("integrity_error", "identity_conflict") for f in self._faults),
-                     "integrity_error")
+            _require(
+                not any(f.code in ("integrity_error", "identity_conflict") for f in self._faults),
+                "integrity_error",
+            )
             _uuid(attempt_id)
             _uuid(source_observation_id)
             _uuid(observation_id, True)
@@ -2307,14 +2398,22 @@ class AttemptRecorder:
             backend = _backend(observed_backend) if observed_backend is not None else None
             attempts, _, observations, _, _, _ = _fold(self._events)
             fields_ = dict(
-                attempt_id=attempt_id, source_observation_id=source_observation_id,
-                frame_offset=frame_offset, frame_length=frame_length, usage=native, observed_backend=backend,
+                attempt_id=attempt_id,
+                source_observation_id=source_observation_id,
+                frame_offset=frame_offset,
+                frame_length=frame_length,
+                usage=native,
+                observed_backend=backend,
             )
             previous = observations.get(observation_id) if observation_id is not None else None
             if observation_id is not None:
-                _require(previous is not None and previous["event"] == "response_observed",
-                         "identity_conflict")
-                _require(all(previous[key] == value for key, value in fields_.items()), "integrity_error")
+                _require(
+                    previous is not None and previous["event"] == "response_observed",
+                    "identity_conflict",
+                )
+                _require(
+                    all(previous[key] == value for key, value in fields_.items()), "integrity_error"
+                )
                 event = previous
             else:
                 event = self._event("response_observed", observation_id=str(uuid.uuid4()), **fields_)
@@ -2324,9 +2423,10 @@ class AttemptRecorder:
                 content = _read_file(fd, "raw-" + raw["ref"]["artifact_id"])
                 _response_frame(content, frame_offset, frame_length)
                 if previous is not None:
-                    invalid = _native_usage_fault(self._events[:self._events.index(previous) + 1])
+                    invalid = _native_usage_fault(self._events[: self._events.index(previous) + 1])
                     return AuditAcknowledgement(
-                        not invalid, AuditFault("invalid_input", "acquired", attempt_id) if invalid else None,
+                        not invalid,
+                        AuditFault("invalid_input", "acquired", attempt_id) if invalid else None,
                     )
                 _fold(self._events + [event])
                 _inventory(handle)
@@ -2342,14 +2442,21 @@ class AttemptRecorder:
     def scoped_snapshot(self, *, scope: dict | None = None) -> ScopedInvocationSnapshot:
         with self._mutex:
             return _scoped_projection(
-                self._context, self._events, self._faults, self._state, self._complete,
-                self._input_manifest if _manifest_event(self._events) is not None else None, scope,
+                self._context,
+                self._events,
+                self._faults,
+                self._state,
+                self._complete,
+                self._input_manifest if _manifest_event(self._events) is not None else None,
+                scope,
             )
 
     @staticmethod
     def reopen_scoped(root: Path, run_id: str, *, scope: dict | None = None) -> ScopedInvocationSnapshot:
         identity, context, events, faults, _, state, complete, manifest = _replay(root, run_id)
-        return _scoped_projection(context, events, faults, state, complete, manifest, scope, run_id=identity)
+        return _scoped_projection(
+            context, events, faults, state, complete, manifest, scope, run_id=identity
+        )
 
     def finish(
         self,
@@ -2379,14 +2486,23 @@ class AttemptRecorder:
             if previous:
                 _require(all(previous[k] == v for k, v in args.items()), "identity_conflict")
                 with _run_dir(handle, self._context["run_id"]) as fd:
-                    self._checked(handle, fd, allow_orphans=True,
-                                  allow_response_faults=_native_usage_fault(self._events))
+                    self._checked(
+                        handle,
+                        fd,
+                        allow_orphans=True,
+                        allow_response_faults=_native_usage_fault(self._events),
+                    )
                 return AuditAcknowledgement(True, None)
             self._writable(allow_fault=True)
             event = self._event("finish", **args)
             _fold(self._events + [event])
             with _run_dir(handle, self._context["run_id"]) as fd:
-                self._checked(handle, fd, allow_orphans=True, allow_response_faults=_native_usage_fault(self._events))
+                self._checked(
+                    handle,
+                    fd,
+                    allow_orphans=True,
+                    allow_response_faults=_native_usage_fault(self._events),
+                )
                 _inventory(handle)
                 _space(fd, self._context["run_id"], ordinary_delta=len(_frame(event)))
                 self._append_event(handle, fd, event)
@@ -2430,16 +2546,24 @@ class AttemptRecorder:
                 _require(previous["outcome"] == outcome, "identity_conflict")
                 _require(self._closed, "integrity_error")
                 with _run_dir(handle, self._context["run_id"]) as fd:
-                    self._checked(handle, fd, allow_orphans=True,
-                                  allow_response_faults=_native_usage_fault(self._events))
+                    self._checked(
+                        handle,
+                        fd,
+                        allow_orphans=True,
+                        allow_response_faults=_native_usage_fault(self._events),
+                    )
                 return AuditAcknowledgement(True, None)
             self._writable(allow_fault=True)
             _require(all(a["finish"] is not None for a in attempts.values()), "identity_conflict")
             _require(outcome != "completed" or self._complete, "persistence_error")
             event = self._event("run_final", outcome=outcome, audit_complete=self._complete)
             with _run_dir(handle, self._context["run_id"]) as fd:
-                disk = self._checked(handle, fd, allow_orphans=True,
-                                     allow_response_faults=_native_usage_fault(self._events))
+                disk = self._checked(
+                    handle,
+                    fd,
+                    allow_orphans=True,
+                    allow_response_faults=_native_usage_fault(self._events),
+                )
                 _inventory(handle)
                 marker = _marker(
                     event,
@@ -2505,11 +2629,15 @@ class AttemptRecorder:
         identity, context, events, faults, capability, state, complete, _ = _replay(root, run_id)
         summary = _summary(identity, context, events, faults, state, complete)
         attempts, _, _, _, _, _ = _fold(events)
-        contexts = MappingProxyType({
-            key: InvocationContext(**value["start"]["context"].copy())
-            for key, value in attempts.items()
-        })
-        return RecorderSnapshot(1, identity, state, complete, tuple(faults), capability, summary, contexts)
+        contexts = MappingProxyType(
+            {
+                key: InvocationContext(**value["start"]["context"].copy())
+                for key, value in attempts.items()
+            }
+        )
+        return RecorderSnapshot(
+            1, identity, state, complete, tuple(faults), capability, summary, contexts
+        )
 
 
 def _qualified_prune(handle, fd, run_id):
@@ -2620,7 +2748,8 @@ def maintain_audit_root(
             except OSError:
                 if result.admitted:
                     result = AuditAcknowledgement(
-                        False, AuditFault("persistence_error", "maintenance", None),
+                        False,
+                        AuditFault("persistence_error", "maintenance", None),
                         publication_uncertain=mutated,
                     )
     return result
