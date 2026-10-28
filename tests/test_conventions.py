@@ -410,8 +410,8 @@ class TestGetDigest:
 
 
 def _await_ctime_tick(*paths):
-    """#110: the kernel stamps ctime from a coarse clock (one tick, ~1-4 ms),
-    so a move+restore inside one tick leaves (dev, ino, ctime) unchanged and
+    """#110: without multigrain timestamps the kernel stamps ctime from a coarse
+    clock (one tick), so a move+restore inside one tick leaves (dev, ino, ctime) unchanged and
     the walk's directory/file stamps cannot see it. Wait until a fresh ctime
     is past every given path's current one, so the injected move below is
     observable and the test checks the detection deterministically instead of
@@ -473,9 +473,7 @@ class TestWalkCtimeTickLimit:
 
     @pytest.mark.parametrize("kind", ["dir", "file"])
     def test_move_and_restore_after_a_tick_is_detected(self, tmp_path, kind):
-        complete, before, after = _walk_through_move_and_restore(
-            tmp_path, kind, wait_for_tick=True
-        )
+        complete, before, after = _walk_through_move_and_restore(tmp_path, kind, wait_for_tick=True)
 
         assert after != before
         assert complete is False

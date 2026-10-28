@@ -58,8 +58,9 @@ def _file_stamp(info: os.stat_result) -> _FileStamp:
 def _directory_stamp(info: os.stat_result) -> _DirectoryStamp:
     """Identify a directory by device, inode and ctime.
 
-    Known limit (#197): the kernel stamps ctime from a coarse clock, about one
-    tick (1-4 ms). Moving a directory away and back inside the same tick
+    Known limit (#197): on kernels and filesystems without multigrain
+    timestamps, the kernel stamps ctime from a coarse clock that advances once
+    per scheduler tick. Moving a directory away and back inside the same tick
     leaves this stamp unchanged, so that swap cannot be seen here.
     """
     return info.st_dev, info.st_ino, info.st_ctime_ns
@@ -488,17 +489,23 @@ def _walk_source(
 ):
     """Walk the selected directory by descriptor when a bound root is available.
 
-    With a bound root, the walk compares directory and file stamps taken before
-    and after each yield and marks the scan incomplete when they differ.
+    With a bound root, the walk compares stamps taken before and after each
+    yield and marks the scan incomplete when they differ. Directories are
+    stamped with device, inode and ctime. Files are stamped (device, inode,
+    mode, size, mtime and ctime) only when they are convention files.
 
-    Known limit (#197): both stamps include ctime, which the kernel takes from a
-    coarse clock (about one tick, 1-4 ms). A directory or file that is moved
-    away and back within one tick, with nothing else changed, has the same
-    stamp afterwards, so the scan still reports complete (a moved file's parent
-    directory has the same limit). The tests wait for a
-    tick before injecting a move (``_await_ctime_tick`` in
-    tests/test_conventions.py). Closing the gap needs a mechanism that does not
-    depend on the clock; see #197.
+    Known limit (#197): the ctime in both stamps is, on kernels and filesystems
+    without multigrain timestamps, taken from a coarse clock that advances once
+    per scheduler tick. A directory or convention file that is moved away and
+    back within one tick, with nothing else changed, has the same stamp
+    afterwards, so the scan still reports complete (the parent directory of a
+    moved file has the same limit). Where the kernel stamps ctime finely (Linux
+    6.13 and later, on filesystems that support multigrain timestamps) the
+    window is closed. The tests wait for a tick before injecting a move
+    (``_await_ctime_tick`` in tests/test_conventions.py), and the
+    inside-one-tick test skips where every move is visible. Closing the gap on
+    the other kernels needs a mechanism that does not depend on the clock; see
+    #197.
     """
     onerror = scan_status.fail if scan_status is not None else None
     if scan_root_fd is None:
