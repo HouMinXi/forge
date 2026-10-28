@@ -283,3 +283,75 @@ def test_non_kernel_rows_survive_kernel_source_error(pipeline, monkeypatch):
     cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root)
     assert "kept" in captured[0]["context_sources_text"]
     assert "unavailable" in captured[0]["context_sources_text"]
+
+
+def _grouped_run(pipeline, monkeypatch, files, *, group_diff=None):
+    """Run the real cli path with grouping forced on; return the dispatched specs and run output."""
+    root, _, _, args, _ = pipeline
+    patch_text = "".join(diff(lines, path=path, removed=removed) for path, lines, removed in files)
+    for path, _, _ in files:
+        (root / path).write_text("x\n")
+    monkeypatch.setattr(
+        cli,
+        "resolve_baseline",
+        lambda *a: ResolvedReview(
+            source_files=[root / path for path, _, _ in files],
+            baseline_content=None,
+            git_diff=patch_text,
+            mode_hint="git",
+        ),
+    )
+    monkeypatch.setattr("code_forge.diff_grouping.max_prompt_tokens_from_gate_config", lambda data: 1)
+    entities = [
+        {"filePath": p, "changeType": "modified", "entityName": "f", "entityType": "function"}
+        for p, _, _ in files
+    ]
+    monkeypatch.setattr(
+        "code_forge.graph_triage._run_sem", lambda *a: SemAcquisition("completed", entities=entities)
+    )
+    if group_diff is not None:
+        monkeypatch.setattr("code_forge.diff_grouping.group_diff", group_diff)
+    dispatched = []
+
+    def grouped(engine, specs, **kw):
+        dispatched.extend(specs)
+        return Mock()
+
+    monkeypatch.setattr(factories, "build_grouped_l1_provider", grouped)
+    cli._run(args, {"FORGE_PROJECT_DIR": str(root)}, root)
+    return dispatched
+
+
+_MIXED = [
+    ("driver.c", ["#ifdef CONFIG_X"], ()),
+    ("ci.yml", ["on: push"], ()),
+    ("README.md", ["# title"], ()),
+]
+
+
+def test_grouped_run_dispatches_config_and_docs_that_own_a_required_hunk(pipeline, monkeypatch):
+    specs = _grouped_run(pipeline, monkeypatch, _MIXED)
+    assert sorted(spec["name"] for spec in specs) == ["config", "docs", "other"]
+
+
+def test_grouped_run_leaves_a_deletion_only_config_unreviewed(pipeline, monkeypatch):
+    files = [_MIXED[0], ("trim.json", [], ("old",))]
+    specs = _grouped_run(pipeline, monkeypatch, files)
+    assert [spec["name"] for spec in specs] == ["other"]
+
+
+def test_grouped_run_reviews_a_required_file_that_grouping_left_out(pipeline, monkeypatch, capsys):
+    from code_forge import diff_grouping
+
+    real = diff_grouping.group_diff
+
+    def without_required(*a, **kw):
+        kw.pop("required_files")
+        return real(*a, **kw)
+
+    specs = _grouped_run(pipeline, monkeypatch, _MIXED, group_diff=without_required)
+    assert sorted(spec["name"] for spec in specs) == ["file:README.md", "file:ci.yml", "other"]
+    assert (
+        "grouping: 2 required file(s) were in no reviewed group; reviewing each on its own: README.md, ci.yml"
+        in capsys.readouterr().err
+    )
