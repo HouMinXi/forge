@@ -411,11 +411,11 @@ class TestGetDigest:
 
 def _await_ctime_tick(*paths):
     """#110: without multigrain timestamps the kernel stamps ctime from a coarse
-    clock (one tick), so a move+restore inside one tick leaves (dev, ino, ctime) unchanged and
-    the walk's directory/file stamps cannot see it. Wait until a fresh ctime
-    is past every given path's current one, so the injected move below is
-    observable and the test checks the detection deterministically instead of
-    racing the clock."""
+    clock (one tick), so a move+restore inside one tick leaves (dev, ino, ctime)
+    unchanged and the walk's directory/file stamps cannot see it. Wait until a
+    fresh ctime is past every given path's current one, so the injected move
+    below is observable and the test checks the detection deterministically
+    instead of racing the clock."""
     import tempfile
     import time
 
