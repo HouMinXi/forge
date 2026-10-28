@@ -1797,8 +1797,8 @@ class AttemptRecorder:
         self._origin = None
         self._preview = False
         self._input_manifest = None
-        # State files (run directory, input manifest, freeze marker) made visible
-        # ahead of the journal event that commits them.
+        # State files (run directory, input manifest, freeze marker, raw body) made
+        # visible ahead of the journal event that commits them.
         self._staged = 0
         try:
             self._context = _context(context)
@@ -1973,15 +1973,18 @@ class AttemptRecorder:
     def _stage(self, fd, name, data):
         """Publish a file that replay reads as state before its journal event.
 
-        The file counts as staged once it may be visible, even if the publish raises
-        after the rename (for example a failed directory fsync).
+        The file counts as staged once the final name or a ``temp-<name>-*`` file may be
+        visible, even if the publish raises after the rename (a failed directory fsync) or
+        before it (a failed rename or write). Replay reads a leftover temp file as torn
+        state, so a retry cannot succeed on a clean slate either way.
         """
         try:
             _publish(fd, name, data)
         except OSError:
             try:
-                visible = name in _entries(fd)
-            except OSError:
+                prefix = "temp-" + name + "-"
+                visible = any(entry == name or entry.startswith(prefix) for entry in _entries(fd))
+            except (OSError, _Rejected):
                 visible = True
             if visible:
                 self._staged += 1
@@ -2233,7 +2236,7 @@ class AttemptRecorder:
                 self._checked(handle, fd, allow_orphans=settling, allow_response_faults=settling)
                 _inventory(handle)
                 _space(fd, self._context["run_id"], ordinary_delta=retain + len(_frame(event)))
-                _publish(fd, "raw-" + artifact_id, data[:retain])
+                self._stage(fd, "raw-" + artifact_id, data[:retain])
                 self._append_event(handle, fd, event)
                 _revalidate(handle)
             if partial:

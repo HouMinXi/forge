@@ -6651,6 +6651,113 @@ def test_stage_failure_after_the_rename_is_publication_uncertain(disk_root, monk
     assert (owner.root / RUN / name).exists()
 
 
+_STAGE_TARGETS = [
+    pytest.param("freeze", id="freeze"),
+    pytest.param("input-manifest.json", id="input-manifest"),
+    pytest.param("raw-", id="raw-body"),
+]
+
+
+def _stage_target(disk_root, stem):
+    """Return the recorder and a call that stages the file whose name starts with ``stem``."""
+    if stem == "raw-":
+        owner = audit.AttemptRecorder(disk_root, context=context(), monotonic=Clock(), utc_now=utc)
+        assert owner.open().admitted
+        attempt = start(owner)
+        return owner, lambda: acquire(owner, attempt, None, data=b"staged body")
+    return _stage_call(disk_root, stem)
+
+
+def _run_entries(owner, prefix):
+    return sorted(e for e in os.listdir(owner.root / RUN) if e.startswith(prefix))
+
+
+def _failing_on_temp(monkeypatch, attribute, stem, owner_module=os):
+    """Make ``os.<attribute>`` raise EIO for the temp file that stages ``stem``."""
+    original = getattr(owner_module, attribute)
+
+    def failing(path, *args, **kwargs):
+        if str(path).startswith("temp-" + stem):
+            raise OSError(errno.EIO, "injected " + attribute)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(owner_module, attribute, failing)
+
+
+@pytest.mark.parametrize("stem", _STAGE_TARGETS)
+def test_stage_rename_failure_leaves_a_temp_file_and_is_publication_uncertain(
+    disk_root, monkeypatch, stem
+):
+    owner, call = _stage_target(disk_root, stem)
+    with monkeypatch.context() as cuts:
+        _failing_on_temp(cuts, "rename", stem)
+        ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert _run_entries(owner, "temp-" + stem) and not _run_entries(owner, stem)
+    assert ack.publication_uncertain is True
+    retry = call()
+    assert not retry.admitted and retry.publication_uncertain is False
+
+
+@pytest.mark.parametrize("stem", _STAGE_TARGETS)
+def test_stage_write_failure_after_the_temp_exists_is_publication_uncertain(
+    disk_root, monkeypatch, stem
+):
+    owner, call = _stage_target(disk_root, stem)
+    with monkeypatch.context() as cuts:
+
+        def write_all(fd, data):
+            raise OSError(errno.EIO, "injected write")
+
+        cuts.setattr(audit, "_write_all", write_all)
+        ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert _run_entries(owner, "temp-" + stem) and not _run_entries(owner, stem)
+    assert ack.publication_uncertain is True
+
+
+@pytest.mark.parametrize("stem", _STAGE_TARGETS)
+def test_stage_failure_before_the_temp_file_exists_is_definitely_unpublished(
+    disk_root, monkeypatch, stem
+):
+    owner, call = _stage_target(disk_root, stem)
+    with monkeypatch.context() as cuts:
+        _failing_on_temp(cuts, "open", stem)
+        ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert not _run_entries(owner, "temp-" + stem) and not _run_entries(owner, stem)
+    assert ack.publication_uncertain is False
+
+
+def test_raw_body_published_before_a_failed_append_is_publication_uncertain(disk_root, monkeypatch):
+    owner, call = _stage_target(disk_root, "raw-")
+    restore = _fail_append_before_writing(monkeypatch, "acquired")
+    ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is True
+    assert len(_run_entries(owner, "raw-")) == 1
+    restore()
+    retry = call()
+    assert not retry.admitted and retry.publication_uncertain is False
+
+
+def test_run_directory_failure_before_the_mkdir_is_definitely_unpublished(disk_root, monkeypatch):
+    owner = audit.AttemptRecorder(disk_root, context=context(), monotonic=Clock(), utc_now=utc)
+    original = os.mkdir
+
+    def mkdir(path, *args, **kwargs):
+        if str(path) == RUN:
+            raise OSError(errno.EIO, "injected mkdir")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "mkdir", mkdir)
+    ack = owner.open()
+    monkeypatch.undo()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is False
+    assert not (owner.root / RUN).exists()
+
+
 # --- Definite outcomes carry no uncertainty flag ----------------------------------------------
 
 
@@ -6899,3 +7006,47 @@ def test_maintenance_unlink_failure_after_an_earlier_tombstone_is_uncertain(reco
     monkeypatch.undo()
     assert not second.admitted and second.fault.code == "persistence_error"
     assert second.publication_uncertain is True
+
+
+def test_maintenance_failure_before_any_change_is_definite(recorder, monkeypatch):
+    owner = _terminal_root(recorder)
+
+    def inventory(handle):
+        raise OSError(errno.EIO, "injected inventory")
+
+    monkeypatch.setattr(audit, "_inventory", inventory)
+    ack = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    monkeypatch.undo()
+    assert not ack.admitted and ack.fault == audit.AuditFault("persistence_error", "maintenance", None)
+    assert ack.publication_uncertain is False
+    assert not (owner.root / RUN / "tombstone").exists()
+
+
+def test_maintenance_close_failure_without_any_change_is_definite(recorder, monkeypatch):
+    # The run is still open, so maintenance has nothing to prune and publishes nothing.
+    owner, _ = recorder
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    ack = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    monkeypatch.undo()
+    assert closer.fired == 1
+    assert not ack.admitted and ack.fault == audit.AuditFault("persistence_error", "maintenance", None)
+    assert ack.publication_uncertain is False
+    assert not (owner.root / RUN / "tombstone").exists()
+
+
+@pytest.mark.parametrize("failure", [OSError(errno.EIO, "x"), audit._Rejected("integrity_error")])
+def test_maintenance_tombstone_publish_that_raises_is_uncertain(recorder, monkeypatch, failure):
+    # A failing publish may already have made the tombstone, or a temp file, visible.
+    owner = _terminal_root(recorder)
+    attempted = []
+
+    def publish(fd, name, data, **kwargs):
+        attempted.append(name)
+        raise failure
+
+    monkeypatch.setattr(audit, "_publish", publish)
+    ack = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    monkeypatch.undo()
+    assert attempted == ["tombstone"]
+    assert not ack.admitted and ack.publication_uncertain is True
