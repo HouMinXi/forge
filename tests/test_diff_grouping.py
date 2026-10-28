@@ -8,6 +8,8 @@ charter accepts (.planning/charter_review_decomposition.md), each one traceable
 to a measurement recorded there.
 """
 
+import pytest
+
 from code_forge.diff_grouping import (
     Group,
     build_edges,
@@ -470,3 +472,220 @@ class TestMaxPromptTokens:
             {"grouping": {"engine_churn": 20, "max_prompt_tokens": 50000}}
         )
         assert (engine, integration) == (20, 2)
+
+
+# -- Required hunks and grouped dispatch (#34) --------------------------------
+
+
+def _diff(path, before, after):
+    """A one-file git diff with one line of context, built from the two versions."""
+    import difflib
+
+    body = list(difflib.unified_diff(before, after, "a/" + path, "b/" + path, n=1, lineterm=""))
+    return "\n".join(["diff --git a/%s b/%s" % (path, path)] + body) + "\n"
+
+
+_LINES = ["line %02d" % n for n in range(1, 13)]
+
+
+def _added(path):
+    """Two additions far apart: two non-deletion hunks."""
+    after = list(_LINES)
+    after.insert(1, "added early")
+    after.insert(11, "added late")
+    return _diff(path, _LINES, after)
+
+
+def _deleted(path):
+    """Removes one line and adds none: a deletion-only hunk."""
+    return _diff(path, _LINES, [x for x in _LINES if x != "line 06"])
+
+
+class TestRequiredReviewFiles:
+    """A file is required when the verifier demands a witness for a hunk in it."""
+
+    def test_files_with_an_added_line_are_required(self):
+        from code_forge.diff_grouping import required_review_files
+
+        assert required_review_files(_added("a.yml") + _added("b.md")) == {"a.yml", "b.md"}
+
+    def test_deletion_only_file_is_not_required(self):
+        from code_forge.diff_grouping import required_review_files
+
+        assert required_review_files(_deleted("a.json") + _added("b.md")) == {"b.md"}
+
+    def test_one_added_line_among_deletions_makes_the_file_required(self):
+        from code_forge.diff_grouping import required_review_files
+
+        after = [x for x in _LINES if x != "line 06"]
+        after.insert(1, "added early")
+        assert required_review_files(_diff("a.json", _LINES, after)) == {"a.json"}
+
+    @staticmethod
+    def _two_hunks(first_adds, second_adds):
+        """One file, two far-apart hunks; each either adds a line or deletes one."""
+        after = list(_LINES)
+        late = ("line 11", "added late") if second_adds else ("line 11", None)
+        early = ("line 02", "added early") if first_adds else ("line 02", None)
+        for anchor, new in (late, early):
+            at = after.index(anchor)
+            if new is None:
+                del after[at]
+            else:
+                after.insert(at + 1, new)
+        return _diff("a.json", _LINES, after)
+
+    def test_later_hunk_that_adds_makes_the_file_required(self):
+        from code_forge.diff_grouping import required_review_files
+
+        assert required_review_files(self._two_hunks(False, True)) == {"a.json"}
+
+    def test_earlier_hunk_that_adds_makes_the_file_required(self):
+        from code_forge.diff_grouping import required_review_files
+
+        assert required_review_files(self._two_hunks(True, False)) == {"a.json"}
+
+    def test_file_whose_hunks_all_delete_is_not_required(self):
+        from code_forge.diff_grouping import required_review_files
+
+        assert required_review_files(self._two_hunks(False, False)) == frozenset()
+
+    def test_removed_file_and_empty_diff_require_nothing(self):
+        from code_forge.diff_grouping import required_review_files
+
+        removed = (
+            "diff --git a/gone.md b/gone.md\ndeleted file mode 100644\n"
+            "--- a/gone.md\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-x\n-y\n"
+        )
+        assert required_review_files(removed) == frozenset()
+        assert required_review_files("") == frozenset()
+
+    def test_rename_without_hunks_requires_nothing(self):
+        from code_forge.diff_grouping import required_review_files
+
+        renamed = (
+            "diff --git a/old.md b/new.md\nsimilarity index 100%\nrename from old.md\nrename to new.md\n"
+        )
+        assert required_review_files(renamed) == frozenset()
+
+
+class TestRequiredHunksGetPasses:
+    """Config and docs keep zero passes unless the verifier needs their hunk."""
+
+    BY_FILE = {
+        "README.md": [_entity("README.md", "modified")],
+        "c.yaml": [_entity("c.yaml", "modified")],
+    }
+
+    @staticmethod
+    def _passes(groups):
+        return {g.role: g.passes for g in groups}
+
+    def test_config_that_owns_a_required_hunk_is_reviewed(self):
+        groups = build_groups(self.BY_FILE, {}, {}, required_files=frozenset({"c.yaml"}))[0]
+        assert self._passes(groups) == {"config": 3, "docs": 0}
+
+    def test_docs_that_own_a_required_hunk_is_reviewed(self):
+        groups = build_groups(self.BY_FILE, {}, {}, required_files=frozenset({"README.md"}))[0]
+        assert self._passes(groups) == {"config": 0, "docs": 3}
+
+    def test_required_file_outside_the_group_does_not_count(self):
+        groups = build_groups(self.BY_FILE, {}, {}, required_files=frozenset({"elsewhere.py"}))[0]
+        assert self._passes(groups) == {"config": 0, "docs": 0}
+
+    def test_one_required_file_reviews_the_whole_config_group(self):
+        by_file = {
+            "a.yaml": [_entity("a.yaml", "modified")],
+            "b.yaml": [_entity("b.yaml", "modified")],
+        }
+        groups = build_groups(by_file, {}, {}, required_files=frozenset({"b.yaml"}))[0]
+        assert [(g.members, g.passes) for g in groups] == [(["a.yaml", "b.yaml"], 3)]
+
+    def test_default_keeps_the_deletion_only_control_at_zero(self):
+        groups = build_groups(self.BY_FILE, {}, {})[0]
+        assert self._passes(groups) == {"config": 0, "docs": 0}
+
+    def test_other_role_is_unchanged(self):
+        by_file = {"data.bin": [_entity("data.bin", "modified")]}
+        groups = build_groups(by_file, {}, {}, required_files=frozenset({"data.bin"}))[0]
+        assert [(g.role, g.passes) for g in groups] == [("other", 3)]
+
+    def test_group_diff_passes_required_files_through(self, tmp_path):
+        changes = [_entity("README.md", "modified"), _entity("c.yaml", "modified")]
+        result = group_diff(changes, tmp_path, required_files=frozenset({"c.yaml"}))
+        assert self._passes(result.groups) == {"config": 3, "docs": 0}
+        default = group_diff(changes, tmp_path)
+        assert self._passes(default.groups) == {"config": 0, "docs": 0}
+
+
+class TestFileScopedFallback:
+    """A required file no review group carries gets its own named group."""
+
+    @staticmethod
+    def _grouping(*groups):
+        from code_forge.diff_grouping import GroupingResult
+
+        return GroupingResult(groups=list(groups))
+
+    def test_required_file_in_a_zero_pass_group_gets_a_file_group(self):
+        from code_forge.diff_grouping import review_groups
+
+        code = Group(name="integration", role="integration", members=["src/a.py"], passes=3)
+        docs = Group(name="docs", role="docs", members=["README.md", "z.md"], passes=0)
+        out, gaps = review_groups(self._grouping(code, docs), frozenset({"README.md", "z.md"}))
+        assert out == [
+            code,
+            Group(name="file:README.md", role="file", members=["README.md"], passes=3),
+            Group(name="file:z.md", role="file", members=["z.md"], passes=3),
+        ]
+        assert gaps == ["README.md", "z.md"]
+
+    def test_files_already_reviewed_get_no_extra_group(self):
+        from code_forge.diff_grouping import review_groups
+
+        code = Group(name="integration", role="integration", members=["src/a.py"], passes=3)
+        docs = Group(name="docs", role="docs", members=["README.md"], passes=0)
+        assert review_groups(self._grouping(code, docs), frozenset({"src/a.py"})) == ([code], [])
+
+    def test_deletion_only_file_is_not_given_a_fallback(self):
+        from code_forge.diff_grouping import review_groups
+
+        code = Group(name="integration", role="integration", members=["src/a.py"], passes=3)
+        cfg = Group(name="config", role="config", members=["c.json"], passes=0)
+        assert review_groups(self._grouping(code, cfg), frozenset()) == ([code], [])
+
+    def test_nothing_reviewed_keeps_the_single_diff_fallback(self):
+        from code_forge.diff_grouping import review_groups
+
+        cfg = Group(name="config", role="config", members=["c.json"], passes=0)
+        assert review_groups(self._grouping(cfg), frozenset({"c.json"})) == ([], [])
+        assert review_groups(self._grouping(), frozenset({"c.json"})) == ([], [])
+
+    def test_required_file_missing_from_every_group_is_still_reviewed(self):
+        from code_forge.diff_grouping import review_groups
+
+        code = Group(name="integration", role="integration", members=["src/a.py"], passes=3)
+        out, gaps = review_groups(self._grouping(code), frozenset({"src/a.py", "lost.yml"}))
+        assert [g.name for g in out] == ["integration", "file:lost.yml"]
+        assert gaps == ["lost.yml"]
+
+    @pytest.mark.parametrize("required", ["src/a.py", "src/b.py", "src/c.py"])
+    def test_every_member_of_a_reviewed_group_counts_as_covered(self, required):
+        from code_forge.diff_grouping import review_groups
+
+        code = Group(
+            name="integration",
+            role="integration",
+            members=["src/a.py", "src/b.py", "src/c.py"],
+            passes=3,
+        )
+        assert review_groups(self._grouping(code), frozenset({required})) == ([code], [])
+
+    def test_fallback_groups_follow_sorted_path_order(self):
+        from code_forge.diff_grouping import review_groups
+
+        paths = ["m.yml", "b.yml", "k.md", "d.json", "z.toml", "a.ini"]
+        code = Group(name="integration", role="integration", members=["src/a.py"], passes=3)
+        out, gaps = review_groups(self._grouping(code), frozenset(paths))
+        assert gaps == sorted(paths)
+        assert [g.name for g in out[1:]] == ["file:" + p for p in sorted(paths)]

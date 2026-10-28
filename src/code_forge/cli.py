@@ -4396,6 +4396,8 @@ def _run(args, env, cwd: Path) -> Verdict:
         GroupingResult,
         group_diff,
         max_prompt_tokens_from_gate_config,
+        required_review_files,
+        review_groups,
         thresholds_from_gate_config,
     )
 
@@ -4447,18 +4449,27 @@ def _run(args, env, cwd: Path) -> Verdict:
             if _sem_outcome.completed
             else "semantic acquisition %s: %s" % (_sem_outcome.status, _sem_outcome.diagnostic)
         )
+        # Hunks the receipt verifier requires a witness for need review passes,
+        # whatever role their file has.
+        _required_files = required_review_files(resolved.git_diff or "")
         try:
             _grouping = group_diff(
                 _changes,
                 cwd,
                 *thresholds_from_gate_config(gate_data),
                 changed_files=get_changed_files(resolved.git_diff or ""),
+                required_files=_required_files,
             )
         except GroupingCoverageError as exc:
             _grouping = GroupingResult()
             if _changes:
                 _grouping_reason = "semantic coverage incomplete: %s" % exc
-        _review_groups = [g for g in _grouping.groups if g.passes > 0]
+        _review_groups, _fallback_files = review_groups(_grouping, _required_files)
+        if _fallback_files:
+            warn(
+                "grouping: %d required file(s) were in no reviewed group; reviewing each on its own: %s"
+                % (len(_fallback_files), ", ".join(_fallback_files))
+            )
         if not _review_groups:
             # sem produced nothing usable -- degrade to the single-diff
             # path loudly rather than reviewing nothing.

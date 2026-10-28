@@ -27,6 +27,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .diff import parse_diff_hunks
+
 # sem's changeType vocabulary, read from the binary's serde variants rather
 # than inferred from whichever branch was handy. A diff that only deletes
 # emits "deleted"; an earlier draft looked for "removed" and would have scored
@@ -74,13 +76,22 @@ def _check_thresholds(engine_churn: int, integration_churn: int) -> None:
 # recovers 30-37% of the union, so a discount here is a recall cut, not an
 # economy.
 #
-# Only declarative content skips the LLM: config and docs are what the
-# deterministic L0 checks already cover. Source in a language this module
-# cannot parse still gets the full three passes -- no def-use edges is a
-# limit on grouping precision, not a licence to skip review. A shell script
-# that changes process lifecycle is logic-bearing by forge's own rules.
+# Declarative content gets no review pass by default: config and docs are what
+# the deterministic L0 checks already cover. That default gives way when the
+# group owns a hunk the receipt verifier requires a witness for (any hunk with
+# an added line): excerpts only come from review passes, so such a group is
+# reviewed like any other. Only a group with no required hunk, such as a
+# deletion-only change the verifier exempts, stays at zero. Source in a
+# language this module cannot parse still gets the full three passes -- no
+# def-use edges is a limit on grouping precision, not a licence to skip
+# review. A shell script that changes process lifecycle is logic-bearing by
+# forge's own rules. The passes are not token-bounded for config and docs: a
+# large required file, such as a lockfile, is reviewed in full.
 _PASSES_PER_GROUP = 3
-_NO_LLM_ROLES = frozenset({"config", "docs"})
+_ZERO_PASS_UNLESS_REQUIRED_ROLES = frozenset({"config", "docs"})
+# Role of a one-file group that review_groups adds for a required file that no
+# reviewed group carries.
+FILE_FALLBACK_ROLE = "file"
 
 _PYTHON_SUFFIXES = (".py",)
 _CONFIG_SUFFIXES = (".yaml", ".yml", ".json", ".toml", ".cfg", ".ini")
@@ -105,6 +116,23 @@ class GroupingResult:
     roles: dict[str, tuple[str, str]] = field(default_factory=dict)
     cross_group_edges: list[dict] = field(default_factory=list)
     orphan_tests: list[str] = field(default_factory=list)
+
+
+def required_review_files(diff_text: str) -> frozenset[str]:
+    """Files owning a hunk the receipt verifier requires a witness for.
+
+    The verifier's hunk check needs an excerpt for every hunk with an added
+    line. It skips a hunk with no added line, and it does not look at files
+    that have no hunk entry: binary, rename-only and mode-only files are
+    listed as exempt by `parse_diff_hunks`, and wholly removed files are
+    dropped by it without being listed. Excerpts only come from review
+    passes. This reads the same parse the verifier reads, so the two cannot
+    disagree.
+    """
+    hunk_map, _exempt = parse_diff_hunks(diff_text)
+    return frozenset(
+        path for path, hunks in hunk_map.items() if any(not hunk["is_deletion_only"] for hunk in hunks)
+    )
 
 
 def churn_profile(entities: list[dict]) -> dict[str, int]:
@@ -325,8 +353,12 @@ def build_groups(
     file_used: dict[str, set[str]],
     engine_churn: int = _ENGINE_CHURN,
     integration_churn: int = _INTEGRATION_CHURN,
+    required_files: frozenset[str] = frozenset(),
 ) -> tuple[list[Group], list[str]]:
     """Partition the changed files into review groups.
+
+    A config or docs group gets review passes when any member is in
+    `required_files` (see required_review_files); otherwise it gets none.
 
     Returns (groups, orphan_tests). Def-use edges are deliberately absent from
     the signature: they do not partition anything, and taking them would imply
@@ -345,7 +377,12 @@ def build_groups(
                 name=name,
                 role=role,
                 members=sorted(members),
-                passes=0 if role in _NO_LLM_ROLES else _PASSES_PER_GROUP,
+                passes=(
+                    0
+                    if role in _ZERO_PASS_UNLESS_REQUIRED_ROLES
+                    and required_files.isdisjoint(members)
+                    else _PASSES_PER_GROUP
+                ),
             )
         )
         placed.update(members)
@@ -421,6 +458,7 @@ def group_diff(
     integration_churn: int = _INTEGRATION_CHURN,
     *,
     changed_files: list[str] | None = None,
+    required_files: frozenset[str] = frozenset(),
 ) -> GroupingResult:
     """Group one diff's entity changes. The module's entry point.
 
@@ -431,6 +469,7 @@ def group_diff(
     is the authoritative inventory from the full diff, including metadata
     changes and deletions. Refuse incomplete or foreign entities before
     reading their source, and require each file in exactly one final group.
+    `required_files` is passed to build_groups.
     """
     _check_thresholds(engine_churn, integration_churn)
     by_file: dict[str, list[dict]] = defaultdict(list)
@@ -446,7 +485,9 @@ def group_diff(
         return GroupingResult()
 
     edges, file_defined, file_used = build_edges(by_file, repo_root)
-    groups, orphans = build_groups(by_file, file_defined, file_used, engine_churn, integration_churn)
+    groups, orphans = build_groups(
+        by_file, file_defined, file_used, engine_churn, integration_churn, required_files
+    )
     placed = Counter(member for group in groups for member in group.members)
     if placed != Counter(expected):
         raise GroupingCoverageError("group membership must cover each changed file exactly once")
@@ -458,3 +499,27 @@ def group_diff(
         cross_group_edges=cross_group_edges(groups, edges, file_defined, file_used),
         orphan_tests=orphans,
     )
+
+
+def review_groups(
+    grouping: GroupingResult, required_files: frozenset[str]
+) -> tuple[list[Group], list[str]]:
+    """The groups to dispatch, and the files that needed a fallback group.
+
+    The dispatched groups are those with passes, plus a `file:<path>` group
+    with a full set of passes for each required file (see
+    required_review_files) that no group with passes carries, so its hunks
+    still get excerpts. Nothing is dropped and no verifier rule is relaxed.
+    If no group has passes, the result is empty and the caller keeps its
+    single-diff review, which already covers every file.
+    """
+    reviewed = [g for g in grouping.groups if g.passes > 0]
+    if not reviewed:
+        return [], []
+    covered = {member for g in reviewed for member in g.members}
+    gaps = sorted(required_files - covered)
+    reviewed.extend(
+        Group(name="file:%s" % path, role=FILE_FALLBACK_ROLE, members=[path], passes=_PASSES_PER_GROUP)
+        for path in gaps
+    )
+    return reviewed, gaps
