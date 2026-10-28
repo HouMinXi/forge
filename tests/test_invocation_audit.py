@@ -7050,3 +7050,132 @@ def test_maintenance_tombstone_publish_that_raises_is_uncertain(recorder, monkey
     monkeypatch.undo()
     assert attempted == ["tombstone"]
     assert not ack.admitted and ack.publication_uncertain is True
+
+
+def _tear_the_journal_on(monkeypatch, name):
+    """Make the append of ``name`` write a torn frame prefix, then raise EIO."""
+    original = audit._append
+
+    def append(fd, event):
+        if event["event"] == name:
+            journal = os.open("journal", os.O_WRONLY | os.O_APPEND, dir_fd=fd)
+            try:
+                os.write(journal, b"00000")
+            finally:
+                os.close(journal)
+            raise OSError(errno.EIO, "mid-frame")
+        return original(fd, event)
+
+    monkeypatch.setattr(audit, "_append", append)
+
+
+def _start_call(owner):
+    return lambda: owner.start(
+        context(), logical_id=LOGICAL, parent_id=None, cause="initial", backend=BACKEND,
+        request_digest=DIGEST, request_bytes=7, action_deadline=100,
+    )
+
+
+def _observe_call(owner):
+    attempt = start(owner)
+    raw = acquire(owner, attempt, None, data=b'{"model":"observed"}')
+    return lambda: owner.observe_response(
+        attempt, source_observation_id=raw.observation_id, frame_offset=0, frame_length=20,
+        usage=usage(0, 0, 0, 0), observed_backend=None,
+    )
+
+
+def _finish_call(owner):
+    attempt = start(owner)
+    return lambda: finish(owner, attempt)
+
+
+@pytest.mark.parametrize(
+    ("event", "build"),
+    [
+        pytest.param("start", _start_call, id="start"),
+        pytest.param("response_observed", _observe_call, id="observe"),
+        pytest.param("finish", _finish_call, id="finish"),
+    ],
+)
+def test_torn_journal_append_is_uncertain_without_any_staged_file(recorder, monkeypatch, event, build):
+    # Nothing is staged before these appends, so only the torn-journal mark can flag them.
+    owner, _ = recorder
+    call = build(owner)
+    staged = owner._staged
+    events_before = len(owner._events)
+    _tear_the_journal_on(monkeypatch, event)
+    ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert owner._append_uncertain is True
+    assert owner._staged == staged and len(owner._events) == events_before
+    assert ack.publication_uncertain is True
+
+
+@pytest.mark.parametrize("stem", _STAGE_TARGETS)
+def test_unrelated_temp_file_is_refused_before_any_stage(disk_root, stem):
+    # This is why `_stage` only has to look for its own `temp-<name>-*` files: another temp
+    # file makes the call fail in `_checked`, before anything is published.
+    owner, call = _stage_target(disk_root, stem)
+    (owner.root / RUN / "temp-other-abc").write_bytes(b"x")
+    staged = owner._staged
+    ack = call()
+    assert not ack.admitted and ack.publication_uncertain is False
+    assert _run_entries(owner, "temp-") == ["temp-other-abc"]
+    assert not _run_entries(owner, stem)
+    assert owner._staged == staged
+
+
+@pytest.mark.parametrize("stem", ["freeze", "input-manifest.json", "raw-"])
+def test_stage_rejected_after_the_temp_write_is_publication_uncertain(disk_root, monkeypatch, stem):
+    owner, call = _stage_target(disk_root, stem)
+    original = audit._entries
+    armed = [True]
+
+    def entries(fd):
+        listing = original(fd)
+        if armed[0] and any(e.startswith("temp-" + stem) for e in listing):
+            # The first listing that sees the temp file is the check inside `_publish`.
+            armed[0] = False
+            raise audit._Rejected("integrity_error")
+        return listing
+
+    monkeypatch.setattr(audit, "_entries", entries)
+    ack = call()
+    monkeypatch.undo()
+    assert not armed[0]
+    assert not ack.admitted and ack.fault.code == "integrity_error"
+    assert _run_entries(owner, "temp-" + stem) and not _run_entries(owner, stem)
+    assert ack.publication_uncertain is True
+
+
+
+@pytest.mark.parametrize("name", ["freeze", "input-manifest.json", "raw-" + RUN])
+def test_stage_counts_only_its_own_temp_files(recorder, monkeypatch, name):
+    # `_stage` is driven directly: through the public calls `_checked` refuses a stray temp file
+    # first. Entries that merely resemble the staged name must not count as staged.
+    owner, _ = recorder
+    run_dir = owner.root / RUN
+    strays = (
+        "temp-other-1", "temp-" + name + "x-1", "temp-" + name[:-1] + "-1", name + "-extra", name[:-1],
+        "x-temp-" + name + "-1",
+    )
+    for stray in strays:
+        (run_dir / stray).write_bytes(b"x")
+
+    def publish(fd, entry, data, **kwargs):
+        raise OSError(errno.EIO, "before the temp file")
+
+    monkeypatch.setattr(audit, "_publish", publish)
+    fd = os.open(run_dir, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        before = owner._staged
+        with pytest.raises(OSError):
+            owner._stage(fd, name, b"data")
+        assert owner._staged == before
+        (run_dir / ("temp-" + name + "-2")).write_bytes(b"x")
+        with pytest.raises(OSError):
+            owner._stage(fd, name, b"data")
+        assert owner._staged == before + 1
+    finally:
+        os.close(fd)

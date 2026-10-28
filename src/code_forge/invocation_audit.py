@@ -1975,12 +1975,14 @@ class AttemptRecorder:
 
         The file counts as staged once the final name or a ``temp-<name>-*`` file may be
         visible, even if the publish raises after the rename (a failed directory fsync) or
-        before it (a failed rename or write). Replay reads a leftover temp file as torn
-        state, so a retry cannot succeed on a clean slate either way.
+        before it (a failed rename or write), or when a check after the temp write rejects the
+        publish. Replay reads a leftover temp file as torn state, so a retry cannot succeed
+        on a clean slate either way. A temp file for another name cannot be listed here:
+        ``_checked`` refuses the call before any stage while one exists.
         """
         try:
             _publish(fd, name, data)
-        except OSError:
+        except (OSError, _Rejected):
             try:
                 prefix = "temp-" + name + "-"
                 visible = any(entry == name or entry.startswith(prefix) for entry in _entries(fd))
