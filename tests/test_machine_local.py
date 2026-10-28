@@ -223,6 +223,118 @@ class TestReplayStallBreaker:
         assert machine._state.round == 2
         assert any(e.startswith(self.STALL_DIAGNOSTIC_PREFIX) for e in machine._state.infra_errors)
 
+    @staticmethod
+    def _l1_finding(fp):
+        return StateFinding(
+            id=fp,
+            fingerprint=fp,
+            source="L1",
+            disposition=Disposition.UNCERTAIN,
+            file="test.py",
+            line_range=[1, 1],
+            description="l1 finding",
+            excerpt="x = 1",  # the host demotes a CONFIRMED verdict that has no own excerpt
+        )
+
+    def _l1_only_machine(self, tmp_path, rounds_log, max_rounds=8):
+        """Every round: no L0 finding, the same CONFIRMED L1 finding on unchanged source.
+
+        LOCAL's autofix loop only runs on L0, so an L1 CONFIRMED finding has no
+        fix budget to spend and no promotion to wait for.
+        """
+
+        def mock_l1():
+            rounds_log.append(1)
+            return ([self._l1_finding("fp-l1-a"), self._l1_finding("fp-l1-b")], [], Usage(), 0.0)
+
+        return StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),  # default disposition: CONFIRMED
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=lambda registry, files: ([], []),
+            l1_provider=mock_l1,
+            max_total_rounds=max_rounds,
+        )
+
+    def test_confirmed_only_l1_rounds_stall_instead_of_running_to_max(self, tmp_path):
+        rounds = []
+        machine = self._l1_only_machine(tmp_path, rounds)
+        verdict = machine.run()
+        assert verdict == Verdict.ESCALATED
+        assert machine._state.converged is False
+        assert len(rounds) == 3
+        stalls = [e for e in machine._state.infra_errors if e.startswith(self.STALL_DIAGNOSTIC_PREFIX)]
+        assert len(stalls) == 1
+        # The reason names the pinned fingerprints, so the reader can see what froze.
+        assert "fp-l1-a" in stalls[0] and "fp-l1-b" in stalls[0]
+        assert "no autofix" in stalls[0]
+        # A stall is not a pass and grants no clean credit.
+        assert machine._state.consecutive_clean_rounds == 0
+
+    def test_confirmed_l0_with_budget_left_is_not_stalled(self, tmp_path):
+        """An L0 CONFIRMED finding still burning autofix budget keeps running."""
+
+        def mock_l0(registry, files):
+            return ([_make_finding(fp="fp-l0", disp=Disposition.CONFIRMED)], [])
+
+        class NoChangeAutoFixer(StubAutoFixer):
+            def fix(self, finding, mode_hint):
+                return FixOutcome.NO_CHANGE
+
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=NoChangeAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+            max_total_rounds=4,
+            max_fix_attempts=100,
+        )
+        machine.run()
+        assert not any(e.startswith(self.STALL_DIAGNOSTIC_PREFIX) for e in machine._state.infra_errors)
+        assert machine._state.round == 3  # ran every round it was given
+
+    def test_stall_predicate_confirmed_only_budget_and_promotion(self, tmp_path):
+        machine = self._l1_only_machine(tmp_path, [])
+        row = {"dispositions": {"fp-l0": "CONFIRMED", "fp-l1": "CONFIRMED"}, "l0_fingerprints": ["fp-l0"]}
+        machine._state.round_history = [dict(row, round=i) for i in range(3)]
+        machine.max_fix_attempts = 3
+
+        # Budget left on the L0 finding: autofix can still change something.
+        machine._state.fix_attempts = {"fp-l0": 1}
+        assert not machine._stalled_on_identical_round()
+        # Budget spent but not yet promoted: the promotion round must run first.
+        machine._state.fix_attempts = {"fp-l0": 3}
+        assert not machine._stalled_on_identical_round()
+        # Budget spent and promoted: nothing left to change.
+        machine._state.promoted_fingerprints = ["fp-l0"]
+        assert machine._stalled_on_identical_round()
+
+    def test_stall_predicate_ignores_clean_and_changing_maps(self, tmp_path):
+        machine = self._l1_only_machine(tmp_path, [])
+        same = {"dispositions": {"fp-l1": "CONFIRMED"}, "l0_fingerprints": []}
+        machine._state.round_history = [dict(same, round=i) for i in range(3)]
+        assert machine._stalled_on_identical_round()
+        machine._state.round_history[1] = {
+            "round": 1,
+            "dispositions": {"fp-l1": "DISMISSED"},
+            "l0_fingerprints": [],
+        }
+        assert not machine._stalled_on_identical_round()
+        machine._state.round_history = [dict(same, round=i, dispositions={}) for i in range(3)]
+        assert not machine._stalled_on_identical_round()
+
     def test_clean_rounds_are_not_a_stall(self, tmp_path):
         def mock_l0(registry, files):
             return ([], [])

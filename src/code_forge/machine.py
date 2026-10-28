@@ -2067,11 +2067,7 @@ class StateMachine:
             if _fp != _FixpointResult.CLEAN and self._stalled_on_identical_round():
                 self._state.verdict = Verdict.ESCALATED
                 self._state.converged = False
-                self._state.infra_errors.append(
-                    "review stalled: identical disposition maps for 3 "
-                    "consecutive rounds (response cache in the path, or "
-                    "genuinely deterministic findings)"
-                )
+                self._state.infra_errors.append(self._stall_reason())
                 self._persist_state()
                 return Verdict.ESCALATED
 
@@ -3990,13 +3986,20 @@ class StateMachine:
         return has_uncertain and not has_unfixed_confirmed
 
     def _stalled_on_identical_round(self) -> bool:
-        """True when a HOLD-blocking mix has been frozen for 3 rounds.
+        """True when a non-clean map has been frozen for 3 rounds with nothing left to change it.
 
-        CLEAN and HOLD already leave the loop. CONFIRMED-only still
-        burns autofix budget and may promote. The leftover livelock is
-        CONFIRMED plus UNCERTAIN together, which can do neither, and a
-        response cache makes that freeze look like progress. Three
-        rounds is two confirmations of the freeze.
+        CLEAN and HOLD already leave the loop. Two frozen shapes remain:
+
+        * CONFIRMED plus UNCERTAIN together, which can neither HOLD nor
+          converge, and which a response cache makes look like progress.
+        * CONFIRMED only. LOCAL's autofix loop runs on L0 findings, so a
+          CONFIRMED L0 finding that still has fix budget, or whose budget is
+          spent but not yet promoted, can still move the map and is left
+          alone. CONFIRMED findings from any other layer get no autofix and
+          no promotion; repeating the round on the same source cannot change
+          them.
+
+        Three rounds is two confirmations of the freeze.
         """
         history = self._product_history()
         if len(history) < 3:
@@ -4008,21 +4011,46 @@ class StateMachine:
         def _value(item):
             return item.value if isinstance(item, Disposition) else item
 
+        confirmed = (Disposition.CONFIRMED, Disposition.CONFIRMED.value)
+        l0_confirmed = [fp for fp in history[-1].get("l0_fingerprints", []) if maps[-1].get(fp) in confirmed]
+
         # An exhausted L0 fix budget is promoted on the next round.
         # Let that pending state transition run before declaring a stall.
         pending_promotion = any(
-            maps[-1].get(fp) in (Disposition.CONFIRMED, Disposition.CONFIRMED.value)
-            and self._state.fix_attempts.get(fp, 0) >= self.max_fix_attempts
+            self._state.fix_attempts.get(fp, 0) >= self.max_fix_attempts
             and fp not in self._state.promoted_fingerprints
-            for fp in history[-1].get("l0_fingerprints", [])
+            for fp in l0_confirmed
         )
         if pending_promotion:
             return False
 
         values = [_value(v) for v in maps[-1].values()]
-        has_confirmed = Disposition.CONFIRMED.value in values
-        has_uncertain = Disposition.UNCERTAIN.value in values
-        return has_confirmed and has_uncertain
+        if Disposition.CONFIRMED.value not in values:
+            return False
+        if Disposition.UNCERTAIN.value in values:
+            return True
+        # CONFIRMED only: stalled unless an L0 finding can still spend autofix budget.
+        budget_left = any(
+            self._state.fix_attempts.get(fp, 0) < self.max_fix_attempts
+            and fp not in self._state.promoted_fingerprints
+            for fp in l0_confirmed
+        )
+        return not budget_left
+
+    def _stall_reason(self) -> str:
+        """Diagnostic for a stall: names what froze, so the reader need not open state.json."""
+        base = "review stalled: identical disposition maps for 3 consecutive rounds"
+        last = (self._product_history()[-1].get("dispositions") or {}) if self._product_history() else {}
+        values = {fp: (v.value if isinstance(v, Disposition) else v) for fp, v in last.items()}
+        if Disposition.UNCERTAIN.value in values.values():
+            return base + " (response cache in the path, or genuinely deterministic findings)"
+        pinned = sorted(fp for fp, v in values.items() if v == Disposition.CONFIRMED.value)
+        return (
+            base
+            + " (CONFIRMED findings unchanged on unchanged source, and no autofix budget or "
+            + "promotion left to change them): "
+            + ", ".join(pinned)
+        )
 
     def _finalize_local_terminal(self) -> None:
         """R3 LOW5: terminal state writer for LOCAL fixpoint exit.
