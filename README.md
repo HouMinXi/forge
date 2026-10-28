@@ -482,6 +482,15 @@ symptom surfaces much later and points the wrong way: mutmut 2.x under a
 `>=3.4` requirement aborts every mutation run with a module-path error
 that reads like a bug in the review.
 
+The dev extra pins `pytest==9.1.1`. Run the test suite on CPython 3.12: with
+that pin it is the only interpreter whose pair is in `QUALIFIED_RUNTIMES`
+(`src/code_forge/_gate_pytest.py`). Forge itself installs on Python 3.12 or
+newer, so the classifiers keep listing 3.13 and 3.14. The pytest gate, however,
+refuses a runtime that is not qualified, so the gate tests fail on those
+interpreters (#102).
+
+Python versions in the classifiers that are not qualified for the pinned pytest: 3.13, 3.14.
+
 ## Installation alternatives
 
 ### git clone
