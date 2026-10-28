@@ -1823,3 +1823,109 @@ def test_required_source_transition_real_utc_interruption_blocks_next_admission(
     assert 'persistence_error' in final.fault_codes
     assert len(snapshot(root, ctx).attempts) == 1
     assert len(final.run_summaries) == 2
+
+
+class _CloseOnce:
+    """Close the recorder's root descriptor for real, then raise EIO once after ``arm()``."""
+
+    def __init__(self, monkeypatch):
+        import errno
+        from code_forge import invocation_audit
+        self.armed = False
+        self.fired = 0
+        original = invocation_audit._RootHandle.close
+
+        def close(handle):
+            original(handle)
+            if self.armed:
+                self.armed = False
+                self.fired += 1
+                raise OSError(errno.EIO, 'root close')
+
+        monkeypatch.setattr(invocation_audit._RootHandle, 'close', close)
+
+    def arm(self):
+        self.armed = True
+
+
+def test_uncertain_acquire_is_reported_not_adopted_and_cannot_be_repeated(setup_owner, monkeypatch):
+    owner, root, ctx, _ = setup_owner
+    lease = begin(owner)
+    lease.entered('entered_api_send')
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    ack = lease.acquired(layer='wire', data=b'{}', complete=True)
+    assert closer.fired == 1
+    assert ack.publication_uncertain is True
+    assert not ack.admitted and ack.ref is None and ack.observation_id is None
+    assert len(snapshot(root, ctx).attempts[0].raw_refs) == 1
+    repeat = lease.acquired(layer='wire', data=b'{}', complete=True)
+    assert repeat.publication_uncertain is False and not repeat.admitted and repeat.ref is None
+    assert len(snapshot(root, ctx).attempts[0].raw_refs) == 1
+    summary = owner.finalize('failed')
+    assert not summary.audit_complete and 'persistence_error' in summary.fault_codes
+
+
+def test_definite_acquire_failure_is_not_marked_uncertain(setup_owner, monkeypatch):
+    import errno
+    from code_forge import invocation_audit
+    owner, root, ctx, _ = setup_owner
+    lease = begin(owner)
+    lease.entered('entered_api_send')
+
+    def publish(fd, name, data, **kwargs):
+        raise OSError(errno.EIO, 'before the raw write')
+
+    monkeypatch.setattr(invocation_audit, '_publish', publish)
+    ack = lease.acquired(layer='wire', data=b'{}', complete=True)
+    assert ack.publication_uncertain is False
+    assert not ack.admitted and ack.ref is None and ack.observation_id is None
+    assert snapshot(root, ctx).attempts[0].raw_refs == ()
+
+
+def test_uncertain_start_yields_no_lease_and_fails_closed(setup_owner, monkeypatch):
+    owner, root, ctx, _ = setup_owner
+    op = operation(owner)
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    with pytest.raises(LLMInvokeError):
+        begin(owner, op)
+    assert closer.fired == 1
+    assert len(snapshot(root, ctx).attempts) == 1
+    with pytest.raises(LLMInvokeError):
+        begin(owner, op)
+    assert len(snapshot(root, ctx).attempts) == 1
+    summary = owner.finalize('failed')
+    assert not summary.audit_complete and 'persistence_error' in summary.fault_codes
+
+
+def test_uncertain_finish_raises_and_leaves_the_audit_incomplete(setup_owner, monkeypatch):
+    owner, root, ctx, _ = setup_owner
+    lease = begin(owner)
+    lease.entered('entered_api_send')
+    assert lease.acquired(layer='wire', data=b'{}', complete=True).admitted
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    with pytest.raises(LLMInvokeError):
+        finish(lease)
+    assert closer.fired == 1
+    assert snapshot(root, ctx).attempts[0].outcome == 'completed'
+    summary = owner.finalize('failed')
+    assert not summary.audit_complete and 'persistence_error' in summary.fault_codes
+
+
+def test_an_exception_escaping_the_recorder_is_reported_as_uncertain(setup_owner, monkeypatch):
+    owner, root, ctx, _ = setup_owner
+    lease = begin(owner)
+    lease.entered('entered_api_send')
+
+    def failure(*args, **kwargs):
+        raise OSError('escaped')
+
+    monkeypatch.setattr(AttemptRecorder, 'settle_acquired', failure)
+    monkeypatch.setattr(AttemptRecorder, 'publish_input_manifest', failure)
+    raw = lease.acquired(layer='wire', data=b'{}', complete=True)
+    assert raw.publication_uncertain is True
+    assert not raw.admitted and raw.ref is None and raw.observation_id is None
+    published = owner.publish_input(manifest(ctx))
+    assert published.publication_uncertain is True and not published.admitted

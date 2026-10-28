@@ -181,7 +181,9 @@ class InvocationOwner:
         try:
             ack = function(**kwargs)
         except Exception:  # noqa: BLE001 - sink diagnostics are not safe invocation metadata
-            ack = AuditAcknowledgement(False, AuditFault('persistence_error', phase, attempt_id))
+            # An escaped exception cannot show that the recorder wrote nothing.
+            ack = AuditAcknowledgement(False, AuditFault('persistence_error', phase, attempt_id),
+                                       publication_uncertain=True)
         except BaseException:  # noqa: BLE001 - interruption must retain a required receipt failure
             self._fault('persistence_error', phase, attempt_id)
             raise
@@ -364,7 +366,8 @@ class InvocationOwner:
                     record.observations.add(ack.observation_id)
                     record.usage_known |= usage is not None and usage.availability in ('known', 'partial')
                 return ack
-            return AcquiredAcknowledgement(False, None, None, ack.fault)
+            return AcquiredAcknowledgement(False, None, None, ack.fault,
+                                           publication_uncertain=ack.publication_uncertain)
 
     def _observe(self, lease, source_id, offset, length, usage, backend):
         self._check_process('acquired', lease)

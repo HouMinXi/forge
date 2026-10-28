@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import copy
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace as _replace
 import datetime
 import errno
 import hashlib
@@ -84,6 +84,8 @@ class StartAcknowledgement:
     admitted: bool
     attempt_id: str | None
     fault: AuditFault | None
+    # True when the call may have committed state before it failed; no id is promised then.
+    publication_uncertain: bool = False
 
 
 @dataclass(frozen=True)
@@ -102,12 +104,16 @@ class AcquiredAcknowledgement:
     observation_id: str | None
     ref: RawRef | None
     fault: AuditFault | None
+    # True when the call may have committed state before it failed; no id or ref is promised then.
+    publication_uncertain: bool = False
 
 
 @dataclass(frozen=True)
 class AuditAcknowledgement:
     admitted: bool
     fault: AuditFault | None
+    # True when the call may have committed state before it failed.
+    publication_uncertain: bool = False
 
 
 @dataclass(frozen=True)
@@ -1914,24 +1920,37 @@ class AttemptRecorder:
             handle = _prepare_audit_root(self.root, create=create)
             if isinstance(handle, AuditFault):
                 return self._denied(handle.code, phase, safe_attempt)
+            committed = (len(self._events), self._append_uncertain)
+            mutated = False
+
+            def measured(held):
+                # Whether the action changed the journal, measured before any denial writes its own fault.
+                nonlocal mutated
+                try:
+                    return action(held)
+                finally:
+                    mutated = (len(self._events), self._append_uncertain) != committed
+
             try:
                 if self._capability is not None:
                     _require(handle.capability == self._capability, "integrity_error")
                 with _root_lock(handle, deadline=deadline, monotonic=self._monotonic, create=create):
                     try:
-                        result = action(handle)
+                        result = measured(handle)
                     except _Rejected as error:
                         result = self._denied(
                             error.code, phase, safe_attempt, handle, preserve=error.preserve
                         )
                     except OSError:
                         result = self._denied("persistence_error", phase, safe_attempt, handle)
+                        result = _replace(result, publication_uncertain=mutated)
                     except (TypeError, ValueError, OverflowError):
                         result = self._denied("invalid_input", phase, safe_attempt, handle)
             except _Rejected as error:
                 result = self._denied(error.code, phase, safe_attempt)
             except OSError:
                 result = self._denied("persistence_error", phase, safe_attempt)
+                result = _replace(result, publication_uncertain=mutated)
             except (TypeError, ValueError, OverflowError):
                 result = self._denied("invalid_input", phase, safe_attempt)
             finally:
@@ -1939,6 +1958,7 @@ class AttemptRecorder:
                     handle.close()
                 except OSError:
                     result = self._denied("persistence_error", phase, safe_attempt)
+                    result = _replace(result, publication_uncertain=mutated)
             return result
 
     def _writable(self, *, allow_fault=False):
@@ -2059,7 +2079,9 @@ class AttemptRecorder:
         return (
             ack
             if isinstance(ack, StartAcknowledgement)
-            else StartAcknowledgement(False, None, ack.fault)
+            else StartAcknowledgement(
+                False, None, ack.fault, publication_uncertain=ack.publication_uncertain
+            )
         )
 
     def acquired(
@@ -2195,7 +2217,9 @@ class AttemptRecorder:
         return (
             ack
             if isinstance(ack, AcquiredAcknowledgement)
-            else AcquiredAcknowledgement(False, None, None, ack.fault)
+            else AcquiredAcknowledgement(
+                False, None, None, ack.fault, publication_uncertain=ack.publication_uncertain
+            )
         )
 
     def publish_input_manifest(self, manifest: dict) -> AuditAcknowledgement:

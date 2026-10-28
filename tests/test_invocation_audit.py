@@ -1,6 +1,7 @@
 """Independent expected observations for the local invocation journal."""
 
 import dataclasses
+import errno
 import hashlib
 import json
 import math
@@ -6077,3 +6078,321 @@ def test_orphan_settlement_receipts_validate_all_committed_raw(disk_root, monkey
     assert call().admitted and not owner.snapshot().audit_complete
     assert owner.snapshot().faults == faults
     assert other_owner(owner.root, str(uuid.uuid4())).open().admitted
+
+
+# --- Publication uncertainty after a mutating guarded action (#54) ---------------------------
+
+
+class _CloseOnce:
+    """Close the root descriptor for real, then raise EIO once after ``arm()``."""
+
+    def __init__(self, monkeypatch):
+        self.armed = False
+        self.fired = 0
+        original = audit._RootHandle.close
+
+        def close(handle):
+            original(handle)
+            if self.armed:
+                self.armed = False
+                self.fired += 1
+                raise OSError(errno.EIO, "root close")
+
+        monkeypatch.setattr(audit._RootHandle, "close", close)
+
+    def arm(self):
+        self.armed = True
+
+
+_FRAME = b'{"model":"observed"}'
+_STAGES = ["open", "manifest", "start", "acquired", "settle_acquired", "observe", "finish", "finalize", "freeze"]
+
+
+def _run_stage(disk_root, closer, stage, *, replay):
+    """Run every step before ``stage`` unarmed, then ``stage`` with the close failure armed.
+
+    With ``replay`` the stage first runs unarmed, so the armed call repeats an identical request
+    that the recorder answers from its journal without writing.
+    """
+    owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
+
+    def armed(call):
+        if replay:
+            assert call().admitted
+        closer.arm()
+        ack = call()
+        assert closer.fired == 1 and not closer.armed
+        return owner, ack
+
+    if stage == "open":
+        return armed(owner.open)
+    assert owner.open().admitted
+    if stage == "manifest":
+        return armed(lambda: owner.publish_input_manifest(input_manifest()))
+    assert owner.publish_input_manifest(input_manifest()).admitted
+    if stage == "start":
+        return armed(lambda: owner.start(
+            bound_context(), logical_id=LOGICAL, parent_id=None, cause="initial", backend=BACKEND,
+            request_digest=DIGEST, request_bytes=7, action_deadline=100,
+        ))
+    attempt = start(owner, bound_context())
+    if stage == "acquired":
+        seen = []
+
+        def call():
+            ack = acquire(owner, attempt, None, data=_FRAME, identity=seen[0] if seen else None)
+            seen[:] = [ack.observation_id] if ack.observation_id else seen
+            return ack
+
+        return armed(call)
+    if stage == "settle_acquired":
+        seen = []
+
+        def call():
+            ack = owner.settle_acquired(
+                attempt, layer="wire", data=_FRAME, complete=True, usage=None,
+                dispatch_state="entered_api_send", observation_id=seen[0] if seen else None,
+            )
+            seen[:] = [ack.observation_id] if ack.observation_id else seen
+            return ack
+
+        return armed(call)
+    raw = acquire(owner, attempt, None, data=_FRAME)
+    assert raw.admitted
+    if stage == "observe":
+        seen = []
+
+        def call():
+            ack = owner.observe_response(
+                attempt, source_observation_id=raw.observation_id, frame_offset=0,
+                frame_length=len(_FRAME), usage=usage(0, 0, 0, 0), observed_backend=None,
+                observation_id=seen[0] if seen else None,
+            )
+            if not seen and owner.scoped_snapshot().attempts[0].response_observations:
+                seen.append(owner.scoped_snapshot().attempts[0].response_observations[0].observation_id)
+            return ack
+
+        return armed(call)
+    if stage == "finish":
+        return armed(lambda: finish(owner, attempt))
+    assert finish(owner, attempt).admitted
+    if stage == "finalize":
+        return armed(lambda: owner.finalize("completed"))
+    assert owner.finalize("completed").admitted
+    return armed(lambda: owner.set_frozen(True))
+
+
+@pytest.mark.parametrize("stage", _STAGES)
+def test_close_failure_after_a_mutation_is_publication_uncertain(disk_root, monkeypatch, stage):
+    closer = _CloseOnce(monkeypatch)
+    owner, ack = _run_stage(disk_root, closer, stage, replay=False)
+    assert ack.publication_uncertain is True
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert not owner.snapshot().audit_complete
+
+
+@pytest.mark.parametrize("stage", ["manifest", "acquired", "settle_acquired", "observe", "finish", "finalize", "freeze"])
+def test_close_failure_after_a_journal_replay_is_definitely_unpublished(disk_root, monkeypatch, stage):
+    closer = _CloseOnce(monkeypatch)
+    owner, ack = _run_stage(disk_root, closer, stage, replay=True)
+    assert ack.publication_uncertain is False
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert not owner.snapshot().audit_complete
+
+
+def test_uncertain_acquire_leaves_a_committed_ref_the_caller_never_received(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    ack = acquire(owner, attempt, None, data=b"committed bytes")
+    assert closer.fired == 1
+    assert ack == audit.AcquiredAcknowledgement(
+        False, None, None, audit.AuditFault("persistence_error", "acquired", attempt),
+        publication_uncertain=True,
+    )
+    (view_attempt,) = audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts
+    (ref,) = view_attempt.raw_refs
+    assert ref.sha256 == hashlib.sha256(b"committed bytes").hexdigest() and ref.retained_bytes == 15
+
+
+def test_uncertain_start_leaves_a_committed_attempt_without_an_id(recorder, monkeypatch):
+    owner, _ = recorder
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    ack = owner.start(
+        context(), logical_id=LOGICAL, parent_id=None, cause="initial", backend=BACKEND,
+        request_digest=DIGEST, request_bytes=7, action_deadline=100,
+    )
+    assert ack == audit.StartAcknowledgement(
+        False, None, audit.AuditFault("persistence_error", "start", None), publication_uncertain=True,
+    )
+    assert len(audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts) == 1
+
+
+def test_publish_failure_before_the_raw_write_is_definitely_unpublished(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+    original = audit._publish
+
+    def publish(fd, name, data):
+        if name.startswith("raw-"):
+            raise OSError(errno.EIO, "before the raw write")
+        return original(fd, name, data)
+
+    closer = _CloseOnce(monkeypatch)
+    monkeypatch.setattr(audit, "_publish", publish)
+    ack = acquire(owner, attempt, None, data=b"never written")
+    assert ack == audit.AcquiredAcknowledgement(
+        False, None, None, audit.AuditFault("persistence_error", "acquired", attempt),
+        publication_uncertain=False,
+    )
+    assert closer.fired == 0
+    (view_attempt,) = audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts
+    assert view_attempt.raw_refs == ()
+    assert not [p for p in (owner.root / RUN).iterdir() if p.name.startswith(("raw-", "temp-raw-"))]
+
+
+def test_publish_failure_before_the_raw_write_and_failed_close_stays_definite(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+
+    def publish(fd, name, data):
+        raise OSError(errno.EIO, "before the raw write")
+
+    closer = _CloseOnce(monkeypatch)
+    monkeypatch.setattr(audit, "_publish", publish)
+    closer.arm()
+    ack = acquire(owner, attempt, None, data=b"never written")
+    assert closer.fired == 1
+    assert ack.publication_uncertain is False and ack.ref is None and not ack.admitted
+    assert audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs == ()
+
+
+def test_journal_append_that_lands_before_raising_is_publication_uncertain(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+    original = audit._append
+
+    def append(fd, event):
+        original(fd, event)
+        if event["event"] == "acquired":
+            raise OSError(errno.EIO, "after the journal write")
+
+    monkeypatch.setattr(audit, "_append", append)
+    ack = acquire(owner, attempt, None, data=b"landed")
+    assert ack.publication_uncertain is True and ack.ref is None and not ack.admitted
+    (ref,) = audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs
+    assert ref.sha256 == hashlib.sha256(b"landed").hexdigest()
+
+
+def test_journal_append_with_unverifiable_bytes_is_publication_uncertain(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+    original = audit._append
+
+    def append(fd, event):
+        if event["event"] == "acquired":
+            # A torn frame prefix: the journal can no longer be verified against either history.
+            journal = os.open("journal", os.O_WRONLY | os.O_APPEND, dir_fd=fd)
+            try:
+                os.write(journal, b"00000")
+            finally:
+                os.close(journal)
+            raise OSError(errno.EIO, "mid-frame")
+        return original(fd, event)
+
+    monkeypatch.setattr(audit, "_append", append)
+    ack = acquire(owner, attempt, None, data=b"torn")
+    assert ack.publication_uncertain is True and ack.ref is None and not ack.admitted
+    assert owner._append_uncertain is True
+
+
+def test_entering_exception_and_cause_survive_a_failed_root_close(recorder, monkeypatch):
+    owner, _ = recorder
+    cause = ValueError("original cause")
+    entering = RuntimeError("entering")
+    entering.__cause__ = cause
+    closer = _CloseOnce(monkeypatch)
+
+    def action(handle):
+        raise entering
+
+    closer.arm()
+    with pytest.raises(RuntimeError) as caught:
+        owner._guard("start", action)
+    assert caught.value is entering and caught.value.__cause__ is cause
+    assert closer.fired == 1
+
+
+def test_lock_release_failure_after_a_mutation_is_publication_uncertain(recorder, monkeypatch):
+    import fcntl
+
+    owner, _ = recorder
+    attempt = start(owner)
+    original = fcntl.flock
+
+    def flock(fd, operation):
+        if operation == fcntl.LOCK_UN:
+            raise OSError(errno.EIO, "unlock")
+        return original(fd, operation)
+
+    monkeypatch.setattr(fcntl, "flock", flock)
+    ack = acquire(owner, attempt, None, data=b"committed")
+    monkeypatch.undo()
+    assert ack.publication_uncertain is True and ack.ref is None and not ack.admitted
+    (ref,) = audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs
+    assert ref.sha256 == hashlib.sha256(b"committed").hexdigest()
+
+
+def test_lock_failure_before_the_action_is_definitely_unpublished(recorder, monkeypatch):
+    import fcntl
+
+    owner, _ = recorder
+    attempt = start(owner)
+
+    def flock(fd, operation):
+        raise OSError(errno.EIO, "lock")
+
+    monkeypatch.setattr(fcntl, "flock", flock)
+    ack = acquire(owner, attempt, None, data=b"never committed")
+    monkeypatch.undo()
+    assert ack.publication_uncertain is False and not ack.admitted
+    assert audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs == ()
+
+
+@pytest.mark.parametrize("failure", [audit._Rejected("integrity_error"), ValueError("late")])
+def test_non_os_failure_after_a_mutation_and_failed_close_is_publication_uncertain(
+    recorder, monkeypatch, failure
+):
+    owner, _ = recorder
+    attempt = start(owner)
+    original = audit._append
+    landed = []
+
+    def append(fd, event):
+        original(fd, event)
+        if event["event"] == "acquired":
+            landed.append(event)
+
+    def revalidate(handle):
+        if landed:
+            raise failure
+
+    closer = _CloseOnce(monkeypatch)
+    monkeypatch.setattr(audit, "_append", append)
+    monkeypatch.setattr(audit, "_revalidate", revalidate)
+    closer.arm()
+    ack = acquire(owner, attempt, None, data=b"committed")
+    assert closer.fired == 1 and landed
+    assert ack.publication_uncertain is True and ack.ref is None and not ack.admitted
+
+
+def test_non_os_failure_before_a_mutation_and_failed_close_stays_definite(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    ack = acquire(owner, attempt, None, data=b"x", layer="not-a-layer")
+    assert closer.fired == 1
+    assert ack.publication_uncertain is False and not ack.admitted and ack.fault.code == "persistence_error"
