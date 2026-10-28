@@ -83,6 +83,9 @@ def test_selects_added_modified_and_renamed_python_files_only(repo):
     _git(repo, "mv", "moved.py", "renamed.py")
     _write(repo, "notes.md", "# notes\n")
     _write(repo, "script.sh", "echo hi\n")
+    _write(repo, "foo.py.bak", "x = 1\n")
+    _write(repo, "stub.pyi.orig", "x: int\n")
+    _write(repo, "pyfile", "x = 1\n")
     _commit(repo)
 
     assert lint_changed.changed_python_files("main", cwd=repo) == [
@@ -124,9 +127,61 @@ def test_non_ascii_and_spaced_names_survive_selection(repo):
     assert lint_changed.changed_python_files("main", cwd=repo) == ["dir with space/módulo.py"]
 
 
-def test_unknown_base_ref_is_an_error(repo):
-    with pytest.raises(subprocess.CalledProcessError):
+def test_file_replaced_by_a_symlink_is_not_selected(repo):
+    (repo / "keep.py").unlink()
+    try:
+        (repo / "keep.py").symlink_to("moved.py")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available here")
+    _commit(repo)
+
+    assert "T\tkeep.py" in _git(repo, "diff", "--name-status", "--no-renames", "main...HEAD")
+    assert lint_changed.changed_python_files("main", cwd=repo) == []
+
+
+def test_unknown_base_ref_exits_with_git_message(repo):
+    with pytest.raises(SystemExit) as excinfo:
         lint_changed.changed_python_files("origin/does-not-exist", cwd=repo)
+
+    message = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert message.startswith("lint_changed: git diff origin/does-not-exist...HEAD failed")
+    assert "fatal:" in message
+    assert "origin/does-not-exist" in message.split("fatal:", 1)[1]
+
+
+def test_missing_merge_base_exits_with_git_message(repo):
+    _git(repo, "checkout", "-q", "--orphan", "unrelated")
+    _write(repo, "other.py")
+    _commit(repo, "unrelated history")
+
+    with pytest.raises(SystemExit) as excinfo:
+        lint_changed.changed_python_files("main", cwd=repo)
+
+    assert excinfo.value.code != 0
+    assert "no merge base" in str(excinfo.value)
+
+
+def test_option_like_base_is_never_read_as_a_git_option(repo, tmp_path):
+    target = tmp_path / "written-by-git"
+
+    with pytest.raises(SystemExit) as excinfo:
+        lint_changed.changed_python_files(f"--output={target}", cwd=repo)
+
+    assert excinfo.value.code != 0
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("template", ["--output={target}", "-O{target}", "-x"])
+def test_option_like_base_is_rejected_on_the_command_line(tmp_path, capsys, template):
+    target = tmp_path / "written-by-git"
+
+    with pytest.raises(SystemExit) as excinfo:
+        lint_changed.main([f"--base={template.format(target=target)}"])
+
+    assert excinfo.value.code == 2
+    assert "base must not start with '-'" in capsys.readouterr().err
+    assert not target.exists()
 
 
 class _Recorder:
@@ -204,15 +259,49 @@ def test_print_requirement_prints_the_pin_and_does_not_lint(capsys, monkeypatch)
     assert capsys.readouterr().out.strip() == lint_changed.ruff_requirement(ROOT / "pyproject.toml")
 
 
-def test_main_lints_the_files_changed_against_the_base(monkeypatch):
+@pytest.mark.parametrize("base", ["origin/main", "origin/release-1.x", "HEAD~3"])
+def test_main_lints_the_files_changed_against_the_base(monkeypatch, base):
     seen = {}
-    monkeypatch.setattr(
-        lint_changed, "changed_python_files", lambda base: seen.setdefault("base", base) and ["a.py"]
-    )
-    monkeypatch.setattr(lint_changed, "run_ruff", lambda files: seen.setdefault("files", files) and 7)
 
-    assert lint_changed.main(["--base", "origin/main"]) == 7
-    assert seen == {"base": "origin/main", "files": ["a.py"]}
+    def fake_changed(passed_base):
+        seen["base"] = passed_base
+        return ["a.py"]
+
+    def fake_run(files):
+        seen["files"] = files
+        return 7
+
+    monkeypatch.setattr(lint_changed, "changed_python_files", fake_changed)
+    monkeypatch.setattr(lint_changed, "run_ruff", fake_run)
+
+    assert lint_changed.main(["--base", base]) == 7
+    assert seen == {"base": base, "files": ["a.py"]}
+
+
+def test_real_runner_returns_the_exit_status_instead_of_raising():
+    assert lint_changed._subprocess_runner([sys.executable, "-c", "raise SystemExit(3)"]) == 3
+
+
+def test_real_runner_runs_in_the_repository_root(capfd, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    command = [sys.executable, "-c", "import os; print(os.getcwd())"]
+
+    assert lint_changed._subprocess_runner(command) == 0
+    assert pathlib.Path(capfd.readouterr().out.strip()).resolve() == lint_changed.REPO_ROOT
+
+
+@pytest.mark.skipif(importlib.util.find_spec("ruff") is None, reason="ruff is not installed")
+def test_real_ruff_honours_the_exclude_list_for_explicit_paths(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[tool.ruff]\nexclude = ["skipped.py"]\n', encoding="utf-8")
+    (tmp_path / "skipped.py").write_text("import os\n", encoding="utf-8")
+    (tmp_path / "clean.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "dirty.py").write_text("import os\n", encoding="utf-8")
+
+    def runner(command):
+        return subprocess.run(command, cwd=tmp_path, check=False, capture_output=True).returncode
+
+    assert lint_changed.run_ruff(["skipped.py", "clean.py"], runner) == 0
+    assert lint_changed.run_ruff(["dirty.py"], runner) != 0
 
 
 def test_main_requires_a_mode():
@@ -243,3 +332,50 @@ def test_workflow_never_lints_the_whole_tree():
 
     assert "ruff check ." not in text
     assert "ruff format ." not in text
+
+
+def _job():
+    return _workflow()["jobs"]["lint-changed"]
+
+
+def test_workflow_is_read_only_and_does_not_keep_credentials():
+    workflow = _workflow()
+    steps = _job()["steps"]
+    checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
+
+    assert workflow["permissions"] == {"contents": "read"}
+    assert "permissions" not in _job()
+    assert checkout["with"]["persist-credentials"] is False
+
+
+def test_workflow_failures_are_not_swallowed():
+    job = _job()
+
+    assert job.get("continue-on-error", False) is False
+    assert all(step.get("continue-on-error", False) is False for step in job["steps"])
+
+
+def test_workflow_actions_are_pinned_to_commit_shas():
+    uses = [step["uses"] for step in _job()["steps"] if "uses" in step]
+
+    assert len(uses) == 2
+    assert all(re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", use) for use in uses)
+
+
+def test_workflow_job_settings_are_pinned():
+    job = _job()
+    setup = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/setup-python@"))
+
+    assert job["name"] == "Lint changed Python files"
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert job["timeout-minutes"] == 10
+    assert setup["with"]["python-version"] == "3.12"
+
+
+def test_workflow_cancels_superseded_runs_per_pull_request():
+    concurrency = _workflow()["concurrency"]
+
+    assert concurrency == {
+        "group": "${{ github.workflow }}-${{ github.event.pull_request.number }}",
+        "cancel-in-progress": True,
+    }
