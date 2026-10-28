@@ -1,6 +1,8 @@
 """Independent expected observations for the local invocation journal."""
 
+import contextlib
 import dataclasses
+import errno
 import hashlib
 import json
 import math
@@ -66,9 +68,7 @@ def utc():
 
 def context(**changes):
     return dataclasses.replace(
-        audit.InvocationContext(
-            RUN, None, None, 0, "qodo-review", GROUP, "c" * 64, "review", None
-        ),
+        audit.InvocationContext(RUN, None, None, 0, "qodo-review", GROUP, "c" * 64, "review", None),
         **changes,
     )
 
@@ -431,7 +431,10 @@ def test_missing_finish_and_torn_tail_remain_ambiguous(recorder):
 def test_denied_open_or_start_has_zero_fixture_dispatches(disk_root):
     dispatches = []
     owner = audit.AttemptRecorder(
-        disk_root, context=context(source_hash=None, snapshot_id=SNAPSHOT), monotonic=Clock(), utc_now=utc
+        disk_root,
+        context=context(source_hash=None, snapshot_id=SNAPSHOT),
+        monotonic=Clock(),
+        utc_now=utc,
     )
     ack = owner.open()
     if ack.admitted:
@@ -4691,7 +4694,9 @@ def test_committed_terminal_without_marker_refuses_retry_without_journal_fault(r
     assert other_owner(owner.root, str(uuid.uuid4())).open().admitted
 
 
-@pytest.mark.parametrize("site", ["open", "start", "acquired", "finish", "run_final", "freeze", "audit_fault"])
+@pytest.mark.parametrize(
+    "site", ["open", "start", "acquired", "finish", "run_final", "freeze", "audit_fault"]
+)
 def test_append_journal_close_reconciles_exact_committed_history(disk_root, monkeypatch, site):
     clock = Clock()
     owner = audit.AttemptRecorder(disk_root, context=context(), monotonic=clock, utc_now=utc)
@@ -4728,8 +4733,14 @@ def test_append_journal_close_reconciles_exact_committed_history(disk_root, monk
             refused = owner.open()
         elif site == "start":
             refused = owner.start(
-                context(), logical_id=str(uuid.uuid4()), parent_id=None, cause="initial",
-                backend=BACKEND, request_digest=DIGEST, request_bytes=7, action_deadline=100,
+                context(),
+                logical_id=str(uuid.uuid4()),
+                parent_id=None,
+                cause="initial",
+                backend=BACKEND,
+                request_digest=DIGEST,
+                request_bytes=7,
+                action_deadline=100,
             )
         elif site in ("acquired", "audit_fault"):
             refused = acquire(owner, earlier, usage(5, 4, 2, 1), complete=site != "audit_fault")
@@ -4779,10 +4790,22 @@ def test_append_journal_close_reconciles_exact_committed_history(disk_root, monk
 
 
 @pytest.mark.parametrize(
-    "cut", [
-        "prior", "torn", "duplicate", "conflict", "fsync", "run_fsync", "root_fsync", "reread",
-        "run_rebound", "root_rebound", "late_run_rebound", "late_root_rebound", "journal_rebound",
-    ]
+    "cut",
+    [
+        "prior",
+        "torn",
+        "duplicate",
+        "conflict",
+        "fsync",
+        "run_fsync",
+        "root_fsync",
+        "reread",
+        "run_rebound",
+        "root_rebound",
+        "late_run_rebound",
+        "late_root_rebound",
+        "journal_rebound",
+    ],
 )
 def test_append_reconciliation_uncertain_bytes_never_authorize_diagnostic(recorder, monkeypatch, cut):
     owner, _ = recorder
@@ -4826,7 +4849,9 @@ def test_append_reconciliation_uncertain_bytes_never_authorize_diagnostic(record
                 owner.root.rename(saved)
                 owner.root.mkdir(mode=0o700)
         after_append = True
-        actual = (saved / ("journal" if cut == "run_rebound" else RUN + "/journal")) if saved else journal
+        actual = (
+            (saved / ("journal" if cut == "run_rebound" else RUN + "/journal")) if saved else journal
+        )
         captured.append(actual.read_bytes())
         raise injected
 
@@ -4920,8 +4945,12 @@ def test_append_reconciliation_secondary_fault_preserves_original_exception(reco
     attempt = start(owner)
     original = OSError("original append identity")
     event = owner._event(
-        "finish", attempt_id=attempt, outcome="failed", error_class=None,
-        duration_s=1.0, dispatch_state="entered_api_send",
+        "finish",
+        attempt_id=attempt,
+        outcome="failed",
+        error_class=None,
+        duration_s=1.0,
+        dispatch_state="entered_api_send",
     )
 
     def append(fd, event):
@@ -4953,8 +4982,12 @@ def test_append_diagnostic_requires_current_exact_history(recorder):
     owner, _ = recorder
     attempt = start(owner)
     external = owner._event(
-        "finish", attempt_id=attempt, outcome="failed", error_class=None,
-        duration_s=1.0, dispatch_state="entered_api_send",
+        "finish",
+        attempt_id=attempt,
+        outcome="failed",
+        error_class=None,
+        duration_s=1.0,
+        dispatch_state="entered_api_send",
     )
     handle = audit._prepare_audit_root(owner.root, create=False)
     try:
@@ -4986,8 +5019,12 @@ def test_append_reconciliation_validates_fold_and_raw_contents(recorder, invalid
         expected = owner._events
     else:
         event = owner._event(
-            "finish", attempt_id=attempt, outcome="failed", error_class=None,
-            duration_s=-1.0, dispatch_state="entered_api_send",
+            "finish",
+            attempt_id=attempt,
+            outcome="failed",
+            error_class=None,
+            duration_s=-1.0,
+            dispatch_state="entered_api_send",
         )
         expected = owner._events + [event]
         with (owner.root / RUN / "journal").open("ab") as stream:
@@ -5012,10 +5049,16 @@ def bound_context(**changes):
 
 def input_manifest(**changes):
     return {
-        "schema_version": 1, "run_id": RUN, "snapshot_id": SNAPSHOT,
-        "mode": "diff", "legacy_source_hash": SOURCE,
-        "exact_diff_sha256": hashlib.sha256(b"exact input\n").hexdigest(), "diff_bytes": 12,
-        "files": [], "repositories": [], **changes,
+        "schema_version": 1,
+        "run_id": RUN,
+        "snapshot_id": SNAPSHOT,
+        "mode": "diff",
+        "legacy_source_hash": SOURCE,
+        "exact_diff_sha256": hashlib.sha256(b"exact input\n").hexdigest(),
+        "diff_bytes": 12,
+        "files": [],
+        "repositories": [],
+        **changes,
     }
 
 
@@ -5042,17 +5085,29 @@ def test_settled_acquired_partial_native_and_entered_sibling_keep_incomplete(rec
     sibling = start(owner, logical=str(uuid.uuid4()))
     payload = b'{"usage":2}\n{"usage":5}\npartial'
     raw = owner.settle_acquired(
-        first, layer="wire", data=payload, complete=False, usage=None,
+        first,
+        layer="wire",
+        data=payload,
+        complete=False,
+        usage=None,
         dispatch_state="entered_api_send",
     )
     assert not raw.admitted and raw.ref and raw.observation_id
     for offset, count in [(0, 2), (12, 5)]:
         assert owner.observe_response(
-            first, source_observation_id=raw.observation_id, frame_offset=offset,
-            frame_length=11, usage=usage(count, 1, 0, 0, kind="cumulative"), observed_backend=None,
+            first,
+            source_observation_id=raw.observation_id,
+            frame_offset=offset,
+            frame_length=11,
+            usage=usage(count, 1, 0, 0, kind="cumulative"),
+            observed_backend=None,
         ).admitted
     assert owner.settle_acquired(
-        sibling, layer="stderr", data=b"stderr", complete=True, usage=None,
+        sibling,
+        layer="stderr",
+        data=b"stderr",
+        complete=True,
+        usage=None,
         dispatch_state="entered_cli_launch",
     ).admitted
     view = owner.scoped_snapshot()
@@ -5061,8 +5116,14 @@ def test_settled_acquired_partial_native_and_entered_sibling_keep_incomplete(rec
     assert view.summary["observed_api_send_count"] == 1
     assert view.summary["observed_cli_launch_count"] == 1
     assert not owner.start(
-        context(), logical_id=str(uuid.uuid4()), parent_id=None, cause="initial", backend=BACKEND,
-        request_digest=DIGEST, request_bytes=7, action_deadline=100,
+        context(),
+        logical_id=str(uuid.uuid4()),
+        parent_id=None,
+        cause="initial",
+        backend=BACKEND,
+        request_digest=DIGEST,
+        request_bytes=7,
+        action_deadline=100,
     ).admitted
     assert finish(owner, first, outcome="failed").admitted
     assert finish(owner, sibling, outcome="failed", dispatch="entered_cli_launch").admitted
@@ -5079,8 +5140,13 @@ def test_response_observed_native_identity_range_and_exact_replay(recorder):
     attempt = start(owner)
     raw = acquire(owner, attempt, None, data=b'{"model":"observed"}')
     observed = dataclasses.replace(BACKEND, observed_backend="actual", observed_model="observed")
-    args = dict(source_observation_id=raw.observation_id, frame_offset=0, frame_length=20,
-                usage=usage(0, 0, 0, 0), observed_backend=observed)
+    args = dict(
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=20,
+        usage=usage(0, 0, 0, 0),
+        observed_backend=observed,
+    )
     assert owner.observe_response(attempt, **args).admitted
     response = owner.scoped_snapshot().attempts[0].response_observations[0]
     assert response.observed_backend.observed_model == "observed"
@@ -5093,8 +5159,13 @@ def test_scoped_projection_full_causal_fold_unequal_roles_and_work_wall(recorder
     owner, clock = recorder
     first = start(owner, context(pass_name="one"))
     clock.value = 1
-    second = start(owner, context(pass_name="two", parent_logical_id=LOGICAL),
-                   logical=str(uuid.uuid4()), parent=first, cause="correction")
+    second = start(
+        owner,
+        context(pass_name="two", parent_logical_id=LOGICAL),
+        logical=str(uuid.uuid4()),
+        parent=first,
+        cause="correction",
+    )
     assert acquire(owner, first, usage(3510, 10, 0, 0)).admitted
     assert acquire(owner, second, usage(7885, 8, 0, 0)).admitted
     clock.value = 3
@@ -5119,21 +5190,37 @@ def test_scoped_projection_full_causal_fold_unequal_roles_and_work_wall(recorder
     assert empty.summary["usage"]["input_tokens"]["known_subtotal"] == 0
 
 
-@pytest.mark.parametrize("change", [
-    {"frame_offset": -1}, {"frame_offset": True}, {"frame_length": 0}, {"frame_length": True},
-    {"frame_length": 99}, {"source_observation_id": str(uuid.uuid4())},
-    {"usage": None, "observed_backend": None},
-    {"usage": dataclasses.replace(usage(1, 1, 0, 0), observation_source="derived")},
-    {"usage": dataclasses.replace(usage(1, 1, 0, 0), scope="cli_process")},
-    {"observed_backend": BACKEND},
-    {"observed_backend": dataclasses.replace(BACKEND, requested_model="wrong", observed_model="actual")},
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"frame_offset": -1},
+        {"frame_offset": True},
+        {"frame_length": 0},
+        {"frame_length": True},
+        {"frame_length": 99},
+        {"source_observation_id": str(uuid.uuid4())},
+        {"usage": None, "observed_backend": None},
+        {"usage": dataclasses.replace(usage(1, 1, 0, 0), observation_source="derived")},
+        {"usage": dataclasses.replace(usage(1, 1, 0, 0), scope="cli_process")},
+        {"observed_backend": BACKEND},
+        {
+            "observed_backend": dataclasses.replace(
+                BACKEND, requested_model="wrong", observed_model="actual"
+            )
+        },
+    ],
+)
 def test_response_observed_invalid_projection_refuses_without_native_event(recorder, change):
     owner, _ = recorder
     attempt = start(owner)
     raw = acquire(owner, attempt, None, data=b'{"usage":1}')
-    args = dict(source_observation_id=raw.observation_id, frame_offset=0, frame_length=11,
-                usage=usage(1, 1, 0, 0), observed_backend=None)
+    args = dict(
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=11,
+        usage=usage(1, 1, 0, 0),
+        observed_backend=None,
+    )
     args.update(change)
     refused = owner.observe_response(attempt, **args)
     assert not refused.admitted
@@ -5141,17 +5228,28 @@ def test_response_observed_invalid_projection_refuses_without_native_event(recor
     assert not owner.scoped_snapshot().audit_complete
 
 
-@pytest.mark.parametrize("layer,data", [
-    ("stderr", b'{"usage":1}'), ("decoded", b'{"usage":1}'), ("wire", b'{"usage":'),
-    ("wire", b'data: {"usage":1}'), ("wire", b'[]'), ("wire", b'\xff'),
-])
+@pytest.mark.parametrize(
+    "layer,data",
+    [
+        ("stderr", b'{"usage":1}'),
+        ("decoded", b'{"usage":1}'),
+        ("wire", b'{"usage":'),
+        ("wire", b'data: {"usage":1}'),
+        ("wire", b"[]"),
+        ("wire", b"\xff"),
+    ],
+)
 def test_response_observed_source_layer_and_complete_native_frame(recorder, layer, data):
     owner, _ = recorder
     attempt = start(owner)
     raw = acquire(owner, attempt, None, data=data, layer=layer)
     assert not owner.observe_response(
-        attempt, source_observation_id=raw.observation_id, frame_offset=0, frame_length=len(data),
-        usage=usage(1, 1, 0, 0), observed_backend=None,
+        attempt,
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(data),
+        usage=usage(1, 1, 0, 0),
+        observed_backend=None,
     ).admitted
     assert not any(e["event"] == "response_observed" for e in events(owner))
 
@@ -5162,8 +5260,12 @@ def test_response_observed_invalid_snapshot_keeps_prior_subtotal(recorder, strea
     attempt = start(owner)
     body = b'data: {"usage":5}\n\n' if stream else b'{"usage":5}'
     raw = acquire(owner, attempt, None, data=body)
-    args = dict(source_observation_id=raw.observation_id, frame_offset=0, frame_length=len(body),
-                observed_backend=None)
+    args = dict(
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(body),
+        observed_backend=None,
+    )
     assert owner.observe_response(attempt, usage=usage(5, 1, 0, 0, kind="cumulative"), **args).admitted
     invalid = usage(availability="invalid", kind="final")
     assert not owner.observe_response(attempt, usage=invalid, **args).admitted
@@ -5181,12 +5283,19 @@ def test_settled_acquired_requires_real_dispatch_observation(recorder, dispatch)
     owner, _ = recorder
     attempt = start(owner)
     assert not owner.settle_acquired(
-        attempt, layer="wire", data=b"raw", complete=True, usage=None, dispatch_state=dispatch,
+        attempt,
+        layer="wire",
+        data=b"raw",
+        complete=True,
+        usage=None,
+        dispatch_state=dispatch,
     ).admitted
     assert not any(e["event"] == "settled_acquired" for e in events(owner))
 
 
-@pytest.mark.parametrize("dispatch", ["entered_api_send", "entered_cli_launch", "possibly_sent", "unknown"])
+@pytest.mark.parametrize(
+    "dispatch", ["entered_api_send", "entered_cli_launch", "possibly_sent", "unknown"]
+)
 def test_settled_acquired_replay_same_identity_and_dispatch_conflict(recorder, dispatch):
     owner, _ = recorder
     attempt = start(owner)
@@ -5202,8 +5311,19 @@ def test_settled_acquired_replay_same_identity_and_dispatch_conflict(recorder, d
         assert finish(owner, attempt).admitted
 
 
-@pytest.mark.parametrize("scope", [None, {}, {"pass_name":None}, {"round_index":None},
-    {"group_id":None}, {"purpose":None}, {"round_index":0}, {"group_id":GROUP}])
+@pytest.mark.parametrize(
+    "scope",
+    [
+        None,
+        {},
+        {"pass_name": None},
+        {"round_index": None},
+        {"group_id": None},
+        {"purpose": None},
+        {"round_index": 0},
+        {"group_id": GROUP},
+    ],
+)
 def test_scoped_projection_none_empty_and_explicit_null(recorder, scope):
     owner, _ = recorder
     attempt = start(owner)
@@ -5217,8 +5337,19 @@ def test_scoped_projection_none_empty_and_explicit_null(recorder, scope):
     assert audit.AttemptRecorder.reopen_scoped(owner.root, RUN, scope=scope).summary == view.summary
 
 
-@pytest.mark.parametrize("scope", [[], True, {"bad":1}, {"round_index":True},
-    {"round_index":float("nan")}, {"group_id":"bad"}, {"pass_name":1}, {"purpose":""}])
+@pytest.mark.parametrize(
+    "scope",
+    [
+        [],
+        True,
+        {"bad": 1},
+        {"round_index": True},
+        {"round_index": float("nan")},
+        {"group_id": "bad"},
+        {"pass_name": 1},
+        {"purpose": ""},
+    ],
+)
 def test_scoped_projection_invalid_filter_is_safe_readonly_fault(recorder, scope):
     owner, _ = recorder
     start(owner)
@@ -5238,29 +5369,45 @@ def test_input_manifest_modes_utf8_quota_and_retained_maintenance(disk_root, mod
     if mode != "diff":
         manifest.update(exact_diff_sha256=None, diff_bytes=None)
     if mode == "files":
-        manifest["files"] = [{"path":"a.py", "sha256":hashlib.sha256(b"").hexdigest(), "bytes":0}]
+        manifest["files"] = [{"path": "a.py", "sha256": hashlib.sha256(b"").hexdigest(), "bytes": 0}]
     if mode == "joint":
-        manifest["repositories"] = [{"label":"repo", "revision":"13aa851", "sha256":SOURCE, "bytes":12}]
+        manifest["repositories"] = [
+            {"label": "repo", "revision": "13aa851", "sha256": SOURCE, "bytes": 12}
+        ]
     assert owner.publish_input_manifest(manifest).admitted
     assert audit.AttemptRecorder.reopen_scoped(owner.root, RUN).input_manifest["mode"] == mode
     attempt = start(owner, bound_context())
     assert finish(owner, attempt).admitted and owner.finalize("completed").admitted
     before = (owner.root / RUN / "input-manifest.json").read_bytes()
     assert audit.maintain_audit_root(
-        owner.root, monotonic=clock, utc_now=lambda:"2026-10-20T12:00:00Z", action_deadline=100,
+        owner.root,
+        monotonic=clock,
+        utc_now=lambda: "2026-10-20T12:00:00Z",
+        action_deadline=100,
     ).admitted
     assert (owner.root / RUN / "input-manifest.json").read_bytes() == before
     assert audit.AttemptRecorder.reopen_scoped(owner.root, RUN).input_manifest["mode"] == mode
 
 
-@pytest.mark.parametrize("change", [
-    {"schema_version":True}, {"run_id":str(uuid.uuid4())}, {"snapshot_id":str(uuid.uuid4())},
-    {"legacy_source_hash":"d"*64}, {"mode":"bad"}, {"files":()}, {"repositories":()},
-    {"exact_diff_sha256":None}, {"diff_bytes":True}, {"diff_bytes":-1},
-    {"mode":"files"}, {"extra":1},
-    {"files":[{"path":"../bad", "sha256":SOURCE, "bytes":1}]},
-    {"repositories":[{"label":"repo", "revision":"main", "sha256":SOURCE, "bytes":1}]},
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"schema_version": True},
+        {"run_id": str(uuid.uuid4())},
+        {"snapshot_id": str(uuid.uuid4())},
+        {"legacy_source_hash": "d" * 64},
+        {"mode": "bad"},
+        {"files": ()},
+        {"repositories": ()},
+        {"exact_diff_sha256": None},
+        {"diff_bytes": True},
+        {"diff_bytes": -1},
+        {"mode": "files"},
+        {"extra": 1},
+        {"files": [{"path": "../bad", "sha256": SOURCE, "bytes": 1}]},
+        {"repositories": [{"label": "repo", "revision": "main", "sha256": SOURCE, "bytes": 1}]},
+    ],
+)
 def test_input_manifest_invalid_closed_binding_refuses(disk_root, change):
     owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
     assert owner.open().admitted
@@ -5272,8 +5419,16 @@ def test_input_manifest_invalid_closed_binding_refuses(disk_root, change):
 def test_input_manifest_missing_corrupt_changed_and_old_history_refuse_writer(disk_root):
     owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
     assert owner.open().admitted
-    ack = owner.start(bound_context(), logical_id=LOGICAL, parent_id=None, cause="initial", backend=BACKEND,
-                      request_digest=DIGEST, request_bytes=7, action_deadline=100)
+    ack = owner.start(
+        bound_context(),
+        logical_id=LOGICAL,
+        parent_id=None,
+        cause="initial",
+        backend=BACKEND,
+        request_digest=DIGEST,
+        request_bytes=7,
+        action_deadline=100,
+    )
     assert not ack.admitted and ack.fault.code == "integrity_error"
     assert not any(e["event"] == "start" for e in events(owner))
     # The original source-bound history is still observable, with no fabricated manifest.
@@ -5285,8 +5440,16 @@ def test_input_manifest_committed_bytes_corruption_refuses_source_and_neighbor(d
     assert owner.open().admitted and owner.publish_input_manifest(input_manifest()).admitted
     path = owner.root / RUN / "input-manifest.json"
     path.write_bytes(path.read_bytes().replace(b"exact_diff", b"wrong_diff"))
-    assert not owner.start(bound_context(), logical_id=LOGICAL, parent_id=None, cause="initial", backend=BACKEND,
-                           request_digest=DIGEST, request_bytes=7, action_deadline=100).admitted
+    assert not owner.start(
+        bound_context(),
+        logical_id=LOGICAL,
+        parent_id=None,
+        cause="initial",
+        backend=BACKEND,
+        request_digest=DIGEST,
+        request_bytes=7,
+        action_deadline=100,
+    ).admitted
     assert not audit.AttemptRecorder.reopen_scoped(owner.root, RUN).audit_complete
     assert not other_owner(owner.root, str(uuid.uuid4())).open().admitted
 
@@ -5297,14 +5460,30 @@ def test_settled_acquired_invalid_native_sibling_still_settles_real_interval(rec
     sibling = start(owner, logical=str(uuid.uuid4()))
     body = b'{"usage":5}'
     raw = acquire(owner, first, None, data=body)
-    assert owner.observe_response(first, source_observation_id=raw.observation_id, frame_offset=0,
-                                  frame_length=len(body), usage=usage(5, 1, 0, 0), observed_backend=None).admitted
-    assert not owner.observe_response(
-        first, source_observation_id=raw.observation_id, frame_offset=0, frame_length=len(body),
-        usage=usage(availability="invalid"), observed_backend=None,
+    assert owner.observe_response(
+        first,
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(body),
+        usage=usage(5, 1, 0, 0),
+        observed_backend=None,
     ).admitted
-    second = owner.settle_acquired(sibling, layer="stdout", data=b"actual sibling", complete=True,
-                                  usage=None, dispatch_state="entered_cli_launch")
+    assert not owner.observe_response(
+        first,
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(body),
+        usage=usage(availability="invalid"),
+        observed_backend=None,
+    ).admitted
+    second = owner.settle_acquired(
+        sibling,
+        layer="stdout",
+        data=b"actual sibling",
+        complete=True,
+        usage=None,
+        dispatch_state="entered_cli_launch",
+    )
     assert second.admitted and second.ref
     assert finish(owner, first, outcome="failed", duration=3).admitted
     assert finish(owner, sibling, outcome="failed", duration=3, dispatch="entered_cli_launch").admitted
@@ -5322,11 +5501,22 @@ def test_settled_acquired_native_fault_still_requires_storage_integrity(recorder
     sibling = start(owner, logical=str(uuid.uuid4()))
     data = b'{"usage":5}'
     raw = acquire(owner, first, None, data=data)
-    assert owner.observe_response(first, source_observation_id=raw.observation_id, frame_offset=0,
-                                  frame_length=len(data), usage=usage(5, 1, 0, 0), observed_backend=None).admitted
-    assert not owner.observe_response(first, source_observation_id=raw.observation_id, frame_offset=0,
-                                      frame_length=len(data), usage=usage(availability="invalid"),
-                                      observed_backend=None).admitted
+    assert owner.observe_response(
+        first,
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(data),
+        usage=usage(5, 1, 0, 0),
+        observed_backend=None,
+    ).admitted
+    assert not owner.observe_response(
+        first,
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(data),
+        usage=usage(availability="invalid"),
+        observed_backend=None,
+    ).admitted
     path = owner.root / RUN / ("raw-" + raw.ref.artifact_id)
     saved = None
     if cut == "journal_torn":
@@ -5340,23 +5530,39 @@ def test_settled_acquired_native_fault_still_requires_storage_integrity(recorder
         saved = owner.root / (RUN + "-saved")
         (owner.root / RUN).rename(saved)
         (owner.root / RUN).mkdir(mode=0o700)
-    ack = owner.settle_acquired(sibling, layer="stderr", data=b"sibling", complete=True,
-                                usage=None, dispatch_state="entered_cli_launch")
+    ack = owner.settle_acquired(
+        sibling,
+        layer="stderr",
+        data=b"sibling",
+        complete=True,
+        usage=None,
+        dispatch_state="entered_cli_launch",
+    )
     assert ack.admitted == (cut == "none")
     if saved:
         (owner.root / RUN).rmdir()
         saved.rename(owner.root / RUN)
     assert not owner.scoped_snapshot().audit_complete
-    assert not owner.start(context(), logical_id=str(uuid.uuid4()), parent_id=None, cause="initial",
-                           backend=BACKEND, request_digest=DIGEST, request_bytes=7,
-                           action_deadline=100).admitted
+    assert not owner.start(
+        context(),
+        logical_id=str(uuid.uuid4()),
+        parent_id=None,
+        cause="initial",
+        backend=BACKEND,
+        request_digest=DIGEST,
+        request_bytes=7,
+        action_deadline=100,
+    ).admitted
 
 
 @pytest.mark.parametrize("site", ["input_manifest", "response_observed", "settled_acquired"])
-def test_input_manifest_response_observed_settled_acquired_real_append_close(recorder, disk_root, monkeypatch, site):
+def test_input_manifest_response_observed_settled_acquired_real_append_close(
+    recorder, disk_root, monkeypatch, site
+):
     if site == "input_manifest":
-        owner = audit.AttemptRecorder(disk_root.with_name("bound-close"), context=bound_context(),
-                                      monotonic=Clock(), utc_now=utc)
+        owner = audit.AttemptRecorder(
+            disk_root.with_name("bound-close"), context=bound_context(), monotonic=Clock(), utc_now=utc
+        )
         assert owner.open().admitted
         attempt = None
         raw = None
@@ -5368,6 +5574,7 @@ def test_input_manifest_response_observed_settled_acquired_real_append_close(rec
     close = os.close
     active = False
     cuts = []
+
     def append(fd, event):
         nonlocal active
         active = event["event"] == site
@@ -5375,24 +5582,37 @@ def test_input_manifest_response_observed_settled_acquired_real_append_close(rec
             return original(fd, event)
         finally:
             active = False
+
     def release(fd):
-        if active and not cuts and os.readlink("/proc/self/fd/"+str(fd)).endswith("/journal"):
+        if active and not cuts and os.readlink("/proc/self/fd/" + str(fd)).endswith("/journal"):
             close(fd)
             cuts.append(fd)
             raise OSError("released journal descriptor after committed event")
         return close(fd)
+
     with monkeypatch.context() as patch:
         patch.setattr(audit, "_append", append)
         patch.setattr(os, "close", release)
         if site == "input_manifest":
             ack = owner.publish_input_manifest(input_manifest())
         elif site == "settled_acquired":
-            ack = owner.settle_acquired(attempt, layer="stdout", data=b"raw", complete=True,
-                                        usage=None, dispatch_state="entered_cli_launch")
+            ack = owner.settle_acquired(
+                attempt,
+                layer="stdout",
+                data=b"raw",
+                complete=True,
+                usage=None,
+                dispatch_state="entered_cli_launch",
+            )
         else:
-            ack = owner.observe_response(attempt, source_observation_id=raw.observation_id,
-                                         frame_offset=0, frame_length=11, usage=usage(5, 1, 0, 0),
-                                         observed_backend=None)
+            ack = owner.observe_response(
+                attempt,
+                source_observation_id=raw.observation_id,
+                frame_offset=0,
+                frame_length=11,
+                usage=usage(5, 1, 0, 0),
+                observed_backend=None,
+            )
     assert len(cuts) == 1 and not ack.admitted and ack.fault.code == "persistence_error"
     durable = events(owner)
     assert owner._events == durable and [e["sequence"] for e in durable] == list(range(len(durable)))
@@ -5401,8 +5621,12 @@ def test_input_manifest_response_observed_settled_acquired_real_append_close(rec
     if site == "input_manifest":
         assert replay.input_manifest == owner.scoped_snapshot().input_manifest
     else:
-        assert finish(owner, attempt, outcome="failed",
-                      dispatch="entered_cli_launch" if site == "settled_acquired" else "entered_api_send").admitted
+        assert finish(
+            owner,
+            attempt,
+            outcome="failed",
+            dispatch="entered_cli_launch" if site == "settled_acquired" else "entered_api_send",
+        ).admitted
     assert owner.finalize("failed").admitted
     assert other_owner(owner.root, str(uuid.uuid4())).open().admitted
 
@@ -5415,30 +5639,43 @@ def test_input_manifest_failed_publication_never_grants_dispatch(disk_root, monk
     original_append = audit._append
     original_read = audit._manifest_contents
     original_space = audit._space
+
     def publish(fd, name, data, **kwargs):
         if name == "input-manifest.json" and cut == "publish":
             raise OSError("manifest publication failure")
         return original_publish(fd, name, data, **kwargs)
+
     def append(fd, event):
         if event["event"] == "input_manifest" and cut == "append":
             raise OSError("manifest event not committed")
         return original_append(fd, event)
+
     def read(fd, rows):
         if cut == "readback" and audit._manifest_event(rows) is not None:
             raise OSError("manifest readback failure")
         return original_read(fd, rows)
+
     def space(fd, run_id, ordinary_delta=0, marker_delta=0):
         if cut == "space" and ordinary_delta:
             raise audit._Rejected("quota_refused")
         return original_space(fd, run_id, ordinary_delta, marker_delta)
+
     with monkeypatch.context() as patch:
         patch.setattr(audit, "_publish", publish)
         patch.setattr(audit, "_append", append)
         patch.setattr(audit, "_manifest_contents", read)
         patch.setattr(audit, "_space", space)
         assert not owner.publish_input_manifest(input_manifest()).admitted
-    assert not owner.start(bound_context(), logical_id=LOGICAL, parent_id=None, cause="initial",
-                           backend=BACKEND, request_digest=DIGEST, request_bytes=7, action_deadline=100).admitted
+    assert not owner.start(
+        bound_context(),
+        logical_id=LOGICAL,
+        parent_id=None,
+        cause="initial",
+        backend=BACKEND,
+        request_digest=DIGEST,
+        request_bytes=7,
+        action_deadline=100,
+    ).admitted
     assert not any(e["event"] == "start" for e in events(owner))
     assert not owner.scoped_snapshot().audit_complete
 
@@ -5446,8 +5683,12 @@ def test_input_manifest_failed_publication_never_grants_dispatch(disk_root, monk
 def test_input_manifest_utf8_payload_bound_and_immutable_conflict(disk_root):
     owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
     assert owner.open().admitted
-    manifest = input_manifest(mode="files", exact_diff_sha256=None, diff_bytes=None,
-                              files=[{"path":"a/\u00e9.py", "sha256":SOURCE, "bytes":0}])
+    manifest = input_manifest(
+        mode="files",
+        exact_diff_sha256=None,
+        diff_bytes=None,
+        files=[{"path": "a/\u00e9.py", "sha256": SOURCE, "bytes": 0}],
+    )
     assert owner.publish_input_manifest(manifest).admitted
     before = (owner.root / RUN / "input-manifest.json").read_bytes()
     assert b"\xc3\xa9" in before
@@ -5455,9 +5696,12 @@ def test_input_manifest_utf8_payload_bound_and_immutable_conflict(disk_root):
     assert owner.scoped_snapshot().input_manifest["files"][0]["bytes"] == 0
     assert not owner.publish_input_manifest(manifest).admitted
     assert (owner.root / RUN / "input-manifest.json").read_bytes() == before
-    huge = input_manifest(mode="files", exact_diff_sha256=None, diff_bytes=None,
-                          files=[{"path":f"{i:04d}/"+"a"*1000, "sha256":SOURCE, "bytes":1}
-                                 for i in range(512)])
+    huge = input_manifest(
+        mode="files",
+        exact_diff_sha256=None,
+        diff_bytes=None,
+        files=[{"path": f"{i:04d}/" + "a" * 1000, "sha256": SOURCE, "bytes": 1} for i in range(512)],
+    )
     with pytest.raises(audit._Rejected) as caught:
         audit._manifest(huge, dataclasses.asdict(bound_context()))
     assert caught.value.code == "quota_refused"
@@ -5475,52 +5719,66 @@ def test_input_manifest_old_bound_history_and_old_vocabulary_refusal(disk_root, 
         if event["event"] in ("run_open", "start"):
             event["context"] = dataclasses.asdict(bound_context())
     _rewrite_journal(prior, rows)
-    before = (root/RUN/"journal").read_bytes()
+    before = (root / RUN / "journal").read_bytes()
     replay = audit.AttemptRecorder.reopen_scoped(root, RUN)
     assert replay.audit_complete and replay.input_manifest is None and len(replay.attempts) == 1
     assert replay.attempts[0].context == bound_context()
-    assert (root/RUN/"journal").read_bytes() == before
+    assert (root / RUN / "journal").read_bytes() == before
 
     current = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
     assert current.open().admitted and current.publish_input_manifest(input_manifest()).admitted
-    before = (current.root/RUN/"journal").read_bytes()
-    legacy_vocabulary = {key: value for key, value in audit._EXTRA.items()
-                         if key not in ("input_manifest", "response_observed", "settled_acquired")}
+    before = (current.root / RUN / "journal").read_bytes()
+    legacy_vocabulary = {
+        key: value
+        for key, value in audit._EXTRA.items()
+        if key not in ("input_manifest", "response_observed", "settled_acquired")
+    }
     with monkeypatch.context() as patch:
         patch.setattr(audit, "_EXTRA", legacy_vocabulary)
         assert not audit.AttemptRecorder.reopen(current.root, RUN).audit_complete
-    assert (current.root/RUN/"journal").read_bytes() == before
+    assert (current.root / RUN / "journal").read_bytes() == before
 
 
-@pytest.mark.parametrize("operation", ["same_attempt_pipe", "settlement_replay", "invalid_response_replay"])
+@pytest.mark.parametrize(
+    "operation", ["same_attempt_pipe", "settlement_replay", "invalid_response_replay"]
+)
 def test_settled_acquired_native_fault_same_attempt_and_identity_replay(recorder, operation):
     owner, _ = recorder
     first = start(owner)
     sibling = start(owner, logical=str(uuid.uuid4()))
     body = b'{"usage":5}'
     raw = acquire(owner, first, None, data=body)
-    args = dict(source_observation_id=raw.observation_id, frame_offset=0, frame_length=len(body),
-                observed_backend=None)
+    args = dict(
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(body),
+        observed_backend=None,
+    )
     assert owner.observe_response(first, usage=usage(5, 1, 0, 0), **args).admitted
     invalid = usage(availability="invalid")
     assert not owner.observe_response(first, usage=invalid, **args).admitted
     if operation == "invalid_response_replay":
         identity = owner.scoped_snapshot().attempts[0].response_observations[-1].observation_id
-        before = (owner.root/RUN/"journal").read_bytes()
+        before = (owner.root / RUN / "journal").read_bytes()
         ack = owner.observe_response(first, observation_id=identity, usage=invalid, **args)
         assert not ack.admitted and ack.fault.code == "invalid_input"
-        assert (owner.root/RUN/"journal").read_bytes() == before
+        assert (owner.root / RUN / "journal").read_bytes() == before
     else:
         attempt = first if operation == "same_attempt_pipe" else sibling
-        values = dict(layer="stderr", data=b"actual second pipe", complete=True, usage=None,
-                      dispatch_state="entered_api_send")
+        values = dict(
+            layer="stderr",
+            data=b"actual second pipe",
+            complete=True,
+            usage=None,
+            dispatch_state="entered_api_send",
+        )
         settled = owner.settle_acquired(attempt, **values)
         assert settled.admitted and settled.ref is not None
         if operation == "settlement_replay":
-            before = (owner.root/RUN/"journal").read_bytes()
+            before = (owner.root / RUN / "journal").read_bytes()
             repeated = owner.settle_acquired(attempt, observation_id=settled.observation_id, **values)
             assert repeated.admitted and repeated.ref == settled.ref
-            assert (owner.root/RUN/"journal").read_bytes() == before
+            assert (owner.root / RUN / "journal").read_bytes() == before
     assert not owner.scoped_snapshot().audit_complete
     assert owner.scoped_snapshot().summary["usage"]["input_tokens"]["known_subtotal"] == 5
     assert owner.scoped_snapshot().summary["usage"]["input_tokens"]["total"] is None
@@ -5537,8 +5795,12 @@ def test_response_observed_durable_frame_range_requires_actual_complete_body(rec
     sibling = start(owner, logical=str(uuid.uuid4()))
     body = b'{"usage":5}'
     raw = acquire(owner, first, None, data=body)
-    args = dict(source_observation_id=raw.observation_id, frame_offset=0, frame_length=len(body),
-                observed_backend=None)
+    args = dict(
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(body),
+        observed_backend=None,
+    )
     assert owner.observe_response(first, usage=usage(5, 1, 0, 0), **args).admitted
     if history == "completed":
         assert finish(owner, first).admitted and finish(owner, sibling).admitted
@@ -5548,17 +5810,23 @@ def test_response_observed_durable_frame_range_requires_actual_complete_body(rec
     rows = events(owner)
     native = next(event for event in rows if event["event"] == "response_observed")
     native["frame_offset"] = 1
-    native["frame_length"] = len(body)-1
+    native["frame_length"] = len(body) - 1
     _rewrite_journal(owner, rows)
     # These bytes are in range but are not a complete native JSON frame.
-    assert (owner.root/RUN/("raw-"+raw.ref.artifact_id)).read_bytes() == body
+    assert (owner.root / RUN / ("raw-" + raw.ref.artifact_id)).read_bytes() == body
     if history == "completed":
         assert not audit.AttemptRecorder.reopen_scoped(owner.root, RUN).audit_complete
         assert not other_owner(owner.root, str(uuid.uuid4())).open().admitted
     else:
         owner._events = rows
-        assert not owner.settle_acquired(sibling, layer="stderr", data=b"real pipe", complete=True,
-                                         usage=None, dispatch_state="entered_api_send").admitted
+        assert not owner.settle_acquired(
+            sibling,
+            layer="stderr",
+            data=b"real pipe",
+            complete=True,
+            usage=None,
+            dispatch_state="entered_api_send",
+        ).admitted
 
 
 def test_response_observed_input_manifest_native_immutable_tombstone(disk_root):
@@ -5568,11 +5836,16 @@ def test_response_observed_input_manifest_native_immutable_tombstone(disk_root):
     attempt = start(owner, bound_context())
     body = b'{"usage":0}'
     raw = acquire(owner, attempt, None, data=body)
-    native = {"prompt_tokens":0}
+    native = {"prompt_tokens": 0}
     observation = dataclasses.replace(usage(0, 0, 0, 0), native_usage=native)
-    assert owner.observe_response(attempt, source_observation_id=raw.observation_id, frame_offset=0,
-                                  frame_length=len(body), usage=observation,
-                                  observed_backend=dataclasses.replace(BACKEND, observed_model="actual")).admitted
+    assert owner.observe_response(
+        attempt,
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(body),
+        usage=observation,
+        observed_backend=dataclasses.replace(BACKEND, observed_model="actual"),
+    ).admitted
     native["prompt_tokens"] = 999
     view = owner.scoped_snapshot()
     assert view.attempts[0].raw_refs == (raw.ref,)
@@ -5582,22 +5855,34 @@ def test_response_observed_input_manifest_native_immutable_tombstone(disk_root):
     with pytest.raises(dataclasses.FrozenInstanceError):
         view.attempts[0].duration_s = 9
     assert finish(owner, attempt).admitted and owner.finalize("completed").admitted
-    assert audit.maintain_audit_root(owner.root, monotonic=clock,
-                                    utc_now=lambda:"2026-10-20T12:00:00Z", action_deadline=100).admitted
-    assert not (owner.root/RUN/("raw-"+raw.ref.artifact_id)).exists()
+    assert audit.maintain_audit_root(
+        owner.root, monotonic=clock, utc_now=lambda: "2026-10-20T12:00:00Z", action_deadline=100
+    ).admitted
+    assert not (owner.root / RUN / ("raw-" + raw.ref.artifact_id)).exists()
     replay = audit.AttemptRecorder.reopen_scoped(owner.root, RUN)
     assert replay.audit_complete and replay.input_manifest["mode"] == "diff"
     assert replay.summary["usage"]["input_tokens"]["total"] == 0
     assert replay.attempts[0].response_observations[0].observed_backend.observed_model == "actual"
 
 
-@pytest.mark.parametrize("field,bad", [
-    ("path", "../bad"), ("path", "/absolute"), ("path", "a//b"), ("path", "a\\b"),
-    ("path", "a\0b"), ("path", "a"*1025), ("sha256", "bad"),
-    ("bytes", True), ("bytes", -1), ("bytes", 1 << 63), ("extra", 1),
-])
+@pytest.mark.parametrize(
+    "field,bad",
+    [
+        ("path", "../bad"),
+        ("path", "/absolute"),
+        ("path", "a//b"),
+        ("path", "a\\b"),
+        ("path", "a\0b"),
+        ("path", "a" * 1025),
+        ("sha256", "bad"),
+        ("bytes", True),
+        ("bytes", -1),
+        ("bytes", 1 << 63),
+        ("extra", 1),
+    ],
+)
 def test_input_manifest_file_row_guard_has_unmasked_real_writer_control(disk_root, field, bad):
-    row = {"path":"a.py", "sha256":SOURCE, "bytes":0}
+    row = {"path": "a.py", "sha256": SOURCE, "bytes": 0}
     manifest = input_manifest(mode="files", exact_diff_sha256=None, diff_bytes=None, files=[row])
     assert audit._manifest(manifest, dataclasses.asdict(bound_context()))
     row[field] = bad
@@ -5605,15 +5890,25 @@ def test_input_manifest_file_row_guard_has_unmasked_real_writer_control(disk_roo
         audit._manifest(manifest, dataclasses.asdict(bound_context()))
     owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
     assert owner.open().admitted and not owner.publish_input_manifest(manifest).admitted
-    assert not (owner.root/RUN/"input-manifest.json").exists()
+    assert not (owner.root / RUN / "input-manifest.json").exists()
 
 
-@pytest.mark.parametrize("field,bad", [
-    ("label", ""), ("label", "a"*129), ("revision", "a\0b"), ("revision", 1),
-    ("sha256", "bad"), ("bytes", True), ("bytes", -1), ("bytes", 1 << 63), ("extra", 1),
-])
+@pytest.mark.parametrize(
+    "field,bad",
+    [
+        ("label", ""),
+        ("label", "a" * 129),
+        ("revision", "a\0b"),
+        ("revision", 1),
+        ("sha256", "bad"),
+        ("bytes", True),
+        ("bytes", -1),
+        ("bytes", 1 << 63),
+        ("extra", 1),
+    ],
+)
 def test_input_manifest_repository_row_guard_has_unmasked_real_writer_control(disk_root, field, bad):
-    row = {"label":"repo", "revision":"main", "sha256":SOURCE, "bytes":0}
+    row = {"label": "repo", "revision": "main", "sha256": SOURCE, "bytes": 0}
     manifest = input_manifest(mode="joint", exact_diff_sha256=None, diff_bytes=None, repositories=[row])
     assert audit._manifest(manifest, dataclasses.asdict(bound_context()))
     row[field] = bad
@@ -5621,21 +5916,30 @@ def test_input_manifest_repository_row_guard_has_unmasked_real_writer_control(di
         audit._manifest(manifest, dataclasses.asdict(bound_context()))
     owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
     assert owner.open().admitted and not owner.publish_input_manifest(manifest).admitted
-    assert not (owner.root/RUN/"input-manifest.json").exists()
+    assert not (owner.root / RUN / "input-manifest.json").exists()
 
 
-@pytest.mark.parametrize("case", ["unsorted_paths", "duplicate_paths", "duplicate_repositories", "many_files", "many_repositories"])
+@pytest.mark.parametrize(
+    "case",
+    ["unsorted_paths", "duplicate_paths", "duplicate_repositories", "many_files", "many_repositories"],
+)
 def test_input_manifest_order_count_and_identity_guard(disk_root, case):
-    row = {"path":"a.py", "sha256":SOURCE, "bytes":0}
+    row = {"path": "a.py", "sha256": SOURCE, "bytes": 0}
     if case in ("unsorted_paths", "duplicate_paths", "many_files"):
-        rows = [dict(row, path="b.py"), row] if case == "unsorted_paths" else [row]*2
+        rows = [dict(row, path="b.py"), row] if case == "unsorted_paths" else [row] * 2
         if case == "many_files":
             rows = [dict(row, path=f"{i:03d}.py") for i in range(513)]
         manifest = input_manifest(mode="files", exact_diff_sha256=None, diff_bytes=None, files=rows)
     else:
-        row = {"label":"repo", "revision":"main", "sha256":SOURCE, "bytes":0}
-        rows = [row]*2 if case == "duplicate_repositories" else [dict(row, label=str(i)) for i in range(513)]
-        manifest = input_manifest(mode="joint", exact_diff_sha256=None, diff_bytes=None, repositories=rows)
+        row = {"label": "repo", "revision": "main", "sha256": SOURCE, "bytes": 0}
+        rows = (
+            [row] * 2
+            if case == "duplicate_repositories"
+            else [dict(row, label=str(i)) for i in range(513)]
+        )
+        manifest = input_manifest(
+            mode="joint", exact_diff_sha256=None, diff_bytes=None, repositories=rows
+        )
     with pytest.raises(audit._Rejected):
         audit._manifest(manifest, dataclasses.asdict(bound_context()))
     owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
@@ -5648,14 +5952,20 @@ def test_response_observed_event_cap_refuses_before_native_commit(recorder):
     attempt = start(owner)
     body = b'{"usage":1}'
     raw = acquire(owner, attempt, None, data=body)
-    oversized = dataclasses.replace(usage(1, 1, 0, 0),
-                                    native_usage={key:10**160 for key in audit._NATIVE})
-    ack = owner.observe_response(attempt, source_observation_id=raw.observation_id,
-                                 frame_offset=0, frame_length=len(body), usage=oversized,
-                                 observed_backend=None)
+    oversized = dataclasses.replace(
+        usage(1, 1, 0, 0), native_usage={key: 10**160 for key in audit._NATIVE}
+    )
+    ack = owner.observe_response(
+        attempt,
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(body),
+        usage=oversized,
+        observed_backend=None,
+    )
     assert not ack.admitted and ack.fault.code == "quota_refused"
     assert not any(event["event"] == "response_observed" for event in events(owner))
-    assert (owner.root/RUN/("raw-"+raw.ref.artifact_id)).read_bytes() == body
+    assert (owner.root / RUN / ("raw-" + raw.ref.artifact_id)).read_bytes() == body
 
 
 def test_scoped_projection_three_unequal_roles_native_usage_and_null_cost(recorder):
@@ -5665,17 +5975,22 @@ def test_scoped_projection_three_unequal_roles_native_usage_and_null_cost(record
     for role, inp, out in zip(roles, (3510, 7885, 888), (10, 8, 5), strict=True):
         attempt = start(owner, context(pass_name=role), logical=str(uuid.uuid4()))
         attempts.append(attempt)
-        body = json.dumps({"usage":{"input_tokens":inp,"output_tokens":out}}).encode()
+        body = json.dumps({"usage": {"input_tokens": inp, "output_tokens": out}}).encode()
         raw = acquire(owner, attempt, None, data=body)
-        assert owner.observe_response(attempt, source_observation_id=raw.observation_id,
-                                      frame_offset=0, frame_length=len(body), usage=usage(inp, out, 0, 0),
-                                      observed_backend=None).admitted
+        assert owner.observe_response(
+            attempt,
+            source_observation_id=raw.observation_id,
+            frame_offset=0,
+            frame_length=len(body),
+            usage=usage(inp, out, 0, 0),
+            observed_backend=None,
+        ).admitted
     clock.value = 4
     for attempt in attempts:
         assert finish(owner, attempt, duration=3).admitted
     assert owner.finalize("completed").admitted
     for role, inp, out in zip(roles, (3510, 7885, 888), (10, 8, 5), strict=True):
-        scope = {"pass_name":role}
+        scope = {"pass_name": role}
         view = audit.AttemptRecorder.reopen_scoped(owner.root, RUN, scope=scope)
         assert view.summary == owner.scoped_snapshot(scope=scope).summary
         assert view.summary["usage"]["input_tokens"]["total"] == inp
@@ -5683,7 +5998,10 @@ def test_scoped_projection_three_unequal_roles_native_usage_and_null_cost(record
         assert view.summary["timing"]["work_s"] == 3 and view.summary["timing"]["wall_s"] == 4
         assert view.summary["cost"] is None and view.summary["admitted_attempt_count"] == 1
         assert view.attempts[0].duration_s == 3
-        assert view.attempts[0].dispatch_state == "entered_api_send" and view.attempts[0].outcome == "completed"
+        assert (
+            view.attempts[0].dispatch_state == "entered_api_send"
+            and view.attempts[0].outcome == "completed"
+        )
     assert owner.scoped_snapshot().summary["usage"]["input_tokens"]["total"] == 12283
     assert owner.scoped_snapshot().summary["timing"]["work_s"] == 9
 
@@ -5693,17 +6011,18 @@ def test_input_manifest_each_qualified_readback_site_is_required(disk_root, monk
     owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
     assert owner.open().admitted
     if site == "before":
-        path = owner.root/RUN/"journal"
+        path = owner.root / RUN / "journal"
         with path.open("ab") as stream:
             stream.write(b"torn")
         before = path.read_bytes()
         assert not owner.publish_input_manifest(input_manifest()).admitted
-        assert not (owner.root/RUN/"input-manifest.json").exists() and path.read_bytes() == before
+        assert not (owner.root / RUN / "input-manifest.json").exists() and path.read_bytes() == before
         return
     checked = owner._checked
     read = audit._manifest_contents
     in_checked = False
     cuts = []
+
     def validate(handle, fd, **kwargs):
         nonlocal in_checked
         in_checked = True
@@ -5711,19 +6030,24 @@ def test_input_manifest_each_qualified_readback_site_is_required(disk_root, monk
             return checked(handle, fd, **kwargs)
         finally:
             in_checked = False
+
     def readback(fd, rows):
-        if (not cuts and audit._manifest_event(rows) is not None
-                and in_checked == (site == "checked_after")):
+        if (
+            not cuts
+            and audit._manifest_event(rows) is not None
+            and in_checked == (site == "checked_after")
+        ):
             cuts.append(site)
             raise OSError("specific postpublication readback failure")
         return read(fd, rows)
+
     with monkeypatch.context() as patch:
         patch.setattr(owner, "_checked", validate)
         patch.setattr(audit, "_manifest_contents", readback)
         ack = owner.publish_input_manifest(input_manifest())
     assert cuts == [site] and not ack.admitted
     assert not owner.scoped_snapshot().audit_complete
-    assert (owner.root/RUN/"input-manifest.json").read_bytes()
+    assert (owner.root / RUN / "input-manifest.json").read_bytes()
 
 
 @pytest.mark.parametrize("cut", ["journal_close", "final_publish", "committed_marker"])
@@ -5747,9 +6071,12 @@ def test_failed_finalization_cannot_publish_freeze(recorder, monkeypatch, cut):
             active = False
 
     def close(fd):
-        if cut == "journal_close" and active and not hits and os.readlink(
-            "/proc/self/fd/" + str(fd)
-        ).endswith("/journal"):
+        if (
+            cut == "journal_close"
+            and active
+            and not hits
+            and os.readlink("/proc/self/fd/" + str(fd)).endswith("/journal")
+        ):
             original_close(fd)
             hits.append("journal_close")
             raise OSError("journal close diagnostic after actual write/fsync/close")
@@ -5783,8 +6110,14 @@ def test_failed_finalization_cannot_publish_freeze(recorder, monkeypatch, cut):
     assert denied.fault in owner.snapshot().faults and not owner.snapshot().audit_complete
     assert other_owner(owner.root, str(uuid.uuid4())).open().admitted
     assert not owner.start(
-        context(), logical_id=str(uuid.uuid4()), parent_id=None, cause="initial",
-        backend=BACKEND, request_digest=DIGEST, request_bytes=7, action_deadline=100,
+        context(),
+        logical_id=str(uuid.uuid4()),
+        parent_id=None,
+        cause="initial",
+        backend=BACKEND,
+        request_digest=DIGEST,
+        request_bytes=7,
+        action_deadline=100,
     ).admitted
 
 
@@ -5800,7 +6133,9 @@ class ManifestEqualText(str):
 def test_manifest_exact_builtin_binding_types(disk_root, field, underlying):
     good = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
     assert good.open().admitted and good.publish_input_manifest(input_manifest()).admitted
-    owner = audit.AttemptRecorder(disk_root.parent / "bad", context=bound_context(), monotonic=Clock(), utc_now=utc)
+    owner = audit.AttemptRecorder(
+        disk_root.parent / "bad", context=bound_context(), monotonic=Clock(), utc_now=utc
+    )
     assert owner.open().admitted
     manifest = input_manifest()
     manifest[field] = ManifestEqualText(manifest[field] if underlying == "canonical" else "spoofed")
@@ -5839,12 +6174,20 @@ def test_manifest_closed_keys_require_builtin_strings(disk_root, site):
 
     manifest = input_manifest()
     if site == "file":
-        manifest.update(mode="files", exact_diff_sha256=None, diff_bytes=None,
-                        files=[{"path":"a.py", "sha256":SOURCE, "bytes":1}])
+        manifest.update(
+            mode="files",
+            exact_diff_sha256=None,
+            diff_bytes=None,
+            files=[{"path": "a.py", "sha256": SOURCE, "bytes": 1}],
+        )
         row, key = manifest["files"][0], "path"
     elif site == "repository":
-        manifest.update(mode="joint", exact_diff_sha256=None, diff_bytes=None,
-                        repositories=[{"label":"repo", "revision":"ea87", "sha256":SOURCE, "bytes":1}])
+        manifest.update(
+            mode="joint",
+            exact_diff_sha256=None,
+            diff_bytes=None,
+            repositories=[{"label": "repo", "revision": "ea87", "sha256": SOURCE, "bytes": 1}],
+        )
         row, key = manifest["repositories"][0], "label"
     else:
         row, key = manifest, "run_id"
@@ -5852,7 +6195,9 @@ def test_manifest_closed_keys_require_builtin_strings(disk_root, site):
     assert good.open().admitted and good.publish_input_manifest(manifest).admitted
     value = row.pop(key)
     row[ForeignKey(key)] = value
-    owner = audit.AttemptRecorder(disk_root.parent / "bad", context=bound_context(), monotonic=Clock(), utc_now=utc)
+    owner = audit.AttemptRecorder(
+        disk_root.parent / "bad", context=bound_context(), monotonic=Clock(), utc_now=utc
+    )
     assert owner.open().admitted
     ack = owner.publish_input_manifest(manifest)
     assert not ack.admitted and ack.fault.code == "integrity_error"
@@ -5870,11 +6215,19 @@ def test_manifest_custom_containers_have_no_publication(disk_root, site):
 
     manifest = input_manifest()
     if site in ("files", "file"):
-        manifest.update(mode="files", exact_diff_sha256=None, diff_bytes=None,
-                        files=[{"path":"a.py", "sha256":SOURCE, "bytes":1}])
+        manifest.update(
+            mode="files",
+            exact_diff_sha256=None,
+            diff_bytes=None,
+            files=[{"path": "a.py", "sha256": SOURCE, "bytes": 1}],
+        )
     if site in ("repositories", "repository"):
-        manifest.update(mode="joint", exact_diff_sha256=None, diff_bytes=None,
-                        repositories=[{"label":"repo", "revision":"ea87", "sha256":SOURCE, "bytes":1}])
+        manifest.update(
+            mode="joint",
+            exact_diff_sha256=None,
+            diff_bytes=None,
+            repositories=[{"label": "repo", "revision": "ea87", "sha256": SOURCE, "bytes": 1}],
+        )
     good = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
     assert good.open().admitted and good.publish_input_manifest(manifest).admitted
     if site == "top":
@@ -5884,17 +6237,19 @@ def test_manifest_custom_containers_have_no_publication(disk_root, site):
     else:
         key = "files" if site == "file" else "repositories"
         manifest[key][0] = ForeignDict(manifest[key][0])
-    owner = audit.AttemptRecorder(disk_root.parent / "bad", context=bound_context(), monotonic=Clock(), utc_now=utc)
+    owner = audit.AttemptRecorder(
+        disk_root.parent / "bad", context=bound_context(), monotonic=Clock(), utc_now=utc
+    )
     assert owner.open().admitted and not owner.publish_input_manifest(manifest).admitted
     assert not (owner.root / RUN / "input-manifest.json").exists()
     assert other_owner(owner.root, str(uuid.uuid4())).open().admitted
 
 
 _CURRENT_RECEIPT_CASES = [
-    (operation, target) for operation in ("finish", "finalize", "freeze", "unfrozen")
+    (operation, target)
+    for operation in ("finish", "finalize", "freeze", "unfrozen")
     for target in ("raw", "journal", "admission", "manifest", "final", "freeze")
-    if (target != "final" or operation != "finish")
-    and (target != "freeze" or operation == "freeze")
+    if (target != "final" or operation != "finish") and (target != "freeze" or operation == "freeze")
 ]
 
 
@@ -5910,16 +6265,22 @@ def test_idempotent_receipt_checks_current_files(disk_root, operation, target, c
         assert owner.finalize("completed").admitted
     if operation == "freeze":
         assert owner.set_frozen(True).admitted
-    call = (lambda: finish(owner, attempt)) if operation == "finish" else (
-        (lambda: owner.finalize("completed")) if operation == "finalize" else (
-            lambda: owner.set_frozen(operation == "freeze")
+    call = (
+        (lambda: finish(owner, attempt))
+        if operation == "finish"
+        else (
+            (lambda: owner.finalize("completed"))
+            if operation == "finalize"
+            else (lambda: owner.set_frozen(operation == "freeze"))
         )
     )
     before = (owner.root / RUN / "journal").read_bytes()
     assert call().admitted and (owner.root / RUN / "journal").read_bytes() == before
     assert audit.AttemptRecorder.reopen(owner.root, RUN).audit_complete
-    name = "raw-" + raw.ref.artifact_id if target == "raw" else (
-        "input-manifest.json" if target == "manifest" else target
+    name = (
+        "raw-" + raw.ref.artifact_id
+        if target == "raw"
+        else ("input-manifest.json" if target == "manifest" else target)
     )
     path = owner.root / RUN / name
     original = path.read_bytes()
@@ -5953,12 +6314,14 @@ def test_scope_requires_builtin_keys_without_writer_fault(recorder, reader):
     owner, _ = recorder
     attempt = start(owner)
     assert acquire(owner, attempt, usage(5, 4, 2, 1)).admitted and finish(owner, attempt).admitted
-    method = owner.scoped_snapshot if reader == "live" else (
-        lambda **kwargs: audit.AttemptRecorder.reopen_scoped(owner.root, RUN, **kwargs)
+    method = (
+        owner.scoped_snapshot
+        if reader == "live"
+        else (lambda **kwargs: audit.AttemptRecorder.reopen_scoped(owner.root, RUN, **kwargs))
     )
-    assert method(scope={"purpose":"review"}).audit_complete
+    assert method(scope={"purpose": "review"}).audit_complete
     before = (owner.root / RUN / "journal").read_bytes()
-    view = method(scope={ForeignKey("purpose"):"review"})
+    view = method(scope={ForeignKey("purpose"): "review"})
     assert not view.audit_complete and any(f.code == "invalid_input" for f in view.faults)
     assert owner.snapshot().audit_complete and (owner.root / RUN / "journal").read_bytes() == before
 
@@ -5990,11 +6353,11 @@ def test_unfrozen_ack_requires_actual_matching_freeze_state(recorder, monkeypatc
         patch.setattr(os, "close", close)
         denied = owner.set_frozen(True)
     assert len(hits) == 1 and not denied.admitted and denied.fault.code == "persistence_error"
-    assert not owner._frozen and json.loads((owner.root/RUN/"freeze").read_bytes())["frozen"] is True
-    before = (owner.root/RUN/"journal").read_bytes()
+    assert not owner._frozen and json.loads((owner.root / RUN / "freeze").read_bytes())["frozen"] is True
+    before = (owner.root / RUN / "journal").read_bytes()
     refused = owner.set_frozen(False)
     assert not refused.admitted and refused.fault.code == "integrity_error"
-    assert (owner.root/RUN/"journal").read_bytes() == before and not owner.snapshot().audit_complete
+    assert (owner.root / RUN / "journal").read_bytes() == before and not owner.snapshot().audit_complete
     assert other_owner(owner.root, str(uuid.uuid4())).open().admitted
 
 
@@ -6003,16 +6366,20 @@ def test_idempotent_native_fault_receipts_keep_storage_settlement_checks(recorde
     attempt = start(owner)
     body = b'{"usage":5}'
     raw = acquire(owner, attempt, None, data=body)
-    args = dict(source_observation_id=raw.observation_id, frame_offset=0, frame_length=len(body),
-                observed_backend=None)
+    args = dict(
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(body),
+        observed_backend=None,
+    )
     assert owner.observe_response(attempt, usage=usage(5, 1, 0, 0), **args).admitted
     assert not owner.observe_response(attempt, usage=usage(availability="invalid"), **args).admitted
     assert finish(owner, attempt, outcome="failed").admitted
     assert finish(owner, attempt, outcome="failed").admitted
     assert owner.finalize("failed").admitted and owner.finalize("failed").admitted
-    path = owner.root/RUN/("raw-"+raw.ref.artifact_id)
+    path = owner.root / RUN / ("raw-" + raw.ref.artifact_id)
     original = path.read_bytes()
-    path.write_bytes(b'x'*len(original))
+    path.write_bytes(b"x" * len(original))
     assert not finish(owner, attempt, outcome="failed").admitted
     assert not owner.finalize("failed").admitted
     path.write_bytes(original)
@@ -6028,7 +6395,9 @@ def test_idempotent_native_fault_receipts_keep_storage_settlement_checks(recorde
 
 @pytest.mark.parametrize("operation", ["finish", "finalize"])
 @pytest.mark.parametrize("repeated", [False, True])
-def test_orphan_settlement_receipts_validate_all_committed_raw(disk_root, monkeypatch, operation, repeated):
+def test_orphan_settlement_receipts_validate_all_committed_raw(
+    disk_root, monkeypatch, operation, repeated
+):
     def prepared(root):
         owner = audit.AttemptRecorder(root, context=context(), monotonic=Clock(), utc_now=utc)
         assert owner.open().admitted
@@ -6047,33 +6416,1261 @@ def test_orphan_settlement_receipts_validate_all_committed_raw(disk_root, monkey
             patch.setattr(audit, "_append", append)
             denied = acquire(owner, first, None, data=b"retained orphan", layer="stderr")
         assert not denied.admitted and denied.fault.code == "persistence_error"
-        names = [p.name for p in (owner.root/RUN).iterdir() if p.name.startswith("raw-")]
+        names = [p.name for p in (owner.root / RUN).iterdir() if p.name.startswith("raw-")]
         assert len(names) == 2 and not owner.snapshot().audit_complete
         if operation == "finalize":
             assert finish(owner, first, outcome="failed").admitted
             assert finish(owner, second, outcome="failed").admitted
+
             def call():
                 return owner.finalize("failed")
         else:
+
             def call():
                 return finish(owner, first, outcome="failed")
+
         if repeated:
             assert call().admitted
         return owner, raw, call
 
     intact, _, intact_call = prepared(disk_root)
     assert intact_call().admitted and not intact.snapshot().audit_complete
-    owner, raw, call = prepared(disk_root.parent/"corrupted")
-    path = owner.root/RUN/("raw-"+raw.ref.artifact_id)
+    owner, raw, call = prepared(disk_root.parent / "corrupted")
+    path = owner.root / RUN / ("raw-" + raw.ref.artifact_id)
     original = path.read_bytes()
-    path.write_bytes(b'x'*len(original))
+    path.write_bytes(b"x" * len(original))
     try:
         ack = call()
         assert not ack.admitted and ack.fault.code == "integrity_error"
-        assert path.read_bytes() == b'x'*len(original) and not owner.snapshot().audit_complete
+        assert path.read_bytes() == b"x" * len(original) and not owner.snapshot().audit_complete
     finally:
         path.write_bytes(original)
     faults = owner.snapshot().faults
     assert call().admitted and not owner.snapshot().audit_complete
     assert owner.snapshot().faults == faults
     assert other_owner(owner.root, str(uuid.uuid4())).open().admitted
+
+
+# --- Publication uncertainty after a mutating guarded action (#54) ---------------------------
+
+
+class _CloseOnce:
+    """Close the root descriptor for real, then raise EIO once after ``arm()``."""
+
+    def __init__(self, monkeypatch):
+        self.armed = False
+        self.fired = 0
+        original = audit._RootHandle.close
+
+        def close(handle):
+            original(handle)
+            if self.armed:
+                self.armed = False
+                self.fired += 1
+                raise OSError(errno.EIO, "root close")
+
+        monkeypatch.setattr(audit._RootHandle, "close", close)
+
+    def arm(self):
+        self.armed = True
+
+
+_FRAME = b'{"model":"observed"}'
+_STAGES = [
+    "open",
+    "manifest",
+    "start",
+    "acquired",
+    "settle_acquired",
+    "observe",
+    "finish",
+    "finalize",
+    "freeze",
+]
+
+
+def _run_stage(disk_root, closer, stage, *, replay):
+    """Run every step before ``stage`` unarmed, then ``stage`` with the close failure armed.
+
+    With ``replay`` the stage first runs unarmed, so the armed call repeats an identical request
+    that the recorder answers from its journal without writing.
+    """
+    owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
+
+    def armed(call):
+        if replay:
+            assert call().admitted
+        closer.arm()
+        ack = call()
+        assert closer.fired == 1 and not closer.armed
+        return owner, ack
+
+    if stage == "open":
+        return armed(owner.open)
+    assert owner.open().admitted
+    if stage == "manifest":
+        return armed(lambda: owner.publish_input_manifest(input_manifest()))
+    assert owner.publish_input_manifest(input_manifest()).admitted
+    if stage == "start":
+        return armed(
+            lambda: owner.start(
+                bound_context(),
+                logical_id=LOGICAL,
+                parent_id=None,
+                cause="initial",
+                backend=BACKEND,
+                request_digest=DIGEST,
+                request_bytes=7,
+                action_deadline=100,
+            )
+        )
+    attempt = start(owner, bound_context())
+    if stage == "acquired":
+        seen = []
+
+        def call():
+            ack = acquire(owner, attempt, None, data=_FRAME, identity=seen[0] if seen else None)
+            seen[:] = [ack.observation_id] if ack.observation_id else seen
+            return ack
+
+        return armed(call)
+    if stage == "settle_acquired":
+        seen = []
+
+        def call():
+            ack = owner.settle_acquired(
+                attempt,
+                layer="wire",
+                data=_FRAME,
+                complete=True,
+                usage=None,
+                dispatch_state="entered_api_send",
+                observation_id=seen[0] if seen else None,
+            )
+            seen[:] = [ack.observation_id] if ack.observation_id else seen
+            return ack
+
+        return armed(call)
+    raw = acquire(owner, attempt, None, data=_FRAME)
+    assert raw.admitted
+    if stage == "observe":
+        seen = []
+
+        def call():
+            ack = owner.observe_response(
+                attempt,
+                source_observation_id=raw.observation_id,
+                frame_offset=0,
+                frame_length=len(_FRAME),
+                usage=usage(0, 0, 0, 0),
+                observed_backend=None,
+                observation_id=seen[0] if seen else None,
+            )
+            if not seen and owner.scoped_snapshot().attempts[0].response_observations:
+                seen.append(owner.scoped_snapshot().attempts[0].response_observations[0].observation_id)
+            return ack
+
+        return armed(call)
+    if stage == "finish":
+        return armed(lambda: finish(owner, attempt))
+    assert finish(owner, attempt).admitted
+    if stage == "finalize":
+        return armed(lambda: owner.finalize("completed"))
+    assert owner.finalize("completed").admitted
+    return armed(lambda: owner.set_frozen(True))
+
+
+@pytest.mark.parametrize("stage", _STAGES)
+def test_close_failure_after_a_mutation_is_publication_uncertain(disk_root, monkeypatch, stage):
+    closer = _CloseOnce(monkeypatch)
+    owner, ack = _run_stage(disk_root, closer, stage, replay=False)
+    assert ack.publication_uncertain is True
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert not owner.snapshot().audit_complete
+
+
+@pytest.mark.parametrize(
+    "stage", ["manifest", "acquired", "settle_acquired", "observe", "finish", "finalize", "freeze"]
+)
+def test_close_failure_after_a_journal_replay_is_definitely_unpublished(disk_root, monkeypatch, stage):
+    closer = _CloseOnce(monkeypatch)
+    owner, ack = _run_stage(disk_root, closer, stage, replay=True)
+    assert ack.publication_uncertain is False
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert not owner.snapshot().audit_complete
+
+
+def test_uncertain_acquire_leaves_a_committed_ref_the_caller_never_received(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    ack = acquire(owner, attempt, None, data=b"committed bytes")
+    assert closer.fired == 1
+    assert ack == audit.AcquiredAcknowledgement(
+        False,
+        None,
+        None,
+        audit.AuditFault("persistence_error", "acquired", attempt),
+        publication_uncertain=True,
+    )
+    (view_attempt,) = audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts
+    (ref,) = view_attempt.raw_refs
+    assert ref.sha256 == hashlib.sha256(b"committed bytes").hexdigest() and ref.retained_bytes == 15
+
+
+def test_uncertain_start_leaves_a_committed_attempt_without_an_id(recorder, monkeypatch):
+    owner, _ = recorder
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    ack = owner.start(
+        context(),
+        logical_id=LOGICAL,
+        parent_id=None,
+        cause="initial",
+        backend=BACKEND,
+        request_digest=DIGEST,
+        request_bytes=7,
+        action_deadline=100,
+    )
+    assert ack == audit.StartAcknowledgement(
+        False,
+        None,
+        audit.AuditFault("persistence_error", "start", None),
+        publication_uncertain=True,
+    )
+    assert len(audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts) == 1
+
+
+def test_publish_failure_before_the_raw_write_is_definitely_unpublished(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+    original = audit._publish
+
+    def publish(fd, name, data):
+        if name.startswith("raw-"):
+            raise OSError(errno.EIO, "before the raw write")
+        return original(fd, name, data)
+
+    closer = _CloseOnce(monkeypatch)
+    monkeypatch.setattr(audit, "_publish", publish)
+    ack = acquire(owner, attempt, None, data=b"never written")
+    assert ack == audit.AcquiredAcknowledgement(
+        False,
+        None,
+        None,
+        audit.AuditFault("persistence_error", "acquired", attempt),
+        publication_uncertain=False,
+    )
+    assert closer.fired == 0
+    (view_attempt,) = audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts
+    assert view_attempt.raw_refs == ()
+    assert not [p for p in (owner.root / RUN).iterdir() if p.name.startswith(("raw-", "temp-raw-"))]
+
+
+def test_publish_failure_before_the_raw_write_and_failed_close_stays_definite(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+
+    def publish(fd, name, data):
+        raise OSError(errno.EIO, "before the raw write")
+
+    closer = _CloseOnce(monkeypatch)
+    monkeypatch.setattr(audit, "_publish", publish)
+    closer.arm()
+    ack = acquire(owner, attempt, None, data=b"never written")
+    assert closer.fired == 1
+    assert ack.publication_uncertain is False and ack.ref is None and not ack.admitted
+    assert audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs == ()
+
+
+def test_journal_append_that_lands_before_raising_is_publication_uncertain(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+    original = audit._append
+
+    def append(fd, event):
+        original(fd, event)
+        if event["event"] == "acquired":
+            raise OSError(errno.EIO, "after the journal write")
+
+    monkeypatch.setattr(audit, "_append", append)
+    ack = acquire(owner, attempt, None, data=b"landed")
+    assert ack.publication_uncertain is True and ack.ref is None and not ack.admitted
+    (ref,) = audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs
+    assert ref.sha256 == hashlib.sha256(b"landed").hexdigest()
+
+
+def test_journal_append_with_unverifiable_bytes_is_publication_uncertain(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+    original = audit._append
+
+    def append(fd, event):
+        if event["event"] == "acquired":
+            # A torn frame prefix: the journal can no longer be verified against either history.
+            journal = os.open("journal", os.O_WRONLY | os.O_APPEND, dir_fd=fd)
+            try:
+                os.write(journal, b"00000")
+            finally:
+                os.close(journal)
+            raise OSError(errno.EIO, "mid-frame")
+        return original(fd, event)
+
+    monkeypatch.setattr(audit, "_append", append)
+    ack = acquire(owner, attempt, None, data=b"torn")
+    assert ack.publication_uncertain is True and ack.ref is None and not ack.admitted
+    assert owner._append_uncertain is True
+
+
+def test_entering_exception_and_cause_survive_a_failed_root_close(recorder, monkeypatch):
+    owner, _ = recorder
+    cause = ValueError("original cause")
+    entering = RuntimeError("entering")
+    entering.__cause__ = cause
+    closer = _CloseOnce(monkeypatch)
+
+    def action(handle):
+        raise entering
+
+    closer.arm()
+    with pytest.raises(RuntimeError) as caught:
+        owner._guard("start", action)
+    assert caught.value is entering and caught.value.__cause__ is cause
+    assert closer.fired == 1
+
+
+def test_lock_release_failure_after_a_mutation_is_publication_uncertain(recorder, monkeypatch):
+    import fcntl
+
+    owner, _ = recorder
+    attempt = start(owner)
+    original = fcntl.flock
+
+    def flock(fd, operation):
+        if operation == fcntl.LOCK_UN:
+            raise OSError(errno.EIO, "unlock")
+        return original(fd, operation)
+
+    monkeypatch.setattr(fcntl, "flock", flock)
+    ack = acquire(owner, attempt, None, data=b"committed")
+    monkeypatch.undo()
+    assert ack.publication_uncertain is True and ack.ref is None and not ack.admitted
+    (ref,) = audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs
+    assert ref.sha256 == hashlib.sha256(b"committed").hexdigest()
+
+
+def test_lock_failure_before_the_action_is_definitely_unpublished(recorder, monkeypatch):
+    import fcntl
+
+    owner, _ = recorder
+    attempt = start(owner)
+
+    def flock(fd, operation):
+        raise OSError(errno.EIO, "lock")
+
+    monkeypatch.setattr(fcntl, "flock", flock)
+    ack = acquire(owner, attempt, None, data=b"never committed")
+    monkeypatch.undo()
+    assert ack.publication_uncertain is False and not ack.admitted
+    assert audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs == ()
+
+
+_LATE_FAILURES = [
+    (audit._Rejected("integrity_error"), "integrity_error"),
+    (ValueError("late"), "invalid_input"),
+    (OSError(errno.EIO, "late"), "persistence_error"),
+]
+
+
+@pytest.mark.parametrize("close_fails", [False, True])
+@pytest.mark.parametrize(("failure", "code"), _LATE_FAILURES)
+def test_failure_after_a_committed_event_is_publication_uncertain(
+    recorder, monkeypatch, failure, code, close_fails
+):
+    owner, _ = recorder
+    attempt = start(owner)
+    original = audit._append
+    landed = []
+
+    def append(fd, event):
+        original(fd, event)
+        if event["event"] == "acquired":
+            landed.append(event)
+
+    def revalidate(handle):
+        if landed:
+            raise failure
+
+    closer = _CloseOnce(monkeypatch)
+    monkeypatch.setattr(audit, "_append", append)
+    monkeypatch.setattr(audit, "_revalidate", revalidate)
+    if close_fails:
+        closer.arm()
+    ack = acquire(owner, attempt, None, data=b"committed")
+    assert closer.fired == int(close_fails) and landed
+    assert ack.publication_uncertain is True and ack.ref is None and not ack.admitted
+    expected = "persistence_error" if close_fails else code
+    assert ack.fault.code == expected
+
+
+@pytest.mark.parametrize("close_fails", [False, True])
+@pytest.mark.parametrize(("failure", "code"), _LATE_FAILURES)
+def test_failure_before_any_mutation_is_definitely_unpublished(
+    recorder, monkeypatch, failure, code, close_fails
+):
+    owner, _ = recorder
+    attempt = start(owner)
+
+    def revalidate(handle):
+        raise failure
+
+    closer = _CloseOnce(monkeypatch)
+    monkeypatch.setattr(audit, "_revalidate", revalidate)
+    if close_fails:
+        closer.arm()
+    ack = acquire(owner, attempt, None, data=b"never committed")
+    monkeypatch.undo()
+    assert closer.fired == int(close_fails)
+    assert ack.publication_uncertain is False and ack.ref is None and not ack.admitted
+    assert audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs == ()
+
+
+def test_invalid_input_before_any_mutation_stays_definite(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    ack = acquire(owner, attempt, None, data=b"x", layer="not-a-layer")
+    assert closer.fired == 1
+    assert ack.publication_uncertain is False and not ack.admitted
+    assert ack.fault.code == "persistence_error"
+
+
+def test_lock_timeout_after_the_start_append_is_publication_uncertain(recorder, monkeypatch):
+    owner, clock = recorder
+    original = audit._append
+
+    def append(fd, event):
+        original(fd, event)
+        if event["event"] == "start":
+            clock.value = 1000.0
+
+    monkeypatch.setattr(audit, "_append", append)
+    ack = owner.start(
+        context(),
+        logical_id=LOGICAL,
+        parent_id=None,
+        cause="initial",
+        backend=BACKEND,
+        request_digest=DIGEST,
+        request_bytes=7,
+        action_deadline=100,
+    )
+    assert ack == audit.StartAcknowledgement(
+        False,
+        None,
+        audit.AuditFault("lock_timeout", "start", None),
+        publication_uncertain=True,
+    )
+    assert len(audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts) == 1
+
+
+def test_invalid_input_after_a_committed_observation_is_publication_uncertain(recorder, monkeypatch):
+    owner, _ = recorder
+    attempt = start(owner)
+    raw = acquire(owner, attempt, None, data=_FRAME)
+    assert raw.admitted and raw.publication_uncertain is False
+    original = audit._append
+    landed = []
+
+    def append(fd, event):
+        original(fd, event)
+        landed.append(event["event"])
+
+    def revalidate(handle):
+        if landed:
+            raise ValueError("late")
+
+    monkeypatch.setattr(audit, "_append", append)
+    monkeypatch.setattr(audit, "_revalidate", revalidate)
+    ack = owner.observe_response(
+        attempt,
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(_FRAME),
+        usage=usage(0, 0, 0, 0),
+        observed_backend=None,
+    )
+    assert landed
+    assert ack.publication_uncertain is True and not ack.admitted
+    assert ack.fault.code == "invalid_input"
+
+
+def _lock_exit_failure(monkeypatch, failure):
+    original = audit._root_lock
+
+    @contextlib.contextmanager
+    def lock(handle, **kwargs):
+        with original(handle, **kwargs):
+            yield
+        raise failure
+
+    monkeypatch.setattr(audit, "_root_lock", lock)
+
+
+@pytest.mark.parametrize(("failure", "code"), _LATE_FAILURES)
+def test_lock_exit_failure_after_a_mutation_is_publication_uncertain(
+    recorder, monkeypatch, failure, code
+):
+    owner, _ = recorder
+    attempt = start(owner)
+    _lock_exit_failure(monkeypatch, failure)
+    ack = acquire(owner, attempt, None, data=b"committed")
+    monkeypatch.undo()
+    assert ack.publication_uncertain is True and ack.ref is None and not ack.admitted
+    assert ack.fault.code == code
+    assert len(audit.AttemptRecorder.reopen_scoped(owner.root, RUN).attempts[0].raw_refs) == 1
+
+
+@pytest.mark.parametrize(("failure", "code"), _LATE_FAILURES)
+def test_lock_exit_failure_after_a_no_op_call_is_definite(recorder, monkeypatch, failure, code):
+    owner, _ = recorder
+    _lock_exit_failure(monkeypatch, failure)
+    ack = owner.set_frozen(False)
+    monkeypatch.undo()
+    assert ack.publication_uncertain is False and not ack.admitted and ack.fault.code == code
+
+
+# --- State files staged ahead of their journal event -----------------------------------------
+
+
+def _fail_append_before_writing(monkeypatch, name):
+    original = audit._append
+
+    def append(fd, event):
+        if event["event"] == name:
+            raise OSError(errno.EIO, "before the journal write")
+        return original(fd, event)
+
+    monkeypatch.setattr(audit, "_append", append)
+    return lambda: monkeypatch.setattr(audit, "_append", original)
+
+
+def test_freeze_marker_staged_before_a_failed_append_is_publication_uncertain(recorder, monkeypatch):
+    owner, _ = recorder
+    restore = _fail_append_before_writing(monkeypatch, "freeze")
+    ack = owner.set_frozen(True)
+    assert ack == audit.AuditAcknowledgement(
+        False,
+        audit.AuditFault("persistence_error", "freeze", None),
+        publication_uncertain=True,
+    )
+    assert (owner.root / RUN / "freeze").exists()
+    assert not [e for e in events(owner) if e["event"] == "freeze"]
+    restore()
+    retry = owner.set_frozen(True)
+    assert not retry.admitted and retry.publication_uncertain is False
+    assert retry.fault.code == "integrity_error"
+    assert not audit.AttemptRecorder.reopen(owner.root, RUN).audit_complete
+
+
+def test_input_manifest_staged_before_a_failed_append_is_publication_uncertain(disk_root, monkeypatch):
+    owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
+    assert owner.open().admitted
+    restore = _fail_append_before_writing(monkeypatch, "input_manifest")
+    ack = owner.publish_input_manifest(input_manifest())
+    assert ack == audit.AuditAcknowledgement(
+        False,
+        audit.AuditFault("persistence_error", "start", None),
+        publication_uncertain=True,
+    )
+    assert (owner.root / RUN / "input-manifest.json").exists()
+    assert not [e for e in events(owner) if e["event"] == "input_manifest"]
+    restore()
+    retry = owner.publish_input_manifest(input_manifest())
+    assert not retry.admitted and retry.publication_uncertain is False
+    assert retry.fault.code == "integrity_error"
+    started = owner.start(
+        bound_context(),
+        logical_id=LOGICAL,
+        parent_id=None,
+        cause="initial",
+        backend=BACKEND,
+        request_digest=DIGEST,
+        request_bytes=7,
+        action_deadline=100,
+    )
+    assert not started.admitted and started.attempt_id is None and started.publication_uncertain is False
+
+
+def test_run_directory_created_before_a_failed_append_is_publication_uncertain(disk_root, monkeypatch):
+    owner = audit.AttemptRecorder(disk_root, context=context(), monotonic=Clock(), utc_now=utc)
+    restore = _fail_append_before_writing(monkeypatch, "run_open")
+    ack = owner.open()
+    assert ack == audit.AuditAcknowledgement(
+        False,
+        audit.AuditFault("persistence_error", "open", None),
+        publication_uncertain=True,
+    )
+    assert (owner.root / RUN).is_dir()
+    restore()
+    retry = owner.open()
+    assert not retry.admitted and retry.fault.code == "identity_conflict"
+
+
+def test_run_directory_with_an_empty_journal_is_publication_uncertain(disk_root, monkeypatch):
+    owner = audit.AttemptRecorder(disk_root, context=context(), monotonic=Clock(), utc_now=utc)
+
+    def append(fd, event):
+        # The journal exists but holds no bytes, so the history reads back as empty.
+        os.close(os.open("journal", os.O_WRONLY | os.O_CREAT, 0o600, dir_fd=fd))
+        raise OSError(errno.EIO, "after creating the journal")
+
+    monkeypatch.setattr(audit, "_append", append)
+    ack = owner.open()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is True
+    assert (owner.root / RUN).is_dir()
+
+
+def test_quota_refusal_before_the_run_directory_is_definite(disk_root, monkeypatch):
+    owner = audit.AttemptRecorder(disk_root, context=context(), monotonic=Clock(), utc_now=utc)
+    monkeypatch.setattr(audit, "ROOT_BYTES", audit.RUN_BYTES - 1)
+    ack = owner.open()
+    assert not ack.admitted and ack.fault.code == "quota_refused"
+    assert ack.publication_uncertain is False
+    assert not (owner.root / RUN).exists()
+
+
+def _stage_call(disk_root, name):
+    owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
+    assert owner.open().admitted
+    if name == "freeze":
+        return owner, lambda: owner.set_frozen(True)
+    return owner, lambda: owner.publish_input_manifest(input_manifest())
+
+
+@pytest.mark.parametrize("name", ["freeze", "input-manifest.json"])
+def test_stage_failure_before_the_rename_is_definitely_unpublished(disk_root, monkeypatch, name):
+    owner, call = _stage_call(disk_root, name)
+    original = audit._publish
+
+    def publish(fd, entry, data, **kwargs):
+        if entry == name:
+            raise OSError(errno.EIO, "before the rename")
+        return original(fd, entry, data, **kwargs)
+
+    monkeypatch.setattr(audit, "_publish", publish)
+    ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is False
+    assert not (owner.root / RUN / name).exists()
+
+
+@pytest.mark.parametrize("name", ["freeze", "input-manifest.json"])
+def test_stage_failure_after_the_rename_is_publication_uncertain(disk_root, monkeypatch, name):
+    owner, call = _stage_call(disk_root, name)
+    original = audit._publish
+
+    def publish(fd, entry, data, **kwargs):
+        original(fd, entry, data, **kwargs)
+        if entry == name:
+            raise OSError(errno.EIO, "after the rename")
+
+    monkeypatch.setattr(audit, "_publish", publish)
+    ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is True
+    assert (owner.root / RUN / name).exists()
+
+
+_STAGE_TARGETS = [
+    pytest.param("freeze", id="freeze"),
+    pytest.param("input-manifest.json", id="input-manifest"),
+    pytest.param("raw-", id="raw-body"),
+]
+
+
+def _stage_target(disk_root, stem):
+    """Return the recorder and a call that stages the file whose name starts with ``stem``."""
+    if stem == "raw-":
+        owner = audit.AttemptRecorder(disk_root, context=context(), monotonic=Clock(), utc_now=utc)
+        assert owner.open().admitted
+        attempt = start(owner)
+        return owner, lambda: acquire(owner, attempt, None, data=b"staged body")
+    return _stage_call(disk_root, stem)
+
+
+def _run_entries(owner, prefix):
+    return sorted(e for e in os.listdir(owner.root / RUN) if e.startswith(prefix))
+
+
+def _failing_on_temp(monkeypatch, attribute, stem, owner_module=os):
+    """Make ``os.<attribute>`` raise EIO for the temp file that stages ``stem``."""
+    original = getattr(owner_module, attribute)
+
+    def failing(path, *args, **kwargs):
+        if str(path).startswith("temp-" + stem):
+            raise OSError(errno.EIO, "injected " + attribute)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(owner_module, attribute, failing)
+
+
+@pytest.mark.parametrize("stem", _STAGE_TARGETS)
+def test_stage_rename_failure_leaves_a_temp_file_and_is_publication_uncertain(
+    disk_root, monkeypatch, stem
+):
+    owner, call = _stage_target(disk_root, stem)
+    with monkeypatch.context() as cuts:
+        _failing_on_temp(cuts, "rename", stem)
+        ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert _run_entries(owner, "temp-" + stem) and not _run_entries(owner, stem)
+    assert ack.publication_uncertain is True
+    retry = call()
+    assert not retry.admitted and retry.publication_uncertain is False
+
+
+@pytest.mark.parametrize("stem", _STAGE_TARGETS)
+def test_stage_write_failure_after_the_temp_exists_is_publication_uncertain(
+    disk_root, monkeypatch, stem
+):
+    owner, call = _stage_target(disk_root, stem)
+    with monkeypatch.context() as cuts:
+
+        def write_all(fd, data):
+            raise OSError(errno.EIO, "injected write")
+
+        cuts.setattr(audit, "_write_all", write_all)
+        ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert _run_entries(owner, "temp-" + stem) and not _run_entries(owner, stem)
+    assert ack.publication_uncertain is True
+
+
+@pytest.mark.parametrize("stem", _STAGE_TARGETS)
+def test_stage_failure_before_the_temp_file_exists_is_definitely_unpublished(
+    disk_root, monkeypatch, stem
+):
+    owner, call = _stage_target(disk_root, stem)
+    with monkeypatch.context() as cuts:
+        _failing_on_temp(cuts, "open", stem)
+        ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert not _run_entries(owner, "temp-" + stem) and not _run_entries(owner, stem)
+    assert ack.publication_uncertain is False
+
+
+def test_raw_body_published_before_a_failed_append_is_publication_uncertain(disk_root, monkeypatch):
+    owner, call = _stage_target(disk_root, "raw-")
+    restore = _fail_append_before_writing(monkeypatch, "acquired")
+    ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is True
+    assert len(_run_entries(owner, "raw-")) == 1
+    restore()
+    retry = call()
+    assert not retry.admitted and retry.publication_uncertain is False
+
+
+def test_run_directory_failure_before_the_mkdir_is_definitely_unpublished(disk_root, monkeypatch):
+    owner = audit.AttemptRecorder(disk_root, context=context(), monotonic=Clock(), utc_now=utc)
+    original = os.mkdir
+
+    def mkdir(path, *args, **kwargs):
+        if str(path) == RUN:
+            raise OSError(errno.EIO, "injected mkdir")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "mkdir", mkdir)
+    ack = owner.open()
+    monkeypatch.undo()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is False
+    assert not (owner.root / RUN).exists()
+
+
+# --- Definite outcomes carry no uncertainty flag ----------------------------------------------
+
+
+def test_every_success_acknowledgement_is_not_uncertain(disk_root):
+    owner = audit.AttemptRecorder(disk_root, context=bound_context(), monotonic=Clock(), utc_now=utc)
+    acks = [owner.open(), owner.publish_input_manifest(input_manifest())]
+    started = owner.start(
+        bound_context(),
+        logical_id=LOGICAL,
+        parent_id=None,
+        cause="initial",
+        backend=BACKEND,
+        request_digest=DIGEST,
+        request_bytes=7,
+        action_deadline=100,
+    )
+    assert isinstance(started, audit.StartAcknowledgement) and started.attempt_id is not None
+    attempt = started.attempt_id
+    raw = acquire(owner, attempt, None, data=_FRAME, identity=None)
+    settled = owner.settle_acquired(
+        attempt,
+        layer="stdout",
+        data=_FRAME,
+        complete=True,
+        usage=None,
+        dispatch_state="entered_api_send",
+        observation_id=None,
+    )
+    observed = owner.observe_response(
+        attempt,
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=len(_FRAME),
+        usage=usage(0, 0, 0, 0),
+        observed_backend=None,
+    )
+    acks += [finish(owner, attempt), owner.finalize("completed"), owner.set_frozen(True)]
+    # Replays answered from the journal succeed without writing and are not uncertain either.
+    acks += [
+        owner.publish_input_manifest(input_manifest()),
+        finish(owner, attempt),
+        owner.finalize("completed"),
+        owner.set_frozen(True),
+        owner.set_frozen(True),
+    ]
+    every = acks + [started, raw, settled, observed]
+    assert len(every) == 14
+    assert all(ack.admitted and ack.fault is None for ack in every)
+    assert [ack.publication_uncertain for ack in every] == [False] * 14
+    assert isinstance(raw, audit.AcquiredAcknowledgement) and raw.ref is not None
+
+
+def test_definite_denial_through_start_is_not_uncertain(recorder):
+    owner, _ = recorder
+    refused = owner.start(
+        context(),
+        logical_id=LOGICAL,
+        parent_id=None,
+        cause="not-a-cause",
+        backend=BACKEND,
+        request_digest=DIGEST,
+        request_bytes=7,
+        action_deadline=100,
+    )
+    assert isinstance(refused, audit.StartAcknowledgement)
+    assert not refused.admitted and refused.attempt_id is None and refused.fault is not None
+    assert refused.publication_uncertain is False
+
+
+def test_definite_denial_through_acquired_is_not_uncertain(recorder):
+    owner, _ = recorder
+    attempt = start(owner)
+    bad = acquire(owner, attempt, None, data=b"x", layer="not-a-layer")
+    assert isinstance(bad, audit.AcquiredAcknowledgement)
+    assert not bad.admitted and bad.ref is None and bad.observation_id is None and bad.fault is not None
+    assert bad.publication_uncertain is False
+
+
+def _terminal_root(recorder):
+    owner, _ = recorder
+    attempt = start(owner)
+    assert acquire(owner, attempt, usage(0, 0, 0, 0), data=b"payload" * 100).admitted
+    assert finish(owner, attempt).admitted and owner.finalize("completed").admitted
+    return owner
+
+
+def _later():
+    return "2026-10-14T12:00:00Z"
+
+
+def test_maintenance_success_and_early_denials_are_not_uncertain(recorder, tmp_path):
+    owner = _terminal_root(recorder)
+    ok = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    assert ok == audit.AuditAcknowledgement(True, None) and ok.publication_uncertain is False
+    missing = audit.maintain_audit_root(
+        tmp_path / "absent", monotonic=Clock(), utc_now=_later, action_deadline=100
+    )
+    assert not missing.admitted and missing.publication_uncertain is False
+    bad_clock = audit.maintain_audit_root(
+        owner.root, monotonic=Clock(), utc_now=lambda: "not a time", action_deadline=100
+    )
+    assert not bad_clock.admitted and bad_clock.publication_uncertain is False
+
+
+def test_maintenance_failure_after_pruning_is_publication_uncertain(recorder, monkeypatch):
+    owner = _terminal_root(recorder)
+    original_sync = os.fsync
+    unlinked = []
+    original_unlink = os.unlink
+
+    def unlink(name, *args, **kwargs):
+        unlinked.append(name)
+        return original_unlink(name, *args, **kwargs)
+
+    def fail_removal_sync(fd):
+        if unlinked and os.fstat(fd).st_mode & 0o170000 == 0o040000:
+            raise OSError(errno.EIO, "removal sync")
+        return original_sync(fd)
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(os, "fsync", fail_removal_sync)
+    ack = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    monkeypatch.undo()
+    assert unlinked
+    assert not ack.admitted and ack.fault == audit.AuditFault("persistence_error", "maintenance", None)
+    assert ack.publication_uncertain is True
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    [
+        (audit._Rejected("integrity_error"), "integrity_error"),
+        (OSError(errno.EIO, "x"), "persistence_error"),
+    ],
+)
+def test_maintenance_failure_after_publishing_a_tombstone_is_uncertain(
+    recorder, monkeypatch, failure, code
+):
+    owner = _terminal_root(recorder)
+    published = []
+    original = audit._publish
+
+    def publish(fd, name, data, **kwargs):
+        original(fd, name, data, **kwargs)
+        published.append(name)
+
+    def prune(handle, fd, run_id):
+        if published:
+            raise failure
+        return original_prune(handle, fd, run_id)
+
+    original_prune = audit._qualified_prune
+    monkeypatch.setattr(audit, "_publish", publish)
+    monkeypatch.setattr(audit, "_qualified_prune", prune)
+    ack = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    monkeypatch.undo()
+    assert published == ["tombstone"]
+    assert not ack.admitted and ack.fault.code == code and ack.publication_uncertain is True
+
+
+def test_maintenance_close_failure_after_pruning_is_publication_uncertain(recorder, monkeypatch):
+    owner = _terminal_root(recorder)
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    ack = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    monkeypatch.undo()
+    assert closer.fired == 1
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is True
+    assert (owner.root / RUN / "tombstone").exists()
+
+
+def test_maintenance_retained_marker_failure_after_a_partial_run_is_uncertain(recorder, monkeypatch):
+    owner = _terminal_root(recorder)
+    original_sync = os.fsync
+    original_unlink = os.unlink
+    unlinked = []
+
+    def unlink(name, *args, **kwargs):
+        unlinked.append(name)
+        return original_unlink(name, *args, **kwargs)
+
+    def fail_removal_sync(fd):
+        if unlinked and os.fstat(fd).st_mode & 0o170000 == 0o040000:
+            raise OSError(errno.EIO, "removal sync")
+        return original_sync(fd)
+
+    with monkeypatch.context() as cuts:
+        cuts.setattr(os, "unlink", unlink)
+        cuts.setattr(os, "fsync", fail_removal_sync)
+        first = audit.maintain_audit_root(
+            owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100
+        )
+    assert not first.admitted and unlinked
+    assert not list((owner.root / RUN).glob("raw-*"))
+    original_publish = audit._publish
+
+    def publish(fd, name, data, **kwargs):
+        if kwargs.get("replace"):
+            raise OSError(errno.EIO, "retained marker")
+        return original_publish(fd, name, data, **kwargs)
+
+    monkeypatch.setattr(audit, "_publish", publish)
+    second = audit.maintain_audit_root(
+        owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100
+    )
+    monkeypatch.undo()
+    assert not second.admitted and second.fault.code == "persistence_error"
+    assert second.publication_uncertain is True
+
+
+def test_stage_failure_after_the_rename_with_an_unreadable_directory_is_uncertain(
+    disk_root, monkeypatch
+):
+    owner, call = _stage_call(disk_root, "freeze")
+    original = audit._publish
+    original_entries = audit._entries
+    renamed = []
+
+    def publish(fd, entry, data, **kwargs):
+        original(fd, entry, data, **kwargs)
+        if entry == "freeze":
+            renamed.append(entry)
+            raise OSError(errno.EIO, "after the rename")
+
+    def entries(fd):
+        if renamed:
+            raise OSError(errno.EIO, "listing")
+        return original_entries(fd)
+
+    monkeypatch.setattr(audit, "_publish", publish)
+    monkeypatch.setattr(audit, "_entries", entries)
+    ack = call()
+    monkeypatch.undo()
+    assert renamed and not ack.admitted and ack.fault.code == "persistence_error"
+    assert ack.publication_uncertain is True
+
+
+def test_maintenance_unlink_failure_after_an_earlier_tombstone_is_uncertain(recorder, monkeypatch):
+    owner = _terminal_root(recorder)
+    original_prune = audit._qualified_prune
+    state = {"published": False}
+    original_publish = audit._publish
+
+    def publish(fd, name, data, **kwargs):
+        original_publish(fd, name, data, **kwargs)
+        state["published"] = True
+
+    def prune(handle, fd, run_id):
+        if state["published"]:
+            raise audit._Rejected("integrity_error")
+        return original_prune(handle, fd, run_id)
+
+    with monkeypatch.context() as cuts:
+        cuts.setattr(audit, "_publish", publish)
+        cuts.setattr(audit, "_qualified_prune", prune)
+        first = audit.maintain_audit_root(
+            owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100
+        )
+    assert not first.admitted and state["published"]
+    assert list((owner.root / RUN).glob("raw-*"))
+
+    def unlink(name, *args, **kwargs):
+        raise OSError(errno.EIO, "unlink")
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    second = audit.maintain_audit_root(
+        owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100
+    )
+    monkeypatch.undo()
+    assert not second.admitted and second.fault.code == "persistence_error"
+    assert second.publication_uncertain is True
+
+
+def test_maintenance_failure_before_any_change_is_definite(recorder, monkeypatch):
+    owner = _terminal_root(recorder)
+
+    def inventory(handle):
+        raise OSError(errno.EIO, "injected inventory")
+
+    monkeypatch.setattr(audit, "_inventory", inventory)
+    ack = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    monkeypatch.undo()
+    assert not ack.admitted and ack.fault == audit.AuditFault("persistence_error", "maintenance", None)
+    assert ack.publication_uncertain is False
+    assert not (owner.root / RUN / "tombstone").exists()
+
+
+def test_maintenance_close_failure_without_any_change_is_definite(recorder, monkeypatch):
+    # The run is still open, so maintenance has nothing to prune and publishes nothing.
+    owner, _ = recorder
+    closer = _CloseOnce(monkeypatch)
+    closer.arm()
+    ack = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    monkeypatch.undo()
+    assert closer.fired == 1
+    assert not ack.admitted and ack.fault == audit.AuditFault("persistence_error", "maintenance", None)
+    assert ack.publication_uncertain is False
+    assert not (owner.root / RUN / "tombstone").exists()
+
+
+@pytest.mark.parametrize("failure", [OSError(errno.EIO, "x"), audit._Rejected("integrity_error")])
+def test_maintenance_tombstone_publish_that_raises_is_uncertain(recorder, monkeypatch, failure):
+    # A failing publish may already have made the tombstone, or a temp file, visible.
+    owner = _terminal_root(recorder)
+    attempted = []
+
+    def publish(fd, name, data, **kwargs):
+        attempted.append(name)
+        raise failure
+
+    monkeypatch.setattr(audit, "_publish", publish)
+    ack = audit.maintain_audit_root(owner.root, monotonic=Clock(), utc_now=_later, action_deadline=100)
+    monkeypatch.undo()
+    assert attempted == ["tombstone"]
+    assert not ack.admitted and ack.publication_uncertain is True
+
+
+def _tear_the_journal_on(monkeypatch, name):
+    """Make the append of ``name`` write a torn frame prefix, then raise EIO."""
+    original = audit._append
+
+    def append(fd, event):
+        if event["event"] == name:
+            journal = os.open("journal", os.O_WRONLY | os.O_APPEND, dir_fd=fd)
+            try:
+                os.write(journal, b"00000")
+            finally:
+                os.close(journal)
+            raise OSError(errno.EIO, "mid-frame")
+        return original(fd, event)
+
+    monkeypatch.setattr(audit, "_append", append)
+
+
+def _start_call(owner):
+    return lambda: owner.start(
+        context(),
+        logical_id=LOGICAL,
+        parent_id=None,
+        cause="initial",
+        backend=BACKEND,
+        request_digest=DIGEST,
+        request_bytes=7,
+        action_deadline=100,
+    )
+
+
+def _observe_call(owner):
+    attempt = start(owner)
+    raw = acquire(owner, attempt, None, data=b'{"model":"observed"}')
+    return lambda: owner.observe_response(
+        attempt,
+        source_observation_id=raw.observation_id,
+        frame_offset=0,
+        frame_length=20,
+        usage=usage(0, 0, 0, 0),
+        observed_backend=None,
+    )
+
+
+def _finish_call(owner):
+    attempt = start(owner)
+    return lambda: finish(owner, attempt)
+
+
+@pytest.mark.parametrize(
+    ("event", "build"),
+    [
+        pytest.param("start", _start_call, id="start"),
+        pytest.param("response_observed", _observe_call, id="observe"),
+        pytest.param("finish", _finish_call, id="finish"),
+    ],
+)
+def test_torn_journal_append_is_uncertain_without_any_staged_file(recorder, monkeypatch, event, build):
+    # Nothing is staged before these appends, so only the torn-journal mark can flag them.
+    owner, _ = recorder
+    call = build(owner)
+    staged = owner._staged
+    events_before = len(owner._events)
+    _tear_the_journal_on(monkeypatch, event)
+    ack = call()
+    assert not ack.admitted and ack.fault.code == "persistence_error"
+    assert owner._append_uncertain is True
+    assert owner._staged == staged and len(owner._events) == events_before
+    assert ack.publication_uncertain is True
+
+
+@pytest.mark.parametrize("stem", _STAGE_TARGETS)
+def test_unrelated_temp_file_is_refused_before_any_stage(disk_root, stem):
+    # This is why `_stage` only has to look for its own `temp-<name>-*` files: another temp
+    # file makes the call fail in `_checked`, before anything is published.
+    owner, call = _stage_target(disk_root, stem)
+    (owner.root / RUN / "temp-other-abc").write_bytes(b"x")
+    staged = owner._staged
+    ack = call()
+    assert not ack.admitted and ack.publication_uncertain is False
+    assert _run_entries(owner, "temp-") == ["temp-other-abc"]
+    assert not _run_entries(owner, stem)
+    assert owner._staged == staged
+
+
+@pytest.mark.parametrize("stem", ["freeze", "input-manifest.json", "raw-"])
+def test_stage_rejected_after_the_temp_write_is_publication_uncertain(disk_root, monkeypatch, stem):
+    owner, call = _stage_target(disk_root, stem)
+    original = audit._entries
+    armed = [True]
+
+    def entries(fd):
+        listing = original(fd)
+        if armed[0] and any(e.startswith("temp-" + stem) for e in listing):
+            # The first listing that sees the temp file is the check inside `_publish`.
+            armed[0] = False
+            raise audit._Rejected("integrity_error")
+        return listing
+
+    monkeypatch.setattr(audit, "_entries", entries)
+    ack = call()
+    monkeypatch.undo()
+    assert not armed[0]
+    assert not ack.admitted and ack.fault.code == "integrity_error"
+    assert _run_entries(owner, "temp-" + stem) and not _run_entries(owner, stem)
+    assert ack.publication_uncertain is True
+
+
+@pytest.mark.parametrize("stem", ["freeze", "input-manifest.json", "raw-"])
+def test_stage_with_both_listings_rejected_is_publication_uncertain(disk_root, monkeypatch, stem):
+    # The check inside `_publish` rejects once the temp file exists, and so does the listing that
+    # `_stage` runs afterwards. `_stage` cannot tell what is visible, so it counts the file as staged.
+    owner, call = _stage_target(disk_root, stem)
+    original = audit._entries
+    rejected = []
+
+    def entries(fd):
+        listing = original(fd)
+        if any(e.startswith("temp-" + stem) for e in listing):
+            rejected.append(listing)
+            raise audit._Rejected("integrity_error")
+        return listing
+
+    monkeypatch.setattr(audit, "_entries", entries)
+    ack = call()
+    monkeypatch.undo()
+    assert len(rejected) >= 2  # the publish check, the stage listing, and any later check
+    assert not ack.admitted and ack.fault.code == "integrity_error"
+    assert _run_entries(owner, "temp-" + stem) and not _run_entries(owner, stem)
+    assert ack.publication_uncertain is True
+
+
+@pytest.mark.parametrize("name", ["freeze", "input-manifest.json", "raw-" + RUN])
+def test_stage_counts_only_its_own_temp_files(recorder, monkeypatch, name):
+    # `_stage` is driven directly: through the public calls `_checked` refuses a stray temp file
+    # first. Entries that merely resemble the staged name must not count as staged.
+    owner, _ = recorder
+    run_dir = owner.root / RUN
+    strays = (
+        "temp-other-1",
+        "temp-" + name + "x-1",
+        "temp-" + name[:-1] + "-1",
+        name + "-extra",
+        name[:-1],
+        "x-temp-" + name + "-1",
+    )
+    for stray in strays:
+        (run_dir / stray).write_bytes(b"x")
+
+    def publish(fd, entry, data, **kwargs):
+        raise OSError(errno.EIO, "before the temp file")
+
+    monkeypatch.setattr(audit, "_publish", publish)
+    fd = os.open(run_dir, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        before = owner._staged
+        with pytest.raises(OSError):
+            owner._stage(fd, name, b"data")
+        assert owner._staged == before
+        (run_dir / ("temp-" + name + "-2")).write_bytes(b"x")
+        with pytest.raises(OSError):
+            owner._stage(fd, name, b"data")
+        assert owner._staged == before + 1
+    finally:
+        os.close(fd)
