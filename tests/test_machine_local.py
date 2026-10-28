@@ -348,9 +348,14 @@ class TestReplayStallBreaker:
         assert machine._stalled_on_identical_round()
 
         # A change in any of the three rounds breaks the freeze, round 0 included.
+        # The changed map keeps a CONFIRMED finding, so the `CONFIRMED not in
+        # values` check cannot be what returns False: the equality checks must.
         for changed_round in (0, 1, 2):
             self._freeze(machine, same)
-            machine._state.round_history[changed_round]["dispositions"] = {"fp-l1": "DISMISSED"}
+            machine._state.round_history[changed_round]["dispositions"] = {
+                "fp-l1": "CONFIRMED",
+                "fp-other": "CONFIRMED",
+            }
             assert not machine._stalled_on_identical_round(), changed_round
 
         self._freeze(machine, {})
