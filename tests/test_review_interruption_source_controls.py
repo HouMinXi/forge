@@ -190,6 +190,13 @@ def _apply_reviewer_fault(body, fault):
         body["code_excerpts"] = []
     elif fault == "excerpt-line-count":
         body["code_excerpts"][0]["content"] = "const value = 2;\n"
+    elif fault == "schema-findings":
+        # C3: schema-invalid (severity) but the findings list and the excerpts
+        # are intact, so the factory yields schema-fail + one UNTRUSTED companion.
+        body["findings"] = [{
+            "file": "control.ts", "line": 2, "severity": "P9",
+            "description": "constructed schema-invalid candidate", "excerpt": "const value = 2;",
+        }]
     elif fault == "literal":
         body["code_excerpts"][0]["content"] = CONTENT["control.ts"].replace("value = 2", "value = 200")
     else:
@@ -704,8 +711,12 @@ def _p3_prefix(root, monkeypatch, severity="P3"):
     return state
 
 
-def test_m4_recurring_p3_plus_schema_preserves_on_real_run(offline_workspace, monkeypatch):
-    """M4 run level: recurring P3 + new incomplete-coverage, then recurring coverage (CYCLE_RESTART), both keep [2, 3]."""
+def test_m4_recurring_p3_plus_coverage_preserves_on_real_run(offline_workspace, monkeypatch):
+    """M4 run level: recurring P3 + new incomplete-coverage, then recurring coverage (CYCLE_RESTART), both keep [2, 3].
+
+    The cause is incomplete-coverage, not schema-fail (name fixed in fix3-c3);
+    the schema-fail companion run is test_c3_schema_invalid_findings_preserve_on_real_run.
+    """
     root = offline_workspace
     state = _p3_prefix(root, monkeypatch)
     assert [row["clean_credit_action"] for row in state.round_history] == ["reset", "earned", "earned"]
@@ -789,6 +800,64 @@ def test_m4_new_confirmed_product_plus_schema_resets_on_real_run(offline_workspa
     machine.run()
     _assert_calls(calls, [3])
     _assert_wiped(root)
+    _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+
+
+def _c3_companion(machine):
+    companions = [
+        f for f in machine._state.findings
+        if f.source == "UNTRUSTED" and f.id == f"l1-adversarial-untrusted-{f.fingerprint}"
+    ]
+    assert len(companions) == 1 and companions[0].disposition.value == "UNCERTAIN"
+    return companions[0].fingerprint
+
+
+def test_c3_schema_invalid_findings_preserve_on_real_run(offline_workspace, monkeypatch):
+    """C3 §4.7: real factories path. One parsed schema-invalid response with valid
+    excerpts yields schema-fail + an UNTRUSTED companion; the round preserves and
+    the persisted row omits the companion fingerprint (mechanism C)."""
+    root = offline_workspace
+    proof, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="schema-findings")
+    seen = _inject_gate_errors(monkeypatch, machine, [])
+    assert machine.run() is not Verdict.PASS
+    _assert_calls(calls, [3])
+    assert seen == [(True, ["review evidence rejected in current round; see receipts/attempted"])]
+    fp = _c3_companion(machine)
+    state = _assert_preserved(root, proof, fixpoint="RESET")
+    latest = state.round_history[-1]
+    assert fp not in latest["dispositions"] and fp in latest["l1_fingerprints"]
+    assert latest["dispositions"]["schema-fail-adversarial"] == "CONFIRMED"
+    # The companion stays visible as audit data in state findings.
+    assert any(f.fingerprint == fp and f.source == "UNTRUSTED" for f in state.findings)
+    _recover(root, monkeypatch, original, [1, 2, 4])
+
+
+@pytest.mark.parametrize(
+    ("extra", "qodo_fault"),
+    [([_AUDIT_UNAVAILABLE], None),
+     ([_AUDIT_UNAVAILABLE, "receipt write failed: constructed I/O error"], None),
+     ([], "literal")],
+    ids=["audit-unavailable", "audit-unavailable-plus-io", "literal"],
+)
+def test_c3_companion_with_gate_damage_wipes_and_keeps_fingerprint(
+    offline_workspace, monkeypatch, extra, qodo_fault
+):
+    """C3 §4.3: gate damage beside a companion takes the M6 wipe; F stays in the row."""
+    root = offline_workspace
+    _, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="schema-findings", qodo_fault=qodo_fault)
+    seen = _inject_gate_errors(monkeypatch, machine, extra)
+    assert machine.run() is Verdict.FAIL
+    _assert_calls(calls, [3])
+    assert len(seen) == 1
+    if qodo_fault is None:
+        # Without the injected damage the predicate alone would preserve.
+        assert seen[0][0] is True
+    fp = _c3_companion(machine)
+    state = _assert_wiped(root)
+    assert state.round_history[-1]["dispositions"][fp] == "UNCERTAIN"
+    assert not any("clean credit preserved" in err for err in state.infra_errors)
     _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
 
 

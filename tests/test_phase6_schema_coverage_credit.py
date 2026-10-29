@@ -16,6 +16,7 @@ from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
 from code_forge.errors import CorruptedStateError
+from code_forge.factories import _ExcerptRejection, _L1Call
 from code_forge.falsify import StubFalsifier
 from code_forge.llm_invoke import Usage
 from code_forge.machine import StateMachine, _FixpointResult
@@ -26,6 +27,8 @@ from code_forge.state import (
     StateFinding,
     Verdict,
     earned_history_cycles,
+    load_state,
+    save_state,
     validate_round_history,
 )
 
@@ -738,3 +741,280 @@ def test_l3_compat_preserved_token_is_the_only_new_action():
         with pytest.raises(CorruptedStateError, match="invalid host clean credit action"):
             validate_round_history([row])
     validate_round_history([_preserved_row(0, 0)])
+
+
+# ---------------------------------------------------------------------------
+# C3 (joint spec c3-impl-spec-joint-v1, sha bc577a5a…): UNTRUSTED companions
+# of ONE parsed schema-fail response are excluded from the counterfactual and
+# omitted from the preserved row. NARROW scope (user-question-pending): any
+# second response, excerpt rejection, unavailable payload, scoped review or
+# non-_L1Call producer keeps the M6 reset (TD-P6-C3c).
+# ---------------------------------------------------------------------------
+
+_C3_FP = "loc-companion"
+
+
+def _companion(name="adversarial", fp=_C3_FP, desc="[adversarial] constructed candidate"):
+    return StateFinding(
+        id=f"l1-{name}-untrusted-{fp}",
+        fingerprint=fp,
+        source="UNTRUSTED",
+        disposition=Disposition.UNCERTAIN,
+        file="test.py",
+        line_range=[2, 2],
+        description=desc,
+    )
+
+
+def _rejection(call, name="adversarial"):
+    return _ExcerptRejection(call._excerpt_invocation, name, {"pass_name": name}, "{}", "")
+
+
+def _c3_machine(tmp_path, monkeypatch, *, name="adversarial", companions=None):
+    """One parsed schema-fail response for `name` plus its UNTRUSTED companion(s)."""
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm.l1_provider = _L1Call(lambda: None)
+    schema = _schema_finding(name)
+    comps = [_companion(name)] if companions is None else companions
+    sm._state.findings = [schema, *comps]
+    sm._phase_findings = {"l1": [schema, *comps]}
+    sm._attempted_last_round = [{"pass_name": name, "findings": [], "code_excerpts": []}]
+    sm._state.round_history = [{"dispositions": {}}, {}]
+    return sm, schema, comps
+
+
+def _add(sm, *findings):
+    sm._state.findings = sm._state.findings + list(findings)
+    sm._phase_findings["l1"] = sm._phase_findings["l1"] + list(findings)
+
+
+def test_c3_single_schema_response_with_companions_preserves(tmp_path, monkeypatch):
+    """§4.1: the companions alone held the reset; excluding them, the round is (iii)-only."""
+    comps = [_companion(), _companion(fp="loc-other")]
+    sm, schema, _ = _c3_machine(tmp_path, monkeypatch, companions=comps)
+    observed = list(sm._state.findings)
+    assert sm._fixpoint_reached() is _FixpointResult.RESET
+    # Excluding only the schema-fail still resets on the companions (fix2 behaviour).
+    assert sm._fixpoint_without([schema]) is _FixpointResult.RESET
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+    assert sm._c3_strip_fps == {_C3_FP, "loc-other"}
+    assert sm._state.findings == observed and all(a is b for a, b in zip(sm._state.findings, observed))
+
+
+def _new_product(fp, desc, disposition=Disposition.CONFIRMED):
+    return _product_finding(fp, disposition, desc)
+
+
+def _proto(sm):
+    proto = _new_product("fp-proto", "P3: protocol", Disposition.UNCERTAIN)
+    _add(sm, proto)
+    sm._falsify_protocol_findings = [proto]
+    sm._falsify_failed_findings = [proto]
+    sm._host_attempt_round = 0
+
+
+def _recurring(sm, finding, prior="CONFIRMED"):
+    _add(sm, finding)
+    sm._state.round_history = [{"dispositions": {finding.fingerprint: prior}}, {}]
+
+
+def _p3_over_threshold(sm):
+    p3s = [_new_product(f"fp-p3-{i}", f"P3: rule {i}") for i in range(6)]
+    _add(sm, *p3s)
+    sm._state.round_history = [{"dispositions": {f.fingerprint: "CONFIRMED" for f in p3s}}, {}]
+
+
+def _p3_density(sm):
+    _recurring(sm, _new_product("fp-p3", "P3: nit"))
+    # One recurring P3 on a two-changed-line diff: 0.5 > P3_DENSITY_THRESHOLD.
+    sm.resolved_review = ResolvedReview(
+        source_files=[Path("test.py")], baseline_content=None, mode_hint="git",
+        git_diff="--- a/test.py\n+++ b/test.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n",
+    )
+
+
+def _swap_to_coverage(sm):
+    coverage = _coverage_finding("adversarial")
+    sm._state.findings = [coverage if f.fingerprint == "schema-fail-adversarial" else f for f in sm._state.findings]
+    sm._phase_findings["l1"] = list(sm._state.findings)
+
+
+def _other_pass(sm):
+    for finding in sm._state.findings:
+        if finding.source == "UNTRUSTED":
+            finding.id = f"l1-expert-untrusted-{finding.fingerprint}"
+
+
+def _two_attempts(sm):
+    sm._attempted_last_round = sm._attempted_last_round * 2
+
+
+def _with_rejection(sm):
+    sm.l1_provider._excerpt_rejections = (_rejection(sm.l1_provider),)
+
+
+def _stale(sm):
+    sm._phase_findings["l1"] = [f for f in sm._phase_findings["l1"] if f.source != "UNTRUSTED"]
+
+
+_C3_NEGATIVES = {
+    "new-confirmed-p1": lambda sm: _add(sm, _new_product("fp-new", "P1: new defect")),
+    "new-confirmed-p3": lambda sm: _add(sm, _new_product("fp-new", "P3: new nit")),
+    "fixed-reversion": lambda sm: _recurring(sm, _new_product("fp-p3", "P3: nit"), prior="FIXED"),
+    "trusted-l1-uncertain": lambda sm: _add(sm, _new_product("fp-unsure", "P3: unsure", Disposition.UNCERTAIN)),
+    "protocol-failure": _proto,
+    "hold-fp": lambda sm: setattr(sm, "_hold_confirmed_fingerprints", ["held-fp"]),
+    "recurring-p2": lambda sm: _recurring(sm, _new_product("fp-p2", "P2: bug")),
+    "p3-distinct-over-threshold": _p3_over_threshold,
+    "p3-density-over-threshold": _p3_density,
+    "l2-infra-plus-protocol": lambda sm: (_proto(sm), setattr(sm, "_l2_infra_error", "constructed L2")),
+    "coverage-cause-only": _swap_to_coverage,
+    "companion-of-pass-without-schema-fail": _other_pass,
+    "two-attempted-items": _two_attempts,
+    "two-attempted-items-plus-rejection": lambda sm: (_two_attempts(sm), _with_rejection(sm)),
+    "non-json-schema-fail-plus-rejection": lambda sm: (
+        setattr(sm, "_attempted_last_round", []), _with_rejection(sm)),
+    "excerpt-rejection-same-pass": _with_rejection,
+    "pass-in-unavailable-set": lambda sm: setattr(sm, "_unavailable_rejected_passes_last_round", {"adversarial"}),
+    "reviewed-repositories-set": lambda sm: setattr(sm, "reviewed_repositories", {"repo": "0" * 40}),
+    "non-l1call-provider": lambda sm: setattr(sm, "l1_provider", lambda: ([], [], Usage(), 0.0)),
+    "stale-prior-round-companion": _stale,
+}
+
+
+@pytest.mark.parametrize("case", list(_C3_NEGATIVES))
+def test_c3_negative_beside_companion_keeps_reset(tmp_path, monkeypatch, case):
+    """§4.2: every non-(iii) cause, and every narrow-scope gate, keeps the M6 reset."""
+    sm, _, _ = _c3_machine(tmp_path, monkeypatch)
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+    _C3_NEGATIVES[case](sm)
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+    assert sm._c3_strip_fps == set()
+
+
+def test_c3_companion_eligibility_is_per_pass(tmp_path, monkeypatch):
+    """A rejection or second response on ANOTHER pass does not disqualify P."""
+    sm, _, _ = _c3_machine(tmp_path, monkeypatch)
+    sm._attempted_last_round = sm._attempted_last_round + [{"pass_name": "qodo"}] * 2
+    sm.l1_provider._excerpt_rejections = (_rejection(sm.l1_provider, "qodo"),)
+    sm._unavailable_rejected_passes_last_round = {"expert"}
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+    assert sm._c3_strip_fps == {_C3_FP}
+
+
+def _host_rows(sm, prior_dispositions=None):
+    disps = prior_dispositions or {}
+    rows = []
+    for index in (0, 1):
+        row = _earned_row(index, index + 1)
+        row.update(source_hash=sm.source_hash, dispositions=dict(disps))
+        rows.append(row)
+    rows.append({
+        "round": 2, "source_hash": sm.source_hash, "reviewed_repositories": None,
+        "clean_credit_action": "unavailable", "phase_status": _phases_returned(),
+        "acquisition_failures": [], "reset_observed": False, "clean_rounds_after": 2,
+    })
+    sm._state.round_history = rows
+    sm._state.round = 2
+    sm._state.consecutive_clean_rounds = 2
+
+
+def _finish(sm, action):
+    """Drive the real snapshot + writer for host attempt 2."""
+    sm._host_attempt_round = 2
+    sm._append_round_snapshot(2, [], list(sm._phase_findings["l1"]))
+    sm._finish_host_attempt(action, _FixpointResult.RESET)
+    return sm._state.round_history[-1]
+
+
+def test_c3_writer_omits_companion_from_preserved_row(tmp_path, monkeypatch):
+    """§4.4: F omitted from dispositions, cause kept, F still in l1_fingerprints; loads."""
+    sm, _, _ = _c3_machine(tmp_path, monkeypatch)
+    _host_rows(sm)
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+    row = _finish(sm, "preserved")
+    assert row["clean_credit_action"] == "preserved"
+    assert row["dispositions"] == {"schema-fail-adversarial": "CONFIRMED"}
+    assert _C3_FP in row["l1_fingerprints"] and "schema-fail-adversarial" in row["l1_fingerprints"]
+    assert sm._c3_strip_fps == set()
+    validate_round_history(sm._state.round_history, 2)
+    state = State(round=2, source_hash=sm.source_hash, round_history=sm._state.round_history,
+                  consecutive_clean_rounds=2)
+    assert earned_history_cycles(state, sm.source_hash, None) == [1, 2]
+
+
+def test_c3_writer_keeps_sticky_confirmed_companion(tmp_path, monkeypatch):
+    """§4.4: a companion promoted to CONFIRMED is not a companion; its fp stays."""
+    comp = _companion(desc="P3: [adversarial] constructed candidate")
+    comp.disposition = Disposition.CONFIRMED
+    comp.severity = "P3"
+    sm, _, _ = _c3_machine(tmp_path, monkeypatch, companions=[comp])
+    _host_rows(sm, {_C3_FP: "CONFIRMED"})
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+    assert sm._c3_strip_fps == set()
+    row = _finish(sm, "preserved")
+    assert row["dispositions"] == {"schema-fail-adversarial": "CONFIRMED", _C3_FP: "CONFIRMED"}
+    validate_round_history(sm._state.round_history, 2)
+
+
+def test_c3_writer_keeps_same_fp_trusted_finding(tmp_path, monkeypatch):
+    """§4.4: the state object at F is a trusted finding, so F is not stripped."""
+    trusted = _new_product(_C3_FP, "P3: trusted nit")
+    sm, schema, comps = _c3_machine(tmp_path, monkeypatch)
+    sm._state.findings = [schema, trusted]
+    sm._phase_findings["l1"] = [schema, *comps, trusted]
+    _host_rows(sm, {_C3_FP: "CONFIRMED"})
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+    assert sm._c3_strip_fps == set()
+    row = _finish(sm, "preserved")
+    assert row["dispositions"][_C3_FP] == "CONFIRMED"
+    validate_round_history(sm._state.round_history, 2)
+
+
+def test_c3_writer_leaves_reset_row_unchanged(tmp_path, monkeypatch):
+    """§4.4: a non-preserved row keeps the companion fingerprint (TD-P6-C3a)."""
+    sm, _, _ = _c3_machine(tmp_path, monkeypatch)
+    _host_rows(sm)
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+    row = _finish(sm, "reset")
+    assert row["dispositions"] == {"schema-fail-adversarial": "CONFIRMED", _C3_FP: "UNCERTAIN"}
+    assert sm._c3_strip_fps == set()
+
+
+def test_c3_begin_host_attempt_clears_strip_set(tmp_path, monkeypatch):
+    sm, _, _ = _c3_machine(tmp_path, monkeypatch)
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+    assert sm._c3_strip_fps
+    sm._state.round_history = []
+    sm._state.earned_clean_window = {"reviewed_repositories": None}
+    monkeypatch.setattr(sm, "_persist_state", lambda: None)
+    sm._begin_host_attempt(0)
+    assert sm._c3_strip_fps == set()
+
+
+@pytest.mark.parametrize("resume", [False, True], ids=["in-memory", "resume-from-disk"])
+def test_c3_trusted_first_confirmation_at_companion_fp_resets_next_round(tmp_path, monkeypatch, resume):
+    """§4.5: preserved N omits F, so a trusted P3 first CONFIRMED at F in N+1 is new (clause a)."""
+    sm, _, _ = _c3_machine(tmp_path, monkeypatch)
+    _host_rows(sm)
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+    _finish(sm, "preserved")
+    if resume:
+        path = tmp_path / "state.json"
+        save_state(sm._state, path)
+        loaded = load_state(path)
+        sm = _guard_machine(tmp_path, monkeypatch)
+        sm._state = loaded
+        assert _C3_FP not in loaded.round_history[-1]["dispositions"]
+    trusted = _new_product(_C3_FP, "P3: trusted nit")
+    sm._state.findings = [trusted]
+    sm._phase_findings = {"l1": [trusted]}
+    sm._state.round = 3
+    assert sm._fixpoint_reached() is _FixpointResult.RESET
+
+
+def test_c3_loader_still_refuses_uncertain_companion_in_preserved_row():
+    """§4.6: no loader relaxation; an unstripped preserved row is refused."""
+    row = _m4_preserved(0, 0, {_C3_FP: "UNCERTAIN"})
+    with pytest.raises(CorruptedStateError, match=_NOT_ONLY):
+        validate_round_history([row])

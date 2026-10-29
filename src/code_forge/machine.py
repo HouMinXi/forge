@@ -859,6 +859,9 @@ class StateMachine:
         self._host_attempt_round: int | None = None
         self._phase_status = {name: "not_run" for name in ROUND_PHASES}
         self._phase_findings: dict[str, list[StateFinding]] = {}
+        # C3: companion fingerprints the preserve predicate excluded; the
+        # writer omits them from a `preserved` row's dispositions only.
+        self._c3_strip_fps: set[str] = set()
         self._acquisition_markers: list[StateFinding] = []
         self._falsify_protocol_findings: list[StateFinding] = []
         self._falsify_failed_findings: list[StateFinding] = []
@@ -1769,6 +1772,7 @@ class StateMachine:
         self._state.converged = False
         self._phase_status = {name: "not_run" for name in ROUND_PHASES}
         self._phase_findings = {}
+        self._c3_strip_fps = set()
         self._acquisition_markers = []
         self._falsify_protocol_findings = []
         self._falsify_failed_findings = []
@@ -1812,6 +1816,13 @@ class StateMachine:
         row = rows[0]
         if self._attempt_snapshot is not None:
             row.update(self._attempt_snapshot)
+        if action == "preserved":
+            # C3 (mechanism C): a preserved row must not seed `ever_seen` with
+            # UNTRUSTED companion fingerprints, or a trusted finding first
+            # confirmed at the same location next round would skip clause (a).
+            for fingerprint in self._c3_strip_fps:
+                row.get("dispositions", {}).pop(fingerprint, None)
+        self._c3_strip_fps = set()
         outcomes = derive_pass_outcomes(self._acquisition_markers)
         failures = []
         for finding in self._acquisition_markers:
@@ -1891,10 +1902,14 @@ class StateMachine:
         the (iii) findings removed, would be CLEAN (plan Q7 / section 2.2). A
         recurring sub-threshold P3 beside a schema-fail therefore preserves,
         while a new CONFIRMED, a FIXED->CONFIRMED reversion, P0-P2, or a
-        semantic UNCERTAIN finding keeps the reset. A preserved round leaves
+        semantic UNCERTAIN finding keeps the reset. C3: the counterfactual also
+        removes the UNTRUSTED companions of a single parsed schema-fail
+        response (`_schema_fail_companions`); their fingerprints are omitted
+        from the preserved row's dispositions. A preserved round leaves
         `_hold_confirmed_fingerprints` untouched, which is safe because the HOLD
         guard already requires it to be empty.
         """
+        self._c3_strip_fps = set()
         if not self._host_receipt_active():
             return False
         if fixpoint not in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART):
@@ -1916,16 +1931,69 @@ class StateMachine:
         ]
         if not schema_coverage:
             return False
-        counterfactual = self._fixpoint_without(schema_coverage)
-        if counterfactual == _FixpointResult.CLEAN:
-            return True
+        companions = self._schema_fail_companions(schema_coverage)
+        counterfactual = self._fixpoint_without(schema_coverage + companions)
         # An L2 infra error alone only downgrades CLEAN to INCOMPLETE; it is
         # credit-neutral. A pending falsifier protocol observation is not.
-        return (
+        preserve = counterfactual == _FixpointResult.CLEAN or (
             counterfactual == _FixpointResult.INCOMPLETE
             and self._l2_infra_error is not None
             and not (protocol_ids and self._host_attempt_round is not None)
         )
+        if preserve:
+            self._c3_strip_fps = {
+                finding.fingerprint
+                for finding in companions
+                if finding.disposition == Disposition.UNCERTAIN
+                and [f for f in self._state.findings if f.fingerprint == finding.fingerprint] == [finding]
+            }
+        return preserve
+
+    def _schema_fail_companions(self, schema_coverage: list[StateFinding]) -> list[StateFinding]:
+        """C3 (narrow): UNTRUSTED companions of a single parsed schema-fail response.
+
+        A pass is companion-eligible only when this round holds its schema-fail
+        finding, exactly one attempted (parsed) payload for it, no typed
+        excerpt rejection, no unavailable payload, an `_L1Call` producer and
+        no scoped repositories. Every check is fail-closed: an ineligible
+        companion stays in the counterfactual and its UNCERTAIN resets.
+        This is the single seam a later widening would change.
+        """
+        from .factories import _L1Call
+
+        producer = self.l1_provider
+        if type(producer) is not _L1Call or self.reviewed_repositories is not None:
+            return []
+        eligible = set()
+        for name in ("qodo", "expert", "adversarial"):
+            if not any(
+                finding.id == f"l1-{name}-schema-fail" and finding.fingerprint == f"schema-fail-{name}"
+                for finding in schema_coverage
+            ):
+                continue
+            attempts = [
+                item for item in self._attempted_last_round
+                if type(item) is dict and item.get("pass_name") == name
+            ]
+            if len(attempts) != 1:
+                continue
+            if any(rejection.pass_name == name for rejection in producer._excerpt_rejections):
+                continue
+            if name in self._unavailable_rejected_passes_last_round:
+                continue
+            eligible.add(name)
+        if not eligible:
+            return []
+        this_round = {id(finding) for finding in self._phase_findings.get("l1", ())}
+        return [
+            finding
+            for finding in self._product_findings()
+            if finding.source == "UNTRUSTED"
+            and finding.disposition == Disposition.UNCERTAIN
+            and not is_receipt_audit(finding)
+            and id(finding) in this_round
+            and any(finding.id == f"l1-{name}-untrusted-{finding.fingerprint}" for name in eligible)
+        ]
 
     def _fixpoint_without(self, excluded: list[StateFinding]) -> _FixpointResult:
         """Evaluate the unchanged fixpoint as if `excluded` had not been observed."""
