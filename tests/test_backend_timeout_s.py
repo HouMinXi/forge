@@ -13,7 +13,13 @@ from code_forge.errors import CliError
 from code_forge.llm_invoke import effective_invoke_timeout_s
 
 CLI = {"type": "cli", "command": "claude"}
-API = {"type": "api", "format": "openai", "base_url": "https://example.invalid/v1", "api_key_env": "K", "model": "m"}
+API = {
+    "type": "api",
+    "format": "openai",
+    "base_url": "https://example.invalid/v1",
+    "api_key_env": "K",
+    "model": "m",
+}
 VERTEX = {"type": "api", "format": "vertex", "project_id": "p", "model": "m"}
 KINDS = {"cli": CLI, "api": API, "vertex": VERTEX}
 
@@ -100,7 +106,9 @@ def test_schema_declares_the_same_maximum():
 
     def walk(node):
         if isinstance(node, dict):
-            if isinstance(node.get("timeout_s"), dict) and "Per-request timeout" in node["timeout_s"].get("description", ""):
+            if isinstance(node.get("timeout_s"), dict) and "Per-request timeout" in node[
+                "timeout_s"
+            ].get("description", ""):
                 found.append(node["timeout_s"])
             for v in node.values():
                 walk(v)
