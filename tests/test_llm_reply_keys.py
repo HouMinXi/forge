@@ -1106,7 +1106,10 @@ def test_trailing_comma_does_not_drop_a_finding(api_env, monkeypatch, keys):
         llm_invoke("task", backend=_api_backend(), reply_keys=keys)
 
 
-_EMBEDDED = '{"findings": [], "code_excerpts": [{"file": "t.py", "start_line": 3, "end_line": 3, "content": "y"}]}'
+_EMBEDDED = (
+    '{"findings": [], "code_excerpts": [{"file": "t.py", "start_line": 3, '
+    '"end_line": 3, "content": "y"}]}'
+)
 _OPEN_BRACES = " func f() { for {"
 
 
