@@ -477,3 +477,55 @@ def test_object_in_an_unclosed_list_is_refused(tail):
 def test_object_in_a_closed_list_or_before_another_item_is_kept(after):
     text = '[{"findings": [], "code_excerpts": []}' + after
     assert _extract_json_from_text(text, leading_only=True) == {"findings": [], "code_excerpts": []}
+
+
+_EMPTY_REVIEW = '{"findings": [], "code_excerpts": []}'
+
+
+@pytest.mark.parametrize("tail", [" d.keys()", " e.g", " a.b", " cfg.get(k)", " x.y z"])
+def test_dotted_name_after_the_reply_is_refused(tail):
+    # cr2 P3-1: a '.' ends a prose word only before whitespace or the end.
+    assert _extract_json_from_text(_EMPTY_REVIEW + tail, ["findings"]) is None
+    assert _extract_json_from_text("Note: " + _EMPTY_REVIEW + tail, ["findings"]) is None
+
+
+@pytest.mark.parametrize("tail", [" Done.", " see a.py."])
+def test_sentence_after_the_reply_is_kept(tail):
+    assert _extract_json_from_text(_EMPTY_REVIEW + tail, ["findings"]) == json.loads(_EMPTY_REVIEW)
+
+
+def test_open_literal_skips_braces_in_strings():
+    # sec F3: the '}' inside "}" does not close the failed literal, so the
+    # keyed object after it is still inside the literal.
+    text = 'Example: {key: "}", inner: ' + _EMPTY_REVIEW
+    literal = invoke._OpenLiteral(text)
+    literal.open_at(text.index("{"))
+    assert literal.holds(text.index('{"findings"'))
+    assert _extract_json_from_text(text, ["findings"]) is None
+
+
+def test_canary_generation_refuses_a_duplicate(tmp_path, capsys):
+    # sec N2 / F1: the canary provider re-parses a string reply. json.loads
+    # would keep the second "mutations" and return a mutation the model
+    # never gave first; the provider falls back to templates instead.
+    from code_forge.cli import _dispatch_inline_canary
+    from code_forge.state import Verdict
+
+    mutation = {"file": "a.py", "line": 1, "original": "a", "code": "b", "description": "d"}
+    reply = '{"mutations": [], "mutations": [%s]}' % json.dumps(mutation)
+    got = []
+
+    def fake_canary(*, canary_provider, **_):
+        got.append(canary_provider("diff"))
+        return Verdict.DELEGATED, []
+
+    mock = Mock(return_value=SimpleNamespace(content=reply))
+    with (
+        patch("code_forge.cli._load_canary_config", return_value={"n": 5}),
+        patch("code_forge.backend.resolve_backend", return_value=MagicMock()),
+        patch("code_forge.canary_gen.run_inline_canary", side_effect=fake_canary),
+        patch("code_forge.llm_invoke.llm_invoke", mock),
+    ):
+        _dispatch_inline_canary("inline", MagicMock(), {}, None, {}, tmp_path)
+    assert got == [[]]
+    assert 'Duplicate key "mutations"' in capsys.readouterr().err
