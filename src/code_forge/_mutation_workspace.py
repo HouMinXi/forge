@@ -139,6 +139,12 @@ def _snapshot(fd: int) -> dict:
                 while chunk := os.read(child, 1024 * 1024):
                     digest.update(chunk)
                 after = os.fstat(child)
+                # mtime and ctime come from a coarse kernel clock (1-4 ms).
+                # A write or a rename away and back in the same tick as the
+                # file's previous change leaves all three equal, so this
+                # check alone misses it (#197, #103). The second hash below
+                # covers the bytes; metadata changes undone within one tick
+                # stay invisible. Accepted limit.
                 if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
                     after.st_size,
                     after.st_mtime_ns,
@@ -166,7 +172,10 @@ def _snapshot(fd: int) -> dict:
             raise MutationWorkspaceError("cache node identity changed while snapshotting")
     directory_after = os.fstat(fd)
     # Coarse kernel timestamps (~4 ms) can hide an added or removed entry
-    # from mtime/ctime, so compare the listing as well.
+    # from mtime/ctime, so compare the listing as well. Neither check sees an
+    # entry created and removed, or renamed away and back, between the two
+    # listings within one tick: stamps and names come out equal (#197,
+    # #103). Accepted limit.
     with os.scandir(fd) as scan:
         names_after = sorted(item.name for item in scan)
     if (directory_before.st_mtime_ns, directory_before.st_ctime_ns) != (
@@ -472,6 +481,11 @@ class MutationWorkspace:
                 data = stream.read()
             after = os.fstat(fd)
             current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            # mtime and ctime tick at 1-4 ms. A same-size rewrite in the same
+            # tick as the file's previous change leaves size, mtime and ctime
+            # equal, and the bytes are not hashed again here, so such a
+            # rewrite during the read is not detected (#197, #103). Accepted
+            # limit.
             if (
                 (before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_mode, before.st_nlink)
                 != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_mode, after.st_nlink)
