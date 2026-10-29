@@ -628,10 +628,10 @@ def _assert_preserved(root, proof, *, fixpoint, diff=DIFF):
     return state
 
 
-def _assert_wiped(root, *, phases=None):
+def _assert_wiped(root, *, phases=None, fixpoint="RESET"):
     state, _ = _state(root)
     latest = state.round_history[-1]
-    assert latest["clean_credit_action"] == "reset" and latest["fixpoint"] == "RESET"
+    assert latest["clean_credit_action"] == "reset" and latest["fixpoint"] == fixpoint
     assert latest["clean_rounds_after"] == 0
     assert state.consecutive_clean_rounds == 0 and state.earned_clean_window["cycles"] == []
     if phases is not None:
@@ -1670,6 +1670,15 @@ def _earned_then(fault):
     return setup
 
 
+def _cycle_restart_preserve_setup(root, monkeypatch):
+    """A recurring coverage finding: the second attempt preserves on CYCLE_RESTART (L-B log line)."""
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="coverage")
+    assert machine.run() is Verdict.ESCALATED
+    machine, calls = _new_machine(root, monkeypatch, fault="coverage")
+    return machine, calls, [4], [5]
+
+
 _SURVIVOR_STOP = "mutation: surviving mutants reported in 3 consecutive rounds"
 
 # J-L1 crash points: each state save after a `preserved` settle (b33b72c8 lines).
@@ -1683,6 +1692,11 @@ _FIX7_POST_SETTLE_SAVES = {
     "survivor-stop-save": (_survivor_preserve_setup, lambda st: _SURVIVOR_STOP in st.infra_errors),
     # active fixpoint: settle :2350, save :2356
     "active-fixpoint-save": (_earned_then("coverage"), lambda st: st.verdict is not Verdict.FAIL),
+    # active fixpoint on CYCLE_RESTART: the L-B "clean credit preserved" line was already written
+    "active-cycle-restart-save": (
+        _cycle_restart_preserve_setup,
+        lambda st: _PRESERVED_LOG % 3 in st.infra_errors,
+    ),
 }
 
 
@@ -1708,8 +1722,12 @@ def test_fix7_crash_at_each_post_settle_save_resets(offline_workspace, monkeypat
     assert armed["raised"] and armed["actions"][-1] == "preserved", armed
     assert seen == [True], seen
     _assert_calls(calls, rounds)
-    state = _assert_wiped(root)
+    restart = site == "active-cycle-restart-save"
+    state = _assert_wiped(root, fixpoint="CYCLE_RESTART" if restart else "RESET")
     assert state.consecutive_clean_rounds == 0
+    if restart:
+        # L-B: the log names the action the ledger now records (reset).
+        _assert_log_matches_ledger(state, 3)
     follow, calls = _new_machine(root, monkeypatch, rounds=1)
     verdict = follow.run()
     _assert_calls(calls, follow_round)

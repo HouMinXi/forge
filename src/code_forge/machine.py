@@ -340,6 +340,11 @@ _FAILURE_EVIDENCE_KEYS = ("publication_error", "cancellation_type", "cleanup_err
 # none (run_mutation pre-seeds "inventory" as empty, so that one must be empty).
 _MUTANT_PHASE_KEYS = ("results_sha256", "metadata_sha256")
 _ATTEMPTED_EVIDENCE_GATE_ERROR = "review evidence rejected in current round; see receipts/attempted"
+# L-B: the CYCLE_RESTART log line, one per action (fix7 also rewrites it on demotion).
+_CYCLE_RESTART_LOG = "tiered-reset: P2/P3-density -- restarting cycle %d"
+_CYCLE_PRESERVED_LOG = (
+    "tiered-reset: P2/P3-density observed at cycle %d -- schema/coverage only, clean credit preserved"
+)
 
 
 def _clean_mutation_skip_kind(
@@ -2157,6 +2162,14 @@ class StateMachine:
         preserve predicate already required it empty.
         """
         row["clean_credit_action"] = "reset"
+        if row.get("fixpoint") == "CYCLE_RESTART":
+            # L-B: the log names the action the ledger records. This attempt
+            # logged "clean credit preserved"; it now records the restart.
+            preserved = _CYCLE_PRESERVED_LOG % row["round"]
+            errors = self._state.infra_errors
+            if preserved in errors:
+                at = len(errors) - 1 - errors[::-1].index(preserved)
+                errors[at] = _CYCLE_RESTART_LOG % row["round"]
         row.setdefault("dispositions", {}).update(self._c3_stripped_dispositions)
         self._c3_stripped_dispositions = {}
         self._reset_clean_credit(settled_host_row=True)
@@ -2265,14 +2278,9 @@ class StateMachine:
             if _fp == _FixpointResult.CYCLE_RESTART:
                 if not _preserve_schema_coverage:
                     self._reset_clean_credit()
-                    self._state.infra_errors.append(
-                        "tiered-reset: P2/P3-density -- restarting cycle %d" % round_index
-                    )
+                    self._state.infra_errors.append(_CYCLE_RESTART_LOG % round_index)
                 else:
-                    self._state.infra_errors.append(
-                        "tiered-reset: P2/P3-density observed at cycle %d -- "
-                        "schema/coverage only, clean credit preserved" % round_index
-                    )
+                    self._state.infra_errors.append(_CYCLE_PRESERVED_LOG % round_index)
             elif _fp == _FixpointResult.RESET:
                 if not _preserve_schema_coverage:
                     self._reset_clean_credit()
