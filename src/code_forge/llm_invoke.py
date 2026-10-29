@@ -1574,9 +1574,9 @@ def _extract_json_from_text(
 
     Limit: a reply cut short right after a quoted `"}], "findings": []}`
     whose remaining text starts like prose (` done`, ` (see a.py)`,
-    `\n- note`, ` or y`, ` for k in d:`, a lone '!' at the end, or after a
-    prose-led object `, b)` or `; f(a)`), with no later string closing
-    into JSON, still returns the quoted empty object, in one call. That
+    `\n- note`, ` or y`, ` for k in d:`, a lone '!' at the end, or after
+    a prose-led object `: x`, `; done` or `, b)`), with no later string
+    closing into JSON, still returns the quoted empty object, in one call. That
     can turn a reply with a P1 into a clean review. It needs the stream
     to stop there while reporting a finished reply: a reply cut by the
     output cap is continued (_continue_truncated), and a whole reply
@@ -1677,8 +1677,6 @@ def _prose_may_follow(text: str, end: int, place: str) -> bool:
             return False  # an indented line continues code
         if _LINE_START.match(rest):
             return True
-    if rest.startswith(('"', "\u201c", "\u201d")):
-        return False
     if _PROSE_WORD.match(rest) or _PROSE_SYMBOL.match(rest):
         return True
     if not gap and _SENTENCE_END.match(rest):
@@ -1690,7 +1688,7 @@ def _prose_may_follow(text: str, end: int, place: str) -> bool:
             return True
     if place == "prose" and not gap:
         punct = _PROSE_PUNCT.match(rest)
-        return punct is not None and _prose_may_follow(text, punct.end(), "leading")
+        return punct is not None and _prose_may_follow(text, k + punct.end(), "leading")
     return False
 
 

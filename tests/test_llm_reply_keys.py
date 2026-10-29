@@ -1253,6 +1253,8 @@ def test_object_right_before_a_close_is_not_the_reply():
         ("\n```", True),
         ("\n| a | b |", True),
         ("\u4e2d\u6587", True),
+        ("!", True),
+        (" !", False),
         ('" and the reply was cut', False),
         ("}", False),
     ],
@@ -1277,6 +1279,8 @@ def test_object_right_before_a_close_is_not_the_reply():
         "fence",
         "table_row",
         "non_ascii_prose",
+        "sentence_end",
+        "spaced_mark",
         "quote_first",
         "close_first",
     ],
@@ -1313,10 +1317,20 @@ def test_text_after_an_object_that_does_not_open_the_reply_is_kept(text):
         'Here: {"findings": ["first"]} // note',
         'Here: {"findings": ["first"]},}',
         'Here: {"findings": ["first"]}\n    return x',
+        'Here: {"findings": ["first"]}; = 1',
         '[{"findings": ["first"]} // note',
         '[{"findings": ["first"]}, "q"]',
+        '[{"findings": ["first"]}; done.',
     ],
-    ids=["prose_led_comment", "prose_led_comma_close", "prose_led_indent", "list_comment", "list_quote"],
+    ids=[
+        "prose_led_comment",
+        "prose_led_comma_close",
+        "prose_led_indent",
+        "prose_led_punct_then_code",
+        "list_comment",
+        "list_quote",
+        "list_punct",
+    ],
 )
 def test_code_after_an_object_that_does_not_open_the_reply_is_refused(text):
     assert invoke._extract_json_from_text(text) is None
@@ -1369,14 +1383,12 @@ _REFUSED_TAILS = {
     "bom_comma": "\ufeff,",
     "indented": "\n    return x",
     "call_after_blank_line": "\n\nfoo()",
+    "call": "; f(a)",
 }
 # Punctuation then prose may follow an object that prose led, as in
 # `Here: {...}; done.`, so these are refused only where the object opens
 # the text or a list.
-_REFUSED_UNLESS_PROSE_LED = {
-    "call": "; f(a)",
-    "colon": ": x",
-}
+_REFUSED_UNLESS_PROSE_LED = {"colon": ": x"}
 # These start like prose, which may follow a whole reply, so a stop-cut
 # reply ending in one cannot be refused (the docstring's Limit).
 _PROSE_LIKE_TAILS = {
@@ -1603,6 +1615,10 @@ _PROSE_LED_DUPLICATES = {
         _FALSIFY_REPLY_KEYS,
     ),
     "falsify_list": ('[{"verdict": "CONFIRMED", "verdict": "DISMISSED"}]', _FALSIFY_REPLY_KEYS),
+    "review_then_reply": (
+        '{"findings": [' + _P1 + '], "code_excerpts": [], "findings": []}\n{"findings": []}',
+        REVIEW_REPLY_KEYS,
+    ),
 }
 
 
@@ -1619,7 +1635,17 @@ def test_scan_refuses_a_duplicate_key(api_env, monkeypatch, name):
     assert request.call_count == 2  # one correction retry, not a failed review
 
 
-@pytest.mark.parametrize("text", [_PY_DICT_REPLY, _JS_REPLY], ids=["python_dict", "js_object"])
+# The quoted review is followed by prose inside the literal, so only the
+# literal rule refuses it.
+_PY_DICT_PROSE = "{'findings': [{'severity': 'P1', 'excerpt': 'x = " + '{"findings": []}' + " done'}]}"
+_JS_PROSE = "{findings: [{severity: 'P1', excerpt: 'x = " + '{"findings": []}' + " done'}]}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [_PY_DICT_REPLY, _JS_REPLY, _PY_DICT_PROSE, _JS_PROSE],
+    ids=["python_dict", "js_object", "python_dict_prose", "js_object_prose"],
+)
 @pytest.mark.parametrize("lead", ["Here is my review: ", "Review:\n", "[", "x = "])
 def test_prose_led_non_json_reply_does_not_yield_its_quoted_review(text, lead):
     # P3-d: a JSON object inside an open dict or JS literal is quoted content.
@@ -1644,13 +1670,13 @@ def test_a_literal_closed_before_the_reply_does_not_end_the_scan(text):
 # P3-5: a repair refused because of a later failure (RepairRefused) must not
 # be answered by a full scan, which would find this later reply. Each site
 # that calls _fallback_reply is pinned.
-_REFUSED_REPAIR = '[{"x": 1}, "a "b" c", tru, {"findings": []}]'
+_REFUSED_REPAIR = '[{"x": 1}, "a "b" c", tru, {"findings": [], "code_excerpts": []}]'
 
 
 def test_refused_repair_input_is_a_full_scan_trap():
     with pytest.raises(invoke.RepairRefused) as caught:
         _loads_model_json(_REFUSED_REPAIR)
-    assert invoke._extract_json_from_text(_REFUSED_REPAIR) == {"findings": []}
+    assert invoke._extract_json_from_text(_REFUSED_REPAIR)["findings"] == []
     assert invoke._fallback_reply(_REFUSED_REPAIR, caught.value, None) is None
 
 
