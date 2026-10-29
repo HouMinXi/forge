@@ -71,8 +71,6 @@ def test_api_corrects_complete_syntax_error(monkeypatch, caplog):
     ]
 
 
-
-
 def parse_error(text):
     try:
         json.loads(text, strict=False)
@@ -252,8 +250,6 @@ def test_existing_nonstandard_compatibility(monkeypatch, text):
     assert request.call_count == 1
 
 
-
-
 @pytest.mark.parametrize("fmt", ["anthropic", "vertex"])
 def test_other_api_formats_sum_usage(monkeypatch, fmt):
     monkeypatch.setenv("JSON_TEST_KEY", "local-test")
@@ -278,8 +274,6 @@ def test_other_api_formats_sum_usage(monkeypatch, fmt):
     assert result.usage == invoke.Usage(21, 41, 7)
     assert request.call_count == 2
     assert request.call_args_list[0].args[1:] == request.call_args_list[1].args[1:]
-
-
 
 
 @pytest.mark.parametrize("status", [429, 503])

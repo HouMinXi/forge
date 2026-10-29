@@ -23,14 +23,21 @@ _ENVELOPE = {"findings": [], "code_excerpts": []}
 
 def _backend():
     return BackendConfig(
-        name="local", type="api", model="m", format="openai",
-        base_url="http://127.0.0.1:9", api_key_env="FORGE_TEST_KEY",
+        name="local",
+        type="api",
+        model="m",
+        format="openai",
+        base_url="http://127.0.0.1:9",
+        api_key_env="FORGE_TEST_KEY",
     )
 
 
 def _truncated(content):
     return _TruncatedResponse(
-        "output truncated", content=content, usage_data={}, resolved_cap=100,
+        "output truncated",
+        content=content,
+        usage_data={},
+        resolved_cap=100,
     )
 
 
@@ -47,6 +54,7 @@ def stub_openai(monkeypatch):
     openai branch into anthropic or vertex. Those must answer the same
     way, or the test waits on a real network call.
     """
+
     def install(behaviour):
         def fake_keyed(prompt, backend, api_key, timeout_s):
             return behaviour(prompt)
@@ -64,7 +72,13 @@ def stub_openai(monkeypatch):
 def _recover(stub_openai, behaviour, partial=_PARTIAL):
     stub_openai(behaviour)
     return _continue_truncated(
-        "prompt", _backend(), "key", 5, _truncated(partial), None, budget=2,
+        "prompt",
+        _backend(),
+        "key",
+        5,
+        _truncated(partial),
+        None,
+        budget=2,
     )
 
 
@@ -108,7 +122,10 @@ def test_invoke_error_is_folded_and_logged(no_wait, stub_openai, caplog):
 def test_truncated_continuation_names_the_partial(no_wait, stub_openai):
     def fail(prompt):
         raise _TruncatedResponse(
-            "output truncated", content="{", usage_data={}, resolved_cap=100,
+            "output truncated",
+            content="{",
+            usage_data={},
+            resolved_cap=100,
         )
 
     with pytest.raises(LLMInvokeError) as caught:
@@ -148,8 +165,14 @@ def test_breaker_trip_escapes_instead_of_being_folded(no_wait, monkeypatch):
 
     with pytest.raises(TruncationBreakerError):
         _continue_truncated(
-            "prompt", _backend(), "key", 5, _truncated(_PARTIAL), None,
-            budget=2, breaker=breaker,
+            "prompt",
+            _backend(),
+            "key",
+            5,
+            _truncated(_PARTIAL),
+            None,
+            budget=2,
+            breaker=breaker,
         )
 
 
