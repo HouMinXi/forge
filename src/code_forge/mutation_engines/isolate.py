@@ -127,6 +127,37 @@ def _read(path: str) -> str:
         raise IsolationUnavailable("cgroup file %r is not UTF-8 decodable: %s" % (path, exc)) from exc
 
 
+# Bytes of child startup diagnostic the parent keeps (#31).
+_STARTUP_DIAGNOSTIC_LIMIT = 200
+
+
+def _startup_diagnostic(stage: str, exc: BaseException) -> bytes:
+    """Encode why the forked child stopped before exec, bounded and ASCII-only."""
+    code = getattr(exc, "errno", None)
+    text = "error stage=%s type=%s errno=%s" % (
+        stage,
+        type(exc).__name__,
+        code if isinstance(code, int) else "none",
+    )
+    return text.encode("ascii", "replace")[:_STARTUP_DIAGNOSTIC_LIMIT]
+
+
+def _read_startup_diagnostic(fd: int) -> str:
+    """Read what a stopped child left in the status pipe without blocking.
+
+    Another thread's fork can hold a copy of the write end, so EOF is not
+    guaranteed; a non-blocking read takes only what is already buffered.
+    """
+    os.set_blocking(fd, False)
+    try:
+        raw = os.read(fd, _STARTUP_DIAGNOSTIC_LIMIT)
+    except BlockingIOError:
+        raw = b""
+    if not raw:
+        return "no startup diagnostic"
+    return raw.decode("ascii", "replace")
+
+
 class _ChildProcess:
     """Minimal forked-child handle (poll/wait/kill) without subprocess."""
 
@@ -230,6 +261,14 @@ class Supervisor:
         if self._process is not None:
             raise IsolationError("supervisor already started")
 
+        # Pipe and cgroup.procs descriptors still open in the parent; a
+        # failed start closes whatever is left.
+        parent_fds: list[int] = []
+
+        def close_parent_fd(fd: int) -> None:
+            parent_fds.remove(fd)
+            os.close(fd)
+
         os.mkdir(self.cgroup_path)
         try:
             limits = {
@@ -248,8 +287,11 @@ class Supervisor:
             self.limits_readback = dict(limits)
 
             gate_r, gate_w = os.pipe()
+            parent_fds.extend((gate_r, gate_w))
             status_r, status_w = os.pipe()
+            parent_fds.extend((status_r, status_w))
             procs_fd = os.open(os.path.join(self.cgroup_path, "cgroup.procs"), os.O_WRONLY)
+            parent_fds.append(procs_fd)
             argv = self._bwrap_argv()
             env = {"PATH": "/usr/bin:/bin"}
 
@@ -261,28 +303,33 @@ class Supervisor:
             # EOF means the exec succeeded.
             pid = os.fork()  # noqa: S606 - raw fork is required for the placement gate
             if pid == 0:
+                stage = "setup"
                 try:
                     os.close(gate_w)
                     os.close(status_r)
+                    stage = "place"
                     os.write(procs_fd, str(os.getpid()).encode())
                     os.close(procs_fd)
+                    stage = "gate"
                     buf = b""
                     while not buf:
                         buf = os.read(gate_r, 1)
                     os.close(gate_r)
+                    stage = "stdio"
                     devnull = os.open(os.devnull, os.O_RDWR)
                     for stdfd in (0, 1, 2):
                         os.dup2(devnull, stdfd)
+                    stage = "exec"
                     os.execvpe(argv[0], argv, env)  # noqa: S606 - exec into bwrap, no shell
-                except BaseException:  # noqa: BLE001 - child must never escape
+                except BaseException as exc:  # noqa: BLE001 - child must never escape
                     try:
-                        os.write(status_w, b"error")
+                        os.write(status_w, _startup_diagnostic(stage, exc))
                     finally:
                         os._exit(127)
 
-            os.close(gate_r)
-            os.close(procs_fd)
-            os.close(status_w)
+            close_parent_fd(gate_r)
+            close_parent_fd(procs_fd)
+            close_parent_fd(status_w)
             self._process = _ChildProcess(pid)
             self.payload_pid = pid
 
@@ -297,25 +344,40 @@ class Supervisor:
                     break
                 time.sleep(0.02)
             if not placed:
-                raise IsolationError("payload process was not placed in the run cgroup")
+                code = self._process.poll()
+                raise IsolationError(
+                    "payload process was not placed in the run cgroup (child %s; %s)"
+                    % (
+                        "still running at deadline" if code is None else "exit %d" % code,
+                        _read_startup_diagnostic(status_r),
+                    )
+                )
 
             self.gate_opened_monotonic_ns = time.monotonic_ns()
             os.write(gate_w, b"1")
-            os.close(gate_w)
+            close_parent_fd(gate_w)
             status = b""
-            while True:
-                chunk = os.read(status_r, 64)
+            while len(status) < _STARTUP_DIAGNOSTIC_LIMIT:
+                chunk = os.read(status_r, _STARTUP_DIAGNOSTIC_LIMIT)
                 if not chunk:
                     break
                 status += chunk
-            os.close(status_r)
+            close_parent_fd(status_r)
             if status:
-                raise IsolationError("payload failed to exec bubblewrap")
+                raise IsolationError(
+                    "payload failed to exec bubblewrap (%s)"
+                    % status[:_STARTUP_DIAGNOSTIC_LIMIT].decode("ascii", "replace")
+                )
         except BaseException:  # noqa: BLE001 - cleanup must run on any failure
             try:
                 if self._process is not None and self._process.poll() is None:
                     self._process.kill()
             finally:
+                for fd in parent_fds:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
                 self._remove_cgroup(force=True)
             raise
 
