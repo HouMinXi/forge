@@ -2,10 +2,12 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Identical-round stall: L0 findings the autofix loop skips cannot move the map (#262).
 
-LOCAL's autofix loop skips L0 findings whose source is MUTANT, E2E_CHECK,
-FIXVAL or INFRA: no fix attempt, no budget spent, no promotion. A frozen
-CONFIRMED map pinned only by such findings must stall instead of running to
-max_total_rounds. Any fingerprint not proven skipped still holds the stall off.
+LOCAL's autofix loop skips findings whose source is in _AUTOFIX_SKIPPED_SOURCES:
+no fix attempt, no budget spent, no promotion. Production L0 runners emit source
+"L0" only, so these cases use an injected l0_runner or set findings directly. A
+frozen CONFIRMED map pinned only by skipped-source L0 findings stalls instead of
+running to max_total_rounds. Any fingerprint not proven skipped still holds the
+stall off.
 """
 
 from pathlib import Path
@@ -91,6 +93,29 @@ def test_l0_finding_the_autofix_loop_handles_still_holds_off_the_stall(tmp_path,
         findings=[_finding("fp-l0", source), _finding("fp-l1", "L1")],
     )
     assert not machine._stalled_on_identical_round()
+
+
+def test_unknown_source_still_holds_off_the_stall(tmp_path):
+    """Skipping is an allow-list: a source outside it counts as budget left."""
+    machine = _machine(tmp_path)
+    _freeze(
+        machine,
+        {"fp-l0": "CONFIRMED", "fp-l1": "CONFIRMED"},
+        l0=["fp-l0"],
+        findings=[_finding("fp-l0", "NEWSRC"), _finding("fp-l1", "L1")],
+    )
+    assert not machine._stalled_on_identical_round()
+
+
+def test_fingerprint_with_two_skipped_sources_stalls(tmp_path):
+    machine = _machine(tmp_path)
+    _freeze(
+        machine,
+        {"fp-l0": "CONFIRMED"},
+        l0=["fp-l0"],
+        findings=[_finding("fp-l0", "MUTANT"), _finding("fp-l0", "INFRA")],
+    )
+    assert machine._stalled_on_identical_round()
 
 
 def test_fingerprint_absent_from_current_findings_still_holds_off_the_stall(tmp_path):

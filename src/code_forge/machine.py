@@ -4306,10 +4306,12 @@ class StateMachine:
           spent and waiting for its promotion round) can still move the map
           and is left alone. CONFIRMED findings from any other layer get no
           autofix and no promotion; repeating the round cannot change them.
-          Neither can an L0 finding whose source the autofix loop skips
-          (MUTANT, E2E_CHECK, FIXVAL, INFRA), so it does not hold the stall off.
-          A fingerprint counts as skipped only when the current findings carry
-          it and every finding with that fingerprint has a skipped source.
+          Neither can an L0 finding whose source is in _AUTOFIX_SKIPPED_SOURCES,
+          so it does not hold the stall off. Production L0 runners emit source
+          "L0" only; this keeps the stall aligned with the autofix skip set for
+          injected or future L0 producers. A fingerprint counts as skipped only
+          when the current findings carry it and every finding with that
+          fingerprint has a skipped source.
 
         Three rounds is two confirmations of the freeze.
         """
