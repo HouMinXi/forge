@@ -38,7 +38,7 @@ from code_forge.baseline import ResolvedReview
 from code_forge.factories import build_l1_provider
 from code_forge.falsify import StubFalsifier
 from code_forge.falsify_real import RealFalsifier
-from code_forge.machine import StateMachine
+from code_forge.machine import StateMachine, TimeoutBreaker
 from code_forge.source import compute_source_hash
 from code_forge.state import Mode, Verdict, load_state, save_state
 
@@ -1350,3 +1350,207 @@ def test_current_prior_receipt_digest_damage_refuses_then_exact_restoration_reco
     path.write_bytes(original[path])
     assert _restore_result(root).passed
     _recover(root, monkeypatch, original, [1, 2, 3])
+
+
+# fix6 (CR2G-M1, CoS 14:34 option A): a failed host attempt never preserves.
+# Cases follow CR1's probes (code-review/pr319-cr2g-m1-cr1-probes/): every
+# failure after all six phases returned takes the M6 reset, as on main
+# 869873f6, and the original exception still propagates.
+
+_ALL_RETURNED = dict.fromkeys(("l0", "rulepack", "l1", "l2", "e2e", "coverage"), "returned")
+
+
+class _AfterRoundInterrupt(KeyboardInterrupt):
+    """A KeyboardInterrupt subclass, so the test can tell it from a real Ctrl-C."""
+
+
+def _fail_receipt_writes(mp):
+    """A receipt-write I/O error in the round under test (recorded, not raised)."""
+
+    def write_receipts(*_args, **_kwargs):
+        raise OSError(28, "constructed receipt write I/O error")
+
+    mp.setattr("code_forge.receipt.write_receipts", write_receipts)
+
+
+def _raise_in_hook(machine, error):
+    def hook(_index):
+        raise error
+
+    machine.post_round_hook = hook
+
+
+def _fail_state_save_after_publish(mp, machine):
+    """Fail the round-end save once this round's receipts were published (no test seam)."""
+    publish = machine._publish_l1_receipts
+    save = machine._persist_state
+    armed = {"published": False, "raised": False}
+
+    def published(*args, **kwargs):
+        try:
+            return publish(*args, **kwargs)
+        finally:
+            armed["published"] = True
+
+    def failing_save():
+        if armed["published"] and not armed["raised"]:
+            armed["raised"] = True
+            raise OSError(5, "constructed state save failure")
+        return save()
+
+    mp.setattr(machine, "_publish_l1_receipts", published)
+    mp.setattr(machine, "_persist_state", failing_save)
+    return armed
+
+
+def _raise_in_gate(mp, machine):
+    def gate():
+        raise OSError(5, "constructed receipt gate read failure")
+
+    mp.setattr(machine, "_receipt_gate_round_errors", gate)
+
+
+def _crash_before_publish(mp, machine):
+    def publish(*_args, **_kwargs):
+        raise RuntimeError("constructed crash before receipt publication")
+
+    mp.setattr(machine, "_publish_l1_receipts", publish)
+
+
+def _workspace_blocker_after_round(mp, machine):
+    """Production raise: the mutation-workspace blocker stops run() before the gate."""
+    execute = machine._execute_round
+
+    def blocked(round_index):
+        execute(round_index)
+        machine._mutation_workspace_blocker = "constructed workspace blocker"
+
+    mp.setattr(machine, "_execute_round", blocked)
+
+
+def _raise_after_gate(mp, machine):
+    """The main-path gate already reset; recording its finding then raises."""
+
+    def record(*_args, **_kwargs):
+        raise RuntimeError("constructed failure after gate")
+
+    mp.setattr(machine, "_record_receipt_gate_failure", record)
+
+
+_FIX6_CASES = {
+    # case: (qodo_fault, receipt write fails, inject(mp, machine), raised type, match)
+    "write-io-then-runtime-error": (
+        None,
+        True,
+        lambda mp, m: _raise_in_hook(m, RuntimeError("constructed post-round failure")),
+        RuntimeError,
+        "constructed post-round failure",
+    ),
+    "write-io-then-ctrl-c": (
+        None,
+        True,
+        lambda mp, m: _raise_in_hook(m, _AfterRoundInterrupt("constructed interrupt")),
+        _AfterRoundInterrupt,
+        "constructed interrupt",
+    ),
+    "write-io-then-state-save-oserror": (
+        None,
+        True,
+        _fail_state_save_after_publish,
+        OSError,
+        "constructed state save failure",
+    ),
+    "write-io-then-workspace-blocker": (
+        None,
+        True,
+        _workspace_blocker_after_round,
+        TimeoutBreaker,
+        "constructed workspace blocker",
+    ),
+    "write-io-then-failure-after-gate": (
+        None,
+        True,
+        _raise_after_gate,
+        RuntimeError,
+        "constructed failure after gate",
+    ),
+    "gate-raises-oserror": (
+        None,
+        False,
+        _raise_in_gate,
+        OSError,
+        "constructed receipt gate read failure",
+    ),
+    "literal-damage-then-runtime-error": (
+        "literal",
+        False,
+        lambda mp, m: _raise_in_hook(m, RuntimeError("constructed post-round failure")),
+        RuntimeError,
+        "constructed post-round failure",
+    ),
+    "crash-before-receipts-published": (
+        None,
+        False,
+        _crash_before_publish,
+        RuntimeError,
+        "constructed crash before receipt publication",
+    ),
+    "clean-gate-then-runtime-error": (
+        None,
+        False,
+        lambda mp, m: _raise_in_hook(m, RuntimeError("constructed post-round failure")),
+        RuntimeError,
+        "constructed post-round failure",
+    ),
+    "clean-gate-then-ctrl-c": (
+        None,
+        False,
+        lambda mp, m: _raise_in_hook(m, _AfterRoundInterrupt("constructed interrupt")),
+        _AfterRoundInterrupt,
+        "constructed interrupt",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_FIX6_CASES))
+def test_fix6_failed_host_attempt_never_preserves(offline_workspace, monkeypatch, case):
+    """CR2G-M1: a failure after every phase returned resets credit and re-raises (P6-1, guard 3)."""
+    qodo_fault, write_io, inject, error, match = _FIX6_CASES[case]
+    root = offline_workspace
+    _, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="schema", qodo_fault=qodo_fault)
+    with monkeypatch.context() as mp:
+        if write_io:
+            _fail_receipt_writes(mp)
+        armed = inject(mp, machine)
+        with pytest.raises(error, match=match):
+            machine.run()
+    if isinstance(armed, dict):
+        assert armed["raised"]
+    _assert_calls(calls, [3])
+    state = _assert_wiped(root, phases=_ALL_RETURNED)
+    # The receipt-write error is in the ledger, not only in memory.
+    logged = [e for e in state.infra_errors if "receipt write failed" in e]
+    assert bool(logged) is write_io, state.infra_errors
+    _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+
+
+@pytest.mark.parametrize("case", ["write-io-then-state-save-oserror", "write-io-then-workspace-blocker"])
+def test_fix6_failed_attempt_then_one_healthy_round_is_not_pass(offline_workspace, monkeypatch, case):
+    """CR2 impact probe: no terminal PASS with window [1, 2, 4] after a failed attempt."""
+    qodo_fault, write_io, inject, error, match = _FIX6_CASES[case]
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="schema", qodo_fault=qodo_fault)
+    with monkeypatch.context() as mp:
+        _fail_receipt_writes(mp)
+        inject(mp, machine)
+        with pytest.raises(error, match=match):
+            machine.run()
+    follow, calls = _new_machine(root, monkeypatch, rounds=1)
+    verdict = follow.run()
+    _assert_calls(calls, [4])
+    state, _ = _state(root)
+    assert verdict is not Verdict.PASS and state.converged is False
+    assert state.consecutive_clean_rounds == 1
+    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [4]

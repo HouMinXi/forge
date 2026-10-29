@@ -887,6 +887,8 @@ def _other_pass(sm):
 
 
 def _two_attempts(sm):
+    # Deviation 7 (extended in fix6, CR2G-N1): edits the legacy _c3_machine
+    # hand-set snapshot; this decision-level test never runs _execute_round.
     sm._attempted_last_round = sm._attempted_last_round * 2
 
 
@@ -915,6 +917,7 @@ _C3_NEGATIVES = {
     "companion-of-pass-without-schema-fail": _other_pass,
     "two-attempted-items": _two_attempts,
     "two-attempted-items-plus-rejection": lambda sm: (_two_attempts(sm), _with_rejection(sm)),
+    # Deviation 7 (extended in fix6): empties the legacy fixture hand-set.
     "non-json-schema-fail-plus-rejection": lambda sm: (
         setattr(sm, "_attempted_last_round", []),
         _with_rejection(sm),
@@ -942,6 +945,8 @@ def test_c3_negative_beside_companion_keeps_reset(tmp_path, monkeypatch, case):
 def test_c3_companion_eligibility_is_per_pass(tmp_path, monkeypatch):
     """A rejection or second response on ANOTHER pass does not disqualify P."""
     sm, _, _ = _c3_machine(tmp_path, monkeypatch)
+    # Deviation 7 (extended in fix6, CR2G-N1): edits the legacy _c3_machine
+    # hand-set snapshot; this decision-level test never runs _execute_round.
     sm._attempted_last_round = sm._attempted_last_round + [{"pass_name": "qodo"}] * 2
     sm.l1_provider._excerpt_rejections = (_rejection(sm.l1_provider, "qodo"),)
     sm._unavailable_rejected_passes_last_round = {"expert"}

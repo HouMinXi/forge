@@ -2034,6 +2034,10 @@ class StateMachine:
         self._acquisition_receipts = ()
         self._acquisition_authority = None
         try:
+            if "l1" in self._phase_findings:
+                # P6-1: this attempt's receipt-write errors reach the ledger
+                # before any early return (the list is current once L1 ran).
+                self._state.infra_errors.extend(self._last_receipt_write_errors)
             for name in self._phase_findings:
                 self._phase_status[name] = "returned"
             if "l1" in self._phase_findings:
@@ -2105,15 +2109,8 @@ class StateMachine:
                 )
                 fixpoint = self._fixpoint_reached()
                 if fixpoint in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART):
-                    # A failed attempt preserves only when every phase returned;
-                    # the predicate checks this too, kept explicit at this site.
-                    if all(
-                        value == "returned" for value in self._phase_status.values()
-                    ) and self._schema_coverage_credit_preserve(fixpoint):
-                        action = "preserved"
-                    else:
-                        self._reset_clean_credit()
-                        action = "reset"
+                    self._reset_clean_credit()
+                    action = "reset"
                 elif fixpoint == _FixpointResult.INCOMPLETE or self._acquisition_markers:
                     action = "interrupted"
             self._state.verdict = Verdict.FAIL
