@@ -421,3 +421,146 @@ def test_llm_invoke_passes_keys_to_excerpt_repair(cli_binary):
     with patch("code_forge.llm_invoke.subprocess.Popen", side_effect=procs):
         result = llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
     assert result.content == NO_EXCERPTS
+
+
+def test_refused_repair_raises_reply_key_rejected_at_the_original_error():
+    with pytest.raises(json.JSONDecodeError) as plain:
+        json.loads(REVIEW_REPRO, strict=False)
+    with pytest.raises(invoke.ReplyKeyRejected) as refused:
+        _loads_model_json(REVIEW_REPRO, REVIEW_REPLY_KEYS)
+    assert (refused.value.msg, refused.value.pos) == (plain.value.msg, plain.value.pos)
+
+
+# A real P1 whose excerpt quotes, unescaped, an object of the reply's own shape
+# and then a dict literal that makes the repair invent a key. Scanning the
+# refused text for an embedded object finds the quoted empty review.
+FRAGMENT = 'x = {"findings": [], "code_excerpts": []}; y = {"a": "b", "c": "d"}'
+FRAGMENT_REPRO = (
+    '{"findings": [{"file": "a.py", "line": 3, "severity": "P1", "description": "d", '
+    '"excerpt": "' + FRAGMENT + '"}], "code_excerpts": []}'
+)
+REAL_P1 = {
+    "findings": [{"file": "a.py", "line": 3, "severity": "P1", "description": "d", "excerpt": FRAGMENT}],
+    "code_excerpts": [],
+}
+
+
+def test_fragment_repro_hides_an_empty_review():
+    with pytest.raises(json.JSONDecodeError):
+        _loads_model_json(FRAGMENT_REPRO, REVIEW_REPLY_KEYS)
+    assert invoke._extract_json_from_text(FRAGMENT_REPRO) == {"findings": [], "code_excerpts": []}
+
+
+def test_api_retries_instead_of_returning_a_quoted_fragment(api_env, monkeypatch):
+    request = Mock(side_effect=[(FRAGMENT_REPRO, STOP), (json.dumps(REAL_P1), STOP)])
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    result = invoke._invoke_api("task", _api_backend(), 7, max_attempts=2, reply_keys=REVIEW_REPLY_KEYS)
+    assert result.content == REAL_P1
+    assert request.call_count == 2
+
+
+def test_wider_retry_does_not_return_a_quoted_fragment(api_env, monkeypatch):
+    monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(FRAGMENT_REPRO, STOP)))
+    assert (
+        invoke._retry_with_more_headroom("p", _wide_backend(), "k", 7, None, REVIEW_REPLY_KEYS) is None
+    )
+
+
+def test_continue_partial_does_not_return_a_quoted_fragment(api_env):
+    with pytest.raises(invoke.LLMInvokeError):
+        invoke._continue_truncated(
+            "p",
+            _api_backend(),
+            "k",
+            7,
+            _truncated(FRAGMENT_REPRO),
+            None,
+            budget=0,
+            reply_keys=REVIEW_REPLY_KEYS,
+        )
+
+
+def test_continue_combined_does_not_return_a_quoted_fragment(api_env, monkeypatch):
+    cut = 40
+    monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(FRAGMENT_REPRO[cut:], STOP)))
+    with pytest.raises(invoke.LLMInvokeError):
+        invoke._continue_truncated(
+            "p",
+            _api_backend(),
+            "k",
+            7,
+            _truncated(FRAGMENT_REPRO[:cut]),
+            None,
+            budget=1,
+            reply_keys=REVIEW_REPLY_KEYS,
+        )
+
+
+# A CLI envelope whose result is the model's object, not a string. When the
+# model text inside it is unescaped, the envelope parse itself is the repair.
+REPAIRED_ENVELOPE = '{"type": "result", "subtype": "success", "result": ' + REVIEW_REPRO + "}"
+REPAIRED_STREAM = '[{"type": "system"}, ' + REPAIRED_ENVELOPE + "]"
+
+
+@pytest.mark.parametrize("stdout", [REPAIRED_ENVELOPE, REPAIRED_STREAM], ids=["envelope", "stream"])
+def test_cli_repaired_object_result_falls_back_to_raw_text(cli_binary, stdout):
+    backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
+    with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(stdout)):
+        result = llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
+    assert result.content == stdout
+    with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(stdout)):
+        result = llm_invoke("prompt", backend=backend)
+    assert result.content["findings"][0]["c"] == 'd"}'
+
+
+def test_cli_unrepaired_object_result_is_not_checked(cli_binary):
+    # Valid JSON from the CLI needed no repair; extra keys are the caller's to judge.
+    reply = {"findings": [], "code_excerpts": [], "note": "n"}
+    stdout = json.dumps({"type": "result", "subtype": "success", "result": reply})
+    backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
+    with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(stdout)):
+        result = llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
+    assert result.content == reply
+
+
+# runtime._parse_llm_response unwraps a one-object list, so the list is checked too.
+RUNTIME_LIST_REPRO = (
+    '[{"surfaces": [], "findings": [{"file": "a", "line": 1, "description": "' + DICT_LITERAL + '"}]}]'
+)
+GOOD_RUNTIME = {"surfaces": [], "findings": [{"file": "a", "line": 1, "description": DICT_LITERAL}]}
+
+
+def test_top_level_list_items_are_checked():
+    assert _unknown_reply_key([{"surfaces": []}, "s", {"x": 1}], RUNTIME_REPLY_KEYS) == "x"
+    assert _unknown_reply_key([{"surfaces": [], "findings": []}], RUNTIME_REPLY_KEYS) is None
+    with pytest.raises(json.JSONDecodeError):
+        _loads_model_json(RUNTIME_LIST_REPRO, RUNTIME_REPLY_KEYS)
+
+
+def test_cli_runtime_list_reply_is_refused(cli_binary):
+    from code_forge.runtime import _parse_llm_response
+
+    backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
+    with patch(
+        "code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(RUNTIME_LIST_REPRO)
+    ):
+        result = llm_invoke("prompt", backend=backend, reply_keys=RUNTIME_REPLY_KEYS)
+    assert result.content == RUNTIME_LIST_REPRO
+    with pytest.raises(ValueError):
+        _parse_llm_response(result.content)
+
+
+def test_api_runtime_list_reply_spends_correction_retry(api_env, monkeypatch):
+    request = Mock(side_effect=[(RUNTIME_LIST_REPRO, STOP), (json.dumps(GOOD_RUNTIME), STOP)])
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    result = invoke._invoke_api("task", _api_backend(), 7, max_attempts=2, reply_keys=RUNTIME_REPLY_KEYS)
+    assert result.content == GOOD_RUNTIME
+    assert request.call_count == 2
+
+
+def test_llm_invoke_keeps_the_real_finding(api_env, monkeypatch):
+    request = Mock(side_effect=[(FRAGMENT_REPRO, STOP), (json.dumps(REAL_P1), STOP)])
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    result = llm_invoke("task", backend=_api_backend(), reply_keys=REVIEW_REPLY_KEYS)
+    assert result.content == REAL_P1
+    assert request.call_count == 2

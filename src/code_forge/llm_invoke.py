@@ -1033,8 +1033,27 @@ class ReplyKeys:
     items: Mapping[str, frozenset[str]] = dataclasses.field(default_factory=dict)
 
 
+class ReplyKeyRejected(json.JSONDecodeError):
+    """A quote repair parsed, but the result has a key the caller's reply cannot have (#264).
+
+    Carries the original parse error's message and position. A caller that
+    would fall back to scanning the text for an embedded object must not do
+    so here: the text is a failed reply whose quoted content can hold an
+    object of the reply's own shape, such as an excerpt quoting
+    `{"findings": []}`.
+    """
+
+
 def _unknown_reply_key(parsed, allowed: ReplyKeys) -> str | None:
     """The first key `parsed` carries that `allowed` does not list, else None."""
+    if isinstance(parsed, list):
+        # runtime._parse_llm_response unwraps a one-object list, so each
+        # object in a top-level list is checked as a reply.
+        for item in parsed:
+            key = _unknown_reply_key(item, allowed) if isinstance(item, dict) else None
+            if key:
+                return key
+        return None
     if not isinstance(parsed, dict):
         return None
     for key, value in parsed.items():
@@ -1075,6 +1094,7 @@ def _loads_model_json(text: str, reply_keys: ReplyKeys | None = None):
     reply cannot have fails closed the same way (#264): an excerpt quoting
     `{"a": "b", "c": "d"}` unescaped repairs into a finding with a new key
     `c` and a cut excerpt. A parse that needed no repair is never checked.
+    That refusal raises ReplyKeyRejected, a JSONDecodeError.
     """
     candidate = text
     first_error: json.JSONDecodeError | None = None
@@ -1100,7 +1120,7 @@ def _loads_model_json(text: str, reply_keys: ReplyKeys | None = None):
             # "line" read as one key). Fail closed with the original error.
             raise first_error
         if first_error is not None and reply_keys is not None and _unknown_reply_key(parsed, reply_keys):
-            raise first_error
+            raise ReplyKeyRejected(first_error.msg, first_error.doc, first_error.pos) from first_error
         return parsed
     raise first_error or json.JSONDecodeError("no parse within the repair budget", text, 0)
 
@@ -1959,7 +1979,16 @@ def _invoke_cli(
                 content = raw_result
         else:
             content = raw_result
-    elif reply_keys is not None and isinstance(parsed, dict):
+            if (
+                reply_keys is not None
+                and _unknown_reply_key(raw_result, reply_keys)
+                and not _parses_without_repair(stdout)
+            ):
+                # The envelope itself needed quote repair, so an object
+                # result is a repair of model text too. With an unlisted
+                # key it is refused like a string result: keep the raw text.
+                content = stdout
+    elif reply_keys is not None and isinstance(parsed, (dict, list)):
         # No envelope: stdout is the model reply itself. It was parsed above
         # without reply_keys, since an envelope's own keys are not the reply's.
         # Parse it again under the caller's keys so a repair that invents a
@@ -1975,6 +2004,14 @@ def _invoke_cli(
         usage=_observed_usage(usage_data, "cli"),
         duration_s=duration,
     )
+
+
+def _parses_without_repair(text: str) -> bool:
+    try:
+        json.loads(text, strict=False)
+    except json.JSONDecodeError:
+        return False
+    return True
 
 
 def _needs_excerpt_repair(parsed, expected_keys, *, l1_evidence_required=False) -> bool:
@@ -2226,6 +2263,8 @@ def _continue_truncated(
         cleaned_partial = _strip_fences(truncated.content)
         try:
             parsed_partial = _loads_model_json(cleaned_partial, reply_keys)
+        except ReplyKeyRejected:
+            parsed_partial = None
         except json.JSONDecodeError:
             parsed_partial = _extract_json_from_text(
                 cleaned_partial,
@@ -2304,11 +2343,13 @@ def _continue_truncated(
             cleaned = _strip_fences(combined)
             try:
                 parsed = _loads_model_json(cleaned, reply_keys)
-            except json.JSONDecodeError:
-                parsed = _extract_json_from_text(
-                    cleaned,
-                    expected_keys=expected_keys,
-                )
+            except json.JSONDecodeError as parse_error:
+                parsed = None
+                if not isinstance(parse_error, ReplyKeyRejected):
+                    parsed = _extract_json_from_text(
+                        cleaned,
+                        expected_keys=expected_keys,
+                    )
                 if parsed is None:
                     last_failure = "combined output is not valid JSON"
                     continue
@@ -2404,6 +2445,8 @@ def _retry_with_more_headroom(
     cleaned = _strip_fences(content)
     try:
         parsed = _loads_model_json(cleaned, reply_keys)
+    except ReplyKeyRejected:
+        parsed = None
     except json.JSONDecodeError:
         parsed = _extract_json_from_text(cleaned, expected_keys=expected_keys)
     if not _is_forge_envelope(parsed, expected_keys):
@@ -2557,7 +2600,11 @@ def _invoke_api(
                 try:
                     parsed_content = _loads_model_json(content, reply_keys)
                 except json.JSONDecodeError as exc:
-                    parsed_content = _extract_json_from_text(content, expected_keys=expected_keys)
+                    parsed_content = None
+                    if not isinstance(exc, ReplyKeyRejected):
+                        # A refused repair is not searched for an embedded
+                        # object: its quoted content can hold one (#264).
+                        parsed_content = _extract_json_from_text(content, expected_keys=expected_keys)
                     if parsed_content is None:
                         finish_reason = ""
                         if isinstance(usage_data, dict):
