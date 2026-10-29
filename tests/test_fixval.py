@@ -157,6 +157,12 @@ def _make_candidate():
     )
 
 
+FAILED_TEST_REPORT = (
+    '<testsuites><testsuite><testcase classname="tests.test_foo" name="test_foo">'
+    '<failure message="assert False"/></testcase></testsuite></testsuites>'
+)
+
+
 def _private_reverse_results(results):
     """Model Git's private output as well as its exit status in orchestration tests."""
     from pathlib import Path
@@ -171,6 +177,9 @@ def _private_reverse_results(results):
             source = image / "src/foo.py"
             source.parent.mkdir(parents=True, exist_ok=True)
             source.write_bytes(b"old\n")
+        report = [arg.split("=", 1)[1] for arg in argv if str(arg).startswith("--junitxml=")]
+        if report and result.returncode == 1:  # pytest's report of a failed test (#28)
+            Path(report[0]).write_text(FAILED_TEST_REPORT, encoding="utf-8")
         return result
 
     return run
