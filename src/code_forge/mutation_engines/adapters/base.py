@@ -11,7 +11,7 @@ import hashlib
 import json
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Protocol
@@ -201,8 +201,22 @@ def cleanup_failure_error(exc: isolate.CgroupCleanupError, target_id: str) -> In
     )
 
 
-def cleanup_failed_result(
-    exc: isolate.CgroupCleanupError,
+@dataclass
+class RunEvidence:
+    """What a run has gathered so far.
+
+    run() owns it and the run body adds each receipt, artifact and the
+    baseline as it gets them, so a sandbox failure partway through still
+    reports everything gathered before it.
+    """
+
+    receipts: list[CommandReceipt] = field(default_factory=list)
+    artifacts: list[ArtifactReference] = field(default_factory=list)
+    baseline: BaselineRecord | None = None
+
+
+def sandbox_failure_result(
+    exc: isolate.CgroupCleanupError | isolate.IsolationUnavailable,
     identity: RunIdentity,
     run_directory: Path,
     baseline: BaselineRecord | None = None,
@@ -210,27 +224,48 @@ def cleanup_failed_result(
     artifacts: Sequence[ArtifactReference] = (),
     infra_errors: Sequence[InfrastructureError] = (),
 ) -> TargetResult:
-    """Report a run whose cgroup was left behind as incomplete, keeping its evidence.
+    """Report a run stopped by the sandbox as incomplete, keeping its evidence.
 
-    The sandboxed command finished, but its run cgroup is still present, so
-    the result is not complete (fail closed) and the cleanup record says the
-    owned group is not empty. The command's receipt, carried on the error,
-    is kept with any receipts the caller already has.
+    A run cgroup left behind (CgroupCleanupError) means the command finished
+    but the host is not clean, so the result fails closed and the cleanup
+    record says the owned group is not empty; the command's receipt, carried
+    on the error, is kept. Missing isolation (IsolationUnavailable) means a
+    command could not start; a probe cgroup left behind, or a run cgroup that
+    teardown could not remove, is also recorded as a cleanup error.
     """
-    receipt = exc.receipt if isinstance(exc.receipt, CommandReceipt) else None
-    kept_receipts = tuple(receipts) + ((receipt,) if receipt is not None else ())
-    error = cleanup_failure_error(exc, identity.target_id)
-    payload = json.dumps(
-        {"message": str(exc), "exit_code": exc.exit_code, "timed_out": exc.timed_out},
-        sort_keys=True,
-    ).encode("utf-8")
-    name = "cleanup-failure.json"
+    target_id = identity.target_id
+    receipt = None
+    if isinstance(exc, isolate.CgroupCleanupError):
+        receipt = exc.receipt if isinstance(exc.receipt, CommandReceipt) else None
+        error = cleanup_failure_error(exc, target_id)
+        cleanup_errors = (error,)
+        group_left = True
+        name = "cleanup-failure.json"
+        report: dict[str, object] = {
+            "message": str(exc),
+            "exit_code": exc.exit_code,
+            "timed_out": exc.timed_out,
+        }
+    else:
+        error = isolation_probe_error(exc, target_id)
+        cleanup_errors = (error,) if error.phase == "cleanup" else ()
+        group_left = exc.cleanup_failure is not None
+        if group_left:
+            cleanup_errors += (cleanup_failure_error(exc.cleanup_failure, target_id),)
+        name = "isolation-failure.json"
+        report = {
+            "message": str(exc),
+            "reason": exc.reason,
+            "cleanup_failure": str(exc.cleanup_failure) if group_left else None,
+        }
+    payload = json.dumps(report, sort_keys=True).encode("utf-8")
     state.publish(run_directory, name, payload)
     evidence = ArtifactReference(
         relative_run_path="results/" + name,
         digest=hashlib.sha256(payload).hexdigest(),
         bytes=len(payload),
     )
+    kept_receipts = tuple(receipts) + ((receipt,) if receipt is not None else ())
     if baseline is None:
         baseline = BaselineRecord(
             state=BaselineState.UNKNOWN,
@@ -238,14 +273,15 @@ def cleanup_failed_result(
             command_receipt=receipt,
             native_evidence=(evidence,),
         )
+    new_errors = (error,) + tuple(e for e in cleanup_errors if e is not error)
     return TargetResult(
         identity=identity,
-        target_id=identity.target_id,
+        target_id=target_id,
         adapter_id=identity.adapter_id,
         adapter_version=identity.adapter_version,
         tool_version=identity.tool_version,
         run_state=RunState.INCOMPLETE,
-        reason_code="cgroup-cleanup-failed",
+        reason_code=error.code,
         baseline=baseline,
         generation=Generation(
             inventory_artifact=evidence,
@@ -256,11 +292,11 @@ def cleanup_failed_result(
         outcomes=(),
         native_artifacts=tuple(artifacts) + (evidence,),
         command_receipts=kept_receipts,
-        infrastructure_errors=tuple(infra_errors) + (error,),
+        infrastructure_errors=tuple(infra_errors) + new_errors,
         cleanup=Cleanup(
-            state=CleanupState.INCOMPLETE,
-            owned_group_empty=False,
+            state=CleanupState.INCOMPLETE if cleanup_errors else CleanupState.COMPLETE,
+            owned_group_empty=not group_left,
             owned_mounts_removed=True,
-            errors=(error,),
+            errors=cleanup_errors,
         ),
     )

@@ -32,8 +32,8 @@ from code_forge.mutation_engines.adapters.base import (
     InputEntry,
     InputSnapshot,
     MutationAdapter,
-    cleanup_failed_result,
     isolation_probe_error,
+    sandbox_failure_result,
 )
 from code_forge.mutation_engines.pytest_report_plugin import PLUGIN_ID
 from code_forge.mutation_engines.schemas import (
@@ -492,8 +492,8 @@ class MutmutAdapter:
                     errors=(),
                 ),
             )
-        except isolate.CgroupCleanupError as exc:
-            return cleanup_failed_result(
+        except (isolate.CgroupCleanupError, isolate.IsolationUnavailable) as exc:
+            return sandbox_failure_result(
                 exc, identity, run_directory, baseline_record, receipts, artifacts, infra_errors
             )
         finally:
@@ -623,6 +623,8 @@ class MutmutAdapter:
                 supervisor.teardown()
             except isolate.CgroupCleanupError as cleanup:
                 isolate.attach_note(exc, str(cleanup))
+                if isinstance(exc, isolate.IsolationUnavailable):
+                    exc.cleanup_failure = cleanup
             finally:
                 thread.join(timeout=30)
             raise

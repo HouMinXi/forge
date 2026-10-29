@@ -26,8 +26,10 @@ from code_forge.mutation_engines.adapters.base import (
     CapabilityState,
     ExecutionContext,
     InputSnapshot,
-    cleanup_failed_result,
+    RunEvidence,
     cleanup_failure_error,
+    isolation_probe_error,
+    sandbox_failure_result,
 )
 from code_forge.mutation_engines.adapters.python_mutmut import (
     MutmutAdapter,
@@ -311,6 +313,16 @@ class GremlinsAdapter:
                 evidence=(),
                 errors=(cleanup_failure_error(exc, target.id),),
             )
+        except isolate.IsolationUnavailable as exc:
+            errors = (isolation_probe_error(exc, target.id),)
+            if exc.cleanup_failure is not None:
+                errors += (cleanup_failure_error(exc.cleanup_failure, target.id),)
+            return CapabilityReport(
+                state=CapabilityState.UNAVAILABLE_ISOLATION,
+                resolved_tool_version=None,
+                evidence=(),
+                errors=errors,
+            )
         if version != SUPPORTED_GREMLINS:
             return CapabilityReport(
                 state=CapabilityState.UNSUPPORTED_VERSION,
@@ -335,14 +347,15 @@ class GremlinsAdapter:
         )
 
     def _version(self, binary: str, context: ExecutionContext) -> str | None:
-        code, _timed_out, _receipt = MutmutAdapter()._run_sandboxed(
-            context,
-            (binary, "--version"),
-            30,
-            Path(tempfile.mkdtemp(prefix="forge-gremlins-probe-")),
-            "probe-" + context.run_id,
-            "",
-        )
+        with tempfile.TemporaryDirectory(prefix="forge-gremlins-probe-") as workspace:
+            code, _timed_out, _receipt = MutmutAdapter()._run_sandboxed(
+                context,
+                (binary, "--version"),
+                30,
+                Path(workspace),
+                "probe-" + context.run_id,
+                "",
+            )
         return SUPPORTED_GREMLINS if code == 0 else None
 
     def invoke(self, root):
@@ -368,12 +381,20 @@ class GremlinsAdapter:
         directory = run_dir(context.state_root, context.run_id)
         directory.mkdir(parents=True, exist_ok=True)
         workspace = Path(tempfile.mkdtemp(prefix="forge-gremlins-", dir=directory))
+        evidence = RunEvidence()
         try:
-            return self._run(target, snapshot, context, directory, workspace)
-        except isolate.CgroupCleanupError as exc:
-            # A run cgroup left behind: an incomplete result, not a crash.
-            # Only the failing command's receipt is kept.
-            return cleanup_failed_result(exc, self._identity(snapshot, context, target), directory)
+            return self._run(target, snapshot, context, directory, workspace, evidence)
+        except (isolate.CgroupCleanupError, isolate.IsolationUnavailable) as exc:
+            # A sandbox failure: an incomplete result, not a crash, that keeps
+            # the baseline and the receipts gathered before it.
+            return sandbox_failure_result(
+                exc,
+                self._identity(snapshot, context, target),
+                directory,
+                evidence.baseline,
+                evidence.receipts,
+                evidence.artifacts,
+            )
         finally:
             if os.environ.get("FORGE_KEEP_WORKSPACE") != "1":
                 shutil.rmtree(workspace, ignore_errors=True)
@@ -385,6 +406,7 @@ class GremlinsAdapter:
         context: ExecutionContext,
         directory: Path,
         workspace: Path,
+        evidence: RunEvidence,
     ) -> TargetResult:
         runner = MutmutAdapter()
         runner._materialize(snapshot, workspace)
@@ -407,6 +429,7 @@ class GremlinsAdapter:
             target.id,
             extra_binds=binds,
         )
+        evidence.receipts.append(baseline_receipt)
         baseline_out = workspace / "baseline.json"
         stream = baseline_out.read_text(encoding="utf-8") if baseline_out.is_file() else ""
         baseline_state, test_count = baseline_from_go_json(stream)
@@ -421,6 +444,8 @@ class GremlinsAdapter:
             command_receipt=baseline_receipt,
             native_evidence=(baseline_ref,),
         )
+        evidence.baseline = baseline
+        evidence.artifacts.append(baseline_ref)
         if baseline_state is not BaselineState.PASSED:
             return self._result(
                 identity,
@@ -454,6 +479,7 @@ class GremlinsAdapter:
             target.id,
             extra_binds=binds,
         )
+        evidence.receipts.append(inv_receipt)
         outcome_argv = (gremlins, "unleash", "--workers", "1", "--output", "outcomes.json")
         _code, out_timed_out, out_receipt = runner._run_sandboxed(
             context,

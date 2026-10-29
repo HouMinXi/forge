@@ -25,7 +25,8 @@ from code_forge.mutation_engines.adapters.base import (
     CapabilityState,
     ExecutionContext,
     InputSnapshot,
-    cleanup_failed_result,
+    RunEvidence,
+    sandbox_failure_result,
 )
 from code_forge.mutation_engines.adapters.python_mutmut import (
     MutmutAdapter,
@@ -244,12 +245,20 @@ class StrykerAdapter:
         directory = run_dir(context.state_root, context.run_id)
         directory.mkdir(parents=True, exist_ok=True)
         workspace = Path(tempfile.mkdtemp(prefix="forge-stryker-", dir=str(directory)))
+        evidence = RunEvidence()
         try:
-            return self._run(target, selection, snapshot, context, directory, workspace)
-        except isolate.CgroupCleanupError as exc:
-            # A run cgroup left behind: an incomplete result, not a crash.
-            # Only the failing command's receipt is kept.
-            return cleanup_failed_result(exc, self._identity(snapshot, context, target), directory)
+            return self._run(target, selection, snapshot, context, directory, workspace, evidence)
+        except (isolate.CgroupCleanupError, isolate.IsolationUnavailable) as exc:
+            # A sandbox failure: an incomplete result, not a crash, that keeps
+            # the baseline and the receipts gathered before it.
+            return sandbox_failure_result(
+                exc,
+                self._identity(snapshot, context, target),
+                directory,
+                evidence.baseline,
+                evidence.receipts,
+                evidence.artifacts,
+            )
         finally:
             if os.environ.get("FORGE_KEEP_WORKSPACE") != "1":
                 shutil.rmtree(workspace, ignore_errors=True)
@@ -262,6 +271,7 @@ class StrykerAdapter:
         context: ExecutionContext,
         directory: Path,
         workspace: Path,
+        evidence: RunEvidence,
     ) -> TargetResult:
         runner = MutmutAdapter()
         runner._materialize(snapshot, workspace)
@@ -288,6 +298,7 @@ class StrykerAdapter:
             extra_binds=self._runtime_binds(context),
             extra_rw_binds=self._vite_bind(workspace),
         )
+        evidence.receipts.append(baseline_receipt)
         vitest = _read_json(vitest_out)
         baseline_state, test_count = baseline_from_vitest(vitest)
         if timed_out or code != 0:
@@ -300,6 +311,8 @@ class StrykerAdapter:
             command_receipt=baseline_receipt,
             native_evidence=(baseline_ref,),
         )
+        evidence.baseline = baseline
+        evidence.artifacts.append(baseline_ref)
         if baseline_state is not BaselineState.PASSED:
             return self._result(
                 identity,

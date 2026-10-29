@@ -41,6 +41,9 @@ class IsolationUnavailable(Exception):
         super().__init__("%s: %s" % (reason, detail))
         self.reason = reason
         self.detail = detail
+        # Set by the caller when tearing down after this error also failed
+        # to remove the run cgroup.
+        self.cleanup_failure: CgroupCleanupError | None = None
 
 
 class IsolationError(Exception):

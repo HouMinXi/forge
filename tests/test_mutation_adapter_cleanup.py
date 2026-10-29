@@ -1,4 +1,4 @@
-"""Every sandboxing adapter reports a run cgroup left behind as an incomplete result."""
+"""Every sandboxing adapter turns a sandbox failure into an incomplete result."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import json
 import shutil
 import stat
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -37,9 +38,8 @@ from code_forge.mutation_engines.targets import TargetSelection
 _LEFT_BEHIND = "/sys/fs/cgroup/forge-run: run cgroup was not removed before the deadline"
 
 
-def _left_behind(receipt_id: str) -> isolate.CgroupCleanupError:
-    error = isolate.CgroupCleanupError(_LEFT_BEHIND)
-    error.receipt = CommandReceipt(
+def _receipt(receipt_id: str) -> CommandReceipt:
+    return CommandReceipt(
         id=receipt_id,
         run_id="run-a",
         target_id="t1",
@@ -54,13 +54,18 @@ def _left_behind(receipt_id: str) -> isolate.CgroupCleanupError:
         resource_events={},
         evidence_refs=(),
     )
+
+
+def _left_behind(receipt_id: str) -> isolate.CgroupCleanupError:
+    error = isolate.CgroupCleanupError(_LEFT_BEHIND)
+    error.receipt = _receipt(receipt_id)
     error.exit_code = 4
     error.timed_out = False
     return error
 
 
-def _context(tmp_path: Path) -> ExecutionContext:
-    return ExecutionContext(
+def _context(tmp_path: Path, **overrides) -> ExecutionContext:
+    fields = dict(
         run_id="run-a",
         config_digest="c",
         execution_policy_digest="e",
@@ -74,6 +79,8 @@ def _context(tmp_path: Path) -> ExecutionContext:
         process_headroom_mb=128,
         approved_node=sys.executable,
     )
+    fields.update(overrides)
+    return ExecutionContext(**fields)
 
 
 def _target(adapter_id: str, **overrides) -> TargetDeclaration:
@@ -113,21 +120,87 @@ def _snapshot(tmp_path: Path) -> InputSnapshot:
     )
 
 
-@pytest.mark.parametrize(
-    "adapter",
-    [GremlinsAdapter, StrykerAdapter, CargoMutantsAdapter],
-    ids=["go-gremlins", "js-stryker", "rust-cargo-mutants"],
-)
-def test_run_cgroup_left_behind_is_an_incomplete_result(tmp_path, monkeypatch, adapter):
-    def stuck(self, *args):
-        raise _left_behind("baseline-run-a")
+def _node_modules(tmp_path: Path) -> dict:
+    modules = tmp_path / "node_modules"
+    modules.mkdir(exist_ok=True)
+    return {"extra_node_paths": (str(modules),)}
 
-    monkeypatch.setattr(adapter, "_run", stuck)
+
+# Each adapter: its command receipt ids in order, the context it needs, and
+# the native baseline output that reads as PASSED.
+_ADAPTERS = {
+    "go-gremlins": (
+        GremlinsAdapter,
+        ("gotest-run-a", "inventory-run-a", "outcomes-run-a"),
+        lambda tmp_path: {},
+        ("baseline.json", '{"Action": "pass", "Test": "TestOk"}\n'),
+    ),
+    "js-stryker": (
+        StrykerAdapter,
+        ("vitest-run-a", "stryker-run-a"),
+        _node_modules,
+        (
+            "vitest-baseline.json",
+            json.dumps({"numTotalTests": 1, "numFailedTests": 0, "numPassedTests": 1, "success": True}),
+        ),
+    ),
+    "rust-cargo-mutants": (
+        CargoMutantsAdapter,
+        ("cargo-run-a", "mutants-run-a"),
+        lambda tmp_path: {},
+        ("baseline.txt", "test result: ok. 1 passed; 0 failed; 0 ignored;\n"),
+    ),
+}
+
+# (adapter, command that fails): every command of every adapter.
+_FAILURE_POINTS = [
+    (name, index)
+    for name, (_, receipt_ids, _, _) in _ADAPTERS.items()
+    for index in range(len(receipt_ids))
+]
+
+
+def _run_failing_at(tmp_path, monkeypatch, name: str, fail_at: int, error):
+    """Run the adapter's real run body; command number fail_at raises error(receipt_id)."""
+    adapter, _, context_overrides, (baseline_file, baseline_text) = _ADAPTERS[name]
+    calls: list[str] = []
+
+    def sandboxed(self, context, argv, timeout, workspace, receipt_id, target_id, **kwargs):
+        calls.append(receipt_id)
+        if len(calls) - 1 == fail_at:
+            raise error(receipt_id)
+        (workspace / baseline_file).write_text(baseline_text, encoding="utf-8")
+        return 0, False, _receipt(receipt_id)
+
+    monkeypatch.setattr(MutmutAdapter, "_run_sandboxed", sandboxed)
     selection = TargetSelection(
         target_id="t1", granularity="file", files=(), line_ranges={}, reasons=("source-change",)
     )
+    context = _context(tmp_path, **context_overrides(tmp_path))
+    result = adapter().run(_target(adapter.id), selection, _snapshot(tmp_path), context)
+    assert len(calls) == fail_at + 1
+    return result
 
-    result = adapter().run(_target(adapter.id), selection, _snapshot(tmp_path), _context(tmp_path))
+
+def _assert_baseline_kept(result, fail_at: int, receipt_ids, last_artifact: str):
+    if fail_at == 0:
+        assert result.baseline.state is BaselineState.UNKNOWN
+        assert result.native_artifacts[:-1] == ()
+    else:
+        assert result.baseline.state is BaselineState.PASSED
+        assert result.baseline.command_receipt.id == receipt_ids[0]
+        assert result.native_artifacts[:-1] == result.baseline.native_evidence
+    assert result.native_artifacts[-1].relative_run_path == "results/" + last_artifact
+    assert result.generation.completion_evidence == result.native_artifacts[-1]
+
+
+@pytest.mark.parametrize(("name", "fail_at"), _FAILURE_POINTS)
+def test_run_cgroup_left_behind_keeps_everything_gathered_before_it(
+    tmp_path, monkeypatch, name, fail_at
+):
+    adapter, receipt_ids, _, _ = _ADAPTERS[name]
+
+    result = _run_failing_at(tmp_path, monkeypatch, name, fail_at, _left_behind)
 
     assert result.adapter_id == adapter.id
     assert result.run_state is RunState.INCOMPLETE
@@ -137,15 +210,66 @@ def test_run_cgroup_left_behind_is_an_incomplete_result(tmp_path, monkeypatch, a
     [error] = result.cleanup.errors
     assert (error.message, error.phase, error.retryable) == (_LEFT_BEHIND, "cleanup", True)
     assert result.infrastructure_errors == (error,)
-    assert result.baseline.state is BaselineState.UNKNOWN
-    assert [r.id for r in result.command_receipts] == ["baseline-run-a"]
+    # Every earlier receipt, then the one carried on the error.
+    assert [r.id for r in result.command_receipts] == list(receipt_ids[: fail_at + 1])
     report = tmp_path / "state" / "runs" / "run-a" / "results" / "cleanup-failure.json"
     assert json.loads(report.read_text()) == {
         "message": _LEFT_BEHIND,
         "exit_code": 4,
         "timed_out": False,
     }
-    assert [a.relative_run_path for a in result.native_artifacts] == ["results/cleanup-failure.json"]
+    _assert_baseline_kept(result, fail_at, receipt_ids, "cleanup-failure.json")
+
+
+@pytest.mark.parametrize(("name", "fail_at"), _FAILURE_POINTS)
+def test_run_without_isolation_is_an_incomplete_result(tmp_path, monkeypatch, name, fail_at):
+    adapter, receipt_ids, _, _ = _ADAPTERS[name]
+
+    def unavailable(receipt_id):
+        return isolate.IsolationUnavailable("no cgroup2")
+
+    result = _run_failing_at(tmp_path, monkeypatch, name, fail_at, unavailable)
+
+    assert result.adapter_id == adapter.id
+    assert result.run_state is RunState.INCOMPLETE
+    assert result.reason_code == "isolation-unavailable"
+    [error] = result.infrastructure_errors
+    assert (error.code, error.phase, error.retryable) == ("isolation-unavailable", "probe", False)
+    # The command never started, so it has no receipt; earlier ones stay.
+    assert [r.id for r in result.command_receipts] == list(receipt_ids[:fail_at])
+    assert result.cleanup.state is CleanupState.COMPLETE
+    assert result.cleanup.owned_group_empty is True
+    assert result.cleanup.errors == ()
+    report = tmp_path / "state" / "runs" / "run-a" / "results" / "isolation-failure.json"
+    assert json.loads(report.read_text()) == {
+        "message": "isolation_unavailable: no cgroup2",
+        "reason": "isolation_unavailable",
+        "cleanup_failure": None,
+    }
+    _assert_baseline_kept(result, fail_at, receipt_ids, "isolation-failure.json")
+
+
+def test_run_probe_cgroup_and_run_cgroup_left_behind_are_both_cleanup_errors(tmp_path, monkeypatch):
+    def unavailable(receipt_id):
+        error = isolate.IsolationUnavailable("probe left", reason="probe_cleanup_failed")
+        error.cleanup_failure = _left_behind(receipt_id)
+        return error
+
+    result = _run_failing_at(tmp_path, monkeypatch, "go-gremlins", 2, unavailable)
+
+    assert result.run_state is RunState.INCOMPLETE
+    assert result.reason_code == "probe-cleanup-failed"
+    assert result.cleanup.state is CleanupState.INCOMPLETE
+    assert result.cleanup.owned_group_empty is False
+    codes = [(e.code, e.phase, e.retryable) for e in result.cleanup.errors]
+    assert codes == [
+        ("probe-cleanup-failed", "cleanup", True),
+        ("cgroup-cleanup-failed", "cleanup", True),
+    ]
+    assert result.infrastructure_errors == result.cleanup.errors
+    report = tmp_path / "state" / "runs" / "run-a" / "results" / "isolation-failure.json"
+    assert json.loads(report.read_text())["cleanup_failure"] == _LEFT_BEHIND
+    assert result.baseline.state is BaselineState.PASSED
 
 
 def test_gremlins_probe_cgroup_left_behind_is_a_retryable_cleanup_error(tmp_path, monkeypatch):
@@ -159,6 +283,74 @@ def test_gremlins_probe_cgroup_left_behind_is_a_retryable_cleanup_error(tmp_path
     assert report.state is CapabilityState.UNAVAILABLE_ISOLATION
     [error] = report.errors
     assert (error.code, error.phase, error.retryable) == ("cgroup-cleanup-failed", "cleanup", True)
+
+
+def _gremlins_probe(tmp_path, monkeypatch, outcome):
+    """Probe gremlins with a fake sandbox; return the report and the probe workspaces."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    binary = tmp_path / "gremlins"
+    binary.write_text("")
+    workspaces: list[Path] = []
+
+    def sandboxed(self, context, argv, timeout, workspace, receipt_id, target_id, **kwargs):
+        assert workspace.is_dir()
+        workspaces.append(workspace)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome, False, _receipt(receipt_id)
+
+    monkeypatch.setattr(MutmutAdapter, "_run_sandboxed", sandboxed)
+    context = _context(tmp_path, extra_node_paths=(str(binary),))
+    return GremlinsAdapter().probe(_target(GremlinsAdapter.id), context), workspaces, scratch
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [0, 1, _left_behind("probe-run-a"), isolate.IsolationUnavailable("no cgroup2")],
+    ids=["supported", "failed", "cgroup-left-behind", "no-isolation"],
+)
+def test_gremlins_probe_leaves_no_workspace_behind(tmp_path, monkeypatch, outcome):
+    _, workspaces, scratch = _gremlins_probe(tmp_path, monkeypatch, outcome)
+
+    [workspace] = workspaces
+    assert workspace.parent == scratch
+    assert workspace.name.startswith("forge-gremlins-probe-")
+    assert list(scratch.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("reason", "code", "phase", "retryable"),
+    [
+        ("isolation_unavailable", "isolation-unavailable", "probe", False),
+        ("probe_cleanup_failed", "probe-cleanup-failed", "cleanup", True),
+    ],
+)
+def test_gremlins_probe_without_isolation_is_unavailable_isolation(
+    tmp_path, monkeypatch, reason, code, phase, retryable
+):
+    error = isolate.IsolationUnavailable("no cgroup2", reason=reason)
+
+    report, _, _ = _gremlins_probe(tmp_path, monkeypatch, error)
+
+    assert report.state is CapabilityState.UNAVAILABLE_ISOLATION
+    [found] = report.errors
+    assert (found.code, found.phase, found.retryable) == (code, phase, retryable)
+
+
+def test_gremlins_probe_reports_a_run_cgroup_left_behind_after_a_start_failure(tmp_path, monkeypatch):
+    error = isolate.IsolationUnavailable("limit readback mismatch")
+    error.cleanup_failure = _left_behind("probe-run-a")
+
+    report, _, _ = _gremlins_probe(tmp_path, monkeypatch, error)
+
+    assert report.state is CapabilityState.UNAVAILABLE_ISOLATION
+    codes = [(e.code, e.phase, e.retryable) for e in report.errors]
+    assert codes == [
+        ("isolation-unavailable", "probe", False),
+        ("cgroup-cleanup-failed", "cleanup", True),
+    ]
 
 
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mutation_contract" / "bash_required_ref"
@@ -219,11 +411,11 @@ def _passed_event(run_id: str, mutant: str | None) -> dict:
     }
 
 
-def test_patch_corpus_entry_cgroup_left_behind_keeps_the_baseline(tmp_path, monkeypatch):
+def _corpus_run(tmp_path, monkeypatch, error):
     def sandboxed(self, context, argv, timeout, workspace, receipt_id, target_id, mutant_id=None):
         if mutant_id is None:
-            return 0, False, _left_behind(receipt_id).receipt
-        raise _left_behind(receipt_id)
+            return 0, False, _receipt(receipt_id)
+        raise error(receipt_id)
 
     monkeypatch.setattr(MutmutAdapter, "_run_sandboxed", sandboxed)
     monkeypatch.setattr(
@@ -240,9 +432,13 @@ def test_patch_corpus_entry_cgroup_left_behind_keeps_the_baseline(tmp_path, monk
         target_id="t1", granularity="full", files=(), line_ranges={}, reasons=("source-change",)
     )
 
-    result = patch_corpus.PatchCorpusAdapter().run(
+    return patch_corpus.PatchCorpusAdapter().run(
         target, selection, _corpus_project(tmp_path), _context(tmp_path)
     )
+
+
+def test_patch_corpus_entry_cgroup_left_behind_keeps_the_baseline(tmp_path, monkeypatch):
+    result = _corpus_run(tmp_path, monkeypatch, _left_behind)
 
     assert result.run_state is RunState.INCOMPLETE
     assert result.reason_code == "cgroup-cleanup-failed"
@@ -252,3 +448,20 @@ def test_patch_corpus_entry_cgroup_left_behind_keeps_the_baseline(tmp_path, monk
     assert result.baseline.state is BaselineState.PASSED
     assert len(result.command_receipts) == 2
     assert result.command_receipts[0] == result.baseline.command_receipt
+    assert result.native_artifacts[-1].relative_run_path == "results/cleanup-failure.json"
+    assert len(result.native_artifacts) == 2
+
+
+def test_patch_corpus_entry_without_isolation_keeps_the_baseline(tmp_path, monkeypatch):
+    def unavailable(receipt_id):
+        return isolate.IsolationUnavailable("no cgroup2")
+
+    result = _corpus_run(tmp_path, monkeypatch, unavailable)
+
+    assert result.run_state is RunState.INCOMPLETE
+    assert result.reason_code == "isolation-unavailable"
+    assert result.cleanup.state is CleanupState.COMPLETE
+    assert result.baseline.state is BaselineState.PASSED
+    assert list(result.command_receipts) == [result.baseline.command_receipt]
+    assert result.native_artifacts[-1].relative_run_path == "results/isolation-failure.json"
+    assert len(result.native_artifacts) == 2

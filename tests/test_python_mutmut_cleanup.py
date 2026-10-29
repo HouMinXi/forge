@@ -289,6 +289,70 @@ def test_mutmut_cleanup_failure_keeps_the_passed_baseline(tmp_path, runs, monkey
     assert [r.id for r in result.command_receipts] == ["baseline-run-c", "mutmut-run-c"]
 
 
+def _two_commands(monkeypatch):
+    def baseline(self, target, selection, workspace, events_dir, context):
+        _, _, receipt = self._run_sandboxed(
+            context, ("pytest",), 30, workspace, "baseline-" + context.run_id, target.id
+        )
+        return BaselineState.PASSED, receipt
+
+    def mutmut(self, workspace, events_dir, context, target):
+        _, _, receipt = self._run_sandboxed(
+            context, ("mutmut", "run"), 30, workspace, "mutmut-" + context.run_id, target.id
+        )
+        return receipt
+
+    monkeypatch.setattr(MutmutAdapter, "_run_baseline", baseline)
+    monkeypatch.setattr(MutmutAdapter, "_run_mutmut", mutmut)
+
+
+def test_isolation_unavailable_at_start_keeps_the_passed_baseline(tmp_path, runs, monkeypatch):
+    scripts, made = runs
+    scripts.extend([{"code": 0}, {"start_error": isolate.IsolationUnavailable("no cgroup2")}])
+    _two_commands(monkeypatch)
+
+    result = _run(tmp_path, monkeypatch)
+
+    assert result.run_state is RunState.INCOMPLETE
+    assert result.reason_code == "isolation-unavailable"
+    assert result.baseline.state is BaselineState.PASSED
+    assert [r.id for r in result.command_receipts] == ["baseline-run-c"]
+    [error] = result.infrastructure_errors
+    assert (error.code, error.phase, error.retryable) == ("isolation-unavailable", "probe", False)
+    assert result.cleanup.state is CleanupState.COMPLETE
+    assert result.cleanup.owned_group_empty is True
+    assert made[1][0].teardowns == 1
+    assert made[1][1].joined
+
+
+def test_isolation_unavailable_with_the_run_cgroup_left_behind(tmp_path, runs, monkeypatch):
+    scripts, _ = runs
+    start_error = isolate.IsolationUnavailable("probe left", reason="probe_cleanup_failed")
+    scripts.append({"start_error": start_error, "cleanup_fails": True})
+
+    result = _run(tmp_path, monkeypatch)
+
+    assert result.run_state is RunState.INCOMPLETE
+    assert result.reason_code == "probe-cleanup-failed"
+    assert result.baseline.state is BaselineState.UNKNOWN
+    assert result.command_receipts == ()
+    assert result.cleanup.state is CleanupState.INCOMPLETE
+    assert result.cleanup.owned_group_empty is False
+    codes = [(e.code, e.phase, e.retryable) for e in result.cleanup.errors]
+    assert codes == [
+        ("probe-cleanup-failed", "cleanup", True),
+        ("cgroup-cleanup-failed", "cleanup", True),
+    ]
+    assert result.cleanup.errors[1].message == _LEFT_BEHIND
+    run_directory = tmp_path / "state" / "runs" / "run-c"
+    report = json.loads((run_directory / "results" / "isolation-failure.json").read_text())
+    assert report == {
+        "message": "probe_cleanup_failed: probe left",
+        "reason": "probe_cleanup_failed",
+        "cleanup_failure": _LEFT_BEHIND,
+    }
+
+
 def test_interrupt_while_reading_the_peak_still_tears_down_and_joins(tmp_path, runs):
     scripts, made = runs
     scripts.append({"code": 0, "peak_error": KeyboardInterrupt()})
