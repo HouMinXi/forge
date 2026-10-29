@@ -2151,7 +2151,9 @@ def test_fix8_demotion_always_reaches_disk(offline_workspace, monkeypatch):
         armed = _spy_actions(mp, machine)
         machine.run()
     assert armed["actions"] == ["preserved"], armed
+    # Nothing observed: no L1 findings and no returned phase.
     machine._phase_findings = {}
+    machine._phase_status = {name: "not_run" for name in machine._phase_status}
     machine._finish_failed_host_attempt(RuntimeError("constructed failure, nothing observed"))
     state = _assert_wiped(root)
     assert state.verdict is Verdict.FAIL
