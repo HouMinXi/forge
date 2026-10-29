@@ -395,12 +395,13 @@ def test_machine_same_source_resume_retains_cost(monkeypatch, tmp_path, capsys, 
     assert ", %d passes, " % (3 + attempted) in capsys.readouterr().err
 
 
-def native_transport(monkeypatch, api_format, usage_case, rejected=False):
+def native_transport(monkeypatch, api_format, usage_case, rejected=False, content=None):
     """Replace only subprocess/HTTP transport; preserve production parsing."""
     from code_forge import llm_invoke as invoke
     from code_forge.backend import BackendConfig
 
-    content = response(MEASUREMENTS[0]).content
+    if content is None:
+        content = response(MEASUREMENTS[0]).content
     if rejected:
         content = "{invalid json}"
     openai = api_format == "openai"
@@ -582,15 +583,15 @@ def test_factory_native_error_preserves_known_siblings(monkeypatch, tmp_path, ap
 def test_factory_recovery_producers_preserve_unknown_usage(monkeypatch, api_format):
     from code_forge.llm_invoke import _continue_truncated, _retry_with_more_headroom, _TruncatedResponse
 
-    backend = native_transport(monkeypatch, api_format, "partial")
-    truncated = _TruncatedResponse(
-        "fixture", content=response(MEASUREMENTS[0]).content,
-        usage_data={}, resolved_cap=10,
-    )
+    # A length cut is always continued, so the continuation sends the rest.
+    reply = response(MEASUREMENTS[0]).content
+    backend = native_transport(monkeypatch, api_format, "partial", content=reply[12:])
+    truncated = _TruncatedResponse("fixture", content=reply[:12], usage_data={}, resolved_cap=10)
     parsed, usage = _continue_truncated("fixture", backend, "fixture", 5, truncated, None)
     assert parsed["findings"] == []
-    assert usage == Usage()
+    assert usage == Usage(11, 0, 0)
     assert usage.known_fields == frozenset()
+    backend = native_transport(monkeypatch, api_format, "partial")
     backend = replace(backend, output_token_limit=32768)
     parsed, usage = _retry_with_more_headroom("fixture", backend, "fixture", 5, None)
     assert parsed["findings"] == []
