@@ -26,7 +26,7 @@ from typing import Optional
 import yaml
 
 from .advisory import AdvisoryFinding
-from .llm_invoke import LLMInvokeError, llm_invoke
+from .llm_invoke import LLMInvokeError, ReplyKeys, llm_invoke
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +81,14 @@ DAEMON_STATE_Q2Q3 = (
     '{"conflicts": []}\n\n'
     "Diff:\n%(diff_text)s"
 )
+
+# The keys each reply may carry (#264). With them a duplicate key is refused:
+# json keeps the last one, so a quoted `"conflicts": []` after the real list
+# would drop every conflict. Conflict items are not checked: a model may add
+# its own item keys, and a repaired reply with them would be refused. A
+# repair inside a conflict's string can still invent an item key, as on main.
+Q1_REPLY_KEYS = ReplyKeys(top=frozenset({"external_state"}))
+Q2Q3_REPLY_KEYS = ReplyKeys(top=frozenset({"conflicts"}))
 
 # Max bytes of grep output to inject into Q2Q3 prompt.
 _MAX_GREP_OUTPUT_BYTES = 50000
@@ -399,8 +407,7 @@ class DaemonStateRunner:
                 "Known static conflict rules (do NOT re-report these, "
                 "only report NEW conflicts not listed here):"
             ]
-            for sf in static_findings:
-                lines.append("- %s" % sf.description)
+            lines.extend("- %s" % sf.description for sf in static_findings)
             static_rules_text = "\n".join(lines) + "\n\n"
 
         # LLM Step 1 -- Q1 enumerate state
@@ -422,6 +429,7 @@ class DaemonStateRunner:
                 q1_prompt,
                 backend=self._backend,
                 expected_keys=frozenset({"external_state"}),
+                reply_keys=Q1_REPLY_KEYS,
             )
         except LLMInvokeError as exc:
             reason = str(exc)
@@ -463,6 +471,7 @@ class DaemonStateRunner:
                 q2q3_prompt,
                 backend=self._backend,
                 expected_keys=frozenset({"conflicts"}),
+                reply_keys=Q2Q3_REPLY_KEYS,
             )
         except LLMInvokeError as exc:
             reason = str(exc)

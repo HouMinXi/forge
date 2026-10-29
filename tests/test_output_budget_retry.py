@@ -248,7 +248,7 @@ def test_cli_zero_limit_preserves_existing_route_without_http(transport, monkeyp
     monkeypatch.setattr(
         invoke,
         "_invoke_cli",
-        lambda *args: calls.append(args) or invoke.LLMResult(ENVELOPE, invoke.Usage()),
+        lambda *args, reply_keys=None: calls.append(args) or invoke.LLMResult(ENVELOPE, invoke.Usage()),
     )
     config = BackendConfig(name="cli", type="cli", model="")
     assert invoke.llm_invoke("prompt", backend=config).content == ENVELOPE
