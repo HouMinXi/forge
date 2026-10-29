@@ -751,6 +751,28 @@ def test_a_note_inside_another_note_is_still_added(notes):
     assert error.__notes__ == list(notes)
 
 
+@pytest.mark.parametrize(
+    "notes",
+    [
+        ("a" + "x" * 400, "b" + "x" * 400),
+        ("x" * 400 + "a", "x" * 400 + "b"),
+        ("cleanup failed", "Cleanup failed"),
+        ("cleanup failed", "cleanup failed "),
+        ("first", "second", "first"),
+    ],
+)
+def test_only_an_equal_note_is_skipped(notes):
+    # attach_note does not cut notes, so the 401-character notes are kept whole
+    # and differ only in their first or last character. Case and trailing
+    # space count, and a repeated note keeps its first place.
+    error = RuntimeError("in flight")
+
+    for note in notes:
+        isolate.attach_note(error, note)
+
+    assert error.__notes__ == list(dict.fromkeys(notes))
+
+
 def test_a_note_anywhere_in_the_list_is_not_repeated():
     error = RuntimeError("in flight")
 
