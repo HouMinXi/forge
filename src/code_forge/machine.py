@@ -4063,6 +4063,9 @@ class StateMachine:
                 self._phase_status[name] = "failed"
             raise
 
+    # Finding sources the LOCAL autofix loop never touches: no fix attempt, no promotion.
+    _AUTOFIX_SKIPPED_SOURCES = frozenset({"MUTANT", "E2E_CHECK", "FIXVAL", "INFRA"})
+
     def _apply_autofix_loop_to(self, findings: list[StateFinding]) -> None:
         """LOCAL only: attempt auto-fix on the given finding list.
 
@@ -4080,7 +4083,7 @@ class StateMachine:
         for finding in findings:
             # Coverage-gap and gate-mechanism findings skip autofix:
             # they are not code defects the autofix loop can address.
-            if finding.source in ("MUTANT", "E2E_CHECK", "FIXVAL", "INFRA"):
+            if finding.source in self._AUTOFIX_SKIPPED_SOURCES:
                 continue
             if finding.disposition != Disposition.CONFIRMED:
                 continue
@@ -4303,11 +4306,10 @@ class StateMachine:
           spent and waiting for its promotion round) can still move the map
           and is left alone. CONFIRMED findings from any other layer get no
           autofix and no promotion; repeating the round cannot change them.
-
-          Known limit: the autofix loop skips L0 findings whose source is
-          MUTANT, E2E_CHECK, FIXVAL or INFRA (no fix attempt, no promotion).
-          They are still counted as "can still move the map" here, so a
-          frozen map pinned only by those still runs to the round cap.
+          Neither can an L0 finding whose source the autofix loop skips
+          (MUTANT, E2E_CHECK, FIXVAL, INFRA), so it does not hold the stall off.
+          A fingerprint counts as skipped only when the current findings carry
+          it and every finding with that fingerprint has a skipped source.
 
         Three rounds is two confirmations of the freeze.
         """
@@ -4341,11 +4343,18 @@ class StateMachine:
         if Disposition.UNCERTAIN.value in values:
             return True
         # CONFIRMED only. Past the pending_promotion guard, an unpromoted
-        # CONFIRMED L0 finding has fix budget left, so "not promoted" is the
-        # whole test. This assumes the autofix loop handles it; findings from
-        # the sources it skips (MUTANT, E2E_CHECK, FIXVAL, INFRA) never use
-        # budget or get promoted, and still count as budget left here.
-        budget_left = any(fp not in self._state.promoted_fingerprints for fp in l0_confirmed)
+        # CONFIRMED L0 finding has fix budget left, unless the autofix loop
+        # skips its source: such a finding never uses budget or gets promoted.
+        sources: dict[str, set[str]] = {}
+        for finding in self._state.findings:
+            sources.setdefault(finding.fingerprint, set()).add(finding.source)
+
+        def _autofix_skips(fp):
+            return fp in sources and sources[fp] <= self._AUTOFIX_SKIPPED_SOURCES
+
+        budget_left = any(
+            fp not in self._state.promoted_fingerprints and not _autofix_skips(fp) for fp in l0_confirmed
+        )
         return not budget_left
 
     # Longest fingerprint list a stall reason spells out; the rest is counted.
