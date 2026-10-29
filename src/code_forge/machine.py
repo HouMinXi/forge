@@ -945,6 +945,9 @@ class StateMachine:
         self._untracked_gate_pinned = False
         self._trusted_gate_cache = None
         self._trusted_config_refusal = None
+        # fix9 (CR3R3-L1): a row a previous run() settled is never this run's to
+        # demote, even if this run fails before its first attempt begins.
+        self._settled_preserve_round = None
         admission_error = mutation_review_admission_error(
             target_kind=self.resolved_review.target_kind,
             git_diff=self.resolved_review.git_diff,

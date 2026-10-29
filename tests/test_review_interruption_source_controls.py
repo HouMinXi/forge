@@ -2003,6 +2003,84 @@ def test_fix8_early_crash_after_resume_changes_nothing(offline_workspace, monkey
     assert _ledger(machine._state) == expected
 
 
+def _interrupt_continuation_index(mp, machine):
+    def index(*_args, **_kwargs):
+        raise _AfterRoundInterrupt("constructed interrupt in continuation index")
+
+    mp.setattr(machine, "_continuation_round_index", index)
+
+
+# fix9 (CR3R3-L1): the same instance runs again and fails before its first attempt.
+_FIX9_SECOND_RUN = {
+    "ctrl-c-in-preflight": (_interrupt_preflight, "constructed interrupt in mutation preflight"),
+    "ctrl-c-in-receipt-diff": (_interrupt_receipt_diff, "constructed interrupt in receipt diff"),
+    "ctrl-c-in-continuation-index": (
+        _interrupt_continuation_index,
+        "constructed interrupt in continuation index",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_FIX9_SECOND_RUN))
+def test_fix9_second_run_early_crash_keeps_prior_preserve(offline_workspace, monkeypatch, case):
+    """CR3R3-L1: a second run() on the same instance cannot demote the first run's preserve.
+
+    The first run() settles round 2 `preserved` (credit 2, window [1, 2]) and
+    returns. The second run() on the same instance is interrupted before its
+    first attempt begins; it may record its FAIL verdict, but round 2's row,
+    credit and window reload unchanged. At 072e3bb1 the guard was still 2 from the first
+    run(), so the row became reset with credit 0 and window [] on disk.
+    """
+    inject, match = _FIX9_SECOND_RUN[case]
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="coverage")
+    with monkeypatch.context() as mp:
+        armed = _spy_actions(mp, machine)
+        machine.run()
+    assert armed["actions"] == ["preserved"], armed
+    expected = _ledger(_state(root)[0])
+    rows, credit, window = expected
+    assert rows[-1]["round"] == 2 and rows[-1]["clean_credit_action"] == "preserved"
+    assert credit == 2 and [entry["cycle"] for entry in window["cycles"]] == [1, 2]
+    dispatched = len(calls)
+    with monkeypatch.context() as mp:
+        inject(mp, machine)
+        with pytest.raises(_AfterRoundInterrupt, match=match):
+            machine.run()
+    assert len(calls) == dispatched
+    state, _ = _state(root)
+    assert _ledger(state) == expected
+    assert _ledger(machine._state) == expected
+    assert state.verdict is not Verdict.PASS
+
+
+def test_fix9_begin_entry_clears_a_stale_guard(offline_workspace, monkeypatch):
+    """`_begin_host_attempt` itself drops a stale guard, whoever calls it.
+
+    The guard is forced to the preserved round, then `_begin_host_attempt`
+    is called directly for that round and raises its reserved-ID error
+    before any attempt exists. The failed path that follows must not demote
+    the row the earlier run settled, in memory or on disk.
+    """
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="coverage")
+    with monkeypatch.context() as mp:
+        armed = _spy_actions(mp, machine)
+        machine.run()
+    assert armed["actions"] == ["preserved"], armed
+    expected = _ledger(_state(root)[0])
+    assert expected[0][-1]["round"] == machine._state.round == 2
+    machine._settled_preserve_round = 2
+    with pytest.raises(CorruptedStateError, match="host attempt ID is already reserved") as error:
+        machine._begin_host_attempt(2)
+    machine._finish_failed_host_attempt(error.value)
+    assert machine._state.round_history[-1]["clean_credit_action"] == "preserved"
+    assert _ledger(_state(root)[0]) == expected
+    assert _ledger(machine._state) == expected
+
+
 def _fail_save_when(mp, machine, predicate):
     """Fail the first state save, after a `preserved` settle, for which `predicate(state)` holds."""
     armed = _spy_actions(mp, machine)
