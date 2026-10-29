@@ -8,7 +8,6 @@ spends its JSON-correction retry instead.
 """
 
 import importlib
-import inspect
 import json
 from functools import partial
 from unittest.mock import MagicMock, Mock, patch
@@ -213,33 +212,84 @@ def test_cli_inner_result_without_keys_keeps_the_repair(cli_binary):
     assert result.content["findings"][0]["c"] == 'd"}'
 
 
-def _source(module_name, func_name):
-    module = importlib.import_module("code_forge." + module_name)
-    return inspect.getsource(getattr(module, func_name))
+_REVIEW_REPLY = {
+    "findings": [],
+    "code_excerpts": [{"file": "src/a.py", "start_line": 1, "end_line": 1, "content": "x"}],
+}
+_TEST_DIFF = "diff --git a/tests/test_a.py b/tests/test_a.py\n@@ -1 +1,2 @@\n x\n+y\n"
 
 
-@pytest.mark.parametrize(
-    "module_name, func_name",
-    [
-        ("factories", "build_l1_provider"),
-        ("cli", "_make_subagent_spawn"),
-        ("cli", "_run_test_assertion_review"),
-    ],
-)
-def test_review_callers_pass_review_keys(module_name, func_name):
-    assert "reply_keys=REVIEW_REPLY_KEYS" in _source(module_name, func_name)
+def _keys_of_every_call(mock):
+    assert mock.call_count >= 1
+    return {id(call.kwargs.get("reply_keys")) for call in mock.call_args_list}
 
 
-def test_runtime_runner_passes_runtime_keys():
-    from code_forge import runtime
+def _invoke_mock(content):
+    from code_forge.llm_invoke import LLMResult, Usage
 
-    assert "reply_keys=RUNTIME_REPLY_KEYS" in inspect.getsource(runtime.RuntimeRunner)
+    return Mock(return_value=LLMResult(content=content, usage=Usage(), duration_s=0.1))
+
+
+def test_l1_provider_passes_review_keys():
+    from pathlib import Path
+
+    from code_forge.factories import build_l1_provider
+    from code_forge.baseline import ResolvedReview
+
+    resolved = ResolvedReview(
+        source_files=[Path("src/a.py")], baseline_content=None, git_diff=_TEST_DIFF, mode_hint="git"
+    )
+    mock = _invoke_mock(json.dumps(_REVIEW_REPLY))
+    with patch("code_forge.llm_invoke.llm_invoke", mock):
+        build_l1_provider("real", resolved)()
+    assert _keys_of_every_call(mock) == {id(REVIEW_REPLY_KEYS)}
+
+
+def test_subagent_spawn_passes_review_keys():
+    from code_forge.cli import _make_subagent_spawn
+
+    mock = _invoke_mock(_REVIEW_REPLY)
+    with patch("code_forge.llm_invoke.llm_invoke", mock):
+        _make_subagent_spawn(backend=None, conv_digest="", post_image="")("qodo", _TEST_DIFF)
+    assert _keys_of_every_call(mock) == {id(REVIEW_REPLY_KEYS)}
+
+
+def test_test_assertion_review_passes_review_keys():
+    from code_forge.cli import _run_test_assertion_review
+
+    mock = _invoke_mock(_REVIEW_REPLY)
+    with patch("code_forge.llm_invoke.llm_invoke", mock):
+        _run_test_assertion_review(_TEST_DIFF, backend=None)
+    assert _keys_of_every_call(mock) == {id(REVIEW_REPLY_KEYS)}
+
+
+def test_runtime_runner_passes_runtime_keys(tmp_path):
+    from code_forge.runtime import RuntimeRunner
+
+    mock = _invoke_mock({"surfaces": [], "findings": []})
+    with patch("code_forge.runtime.llm_invoke", mock):
+        RuntimeRunner(backend=MagicMock()).run("diff --git a/r.sh b/r.sh\n+nft add table", tmp_path)
+    assert _keys_of_every_call(mock) == {id(RUNTIME_REPLY_KEYS)}
 
 
 def test_falsifier_passes_falsify_keys():
-    from code_forge import falsify_real
+    from code_forge.disposition import Disposition
+    from code_forge.falsify_real import RealFalsifier
+    from code_forge.state import StateFinding
 
-    assert "reply_keys=_FALSIFY_REPLY_KEYS" in inspect.getsource(falsify_real.RealFalsifier)
+    finding = StateFinding(
+        id="fp-1",
+        fingerprint="fp-1",
+        source="L1",
+        disposition=Disposition.CONFIRMED,
+        file="src/foo.py",
+        line_range=[1, 2],
+        description="d",
+    )
+    mock = _invoke_mock({"verdict": "CONFIRMED", "reasoning": "r"})
+    with patch("code_forge.falsify_real.llm_invoke", mock):
+        RealFalsifier().falsify(finding)
+    assert _keys_of_every_call(mock) == {id(_FALSIFY_REPLY_KEYS)}
 
 
 def _bare_cli_proc(stdout):
