@@ -20,6 +20,7 @@ import glob
 import logging
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -616,11 +617,10 @@ def _test_reverted_candidate(
     # #183: each bounded FIXVAL test run starts with a progress line, so the
     # MCP job's inactivity watchdog never sees two runs as one silent span.
     progress.emit("fixval: reverted-fix run")
-    report = None
+    report_dir = report = None
     if not require_witness and _runs_pytest(scoped_cmd):
-        fd, report = tempfile.mkstemp(prefix="fixval-junit-", suffix=".xml")
-        os.close(fd)
-        os.unlink(report)  # pytest writes it; a stale empty file would read as a report
+        report_dir = tempfile.mkdtemp(prefix="fixval-junit-")
+        report = os.path.join(report_dir, "junit.xml")
     try:
         return _judge_reverted_run(
             candidate,
@@ -634,11 +634,8 @@ def _test_reverted_candidate(
             report,
         )
     finally:
-        if report is not None:
-            try:
-                os.unlink(report)
-            except FileNotFoundError:
-                pass
+        if report_dir is not None:
+            shutil.rmtree(report_dir, ignore_errors=True)
 
 
 def _judge_reverted_run(

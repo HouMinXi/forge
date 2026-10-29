@@ -31,6 +31,11 @@ _CANNOT_IMPORT = re.compile(r"cannot import name '(\w+)' from '([\w.]+)'")
 _NO_ATTRIBUTE = re.compile(r"module '([\w.]+)' has no attribute '(\w+)'")
 _NO_MODULE = re.compile(r"No module named '([\w.]+)'|bad magic number in '([\w.]+)'")
 
+# A <failure> with one of these messages is a test that passed when it was
+# expected to fail: a strict xfail that passed, or a unittest expectedFailure
+# that succeeded. #28 counts neither as a RED witness.
+_UNEXPECTED_PASS = ("[XPASS(strict)]", "Failed: Unexpected success")
+
 
 @dataclass(frozen=True)
 class AddedNames:
@@ -125,9 +130,10 @@ def _is_added_import_failure(text: str, added: AddedNames) -> bool:
 def red_witness(junit_xml: str, added: AddedNames) -> bool:
     """Whether the report shows the reverted code failing a test.
 
-    A `<failure>` is a failed test call. An `<error>` counts only when it is
-    a collection or setup error whose text is an import of a name in
-    `added`; teardown errors never count. A report that does not parse
+    A `<failure>` is a failed test call, unless it reports an unexpected
+    pass (a strict XPASS or a unittest unexpected success). An `<error>`
+    counts only when it is a collection or setup error whose text is an
+    import of a name in `added`; teardown errors never count. A report that does not parse
     shows nothing.
     """
     try:
@@ -137,8 +143,9 @@ def red_witness(junit_xml: str, added: AddedNames) -> bool:
     except ElementTree.ParseError:
         return False
     for case in root.iter("testcase"):
-        if case.find("failure") is not None:
-            return True
+        for failure in case.findall("failure"):
+            if not failure.get("message", "").startswith(_UNEXPECTED_PASS):
+                return True
         for error in case.findall("error"):
             message = error.get("message", "")
             if message.startswith("failed on teardown"):

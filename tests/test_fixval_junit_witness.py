@@ -70,6 +70,12 @@ def test_added_names_maps_paths_to_modules_and_skips_names_that_already_existed(
     assert found.modules == {"lib.pkg"}
 
 
+def test_a_path_that_is_not_an_importable_module_adds_nothing():
+    # pkg/foo-bar.py cannot be imported, so no import error can name it
+    assert added_names(_patch("pkg/foo-bar.py", ["pass"], ["def helper():"])) == NOTHING
+    assert added_names(_patch("pkg/foo-bar.py", [], ["def helper():"], new_file=True)) == NOTHING
+
+
 def test_unreadable_patch_adds_nothing():
     assert added_names("@@ not a diff\n+def helper():\n") == NOTHING
 
@@ -143,6 +149,53 @@ def test_red_witness(report, added, red):
     assert red_witness(report, added) is red
 
 
+UNEXPECTED_PASSES = """\
+import unittest
+
+import pytest
+
+
+@pytest.mark.xfail(strict=True)
+def test_strict_xpass():
+    pass
+
+
+@pytest.mark.xfail(strict=True, reason="bug 7")
+def test_strict_xpass_with_reason():
+    pass
+
+
+class Case(unittest.TestCase):
+    @unittest.expectedFailure
+    def test_unexpected_success(self):
+        pass
+"""
+
+
+def _real_report(tmp_path, body):
+    (tmp_path / "test_probe.py").write_text(body, encoding="utf-8")
+    report = tmp_path / "junit.xml"
+    run = subprocess.run(
+        [*PYTEST, "--junitxml=%s" % report, "test_probe.py"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 1, run.stdout + run.stderr
+    return report.read_text(encoding="utf-8")
+
+
+def test_real_unexpected_passes_are_not_red(tmp_path):
+    report = _real_report(tmp_path, UNEXPECTED_PASSES)
+    assert report.count("<failure") == 3  # pytest reports each one as a failure
+    assert red_witness(report, CALC_HELPER) is False
+
+
+def test_real_failed_test_beside_unexpected_passes_is_red(tmp_path):
+    report = _real_report(tmp_path, UNEXPECTED_PASSES + "\n\ndef test_real():\n    assert 1 == 2\n")
+    assert red_witness(report, NOTHING) is True
+
+
 PYTEST = [sys.executable, "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist"]
 
 
@@ -201,6 +254,47 @@ def test_real_failed_test_is_red_and_the_report_is_removed(tmp_path, monkeypatch
     monkeypatch.setattr(tempfile, "tempdir", str(reports))
     result = _reverted(tmp_path, "def test_it():\n    assert False\n", added=None)
     assert result.status is FixvalStatus.PASS, result.block_message
+    assert list(reports.iterdir()) == []
+
+
+def test_real_unexpected_passes_alone_are_inconclusive(tmp_path):
+    _inconclusive(_reverted(tmp_path, UNEXPECTED_PASSES), 1)
+
+
+def _spy_run(monkeypatch, returncode):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        reports = [arg.split("=", 1)[1] for arg in argv if arg.startswith("--junitxml=")]
+        if reports:
+            report = os.path.dirname(reports[0])
+            calls.append(("report-dir", report, os.stat(report).st_mode & 0o777, os.listdir(report)))
+        return subprocess.CompletedProcess(argv, returncode, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    return calls
+
+
+def test_require_witness_run_passes_no_junitxml(tmp_path, monkeypatch):
+    calls = _spy_run(monkeypatch, 1)
+    cmd = [*PYTEST, "test_probe.py"]
+    result = _test_reverted_candidate(CANDIDATE, cmd, {}, str(tmp_path), require_witness=True)
+    assert calls == [cmd]
+    assert result is None
+
+
+def test_report_goes_in_a_fresh_private_directory_that_is_removed(tmp_path, monkeypatch):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(reports))
+    calls = _spy_run(monkeypatch, 1)
+    _inconclusive(_test_reverted_candidate(CANDIDATE, [*PYTEST, "t.py"], {}, str(tmp_path)), 1)
+    [argv, (_tag, directory, mode, entries)] = calls
+    assert argv[-1] == "--junitxml=%s" % os.path.join(directory, "junit.xml")
+    assert os.path.dirname(directory) == str(reports)
+    assert os.path.basename(directory).startswith("fixval-junit-")
+    assert (mode, entries) == (0o700, [])
     assert list(reports.iterdir()) == []
 
 
