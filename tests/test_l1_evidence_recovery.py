@@ -80,7 +80,7 @@ def test_scoped_empty_evidence_gets_one_repair(monkeypatch, kind, root, with_fin
     assert "for those findings" not in prompt
     assert calls[1][0][2] == 7
     if kind == "api":
-        assert calls[1][1] == {"expected_keys": None, "max_attempts": 1}
+        assert calls[1][1] == {"expected_keys": None, "max_attempts": 1, "reply_keys": None}
 
 
 @pytest.mark.parametrize(
