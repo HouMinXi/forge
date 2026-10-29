@@ -26,7 +26,7 @@ from typing import Optional
 import yaml
 
 from .advisory import AdvisoryFinding
-from .llm_invoke import LLMInvokeError, llm_invoke
+from .llm_invoke import LLMInvokeError, ReplyKeys, llm_invoke
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +80,15 @@ DAEMON_STATE_Q2Q3 = (
     "If no conflicts found, return: "
     '{"conflicts": []}\n\n'
     "Diff:\n%(diff_text)s"
+)
+
+# The keys each reply may carry (#264). With them a duplicate key is refused:
+# json keeps the last one, so a quoted `"conflicts": []` after the real list
+# would drop every conflict.
+Q1_REPLY_KEYS = ReplyKeys(top=frozenset({"external_state"}))
+Q2Q3_REPLY_KEYS = ReplyKeys(
+    top=frozenset({"conflicts"}),
+    items={"conflicts": frozenset({"subsystem", "mutates", "interferes_with", "scenario"})},
 )
 
 # Max bytes of grep output to inject into Q2Q3 prompt.
@@ -421,6 +430,7 @@ class DaemonStateRunner:
                 q1_prompt,
                 backend=self._backend,
                 expected_keys=frozenset({"external_state"}),
+                reply_keys=Q1_REPLY_KEYS,
             )
         except LLMInvokeError as exc:
             reason = str(exc)
@@ -462,6 +472,7 @@ class DaemonStateRunner:
                 q2q3_prompt,
                 backend=self._backend,
                 expected_keys=frozenset({"conflicts"}),
+                reply_keys=Q2Q3_REPLY_KEYS,
             )
         except LLMInvokeError as exc:
             reason = str(exc)

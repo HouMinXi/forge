@@ -1231,9 +1231,10 @@ def test_object_right_before_a_close_is_not_the_reply():
 @pytest.mark.parametrize(
     "after, kept",
     [
-        (' {"findings": ["second"]}', True),
+        (' {"findings": ["second"]}', False),
+        (' {"x": "second"}', True),
         ("\nThe stray `}` on line 9.", True),
-        (', {"x": "y"}]', True),
+        (', {"x": "y"}]', False),
         (" func f() { for {" + '"}]', False),
         (' and "q" then ]', False),
         (' and "q" then }', False),
@@ -1241,9 +1242,10 @@ def test_object_right_before_a_close_is_not_the_reply():
         ("}", False),
     ],
     ids=[
-        "whole_object",
+        "second_reply",
+        "other_object",
         "prose_brace",
-        "list_rest",
+        "comma_after_leading",
         "open_braces_then_quote",
         "quote_then_bracket",
         "quote_then_brace",
@@ -1256,6 +1258,20 @@ def test_text_after_the_reply(after, kept):
     assert (invoke._extract_json_from_text(text) is not None) is kept
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[{"findings": ["first"]}, {"x": "y"}]',
+        'Here: {"findings": ["first"]}, then more.',
+        'Here: {"findings": ["first"]}; done.',
+        'Here: {"findings": ["first"]} // note',
+    ],
+    ids=["list_rest", "prose_led_comma", "prose_led_semicolon", "prose_led_comment"],
+)
+def test_code_after_an_object_that_does_not_open_the_reply_is_kept(text):
+    assert invoke._extract_json_from_text(text) == {"findings": ["first"]}
+
+
 def test_cli_repaired_object_result_with_an_empty_key_falls_back(cli_binary):
     stdout = '{"type": "result", "subtype": "success", "result": {"findings": [], "": "q "x" r"}}'
     backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
@@ -1265,3 +1281,170 @@ def test_cli_repaired_object_result_with_an_empty_key_falls_back(cli_binary):
     with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(stdout)):
         result = llm_invoke("prompt", backend=backend)
     assert "" in result.content
+
+
+# A reply that opens with code_excerpts, cut right after an excerpt quoting
+# `"}], "findings": []}`: the quote closes the reply's object early, and the
+# P1 finding after it is lost if that object is taken as the reply.
+_CUT_EXCERPTS_FIRST = (
+    '{"code_excerpts": [{"file": "a.py", "start_line": 1, "end_line": 1, "content": "x"}], '
+    '"findings": []}'
+)
+_CUT_REST = '"}], "findings": [{"file": "a.py", "line": 3, "severity": "P1", "description": "d"}]}'
+_REFUSED_TAILS = {
+    "comma_close": ",}",
+    "bracket_close": "]}",
+    "comment": " // done",
+    "call": "; f(a)",
+    "escape": "\\u007d",
+    "smart_quote": " \u201cx",
+}
+# Text that starts with a word or a digit reads as prose after a valid reply
+# (the P2-2 C cases), so these cut tails cannot be refused on a stop.
+_PROSE_LIKE_TAILS = {"number": " 42", "word": " done", "open_braces": _OPEN_BRACES}
+_ALL_TAILS = {**_REFUSED_TAILS, **_PROSE_LIKE_TAILS}
+
+
+def _keeps_the_p1(call):
+    try:
+        result = call()
+    except invoke.LLMInvokeError:
+        return True
+    return "P1" in [f.get("severity") for f in result.content.get("findings", [])]
+
+
+@pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
+@pytest.mark.parametrize("tail", sorted(_REFUSED_TAILS))
+def test_stop_cut_code_tail_is_refused(api_env, monkeypatch, tail, keys):
+    text = _CUT_EXCERPTS_FIRST + _REFUSED_TAILS[tail]
+    assert invoke._extract_json_from_text(text) is None
+    monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(text, STOP)))
+    with pytest.raises(invoke.LLMInvokeError):
+        llm_invoke("task", backend=_api_backend(), reply_keys=keys)
+
+
+@pytest.mark.parametrize("tail", sorted(_PROSE_LIKE_TAILS))
+def test_stop_cut_prose_like_tail_is_a_known_limit(api_env, monkeypatch, tail):
+    text = _CUT_EXCERPTS_FIRST + _PROSE_LIKE_TAILS[tail]
+    monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(text, STOP)))
+    result = llm_invoke("task", backend=_api_backend(), reply_keys=REVIEW_REPLY_KEYS)
+    assert result.content["findings"] == []
+
+
+@pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
+@pytest.mark.parametrize("tail", sorted(_ALL_TAILS))
+def test_length_cut_tail_asks_for_the_rest(api_env, monkeypatch, tail, keys):
+    text = _CUT_EXCERPTS_FIRST + _ALL_TAILS[tail]
+    request = Mock(side_effect=[_truncated(text), (_CUT_REST, STOP)] + [(text, STOP)] * 6)
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    assert _keeps_the_p1(lambda: llm_invoke("task", backend=_api_backend(), reply_keys=keys))
+    assert request.call_count >= 2  # the cut reply was continued, not taken
+
+
+def test_continue_partial_needs_a_whole_parse(api_env, monkeypatch):
+    # The fallback scan reads this cut partial as an empty review followed by
+    # prose (a known limit on a stop). Cut by length it must be continued.
+    partial = _CUT_EXCERPTS_FIRST + _PROSE_LIKE_TAILS["number"]
+    assert invoke._extract_json_from_text(partial) is not None
+    request = Mock(return_value=(" more", STOP))
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    try:
+        invoke._continue_truncated(
+            "p", _api_backend(), "k", 7, _truncated(partial), None, reply_keys=REVIEW_REPLY_KEYS
+        )
+    except invoke.LLMInvokeError:
+        pass
+    assert request.called
+
+
+_PY_DICT_REPLY = (
+    "{'findings': [{'file': 'a.py', 'line': 3, 'severity': 'P1', 'description': 'd', "
+    "'excerpt': 'x = " + '{"findings": []}' + "'}]}"
+)
+_JS_REPLY = (
+    "{findings: [{file: 'a.py', line: 3, severity: 'P1', description: 'd', "
+    "excerpt: 'x = " + '{"findings": []}' + "'}]}"
+)
+
+
+@pytest.mark.parametrize("text", [_PY_DICT_REPLY, _JS_REPLY], ids=["python_dict", "js_object"])
+def test_non_json_reply_does_not_yield_its_quoted_review(api_env, monkeypatch, text):
+    assert invoke._extract_json_from_text(text) is None
+    monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(text, STOP)))
+    with pytest.raises(invoke.LLMInvokeError):
+        llm_invoke("task", backend=_api_backend(), reply_keys=REVIEW_REPLY_KEYS)
+
+
+def test_failed_brace_after_prose_does_not_end_the_scan():
+    text = "Note {a b} first. " + '{"findings": ["real"]}'
+    assert invoke._extract_json_from_text(text) == {"findings": ["real"]}
+
+
+_EXAMPLE_THEN_REPLY = (
+    'The format is {"findings": []}. My review:\n'
+    '{"findings": [{"file": "a.py", "line": 3, "severity": "P1", "description": "d"}]}'
+)
+
+
+def test_example_envelope_before_the_reply_is_not_the_reply(api_env, monkeypatch):
+    assert invoke._extract_json_from_text(_EXAMPLE_THEN_REPLY) is None
+    assert _keeps_the_p1(
+        lambda: _llm_with(monkeypatch, _EXAMPLE_THEN_REPLY, reply_keys=REVIEW_REPLY_KEYS)
+    )
+
+
+def _llm_with(monkeypatch, text, **kwargs):
+    monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(text, STOP)))
+    return llm_invoke("task", backend=_api_backend(), **kwargs)
+
+
+def test_canary_review_passes_review_keys(tmp_path):
+    from code_forge.cli import _dispatch_inline_canary
+    from code_forge.state import Verdict
+
+    def fake_canary(*, review_provider, **_):
+        review_provider("review prompt")
+        return Verdict.DELEGATED, []
+
+    mock = _invoke_mock(_REVIEW_REPLY)
+    with (
+        patch("code_forge.cli._load_canary_config", return_value={"n": 5}),
+        patch("code_forge.backend.resolve_backend", return_value=MagicMock()),
+        patch("code_forge.canary_gen.run_inline_canary", side_effect=fake_canary),
+        patch("code_forge.llm_invoke.llm_invoke", mock),
+    ):
+        _dispatch_inline_canary("inline", MagicMock(), {}, None, {}, tmp_path)
+    assert _keys_of_every_call(mock) == {id(REVIEW_REPLY_KEYS)}
+
+
+def test_daemon_state_passes_its_keys(tmp_path):
+    import yaml
+
+    from code_forge import daemon_state
+
+    gate = tmp_path / ".code-forge"
+    gate.mkdir()
+    (gate / "gate.yaml").write_text(
+        yaml.safe_dump({"daemon_state": {"enabled": True, "subsystems": ["nftables"]}})
+    )
+    q1 = _invoke_mock({"external_state": ["nft mark"]}).return_value
+    q2q3 = _invoke_mock({"conflicts": []}).return_value
+    with (
+        patch("code_forge.daemon_state.llm_invoke", side_effect=[q1, q2q3]) as mock,
+        patch("code_forge.daemon_state._grep_repo", return_value=""),
+    ):
+        daemon_state.DaemonStateRunner(backend=MagicMock()).run("+nft add rule", tmp_path)
+    assert [c.kwargs.get("reply_keys") for c in mock.call_args_list] == [
+        daemon_state.Q1_REPLY_KEYS,
+        daemon_state.Q2Q3_REPLY_KEYS,
+    ]
+
+
+def test_daemon_duplicate_conflicts_is_refused():
+    from code_forge.daemon_state import Q2Q3_REPLY_KEYS
+
+    conflict = '{"subsystem": "s", "mutates": "m", "interferes_with": "i", "scenario": "c"}'
+    text = '{"conflicts": [' + conflict + '], "conflicts": []}'
+    assert _loads_model_json(text)["conflicts"] == []  # json keeps the last key
+    with pytest.raises(invoke.ReplyKeyRejected):
+        _loads_model_json(text, Q2Q3_REPLY_KEYS)

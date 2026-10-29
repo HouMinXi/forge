@@ -1543,17 +1543,25 @@ def _extract_json_from_text(
     Two rules keep an object quoted inside the reply from being returned
     as the reply (#264):
 
-    - A '{' whose decode fails after reaching a '"' ends the scan. That
-      '{' opened JSON with strings, the reply's own object most likely,
-      and every later '{' may sit inside one of its strings: an excerpt
-      quoting `x = {"findings": [], ...}` unescaped. A '{' that fails
-      before any '"' (prose such as `{a`) does not end it.
+    - A '{' whose decode fails ends the scan when it opens the text (after
+      any '[' and whitespace) or fails after reaching a '"'. That '{'
+      opened the reply, or JSON with strings, and every later '{' may sit
+      inside it: an excerpt quoting `x = {"findings": [], ...}` unescaped,
+      or a Python dict or JS object literal quoting a JSON review. A '{'
+      after prose that fails before any '"' (such as `{a`) does not end it.
     - A decoded object with the reply's keys is not returned, and the
-      scan ends, when the text after it continues JSON the object sits
-      inside (_json_continues_after): a leading object that a quoted
-      `"}], "findings": []}` closed early, with any code after the quote.
-      The model's own envelope is followed by prose, a fence, `,` or `]`
-      in a list, another whole object or nothing.
+      scan ends, when the text after it refuses it (_text_after_refuses):
+      it continues JSON the object sits inside, such as a leading object
+      that a quoted `"}], "findings": []}` closed early, or a later whole
+      object also carries the reply's keys. The model's own envelope is
+      followed by prose, a fence, `,` or `]` in a list, other objects or
+      nothing.
+
+    Limit: text after a leading object that starts with a word or a digit
+    reads as prose, so a reply cut right after a quoted
+    `"}], "findings": []}` whose next character is a letter or digit (with
+    no later '"') still returns the quoted empty object. Refusing those
+    would also refuse a valid reply followed by prose.
 
     Returns None if no valid envelope can be extracted.
     """
@@ -1574,34 +1582,55 @@ def _extract_json_from_text(
                 obj = None
             if obj is not None and obj.keys() & keys:
                 return obj
-            if '"' in text[i : exc.pos + 1]:
+            if i == reply_start or '"' in text[i : exc.pos + 1]:
                 return None
             continue
         if isinstance(obj, dict) and obj.keys() & keys:
-            return None if _json_continues_after(text, end, decoder) else obj
+            leading = i == reply_start and "[" not in text[:reply_start]
+            return None if _text_after_refuses(text, end, decoder, keys, leading=leading) else obj
     return None
 
 
-def _json_continues_after(text: str, end: int, decoder: json.JSONDecoder) -> bool:
-    """Whether text[end:] continues JSON that the object before it sits in.
+# Text that can continue code but does not start prose: what follows the
+# reply's leading object when a quoted `"}], "findings": []}` closed it early.
+_CODE_AFTER_LEADING = (",", "]", ")", ";", "=", "\\", "//", "\u201c", "\u201d")
 
-    True when the text after `end` starts with '}' or '"' (after
-    whitespace), or holds a '"' that a '}' or ']' follows, both outside
-    any whole object (one raw_decode reads). Prose after the reply, a
-    fence, another whole object or a list's ',' and ']' give False.
+
+def _text_after_refuses(
+    text: str,
+    end: int,
+    decoder: json.JSONDecoder,
+    keys: frozenset[str],
+    *,
+    leading: bool,
+) -> bool:
+    """Whether the object that ends at `end` must not be taken as the reply.
+
+    True when the text after it (after whitespace) starts with '}' or '"',
+    or with code such as ',' or ']' when the object opens the reply
+    (`leading`, and the reply is not a list); when it holds a '"' that a
+    '}' or ']' follows, both outside any whole object (one raw_decode
+    reads); or when a later whole object also has the reply's keys, so
+    either could be the reply. Prose after the reply, a fence, a list's
+    ',' and ']' and objects without the reply's keys give False.
     """
     k = json.decoder.WHITESPACE.match(text, end).end()
     if text[k : k + 1] in ("}", '"'):
+        return True
+    if leading and text.startswith(_CODE_AFTER_LEADING, k):
         return True
     quoted = False
     while k < len(text):
         ch = text[k]
         if ch == "{":
             try:
-                _, k = decoder.raw_decode(text, k)
-                continue
+                obj, k = decoder.raw_decode(text, k)
             except json.JSONDecodeError:
                 pass
+            else:
+                if isinstance(obj, dict) and obj.keys() & keys:
+                    return True
+                continue
         elif ch == '"':
             quoted = True
         elif ch in "}]" and quoted:
@@ -2404,10 +2433,13 @@ def _continue_truncated(
         # partial directly and return it, spending no continuation
         # budget.
         cleaned_partial = _strip_fences(truncated.content)
+        # Only a partial that parses whole counts: an object found inside
+        # cut text may close early on quoted content, such as an excerpt
+        # quoting `"}], "findings": []}`, with the real reply after the cut.
         try:
             parsed_partial = _loads_model_json(cleaned_partial, reply_keys)
-        except json.JSONDecodeError as parse_error:
-            parsed_partial = _fallback_reply(cleaned_partial, parse_error, expected_keys)
+        except json.JSONDecodeError:
+            parsed_partial = None
         if _is_forge_envelope(parsed_partial, expected_keys):
             return parsed_partial, _observed_usage(truncated.usage_data, backend.format)
         if not truncated.content.strip() or "{" not in truncated.content:

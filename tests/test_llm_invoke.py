@@ -3964,9 +3964,12 @@ class TestExtractJsonFromText:
         exhausted the cap and returned None, missing the real envelope.
         The fix removes the cap; raw_decode fails in O(1) for invalid JSON.
         """
-        text = "{a" * 10 + ' {"findings": ["REAL"]}'
+        text = "Note: " + "{a" * 10 + ' {"findings": ["REAL"]}'
         result = self._extract(text)
         assert result == {"findings": ["REAL"]}, f"F2 fail: expected envelope dict, got {result!r}"
+        # A reply that itself opens with a '{' that does not decode is not
+        # prose: every later '{' may sit inside it (#264).
+        assert self._extract("{a" * 10 + ' {"findings": ["REAL"]}') is None
 
 
 class TestMimoProCompatibility:
