@@ -8,9 +8,9 @@ no fix attempt, no budget spent, no promotion. Production L0 runners emit source
 real merge and snapshot code. Each round snapshot records, in l0_autofix_skipped,
 the L0 fingerprints whose every raw finding has a skipped source. A frozen
 CONFIRMED map pinned only by those fingerprints stalls instead of running to
-max_total_rounds. Any fingerprint the latest snapshot does not list holds the
-stall off, including every fingerprint of a snapshot written before the field
-existed.
+max_total_rounds. Any fingerprint that one of the three window rows does not
+list holds the stall off, including every fingerprint of a row written before
+the field existed.
 """
 
 import json
@@ -210,11 +210,35 @@ def test_skip_proof_comes_from_the_projected_row(tmp_path, action, projected, tr
     assert machine._stalled_on_identical_round() is stalls
 
 
-def test_only_the_latest_snapshot_proves_a_skip(tmp_path):
+@pytest.mark.parametrize("row", [0, 1, 2])
+def test_every_window_row_must_prove_the_skip(tmp_path, row):
+    """A round in the window that handled the fingerprint spent budget there."""
     machine = _machine(tmp_path)
     _freeze(machine, l0=[_finding("fp-l0", "MUTANT")])
-    machine._state.round_history[-1]["l0_autofix_skipped"] = []
+    machine._state.round_history[row]["l0_autofix_skipped"] = []
     assert not machine._stalled_on_identical_round()
+
+
+@pytest.mark.parametrize("value", [None, "missing"], ids=["malformed", "missing"])
+def test_an_earlier_window_row_without_proof_holds_off_the_stall(tmp_path, value):
+    machine = _machine(tmp_path)
+    _freeze(machine, l0=[_finding("fp-l0", "MUTANT")])
+    if value == "missing":
+        del machine._state.round_history[0]["l0_autofix_skipped"]
+    else:
+        machine._state.round_history[0]["l0_autofix_skipped"] = value
+    assert not machine._stalled_on_identical_round()
+
+
+def test_rows_before_the_window_do_not_matter(tmp_path):
+    """Only the three window rows are read; an older row that handled fp-l0 does not count."""
+    machine = _machine(tmp_path)
+    machine._append_round_snapshot(0, [_finding("fp-l0", "L0")], [])
+    machine._state.findings = machine._merge_findings([_finding("fp-l0", "MUTANT")], [])
+    for round_index in range(1, 4):
+        machine._append_round_snapshot(round_index, [_finding("fp-l0", "MUTANT")], [])
+    assert machine._state.round_history[0]["l0_autofix_skipped"] == []
+    assert machine._stalled_on_identical_round()
 
 
 def test_another_l0_fingerprint_with_budget_left_holds_off_the_stall(tmp_path):
@@ -274,10 +298,11 @@ def test_resume_with_a_lower_fix_limit_promotes(tmp_path):
 
 
 def test_resume_from_state_written_before_the_field(tmp_path):
-    """End to end: rows without l0_autofix_skipped hold nothing off once a new row lands.
+    """End to end: rows without l0_autofix_skipped prove no skip, so they hold the stall off.
 
-    Three old rows freeze the map; the first resumed round writes the field, and
-    the stall reads only that latest row.
+    Three old rows freeze the map. A skip needs proof in all three window rows,
+    so the resumed run stalls only once three new rows carry the field (round
+    index 5). Reading a missing field as a skip would stall at round index 3.
     """
     findings = [_finding("fp-x", "MUTANT")]
     _machine(tmp_path, l0_findings=findings, max_rounds=3).run()
@@ -292,9 +317,9 @@ def test_resume_from_state_written_before_the_field(tmp_path):
     resumed = _machine(tmp_path, l0_findings=findings, max_rounds=10)
     assert resumed.run() == Verdict.ESCALATED
     history = resumed._state.round_history
-    assert ["l0_autofix_skipped" in row for row in history] == [False, False, False, True]
-    assert history[-1]["l0_autofix_skipped"] == ["fp-x"]
-    assert resumed._state.round == 3
+    assert ["l0_autofix_skipped" in row for row in history] == [False] * 3 + [True] * 3
+    assert all(row["l0_autofix_skipped"] == ["fp-x"] for row in history[3:])
+    assert resumed._state.round == 5
     assert len(_stalls(resumed)) == 1
 
 
@@ -339,7 +364,52 @@ def test_budget_spent_as_l0_then_skipped_source_only_stalls(tmp_path):
     stalls = _stalls(machine)
     assert len(stalls) == 1
     assert "fp-x" in stalls[0]
-    assert machine._state.round == 3  # rows 1-3 frozen, fp-x skipped on row 3
+    assert machine._state.round == 5  # rows 3-5: the first window skipped in every row
+
+
+@pytest.mark.parametrize("first", ["L0", "MUTANT"])
+def test_alternating_sources_spend_the_budget_and_promote(tmp_path, first):
+    """End to end: fp-x alternates between L0 and MUTANT, so every window holds a handled round.
+
+    Each L0 round spends one attempt; the map stays frozen but the fingerprint
+    is promoted after its third attempt, as on main, instead of stalling early.
+    """
+    other = "MUTANT" if first == "L0" else "L0"
+    ref = []
+    machine = _machine(
+        tmp_path,
+        max_rounds=12,
+        l0_runner=_round_aware_runner(
+            ref, lambda round_index: [_finding("fp-x", first if round_index % 2 == 0 else other)]
+        ),
+    )
+    ref.append(machine)
+    machine.run()
+    assert machine._state.fix_attempts == {"fp-x": 3}
+    assert machine._state.promoted_fingerprints == {"fp-x"}
+    assert _stalls(machine) == []
+    assert machine._state.round == (6 if first == "L0" else 7)
+
+
+def test_skipped_window_before_a_handled_round_stalls(tmp_path):
+    """Known limit, pinned: three MUTANT-only rounds stall at round index 2.
+
+    The stall cannot see that the producer would switch fp-x to L0 on round 3;
+    by then the review is already ESCALATED with no fix attempt spent.
+    """
+    ref = []
+    machine = _machine(
+        tmp_path,
+        max_rounds=12,
+        l0_runner=_round_aware_runner(
+            ref, lambda round_index: [_finding("fp-x", "MUTANT" if round_index < 3 else "L0")]
+        ),
+    )
+    ref.append(machine)
+    assert machine.run() == Verdict.ESCALATED
+    assert machine._state.round == 2
+    assert machine._state.fix_attempts == {}
+    assert len(_stalls(machine)) == 1
 
 
 def test_budget_spent_as_l0_stays_pending_while_still_l0(tmp_path):

@@ -4306,15 +4306,18 @@ class StateMachine:
           spent and waiting for its promotion round) can still move the map
           and is left alone. CONFIRMED findings from any other layer get no
           autofix and no promotion; repeating the round cannot change them.
-          Neither can an L0 fingerprint the autofix loop skipped in the latest
-          round, so it does not hold the stall off, even with its budget spent
-          by earlier rounds under a handled source. Production L0 runners emit
+          Neither can an L0 fingerprint the autofix loop skipped in every round
+          of the frozen window, so it does not hold the stall off, even with
+          its budget spent by earlier rounds under a handled source. A
+          fingerprint the loop handled in any of those rounds spent budget
+          there and still holds the stall off. Production L0 runners emit
           source "L0" only; this keeps the stall aligned with the autofix skip
-          set for injected or future L0 producers. The latest snapshot's
+          set for injected or future L0 producers. Each window row's
           l0_autofix_skipped field is the only proof of a skip. It is computed
           from the raw L0 findings, not from the merged state, which keeps one
-          finding per fingerprint. A snapshot without the field proves nothing,
-          so every unpromoted L0 fingerprint holds the stall off.
+          finding per fingerprint. A window row without the field, or with a
+          non-list value, proves nothing, so every unpromoted L0 fingerprint
+          holds the stall off.
 
         Three rounds is two confirmations of the freeze.
         """
@@ -4332,13 +4335,18 @@ class StateMachine:
         l0_fingerprints = history[-1].get("l0_fingerprints", [])
         l0_confirmed = [fp for fp in l0_fingerprints if maps[-1].get(fp) in confirmed]
 
-        # The latest snapshot's l0_autofix_skipped is the only proof that the
-        # autofix loop skipped a fingerprint; missing or malformed proves none.
-        # history is the projected product history, so this is the same row as
-        # maps[-1]: a trailing pending or dispositionless host row is not read.
-        skipped = history[-1].get("l0_autofix_skipped")
-        if not isinstance(skipped, list):
-            skipped = []
+        # A fingerprint counts as skipped only when all three window rows list
+        # it in l0_autofix_skipped. A round in the window that handled it spent
+        # fix budget, so the map can still move. A missing or malformed field
+        # proves no skip. history is the projected product history, so the
+        # window rows are the rows behind maps: a trailing pending or
+        # dispositionless host row is not read.
+        window_skips = [h.get("l0_autofix_skipped") for h in history[-3:]]
+        skipped = [
+            fp
+            for fp in l0_fingerprints
+            if all(isinstance(row, list) and fp in row for row in window_skips)
+        ]
 
         # An exhausted L0 fix budget is promoted on the next round.
         # Let that pending state transition run before declaring a stall.
