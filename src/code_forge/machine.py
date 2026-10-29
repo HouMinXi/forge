@@ -865,6 +865,13 @@ class StateMachine:
         # C3: companion fingerprints the preserve predicate excluded; the
         # writer omits them from a `preserved` row's dispositions only.
         self._c3_strip_fps: set[str] = set()
+        # fix7 (CR3R-L1): what the writer stripped, so a failure later in the
+        # same attempt can turn the settled `preserved` row back into a reset.
+        self._c3_stripped_dispositions: dict[str, str] = {}
+        # fix7 (CR2R2-L1): receipt-write errors already logged to infra_errors
+        # (directly or as a receipt gate finding). Every site that books one
+        # ends the run, so the list never carries over into another round.
+        self._booked_receipt_write_errors: list[str] = []
         self._acquisition_markers: list[StateFinding] = []
         self._falsify_protocol_findings: list[StateFinding] = []
         self._falsify_failed_findings: list[StateFinding] = []
@@ -1819,6 +1826,15 @@ class StateMachine:
         row = rows[0]
         if self._attempt_snapshot is not None:
             row.update(self._attempt_snapshot)
+        self._c3_stripped_dispositions = (
+            {
+                fp: row["dispositions"][fp]
+                for fp in self._c3_strip_fps
+                if fp in row.get("dispositions", {})
+            }
+            if action == "preserved"
+            else {}
+        )
         if action == "preserved":
             # C3 (mechanism C): a preserved row must not seed `ever_seen` with
             # UNTRUSTED companion fingerprints, or a trusted finding first
@@ -1856,10 +1872,10 @@ class StateMachine:
         if action == "reset":
             self._hold_confirmed_fingerprints = []
 
-    def _reset_clean_credit(self) -> None:
+    def _reset_clean_credit(self, *, settled_host_row: bool = False) -> None:
         self._state.consecutive_clean_rounds = 0
         self._clean_window_cycles.clear()
-        if self._host_attempt_round is not None:
+        if settled_host_row or self._host_attempt_round is not None:
             self._state.earned_clean_window = {
                 "version": 1,
                 "source_hash": self.source_hash,
@@ -2037,7 +2053,12 @@ class StateMachine:
             if "l1" in self._phase_findings:
                 # P6-1: this attempt's receipt-write errors reach the ledger
                 # before any early return (the list is current once L1 ran).
-                self._state.infra_errors.extend(self._last_receipt_write_errors)
+                # fix7 (CR2R2-L1): only the ones this attempt has not logged.
+                self._state.infra_errors.extend(
+                    error
+                    for error in self._last_receipt_write_errors
+                    if error not in self._booked_receipt_write_errors
+                )
             for name in self._phase_findings:
                 self._phase_status[name] = "returned"
             if "l1" in self._phase_findings:
@@ -2048,6 +2069,8 @@ class StateMachine:
                 for row in self._state.round_history
                 if is_host_round(row) and row["round"] == self._state.round
             ]
+            if rows and rows[0]["clean_credit_action"] == "preserved":
+                self._demote_settled_preserve(rows[0])
             if not rows or (self._host_attempt_round is None and not observed):
                 return
             row = rows[0]
@@ -2124,6 +2147,20 @@ class StateMachine:
                 logging.getLogger("code_forge").warning(error)
             except BaseException:  # noqa: BLE001 - reporting must preserve the primary too
                 return
+
+    def _demote_settled_preserve(self, row: dict) -> None:
+        """fix7 (CR3R-L1): a failure after the main path settled `preserved` keeps no credit.
+
+        The row becomes the reset the main path records for the same round:
+        credit and the earned window are wiped, the C3 companion fingerprints
+        the writer omitted return to `dispositions`. HOLD needs no clearing: the
+        preserve predicate already required it empty.
+        """
+        row["clean_credit_action"] = "reset"
+        row.setdefault("dispositions", {}).update(self._c3_stripped_dispositions)
+        self._c3_stripped_dispositions = {}
+        self._reset_clean_credit(settled_host_row=True)
+        row["clean_rounds_after"] = self._state.consecutive_clean_rounds
 
     def _run_local(self) -> Verdict:
         """LOCAL: loop until fixpoint / HOLD / MAX_TOTAL_ROUNDS.
@@ -3991,6 +4028,8 @@ class StateMachine:
             )
         )
         self._state.infra_errors.append(f"receipt: {error}")
+        if error in self._last_receipt_write_errors:
+            self._booked_receipt_write_errors.append(error)
 
     def _publish_l1_receipts(
         self,
@@ -4138,6 +4177,7 @@ class StateMachine:
                 self._last_receipt_write_errors = [f"receipt write failed: {exc}"]
             if self._last_receipt_write_errors:
                 self._state.infra_errors.extend(self._last_receipt_write_errors)
+                self._booked_receipt_write_errors.extend(self._last_receipt_write_errors)
                 try:
                     self._persist_state()
                 except OSError as exc:

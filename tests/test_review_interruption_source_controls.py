@@ -1437,6 +1437,46 @@ def _raise_after_gate(mp, machine):
     mp.setattr(machine, "_record_receipt_gate_failure", record)
 
 
+def _spy_actions(mp, machine):
+    """Record each `_finish_host_attempt` action, so a case proves a preserve was settled."""
+    finish = machine._finish_host_attempt
+    armed = {"actions": [], "raised": False}
+
+    def spy(action, *args, **kwargs):
+        armed["actions"].append(action)
+        return finish(action, *args, **kwargs)
+
+    mp.setattr(machine, "_finish_host_attempt", spy)
+    return armed
+
+
+def _fail_first_save_after_preserve(mp, machine):
+    """fix7 (CR3R-L1 a): the first state save after the main path settled `preserved` fails."""
+    armed = _spy_actions(mp, machine)
+    save = machine._persist_state
+
+    def failing_save():
+        if "preserved" in armed["actions"] and not armed["raised"]:
+            armed["raised"] = True
+            raise OSError(5, "constructed state save failure after preserve")
+        return save()
+
+    mp.setattr(machine, "_persist_state", failing_save)
+    return armed
+
+
+def _record_raises_after_preserve(mp, machine):
+    """fix7 (CR3R-L1 b): `_record_receipt_gate_failure` raises after the gate settled `preserved`."""
+    armed = _spy_actions(mp, machine)
+
+    def record(*_args, **_kwargs):
+        armed["raised"] = True
+        raise RuntimeError("constructed gate record failure after preserve")
+
+    mp.setattr(machine, "_record_receipt_gate_failure", record)
+    return armed
+
+
 _FIX6_CASES = {
     # case: (qodo_fault, receipt write fails, inject(mp, machine), raised type, match)
     "write-io-then-runtime-error": (
@@ -1509,6 +1549,21 @@ _FIX6_CASES = {
         _AfterRoundInterrupt,
         "constructed interrupt",
     ),
+    # fix7 (CR3R-L1): the main path already settled `preserved` before the failure.
+    "preserved-then-state-save-oserror": (
+        None,
+        False,
+        _fail_first_save_after_preserve,
+        OSError,
+        "constructed state save failure after preserve",
+    ),
+    "preserved-then-gate-record-error": (
+        None,
+        False,
+        _record_raises_after_preserve,
+        RuntimeError,
+        "constructed gate record failure after preserve",
+    ),
 }
 
 
@@ -1527,6 +1582,8 @@ def test_fix6_failed_host_attempt_never_preserves(offline_workspace, monkeypatch
             machine.run()
     if isinstance(armed, dict):
         assert armed["raised"]
+        if "actions" in armed:
+            assert "preserved" in armed["actions"], armed["actions"]
     _assert_calls(calls, [3])
     state = _assert_wiped(root, phases=_ALL_RETURNED)
     # The receipt-write error is in the ledger, not only in memory.
@@ -1535,7 +1592,15 @@ def test_fix6_failed_host_attempt_never_preserves(offline_workspace, monkeypatch
     _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
 
 
-@pytest.mark.parametrize("case", ["write-io-then-state-save-oserror", "write-io-then-workspace-blocker"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "write-io-then-state-save-oserror",
+        "write-io-then-workspace-blocker",
+        "preserved-then-state-save-oserror",
+        "preserved-then-gate-record-error",
+    ],
+)
 def test_fix6_failed_attempt_then_one_healthy_round_is_not_pass(offline_workspace, monkeypatch, case):
     """CR2 impact probe: no terminal PASS with window [1, 2, 4] after a failed attempt."""
     qodo_fault, write_io, inject, error, match = _FIX6_CASES[case]
@@ -1543,7 +1608,8 @@ def test_fix6_failed_attempt_then_one_healthy_round_is_not_pass(offline_workspac
     _earned_prefix(root, monkeypatch)
     machine, _ = _new_machine(root, monkeypatch, fault="schema", qodo_fault=qodo_fault)
     with monkeypatch.context() as mp:
-        _fail_receipt_writes(mp)
+        if write_io:
+            _fail_receipt_writes(mp)
         inject(mp, machine)
         with pytest.raises(error, match=match):
             machine.run()
@@ -1554,3 +1620,105 @@ def test_fix6_failed_attempt_then_one_healthy_round_is_not_pass(offline_workspac
     assert verdict is not Verdict.PASS and state.converged is False
     assert state.consecutive_clean_rounds == 1
     assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [4]
+
+
+@pytest.mark.parametrize(
+    "inject",
+    [_fail_first_save_after_preserve, _record_raises_after_preserve],
+    ids=["state-save", "gate-record"],
+)
+def test_fix7_demoted_preserve_restores_c3_companion(offline_workspace, monkeypatch, inject):
+    """CR3R-L1: the demoted row is the M6 reset row, so the stripped C3 companion is back in it."""
+    root = offline_workspace
+    _, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="schema-findings")
+    with monkeypatch.context() as mp:
+        armed = inject(mp, machine)
+        with pytest.raises((OSError, RuntimeError), match="after preserve"):
+            machine.run()
+    assert armed["raised"] and "preserved" in armed["actions"], armed
+    _assert_calls(calls, [3])
+    fp = _c3_companion(machine)
+    state = _assert_wiped(root, phases=_ALL_RETURNED)
+    assert state.round_history[-1]["dispositions"][fp] == "UNCERTAIN"
+    _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+
+
+def test_fix7_failure_record_save_error_never_replaces_primary(offline_workspace, monkeypatch):
+    """CR3R I-4: when saving the failure record fails, the original exception still propagates."""
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="schema")
+    save = machine._persist_state
+    fired = {"hook": False}
+
+    def hook(_index):
+        fired["hook"] = True
+        raise RuntimeError("constructed primary failure")
+
+    def failing_save():
+        if fired["hook"]:
+            raise OSError(5, "constructed failure-record save error")
+        return save()
+
+    machine.post_round_hook = hook
+    monkeypatch.setattr(machine, "_persist_state", failing_save)
+    with pytest.raises(RuntimeError, match="constructed primary failure"):
+        machine.run()
+    assert any(
+        "host attempt save failed after RuntimeError" in error
+        and "constructed failure-record save error" in error
+        for error in machine._state.infra_errors
+    ), machine._state.infra_errors
+
+
+def _timeout_after_l1(mp, machine):
+    """CR2R2-L1 P4: `_check_l1_can_still_converge` raises TimeoutBreaker."""
+
+    def check(*_args, **_kwargs):
+        raise TimeoutBreaker("constructed L1 convergence breaker")
+
+    mp.setattr(machine, "_check_l1_can_still_converge", check)
+
+
+def _raise_after_gate_recorded(mp, machine):
+    """CR2R2-L1 P5: the gate records its finding, then the main path raises."""
+    record = machine._record_receipt_gate_failure
+
+    def recorded(*args, **kwargs):
+        record(*args, **kwargs)
+        raise RuntimeError("constructed failure after the gate finding")
+
+    mp.setattr(machine, "_record_receipt_gate_failure", recorded)
+
+
+_FIX7_LOGGED_ONCE = {
+    "l1-timeout-breaker": (_timeout_after_l1, TimeoutBreaker, "constructed L1 convergence breaker"),
+    "gate-recorded-then-runtime-error": (
+        _raise_after_gate_recorded,
+        RuntimeError,
+        "constructed failure after the gate finding",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_FIX7_LOGGED_ONCE))
+def test_fix7_receipt_write_error_logged_once(offline_workspace, monkeypatch, case):
+    """CR2R2-L1: a receipt-write error the main path logged is not logged again on failure."""
+    inject, error, match = _FIX7_LOGGED_ONCE[case]
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="schema")
+    with monkeypatch.context() as mp:
+        _fail_receipt_writes(mp)
+        inject(mp, machine)
+        with pytest.raises(error, match=match):
+            machine.run()
+    state, _ = _state(root)
+    assert state.verdict is not Verdict.PASS
+    logged = [e for e in state.infra_errors if "receipt write failed" in e]
+    assert len(logged) == 1, state.infra_errors
+    lines = [
+        line for line in cli._format_infra_lines(state).splitlines() if "receipt write failed" in line
+    ]
+    assert len(lines) == 1, lines
