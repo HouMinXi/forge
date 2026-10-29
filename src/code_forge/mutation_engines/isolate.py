@@ -98,6 +98,9 @@ def verify_isolation_support(cgroup_root: str) -> None:
     finally:
         try:
             os.rmdir(probe)
+        except FileNotFoundError:
+            # Already gone: nothing was left behind.
+            pass
         except OSError as exc:
             # A probe cgroup left behind is a cleanup failure (#31): report it,
             # without replacing an error that is already on its way out.

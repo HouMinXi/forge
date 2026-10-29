@@ -32,6 +32,8 @@ from code_forge.mutation_engines.adapters.base import (
     InputEntry,
     InputSnapshot,
     MutationAdapter,
+    cleanup_failed_result,
+    isolation_probe_error,
 )
 from code_forge.mutation_engines.pytest_report_plugin import PLUGIN_ID
 from code_forge.mutation_engines.schemas import (
@@ -311,16 +313,7 @@ class MutmutAdapter:
         try:
             isolate.verify_isolation_support(context.cgroup_root)
         except isolate.IsolationUnavailable as exc:
-            errors.append(
-                InfrastructureError(
-                    code="isolation-unavailable",
-                    phase="probe",
-                    target_id=target.id,
-                    message=str(exc),
-                    retryable=False,
-                    evidence_refs=(),
-                )
-            )
+            errors.append(isolation_probe_error(exc, target.id))
             return CapabilityReport(
                 state=CapabilityState.UNAVAILABLE_ISOLATION,
                 resolved_tool_version=version,
@@ -500,85 +493,11 @@ class MutmutAdapter:
                 ),
             )
         except isolate.CgroupCleanupError as exc:
-            return self._cleanup_failed_result(
-                exc, identity, target, run_directory, baseline_record, receipts, artifacts, infra_errors
+            return cleanup_failed_result(
+                exc, identity, run_directory, baseline_record, receipts, artifacts, infra_errors
             )
         finally:
             shutil.rmtree(workspace, ignore_errors=True)
-
-    @staticmethod
-    def _cleanup_failed_result(
-        exc: isolate.CgroupCleanupError,
-        identity: RunIdentity,
-        target: TargetDeclaration,
-        run_directory: Path,
-        baseline_record: BaselineRecord | None,
-        receipts: list[CommandReceipt],
-        artifacts: list[ArtifactReference],
-        infra_errors: list[InfrastructureError],
-    ) -> TargetResult:
-        """Report a run whose cgroup was left behind as incomplete, keeping its evidence.
-
-        The sandboxed command finished, but its run cgroup is still present,
-        so the result is not complete (fail closed) and the cleanup record
-        says the owned group is not empty. The command's receipt, carried on
-        the error, is kept with the other receipts.
-        """
-        receipt = exc.receipt if isinstance(exc.receipt, CommandReceipt) else None
-        if receipt is not None:
-            receipts.append(receipt)
-        error = InfrastructureError(
-            code="cgroup-cleanup-failed",
-            phase="cleanup",
-            target_id=target.id,
-            message=str(exc),
-            retryable=True,
-            evidence_refs=(),
-        )
-        evidence = _artifact(
-            run_directory,
-            "cleanup-failure.json",
-            json.dumps(
-                {"message": str(exc), "exit_code": exc.exit_code, "timed_out": exc.timed_out},
-                sort_keys=True,
-            ).encode("utf-8"),
-        )
-        artifacts.append(evidence)
-        if baseline_record is None:
-            baseline_record = BaselineRecord(
-                state=BaselineState.UNKNOWN,
-                test_count=0,
-                command_receipt=receipt,
-                native_evidence=(evidence,),
-            )
-        return TargetResult(
-            identity=identity,
-            target_id=target.id,
-            adapter_id=ADAPTER_ID,
-            adapter_version=ADAPTER_VERSION,
-            tool_version=SUPPORTED_MUTMUT_VERSION,
-            run_state=RunState.INCOMPLETE,
-            reason_code="cgroup-cleanup-failed",
-            baseline=baseline_record,
-            generation=Generation(
-                inventory_artifact=evidence,
-                completion_evidence=evidence,
-                extractor_version=ADAPTER_VERSION,
-            ),
-            inventory=Inventory(generated=0, selected=0, excluded=0, completed=0, manifest=()),
-            outcomes=(),
-            native_artifacts=tuple(artifacts),
-            command_receipts=tuple(receipts),
-            infrastructure_errors=tuple(infra_errors) + (error,),
-            cleanup=Cleanup(
-                state=CleanupState.INCOMPLETE,
-                owned_group_empty=False,
-                owned_mounts_removed=True,
-                errors=(error,),
-            ),
-        )
-
-    # -- internals ---------------------------------------------------------
 
     def _materialize(self, snapshot: InputSnapshot, workspace: Path) -> None:
         for entry in snapshot.files:
@@ -694,6 +613,8 @@ class MutmutAdapter:
             except subprocess.TimeoutExpired:
                 timed_out = True
                 code = -1
+            # Read inside the try, so an interrupt here still tears down and joins.
+            memory_peak = supervisor.read_resource_peak("memory.peak")
         except BaseException as exc:
             # The in-flight error (including KeyboardInterrupt, SystemExit or
             # CancelledError) is the one that propagates. A cgroup cleanup
@@ -705,7 +626,6 @@ class MutmutAdapter:
             finally:
                 thread.join(timeout=30)
             raise
-        memory_peak = supervisor.read_resource_peak("memory.peak")
         cleanup_failure: isolate.CgroupCleanupError | None = None
         try:
             supervisor.teardown()

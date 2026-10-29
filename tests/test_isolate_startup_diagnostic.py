@@ -788,6 +788,22 @@ def test_probe_cgroup_removed_is_silent(tmp_path, monkeypatch):
     assert os.listdir(tmp_path) == []
 
 
+def test_probe_cgroup_already_gone_is_silent(tmp_path, monkeypatch):
+    check = _probe(tmp_path, monkeypatch, True, FileNotFoundError(errno.ENOENT, "gone"))
+
+    assert check() is None
+
+
+def test_probe_cgroup_already_gone_adds_no_note_to_the_probe_error(tmp_path, monkeypatch):
+    check = _probe(tmp_path, monkeypatch, False, FileNotFoundError(errno.ENOENT, "gone"))
+
+    with pytest.raises(isolate.IsolationUnavailable) as info:
+        check()
+
+    assert info.value.reason == "isolation_unavailable"
+    assert not hasattr(info.value, "__notes__")
+
+
 def test_failed_start_keeps_its_error_and_notes_the_cleanup_failure(plain_root, monkeypatch):
     _scoped_os(monkeypatch, procs_flags=os.O_RDONLY)
 

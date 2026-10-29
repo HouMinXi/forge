@@ -20,11 +20,14 @@ import stat
 import tempfile
 from pathlib import Path
 
+from code_forge.mutation_engines import isolate
 from code_forge.mutation_engines.adapters.base import (
     CapabilityReport,
     CapabilityState,
     ExecutionContext,
     InputSnapshot,
+    cleanup_failed_result,
+    cleanup_failure_error,
 )
 from code_forge.mutation_engines.adapters.python_mutmut import (
     MutmutAdapter,
@@ -299,7 +302,15 @@ class GremlinsAdapter:
                     ),
                 ),
             )
-        version = self._version(binary, context)
+        try:
+            version = self._version(binary, context)
+        except isolate.CgroupCleanupError as exc:
+            return CapabilityReport(
+                state=CapabilityState.UNAVAILABLE_ISOLATION,
+                resolved_tool_version=None,
+                evidence=(),
+                errors=(cleanup_failure_error(exc, target.id),),
+            )
         if version != SUPPORTED_GREMLINS:
             return CapabilityReport(
                 state=CapabilityState.UNSUPPORTED_VERSION,
@@ -359,6 +370,10 @@ class GremlinsAdapter:
         workspace = Path(tempfile.mkdtemp(prefix="forge-gremlins-", dir=directory))
         try:
             return self._run(target, snapshot, context, directory, workspace)
+        except isolate.CgroupCleanupError as exc:
+            # A run cgroup left behind: an incomplete result, not a crash.
+            # Only the failing command's receipt is kept.
+            return cleanup_failed_result(exc, self._identity(snapshot, context, target), directory)
         finally:
             if os.environ.get("FORGE_KEEP_WORKSPACE") != "1":
                 shutil.rmtree(workspace, ignore_errors=True)

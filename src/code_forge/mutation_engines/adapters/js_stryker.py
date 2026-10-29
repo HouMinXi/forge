@@ -19,11 +19,13 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from code_forge.mutation_engines import isolate
 from code_forge.mutation_engines.adapters.base import (
     CapabilityReport,
     CapabilityState,
     ExecutionContext,
     InputSnapshot,
+    cleanup_failed_result,
 )
 from code_forge.mutation_engines.adapters.python_mutmut import (
     MutmutAdapter,
@@ -244,6 +246,10 @@ class StrykerAdapter:
         workspace = Path(tempfile.mkdtemp(prefix="forge-stryker-", dir=str(directory)))
         try:
             return self._run(target, selection, snapshot, context, directory, workspace)
+        except isolate.CgroupCleanupError as exc:
+            # A run cgroup left behind: an incomplete result, not a crash.
+            # Only the failing command's receipt is kept.
+            return cleanup_failed_result(exc, self._identity(snapshot, context, target), directory)
         finally:
             if os.environ.get("FORGE_KEEP_WORKSPACE") != "1":
                 shutil.rmtree(workspace, ignore_errors=True)

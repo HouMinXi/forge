@@ -17,12 +17,14 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from code_forge.mutation_engines import isolate
 from code_forge.mutation_engines.adapters.base import (
     CapabilityReport,
     CapabilityState,
     ExecutionContext,
     InputSnapshot,
     MutationAdapter,
+    cleanup_failed_result,
 )
 from code_forge.mutation_engines.adapters.python_mutmut import (
     _PLUGIN_MODULE,
@@ -135,6 +137,7 @@ class PatchCorpusAdapter:
         run_directory = Path(context.state_root) / "runs" / context.run_id
         run_directory.mkdir(parents=True, exist_ok=True)
         receipts: list[CommandReceipt] = []
+        baseline: BaselineRecord | None = None
         try:
             self._materialize(snapshot, workspace)
             corpus, corpus_artifact = self._load(target, workspace, run_directory)
@@ -236,6 +239,12 @@ class PatchCorpusAdapter:
                     owned_mounts_removed=True,
                     errors=(),
                 ),
+            )
+        except isolate.CgroupCleanupError as exc:
+            # A run cgroup left behind: an incomplete result that keeps the
+            # baseline and the receipts gathered so far.
+            return cleanup_failed_result(
+                exc, _identity(target, context), run_directory, baseline, receipts
             )
         finally:
             shutil.rmtree(workspace, ignore_errors=True)

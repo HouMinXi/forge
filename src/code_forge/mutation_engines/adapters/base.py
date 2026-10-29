@@ -7,13 +7,28 @@ never mutate shared state.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Protocol
 
+from code_forge.mutation_engines import isolate, state
 from code_forge.mutation_engines.schemas import (
+    ArtifactReference,
+    BaselineRecord,
+    BaselineState,
+    Cleanup,
+    CleanupState,
+    CommandReceipt,
+    Generation,
     InfrastructureError,
+    Inventory,
+    RunIdentity,
+    RunState,
     TargetDeclaration,
     TargetResult,
     valid_identifier,
@@ -146,3 +161,106 @@ class MutationAdapter(Protocol):
         snapshot: InputSnapshot,
         context: ExecutionContext,
     ) -> TargetResult: ...
+
+
+def isolation_probe_error(exc: isolate.IsolationUnavailable, target_id: str) -> InfrastructureError:
+    """The probe error for an isolation check that failed.
+
+    A probe cgroup left behind is a cleanup failure that a later run can
+    clear, so it is retryable. Any other reason means the host lacks the
+    isolation envelope.
+    """
+    if exc.reason == "probe_cleanup_failed":
+        return InfrastructureError(
+            code="probe-cleanup-failed",
+            phase="cleanup",
+            target_id=target_id,
+            message=str(exc),
+            retryable=True,
+            evidence_refs=(),
+        )
+    return InfrastructureError(
+        code="isolation-unavailable",
+        phase="probe",
+        target_id=target_id,
+        message=str(exc),
+        retryable=False,
+        evidence_refs=(),
+    )
+
+
+def cleanup_failure_error(exc: isolate.CgroupCleanupError, target_id: str) -> InfrastructureError:
+    """The infrastructure error for a run cgroup left behind."""
+    return InfrastructureError(
+        code="cgroup-cleanup-failed",
+        phase="cleanup",
+        target_id=target_id,
+        message=str(exc),
+        retryable=True,
+        evidence_refs=(),
+    )
+
+
+def cleanup_failed_result(
+    exc: isolate.CgroupCleanupError,
+    identity: RunIdentity,
+    run_directory: Path,
+    baseline: BaselineRecord | None = None,
+    receipts: Sequence[CommandReceipt] = (),
+    artifacts: Sequence[ArtifactReference] = (),
+    infra_errors: Sequence[InfrastructureError] = (),
+) -> TargetResult:
+    """Report a run whose cgroup was left behind as incomplete, keeping its evidence.
+
+    The sandboxed command finished, but its run cgroup is still present, so
+    the result is not complete (fail closed) and the cleanup record says the
+    owned group is not empty. The command's receipt, carried on the error,
+    is kept with any receipts the caller already has.
+    """
+    receipt = exc.receipt if isinstance(exc.receipt, CommandReceipt) else None
+    kept_receipts = tuple(receipts) + ((receipt,) if receipt is not None else ())
+    error = cleanup_failure_error(exc, identity.target_id)
+    payload = json.dumps(
+        {"message": str(exc), "exit_code": exc.exit_code, "timed_out": exc.timed_out},
+        sort_keys=True,
+    ).encode("utf-8")
+    name = "cleanup-failure.json"
+    state.publish(run_directory, name, payload)
+    evidence = ArtifactReference(
+        relative_run_path="results/" + name,
+        digest=hashlib.sha256(payload).hexdigest(),
+        bytes=len(payload),
+    )
+    if baseline is None:
+        baseline = BaselineRecord(
+            state=BaselineState.UNKNOWN,
+            test_count=0,
+            command_receipt=receipt,
+            native_evidence=(evidence,),
+        )
+    return TargetResult(
+        identity=identity,
+        target_id=identity.target_id,
+        adapter_id=identity.adapter_id,
+        adapter_version=identity.adapter_version,
+        tool_version=identity.tool_version,
+        run_state=RunState.INCOMPLETE,
+        reason_code="cgroup-cleanup-failed",
+        baseline=baseline,
+        generation=Generation(
+            inventory_artifact=evidence,
+            completion_evidence=evidence,
+            extractor_version=identity.adapter_version,
+        ),
+        inventory=Inventory(generated=0, selected=0, excluded=0, completed=0, manifest=()),
+        outcomes=(),
+        native_artifacts=tuple(artifacts) + (evidence,),
+        command_receipts=kept_receipts,
+        infrastructure_errors=tuple(infra_errors) + (error,),
+        cleanup=Cleanup(
+            state=CleanupState.INCOMPLETE,
+            owned_group_empty=False,
+            owned_mounts_removed=True,
+            errors=(error,),
+        ),
+    )

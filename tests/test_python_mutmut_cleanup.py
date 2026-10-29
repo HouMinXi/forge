@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import subprocess
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 
 from code_forge.mutation_engines import isolate
 from code_forge.mutation_engines.adapters.base import ExecutionContext, InputSnapshot
+from code_forge.mutation_engines.adapters import python_mutmut
+from code_forge.mutation_engines.adapters.base import CapabilityState
 from code_forge.mutation_engines.adapters.python_mutmut import ADAPTER_ID, MutmutAdapter
 from code_forge.mutation_engines.schemas import (
     BaselineState,
@@ -34,6 +39,9 @@ class _FakeSupervisor:
         return self.script.get("code", 0)
 
     def read_resource_peak(self, name: str) -> int | None:
+        error = self.script.get("peak_error")
+        if error is not None:
+            raise error
         return None
 
     def teardown(self) -> None:
@@ -228,23 +236,28 @@ def _run(tmp_path: Path, monkeypatch):
     return MutmutAdapter().run(_target(), selection, snapshot, _context(tmp_path))
 
 
-def _assert_cleanup_failed(result):
+def _assert_cleanup_failed(result, run_directory: Path, exit_code: int):
     assert result.run_state is RunState.INCOMPLETE
     assert result.reason_code == "cgroup-cleanup-failed"
     assert result.cleanup.state is CleanupState.INCOMPLETE
     assert result.cleanup.owned_group_empty is False
     assert [e.message for e in result.cleanup.errors] == [_LEFT_BEHIND]
     assert result.cleanup.errors[0].phase == "cleanup"
+    assert result.cleanup.errors[0].retryable is True
     assert result.cleanup.errors[0] in result.infrastructure_errors
+    report = json.loads((run_directory / "results" / "cleanup-failure.json").read_text())
+    assert report == {"message": _LEFT_BEHIND, "exit_code": exit_code, "timed_out": False}
+    assert result.native_artifacts[-1].relative_run_path == "results/cleanup-failure.json"
+    assert result.generation.completion_evidence == result.native_artifacts[-1]
 
 
 def test_baseline_cleanup_failure_is_an_incomplete_run(tmp_path, runs, monkeypatch):
     scripts, _ = runs
-    scripts.append({"code": 0, "cleanup_fails": True})
+    scripts.append({"code": 3, "cleanup_fails": True})
 
     result = _run(tmp_path, monkeypatch)
 
-    _assert_cleanup_failed(result)
+    _assert_cleanup_failed(result, tmp_path / "state" / "runs" / "run-c", 3)
     assert result.baseline.state is BaselineState.UNKNOWN
     assert result.baseline.command_receipt.id == "baseline-run-c"
     assert [r.id for r in result.command_receipts] == ["baseline-run-c"]
@@ -252,7 +265,7 @@ def test_baseline_cleanup_failure_is_an_incomplete_run(tmp_path, runs, monkeypat
 
 def test_mutmut_cleanup_failure_keeps_the_passed_baseline(tmp_path, runs, monkeypatch):
     scripts, _ = runs
-    scripts.extend([{"code": 0}, {"code": 0, "cleanup_fails": True}])
+    scripts.extend([{"code": 0}, {"code": 5, "cleanup_fails": True}])
 
     def baseline(self, target, selection, workspace, events_dir, context):
         _, _, receipt = self._run_sandboxed(
@@ -271,6 +284,46 @@ def test_mutmut_cleanup_failure_keeps_the_passed_baseline(tmp_path, runs, monkey
 
     result = _run(tmp_path, monkeypatch)
 
-    _assert_cleanup_failed(result)
+    _assert_cleanup_failed(result, tmp_path / "state" / "runs" / "run-c", 5)
     assert result.baseline.state is BaselineState.PASSED
     assert [r.id for r in result.command_receipts] == ["baseline-run-c", "mutmut-run-c"]
+
+
+def test_interrupt_while_reading_the_peak_still_tears_down_and_joins(tmp_path, runs):
+    scripts, made = runs
+    scripts.append({"code": 0, "peak_error": KeyboardInterrupt()})
+
+    with pytest.raises(KeyboardInterrupt):
+        _sandboxed(tmp_path)
+
+    assert made[0][0].teardowns == 1
+    assert made[0][1].joined
+
+
+def _probe_with(monkeypatch, error: isolate.IsolationUnavailable):
+    version = SimpleNamespace(returncode=0, stdout=python_mutmut.SUPPORTED_MUTMUT_VERSION + "\n")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: version)
+
+    def verify(root):
+        raise error
+
+    monkeypatch.setattr(isolate, "verify_isolation_support", verify)
+    return MutmutAdapter().probe(_target(), _context(Path("/nonexistent")))
+
+
+def test_probe_cgroup_left_behind_is_a_retryable_cleanup_error(monkeypatch):
+    report = _probe_with(
+        monkeypatch, isolate.IsolationUnavailable("probe left", reason="probe_cleanup_failed")
+    )
+
+    assert report.state is CapabilityState.UNAVAILABLE_ISOLATION
+    [error] = report.errors
+    assert (error.code, error.phase, error.retryable) == ("probe-cleanup-failed", "cleanup", True)
+
+
+def test_probe_without_isolation_is_a_permanent_probe_error(monkeypatch):
+    report = _probe_with(monkeypatch, isolate.IsolationUnavailable("no cgroup2"))
+
+    assert report.state is CapabilityState.UNAVAILABLE_ISOLATION
+    [error] = report.errors
+    assert (error.code, error.phase, error.retryable) == ("isolation-unavailable", "probe", False)
