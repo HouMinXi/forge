@@ -716,6 +716,32 @@ def test_the_same_note_is_attached_once():
     assert error.__notes__ == ["cleanup failed", "another note"]
 
 
+def test_notes_that_share_a_long_prefix_are_both_kept():
+    # A start failure and its teardown can fail on the same cgroup with
+    # different errno values: the notes differ only at the end.
+    left = (
+        "/sys/fs/cgroup/forge-run: run cgroup was not removed before the deadline"
+        " (last rmdir error type=OSError errno="
+    )
+    error = RuntimeError("in flight")
+
+    isolate.attach_note(error, left + "16)")
+    isolate.attach_note(error, left + "39)")
+
+    assert error.__notes__ == [left + "16)", left + "39)"]
+
+
+def test_a_note_anywhere_in_the_list_is_not_repeated():
+    error = RuntimeError("in flight")
+
+    isolate.attach_note(error, "first")
+    isolate.attach_note(error, "second")
+    isolate.attach_note(error, "first")
+    isolate.attach_note(error, "second")
+
+    assert error.__notes__ == ["first", "second"]
+
+
 def test_interrupt_while_noting_never_replaces_the_error():
     # Reading __notes__ raises KeyboardInterrupt, which is not an Exception:
     # the note is dropped and the caller still re-raises its own error.
