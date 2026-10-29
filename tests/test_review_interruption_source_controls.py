@@ -56,6 +56,12 @@ DIFF = (
     "@@ -1,2 +1,3 @@\n const context = 4;\n+const value = 5;\n const end = 6;\n"
 )
 CHANGED_DIFF = DIFF.replace("const value = 2;", "const value = 20;")
+# C3 v3 T3: the same review plus an excerpt-exempt pure-deletion section.
+DELETED_CONTENT = {"legacy.ts": "const keep = 7;\n"}
+DELETION_DIFF = DIFF + (
+    "diff --git a/legacy.ts b/legacy.ts\n--- a/legacy.ts\n+++ b/legacy.ts\n"
+    "@@ -1,3 +1,1 @@\n const keep = 7;\n-const drop = 8;\n-const gone = 9;\n"
+)
 
 # Acquisition: case, observed pass status, current kind/timeout/exit.
 ACQUISITION_CASES = [
@@ -129,12 +135,14 @@ def _healthy(diff=DIFF):
     content = dict(CONTENT)
     if diff == CHANGED_DIFF:
         content["control.ts"] = content["control.ts"].replace("const value = 2;", "const value = 20;")
+    elif diff == DELETION_DIFF:
+        content.update(DELETED_CONTENT)
     else:
-        assert diff == DIFF, "fixture supports only its two explicit source versions"
+        assert diff == DIFF, "fixture supports only its explicit source versions"
     return {
         "findings": [],
         "code_excerpts": [
-            {"file": name, "start_line": 1, "end_line": 3, "content": text}
+            {"file": name, "start_line": 1, "end_line": text.count("\n"), "content": text}
             for name, text in content.items()
         ],
     }
@@ -197,6 +205,13 @@ def _apply_reviewer_fault(body, fault):
             "file": "control.ts", "line": 2, "severity": "P9",
             "description": "constructed schema-invalid candidate", "excerpt": "const value = 2;",
         }]
+    elif fault == "schema-findings-two":
+        # C3 T6: one schema-invalid response, two candidates -> two companions.
+        body = _apply_reviewer_fault(body, "schema-findings")
+        body["findings"].append({
+            "file": "other.ts", "line": 2, "severity": "P9",
+            "description": "second schema-invalid candidate", "excerpt": "const value = 5;",
+        })
     elif fault == "literal":
         body["code_excerpts"][0]["content"] = CONTENT["control.ts"].replace("value = 2", "value = 200")
     else:
@@ -328,8 +343,8 @@ def _assert_calls(calls, cycles, *, missing_excerpt_repair=False):
     assert Counter(calls) == expected
 
 
-def _earned_prefix(root, monkeypatch):
-    machine, calls = _new_machine(root, monkeypatch, rounds=2)
+def _earned_prefix(root, monkeypatch, diff=DIFF):
+    machine, calls = _new_machine(root, monkeypatch, rounds=2, diff=diff)
     assert machine.run() is Verdict.ESCALATED  # two is below the unchanged floor
     _assert_calls(calls, [1, 2])
     state, _ = _state(root)
@@ -339,7 +354,7 @@ def _earned_prefix(root, monkeypatch):
     original = {}
     for cycle, stored in zip((1, 2), state.earned_clean_window["cycles"], strict=True):
         entry, result = verify._capture_earned_cycle(
-            root, compute_source_hash(git_diff=DIFF), verify.parse_diff_files(DIFF), cycle=cycle, diff_text=DIFF,
+            root, compute_source_hash(git_diff=diff), verify.parse_diff_files(diff), cycle=cycle, diff_text=diff,
         )
         assert result.passed and result.checks_run == result.checks_passed == 8, result.reason
         assert entry == stored
@@ -348,7 +363,7 @@ def _earned_prefix(root, monkeypatch):
             path = root / ".code-forge" / "receipts" / f"receipt-c{cycle}p{number}.json"
             original[path] = path.read_bytes()
             assert hashlib.sha256(original[path]).hexdigest() == stored["receipt_sha256"][str(number)]
-    assert not _verify(root).passed
+    assert not _verify(root, diff).passed
     return copy.deepcopy(state.earned_clean_window), original
 
 
@@ -520,14 +535,14 @@ def test_current_mixed_product_and_acquisition_resets_prior_window(offline_works
     _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
 
 
-def _assert_preserved(root, proof, *, fixpoint):
+def _assert_preserved(root, proof, *, fixpoint, diff=DIFF):
     state, _ = _state(root)
     latest = state.round_history[-1]
     assert latest["clean_credit_action"] == "preserved" and latest["fixpoint"] == fixpoint
     assert latest["reset_observed"] is True and latest["clean_rounds_after"] == 2
     assert state.consecutive_clean_rounds == 2 and state.earned_clean_window == proof
     assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [1, 2]
-    assert _restore_result(root).passed and not _verify(root).passed
+    assert _restore_result(root, diff).passed and not _verify(root, diff).passed
     return state
 
 
@@ -830,6 +845,53 @@ def test_c3_schema_invalid_findings_preserve_on_real_run(offline_workspace, monk
     assert latest["dispositions"]["schema-fail-adversarial"] == "CONFIRMED"
     # The companion stays visible as audit data in state findings.
     assert any(f.fingerprint == fp and f.source == "UNTRUSTED" for f in state.findings)
+    _recover(root, monkeypatch, original, [1, 2, 4])
+
+
+def test_c3v2_single_response_with_pure_deletion_section_preserves(offline_workspace, monkeypatch):
+    """C3 v3 T3: one schema-invalid response per pass on a diff that also holds
+    an excerpt-exempt pure-deletion section still preserves. Rule 2a counts the
+    single response (1), so no receipt-diff belt is hidden in the decision."""
+    from code_forge.reviewer_json import _requires_l1_excerpts
+
+    root = offline_workspace
+    for name, text in DELETED_CONTENT.items():
+        (root / name).write_text(text, encoding="utf-8")
+    deletion = DELETION_DIFF[len(DIFF):]
+    assert _requires_l1_excerpts(deletion) is False
+    proof, _ = _earned_prefix(root, monkeypatch, diff=DELETION_DIFF)
+    machine, calls = _new_machine(root, monkeypatch, fault="schema-findings", diff=DELETION_DIFF)
+    seen = _inject_gate_errors(monkeypatch, machine, [])
+    assert machine.run() is not Verdict.PASS
+    _assert_calls(calls, [3])
+    assert seen == [(True, ["review evidence rejected in current round; see receipts/attempted"])]
+    fp = _c3_companion(machine)
+    state = _assert_preserved(root, proof, fixpoint="RESET", diff=DELETION_DIFF)
+    latest = state.round_history[-1]
+    assert fp not in latest["dispositions"] and fp in latest["l1_fingerprints"]
+
+
+def test_two_companions_from_one_schema_response_both_stripped_on_real_run(offline_workspace, monkeypatch):
+    """C3 v3 T6 (CR2 F-2): one parsed schema-invalid adversarial response with
+    two candidates on a real, non-exempt diff -> two UNTRUSTED companions; the
+    round preserves and the persisted row omits BOTH fingerprints."""
+    root = offline_workspace
+    proof, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="schema-findings-two")
+    seen = _inject_gate_errors(monkeypatch, machine, [])
+    assert machine.run() is not Verdict.PASS
+    _assert_calls(calls, [3])
+    assert len(seen) == 1 and seen[0][0] is True
+    comps = [f for f in machine._state.findings
+             if f.source == "UNTRUSTED" and f.id == f"l1-adversarial-untrusted-{f.fingerprint}"]
+    assert len(comps) == 2 and all(c.disposition.value == "UNCERTAIN" for c in comps)
+    state = _assert_preserved(root, proof, fixpoint="RESET")
+    latest = state.round_history[-1]
+    for c in comps:
+        assert c.fingerprint in latest["l1_fingerprints"]
+        assert c.fingerprint not in latest["dispositions"]
+    ever_seen = {fp for row in state.round_history for fp in row.get("dispositions", {})}
+    assert not ever_seen & {c.fingerprint for c in comps}
     _recover(root, monkeypatch, original, [1, 2, 4])
 
 

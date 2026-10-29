@@ -353,6 +353,20 @@ class _L1Call:
         self.is_stub_l1 = False
         self._excerpt_invocation = object()
         self._excerpt_rejections: tuple[_ExcerptRejection, ...] = ()
+        # C3 rule 2a: received reviewer responses per pass in this
+        # invocation, counted at the producer before validation (any
+        # outcome). None means the producer recorded nothing.
+        self.reviewer_responses: dict[str, int] | None = None
+
+    def record_reviewer_response(self, pass_name: str) -> None:
+        """Count one received reviewer response for `pass_name`."""
+        from .state import _PASS_NAMES
+
+        if pass_name not in _PASS_NAMES:
+            return
+        if self.reviewer_responses is None:
+            self.reviewer_responses = {}
+        self.reviewer_responses[pass_name] = self.reviewer_responses.get(pass_name, 0) + 1
 
     def record_excerpt_rejection(
         self, error: Exception, pass_name: str, attempted: dict, *, diff_text: str
@@ -386,6 +400,7 @@ class _L1Call:
         self.pending_raw_responses = []
         self.acquisition_failures = []
         self.unavailable_rejected_passes = set()
+        self.reviewer_responses = None
         result = self._body(self)
         # Snapshot before attaching observations: grouped calls may already
         # carry child audit data, which must never reference itself.
@@ -605,6 +620,8 @@ def build_l1_provider(
 
         for i, (pass_name, _role) in enumerate(pass_configs):
             pr = pass_results[i]
+            if not isinstance(pr, Exception) or isinstance(pr, InvalidJSONResponseError):
+                call.record_reviewer_response(pass_name)
             observed_usage = (
                 pr.observed_usage if isinstance(pr, LLMInvokeError) else
                 pr.usage if not isinstance(pr, Exception) else None
@@ -941,6 +958,9 @@ def build_grouped_l1_provider(
             total_output += usage.output_tokens
             total_cached += usage.cached_input_tokens
             total_duration += duration
+        # C3 rule 2g: a grouped review never reports a response count, so
+        # every grouped pass stays ineligible. Do not sum the children.
+        call.reviewer_responses = None
         return (
             all_findings,
             all_excerpts,

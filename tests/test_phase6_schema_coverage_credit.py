@@ -31,6 +31,8 @@ from code_forge.state import (
     save_state,
     validate_round_history,
 )
+from tests import test_review_interruption_source_controls as _sc
+from tests.test_review_interruption_source_controls import offline_workspace  # noqa: F401
 
 
 SOURCE = "a" * 64
@@ -773,7 +775,11 @@ def _rejection(call, name="adversarial"):
 def _c3_machine(tmp_path, monkeypatch, *, name="adversarial", companions=None):
     """One parsed schema-fail response for `name` plus its UNTRUSTED companion(s)."""
     sm = _guard_machine(tmp_path, monkeypatch)
-    sm.l1_provider = _L1Call(lambda: None)
+    # Rule 2a: the count enters through a real _L1Call recorder and the
+    # machine's own snapshot point, never by setting the host snapshot.
+    sm.l1_provider = _L1Call(lambda call: call.record_reviewer_response(name))
+    sm.l1_provider()
+    sm._capture_reviewer_responses()
     schema = _schema_finding(name)
     comps = [_companion(name)] if companions is None else companions
     sm._state.findings = [schema, *comps]
@@ -961,8 +967,11 @@ def test_c3_writer_keeps_same_fp_trusted_finding(tmp_path, monkeypatch):
     """§4.4: the state object at F is a trusted finding, so F is not stripped."""
     trusted = _new_product(_C3_FP, "P3: trusted nit")
     sm, schema, comps = _c3_machine(tmp_path, monkeypatch)
-    sm._state.findings = [schema, trusted]
+    # T16 (fix4): the companion and the trusted finding share F in state, so
+    # the companion is eligible and only the single-object guard keeps F.
+    sm._state.findings = [schema, *comps, trusted]
     sm._phase_findings["l1"] = [schema, *comps, trusted]
+    assert sm._schema_fail_companions([schema]) == comps
     _host_rows(sm, {_C3_FP: "CONFIRMED"})
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
     assert sm._c3_strip_fps == set()
@@ -1018,3 +1027,260 @@ def test_c3_loader_still_refuses_uncertain_companion_in_preserved_row():
     row = _m4_preserved(0, 0, {_C3_FP: "UNCERTAIN"})
     with pytest.raises(CorruptedStateError, match=_NOT_ONLY):
         validate_round_history([row])
+
+
+def test_c3a_reset_row_seeds_ever_seen(tmp_path, monkeypatch):
+    """T18 / TD-P6-C3a debt pin: a non-preserved (reset) row keeps the
+    companion fp, so it seeds ever_seen and a trusted first confirmation at F
+    in N+1 is NOT new under clause (a). Pinned as-is; not fixed by C3."""
+    sm, _, _ = _c3_machine(tmp_path, monkeypatch)
+    _host_rows(sm)
+    monkeypatch.setattr(sm, "_persist_state", lambda: None)
+    # The real reset order: credit is wiped, then the attempt is finalized.
+    sm._state.earned_clean_window = {"reviewed_repositories": None}
+    sm._host_attempt_round = 2
+    sm._append_round_snapshot(2, [], list(sm._phase_findings["l1"]))
+    sm._reset_clean_credit()
+    sm._finish_host_attempt("reset", _FixpointResult.RESET)
+    row = sm._state.round_history[-1]
+    assert row["clean_credit_action"] == "reset" and row["dispositions"][_C3_FP] == "UNCERTAIN"
+    validate_round_history(sm._state.round_history, 2)
+    ever_seen = {fp for past in sm._state.round_history for fp in past.get("dispositions", {})}
+    assert _C3_FP in ever_seen
+    trusted = _new_product(_C3_FP, "P3: trusted nit")
+    sm._state.findings = [trusted]
+    sm._phase_findings = {"l1": [trusted]}
+    sm._state.round = 3
+    assert sm._fixpoint_reached() is not _FixpointResult.RESET
+
+
+# ---------------------------------------------------------------------------
+# C3 v3 (fix4) machine-level rule 2a/2b/2g and rule 3 tests. Every count and
+# attempt enters through the real production _L1Call (its body, or the public
+# recorders) and the machine's own snapshot point; no test sets
+# `_responses_last_round` or `_attempted_last_round`.
+# ---------------------------------------------------------------------------
+
+
+
+def _c3v2_wrap_body(machine, after):
+    """Run the real provider body, then apply `after(call)` to the producer."""
+    provider = machine.l1_provider
+    assert type(provider) is _L1Call
+    original = provider._body
+
+    def body(call):
+        result = original(call)
+        after(call)
+        return result
+
+    provider._body = body
+
+
+def _c3v2_run_reset(root, monkeypatch, after, *, fault="schema-findings"):
+    machine, calls = _sc._new_machine(root, monkeypatch, fault=fault)
+    _c3v2_wrap_body(machine, after)
+    seen = _sc._inject_gate_errors(monkeypatch, machine, [])
+    assert machine.run() is not Verdict.PASS
+    assert len(seen) == 1 and seen[0][0] is False, seen
+    _sc._c3_companion(machine)
+    state, _ = _sc._state(root)
+    latest = state.round_history[-1]
+    assert latest["clean_credit_action"] == "reset"
+    return machine, latest
+
+
+def _adversarial_attempts(call):
+    return [a for a in call.attempted_excerpts if a.get("pass_name") == "adversarial"]
+
+
+def test_c3v2_run_control_single_response_preserves(offline_workspace, monkeypatch):
+    """Control for T10-T15: the same run without the extra effect preserves."""
+    machine, calls = _sc._new_machine(offline_workspace, monkeypatch, fault="schema-findings")
+    _c3v2_wrap_body(machine, lambda call: None)
+    seen = _sc._inject_gate_errors(monkeypatch, machine, [])
+    machine.run()
+    assert seen[0][0] is True
+    assert machine._responses_last_round == {"qodo": 1, "expert": 1, "adversarial": 1}
+    assert _sc._state(offline_workspace)[0].round_history[-1]["clean_credit_action"] == "preserved"
+
+
+def test_c3v2_rule2_count2_one_attempt_resets(offline_workspace, monkeypatch):
+    """T10: two received responses for P, one attempted payload -> reset (2a)."""
+    def after(call):
+        assert len(_adversarial_attempts(call)) == 1
+        call.record_reviewer_response("adversarial")
+
+    machine, _ = _c3v2_run_reset(offline_workspace, monkeypatch, after)
+    assert machine._responses_last_round["adversarial"] == 2
+
+
+def test_c3v2_rule2_count1_zero_attempts_resets(offline_workspace, monkeypatch):
+    """T11: one received response for P but no attempted payload -> reset (2b)."""
+    def after(call):
+        call.attempted_excerpts = [a for a in call.attempted_excerpts if a.get("pass_name") != "adversarial"]
+
+    machine, _ = _c3v2_run_reset(offline_workspace, monkeypatch, after)
+    assert machine._responses_last_round["adversarial"] == 1
+
+
+def test_c3v2_rule2_count1_dict_subclass_attempt_resets(offline_workspace, monkeypatch):
+    """T12. Defense-in-depth, production-equivalent under 2a/2g.
+
+    The real _L1Call records count 1 for P; P's only attempted item is a
+    GroupedReviewAttempt (a dict subclass). The exact-dict filter resets."""
+    from code_forge.reviewer_json import GroupedReviewAttempt, ReviewGroupScope
+
+    def after(call):
+        scope = ReviewGroupScope(name="g", diff_sha256="0" * 64, source_files=("control.ts",))
+        call.attempted_excerpts = [
+            GroupedReviewAttempt(a, scope) if a.get("pass_name") == "adversarial" else a
+            for a in call.attempted_excerpts
+        ]
+        assert [type(a) for a in _adversarial_attempts(call)] == [GroupedReviewAttempt]
+
+    machine, _ = _c3v2_run_reset(offline_workspace, monkeypatch, after)
+    assert machine._responses_last_round["adversarial"] == 1
+
+
+def _set_responses(value):
+    def after(call):
+        call.reviewer_responses = value(dict(call.reviewer_responses or {}))
+    return after
+
+
+_C3V2_MALFORMED = {
+    "none": _set_responses(lambda r: None),
+    "missing-key": _set_responses(lambda r: {k: v for k, v in r.items() if k != "adversarial"}),
+    "zero": _set_responses(lambda r: {**r, "adversarial": 0}),
+    "bool": _set_responses(lambda r: {**r, "adversarial": True}),
+    "str": _set_responses(lambda r: {**r, "adversarial": "1"}),
+    "negative": _set_responses(lambda r: {**r, "adversarial": -1}),
+    "float": _set_responses(lambda r: {**r, "adversarial": 1.0}),
+    "non-dict": _set_responses(lambda r: list(r.items())),
+    "malformed-sibling": _set_responses(lambda r: {**r, "qodo": True}),
+    "unknown-key": _set_responses(lambda r: {**r, "l2": 1}),
+}
+
+
+@pytest.mark.parametrize("case", [*_C3V2_MALFORMED, "never-recorded"])
+def test_c3v2_rule2_count_none_or_malformed_resets(offline_workspace, monkeypatch, case):
+    """T13: None, missing, 0, bool/str/negative/float or a non-dict -> reset.
+    Set on the producer's reviewer_responses (or never recorded), never on
+    the host snapshot; the machine's own capture validates it."""
+    if case == "never-recorded":
+        monkeypatch.setattr(_L1Call, "record_reviewer_response", lambda self, name: None)
+        after = lambda call: None  # noqa: E731
+    else:
+        after = _C3V2_MALFORMED[case]
+    machine, _ = _c3v2_run_reset(offline_workspace, monkeypatch, after)
+    kept = {"zero": {"qodo": 1, "expert": 1, "adversarial": 0}, "missing-key": {"qodo": 1, "expert": 1}}
+    assert machine._responses_last_round == kept.get(case)
+
+
+def test_c3v2_snapshot_cleared_before_l1(offline_workspace, monkeypatch):
+    """T14: round N captures a snapshot; L1 raises in N+1 -> snapshot None
+    (cleared before L1, never carried over)."""
+    machine, calls = _sc._new_machine(offline_workspace, monkeypatch, rounds=2)
+    provider = machine.l1_provider
+    original = provider._body
+    at_l1 = []
+    after_round = []
+    gate = machine._receipt_gate_round_errors
+
+    def errors():
+        after_round.append(machine._responses_last_round)
+        return gate()
+
+    monkeypatch.setattr(machine, "_receipt_gate_round_errors", errors)
+
+    def body(call):
+        at_l1.append(machine._responses_last_round)
+        if len(at_l1) == 2:
+            raise RuntimeError("constructed L1 crash in round N+1")
+        return original(call)
+
+    provider._body = body
+    with pytest.raises(RuntimeError, match="constructed L1 crash"):
+        machine.run()
+    assert after_round == [{"qodo": 1, "expert": 1, "adversarial": 1}]
+    assert at_l1 == [None, None]
+    assert machine._responses_last_round is None
+
+
+def test_c3v2_rule3_injected_rejection_resets(offline_workspace, monkeypatch):
+    """T15. Defense-in-depth, production-equivalent under 2a/2g.
+
+    The real _L1Call records count 1 for P and, through the public
+    record_excerpt_rejection, a real ExcerptEvidenceError bound to P's
+    admissible attempted dict and the diff text. Rule 3 resets."""
+    from code_forge.reviewer_json import ExcerptEvidenceError
+
+    def after(call):
+        (attempt,) = _adversarial_attempts(call)
+        call.record_excerpt_rejection(
+            ExcerptEvidenceError("constructed excerpt rejection"), "adversarial", attempt, diff_text=_sc.DIFF,
+        )
+        assert [r.pass_name for r in call._excerpt_rejections] == ["adversarial"]
+
+    machine, _ = _c3v2_run_reset(offline_workspace, monkeypatch, after)
+    assert machine._responses_last_round["adversarial"] == 1
+
+
+def _c3v2_group_transport(monkeypatch, groups):
+    """Grouped reviewer replies: excerpts only for the group's files; the
+    adversarial pass of the control.ts group returns the schema-findings decoy."""
+    def transport(prompt, *args, **kwargs):
+        files = [name for name in _sc.CONTENT if f"diff --git a/{name}" in prompt]
+        assert files and tuple(files) in groups
+        body = {"findings": [], "code_excerpts": [
+            {"file": name, "start_line": 1, "end_line": 3, "content": _sc.CONTENT[name]} for name in files
+        ]}
+        if _sc._reviewer_role(prompt) == "adversarial" and "control.ts" in files:
+            body = _sc._apply_reviewer_fault(body, "schema-findings")
+        return _sc.llm_invoke.LLMResult(body)
+
+    monkeypatch.setattr(_sc.llm_invoke, "_invoke_api", transport)
+
+
+def _c3v2_section(name):
+    parts = _sc.DIFF.split("diff --git ")
+    (part,) = [p for p in parts if p.startswith(f"a/{name} ")]
+    return "diff --git " + part
+
+
+@pytest.mark.parametrize("groups", [(("control.ts",), ("other.ts",)), (("control.ts", "other.ts"),)],
+                         ids=["g2", "g1"])
+def test_c3v2_grouped_resets(offline_workspace, monkeypatch, groups):
+    """T4 (grouped probe, promoted): the real composite from
+    build_grouped_l1_provider drives a real machine round. The composite's
+    count is None (2g), so the round resets at G=2 and G=1."""
+    from code_forge.backend import BackendConfig
+    from code_forge.factories import build_grouped_l1_provider
+    from code_forge.reviewer_json import GroupedReviewAttempt
+
+    machine, _ = _sc._new_machine(offline_workspace, monkeypatch, fault="schema-findings")
+    _c3v2_group_transport(monkeypatch, groups)
+    backend = BackendConfig(
+        name="constructed-offline", type="api", format="openai", model="offline",
+        base_url="http://127.0.0.1:1", timeout_s=1,
+    )
+    specs = []
+    for index, files in enumerate(groups):
+        diff = "".join(_c3v2_section(name) for name in files)
+        specs.append({
+            "name": f"g{index}", "conventions_digest": "", "split_context": "",
+            "post_image": "".join(f"# {n}\n{_sc.CONTENT[n]}" for n in files),
+            "resolved": ResolvedReview([Path(n) for n in files], None, diff, "git"),
+        })
+    machine.l1_provider = build_grouped_l1_provider("auto", specs, backend=backend, max_attempts=1)
+    assert type(machine.l1_provider) is _L1Call
+    seen = _sc._inject_gate_errors(monkeypatch, machine, [])
+    machine.run()
+    assert machine._responses_last_round is None
+    attempts = [a for a in machine._attempted_last_round if a.get("pass_name") == "adversarial"]
+    assert [type(a) for a in attempts] == [GroupedReviewAttempt]
+    _sc._c3_companion(machine)
+    assert len(seen) == 1 and seen[0][0] is False
+    state, _ = _sc._state(offline_workspace)
+    assert state.round_history[-1]["clean_credit_action"] == "reset"

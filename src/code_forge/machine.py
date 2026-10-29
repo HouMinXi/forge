@@ -853,6 +853,9 @@ class StateMachine:
         self._last_receipt_write_errors: list[str] = []
         self._excerpts_last_round: list[dict] = []
         self._attempted_last_round: list[dict] = []
+        # C3 rule 2a: validated in-memory copy of the producer's per-pass
+        # reviewer response count for this round (never persisted).
+        self._responses_last_round: dict[str, int] | None = None
         self._raw_observations_last_round: list[dict] = []
         self._pending_raw_responses_last_round: list[dict] = []
         self._unavailable_rejected_passes_last_round: set[str] = set()
@@ -1971,6 +1974,8 @@ class StateMachine:
                 for finding in schema_coverage
             ):
                 continue
+            if self._responses_last_round is None or self._responses_last_round.get(name) != 1:
+                continue
             attempts = [
                 item for item in self._attempted_last_round
                 if type(item) is dict and item.get("pass_name") == name
@@ -1994,6 +1999,23 @@ class StateMachine:
             and id(finding) in this_round
             and any(finding.id == f"l1-{name}-untrusted-{finding.fingerprint}" for name in eligible)
         ]
+
+    def _capture_reviewer_responses(self) -> None:
+        """Snapshot the producer's response count once per round (C3 rule 2a).
+
+        Only an exact dict of `_PASS_NAMES` keys to non-negative exact ints
+        is kept; anything else is None, which leaves every pass ineligible.
+        """
+        from .state import _PASS_NAMES
+
+        responses = getattr(self.l1_provider, "reviewer_responses", None)
+        if type(responses) is not dict or not all(
+            type(name) is str and name in _PASS_NAMES and type(count) is int and count >= 0
+            for name, count in responses.items()
+        ):
+            self._responses_last_round = None
+            return
+        self._responses_last_round = dict(responses)
 
     def _fixpoint_without(self, excluded: list[StateFinding]) -> _FixpointResult:
         """Evaluate the unchanged fixpoint as if `excluded` had not been observed."""
@@ -4079,6 +4101,7 @@ class StateMachine:
         self._raw_observations_last_round = []
         self._pending_raw_responses_last_round = []
         self._unavailable_rejected_passes_last_round = set()
+        self._responses_last_round = None
         l1_findings, l1_excerpts = self._run_l1_phase()
         self._raw_observations_last_round = list(
             getattr(self.l1_provider, "raw_observations", None) or []
@@ -4102,6 +4125,7 @@ class StateMachine:
         # Attempted (schema-failed) payloads the producer retained for
         # audit: written by the receipt writer as failure artifacts.
         self._attempted_last_round = list(getattr(self.l1_provider, "attempted_excerpts", None) or [])
+        self._capture_reviewer_responses()
         try:
             self._check_l1_can_still_converge(l1_findings)
         except TimeoutBreaker:
