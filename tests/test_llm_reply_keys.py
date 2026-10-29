@@ -1070,23 +1070,35 @@ def test_reply_keys_are_hashable_and_read_only():
     assert hash(built) == hash(ReplyKeys(top=frozenset({"a"}), items={"a": frozenset({"b"})}))
 
 
-def _trailing_comma_error(message, at):
-    text = '{"findings": [{"file": "a.py", "description": "z",}]}'
-    pos = text.index(",}") + (1 if at == "close" else 0)
-    return text, json.JSONDecodeError(message, text, pos)
-
-
 @pytest.mark.parametrize(
-    "message, at",
+    "text, comma",
     [
-        ("Expecting property name enclosed in double quotes", "close"),  # Python 3.12
-        ("Illegal trailing comma before end of object", "comma"),  # Python 3.13+
+        ('{"findings": [{"file": "a.py", "description": "z",}]}', ",}"),
+        ('{"findings": [{"file": "a.py", "description": "z"},]}', ",]"),
+        ('{"findings": [{"file": "a.py", "description": "z" ,\n }]}', ",\n }"),
     ],
-    ids=["py312", "py313"],
+    ids=["object", "list", "spaced"],
 )
-def test_trailing_comma_is_not_repaired_on_any_python(message, at):
-    text, error = _trailing_comma_error(message, at)
-    assert invoke._error_is_at_quote(text, error) is None
+@pytest.mark.parametrize(
+    "message, at_close",
+    [
+        ("Expecting property name enclosed in double quotes", True),  # Python 3.12, ",}"
+        ("Expecting value", True),  # Python 3.12, ",]"
+        ("Illegal trailing comma before end of object", False),  # Python 3.13+
+    ],
+    ids=["py312_name", "py312_value", "py313"],
+)
+def test_trailing_comma_is_not_repaired_on_any_python(text, comma, message, at_close):
+    pos = text.index(comma) + (len(comma) - 1 if at_close else 0)
+    assert invoke._error_is_at_quote(text, json.JSONDecodeError(message, text, pos)) is None
+
+
+def test_close_after_a_quote_is_still_repaired():
+    # Without a comma before it, the error at '}' follows a stray quote.
+    text = '{"findings": [{"file": "a.py", "description": "say "hi" }]}'
+    pos = text.index(" }") + 1
+    error = json.JSONDecodeError("Expecting property name enclosed in double quotes", text, pos)
+    assert invoke._error_is_at_quote(text, error) is not None
 
 
 _P2_AFTER_TRAILING_COMMA = (
@@ -1223,8 +1235,20 @@ def test_object_right_before_a_close_is_not_the_reply():
         (', {"x": "y"}]', True),
         (" func f() { for {" + '"}]', False),
         (' and "q" then ]', False),
+        (' and "q" then }', False),
+        ('" and the reply was cut', False),
+        ("}", False),
     ],
-    ids=["whole_object", "prose_brace", "list_rest", "open_braces_then_quote", "prose_quote_close"],
+    ids=[
+        "whole_object",
+        "prose_brace",
+        "list_rest",
+        "open_braces_then_quote",
+        "quote_then_bracket",
+        "quote_then_brace",
+        "quote_first",
+        "close_first",
+    ],
 )
 def test_text_after_the_reply(after, kept):
     text = '{"findings": ["first"]}' + after
