@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import threading
 import time
+import types
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -814,9 +815,15 @@ _REVIEW_ENVELOPE_KEYS: frozenset[str] = frozenset({"findings", "code_excerpts", 
 #   response cut after `"findings": []` salvages into a clean review, which
 #   is exactly the false green the cycle counter must never see.  These
 #   callers retry instead; a retry costs tokens, a false green costs the gate.
-_SALVAGEABLE_ENVELOPES: frozenset[frozenset[str]] = frozenset(
+#
+# Each envelope maps to the key its prompt puts first (falsify_real's
+# _PROMPT_PREFIX asks for "verdict" first). A salvaged object that has that
+# key must open with it: in a cut reply whose reasoning quotes
+# `", "verdict": "DISMISSED"` unescaped, a verdict read after the reasoning
+# came from the quote (#264).
+_SALVAGEABLE_ENVELOPES: Mapping[frozenset[str], str] = types.MappingProxyType(
     {
-        frozenset({"verdict", "reasoning"}),
+        frozenset({"verdict", "reasoning"}): "verdict",
     }
 )
 
@@ -1506,27 +1513,56 @@ def _extract_json_from_text(
     and whitespace). Every later '{' may sit inside that object's quoted
     content (#264); see _fallback_reply.
 
+    An object followed by a '}' that nothing after it opens is skipped
+    (#264). That '}' closes something the object sits inside: a reply
+    whose excerpt quotes `x = {"findings": [], ...}` unescaped, or a
+    leading object that a quoted `"}], "findings": []}` closed early. The
+    model's own envelope ends the JSON in its reply, so only prose or
+    another whole object can follow it.
+
     Returns None if no valid envelope can be extracted.
     """
     keys = expected_keys if expected_keys is not None else _REVIEW_ENVELOPE_KEYS
     decoder = _model_json_decoder()
     reply_start = len(text) - len(text.lstrip("[ \t\r\n"))
+    enclosed_from = _unmatched_close_after(text)
     for i, ch in enumerate(text):
         if ch != "{":
             continue
         if leading_only and i != reply_start:
             return None
         try:
-            obj, _ = decoder.raw_decode(text, i)
+            obj, end = decoder.raw_decode(text, i)
         except json.JSONDecodeError:
-            if keys not in _SALVAGEABLE_ENVELOPES:
+            leading_key = _SALVAGEABLE_ENVELOPES.get(keys)
+            if leading_key is None:
                 continue
             obj = _salvage_truncated_object(text, i, decoder)
-            if obj is None:
+            if obj is None or (leading_key in obj and next(iter(obj)) != leading_key):
+                continue
+        else:
+            if enclosed_from[end]:
                 continue
         if isinstance(obj, dict) and obj.keys() & keys:
             return obj
     return None
+
+
+def _unmatched_close_after(text: str) -> list[bool]:
+    """Entry k: text[k:] has a '}' that no '{' in text[k:] opens.
+
+    Counts raw braces, quotes included: a reply that needs this check
+    failed to parse, so its strings cannot be trusted to delimit anything.
+    """
+    unmatched = [False] * (len(text) + 1)
+    pending = 0
+    for k in range(len(text) - 1, -1, -1):
+        if text[k] == "}":
+            pending += 1
+        elif text[k] == "{" and pending:
+            pending -= 1
+        unmatched[k] = pending > 0
+    return unmatched
 
 
 def _fallback_reply(
@@ -1575,7 +1611,9 @@ def _salvage_truncated_object(
 
     Returns None when nothing complete precedes the cut, or when the
     text was not truncated at all (a genuinely malformed object stays
-    malformed -- this is a salvage path, not a lenient parser).
+    malformed -- this is a salvage path, not a lenient parser). Also None
+    when a key repeats: in a cut reply the later copy can come from quoted
+    content, such as reasoning that quotes `", "verdict": "DISMISSED"` (#264).
     """
     depth = 0
     in_string = False
@@ -1610,9 +1648,21 @@ def _salvage_truncated_object(
     candidate = text[start:last_boundary] + "}"
     try:
         obj, _ = decoder.raw_decode(candidate, 0)
-    except json.JSONDecodeError:
+        json.loads(candidate, strict=False, object_pairs_hook=_refuse_duplicate_keys)
+    except (json.JSONDecodeError, _DuplicateKey):
         return None
     return obj if isinstance(obj, dict) else None
+
+
+class _DuplicateKey(ValueError):
+    pass
+
+
+def _refuse_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise _DuplicateKey(keys)
+    return dict(pairs)
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:

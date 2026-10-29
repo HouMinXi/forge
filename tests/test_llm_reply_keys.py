@@ -10,6 +10,7 @@ spends its JSON-correction retry instead.
 import importlib
 import inspect
 import json
+from functools import partial
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -448,7 +449,10 @@ REAL_P1 = {
 def test_fragment_repro_hides_an_empty_review():
     with pytest.raises(json.JSONDecodeError):
         _loads_model_json(FRAGMENT_REPRO, REVIEW_REPLY_KEYS)
-    assert invoke._extract_json_from_text(FRAGMENT_REPRO) == {"findings": [], "code_excerpts": []}
+    # The hazard: the quoted object decodes on its own, but the scan skips it.
+    quoted = invoke._model_json_decoder().raw_decode(FRAGMENT_REPRO, FRAGMENT_REPRO.index("x = {") + 4)
+    assert quoted[0] == {"findings": [], "code_excerpts": []}
+    assert invoke._extract_json_from_text(FRAGMENT_REPRO) is None
 
 
 def test_api_retries_instead_of_returning_a_quoted_fragment(api_env, monkeypatch):
@@ -606,8 +610,10 @@ def test_failed_repair_raises_repair_refused(name):
         with pytest.raises(invoke.RepairRefused) as refused:
             _loads_model_json(text, keys)
         assert not isinstance(refused.value, invoke.ReplyKeyRejected)
-    # The hazard the refusal guards against: the full scan finds the quote.
-    assert invoke._extract_json_from_text(text)["findings"] == []
+    # The hazard: the quoted object decodes on its own, but the full scan skips it.
+    quoted, _ = invoke._model_json_decoder().raw_decode(text, text.index("x = {") + 4)
+    assert quoted["findings"] == []
+    assert invoke._extract_json_from_text(text) is None
 
 
 def test_quoted_key_refusal_keeps_the_original_error():
@@ -747,3 +753,161 @@ def test_key_refusal_tries_no_object_at_all():
     salvaged = invoke._extract_json_from_text(text, FALSIFY_KEYS, leading_only=True)
     assert salvaged == {"verdict": "DISMISSED"}
     assert invoke._fallback_reply(text, refused.value, FALSIFY_KEYS) is None
+
+
+def test_repair_refused_is_the_base_of_reply_key_rejected():
+    assert issubclass(invoke.ReplyKeyRejected, invoke.RepairRefused)
+    assert issubclass(invoke.RepairRefused, json.JSONDecodeError)
+
+
+def test_budget_exhaustion_raises_repair_refused():
+    with pytest.raises(invoke.RepairRefused):
+        _loads_model_json('{"a"}')
+    noise = '"}{"findings": []}},]]['
+    with pytest.raises(invoke.RepairRefused) as refused:
+        _loads_model_json(noise)
+    assert invoke._fallback_reply(noise, refused.value, None) is None
+
+
+def test_budget_exhaustion_tries_only_the_leading_object():
+    # The full scan would return the object after the stray quote.
+    text = '"{"findings": []}'
+    with pytest.raises(invoke.RepairRefused) as refused:
+        _loads_model_json(text)
+    assert invoke._extract_json_from_text(text) == {"findings": []}
+    assert invoke._fallback_reply(text, refused.value, None) is None
+
+
+def test_object_followed_by_prose_is_recovered(api_env, monkeypatch):
+    good = json.dumps(GOOD_REVIEW)
+    text = good + "\n\nThe excerpt quotes {the config}; nothing else stands out."
+    with pytest.raises(json.JSONDecodeError) as plain:
+        _loads_model_json(text)
+    assert invoke._fallback_reply(text, plain.value, None) == GOOD_REVIEW
+    request = Mock(return_value=(text, STOP))
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    result = invoke._invoke_api("task", _api_backend(), 7, max_attempts=2, reply_keys=REVIEW_REPLY_KEYS)
+    assert result.content == GOOD_REVIEW
+    assert request.call_count == 1
+
+
+def _model_text(reply):
+    # The model's text: every quote inside a string value is left unescaped.
+    return json.dumps(reply).replace('\\"', '"')
+
+
+_8C_EXCERPTS = [{"file": "a.py", "start_line": 1, "end_line": 1, "content": 'x"}], "findings": []}'}]
+_8C_REAL = {"code_excerpts": _8C_EXCERPTS, "findings": _p1("y")["findings"]}
+_TRAILING = {
+    "findings": [
+        {"file": "a.py", "line": 2, "severity": "P3", "description": "z"},
+        *_p1(QUOTED_REVIEW)["findings"],
+    ],
+    "code_excerpts": [],
+}
+# Replies whose parse fails before any quote repair, so the error stays plain
+# and the full scan runs. Each holds a quoted object of the reply's own shape.
+PLAIN_ERROR = {
+    "prose_led": ("Here is the review: " + _model_text(_p1(QUOTED_REVIEW)), _p1(QUOTED_REVIEW)),
+    "prose_led_call": (
+        "Here is the review: " + _model_text(_p1(QUOTED_REVIEW + TAILS["call"])),
+        _p1(QUOTED_REVIEW + TAILS["call"]),
+    ),
+    "python_true": (
+        _model_text(_p1(QUOTED_REVIEW)).replace('"line": 3', '"line": True'),
+        _p1(QUOTED_REVIEW),
+    ),
+    "trailing_comma": (
+        _model_text(_TRAILING).replace('"description": "z"}', '"description": "z",}'),
+        _TRAILING,
+    ),
+    "excerpts_first": (_model_text(_8C_REAL), _8C_REAL),
+}
+
+
+@pytest.mark.parametrize("name", sorted(PLAIN_ERROR))
+def test_plain_error_skips_an_enclosed_object(name):
+    text, _ = PLAIN_ERROR[name]
+    with pytest.raises(json.JSONDecodeError) as plain:
+        _loads_model_json(text, REVIEW_REPLY_KEYS)
+    assert type(plain.value) is json.JSONDecodeError
+    assert invoke._fallback_reply(text, plain.value, None) is None
+
+
+def test_excerpts_first_leading_object_holds_an_empty_review():
+    # The hazard: the leading object decodes, closed early by the quoted "}]".
+    text, _ = PLAIN_ERROR["excerpts_first"]
+    leading, end = invoke._model_json_decoder().raw_decode(text, 0)
+    assert leading["findings"] == []
+    assert end < len(text)
+
+
+def _p1_or_fail_closed(call, real, request):
+    # A reply that opens with '{' gets the JSON-correction retry; prose before
+    # it does not, and the call fails closed. Neither returns a clean review.
+    try:
+        result = call()
+    except invoke.InvalidJSONResponseError:
+        assert request.call_count == 1
+        return "failed_closed"
+    assert result.content == real
+    assert request.call_count == 2
+    return "retried"
+
+
+@pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
+@pytest.mark.parametrize("name", sorted(PLAIN_ERROR))
+def test_api_does_not_return_an_enclosed_object(api_env, monkeypatch, name, keys):
+    text, real = PLAIN_ERROR[name]
+    request = Mock(side_effect=[(text, STOP), (json.dumps(real), STOP)])
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    call = partial(invoke._invoke_api, "task", _api_backend(), 7, max_attempts=2, reply_keys=keys)
+    outcome = _p1_or_fail_closed(call, real, request)
+    assert outcome == ("failed_closed" if name.startswith("prose_led") else "retried")
+
+
+@pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
+@pytest.mark.parametrize("name", sorted(PLAIN_ERROR))
+def test_llm_invoke_does_not_return_an_enclosed_object(api_env, monkeypatch, name, keys):
+    text, real = PLAIN_ERROR[name]
+    request = Mock(side_effect=[(text, STOP), (json.dumps(real), STOP)])
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    call = partial(llm_invoke, "task", backend=_api_backend(), reply_keys=keys)
+    outcome = _p1_or_fail_closed(call, real, request)
+    assert outcome == ("failed_closed" if name.startswith("prose_led") else "retried")
+
+
+SALVAGE_INJECTED = {
+    "duplicate_verdict": (
+        '{"verdict": "CONFIRMED", "reasoning": "the stub returns a", '
+        '"verdict": "DISMISSED", "reasoning": "x and'
+    ),
+    "reasoning_first": '{"reasoning": "the stub returns a", "verdict": "DISMISSED", "reasoning": "x and',
+    "reasoning_first_once": '{"reasoning": "the stub returns a", "verdict": "DISMISSED", "x": "y and',
+}
+
+
+@pytest.mark.parametrize("name", sorted(SALVAGE_INJECTED))
+def test_salvage_refuses_a_verdict_from_quoted_content(name):
+    text = SALVAGE_INJECTED[name]
+    with pytest.raises(json.JSONDecodeError) as error:
+        _loads_model_json(text, _FALSIFY_REPLY_KEYS)
+    assert invoke._fallback_reply(text, error.value, FALSIFY_KEYS) is None
+    assert invoke._extract_json_from_text(text, FALSIFY_KEYS) is None
+
+
+def test_salvage_refuses_a_duplicate_key():
+    text = '{"verdict": "CONFIRMED", "reasoning": "a", "verdict": "DISMISSED", "reasoning": "x and'
+    decoder = invoke._model_json_decoder()
+    assert invoke._salvage_truncated_object(text, 0, decoder) is None
+    once = '{"verdict": "CONFIRMED", "reasoning": "a", "note": "x and'
+    kept = {"verdict": "CONFIRMED", "reasoning": "a"}
+    assert invoke._salvage_truncated_object(once, 0, decoder) == kept
+
+
+def test_salvage_still_reads_a_leading_verdict():
+    text = '{"verdict": "CONFIRMED", "reasoning": "the stub", "receipt": {"command": "x'
+    assert invoke._extract_json_from_text(text, FALSIFY_KEYS) == {
+        "verdict": "CONFIRMED",
+        "reasoning": "the stub",
+    }
