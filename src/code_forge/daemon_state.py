@@ -84,12 +84,11 @@ DAEMON_STATE_Q2Q3 = (
 
 # The keys each reply may carry (#264). With them a duplicate key is refused:
 # json keeps the last one, so a quoted `"conflicts": []` after the real list
-# would drop every conflict.
+# would drop every conflict. Conflict items are not checked: a model may add
+# its own item keys, and a repaired reply with them would be refused. A
+# repair inside a conflict's string can still invent an item key, as on main.
 Q1_REPLY_KEYS = ReplyKeys(top=frozenset({"external_state"}))
-Q2Q3_REPLY_KEYS = ReplyKeys(
-    top=frozenset({"conflicts"}),
-    items={"conflicts": frozenset({"subsystem", "mutates", "interferes_with", "scenario"})},
-)
+Q2Q3_REPLY_KEYS = ReplyKeys(top=frozenset({"conflicts"}))
 
 # Max bytes of grep output to inject into Q2Q3 prompt.
 _MAX_GREP_OUTPUT_BYTES = 50000

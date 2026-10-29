@@ -36,7 +36,13 @@ from .canary import (
 )
 from .evidence import reverify_finding_cites
 from .findings import finding_line  # noqa: F401 -- re-export awareness
+from .llm_invoke import ReplyKeys
 from .state import Verdict
+
+# The canary review reply's keys (#264): only the top key, since a model may
+# add its own finding keys (title, fix, confidence) and the canary validator
+# ignores them. A duplicate or unknown top key in a repaired reply is refused.
+CANARY_REVIEW_REPLY_KEYS = ReplyKeys(top=frozenset({"findings"}))
 
 
 # ---------------------------------------------------------------------------

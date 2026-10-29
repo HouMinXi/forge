@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from code_forge.backend import BackendConfig
+from code_forge.canary_gen import CANARY_REVIEW_REPLY_KEYS
 from code_forge.falsify_real import _FALSIFY_REPLY_KEYS
 from code_forge.llm_invoke import ReplyKeys, _loads_model_json, _unknown_reply_key, llm_invoke
 from code_forge.reviewer_json import REVIEW_REPLY_KEYS
@@ -909,8 +910,9 @@ def test_excerpts_first_leading_object_holds_an_empty_review():
 
 
 def _p1_or_fail_closed(call, real, request):
-    # A reply that opens with '{' gets the JSON-correction retry; prose before
-    # it does not, and the call fails closed. Neither returns a clean review.
+    # Any reply holding a '{' gets the JSON-correction retry, prose before it
+    # or not, so a refused object costs one call. Neither outcome returns a
+    # clean review.
     try:
         result = call()
     except invoke.InvalidJSONResponseError:
@@ -929,7 +931,7 @@ def test_api_does_not_return_an_enclosed_object(api_env, monkeypatch, name, keys
     monkeypatch.setattr(invoke, "_invoke_openai", request)
     call = partial(invoke._invoke_api, "task", _api_backend(), 7, max_attempts=2, reply_keys=keys)
     outcome = _p1_or_fail_closed(call, real, request)
-    assert outcome == ("failed_closed" if name.startswith("prose_led") else "retried")
+    assert outcome == "retried"
 
 
 @pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
@@ -940,7 +942,7 @@ def test_llm_invoke_does_not_return_an_enclosed_object(api_env, monkeypatch, nam
     monkeypatch.setattr(invoke, "_invoke_openai", request)
     call = partial(llm_invoke, "task", backend=_api_backend(), reply_keys=keys)
     outcome = _p1_or_fail_closed(call, real, request)
-    assert outcome == ("failed_closed" if name.startswith("prose_led") else "retried")
+    assert outcome == "retried"
 
 
 SALVAGE_INJECTED = {
@@ -1236,8 +1238,21 @@ def test_object_right_before_a_close_is_not_the_reply():
         ("\nThe stray `}` on line 9.", True),
         (', {"x": "y"}]', False),
         (" func f() { for {" + '"}]', False),
-        (' and "q" then ]', False),
-        (' and "q" then }', False),
+        (' and "q"] then', False),
+        (' and "q"} then', False),
+        (' and "q": 1', False),
+        ('\nThe call `f("a")` returns.', True),
+        (' {"x": 1} done.', True),
+        (' {"x": 1} {"findings": []}', False),
+        (' {"x": 1, "x": 2}', False),
+        (" 42", False),
+        ("\n    return x", False),
+        ("\uff0c and more", False),
+        ("\u00a0, and more", False),
+        ("\n\n2 files reviewed.", True),
+        ("\n```", True),
+        ("\n| a | b |", True),
+        ("\u4e2d\u6587", True),
         ('" and the reply was cut', False),
         ("}", False),
     ],
@@ -1249,6 +1264,19 @@ def test_object_right_before_a_close_is_not_the_reply():
         "open_braces_then_quote",
         "quote_then_bracket",
         "quote_then_brace",
+        "quote_then_colon",
+        "quoted_word_in_prose",
+        "other_object_then_prose",
+        "other_object_then_reply",
+        "other_object_with_a_duplicate_key",
+        "number",
+        "indented_line",
+        "fullwidth_comma",
+        "nbsp_comma",
+        "count_line",
+        "fence",
+        "table_row",
+        "non_ascii_prose",
         "quote_first",
         "close_first",
     ],
@@ -1264,12 +1292,34 @@ def test_text_after_the_reply(after, kept):
         '[{"findings": ["first"]}, {"x": "y"}]',
         'Here: {"findings": ["first"]}, then more.',
         'Here: {"findings": ["first"]}; done.',
-        'Here: {"findings": ["first"]} // note',
+        'Here: {"findings": ["first"]}, {"x": "y"}]',
+        'Here: {"findings": ["first"]}: the review.',
     ],
-    ids=["list_rest", "prose_led_comma", "prose_led_semicolon", "prose_led_comment"],
+    ids=[
+        "list_rest",
+        "prose_led_comma",
+        "prose_led_semicolon",
+        "prose_led_list_rest",
+        "prose_led_colon",
+    ],
 )
-def test_code_after_an_object_that_does_not_open_the_reply_is_kept(text):
+def test_text_after_an_object_that_does_not_open_the_reply_is_kept(text):
     assert invoke._extract_json_from_text(text) == {"findings": ["first"]}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'Here: {"findings": ["first"]} // note',
+        'Here: {"findings": ["first"]},}',
+        'Here: {"findings": ["first"]}\n    return x',
+        '[{"findings": ["first"]} // note',
+        '[{"findings": ["first"]}, "q"]',
+    ],
+    ids=["prose_led_comment", "prose_led_comma_close", "prose_led_indent", "list_comment", "list_quote"],
+)
+def test_code_after_an_object_that_does_not_open_the_reply_is_refused(text):
+    assert invoke._extract_json_from_text(text) is None
 
 
 def test_cli_repaired_object_result_with_an_empty_key_falls_back(cli_binary):
@@ -1291,28 +1341,61 @@ _CUT_EXCERPTS_FIRST = (
     '"findings": []}'
 )
 _CUT_REST = '"}], "findings": [{"file": "a.py", "line": 3, "severity": "P1", "description": "d"}]}'
+# Text after the object must start like prose or markdown (see
+# _prose_may_follow); these tails do not, in every place.
 _REFUSED_TAILS = {
     "comma_close": ",}",
     "bracket_close": "]}",
     "comment": " // done",
-    "call": "; f(a)",
     "escape": "\\u007d",
     "smart_quote": " \u201cx",
     "right_smart_quote": " \u201dx",
     "close_paren": ")",
     "assign": " = 1",
-}
-# Any other first character reads as prose after a valid reply (the P2-2 C
-# cases), so these cut tails cannot be refused on a stop.
-_PROSE_LIKE_TAILS = {
     "number": " 42",
-    "word": " done",
     "open_braces": _OPEN_BRACES,
+    "plus": " + 1",
+    "and": " && y",
+    "block_comment": " /* c */",
+    "less": " < 3",
+    "pipe": " | x",
+    "star": " * p",
+    "exponent": "e+1",
+    "quote": ' "x"',
+    "fullwidth_comma": "\uff0c",
+    "fullwidth_semicolon": "\uff1b",
+    "nbsp_comma": "\u00a0,",
+    "line_separator_comma": "\u2028,",
+    "bom_comma": "\ufeff,",
+    "indented": "\n    return x",
+    "call_after_blank_line": "\n\nfoo()",
+}
+# Punctuation then prose may follow an object that prose led, as in
+# `Here: {...}; done.`, so these are refused only where the object opens
+# the text or a list.
+_REFUSED_UNLESS_PROSE_LED = {
+    "call": "; f(a)",
+    "colon": ": x",
+}
+# These start like prose, which may follow a whole reply, so a stop-cut
+# reply ending in one cannot be refused (the docstring's Limit).
+_PROSE_LIKE_TAILS = {
+    "word": " done",
     "paren": " (see a.py)",
     "list_item": "\n- note",
     "single_quote": " 'a'",
+    "or": " or y",
+    "for": " for k in d:",
 }
-_ALL_TAILS = {**_REFUSED_TAILS, **_PROSE_LIKE_TAILS}
+# The cut partial parses whole; finish=length still asks for the rest.
+_WHOLE_PARSE_TAILS = {"none": "", "newline": "\n", "spaces": "  "}
+_ALL_TAILS = {
+    **_REFUSED_TAILS,
+    **_REFUSED_UNLESS_PROSE_LED,
+    **_PROSE_LIKE_TAILS,
+    **_WHOLE_PARSE_TAILS,
+}
+_PLACES = {"leading": "", "list": "[", "prose": "Review: "}
 
 
 def _keeps_the_p1(call):
@@ -1323,19 +1406,29 @@ def _keeps_the_p1(call):
     return "P1" in [f.get("severity") for f in result.content.get("findings", [])]
 
 
+_REFUSED_CASES = [(place, tail) for place in _PLACES for tail in _REFUSED_TAILS] + [
+    (place, tail) for place in ("leading", "list") for tail in _REFUSED_UNLESS_PROSE_LED
+]
+
+
 @pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
-@pytest.mark.parametrize("tail", sorted(_REFUSED_TAILS))
-def test_stop_cut_code_tail_is_refused(api_env, monkeypatch, tail, keys):
-    text = _CUT_EXCERPTS_FIRST + _REFUSED_TAILS[tail]
+@pytest.mark.parametrize("place, tail", _REFUSED_CASES)
+def test_stop_cut_code_tail_is_refused(api_env, monkeypatch, place, tail, keys):
+    text = _PLACES[place] + _CUT_EXCERPTS_FIRST + _ALL_TAILS[tail]
     assert invoke._extract_json_from_text(text) is None
     monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(text, STOP)))
     with pytest.raises(invoke.LLMInvokeError):
         llm_invoke("task", backend=_api_backend(), reply_keys=keys)
 
 
-@pytest.mark.parametrize("tail", sorted(_PROSE_LIKE_TAILS))
-def test_stop_cut_prose_like_tail_is_a_known_limit(api_env, monkeypatch, tail):
-    text = _CUT_EXCERPTS_FIRST + _PROSE_LIKE_TAILS[tail]
+_KNOWN_LIMIT_CASES = [(place, tail) for place in _PLACES for tail in _PROSE_LIKE_TAILS] + [
+    ("prose", tail) for tail in _REFUSED_UNLESS_PROSE_LED
+]
+
+
+@pytest.mark.parametrize("place, tail", _KNOWN_LIMIT_CASES)
+def test_stop_cut_prose_like_tail_is_a_known_limit(api_env, monkeypatch, place, tail):
+    text = _PLACES[place] + _CUT_EXCERPTS_FIRST + _ALL_TAILS[tail]
     monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(text, STOP)))
     result = llm_invoke("task", backend=_api_backend(), reply_keys=REVIEW_REPLY_KEYS)
     assert result.content["findings"] == []
@@ -1354,7 +1447,7 @@ def test_length_cut_tail_asks_for_the_rest(api_env, monkeypatch, tail, keys):
 def test_continue_partial_needs_a_whole_parse(api_env, monkeypatch):
     # The fallback scan reads this cut partial as an empty review followed by
     # prose (a known limit on a stop). Cut by length it must be continued.
-    partial = _CUT_EXCERPTS_FIRST + _PROSE_LIKE_TAILS["number"]
+    partial = _CUT_EXCERPTS_FIRST + _PROSE_LIKE_TAILS["word"]
     assert invoke._extract_json_from_text(partial) is not None
     request = Mock(return_value=(" more", STOP))
     monkeypatch.setattr(invoke, "_invoke_openai", request)
@@ -1424,7 +1517,18 @@ def test_canary_review_passes_review_keys(tmp_path):
         patch("code_forge.llm_invoke.llm_invoke", mock),
     ):
         _dispatch_inline_canary("inline", MagicMock(), {}, None, {}, tmp_path)
-    assert _keys_of_every_call(mock) == {id(REVIEW_REPLY_KEYS)}
+    assert _keys_of_every_call(mock) == {id(CANARY_REVIEW_REPLY_KEYS)}
+
+
+def test_canary_review_keys_check_the_top_level_only():
+    # The canary prompt asks for findings only; its items are not checked,
+    # as before #264, so a repaired item key is kept.
+    assert CANARY_REVIEW_REPLY_KEYS == ReplyKeys(top=frozenset({"findings"}))
+    text = '{"findings": [{"description": "x = "y"", "fix": "z"}]}'
+    assert _loads_model_json(text, CANARY_REVIEW_REPLY_KEYS)["findings"][0]["fix"] == "z"
+    text = '{"findings": [], "code_excerpts": ["say "hi" now"]}'
+    with pytest.raises(invoke.ReplyKeyRejected):
+        _loads_model_json(text, CANARY_REVIEW_REPLY_KEYS)
 
 
 def test_daemon_state_passes_its_keys(tmp_path):
@@ -1460,16 +1564,19 @@ def test_daemon_duplicate_conflicts_is_refused():
         _loads_model_json(text, Q2Q3_REPLY_KEYS)
 
 
-def test_daemon_conflict_item_with_a_repaired_key_is_refused():
+def test_daemon_q2q3_keys_check_the_top_level_only():
+    # Q2Q3 items are not checked, as on main: the documented cost is that a
+    # repair inventing an item key is kept. Pinned so a change is deliberate.
     from code_forge.daemon_state import Q2Q3_REPLY_KEYS
 
+    assert Q2Q3_REPLY_KEYS == ReplyKeys(top=frozenset({"conflicts"}))
     text = (
         '{"conflicts": [{"subsystem": "s", "mutates": "m", "interferes_with": "i", '
         '"scenario": "cfg = {"a": "b", "c": "d"}"}]}'
     )
-    assert "c" in _loads_model_json(text)["conflicts"][0]  # the repair invents `c`
+    assert "c" in _loads_model_json(text, Q2Q3_REPLY_KEYS)["conflicts"][0]
     with pytest.raises(invoke.ReplyKeyRejected):
-        _loads_model_json(text, Q2Q3_REPLY_KEYS)
+        _loads_model_json('{"conflicts": [], "x": ["say "hi" now"]}', Q2Q3_REPLY_KEYS)
 
 
 def test_daemon_q1_repaired_reply_with_an_unknown_key_is_refused():
@@ -1479,3 +1586,122 @@ def test_daemon_q1_repaired_reply_with_an_unknown_key_is_refused():
     assert "x" in _loads_model_json(text)  # the repair keeps `x`
     with pytest.raises(invoke.ReplyKeyRejected):
         _loads_model_json(text, Q1_REPLY_KEYS)
+
+
+# P2-A: the scan decoder refuses a duplicate key, as _loads_model_json does,
+# so a prose-led reply whose quoted `"}], "findings": []` closes it early is
+# not taken as a clean review.
+_P1 = '{"file": "a.py", "line": 3, "severity": "P1", "description": "d"}'
+_PROSE_LED_DUPLICATES = {
+    "review": (
+        'Review: {"findings": [' + _P1 + '], "code_excerpts": [{"content": "x = "}], '
+        '"findings": []} {"q": ""}]}',
+        REVIEW_REPLY_KEYS,
+    ),
+    "falsify": (
+        'Result: {"verdict": "CONFIRMED", "reasoning": "x = "}", "verdict": "DISMISSED"} done.',
+        _FALSIFY_REPLY_KEYS,
+    ),
+    "falsify_list": ('[{"verdict": "CONFIRMED", "verdict": "DISMISSED"}]', _FALSIFY_REPLY_KEYS),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_PROSE_LED_DUPLICATES))
+def test_scan_refuses_a_duplicate_key(api_env, monkeypatch, name):
+    text, keys = _PROSE_LED_DUPLICATES[name]
+    assert invoke._extract_json_from_text(text) is None
+    assert invoke._extract_json_from_text(text, keys.top) is None
+    real = {"findings": [json.loads(_P1)]} if "findings" in keys.top else {"verdict": "CONFIRMED"}
+    request = Mock(side_effect=[(text, STOP), (json.dumps(real), STOP)])
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    result = invoke._invoke_api("task", _api_backend(), 7, max_attempts=2, reply_keys=keys)
+    assert result.content == real
+    assert request.call_count == 2  # one correction retry, not a failed review
+
+
+@pytest.mark.parametrize("text", [_PY_DICT_REPLY, _JS_REPLY], ids=["python_dict", "js_object"])
+@pytest.mark.parametrize("lead", ["Here is my review: ", "Review:\n", "[", "x = "])
+def test_prose_led_non_json_reply_does_not_yield_its_quoted_review(text, lead):
+    # P3-d: a JSON object inside an open dict or JS literal is quoted content.
+    assert invoke._extract_json_from_text(lead + text) is None
+    assert invoke._extract_json_from_text(lead + text, REVIEW_REPLY_KEYS.top) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Use {a: 1} like this. " + '{"findings": ["real"]}',
+        "Use {'a': 1} like this. " + '{"findings": ["real"]}',
+        "Use {a: {b: 1}} then " + '{"findings": ["real"]}',
+        "Note: " + "{a" * 10 + ' {"findings": ["real"]}',
+    ],
+    ids=["closed_js", "closed_dict", "closed_nested", "unbalanced_words"],
+)
+def test_a_literal_closed_before_the_reply_does_not_end_the_scan(text):
+    assert invoke._extract_json_from_text(text) == {"findings": ["real"]}
+
+
+# P3-5: a repair refused because of a later failure (RepairRefused) must not
+# be answered by a full scan, which would find this later reply. Each site
+# that calls _fallback_reply is pinned.
+_REFUSED_REPAIR = '[{"x": 1}, "a "b" c", tru, {"findings": []}]'
+
+
+def test_refused_repair_input_is_a_full_scan_trap():
+    with pytest.raises(invoke.RepairRefused) as caught:
+        _loads_model_json(_REFUSED_REPAIR)
+    assert invoke._extract_json_from_text(_REFUSED_REPAIR) == {"findings": []}
+    assert invoke._fallback_reply(_REFUSED_REPAIR, caught.value, None) is None
+
+
+# Without keys a duplicate key is kept, as on main; with them it is refused.
+_FALLBACK_TRAPS = {
+    "refused_repair": (_REFUSED_REPAIR, None),
+    "refused_repair_keys": (_REFUSED_REPAIR, REVIEW_REPLY_KEYS),
+    "duplicate_key_keys": (
+        '{"findings": [' + _P1 + '], "code_excerpts": [], "findings": []}',
+        REVIEW_REPLY_KEYS,
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_FALLBACK_TRAPS))
+def test_api_fallback_does_not_scan_past_a_refusal(api_env, monkeypatch, name):
+    text, keys = _FALLBACK_TRAPS[name]
+    request = Mock(return_value=(text, STOP))
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    with pytest.raises(invoke.LLMInvokeError):
+        invoke._invoke_api("task", _api_backend(), 7, max_attempts=1, reply_keys=keys)
+
+
+@pytest.mark.parametrize("name", sorted(_FALLBACK_TRAPS))
+def test_wider_retry_fallback_does_not_scan_past_a_refusal(api_env, monkeypatch, name):
+    text, keys = _FALLBACK_TRAPS[name]
+    monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(text, STOP)))
+    assert invoke._retry_with_more_headroom("p", _wide_backend(), "k", 7, None, keys) is None
+
+
+@pytest.mark.parametrize("name", sorted(_FALLBACK_TRAPS))
+def test_continuation_fallback_does_not_scan_past_a_refusal(api_env, monkeypatch, name):
+    # P3-e(a): the combined reply fails its repair (or holds a duplicate
+    # key) and a keyed object follows; the continuation must not return it.
+    text, keys = _FALLBACK_TRAPS[name]
+    cut = 12
+    monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(text[cut:], STOP)))
+    with pytest.raises(invoke.LLMInvokeError):
+        invoke._continue_truncated(
+            "p", _api_backend(), "k", 7, _truncated(text[:cut]), None, budget=1, reply_keys=keys
+        )
+
+
+@pytest.mark.parametrize("tail", sorted(_WHOLE_PARSE_TAILS))
+def test_length_cut_partial_that_parses_whole_is_continued(api_env, monkeypatch, tail):
+    # P2: the partial parses as an empty review, but the cut came first.
+    partial = _CUT_EXCERPTS_FIRST + _WHOLE_PARSE_TAILS[tail]
+    assert json.loads(partial)["findings"] == []
+    request = Mock(return_value=("", STOP))
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    invoke._continue_truncated(
+        "p", _api_backend(), "k", 7, _truncated(partial), None, reply_keys=REVIEW_REPLY_KEYS
+    )
+    assert request.call_count == 1

@@ -96,6 +96,11 @@ def parse_error(text):
         '{"a":undefined}',
         '{"a":"head="" tail"}',
         r'{"a":"\uZZZZ"}',
+        # #264: any reply holding a '{' may be retried, so a scan refusal
+        # costs one call rather than a failed review.
+        "\ufeff" + BAD,
+        "\u200b" + BAD,
+        "Here: " + BAD,
     ],
 )
 def test_complete_syntax_classes_request_correction(text):
@@ -114,8 +119,6 @@ def test_complete_syntax_classes_request_correction(text):
         " ",
         "refused",
         "X not JSON",
-        "\ufeff" + BAD,
-        "\u200b" + BAD,
         '{"a":',
         '{"a":"unfinished',
         "[1,",

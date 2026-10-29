@@ -3562,9 +3562,9 @@ def _dispatch_inline_canary(
                     raise RuntimeError("no backend available for canary review")
                 import json as _json
 
-                from .reviewer_json import REVIEW_REPLY_KEYS
+                from .canary_gen import CANARY_REVIEW_REPLY_KEYS
 
-                result = _llm_invoke(prompt, backend=backend, reply_keys=REVIEW_REPLY_KEYS)
+                result = _llm_invoke(prompt, backend=backend, reply_keys=CANARY_REVIEW_REPLY_KEYS)
                 return (
                     _json.dumps(result.content)
                     if isinstance(result.content, dict)
