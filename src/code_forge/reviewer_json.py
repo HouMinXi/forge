@@ -74,9 +74,9 @@ REVIEW_JSON_CONTRACT = (
     "change, a caller in another file -- goes in an optional "
     '"context_quotes": [{"file": "...", "content": "..."}] instead. It '
     "carries no line numbers because it asserts nothing about them.\n"
-    "Each finding MUST carry its own \"excerpt\": the verbatim post-image "
+    'Each finding MUST carry its own "excerpt": the verbatim post-image '
     "source line(s) of that finding's file, contiguous and including its "
-    "\"line\". Root code_excerpts do not count as a finding's evidence.\n"
+    '"line". Root code_excerpts do not count as a finding\'s evidence.\n'
     "start_line and end_line are post-image line numbers of the new file; "
     "the @@ header's old-side start is not a source line.\n"
 )
@@ -562,7 +562,10 @@ def _normalize_root_finding(data: dict) -> None:
         or abs(data["line"]) > sys.maxsize
         or type(data.get("description")) is not str
         or not data["description"].strip()
-        or not any(type(data.get("excerpt")) is native for native in (str, type(None), bool, int, float, list, dict))
+        or not any(
+            type(data.get("excerpt")) is native
+            for native in (str, type(None), bool, int, float, list, dict)
+        )
     ):
         return
     if "\x00" in data["file"]:
@@ -685,8 +688,14 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         # Hoisting copies finding dictionaries but retains excerpt objects.
         # Isolate alias writes without traversing arbitrary model metadata.
         data["code_excerpts"] = [
-            (dict(excerpt) if type(excerpt) is dict else {key: value for key, value in dict.items(excerpt)})
-            if isinstance(excerpt, dict) else excerpt for excerpt in data["code_excerpts"]
+            (
+                dict(excerpt)
+                if type(excerpt) is dict
+                else {key: value for key, value in dict.items(excerpt)}
+            )
+            if isinstance(excerpt, dict)
+            else excerpt
+            for excerpt in data["code_excerpts"]
         ]
     _normalize_excerpt_aliases(data)
 

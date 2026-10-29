@@ -209,6 +209,7 @@ def _parse_llm_response(
     strings of either form. Already decoded content cannot establish the
     original response's completeness or duplicate-key provenance.
     """
+
     def unique_object(pairs: list[tuple[str, object]]) -> dict:
         result = {}
         for key, value in pairs:

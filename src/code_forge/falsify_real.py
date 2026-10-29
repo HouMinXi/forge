@@ -186,9 +186,7 @@ def _anchored_diff_excerpt(section: str, text: str, line_range: Optional[list[in
     return ""
 
 
-def _diff_for_file(
-    diff_text: Optional[str], path: str, line_range: Optional[list[int]] = None
-) -> str:
+def _diff_for_file(diff_text: Optional[str], path: str, line_range: Optional[list[int]] = None) -> str:
     """Annotated hunks for one file, or "" when the file has none."""
     if not diff_text or not path:
         return ""
@@ -204,8 +202,7 @@ def _diff_for_file(
             return anchored
         notice = (
             "\n... [anchor unavailable; cited code not located; prefix truncated to %d characters; "
-            "omitted diff text]\n"
-            % _DIFF_CAP
+            "omitted diff text]\n" % _DIFF_CAP
         )
         text = text[: _DIFF_CAP - len(notice)] + notice
     return text

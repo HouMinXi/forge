@@ -22,7 +22,11 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 from . import __version__
 from .assertion_outcome import (
-    AssertionKind, AssertionOutcome, AssertionStage, AssertionStatus, legacy_progress_outcome,
+    AssertionKind,
+    AssertionOutcome,
+    AssertionStage,
+    AssertionStatus,
+    legacy_progress_outcome,
 )
 from .runner import capture_tool_version
 from .sarif import build_sarif_log, format_classification_line, format_summary
@@ -107,7 +111,8 @@ def _format_infra_lines(final_state: Any) -> str:
     errors = [" ".join(str(e).split()) for e in final_state.infra_errors]
     errors = [e for e in errors if e]
     lines = [
-        "code-forge: infra: " + (e if len(e) <= _INFRA_LINE_CHARS else e[: _INFRA_LINE_CHARS - 3] + "...")
+        "code-forge: infra: "
+        + (e if len(e) <= _INFRA_LINE_CHARS else e[: _INFRA_LINE_CHARS - 3] + "...")
         for e in errors[:_INFRA_LINES_MAX]
     ]
     extra = len(errors) - _INFRA_LINES_MAX
@@ -164,15 +169,15 @@ def _emit_ci_output(
         assertion_outcome=assertion_outcome,
     )
     legacy_summary = format_summary(
-        final_state, advisory_count=len(advisories), manifest=manifest,
+        final_state,
+        advisory_count=len(advisories),
+        manifest=manifest,
         assertion_outcome=assertion_outcome,
     )
     # Match presentation serializer domain (allow_nan=False) so the substrate
     # accepts the same document the pure helpers will extend.
     legacy_stdout = json.dumps(log_dict, ensure_ascii=False, allow_nan=False)
-    substrate = prepare_legacy_report(
-        log_dict, stdout=legacy_stdout, stderr=legacy_summary
-    )
+    substrate = prepare_legacy_report(log_dict, stdout=legacy_stdout, stderr=legacy_summary)
     if substrate.sarif_document is not None:
         projection = classify_report_records(final_state)
         prepared = prepare_report_views(substrate, projection)
@@ -1435,14 +1440,19 @@ def _run_test_assertion_review(
         changed = get_changed_files(diff_text)
         # Match test paths and filenames without treating contest.py as a test.
         test_files = [
-            f for f in changed
-            if "/tests/" in f or f.startswith("tests/")
-            or "test_" in f.split("/")[-1] or "_test." in f.split("/")[-1]
+            f
+            for f in changed
+            if "/tests/" in f
+            or f.startswith("tests/")
+            or "test_" in f.split("/")[-1]
+            or "_test." in f.split("/")[-1]
         ]
         if not test_files:
             outcome = AssertionOutcome(
-                AssertionStatus.NOT_APPLICABLE, 0,
-                AssertionStage.ELIGIBILITY, AssertionKind.NO_TEST_FILES,
+                AssertionStatus.NOT_APPLICABLE,
+                0,
+                AssertionStage.ELIGIBILITY,
+                AssertionKind.NO_TEST_FILES,
             )
         else:
             from .diff import annotated_diff_prompt_block
@@ -1456,7 +1466,8 @@ def _run_test_assertion_review(
                 '"description": "..."}], '
                 '"code_excerpts": [{"file": "...", "start_line": N, '
                 '"end_line": M, "content": "..."}]}\n'
-                "Each diff hunk MUST have at least one code_excerpt.\n" + annotated_diff_prompt_block(diff_text)
+                "Each diff hunk MUST have at least one code_excerpt.\n"
+                + annotated_diff_prompt_block(diff_text)
             )
             stage = AssertionStage.INVOCATION
             result = llm_invoke(prompt, backend=backend, reply_keys=REVIEW_REPLY_KEYS)
@@ -1464,7 +1475,9 @@ def _run_test_assertion_review(
             validated = validate_reviewer_json(result.content)
             stage = AssertionStage.CONVERSION
             findings = _json_to_state_findings(
-                validated, "test-assertion", backend=backend.name if backend else None,
+                validated,
+                "test-assertion",
+                backend=backend.name if backend else None,
             )
             outcome = AssertionOutcome(
                 AssertionStatus.COMPLETED_FINDINGS if findings else AssertionStatus.COMPLETED_EMPTY,
@@ -1480,7 +1493,9 @@ def _run_test_assertion_review(
         )
         findings = []
         outcome = AssertionOutcome(
-            AssertionStatus.FAILED, None, stage,
+            AssertionStatus.FAILED,
+            None,
+            stage,
             AssertionKind.TIMEOUT if timed_out else AssertionKind.ERROR,
         )
     # Notification errors belong to the caller, not the model's failure path.
@@ -1507,13 +1522,18 @@ def _run_test_assertion_phase(
     result: AssertionOutcome | None = None
     try:
         findings = _run_test_assertion_review(
-            diff_text, backend, on_outcome=legacy_results.append, on_result=results.append,
+            diff_text,
+            backend,
+            on_outcome=legacy_results.append,
+            on_result=results.append,
         )
         for finding in findings:
             sys.stderr.write("[test-assertion] %s\n" % finding.description)
         if len(results) == 1 and type(results[0]) is AssertionOutcome:
             candidate = results[0]
-            if candidate.finding_count == len(findings) or (candidate.finding_count is None and not findings):
+            if candidate.finding_count == len(findings) or (
+                candidate.finding_count is None and not findings
+            ):
                 result = candidate
         legacy = legacy_progress_outcome(legacy_results[0]) if len(legacy_results) == 1 else "unreported"
         outcome = result.legacy_outcome() if result is not None else legacy
@@ -4173,11 +4193,15 @@ def _run(args, env, cwd: Path) -> Verdict:
         from .mutation import mutation_review_admission_error
 
         admission_error = mutation_review_admission_error(
-            target_kind=resolved.target_kind, git_diff=resolved.git_diff,
-            source_files=resolved.source_files, source_root=cwd,
+            target_kind=resolved.target_kind,
+            git_diff=resolved.git_diff,
+            source_files=resolved.source_files,
+            source_root=cwd,
             config_root=test_config_root or cwd,
-            runner=build_l2_runner(cwd=cwd), ci_detached=mode == Mode.CI,
-            base_sha=resolved.base_sha, allow_untracked=mode != Mode.CI,
+            runner=build_l2_runner(cwd=cwd),
+            ci_detached=mode == Mode.CI,
+            base_sha=resolved.base_sha,
+            allow_untracked=mode != Mode.CI,
         )
         if admission_error:
             raise CliError(admission_error)
@@ -4299,8 +4323,10 @@ def _run(args, env, cwd: Path) -> Verdict:
     from .gate_check import trusted_gate_data_or_error
 
     _trusted_ctx_gate = trusted_gate_data_or_error(
-        config_root=test_config_root or cwd, source_root=cwd,
-        base_sha=resolved.base_sha, allow_untracked=mode != Mode.CI,
+        config_root=test_config_root or cwd,
+        source_root=cwd,
+        base_sha=resolved.base_sha,
+        allow_untracked=mode != Mode.CI,
     )
     _graph_source = GraphTriageSource(cwd, gate_config=_trusted_ctx_gate)
     _context_rows: list = []
@@ -4690,8 +4716,12 @@ def _run(args, env, cwd: Path) -> Verdict:
             # Keep advice and the final state reload in the same review lock.
             assertion_outcome = (
                 _run_test_assertion_phase(resolved.git_diff, backend)
-                if resolved.git_diff else AssertionOutcome(
-                    AssertionStatus.SKIPPED, None, AssertionStage.ELIGIBILITY, AssertionKind.NO_GIT_DIFF,
+                if resolved.git_diff
+                else AssertionOutcome(
+                    AssertionStatus.SKIPPED,
+                    None,
+                    AssertionStage.ELIGIBILITY,
+                    AssertionKind.NO_GIT_DIFF,
                 )
             )
             # SARIF emission in CI mode, inside lock scope.
@@ -4760,8 +4790,10 @@ def _run_hold_loop(
         from .gate_check import trusted_gate_data_or_error
 
         _trusted_ctx_gate = trusted_gate_data_or_error(  # #150
-            config_root=test_config_root or cwd, source_root=cwd,
-            base_sha=resolved.base_sha, allow_untracked=mode != Mode.CI,
+            config_root=test_config_root or cwd,
+            source_root=cwd,
+            base_sha=resolved.base_sha,
+            allow_untracked=mode != Mode.CI,
         )
         _graph_triage_runner = GraphTriageSource(cwd, gate_config=_trusted_ctx_gate).advisory_runner(
             getattr(resolved, "head_sha", None), allow_unsnapshotted_context
@@ -4901,9 +4933,16 @@ def _run_mutation_check(args, cwd: Path) -> int:
       1  FAIL (survivors found)
       2  CLI_ERROR (git or invocation error)
     """
-    from .mutation import run_mutation, _mutation_outcome, capture_mutation_source_guard, mutation_source_guard_matches
+    from .mutation import (
+        run_mutation,
+        _mutation_outcome,
+        capture_mutation_source_guard,
+        mutation_source_guard_matches,
+    )
     from .mutation_findings import (
-        apply_mutation_ledger_dispositions, decode_mutation_survivor_details, mutation_review_context,
+        apply_mutation_ledger_dispositions,
+        decode_mutation_survivor_details,
+        mutation_review_context,
     )
 
     review_head = None
@@ -4934,8 +4973,13 @@ def _run_mutation_check(args, cwd: Path) -> int:
         def captured_head():
             try:
                 current = subprocess.run(
-                    ["git", "rev-parse", "HEAD"], cwd=str(cwd), capture_output=True,
-                    text=True, encoding="utf-8", errors="replace", check=False,
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=str(cwd),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
                 )
             except OSError:
                 return None
@@ -4981,8 +5025,14 @@ def _run_mutation_check(args, cwd: Path) -> int:
 
     if args.diff is None:
         source_guard = capture_mutation_source_guard(
-            source_root=cwd, target_kind="WORKING", base_sha=review_head, head_sha=review_head,
-            git_diff=diff_text, paths=tuple(diff_files), diff_paths=(), selection="TRACKED_WORKING",
+            source_root=cwd,
+            target_kind="WORKING",
+            base_sha=review_head,
+            head_sha=review_head,
+            git_diff=diff_text,
+            paths=tuple(diff_files),
+            diff_paths=(),
+            selection="TRACKED_WORKING",
         )
 
     from .gate_check import load_gate_config
@@ -5028,12 +5078,18 @@ def _run_mutation_check(args, cwd: Path) -> int:
     if "baseline_env_retry" in evidence:
         from .baseline_guard import env_retry_note
 
-        print("code-forge: mutation-check: NOTE: %s" % env_retry_note(evidence["baseline_env_retry"]), file=sys.stderr)
+        print(
+            "code-forge: mutation-check: NOTE: %s" % env_retry_note(evidence["baseline_env_retry"]),
+            file=sys.stderr,
+        )
     same_head = args.diff is None and review_head is not None and captured_head() == review_head
     same_source = mutation_source_guard_matches(source_guard, source_root=cwd)
     if args.diff is None and not same_source:
-        print("code-forge: mutation-check: source changed or review capture unavailable; native ruling refused",
-              file=sys.stderr)
+        print(
+            "code-forge: mutation-check: source changed or review capture unavailable; "
+            "native ruling refused",
+            file=sys.stderr,
+        )
 
     skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
     quiet = {"mutation-tests-only", "mutation-no-adapter"}
@@ -5065,20 +5121,36 @@ def _run_mutation_check(args, cwd: Path) -> int:
             )
         return EXIT_CLI_ERROR
 
-    context = mutation_review_context(
-        source_root=cwd, base_sha=review_head, head_sha=review_head, git_diff=diff_text,
-    ) if same_head and same_source else None
-    decoded = decode_mutation_survivor_details(
-        _mutation_outcome(findings, infra_errors, evidence, review_context=context),
-        review_context=context, include_timeout_diagnostics=True,
-    ) if context is not None else None
+    context = (
+        mutation_review_context(
+            source_root=cwd,
+            base_sha=review_head,
+            head_sha=review_head,
+            git_diff=diff_text,
+        )
+        if same_head and same_source
+        else None
+    )
+    decoded = (
+        decode_mutation_survivor_details(
+            _mutation_outcome(findings, infra_errors, evidence, review_context=context),
+            review_context=context,
+            include_timeout_diagnostics=True,
+        )
+        if context is not None
+        else None
+    )
     if decoded is not None:
         for finding in decoded:
             if finding.id.startswith("mutation-timeout-"):
                 print("code-forge: mutation-check: " + finding.description, file=sys.stderr)
     notes = apply_mutation_ledger_dispositions(
-        findings, source_root=cwd, base_sha=review_head, head_sha=review_head,
-        git_diff=diff_text, eligible_measurement=decoded is not None,
+        findings,
+        source_root=cwd,
+        base_sha=review_head,
+        head_sha=review_head,
+        git_diff=diff_text,
+        eligible_measurement=decoded is not None,
     )
     for note in notes:
         print("code-forge: mutation-check: %s" % note, file=sys.stderr)

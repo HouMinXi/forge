@@ -230,8 +230,9 @@ def _observed_usage(usage_data: dict, api_format: str) -> Usage:
     else:
         cache_reports = (usage_data.get("cache_read_input_tokens"),)
     valid_cache_reports = [value for value in cache_reports if type(value) is int and value >= 0]
-    counts.append(next((value for value in valid_cache_reports if value > 0),
-                       0 if valid_cache_reports else None))
+    counts.append(
+        next((value for value in valid_cache_reports if value > 0), 0 if valid_cache_reports else None)
+    )
     valid = [type(value) is int and value >= 0 for value in counts]
     return Usage(
         *(value if known else 0 for value, known in zip(counts, valid, strict=True)),
@@ -1323,7 +1324,7 @@ def _quote_is_escaped(text: str, quote_at: int) -> bool:
 
 
 def _escape_at(text: str, position: int) -> str:
-    return text[:position] + '\\' + text[position:]
+    return text[:position] + "\\" + text[position:]
 
 
 # A model that finished the reply still produced unparseable JSON.
@@ -2099,7 +2100,11 @@ def _repair_missing_excerpts(
             )
     except LLMInvokeError as exc:
         duration = max(exc.duration_s, time.monotonic() - repair_start)
-        return parsed, exc.observed_usage if exc.observed_usage is not None else Usage(known_fields=frozenset()), duration
+        return (
+            parsed,
+            exc.observed_usage if exc.observed_usage is not None else Usage(known_fields=frozenset()),
+            duration,
+        )
     excerpts = _excerpts_from(follow.content)
     if not excerpts:
         return parsed, follow.usage, follow.duration_s
