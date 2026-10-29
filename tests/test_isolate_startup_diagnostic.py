@@ -731,6 +731,26 @@ def test_notes_that_share_a_long_prefix_are_both_kept():
     assert error.__notes__ == [left + "16)", left + "39)"]
 
 
+@pytest.mark.parametrize(
+    "notes",
+    [
+        ("cleanup failed: /x", "cleanup failed"),
+        ("cleanup failed", "cleanup failed: /x"),
+        ("errno=16", "rmdir errno=16"),
+        ("rmdir errno=16", "errno=16"),
+    ],
+)
+def test_a_note_inside_another_note_is_still_added(notes):
+    # Only an equal note is skipped, not one that shares a prefix or suffix
+    # with another note, or is contained in it.
+    error = RuntimeError("in flight")
+
+    for note in notes:
+        isolate.attach_note(error, note)
+
+    assert error.__notes__ == list(notes)
+
+
 def test_a_note_anywhere_in_the_list_is_not_repeated():
     error = RuntimeError("in flight")
 
