@@ -1302,9 +1302,16 @@ _REFUSED_TAILS = {
     "close_paren": ")",
     "assign": " = 1",
 }
-# Text that starts with a word or a digit reads as prose after a valid reply
-# (the P2-2 C cases), so these cut tails cannot be refused on a stop.
-_PROSE_LIKE_TAILS = {"number": " 42", "word": " done", "open_braces": _OPEN_BRACES}
+# Any other first character reads as prose after a valid reply (the P2-2 C
+# cases), so these cut tails cannot be refused on a stop.
+_PROSE_LIKE_TAILS = {
+    "number": " 42",
+    "word": " done",
+    "open_braces": _OPEN_BRACES,
+    "paren": " (see a.py)",
+    "list_item": "\n- note",
+    "single_quote": " 'a'",
+}
 _ALL_TAILS = {**_REFUSED_TAILS, **_PROSE_LIKE_TAILS}
 
 

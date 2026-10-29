@@ -1557,11 +1557,13 @@ def _extract_json_from_text(
       followed by prose, a fence, `,` or `]` in a list, other objects or
       nothing.
 
-    Limit: text after a leading object that starts with a word or a digit
-    reads as prose, so a reply cut right after a quoted
-    `"}], "findings": []}` whose next character is a letter or digit (with
-    no later '"') still returns the quoted empty object. Refusing those
-    would also refuse a valid reply followed by prose.
+    Limit: after a leading object, only the text that _text_after_refuses
+    names is refused. Any other next character (a letter, a digit, '(',
+    '[', '{', '-', '#', a single quote and the like) reads as prose, so a
+    reply cut right after a quoted `"}], "findings": []}` and followed by
+    such text, with no later '"' and no later object with the reply's keys,
+    still returns the quoted empty object. Refusing those would also refuse
+    a valid reply followed by prose.
 
     Returns None if no valid envelope can be extracted.
     """
