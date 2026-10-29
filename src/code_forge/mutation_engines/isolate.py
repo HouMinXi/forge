@@ -47,6 +47,10 @@ class IsolationError(Exception):
     """A supervisor usage or lifecycle error."""
 
 
+class CgroupCleanupError(IsolationError):
+    """The run cgroup was still present when the removal deadline passed."""
+
+
 def verify_isolation_support(cgroup_root: str) -> None:
     """Raise IsolationUnavailable unless the delegated root is usable."""
     if shutil.which("bwrap") is None:
@@ -131,15 +135,35 @@ def _read(path: str) -> str:
 _STARTUP_DIAGNOSTIC_LIMIT = 200
 
 
-def _startup_diagnostic(stage: str, exc: BaseException) -> bytes:
-    """Encode why the forked child stopped before exec, bounded and ASCII-only."""
+def _printable(text: str) -> str:
+    """Replace every character outside printable ASCII (0x20-0x7e) with '?'."""
+    return "".join(ch if " " <= ch <= "~" else "?" for ch in text)
+
+
+def _error_detail(exc: BaseException) -> str:
+    """Name an exception by type and errno, e.g. ``type=OSError errno=16``."""
     code = getattr(exc, "errno", None)
-    text = "error stage=%s type=%s errno=%s" % (
-        stage,
-        type(exc).__name__,
-        code if isinstance(code, int) else "none",
-    )
-    return text.encode("ascii", "replace")[:_STARTUP_DIAGNOSTIC_LIMIT]
+    return "type=%s errno=%s" % (type(exc).__name__, code if isinstance(code, int) else "none")
+
+
+def _startup_diagnostic(stage: str, exc: BaseException) -> bytes:
+    """Encode why the forked child stopped before exec, bounded and printable ASCII."""
+    text = "error stage=%s %s" % (stage, _error_detail(exc))
+    return _printable(text).encode("ascii")[:_STARTUP_DIAGNOSTIC_LIMIT]
+
+
+def _decode_startup_diagnostic(raw: bytes) -> str:
+    """Decode child diagnostic bytes; each byte outside printable ASCII becomes '?'."""
+    return _printable(raw.decode("latin-1"))
+
+
+def _describe_exit(code: int | None) -> str:
+    """Describe a child's exit status for a startup error message."""
+    if code is None:
+        return "still running at deadline"
+    if code < 0:
+        return "signal %d" % -code
+    return "exit %d" % code
 
 
 def _read_startup_diagnostic(fd: int) -> str:
@@ -155,7 +179,7 @@ def _read_startup_diagnostic(fd: int) -> str:
         raw = b""
     if not raw:
         return "no startup diagnostic"
-    return raw.decode("ascii", "replace")
+    return _decode_startup_diagnostic(raw)
 
 
 class _ChildProcess:
@@ -211,6 +235,8 @@ class Supervisor:
         self._process: _ChildProcess | None = None
         self._owner_thread: SupervisorThread | None = None
         self._torn_down = False
+        # Set when the run cgroup outlived its removal deadline.
+        self.cleanup_error: str | None = None
 
     def _bind_thread(self, thread: "SupervisorThread") -> None:
         self._owner_thread = thread
@@ -323,7 +349,13 @@ class Supervisor:
                     os.execvpe(argv[0], argv, env)  # noqa: S606 - exec into bwrap, no shell
                 except BaseException as exc:  # noqa: BLE001 - child must never escape
                     try:
-                        os.write(status_w, _startup_diagnostic(stage, exc))
+                        # A failure here must still leave bytes in the pipe:
+                        # an empty pipe at EOF reads as a successful exec.
+                        try:
+                            message = _startup_diagnostic(stage, exc)
+                        except BaseException:  # noqa: BLE001 - fall back to a constant
+                            message = b"error stage=unknown"
+                        os.write(status_w, message)
                     finally:
                         os._exit(127)
 
@@ -347,10 +379,7 @@ class Supervisor:
                 code = self._process.poll()
                 raise IsolationError(
                     "payload process was not placed in the run cgroup (child %s; %s)"
-                    % (
-                        "still running at deadline" if code is None else "exit %d" % code,
-                        _read_startup_diagnostic(status_r),
-                    )
+                    % (_describe_exit(code), _read_startup_diagnostic(status_r))
                 )
 
             self.gate_opened_monotonic_ns = time.monotonic_ns()
@@ -358,17 +387,16 @@ class Supervisor:
             close_parent_fd(gate_w)
             status = b""
             while len(status) < _STARTUP_DIAGNOSTIC_LIMIT:
-                chunk = os.read(status_r, _STARTUP_DIAGNOSTIC_LIMIT)
+                chunk = os.read(status_r, _STARTUP_DIAGNOSTIC_LIMIT - len(status))
                 if not chunk:
                     break
                 status += chunk
             close_parent_fd(status_r)
             if status:
                 raise IsolationError(
-                    "payload failed to exec bubblewrap (%s)"
-                    % status[:_STARTUP_DIAGNOSTIC_LIMIT].decode("ascii", "replace")
+                    "payload failed to exec bubblewrap (%s)" % _decode_startup_diagnostic(status)
                 )
-        except BaseException:  # noqa: BLE001 - cleanup must run on any failure
+        except BaseException as exc:  # noqa: BLE001 - cleanup must run on any failure
             try:
                 if self._process is not None and self._process.poll() is None:
                     self._process.kill()
@@ -378,7 +406,12 @@ class Supervisor:
                         os.close(fd)
                     except OSError:
                         pass
-                self._remove_cgroup(force=True)
+                try:
+                    self._remove_cgroup(force=True)
+                except CgroupCleanupError as cleanup:
+                    # The start failure stays the raised error; the cleanup
+                    # failure rides along as a note and in cleanup_error.
+                    exc.add_note(str(cleanup))
             raise
 
     def read_resource_peak(self, name: str) -> int | None:
@@ -416,7 +449,7 @@ class Supervisor:
             except OSError:
                 pass
         deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
+        while True:
             try:
                 os.rmdir(self.cgroup_path)
                 return
@@ -424,14 +457,24 @@ class Supervisor:
                 # Already removed (a failed start cleans up once and the later
                 # teardown asks again): absence is a successful removal.
                 return
-            except OSError:
-                if force and os.path.exists(kill_file):
-                    # keep killing stragglers between rmdir retries
-                    try:
-                        _write(kill_file, "1")
-                    except OSError:
-                        pass
-                time.sleep(0.1)
+            except OSError as exc:
+                last_error = exc
+            if time.monotonic() >= deadline:
+                break
+            if force and os.path.exists(kill_file):
+                # keep killing stragglers between rmdir retries
+                try:
+                    _write(kill_file, "1")
+                except OSError:
+                    pass
+            time.sleep(0.1)
+        # EBUSY (live tasks), ENOTEMPTY or EACCES at the deadline is a real
+        # cleanup failure: report it instead of leaving the cgroup silently.
+        self.cleanup_error = _printable(
+            "run cgroup was not removed before the deadline (last rmdir error %s)"
+            % _error_detail(last_error)
+        )[:_STARTUP_DIAGNOSTIC_LIMIT]
+        raise CgroupCleanupError("%s: %s" % (self.cgroup_path, self.cleanup_error))
 
     def teardown(self) -> None:
         if self._torn_down:
