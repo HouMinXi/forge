@@ -1298,6 +1298,9 @@ _REFUSED_TAILS = {
     "call": "; f(a)",
     "escape": "\\u007d",
     "smart_quote": " \u201cx",
+    "right_smart_quote": " \u201dx",
+    "close_paren": ")",
+    "assign": " = 1",
 }
 # Text that starts with a word or a digit reads as prose after a valid reply
 # (the P2-2 C cases), so these cut tails cannot be refused on a stop.
@@ -1446,5 +1449,17 @@ def test_daemon_duplicate_conflicts_is_refused():
     conflict = '{"subsystem": "s", "mutates": "m", "interferes_with": "i", "scenario": "c"}'
     text = '{"conflicts": [' + conflict + '], "conflicts": []}'
     assert _loads_model_json(text)["conflicts"] == []  # json keeps the last key
+    with pytest.raises(invoke.ReplyKeyRejected):
+        _loads_model_json(text, Q2Q3_REPLY_KEYS)
+
+
+def test_daemon_conflict_item_with_a_repaired_key_is_refused():
+    from code_forge.daemon_state import Q2Q3_REPLY_KEYS
+
+    text = (
+        '{"conflicts": [{"subsystem": "s", "mutates": "m", "interferes_with": "i", '
+        '"scenario": "cfg = {"a": "b", "c": "d"}"}]}'
+    )
+    assert "c" in _loads_model_json(text)["conflicts"][0]  # the repair invents `c`
     with pytest.raises(invoke.ReplyKeyRejected):
         _loads_model_json(text, Q2Q3_REPLY_KEYS)
