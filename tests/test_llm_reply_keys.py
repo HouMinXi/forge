@@ -911,3 +911,18 @@ def test_salvage_still_reads_a_leading_verdict():
         "verdict": "CONFIRMED",
         "reasoning": "the stub",
     }
+
+
+@pytest.mark.parametrize(
+    "after",
+    [" }", " } {", ' "}', '"} {"a": 1}'],
+    ids=["one_close", "close_then_open", "quote_close", "close_then_object"],
+)
+def test_object_before_an_unopened_close_is_skipped(after):
+    # The '}' closes something the object sat inside; a later '{' cannot open it.
+    assert invoke._extract_json_from_text('{"findings": []}' + after) is None
+
+
+def test_object_before_balanced_braces_is_kept():
+    text = '{"findings": []} then {"a": 1} and {b}'
+    assert invoke._extract_json_from_text(text) == {"findings": []}
