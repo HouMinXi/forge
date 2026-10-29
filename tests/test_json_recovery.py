@@ -235,7 +235,6 @@ def test_legal_inputs_remain_unchanged(monkeypatch, value):
 @pytest.mark.parametrize(
     "text",
     [
-        '{"a":1,"a":2}',
         '{"a":NaN}',
         '{"a":Infinity}',
         '{"excerpt":"raw\n\tline\r\n"}',
@@ -248,6 +247,16 @@ def test_existing_nonstandard_compatibility(monkeypatch, text):
     actual = invoke._invoke_api("task", backend(), 7).content
     assert json.dumps(actual) == json.dumps(json.loads(text, strict=False))
     assert request.call_count == 1
+
+
+def test_duplicate_key_is_refused(monkeypatch):
+    # #264: json keeps the last of a repeated key, so a quoted
+    # `"findings": []` would replace the real list. The reply is refused.
+    monkeypatch.setenv("JSON_TEST_KEY", "local-test")
+    request = Mock(return_value=('{"a":1,"a":2}', {}))
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    with pytest.raises(invoke.InvalidJSONResponseError, match='Duplicate key "a"'):
+        invoke._invoke_api("task", backend(), 7)
 
 
 @pytest.mark.parametrize("fmt", ["anthropic", "vertex"])

@@ -17,7 +17,13 @@ import pytest
 from code_forge.backend import BackendConfig
 from code_forge.canary_gen import CANARY_REVIEW_REPLY_KEYS
 from code_forge.falsify_real import _FALSIFY_REPLY_KEYS
-from code_forge.llm_invoke import ReplyKeys, _loads_model_json, _unknown_reply_key, llm_invoke
+from code_forge.llm_invoke import (
+    LLMInvokeError,
+    ReplyKeys,
+    _loads_model_json,
+    _unknown_reply_key,
+    llm_invoke,
+)
 from code_forge.reviewer_json import REVIEW_REPLY_KEYS
 from code_forge.runtime import RUNTIME_REPLY_KEYS
 
@@ -74,8 +80,8 @@ def test_caller_schemas_reject_invented_keys(text, keys):
 
 
 def test_unrepaired_reply_with_unknown_key_still_parses():
-    # A reply that needs no repair is never checked: models add keys and
-    # validators decide what to do with them.
+    # A reply that needs no repair gets no key check here (duplicates are
+    # still refused): models add keys and validators decide what to do.
     text = '{"findings": [{"file": "a.py", "line": 1, "note": "x"}], "code_excerpts": [], "extra": 1}'
     assert _loads_model_json(text, REVIEW_REPLY_KEYS) == json.loads(text)
 
@@ -199,11 +205,12 @@ def _cli_proc(inner):
     return proc
 
 
-def test_cli_inner_result_falls_back_to_raw_text(cli_binary):
+def test_cli_inner_result_refusal_fails_the_call(cli_binary):
+    # A refused repair is a failed call, not raw text for the caller to parse.
     backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
     with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_cli_proc(REVIEW_REPRO)):
-        result = llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
-    assert result.content == REVIEW_REPRO
+        with pytest.raises(LLMInvokeError, match="reply refused -- ReplyKeyRejected"):
+            llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
 
 
 def test_cli_inner_result_without_keys_keeps_the_repair(cli_binary):
@@ -301,12 +308,12 @@ def _bare_cli_proc(stdout):
     return proc
 
 
-def test_cli_bare_stdout_falls_back_to_raw_text(cli_binary):
+def test_cli_bare_stdout_refusal_fails_the_call(cli_binary):
     # A CLI or proxy that prints the model's JSON with no result envelope.
     backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
     with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(REVIEW_REPRO)):
-        result = llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
-    assert result.content == REVIEW_REPRO
+        with pytest.raises(LLMInvokeError, match="reply refused -- ReplyKeyRejected"):
+            llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
 
 
 def test_cli_bare_stdout_without_keys_keeps_the_repair(cli_binary):
@@ -569,11 +576,11 @@ REPAIRED_STREAM = '[{"type": "system"}, ' + REPAIRED_ENVELOPE + "]"
 
 
 @pytest.mark.parametrize("stdout", [REPAIRED_ENVELOPE, REPAIRED_STREAM], ids=["envelope", "stream"])
-def test_cli_repaired_object_result_falls_back_to_raw_text(cli_binary, stdout):
+def test_cli_repaired_object_result_refusal_fails_the_call(cli_binary, stdout):
     backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
     with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(stdout)):
-        result = llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
-    assert result.content == stdout
+        with pytest.raises(LLMInvokeError, match="reply refused -- ReplyKeyRejected"):
+            llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
     with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(stdout)):
         result = llm_invoke("prompt", backend=backend)
     assert result.content["findings"][0]["c"] == 'd"}'
@@ -604,16 +611,12 @@ def test_top_level_list_items_are_checked():
 
 
 def test_cli_runtime_list_reply_is_refused(cli_binary):
-    from code_forge.runtime import _parse_llm_response
-
     backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
     with patch(
         "code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(RUNTIME_LIST_REPRO)
     ):
-        result = llm_invoke("prompt", backend=backend, reply_keys=RUNTIME_REPLY_KEYS)
-    assert result.content == RUNTIME_LIST_REPRO
-    with pytest.raises(ValueError):
-        _parse_llm_response(result.content)
+        with pytest.raises(LLMInvokeError, match="reply refused -- ReplyKeyRejected"):
+            llm_invoke("prompt", backend=backend, reply_keys=RUNTIME_REPLY_KEYS)
 
 
 def test_api_runtime_list_reply_spends_correction_retry(api_env, monkeypatch):
@@ -754,7 +757,8 @@ def test_failed_repair_still_salvages_the_leading_object():
     # A cut falsify reply with an unescaped quote is still the reply's own object.
     with pytest.raises(invoke.RepairRefused) as refused:
         _loads_model_json(CUT_FALSIFY)
-    assert invoke._fallback_reply(CUT_FALSIFY, refused.value, FALSIFY_KEYS) == {"verdict": "DISMISSED"}
+    salvaged = invoke._fallback_reply(CUT_FALSIFY, refused.value, FALSIFY_KEYS, _FALSIFY_REPLY_KEYS)
+    assert salvaged == {"verdict": "DISMISSED"}
 
 
 def test_leading_only_skips_a_later_object():
@@ -768,14 +772,34 @@ def test_leading_only_skips_a_later_object():
     assert invoke._extract_json_from_text(other, FALSIFY_KEYS, leading_only=True) is None
 
 
-def test_plain_error_still_scans_the_text(api_env, monkeypatch):
+def test_plain_error_without_keys_still_scans_the_text(api_env, monkeypatch):
     # Prose before the reply fails at the first character, with no repair tried.
     good = json.dumps(GOOD_REVIEW)
     request = Mock(return_value=("Here is the review: " + good, STOP))
     monkeypatch.setattr(invoke, "_invoke_openai", request)
-    result = invoke._invoke_api("task", _api_backend(), 7, max_attempts=2, reply_keys=REVIEW_REPLY_KEYS)
+    result = invoke._invoke_api("task", _api_backend(), 7, max_attempts=2)
     assert result.content == GOOD_REVIEW
     assert request.call_count == 1
+
+
+def test_prose_led_reply_with_keys_spends_the_correction_retry(api_env, monkeypatch):
+    # With keys only a leading object is taken; prose first costs the correction call.
+    good = json.dumps(GOOD_REVIEW)
+    request = Mock(side_effect=[("Here is the review: " + good, STOP), (good, STOP)])
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    result = invoke._invoke_api("task", _api_backend(), 7, max_attempts=2, reply_keys=REVIEW_REPLY_KEYS)
+    assert result.content == GOOD_REVIEW
+    assert request.call_count == 2
+    assert "could not be decoded as JSON" in request.call_args_list[1].args[0]
+
+
+def test_prose_led_reply_with_keys_fails_closed_when_repeated(api_env, monkeypatch):
+    good = json.dumps(GOOD_REVIEW)
+    request = Mock(return_value=("Here is the review: " + good, STOP))
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    with pytest.raises(invoke.InvalidJSONResponseError):
+        invoke._invoke_api("task", _api_backend(), 7, max_attempts=2, reply_keys=REVIEW_REPLY_KEYS)
+    assert request.call_count == 2
 
 
 def test_cli_repaired_object_result_with_known_keys_is_kept(cli_binary):
@@ -814,7 +838,7 @@ def test_key_refusal_tries_no_object_at_all():
         _loads_model_json(text, _FALSIFY_REPLY_KEYS)
     salvaged = invoke._extract_json_from_text(text, FALSIFY_KEYS, leading_only=True)
     assert salvaged == {"verdict": "DISMISSED"}
-    assert invoke._fallback_reply(text, refused.value, FALSIFY_KEYS) is None
+    assert invoke._fallback_reply(text, refused.value, FALSIFY_KEYS, _FALSIFY_REPLY_KEYS) is None
 
 
 def test_repair_refused_is_the_base_of_reply_key_rejected():
@@ -828,7 +852,7 @@ def test_budget_exhaustion_raises_repair_refused():
     noise = '"}{"findings": []}},]]['
     with pytest.raises(invoke.RepairRefused) as refused:
         _loads_model_json(noise)
-    assert invoke._fallback_reply(noise, refused.value, None) is None
+    assert invoke._fallback_reply(noise, refused.value, None, None) is None
 
 
 def test_budget_exhaustion_tries_only_the_leading_object():
@@ -837,7 +861,7 @@ def test_budget_exhaustion_tries_only_the_leading_object():
     with pytest.raises(invoke.RepairRefused) as refused:
         _loads_model_json(text)
     assert invoke._extract_json_from_text(text) == {"findings": []}
-    assert invoke._fallback_reply(text, refused.value, None) is None
+    assert invoke._fallback_reply(text, refused.value, None, None) is None
 
 
 def test_object_followed_by_prose_is_recovered(api_env, monkeypatch):
@@ -845,7 +869,8 @@ def test_object_followed_by_prose_is_recovered(api_env, monkeypatch):
     text = good + "\n\nThe excerpt quotes {the config}; nothing else stands out."
     with pytest.raises(json.JSONDecodeError) as plain:
         _loads_model_json(text)
-    assert invoke._fallback_reply(text, plain.value, None) == GOOD_REVIEW
+    assert invoke._fallback_reply(text, plain.value, None, None) == GOOD_REVIEW
+    assert invoke._fallback_reply(text, plain.value, None, REVIEW_REPLY_KEYS) == GOOD_REVIEW
     request = Mock(return_value=(text, STOP))
     monkeypatch.setattr(invoke, "_invoke_openai", request)
     result = invoke._invoke_api("task", _api_backend(), 7, max_attempts=2, reply_keys=REVIEW_REPLY_KEYS)
@@ -898,7 +923,7 @@ def test_plain_error_skips_an_enclosed_object(name):
     with pytest.raises(json.JSONDecodeError) as plain:
         _loads_model_json(text, REVIEW_REPLY_KEYS)
     assert type(plain.value) is json.JSONDecodeError
-    assert invoke._fallback_reply(text, plain.value, None) is None
+    assert invoke._fallback_reply(text, plain.value, None, None) is None
 
 
 def test_excerpts_first_leading_object_holds_an_empty_review():
@@ -960,7 +985,7 @@ def test_salvage_refuses_a_verdict_from_quoted_content(name):
     text = SALVAGE_INJECTED[name]
     with pytest.raises(json.JSONDecodeError) as error:
         _loads_model_json(text, _FALSIFY_REPLY_KEYS)
-    assert invoke._fallback_reply(text, error.value, FALSIFY_KEYS) is None
+    assert invoke._fallback_reply(text, error.value, FALSIFY_KEYS, _FALSIFY_REPLY_KEYS) is None
     assert invoke._extract_json_from_text(text, FALSIFY_KEYS) is None
 
 
@@ -1011,12 +1036,16 @@ VALID_THEN_PROSE = {
 @pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
 @pytest.mark.parametrize("name", sorted(VALID_THEN_PROSE))
 def test_valid_reply_then_prose_with_a_brace_is_kept(api_env, monkeypatch, name, keys):
-    # As on main: prose after the reply's own object does not hide it.
-    request = Mock(return_value=(VALID_THEN_PROSE[name], STOP))
+    # As on main: prose after the reply's own object does not hide it. With
+    # keys, prose before it costs the correction retry.
+    prose_led = not VALID_THEN_PROSE[name].startswith("{")
+    retried = keys is not None and prose_led
+    replies = [(VALID_THEN_PROSE[name], STOP), (json.dumps(_VALID), STOP)]
+    request = Mock(side_effect=replies)
     monkeypatch.setattr(invoke, "_invoke_openai", request)
     result = llm_invoke("task", backend=_api_backend(), reply_keys=keys)
     assert result.content == _VALID
-    assert request.call_count == 1
+    assert request.call_count == (2 if retried else 1)
 
 
 _QUOTED_VERDICT = '{"verdict": "DISMISSED", "reasoning": "ok"}'
@@ -1045,7 +1074,7 @@ def test_falsify_reply_never_takes_a_quoted_verdict(name):
     with pytest.raises(json.JSONDecodeError) as error:
         _loads_model_json(text, _FALSIFY_REPLY_KEYS)
     for got in (
-        invoke._fallback_reply(text, error.value, FALSIFY_KEYS),
+        invoke._fallback_reply(text, error.value, FALSIFY_KEYS, _FALSIFY_REPLY_KEYS),
         invoke._extract_json_from_text(text, FALSIFY_KEYS),
     ):
         assert got is None or got.get("verdict") == "CONFIRMED"
@@ -1199,10 +1228,12 @@ def test_open_braces_do_not_flip_a_verdict(api_env, monkeypatch, text):
 
 def test_duplicate_verdict_is_refused_with_keys():
     text = '{"verdict": "CONFIRMED", "reasoning": "a", "verdict": "DISMISSED", "reasoning": "b"}'
-    assert _loads_model_json(text)["verdict"] == "DISMISSED"  # json keeps the last key
-    with pytest.raises(invoke.ReplyKeyRejected):
-        _loads_model_json(text, _FALSIFY_REPLY_KEYS)
-    assert invoke._fallback_reply(text, invoke.ReplyKeyRejected("m", text, 0), FALSIFY_KEYS) is None
+    assert json.loads(text)["verdict"] == "DISMISSED"  # json keeps the last key
+    for keys in (None, _FALSIFY_REPLY_KEYS):
+        with pytest.raises(invoke.DuplicateReplyKey, match='Duplicate key "verdict"'):
+            _loads_model_json(text, keys)
+    rejected = invoke.ReplyKeyRejected("m", text, 0)
+    assert invoke._fallback_reply(text, rejected, FALSIFY_KEYS, None) is None
 
 
 def test_repair_that_repeats_an_item_key_is_refused():
@@ -1218,11 +1249,12 @@ def test_repair_that_repeats_an_item_key_is_refused():
 
 def test_duplicate_key_after_a_repair_keeps_the_first_error():
     text = '{"verdict": "CONFIRMED", "reasoning": "say "hi"", "verdict": "DISMISSED"}'
-    with pytest.raises(invoke.ReplyKeyRejected) as error:
+    with pytest.raises(invoke.DuplicateReplyKey) as error:
         _loads_model_json(text, _FALSIFY_REPLY_KEYS)
     with pytest.raises(json.JSONDecodeError) as plain:
         json.loads(text)
     assert error.value.pos == plain.value.pos
+    assert error.value.msg == 'Duplicate key "verdict" in reply'
 
 
 def test_object_right_before_a_close_is_not_the_reply():
@@ -1336,12 +1368,12 @@ def test_code_after_an_object_that_does_not_open_the_reply_is_refused(text):
     assert invoke._extract_json_from_text(text) is None
 
 
-def test_cli_repaired_object_result_with_an_empty_key_falls_back(cli_binary):
+def test_cli_repaired_object_result_with_an_empty_key_fails_the_call(cli_binary):
     stdout = '{"type": "result", "subtype": "success", "result": {"findings": [], "": "q "x" r"}}'
     backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
     with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(stdout)):
-        result = llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
-    assert result.content == stdout
+        with pytest.raises(LLMInvokeError, match="reply refused"):
+            llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
     with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(stdout)):
         result = llm_invoke("prompt", backend=backend)
     assert "" in result.content
@@ -1355,6 +1387,13 @@ _CUT_EXCERPTS_FIRST = (
     '"findings": []}'
 )
 _CUT_REST = '"}], "findings": [{"file": "a.py", "line": 3, "severity": "P1", "description": "d"}]}'
+# The reply the cut text is the start of, with its excerpt quote escaped.
+_CUT_WHOLE = {
+    "code_excerpts": [
+        {"file": "a.py", "start_line": 1, "end_line": 1, "content": 'x"}], "findings": []}'}
+    ],
+    "findings": [{"file": "a.py", "line": 3, "severity": "P1", "description": "d"}],
+}
 # Text after the object must start like prose or markdown (see
 # _prose_may_follow); these tails do not, in every place.
 _REFUSED_TAILS = {
@@ -1384,11 +1423,12 @@ _REFUSED_TAILS = {
     "indented": "\n    return x",
     "call_after_blank_line": "\n\nfoo()",
     "call": "; f(a)",
+    "method_call": ".keys()",
 }
 # Punctuation then prose may follow an object that prose led, as in
 # `Here: {...}; done.`, so these are refused only where the object opens
 # the text or a list.
-_REFUSED_UNLESS_PROSE_LED = {"colon": ": x"}
+_REFUSED_UNLESS_PROSE_LED = {"colon": ": x", "period_word": ". Then"}
 # These start like prose, which may follow a whole reply, so a stop-cut
 # reply ending in one cannot be refused (the docstring's Limit).
 _PROSE_LIKE_TAILS = {
@@ -1411,10 +1451,8 @@ _PLACES = {"leading": "", "list": "[", "prose": "Review: "}
 
 
 def _keeps_the_p1(call):
-    try:
-        result = call()
-    except invoke.LLMInvokeError:
-        return True
+    # The call returns, and its review holds the P1: failing closed does not count.
+    result = call()
     return "P1" in [f.get("severity") for f in result.content.get("findings", [])]
 
 
@@ -1438,22 +1476,34 @@ _KNOWN_LIMIT_CASES = [(place, tail) for place in _PLACES for tail in _PROSE_LIKE
 ]
 
 
+@pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
 @pytest.mark.parametrize("place, tail", _KNOWN_LIMIT_CASES)
-def test_stop_cut_prose_like_tail_is_a_known_limit(api_env, monkeypatch, place, tail):
+def test_stop_cut_prose_like_tail_is_a_known_limit(api_env, monkeypatch, place, tail, keys):
+    # In a list the cut leaves the list unclosed, which fails closed. With
+    # keys only a leading or list object is taken, so prose before the cut
+    # reply fails closed too; elsewhere the empty review is the known limit.
     text = _PLACES[place] + _CUT_EXCERPTS_FIRST + _ALL_TAILS[tail]
     monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(text, STOP)))
-    result = llm_invoke("task", backend=_api_backend(), reply_keys=REVIEW_REPLY_KEYS)
+    if place == "list" or (keys is not None and place == "prose"):
+        with pytest.raises(invoke.LLMInvokeError):
+            llm_invoke("task", backend=_api_backend(), reply_keys=keys)
+        return
+    result = llm_invoke("task", backend=_api_backend(), reply_keys=keys)
     assert result.content["findings"] == []
 
 
 @pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
 @pytest.mark.parametrize("tail", sorted(_ALL_TAILS))
-def test_length_cut_tail_asks_for_the_rest(api_env, monkeypatch, tail, keys):
-    text = _CUT_EXCERPTS_FIRST + _ALL_TAILS[tail]
-    request = Mock(side_effect=[_truncated(text), (_CUT_REST, STOP)] + [(text, STOP)] * 6)
+@pytest.mark.parametrize("place", sorted(_PLACES))
+def test_length_cut_tail_asks_for_the_rest(api_env, monkeypatch, tail, keys, place):
+    # The cut reply is never taken: the run goes on to the whole reply,
+    # which the model sends escaped on a later call.
+    text = _PLACES[place] + _CUT_EXCERPTS_FIRST + _ALL_TAILS[tail]
+    whole = json.dumps(_CUT_WHOLE)
+    request = Mock(side_effect=[_truncated(text), (_CUT_REST, STOP)] + [(whole, STOP)] * 6)
     monkeypatch.setattr(invoke, "_invoke_openai", request)
     assert _keeps_the_p1(lambda: llm_invoke("task", backend=_api_backend(), reply_keys=keys))
-    assert request.call_count >= 2  # the cut reply was continued, not taken
+    assert request.call_count >= 3  # continued, then asked again, never the cut text
 
 
 def test_continue_partial_needs_a_whole_parse(api_env, monkeypatch):
@@ -1501,11 +1551,15 @@ _EXAMPLE_THEN_REPLY = (
 )
 
 
-def test_example_envelope_before_the_reply_is_not_the_reply(api_env, monkeypatch):
+@pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
+def test_example_envelope_before_the_reply_is_not_the_reply(api_env, monkeypatch, keys):
     assert invoke._extract_json_from_text(_EXAMPLE_THEN_REPLY) is None
-    assert _keeps_the_p1(
-        lambda: _llm_with(monkeypatch, _EXAMPLE_THEN_REPLY, reply_keys=REVIEW_REPLY_KEYS)
-    )
+    real = _EXAMPLE_THEN_REPLY[_EXAMPLE_THEN_REPLY.index("\n") + 1 :]
+    request = Mock(side_effect=[(_EXAMPLE_THEN_REPLY, STOP), (real, STOP)])
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    call = partial(invoke._invoke_api, "task", _api_backend(), 7, max_attempts=2, reply_keys=keys)
+    assert _keeps_the_p1(call)
+    assert request.call_count == 2  # one correction retry, no more
 
 
 def _llm_with(monkeypatch, text, **kwargs):
@@ -1571,9 +1625,10 @@ def test_daemon_duplicate_conflicts_is_refused():
 
     conflict = '{"subsystem": "s", "mutates": "m", "interferes_with": "i", "scenario": "c"}'
     text = '{"conflicts": [' + conflict + '], "conflicts": []}'
-    assert _loads_model_json(text)["conflicts"] == []  # json keeps the last key
-    with pytest.raises(invoke.ReplyKeyRejected):
-        _loads_model_json(text, Q2Q3_REPLY_KEYS)
+    assert json.loads(text)["conflicts"] == []  # json keeps the last key
+    for keys in (None, Q2Q3_REPLY_KEYS):
+        with pytest.raises(invoke.DuplicateReplyKey, match='Duplicate key "conflicts"'):
+            _loads_model_json(text, keys)
 
 
 def test_daemon_q2q3_keys_check_the_top_level_only():
@@ -1677,17 +1732,16 @@ def test_refused_repair_input_is_a_full_scan_trap():
     with pytest.raises(invoke.RepairRefused) as caught:
         _loads_model_json(_REFUSED_REPAIR)
     assert invoke._extract_json_from_text(_REFUSED_REPAIR)["findings"] == []
-    assert invoke._fallback_reply(_REFUSED_REPAIR, caught.value, None) is None
+    assert invoke._fallback_reply(_REFUSED_REPAIR, caught.value, None, None) is None
 
 
-# Without keys a duplicate key is kept, as on main; with them it is refused.
+# A duplicate key is refused with or without keys.
+_DUPLICATE_FINDINGS = '{"findings": [' + _P1 + '], "code_excerpts": [], "findings": []}'
 _FALLBACK_TRAPS = {
     "refused_repair": (_REFUSED_REPAIR, None),
     "refused_repair_keys": (_REFUSED_REPAIR, REVIEW_REPLY_KEYS),
-    "duplicate_key_keys": (
-        '{"findings": [' + _P1 + '], "code_excerpts": [], "findings": []}',
-        REVIEW_REPLY_KEYS,
-    ),
+    "duplicate_key": (_DUPLICATE_FINDINGS, None),
+    "duplicate_key_keys": (_DUPLICATE_FINDINGS, REVIEW_REPLY_KEYS),
 }
 
 

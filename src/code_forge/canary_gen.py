@@ -36,7 +36,7 @@ from .canary import (
 )
 from .evidence import reverify_finding_cites
 from .findings import finding_line  # noqa: F401 -- re-export awareness
-from .llm_invoke import ReplyKeys
+from .llm_invoke import ReplyKeys, loads_reply_json
 from .state import Verdict
 
 # The canary review reply's keys (#264): only the top key, since a model may
@@ -354,8 +354,8 @@ def dispatch_canary_review(
     raw = provider(prompt)
 
     try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+        data = loads_reply_json(raw)
+    except (ValueError, TypeError):
         print("code-forge: canary: cannot parse reviewer response as JSON", file=sys.stderr)
         return []
 

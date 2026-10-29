@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 from .basis import derive_basis
 from .diff import describe_fabricated_lines, parse_diff_hunks
+from .llm_invoke import loads_reply_json
 from .manifest import EnvManifest, ManifestTier
 from .reviewer_json import GroupedReviewAttempt, read_source_lines
 from .state import (
@@ -183,7 +184,7 @@ def _canonical_response(raw: str) -> str:
         text = body.rsplit("```", 1)[0].strip()
     try:
         return json.dumps(
-            _normalize_response_value(json.loads(text)),
+            _normalize_response_value(loads_reply_json(text)),
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,

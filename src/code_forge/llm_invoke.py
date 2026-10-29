@@ -1059,7 +1059,15 @@ class RepairRefused(json.JSONDecodeError):
 
 
 class ReplyKeyRejected(RepairRefused):
-    """A quote repair parsed, but the result has a key the caller's reply cannot have (#264)."""
+    """The reply parsed, but with a key it cannot have (#264).
+
+    Either a key repeats (DuplicateReplyKey), or a quote repair gave a key
+    the caller's reply keys do not list.
+    """
+
+
+class DuplicateReplyKey(ReplyKeyRejected):
+    """The reply repeats a key in one object; `msg` names the key (#264)."""
 
 
 def _unknown_reply_key(parsed, allowed: ReplyKeys) -> str | None:
@@ -1108,16 +1116,34 @@ def _loads_model_json(text: str, reply_keys: ReplyKeys | None = None):
     replies that base repaired by luck now fail closed this way; that is
     intended, since a wrong parse silently changes a verdict.
 
-    With `reply_keys`, a repaired parse that carries a key the caller's
-    reply cannot have fails closed the same way (#264): an excerpt quoting
-    `{"a": "b", "c": "d"}` unescaped repairs into a finding with a new key
-    `c` and a cut excerpt. A parse that needed no repair is never checked.
-    That refusal raises ReplyKeyRejected.
+    Every parse refuses a duplicate key (#264): json keeps the last one,
+    so a quoted `"findings": []` or `"verdict": "DISMISSED"` would replace
+    the real value. That refusal raises DuplicateReplyKey, naming the key.
 
-    Every other failure after a repair was tried raises RepairRefused, with
-    the same message and position as before. A failure with no repair tried
-    stays a plain JSONDecodeError.
+    With `reply_keys`, a repaired parse that carries a key the caller's
+    reply cannot have also raises ReplyKeyRejected: an excerpt quoting
+    `{"a": "b", "c": "d"}` unescaped repairs into a finding with a new key
+    `c` and a cut excerpt. A parse that needed no repair is checked for
+    duplicate keys only, not for unknown keys.
+
+    A text longer than _MAX_REPAIR_CHARS that needs a repair, a text that
+    needs more than _MAX_REPAIRS repairs, and a text nested too deeply for
+    the decoder raise RepairRefused, as does every other failure after a
+    repair was tried (with the same message and position as before). A
+    failure with no repair tried stays a plain JSONDecodeError.
     """
+    return _parse_model_json(text, reply_keys)[0]
+
+
+# Bounds on the quote repair and on the embedded-object scan (#264). Each
+# repair attempt parses the whole text again, so the work is the text
+# length times the attempts. A review reply is a few kilobytes.
+_MAX_REPAIR_CHARS = 256 * 1024
+_MAX_REPAIRS = 256
+
+
+def _parse_model_json(text: str, reply_keys: ReplyKeys | None = None) -> tuple[Any, bool]:
+    """_loads_model_json, also returning whether a quote repair was needed."""
     candidate = text
     first_error: json.JSONDecodeError | None = None
     # Positions the loop escaped (the inserted backslash), kept current as
@@ -1125,16 +1151,16 @@ def _loads_model_json(text: str, reply_keys: ReplyKeys | None = None):
     repaired: list[int] = []
     # Each attempt escapes one quote and at least two stay structural, so
     # count - 1 attempts (the last one parsing) always suffice.
-    # With reply_keys, a duplicate key is refused: json keeps the last one,
-    # and a quoted `"verdict": "DISMISSED"` would replace the real verdict.
-    hook = _refuse_duplicate_keys if reply_keys is not None else None
     for _ in range(max(1, text.count('"') - 1)):
         try:
-            parsed = json.loads(candidate, strict=False, object_pairs_hook=hook)
+            parsed = json.loads(candidate, strict=False, object_pairs_hook=_refuse_duplicate_keys)
         except _DuplicateKey as exc:
-            if first_error is None:
-                raise ReplyKeyRejected("Duplicate key in reply", text, 0) from exc
-            raise ReplyKeyRejected(first_error.msg, first_error.doc, first_error.pos) from exc
+            # After a repair, point at the original error, as the other
+            # refusals do: the duplicate may be the repair's own doing.
+            pos = first_error.pos if first_error is not None else 0
+            raise DuplicateReplyKey(_duplicate_key_message(exc), text, pos) from exc
+        except RecursionError:
+            raise RepairRefused("Reply nests too deeply to decode", text, 0) from None
         except json.JSONDecodeError as exc:
             first_error = first_error or exc
             quote_at = _error_is_at_quote(candidate, exc, repaired)
@@ -1142,6 +1168,8 @@ def _loads_model_json(text: str, reply_keys: ReplyKeys | None = None):
                 if exc is first_error:
                     raise
                 raise RepairRefused(exc.msg, exc.doc, exc.pos) from exc
+            if len(text) > _MAX_REPAIR_CHARS or len(repaired) >= _MAX_REPAIRS:
+                raise RepairRefused(first_error.msg, first_error.doc, first_error.pos) from exc
             candidate = _escape_at(candidate, quote_at)
             repaired = _record_escape(repaired, quote_at)
             continue
@@ -1156,11 +1184,22 @@ def _loads_model_json(text: str, reply_keys: ReplyKeys | None = None):
             and _unknown_reply_key(parsed, reply_keys) is not None
         ):
             raise ReplyKeyRejected(first_error.msg, first_error.doc, first_error.pos) from first_error
-        return parsed
+        return parsed, first_error is not None
     # The loop runs at least once, and every pass that neither returns nor
     # raises has set first_error.
     assert first_error is not None
     raise RepairRefused(first_error.msg, first_error.doc, first_error.pos) from first_error
+
+
+def _duplicate_key_message(exc: "_DuplicateKey") -> str:
+    """Name the repeated key, for the correction prompt and the logs."""
+    keys = exc.args[0] if exc.args else []
+    seen: set = set()
+    for key in keys:
+        if key in seen:
+            return "Duplicate key %s in reply" % json.dumps(key)[:80]
+        seen.add(key)
+    return "Duplicate key in reply"
 
 
 def _record_escape(repaired: list[int], escaped_at: int) -> list[int]:
@@ -1456,10 +1495,18 @@ def _json_correction_prompt(
         or _json_cut_at_eof(content)
     ):
         return None
+    if isinstance(error, DuplicateReplyKey):
+        # JSON whose fault is a repeated key: a syntax position would send
+        # the model looking for a syntax error that is not there.
+        problem = f"was refused: {error.msg}. Each key may appear only once in an object. "
+    else:
+        problem = (
+            "could not be decoded as JSON "
+            f"(JSONDecodeError at line {error.lineno}, column {error.colno}). "
+        )
     return (
         f"{prompt}\n\n"
-        "Your previous response could not be decoded as JSON "
-        f"(JSONDecodeError at line {error.lineno}, column {error.colno}). "
+        f"Your previous response {problem}"
         "Return the complete response again as valid JSON, not a continuation. "
         "Use valid JSON escaping for quotes and backslashes in strings. "
         "Follow all original task requirements, fields, and source excerpts. "
@@ -1510,8 +1557,10 @@ def _extract_json_from_text(
 ) -> dict | None:
     """Find and return the first valid forge-envelope JSON object in text.
 
-    Module-private helper called only from _invoke_api() when _strip_fences
-    + json.loads fails. Not part of the public API.
+    Module-private helper, reached only through _fallback_reply after
+    _loads_model_json fails: the API parse in _invoke_api, the combined
+    parse in _continue_truncated and the wider retry in
+    _retry_with_more_headroom. Not part of the public API.
 
     expected_keys: the set of top-level keys the caller expects in its
     response envelope. Only dicts whose key set overlaps expected_keys are
@@ -1519,32 +1568,32 @@ def _extract_json_from_text(
     appear in model prose before the real envelope (F1 fix). None uses
     _REVIEW_ENVELOPE_KEYS (the default for all review-pass callers).
 
-    Callers pass expected_keys through llm_invoke; this function is called
-    only from within this module (the parse-retry paths in _invoke_api and
-    _invoke_cli).  The envelopes in use, by the caller that requests them:
-      factories.py / cli.py / runtime.py   findings / code_excerpts /
-                                           surfaces          (default)
-      falsify_real.py:54  falsify          verdict / reasoning  (explicit)
-      daemon_state.py:412 Q1               external_state       (explicit)
-      daemon_state.py:453 Q2Q3             conflicts            (explicit)
-      contract_loader.py:282 contract      summary              (explicit)
-      backend.py:1042     probe            ok                   (explicit)
+    Callers pass expected_keys through llm_invoke. The envelopes in use,
+    by the function that requests them:
+      factories / cli / runtime review passes   findings / code_excerpts /
+                                                surfaces   (default)
+      falsify_real.falsify                      verdict / reasoning
+      daemon_state Q1 query                     external_state
+      daemon_state Q2/Q3 query                  conflicts
+      contract_loader contract extraction       summary
+      backend probe                             ok
     Adding a caller with new keys: pass expected_keys and update this list.
     Adding one that should also survive truncation: see
     _SALVAGEABLE_ENVELOPES, and read the warning there first.
 
     Scans left-to-right for '{' only; all forge envelopes are dicts, never
-    bare arrays.  No attempt cap: raw_decode fails in O(1) for invalid JSON
-    (exits at the first non-JSON character), so the scan stays O(n)
-    amortised across all '{' positions even when many invalid braces
-    precede the real envelope (F2 fix).
+    bare arrays. A text longer than _MAX_REPAIR_CHARS is not scanned, and
+    a text nested too deeply for the decoder yields None. A '{' that cannot
+    open a JSON object (not followed by '"' or '}') is not decoded, and the
+    open-literal check walks the text once (_OpenLiteral), so the scan is
+    linear in the '{' positions apart from the decode of each JSON-looking
+    one.
 
-    That bound holds for every envelope except the whitelisted salvage
-    path, where a failed raw_decode is followed by a scan of the rest of
-    the text (_salvage_truncated_object), making the worst case O(n*m) for
-    m brace positions.  Accepted because the whitelist admits only the
-    falsify envelope, whose responses are a single small object rather
-    than model prose full of braces.
+    The whitelisted salvage path adds a scan of the rest of the text after
+    a failed decode (_salvage_truncated_object), making the worst case
+    O(n*m) for m brace positions. Accepted because the whitelist admits
+    only the falsify envelope, whose responses are a single small object
+    rather than model prose full of braces.
 
     leading_only tries only an object that opens the text (after any '['
     and whitespace). Every later '{' may sit inside that object's quoted
@@ -1572,28 +1621,56 @@ def _extract_json_from_text(
       of a reply that a quoted `"}], "findings": []}` closed early), or
       holds another object with the reply's keys.
 
-    Limit: a reply cut short right after a quoted `"}], "findings": []}`
-    whose remaining text starts like prose (` done`, ` (see a.py)`,
-    `\n- note`, ` or y`, ` for k in d:`, a lone '!' at the end, or after
-    a prose-led object `: x`, `; done` or `, b)`), with no later string
-    closing into JSON, still returns the quoted empty object, in one call. That
+    Limit: a reply that opens the text, cut short right after a quoted
+    `"}], "findings": []}`, still returns the quoted empty object in one
+    call when the rest of the text is empty, whitespace, or starts like
+    prose (` done`, ` (see a.py)`, `\n- note`, ` or y`, ` for k in d:`,
+    a lone '!' at the end) with no later string closing into JSON. That
     can turn a reply with a P1 into a clean review. It needs the stream
     to stop there while reporting a finished reply: a reply cut by the
     output cap is continued (_continue_truncated), and a whole reply
     carries its own `"}], ...` after the quote. Refusing such text would
-    also refuse a valid reply followed by prose.
+    also refuse a valid reply followed by prose. In a list the object
+    must be followed by ']' or another item, so a cut list is refused.
+    For callers without reply keys, an object after prose has the same
+    limit, plus `: x`, `; done`, `. Then` and `, b)`; callers with reply
+    keys never take an object after prose (_fallback_reply).
+    tests/reply_tail_corpus.py measures these cases.
 
     Returns None if no valid envelope can be extracted.
     """
+    if len(text) > _MAX_REPAIR_CHARS:
+        return None
+    try:
+        return _scan_for_reply(text, expected_keys, leading_only)
+    except RecursionError:
+        return None
+
+
+# A '{' that can open a JSON object.
+_JSON_OBJECT_START = re.compile(r'\{[ \t\r\n]*["}]')
+
+
+def _scan_for_reply(
+    text: str,
+    expected_keys: frozenset[str] | None,
+    leading_only: bool,
+) -> dict | None:
+    """The scan behind _extract_json_from_text."""
     keys = expected_keys if expected_keys is not None else _REVIEW_ENVELOPE_KEYS
     decoder = _scan_decoder()
     reply_start = len(text) - len(text.lstrip("[ \t\r\n"))
-    literal_at = -1  # the open dict or object literal that failed to decode
+    literal = _OpenLiteral(text)  # the dict or object literal that failed to decode
     for i, ch in enumerate(text):
         if ch != "{":
             continue
         if leading_only and i != reply_start:
             return None
+        if i != reply_start and not _JSON_OBJECT_START.match(text, i):
+            # Not JSON, so its decode fails before any '"': skip the decode.
+            if _OBJECT_LITERAL.match(text, i) and not literal.holds(i):
+                literal.open_at(i)
+            continue
         try:
             obj, end = decoder.raw_decode(text, i)
         except _DuplicateKey:
@@ -1607,11 +1684,9 @@ def _extract_json_from_text(
                 return obj
             if i == reply_start or '"' in text[i : exc.pos + 1]:
                 return None
-            if _OBJECT_LITERAL.match(text, i) and not _inside(text, literal_at, i):
-                literal_at = i
             continue
         if isinstance(obj, dict) and obj.keys() & keys:
-            if _inside(text, literal_at, i):
+            if literal.holds(i):
                 return None
             place = "prose" if i != reply_start else "list" if "[" in text[:i] else "leading"
             return None if _text_after_refuses(text, end, decoder, keys, place=place) else obj
@@ -1622,12 +1697,48 @@ def _extract_json_from_text(
 _OBJECT_LITERAL = re.compile(r"\{\s*(?:'[^']*'|[A-Za-z_]\w*)\s*:")
 
 
-def _inside(text: str, start: int, i: int) -> bool:
-    """Whether `i` sits inside the braces opened at `start` (-1: none)."""
-    if start < 0:
-        return False
-    span = text[start:i]
-    return span.count("{") > span.count("}")
+# A string inside a literal, to its closing quote or the end of the text.
+_LITERAL_STRING = {
+    '"': re.compile(r'"(?:[^"\\]|\\.)*(?:"|\Z)', re.S),
+    "'": re.compile(r"'(?:[^'\\]|\\.)*(?:'|\Z)", re.S),
+}
+
+
+class _OpenLiteral:
+    """The braces of the last failed dict or object literal (#264).
+
+    holds(i) says whether `i` sits inside them: whether the text from the
+    literal's '{' to `i` opens more braces than it closes. Braces inside a
+    string within the literal do not count, so `{key: "}", ...}` stays
+    open. The walk keeps its place, as the scan asks about rising `i`.
+    """
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.start = -1
+        self.pos = -1
+        self.depth = 0
+
+    def open_at(self, start: int) -> None:
+        self.start = self.pos = start
+        self.depth = 0
+
+    def holds(self, i: int) -> bool:
+        if self.start < 0:
+            return False
+        text, pos, depth = self.text, self.pos, self.depth
+        while pos < i:
+            ch = text[pos]
+            if depth > 0 and ch in _LITERAL_STRING:
+                pos = _LITERAL_STRING[ch].match(text, pos).end()
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+            pos += 1
+        self.pos, self.depth = pos, depth
+        return depth > 0
 
 
 # What may follow the reply's object (#264). A cut reply's object can be one
@@ -1643,9 +1754,17 @@ _PROSE_WORD = re.compile(
     r"(?:[(\[*_]*" + _WORD + r"[\w'\u2019-]*|[`'\u2018(\[*_]+" + _WORD + r"[\w.'/\u2019-]*)"
     r"(?:[\s,;:!?'\u2019`*_\])]|\.(?:\s|$)|$)"
 )
-# Non-ASCII text such as CJK prose or an emoji, but not fullwidth code
-# punctuation, smart quotes or a BOM.
-_PROSE_SYMBOL = re.compile(r"[\u2014\u2013] |[^\x00-\x7f\u201c\u201d\uff0c\uff1b\ufeff]")
+# Non-ASCII prose: a dash and a space, a letter (CJK included), or a CJK
+# full stop, comma or mark that ends the text or is followed by whitespace
+# or a letter. Nothing else: not fullwidth code punctuation or brackets,
+# smart or corner quotes, a middle dot, a zero-width character or a BOM.
+_PROSE_SYMBOL = re.compile(
+    r"[\u2014\u2013] |(?![\x00-\x7f])"
+    + _WORD
+    + r"|[\u3001\u3002\uff01\uff1f\uff1a\u2026](?=\s|$|"
+    + _WORD
+    + ")"
+)
 # Markdown that starts a line: a fence, a rule, a table, a list item, a
 # heading, a footnote, or a number and a word.
 _LINE_START = re.compile(r"```|---|\||\[\d+\]|[-*+>][ \t]|#+[ \t]|\d+[.)]?[ \t]+" + _WORD)
@@ -1661,14 +1780,21 @@ def _prose_may_follow(text: str, end: int, place: str) -> bool:
     Whitespace is any str.isspace character. Nothing, a prose word, non-
     ASCII prose, or markdown at the start of an unindented line may follow
     in every place; '.', '!' or '?' may end the text. After an object
-    that does not open the text, ',' then another object or ']' then the
-    same may follow. After an object that prose led, ',', ';', '.', ':',
-    '!' or '?' then whitespace may follow directly, as in
-    `Here: {...}, then more.`
+    that opens a list, only ']' then the same, or ',' then another object
+    or list, may follow: the end of the text or anything else leaves the
+    list unclosed. After an object that prose led, those may follow too,
+    and so may ',', ';', '.', ':', '!' or '?' then whitespace directly,
+    as in `Here: {...}, then more.`
     """
     k = end
     while k < len(text) and text[k].isspace():
         k += 1
+    if place == "list":
+        # Inside a list only ']' or ',' and another item may follow: anything
+        # else, or the end of the text, leaves the list unclosed, as a cut does.
+        if text.startswith("]", k):
+            return _prose_may_follow(text, k + 1, "leading")
+        return re.match(r",\s*[\[{]", text[k:]) is not None
     if k == len(text):
         return True
     gap, rest = text[end:k], text[k:]
@@ -1681,7 +1807,7 @@ def _prose_may_follow(text: str, end: int, place: str) -> bool:
         return True
     if not gap and _SENTENCE_END.match(rest):
         return True
-    if place != "leading":
+    if place == "prose":
         if rest.startswith("]"):
             return _prose_may_follow(text, k + 1, "leading")
         if re.match(r",\s*[\[{]", rest):
@@ -1731,7 +1857,7 @@ def _text_after_refuses(
         return True
     while k < len(text):
         ch = text[k]
-        if ch == "{":
+        if ch == "{" and _JSON_OBJECT_START.match(text, k):
             try:
                 obj, k = decoder.raw_decode(text, k)
             except _DuplicateKey:
@@ -1752,22 +1878,29 @@ def _fallback_reply(
     text: str,
     error: json.JSONDecodeError,
     expected_keys: frozenset[str] | None,
+    reply_keys: ReplyKeys | None,
 ) -> dict | None:
     """The object to use after `_loads_model_json` raised `error`, or None.
 
-    A plain error scans the text for an embedded object. After a refused
-    repair the text is a reply with unescaped quoted content, and an
-    excerpt quoting `x = {"findings": [], ...}` holds an object of the
-    reply's own shape (#264). Only the reply's own leading object is then
-    tried, so a cut falsify reply is still salvaged. After a key refusal
-    nothing is tried.
+    This is the one place a reply that did not parse whole is accepted
+    from part of its text. After a key refusal nothing is tried.
+
+    After a refused repair the text is a reply with unescaped quoted
+    content, and an excerpt quoting `x = {"findings": [], ...}` holds an
+    object of the reply's own shape (#264). A caller with reply keys (a
+    review, falsify or daemon reply) may also get prose quoting such an
+    object before its reply. In both cases only an object that opens the
+    text or a list is tried, so a cut falsify reply is still salvaged and
+    a prose-led reply goes to the correction retry. Otherwise (contract,
+    probe and canary mutation calls) the text is scanned for an embedded
+    object.
     """
     if isinstance(error, ReplyKeyRejected):
         return None
     return _extract_json_from_text(
         text,
         expected_keys=expected_keys,
-        leading_only=isinstance(error, RepairRefused),
+        leading_only=reply_keys is not None or isinstance(error, RepairRefused),
     )
 
 
@@ -1846,6 +1979,23 @@ def _refuse_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
     if len(set(keys)) != len(keys):
         raise _DuplicateKey(keys)
     return dict(pairs)
+
+
+def loads_reply_json(text: str):
+    """Strictly parse model reply text that a caller reads again (#264).
+
+    json.loads keeps the last of two equal keys, so a reply holding a
+    quoted `"findings": []` after the real findings would read as clean.
+    Every later parse of reply text uses this instead: a duplicate key,
+    and nesting too deep for the decoder, raise ValueError, as any other
+    invalid JSON does (json.JSONDecodeError is a ValueError).
+    """
+    try:
+        return json.loads(text, object_pairs_hook=_refuse_duplicate_keys)
+    except _DuplicateKey as exc:
+        raise ValueError(_duplicate_key_message(exc)) from None
+    except RecursionError:
+        raise ValueError("reply JSON nests too deeply to decode") from None
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
@@ -2203,8 +2353,23 @@ def _invoke_cli(
 
     stdout = _strip_fences(stdout_data)
 
+    def refused(exc: json.JSONDecodeError, text: str) -> LLMInvokeError:
+        # A refused repair or key (#264) fails the call: keeping the raw
+        # text would hand a caller a reply whose repair was judged unsafe.
+        diag = "%s: %s\nstdout[:500]: %r" % (type(exc).__name__, exc, text[:500])
+        return LLMInvokeError(
+            "LLM subprocess reply refused -- %s" % diag,
+            exit_code=0,
+            stderr=diag,
+            duration_s=duration,
+        )
+
     try:
-        parsed = _loads_model_json(stdout)
+        # No reply_keys: an envelope's own keys are not the reply's. A
+        # duplicate key is refused here all the same.
+        parsed, stdout_repaired = _parse_model_json(stdout)
+    except RepairRefused as exc:
+        raise refused(exc, stdout) from exc
     except json.JSONDecodeError as exc:
         diag = "JSONDecodeError: %s\nstdout[:500]: %r" % (exc, stdout[:500])
         raise LLMInvokeError(
@@ -2254,45 +2419,40 @@ def _invoke_cli(
             stripped = _strip_fences(raw_result)
             try:
                 content = _loads_model_json(stripped, reply_keys)
+            except RepairRefused as exc:
+                raise refused(exc, stripped) from exc
             except json.JSONDecodeError:
+                # Plain text with no repair tried: the caller's own strict
+                # parse decides what it is.
                 content = raw_result
         else:
             content = raw_result
             if (
                 reply_keys is not None
+                and stdout_repaired
                 and _unknown_reply_key(raw_result, reply_keys) is not None
-                and not _parses_without_repair(stdout)
             ):
                 # The envelope itself needed quote repair, so an object
-                # result is a repair of model text too. With an unlisted
-                # key it is refused like a string result: keep the raw text.
-                content = stdout
-    elif reply_keys is not None and parsed is reply and isinstance(parsed, (dict, list)):
-        # No envelope: stdout is the model reply itself. It was parsed above
-        # without reply_keys, since an envelope's own keys are not the reply's.
-        # A result event taken from a stream array is CLI output, not the
-        # reply, so it is not parsed again (parsed is not reply).
-        # Parse it again under the caller's keys so a repair that invents a
-        # key fails closed here too (#264); keep the raw text as the inner
-        # result path does.
-        try:
-            content = _loads_model_json(stdout, reply_keys)
-        except json.JSONDecodeError:
-            content = stdout
+                # result is a repair of model text too, refused like a
+                # string result. Its duplicate keys were refused above.
+                raise refused(ReplyKeyRejected("Repaired reply has an unknown key", stdout, 0), stdout)
+    elif (
+        reply_keys is not None
+        and parsed is reply
+        and stdout_repaired
+        and _unknown_reply_key(parsed, reply_keys) is not None
+    ):
+        # No envelope: stdout is the model reply itself, parsed above. A
+        # result event taken from a stream array is CLI output, not the
+        # reply (parsed is not reply). A repair that invents a key fails
+        # closed here as on the other paths (#264).
+        raise refused(ReplyKeyRejected("Repaired reply has an unknown key", stdout, 0), stdout)
 
     return LLMResult(
         content=content,
         usage=_observed_usage(usage_data, "cli"),
         duration_s=duration,
     )
-
-
-def _parses_without_repair(text: str) -> bool:
-    try:
-        json.loads(text, strict=False)
-    except json.JSONDecodeError:
-        return False
-    return True
 
 
 def _needs_excerpt_repair(parsed, expected_keys, *, l1_evidence_required=False) -> bool:
@@ -2607,20 +2767,9 @@ def _continue_truncated(
                 continue
             if not isinstance(cont, str):
                 cont = ""
-            combined = truncated.content + cont
-            cleaned = _strip_fences(combined)
-            try:
-                parsed = _loads_model_json(cleaned, reply_keys)
-            except json.JSONDecodeError as parse_error:
-                parsed = _fallback_reply(cleaned, parse_error, expected_keys)
-                if parsed is None:
-                    last_failure = "combined output is not valid JSON"
-                    continue
-            # Completing the JSON is not enough: the combined shape
-            # must be a full forge envelope, or the continuation is a
-            # failed attempt.
-            if not _is_forge_envelope(parsed, expected_keys):
-                last_failure = "combined output is not a forge envelope"
+            parsed = _continued_reply(truncated.content, cont, expected_keys, reply_keys)
+            if isinstance(parsed, str):
+                last_failure = parsed
                 continue
             return parsed, _sum_usage(
                 _observed_usage(truncated.usage_data, backend.format),
@@ -2636,6 +2785,57 @@ def _continue_truncated(
         # traceable.
         raise _exhaustion_error(budget, last_failure) from exc
     raise _exhaustion_error(budget, last_failure)
+
+
+# A continuation that adds nothing to a whole partial: whitespace, fence
+# marks, or the partial's own closing brackets echoed again.
+_ECHO_ONLY = re.compile(r"(?:\s|```|[}\]])*")
+
+
+def _continued_reply(
+    partial: str,
+    cont: str,
+    expected_keys: frozenset[str] | None,
+    reply_keys: ReplyKeys | None,
+):
+    """The reply from a cut partial and its continuation, or why not (a str).
+
+    The partial plus the continuation is read first, as one reply. When
+    that is not a forge envelope, two readings of a continuation that does
+    not extend the partial are tried (#264):
+
+    - nothing but whitespace, fences and closing brackets: the model
+      echoed the end of a reply that was already whole, so the partial is
+      read alone, as with an empty continuation;
+    - a reply of its own, opening with '{': the model restated the whole
+      reply, which is taken only when it parses strictly with no fallback.
+    """
+    readings = [partial + cont]
+    if _ECHO_ONLY.fullmatch(cont):
+        readings.append(partial)
+    failure = "combined output is not valid JSON"
+    for text in readings:
+        cleaned = _strip_fences(text)
+        try:
+            parsed = _loads_model_json(cleaned, reply_keys)
+        except json.JSONDecodeError as parse_error:
+            parsed = _fallback_reply(cleaned, parse_error, expected_keys, reply_keys)
+            if parsed is None:
+                continue
+        # Completing the JSON is not enough: the combined shape must be
+        # a full forge envelope, or the continuation is a failed attempt.
+        if _is_forge_envelope(parsed, expected_keys):
+            return parsed
+        failure = "combined output is not a forge envelope"
+    restated = _strip_fences(cont)
+    if restated.startswith("{"):
+        try:
+            parsed = _loads_model_json(restated, reply_keys)
+        except json.JSONDecodeError:
+            return failure
+        if _is_forge_envelope(parsed, expected_keys):
+            return parsed
+    return failure
 
 
 def _retry_with_more_headroom(
@@ -2709,7 +2909,7 @@ def _retry_with_more_headroom(
     try:
         parsed = _loads_model_json(cleaned, reply_keys)
     except json.JSONDecodeError as parse_error:
-        parsed = _fallback_reply(cleaned, parse_error, expected_keys)
+        parsed = _fallback_reply(cleaned, parse_error, expected_keys, reply_keys)
     if not _is_forge_envelope(parsed, expected_keys):
         return None
 
@@ -2861,7 +3061,7 @@ def _invoke_api(
                 try:
                     parsed_content = _loads_model_json(content, reply_keys)
                 except json.JSONDecodeError as exc:
-                    parsed_content = _fallback_reply(content, exc, expected_keys)
+                    parsed_content = _fallback_reply(content, exc, expected_keys, reply_keys)
                     if parsed_content is None:
                         finish_reason = ""
                         if isinstance(usage_data, dict):

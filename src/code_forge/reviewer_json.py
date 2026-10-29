@@ -22,7 +22,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .llm_invoke import ReplyKeys
+from .llm_invoke import ReplyKeys, loads_reply_json
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +32,16 @@ _EXCERPT_REQUIRED = {"file", "start_line", "end_line", "content"}
 _VALID_SEVERITIES = {"P0", "P1", "P2", "P3"}
 
 # The keys REVIEW_JSON_CONTRACT asks for, plus a finding's nested
-# code_excerpts (hoisted by _hoist_nested_excerpts). A reply that parses
-# only after quote repair and carries any other key is rejected (#264).
+# code_excerpts (hoisted by _hoist_nested_excerpts) and the excerpt
+# spellings _normalize_excerpt_aliases accepts. A reply that parses only
+# after quote repair and carries any other key is rejected (#264).
 REVIEW_REPLY_KEYS = ReplyKeys(
     top=frozenset({"findings", "code_excerpts", "context_quotes"}),
     items={
         "findings": frozenset({"file", "line", "severity", "description", "excerpt", "code_excerpts"}),
-        "code_excerpts": frozenset({"file", "start_line", "end_line", "content"}),
+        "code_excerpts": frozenset(
+            {"file", "start_line", "end_line", "content", "line_start", "line_end", "code"}
+        ),
         "context_quotes": frozenset({"file", "content"}),
     },
 )
@@ -675,8 +678,8 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         data = dict(raw) if type(raw) is dict else {key: value for key, value in dict.items(raw)}
     else:
         try:
-            data = json.loads(_strip_fence(raw))
-        except (json.JSONDecodeError, TypeError) as e:
+            data = loads_reply_json(_strip_fence(raw))
+        except (ValueError, TypeError) as e:
             raise ValueError(f"not valid JSON: {e}") from e
 
     if not isinstance(data, dict):

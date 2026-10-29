@@ -3496,6 +3496,7 @@ def _dispatch_inline_canary(
             from .canary_gen import run_inline_canary
             from .backend import resolve_backend
             from .llm_invoke import llm_invoke as _llm_invoke
+            from .llm_invoke import loads_reply_json
 
             import subprocess as _sp
 
@@ -3525,7 +3526,6 @@ def _dispatch_inline_canary(
             def _canary_provider(diff_text_arg: str) -> list:
                 if backend is None:
                     return []
-                import json as _json
 
                 prompt = (
                     "You are a code mutation expert. Given this Python diff, "
@@ -3547,7 +3547,7 @@ def _dispatch_inline_canary(
                     content = result.content
                     if isinstance(content, dict):
                         return content.get("mutations", [])
-                    parsed = _json.loads(str(content))
+                    parsed = loads_reply_json(str(content))
                     return parsed.get("mutations", [])
                 except MemoryError:
                     raise

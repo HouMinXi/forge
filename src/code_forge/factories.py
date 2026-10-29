@@ -84,8 +84,10 @@ def _assess_raw_response(response) -> tuple[dict | None, bool]:
         return None, False
     if type(response) is dict:
         return (response if _admissible_raw_value(response) else None), True
+    from .llm_invoke import loads_reply_json
+
     try:
-        data = json.loads(_strip_fence(response))
+        data = loads_reply_json(_strip_fence(response))
     except (ValueError, TypeError):
         return None, False
     if type(data) is not dict:
