@@ -595,6 +595,32 @@ def _m4_preserved(index, count, other):
     return row
 
 
+def test_l1_l2_infra_incomplete_counterfactual_preserves(tmp_path, monkeypatch):
+    """L-1: an L2 infra error alone only downgrades the counterfactual CLEAN to INCOMPLETE; credit-neutral."""
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._l2_infra_error = "constructed L2 runner failure"
+    assert sm._fixpoint_without([sm._state.findings[0]]) is _FixpointResult.INCOMPLETE
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.CYCLE_RESTART) is True
+
+
+def test_l1_l2_infra_incomplete_with_pending_protocol_keeps_reset(tmp_path, monkeypatch):
+    """L-1: the same INCOMPLETE arm refuses when a falsifier protocol observation is pending."""
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._l2_infra_error = "constructed L2 runner failure"
+    proto = _product_finding("fp-proto", disposition=Disposition.UNCERTAIN, desc="P3: protocol")
+    sm._state.findings = sm._state.findings + [proto]
+    sm._falsify_protocol_findings = [proto]
+    sm._falsify_failed_findings = [proto]
+    sm._host_attempt_round = 0
+    assert sm._fixpoint_without([sm._state.findings[0]]) is _FixpointResult.INCOMPLETE
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+    # Without the L2 infra error the protocol-only INCOMPLETE never preserved.
+    sm._l2_infra_error = None
+    assert sm._fixpoint_without([sm._state.findings[0]]) is _FixpointResult.INCOMPLETE
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+
+
 def test_m4_loader_accepts_recurring_confirmed_beside_iii_cause():
     rows = [
         _m4_prior_row(0, {"fp-p3": "CONFIRMED"}),

@@ -705,7 +705,7 @@ def _p3_prefix(root, monkeypatch, severity="P3"):
 
 
 def test_m4_recurring_p3_plus_schema_preserves_on_real_run(offline_workspace, monkeypatch):
-    """M4 run level: recurring P3 + new schema-fail, then recurring schema (CYCLE_RESTART), both keep [2, 3]."""
+    """M4 run level: recurring P3 + new incomplete-coverage, then recurring coverage (CYCLE_RESTART), both keep [2, 3]."""
     root = offline_workspace
     state = _p3_prefix(root, monkeypatch)
     assert [row["clean_credit_action"] for row in state.round_history] == ["reset", "earned", "earned"]
@@ -743,6 +743,37 @@ def test_m4_recurring_p0_to_p2_plus_schema_resets_on_real_run(offline_workspace,
     _assert_calls(calls, [4])
     state, _ = _state(root)
     latest = state.round_history[-1]
+    assert latest["clean_credit_action"] == "reset"
+    assert state.consecutive_clean_rounds == 0 and state.earned_clean_window["cycles"] == []
+
+
+@pytest.mark.parametrize("severity", ["P2", "P1", "P0"])
+def test_l3_recurring_finding_raised_to_p0_p2_beside_coverage_wipes_earned_window(
+    offline_workspace, monkeypatch, severity
+):
+    """L-3: non-vacuous negative. The window [2, 3] was earned beside the
+    recurring P3; the same fingerprint (location-stable) now at P0-P2 beside
+    incomplete-coverage is a recurring finding, so only the tier decides,
+    and the counterfactual is not CLEAN: the earned window is wiped."""
+    root = offline_workspace
+    state = _p3_prefix(root, monkeypatch)
+    assert [row["clean_credit_action"] for row in state.round_history] == ["reset", "earned", "earned"]
+    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [2, 3]
+    product = [fp for fp, disp in state.round_history[-1]["dispositions"].items() if disp == "CONFIRMED"]
+    assert len(product) == 1
+    machine, calls = _new_machine(
+        root, monkeypatch, fault="coverage", mixed_product=True, product_severity=severity,
+    )
+    machine.run()
+    _assert_calls(calls, [4])
+    state, _ = _state(root)
+    latest = state.round_history[-1]
+    assert latest["dispositions"][product[0]] == "CONFIRMED"
+    assert latest["dispositions"]["incomplete-coverage-adversarial"] == "CONFIRMED"
+    # The new incomplete-coverage cause is itself a first-seen CONFIRMED, so the
+    # recorded fixpoint is RESET (clause a) at every tier; the tier is decided in
+    # the counterfactual (P2 -> CYCLE_RESTART, P0/P1 -> RESET), neither CLEAN.
+    assert latest["fixpoint"] == "RESET"
     assert latest["clean_credit_action"] == "reset"
     assert state.consecutive_clean_rounds == 0 and state.earned_clean_window["cycles"] == []
 
