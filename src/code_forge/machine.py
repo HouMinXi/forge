@@ -873,6 +873,10 @@ class StateMachine:
         # fix7 (CR3R-L1): what the writer stripped, so a failure later in the
         # same attempt can turn the settled `preserved` row back into a reset.
         self._c3_stripped_dispositions: dict[str, str] = {}
+        # fix8 (CR3R2-L1): the round whose `preserved` row this attempt settled.
+        # Cleared before every attempt begins, so a failure between rounds or
+        # right after resume never demotes a preserve an earlier attempt saved.
+        self._settled_preserve_round: int | None = None
         # fix7 (CR2R2-L1): receipt-write errors already logged to infra_errors
         # (directly or as a receipt gate finding). Every site that books one
         # ends the run, so the list never carries over into another round.
@@ -1776,6 +1780,7 @@ class StateMachine:
         )
 
     def _begin_host_attempt(self, round_index: int) -> None:
+        self._settled_preserve_round = None
         if not self._host_receipt_active():
             return
         if any(row["round"] == round_index for row in self._state.round_history):
@@ -1874,6 +1879,8 @@ class StateMachine:
         if evidence_rejections is not None:
             row["evidence_rejections"] = evidence_rejections
         self._host_attempt_round = None
+        if action == "preserved":
+            self._settled_preserve_round = row["round"]
         if action == "reset":
             self._hold_confirmed_fingerprints = []
 
@@ -2074,7 +2081,11 @@ class StateMachine:
                 for row in self._state.round_history
                 if is_host_round(row) and row["round"] == self._state.round
             ]
-            if rows and rows[0]["clean_credit_action"] == "preserved":
+            if (
+                rows
+                and rows[0]["clean_credit_action"] == "preserved"
+                and rows[0]["round"] == self._settled_preserve_round
+            ):
                 self._demote_settled_preserve(rows[0])
             if not rows or (self._host_attempt_round is None and not observed):
                 return
@@ -2172,6 +2183,7 @@ class StateMachine:
                 errors[at] = _CYCLE_RESTART_LOG % row["round"]
         row.setdefault("dispositions", {}).update(self._c3_stripped_dispositions)
         self._c3_stripped_dispositions = {}
+        self._settled_preserve_round = None
         self._reset_clean_credit(settled_host_row=True)
         row["clean_rounds_after"] = self._state.consecutive_clean_rounds
 
@@ -2218,6 +2230,7 @@ class StateMachine:
         start = self._continuation_round_index()
         self._preflight_mutation_workspace()
         for round_index in range(start, start + self.max_total_rounds):
+            self._settled_preserve_round = None
             self._begin_host_attempt(round_index)
             if check_escalated_frozen(self._state):
                 self._append_round_snapshot(

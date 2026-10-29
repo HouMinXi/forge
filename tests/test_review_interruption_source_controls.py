@@ -35,6 +35,7 @@ from code_forge import cli, llm_invoke, verify
 from code_forge.autofix import NoChangeAutoFixer
 from code_forge.backend import BackendConfig
 from code_forge.baseline import ResolvedReview
+from code_forge.errors import CorruptedStateError
 from code_forge.factories import build_l1_provider
 from code_forge.falsify import StubFalsifier
 from code_forge.falsify_real import RealFalsifier
@@ -1845,3 +1846,144 @@ def test_fix7_receipt_write_error_logged_once(offline_workspace, monkeypatch, ca
         line for line in cli._format_infra_lines(state).splitlines() if "receipt write failed" in line
     ]
     assert len(lines) == 1, lines
+
+
+# fix8 (CR3R2-L1): a preserve that an EARLIER attempt settled is not this
+# attempt's to demote. Only the attempt that settled it may turn it into a reset.
+def _ledger(state):
+    return (
+        copy.deepcopy(state.round_history),
+        state.consecutive_clean_rounds,
+        copy.deepcopy(state.earned_clean_window),
+    )
+
+
+def _raise_before_next_begin(error):
+    """Ctrl-C (or any error) after round N settled, before round N+1 begins (loop top)."""
+
+    def inject(machine, begin, _index):
+        raise error
+
+    return inject
+
+
+def _reserved_id_in_next_begin(machine, begin, index):
+    """The real `_begin_host_attempt` raises its own CorruptedStateError (reserved ID)."""
+    return begin(index - 1)
+
+
+_FIX8_BETWEEN_ROUNDS = {
+    "ctrl-c-at-loop-top": (
+        _raise_before_next_begin(_AfterRoundInterrupt("constructed interrupt between rounds")),
+        _AfterRoundInterrupt,
+        "constructed interrupt between rounds",
+    ),
+    "corrupted-state-in-begin": (
+        _reserved_id_in_next_begin,
+        CorruptedStateError,
+        "host attempt ID is already reserved",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_FIX8_BETWEEN_ROUNDS))
+def test_fix8_failure_between_rounds_keeps_prior_preserve(offline_workspace, monkeypatch, case):
+    """CR3R2-L1: a failure before the next round begins leaves the settled preserve as it was.
+
+    Round 3 settles `preserved` (credit 2, window [1, 2]) and its save
+    completes. The failure comes before round 4's attempt is reserved, so
+    round 3's row, credit and window stay byte-for-byte what round 3 saved.
+    At 311077fb the row became reset with credit 0 and window [].
+    """
+    inject, error, match = _FIX8_BETWEEN_ROUNDS[case]
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="coverage", rounds=2)
+    begin = machine._begin_host_attempt
+    armed = _spy_actions(monkeypatch, machine)
+    seen = {}
+
+    def next_begin(index):
+        if armed["actions"] != ["preserved"]:
+            return begin(index)
+        seen["disk"] = _ledger(_state(root)[0])
+        seen["memory"] = _ledger(machine._state)
+        return inject(machine, begin, index)
+
+    monkeypatch.setattr(machine, "_begin_host_attempt", next_begin)
+    with pytest.raises(error, match=match):
+        machine.run()
+    assert armed["actions"] == ["preserved"], armed
+    _assert_calls(calls, [3])
+    state, _ = _state(root)
+    rows, credit, window = seen["disk"]
+    assert rows[-1]["round"] == 2 and rows[-1]["clean_credit_action"] == "preserved"
+    assert credit == 2 and [entry["cycle"] for entry in window["cycles"]] == [1, 2]
+    assert _ledger(state) == seen["disk"]
+    assert _ledger(machine._state) == seen["memory"] == seen["disk"]
+    assert state.verdict is Verdict.FAIL and state.converged is False
+
+
+def _preserved_on_disk(root, monkeypatch):
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="coverage")
+    with monkeypatch.context() as mp:
+        armed = _spy_actions(mp, machine)
+        machine.run()
+    assert armed["actions"] == ["preserved"], armed
+    state, _ = _state(root)
+    assert state.round_history[-1]["clean_credit_action"] == "preserved"
+    assert state.consecutive_clean_rounds == 2
+    return root / ".code-forge" / "state.json"
+
+
+def _corrupted_begin(mp, machine):
+    def begin(_index):
+        raise CorruptedStateError("constructed corrupted state at begin")
+
+    mp.setattr(machine, "_begin_host_attempt", begin)
+
+
+def _interrupt_receipt_diff(mp, machine):
+    def diff(*_args, **_kwargs):
+        raise _AfterRoundInterrupt("constructed interrupt in receipt diff")
+
+    mp.setattr(machine, "_receipt_diff", diff)
+
+
+_FIX8_RESUME = {
+    # CoS item (2): CorruptedStateError in `_begin_host_attempt` after resume.
+    "corrupted-state-in-begin": (
+        _corrupted_begin,
+        CorruptedStateError,
+        "constructed corrupted state at begin",
+    ),
+    # CR3 I-6: Ctrl-C in `_receipt_diff` while resuming.
+    "ctrl-c-in-receipt-diff": (
+        _interrupt_receipt_diff,
+        _AfterRoundInterrupt,
+        "constructed interrupt in receipt diff",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_FIX8_RESUME))
+def test_fix8_early_crash_after_resume_changes_nothing(offline_workspace, monkeypatch, case):
+    """CR3R2-L1 / I-6: a crash right after resume leaves state.json and memory unchanged.
+
+    At 311077fb state.json stayed the same but the in-memory row became
+    reset with credit 0.
+    """
+    inject, error, match = _FIX8_RESUME[case]
+    root = offline_workspace
+    path = _preserved_on_disk(root, monkeypatch)
+    before = path.read_bytes()
+    expected = _ledger(_state(root)[0])
+    machine, calls = _new_machine(root, monkeypatch, fault="coverage")
+    with monkeypatch.context() as mp:
+        inject(mp, machine)
+        with pytest.raises(error, match=match):
+            machine.run()
+    assert calls == []
+    assert path.read_bytes() == before
+    assert _ledger(machine._state) == expected
