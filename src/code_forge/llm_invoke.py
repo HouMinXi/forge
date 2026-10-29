@@ -1959,6 +1959,16 @@ def _invoke_cli(
                 content = raw_result
         else:
             content = raw_result
+    elif reply_keys is not None and isinstance(parsed, dict):
+        # No envelope: stdout is the model reply itself. It was parsed above
+        # without reply_keys, since an envelope's own keys are not the reply's.
+        # Parse it again under the caller's keys so a repair that invents a
+        # key fails closed here too (#264); keep the raw text as the inner
+        # result path does.
+        try:
+            content = _loads_model_json(stdout, reply_keys)
+        except json.JSONDecodeError:
+            content = stdout
 
     return LLMResult(
         content=content,

@@ -90,6 +90,7 @@ def test_repaired_reply_with_only_allowed_keys_still_parses():
 def test_repaired_review_with_allowed_nested_keys_still_parses():
     text = (
         '{"findings": [{"file": "a.py", "line": 1, "severity": "P2", "description": "say "x"", '
+        '"excerpt": "e", '
         '"code_excerpts": [{"file": "a.py", "start_line": 1, "end_line": 1, "content": "c"}]}], '
         '"code_excerpts": [{"file": "a.py", "start_line": 1, "end_line": 2, "content": "c"}], '
         '"context_quotes": [{"file": "a.py", "content": "q"}]}'
@@ -238,3 +239,185 @@ def test_falsifier_passes_falsify_keys():
     from code_forge import falsify_real
 
     assert "reply_keys=_FALSIFY_REPLY_KEYS" in inspect.getsource(falsify_real.RealFalsifier)
+
+
+def _bare_cli_proc(stdout):
+    proc = MagicMock()
+    proc.returncode = 0
+    proc.communicate.return_value = (stdout, "")
+    proc.pid = 12345
+    return proc
+
+
+def test_cli_bare_stdout_falls_back_to_raw_text(cli_binary):
+    # A CLI or proxy that prints the model's JSON with no result envelope.
+    backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
+    with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(REVIEW_REPRO)):
+        result = llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
+    assert result.content == REVIEW_REPRO
+
+
+def test_cli_bare_stdout_without_keys_keeps_the_repair(cli_binary):
+    backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
+    with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(REVIEW_REPRO)):
+        result = llm_invoke("prompt", backend=backend)
+    assert result.content["findings"][0]["c"] == 'd"}'
+
+
+def test_cli_bare_stdout_with_allowed_keys_still_parses(cli_binary):
+    backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
+    stdout = '{"verdict": "DISMISSED", "reasoning": "it says "hi" there"}'
+    with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(stdout)):
+        result = llm_invoke("prompt", backend=backend, reply_keys=_FALSIFY_REPLY_KEYS)
+    assert result.content == {"verdict": "DISMISSED", "reasoning": 'it says "hi" there'}
+
+
+# Each item list in REVIEW_REPLY_KEYS rejects a repair that lands in it.
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"findings": [], "code_excerpts": [{"file": "a.py", "start_line": 1, "end_line": 1, '
+        '"content": "' + DICT_LITERAL + '"}]}',
+        '{"findings": [], "code_excerpts": [], "context_quotes": [{"file": "a.py", '
+        '"content": "' + DICT_LITERAL + '"}]}',
+    ],
+    ids=["code_excerpts", "context_quotes"],
+)
+def test_review_item_lists_reject_invented_keys(text):
+    assert _loads_model_json(text)
+    with pytest.raises(json.JSONDecodeError):
+        _loads_model_json(text, REVIEW_REPLY_KEYS)
+
+
+def test_repaired_falsify_reply_may_carry_a_receipt():
+    text = (
+        '{"verdict": "CONFIRMED", "reasoning": "it says "hi" there", '
+        '"receipt": {"command": "pytest", "output": "1 failed"}}'
+    )
+    assert _loads_model_json(text, _FALSIFY_REPLY_KEYS)["receipt"] == {
+        "command": "pytest",
+        "output": "1 failed",
+    }
+
+
+def test_repaired_runtime_reply_may_carry_surfaces():
+    text = (
+        '{"surfaces": ["cli"], "findings": [{"file": "a", "line": 1, "surface": "cli", '
+        '"description": "say "x""}]}'
+    )
+    assert _loads_model_json(text, RUNTIME_REPLY_KEYS)["surfaces"] == ["cli"]
+
+
+# reply_keys must reach every parse in a call. Each test below sends REVIEW_REPRO
+# through one site. With the keys, the repair is refused; without them at that
+# site, the repaired dict with the invented key would come back as the result.
+
+STOP = {"prompt_tokens": 1, "completion_tokens": 2, "_forge_finish_reason": "stop"}
+
+
+def _truncated(content):
+    return invoke._TruncatedResponse(
+        "cut", content=content, usage_data={}, resolved_cap=1024, kind="truncated", retryable=False
+    )
+
+
+def _wide_backend():
+    return BackendConfig(
+        name="keys-test",
+        type="api",
+        format="openai",
+        base_url="http://127.0.0.1:1/v1",
+        api_key_env="KEYS_TEST_KEY",
+        model="test",
+        max_tokens=1024,
+        output_token_limit=4096,
+    )
+
+
+@pytest.fixture
+def api_env(monkeypatch):
+    monkeypatch.setenv("KEYS_TEST_KEY", "local-test")
+    monkeypatch.setattr(invoke.time, "sleep", Mock())
+
+
+def test_continue_partial_parse_uses_keys(api_env):
+    with pytest.raises(invoke.LLMInvokeError):
+        invoke._continue_truncated(
+            "p",
+            _api_backend(),
+            "k",
+            7,
+            _truncated(REVIEW_REPRO),
+            None,
+            budget=0,
+            reply_keys=REVIEW_REPLY_KEYS,
+        )
+
+
+def test_continue_combined_parse_uses_keys(api_env, monkeypatch):
+    cut = 40
+    monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(REVIEW_REPRO[cut:], STOP)))
+    with pytest.raises(invoke.LLMInvokeError):
+        invoke._continue_truncated(
+            "p",
+            _api_backend(),
+            "k",
+            7,
+            _truncated(REVIEW_REPRO[:cut]),
+            None,
+            budget=1,
+            reply_keys=REVIEW_REPLY_KEYS,
+        )
+
+
+def test_wider_retry_parse_uses_keys(api_env, monkeypatch):
+    request = Mock(return_value=(REVIEW_REPRO, STOP))
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    assert (
+        invoke._retry_with_more_headroom("p", _wide_backend(), "k", 7, None, REVIEW_REPLY_KEYS) is None
+    )
+    assert request.call_count == 1
+
+
+def test_api_passes_keys_to_continuation(api_env, monkeypatch):
+    request = Mock(side_effect=[_truncated(REVIEW_REPRO), ("", STOP), ("", STOP)])
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    with pytest.raises(invoke.LLMInvokeError):
+        invoke._invoke_api("task", _api_backend(), 7, max_attempts=1, reply_keys=REVIEW_REPLY_KEYS)
+    assert request.call_count == 3
+
+
+def test_api_passes_keys_to_wider_retry(api_env, monkeypatch):
+    cut = 40
+    request = Mock(
+        side_effect=[_truncated(REVIEW_REPRO[:cut]), ("", STOP), ("", STOP), (REVIEW_REPRO, STOP)]
+    )
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    with pytest.raises(invoke.LLMInvokeError):
+        invoke._invoke_api("task", _wide_backend(), 7, max_attempts=1, reply_keys=REVIEW_REPLY_KEYS)
+    assert request.call_count == 4
+
+
+# The follow-up quotes a dict literal in its excerpt; the repair would cut it
+# and add a key `c` to the excerpt object.
+EXCERPT_REPRO = (
+    '{"code_excerpts": [{"file": "a.py", "start_line": 1, "end_line": 1, '
+    '"content": "' + DICT_LITERAL + '"}]}'
+)
+NO_EXCERPTS = {"findings": [{"file": "a.py", "line": 1, "severity": "P2", "description": "d"}]}
+
+
+def test_excerpt_repair_api_follow_up_uses_keys(api_env, monkeypatch):
+    monkeypatch.setattr(invoke, "_invoke_openai", Mock(return_value=(EXCERPT_REPRO, STOP)))
+    repaired, _usage, _duration = invoke._repair_missing_excerpts(
+        NO_EXCERPTS, "task", _api_backend(), 7, reply_keys=REVIEW_REPLY_KEYS
+    )
+    assert repaired is NO_EXCERPTS
+
+
+def test_llm_invoke_passes_keys_to_excerpt_repair(cli_binary):
+    backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
+    procs = [_cli_proc(json.dumps(NO_EXCERPTS)), _cli_proc(EXCERPT_REPRO)]
+    with patch("code_forge.llm_invoke.subprocess.Popen", side_effect=procs):
+        result = llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
+    assert result.content == NO_EXCERPTS
