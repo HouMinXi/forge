@@ -94,18 +94,21 @@ class _Side:
         self.continued = False  # the previous import line ended with `\`
 
     def names(self, line: str) -> set[str]:
+        code = line.split("#", 1)[0]
         if self.open:
-            inside, closed, _rest = line.split("#", 1)[0].partition(")")
+            inside, closed, _rest = code.partition(")")
             self.open = not closed
             return _clause_names(inside)
+        # A `\` at the end of a comment continues nothing.
+        ends_in_backslash = code.rstrip().endswith("\\")
         if self.continued:
             # A trailing `\` follows a comma, so it is an item of its own
             # that matches no name.
-            self.continued = line.rstrip().endswith("\\")
-            return _clause_names(line.split("#", 1)[0])
+            self.continued = ends_in_backslash
+            return _clause_names(code)
         if _OPEN_FROM_IMPORT.match(line):
             self.open = True
-        elif (_FROM_IMPORT.match(line) or _IMPORT.match(line)) and line.rstrip().endswith("\\"):
+        elif ends_in_backslash and (_FROM_IMPORT.match(line) or _IMPORT.match(line)):
             self.continued = True
         return _defined(line)
 

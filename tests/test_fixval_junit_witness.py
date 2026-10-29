@@ -139,6 +139,13 @@ def test_a_function_level_parenthesised_import_binds_nothing():
         # only an import line continues; an assignment's backslash does not
         (["+total = 1 + \\", "+    newname"], {"total"}),
         (["+def f():", "+    from pkg.o import a, \\", "+        b"], {"f"}),
+        # a plain import does not continue onto the next line
+        (["+import json", "+VALUE = 1"], {"json", "VALUE"}),
+        # a parenthesised import is closed by its `)`, even with a `\\` inside
+        (["+from pkg.o import (a, \\", "+    newname)", "+VALUE = 1"], {"a", "newname", "VALUE"}),
+        # a backslash at the end of a comment continues nothing
+        (["+import os  # see \\", "+def helper():"], {"os", "helper"}),
+        (["+from pkg.o import a, \\", "+    b  # c \\", "+VALUE = 1"], {"a", "b", "VALUE"}),
     ],
 )
 def test_added_names_reads_backslash_continued_imports(lines, names):
@@ -148,6 +155,12 @@ def test_added_names_reads_backslash_continued_imports(lines, names):
 
 def test_a_backslash_continued_import_of_an_added_name_is_red():
     found = added_names(_hunk("src/calc.py", [" from pkg.o import a, \\", "+    helper"]))
+    assert red_witness(_report(_error("collection failure", IMPORT_HELPER)), found) is True
+
+
+def test_a_definition_after_an_import_whose_comment_ends_in_a_backslash_is_red():
+    lines = ["+import os  # see \\", "+def helper():", "+    return os.sep"]
+    found = added_names(_hunk("src/calc.py", lines))
     assert red_witness(_report(_error("collection failure", IMPORT_HELPER)), found) is True
 
 
@@ -252,6 +265,17 @@ NEWMOD2 = AddedNames(frozenset(), frozenset({"pkg.newmod2"}))
         (
             _report(_error("collection failure", IMPORT_NEWMOD.replace("newmod", "other"))),
             NEW_MODULE,
+            False,
+        ),
+        # a parent of a created module is not RED, nor is a namespace parent
+        (
+            _report(_error("collection failure", "E ModuleNotFoundError: No module named 'pkg'")),
+            NEW_MODULE,
+            False,
+        ),
+        (
+            _report(_error("collection failure", "E ModuleNotFoundError: No module named 'pkg.new'")),
+            AddedNames(frozenset(), frozenset({"pkg.new.mod"})),
             False,
         ),
         # false-RED boundaries: the module must be exactly `M.X`, and `No module
