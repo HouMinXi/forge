@@ -2065,6 +2065,50 @@ def test_fix9_second_run_early_crash_keeps_prior_preserve(offline_workspace, mon
     assert state.verdict is not Verdict.PASS
 
 
+_P13 = {
+    # CR2F8-L1 P13a: run 1 returns ESCALATED; run 2's preflight gets Ctrl-C.
+    "p13a-escalated-then-ctrl-c": ("coverage", Verdict.ESCALATED, _AfterRoundInterrupt),
+    # CR2F8-L1 P13b: run 1 returns FAIL at the gate; run 2's preflight raises.
+    "p13b-fail-then-runtime-error": ("schema", Verdict.FAIL, RuntimeError),
+}
+
+
+@pytest.mark.parametrize("case", list(_P13))
+def test_fix9_p13_second_run_preflight_failure_keeps_preserve(offline_workspace, monkeypatch, case):
+    """CR2F8-L1 P13a/P13b: two run() calls on one instance; the second fails at preflight.
+
+    Run 1 settles round 2 `preserved` (credit 2, window [1, 2]) and returns
+    normally. Run 2 fails in `_preflight_mutation_workspace`, before its loop.
+    Round 2 stays `preserved` with credit 2 and window [1, 2], on disk
+    (reload) and in memory. At 072e3bb1 both became reset, credit 0, window [].
+    """
+    fault, verdict, error = _P13[case]
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault=fault)
+    with monkeypatch.context() as mp:
+        armed = _spy_actions(mp, machine)
+        assert machine.run() is verdict
+    assert armed["actions"] == ["preserved"], armed
+    expected = _ledger(_state(root)[0])
+    rows, credit, window = expected
+    assert rows[-1]["round"] == 2 and rows[-1]["clean_credit_action"] == "preserved"
+    assert credit == 2 and [entry["cycle"] for entry in window["cycles"]] == [1, 2]
+    assert _ledger(machine._state) == expected
+    dispatched = len(calls)
+
+    def preflight(*_args, **_kwargs):
+        raise error("constructed preflight failure in the second run")
+
+    with monkeypatch.context() as mp:
+        mp.setattr(machine, "_preflight_mutation_workspace", preflight)
+        with pytest.raises(error, match="constructed preflight failure"):
+            machine.run()
+    assert len(calls) == dispatched
+    assert _ledger(_state(root)[0]) == expected
+    assert _ledger(machine._state) == expected
+
+
 def test_fix9_begin_entry_clears_a_stale_guard(offline_workspace, monkeypatch):
     """`_begin_host_attempt` itself drops a stale guard, whoever calls it.
 
