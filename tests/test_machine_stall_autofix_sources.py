@@ -101,7 +101,10 @@ def test_snapshot_records_fingerprints_whose_every_l0_finding_is_skipped(tmp_pat
 
 
 def test_snapshot_field_is_sorted(tmp_path):
-    """With 14 skipped fingerprints a set iterates in sorted order with odds near 1/14!, so list() fails."""
+    """With 14 skipped fingerprints a set iterates in sorted order with odds near 1/14!.
+
+    So a list() of the set fails this check.
+    """
     machine = _machine(tmp_path)
     fingerprints = [f"fp-{name}" for name in "qwertyuiopzxcv"]
     machine._append_round_snapshot(0, [_finding(fp, "MUTANT") for fp in fingerprints], [])
