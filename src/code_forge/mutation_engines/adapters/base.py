@@ -11,7 +11,7 @@ import hashlib
 import json
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Protocol
@@ -248,6 +248,10 @@ def sandbox_failure_result(
         }
     else:
         error = isolation_probe_error(exc, target_id)
+        if error.phase == "probe":
+            # Supervisor.start re-checks isolation, so here it failed on a
+            # command of the run, not in the adapter's probe.
+            error = replace(error, phase="baseline" if baseline is None else "mutation")
         cleanup_errors = (error,) if error.phase == "cleanup" else ()
         group_left = exc.cleanup_failure is not None
         if group_left:

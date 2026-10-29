@@ -318,11 +318,26 @@ def test_isolation_unavailable_at_start_keeps_the_passed_baseline(tmp_path, runs
     assert result.baseline.state is BaselineState.PASSED
     assert [r.id for r in result.command_receipts] == ["baseline-run-c"]
     [error] = result.infrastructure_errors
-    assert (error.code, error.phase, error.retryable) == ("isolation-unavailable", "probe", False)
+    assert (error.code, error.phase, error.retryable) == ("isolation-unavailable", "mutation", False)
     assert result.cleanup.state is CleanupState.COMPLETE
     assert result.cleanup.owned_group_empty is True
     assert made[1][0].teardowns == 1
     assert made[1][1].joined
+
+
+def test_isolation_unavailable_on_the_baseline_command_is_a_baseline_error(tmp_path, runs, monkeypatch):
+    scripts, _ = runs
+    scripts.append({"start_error": isolate.IsolationUnavailable("no cgroup2")})
+    _two_commands(monkeypatch)
+
+    result = _run(tmp_path, monkeypatch)
+
+    assert result.run_state is RunState.INCOMPLETE
+    assert result.baseline.state is BaselineState.UNKNOWN
+    assert result.command_receipts == ()
+    [error] = result.infrastructure_errors
+    assert (error.code, error.phase, error.retryable) == ("isolation-unavailable", "baseline", False)
+    assert result.cleanup.state is CleanupState.COMPLETE
 
 
 def test_isolation_unavailable_with_the_run_cgroup_left_behind(tmp_path, runs, monkeypatch):

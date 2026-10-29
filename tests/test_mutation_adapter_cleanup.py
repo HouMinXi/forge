@@ -234,7 +234,10 @@ def test_run_without_isolation_is_an_incomplete_result(tmp_path, monkeypatch, na
     assert result.run_state is RunState.INCOMPLETE
     assert result.reason_code == "isolation-unavailable"
     [error] = result.infrastructure_errors
-    assert (error.code, error.phase, error.retryable) == ("isolation-unavailable", "probe", False)
+    # The isolation check failed on a run command, not in the probe: the
+    # baseline command if it was first, otherwise a mutation command.
+    phase = "baseline" if fail_at == 0 else "mutation"
+    assert (error.code, error.phase, error.retryable) == ("isolation-unavailable", phase, False)
     # The command never started, so it has no receipt; earlier ones stay.
     assert [r.id for r in result.command_receipts] == list(receipt_ids[:fail_at])
     assert result.cleanup.state is CleanupState.COMPLETE
@@ -460,6 +463,8 @@ def test_patch_corpus_entry_without_isolation_keeps_the_baseline(tmp_path, monke
 
     assert result.run_state is RunState.INCOMPLETE
     assert result.reason_code == "isolation-unavailable"
+    [error] = result.infrastructure_errors
+    assert (error.code, error.phase) == ("isolation-unavailable", "mutation")
     assert result.cleanup.state is CleanupState.COMPLETE
     assert result.baseline.state is BaselineState.PASSED
     assert list(result.command_receipts) == [result.baseline.command_receipt]
