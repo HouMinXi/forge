@@ -98,6 +98,17 @@ IMPORT_HELPER = "E   ImportError: cannot import name 'helper' from 'calc' (/r/sr
     [
         (_report('<failure message="assert 1 == 2"/>'), NOTHING, True),
         (_report(_error("collection failure", IMPORT_HELPER)), CALC_HELPER, True),
+        # one testcase: an unexpected pass, then a real failure (every <failure> is read)
+        (
+            _report('<failure message="[XPASS(strict)] "/><failure message="assert 1 == 2"/>'),
+            NOTHING,
+            True,
+        ),
+        (
+            _report('<failure message="Failed: Unexpected success"/><failure message="boom"/>'),
+            NOTHING,
+            True,
+        ),
         (_report(_error("failed on setup with &quot;%s&quot;" % IMPORT_HELPER)), CALC_HELPER, True),
         (
             _report(
@@ -296,6 +307,26 @@ def test_report_goes_in_a_fresh_private_directory_that_is_removed(tmp_path, monk
     assert os.path.basename(directory).startswith("fixval-junit-")
     assert (mode, entries) == (0o700, [])
     assert list(reports.iterdir()) == []
+
+
+def test_a_report_directory_that_cannot_be_removed_does_not_lose_the_verdict(tmp_path, monkeypatch):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(reports))
+    real_rmdir = os.rmdir
+
+    def rmdir(path, *args, **kwargs):
+        if "fixval-junit-" in str(path):
+            raise PermissionError(13, "injected rmdir failure", str(path))
+        return real_rmdir(path, *args, **kwargs)
+
+    calls = _spy_run(monkeypatch, 1)
+    monkeypatch.setattr(os, "rmdir", rmdir)
+    result = _test_reverted_candidate(CANDIDATE, [*PYTEST, "t.py"], {}, str(tmp_path))
+    monkeypatch.setattr(os, "rmdir", real_rmdir)
+    _inconclusive(result, 1)
+    [_argv, (_tag, directory, _mode, _entries)] = calls
+    assert os.listdir(directory) == []  # only the empty directory is left behind
 
 
 def _git(root, *arguments):
