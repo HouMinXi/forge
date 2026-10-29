@@ -76,6 +76,66 @@ def test_a_path_that_is_not_an_importable_module_adds_nothing():
     assert added_names(_patch("pkg/foo-bar.py", [], ["def helper():"], new_file=True)) == NOTHING
 
 
+def _hunk(path, lines):
+    """A modification hunk; each line starts with "+", "-" or " "."""
+    old = sum(not line.startswith("+") for line in lines)
+    new = sum(not line.startswith("-") for line in lines)
+    head = "diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n" % (path, path, path, path)
+    return head + "@@ -1,%d +1,%d @@\n" % (old, new) + "".join(line + "\n" for line in lines)
+
+
+@pytest.mark.parametrize(
+    ("lines", "names"),
+    [
+        # a new multi-line import binds every name inside the parentheses
+        (["+from .impl import (", "+    run,  # see (a)", "+    stop as halt,", "+)"], {"run", "halt"}),
+        # each side keeps its own state: the removed lines leave the old import open
+        (["-from .impl import (", "-    run,", "+from .impl import (stop,", " )"], {"stop"}),
+        # a name added inside an import whose opening line is context
+        ([" from .impl import (", " run,", "+    stop,", " )"], {"stop"}),
+        # a name moved from one line of the import to another is not new
+        ([" from .impl import (", "-    run, stop", "+    run,", "+    stop,", " )"], set()),
+        (["+from .impl import (run,", "+    stop)", "+def after():"], {"run", "stop", "after"}),
+        # after the closing line, indented lines bind nothing again
+        ([" from .impl import (", " run,", " )", "+    value = 1"], set()),
+    ],
+)
+def test_added_names_reads_multi_line_imports(lines, names):
+    found = added_names(_hunk("src/calc.py", lines))
+    assert {name for _module, name in found.names} == names
+
+
+RENAME = """\
+diff --git a/src/old.py b/src/pkg/newmod.py
+similarity index 90%
+rename from src/old.py
+rename to src/pkg/newmod.py
+--- a/src/old.py
++++ b/src/pkg/newmod.py
+@@ -1 +1 @@
+-X = 1
++X = 2
+"""
+
+
+def test_a_renamed_or_copied_file_adds_its_module():
+    assert added_names(RENAME).modules == {"src.pkg.newmod", "pkg.newmod"}
+    copy = RENAME.replace("rename ", "copy ")
+    assert added_names(copy).modules == {"src.pkg.newmod", "pkg.newmod"}
+
+
+def test_a_rename_to_a_name_the_module_already_had_adds_no_module():
+    # src/calc.py was importable as `calc` before the fix moved it to calc.py
+    rename = RENAME.replace("src/old.py", "src/calc.py").replace("src/pkg/newmod.py", "calc.py")
+    assert added_names(rename).modules == frozenset()
+
+
+def test_a_modified_file_adds_no_module():
+    assert added_names(_hunk("src/calc.py", ["-X = 1", "+X = 2"])).modules == frozenset()
+    plain = "--- a/src/calc.py\n+++ b/src/calc.py\n@@ -1 +1 @@\n-X = 1\n+X = 2\n"
+    assert added_names(plain).modules == frozenset()
+
+
 def test_unreadable_patch_adds_nothing():
     assert added_names("@@ not a diff\n+def helper():\n") == NOTHING
 
@@ -91,6 +151,7 @@ def _error(message, text=""):
 
 
 IMPORT_HELPER = "E   ImportError: cannot import name 'helper' from 'calc' (/r/src/calc.py)"
+IMPORT_NEWMOD = "E   ImportError: cannot import name 'newmod' from 'pkg' (/r/src/pkg/__init__.py)"
 
 
 @pytest.mark.parametrize(
@@ -109,7 +170,27 @@ IMPORT_HELPER = "E   ImportError: cannot import name 'helper' from 'calc' (/r/sr
             NOTHING,
             True,
         ),
+        # a real failure, then an unexpected pass (the last <failure> is not the only one read)
+        (
+            _report('<failure message="assert 1 == 2"/><failure message="[XPASS(strict)] "/>'),
+            NOTHING,
+            True,
+        ),
         (_report(_error("failed on setup with &quot;%s&quot;" % IMPORT_HELPER)), CALC_HELPER, True),
+        # `from pkg import newmod`, where the fix creates the module pkg/newmod.py
+        (_report(_error("collection failure", IMPORT_NEWMOD)), NEW_MODULE, True),
+        (
+            _report(
+                _error("collection failure", "E AttributeError: module 'pkg' has no attribute 'newmod'")
+            ),
+            NEW_MODULE,
+            True,
+        ),
+        (
+            _report(_error("collection failure", IMPORT_NEWMOD.replace("newmod", "other"))),
+            NEW_MODULE,
+            False,
+        ),
         (
             _report(
                 _error("collection failure", "E AttributeError: module 'calc' has no attribute 'helper'")
@@ -266,6 +347,44 @@ def test_real_failed_test_is_red_and_the_report_is_removed(tmp_path, monkeypatch
     result = _reverted(tmp_path, "def test_it():\n    assert False\n", added=None)
     assert result.status is FixvalStatus.PASS, result.block_message
     assert list(reports.iterdir()) == []
+
+
+def test_real_import_of_a_module_the_fix_creates_is_red(tmp_path):
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    body = "from pkg import newmod\n\ndef test_it():\n    newmod.run()\n"
+    result = _reverted(tmp_path, body, added=NEW_MODULE)
+    assert result.status is FixvalStatus.PASS, result.block_message
+
+
+def test_real_command_with_a_double_dash_still_gets_its_report(tmp_path):
+    (tmp_path / "test_probe.py").write_text("def test_it():\n    assert False\n", encoding="utf-8")
+    cmd = [*PYTEST, "--", "test_probe.py"]
+    result = _test_reverted_candidate(CANDIDATE, cmd, dict(os.environ), str(tmp_path), added=NOTHING)
+    assert result.status is FixvalStatus.PASS, result.block_message
+
+
+@pytest.mark.parametrize(
+    ("cmd", "expected"),
+    [
+        (["pytest", "-q", "--", "t.py"], ["pytest", "-q", "J", "--", "t.py"]),
+        (
+            ["python", "-B", "-m", "pytest", "--", "pytest"],
+            ["python", "-B", "-m", "pytest", "J", "--", "pytest"],
+        ),
+        (["uv", "run", "--", "pytest", "t.py"], ["uv", "run", "--", "pytest", "t.py", "J"]),
+        (
+            ["coverage", "run", "-m", "pytest", "--", "t.py"],
+            ["coverage", "run", "-m", "pytest", "J", "--", "t.py"],
+        ),
+        (["pytest", "t.py"], ["pytest", "t.py", "J"]),
+    ],
+)
+def test_junitxml_goes_before_a_double_dash_of_pytest(tmp_path, monkeypatch, cmd, expected):
+    calls = _spy_run(monkeypatch, 1)
+    _test_reverted_candidate(CANDIDATE, cmd, {}, str(tmp_path))
+    argv = [("J" if arg.startswith("--junitxml=") else arg) for arg in calls[0]]
+    assert argv == expected
 
 
 def test_real_unexpected_passes_alone_are_inconclusive(tmp_path):

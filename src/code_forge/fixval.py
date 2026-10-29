@@ -638,10 +638,27 @@ def _test_reverted_candidate(
             shutil.rmtree(report_dir, ignore_errors=True)
 
 
+def _with_junitxml(cmd: list[str], report: str) -> list[str]:
+    """`cmd` with `--junitxml=<report>` added as a pytest option.
+
+    pytest reads every argument after a bare `--` as a path, so the flag
+    goes before the first `--` among pytest's own arguments. A `--` that
+    belongs to a wrapper (`uv run -- pytest`) comes before the pytest part
+    and is left alone."""
+    flag = "--junitxml=%s" % report
+    argv = _unwrap_runner([str(arg) for arg in cmd])
+    # argv is a suffix of cmd; `coverage run` swaps its prefix for one
+    # "python", so the offset holds for every argument after the program.
+    if "--" in argv:
+        at = len(cmd) - len(argv) + argv.index("--")
+        return [*cmd[:at], flag, *cmd[at:]]
+    return [*cmd, flag]
+
+
 def _judge_reverted_run(
     candidate, scoped_cmd, run_env, repo_root, reverted_files, require_witness, timeout, added, report
 ) -> FixvalResult | None:
-    cmd = scoped_cmd if report is None else [*scoped_cmd, "--junitxml=%s" % report]
+    cmd = scoped_cmd if report is None else _with_junitxml(scoped_cmd, report)
     try:
         result = subprocess.run(
             cmd,

@@ -26,6 +26,8 @@ _ASSIGNMENT = re.compile(r"([A-Za-z_]\w*)\s*(?::[^=]*)?=(?!=)")
 _FROM_IMPORT = re.compile(r"from\s+[\w.]+\s+import\s+\(?([^)#]*)")
 _IMPORT = re.compile(r"import\s+([^#]*)")
 _ALIAS = re.compile(r"[\w.]+(?:\s+as\s+(\w+))?")
+# `from x import (` with the closing parenthesis on a later line.
+_OPEN_FROM_IMPORT = re.compile(r"from\s+[\w.]+\s+import\s*\([^)#]*(?:#.*)?$")
 
 _CANNOT_IMPORT = re.compile(r"cannot import name '(\w+)' from '([\w.]+)'")
 _NO_ATTRIBUTE = re.compile(r"module '([\w.]+)' has no attribute '(\w+)'")
@@ -55,26 +57,47 @@ def _module_names(path: str) -> set[str]:
     if not parts or not all(part.isidentifier() for part in parts):
         return set()
     names = {".".join(parts)}
+    # Known limit: only `src/` is stripped. A module under another root
+    # (`lib/pkg/mod.py` imported as `pkg.mod`) is matched by its full dotted
+    # path alone, so an import error that names the shorter form is not RED
+    # and the run stays inconclusive. Guessing roots would widen RED.
     if parts[0] == "src" and len(parts) > 1:
         names.add(".".join(parts[1:]))
     return names
 
 
-def _imported_names(line: str) -> set[str]:
-    match = _FROM_IMPORT.match(line)
-    if match:
-        clause = match.group(1)
-    else:
-        match = _IMPORT.match(line)
-        if not match:
-            return set()
-        clause = match.group(1)
+def _clause_names(clause: str) -> set[str]:
     names = set()
     for item in clause.split(","):
         alias = _ALIAS.fullmatch(item.strip())
         if alias:
             names.add(alias.group(1) or item.strip().split(".")[0])
     return names
+
+
+def _imported_names(line: str) -> set[str]:
+    match = _FROM_IMPORT.match(line) or _IMPORT.match(line)
+    return _clause_names(match.group(1)) if match else set()
+
+
+class _Side:
+    """One side (pre- or post-image) of a hunk, read in order, so the
+    lines inside a multi-line `from x import (...)` bind their names.
+
+    Known limit: a hunk that starts inside such an import does not see its
+    opening line, so the names there are not read (no RED from them)."""
+
+    def __init__(self):
+        self.open = False
+
+    def names(self, line: str) -> set[str]:
+        if self.open:
+            inside, closed, _rest = line.split("#", 1)[0].partition(")")
+            self.open = not closed
+            return _clause_names(inside)
+        if _OPEN_FROM_IMPORT.match(line):
+            self.open = True
+        return _defined(line)
 
 
 def _defined(line: str) -> set[str]:
@@ -102,28 +125,39 @@ def added_names(patch: str) -> AddedNames:
         dotted = _module_names(path or "")
         if not dotted:
             continue
-        if patched_file_path(entry, source=True) is None:
-            modules.update(dotted)
+        source = patched_file_path(entry, source=True)
+        if source is None or source != path:
+            # A created, renamed or copied file: its module exists only
+            # with the fix (a rename's old name is gone, not added).
+            modules.update(dotted - _module_names(source or ""))
         added: set[str] = set()
         removed: set[str] = set()
         for hunk in entry:
+            new, old = _Side(), _Side()
             for line in hunk:
                 if line.is_added:
-                    added |= _defined(line.value)
+                    added |= new.names(line.value)
                 elif line.is_removed:
-                    removed |= _defined(line.value)
+                    removed |= old.names(line.value)
+                else:
+                    new.names(line.value)
+                    old.names(line.value)
         names.update((module, name) for module in dotted for name in added - removed)
     return AddedNames(frozenset(names), frozenset(modules))
 
 
 def _is_added_import_failure(text: str, added: AddedNames) -> bool:
+    # `from pkg import name` names a binding or a submodule the fix adds.
     for name, module in _CANNOT_IMPORT.findall(text):
-        if (module, name) in added.names:
+        if (module, name) in added.names or "%s.%s" % (module, name) in added.modules:
             return True
     for module, name in _NO_ATTRIBUTE.findall(text):
-        if (module, name) in added.names:
+        if (module, name) in added.names or "%s.%s" % (module, name) in added.modules:
             return True
     # A module the fix adds is missing, or only a stale foreign .pyc is left.
+    # Known limit: a missing parent (`No module named 'pkg.new'` when the fix
+    # creates `pkg/new/mod.py` as a namespace package) is not RED, because
+    # the patch alone does not show whether `pkg/new/` existed before.
     return any(set(modules) & added.modules for modules in _NO_MODULE.findall(text))
 
 
@@ -137,8 +171,11 @@ def red_witness(junit_xml: str, added: AddedNames) -> bool:
     shows nothing.
     """
     try:
-        # pytest wrote it; ElementTree resolves no external entities and the
-        # bundled expat caps entity expansion, so a hostile conftest gains nothing.
+        # pytest wrote it into a private directory. ElementTree resolves no
+        # external entities. Entity expansion (billion laughs) is capped only
+        # by expat 2.4.0 and later (pyexpat.EXPAT_VERSION); with an older
+        # expat a crafted report could use much memory. Accepted: writing
+        # one takes code that already runs in the test process (conftest).
         root = ElementTree.fromstring(junit_xml)  # noqa: S314
     except ElementTree.ParseError:
         return False
