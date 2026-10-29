@@ -596,18 +596,22 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
         ):
             raise CorruptedStateError("reset host round lacks reset observation")
         # Phase 6: schema_fail / incomplete-coverage may observe fixpoint RESET
-        # while credit-side skip/undo keeps the prior earned window (preserved).
+        # while the credit side skips the wipe and keeps the prior earned
+        # window (preserved). Only a fully returned round can carry it.
         if action == "preserved" and (
             not row["reset_observed"]
             or failures
+            or protocol_failures
             or row.get("fixpoint") not in ("RESET", "CYCLE_RESTART")
-            or phases["l1"] != "returned"
+            or not all(value == "returned" for value in phases.values())
         ):
             raise CorruptedStateError("preserved host round lacks schema/coverage reset observation")
         if action in (
             "earned", "interrupted", "reset", "evidence_rejected", "preserved"
         ) and "dispositions" not in row:
             raise CorruptedStateError("finalized host round lacks product snapshot")
+        if action == "preserved":
+            _validate_preserved_dispositions(row)
     if round_index is not None and (
         type(round_index) is not int
         or round_index < 0
@@ -615,6 +619,41 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
         or (not history and round_index != 0)
     ):
         raise CorruptedStateError("stored round disagrees with attempt history")
+
+
+_PRESERVED_III_FP = re.compile(r"^(?:schema-fail|incomplete-coverage)-(?:qodo|expert|adversarial)$")
+_RECEIPT_AUDIT_FP = re.compile(r"^receipt-[0-9a-f]{12}$")
+_MUTATION_INFRA_FP = "mutation-evidence-error"
+
+
+def _validate_preserved_dispositions(row: dict) -> None:
+    """Q2=(iii) only: a preserved row must be caused by schema/coverage findings alone.
+
+    The snapshot must name at least one CONFIRMED schema-fail/incomplete-coverage
+    fingerprint that L1 observed this round, and every other open (CONFIRMED or
+    UNCERTAIN) disposition must be a credit-neutral diagnostic: an UNCERTAIN
+    receipt audit row or the mutation infra diagnostic.
+    """
+    disps = row["dispositions"]
+    l1 = row.get("l1_fingerprints")
+    if not isinstance(l1, list):
+        l1 = []
+    causes = [
+        fp
+        for fp, disp in disps.items()
+        if _PRESERVED_III_FP.match(fp) and disp == Disposition.CONFIRMED.value and fp in l1
+    ]
+    if not causes:
+        raise CorruptedStateError("preserved host round lacks Q2=(iii) schema/coverage disposition")
+    open_values = {Disposition.CONFIRMED.value, Disposition.UNCERTAIN.value}
+    for fp, disp in disps.items():
+        if disp not in open_values or fp in causes:
+            continue
+        if fp == _MUTATION_INFRA_FP:
+            continue
+        if _RECEIPT_AUDIT_FP.match(fp) and disp == Disposition.UNCERTAIN.value:
+            continue
+        raise CorruptedStateError("preserved host round lacks (iii)-only product dispositions")
 
 
 def product_round_history(history: list[dict], *, before_round: int | None = None) -> list[dict]:

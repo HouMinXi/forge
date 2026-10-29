@@ -180,8 +180,26 @@ def _candidate_payload(payload):
     return payload
 
 
+def _apply_reviewer_fault(body, fault):
+    """Mutate one constructed reviewer reply into the named receipt fault."""
+    if fault == "schema":
+        body["findings"] = "not an array"
+    elif fault == "coverage":
+        body["code_excerpts"] = body["code_excerpts"][:1]
+    elif fault == "missing-excerpts":
+        body["code_excerpts"] = []
+    elif fault == "excerpt-line-count":
+        body["code_excerpts"][0]["content"] = "const value = 2;\n"
+    elif fault == "literal":
+        body["code_excerpts"][0]["content"] = CONTENT["control.ts"].replace("value = 2", "value = 200")
+    else:
+        raise AssertionError("unknown constructed reviewer fault: " + str(fault))
+    return body
+
+
 def _new_machine(root, monkeypatch, *, fault=None, rounds=1, mode=Mode.LOCAL,
-                 diff=DIFF, mixed_product=False, falsifier_reply=None, threshold=3):
+                 diff=DIFF, mixed_product=False, falsifier_reply=None, threshold=3,
+                 qodo_fault=None):
     """Keep production _L1Call intact; inject candidates through reviewer JSON."""
     calls = []
     lock = threading.Lock()
@@ -195,25 +213,15 @@ def _new_machine(root, monkeypatch, *, fault=None, rounds=1, mode=Mode.LOCAL,
         with lock:
             calls.append((holder["machine"]._state.round + 1, role, phase))
         body = _healthy(diff)
+        if role == "qodo" and qodo_fault is not None:
+            return llm_invoke.LLMResult(_apply_reviewer_fault(body, qodo_fault))
         if role == "qodo" and (mixed_product or falsifier_reply is not None):
             return llm_invoke.LLMResult(_candidate_payload(body))
         if role != "adversarial" or fault is None:
             return llm_invoke.LLMResult(body)
         if fault in {row[0] for row in ACQUISITION_CASES}:
             raise _acquisition_error(fault)
-        if fault == "schema":
-            body["findings"] = "not an array"
-        elif fault == "coverage":
-            body["code_excerpts"] = body["code_excerpts"][:1]
-        elif fault == "missing-excerpts":
-            body["code_excerpts"] = []
-        elif fault == "excerpt-line-count":
-            body["code_excerpts"][0]["content"] = "const value = 2;\n"
-        elif fault == "literal":
-            body["code_excerpts"][0]["content"] = CONTENT["control.ts"].replace("value = 2", "value = 200")
-        else:
-            raise AssertionError("unknown constructed reviewer fault: " + str(fault))
-        return llm_invoke.LLMResult(body)
+        return llm_invoke.LLMResult(_apply_reviewer_fault(body, fault))
 
     monkeypatch.setattr(llm_invoke, "_invoke_api", transport)
     backend = BackendConfig(
@@ -458,6 +466,10 @@ def test_current_schema_coverage_and_evidence_rejection_have_distinct_accounting
         else:
             assert "evidence_rejections" not in latest
             assert latest["fixpoint"] in ("RESET", "CYCLE_RESTART")
+            # M3: the (iii) key is checked against the real factory-built finding.
+            produced = [f for f in machine._state.findings if f.id == f"l1-adversarial-{marker}"]
+            assert len(produced) == 1
+            assert machine._is_schema_or_incomplete_coverage_finding(produced[0]) is True
         assert _restore_result(root).passed
         _recover(root, monkeypatch, original, [1, 2, 4])
     else:
@@ -495,6 +507,128 @@ def test_current_mixed_product_and_acquisition_resets_prior_window(offline_works
     summary, report = _report(root)
     assert "ESCALATED findings=2 confirmed=2" in summary and len(report["results"]) == 2
     assert not _verify(root).passed
+    _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+
+
+def _assert_preserved(root, proof, *, fixpoint):
+    state, _ = _state(root)
+    latest = state.round_history[-1]
+    assert latest["clean_credit_action"] == "preserved" and latest["fixpoint"] == fixpoint
+    assert latest["reset_observed"] is True and latest["clean_rounds_after"] == 2
+    assert state.consecutive_clean_rounds == 2 and state.earned_clean_window == proof
+    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [1, 2]
+    assert _restore_result(root).passed and not _verify(root).passed
+    return state
+
+
+def _assert_wiped(root, *, phases=None):
+    state, _ = _state(root)
+    latest = state.round_history[-1]
+    assert latest["clean_credit_action"] == "reset" and latest["fixpoint"] == "RESET"
+    assert latest["clean_rounds_after"] == 0
+    assert state.consecutive_clean_rounds == 0 and state.earned_clean_window["cycles"] == []
+    if phases is not None:
+        assert latest["phase_status"] == phases
+    # Restore sees a valid empty proof: no inherited credit survives.
+    assert _restore_result(root).passed and not _verify(root).passed
+    return state
+
+
+def test_h1_schema_fault_then_l2_crash_never_preserves(offline_workspace, monkeypatch):
+    """H1: a failed attempt with unreturned phases takes the M6 reset."""
+    root = offline_workspace
+    _, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="schema")
+
+    def crash(*_args, **_kwargs):
+        raise RuntimeError("constructed L2 crash")
+
+    monkeypatch.setattr(machine, "_run_l2_phase", crash)
+    with pytest.raises(RuntimeError, match="constructed L2 crash"):
+        machine.run()
+    _assert_calls(calls, [3])
+    _assert_wiped(root, phases={
+        "l0": "returned", "rulepack": "returned", "l1": "returned",
+        "l2": "failed", "e2e": "not_run", "coverage": "not_run",
+    })
+    _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+
+
+@pytest.mark.parametrize(("fault", "verdict"), [("schema", "FAIL"), ("coverage", "ESCALATED")])
+def test_recurring_schema_coverage_cycle_restart_keeps_window(
+    offline_workspace, monkeypatch, fault, verdict
+):
+    """M2: a recurring (iii) finding reaches CYCLE_RESTART and the window survives (L2 message)."""
+    root = offline_workspace
+    proof, original = _earned_prefix(root, monkeypatch)
+    for index, fixpoint in ((2, "RESET"), (3, "CYCLE_RESTART")):
+        machine, calls = _new_machine(root, monkeypatch, fault=fault)
+        assert machine.run().value == verdict
+        _assert_calls(calls, [index + 1])
+        state = _assert_preserved(root, proof, fixpoint=fixpoint)
+    assert not any("restarting cycle" in err for err in state.infra_errors)
+    assert (
+        "tiered-reset: P2/P3-density observed at cycle 3 -- schema/coverage only, "
+        "clean credit preserved"
+    ) in state.infra_errors
+    _recover(root, monkeypatch, original, [1, 2, 5])
+
+
+def test_coverage_on_receipt_gate_path_preserves(offline_workspace, monkeypatch):
+    """M2: coverage + schema in one round fails at the receipt gate and preserves."""
+    root = offline_workspace
+    proof, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="schema", qodo_fault="coverage")
+    assert machine.run() is Verdict.FAIL
+    _assert_calls(calls, [3])
+    state = _assert_preserved(root, proof, fixpoint="RESET")
+    assert set(state.round_history[-1]["dispositions"]) == {
+        "incomplete-coverage-qodo", "schema-fail-adversarial",
+    }
+    assert state.infra_errors[-1] == (
+        "receipt: review evidence rejected in current round; see receipts/attempted"
+    )
+    _recover(root, monkeypatch, original, [1, 2, 4])
+
+
+@pytest.mark.parametrize(("fault", "qodo_fault"), [("literal", "coverage"), ("coverage", "literal")])
+def test_coverage_with_literal_damage_on_gate_path_resets(
+    offline_workspace, monkeypatch, fault, qodo_fault
+):
+    """Gate path: literal damage beside a (iii) finding is not (iii)-only; M6 wipe."""
+    root = offline_workspace
+    _, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault=fault, qodo_fault=qodo_fault)
+    assert machine.run() is Verdict.FAIL
+    _assert_calls(calls, [3])
+    state = _assert_wiped(root)
+    assert any("excerpt content mismatch" in err for err in state.infra_errors)
+    _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+
+
+@pytest.mark.parametrize("cause", ["mixed-product", "falsifier-transport", "acquisition"])
+def test_schema_with_non_iii_cause_resets(offline_workspace, monkeypatch, cause):
+    """M2: each non-(iii) companion cause keeps the M6 wipe on a real run."""
+    root = offline_workspace
+    _, original = _earned_prefix(root, monkeypatch)
+    kwargs = {
+        "mixed-product": {"fault": "schema", "mixed_product": True},
+        "falsifier-transport": {
+            "fault": "schema",
+            "falsifier_reply": llm_invoke.LLMInvokeError(
+                "constructed falsifier timeout", is_timeout=True, retryable=False,
+            ),
+        },
+        "acquisition": {"fault": "no-json", "qodo_fault": "schema"},
+    }[cause]
+    machine, calls = _new_machine(root, monkeypatch, **kwargs)
+    assert machine.run() is Verdict.FAIL
+    _assert_calls(calls, [3])
+    state = _assert_wiped(root)
+    dispositions = state.round_history[-1]["dispositions"]
+    assert any(fp.startswith("schema-fail-") for fp in dispositions)
+    assert any(not fp.startswith("schema-fail-") and disp in ("CONFIRMED", "UNCERTAIN")
+               for fp, disp in dispositions.items())
     _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
 
 

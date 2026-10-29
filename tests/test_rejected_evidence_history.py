@@ -171,10 +171,16 @@ def test_rejection_authority_is_illegal_on_other_actions(action):
     elif action == "reset":
         row.update(reset_observed=True, clean_rounds_after=0, fixpoint="RESET")
     elif action == "preserved":
-        row.update(reset_observed=True, clean_rounds_after=1, fixpoint="RESET")
+        row.update(
+            reset_observed=True,
+            clean_rounds_after=1,
+            fixpoint="RESET",
+            dispositions={"schema-fail-qodo": "CONFIRMED"},
+            l1_fingerprints=["schema-fail-qodo"],
+        )
     validate_round_history([row])
     row["evidence_rejections"] = [_rejection()]
-    with pytest.raises(CorruptedStateError):
+    with pytest.raises(CorruptedStateError, match="evidence rejection authority has incompatible action"):
         validate_round_history([row])
 
 

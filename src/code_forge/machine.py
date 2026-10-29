@@ -339,6 +339,7 @@ _FAILURE_EVIDENCE_KEYS = ("publication_error", "cancellation_type", "cleanup_err
 # Present only once mutants were generated or run; a baseline-stage skip has
 # none (run_mutation pre-seeds "inventory" as empty, so that one must be empty).
 _MUTANT_PHASE_KEYS = ("results_sha256", "metadata_sha256")
+_ATTEMPTED_EVIDENCE_GATE_ERROR = "review evidence rejected in current round; see receipts/attempted"
 
 
 def _clean_mutation_skip_kind(
@@ -1878,11 +1879,23 @@ class StateMachine:
         """Credit-side preserve for schema/coverage RESET without rewriting fixpoint rules.
 
         When fixpoint still returns RESET/CYCLE_RESTART solely because of Q2=(iii)
-        schema-fail / incomplete-coverage findings, skip/undo `_reset_clean_credit`
+        schema-fail / incomplete-coverage findings, skip `_reset_clean_credit`
         and record clean_credit_action=preserved. Mixed product/acquisition/HOLD/
         falsifier-transport causes keep the wipe + reset action.
+
+        Guards, in order: host receipt mode only (non-receipt runs keep the M6
+        reset exactly); RESET/CYCLE_RESTART only; every round phase returned
+        (a partial or crashed attempt never preserves); no acquisition marker,
+        HOLD fingerprint, or falsifier transport failure; at least one (iii)
+        finding; no other open product finding. A preserved round leaves
+        `_hold_confirmed_fingerprints` untouched, which is safe because the HOLD
+        guard already requires it to be empty.
         """
+        if not self._host_receipt_active():
+            return False
         if fixpoint not in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART):
+            return False
+        if any(value != "returned" for value in self._phase_status.values()):
             return False
         if self._acquisition_markers:
             return False
@@ -1986,7 +1999,11 @@ class StateMachine:
                 )
                 fixpoint = self._fixpoint_reached()
                 if fixpoint in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART):
-                    if self._schema_coverage_credit_preserve(fixpoint):
+                    # A failed attempt preserves only when every phase returned;
+                    # the predicate checks this too, kept explicit at this site.
+                    if all(
+                        value == "returned" for value in self._phase_status.values()
+                    ) and self._schema_coverage_credit_preserve(fixpoint):
                         action = "preserved"
                     else:
                         self._reset_clean_credit()
@@ -2097,9 +2114,14 @@ class StateMachine:
             if _fp == _FixpointResult.CYCLE_RESTART:
                 if not _preserve_schema_coverage:
                     self._reset_clean_credit()
-                self._state.infra_errors.append(
-                    "tiered-reset: P2/P3-density -- restarting cycle %d" % round_index
-                )
+                    self._state.infra_errors.append(
+                        "tiered-reset: P2/P3-density -- restarting cycle %d" % round_index
+                    )
+                else:
+                    self._state.infra_errors.append(
+                        "tiered-reset: P2/P3-density observed at cycle %d -- "
+                        "schema/coverage only, clean credit preserved" % round_index
+                    )
             elif _fp == _FixpointResult.RESET:
                 if not _preserve_schema_coverage:
                     self._reset_clean_credit()
@@ -2136,9 +2158,15 @@ class StateMachine:
                         if _fp == _FixpointResult.INCOMPLETE or self._acquisition_markers
                         else "unavailable"
                     )
-                elif _preserve_schema_coverage:
+                elif _preserve_schema_coverage and all(
+                    err == _ATTEMPTED_EVIDENCE_GATE_ERROR for err in gate_errors
+                ):
                     gate_action = "preserved"
                 else:
+                    # Literal/IO/unavailable-audit damage alongside a (iii)
+                    # finding is not a (iii)-only round: take the M6 wipe now.
+                    if _preserve_schema_coverage:
+                        self._reset_clean_credit()
                     gate_action = "reset"
                 self._finish_host_attempt(
                     gate_action,
@@ -2172,7 +2200,11 @@ class StateMachine:
                 self._finish_host_attempt(
                     "interrupted"
                     if _fp == _FixpointResult.INCOMPLETE
-                    else ("reset" if _fp != _FixpointResult.CLEAN else "unavailable"),
+                    else (
+                        "unavailable"
+                        if _fp == _FixpointResult.CLEAN
+                        else ("preserved" if _preserve_schema_coverage else "reset")
+                    ),
                     _fp,
                 )
                 self._persist_state()
@@ -3260,7 +3292,7 @@ class StateMachine:
         """
         errors: list[str] = list(self._last_receipt_write_errors)
         if self._attempted_last_round:
-            errors.append("review evidence rejected in current round; see receipts/attempted")
+            errors.append(_ATTEMPTED_EVIDENCE_GATE_ERROR)
         if self._unavailable_rejected_passes_last_round:
             errors.append("review evidence rejected in current round; audit payload unavailable")
         diff_text = self._receipt_diff()

@@ -891,8 +891,12 @@ def test_healthy_acquired_receipts_keep_normal_order(tmp_path, monkeypatch):
     assert not list((tmp_path / ".code-forge/receipts/attempted").glob("*.json"))
 
 
-def _assert_local_early_attempt(machine, *, round_index, credit_action="preserved"):
-    """Pure schema_fail → preserved; mixed product CONFIRMED still resets."""
+def _assert_local_early_attempt(machine, *, round_index, credit_action="reset"):
+    """A failed attempt whose later phases never ran stays a reset (M6 behaviour).
+
+    Phase 6 preserve requires every round phase returned (#332 PR #319 H1), so
+    a schema_fail observed before L2/E2E/coverage ran cannot keep credit.
+    """
     history = machine._state.round_history
     assert len({row["round"] for row in history}) == len(history)
     row = history[-1]

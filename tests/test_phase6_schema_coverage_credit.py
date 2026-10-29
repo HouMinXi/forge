@@ -8,14 +8,23 @@ All greens 「未经独立复现」.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from code_forge.autofix import StubAutoFixer
+from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
 from code_forge.errors import CorruptedStateError
+from code_forge.falsify import StubFalsifier
+from code_forge.llm_invoke import Usage
+from code_forge.machine import StateMachine, _FixpointResult
 from code_forge.state import (
     ROUND_PHASES,
+    Mode,
     State,
     StateFinding,
+    Verdict,
     earned_history_cycles,
     validate_round_history,
 )
@@ -44,7 +53,7 @@ def _earned_row(index, count):
     }
 
 
-def _preserved_row(index, count, *, fixpoint="RESET"):
+def _preserved_row(index, count, *, fixpoint="RESET", cause="schema-fail-adversarial"):
     return {
         "round": index,
         "source_hash": SOURCE,
@@ -55,7 +64,8 @@ def _preserved_row(index, count, *, fixpoint="RESET"):
         "reset_observed": True,
         "clean_rounds_after": count,
         "fixpoint": fixpoint,
-        "dispositions": {"schema-fail-adversarial": "CONFIRMED"},
+        "dispositions": {cause: "CONFIRMED"},
+        "l1_fingerprints": [cause],
     }
 
 
@@ -71,36 +81,123 @@ def test_preserved_in_closed_set_and_survives_earned_window():
     assert earned_history_cycles(state, SOURCE, None) == [1, 2]
 
 
+@pytest.mark.parametrize("cause", [
+    f"{kind}-{name}" for kind in ("schema-fail", "incomplete-coverage") for name in _PASS_NAMES
+])
 @pytest.mark.parametrize("fixpoint", ["RESET", "CYCLE_RESTART"])
-def test_preserved_accepts_reset_shaped_observation(fixpoint):
-    validate_round_history([_preserved_row(0, 0, fixpoint=fixpoint)], 0)
+def test_preserved_accepts_reset_shaped_observation(fixpoint, cause):
+    rows = [_earned_row(0, 1), _earned_row(1, 2), _preserved_row(2, 2, fixpoint=fixpoint, cause=cause)]
+    validate_round_history(rows, 2)
+    state = State(round=2, source_hash=SOURCE, round_history=rows, consecutive_clean_rounds=2)
+    assert earned_history_cycles(state, SOURCE, None) == [1, 2]
+
+
+_SHAPE = "preserved host round lacks schema/coverage reset observation"
+_NO_CAUSE = "preserved host round lacks Q2=\\(iii\\) schema/coverage disposition"
+_NOT_ONLY = "preserved host round lacks \\(iii\\)-only product dispositions"
 
 
 @pytest.mark.parametrize(
-    "mutate",
+    ("mutate", "match"),
     [
-        lambda r: r.update(reset_observed=False),
-        lambda r: r.update(fixpoint="CLEAN"),
-        lambda r: r.update(fixpoint="INCOMPLETE"),
-        lambda r: r.update(
-            acquisition_failures=[
-                {
-                    "id": "l1-qodo-invoke-fail",
-                    "fingerprint": "invoke-fail-qodo",
-                    "pass_name": "qodo",
-                    "outcome": "error",
-                }
-            ]
+        (lambda r: r.update(reset_observed=False), _SHAPE),
+        (lambda r: r.update(fixpoint="CLEAN"), _SHAPE),
+        (lambda r: r.update(fixpoint="INCOMPLETE"), "incomplete host round lacks protocol interruption"),
+        (
+            lambda r: r.update(
+                acquisition_failures=[
+                    {
+                        "id": "l1-qodo-invoke-fail",
+                        "fingerprint": "invoke-fail-qodo",
+                        "pass_name": "qodo",
+                        "outcome": "error",
+                    }
+                ]
+            ),
+            _SHAPE,
         ),
-        lambda r: r.update(phase_status={**_phases_returned(), "l1": "not_run"}),
-        lambda r: r.pop("dispositions"),
+        (lambda r: r.update(phase_status={**_phases_returned(), "l1": "not_run"}), _SHAPE),
+        # H1/M1: every phase must have returned, not only L1.
+        (lambda r: r.update(phase_status={**_phases_returned(), "l2": "not_run"}), _SHAPE),
+        (lambda r: r.update(phase_status={**_phases_returned(), "l2": "failed"}), _SHAPE),
+        (lambda r: r.update(phase_status={**_phases_returned(), "e2e": "not_run"}), _SHAPE),
+        (lambda r: r.update(phase_status={**_phases_returned(), "coverage": "not_run"}), _SHAPE),
+        (lambda r: r.update(falsify_protocol_failures=["schema-fail-adversarial"]),
+         "falsifier protocol failure lacks L1 observation"),
+        (lambda r: r.pop("dispositions"), "finalized host round lacks product snapshot"),
     ],
 )
-def test_preserved_rejects_malformed_observation(mutate):
+def test_preserved_rejects_malformed_observation(mutate, match):
     row = _preserved_row(0, 0)
     mutate(row)
-    with pytest.raises(CorruptedStateError):
+    with pytest.raises(CorruptedStateError, match=match):
         validate_round_history([row])
+
+
+@pytest.mark.parametrize(
+    ("dispositions", "l1_fingerprints", "match"),
+    [
+        ({}, [], _NO_CAUSE),
+        ({"product-fp": "CONFIRMED"}, ["product-fp"], _NO_CAUSE),
+        ({"schema-fail-adversarial": "UNCERTAIN"}, ["schema-fail-adversarial"], _NO_CAUSE),
+        ({"schema-fail-adversarial": "DISMISSED"}, ["schema-fail-adversarial"], _NO_CAUSE),
+        ({"schema-fail-adversarial": "CONFIRMED"}, [], _NO_CAUSE),
+        ({"schema-fail-adversarial": "CONFIRMED"}, None, _NO_CAUSE),
+        ({"schema-fail-other": "CONFIRMED"}, ["schema-fail-other"], _NO_CAUSE),
+        ({"invoke-fail-qodo": "CONFIRMED"}, ["invoke-fail-qodo"], _NO_CAUSE),
+        ({"xschema-fail-qodo": "CONFIRMED"}, ["xschema-fail-qodo"], _NO_CAUSE),
+        (
+            {"schema-fail-qodo": "CONFIRMED", "product-fp": "CONFIRMED"},
+            ["schema-fail-qodo", "product-fp"],
+            _NOT_ONLY,
+        ),
+        (
+            {"incomplete-coverage-expert": "CONFIRMED", "product-fp": "UNCERTAIN"},
+            ["incomplete-coverage-expert", "product-fp"],
+            _NOT_ONLY,
+        ),
+        (
+            {"schema-fail-qodo": "CONFIRMED", "receipt-0123456789ab": "CONFIRMED"},
+            ["schema-fail-qodo"],
+            _NOT_ONLY,
+        ),
+        (
+            {"schema-fail-qodo": "CONFIRMED", "invoke-fail-expert": "CONFIRMED"},
+            ["schema-fail-qodo", "invoke-fail-expert"],
+            _NOT_ONLY,
+        ),
+        (
+            # A (iii) id that L1 did not observe this round is not a cause.
+            {"schema-fail-qodo": "CONFIRMED", "schema-fail-expert": "CONFIRMED"},
+            ["schema-fail-qodo"],
+            _NOT_ONLY,
+        ),
+    ],
+)
+def test_preserved_requires_iii_only_dispositions(dispositions, l1_fingerprints, match):
+    """M1: preserved needs an observed (iii) cause and nothing else open."""
+    row = _preserved_row(0, 0)
+    row["dispositions"] = dispositions
+    if l1_fingerprints is None:
+        row.pop("l1_fingerprints")
+    else:
+        row["l1_fingerprints"] = l1_fingerprints
+    with pytest.raises(CorruptedStateError, match=match):
+        validate_round_history([row])
+
+
+def test_preserved_allows_credit_neutral_diagnostics_beside_iii_cause():
+    row = _preserved_row(0, 0)
+    row["dispositions"] = {
+        "schema-fail-adversarial": "CONFIRMED",
+        "incomplete-coverage-qodo": "CONFIRMED",
+        "receipt-0123456789ab": "UNCERTAIN",
+        "mutation-evidence-error": "CONFIRMED",
+        "old-product-fp": "DISMISSED",
+        "fixed-product-fp": "FIXED",
+    }
+    row["l1_fingerprints"] = ["schema-fail-adversarial", "incomplete-coverage-qodo"]
+    validate_round_history([row])
 
 
 def test_preserved_does_not_append_earn_and_reset_still_clears():
@@ -139,7 +236,11 @@ def test_unknown_token_still_refused():
 
 @pytest.mark.parametrize("name", _PASS_NAMES)
 def test_schema_coverage_finding_helpers_match_factory_ids(name):
-    """Machine eligibility keys must stay aligned with factories.py ids."""
+    """Machine eligibility keys must stay aligned with factories.py ids.
+
+    Constructed here; the factory-built findings are checked against the same
+    helper in test_review_interruption_source_controls (real provider path).
+    """
     schema = StateFinding(
         id=f"l1-{name}-schema-fail",
         fingerprint=f"schema-fail-{name}",
@@ -181,16 +282,310 @@ def test_schema_coverage_finding_helpers_match_factory_ids(name):
     assert probe._is_schema_or_incomplete_coverage_finding(other) is False
 
 
-def test_label_presence_alone_is_not_a_credit_authority_field():
-    """Phase 5 host_failure_kind is report-wire only; history authority ignores it."""
-    rows = [_earned_row(0, 1), _earned_row(1, 2), _preserved_row(2, 2)]
-    rows[-1]["host_failure_kind"] = "PROVIDER_TRANSPORT"
-    validate_round_history(rows, 2)
-    state = State(
-        round=2,
-        source_hash=SOURCE,
-        round_history=rows,
-        consecutive_clean_rounds=2,
+@pytest.mark.parametrize("label", [None, "PROVIDER_TRANSPORT", "PROVIDER_CAPACITY", "SCHEMA"])
+@pytest.mark.parametrize("action_row", ["earned", "preserved"])
+def test_label_presence_alone_is_not_a_credit_authority_field(label, action_row):
+    """Phase 5 host_failure_kind is report-wire only (plan §6 label-inert).
+
+    Adding, flipping, or omitting the label on the row leaves validation and the
+    earned window identical to the unlabelled history.
+    """
+    def rows():
+        tail = _preserved_row(2, 2) if action_row == "preserved" else _earned_row(2, 3)
+        return [_earned_row(0, 1), _earned_row(1, 2), tail]
+
+    def cycles(history):
+        validate_round_history(history, 2)
+        count = history[-1]["clean_rounds_after"]
+        state = State(round=2, source_hash=SOURCE, round_history=history, consecutive_clean_rounds=count)
+        return earned_history_cycles(state, SOURCE, None)
+
+    baseline = cycles(rows())
+    labelled = rows()
+    if label is not None:
+        labelled[-1]["host_failure_kind"] = label
+    assert cycles(labelled) == baseline
+    assert baseline == ([1, 2] if action_row == "preserved" else [1, 2, 3])
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"file": "<coverage-guard>"},
+        {"file": "test.py"},
+        {"line_range": [1, 1]},
+        {"source": "L1"},
+        {"disposition": Disposition.UNCERTAIN},
+        {"id": "l1-other-schema-fail", "fingerprint": "schema-fail-other"},
+        {"fingerprint": "schema-fail-expert"},
+    ],
+)
+def test_schema_finding_near_miss_is_not_iii(tmp_path, monkeypatch, change):
+    """M2: each identity field of the (iii) key is load-bearing, incl. file."""
+    sm = _guard_machine(tmp_path, monkeypatch)
+    near = _schema_finding("qodo")
+    for key, value in change.items():
+        setattr(near, key, value)
+    assert sm._is_schema_or_incomplete_coverage_finding(near) is False
+    sm._state.findings = [near]
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+
+
+def _coverage_finding(name="qodo"):
+    return StateFinding(
+        id=f"l1-{name}-incomplete-coverage",
+        fingerprint=f"incomplete-coverage-{name}",
+        source="INFRA",
+        disposition=Disposition.CONFIRMED,
+        file="<coverage-guard>",
+        line_range=[0, 0],
+        description="incomplete coverage: constructed",
     )
-    # Label key is inert: preserve still keeps prior earned; no new earn.
-    assert earned_history_cycles(state, SOURCE, None) == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"file": "<schema-validation>"},
+        {"file": "test.py"},
+        {"line_range": [1, 1]},
+        {"source": "L1"},
+        {"disposition": Disposition.UNCERTAIN},
+        {"id": "l1-other-incomplete-coverage", "fingerprint": "incomplete-coverage-other"},
+        {"fingerprint": "incomplete-coverage-expert"},
+    ],
+)
+def test_coverage_finding_near_miss_is_not_iii(tmp_path, monkeypatch, change):
+    """M2: the incomplete-coverage key is load-bearing on every field, incl. file."""
+    sm = _guard_machine(tmp_path, monkeypatch)
+    exact = _coverage_finding("qodo")
+    assert sm._is_schema_or_incomplete_coverage_finding(exact) is True
+    near = _coverage_finding("qodo")
+    for key, value in change.items():
+        setattr(near, key, value)
+    assert sm._is_schema_or_incomplete_coverage_finding(near) is False
+    sm._state.findings = [near]
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+
+
+# ---------------------------------------------------------------------------
+# Predicate guards on a real StateMachine (M2). Each test flips exactly one
+# guard from the accepted baseline so a removed guard fails here.
+# ---------------------------------------------------------------------------
+
+
+def _schema_finding(name="qodo", severity=None):
+    finding = StateFinding(
+        id=f"l1-{name}-schema-fail",
+        fingerprint=f"schema-fail-{name}",
+        source="INFRA",
+        disposition=Disposition.CONFIRMED,
+        file="<schema-validation>",
+        line_range=[0, 0],
+        description="schema validation failed: constructed",
+    )
+    if severity is not None:
+        finding.severity = severity
+    return finding
+
+
+def _product_finding(fp="product-fp", disposition=Disposition.CONFIRMED, desc="P0: constructed defect"):
+    return StateFinding(
+        id=fp,
+        fingerprint=fp,
+        source="L1",
+        disposition=disposition,
+        file="test.py",
+        line_range=[1, 1],
+        description=desc,
+    )
+
+
+def _guard_machine(tmp_path, monkeypatch, *, receipt_active=True):
+    sm = StateMachine(
+        resolved_review=ResolvedReview(
+            source_files=[Path("test.py")], baseline_content=None, git_diff=None, mode_hint="git",
+        ),
+        falsifier=StubFalsifier(),
+        source_hash="abc",
+        baseline_spec_repr="empty",
+        cwd=tmp_path,
+        registry={},
+        mode=Mode.LOCAL,
+        autofixer=StubAutoFixer(),
+        revert_fn=lambda f: None,
+        l0_runner=lambda r, f: ([], []),
+        l1_provider=lambda r: [],
+    )
+    if receipt_active:
+        monkeypatch.setattr(sm, "_host_receipt_active", lambda: True)
+    sm._phase_status = {name: "returned" for name in ROUND_PHASES}
+    sm._state.findings = [_schema_finding()]
+    return sm
+
+
+@pytest.mark.parametrize("fixpoint", [_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART])
+def test_guard_baseline_schema_only_round_preserves(tmp_path, monkeypatch, fixpoint):
+    sm = _guard_machine(tmp_path, monkeypatch)
+    assert sm._schema_coverage_credit_preserve(fixpoint) is True
+
+
+@pytest.mark.parametrize(
+    "fixpoint", [None, _FixpointResult.CLEAN, _FixpointResult.INCOMPLETE]
+)
+def test_guard_non_reset_fixpoint_never_preserves(tmp_path, monkeypatch, fixpoint):
+    sm = _guard_machine(tmp_path, monkeypatch)
+    assert sm._schema_coverage_credit_preserve(fixpoint) is False
+
+
+def test_guard_non_receipt_machine_never_preserves(tmp_path, monkeypatch):
+    """H2: first guard is host receipt mode."""
+    sm = _guard_machine(tmp_path, monkeypatch, receipt_active=False)
+    assert sm._host_receipt_active() is False
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+
+
+@pytest.mark.parametrize("phase", ROUND_PHASES)
+@pytest.mark.parametrize("status", ["not_run", "failed"])
+def test_guard_any_unreturned_phase_never_preserves(tmp_path, monkeypatch, phase, status):
+    """H1: a partial attempt (e.g. L2 crash) cannot keep credit."""
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._phase_status[phase] = status
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+
+
+def test_guard_acquisition_marker_never_preserves(tmp_path, monkeypatch):
+    sm = _guard_machine(tmp_path, monkeypatch)
+    marker = StateFinding(
+        id="l1-expert-invoke-fail",
+        fingerprint="invoke-fail-expert",
+        source="INFRA",
+        disposition=Disposition.CONFIRMED,
+        file="<llm-invoke>",
+        line_range=[0, 0],
+        description="constructed acquisition marker",
+    )
+    sm._state.findings.append(marker)
+    sm._acquisition_markers = [marker]
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+
+
+def test_guard_hold_fingerprint_never_preserves(tmp_path, monkeypatch):
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._hold_confirmed_fingerprints = ["held-fp"]
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+
+
+def test_guard_falsifier_transport_failure_never_preserves(tmp_path, monkeypatch):
+    sm = _guard_machine(tmp_path, monkeypatch)
+    failed = _product_finding("transport-fp", Disposition.DISMISSED)
+    sm._falsify_failed_findings = [failed]
+    sm._falsify_protocol_findings = []
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+    # The same finding classified as a protocol failure is not transport.
+    sm._falsify_protocol_findings = [failed]
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+
+
+def test_guard_requires_a_iii_finding(tmp_path, monkeypatch):
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._state.findings = []
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+
+
+@pytest.mark.parametrize("disposition", [Disposition.CONFIRMED, Disposition.UNCERTAIN])
+def test_guard_open_product_finding_never_preserves(tmp_path, monkeypatch, disposition):
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._state.findings.append(_product_finding(disposition=disposition))
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+
+
+@pytest.mark.parametrize("disposition", [Disposition.DISMISSED, Disposition.FIXED])
+def test_guard_closed_product_finding_does_not_block(tmp_path, monkeypatch, disposition):
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._state.findings.append(_product_finding(disposition=disposition))
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+
+
+def test_recurring_schema_cycle_restart_preserves(tmp_path, monkeypatch):
+    """M2: a recurring P2 schema finding yields CYCLE_RESTART and still preserves."""
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._state.findings = [_schema_finding(severity="P2")]
+    sm._state.round_history = [{"dispositions": {"schema-fail-qodo": "CONFIRMED"}}, {}]
+    fixpoint = sm._fixpoint_reached()
+    assert fixpoint is _FixpointResult.CYCLE_RESTART
+    assert sm._schema_coverage_credit_preserve(fixpoint) is True
+
+
+def test_m4_recurring_p3_plus_new_schema_resets_pinned(tmp_path, monkeypatch):
+    """M4 HOLD: pin the conservative fail-closed behaviour pending user decision.
+
+    A recurring P3 product finding alone is CLEAN; adding a new schema-fail
+    flips the fixpoint to a reset kind, and preserve stays refused because the
+    P3 finding is an open product finding. The counterfactual (credit the P3
+    round as if schema were absent) is intentionally not implemented.
+    """
+    sm = _guard_machine(tmp_path, monkeypatch)
+    p3 = _product_finding("fp-p3", desc="P3: naming nit")
+    sm._state.findings = [p3]
+    sm._state.round_history = [{"dispositions": {"fp-p3": "CONFIRMED"}}, {}]
+    assert sm._fixpoint_reached() is _FixpointResult.CLEAN
+    sm._state.findings = [p3, _schema_finding()]
+    fixpoint = sm._fixpoint_reached()
+    assert fixpoint in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART)
+    assert sm._schema_coverage_credit_preserve(fixpoint) is False
+
+
+def test_h2_non_receipt_local_schema_round_keeps_m6_reset(tmp_path):
+    """H2 regression: without host receipts the round resets exactly as on M6."""
+    calls = {"n": 0}
+
+    def l1():
+        n = calls["n"]
+        calls["n"] += 1
+        return ([_schema_finding()] if n == 2 else [], [], Usage(), 0.0)
+
+    machine = StateMachine(
+        mode=Mode.LOCAL,
+        falsifier=StubFalsifier(),
+        autofixer=StubAutoFixer(),
+        revert_fn=lambda f: None,
+        resolved_review=ResolvedReview(
+            source_files=[Path("test.py")], baseline_content=None, git_diff=None, mode_hint="git",
+        ),
+        source_hash="abc",
+        baseline_spec_repr="empty",
+        cwd=tmp_path,
+        registry={},
+        l0_runner=lambda r, f: ([], []),
+        l1_provider=l1,
+        max_total_rounds=8,
+        clean_round_threshold=3,
+    )
+    assert machine._host_receipt_active() is False
+    assert machine.run() is Verdict.PASS
+    history = [
+        (row.get("round"), row.get("fixpoint"), row.get("clean_rounds_after"))
+        for row in machine._state.round_history
+    ]
+    assert history == [
+        (0, "CLEAN", 1), (1, "CLEAN", 2), (2, "RESET", 0),
+        (3, "CLEAN", 1), (4, "CLEAN", 2), (5, "CLEAN", 3),
+    ]
+    assert all("clean_credit_action" not in row for row in machine._state.round_history)
+    assert earned_history_cycles(machine._state, "abc", None) == [4, 5, 6]
+
+
+def test_l3_compat_preserved_token_is_the_only_new_action():
+    """L3: the closed token set grew by exactly `preserved`; unknown tokens stay refused.
+
+    M6 (ec8cca99) refuses a `preserved` row with "invalid host clean credit
+    action" (evidence: review-fix1/L3-compat-m6-refusal.txt); this branch
+    accepts only a well-formed (iii) preserved row.
+    """
+    for token in ("preserve", "Preserved", "preserved_credit", "restore"):
+        row = _preserved_row(0, 0)
+        row["clean_credit_action"] = token
+        with pytest.raises(CorruptedStateError, match="invalid host clean credit action"):
+            validate_round_history([row])
+    validate_round_history([_preserved_row(0, 0)])
