@@ -4306,12 +4306,14 @@ class StateMachine:
           spent and waiting for its promotion round) can still move the map
           and is left alone. CONFIRMED findings from any other layer get no
           autofix and no promotion; repeating the round cannot change them.
-          Neither can an L0 finding whose source is in _AUTOFIX_SKIPPED_SOURCES,
-          so it does not hold the stall off. Production L0 runners emit source
-          "L0" only; this keeps the stall aligned with the autofix skip set for
-          injected or future L0 producers. A fingerprint counts as skipped only
-          when the current findings carry it and every finding with that
-          fingerprint has a skipped source.
+          Neither can an L0 fingerprint the autofix loop skipped in the latest
+          round, so it does not hold the stall off. Production L0 runners emit
+          source "L0" only; this keeps the stall aligned with the autofix skip
+          set for injected or future L0 producers. The latest snapshot's
+          l0_autofix_skipped field is the only proof of a skip. It is computed
+          from the raw L0 findings, not from the merged state, which keeps one
+          finding per fingerprint. A snapshot without the field proves nothing,
+          so every unpromoted L0 fingerprint holds the stall off.
 
         Three rounds is two confirmations of the freeze.
         """
@@ -4346,16 +4348,12 @@ class StateMachine:
             return True
         # CONFIRMED only. Past the pending_promotion guard, an unpromoted
         # CONFIRMED L0 finding has fix budget left, unless the autofix loop
-        # skips its source: such a finding never uses budget or gets promoted.
-        sources: dict[str, set[str]] = {}
-        for finding in self._state.findings:
-            sources.setdefault(finding.fingerprint, set()).add(finding.source)
-
-        def _autofix_skips(fp):
-            return fp in sources and sources[fp] <= self._AUTOFIX_SKIPPED_SOURCES
-
+        # skipped it: such a finding never uses budget or gets promoted.
+        skipped = history[-1].get("l0_autofix_skipped")
+        if not isinstance(skipped, list):
+            skipped = []
         budget_left = any(
-            fp not in self._state.promoted_fingerprints and not _autofix_skips(fp) for fp in l0_confirmed
+            fp not in self._state.promoted_fingerprints and fp not in skipped for fp in l0_confirmed
         )
         return not budget_left
 
@@ -5421,6 +5419,11 @@ class StateMachine:
                 f.disposition = Disposition(prior)
         return findings
 
+    def _l0_autofix_skipped(self, l0_findings: list[StateFinding]) -> list[str]:
+        """Sorted L0 fingerprints whose every raw finding has a source autofix skips."""
+        handled = {f.fingerprint for f in l0_findings if f.source not in self._AUTOFIX_SKIPPED_SOURCES}
+        return sorted({f.fingerprint for f in l0_findings} - handled)
+
     def _append_round_snapshot(
         self,
         round_index: int,
@@ -5434,6 +5437,10 @@ class StateMachine:
         snapshot = {
             "round": round_index,
             "l0_fingerprints": [f.fingerprint for f in l0_findings],
+            # #262: L0 fingerprints the autofix loop skips this round. Every raw
+            # L0 finding with the fingerprint must have a skipped source; the
+            # merged state keeps one finding per fingerprint and cannot tell.
+            "l0_autofix_skipped": self._l0_autofix_skipped(l0_findings),
             "l1_fingerprints": [f.fingerprint for f in l1_findings],
             "l2_fingerprints": [f.fingerprint for f in (l2_findings or [])],
             "e2e_fingerprints": [f.fingerprint for f in (e2e_findings or [])],
