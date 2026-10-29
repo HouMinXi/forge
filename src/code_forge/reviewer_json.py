@@ -15,7 +15,6 @@ tests/test_reviewer_json_contract.py.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import re
 import sys
@@ -483,7 +482,7 @@ def _strip_fence(raw: str) -> str:
     fails closed on it.
     """
     if not isinstance(raw, str):
-        # Non-string input reaches json.loads as before, whose
+        # Non-string input reaches the JSON parse as before, whose
         # TypeError the caller converts to ValueError -- this helper
         # must not raise an AttributeError ahead of that contract.
         return raw
