@@ -139,14 +139,25 @@ def _snapshot(fd: int) -> dict:
                 while chunk := os.read(child, 1024 * 1024):
                     digest.update(chunk)
                 after = os.fstat(child)
+                # mtime and ctime come from a coarse kernel clock that advances
+                # once per scheduler tick (1-10 ms depending on CONFIG_HZ). A
+                # same-size write, or a rename away and back, in the same tick
+                # as the file's previous change leaves size, mtime and ctime
+                # equal, so this check alone misses it (#197, #103). The second
+                # hash below covers the bytes; metadata changes undone within
+                # one tick stay invisible. Where the kernel stamps ctime finely
+                # (Linux 6.13 and later, on filesystems that support multigrain
+                # timestamps) the window is closed. Accepted limit on other
+                # kernels.
                 if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
                     after.st_size,
                     after.st_mtime_ns,
                     after.st_ctime_ns,
                 ):
                     raise MutationWorkspaceError("cache bytes changed while snapshotting")
-                # Coarse timestamps (~4 ms) can hide a same-size in-place
-                # rewrite from fstat, so hash the same fd once more (#239).
+                # Coarse timestamps (1-10 ms depending on CONFIG_HZ) can hide a
+                # same-size in-place rewrite from fstat, so hash the same fd
+                # once more (#239).
                 if _fd_sha256(child) != digest.hexdigest():
                     raise MutationWorkspaceError("cache bytes changed while snapshotting")
                 row.update(type="file", size=after.st_size, sha256=digest.hexdigest())
@@ -165,8 +176,14 @@ def _snapshot(fd: int) -> dict:
         if row.get("type") == "link" and os.readlink(entry.name, dir_fd=fd) != row["target"]:
             raise MutationWorkspaceError("cache node identity changed while snapshotting")
     directory_after = os.fstat(fd)
-    # Coarse kernel timestamps (~4 ms) can hide an added or removed entry
-    # from mtime/ctime, so compare the listing as well.
+    # Coarse kernel timestamps (1-10 ms depending on CONFIG_HZ) can hide an
+    # added or removed entry from mtime/ctime, so compare the listing as well.
+    # Neither check sees an entry created and removed, or renamed away and
+    # back, between the two listings in the same tick as the directory's
+    # previous change: stamps and names come out equal (#197, #103). Where the
+    # kernel stamps ctime finely (Linux 6.13 and later, on filesystems that
+    # support multigrain timestamps) the window is closed. Accepted limit on
+    # other kernels.
     with os.scandir(fd) as scan:
         names_after = sorted(item.name for item in scan)
     if (directory_before.st_mtime_ns, directory_before.st_ctime_ns) != (
@@ -472,6 +489,19 @@ class MutationWorkspace:
                 data = stream.read()
             after = os.fstat(fd)
             current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            # mtime and ctime tick every 1-10 ms depending on CONFIG_HZ. A
+            # same-size rewrite in the same tick as the file's previous change
+            # leaves size, mtime and ctime equal. With `expected` set, the
+            # sha256 comparison below still catches bytes that differ from the
+            # expected ones. With `expected` None the caller's own sha256
+            # check covers this (`_write_private_config` and
+            # `_retain_config_backup` compare against the bytes they just
+            # wrote), except for the first capture in `acquire`: there no
+            # reference bytes exist, so such a rewrite during the read is not
+            # detected (#197, #103). Where the kernel stamps ctime finely
+            # (Linux 6.13 and later, on filesystems that support multigrain
+            # timestamps) the window is closed. Accepted limit on other
+            # kernels.
             if (
                 (before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_mode, before.st_nlink)
                 != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_mode, after.st_nlink)
