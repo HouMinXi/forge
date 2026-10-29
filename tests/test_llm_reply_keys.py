@@ -315,6 +315,17 @@ def test_cli_bare_stdout_without_keys_keeps_the_repair(cli_binary):
     assert result.content["findings"][0]["c"] == 'd"}'
 
 
+@pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "review_keys"])
+def test_cli_stream_result_event_without_result_is_kept(cli_binary, keys):
+    # A result event with no "result" member is CLI output, as on main: the
+    # bare-stdout re-parse must not swap it for the whole stream array.
+    backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
+    stdout = '[{"type": "system"}, {"type": "result", "subtype": "success"}]'
+    with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(stdout)):
+        result = llm_invoke("prompt", backend=backend, reply_keys=keys)
+    assert result.content == {"type": "result", "subtype": "success"}
+
+
 def test_cli_bare_stdout_with_allowed_keys_still_parses(cli_binary):
     backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
     stdout = '{"verdict": "DISMISSED", "reasoning": "it says "hi" there"}'

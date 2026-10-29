@@ -2034,6 +2034,7 @@ def _invoke_cli(
     # Current claude CLI versions emit a streaming event array instead of a
     # single envelope dict. Find the last result event and treat it as the
     # envelope so the existing dict-unwrap path below handles it normally.
+    reply = parsed
     if isinstance(parsed, list):
         result_events = [e for e in parsed if isinstance(e, dict) and e.get("type") == "result"]
         if result_events:
@@ -2083,9 +2084,11 @@ def _invoke_cli(
                 # result is a repair of model text too. With an unlisted
                 # key it is refused like a string result: keep the raw text.
                 content = stdout
-    elif reply_keys is not None and isinstance(parsed, (dict, list)):
+    elif reply_keys is not None and parsed is reply and isinstance(parsed, (dict, list)):
         # No envelope: stdout is the model reply itself. It was parsed above
         # without reply_keys, since an envelope's own keys are not the reply's.
+        # A result event taken from a stream array is CLI output, not the
+        # reply, so it is not parsed again (parsed is not reply).
         # Parse it again under the caller's keys so a repair that invents a
         # key fails closed here too (#264); keep the raw text as the inner
         # result path does.
