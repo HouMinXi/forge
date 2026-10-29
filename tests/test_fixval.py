@@ -684,7 +684,7 @@ class TestVariableRenamer:
         _ast.fix_missing_locations(transformed)
         out = _ast.unparse(transformed)
         ns: dict = {}
-        exec(compile(out, "<string>", "exec"), ns)
+        exec(compile(out, "<string>", "exec"), ns)  # noqa: S102 - runs the literal above, renamed
         assert ns["compute"]() == 42
 
 
