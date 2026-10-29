@@ -2,14 +2,12 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Preserved host-round validation, split out of state.py (user decision D-v11-1).
 
-Moved verbatim; state.py imports and re-exports every name here. This
-module must not import `state` at module level (state imports it), so
-the one state helper it needs, `is_host_round`, is looked up lazily.
-`_project_product_row` is late-bound the same way (fix7, joint I-9): the
-moved definition is kept as is under `_moved_project_product_row`, which
-state.py re-exports as `_project_product_row`; the name here is rebound at
-the end to a shim, so patching `state._project_product_row` also reaches
-the callers here.
+Moved verbatim; state.py imports and re-exports every name defined here
+except the two late-bound helpers below. This module must not import
+`state` at module level (state imports it), so the state helpers it needs,
+`is_host_round` and `_project_product_row`, are looked up at call time.
+`_project_product_row` stays defined in state.py (fix8, I-3/I-9), so
+patching `state._project_product_row` also reaches the callers here.
 """
 
 from __future__ import annotations
@@ -86,24 +84,6 @@ def _recurring_confirmed(fp: str, history: list[dict], previous: dict) -> bool:
 
 
 def _project_product_row(row: dict) -> dict | None:
-    """One finalized product snapshot as the fixpoint sees it, or None."""
-    if not is_host_round(row):
-        return row
-    if row["clean_credit_action"] == "pending" or "dispositions" not in row:
-        return None
-    row = dict(row)
-    collisions = {
-        fp for name in ("l0", "l2", "e2e", "rulepack") for fp in row.get(f"{name}_fingerprints", [])
-    }
-    synthetic = {f["fingerprint"] for f in row["acquisition_failures"]} - collisions
-    row["dispositions"] = {fp: disp for fp, disp in row["dispositions"].items() if fp not in synthetic}
-    return row
-
-
-_moved_project_product_row = _project_product_row
-
-
-def _project_product_row(row: dict) -> dict | None:  # noqa: F811 (late-bound shim, see module doc)
     """Late-bound `state._project_product_row` (no module-level import cycle)."""
     from .state import _project_product_row as state_project_product_row
 

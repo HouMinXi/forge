@@ -25,7 +25,6 @@ from .state_preserved import (  # re-exported: preserved-row validation (D-v11-1
     _MUTATION_INFRA_FP as _MUTATION_INFRA_FP,
     _PRESERVED_III_FP as _PRESERVED_III_FP,
     _RECEIPT_AUDIT_FP as _RECEIPT_AUDIT_FP,
-    _moved_project_product_row as _project_product_row,  # state_preserved keeps a late-bound shim
     _recurring_confirmed as _recurring_confirmed,
     _validate_preserved_dispositions as _validate_preserved_dispositions,
 )
@@ -646,6 +645,21 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
         or (not history and round_index != 0)
     ):
         raise CorruptedStateError("stored round disagrees with attempt history")
+
+
+def _project_product_row(row: dict) -> dict | None:
+    """One finalized product snapshot as the fixpoint sees it, or None."""
+    if not is_host_round(row):
+        return row
+    if row["clean_credit_action"] == "pending" or "dispositions" not in row:
+        return None
+    row = dict(row)
+    collisions = {
+        fp for name in ("l0", "l2", "e2e", "rulepack") for fp in row.get(f"{name}_fingerprints", [])
+    }
+    synthetic = {f["fingerprint"] for f in row["acquisition_failures"]} - collisions
+    row["dispositions"] = {fp: disp for fp, disp in row["dispositions"].items() if fp not in synthetic}
+    return row
 
 
 def product_round_history(history: list[dict], *, before_round: int | None = None) -> list[dict]:

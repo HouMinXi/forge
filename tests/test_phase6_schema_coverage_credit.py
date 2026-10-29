@@ -680,6 +680,20 @@ def test_i9_state_project_product_row_patch_reaches_preserved_validation(monkeyp
     assert "code_forge.state_preserved" in callers
 
 
+def test_i3_project_product_row_has_one_definition():
+    """fix8 I-3: one real definition (in state.py), one call-time shim, and it pickles again."""
+    import pickle
+
+    from code_forge import state as state_module
+    from code_forge import state_preserved
+
+    real = state_module._project_product_row
+    assert real.__module__ == "code_forge.state" and real.__qualname__ == "_project_product_row"
+    assert pickle.loads(pickle.dumps(real)) is real  # noqa: S301 - our own function object
+    assert state_preserved._project_product_row is not real
+    assert not hasattr(state_preserved, "_moved_project_product_row")
+
+
 @pytest.mark.parametrize(
     ("prior", "other"),
     [
