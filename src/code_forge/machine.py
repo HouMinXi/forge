@@ -878,8 +878,9 @@ class StateMachine:
         # right after resume never demotes a preserve an earlier attempt saved.
         self._settled_preserve_round: int | None = None
         # fix7 (CR2R2-L1): receipt-write errors already logged to infra_errors
-        # (directly or as a receipt gate finding). Every site that books one
-        # ends the run, so the list never carries over into another round.
+        # (directly or as a receipt gate finding). fix8: reset with
+        # `_last_receipt_write_errors` when each attempt's L1 starts, so a
+        # later attempt (or a second run()) never inherits these bookings.
         self._booked_receipt_write_errors: list[str] = []
         self._acquisition_markers: list[StateFinding] = []
         self._falsify_protocol_findings: list[StateFinding] = []
@@ -2081,13 +2082,15 @@ class StateMachine:
                 for row in self._state.round_history
                 if is_host_round(row) and row["round"] == self._state.round
             ]
-            if (
+            demoted = bool(
                 rows
                 and rows[0]["clean_credit_action"] == "preserved"
                 and rows[0]["round"] == self._settled_preserve_round
-            ):
+            )
+            if demoted:
                 self._demote_settled_preserve(rows[0])
-            if not rows or (self._host_attempt_round is None and not observed):
+            # fix8 (P12): a demotion always reaches the save below, never this return.
+            if not rows or (self._host_attempt_round is None and not observed and not demoted):
                 return
             row = rows[0]
             if self._host_attempt_round is None or row["clean_credit_action"] not in (
@@ -2165,8 +2168,11 @@ class StateMachine:
                 return
 
     def _demote_settled_preserve(self, row: dict) -> None:
-        """fix7 (CR3R-L1): a failure after the main path settled `preserved` keeps no credit.
+        """fix7 (CR3R-L1): a failed attempt never keeps a preserved row it settled.
 
+        fix8 scope: only the row this attempt settled (`_settled_preserve_round`),
+        for any failure after the settle and before the next attempt begins.
+        Rows settled by earlier attempts and earned rows are unchanged, as on main.
         The row becomes the reset the main path records for the same round:
         credit and the earned window are wiped, the C3 companion fingerprints
         the writer omitted return to `dispositions`. HOLD needs no clearing: the
@@ -4183,6 +4189,8 @@ class StateMachine:
         if self._host_attempt_round is not None:
             self._phase_findings["l1"] = l1_findings
         self._last_receipt_write_errors = []
+        # fix8 (CR2G I4): bookings describe this attempt's L1 errors only.
+        self._booked_receipt_write_errors = []
         # Attempted (schema-failed) payloads the producer retained for
         # audit: written by the receipt writer as failure artifacts.
         self._attempted_last_round = list(getattr(self.l1_provider, "attempted_excerpts", None) or [])

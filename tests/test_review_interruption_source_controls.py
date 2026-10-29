@@ -1951,7 +1951,20 @@ def _interrupt_receipt_diff(mp, machine):
     mp.setattr(machine, "_receipt_diff", diff)
 
 
+def _interrupt_preflight(mp, machine):
+    def preflight(*_args, **_kwargs):
+        raise _AfterRoundInterrupt("constructed interrupt in mutation preflight")
+
+    mp.setattr(machine, "_preflight_mutation_workspace", preflight)
+
+
 _FIX8_RESUME = {
+    # CR2G P12 / joint pre-attempt failure: Ctrl-C in the startup preflight.
+    "ctrl-c-in-preflight": (
+        _interrupt_preflight,
+        _AfterRoundInterrupt,
+        "constructed interrupt in mutation preflight",
+    ),
     # CoS item (2): CorruptedStateError in `_begin_host_attempt` after resume.
     "corrupted-state-in-begin": (
         _corrupted_begin,
@@ -1986,4 +1999,186 @@ def test_fix8_early_crash_after_resume_changes_nothing(offline_workspace, monkey
             machine.run()
     assert calls == []
     assert path.read_bytes() == before
+    assert _ledger(_state(root)[0]) == expected
     assert _ledger(machine._state) == expected
+
+
+def _fail_save_when(mp, machine, predicate):
+    """Fail the first state save, after a `preserved` settle, for which `predicate(state)` holds."""
+    armed = _spy_actions(mp, machine)
+    save = machine._persist_state
+
+    def failing_save():
+        if "preserved" in armed["actions"] and not armed["raised"] and predicate(machine._state):
+            armed["raised"] = True
+            armed["disk_before"] = _ledger(_state(machine.cwd)[0])
+            raise OSError(5, "constructed state save failure after preserve")
+        return save()
+
+    mp.setattr(machine, "_persist_state", failing_save)
+    return armed
+
+
+def _real_mutation_infra_breaker(mp, machine):
+    """CR2G P9 / joint :2733: the real #114 breaker fires after the round's final save."""
+    armed = _spy_actions(mp, machine)
+    check = machine._check_mutation_infra_can_still_converge
+
+    def breaker():
+        if "preserved" in armed["actions"] and not armed["raised"]:
+            armed["raised"] = True
+            armed["disk_before"] = _ledger(_state(machine.cwd)[0])
+            machine._state.rounds_with_mutation_infra = 3
+        return check()
+
+    mp.setattr(machine, "_check_mutation_infra_can_still_converge", breaker)
+    return armed
+
+
+def _interrupt_in_hold_check(mp, machine):
+    """CR2G P10 as probed (:2407 at 311077fb): Ctrl-C in `_should_enter_hold`, same attempt."""
+    armed = _spy_actions(mp, machine)
+
+    def hold():
+        armed["raised"] = True
+        armed["disk_before"] = _ledger(_state(machine.cwd)[0])
+        raise _AfterRoundInterrupt("constructed interrupt in hold check")
+
+    mp.setattr(machine, "_should_enter_hold", hold)
+    return armed
+
+
+def _stall_save_fails(mp, machine):
+    """Joint J-N1 (:2426 at 311077fb): the stall ESCALATED save fails."""
+    mp.setattr(machine, "_stalled_on_identical_round", lambda: True)
+    return _fail_save_when(mp, machine, lambda st: st.verdict is Verdict.ESCALATED)
+
+
+def _max_rounds_save_fails(mp, machine):
+    """Joint J-N1 (:2434 at 311077fb): the MAX_TOTAL_ROUNDS ESCALATED save fails."""
+    mp.setattr(machine, "_stalled_on_identical_round", lambda: False)
+    return _fail_save_when(
+        mp,
+        machine,
+        lambda st: (
+            st.verdict is Verdict.ESCALATED and st.infra_errors[-1].startswith("ESCALATED category=")
+        ),
+    )
+
+
+_FIX8_SAME_ATTEMPT = {
+    "mutation-infra-breaker": (
+        _real_mutation_infra_breaker,
+        TimeoutBreaker,
+        "mutation infrastructure error in 3 consecutive rounds",
+    ),
+    "ctrl-c-in-hold-check": (
+        _interrupt_in_hold_check,
+        _AfterRoundInterrupt,
+        "constructed interrupt in hold check",
+    ),
+    "stall-escalated-save": (_stall_save_fails, OSError, "after preserve"),
+    "max-rounds-escalated-save": (_max_rounds_save_fails, OSError, "after preserve"),
+}
+
+
+@pytest.mark.parametrize("case", list(_FIX8_SAME_ATTEMPT))
+def test_fix8_same_attempt_failure_after_saved_preserve_resets(offline_workspace, monkeypatch, case):
+    """Ruling A / CR2F7-L1 P9 / joint J-N1: the attempt that settled the preserve keeps no credit.
+
+    The failure comes after the round's final save already put `preserved`
+    (credit 2) on disk, but in the same attempt: state.json reloads with the
+    reset row, credit 0 and window []. Green at 311077fb too (pins scope).
+    """
+    inject, error, match = _FIX8_SAME_ATTEMPT[case]
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="coverage")
+    with monkeypatch.context() as mp:
+        armed = inject(mp, machine)
+        with pytest.raises(error, match=match):
+            machine.run()
+    assert armed["raised"] and armed["actions"] == ["preserved"], armed
+    rows, credit, _ = armed["disk_before"]
+    assert rows[-1]["clean_credit_action"] == "preserved" and credit == 2
+    _assert_calls(calls, [3])
+    state = _assert_wiped(root)
+    assert state.verdict is not Verdict.PASS and state.converged is False
+
+
+def test_fix8_earned_row_kept_after_post_settle_failure(offline_workspace, monkeypatch):
+    """CR2F7-L2 P11: an earned row is unchanged by a failure after its settle, as on main.
+
+    Only preserved rows are demoted; the earned row, credit 3 and window
+    [1, 2, 3] reach disk with verdict FAIL.
+    """
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch)
+    with monkeypatch.context() as mp:
+        armed = _spy_actions(mp, machine)
+        save = machine._persist_state
+
+        def failing_save():
+            if "earned" in armed["actions"] and not armed["raised"]:
+                armed["raised"] = True
+                raise OSError(5, "constructed state save failure after earn")
+            return save()
+
+        mp.setattr(machine, "_persist_state", failing_save)
+        with pytest.raises(OSError, match="after earn"):
+            machine.run()
+    assert armed["raised"] and armed["actions"] == ["earned"], armed
+    _assert_calls(calls, [3])
+    state, _ = _state(root)
+    assert state.round_history[-1]["clean_credit_action"] == "earned"
+    assert state.round_history[-1]["clean_rounds_after"] == 3
+    assert state.consecutive_clean_rounds == 3
+    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [1, 2, 3]
+    assert state.verdict is Verdict.FAIL
+
+
+def test_fix8_demotion_always_reaches_disk(offline_workspace, monkeypatch):
+    """CR2G P12: a demotion is saved even when no phase of the failing call was observed.
+
+    At 311077fb the `not observed` early return could leave a demotion in
+    memory only; fix8 routes every demotion to the failure path's save.
+    """
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="coverage")
+    with monkeypatch.context() as mp:
+        armed = _spy_actions(mp, machine)
+        machine.run()
+    assert armed["actions"] == ["preserved"], armed
+    machine._phase_findings = {}
+    machine._finish_failed_host_attempt(RuntimeError("constructed failure, nothing observed"))
+    state = _assert_wiped(root)
+    assert state.verdict is Verdict.FAIL
+
+
+def test_fix8_second_run_records_identical_receipt_error(offline_workspace, monkeypatch):
+    """CR2G I4: bookings are per attempt; a second run() logs its own identical error once.
+
+    The first run books the error on the L1 breaker. The second run on the
+    same instance hits the same write error and fails after the round; its
+    error is still recorded, exactly once more.
+    """
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="schema")
+    with monkeypatch.context() as mp:
+        _fail_receipt_writes(mp)
+        _timeout_after_l1(mp, machine)
+        with pytest.raises(TimeoutBreaker, match="constructed L1 convergence breaker"):
+            machine.run()
+    first = [e for e in _state(root)[0].infra_errors if "receipt write failed" in e]
+    assert len(first) == 1, first
+    with monkeypatch.context() as mp:
+        _fail_receipt_writes(mp)
+        _raise_in_hook(machine, RuntimeError("constructed post-round failure"))
+        with pytest.raises(RuntimeError, match="constructed post-round failure"):
+            machine.run()
+    second = [e for e in _state(root)[0].infra_errors if "receipt write failed" in e]
+    assert second[: len(first)] == first
+    assert len(second) == len(first) + 1, second
