@@ -773,6 +773,21 @@ def test_only_an_equal_note_is_skipped(notes):
     assert error.__notes__ == list(dict.fromkeys(notes))
 
 
+def test_an_equal_note_built_at_runtime_is_skipped():
+    # Notes are compared by value, not identity: the second note is a new
+    # string object with the same text.
+    note = "first"
+    same_text = "".join(["fir", "st"])
+    assert same_text == note
+    assert same_text is not note
+    error = RuntimeError("in flight")
+
+    isolate.attach_note(error, note)
+    isolate.attach_note(error, same_text)
+
+    assert error.__notes__ == ["first"]
+
+
 def test_a_note_anywhere_in_the_list_is_not_repeated():
     error = RuntimeError("in flight")
 
