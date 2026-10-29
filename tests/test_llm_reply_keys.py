@@ -1068,3 +1068,161 @@ def test_reply_keys_are_hashable_and_read_only():
     built = ReplyKeys(top=frozenset({"a"}), items={"a": frozenset({"b"})})
     assert built == ReplyKeys(top=frozenset({"a"}), items={"a": frozenset({"b"})})
     assert hash(built) == hash(ReplyKeys(top=frozenset({"a"}), items={"a": frozenset({"b"})}))
+
+
+def _trailing_comma_error(message, at):
+    text = '{"findings": [{"file": "a.py", "description": "z",}]}'
+    pos = text.index(",}") + (1 if at == "close" else 0)
+    return text, json.JSONDecodeError(message, text, pos)
+
+
+@pytest.mark.parametrize(
+    "message, at",
+    [
+        ("Expecting property name enclosed in double quotes", "close"),  # Python 3.12
+        ("Illegal trailing comma before end of object", "comma"),  # Python 3.13+
+    ],
+    ids=["py312", "py313"],
+)
+def test_trailing_comma_is_not_repaired_on_any_python(message, at):
+    text, error = _trailing_comma_error(message, at)
+    assert invoke._error_is_at_quote(text, error) is None
+
+
+_P2_AFTER_TRAILING_COMMA = (
+    '{"findings": [{"file": "t.py", "line": 3, "severity": "P1", "description": "z",}, '
+    '{"file": "t.py", "line": 4, "severity": "P2", "description": "w"}], "code_excerpts": []}'
+)
+
+
+@pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
+def test_trailing_comma_does_not_drop_a_finding(api_env, monkeypatch, keys):
+    with pytest.raises(json.JSONDecodeError) as error:
+        _loads_model_json(_P2_AFTER_TRAILING_COMMA, keys)
+    assert not isinstance(error.value, invoke.RepairRefused)
+    request = Mock(return_value=(_P2_AFTER_TRAILING_COMMA, STOP))
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    with pytest.raises(invoke.InvalidJSONResponseError):
+        llm_invoke("task", backend=_api_backend(), reply_keys=keys)
+
+
+_EMBEDDED = '{"findings": [], "code_excerpts": [{"file": "t.py", "start_line": 3, "end_line": 3, "content": "y"}]}'
+_OPEN_BRACES = " func f() { for {"
+
+
+def _review_text(line, lead=""):
+    return (
+        '{"findings": [{"file": "t.py", "line": 3, "severity": "P1", ' + lead + '"description": "bad", '
+        '"excerpt": "' + line + '"}], "code_excerpts": [{"file": "t.py", "start_line": 3, '
+        '"end_line": 3, "content": "' + line + '"}]}'
+    )
+
+
+_EXCERPTS_FIRST_OPEN = (
+    '{"code_excerpts": [{"file": "a.py", "start_line": 1, "end_line": 1, "content": "x"}], '
+    '"findings": []}' + _OPEN_BRACES + '"}], "findings": [{"file": "a.py", "line": 3, '
+    '"severity": "P1", "description": "d"}]}'
+)
+QUOTED_REVIEW_REPLIES = {
+    "open_braces_prose_led": "Here is my review:\n" + _review_text("x = " + _EMBEDDED + _OPEN_BRACES),
+    "open_braces_true_led": _review_text("x = " + _EMBEDDED + _OPEN_BRACES, '"x": True, '),
+    "open_braces_excerpts_first": _EXCERPTS_FIRST_OPEN,
+    "cut_prose_led": "Here is my review:\n"
+    + _review_text("x = " + _EMBEDDED).split(_EMBEDDED)[0]
+    + _EMBEDDED,
+    "cut_true_led": _review_text("x = " + _EMBEDDED, '"x": True, ').split(_EMBEDDED)[0] + _EMBEDDED,
+}
+
+
+@pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
+@pytest.mark.parametrize(
+    "name, finish",
+    [(name, "stop") for name in sorted(QUOTED_REVIEW_REPLIES)]
+    + [(name, "length") for name in sorted(QUOTED_REVIEW_REPLIES) if name.startswith("cut_")],
+)
+def test_quoted_review_is_never_the_reply(api_env, monkeypatch, name, keys, finish):
+    text = QUOTED_REVIEW_REPLIES[name]
+    usage = dict(STOP, _forge_finish_reason=finish)
+    request = Mock(return_value=(text, usage))
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    try:
+        result = llm_invoke("task", backend=_api_backend(), reply_keys=keys)
+    except invoke.LLMInvokeError:
+        return
+    severities = [f.get("severity") for f in result.content.get("findings", [])]
+    assert "P1" in severities
+
+
+_QUOTED_DISMISSAL = '{"verdict": "DISMISSED", "reasoning": "ok"}'
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'Ok:\n{"verdict": "CONFIRMED", "reasoning": "it returns '
+        + _QUOTED_DISMISSAL
+        + _OPEN_BRACES
+        + '", "x": 1}',
+        '{"verdict": "CONFIRMED", "reasoning": "it returns ' + _QUOTED_DISMISSAL + _OPEN_BRACES + '"}',
+    ],
+    ids=["prose_led", "bare"],
+)
+def test_open_braces_do_not_flip_a_verdict(api_env, monkeypatch, text):
+    request = Mock(return_value=(text, STOP))
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    try:
+        result = llm_invoke(
+            "task", backend=_api_backend(), expected_keys=FALSIFY_KEYS, reply_keys=_FALSIFY_REPLY_KEYS
+        )
+    except invoke.LLMInvokeError:
+        return
+    assert result.content.get("verdict") == "CONFIRMED"
+
+
+def test_duplicate_verdict_is_refused_with_keys():
+    text = '{"verdict": "CONFIRMED", "reasoning": "a", "verdict": "DISMISSED", "reasoning": "b"}'
+    assert _loads_model_json(text)["verdict"] == "DISMISSED"  # json keeps the last key
+    with pytest.raises(invoke.ReplyKeyRejected):
+        _loads_model_json(text, _FALSIFY_REPLY_KEYS)
+    assert invoke._fallback_reply(text, invoke.ReplyKeyRejected("m", text, 0), FALSIFY_KEYS) is None
+
+
+def test_repair_that_repeats_an_item_key_is_refused():
+    # A cut excerpts-first reply: the repair reads the quoted object's keys
+    # into the excerpt item, repeating file, start_line, end_line and content.
+    text = (
+        '{"code_excerpts": [{"file": "a.py", "start_line": 1, "end_line": 1, "content": "x = '
+        + _EMBEDDED
+    )
+    with pytest.raises(invoke.ReplyKeyRejected):
+        _loads_model_json(text, REVIEW_REPLY_KEYS)
+
+
+def test_duplicate_key_after_a_repair_keeps_the_first_error():
+    text = '{"verdict": "CONFIRMED", "reasoning": "say "hi"", "verdict": "DISMISSED"}'
+    with pytest.raises(invoke.ReplyKeyRejected) as error:
+        _loads_model_json(text, _FALSIFY_REPLY_KEYS)
+    with pytest.raises(json.JSONDecodeError) as plain:
+        json.loads(text)
+    assert error.value.pos == plain.value.pos
+
+
+def test_object_right_before_a_close_is_not_the_reply():
+    assert invoke._extract_json_from_text('{"x": 1, "ok": True} {"findings": []}}') is None
+    assert invoke._extract_json_from_text('{"findings": []}}') is None
+
+
+@pytest.mark.parametrize(
+    "after, kept",
+    [
+        (' {"findings": ["second"]}', True),
+        ("\nThe stray `}` on line 9.", True),
+        (', {"x": "y"}]', True),
+        (" func f() { for {" + '"}]', False),
+        (' and "q" then ]', False),
+    ],
+    ids=["whole_object", "prose_brace", "list_rest", "open_braces_then_quote", "prose_quote_close"],
+)
+def test_text_after_the_reply(after, kept):
+    text = '{"findings": ["first"]}' + after
+    assert (invoke._extract_json_from_text(text) is not None) is kept

@@ -1124,9 +1124,16 @@ def _loads_model_json(text: str, reply_keys: ReplyKeys | None = None):
     repaired: list[int] = []
     # Each attempt escapes one quote and at least two stay structural, so
     # count - 1 attempts (the last one parsing) always suffice.
+    # With reply_keys, a duplicate key is refused: json keeps the last one,
+    # and a quoted `"verdict": "DISMISSED"` would replace the real verdict.
+    hook = _refuse_duplicate_keys if reply_keys is not None else None
     for _ in range(max(1, text.count('"') - 1)):
         try:
-            parsed = json.loads(candidate, strict=False)
+            parsed = json.loads(candidate, strict=False, object_pairs_hook=hook)
+        except _DuplicateKey as exc:
+            if first_error is None:
+                raise ReplyKeyRejected("Duplicate key in reply", text, 0) from exc
+            raise ReplyKeyRejected(first_error.msg, first_error.doc, first_error.pos) from exc
         except json.JSONDecodeError as exc:
             first_error = first_error or exc
             quote_at = _error_is_at_quote(candidate, exc, repaired)
@@ -1149,9 +1156,10 @@ def _loads_model_json(text: str, reply_keys: ReplyKeys | None = None):
         ):
             raise ReplyKeyRejected(first_error.msg, first_error.doc, first_error.pos) from first_error
         return parsed
-    if first_error is not None:
-        raise RepairRefused(first_error.msg, first_error.doc, first_error.pos) from first_error
-    raise json.JSONDecodeError("no parse within the repair budget", text, 0)
+    # The loop runs at least once, and every pass that neither returns nor
+    # raises has set first_error.
+    assert first_error is not None
+    raise RepairRefused(first_error.msg, first_error.doc, first_error.pos) from first_error
 
 
 def _record_escape(repaired: list[int], escaped_at: int) -> list[int]:
@@ -1207,6 +1215,16 @@ def _error_is_at_quote(text: str, exc: json.JSONDecodeError, repaired: Sequence[
         and text[pos] == ","
     ):
         return None  # ",," : a doubled separator is structure, not content
+    if (
+        exc.msg.startswith(("Expecting property name", "Expecting value"))
+        and pos < len(text)
+        and text[pos] in "}]"
+        and text[:pos].rstrip().endswith(",")
+    ):
+        # A trailing comma (",}" or ",]"). Python 3.13+ reports "Illegal
+        # trailing comma" and stops here too; 3.12 reports this message,
+        # and escaping an earlier quote would read the comma as content.
+        return None
     if exc.msg.startswith("Unterminated string"):
         # Content ending in a quoted value and a comma (an excerpt line such
         # as ``"name": "forge",``): json closes the string at the value's
@@ -1530,11 +1548,12 @@ def _extract_json_from_text(
       and every later '{' may sit inside one of its strings: an excerpt
       quoting `x = {"findings": [], ...}` unescaped. A '{' that fails
       before any '"' (prose such as `{a`) does not end it.
-    - A decoded object followed, after whitespace, by `}` or `"` is
-      skipped. That character closes a string or object the decoded one
-      sits inside: a leading object that a quoted `"}], "findings": []}`
-      closed early. The model's own envelope is followed by prose, a
-      fence, `,` or `]` in a list, another object or nothing.
+    - A decoded object with the reply's keys is not returned, and the
+      scan ends, when the text after it continues JSON the object sits
+      inside (_json_continues_after): a leading object that a quoted
+      `"}], "findings": []}` closed early, with any code after the quote.
+      The model's own envelope is followed by prose, a fence, `,` or `]`
+      in a list, another whole object or nothing.
 
     Returns None if no valid envelope can be extracted.
     """
@@ -1558,19 +1577,37 @@ def _extract_json_from_text(
             if '"' in text[i : exc.pos + 1]:
                 return None
             continue
-        next_at = json.decoder.WHITESPACE.match(text, end).end()
-        after = text[next_at : next_at + 1]
-        if after in _JSON_CONTINUATION:
-            continue
         if isinstance(obj, dict) and obj.keys() & keys:
-            return obj
+            return None if _json_continues_after(text, end, decoder) else obj
     return None
 
 
-# After a decoded object, one of these continues a string or object the
-# object sits inside. ',', ':' and ']' are left out: they also follow an
-# object in a reply list or in prose.
-_JSON_CONTINUATION = frozenset('}"')
+def _json_continues_after(text: str, end: int, decoder: json.JSONDecoder) -> bool:
+    """Whether text[end:] continues JSON that the object before it sits in.
+
+    True when the text after `end` starts with '}' or '"' (after
+    whitespace), or holds a '"' that a '}' or ']' follows, both outside
+    any whole object (one raw_decode reads). Prose after the reply, a
+    fence, another whole object or a list's ',' and ']' give False.
+    """
+    k = json.decoder.WHITESPACE.match(text, end).end()
+    if text[k : k + 1] in ("}", '"'):
+        return True
+    quoted = False
+    while k < len(text):
+        ch = text[k]
+        if ch == "{":
+            try:
+                _, k = decoder.raw_decode(text, k)
+                continue
+            except json.JSONDecodeError:
+                pass
+        elif ch == '"':
+            quoted = True
+        elif ch in "}]" and quoted:
+            return True
+        k += 1
+    return False
 
 
 def _fallback_reply(
