@@ -62,8 +62,12 @@ from .lenses import strip_lens_tag
 from .llm_invoke import FalsifyProtocolError, InvalidJSONResponseError, LLMInvokeError, Usage
 from .mutation import OTHER_ADAPTER_INFRA as _OTHER_ADAPTER_INFRA
 from .mutation import (
-    launch_detached_mutation, capture_mutation_source_guard, mutation_source_guard_matches,
-    executable_review_sources, is_native_mutation_runner, mutation_review_admission_error,
+    launch_detached_mutation,
+    capture_mutation_source_guard,
+    mutation_source_guard_matches,
+    executable_review_sources,
+    is_native_mutation_runner,
+    mutation_review_admission_error,
 )
 from .mutation_findings import (
     apply_mutation_ledger_dispositions,
@@ -338,7 +342,11 @@ _MUTANT_PHASE_KEYS = ("results_sha256", "metadata_sha256")
 
 
 def _clean_mutation_skip_kind(
-    findings: list, infra: list[str], evidence: dict, *, source_unchanged: bool,
+    findings: list,
+    infra: list[str],
+    evidence: dict,
+    *,
+    source_unchanged: bool,
 ) -> str | None:
     """Classify a native carrier that measured nothing, or return None.
 
@@ -377,7 +385,10 @@ def _clean_mutation_skip_kind(
     # Same default as decode_mutation_survivor_details: run_mutation records
     # cleanup_complete only on a failed teardown, so absent means complete.
     # Requiring an explicit True would make these exemptions unreachable.
-    if evidence.get("cancelled", False) is not False or evidence.get("cleanup_complete", True) is not True:
+    if (
+        evidence.get("cancelled", False) is not False
+        or evidence.get("cleanup_complete", True) is not True
+    ):
         return None
     kinds = {f.fingerprint for f in findings}
     mutant_phase = any(key in evidence for key in _MUTANT_PHASE_KEYS)
@@ -407,7 +418,6 @@ def _clean_mutation_skip_kind(
             return None
         return kind
     return None
-
 
 
 # fingerprint -> (kind, infra rule, allowed mutant-phase evidence). #120/#127/#133.
@@ -445,11 +455,23 @@ _TOP_LEVEL_DOC_STEMS = ("README", "LICENSE", "LICENCE", "CHANGELOG", "COPYING", 
 _NEVER_DOC_DIRS = frozenset({"src", ".github", ".cursor", ".code-forge"})
 # Lower-cased names read by forge as review input (conventions_resolver) or
 # as build/dependency inputs (detect.py, manifest.py).
-_NEVER_DOC_NAMES = frozenset({
-    "agents.md", "claude.md", "gemini.md", "copilot-instructions.md",
-    ".cursorrules", ".windsurfrules", "cmakelists.txt", "pyproject.toml",
-    "manifest.in", "pipfile", "makefile", "dockerfile", "package.json",
-})
+_NEVER_DOC_NAMES = frozenset(
+    {
+        "agents.md",
+        "claude.md",
+        "gemini.md",
+        "copilot-instructions.md",
+        ".cursorrules",
+        ".windsurfrules",
+        "cmakelists.txt",
+        "pyproject.toml",
+        "manifest.in",
+        "pipfile",
+        "makefile",
+        "dockerfile",
+        "package.json",
+    }
+)
 _NEVER_DOC_PREFIXES = ("requirements", "constraints", "setup.")
 
 
@@ -605,7 +627,11 @@ def _default_tests_only(paths: list[str]) -> bool:
 
 
 def _is_clean_baseline_timeout_skip(
-    findings: list, infra: list[str], evidence: dict, *, source_unchanged: bool,
+    findings: list,
+    infra: list[str],
+    evidence: dict,
+    *,
+    source_unchanged: bool,
 ) -> bool:
     """#120: the runner stopped at a cleanly classified baseline timeout."""
     kind = _clean_mutation_skip_kind(findings, infra, evidence, source_unchanged=source_unchanged)
@@ -708,9 +734,14 @@ def _swap_untracked_gate_record(gate: Path, digest: str) -> str | None:
 # #141: review-time gate.yaml keys read from the trusted gate (baseline /
 # outside config root), never from the tree under review.
 _REVIEW_GATE_KEYS = (
-    "ledger", "rulepacks", "rulepacks_blocking", "rulepack_timeout_seconds", "pinned_paths",
+    "ledger",
+    "rulepacks",
+    "rulepacks_blocking",
+    "rulepack_timeout_seconds",
+    "pinned_paths",
     "style_downgrade",
-    "graph_triage", "knowledge",  # #150: advisory/context switches
+    "graph_triage",
+    "knowledge",  # #150: advisory/context switches
 )
 
 
@@ -858,8 +889,14 @@ class StateMachine:
     def _capture_mutation_review_source(self) -> None:
         """Retain the initial subject across autofix rounds; never refresh its guard."""
         review = self.resolved_review
-        subject = (review.target_kind, review.base_sha, review.head_sha, review.git_diff,
-                   tuple(str(path) for path in review.source_files), review.diff_paths)
+        subject = (
+            review.target_kind,
+            review.base_sha,
+            review.head_sha,
+            review.git_diff,
+            tuple(str(path) for path in review.source_files),
+            review.diff_paths,
+        )
         if self._mutation_source_review is review:
             if self._mutation_source_subject != subject:
                 self._mutation_source_guard = None
@@ -867,9 +904,13 @@ class StateMachine:
         self._mutation_source_review = review
         self._mutation_source_subject = subject
         self._mutation_source_guard = capture_mutation_source_guard(
-            source_root=self._source_root(), target_kind=review.target_kind,
-            base_sha=review.base_sha, head_sha=review.head_sha, git_diff=review.git_diff,
-            paths=tuple(str(path) for path in review.source_files), diff_paths=review.diff_paths,
+            source_root=self._source_root(),
+            target_kind=review.target_kind,
+            base_sha=review.base_sha,
+            head_sha=review.head_sha,
+            git_diff=review.git_diff,
+            paths=tuple(str(path) for path in review.source_files),
+            diff_paths=review.diff_paths,
         )
 
     def run(self) -> Verdict:
@@ -881,11 +922,15 @@ class StateMachine:
         self._trusted_gate_cache = None
         self._trusted_config_refusal = None
         admission_error = mutation_review_admission_error(
-            target_kind=self.resolved_review.target_kind, git_diff=self.resolved_review.git_diff,
-            source_files=self._source_files(), source_root=self._source_root(),
+            target_kind=self.resolved_review.target_kind,
+            git_diff=self.resolved_review.git_diff,
+            source_files=self._source_files(),
+            source_root=self._source_root(),
             config_root=self._test_config_root(),
-            runner=self.l2_runner, ci_detached=self.mode == Mode.CI,
-            base_sha=self.resolved_review.base_sha, allow_untracked=self.mode is not Mode.CI,
+            runner=self.l2_runner,
+            ci_detached=self.mode == Mode.CI,
+            base_sha=self.resolved_review.base_sha,
+            allow_untracked=self.mode is not Mode.CI,
         )
         # #141: resolve the trusted gate once, before the first cycle, so review
         # cycles do no git I/O for ledger / rulepack / suppression switches. Done
@@ -937,7 +982,11 @@ class StateMachine:
             self._display_advisories()
             progress.emit(
                 "review phase done: verdict=%s findings=%d confirmed=%d"
-                % (verdict.value, len(reporting_product_findings(self._state.findings)), self._count(Disposition.CONFIRMED))
+                % (
+                    verdict.value,
+                    len(reporting_product_findings(self._state.findings)),
+                    self._count(Disposition.CONFIRMED),
+                )
             )
         except BaseException:  # noqa: BLE001 - discard authority, preserve the failure
             self._acquisition_receipts = ()
@@ -1039,6 +1088,7 @@ class StateMachine:
         if result_path.exists():
             bound_result = False
             try:
+
                 def unique_object(pairs):
                     value = {}
                     for key, item in pairs:
@@ -1052,7 +1102,9 @@ class StateMachine:
 
                 with open(result_path, "r", encoding="utf-8") as f:
                     result_data = json.load(
-                        f, object_pairs_hook=unique_object, parse_constant=invalid_constant,
+                        f,
+                        object_pairs_hook=unique_object,
+                        parse_constant=invalid_constant,
                     )
 
                 # Explicit legacy compatibility: an absent version and null
@@ -1068,17 +1120,28 @@ class StateMachine:
                         from .lock import _pid_alive
 
                         context = mutation_review_context(
-                            source_root=self._source_root(), base_sha=self.resolved_review.base_sha,
-                            head_sha=self.resolved_review.head_sha, git_diff=self.resolved_review.git_diff,
+                            source_root=self._source_root(),
+                            base_sha=self.resolved_review.base_sha,
+                            head_sha=self.resolved_review.head_sha,
+                            git_diff=self.resolved_review.git_diff,
                         )
                         valid = (
                             type(result_data.get("survivor_details_version")) is int
                             and result_data["survivor_details_version"] == 1
-                            and context is not None and result_data.get("review_context") == context
-                            and mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root())
-                            and not any(key in result_data for key in (
-                                "publication_error", "cancellation_type", "cleanup_error", "process_failure",
-                            ))
+                            and context is not None
+                            and result_data.get("review_context") == context
+                            and mutation_source_guard_matches(
+                                self._mutation_source_guard, source_root=self._source_root()
+                            )
+                            and not any(
+                                key in result_data
+                                for key in (
+                                    "publication_error",
+                                    "cancellation_type",
+                                    "cleanup_error",
+                                    "process_failure",
+                                )
+                            )
                             and result_data.get("cancelled", False) is False
                             and result_data.get("cleanup_complete", True) is True
                             and result_data.get("infra_errors") == []
@@ -1097,7 +1160,8 @@ class StateMachine:
                     )
                     self._state.converged = False
                     self._state.infra_errors.append(
-                        "CI: bound mutation measurement still running" if pending
+                        "CI: bound mutation measurement still running"
+                        if pending
                         else "CI: invalid or incomplete bound mutation measurement"
                     )
                     if not pending:
@@ -1132,51 +1196,74 @@ class StateMachine:
                         verdict_data = result_data
                         if bound_result:
                             context = mutation_review_context(
-                                source_root=self._source_root(), base_sha=self.resolved_review.base_sha,
-                                head_sha=self.resolved_review.head_sha, git_diff=self.resolved_review.git_diff,
+                                source_root=self._source_root(),
+                                base_sha=self.resolved_review.base_sha,
+                                head_sha=self.resolved_review.head_sha,
+                                git_diff=self.resolved_review.git_diff,
                             )
                             mutation_findings = decode_mutation_survivor_details(
-                                result_data, review_context=context, include_timeout_diagnostics=True,
+                                result_data,
+                                review_context=context,
+                                include_timeout_diagnostics=True,
                             )
-                            if not mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root()):
+                            if not mutation_source_guard_matches(
+                                self._mutation_source_guard, source_root=self._source_root()
+                            ):
                                 mutation_findings = None
                             if mutation_findings is None:
                                 self._state.verdict = Verdict.FAIL
                                 self._state.converged = False
-                                self._state.infra_errors.append("CI: invalid bound mutation survivor details")
+                                self._state.infra_errors.append(
+                                    "CI: invalid bound mutation survivor details"
+                                )
                                 self._persist_state()
                                 self._write_ci_ledger_rows()
                                 return Verdict.FAIL
                             prior = {f.fingerprint: f for f in self._state.findings}
                             timeout_conflict = any(
                                 f.fingerprint in prior
-                                and (f.id.startswith("mutation-timeout-")
-                                     or (prior[f.fingerprint].source == "MUTANT"
-                                         and prior[f.fingerprint].id.startswith("mutation-timeout-")))
-                                and (prior[f.fingerprint].id != f.id
-                                     or prior[f.fingerprint].source != "MUTANT"
-                                     or prior[f.fingerprint].disposition != Disposition.DISMISSED
-                                     or f.disposition != Disposition.DISMISSED)
+                                and (
+                                    f.id.startswith("mutation-timeout-")
+                                    or (
+                                        prior[f.fingerprint].source == "MUTANT"
+                                        and prior[f.fingerprint].id.startswith("mutation-timeout-")
+                                    )
+                                )
+                                and (
+                                    prior[f.fingerprint].id != f.id
+                                    or prior[f.fingerprint].source != "MUTANT"
+                                    or prior[f.fingerprint].disposition != Disposition.DISMISSED
+                                    or f.disposition != Disposition.DISMISSED
+                                )
                                 for f in mutation_findings
                             )
                             if timeout_conflict:
                                 self._state.verdict = Verdict.FAIL
                                 self._state.converged = False
-                                self._state.infra_errors.append("CI: bound mutation timeout identity collision")
+                                self._state.infra_errors.append(
+                                    "CI: bound mutation timeout identity collision"
+                                )
                                 self._persist_state()
                                 self._write_ci_ledger_rows()
                                 return Verdict.FAIL
                             notes = apply_mutation_ledger_dispositions(
-                                mutation_findings, source_root=self._source_root(),
-                                base_sha=self.resolved_review.base_sha, head_sha=self.resolved_review.head_sha,
-                                git_diff=self.resolved_review.git_diff, eligible_measurement=True,
+                                mutation_findings,
+                                source_root=self._source_root(),
+                                base_sha=self.resolved_review.base_sha,
+                                head_sha=self.resolved_review.head_sha,
+                                git_diff=self.resolved_review.git_diff,
+                                eligible_measurement=True,
                             )
                             for note in notes:
                                 progress.emit(note)
                             unresolved = [f.id for f in mutation_findings if is_mutation_survivor(f)]
-                            progress.emit("mutation: %d unresolved of %d original survivors" % (
-                                len(unresolved), len(result_data["survivors"]),
-                            ))
+                            progress.emit(
+                                "mutation: %d unresolved of %d original survivors"
+                                % (
+                                    len(unresolved),
+                                    len(result_data["survivors"]),
+                                )
+                            )
                             verdict_data = dict(result_data, survivors=unresolved)
                             # Persist the actual current identities even on the
                             # survivor FAIL below. A weaker detached disposition
@@ -1186,8 +1273,10 @@ class StateMachine:
                                 previous = current.get(finding.fingerprint)
                                 if previous is None or previous.disposition == Disposition.DISMISSED:
                                     current[finding.fingerprint] = finding
-                                if (finding.id.startswith("mutation-timeout-")
-                                        and finding.id not in self._mutation_timeout_emitted):
+                                if (
+                                    finding.id.startswith("mutation-timeout-")
+                                    and finding.id not in self._mutation_timeout_emitted
+                                ):
                                     progress.emit("mutation: " + finding.description)
                                     self._mutation_timeout_emitted.add(finding.id)
                             self._state.findings = list(current.values())
@@ -1337,7 +1426,11 @@ class StateMachine:
         elif py_files and shutil.which("mutmut") is not None:
             mutation_timeout = None
             from .gate_check import (
-                UNTRACKED_GATE_NOT_MEASURED, BaselineGateInvalid, GateNotFound, OutsideConfigRootRefused, OutsideGateInvalid,
+                UNTRACKED_GATE_NOT_MEASURED,
+                BaselineGateInvalid,
+                GateNotFound,
+                OutsideConfigRootRefused,
+                OutsideGateInvalid,
                 UntrackedGateRefused,
             )
 
@@ -1427,8 +1520,10 @@ class StateMachine:
                 review_context = None
                 try:
                     review_context = mutation_review_context(
-                        source_root=self._source_root(), base_sha=self.resolved_review.base_sha,
-                        head_sha=self.resolved_review.head_sha, git_diff=self.resolved_review.git_diff,
+                        source_root=self._source_root(),
+                        base_sha=self.resolved_review.base_sha,
+                        head_sha=self.resolved_review.head_sha,
+                        git_diff=self.resolved_review.git_diff,
                     )
                     started = launch_detached_mutation(
                         diff_files,
@@ -1449,9 +1544,11 @@ class StateMachine:
                     self._state.infra_errors.append(f"CI: mutation launch error: {exc}")
                 if not started:
                     self._state.infra_errors.append("CI: mutation subprocess failed to start")
-                if (review_context is not None
-                        and not completed_bound_result
-                        and getattr(self, "_mutation_measurement_eligible", False) is not True):
+                if (
+                    review_context is not None
+                    and not completed_bound_result
+                    and getattr(self, "_mutation_measurement_eligible", False) is not True
+                ):
                     if started:
                         bound_launch_pending = True
                         progress.emit("mutation: bound measurement launched; completion pending")
@@ -1517,7 +1614,9 @@ class StateMachine:
             or self._mutation_bound_failure
             or self._l2_infra_error is not None
             or self._trusted_config_refusal is not None
-            else Verdict.PENDING if bound_launch_pending else Verdict.PASS
+            else Verdict.PENDING
+            if bound_launch_pending
+            else Verdict.PASS
         )
         if self._trusted_config_refusal is not None:
             note = f"CI: {self._trusted_config_refusal}"
@@ -1648,12 +1747,14 @@ class StateMachine:
         if latest["clean_credit_action"] != "interrupted":
             return []
         observed = latest["dispositions"]
-        return list(dict.fromkeys(
-            finding.fingerprint
-            for finding in reporting_product_findings(self._state.findings)
-            if observed.get(finding.fingerprint) == Disposition.UNCERTAIN.value
-            and finding.disposition == Disposition.CONFIRMED
-        ))
+        return list(
+            dict.fromkeys(
+                finding.fingerprint
+                for finding in reporting_product_findings(self._state.findings)
+                if observed.get(finding.fingerprint) == Disposition.UNCERTAIN.value
+                and finding.disposition == Disposition.CONFIRMED
+            )
+        )
 
     def _begin_host_attempt(self, round_index: int) -> None:
         if not self._host_receipt_active():
@@ -1696,8 +1797,11 @@ class StateMachine:
         self._persist_state()
 
     def _finish_host_attempt(
-        self, action: str, fixpoint: _FixpointResult | None,
-        *, evidence_rejections: list[dict] | None = None,
+        self,
+        action: str,
+        fixpoint: _FixpointResult | None,
+        *,
+        evidence_rejections: list[dict] | None = None,
     ) -> None:
         if self._host_attempt_round is None:
             return
@@ -1965,7 +2069,9 @@ class StateMachine:
                 rejected_evidence = self._pure_evidence_rejections(_fp)
                 self._finish_host_attempt(
                     (
-                        "evidence_rejected" if rejected_evidence else "interrupted"
+                        "evidence_rejected"
+                        if rejected_evidence
+                        else "interrupted"
                         if _fp == _FixpointResult.INCOMPLETE or self._acquisition_markers
                         else "unavailable"
                     )
@@ -2279,12 +2385,9 @@ class StateMachine:
                 with _lock:
                     falsify_infra_failures.append(f.fingerprint)
                     self._falsify_failed_findings.append(f)
-                    self._state.infra_errors.append(
-                        f"falsify {failure} on {f.fingerprint}: {exc}"
-                    )
+                    self._state.infra_errors.append(f"falsify {failure} on {f.fingerprint}: {exc}")
                 progress.emit(
-                    "falsify %d/%d: %s (%.1fs)"
-                    % (i, total, failure, time.monotonic() - t_falsify)
+                    "falsify %d/%d: %s (%.1fs)" % (i, total, failure, time.monotonic() - t_falsify)
                 )
             except RuntimeError as exc:
                 f.disposition = Disposition.UNCERTAIN
@@ -2491,8 +2594,11 @@ class StateMachine:
             )
         notes: list[str] = []
         globs = trusted_mutation_globs(
-            config_root=self._test_config_root(), source_root=self._source_root(),
-            base_sha=self.resolved_review.base_sha, config_test=test_config, notes=notes,
+            config_root=self._test_config_root(),
+            source_root=self._source_root(),
+            base_sha=self.resolved_review.base_sha,
+            config_test=test_config,
+            notes=notes,
             allow_untracked=self.mode is not Mode.CI,
         )
         self._state.infra_errors.extend(f"L2: {note}" for note in notes)
@@ -2503,7 +2609,8 @@ class StateMachine:
         holds an orphan container, so no LLM passes are spent on a run whose
         every L2 phase would stop on it. Read-only; deletes nothing."""
         if self.l2_runner is None or not is_native_mutation_runner(
-            self.l2_runner, source_root=self._source_root(),
+            self.l2_runner,
+            source_root=self._source_root(),
         ):
             return
         from ._mutation_workspace import find_orphan_container, orphan_container_message
@@ -2544,8 +2651,10 @@ class StateMachine:
         self._check_untracked_gate_pin()
         pin = getattr(self, "_untracked_gate_pin", None)
         config = load_trusted_gate_config(
-            config_root=self._test_config_root(), source_root=self._source_root(),
-            base_sha=self.resolved_review.base_sha, allow_untracked=self.mode is not Mode.CI,
+            config_root=self._test_config_root(),
+            source_root=self._source_root(),
+            base_sha=self.resolved_review.base_sha,
+            allow_untracked=self.mode is not Mode.CI,
             expected_sha256=pin[1] if pin is not None else None,  # #167: parse the pinned bytes
         )
         self._check_untracked_gate_pin()
@@ -2560,7 +2669,8 @@ class StateMachine:
         from .gate_check import config_root_is_outside_review
 
         if self.mode is Mode.CI or config_root_is_outside_review(
-            self._test_config_root(), self._source_root(),
+            self._test_config_root(),
+            self._source_root(),
         ):
             return None
         root = Path(self._source_root())
@@ -2571,7 +2681,11 @@ class StateMachine:
         def git(*args):
             try:
                 return subprocess.run(
-                    ["git", *args], cwd=str(root), capture_output=True, timeout=10, check=False,
+                    ["git", *args],
+                    cwd=str(root),
+                    capture_output=True,
+                    timeout=10,
+                    check=False,
                 ).returncode
             except (OSError, subprocess.TimeoutExpired):
                 return None
@@ -2614,16 +2728,19 @@ class StateMachine:
         self._untracked_gate_pin = (gate, digest)
         previous = _swap_untracked_gate_record(gate, digest)
         changed = previous is not None and previous != digest
-        self._advisories.append(AdvisoryFinding(
-            id="UNTRACKED_GATE_CHANGED" if changed else "UNTRACKED_GATE_IN_USE",
-            axis="config", file=".code-forge/gate.yaml",
-            description=(
-                f"untracked .code-forge/gate.yaml (sha256 {digest[:12]}) supplies test.* for this "
-                "review; it is in no reviewed diff, so check it was not edited by the change "
-                "under review"
-                + (f" -- CHANGED since the previous review (was {previous[:12]})" if changed else "")
-            ),
-        ))
+        self._advisories.append(
+            AdvisoryFinding(
+                id="UNTRACKED_GATE_CHANGED" if changed else "UNTRACKED_GATE_IN_USE",
+                axis="config",
+                file=".code-forge/gate.yaml",
+                description=(
+                    f"untracked .code-forge/gate.yaml (sha256 {digest[:12]}) supplies test.* for this "
+                    "review; it is in no reviewed diff, so check it was not edited by the change "
+                    "under review"
+                    + (f" -- CHANGED since the previous review (was {previous[:12]})" if changed else "")
+                ),
+            )
+        )
 
     def _check_untracked_gate_pin(self) -> None:
         """#143: refuse an untracked gate.yaml whose content changed after the
@@ -2670,7 +2787,11 @@ class StateMachine:
         baseline, a change-added one, a linked/untracked one in CI) means
         built-in defaults, never the reviewed tree's copy. A malformed
         trusted file raises ValueError for the caller's fail-open path."""
-        from .gate_check import OutsideConfigRootRefused, UntrustedGateConfigError, load_trusted_gate_data
+        from .gate_check import (
+            OutsideConfigRootRefused,
+            UntrustedGateConfigError,
+            load_trusted_gate_data,
+        )
 
         self._note_gate_yaml_edit()
         try:
@@ -2681,8 +2802,10 @@ class StateMachine:
             self._check_untracked_gate_pin()
             pin = getattr(self, "_untracked_gate_pin", None)
             data = load_trusted_gate_data(
-                config_root=self._test_config_root(), source_root=self._source_root(),
-                base_sha=self.resolved_review.base_sha, allow_untracked=self.mode is not Mode.CI,
+                config_root=self._test_config_root(),
+                source_root=self._source_root(),
+                base_sha=self.resolved_review.base_sha,
+                allow_untracked=self.mode is not Mode.CI,
                 expected_sha256=pin[1] if pin is not None else None,
             )
             self._check_untracked_gate_pin()
@@ -2717,14 +2840,18 @@ class StateMachine:
             or any(a.id == "GATE_YAML_EDIT_NOT_APPLIED" for a in self._advisories)
         ):
             return
-        self._advisories.append(AdvisoryFinding(
-            id="GATE_YAML_EDIT_NOT_APPLIED", axis="config", file=".code-forge/gate.yaml",
-            description=(
-                "test.*, mutation globs, ledger, rulepacks/rulepacks_blocking, pinned_paths and "
-                "style_downgrade from this change's gate.yaml were not applied (they take effect "
-                "once on the review baseline)"
-            ),
-        ))
+        self._advisories.append(
+            AdvisoryFinding(
+                id="GATE_YAML_EDIT_NOT_APPLIED",
+                axis="config",
+                file=".code-forge/gate.yaml",
+                description=(
+                    "test.*, mutation globs, ledger, rulepacks/rulepacks_blocking, pinned_paths and "
+                    "style_downgrade from this change's gate.yaml were not applied (they take effect "
+                    "once on the review baseline)"
+                ),
+            )
+        )
 
     def _run_l2_phase(self) -> list[StateFinding]:
         """L2 mutation phase. Runs after L1.
@@ -2741,7 +2868,9 @@ class StateMachine:
         source_before = False
         if self.mode in (Mode.LOCAL, Mode.CI):
             self._capture_mutation_review_source()
-            source_before = mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root())
+            source_before = mutation_source_guard_matches(
+                self._mutation_source_guard, source_root=self._source_root()
+            )
         diff_files = [str(f) for f in self._executable_source_files()]
 
         if not diff_files:
@@ -2761,7 +2890,11 @@ class StateMachine:
 
         if needs_baseline:
             from .gate_check import (
-                UNTRACKED_GATE_NOT_MEASURED, BaselineGateInvalid, GateNotFound, OutsideConfigRootRefused, OutsideGateInvalid,
+                UNTRACKED_GATE_NOT_MEASURED,
+                BaselineGateInvalid,
+                GateNotFound,
+                OutsideConfigRootRefused,
+                OutsideGateInvalid,
                 UntrackedGateRefused,
             )
 
@@ -2834,31 +2967,41 @@ class StateMachine:
             )
             self._state.infra_errors.extend(l2_infra)
             source_after = native and mutation_source_guard_matches(
-                self._mutation_source_guard, source_root=self._source_root(),
+                self._mutation_source_guard,
+                source_root=self._source_root(),
             )
             decoded = None
             if native:
                 context = mutation_review_context(
-                    source_root=self._source_root(), base_sha=self.resolved_review.base_sha,
-                    head_sha=self.resolved_review.head_sha, git_diff=self.resolved_review.git_diff,
+                    source_root=self._source_root(),
+                    base_sha=self.resolved_review.base_sha,
+                    head_sha=self.resolved_review.head_sha,
+                    git_diff=self.resolved_review.git_diff,
                 )
                 carrier = _mutation_outcome(l2_findings, l2_infra, evidence, review_context=context)
                 if source_before and source_after:
                     decoded = decode_mutation_survivor_details(
-                        carrier, review_context=context, include_timeout_diagnostics=True,
+                        carrier,
+                        review_context=context,
+                        include_timeout_diagnostics=True,
                     )
                 # Raw producer notes may precede a late cleanup failure. They
                 # grant no diagnostic authority until the whole carrier passes.
-                l2_findings = [f for f in l2_findings if not (
-                    f.source == "MUTANT" and f.id.startswith("mutation-timeout-")
-                )]
+                l2_findings = [
+                    f
+                    for f in l2_findings
+                    if not (f.source == "MUTANT" and f.id.startswith("mutation-timeout-"))
+                ]
                 if decoded is not None:
                     notes = [f for f in decoded if f.id.startswith("mutation-timeout-")]
                     self._mutation_timeout_objects = {id(f) for f in notes}
                     l2_findings.extend(notes)
                 else:
                     kind = _clean_mutation_skip_kind(
-                        l2_findings, l2_infra, evidence, source_unchanged=bool(source_before and source_after),
+                        l2_findings,
+                        l2_infra,
+                        evidence,
+                        source_unchanged=bool(source_before and source_after),
                     )
                     if kind is None:
                         self._mutation_bound_failure = True
@@ -2889,7 +3032,9 @@ class StateMachine:
                         self._mutation_bound_failure = True
                         self._state.infra_errors.append(_ci_skip_reason(kind, l2_findings))
             elif self.mode == Mode.CI and any(
-                f.id == "MUTATION_SKIPPED" and f.fingerprint in ("mutation-baseline-timeout", "mutation-flaky", "mutation-host-busy")
+                f.id == "MUTATION_SKIPPED"
+                and f.fingerprint
+                in ("mutation-baseline-timeout", "mutation-flaky", "mutation-host-busy")
                 for f in l2_findings
             ):
                 # #124/#127: the CI baseline policy is runner-independent; a
@@ -2904,9 +3049,17 @@ class StateMachine:
                     skip_kind = "baseline-failed"
                 self._state.infra_errors.append(_ci_skip_reason(skip_kind, l2_findings))
             self._mutation_measurement_eligible = native and decoded is not None
-            if native and not self._mutation_measurement_eligible and any(is_mutation_survivor(f) for f in l2_findings):
-                if not source_before or not mutation_source_guard_matches(self._mutation_source_guard, source_root=self._source_root()):
-                    progress.emit("mutation: source changed or review capture unavailable; native ruling refused")
+            if (
+                native
+                and not self._mutation_measurement_eligible
+                and any(is_mutation_survivor(f) for f in l2_findings)
+            ):
+                if not source_before or not mutation_source_guard_matches(
+                    self._mutation_source_guard, source_root=self._source_root()
+                ):
+                    progress.emit(
+                        "mutation: source changed or review capture unavailable; native ruling refused"
+                    )
             return l2_findings
         except Exception as exc:  # noqa: BLE001
             self._mutation_bound_failure = native
@@ -2928,10 +3081,16 @@ class StateMachine:
             clean, why, shown = False, "symlinked files are not measured", ", ".join(linked)
         elif fingerprints == {"mutation-tests-only"}:
             clean = _default_tests_only(diff_files)
-            why = "diff is tests-only" if clean else "configured skip globs or conftest.py leave nothing to mutate"
+            why = (
+                "diff is tests-only"
+                if clean
+                else "configured skip globs or conftest.py leave nothing to mutate"
+            )
         else:
             clean = CI_DOCS_ONLY_MUTATION_SKIP_PASSES and _docs_only_files(
-                diff_files, self._source_root(), self._review_diff_paths(),
+                diff_files,
+                self._source_root(),
+                self._review_diff_paths(),
             )
             why = "docs-only diff" if clean else "no mutation adapter covers"
         if clean or self.mode != Mode.CI:
@@ -3069,9 +3228,11 @@ class StateMachine:
                 reviewed_repositories=self.reviewed_repositories,
             )
             result = self._verify_host_completion(result)
-            return [] if result.passed else [
-                _ReceiptGateFailure(f"receipt acceptance: {result.reason}", result)
-            ]
+            return (
+                []
+                if result.passed
+                else [_ReceiptGateFailure(f"receipt acceptance: {result.reason}", result)]
+            )
         if not diff_text:
             # Nothing to verify against (non-git / stub reviews).
             return errors
@@ -3184,22 +3345,35 @@ class StateMachine:
 
         if type(result) is not VerifyResult:
             return result
-        if not result.passed and result.failure_kind is not VerifyFailureKind.INCOMPLETE_PASS and not result.unresolved_findings:
+        if (
+            not result.passed
+            and result.failure_kind is not VerifyFailureKind.INCOMPLETE_PASS
+            and not result.unresolved_findings
+        ):
             return result
         cycle = self._state.round + 1
         expected = {}
         observed = {}
         valid_statuses = {outcome.value for outcome in PassOutcome}
-        for snapshot, target in ((self._written_pass_outcomes, expected), (result.completion_statuses, observed)):
+        for snapshot, target in (
+            (self._written_pass_outcomes, expected),
+            (result.completion_statuses, observed),
+        ):
             malformed = type(snapshot) is not tuple
             seen = set()
             if not malformed:
                 for row in snapshot:
                     if not (
-                        type(row) is tuple and len(row) == 3
-                        and type(row[0]) is int and row[0] > 0
-                        and type(row[1]) is int and row[1] in (1, 2, 3)
-                        and ((target is observed and row[2] is None) or (type(row[2]) is str and row[2] in valid_statuses))
+                        type(row) is tuple
+                        and len(row) == 3
+                        and type(row[0]) is int
+                        and row[0] > 0
+                        and type(row[1]) is int
+                        and row[1] in (1, 2, 3)
+                        and (
+                            (target is observed and row[2] is None)
+                            or (type(row[2]) is str and row[2] in valid_statuses)
+                        )
                         and (row[0], row[1]) not in seen
                     ):
                         malformed = True
@@ -3208,26 +3382,41 @@ class StateMachine:
                     if row[0] == cycle:
                         target[row[1]] = row[2]
             if malformed:
-                return VerifyResult(False, "current host completion snapshot invalid", 8, min(result.checks_passed, 7))
+                return VerifyResult(
+                    False, "current host completion snapshot invalid", 8, min(result.checks_passed, 7)
+                )
         acquired = self._current_acquisition()
         if self._acquisition_authority is not None and acquired is None:
-            return VerifyResult(False, "current host acquisition snapshot invalid", 8, min(result.checks_passed, 7))
+            return VerifyResult(
+                False, "current host acquisition snapshot invalid", 8, min(result.checks_passed, 7)
+            )
         if acquired is not None:
             for number, outcome in enumerate(acquired.outcomes, 1):
                 if outcome is not PassOutcome.COMPLETED:
                     expected[number] = outcome.value
         if set(expected) != {1, 2, 3} or set(observed) != {1, 2, 3}:
             if self._acquisition_markers:
-                return VerifyResult(False, "current host completion snapshot unavailable", 8, min(result.checks_passed, 7))
+                return VerifyResult(
+                    False,
+                    "current host completion snapshot unavailable",
+                    8,
+                    min(result.checks_passed, 7),
+                )
             return result
         for number in (1, 2, 3):
             if observed[number] == expected[number]:
                 continue
-            if observed[number] is None and expected[number] == "completed" and not self._acquisition_markers:
+            if (
+                observed[number] is None
+                and expected[number] == "completed"
+                and not self._acquisition_markers
+            ):
                 continue  # public legacy omission without actual host failure
             return VerifyResult(
-                False, f"receipt completion contradicts actual host outcome: c{cycle}p{number} expected {expected[number]}",
-                8, min(result.checks_passed, 7),
+                False,
+                f"receipt completion contradicts actual host outcome: c{cycle}p{number} expected {expected[number]}",
+                8,
+                min(result.checks_passed, 7),
             )
         return result
 
@@ -3239,10 +3428,13 @@ class StateMachine:
             type(result) is not VerifyResult
             or result.passed
             or result.failure_kind is not None
-            or result.checks_run != 8 or result.checks_passed not in (6, 7)
+            or result.checks_run != 8
+            or result.checks_passed not in (6, 7)
             or type(result.incomplete_passes) is not tuple
             or not result.incomplete_passes
-            or any(type(number) is not int or number not in (1, 2, 3) for number in result.incomplete_passes)
+            or any(
+                type(number) is not int or number not in (1, 2, 3) for number in result.incomplete_passes
+            )
         ):
             return False
         acquired = self._current_acquisition()
@@ -3251,13 +3443,21 @@ class StateMachine:
         if self._verify_host_completion(result) is not result:
             return False
         for snapshot in (self._acquisition_receipts, result.unresolved_findings):
-            if type(snapshot) is not tuple or not snapshot or any(
-                type(row) is not tuple or len(row) != 4
-                or type(row[0]) is not int or row[0] != self._state.round + 1
-                or type(row[1]) is not int or row[1] not in (1, 2, 3)
-                or type(row[2]) is not str or row[2] != self.source_hash
-                or type(row[3]) is not str
-                for row in snapshot
+            if (
+                type(snapshot) is not tuple
+                or not snapshot
+                or any(
+                    type(row) is not tuple
+                    or len(row) != 4
+                    or type(row[0]) is not int
+                    or row[0] != self._state.round + 1
+                    or type(row[1]) is not int
+                    or row[1] not in (1, 2, 3)
+                    or type(row[2]) is not str
+                    or row[2] != self.source_hash
+                    or type(row[3]) is not str
+                    for row in snapshot
+                )
             ):
                 return False
         if sorted(self._acquisition_receipts) != sorted(result.unresolved_findings):
@@ -3265,7 +3465,8 @@ class StateMachine:
         for number in result.incomplete_passes:
             facts = [fact for fact in acquired.facts if fact.number == number]
             if (
-                not facts or not any(fact.emitted for fact in facts)
+                not facts
+                or not any(fact.emitted for fact in facts)
                 or acquired.outcomes[number - 1] is not PassOutcome.ERROR
                 or not all(fact.capacity and fact.outcome is PassOutcome.ERROR for fact in facts)
             ):
@@ -3281,8 +3482,12 @@ class StateMachine:
             return
         producer = self.l1_provider
         self._rejection_authority = _RejectionSnapshot(
-            producer, producer._excerpt_invocation, self._state.round + 1,
-            self.source_hash, producer._excerpt_rejections, producer.attempted_excerpts,
+            producer,
+            producer._excerpt_invocation,
+            self._state.round + 1,
+            self.source_hash,
+            producer._excerpt_rejections,
+            producer.attempted_excerpts,
         )
 
     def _current_evidence_rejections(self) -> _RejectionSnapshot | None:
@@ -3292,25 +3497,35 @@ class StateMachine:
         snapshot = self._rejection_authority
         producer = self.l1_provider
         if (
-            type(snapshot) is not _RejectionSnapshot or type(producer) is not _L1Call
-            or snapshot.producer is not producer or snapshot.token is not producer._excerpt_invocation
-            or snapshot.cycle != self._state.round + 1 or snapshot.source_hash != self.source_hash
+            type(snapshot) is not _RejectionSnapshot
+            or type(producer) is not _L1Call
+            or snapshot.producer is not producer
+            or snapshot.token is not producer._excerpt_invocation
+            or snapshot.cycle != self._state.round + 1
+            or snapshot.source_hash != self.source_hash
             or self.reviewed_repositories is not None
-            or type(snapshot.observations) is not tuple or not snapshot.observations
+            or type(snapshot.observations) is not tuple
+            or not snapshot.observations
             or snapshot.observations is not producer._excerpt_rejections
-            or type(snapshot.attempts) is not list or snapshot.attempts is not producer.attempted_excerpts
+            or type(snapshot.attempts) is not list
+            or snapshot.attempts is not producer.attempted_excerpts
             or len(snapshot.attempts) != len(snapshot.observations)
-            or producer.acquisition_failures or producer.raw_observations
+            or producer.acquisition_failures
+            or producer.raw_observations
             or producer.unavailable_rejected_passes
         ):
             return None
         diff_text = self._receipt_diff()
         for observation, attempt in zip(snapshot.observations, snapshot.attempts, strict=True):
             if (
-                type(observation) is not _ExcerptRejection or observation.owner_token is not snapshot.token
-                or type(attempt) is not dict or observation.original is not attempt
-                or observation.pass_name not in _PASS_NAMES or attempt.get("pass_name") != observation.pass_name
-                or observation.diff_text != diff_text or attempt.get("findings") != []
+                type(observation) is not _ExcerptRejection
+                or observation.owner_token is not snapshot.token
+                or type(attempt) is not dict
+                or observation.original is not attempt
+                or observation.pass_name not in _PASS_NAMES
+                or attempt.get("pass_name") != observation.pass_name
+                or observation.diff_text != diff_text
+                or attempt.get("findings") != []
                 or not _admissible_raw_value(attempt)
                 or json.dumps(attempt, sort_keys=True, separators=(",", ":")) != observation.payload_json
             ):
@@ -3325,31 +3540,50 @@ class StateMachine:
 
         snapshot = self._current_evidence_rejections()
         if (
-            snapshot is None or self._raw_observations_last_round
+            snapshot is None
+            or self._raw_observations_last_round
             or self._unavailable_rejected_passes_last_round
             or len(self._attempted_last_round) != len(snapshot.attempts)
-            or any(a is not b for a, b in zip(self._attempted_last_round, snapshot.attempts, strict=True))
+            or any(
+                a is not b for a, b in zip(self._attempted_last_round, snapshot.attempts, strict=True)
+            )
         ):
             return
         roles = {observation.pass_name for observation in snapshot.observations}
-        expected = tuple((snapshot.cycle, number, "incomplete" if role in roles else "completed")
-                         for number, role in enumerate(_PASS_NAMES, 1))
+        expected = tuple(
+            (snapshot.cycle, number, "incomplete" if role in roles else "completed")
+            for number, role in enumerate(_PASS_NAMES, 1)
+        )
         if self._written_pass_outcomes != expected:
             return
         directory = self.cwd / ".code-forge" / "receipts"
         try:
             entries = []
             for index, observation in enumerate(snapshot.observations):
-                raw = _attempted_artifact_path(directory, snapshot.cycle, observation.pass_name, index).read_bytes()
+                raw = _attempted_artifact_path(
+                    directory, snapshot.cycle, observation.pass_name, index
+                ).read_bytes()
                 audit = json.loads(raw)
-                if json.dumps(audit["payload"], sort_keys=True, separators=(",", ":")) != observation.payload_json:
+                if (
+                    json.dumps(audit["payload"], sort_keys=True, separators=(",", ":"))
+                    != observation.payload_json
+                ):
                     return
                 entries.append((observation.pass_name, index, hashlib.sha256(raw).hexdigest()))
             row = self._rejection_row(entries)
-            if not _validate_evidence_rejection(self.cwd, self.source_hash, self._receipt_diff(), row).passed:
+            if not _validate_evidence_rejection(
+                self.cwd, self.source_hash, self._receipt_diff(), row
+            ).passed:
                 return
-            digests = tuple((number, hashlib.sha256((directory / f"receipt-c{snapshot.cycle}p{number}.json").read_bytes()).hexdigest())
-                            for number in (1, 2, 3))
+            digests = tuple(
+                (
+                    number,
+                    hashlib.sha256(
+                        (directory / f"receipt-c{snapshot.cycle}p{number}.json").read_bytes()
+                    ).hexdigest(),
+                )
+                for number in (1, 2, 3)
+            )
         except (OSError, ValueError, KeyError, TypeError, RecursionError):
             return
         self._rejected_evidence_entries = tuple(entries)
@@ -3358,8 +3592,10 @@ class StateMachine:
 
     def _rejection_row(self, entries) -> dict:
         return {
-            "round": self._state.round, "source_hash": self.source_hash,
-            "reviewed_repositories": self.reviewed_repositories, "dispositions": {},
+            "round": self._state.round,
+            "source_hash": self.source_hash,
+            "reviewed_repositories": self.reviewed_repositories,
+            "dispositions": {},
             "evidence_rejections": [
                 {"pass_name": role, "attempt_index": index, "artifact_sha256": digest}
                 for role, index, digest in entries
@@ -3371,29 +3607,44 @@ class StateMachine:
 
         snapshot = self._current_evidence_rejections()
         if (
-            self.mode != Mode.LOCAL or fixpoint is not _FixpointResult.CLEAN
+            self.mode != Mode.LOCAL
+            or fixpoint is not _FixpointResult.CLEAN
             or snapshot is None
-            or not self._rejected_evidence_entries or len(self._rejection_receipt_digests) != 3
+            or not self._rejected_evidence_entries
+            or len(self._rejection_receipt_digests) != 3
             or self._written_pass_outcomes != self._rejection_written_outcomes
             or len(self._attempted_last_round) != len(snapshot.attempts)
-            or any(a is not b for a, b in zip(self._attempted_last_round, snapshot.attempts, strict=True))
-            or self._state.findings or self._acquisition_markers
-            or self._falsify_protocol_findings or self._falsify_failed_findings
-            or self._last_receipt_write_errors or self._raw_observations_last_round
+            or any(
+                a is not b for a, b in zip(self._attempted_last_round, snapshot.attempts, strict=True)
+            )
+            or self._state.findings
+            or self._acquisition_markers
+            or self._falsify_protocol_findings
+            or self._falsify_failed_findings
+            or self._last_receipt_write_errors
+            or self._raw_observations_last_round
             or self._unavailable_rejected_passes_last_round
-            or self._attempt_snapshot is None or self._attempt_snapshot.get("dispositions") != {}
+            or self._attempt_snapshot is None
+            or self._attempt_snapshot.get("dispositions") != {}
             or any(value != "returned" for value in self._phase_status.values())
         ):
             return None
         directory = self.cwd / ".code-forge" / "receipts"
         try:
-            if any(hashlib.sha256((directory / f"receipt-c{self._state.round + 1}p{number}.json").read_bytes()).hexdigest() != digest
-                   for number, digest in self._rejection_receipt_digests):
+            if any(
+                hashlib.sha256(
+                    (directory / f"receipt-c{self._state.round + 1}p{number}.json").read_bytes()
+                ).hexdigest()
+                != digest
+                for number, digest in self._rejection_receipt_digests
+            ):
                 return None
         except OSError:
             return None
         row = self._rejection_row(self._rejected_evidence_entries)
-        if not _validate_evidence_rejection(self.cwd, self.source_hash, self._receipt_diff(), row).passed:
+        if not _validate_evidence_rejection(
+            self.cwd, self.source_hash, self._receipt_diff(), row
+        ).passed:
             return None
         return row["evidence_rejections"]
 
@@ -3406,25 +3657,32 @@ class StateMachine:
             type(snapshot) is not _AcquisitionSnapshot
             or type(self.l1_provider) is not _L1Call
             or snapshot.producer is not self.l1_provider
-            or type(snapshot.cycle) is not int or snapshot.cycle != self._state.round + 1
-            or type(snapshot.source_hash) is not str or snapshot.source_hash != self.source_hash
+            or type(snapshot.cycle) is not int
+            or snapshot.cycle != self._state.round + 1
+            or type(snapshot.source_hash) is not str
+            or snapshot.source_hash != self.source_hash
             or type(snapshot.facts) is not tuple
-            or type(snapshot.outcomes) is not tuple or len(snapshot.outcomes) != 3
+            or type(snapshot.outcomes) is not tuple
+            or len(snapshot.outcomes) != 3
             or any(type(outcome) is not PassOutcome for outcome in snapshot.outcomes)
             or type(snapshot.markers) is not tuple
         ):
             return None
         if any(
-            type(fact) is not _AcquisitionFact or type(fact.original) is not StateFinding
-            or type(fact.number) is not int or fact.number not in (1, 2, 3)
+            type(fact) is not _AcquisitionFact
+            or type(fact.original) is not StateFinding
+            or type(fact.number) is not int
+            or fact.number not in (1, 2, 3)
             or type(fact.outcome) is not PassOutcome
-            or type(fact.capacity) is not bool or type(fact.emitted) is not bool
+            or type(fact.capacity) is not bool
+            or type(fact.emitted) is not bool
             for fact in snapshot.facts
         ):
             return None
         originals = self.l1_provider.acquisition_failures
         if (
-            type(originals) is not list or type(self._acquisition_markers) is not list
+            type(originals) is not list
+            or type(self._acquisition_markers) is not list
             or sorted(map(id, originals)) != sorted(id(fact.original) for fact in snapshot.facts)
             or sorted(map(id, self._acquisition_markers)) != sorted(map(id, snapshot.markers))
         ):
@@ -3447,24 +3705,42 @@ class StateMachine:
         cycle = self._state.round + 1
         facts = []
         for original in originals:
-            number = next((index for index, role in enumerate(_PASS_NAMES, 1) if original.id in (f"l1-{role}-invoke-fail", f"l1-{role}-spawn-fail")), 0)
+            number = next(
+                (
+                    index
+                    for index, role in enumerate(_PASS_NAMES, 1)
+                    if original.id in (f"l1-{role}-invoke-fail", f"l1-{role}-spawn-fail")
+                ),
+                0,
+            )
             outcomes = derive_pass_outcomes([original])
-            facts.append(_AcquisitionFact(
-                original, number,
-                outcomes[_PASS_NAMES[number - 1]] if number else PassOutcome.COMPLETED,
-                is_provider_capacity(original),
-                any(original is marker for marker in self._acquisition_markers),
-            ))
+            facts.append(
+                _AcquisitionFact(
+                    original,
+                    number,
+                    outcomes[_PASS_NAMES[number - 1]] if number else PassOutcome.COMPLETED,
+                    is_provider_capacity(original),
+                    any(original is marker for marker in self._acquisition_markers),
+                )
+            )
         outcomes = derive_pass_outcomes(originals)
         snapshot = _AcquisitionSnapshot(
-            self.l1_provider, cycle, self.source_hash, tuple(facts),
-            tuple(outcomes[role] for role in _PASS_NAMES), tuple(self._acquisition_markers),
+            self.l1_provider,
+            cycle,
+            self.source_hash,
+            tuple(facts),
+            tuple(outcomes[role] for role in _PASS_NAMES),
+            tuple(self._acquisition_markers),
         )
         entries = []
         for finding in self._acquisition_markers:
             if not any(finding is original for original in originals):
                 continue
-            number = next(index for index, role in enumerate(_PASS_NAMES, 1) if finding.id.startswith(f"l1-{role}-"))
+            number = next(
+                index
+                for index, role in enumerate(_PASS_NAMES, 1)
+                if finding.id.startswith(f"l1-{role}-")
+            )
             entry = {
                 "file": finding.file,
                 "line": finding.line_range[0] if finding.line_range else 0,
@@ -3472,7 +3748,14 @@ class StateMachine:
                 "disposition": finding.disposition.value,
                 "basis": derive_basis(finding, convergence_rounds=cycle).to_dict(),
             }
-            entries.append((cycle, number, self.source_hash, json.dumps(entry, sort_keys=True, separators=(",", ":"))))
+            entries.append(
+                (
+                    cycle,
+                    number,
+                    self.source_hash,
+                    json.dumps(entry, sort_keys=True, separators=(",", ":")),
+                )
+            )
         self._acquisition_receipts = tuple(entries)
         self._acquisition_authority = snapshot
 
@@ -3559,11 +3842,20 @@ class StateMachine:
             try:
                 directory = self.cwd / ".code-forge" / "receipts"
                 paths = [directory / f"receipt-c{round_index + 1}p{number}.json" for number in (1, 2, 3)]
-                if type(written) is list and len(written) == 3 and all(type(path) is type(directory) for path in written) and set(written) == set(paths):
+                if (
+                    type(written) is list
+                    and len(written) == 3
+                    and all(type(path) is type(directory) for path in written)
+                    and set(written) == set(paths)
+                ):
                     statuses = []
                     for number, path in enumerate(paths, 1):
                         receipt = json.loads(path.read_text(encoding="utf-8"))
-                        if type(receipt) is not dict or type(receipt.get("pass_status")) is not str or receipt["pass_status"] not in {outcome.value for outcome in PassOutcome}:
+                        if (
+                            type(receipt) is not dict
+                            or type(receipt.get("pass_status")) is not str
+                            or receipt["pass_status"] not in {outcome.value for outcome in PassOutcome}
+                        ):
                             raise ValueError("writer completion snapshot invalid")
                         statuses.append((round_index + 1, number, receipt["pass_status"]))
                     self._written_pass_outcomes = tuple(statuses)
@@ -3654,12 +3946,16 @@ class StateMachine:
         # carry-forward cannot override a revocation or an unproved successor.
         l2_survivor_objects = (
             {id(f) for f in l2_findings if is_mutation_survivor(f)}
-            if self.mode in (Mode.LOCAL, Mode.CI) else set()
+            if self.mode in (Mode.LOCAL, Mode.CI)
+            else set()
         )
         if self.mode in (Mode.LOCAL, Mode.CI):
             notes = apply_mutation_ledger_dispositions(
-                l2_findings, source_root=self._source_root(), base_sha=self.resolved_review.base_sha,
-                head_sha=self.resolved_review.head_sha, git_diff=self.resolved_review.git_diff,
+                l2_findings,
+                source_root=self._source_root(),
+                base_sha=self.resolved_review.base_sha,
+                head_sha=self.resolved_review.head_sha,
+                git_diff=self.resolved_review.git_diff,
                 eligible_measurement=getattr(self, "_mutation_measurement_eligible", False),
             )
             for note in notes:
@@ -3676,8 +3972,11 @@ class StateMachine:
         )
         # Terminal timeout diagnostics are observations, not adjudications;
         # stale promotion history cannot turn them into unresolved findings.
-        carry_forward = [f for f in merged if id(f) not in l2_survivor_objects
-                         and id(f) not in self._mutation_timeout_objects]
+        carry_forward = [
+            f
+            for f in merged
+            if id(f) not in l2_survivor_objects and id(f) not in self._mutation_timeout_objects
+        ]
         merged_objects = {id(f) for f in merged}
         for finding in l2_findings:
             if id(finding) in self._mutation_timeout_objects:
@@ -3719,14 +4018,19 @@ class StateMachine:
         pass_usage = self._round_pass_usage
         if pass_usage is None:
             pass_usage = [
-                {"pass_name": role, "input": None, "output": None, "cached": None,
-                 "duration_s": None, "available": False}
+                {
+                    "pass_name": role,
+                    "input": None,
+                    "output": None,
+                    "cached": None,
+                    "duration_s": None,
+                    "available": False,
+                }
                 for role in _PASS_NAMES
             ]
         for row in pass_usage:
             self._state.cost_per_pass.append(
-                dict(row, **{"pass": _PASS_NAMES.index(row["pass_name"]) + 1,
-                             "cycle": round_index})
+                dict(row, **{"pass": _PASS_NAMES.index(row["pass_name"]) + 1, "cycle": round_index})
             )
         self._state.cost_passes = len(self._state.cost_per_pass)
         # Reset round accumulators for next round.
@@ -3759,6 +4063,9 @@ class StateMachine:
                 self._phase_status[name] = "failed"
             raise
 
+    # Finding sources the LOCAL autofix loop never touches: no fix attempt, no promotion.
+    _AUTOFIX_SKIPPED_SOURCES = frozenset({"MUTANT", "E2E_CHECK", "FIXVAL", "INFRA"})
+
     def _apply_autofix_loop_to(self, findings: list[StateFinding]) -> None:
         """LOCAL only: attempt auto-fix on the given finding list.
 
@@ -3776,7 +4083,7 @@ class StateMachine:
         for finding in findings:
             # Coverage-gap and gate-mechanism findings skip autofix:
             # they are not code defects the autofix loop can address.
-            if finding.source in ("MUTANT", "E2E_CHECK", "FIXVAL", "INFRA"):
+            if finding.source in self._AUTOFIX_SKIPPED_SOURCES:
                 continue
             if finding.disposition != Disposition.CONFIRMED:
                 continue
@@ -3882,7 +4189,9 @@ class StateMachine:
         for fp, disp in current_disps.items():
             if disp != Disposition.CONFIRMED:
                 continue
-            if any(past.get("dispositions", {}).get(fp) == Disposition.CONFIRMED.value for past in history):
+            if any(
+                past.get("dispositions", {}).get(fp) == Disposition.CONFIRMED.value for past in history
+            ):
                 continue
             if any(fp in past.get("falsify_protocol_failures", []) for past in history):
                 return _FixpointResult.RESET
@@ -3997,11 +4306,18 @@ class StateMachine:
           spent and waiting for its promotion round) can still move the map
           and is left alone. CONFIRMED findings from any other layer get no
           autofix and no promotion; repeating the round cannot change them.
-
-          Known limit: the autofix loop skips L0 findings whose source is
-          MUTANT, E2E_CHECK, FIXVAL or INFRA (no fix attempt, no promotion).
-          They are still counted as "can still move the map" here, so a
-          frozen map pinned only by those still runs to the round cap.
+          Neither can an L0 fingerprint the autofix loop skipped in every round
+          of the frozen window, so it does not hold the stall off, even with
+          its budget spent by earlier rounds under a handled source. A
+          fingerprint the loop handled in any of those rounds spent budget
+          there and still holds the stall off. Production L0 runners emit
+          source "L0" only; this keeps the stall aligned with the autofix skip
+          set for injected or future L0 producers. Each window row's
+          l0_autofix_skipped field is the only proof of a skip. It is computed
+          from the raw L0 findings, not from the merged state, which keeps one
+          finding per fingerprint. A window row without the field, or with a
+          non-list value, proves nothing, so every unpromoted L0 fingerprint
+          holds the stall off.
 
         Three rounds is two confirmations of the freeze.
         """
@@ -4019,11 +4335,26 @@ class StateMachine:
         l0_fingerprints = history[-1].get("l0_fingerprints", [])
         l0_confirmed = [fp for fp in l0_fingerprints if maps[-1].get(fp) in confirmed]
 
+        # A fingerprint counts as skipped only when all three window rows list
+        # it in l0_autofix_skipped. A round in the window that handled it spent
+        # fix budget, so the map can still move. A missing or malformed field
+        # proves no skip. history is the projected product history, so the
+        # window rows are the rows behind maps: a trailing pending or
+        # dispositionless host row is not read.
+        window_skips = [h.get("l0_autofix_skipped") for h in history[-3:]]
+        skipped = [
+            fp
+            for fp in l0_fingerprints
+            if all(isinstance(row, list) and fp in row for row in window_skips)
+        ]
+
         # An exhausted L0 fix budget is promoted on the next round.
         # Let that pending state transition run before declaring a stall.
+        # A skipped fingerprint is never promoted, so it is never pending.
         pending_promotion = any(
             self._state.fix_attempts.get(fp, 0) >= self.max_fix_attempts
             and fp not in self._state.promoted_fingerprints
+            and fp not in skipped
             for fp in l0_confirmed
         )
         if pending_promotion:
@@ -4035,11 +4366,11 @@ class StateMachine:
         if Disposition.UNCERTAIN.value in values:
             return True
         # CONFIRMED only. Past the pending_promotion guard, an unpromoted
-        # CONFIRMED L0 finding has fix budget left, so "not promoted" is the
-        # whole test. This assumes the autofix loop handles it; findings from
-        # the sources it skips (MUTANT, E2E_CHECK, FIXVAL, INFRA) never use
-        # budget or get promoted, and still count as budget left here.
-        budget_left = any(fp not in self._state.promoted_fingerprints for fp in l0_confirmed)
+        # CONFIRMED L0 finding has fix budget left, unless the autofix loop
+        # skipped it: such a finding never uses budget or gets promoted.
+        budget_left = any(
+            fp not in self._state.promoted_fingerprints and fp not in skipped for fp in l0_confirmed
+        )
         return not budget_left
 
     # Longest fingerprint list a stall reason spells out; the rest is counted.
@@ -4360,7 +4691,14 @@ class StateMachine:
             ledger_cfg = gate_data.get("ledger")
             if isinstance(ledger_cfg, dict) and ledger_cfg.get("enabled") is False:
                 return 0
-        except (OSError, ValueError, yaml.YAMLError, UnicodeDecodeError, AttributeError, TypeError) as exc:
+        except (
+            OSError,
+            ValueError,
+            yaml.YAMLError,
+            UnicodeDecodeError,
+            AttributeError,
+            TypeError,
+        ) as exc:
             msg = f"CI: gate.yaml ledger kill-switch read failed (fail-open, ledger enabled): {exc}"
             self._state.infra_errors.append(msg)
             print(msg, file=sys.stderr)
@@ -4373,7 +4711,10 @@ class StateMachine:
                 return 0
 
             ledger_root = resolve_ledger_root(self._source_root())
-            existing = {(r.fingerprint, r.base_sha, r.head_sha, r.suppression_key) for r in iter_rows(ledger_root)}
+            existing = {
+                (r.fingerprint, r.base_sha, r.head_sha, r.suppression_key)
+                for r in iter_rows(ledger_root)
+            }
             ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             # Collect findings in scope: CONFIRMED + style-downgraded findings (CP1 W-5)
@@ -4479,7 +4820,14 @@ class StateMachine:
                     kw = sd.get("keywords", [])
                     if isinstance(kw, list):
                         style_keywords = [str(k) for k in kw if isinstance(k, str)]
-        except (OSError, ValueError, yaml.YAMLError, UnicodeDecodeError, AttributeError, TypeError) as exc:
+        except (
+            OSError,
+            ValueError,
+            yaml.YAMLError,
+            UnicodeDecodeError,
+            AttributeError,
+            TypeError,
+        ) as exc:
             msg = f"CI: gate.yaml read for suppression failed (fail-open): {exc}"
             self._state.infra_errors.append(msg)
             print(msg, file=sys.stderr)
@@ -4651,7 +4999,11 @@ class StateMachine:
                     evidence_files=[],
                 )
             )
-        if evidence.status.value == "unavailable" and evidence.exit_code is not None and evidence.exit_code < 0:
+        if (
+            evidence.status.value == "unavailable"
+            and evidence.exit_code is not None
+            and evidence.exit_code < 0
+        ):
             # A signal-killed check (OOM kill, external SIGKILL) is UNAVAILABLE,
             # not a finding. Name the reason where the CI summary and state.json
             # show infra errors; non-convergence is then diagnosed as category D
@@ -4667,7 +5019,9 @@ class StateMachine:
         # L1-CONFIRMED strengthening; the EXEC finding above carries the
         # verdict-blocking failure independently.
 
-    def _trusted_packs_root(self, gate_config: dict, dest: Path, *, blocking: bool = True) -> Path | None:
+    def _trusted_packs_root(
+        self, gate_config: dict, dest: Path, *, blocking: bool = True
+    ) -> Path | None:
         """#150: repo-local packs that can block come from the trusted root
         (outside config root or review baseline), copied into ``dest``; the
         reviewed tree's ``.code-forge/packs`` is never used. Built-in packs
@@ -4680,14 +5034,19 @@ class StateMachine:
         builtin = set(discover_packs(dest, local_root=dest / "none"))
         # #177: a name listed twice is copied once (a second mkdir would
         # refuse every trusted pack and drop all blocking findings).
-        local = list(dict.fromkeys(n for n in names if n not in builtin)) if isinstance(names, list) else []
+        local = (
+            list(dict.fromkeys(n for n in names if n not in builtin)) if isinstance(names, list) else []
+        )
         if not local:
             return dest
         try:
             root, notes = materialize_trusted_packs(
-                config_root=self._test_config_root(), source_root=self._source_root(),
-                base_sha=self.resolved_review.base_sha, allow_untracked=self.mode is not Mode.CI,
-                names=local, dest=dest,
+                config_root=self._test_config_root(),
+                source_root=self._source_root(),
+                base_sha=self.resolved_review.base_sha,
+                allow_untracked=self.mode is not Mode.CI,
+                names=local,
+                dest=dest,
             )
         except (OSError, UntrustedGateConfigError) as exc:
             self._state.infra_errors.append(f"rulepack: trusted packs refused: {exc}")
@@ -4745,8 +5104,10 @@ class StateMachine:
                 return []
             if self.source_root is None:
                 advisories = runner.run(
-                    self.resolved_review.git_diff or "", self.cwd,
-                    gate_config=gate_config, packs_root=packs_root,
+                    self.resolved_review.git_diff or "",
+                    self.cwd,
+                    gate_config=gate_config,
+                    packs_root=packs_root,
                 )
             else:
                 advisories = runner.run(
@@ -4831,7 +5192,10 @@ class StateMachine:
             try:
                 if isinstance(runner, GraphTriageRunner) and type(runner).run is GraphTriageRunner.run:
                     findings = runner.run(
-                        diff_text, self._source_root(), config_root=self.cwd, gate_config=trusted_gate,
+                        diff_text,
+                        self._source_root(),
+                        config_root=self.cwd,
+                        gate_config=trusted_gate,
                     )
                 elif isinstance(runner, RulepackRunner) and type(runner).run is RulepackRunner.run:
                     findings = self._run_trusted_advisory_rulepack(runner, diff_text, trusted_gate)
@@ -4973,11 +5337,7 @@ class StateMachine:
         l1_selected: dict[str, StateFinding] = {}
         for f in l1_findings:
             previous = l1_selected.get(f.fingerprint)
-            if (
-                previous is not None
-                and id(f) in failed_ids
-                and id(previous) not in failed_ids
-            ):
+            if previous is not None and id(f) in failed_ids and id(previous) not in failed_ids:
                 continue
             l1_selected[f.fingerprint] = f
         merged.update(l1_selected)
@@ -5075,6 +5435,11 @@ class StateMachine:
                 f.disposition = Disposition(prior)
         return findings
 
+    def _l0_autofix_skipped(self, l0_findings: list[StateFinding]) -> list[str]:
+        """Sorted L0 fingerprints whose every raw finding has a source autofix skips."""
+        handled = {f.fingerprint for f in l0_findings if f.source not in self._AUTOFIX_SKIPPED_SOURCES}
+        return sorted({f.fingerprint for f in l0_findings} - handled)
+
     def _append_round_snapshot(
         self,
         round_index: int,
@@ -5088,6 +5453,10 @@ class StateMachine:
         snapshot = {
             "round": round_index,
             "l0_fingerprints": [f.fingerprint for f in l0_findings],
+            # #262: L0 fingerprints the autofix loop skips this round. Every raw
+            # L0 finding with the fingerprint must have a skipped source; the
+            # merged state keeps one finding per fingerprint and cannot tell.
+            "l0_autofix_skipped": self._l0_autofix_skipped(l0_findings),
             "l1_fingerprints": [f.fingerprint for f in l1_findings],
             "l2_fingerprints": [f.fingerprint for f in (l2_findings or [])],
             "e2e_fingerprints": [f.fingerprint for f in (e2e_findings or [])],
@@ -5105,7 +5474,9 @@ class StateMachine:
 
     def _count(self, disposition: Disposition) -> int:
         """Count findings with a given disposition."""
-        return sum(1 for f in reporting_product_findings(self._state.findings) if f.disposition == disposition)
+        return sum(
+            1 for f in reporting_product_findings(self._state.findings) if f.disposition == disposition
+        )
 
     def _count_coverage_gaps(self) -> int:
         """Count active COVERAGE findings (per-file review gaps).
@@ -5155,4 +5526,6 @@ class StateMachine:
 
     def _executable_source_files(self) -> list[Path]:
         """Project semantic scope onto entries with a reviewed post-image."""
-        return executable_review_sources(self._source_files(), self.resolved_review.git_diff, self._source_root())
+        return executable_review_sources(
+            self._source_files(), self.resolved_review.git_diff, self._source_root()
+        )
