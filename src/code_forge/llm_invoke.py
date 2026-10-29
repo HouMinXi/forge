@@ -1037,7 +1037,12 @@ class ReplyKeys:
     """
 
     top: frozenset[str]
-    items: Mapping[str, frozenset[str]] = dataclasses.field(default_factory=dict)
+    # Read-only after construction. Left out of the hash (equal objects
+    # still hash equal through `top`) because a mapping is unhashable.
+    items: Mapping[str, frozenset[str]] = dataclasses.field(default_factory=dict, hash=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "items", types.MappingProxyType(dict(self.items)))
 
 
 class RepairRefused(json.JSONDecodeError):
@@ -1063,7 +1068,7 @@ def _unknown_reply_key(parsed, allowed: ReplyKeys) -> str | None:
         # object in a top-level list is checked as a reply.
         for item in parsed:
             key = _unknown_reply_key(item, allowed) if isinstance(item, dict) else None
-            if key:
+            if key is not None:
                 return key
         return None
     if not isinstance(parsed, dict):
@@ -1137,7 +1142,11 @@ def _loads_model_json(text: str, reply_keys: ReplyKeys | None = None):
             # holding a raw quote means structure was escaped ("], None",
             # "line" read as one key). Fail closed with the original error.
             raise RepairRefused(first_error.msg, first_error.doc, first_error.pos) from first_error
-        if first_error is not None and reply_keys is not None and _unknown_reply_key(parsed, reply_keys):
+        if (
+            first_error is not None
+            and reply_keys is not None
+            and _unknown_reply_key(parsed, reply_keys) is not None
+        ):
             raise ReplyKeyRejected(first_error.msg, first_error.doc, first_error.pos) from first_error
         return parsed
     if first_error is not None:
@@ -1513,19 +1522,25 @@ def _extract_json_from_text(
     and whitespace). Every later '{' may sit inside that object's quoted
     content (#264); see _fallback_reply.
 
-    An object followed by a '}' that nothing after it opens is skipped
-    (#264). That '}' closes something the object sits inside: a reply
-    whose excerpt quotes `x = {"findings": [], ...}` unescaped, or a
-    leading object that a quoted `"}], "findings": []}` closed early. The
-    model's own envelope ends the JSON in its reply, so only prose or
-    another whole object can follow it.
+    Two rules keep an object quoted inside the reply from being returned
+    as the reply (#264):
+
+    - A '{' whose decode fails after reaching a '"' ends the scan. That
+      '{' opened JSON with strings, the reply's own object most likely,
+      and every later '{' may sit inside one of its strings: an excerpt
+      quoting `x = {"findings": [], ...}` unescaped. A '{' that fails
+      before any '"' (prose such as `{a`) does not end it.
+    - A decoded object followed, after whitespace, by `}` or `"` is
+      skipped. That character closes a string or object the decoded one
+      sits inside: a leading object that a quoted `"}], "findings": []}`
+      closed early. The model's own envelope is followed by prose, a
+      fence, `,` or `]` in a list, another object or nothing.
 
     Returns None if no valid envelope can be extracted.
     """
     keys = expected_keys if expected_keys is not None else _REVIEW_ENVELOPE_KEYS
     decoder = _model_json_decoder()
     reply_start = len(text) - len(text.lstrip("[ \t\r\n"))
-    enclosed_from = _unmatched_close_after(text)
     for i, ch in enumerate(text):
         if ch != "{":
             continue
@@ -1533,36 +1548,29 @@ def _extract_json_from_text(
             return None
         try:
             obj, end = decoder.raw_decode(text, i)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
             leading_key = _SALVAGEABLE_ENVELOPES.get(keys)
-            if leading_key is None:
-                continue
-            obj = _salvage_truncated_object(text, i, decoder)
-            if obj is None or (leading_key in obj and next(iter(obj)) != leading_key):
-                continue
-        else:
-            if enclosed_from[end]:
-                continue
+            obj = None if leading_key is None else _salvage_truncated_object(text, i, decoder)
+            if obj is not None and leading_key in obj and next(iter(obj)) != leading_key:
+                obj = None
+            if obj is not None and obj.keys() & keys:
+                return obj
+            if '"' in text[i : exc.pos + 1]:
+                return None
+            continue
+        next_at = json.decoder.WHITESPACE.match(text, end).end()
+        after = text[next_at : next_at + 1]
+        if after in _JSON_CONTINUATION:
+            continue
         if isinstance(obj, dict) and obj.keys() & keys:
             return obj
     return None
 
 
-def _unmatched_close_after(text: str) -> list[bool]:
-    """Entry k: text[k:] has a '}' that no '{' in text[k:] opens.
-
-    Counts raw braces, quotes included: a reply that needs this check
-    failed to parse, so its strings cannot be trusted to delimit anything.
-    """
-    unmatched = [False] * (len(text) + 1)
-    pending = 0
-    for k in range(len(text) - 1, -1, -1):
-        if text[k] == "}":
-            pending += 1
-        elif text[k] == "{" and pending:
-            pending -= 1
-        unmatched[k] = pending > 0
-    return unmatched
+# After a decoded object, one of these continues a string or object the
+# object sits inside. ',', ':' and ']' are left out: they also follow an
+# object in a reply list or in prose.
+_JSON_CONTINUATION = frozenset('}"')
 
 
 def _fallback_reply(
@@ -2077,7 +2085,7 @@ def _invoke_cli(
             content = raw_result
             if (
                 reply_keys is not None
-                and _unknown_reply_key(raw_result, reply_keys)
+                and _unknown_reply_key(raw_result, reply_keys) is not None
                 and not _parses_without_repair(stdout)
             ):
                 # The envelope itself needed quote repair, so an object

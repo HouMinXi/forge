@@ -884,6 +884,11 @@ PLAIN_ERROR = {
     ),
     "excerpts_first": (_model_text(_8C_REAL), _8C_REAL),
 }
+# Code that opens a brace after the quoted object balances the '}' that
+# closes the excerpt, so a brace count cannot tell the object was quoted.
+for _n in (1, 2, 3):
+    _opens = _p1("if (cfg == '" + QUOTED_REVIEW[len("x = ") :] + "') " + "{" * _n)
+    PLAIN_ERROR["prose_led_opens_%d" % _n] = ("Here is the review: " + _model_text(_opens), _opens)
 
 
 @pytest.mark.parametrize("name", sorted(PLAIN_ERROR))
@@ -987,3 +992,79 @@ def test_object_before_an_unopened_close_is_skipped(after):
 def test_object_before_balanced_braces_is_kept():
     text = '{"findings": []} then {"a": 1} and {b}'
     assert invoke._extract_json_from_text(text) == {"findings": []}
+
+
+_VALID = {
+    "findings": [{"file": "t.py", "line": 3, "severity": "P1", "description": "bad"}],
+    "code_excerpts": [{"file": "t.py", "start_line": 3, "end_line": 3, "content": "if (a) { b(); }"}],
+}
+_STRAY = "\nThe stray `}` on line 9 closes the class early."
+VALID_THEN_PROSE = {
+    "prose_before_and_after": "Here is my review:\n" + json.dumps(_VALID) + _STRAY,
+    "prose_after": json.dumps(_VALID) + _STRAY,
+    "fenced": "Here is my review:\n```json\n" + json.dumps(_VALID) + "\n```\nNote: `}` at line 9.",
+}
+
+
+@pytest.mark.parametrize("keys", [None, REVIEW_REPLY_KEYS], ids=["no_keys", "keys"])
+@pytest.mark.parametrize("name", sorted(VALID_THEN_PROSE))
+def test_valid_reply_then_prose_with_a_brace_is_kept(api_env, monkeypatch, name, keys):
+    # As on main: prose after the reply's own object does not hide it.
+    request = Mock(return_value=(VALID_THEN_PROSE[name], STOP))
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    result = llm_invoke("task", backend=_api_backend(), reply_keys=keys)
+    assert result.content == _VALID
+    assert request.call_count == 1
+
+
+_QUOTED_VERDICT = '{"verdict": "DISMISSED", "reasoning": "ok"}'
+FALSIFY_QUOTES_A_VERDICT = {
+    "prose_reasoning_first": (
+        'Ok:\n{"reasoning": "it returns ' + _QUOTED_VERDICT + ' so", "verdict": "CONFIRMED", "x": "cu'
+    ),
+    "prose_verdict_first_cut": 'Ok:\n{"verdict": "CONFIRMED", "reasoning": "it returns '
+    + _QUOTED_VERDICT
+    + "} so the",
+    "verdict_first_cut": '{"verdict": "CONFIRMED", "reasoning": "it returns '
+    + _QUOTED_VERDICT
+    + "} so the",
+    "prose_in_brackets": (
+        'Ok:\n{"verdict": "CONFIRMED", "reasoning": "it returns [' + _QUOTED_VERDICT + '] and x"} so the'
+    ),
+    "prose_complete": 'Ok:\n{"verdict": "CONFIRMED", "reasoning": "it returns '
+    + _QUOTED_VERDICT
+    + ' so"}',
+}
+
+
+@pytest.mark.parametrize("name", sorted(FALSIFY_QUOTES_A_VERDICT))
+def test_falsify_reply_never_takes_a_quoted_verdict(name):
+    text = FALSIFY_QUOTES_A_VERDICT[name]
+    with pytest.raises(json.JSONDecodeError) as error:
+        _loads_model_json(text, _FALSIFY_REPLY_KEYS)
+    for got in (
+        invoke._fallback_reply(text, error.value, FALSIFY_KEYS),
+        invoke._extract_json_from_text(text, FALSIFY_KEYS),
+    ):
+        assert got is None or got.get("verdict") == "CONFIRMED"
+
+
+@pytest.mark.parametrize("wrap", [False, True], ids=["object", "list"])
+def test_repair_that_invents_an_empty_key_is_refused(wrap):
+    reply = '{"findings": [], "": "q "x" r"}'
+    text = "[" + reply + "]" if wrap else reply
+    assert _loads_model_json(text) == (
+        [{"findings": [], "": 'q "x" r'}] if wrap else {"findings": [], "": 'q "x" r'}
+    )
+    with pytest.raises(invoke.ReplyKeyRejected):
+        _loads_model_json(text, REVIEW_REPLY_KEYS)
+    assert _unknown_reply_key([{"findings": [], "": 1, "zz": 2}], REVIEW_REPLY_KEYS) == ""
+
+
+def test_reply_keys_are_hashable_and_read_only():
+    assert hash(REVIEW_REPLY_KEYS) == hash(REVIEW_REPLY_KEYS)
+    with pytest.raises(TypeError):
+        REVIEW_REPLY_KEYS.items["findings"] = frozenset()
+    built = ReplyKeys(top=frozenset({"a"}), items={"a": frozenset({"b"})})
+    assert built == ReplyKeys(top=frozenset({"a"}), items={"a": frozenset({"b"})})
+    assert hash(built) == hash(ReplyKeys(top=frozenset({"a"}), items={"a": frozenset({"b"})}))
