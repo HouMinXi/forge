@@ -1526,8 +1526,6 @@ def _extract_json_from_text(
                 continue
         if isinstance(obj, dict) and obj.keys() & keys:
             return obj
-        if leading_only:
-            return None
     return None
 
 
