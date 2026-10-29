@@ -399,8 +399,7 @@ class DaemonStateRunner:
                 "Known static conflict rules (do NOT re-report these, "
                 "only report NEW conflicts not listed here):"
             ]
-            for sf in static_findings:
-                lines.append("- %s" % sf.description)
+            lines.extend("- %s" % sf.description for sf in static_findings)
             static_rules_text = "\n".join(lines) + "\n\n"
 
         # LLM Step 1 -- Q1 enumerate state
