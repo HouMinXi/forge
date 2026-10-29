@@ -2010,7 +2010,15 @@ def _interrupt_continuation_index(mp, machine):
     mp.setattr(machine, "_continuation_round_index", index)
 
 
-# fix9 (CR3R3-L1): the same instance runs again and fails before its first attempt.
+def _breaker_in_preflight(mp, machine):
+    def preflight(*_args, **_kwargs):
+        raise TimeoutBreaker("constructed orphan container")
+
+    mp.setattr(machine, "_preflight_mutation_workspace", preflight)
+
+
+# fix9 (CR3R3-L1 / joint J-L1): the same instance runs again and fails before its
+# first attempt.
 _FIX9_SECOND_RUN = {
     "ctrl-c-in-preflight": (_interrupt_preflight, "constructed interrupt in mutation preflight"),
     "ctrl-c-in-receipt-diff": (_interrupt_receipt_diff, "constructed interrupt in receipt diff"),
@@ -2018,6 +2026,8 @@ _FIX9_SECOND_RUN = {
         _interrupt_continuation_index,
         "constructed interrupt in continuation index",
     ),
+    # joint J-L1 / CR2 E1: the #114 breaker raised from the startup preflight.
+    "breaker-in-preflight": (_breaker_in_preflight, "constructed orphan container"),
 }
 
 
@@ -2046,7 +2056,7 @@ def test_fix9_second_run_early_crash_keeps_prior_preserve(offline_workspace, mon
     dispatched = len(calls)
     with monkeypatch.context() as mp:
         inject(mp, machine)
-        with pytest.raises(_AfterRoundInterrupt, match=match):
+        with pytest.raises((_AfterRoundInterrupt, TimeoutBreaker), match=match):
             machine.run()
     assert len(calls) == dispatched
     state, _ = _state(root)
@@ -2079,6 +2089,90 @@ def test_fix9_begin_entry_clears_a_stale_guard(offline_workspace, monkeypatch):
     assert machine._state.round_history[-1]["clean_credit_action"] == "preserved"
     assert _ledger(_state(root)[0]) == expected
     assert _ledger(machine._state) == expected
+
+
+def test_fix9_failed_demotion_save_then_second_run_keeps_disk(offline_workspace, monkeypatch):
+    """Joint J-N1 / CR2 E2: a demotion whose save failed is not redone by the next run().
+
+    Run 1 settles round 2 `preserved` and its final save completes; then
+    Ctrl-C, and the failure path's save of the demotion fails, so disk keeps
+    `preserved` (credit 2) while memory holds the reset. The same instance
+    runs again and is interrupted before its attempt: disk still reloads
+    `preserved` with credit 2 and window [1, 2].
+    """
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="coverage")
+    save = machine._persist_state
+    armed = {"on": False}
+
+    def interrupt():
+        armed["on"] = True
+        raise _AfterRoundInterrupt("constructed interrupt after the final save")
+
+    def failing_save():
+        if armed["on"]:
+            raise OSError(28, "constructed disk full during the demotion save")
+        return save()
+
+    with monkeypatch.context() as mp:
+        actions = _spy_actions(mp, machine)
+        mp.setattr(machine, "_check_mutation_infra_can_still_converge", interrupt)
+        mp.setattr(machine, "_persist_state", failing_save)
+        with pytest.raises(_AfterRoundInterrupt):
+            machine.run()
+    assert actions["actions"] == ["preserved"], actions
+    assert machine._state.round_history[-1]["clean_credit_action"] == "reset"
+    expected = _ledger(_state(root)[0])
+    rows, credit, window = expected
+    assert rows[-1]["round"] == 2 and rows[-1]["clean_credit_action"] == "preserved"
+    assert credit == 2 and [entry["cycle"] for entry in window["cycles"]] == [1, 2]
+    with monkeypatch.context() as mp:
+        _interrupt_continuation_index(mp, machine)
+        with pytest.raises(_AfterRoundInterrupt):
+            machine.run()
+    assert _ledger(_state(root)[0]) == expected
+
+
+@pytest.mark.parametrize("other", ["earned", "preserved"])
+def test_fix9_row_settled_by_another_instance_is_kept(offline_workspace, monkeypatch, other):
+    """Joint J-L1 / J-N1, CR2 E3: A's next run() never touches a row B settled.
+
+    A settles round 2 `preserved`. The ledger is rolled back to the earned
+    prefix and B settles round 2 again (`earned`: credit 3, window [1, 2, 3];
+    or `preserved`: credit 2, window [1, 2]). A's second run() is
+    interrupted before its attempt; B's row, credit and window reload
+    unchanged.
+    """
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    forge = root / ".code-forge"
+    prefix = (forge / "state.json").read_bytes()
+    prefix_files = set(forge.rglob("*"))
+    a, _ = _new_machine(root, monkeypatch, fault="coverage")
+    with monkeypatch.context() as mp:
+        armed = _spy_actions(mp, a)
+        a.run()
+    assert armed["actions"] == ["preserved"], armed
+    (forge / "state.json").write_bytes(prefix)
+    for path in sorted(forge.rglob("*"), reverse=True):
+        if path not in prefix_files and path.is_file():
+            path.unlink()
+    b, _ = _new_machine(root, monkeypatch, fault="coverage" if other == "preserved" else None)
+    with monkeypatch.context() as mp:
+        armed = _spy_actions(mp, b)
+        b.run()
+    assert armed["actions"] == [other], armed
+    expected = _ledger(_state(root)[0])
+    rows, credit, window = expected
+    assert rows[-1]["round"] == 2 and rows[-1]["clean_credit_action"] == other
+    cycles = {"earned": [1, 2, 3], "preserved": [1, 2]}[other]
+    assert credit == len(cycles) and [entry["cycle"] for entry in window["cycles"]] == cycles
+    with monkeypatch.context() as mp:
+        _interrupt_continuation_index(mp, a)
+        with pytest.raises(_AfterRoundInterrupt):
+            a.run()
+    assert _ledger(_state(root)[0]) == expected
 
 
 def _fail_save_when(mp, machine, predicate):
@@ -2217,22 +2311,35 @@ def test_fix8_earned_row_kept_after_post_settle_failure(offline_workspace, monke
 
 
 def test_fix8_demotion_always_reaches_disk(offline_workspace, monkeypatch):
-    """CR2G P12: a demotion is saved even when no phase of the failing call was observed.
+    """CR2G P12: a demotion is saved even when the failing attempt shows no observation.
 
-    At 311077fb the `not observed` early return could leave a demotion in
-    memory only; fix8 routes every demotion to the failure path's save.
+    fix9 (joint J-N2): the failure is inside the attempt that settled the
+    preserve, after the round's final save put `preserved` on disk. The
+    attempt's observations are dropped first, so only the `not demoted` term
+    keeps the failure path from returning before its save. The guard is the
+    one this attempt set, not one left over from an earlier run().
     """
     root = offline_workspace
     _earned_prefix(root, monkeypatch)
     machine, _ = _new_machine(root, monkeypatch, fault="coverage")
+    seen = {}
+
+    def unobserved_failure():
+        seen["disk"] = _ledger(_state(root)[0])
+        seen["guard"] = machine._settled_preserve_round
+        machine._phase_findings = {}
+        machine._phase_status = {name: "not_run" for name in machine._phase_status}
+        raise RuntimeError("constructed failure, nothing observed")
+
     with monkeypatch.context() as mp:
         armed = _spy_actions(mp, machine)
-        machine.run()
+        mp.setattr(machine, "_check_mutation_infra_can_still_converge", unobserved_failure)
+        with pytest.raises(RuntimeError, match="nothing observed"):
+            machine.run()
     assert armed["actions"] == ["preserved"], armed
-    # Nothing observed: no L1 findings and no returned phase.
-    machine._phase_findings = {}
-    machine._phase_status = {name: "not_run" for name in machine._phase_status}
-    machine._finish_failed_host_attempt(RuntimeError("constructed failure, nothing observed"))
+    rows, credit, _ = seen["disk"]
+    assert rows[-1]["round"] == seen["guard"] == 2
+    assert rows[-1]["clean_credit_action"] == "preserved" and credit == 2
     state = _assert_wiped(root)
     assert state.verdict is Verdict.FAIL
 
