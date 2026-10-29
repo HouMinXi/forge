@@ -1569,7 +1569,11 @@ _FIX6_CASES = {
 
 @pytest.mark.parametrize("case", list(_FIX6_CASES))
 def test_fix6_failed_host_attempt_never_preserves(offline_workspace, monkeypatch, case):
-    """CR2G-M1: a failure after every phase returned resets credit and re-raises (P6-1, guard 3)."""
+    """CR2G-M1: a failure after every phase returned ends as reset and re-raises (P6-1, guard 3).
+
+    fix7 (CR3R-L1 / J-L1): this holds even when the main path had already
+    settled the round as `preserved` before the failure.
+    """
     qodo_fault, write_io, inject, error, match = _FIX6_CASES[case]
     root = offline_workspace
     _, original = _earned_prefix(root, monkeypatch)
@@ -1602,7 +1606,12 @@ def test_fix6_failed_host_attempt_never_preserves(offline_workspace, monkeypatch
     ],
 )
 def test_fix6_failed_attempt_then_one_healthy_round_is_not_pass(offline_workspace, monkeypatch, case):
-    """CR2 impact probe: no terminal PASS with window [1, 2, 4] after a failed attempt."""
+    """CR2 impact probe: one healthy round after a failed attempt earns credit 1, window [4].
+
+    No terminal PASS with window [1, 2, 4]. fix7 (CR3R-L1 / J-L1): this
+    includes a failure after the round settled `preserved`; at b33b72c8 those
+    cases kept credit 2 and gave PASS [1, 2, 4].
+    """
     qodo_fault, write_io, inject, error, match = _FIX6_CASES[case]
     root = offline_workspace
     _earned_prefix(root, monkeypatch)
@@ -1642,6 +1651,72 @@ def test_fix7_demoted_preserve_restores_c3_companion(offline_workspace, monkeypa
     state = _assert_wiped(root, phases=_ALL_RETURNED)
     assert state.round_history[-1]["dispositions"][fp] == "UNCERTAIN"
     _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+
+
+def _survivor_preserve_setup(root, monkeypatch):
+    """L-C setup: the third consecutive survivor round settles `preserved` on the survivor stop."""
+    monkeypatch.setattr("code_forge.flow_contract.P3_DENSITY_THRESHOLD", 1.0)
+    machine, calls = _new_machine(root, monkeypatch, fault="coverage", fault_rounds={3}, rounds=3)
+    machine.l2_runner = lambda *args, **kwargs: ([_survivor("P3")], [])
+    return machine, calls, [1, 2, 3], [4]
+
+
+def _earned_then(fault):
+    def setup(root, monkeypatch):
+        _earned_prefix(root, monkeypatch)
+        machine, calls = _new_machine(root, monkeypatch, fault=fault)
+        return machine, calls, [3], [4]
+
+    return setup
+
+
+_SURVIVOR_STOP = "mutation: surviving mutants reported in 3 consecutive rounds"
+
+# J-L1 crash points: each state save after a `preserved` settle (b33b72c8 lines).
+_FIX7_POST_SETTLE_SAVES = {
+    # receipt gate: settle :2275, save :2289
+    "gate-save": (
+        _earned_then("schema"),
+        lambda st: st.verdict is Verdict.FAIL and _SURVIVOR_STOP not in st.infra_errors,
+    ),
+    # 3-survivor stop: settle :2304, save :2314
+    "survivor-stop-save": (_survivor_preserve_setup, lambda st: _SURVIVOR_STOP in st.infra_errors),
+    # active fixpoint: settle :2350, save :2356
+    "active-fixpoint-save": (_earned_then("coverage"), lambda st: st.verdict is not Verdict.FAIL),
+}
+
+
+@pytest.mark.parametrize("site", list(_FIX7_POST_SETTLE_SAVES))
+def test_fix7_crash_at_each_post_settle_save_resets(offline_workspace, monkeypatch, site):
+    """J-L1: an OSError on any state save after a `preserved` settle ends as reset with credit 0."""
+    setup, at_site = _FIX7_POST_SETTLE_SAVES[site]
+    root = offline_workspace
+    machine, calls, rounds, follow_round = setup(root, monkeypatch)
+    seen = []
+    with monkeypatch.context() as mp:
+        armed = _fail_first_save_after_preserve(mp, machine)
+        save = machine._persist_state
+
+        def observed_save():
+            if "preserved" in armed["actions"] and not armed["raised"]:
+                seen.append(at_site(machine._state))
+            return save()
+
+        mp.setattr(machine, "_persist_state", observed_save)
+        with pytest.raises(OSError, match="constructed state save failure after preserve"):
+            machine.run()
+    assert armed["raised"] and armed["actions"][-1] == "preserved", armed
+    assert seen == [True], seen
+    _assert_calls(calls, rounds)
+    state = _assert_wiped(root)
+    assert state.consecutive_clean_rounds == 0
+    follow, calls = _new_machine(root, monkeypatch, rounds=1)
+    verdict = follow.run()
+    _assert_calls(calls, follow_round)
+    state, _ = _state(root)
+    assert verdict is not Verdict.PASS and state.converged is False
+    assert state.consecutive_clean_rounds == 1
+    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == follow_round
 
 
 def test_fix7_failure_record_save_error_never_replaces_primary(offline_workspace, monkeypatch):
@@ -1692,6 +1767,27 @@ def _raise_after_gate_recorded(mp, machine):
     mp.setattr(machine, "_record_receipt_gate_failure", recorded)
 
 
+def _fail_first_save_after_gate_record(mp, machine):
+    """J-N1 (b): the gate records `receipt: <error>`, then the state save at b33b72c8 :2289 fails."""
+    record = machine._record_receipt_gate_failure
+    save = machine._persist_state
+    armed = {"recorded": False, "raised": False}
+
+    def recorded(*args, **kwargs):
+        armed["recorded"] = True
+        return record(*args, **kwargs)
+
+    def failing_save():
+        if armed["recorded"] and not armed["raised"]:
+            armed["raised"] = True
+            raise OSError(5, "constructed state save failure after the gate finding")
+        return save()
+
+    mp.setattr(machine, "_record_receipt_gate_failure", recorded)
+    mp.setattr(machine, "_persist_state", failing_save)
+    return armed
+
+
 _FIX7_LOGGED_ONCE = {
     "l1-timeout-breaker": (_timeout_after_l1, TimeoutBreaker, "constructed L1 convergence breaker"),
     "gate-recorded-then-runtime-error": (
@@ -1699,12 +1795,21 @@ _FIX7_LOGGED_ONCE = {
         RuntimeError,
         "constructed failure after the gate finding",
     ),
+    "gate-recorded-then-state-save-oserror": (
+        _fail_first_save_after_gate_record,
+        OSError,
+        "constructed state save failure after the gate finding",
+    ),
 }
 
 
 @pytest.mark.parametrize("case", list(_FIX7_LOGGED_ONCE))
 def test_fix7_receipt_write_error_logged_once(offline_workspace, monkeypatch, case):
-    """CR2R2-L1: a receipt-write error the main path logged is not logged again on failure."""
+    """CR2R2-L1 / J-N1: a receipt-write error the main path logged is not logged again on failure.
+
+    The gate's `receipt: <error>` entry and the failed path's unprefixed
+    `<error>` are the same error: exactly one entry, one CLI line.
+    """
     inject, error, match = _FIX7_LOGGED_ONCE[case]
     root = offline_workspace
     _earned_prefix(root, monkeypatch)

@@ -657,6 +657,29 @@ def test_m4_loader_accepts_recurring_uncertain_then_confirmed_without_protocol()
     validate_round_history(rows, 2)
 
 
+def test_i9_state_project_product_row_patch_reaches_preserved_validation(monkeypatch):
+    """Joint I-9: patching `state._project_product_row` reaches the split-out validator too."""
+    import sys
+
+    from code_forge import state as state_module
+
+    original = state_module._project_product_row
+    callers = []
+
+    def spy(row):
+        callers.append(sys._getframe(1).f_globals["__name__"])
+        return original(row)
+
+    monkeypatch.setattr(state_module, "_project_product_row", spy)
+    rows = [
+        _m4_prior_row(0, {"fp-p3": "CONFIRMED"}),
+        _m4_prior_row(1, {"fp-p3": "CONFIRMED"}),
+        _m4_preserved(2, 2, {"fp-p3": "CONFIRMED"}),
+    ]
+    validate_round_history(rows, 2)
+    assert "code_forge.state_preserved" in callers
+
+
 @pytest.mark.parametrize(
     ("prior", "other"),
     [

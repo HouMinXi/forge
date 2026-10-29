@@ -25,7 +25,7 @@ from .state_preserved import (  # re-exported: preserved-row validation (D-v11-1
     _MUTATION_INFRA_FP as _MUTATION_INFRA_FP,
     _PRESERVED_III_FP as _PRESERVED_III_FP,
     _RECEIPT_AUDIT_FP as _RECEIPT_AUDIT_FP,
-    _project_product_row as _project_product_row,
+    _moved_project_product_row as _project_product_row,  # state_preserved keeps a late-bound shim
     _recurring_confirmed as _recurring_confirmed,
     _validate_preserved_dispositions as _validate_preserved_dispositions,
 )

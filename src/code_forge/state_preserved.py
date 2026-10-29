@@ -5,6 +5,11 @@
 Moved verbatim; state.py imports and re-exports every name here. This
 module must not import `state` at module level (state imports it), so
 the one state helper it needs, `is_host_round`, is looked up lazily.
+`_project_product_row` is late-bound the same way (fix7, joint I-9): the
+moved definition is kept as is under `_moved_project_product_row`, which
+state.py re-exports as `_project_product_row`; the name here is rebound at
+the end to a shim, so patching `state._project_product_row` also reaches
+the callers here.
 """
 
 from __future__ import annotations
@@ -93,3 +98,13 @@ def _project_product_row(row: dict) -> dict | None:
     synthetic = {f["fingerprint"] for f in row["acquisition_failures"]} - collisions
     row["dispositions"] = {fp: disp for fp, disp in row["dispositions"].items() if fp not in synthetic}
     return row
+
+
+_moved_project_product_row = _project_product_row
+
+
+def _project_product_row(row: dict) -> dict | None:  # noqa: F811 (late-bound shim, see module doc)
+    """Late-bound `state._project_product_row` (no module-level import cycle)."""
+    from .state import _project_product_row as state_project_product_row
+
+    return state_project_product_row(row)
