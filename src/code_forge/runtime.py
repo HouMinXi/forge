@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from .advisory import AdvisoryFinding
-from .llm_invoke import LLMInvokeError, llm_invoke
+from .llm_invoke import LLMInvokeError, ReplyKeys, llm_invoke
 from .source import compute_source_hash
 
 # ---------------------------------------------------------------------------
@@ -64,6 +64,13 @@ RUNTIME_LIFECYCLE_QUESTION = (
     "If no runtime surfaces are affected, return: "
     '{"surfaces": [], "findings": []}\n\n'
     "Diff:\n{diff_text}"
+)
+
+# The keys RUNTIME_LIFECYCLE_QUESTION asks for; checked only on a reply that
+# needed quote repair (#264).
+RUNTIME_REPLY_KEYS = ReplyKeys(
+    top=frozenset({"surfaces", "findings"}),
+    items={"findings": frozenset({"file", "line", "surface", "description"})},
 )
 
 
@@ -371,7 +378,7 @@ class RuntimeRunner:
         # str.replace NOT str.format: diffs can contain literal { or }.
         prompt = RUNTIME_LIFECYCLE_QUESTION.replace("{diff_text}", prompt_diff)
         try:
-            result = llm_invoke(prompt, backend=self._backend)
+            result = llm_invoke(prompt, backend=self._backend, reply_keys=RUNTIME_REPLY_KEYS)
         except LLMInvokeError as exc:
             reason = str(exc)
             self.infra_errors.append("RUNTIME axis LLM call failed: %s" % reason)

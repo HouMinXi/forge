@@ -22,12 +22,26 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .llm_invoke import ReplyKeys
+
 logger = logging.getLogger(__name__)
 
 _REQUIRED_FIELDS = {"findings", "code_excerpts"}
 _FINDING_REQUIRED = {"file", "line", "severity", "description"}
 _EXCERPT_REQUIRED = {"file", "start_line", "end_line", "content"}
 _VALID_SEVERITIES = {"P0", "P1", "P2", "P3"}
+
+# The keys REVIEW_JSON_CONTRACT asks for, plus a finding's nested
+# code_excerpts (hoisted by _hoist_nested_excerpts). A reply that parses
+# only after quote repair and carries any other key is rejected (#264).
+REVIEW_REPLY_KEYS = ReplyKeys(
+    top=frozenset({"findings", "code_excerpts", "context_quotes"}),
+    items={
+        "findings": frozenset({"file", "line", "severity", "description", "excerpt", "code_excerpts"}),
+        "code_excerpts": frozenset({"file", "start_line", "end_line", "content"}),
+        "context_quotes": frozenset({"file", "content"}),
+    },
+)
 
 # The half of every L1 review prompt that describes the JSON to return. It
 # lives next to the validator that enforces that JSON so the two cannot

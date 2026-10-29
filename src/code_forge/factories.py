@@ -460,6 +460,7 @@ def build_l1_provider(
     from .llm_invoke import InvalidJSONResponseError, LLMInvokeError, llm_invoke
     from .reviewer_json import (
         REVIEW_JSON_CONTRACT,
+        REVIEW_REPLY_KEYS,
         ExcerptEvidenceError,
         MissingExcerptEvidenceError,
         _collect_excerpts,
@@ -561,6 +562,7 @@ def build_l1_provider(
                 l1_evidence_required=_requires_l1_excerpts(
                     diff_text, reviewed_repositories=reviewed_repositories
                 ),
+                reply_keys=REVIEW_REPLY_KEYS,
             )
             if r.usage.input_tokens > 0 or r.usage.output_tokens > 0 or r.usage.cached_input_tokens > 0:
                 bname = backend.name if backend else "unknown"

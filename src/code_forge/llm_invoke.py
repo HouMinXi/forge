@@ -26,7 +26,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Optional
 
 from . import progress
@@ -1017,7 +1017,40 @@ def _resolve_model() -> str:
     return os.environ.get("FORGE_LLM_MODEL", "")
 
 
-def _loads_model_json(text: str):
+@dataclass(frozen=True)
+class ReplyKeys:
+    """The keys a caller's reply may carry, per level (#264).
+
+    `top` lists the top-level object's keys. `items[key]` lists the keys of
+    each object under top-level `key`, whether that member is one object or
+    a list of them. Deeper levels and members missing from `items` are not
+    checked. Used only to vet a parse that needed quote repair: an unknown
+    key there means the repair read quoted content as structure.
+    """
+
+    top: frozenset[str]
+    items: Mapping[str, frozenset[str]] = dataclasses.field(default_factory=dict)
+
+
+def _unknown_reply_key(parsed, allowed: ReplyKeys) -> str | None:
+    """The first key `parsed` carries that `allowed` does not list, else None."""
+    if not isinstance(parsed, dict):
+        return None
+    for key, value in parsed.items():
+        if key not in allowed.top:
+            return key
+        item_keys = allowed.items.get(key)
+        if item_keys is None:
+            continue
+        for item in value if isinstance(value, list) else [value]:
+            if isinstance(item, dict):
+                extra = sorted(item.keys() - item_keys)
+                if extra:
+                    return extra[0]
+    return None
+
+
+def _loads_model_json(text: str, reply_keys: ReplyKeys | None = None):
     """Parse model-emitted JSON, allowing unescaped control characters.
 
     RFC 8259 forbids U+0000-U+001F inside strings. Models quoting source
@@ -1036,6 +1069,11 @@ def _loads_model_json(text: str):
     guessing. The caller then spends its one JSON-correction retry. Some
     replies that base repaired by luck now fail closed this way; that is
     intended, since a wrong parse silently changes a verdict.
+
+    With `reply_keys`, a repaired parse that carries a key the caller's
+    reply cannot have fails closed the same way (#264): an excerpt quoting
+    `{"a": "b", "c": "d"}` unescaped repairs into a finding with a new key
+    `c` and a cut excerpt. A parse that needed no repair is never checked.
     """
     candidate = text
     first_error: json.JSONDecodeError | None = None
@@ -1059,6 +1097,8 @@ def _loads_model_json(text: str):
             # #216 review: a repair only escapes content quotes, so a key
             # holding a raw quote means structure was escaped ("], None",
             # "line" read as one key). Fail closed with the original error.
+            raise first_error
+        if first_error is not None and reply_keys is not None and _unknown_reply_key(parsed, reply_keys):
             raise first_error
         return parsed
     raise first_error or json.JSONDecodeError("no parse within the repair budget", text, 0)
@@ -1612,6 +1652,7 @@ def llm_invoke(
     retry_timeout: bool = False,
     *,
     l1_evidence_required: bool = False,
+    reply_keys: ReplyKeys | None = None,
 ) -> LLMResult:
     """Invoke LLM via backend (cli subprocess or api HTTP).
 
@@ -1639,6 +1680,11 @@ def llm_invoke(
         l1_evidence_required: Host-computed L1 applicability. Ask once for
             missing inspection evidence even on a quiet review; callers
             still validate the returned excerpts against source.
+        reply_keys: The keys the reply may carry, per level. When a reply
+            parses only after quote repair and carries a key not listed,
+            the repair is discarded and the parse fails (#264); api
+            backends then spend their JSON-correction retry. None keeps
+            the repair unchecked beyond the #216 quoted-key guard.
 
     Returns:
         LLMResult with content, usage (tokens), and duration_s
@@ -1690,7 +1736,7 @@ def llm_invoke(
                     "applied. Remove them, or make this an api backend." % (backend.name, field),
                     retryable=False,
                 )
-        result = _invoke_cli(prompt, backend, timeout_s)
+        result = _invoke_cli(prompt, backend, timeout_s, reply_keys=reply_keys)
     elif backend.type == "api":
         result = _invoke_api(
             prompt,
@@ -1701,6 +1747,7 @@ def llm_invoke(
             initial_delay_s=initial_delay_s,
             continuation_breaker=continuation_breaker,
             retry_timeout=retry_timeout,
+            reply_keys=reply_keys,
         )
     else:
         raise LLMInvokeError("unsupported backend type: %r" % backend.type)
@@ -1712,6 +1759,7 @@ def llm_invoke(
             backend,
             timeout_s,
             l1_evidence_required=l1_evidence_required,
+            reply_keys=reply_keys,
         )
         result = LLMResult(
             content=repaired,
@@ -1747,6 +1795,8 @@ def _invoke_cli(
     prompt: str,
     backend: BackendConfig,
     timeout_s: int,
+    *,
+    reply_keys: ReplyKeys | None = None,
 ) -> LLMResult:
     """Invoke LLM via cli subprocess. Returns LLMResult with Usage(0,0)"""
     # Resolve binary: use backend.command if set, else default to "claude"
@@ -1903,7 +1953,7 @@ def _invoke_cli(
         if isinstance(raw_result, str):
             stripped = _strip_fences(raw_result)
             try:
-                content = _loads_model_json(stripped)
+                content = _loads_model_json(stripped, reply_keys)
             except json.JSONDecodeError:
                 content = raw_result
         else:
@@ -2021,6 +2071,7 @@ def _repair_missing_excerpts(
     timeout_s: int,
     *,
     l1_evidence_required: bool = False,
+    reply_keys: ReplyKeys | None = None,
 ) -> tuple[dict, Usage, float]:
     """Ask once for excerpts. Never invent them. Keep the original findings.
 
@@ -2036,7 +2087,7 @@ def _repair_missing_excerpts(
     repair_start = time.monotonic()
     try:
         if backend.type == "cli":
-            follow = _invoke_cli(repair_prompt, backend, timeout_s)
+            follow = _invoke_cli(repair_prompt, backend, timeout_s, reply_keys=reply_keys)
         else:
             follow = _invoke_api(
                 repair_prompt,
@@ -2044,6 +2095,7 @@ def _repair_missing_excerpts(
                 timeout_s,
                 expected_keys=None,
                 max_attempts=1,
+                reply_keys=reply_keys,
             )
     except LLMInvokeError as exc:
         duration = max(exc.duration_s, time.monotonic() - repair_start)
@@ -2126,6 +2178,7 @@ def _continue_truncated(
     expected_keys: frozenset[str] | None,
     budget: int = 2,
     breaker: "TruncationBreaker | None" = None,
+    reply_keys: ReplyKeys | None = None,
 ):
     """Recover a truncated reply with a bounded continuation.
 
@@ -2157,7 +2210,7 @@ def _continue_truncated(
         # budget.
         cleaned_partial = _strip_fences(truncated.content)
         try:
-            parsed_partial = _loads_model_json(cleaned_partial)
+            parsed_partial = _loads_model_json(cleaned_partial, reply_keys)
         except json.JSONDecodeError:
             parsed_partial = _extract_json_from_text(
                 cleaned_partial,
@@ -2235,7 +2288,7 @@ def _continue_truncated(
             combined = truncated.content + cont
             cleaned = _strip_fences(combined)
             try:
-                parsed = _loads_model_json(cleaned)
+                parsed = _loads_model_json(cleaned, reply_keys)
             except json.JSONDecodeError:
                 parsed = _extract_json_from_text(
                     cleaned,
@@ -2272,6 +2325,7 @@ def _retry_with_more_headroom(
     api_key: str,
     timeout_s: int,
     expected_keys: frozenset[str] | None,
+    reply_keys: ReplyKeys | None = None,
 ):
     """Re-ask for the whole answer with a wider output cap.
 
@@ -2334,7 +2388,7 @@ def _retry_with_more_headroom(
         return None
     cleaned = _strip_fences(content)
     try:
-        parsed = _loads_model_json(cleaned)
+        parsed = _loads_model_json(cleaned, reply_keys)
     except json.JSONDecodeError:
         parsed = _extract_json_from_text(cleaned, expected_keys=expected_keys)
     if not _is_forge_envelope(parsed, expected_keys):
@@ -2352,6 +2406,7 @@ def _invoke_api(
     initial_delay_s: float = 2.0,
     continuation_breaker: "TruncationBreaker | None" = None,
     retry_timeout: bool = False,
+    reply_keys: ReplyKeys | None = None,
 ) -> LLMResult:
     """Invoke LLM via HTTP API (openai or anthropic format). Returns LLMResult."""
     # Look up API key (not needed for vertex which uses OAuth2)
@@ -2485,7 +2540,7 @@ def _invoke_api(
                 raw_content = content
                 content = _strip_fences(content)
                 try:
-                    parsed_content = _loads_model_json(content)
+                    parsed_content = _loads_model_json(content, reply_keys)
                 except json.JSONDecodeError as exc:
                     parsed_content = _extract_json_from_text(content, expected_keys=expected_keys)
                     if parsed_content is None:
@@ -2569,6 +2624,7 @@ def _invoke_api(
                         exc,
                         expected_keys,
                         breaker=breaker,
+                        reply_keys=reply_keys,
                     )
                 except TruncationBreakerError:
                     raise
@@ -2600,6 +2656,7 @@ def _invoke_api(
                         api_key,
                         timeout_s,
                         expected_keys,
+                        reply_keys=reply_keys,
                     )
                 if wider is not None:
                     parsed, usage = wider
