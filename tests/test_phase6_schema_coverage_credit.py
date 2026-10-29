@@ -517,23 +517,146 @@ def test_recurring_schema_cycle_restart_preserves(tmp_path, monkeypatch):
     assert sm._schema_coverage_credit_preserve(fixpoint) is True
 
 
-def test_m4_recurring_p3_plus_new_schema_resets_pinned(tmp_path, monkeypatch):
-    """M4 HOLD: pin the conservative fail-closed behaviour pending user decision.
-
-    A recurring P3 product finding alone is CLEAN; adding a new schema-fail
-    flips the fixpoint to a reset kind, and preserve stays refused because the
-    P3 finding is an open product finding. The counterfactual (credit the P3
-    round as if schema were absent) is intentionally not implemented.
-    """
+def _m4_machine(tmp_path, monkeypatch, product, *, prior="CONFIRMED"):
+    """M4: a recurring product finding (seen in the prior snapshot) beside a new schema-fail."""
     sm = _guard_machine(tmp_path, monkeypatch)
+    sm._state.findings = [product]
+    sm._state.round_history = [{"dispositions": {product.fingerprint: prior}}, {}]
+    return sm
+
+
+def test_m4_recurring_p3_plus_new_schema_preserves(tmp_path, monkeypatch):
+    """M4 (plan Q7 / section 2.2): preserve iff the fixpoint without (iii) is CLEAN.
+
+    A recurring sub-threshold P3 alone is CLEAN; a new schema-fail turns the
+    observed fixpoint into a reset kind, and the counterfactual keeps credit.
+    """
     p3 = _product_finding("fp-p3", desc="P3: naming nit")
-    sm._state.findings = [p3]
-    sm._state.round_history = [{"dispositions": {"fp-p3": "CONFIRMED"}}, {}]
+    sm = _m4_machine(tmp_path, monkeypatch, p3)
     assert sm._fixpoint_reached() is _FixpointResult.CLEAN
     sm._state.findings = [p3, _schema_finding()]
     fixpoint = sm._fixpoint_reached()
+    assert fixpoint is _FixpointResult.RESET
+    assert sm._schema_coverage_credit_preserve(fixpoint) is True
+    # The counterfactual restores the observed findings exactly.
+    assert [f.fingerprint for f in sm._state.findings] == ["fp-p3", "schema-fail-qodo"]
+    assert sm._fixpoint_reached() is _FixpointResult.RESET
+
+
+@pytest.mark.parametrize(
+    ("desc", "prior", "counterfactual"),
+    [
+        ("P2: recurring bug", "CONFIRMED", _FixpointResult.CYCLE_RESTART),
+        ("P1: recurring defect", "CONFIRMED", _FixpointResult.RESET),
+        ("P0: recurring defect", "CONFIRMED", _FixpointResult.RESET),
+        # FIXED -> CONFIRMED reversion is clause (b), even for a P3.
+        ("P3: naming nit", "FIXED", _FixpointResult.RESET),
+    ],
+    ids=["p2", "p1", "p0", "p3-reversion"],
+)
+def test_m4_non_clean_counterfactual_keeps_reset(tmp_path, monkeypatch, desc, prior, counterfactual):
+    product = _product_finding("fp-product", desc=desc)
+    sm = _m4_machine(tmp_path, monkeypatch, product, prior=prior)
+    assert sm._fixpoint_reached() is counterfactual
+    sm._state.findings = [product, _schema_finding()]
+    fixpoint = sm._fixpoint_reached()
     assert fixpoint in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART)
     assert sm._schema_coverage_credit_preserve(fixpoint) is False
+
+
+@pytest.mark.parametrize(
+    "product",
+    [
+        _product_finding("fp-new", desc="P3: naming nit"),
+        _product_finding("fp-new", disposition=Disposition.UNCERTAIN, desc="P3: unsure nit"),
+    ],
+    ids=["new-confirmed-p3", "semantic-uncertain"],
+)
+def test_m4_new_confirmed_or_uncertain_keeps_reset(tmp_path, monkeypatch, product):
+    """A NEW CONFIRMED (clause a) or a semantic UNCERTAIN never preserves, even at P3."""
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._state.findings = [product, _schema_finding()]
+    sm._state.round_history = [{"dispositions": {}}, {}]
+    assert sm._fixpoint_without([sm._state.findings[1]]) is _FixpointResult.RESET
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+
+
+def _m4_prior_row(index, dispositions, **extra):
+    row = _earned_row(index, index + 1)
+    row["dispositions"] = dispositions
+    row.update(extra)
+    return row
+
+
+def _m4_preserved(index, count, other):
+    row = _preserved_row(index, count)
+    row["dispositions"].update(other)
+    row["l1_fingerprints"].extend(other)
+    return row
+
+
+def test_m4_loader_accepts_recurring_confirmed_beside_iii_cause():
+    rows = [
+        _m4_prior_row(0, {"fp-p3": "CONFIRMED"}),
+        _m4_prior_row(1, {"fp-p3": "CONFIRMED"}),
+        _m4_preserved(2, 2, {"fp-p3": "CONFIRMED"}),
+    ]
+    validate_round_history(rows, 2)
+    state = State(round=2, source_hash=SOURCE, round_history=rows, consecutive_clean_rounds=2)
+    assert earned_history_cycles(state, SOURCE, None) == [1, 2]
+
+
+@pytest.mark.parametrize(
+    ("prior", "other"),
+    [
+        # New CONFIRMED product finding: clause (a).
+        ([{}, {}], {"fp-new": "CONFIRMED"}),
+        # FIXED -> CONFIRMED reversion against the previous snapshot: clause (b).
+        ([{"fp-p3": "CONFIRMED"}, {"fp-p3": "FIXED"}], {"fp-p3": "CONFIRMED"}),
+        # Recurring but UNCERTAIN: semantic uncertainty is never credit-neutral.
+        ([{"fp-p3": "UNCERTAIN"}, {"fp-p3": "UNCERTAIN"}], {"fp-p3": "UNCERTAIN"}),
+    ],
+    ids=["new-confirmed", "fixed-reversion", "recurring-uncertain"],
+)
+def test_m4_loader_refuses_non_recurring_product(prior, other):
+    rows = [_m4_prior_row(i, disps) for i, disps in enumerate(prior)]
+    rows.append(_m4_preserved(len(prior), len(prior), other))
+    with pytest.raises(CorruptedStateError, match=_NOT_ONLY):
+        validate_round_history(rows, len(prior))
+
+
+def test_m4_loader_refuses_first_confirmation_after_protocol_observation():
+    observed = {"fp-p3": "UNCERTAIN", "schema-fail-adversarial": "DISMISSED"}
+    protocol = _m4_prior_row(0, observed, falsify_protocol_failures=["fp-p3"])
+    protocol["l1_fingerprints"] = ["fp-p3"]
+    protocol.update(clean_credit_action="interrupted", fixpoint="INCOMPLETE", reset_observed=False)
+    protocol["clean_rounds_after"] = 0
+    rows = [protocol, _m4_preserved(1, 0, {"fp-p3": "CONFIRMED"})]
+    with pytest.raises(CorruptedStateError, match=_NOT_ONLY):
+        validate_round_history(rows, 1)
+    # Once the fingerprint was adjudicated CONFIRMED, it is a plain repeat.
+    rows.insert(1, _m4_prior_row(1, {"fp-p3": "CONFIRMED"}))
+    rows[1]["clean_rounds_after"] = 0
+    rows[2]["round"] = 2
+    validate_round_history(rows, 2)
+
+
+def test_m4_loader_recurrence_ignores_synthetic_acquisition_markers():
+    """A prior synthetic acquisition marker is not a product observation (projection, as the fixpoint)."""
+    marker = "invoke-fail-qodo"
+    interrupted = _m4_prior_row(1, {marker: "CONFIRMED"})
+    interrupted.update(clean_credit_action="interrupted", fixpoint="CLEAN", reset_observed=False)
+    interrupted["clean_rounds_after"] = 1
+    interrupted["acquisition_failures"] = [{
+        "id": "l1-qodo-invoke-fail", "fingerprint": marker, "pass_name": "qodo", "outcome": "error",
+    }]
+    rows = [_m4_prior_row(0, {}), interrupted, _m4_preserved(2, 1, {marker: "CONFIRMED"})]
+    with pytest.raises(CorruptedStateError, match=_NOT_ONLY):
+        validate_round_history(rows, 1)
+    # The same fingerprint seen as a real product finding is a plain repeat.
+    rows = [_m4_prior_row(0, {}), _m4_prior_row(1, {marker: "CONFIRMED"}),
+            _m4_preserved(2, 2, {marker: "CONFIRMED"})]
+    validate_round_history(rows, 2)
 
 
 def test_h2_non_receipt_local_schema_round_keeps_m6_reset(tmp_path):

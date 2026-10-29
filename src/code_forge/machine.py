@@ -1878,7 +1878,7 @@ class StateMachine:
     def _schema_coverage_credit_preserve(self, fixpoint: _FixpointResult | None) -> bool:
         """Credit-side preserve for schema/coverage RESET without rewriting fixpoint rules.
 
-        When fixpoint still returns RESET/CYCLE_RESTART solely because of Q2=(iii)
+        When fixpoint returns RESET/CYCLE_RESTART only because of Q2=(iii)
         schema-fail / incomplete-coverage findings, skip `_reset_clean_credit`
         and record clean_credit_action=preserved. Mixed product/acquisition/HOLD/
         falsifier-transport causes keep the wipe + reset action.
@@ -1887,7 +1887,11 @@ class StateMachine:
         reset exactly); RESET/CYCLE_RESTART only; every round phase returned
         (a partial or crashed attempt never preserves); no acquisition marker,
         HOLD fingerprint, or falsifier transport failure; at least one (iii)
-        finding; no other open product finding. A preserved round leaves
+        finding; and the counterfactual: the unchanged fixpoint, evaluated with
+        the (iii) findings removed, would be CLEAN (plan Q7 / section 2.2). A
+        recurring sub-threshold P3 beside a schema-fail therefore preserves,
+        while a new CONFIRMED, a FIXED->CONFIRMED reversion, P0-P2, or a
+        semantic UNCERTAIN finding keeps the reset. A preserved round leaves
         `_hold_confirmed_fingerprints` untouched, which is safe because the HOLD
         guard already requires it to be empty.
         """
@@ -1904,24 +1908,34 @@ class StateMachine:
         protocol_ids = {id(finding) for finding in self._falsify_protocol_findings}
         if any(id(finding) not in protocol_ids for finding in self._falsify_failed_findings):
             return False
-        product = [
+        schema_coverage = [
             finding
             for finding in self._product_findings()
             if not is_mutation_infra_diagnostic(finding)
-        ]
-        schema_coverage = [
-            finding for finding in product if self._is_schema_or_incomplete_coverage_finding(finding)
+            and self._is_schema_or_incomplete_coverage_finding(finding)
         ]
         if not schema_coverage:
             return False
-        for finding in product:
-            if is_receipt_audit(finding):
-                continue
-            if self._is_schema_or_incomplete_coverage_finding(finding):
-                continue
-            if finding.disposition in (Disposition.CONFIRMED, Disposition.UNCERTAIN):
-                return False
-        return True
+        counterfactual = self._fixpoint_without(schema_coverage)
+        if counterfactual == _FixpointResult.CLEAN:
+            return True
+        # An L2 infra error alone only downgrades CLEAN to INCOMPLETE; it is
+        # credit-neutral. A pending falsifier protocol observation is not.
+        return (
+            counterfactual == _FixpointResult.INCOMPLETE
+            and self._l2_infra_error is not None
+            and not (protocol_ids and self._host_attempt_round is not None)
+        )
+
+    def _fixpoint_without(self, excluded: list[StateFinding]) -> _FixpointResult:
+        """Evaluate the unchanged fixpoint as if `excluded` had not been observed."""
+        excluded_ids = {id(finding) for finding in excluded}
+        observed = self._state.findings
+        self._state.findings = [f for f in observed if id(f) not in excluded_ids]
+        try:
+            return self._fixpoint_reached()
+        finally:
+            self._state.findings = observed
 
     def _finish_failed_host_attempt(self, primary: BaseException) -> None:
         """Retain the original error while recording only phases actually observed."""
@@ -2111,6 +2125,17 @@ class StateMachine:
 
             _fp = self._fixpoint_reached()
             _preserve_schema_coverage = self._schema_coverage_credit_preserve(_fp)
+            # Receipt acceptance gate: invalid evidence for the round just
+            # written fails fast with persisted non-PASS state instead of
+            # accumulating clean rounds toward a false PASS.
+            gate_errors = self._receipt_gate_round_errors()
+            if _preserve_schema_coverage and any(
+                err != _ATTEMPTED_EVIDENCE_GATE_ERROR for err in gate_errors
+            ):
+                # Literal/IO/unavailable-audit damage alongside a (iii)
+                # finding is not a (iii)-only round: decide the M6 wipe
+                # before anything reports preserved credit.
+                _preserve_schema_coverage = False
             if _fp == _FixpointResult.CYCLE_RESTART:
                 if not _preserve_schema_coverage:
                     self._reset_clean_credit()
@@ -2126,10 +2151,6 @@ class StateMachine:
                 if not _preserve_schema_coverage:
                     self._reset_clean_credit()
 
-            # Receipt acceptance gate: invalid evidence for the round just
-            # written fails fast with persisted non-PASS state instead of
-            # accumulating clean rounds toward a false PASS.
-            gate_errors = self._receipt_gate_round_errors()
             earned_entry = None
             capacity_gate_error = None
             if active and _fp == _FixpointResult.CLEAN and not gate_errors:
@@ -2158,16 +2179,8 @@ class StateMachine:
                         if _fp == _FixpointResult.INCOMPLETE or self._acquisition_markers
                         else "unavailable"
                     )
-                elif _preserve_schema_coverage and all(
-                    err == _ATTEMPTED_EVIDENCE_GATE_ERROR for err in gate_errors
-                ):
-                    gate_action = "preserved"
                 else:
-                    # Literal/IO/unavailable-audit damage alongside a (iii)
-                    # finding is not a (iii)-only round: take the M6 wipe now.
-                    if _preserve_schema_coverage:
-                        self._reset_clean_credit()
-                    gate_action = "reset"
+                    gate_action = "preserved" if _preserve_schema_coverage else "reset"
                 self._finish_host_attempt(
                     gate_action,
                     _fp,

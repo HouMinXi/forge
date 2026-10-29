@@ -172,9 +172,9 @@ def _acquisition_error(case):
     raise AssertionError("unknown constructed acquisition case: " + case)
 
 
-def _candidate_payload(payload):
+def _candidate_payload(payload, severity="P1"):
     payload["findings"] = [{
-        "file": "control.ts", "line": 2, "severity": "P1",
+        "file": "control.ts", "line": 2, "severity": severity,
         "description": "constructed product defect", "excerpt": "const value = 2;",
     }]
     return payload
@@ -199,7 +199,7 @@ def _apply_reviewer_fault(body, fault):
 
 def _new_machine(root, monkeypatch, *, fault=None, rounds=1, mode=Mode.LOCAL,
                  diff=DIFF, mixed_product=False, falsifier_reply=None, threshold=3,
-                 qodo_fault=None):
+                 qodo_fault=None, product_severity="P1", fault_rounds=None):
     """Keep production _L1Call intact; inject candidates through reviewer JSON."""
     calls = []
     lock = threading.Lock()
@@ -216,8 +216,11 @@ def _new_machine(root, monkeypatch, *, fault=None, rounds=1, mode=Mode.LOCAL,
         if role == "qodo" and qodo_fault is not None:
             return llm_invoke.LLMResult(_apply_reviewer_fault(body, qodo_fault))
         if role == "qodo" and (mixed_product or falsifier_reply is not None):
-            return llm_invoke.LLMResult(_candidate_payload(body))
-        if role != "adversarial" or fault is None:
+            return llm_invoke.LLMResult(_candidate_payload(body, product_severity))
+        cycle = holder["machine"]._state.round + 1
+        if role != "adversarial" or fault is None or (
+            fault_rounds is not None and cycle not in fault_rounds
+        ):
             return llm_invoke.LLMResult(body)
         if fault in {row[0] for row in ACQUISITION_CASES}:
             raise _acquisition_error(fault)
@@ -604,6 +607,198 @@ def test_coverage_with_literal_damage_on_gate_path_resets(
     state = _assert_wiped(root)
     assert any("excerpt content mismatch" in err for err in state.infra_errors)
     _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+
+
+_PRESERVED_LOG = "tiered-reset: P2/P3-density observed at cycle %d -- schema/coverage only, clean credit preserved"
+_RESTART_LOG = "tiered-reset: P2/P3-density -- restarting cycle %d"
+_AUDIT_UNAVAILABLE = "review evidence rejected in current round; audit payload unavailable"
+
+
+def _assert_log_matches_ledger(state, cycle):
+    """L-B: the CYCLE_RESTART log line names the action the ledger recorded."""
+    latest = state.round_history[-1]
+    assert latest["fixpoint"] == "CYCLE_RESTART"
+    preserved_line = _PRESERVED_LOG % cycle in state.infra_errors
+    restart_line = _RESTART_LOG % cycle in state.infra_errors
+    if latest["clean_credit_action"] == "preserved":
+        assert preserved_line and not restart_line
+    else:
+        assert latest["clean_credit_action"] == "reset"
+        assert restart_line and not preserved_line
+
+
+def _inject_gate_errors(monkeypatch, machine, extra):
+    """Append gate errors; record what the predicate and real gate saw at that moment."""
+    original = machine._receipt_gate_round_errors
+    seen = []
+
+    def errors():
+        observed = original()
+        seen.append((machine._schema_coverage_credit_preserve(machine._fixpoint_reached()), observed))
+        return observed + list(extra)
+
+    monkeypatch.setattr(machine, "_receipt_gate_round_errors", errors)
+    return seen
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [[_AUDIT_UNAVAILABLE], [_AUDIT_UNAVAILABLE, "receipt write failed: constructed I/O error"]],
+    ids=["audit-unavailable", "audit-unavailable-plus-io"],
+)
+def test_la_audit_unavailable_beside_attempted_schema_wipes(offline_workspace, monkeypatch, extra):
+    """L-A pin: attempted + audit-unavailable (+ I/O) gate errors wipe like M6 (deliberate narrowing)."""
+    root = offline_workspace
+    _, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="schema")
+    seen = _inject_gate_errors(monkeypatch, machine, extra)
+    assert machine.run() is Verdict.FAIL
+    _assert_calls(calls, [3])
+    state = _assert_wiped(root)
+    # Without the injected errors this round was (iii)-only and would preserve.
+    assert seen == [(True, ["review evidence rejected in current round; see receipts/attempted"])]
+    assert not any("clean credit preserved" in err for err in state.infra_errors)
+    _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+
+
+@pytest.mark.parametrize("damage", ["preserve", "audit-unavailable", "literal"])
+def test_lb_cycle_restart_log_matches_ledger(offline_workspace, monkeypatch, damage):
+    """L-B: no 'credit preserved' line when the gate later takes the M6 wipe."""
+    root = offline_workspace
+    proof, original = _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="coverage")
+    assert machine.run() is Verdict.ESCALATED
+    _assert_preserved(root, proof, fixpoint="RESET")
+    kwargs = {"fault": "coverage"}
+    if damage == "literal":
+        kwargs["qodo_fault"] = "literal"
+    machine, calls = _new_machine(root, monkeypatch, **kwargs)
+    seen = _inject_gate_errors(monkeypatch, machine, [_AUDIT_UNAVAILABLE] if damage == "audit-unavailable" else [])
+    expected = Verdict.ESCALATED if damage == "preserve" else Verdict.FAIL
+    assert machine.run() is expected
+    # The predicate alone would preserve; only the gate evidence decides the wipe.
+    assert [preserve for preserve, _ in seen] == [True]
+    _assert_calls(calls, [4])
+    state, _ = _state(root)
+    _assert_log_matches_ledger(state, 3)
+    if damage == "preserve":
+        _assert_preserved(root, proof, fixpoint="CYCLE_RESTART")
+        _recover(root, monkeypatch, original, [1, 2, 5])
+    else:
+        assert state.round_history[-1]["clean_credit_action"] == "reset"
+        assert state.consecutive_clean_rounds == 0 and state.earned_clean_window["cycles"] == []
+        _recover(root, monkeypatch, original, [5, 6, 7], rounds=3)
+
+
+def _p3_prefix(root, monkeypatch, severity="P3"):
+    """A recurring product finding: new in cycle 1 (reset), then cycles 2-3 earn."""
+    # One P3 on this two-line fixture diff is above the production density
+    # threshold; raise it so the recurring P3 is the sub-threshold CLEAN case.
+    monkeypatch.setattr("code_forge.flow_contract.P3_DENSITY_THRESHOLD", 1.0)
+    machine, calls = _new_machine(
+        root, monkeypatch, rounds=3, mixed_product=True, product_severity=severity,
+    )
+    machine.run()
+    _assert_calls(calls, [1, 2, 3])
+    state, _ = _state(root)
+    return state
+
+
+def test_m4_recurring_p3_plus_schema_preserves_on_real_run(offline_workspace, monkeypatch):
+    """M4 run level: recurring P3 + new schema-fail, then recurring schema (CYCLE_RESTART), both keep [2, 3]."""
+    root = offline_workspace
+    state = _p3_prefix(root, monkeypatch)
+    assert [row["clean_credit_action"] for row in state.round_history] == ["reset", "earned", "earned"]
+    proof = copy.deepcopy(state.earned_clean_window)
+    assert [entry["cycle"] for entry in proof["cycles"]] == [2, 3]
+    product = [fp for fp, disp in state.round_history[-1]["dispositions"].items() if disp == "CONFIRMED"]
+    assert len(product) == 1
+    for cycle, fixpoint in ((4, "RESET"), (5, "CYCLE_RESTART")):
+        machine, calls = _new_machine(
+            root, monkeypatch, fault="coverage", mixed_product=True, product_severity="P3",
+        )
+        assert machine.run() is Verdict.ESCALATED
+        _assert_calls(calls, [cycle])
+        state, _ = _state(root)
+        latest = state.round_history[-1]
+        assert latest["clean_credit_action"] == "preserved" and latest["fixpoint"] == fixpoint
+        assert latest["dispositions"][product[0]] == "CONFIRMED"
+        assert latest["dispositions"]["incomplete-coverage-adversarial"] == "CONFIRMED"
+        assert state.consecutive_clean_rounds == 2 and state.earned_clean_window == proof
+        assert _restore_result(root).passed and not _verify(root).passed
+    _assert_log_matches_ledger(state, 4)
+
+
+@pytest.mark.parametrize("severity", ["P2", "P1", "P0"])
+def test_m4_recurring_p0_to_p2_plus_schema_resets_on_real_run(offline_workspace, monkeypatch, severity):
+    """M4 negative: a recurring P0-P2 beside schema/coverage keeps the M6 wipe."""
+    root = offline_workspace
+    state = _p3_prefix(root, monkeypatch, severity)
+    expected_prefix = {"P2": "CYCLE_RESTART", "P1": "RESET", "P0": "RESET"}[severity]
+    assert [row["fixpoint"] for row in state.round_history][1:] == [expected_prefix] * 2
+    machine, calls = _new_machine(
+        root, monkeypatch, fault="coverage", mixed_product=True, product_severity=severity,
+    )
+    machine.run()
+    _assert_calls(calls, [4])
+    state, _ = _state(root)
+    latest = state.round_history[-1]
+    assert latest["clean_credit_action"] == "reset"
+    assert state.consecutive_clean_rounds == 0 and state.earned_clean_window["cycles"] == []
+
+
+def test_m4_new_confirmed_product_plus_schema_resets_on_real_run(offline_workspace, monkeypatch):
+    """M4 negative: a NEW CONFIRMED product finding (even P3) beside schema keeps the M6 wipe."""
+    root = offline_workspace
+    _, original = _earned_prefix(root, monkeypatch)
+    monkeypatch.setattr("code_forge.flow_contract.P3_DENSITY_THRESHOLD", 1.0)
+    machine, calls = _new_machine(
+        root, monkeypatch, fault="coverage", mixed_product=True, product_severity="P3",
+    )
+    machine.run()
+    _assert_calls(calls, [3])
+    _assert_wiped(root)
+    _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+
+
+def _survivor(severity):
+    from code_forge.state import StateFinding
+    from code_forge.disposition import Disposition
+
+    finding = StateFinding(
+        id="mutant-control.x_mutmut_1", fingerprint="mutant:control.x_mutmut_1", source="MUTANT",
+        disposition=Disposition.CONFIRMED, file="control.ts", line_range=[0, 0],
+        description="mutant survived: control.x_mutmut_1",
+    )
+    if severity is not None:
+        finding.severity = severity
+    return finding
+
+
+@pytest.mark.parametrize(("severity", "action"), [("P3", "preserved"), (None, "reset")],
+                         ids=["p3-survivor-preserved", "default-survivor-reset"])
+def test_lc_survivor_ladder_third_round_with_coverage(offline_workspace, monkeypatch, severity, action):
+    """L-C: the 3-consecutive-survivor stop records preserved only for a (iii)-only counterfactual."""
+    root = offline_workspace
+    monkeypatch.setattr("code_forge.flow_contract.P3_DENSITY_THRESHOLD", 1.0)
+    machine, calls = _new_machine(root, monkeypatch, fault="coverage", fault_rounds={3}, rounds=3)
+    machine.l2_runner = lambda *args, **kwargs: ([_survivor(severity)], [])
+    assert machine.run() is Verdict.FAIL
+    _assert_calls(calls, [1, 2, 3])
+    state, _ = _state(root)
+    assert state.consecutive_survivor_rounds == 3
+    assert "mutation: surviving mutants reported in 3 consecutive rounds" in state.infra_errors
+    latest = state.round_history[-1]
+    assert latest["clean_credit_action"] == action
+    assert latest["dispositions"]["incomplete-coverage-adversarial"] == "CONFIRMED"
+    if action == "preserved":
+        assert [row["clean_credit_action"] for row in state.round_history] == ["reset", "earned", "preserved"]
+        assert latest["fixpoint"] == "RESET"
+        assert state.consecutive_clean_rounds == 1
+        assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [2]
+    else:
+        assert state.consecutive_clean_rounds == 0 and state.earned_clean_window["cycles"] == []
+    assert _restore_result(root).passed and not _verify(root).passed
 
 
 @pytest.mark.parametrize("cause", ["mixed-product", "falsifier-transport", "acquisition"])
