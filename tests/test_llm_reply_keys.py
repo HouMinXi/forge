@@ -1463,3 +1463,12 @@ def test_daemon_conflict_item_with_a_repaired_key_is_refused():
     assert "c" in _loads_model_json(text)["conflicts"][0]  # the repair invents `c`
     with pytest.raises(invoke.ReplyKeyRejected):
         _loads_model_json(text, Q2Q3_REPLY_KEYS)
+
+
+def test_daemon_q1_repaired_reply_with_an_unknown_key_is_refused():
+    from code_forge.daemon_state import Q1_REPLY_KEYS
+
+    text = '{"external_state": ["m"], "x": ["say "hi" now"]}'
+    assert "x" in _loads_model_json(text)  # the repair keeps `x`
+    with pytest.raises(invoke.ReplyKeyRejected):
+        _loads_model_json(text, Q1_REPLY_KEYS)
