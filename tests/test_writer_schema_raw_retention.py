@@ -82,7 +82,9 @@ def _case(tmp_path, monkeypatch, *, grouped=False, failed_role="expert", style="
         if style == "fenced":
             raw = " \n" + chr(96) * 3 + "json\n" + raw + "\n" + chr(96) * 3 + "\t "
         elif style == "embedded":
-            raw = "Review output follows.\n" + raw + "\nEnd of output."
+            # Prose may follow the reply. Prose before it is refused when the
+            # caller has reply keys, so it costs a correction retry (#264).
+            raw = raw + "\nEnd of output."
         if role == control["malformed_role"]:
             raw = '{"findings":[true,,false]}'
         acquired[key] = raw
