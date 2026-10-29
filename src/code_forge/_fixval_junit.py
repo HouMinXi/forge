@@ -82,21 +82,31 @@ def _imported_names(line: str) -> set[str]:
 
 class _Side:
     """One side (pre- or post-image) of a hunk, read in order, so the
-    lines inside a multi-line `from x import (...)` bind their names.
+    lines of a multi-line import bind their names: inside the parentheses
+    of `from x import (...)`, or after a module-level import line that ends
+    with a backslash.
 
     Known limit: a hunk that starts inside such an import does not see its
     opening line, so the names there are not read (no RED from them)."""
 
     def __init__(self):
-        self.open = False
+        self.open = False  # inside `from x import (`
+        self.continued = False  # the previous import line ended with `\`
 
     def names(self, line: str) -> set[str]:
         if self.open:
             inside, closed, _rest = line.split("#", 1)[0].partition(")")
             self.open = not closed
             return _clause_names(inside)
+        if self.continued:
+            # A trailing `\` follows a comma, so it is an item of its own
+            # that matches no name.
+            self.continued = line.rstrip().endswith("\\")
+            return _clause_names(line.split("#", 1)[0])
         if _OPEN_FROM_IMPORT.match(line):
             self.open = True
+        elif (_FROM_IMPORT.match(line) or _IMPORT.match(line)) and line.rstrip().endswith("\\"):
+            self.continued = True
         return _defined(line)
 
 

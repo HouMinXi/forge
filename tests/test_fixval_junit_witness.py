@@ -105,6 +105,67 @@ def test_added_names_reads_multi_line_imports(lines, names):
     assert {name for _module, name in found.names} == names
 
 
+def test_a_comment_on_the_opening_line_still_opens_the_import():
+    lines = ["+from .impl import (  # noqa: F401", "+    helper,", "+)"]
+    found = added_names(_hunk("src/calc.py", lines))
+    assert found.names == {("src.calc", "helper"), ("calc", "helper")}
+    # the reverted run's import error for that name is RED
+    assert red_witness(_report(_error("collection failure", IMPORT_HELPER)), found) is True
+
+
+def test_a_function_level_parenthesised_import_binds_nothing():
+    lines = [
+        "+def load():",
+        "+    from .impl import (",
+        "+        helper,",
+        "+    )",
+        "+    return helper",
+    ]
+    found = added_names(_hunk("src/calc.py", lines))
+    assert {name for _module, name in found.names} == {"load"}
+
+
+@pytest.mark.parametrize(
+    ("lines", "names"),
+    [
+        (["+from pkg.o import a, \\", "+    newname"], {"a", "newname"}),
+        (
+            ["+from pkg.o import \\", "+    a, \\", "+    newname", "+VALUE = 1"],
+            {"a", "newname", "VALUE"},
+        ),
+        (["+import json, \\", "+    csv as table"], {"json", "table"}),
+        (["+from pkg.o import a,\\", "+    b,\\", "+    newname  # noqa"], {"a", "b", "newname"}),
+        ([" from pkg.o import a, \\", "+    newname"], {"newname"}),
+        # only an import line continues; an assignment's backslash does not
+        (["+total = 1 + \\", "+    newname"], {"total"}),
+        (["+def f():", "+    from pkg.o import a, \\", "+        b"], {"f"}),
+    ],
+)
+def test_added_names_reads_backslash_continued_imports(lines, names):
+    found = added_names(_hunk("src/calc.py", lines))
+    assert {name for _module, name in found.names} == names
+
+
+def test_a_backslash_continued_import_of_an_added_name_is_red():
+    found = added_names(_hunk("src/calc.py", [" from pkg.o import a, \\", "+    helper"]))
+    assert red_witness(_report(_error("collection failure", IMPORT_HELPER)), found) is True
+
+
+def test_an_import_left_open_at_the_end_of_a_hunk_does_not_leak_into_the_next():
+    # The first hunk stops inside `from .impl import (`; the second hunk is
+    # elsewhere in the file, inside a call, where `stop,` binds nothing.
+    patch = (
+        "diff --git a/src/calc.py b/src/calc.py\n--- a/src/calc.py\n+++ b/src/calc.py\n"
+        "@@ -1,1 +1,2 @@\n from .impl import (\n+    run,\n"
+        "@@ -20,2 +21,3 @@\n call(\n+    stop,\n )\n"
+    )
+    found = added_names(patch)
+    assert {name for _module, name in found.names} == {"run"}
+    # the same with a module-level binding at column 0 in the second hunk
+    found = added_names(patch.replace("+    stop,\n )\n", "+LIMIT = 3\n )\n"))
+    assert {name for _module, name in found.names} == {"run", "LIMIT"}
+
+
 RENAME = """\
 diff --git a/src/old.py b/src/pkg/newmod.py
 similarity index 90%
@@ -152,6 +213,8 @@ def _error(message, text=""):
 
 IMPORT_HELPER = "E   ImportError: cannot import name 'helper' from 'calc' (/r/src/calc.py)"
 IMPORT_NEWMOD = "E   ImportError: cannot import name 'newmod' from 'pkg' (/r/src/pkg/__init__.py)"
+NO_ATTRIBUTE_NEWMOD = "E AttributeError: module 'pkg' has no attribute 'newmod'"
+NEWMOD2 = AddedNames(frozenset(), frozenset({"pkg.newmod2"}))
 
 
 @pytest.mark.parametrize(
@@ -189,6 +252,25 @@ IMPORT_NEWMOD = "E   ImportError: cannot import name 'newmod' from 'pkg' (/r/src
         (
             _report(_error("collection failure", IMPORT_NEWMOD.replace("newmod", "other"))),
             NEW_MODULE,
+            False,
+        ),
+        # false-RED boundaries: the module must be exactly `M.X`, and `No module
+        # named` must name a module the fix creates, not one that starts with it
+        (_report(_error("collection failure", IMPORT_NEWMOD)), NEWMOD2, False),
+        (
+            _report(_error("collection failure", IMPORT_NEWMOD.replace("'pkg'", "'other'"))),
+            NEW_MODULE,
+            False,
+        ),
+        (_report(_error("collection failure", NO_ATTRIBUTE_NEWMOD)), NEWMOD2, False),
+        (
+            _report(_error("collection failure", NO_ATTRIBUTE_NEWMOD.replace("'pkg'", "'other'"))),
+            NEW_MODULE,
+            False,
+        ),
+        (
+            _report(_error("collection failure", "E ModuleNotFoundError: No module named 'pkg.newer'")),
+            AddedNames(frozenset(), frozenset({"pkg.new"})),
             False,
         ),
         (
