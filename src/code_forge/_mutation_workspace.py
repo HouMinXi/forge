@@ -493,11 +493,15 @@ class MutationWorkspace:
             # same-size rewrite in the same tick as the file's previous change
             # leaves size, mtime and ctime equal. With `expected` set, the
             # sha256 comparison below still catches bytes that differ from the
-            # expected ones. With `expected` None nothing checks the bytes
-            # again, so such a rewrite during the read is not detected (#197,
-            # #103). Where the kernel stamps ctime finely (Linux 6.13 and
-            # later, on filesystems that support multigrain timestamps) the
-            # window is closed. Accepted limit on other kernels.
+            # expected ones. With `expected` None the caller's own sha256
+            # check covers this (`_write_private_config` and
+            # `_retain_config_backup` compare against the bytes they just
+            # wrote), except for the first capture in `acquire`: there no
+            # reference bytes exist, so such a rewrite during the read is not
+            # detected (#197, #103). Where the kernel stamps ctime finely
+            # (Linux 6.13 and later, on filesystems that support multigrain
+            # timestamps) the window is closed. Accepted limit on other
+            # kernels.
             if (
                 (before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_mode, before.st_nlink)
                 != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_mode, after.st_nlink)
