@@ -6079,8 +6079,6 @@ class TestCliEnv:
         _invoke_cli("test", backend, 120)
 
 
-
-
 class TestConnectionErrorHandling:
     """Connection-level OSError (RemoteDisconnected, SSLError) must be caught
     and wrapped as retryable LLMInvokeError, not propagate as a raw crash.
