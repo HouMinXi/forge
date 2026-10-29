@@ -29,12 +29,12 @@ STALL_DIAGNOSTIC_PREFIX = "review stalled: identical disposition maps for 3 cons
 SKIPPED_SOURCES = ["MUTANT", "E2E_CHECK", "FIXVAL", "INFRA"]
 
 
-def _finding(fp, source):
+def _finding(fp, source, disposition=Disposition.CONFIRMED):
     return StateFinding(
         id=f"{fp}-{source}",
         fingerprint=fp,
         source=source,
-        disposition=Disposition.CONFIRMED,
+        disposition=disposition,
         file="test.py",
         line_range=[1, 1],
         description="test finding",
@@ -48,7 +48,12 @@ def _no_change_autofixer(tmp_path):
     return StubAutoFixer(fixture)
 
 
-def _machine(tmp_path, l0_findings=(), max_rounds=8, max_fix_attempts=3):
+def _machine(tmp_path, l0_findings=(), max_rounds=8, max_fix_attempts=3, l0_runner=None):
+    if l0_runner is None:
+
+        def l0_runner(registry, files):
+            return list(l0_findings), []
+
     return StateMachine(
         mode=Mode.LOCAL,
         falsifier=StubFalsifier(),  # default disposition: CONFIRMED
@@ -64,7 +69,7 @@ def _machine(tmp_path, l0_findings=(), max_rounds=8, max_fix_attempts=3):
         baseline_spec_repr="empty",
         cwd=tmp_path,
         registry={},
-        l0_runner=lambda registry, files: (list(l0_findings), []),
+        l0_runner=l0_runner,
         max_total_rounds=max_rounds,
         max_fix_attempts=max_fix_attempts,
     )
@@ -93,6 +98,15 @@ def test_snapshot_records_fingerprints_whose_every_l0_finding_is_skipped(tmp_pat
     ]
     machine._append_round_snapshot(0, l0, [_finding("fp-l1", "MUTANT")])
     assert machine._state.round_history[-1]["l0_autofix_skipped"] == ["fp-a", "fp-b"]
+
+
+def test_snapshot_field_is_sorted(tmp_path):
+    """With 14 skipped fingerprints a set iterates in sorted order with odds near 1/14!, so list() fails."""
+    machine = _machine(tmp_path)
+    fingerprints = [f"fp-{name}" for name in "qwertyuiopzxcv"]
+    machine._append_round_snapshot(0, [_finding(fp, "MUTANT") for fp in fingerprints], [])
+    row = machine._state.round_history[-1]["l0_autofix_skipped"]
+    assert row == sorted(fingerprints)
 
 
 @pytest.mark.parametrize("source", SKIPPED_SOURCES)
@@ -150,11 +164,50 @@ def test_snapshot_without_the_field_holds_off_the_stall(tmp_path):
     assert not machine._stalled_on_identical_round()
 
 
-def test_malformed_field_holds_off_the_stall(tmp_path):
+@pytest.mark.parametrize(
+    "value",
+    ["x", ("x",), {"x"}, {"x": True}, None, 0],
+    ids=["str", "tuple", "set", "dict", "none", "int"],
+)
+def test_malformed_field_holds_off_the_stall(tmp_path, value):
+    """Only a list proves a skip. list(value) would read "x" from every iterable case."""
     machine = _machine(tmp_path)
-    _freeze(machine, l0=[_finding("fp-l0", "MUTANT")])
-    machine._state.round_history[-1]["l0_autofix_skipped"] = "fp-l0"
+    _freeze(machine, l0=[_finding("x", "MUTANT")])
+    machine._state.round_history[-1]["l0_autofix_skipped"] = value
     assert not machine._stalled_on_identical_round()
+
+
+def _host_row(round_index, action):
+    """A host round row that product_round_history drops: pending, or without dispositions."""
+    return {
+        "round": round_index,
+        "clean_credit_action": action,
+        "phase_status": dict.fromkeys(("l0", "rulepack", "l1", "l2", "e2e", "coverage"), "not_run"),
+        "acquisition_failures": [],
+        "reset_observed": False,
+        "source_hash": "abc",
+        "reviewed_repositories": None,
+        "clean_rounds_after": 0,
+    }
+
+
+@pytest.mark.parametrize("action", ["pending", "unavailable"])
+@pytest.mark.parametrize(
+    ("projected", "trailing", "stalls"),
+    [(["x"], [], True), ([], ["x"], False)],
+    ids=["projected-skips", "trailing-skips"],
+)
+def test_skip_proof_comes_from_the_projected_row(tmp_path, action, projected, trailing, stalls):
+    """The skip proof is read from the same projected row as the frozen map.
+
+    A trailing pending or dispositionless host row is not a product snapshot, so
+    its l0_autofix_skipped neither proves nor disproves a skip.
+    """
+    machine = _machine(tmp_path)
+    _freeze(machine, l0=[_finding("x", "MUTANT")])
+    machine._state.round_history[-1]["l0_autofix_skipped"] = projected
+    machine._state.round_history.append({**_host_row(3, action), "l0_autofix_skipped": trailing})
+    assert machine._stalled_on_identical_round() is stalls
 
 
 def test_only_the_latest_snapshot_proves_a_skip(tmp_path):
@@ -178,6 +231,130 @@ def test_pending_promotion_still_runs_first(tmp_path):
     assert not machine._stalled_on_identical_round()
     machine._state.promoted_fingerprints = {"fp-l0"}
     assert machine._stalled_on_identical_round()
+
+
+def test_spent_skipped_fingerprint_is_not_pending_promotion(tmp_path):
+    """A fingerprint the autofix loop skips is never promoted, so spent budget cannot hold the stall."""
+    machine = _machine(tmp_path)
+    _freeze(machine, l0=[_finding("fp-l0", "MUTANT")])
+    machine._state.fix_attempts = {"fp-l0": 3}
+    assert machine._stalled_on_identical_round()
+
+
+def test_spent_handled_fingerprint_is_pending_promotion(tmp_path):
+    """Control: CONFIRMED plus UNCERTAIN stalls, unless an L0 budget is exactly spent."""
+    machine = _machine(tmp_path)
+    _freeze(machine, l0=[_finding("fp-l0", "L0")], l1=[_finding("fp-l1", "L1", Disposition.UNCERTAIN)])
+    assert machine._stalled_on_identical_round()
+    machine._state.fix_attempts = {"fp-l0": 3}  # == max_fix_attempts
+    assert not machine._stalled_on_identical_round()
+
+
+def test_attempts_above_the_limit_are_pending_promotion(tmp_path):
+    """max_fix_attempts is not persisted; a resume with a lower limit leaves attempts above it."""
+    machine = _machine(tmp_path, max_fix_attempts=3)
+    _freeze(machine, l0=[_finding("fp-l0", "L0")], l1=[_finding("fp-l1", "L1", Disposition.UNCERTAIN)])
+    machine._state.fix_attempts = {"fp-l0": 5}
+    assert not machine._stalled_on_identical_round()
+
+
+def test_resume_with_a_lower_fix_limit_promotes(tmp_path):
+    """End to end: 4 attempts under max_fix_attempts=6, then a resume under 3 promotes."""
+    first = _machine(tmp_path, l0_findings=[_finding("fp-l0", "L0")], max_rounds=4, max_fix_attempts=6)
+    first.run()
+    assert first._state.fix_attempts == {"fp-l0": 4}
+    assert not first._state.promoted_fingerprints
+    resumed = _machine(
+        tmp_path, l0_findings=[_finding("fp-l0", "L0")], max_rounds=10, max_fix_attempts=3
+    )
+    resumed.run()
+    assert resumed._state.promoted_fingerprints == {"fp-l0"}
+    assert resumed._state.fix_attempts == {"fp-l0": 4}
+    assert _stalls(resumed) == []
+
+
+def test_resume_from_state_written_before_the_field(tmp_path):
+    """End to end: rows without l0_autofix_skipped hold nothing off once a new row lands.
+
+    Three old rows freeze the map; the first resumed round writes the field, and
+    the stall reads only that latest row.
+    """
+    findings = [_finding("fp-x", "MUTANT")]
+    _machine(tmp_path, l0_findings=findings, max_rounds=3).run()
+    state_path = tmp_path / ".code-forge" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert len(state["round_history"]) == 3
+    for row in state["round_history"]:
+        row.pop("l0_autofix_skipped")
+    state["infra_errors"] = []
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    resumed = _machine(tmp_path, l0_findings=findings, max_rounds=10)
+    assert resumed.run() == Verdict.ESCALATED
+    history = resumed._state.round_history
+    assert ["l0_autofix_skipped" in row for row in history] == [False, False, False, True]
+    assert history[-1]["l0_autofix_skipped"] == ["fp-x"]
+    assert resumed._state.round == 3
+    assert len(_stalls(resumed)) == 1
+
+
+def _round_aware_runner(machine_ref, findings_for_round):
+    def runner(registry, files):
+        return findings_for_round(machine_ref[0]._state.round), []
+
+    return runner
+
+
+def test_spent_budget_promotes_before_an_uncertain_map_stalls(tmp_path):
+    """End to end: budget spent on round index 2 waits for its promotion on round 3.
+
+    The frozen map holds CONFIRMED and UNCERTAIN, which stalls at once unless the
+    pending-promotion guard counts fix_attempts == max_fix_attempts as pending.
+    """
+    findings = [_finding("fp-l0", "L0"), _finding("fp-unc", "MUTANT", Disposition.UNCERTAIN)]
+    machine = _machine(tmp_path, l0_findings=findings, max_rounds=8)
+    machine.run()
+    assert machine._state.fix_attempts == {"fp-l0": 3}
+    assert machine._state.promoted_fingerprints == {"fp-l0"}
+    assert machine._state.round == 3
+    assert _stalls(machine) == []
+
+
+def test_budget_spent_as_l0_then_skipped_source_only_stalls(tmp_path):
+    """End to end: fp-x spends its budget as L0, then arrives only as MUTANT.
+
+    The autofix loop skips the MUTANT finding, so fp-x is never promoted. Its
+    spent budget must not hold the stall off for the rest of the run.
+    """
+    ref = []
+
+    def findings_for_round(round_index):
+        return [_finding("fp-x", "L0" if round_index < 3 else "MUTANT")]
+
+    machine = _machine(tmp_path, max_rounds=12, l0_runner=_round_aware_runner(ref, findings_for_round))
+    ref.append(machine)
+    assert machine.run() == Verdict.ESCALATED
+    assert machine._state.fix_attempts == {"fp-x": 3}
+    assert not machine._state.promoted_fingerprints
+    stalls = _stalls(machine)
+    assert len(stalls) == 1
+    assert "fp-x" in stalls[0]
+    assert machine._state.round == 3  # rows 1-3 frozen, fp-x skipped on row 3
+
+
+def test_budget_spent_as_l0_stays_pending_while_still_l0(tmp_path):
+    """Control for the case above: a spent fingerprint that stays L0 is promoted, not stalled."""
+    ref = []
+    machine = _machine(
+        tmp_path,
+        max_rounds=12,
+        l0_runner=_round_aware_runner(ref, lambda round_index: [_finding("fp-x", "L0")]),
+    )
+    ref.append(machine)
+    machine.run()
+    assert machine._state.fix_attempts == {"fp-x": 3}
+    assert machine._state.promoted_fingerprints == {"fp-x"}
+    assert _stalls(machine) == []
 
 
 @pytest.mark.parametrize("source", SKIPPED_SOURCES)

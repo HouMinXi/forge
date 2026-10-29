@@ -4307,7 +4307,8 @@ class StateMachine:
           and is left alone. CONFIRMED findings from any other layer get no
           autofix and no promotion; repeating the round cannot change them.
           Neither can an L0 fingerprint the autofix loop skipped in the latest
-          round, so it does not hold the stall off. Production L0 runners emit
+          round, so it does not hold the stall off, even with its budget spent
+          by earlier rounds under a handled source. Production L0 runners emit
           source "L0" only; this keeps the stall aligned with the autofix skip
           set for injected or future L0 producers. The latest snapshot's
           l0_autofix_skipped field is the only proof of a skip. It is computed
@@ -4331,11 +4332,21 @@ class StateMachine:
         l0_fingerprints = history[-1].get("l0_fingerprints", [])
         l0_confirmed = [fp for fp in l0_fingerprints if maps[-1].get(fp) in confirmed]
 
+        # The latest snapshot's l0_autofix_skipped is the only proof that the
+        # autofix loop skipped a fingerprint; missing or malformed proves none.
+        # history is the projected product history, so this is the same row as
+        # maps[-1]: a trailing pending or dispositionless host row is not read.
+        skipped = history[-1].get("l0_autofix_skipped")
+        if not isinstance(skipped, list):
+            skipped = []
+
         # An exhausted L0 fix budget is promoted on the next round.
         # Let that pending state transition run before declaring a stall.
+        # A skipped fingerprint is never promoted, so it is never pending.
         pending_promotion = any(
             self._state.fix_attempts.get(fp, 0) >= self.max_fix_attempts
             and fp not in self._state.promoted_fingerprints
+            and fp not in skipped
             for fp in l0_confirmed
         )
         if pending_promotion:
@@ -4349,9 +4360,6 @@ class StateMachine:
         # CONFIRMED only. Past the pending_promotion guard, an unpromoted
         # CONFIRMED L0 finding has fix budget left, unless the autofix loop
         # skipped it: such a finding never uses budget or gets promoted.
-        skipped = history[-1].get("l0_autofix_skipped")
-        if not isinstance(skipped, list):
-            skipped = []
         budget_left = any(
             fp not in self._state.promoted_fingerprints and fp not in skipped for fp in l0_confirmed
         )
