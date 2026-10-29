@@ -2429,21 +2429,10 @@ def _continue_truncated(
             breaker.record_truncation()
         if not isinstance(truncated.content, str):
             return None
-        # A truncated response whose partial is already a complete
-        # forge envelope needs no continuation: the length stop landed
-        # after the JSON closed, or on trailing prose. Parse the
-        # partial directly and return it, spending no continuation
-        # budget.
-        cleaned_partial = _strip_fences(truncated.content)
-        # Only a partial that parses whole counts: an object found inside
-        # cut text may close early on quoted content, such as an excerpt
-        # quoting `"}], "findings": []}`, with the real reply after the cut.
-        try:
-            parsed_partial = _loads_model_json(cleaned_partial, reply_keys)
-        except json.JSONDecodeError:
-            parsed_partial = None
-        if _is_forge_envelope(parsed_partial, expected_keys):
-            return parsed_partial, _observed_usage(truncated.usage_data, backend.format)
+        # A cut reply always gets a continuation, even when the partial
+        # already parses whole (#264): an excerpt quoting `"}], "findings": []}`
+        # can close the reply early, with the real findings after the cut.
+        # An empty continuation leaves the partial as the combined text.
         if not truncated.content.strip() or "{" not in truncated.content:
             return None
         # The tail re-enters a prompt as fenced data; strip the fence

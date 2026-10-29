@@ -117,12 +117,17 @@ def test_truncated_continuation_names_the_partial(no_wait, stub_openai):
     assert str(caught.value).endswith("last failure: output truncated")
 
 
-def test_a_complete_partial_is_returned_without_a_continuation(no_wait, stub_openai):
-    """A partial that is already the envelope is returned as-is, with no continuation issued."""
-    recovered = _recover(
-        stub_openai, lambda prompt: pytest.fail("continuation was issued"), partial=json.dumps(_ENVELOPE)
-    )
+def test_a_complete_partial_still_gets_a_continuation(no_wait, stub_openai):
+    """A partial that already parses as the envelope still gets one continuation (#264)."""
+    prompts = []
+
+    def empty(prompt):
+        prompts.append(prompt)
+        return "", {}
+
+    recovered = _recover(stub_openai, empty, partial=json.dumps(_ENVELOPE))
     assert recovered is not None
+    assert len(prompts) == 1
 
     assert recovered[0] == _ENVELOPE
 

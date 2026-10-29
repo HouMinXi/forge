@@ -2932,17 +2932,18 @@ class TestTruncationRecover:
 
         assert mock_invoke.call_count == 4
 
-    def test_complete_json_partial_returns_without_continuation(self):
-        """A truncated response whose partial is already a complete
-        forge envelope is returned directly: the length stop landed
-        after the JSON closed, so no continuation request is issued."""
+    def test_complete_json_partial_still_asks_for_a_continuation(self):
+        """A truncated response whose partial already parses as a forge
+        envelope still gets one continuation: a cut can close an object
+        early (#264). An empty continuation returns the partial."""
         backend = _make_api_backend(name="ds", fmt="openai")
         complete = (
             '{"findings": [{"file": "a.c", "line": 1, '
             '"severity": "LOW", "description": "d"}], '
             '"code_excerpts": []}'
         )
-        side_effect = [_truncated_response(partial=complete)]
+        stop = {"prompt_tokens": 1, "completion_tokens": 0, "_forge_finish_reason": "stop"}
+        side_effect = [_truncated_response(partial=complete), ("", stop)]
         with (
             patch.dict(os.environ, {"TEST_KEY": "sk-test"}),
             patch("code_forge.llm_invoke._invoke_openai", side_effect=side_effect) as mock_invoke,
@@ -2951,9 +2952,8 @@ class TestTruncationRecover:
             result = llm_invoke("p", backend=backend, max_attempts=5)
 
         assert result.content == json.loads(complete)
-        assert result.usage == Usage(800, 16384)
         assert result.is_truncated is True
-        assert mock_invoke.call_count == 1
+        assert mock_invoke.call_count == 2
 
     def test_breaker_tripped_between_attempts_stops_further_dispatch(self):
         """A trip recorded by another worker between continuation
