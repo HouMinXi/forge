@@ -647,6 +647,16 @@ def test_m4_loader_accepts_recurring_confirmed_beside_iii_cause():
     assert earned_history_cycles(state, SOURCE, None) == [1, 2]
 
 
+def test_m4_loader_accepts_recurring_uncertain_then_confirmed_without_protocol():
+    """CR2R2-L3: a fingerprint seen UNCERTAIN (no protocol observation) recurs, as in the fixpoint."""
+    rows = [
+        _m4_prior_row(0, {"fp-p3": "UNCERTAIN"}),
+        _m4_prior_row(1, {"fp-p3": "UNCERTAIN"}),
+        _m4_preserved(2, 2, {"fp-p3": "CONFIRMED"}),
+    ]
+    validate_round_history(rows, 2)
+
+
 @pytest.mark.parametrize(
     ("prior", "other"),
     [
