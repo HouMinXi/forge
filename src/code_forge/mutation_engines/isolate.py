@@ -48,7 +48,15 @@ class IsolationError(Exception):
 
 
 class CgroupCleanupError(IsolationError):
-    """The run cgroup was still present when the removal deadline passed."""
+    """The run cgroup was still present when the removal deadline passed.
+
+    When the payload itself finished, the caller attaches what it measured
+    (receipt, exit code, timeout flag) so the evidence is not lost.
+    """
+
+    receipt: object | None = None
+    exit_code: int | None = None
+    timed_out: bool | None = None
 
 
 def verify_isolation_support(cgroup_root: str) -> None:
@@ -77,17 +85,26 @@ def verify_isolation_support(cgroup_root: str) -> None:
         raise IsolationUnavailable(
             "cannot create child cgroup under %r: %s" % (cgroup_root, exc)
         ) from exc
+    failure: BaseException | None = None
     try:
         for fname in ("memory.max", "pids.max", "memory.swap.max", "cgroup.procs"):
             if not os.path.exists(os.path.join(probe, fname)):
                 raise IsolationUnavailable(
                     "delegated cgroup lacks %s (controllers memory+pids required)" % fname
                 )
+    except BaseException as exc:
+        failure = exc
+        raise
     finally:
         try:
             os.rmdir(probe)
-        except OSError:
-            pass
+        except OSError as exc:
+            # A probe cgroup left behind is a cleanup failure (#31): report it,
+            # without replacing an error that is already on its way out.
+            detail = _bounded("probe cgroup %s was not removed (%s)" % (probe, _error_detail(exc)))
+            if failure is None:
+                raise IsolationUnavailable(detail, reason="probe_cleanup_failed") from exc
+            attach_note(failure, detail)
 
 
 @dataclass(frozen=True)
@@ -133,6 +150,8 @@ def _read(path: str) -> str:
 
 # Bytes of child startup diagnostic the parent keeps (#31).
 _STARTUP_DIAGNOSTIC_LIMIT = 200
+# A cleanup error names the cgroup path as well as the 200-character detail.
+_CLEANUP_MESSAGE_LIMIT = 400
 
 
 def _printable(text: str) -> str:
@@ -144,6 +163,23 @@ def _error_detail(exc: BaseException) -> str:
     """Name an exception by type and errno, e.g. ``type=OSError errno=16``."""
     code = getattr(exc, "errno", None)
     return "type=%s errno=%s" % (type(exc).__name__, code if isinstance(code, int) else "none")
+
+
+def _bounded(text: str) -> str:
+    """Printable ASCII, cut to the diagnostic limit, for messages built from paths or errors."""
+    return _printable(text)[:_STARTUP_DIAGNOSTIC_LIMIT]
+
+
+def attach_note(exc: BaseException, note: str) -> None:
+    """Add ``note`` to ``exc`` without ever replacing it.
+
+    A failure while recording the note (for example MemoryError) is dropped,
+    so the error in flight is the one that propagates.
+    """
+    try:
+        BaseException.add_note(exc, note)
+    except BaseException:  # noqa: BLE001, S110 - a note must never mask the failure
+        pass
 
 
 def _startup_diagnostic(stage: str, exc: BaseException) -> bytes:
@@ -411,7 +447,7 @@ class Supervisor:
                 except CgroupCleanupError as cleanup:
                     # The start failure stays the raised error; the cleanup
                     # failure rides along as a note and in cleanup_error.
-                    exc.add_note(str(cleanup))
+                    attach_note(exc, str(cleanup))
             raise
 
     def read_resource_peak(self, name: str) -> int | None:
@@ -441,52 +477,69 @@ class Supervisor:
             raise IsolationError("supervisor not started")
         return self._process.wait(timeout=timeout)
 
-    def _remove_cgroup(self, force: bool = False) -> None:
+    def _remove_cgroup(self, force: bool = False, timeout: float = 10) -> None:
         kill_file = os.path.join(self.cgroup_path, "cgroup.kill")
         if os.path.exists(kill_file):
             try:
                 _write(kill_file, "1")
             except OSError:
                 pass
-        deadline = time.monotonic() + 10
+        # Only the outcome of this removal counts: a stale failure text from
+        # an earlier attempt must not outlive a later successful removal.
+        self.cleanup_error = None
+        deadline = time.monotonic() + timeout
         while True:
             try:
                 os.rmdir(self.cgroup_path)
-                return
             except FileNotFoundError:
                 # Already removed (a failed start cleans up once and the later
                 # teardown asks again): absence is a successful removal.
-                return
+                pass
             except OSError as exc:
                 last_error = exc
-            if time.monotonic() >= deadline:
-                break
-            if force and os.path.exists(kill_file):
-                # keep killing stragglers between rmdir retries
-                try:
-                    _write(kill_file, "1")
-                except OSError:
-                    pass
-            time.sleep(0.1)
+                if time.monotonic() >= deadline:
+                    break
+                if force and os.path.exists(kill_file):
+                    # keep killing stragglers between rmdir retries
+                    try:
+                        _write(kill_file, "1")
+                    except OSError:
+                        pass
+                time.sleep(0.1)
+                continue
+            return
         # EBUSY (live tasks), ENOTEMPTY or EACCES at the deadline is a real
         # cleanup failure: report it instead of leaving the cgroup silently.
-        self.cleanup_error = _printable(
+        self.cleanup_error = _bounded(
             "run cgroup was not removed before the deadline (last rmdir error %s)"
             % _error_detail(last_error)
-        )[:_STARTUP_DIAGNOSTIC_LIMIT]
-        raise CgroupCleanupError("%s: %s" % (self.cgroup_path, self.cleanup_error))
+        )
+        raise CgroupCleanupError(
+            _printable("%s: %s" % (self.cgroup_path, self.cleanup_error))[:_CLEANUP_MESSAGE_LIMIT]
+        ) from last_error
 
     def teardown(self) -> None:
+        """Kill the payload and remove the run cgroup.
+
+        Removal is forced (cgroup.kill is rewritten between retries), so any
+        straggler the kill missed is killed again instead of keeping the
+        cgroup busy. If an earlier removal already ran out its deadline (a
+        failed start), one more attempt is made instead of a second 10 s wait.
+        Teardown is only marked done once the cgroup is gone, so a caller can
+        retry after a CgroupCleanupError.
+        """
         if self._torn_down:
             return
-        self._torn_down = True
         if self._process is not None and self._process.poll() is None:
             self._process.kill()
             try:
                 self._process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 pass
-        self._remove_cgroup()
+        # Decided before the call, which resets cleanup_error.
+        timeout = 0 if self.cleanup_error is not None else 10
+        self._remove_cgroup(force=True, timeout=timeout)
+        self._torn_down = True
 
 
 class SupervisorThread(threading.Thread):

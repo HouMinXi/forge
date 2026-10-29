@@ -33,6 +33,9 @@ pytestmark = pytest.mark.filterwarnings("ignore:This process .* is multi-threade
 
 _MISSING_BINARY = ("/nonexistent/forge-bwrap",)
 
+# The real removal, kept before ``plain_root`` replaces it with rmtree.
+_REAL_REMOVE_CGROUP = Supervisor._remove_cgroup
+
 
 @pytest.fixture
 def plain_root(tmp_path, monkeypatch):
@@ -41,7 +44,7 @@ def plain_root(tmp_path, monkeypatch):
     monkeypatch.setattr(
         Supervisor,
         "_remove_cgroup",
-        lambda self, force=False: shutil.rmtree(self.cgroup_path, ignore_errors=True),
+        lambda self, force=False, timeout=10: shutil.rmtree(self.cgroup_path, ignore_errors=True),
     )
     return tmp_path
 
@@ -194,11 +197,13 @@ def test_stdio_failure_reports_stdio_stage(plain_root, monkeypatch):
     )
 
 
-def test_child_still_reports_when_formatting_the_diagnostic_fails(plain_root, monkeypatch):
+@pytest.mark.parametrize("failure", [MemoryError, KeyboardInterrupt])
+def test_child_still_reports_when_formatting_the_diagnostic_fails(plain_root, monkeypatch, failure):
     # Without the fallback the child writes nothing, the parent reads EOF and
-    # treats the failed exec as a successful start.
+    # treats the failed exec as a successful start. KeyboardInterrupt is not
+    # an Exception, so a fallback that caught only Exception would miss it.
     def broken_diagnostic(stage, exc):
-        raise MemoryError
+        raise failure
 
     _scoped_os(monkeypatch)
     monkeypatch.setattr(isolate, "_startup_diagnostic", broken_diagnostic)
@@ -218,23 +223,25 @@ def test_exec_status_non_ascii_bytes_become_question_marks(plain_root, monkeypat
 
 
 def test_exec_status_read_stops_at_the_limit(plain_root, monkeypatch):
-    # The child writes 300 bytes in two parts, 150 then 150. The parent must
-    # keep exactly 200: it asks only for what is left under the limit.
+    # The child writes 300 bytes. Each parent read returns at most 150, so the
+    # parent needs a second read, which must ask only for the 50 bytes left
+    # under the limit.
     parent = os.getpid()
+    requested = []
 
-    def write(fd, data):
-        if _in_child_of(parent) and len(data) == 300:
-            os.write(fd, data[:150])
-            time.sleep(0.3)
-            return os.write(fd, data[150:])
-        return os.write(fd, data)
+    def read(fd, size):
+        if _in_child_of(parent):
+            return os.read(fd, size)
+        requested.append(size)
+        return os.read(fd, min(size, 150))
 
-    _scoped_os(monkeypatch, write=write)
+    _scoped_os(monkeypatch, read=read)
     monkeypatch.setattr(isolate, "_startup_diagnostic", lambda stage, exc: b"x" * 300)
 
     message = _start_error(plain_root, argv=_MISSING_BINARY)
 
     assert message == "payload failed to exec bubblewrap (%s)" % ("x" * 200)
+    assert requested == [200, 50]
 
 
 def test_unplaced_child_still_running_at_deadline(plain_root, monkeypatch):
@@ -287,6 +294,94 @@ def test_fork_failure_closes_the_pipes_and_cgroup_procs(plain_root, monkeypatch)
     assert "injected fork failure" in message
     assert _open_fds() == before
     assert not (plain_root / "forge-diag").exists()
+
+
+def test_close_failure_during_cleanup_keeps_the_start_error(plain_root, monkeypatch):
+    # Once the placement failure is known, every parent close fails with EIO
+    # (after really closing the fd). The placement error must still be the
+    # one raised, and every remaining fd must still be closed.
+    parent = os.getpid()
+    armed = []
+    read_diagnostic = isolate._read_startup_diagnostic
+
+    def arm_then_read(fd):
+        armed.append(fd)
+        return read_diagnostic(fd)
+
+    def close(fd):
+        os.close(fd)
+        if armed and not _in_child_of(parent):
+            raise OSError(errno.EIO, "injected close failure")
+
+    _scoped_os(monkeypatch, procs_flags=os.O_RDONLY, close=close)
+    monkeypatch.setattr(isolate, "_read_startup_diagnostic", arm_then_read)
+    before = _open_fds()
+
+    message = _start_error(plain_root)
+
+    assert message.startswith("payload process was not placed in the run cgroup (child exit 127;")
+    assert _open_fds() == before
+
+
+def test_start_failure_with_a_busy_cgroup_waits_once(plain_root, monkeypatch):
+    # The real _remove_cgroup on the start path. rmdir fails with ENOTEMPTY
+    # and moves the fake clock past the deadline, so each removal makes one
+    # attempt. The placement error stays the raised error, the cleanup
+    # failure is a note, and teardown makes one more attempt instead of a
+    # second 10 s wait. Teardown can be retried once the cgroup goes.
+    monkeypatch.setattr(Supervisor, "_remove_cgroup", _REAL_REMOVE_CGROUP)
+    offset = [0.0]
+    rmdir_calls = []
+    busy = [True]
+
+    def rmdir(path):
+        rmdir_calls.append(path)
+        if busy[0]:
+            offset[0] += 100.0
+            raise OSError(errno.ENOTEMPTY, "Directory not empty")
+        shutil.rmtree(path)
+
+    _scoped_os(monkeypatch, procs_flags=os.O_RDONLY, rmdir=rmdir)
+    monkeypatch.setattr(
+        isolate,
+        "time",
+        SimpleNamespace(
+            monotonic=lambda: time.monotonic() + offset[0],
+            sleep=time.sleep,
+            monotonic_ns=time.monotonic_ns,
+        ),
+    )
+    sup = _supervisor(plain_root)
+    thread = SupervisorThread(sup)
+    thread.start()
+    try:
+        with pytest.raises(IsolationError) as info:
+            thread.wait_started(30)
+    finally:
+        thread.join(timeout=30)
+        sup._process.wait(timeout=30)
+
+    detail = (
+        "run cgroup was not removed before the deadline (last rmdir error type=OSError errno=%d)"
+        % (errno.ENOTEMPTY)
+    )
+    assert type(info.value) is IsolationError
+    assert str(info.value).startswith("payload process was not placed in the run cgroup")
+    assert info.value.__notes__ == ["%s: %s" % (sup.cgroup_path, detail)]
+    assert sup.cleanup_error == detail
+    assert len(rmdir_calls) == 1
+
+    with pytest.raises(CgroupCleanupError):
+        sup.teardown()
+    assert len(rmdir_calls) == 2
+
+    busy[0] = False
+    sup.teardown()
+    assert len(rmdir_calls) == 3
+    assert sup.cleanup_error is None
+    assert not os.path.exists(sup.cgroup_path)
+    sup.teardown()
+    assert len(rmdir_calls) == 3
 
 
 @pytest.mark.parametrize(
@@ -387,6 +482,20 @@ def test_read_diagnostic_does_not_block_on_open_writer():
         os.close(write_fd)
 
 
+def test_read_diagnostic_does_not_hide_a_read_error(monkeypatch):
+    # Only "nothing buffered yet" (EAGAIN) means no diagnostic. Another read
+    # error, such as EBADF, is a bug and must not read as an empty pipe.
+    def read(fd, size):
+        raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr(isolate, "os", _ScopedOs(read=read, set_blocking=lambda fd, flag: None))
+
+    with pytest.raises(OSError) as info:
+        isolate._read_startup_diagnostic(3)
+
+    assert info.value.errno == errno.EBADF
+
+
 def test_read_diagnostic_keeps_only_200_bytes():
     read_fd, write_fd = os.pipe()
     try:
@@ -484,9 +593,17 @@ def test_cgroup_still_present_at_deadline_is_reported(tmp_path, monkeypatch, err
 def test_cleanup_error_is_bounded_and_printable(tmp_path, monkeypatch):
     odd = type("E\n" + "Z" * 400, (OSError,), {})
     sup, _ = _removal(tmp_path, monkeypatch, [odd(errno.EBUSY, "busy")] * 5)
+    os.rmdir(sup.cgroup_path)
+    sup.cgroup_path = os.path.join(str(tmp_path), "\x1b[31m" + "p" * 600)
 
-    with pytest.raises(CgroupCleanupError):
+    with pytest.raises(CgroupCleanupError) as info:
         sup._remove_cgroup()
+
+    message = str(info.value)
+    assert len(message) == 400
+    assert message.startswith(str(tmp_path) + "/?[31mppp")
+    assert all(" " <= ch <= "~" for ch in message)
+    assert isinstance(info.value.__cause__, odd)
 
     prefix = "run cgroup was not removed before the deadline (last rmdir error type=E?ZZZ"
     assert len(sup.cleanup_error) == 200
@@ -496,6 +613,7 @@ def test_cleanup_error_is_bounded_and_printable(tmp_path, monkeypatch):
 
 def test_absent_cgroup_counts_as_removed(tmp_path, monkeypatch):
     sup, calls = _removal(tmp_path, monkeypatch, [FileNotFoundError(errno.ENOENT, "gone")])
+    sup.cleanup_error = "stale text from an earlier removal"
 
     assert sup._remove_cgroup() is None
     assert sup.cleanup_error is None
@@ -504,6 +622,7 @@ def test_absent_cgroup_counts_as_removed(tmp_path, monkeypatch):
 
 def test_removal_retries_until_the_cgroup_goes(tmp_path, monkeypatch):
     sup, calls = _removal(tmp_path, monkeypatch, [OSError(errno.EBUSY, "busy")])
+    sup.cleanup_error = "stale text from an earlier removal"
 
     assert sup._remove_cgroup() is None
     assert sup.cleanup_error is None
@@ -526,12 +645,147 @@ def test_forced_removal_kills_again_between_retries(tmp_path, monkeypatch, force
 
 
 def test_teardown_reports_a_cgroup_left_behind(tmp_path, monkeypatch):
-    sup, _ = _removal(tmp_path, monkeypatch, [OSError(errno.EBUSY, "busy")] * 5)
+    sup, calls = _removal(tmp_path, monkeypatch, [OSError(errno.EBUSY, "busy")] * 5)
 
     with pytest.raises(CgroupCleanupError):
         sup.teardown()
 
     assert sup.cleanup_error.startswith("run cgroup was not removed before the deadline")
+    assert len(calls) == 2
+
+
+def _teardown_calls(tmp_path, monkeypatch, outcomes):
+    """A supervisor whose _remove_cgroup records its arguments and plays ``outcomes``."""
+    calls = []
+
+    def remove(self, force=False, timeout=10):
+        calls.append((force, timeout))
+        outcome = outcomes.pop(0)
+        if outcome is not None:
+            self.cleanup_error = "busy"
+            raise outcome
+        self.cleanup_error = None
+
+    monkeypatch.setattr(Supervisor, "_remove_cgroup", remove)
+    return _supervisor(tmp_path), calls
+
+
+def test_teardown_forces_removal_and_can_be_retried(tmp_path, monkeypatch):
+    sup, calls = _teardown_calls(tmp_path, monkeypatch, [CgroupCleanupError("busy"), None])
+
+    with pytest.raises(CgroupCleanupError):
+        sup.teardown()
+    sup.teardown()
+    sup.teardown()
+
+    # Forced each time; the retry after a timed-out removal makes one attempt
+    # (timeout 0); once removed, teardown is done.
+    assert calls == [(True, 10), (True, 0)]
+
+
+def test_teardown_after_a_failed_start_removal_does_not_wait_again(tmp_path, monkeypatch):
+    sup, calls = _teardown_calls(tmp_path, monkeypatch, [None])
+    sup.cleanup_error = "run cgroup was not removed before the deadline"
+
+    sup.teardown()
+
+    assert calls == [(True, 0)]
+
+
+def test_note_failure_never_replaces_the_error():
+    error = RuntimeError("in flight")
+    error.__notes__ = "not a list"  # makes add_note raise TypeError
+
+    isolate.attach_note(error, "cleanup failed")
+
+    assert error.__notes__ == "not a list"
+    fresh = RuntimeError("in flight")
+    isolate.attach_note(fresh, "cleanup failed")
+    assert fresh.__notes__ == ["cleanup failed"]
+
+
+def test_interrupt_while_noting_never_replaces_the_error():
+    # Reading __notes__ raises KeyboardInterrupt, which is not an Exception:
+    # the note is dropped and the caller still re-raises its own error.
+    class Interrupting(RuntimeError):
+        @property
+        def __notes__(self):
+            raise KeyboardInterrupt
+
+    isolate.attach_note(Interrupting("in flight"), "cleanup failed")
+
+
+# --- probe cleanup ----------------------------------------------------------
+
+
+def _probe(tmp_path, monkeypatch, exists, rmdir_error):
+    monkeypatch.setattr(isolate, "shutil", SimpleNamespace(which=lambda name: "/usr/bin/bwrap"))
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: SimpleNamespace(stdout="cgroup2fs\n"),
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+
+    def rmdir(path):
+        if rmdir_error is not None:
+            raise rmdir_error
+        os.rmdir(path)
+
+    monkeypatch.setattr(
+        isolate,
+        "os",
+        _ScopedOs(
+            rmdir=rmdir,
+            path=SimpleNamespace(exists=lambda p: exists, join=os.path.join, isdir=os.path.isdir),
+        ),
+    )
+    return lambda: isolate.verify_isolation_support(str(tmp_path))
+
+
+def test_probe_cgroup_left_behind_is_reported(tmp_path, monkeypatch):
+    check = _probe(tmp_path, monkeypatch, True, OSError(errno.EBUSY, "Device or resource busy"))
+
+    with pytest.raises(isolate.IsolationUnavailable) as info:
+        check()
+
+    assert info.value.reason == "probe_cleanup_failed"
+    assert info.value.detail.startswith("probe cgroup %s/.forge-probe-" % tmp_path)
+    assert info.value.detail.endswith("was not removed (type=OSError errno=%d)" % errno.EBUSY)
+    assert len(info.value.detail) <= 200
+
+
+def test_probe_cleanup_report_is_bounded(tmp_path, monkeypatch):
+    root = tmp_path / ("r" * 250)
+    root.mkdir()
+    check = _probe(root, monkeypatch, True, OSError(errno.EBUSY, "Device or resource busy"))
+
+    with pytest.raises(isolate.IsolationUnavailable) as info:
+        check()
+
+    assert len(info.value.detail) == 200
+    assert info.value.detail == ("probe cgroup %s/.forge-probe-" % root)[:200]
+
+
+def test_probe_cleanup_failure_is_a_note_on_the_probe_error(tmp_path, monkeypatch):
+    check = _probe(tmp_path, monkeypatch, False, OSError(errno.EBUSY, "Device or resource busy"))
+
+    with pytest.raises(isolate.IsolationUnavailable) as info:
+        check()
+
+    assert info.value.reason == "isolation_unavailable"
+    assert "lacks memory.max" in info.value.detail
+    assert len(info.value.__notes__) == 1
+    assert info.value.__notes__[0].endswith("errno=%d)" % errno.EBUSY)
+
+
+def test_probe_cgroup_removed_is_silent(tmp_path, monkeypatch):
+    check = _probe(tmp_path, monkeypatch, True, None)
+
+    assert check() is None
+    assert os.listdir(tmp_path) == []
 
 
 def test_failed_start_keeps_its_error_and_notes_the_cleanup_failure(plain_root, monkeypatch):
