@@ -1948,7 +1948,8 @@ class StateMachine:
                 finding.fingerprint
                 for finding in companions
                 if finding.disposition == Disposition.UNCERTAIN
-                and [f for f in self._state.findings if f.fingerprint == finding.fingerprint] == [finding]
+                and [f for f in self._state.findings if f.fingerprint == finding.fingerprint]
+                == [finding]
             }
         return preserve
 
@@ -1977,7 +1978,8 @@ class StateMachine:
             if self._responses_last_round is None or self._responses_last_round.get(name) != 1:
                 continue
             attempts = [
-                item for item in self._attempted_last_round
+                item
+                for item in self._attempted_last_round
                 if type(item) is dict and item.get("pass_name") == name
             ]
             if len(attempts) != 1:
@@ -2265,7 +2267,9 @@ class StateMachine:
                 rejected_evidence = self._pure_evidence_rejections(_fp)
                 if _fp in (_FixpointResult.CLEAN, _FixpointResult.INCOMPLETE):
                     gate_action = (
-                        "evidence_rejected" if rejected_evidence else "interrupted"
+                        "evidence_rejected"
+                        if rejected_evidence
+                        else "interrupted"
                         if _fp == _FixpointResult.INCOMPLETE or self._acquisition_markers
                         else "unavailable"
                     )

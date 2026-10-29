@@ -179,10 +179,15 @@ def provider_failure_snapshot(metadata: dict | None) -> dict | None:
     usage = metadata.get("usage")
     return {
         key: (
-            {name: scalar(usage.get(name)) for name in (
-                "input_tokens", "output_tokens", "cached_input_tokens"
-            )} if type(usage) is dict else None
-        ) if key == "usage" else scalar(metadata.get(key))
+            {
+                name: scalar(usage.get(name))
+                for name in ("input_tokens", "output_tokens", "cached_input_tokens")
+            }
+            if type(usage) is dict
+            else None
+        )
+        if key == "usage"
+        else scalar(metadata.get(key))
         for key in ("kind", "duration_s", "exit_code", "stderr", "usage")
     }
 
@@ -194,24 +199,31 @@ def record_provider_failure(finding: StateFinding, error: Exception) -> None:
     if not isinstance(error, LLMInvokeError):
         return
     finding.is_timeout = error.is_timeout
-    finding.provider_failure = provider_failure_snapshot({
-        "kind": error.kind,
-        "duration_s": error.duration_s,
-        "exit_code": error.exit_code,
-        "stderr": error.stderr,
-        "usage": None if type(error.usage) is not Usage else {
-            "input_tokens": error.usage.input_tokens,
-            "output_tokens": error.usage.output_tokens,
-            "cached_input_tokens": error.usage.cached_input_tokens,
-        },
-    })
+    finding.provider_failure = provider_failure_snapshot(
+        {
+            "kind": error.kind,
+            "duration_s": error.duration_s,
+            "exit_code": error.exit_code,
+            "stderr": error.stderr,
+            "usage": None
+            if type(error.usage) is not Usage
+            else {
+                "input_tokens": error.usage.input_tokens,
+                "output_tokens": error.usage.output_tokens,
+                "cached_input_tokens": error.usage.cached_input_tokens,
+            },
+        }
+    )
     if error.kind == "truncated":
         finding.diagnostic_kind = FindingDiagnosticKind.PROVIDER_CAPACITY
 
 
 def _host_diagnostic_shape(finding: StateFinding) -> bool:
     return (
-        all(type(value) is str for value in (finding.id, finding.fingerprint, finding.source, finding.file))
+        all(
+            type(value) is str
+            for value in (finding.id, finding.fingerprint, finding.source, finding.file)
+        )
         and finding.source == "INFRA"
         and finding.disposition is Disposition.CONFIRMED
         and type(finding.line_range) is list
@@ -266,8 +278,11 @@ def is_mutation_infra_diagnostic(finding: StateFinding) -> bool:
 def reporting_product_findings(findings: list[StateFinding]) -> list[StateFinding]:
     """Shared product projection; raw findings remain available for diagnosis."""
     return [
-        f for f in findings
-        if not is_receipt_audit(f) and not is_provider_diagnostic(f) and not is_mutation_infra_diagnostic(f)
+        f
+        for f in findings
+        if not is_receipt_audit(f)
+        and not is_provider_diagnostic(f)
+        and not is_mutation_infra_diagnostic(f)
     ]
 
 
@@ -299,7 +314,9 @@ def derive_pass_outcomes(
             if f.id == f"l1-{pass_name}-spawn-fail":
                 candidate = (
                     PassOutcome.TIMEOUT
-                    if type(f.provider_failure) is not dict or type(f.provider_failure.get("kind")) is not str or f.is_timeout
+                    if type(f.provider_failure) is not dict
+                    or type(f.provider_failure.get("kind")) is not str
+                    or f.is_timeout
                     else PassOutcome.ERROR
                 )
             elif f.id == f"l1-{pass_name}-invoke-fail":
@@ -477,7 +494,9 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             identities = set()
             for rejection in rejections:
                 if not isinstance(rejection, dict) or set(rejection) != {
-                    "pass_name", "attempt_index", "artifact_sha256"
+                    "pass_name",
+                    "attempt_index",
+                    "artifact_sha256",
                 }:
                     raise CorruptedStateError("invalid evidence rejection identity")
                 name = rejection["pass_name"]
@@ -536,9 +555,8 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             if name not in _PASS_NAMES or failure["outcome"] not in ("error", "timeout"):
                 raise CorruptedStateError("invalid acquisition failure outcome")
             kind = "spawn" if failure["id"] == f"l1-{name}-spawn-fail" else "invoke"
-            if (
-                failure["id"] != f"l1-{name}-{kind}-fail"
-                or (failure["fingerprint"] != f"{kind}-fail-{name}")
+            if failure["id"] != f"l1-{name}-{kind}-fail" or (
+                failure["fingerprint"] != f"{kind}-fail-{name}"
             ):
                 raise CorruptedStateError("invalid acquisition producer marker")
         observed = any(value == "returned" for value in phases.values())
@@ -606,9 +624,10 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             or not all(value == "returned" for value in phases.values())
         ):
             raise CorruptedStateError("preserved host round lacks schema/coverage reset observation")
-        if action in (
-            "earned", "interrupted", "reset", "evidence_rejected", "preserved"
-        ) and "dispositions" not in row:
+        if (
+            action in ("earned", "interrupted", "reset", "evidence_rejected", "preserved")
+            and "dispositions" not in row
+        ):
             raise CorruptedStateError("finalized host round lacks product snapshot")
         if action == "preserved":
             _validate_preserved_dispositions(row, history[:position])
@@ -687,14 +706,10 @@ def _project_product_row(row: dict) -> dict | None:
         return None
     row = dict(row)
     collisions = {
-        fp
-        for name in ("l0", "l2", "e2e", "rulepack")
-        for fp in row.get(f"{name}_fingerprints", [])
+        fp for name in ("l0", "l2", "e2e", "rulepack") for fp in row.get(f"{name}_fingerprints", [])
     }
     synthetic = {f["fingerprint"] for f in row["acquisition_failures"]} - collisions
-    row["dispositions"] = {
-        fp: disp for fp, disp in row["dispositions"].items() if fp not in synthetic
-    }
+    row["dispositions"] = {fp: disp for fp, disp in row["dispositions"].items() if fp not in synthetic}
     return row
 
 
@@ -727,9 +742,7 @@ def earned_history_cycles(state: State, source_hash: str, manifest: dict | None)
                 earned.append(row["round"] + 1)
             elif action == "reset":
                 earned.clear()
-            elif action not in (
-                "interrupted", "pending", "evidence_rejected", "preserved"
-            ) and earned:
+            elif action not in ("interrupted", "pending", "evidence_rejected", "preserved") and earned:
                 if action == "unavailable" and all(
                     value == "not_run" for value in row["phase_status"].values()
                 ):
@@ -778,8 +791,7 @@ def _finding_from_dict(d: dict) -> StateFinding:
         falsify_reasoning=d.get("falsify_reasoning"),
         evidence_downgrade=d.get("evidence_downgrade"),
         diagnostic_kind=(
-            None if d.get("diagnostic_kind") is None
-            else FindingDiagnosticKind(d["diagnostic_kind"])
+            None if d.get("diagnostic_kind") is None else FindingDiagnosticKind(d["diagnostic_kind"])
         ),
         provider_failure=d.get("provider_failure"),
     )

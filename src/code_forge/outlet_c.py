@@ -115,7 +115,7 @@ def _run_chunk(
         raw = ""
         try:
             raw = spawn_fn(pass_name, chunk_diff)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any spawn failure becomes an INFRA finding
             findings.append(
                 StateFinding(
                     id="l1-%s-spawn-fail" % pass_name,

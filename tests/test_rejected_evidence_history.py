@@ -164,10 +164,14 @@ def test_rejection_authority_is_illegal_on_other_actions(action):
         row.pop("dispositions")
         row["phase_status"] = {name: "not_run" for name in ROUND_PHASES}
     elif action == "interrupted":
-        row["acquisition_failures"] = [{
-            "id": "l1-qodo-invoke-fail", "fingerprint": "invoke-fail-qodo",
-            "pass_name": "qodo", "outcome": "error",
-        }]
+        row["acquisition_failures"] = [
+            {
+                "id": "l1-qodo-invoke-fail",
+                "fingerprint": "invoke-fail-qodo",
+                "pass_name": "qodo",
+                "outcome": "error",
+            }
+        ]
     elif action == "reset":
         row.update(reset_observed=True, clean_rounds_after=0, fixpoint="RESET")
     elif action == "preserved":
@@ -180,7 +184,9 @@ def test_rejection_authority_is_illegal_on_other_actions(action):
         )
     validate_round_history([row])
     row["evidence_rejections"] = [_rejection()]
-    with pytest.raises(CorruptedStateError, match="evidence rejection authority has incompatible action"):
+    with pytest.raises(
+        CorruptedStateError, match="evidence rejection authority has incompatible action"
+    ):
         validate_round_history([row])
 
 
@@ -217,10 +223,17 @@ def test_rejected_evidence_requires_every_phase_returned(phase, status):
         ("reset_observed", 0),
         ("dispositions", None),
         ("dispositions", {"candidate": "invalid"}),
-        ("acquisition_failures", [{
-            "id": "l1-qodo-invoke-fail", "fingerprint": "invoke-fail-qodo",
-            "pass_name": "qodo", "outcome": "error",
-        }]),
+        (
+            "acquisition_failures",
+            [
+                {
+                    "id": "l1-qodo-invoke-fail",
+                    "fingerprint": "invoke-fail-qodo",
+                    "pass_name": "qodo",
+                    "outcome": "error",
+                }
+            ],
+        ),
         ("falsify_protocol_failures", ["candidate"]),
     ],
 )
@@ -282,10 +295,14 @@ def test_existing_legacy_and_modern_transition_semantics_stay_compatible():
     rows.append(pending)
     assert earned_history_cycles(_state(rows, 2), SOURCE, None) == [1, 2]
     interrupted = _row(2, "interrupted", 2)
-    interrupted["acquisition_failures"] = [{
-        "id": "l1-qodo-invoke-fail", "fingerprint": "invoke-fail-qodo",
-        "pass_name": "qodo", "outcome": "error",
-    }]
+    interrupted["acquisition_failures"] = [
+        {
+            "id": "l1-qodo-invoke-fail",
+            "fingerprint": "invoke-fail-qodo",
+            "pass_name": "qodo",
+            "outcome": "error",
+        }
+    ]
     rows[-1] = interrupted
     assert earned_history_cycles(_state(rows, 2), SOURCE, None) == [1, 2]
     reset = _row(3, "reset", 0)

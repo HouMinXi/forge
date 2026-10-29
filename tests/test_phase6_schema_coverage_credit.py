@@ -32,7 +32,12 @@ from code_forge.state import (
     validate_round_history,
 )
 from tests import test_review_interruption_source_controls as _sc
-from tests.test_review_interruption_source_controls import offline_workspace  # noqa: F401
+
+# Re-export the shared fixture by plain assignment, not `from ... import`, so test
+# parameters named `offline_workspace` are not ruff F811 redefinitions of an
+# unused import. pytest registers a fixture under its module attribute name, so
+# the attribute must stay `offline_workspace`.
+offline_workspace = _sc.offline_workspace
 
 
 SOURCE = "a" * 64
@@ -86,9 +91,10 @@ def test_preserved_in_closed_set_and_survives_earned_window():
     assert earned_history_cycles(state, SOURCE, None) == [1, 2]
 
 
-@pytest.mark.parametrize("cause", [
-    f"{kind}-{name}" for kind in ("schema-fail", "incomplete-coverage") for name in _PASS_NAMES
-])
+@pytest.mark.parametrize(
+    "cause",
+    [f"{kind}-{name}" for kind in ("schema-fail", "incomplete-coverage") for name in _PASS_NAMES],
+)
 @pytest.mark.parametrize("fixpoint", ["RESET", "CYCLE_RESTART"])
 def test_preserved_accepts_reset_shaped_observation(fixpoint, cause):
     rows = [_earned_row(0, 1), _earned_row(1, 2), _preserved_row(2, 2, fixpoint=fixpoint, cause=cause)]
@@ -127,8 +133,10 @@ _NOT_ONLY = "preserved host round lacks \\(iii\\)-only product dispositions"
         (lambda r: r.update(phase_status={**_phases_returned(), "l2": "failed"}), _SHAPE),
         (lambda r: r.update(phase_status={**_phases_returned(), "e2e": "not_run"}), _SHAPE),
         (lambda r: r.update(phase_status={**_phases_returned(), "coverage": "not_run"}), _SHAPE),
-        (lambda r: r.update(falsify_protocol_failures=["schema-fail-adversarial"]),
-         "falsifier protocol failure lacks L1 observation"),
+        (
+            lambda r: r.update(falsify_protocol_failures=["schema-fail-adversarial"]),
+            "falsifier protocol failure lacks L1 observation",
+        ),
         (lambda r: r.pop("dispositions"), "finalized host round lacks product snapshot"),
     ],
 )
@@ -295,6 +303,7 @@ def test_label_presence_alone_is_not_a_credit_authority_field(label, action_row)
     Adding, flipping, or omitting the label on the row leaves validation and the
     earned window identical to the unlabelled history.
     """
+
     def rows():
         tail = _preserved_row(2, 2) if action_row == "preserved" else _earned_row(2, 3)
         return [_earned_row(0, 1), _earned_row(1, 2), tail]
@@ -409,7 +418,10 @@ def _product_finding(fp="product-fp", disposition=Disposition.CONFIRMED, desc="P
 def _guard_machine(tmp_path, monkeypatch, *, receipt_active=True):
     sm = StateMachine(
         resolved_review=ResolvedReview(
-            source_files=[Path("test.py")], baseline_content=None, git_diff=None, mode_hint="git",
+            source_files=[Path("test.py")],
+            baseline_content=None,
+            git_diff=None,
+            mode_hint="git",
         ),
         falsifier=StubFalsifier(),
         source_hash="abc",
@@ -435,9 +447,7 @@ def test_guard_baseline_schema_only_round_preserves(tmp_path, monkeypatch, fixpo
     assert sm._schema_coverage_credit_preserve(fixpoint) is True
 
 
-@pytest.mark.parametrize(
-    "fixpoint", [None, _FixpointResult.CLEAN, _FixpointResult.INCOMPLETE]
-)
+@pytest.mark.parametrize("fixpoint", [None, _FixpointResult.CLEAN, _FixpointResult.INCOMPLETE])
 def test_guard_non_reset_fixpoint_never_preserves(tmp_path, monkeypatch, fixpoint):
     sm = _guard_machine(tmp_path, monkeypatch)
     assert sm._schema_coverage_credit_preserve(fixpoint) is False
@@ -678,15 +688,23 @@ def test_m4_loader_recurrence_ignores_synthetic_acquisition_markers():
     interrupted = _m4_prior_row(1, {marker: "CONFIRMED"})
     interrupted.update(clean_credit_action="interrupted", fixpoint="CLEAN", reset_observed=False)
     interrupted["clean_rounds_after"] = 1
-    interrupted["acquisition_failures"] = [{
-        "id": "l1-qodo-invoke-fail", "fingerprint": marker, "pass_name": "qodo", "outcome": "error",
-    }]
+    interrupted["acquisition_failures"] = [
+        {
+            "id": "l1-qodo-invoke-fail",
+            "fingerprint": marker,
+            "pass_name": "qodo",
+            "outcome": "error",
+        }
+    ]
     rows = [_m4_prior_row(0, {}), interrupted, _m4_preserved(2, 1, {marker: "CONFIRMED"})]
     with pytest.raises(CorruptedStateError, match=_NOT_ONLY):
         validate_round_history(rows, 1)
     # The same fingerprint seen as a real product finding is a plain repeat.
-    rows = [_m4_prior_row(0, {}), _m4_prior_row(1, {marker: "CONFIRMED"}),
-            _m4_preserved(2, 2, {marker: "CONFIRMED"})]
+    rows = [
+        _m4_prior_row(0, {}),
+        _m4_prior_row(1, {marker: "CONFIRMED"}),
+        _m4_preserved(2, 2, {marker: "CONFIRMED"}),
+    ]
     validate_round_history(rows, 2)
 
 
@@ -705,7 +723,10 @@ def test_h2_non_receipt_local_schema_round_keeps_m6_reset(tmp_path):
         autofixer=StubAutoFixer(),
         revert_fn=lambda f: None,
         resolved_review=ResolvedReview(
-            source_files=[Path("test.py")], baseline_content=None, git_diff=None, mode_hint="git",
+            source_files=[Path("test.py")],
+            baseline_content=None,
+            git_diff=None,
+            mode_hint="git",
         ),
         source_hash="abc",
         baseline_spec_repr="empty",
@@ -723,8 +744,12 @@ def test_h2_non_receipt_local_schema_round_keeps_m6_reset(tmp_path):
         for row in machine._state.round_history
     ]
     assert history == [
-        (0, "CLEAN", 1), (1, "CLEAN", 2), (2, "RESET", 0),
-        (3, "CLEAN", 1), (4, "CLEAN", 2), (5, "CLEAN", 3),
+        (0, "CLEAN", 1),
+        (1, "CLEAN", 2),
+        (2, "RESET", 0),
+        (3, "CLEAN", 1),
+        (4, "CLEAN", 2),
+        (5, "CLEAN", 3),
     ]
     assert all("clean_credit_action" not in row for row in machine._state.round_history)
     assert earned_history_cycles(machine._state, "abc", None) == [4, 5, 6]
@@ -775,8 +800,12 @@ def _rejection(call, name="adversarial"):
 def _c3_machine(tmp_path, monkeypatch, *, name="adversarial", companions=None):
     """One parsed schema-fail response for `name` plus its UNTRUSTED companion(s)."""
     sm = _guard_machine(tmp_path, monkeypatch)
-    # Rule 2a: the count enters through a real _L1Call recorder and the
-    # machine's own snapshot point, never by setting the host snapshot.
+    # Rule 2a: the response count enters through a real _L1Call recorder and
+    # the machine's own snapshot point (`_capture_reviewer_responses`); the
+    # fixture never sets `_responses_last_round` directly. The
+    # `_attempted_last_round` assignment below is a legacy-fixture hand-set
+    # kept for the v1 tests per v3 T17; it is NOT the production injection
+    # path (production assigns it only from the L1 phase result).
     sm.l1_provider = _L1Call(lambda call: call.record_reviewer_response(name))
     sm.l1_provider()
     sm._capture_reviewer_responses()
@@ -804,7 +833,9 @@ def test_c3_single_schema_response_with_companions_preserves(tmp_path, monkeypat
     assert sm._fixpoint_without([schema]) is _FixpointResult.RESET
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
     assert sm._c3_strip_fps == {_C3_FP, "loc-other"}
-    assert sm._state.findings == observed and all(a is b for a, b in zip(sm._state.findings, observed))
+    assert sm._state.findings == observed and all(
+        a is b for a, b in zip(sm._state.findings, observed, strict=True)
+    )
 
 
 def _new_product(fp, desc, disposition=Disposition.CONFIRMED):
@@ -834,14 +865,18 @@ def _p3_density(sm):
     _recurring(sm, _new_product("fp-p3", "P3: nit"))
     # One recurring P3 on a two-changed-line diff: 0.5 > P3_DENSITY_THRESHOLD.
     sm.resolved_review = ResolvedReview(
-        source_files=[Path("test.py")], baseline_content=None, mode_hint="git",
+        source_files=[Path("test.py")],
+        baseline_content=None,
+        mode_hint="git",
         git_diff="--- a/test.py\n+++ b/test.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n",
     )
 
 
 def _swap_to_coverage(sm):
     coverage = _coverage_finding("adversarial")
-    sm._state.findings = [coverage if f.fingerprint == "schema-fail-adversarial" else f for f in sm._state.findings]
+    sm._state.findings = [
+        coverage if f.fingerprint == "schema-fail-adversarial" else f for f in sm._state.findings
+    ]
     sm._phase_findings["l1"] = list(sm._state.findings)
 
 
@@ -867,7 +902,9 @@ _C3_NEGATIVES = {
     "new-confirmed-p1": lambda sm: _add(sm, _new_product("fp-new", "P1: new defect")),
     "new-confirmed-p3": lambda sm: _add(sm, _new_product("fp-new", "P3: new nit")),
     "fixed-reversion": lambda sm: _recurring(sm, _new_product("fp-p3", "P3: nit"), prior="FIXED"),
-    "trusted-l1-uncertain": lambda sm: _add(sm, _new_product("fp-unsure", "P3: unsure", Disposition.UNCERTAIN)),
+    "trusted-l1-uncertain": lambda sm: _add(
+        sm, _new_product("fp-unsure", "P3: unsure", Disposition.UNCERTAIN)
+    ),
     "protocol-failure": _proto,
     "hold-fp": lambda sm: setattr(sm, "_hold_confirmed_fingerprints", ["held-fp"]),
     "recurring-p2": lambda sm: _recurring(sm, _new_product("fp-p2", "P2: bug")),
@@ -879,9 +916,13 @@ _C3_NEGATIVES = {
     "two-attempted-items": _two_attempts,
     "two-attempted-items-plus-rejection": lambda sm: (_two_attempts(sm), _with_rejection(sm)),
     "non-json-schema-fail-plus-rejection": lambda sm: (
-        setattr(sm, "_attempted_last_round", []), _with_rejection(sm)),
+        setattr(sm, "_attempted_last_round", []),
+        _with_rejection(sm),
+    ),
     "excerpt-rejection-same-pass": _with_rejection,
-    "pass-in-unavailable-set": lambda sm: setattr(sm, "_unavailable_rejected_passes_last_round", {"adversarial"}),
+    "pass-in-unavailable-set": lambda sm: setattr(
+        sm, "_unavailable_rejected_passes_last_round", {"adversarial"}
+    ),
     "reviewed-repositories-set": lambda sm: setattr(sm, "reviewed_repositories", {"repo": "0" * 40}),
     "non-l1call-provider": lambda sm: setattr(sm, "l1_provider", lambda: ([], [], Usage(), 0.0)),
     "stale-prior-round-companion": _stale,
@@ -915,11 +956,18 @@ def _host_rows(sm, prior_dispositions=None):
         row = _earned_row(index, index + 1)
         row.update(source_hash=sm.source_hash, dispositions=dict(disps))
         rows.append(row)
-    rows.append({
-        "round": 2, "source_hash": sm.source_hash, "reviewed_repositories": None,
-        "clean_credit_action": "unavailable", "phase_status": _phases_returned(),
-        "acquisition_failures": [], "reset_observed": False, "clean_rounds_after": 2,
-    })
+    rows.append(
+        {
+            "round": 2,
+            "source_hash": sm.source_hash,
+            "reviewed_repositories": None,
+            "clean_credit_action": "unavailable",
+            "phase_status": _phases_returned(),
+            "acquisition_failures": [],
+            "reset_observed": False,
+            "clean_rounds_after": 2,
+        }
+    )
     sm._state.round_history = rows
     sm._state.round = 2
     sm._state.consecutive_clean_rounds = 2
@@ -944,8 +992,12 @@ def test_c3_writer_omits_companion_from_preserved_row(tmp_path, monkeypatch):
     assert _C3_FP in row["l1_fingerprints"] and "schema-fail-adversarial" in row["l1_fingerprints"]
     assert sm._c3_strip_fps == set()
     validate_round_history(sm._state.round_history, 2)
-    state = State(round=2, source_hash=sm.source_hash, round_history=sm._state.round_history,
-                  consecutive_clean_rounds=2)
+    state = State(
+        round=2,
+        source_hash=sm.source_hash,
+        round_history=sm._state.round_history,
+        consecutive_clean_rounds=2,
+    )
     assert earned_history_cycles(state, sm.source_hash, None) == [1, 2]
 
 
@@ -1062,7 +1114,6 @@ def test_c3a_reset_row_seeds_ever_seen(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-
 def _c3v2_wrap_body(machine, after):
     """Run the real provider body, then apply `after(call)` to the producer."""
     provider = machine.l1_provider
@@ -1107,6 +1158,7 @@ def test_c3v2_run_control_single_response_preserves(offline_workspace, monkeypat
 
 def test_c3v2_rule2_count2_one_attempt_resets(offline_workspace, monkeypatch):
     """T10: two received responses for P, one attempted payload -> reset (2a)."""
+
     def after(call):
         assert len(_adversarial_attempts(call)) == 1
         call.record_reviewer_response("adversarial")
@@ -1117,8 +1169,11 @@ def test_c3v2_rule2_count2_one_attempt_resets(offline_workspace, monkeypatch):
 
 def test_c3v2_rule2_count1_zero_attempts_resets(offline_workspace, monkeypatch):
     """T11: one received response for P but no attempted payload -> reset (2b)."""
+
     def after(call):
-        call.attempted_excerpts = [a for a in call.attempted_excerpts if a.get("pass_name") != "adversarial"]
+        call.attempted_excerpts = [
+            a for a in call.attempted_excerpts if a.get("pass_name") != "adversarial"
+        ]
 
     machine, _ = _c3v2_run_reset(offline_workspace, monkeypatch, after)
     assert machine._responses_last_round["adversarial"] == 1
@@ -1146,6 +1201,7 @@ def test_c3v2_rule2_count1_dict_subclass_attempt_resets(offline_workspace, monke
 def _set_responses(value):
     def after(call):
         call.reviewer_responses = value(dict(call.reviewer_responses or {}))
+
     return after
 
 
@@ -1219,7 +1275,10 @@ def test_c3v2_rule3_injected_rejection_resets(offline_workspace, monkeypatch):
     def after(call):
         (attempt,) = _adversarial_attempts(call)
         call.record_excerpt_rejection(
-            ExcerptEvidenceError("constructed excerpt rejection"), "adversarial", attempt, diff_text=_sc.DIFF,
+            ExcerptEvidenceError("constructed excerpt rejection"),
+            "adversarial",
+            attempt,
+            diff_text=_sc.DIFF,
         )
         assert [r.pass_name for r in call._excerpt_rejections] == ["adversarial"]
 
@@ -1230,12 +1289,17 @@ def test_c3v2_rule3_injected_rejection_resets(offline_workspace, monkeypatch):
 def _c3v2_group_transport(monkeypatch, groups):
     """Grouped reviewer replies: excerpts only for the group's files; the
     adversarial pass of the control.ts group returns the schema-findings decoy."""
+
     def transport(prompt, *args, **kwargs):
         files = [name for name in _sc.CONTENT if f"diff --git a/{name}" in prompt]
         assert files and tuple(files) in groups
-        body = {"findings": [], "code_excerpts": [
-            {"file": name, "start_line": 1, "end_line": 3, "content": _sc.CONTENT[name]} for name in files
-        ]}
+        body = {
+            "findings": [],
+            "code_excerpts": [
+                {"file": name, "start_line": 1, "end_line": 3, "content": _sc.CONTENT[name]}
+                for name in files
+            ],
+        }
         if _sc._reviewer_role(prompt) == "adversarial" and "control.ts" in files:
             body = _sc._apply_reviewer_fault(body, "schema-findings")
         return _sc.llm_invoke.LLMResult(body)
@@ -1249,8 +1313,9 @@ def _c3v2_section(name):
     return "diff --git " + part
 
 
-@pytest.mark.parametrize("groups", [(("control.ts",), ("other.ts",)), (("control.ts", "other.ts"),)],
-                         ids=["g2", "g1"])
+@pytest.mark.parametrize(
+    "groups", [(("control.ts",), ("other.ts",)), (("control.ts", "other.ts"),)], ids=["g2", "g1"]
+)
 def test_c3v2_grouped_resets(offline_workspace, monkeypatch, groups):
     """T4 (grouped probe, promoted): the real composite from
     build_grouped_l1_provider drives a real machine round. The composite's
@@ -1262,17 +1327,25 @@ def test_c3v2_grouped_resets(offline_workspace, monkeypatch, groups):
     machine, _ = _sc._new_machine(offline_workspace, monkeypatch, fault="schema-findings")
     _c3v2_group_transport(monkeypatch, groups)
     backend = BackendConfig(
-        name="constructed-offline", type="api", format="openai", model="offline",
-        base_url="http://127.0.0.1:1", timeout_s=1,
+        name="constructed-offline",
+        type="api",
+        format="openai",
+        model="offline",
+        base_url="http://127.0.0.1:1",
+        timeout_s=1,
     )
     specs = []
     for index, files in enumerate(groups):
         diff = "".join(_c3v2_section(name) for name in files)
-        specs.append({
-            "name": f"g{index}", "conventions_digest": "", "split_context": "",
-            "post_image": "".join(f"# {n}\n{_sc.CONTENT[n]}" for n in files),
-            "resolved": ResolvedReview([Path(n) for n in files], None, diff, "git"),
-        })
+        specs.append(
+            {
+                "name": f"g{index}",
+                "conventions_digest": "",
+                "split_context": "",
+                "post_image": "".join(f"# {n}\n{_sc.CONTENT[n]}" for n in files),
+                "resolved": ResolvedReview([Path(n) for n in files], None, diff, "git"),
+            }
+        )
     machine.l1_provider = build_grouped_l1_provider("auto", specs, backend=backend, max_attempts=1)
     assert type(machine.l1_provider) is _L1Call
     seen = _sc._inject_gate_errors(monkeypatch, machine, [])
