@@ -1075,9 +1075,10 @@ def test_reply_keys_are_hashable_and_read_only():
     [
         ('{"findings": [{"file": "a.py", "description": "z",}]}', ",}"),
         ('{"findings": [{"file": "a.py", "description": "z"},]}', ",]"),
+        ('{"findings": [], "context_quotes": ["a", "b",]}', ",]"),
         ('{"findings": [{"file": "a.py", "description": "z" ,\n }]}', ",\n }"),
     ],
-    ids=["object", "list", "spaced"],
+    ids=["object", "list", "string_list", "spaced"],
 )
 @pytest.mark.parametrize(
     "message, at_close",
@@ -1253,3 +1254,14 @@ def test_object_right_before_a_close_is_not_the_reply():
 def test_text_after_the_reply(after, kept):
     text = '{"findings": ["first"]}' + after
     assert (invoke._extract_json_from_text(text) is not None) is kept
+
+
+def test_cli_repaired_object_result_with_an_empty_key_falls_back(cli_binary):
+    stdout = '{"type": "result", "subtype": "success", "result": {"findings": [], "": "q "x" r"}}'
+    backend = BackendConfig(name="cli-test", type="cli", model="m", command="")
+    with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(stdout)):
+        result = llm_invoke("prompt", backend=backend, reply_keys=REVIEW_REPLY_KEYS)
+    assert result.content == stdout
+    with patch("code_forge.llm_invoke.subprocess.Popen", return_value=_bare_cli_proc(stdout)):
+        result = llm_invoke("prompt", backend=backend)
+    assert "" in result.content
