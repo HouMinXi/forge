@@ -704,6 +704,18 @@ def test_note_failure_never_replaces_the_error():
     assert fresh.__notes__ == ["cleanup failed"]
 
 
+def test_the_same_note_is_attached_once():
+    # Supervisor.start notes a cleanup failure on the start error, and the
+    # caller's own teardown can note the same text again.
+    error = RuntimeError("in flight")
+
+    isolate.attach_note(error, "cleanup failed")
+    isolate.attach_note(error, "cleanup failed")
+    isolate.attach_note(error, "another note")
+
+    assert error.__notes__ == ["cleanup failed", "another note"]
+
+
 def test_interrupt_while_noting_never_replaces_the_error():
     # Reading __notes__ raises KeyboardInterrupt, which is not an Exception:
     # the note is dropped and the caller still re-raises its own error.

@@ -194,6 +194,26 @@ def _assert_baseline_kept(result, fail_at: int, receipt_ids, last_artifact: str)
     assert result.generation.completion_evidence == result.native_artifacts[-1]
 
 
+def _assert_reported(result, tmp_path: Path, artifact_name: str):
+    """The result names its target and versions, and its evidence matches the file."""
+    identity = result.identity
+    assert identity.target_id == "t1"
+    assert identity.adapter_version != identity.tool_version
+    assert (result.target_id, result.adapter_version, result.tool_version) == (
+        "t1",
+        identity.adapter_version,
+        identity.tool_version,
+    )
+    assert result.generation.extractor_version == identity.adapter_version
+    assert result.cleanup.owned_mounts_removed is True
+    for error in result.infrastructure_errors + result.cleanup.errors:
+        assert error.target_id == "t1"
+    payload = (tmp_path / "state" / "runs" / "run-a" / "results" / artifact_name).read_bytes()
+    evidence = result.native_artifacts[-1]
+    assert evidence.relative_run_path == "results/" + artifact_name
+    assert (evidence.digest, evidence.bytes) == (hashlib.sha256(payload).hexdigest(), len(payload))
+
+
 @pytest.mark.parametrize(("name", "fail_at"), _FAILURE_POINTS)
 def test_run_cgroup_left_behind_keeps_everything_gathered_before_it(
     tmp_path, monkeypatch, name, fail_at
@@ -219,6 +239,7 @@ def test_run_cgroup_left_behind_keeps_everything_gathered_before_it(
         "timed_out": False,
     }
     _assert_baseline_kept(result, fail_at, receipt_ids, "cleanup-failure.json")
+    _assert_reported(result, tmp_path, "cleanup-failure.json")
 
 
 @pytest.mark.parametrize(("name", "fail_at"), _FAILURE_POINTS)
@@ -238,6 +259,7 @@ def test_run_without_isolation_is_an_incomplete_result(tmp_path, monkeypatch, na
     # baseline command if it was first, otherwise a mutation command.
     phase = "baseline" if fail_at == 0 else "mutation"
     assert (error.code, error.phase, error.retryable) == ("isolation-unavailable", phase, False)
+    assert error.message == "isolation_unavailable: no cgroup2"
     # The command never started, so it has no receipt; earlier ones stay.
     assert [r.id for r in result.command_receipts] == list(receipt_ids[:fail_at])
     assert result.cleanup.state is CleanupState.COMPLETE
@@ -250,6 +272,7 @@ def test_run_without_isolation_is_an_incomplete_result(tmp_path, monkeypatch, na
         "cleanup_failure": None,
     }
     _assert_baseline_kept(result, fail_at, receipt_ids, "isolation-failure.json")
+    _assert_reported(result, tmp_path, "isolation-failure.json")
 
 
 def test_run_probe_cgroup_and_run_cgroup_left_behind_are_both_cleanup_errors(tmp_path, monkeypatch):
@@ -269,10 +292,15 @@ def test_run_probe_cgroup_and_run_cgroup_left_behind_are_both_cleanup_errors(tmp
         ("probe-cleanup-failed", "cleanup", True),
         ("cgroup-cleanup-failed", "cleanup", True),
     ]
+    assert [e.message for e in result.cleanup.errors] == [
+        "probe_cleanup_failed: probe left",
+        _LEFT_BEHIND,
+    ]
     assert result.infrastructure_errors == result.cleanup.errors
     report = tmp_path / "state" / "runs" / "run-a" / "results" / "isolation-failure.json"
     assert json.loads(report.read_text())["cleanup_failure"] == _LEFT_BEHIND
     assert result.baseline.state is BaselineState.PASSED
+    _assert_reported(result, tmp_path, "isolation-failure.json")
 
 
 def test_gremlins_probe_cgroup_left_behind_is_a_retryable_cleanup_error(tmp_path, monkeypatch):
@@ -363,16 +391,28 @@ _SCRIPT = "scripts/check-ref.sh"
 def _corpus_project(tmp_path: Path) -> InputSnapshot:
     root = tmp_path / "proj"
     shutil.copytree(_FIXTURE, root, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    entry = {
-        "id": "drop-empty-guard",
-        "source": _SCRIPT,
-        "source_digest": compute_source_digest((root / _SCRIPT).read_bytes()),
-        "old": 'echo "ok $ref"\n',
-        "new": 'echo "ok"\n',
-        "operator": "message-change",
-        "test_selector": "tests/test_check_ref.py::test_accepts_ref",
-    }
-    body = {"schema_version": 1, "target_id": "t1", "entries": [entry]}
+    digest = compute_source_digest((root / _SCRIPT).read_bytes())
+    entries = [
+        {
+            "id": "drop-empty-guard",
+            "source": _SCRIPT,
+            "source_digest": digest,
+            "old": 'echo "ok $ref"\n',
+            "new": 'echo "ok"\n',
+            "operator": "message-change",
+            "test_selector": "tests/test_check_ref.py::test_accepts_ref",
+        },
+        {
+            "id": "change-empty-message",
+            "source": _SCRIPT,
+            "source_digest": digest,
+            "old": 'echo "empty ref" >&2\n',
+            "new": 'echo "empty" >&2\n',
+            "operator": "message-change",
+            "test_selector": "tests/test_check_ref.py::test_accepts_ref",
+        },
+    ]
+    body = {"schema_version": 1, "target_id": "t1", "entries": entries}
     (root / "corpus.json").write_text(json.dumps(body))
     files = tuple(
         InputEntry(
@@ -414,11 +454,21 @@ def _passed_event(run_id: str, mutant: str | None) -> dict:
     }
 
 
-def _corpus_run(tmp_path, monkeypatch, error):
+def _corpus_run(tmp_path, monkeypatch, error, fail_at: int = 1):
+    """Run the patch-corpus adapter; sandboxed command number fail_at raises error(receipt_id).
+
+    Command 0 is the baseline, then one command per corpus entry.
+    """
+    calls: list[str] = []
+
     def sandboxed(self, context, argv, timeout, workspace, receipt_id, target_id, mutant_id=None):
-        if mutant_id is None:
-            return 0, False, _receipt(receipt_id)
-        raise error(receipt_id)
+        calls.append(receipt_id)
+        if len(calls) - 1 == fail_at:
+            raise error(receipt_id)
+        return 0, False, _receipt(receipt_id)
+
+    def event_bytes(events_dir, run_id, mutant):
+        return json.dumps(_passed_event(run_id, mutant), sort_keys=True).encode("utf-8")
 
     monkeypatch.setattr(MutmutAdapter, "_run_sandboxed", sandboxed)
     monkeypatch.setattr(
@@ -426,6 +476,7 @@ def _corpus_run(tmp_path, monkeypatch, error):
         "_load_event",
         lambda events, run_id, mutant: _passed_event(run_id, mutant),
     )
+    monkeypatch.setattr(patch_corpus, "_event_bytes", event_bytes)
     target = _target(
         patch_corpus.ADAPTER_ID,
         command=(sys.executable, "-m", "pytest", "-q"),
@@ -435,9 +486,11 @@ def _corpus_run(tmp_path, monkeypatch, error):
         target_id="t1", granularity="full", files=(), line_ranges={}, reasons=("source-change",)
     )
 
-    return patch_corpus.PatchCorpusAdapter().run(
+    result = patch_corpus.PatchCorpusAdapter().run(
         target, selection, _corpus_project(tmp_path), _context(tmp_path)
     )
+    assert len(calls) == fail_at + 1
+    return result
 
 
 def test_patch_corpus_entry_cgroup_left_behind_keeps_the_baseline(tmp_path, monkeypatch):
@@ -453,6 +506,7 @@ def test_patch_corpus_entry_cgroup_left_behind_keeps_the_baseline(tmp_path, monk
     assert result.command_receipts[0] == result.baseline.command_receipt
     assert result.native_artifacts[-1].relative_run_path == "results/cleanup-failure.json"
     assert len(result.native_artifacts) == 2
+    _assert_reported(result, tmp_path, "cleanup-failure.json")
 
 
 def test_patch_corpus_entry_without_isolation_keeps_the_baseline(tmp_path, monkeypatch):
@@ -470,3 +524,32 @@ def test_patch_corpus_entry_without_isolation_keeps_the_baseline(tmp_path, monke
     assert list(result.command_receipts) == [result.baseline.command_receipt]
     assert result.native_artifacts[-1].relative_run_path == "results/isolation-failure.json"
     assert len(result.native_artifacts) == 2
+    _assert_reported(result, tmp_path, "isolation-failure.json")
+
+
+@pytest.mark.parametrize("error", [_left_behind, lambda receipt_id: isolate.IsolationUnavailable("x")])
+def test_patch_corpus_baseline_sandbox_failure_has_an_unknown_baseline(tmp_path, monkeypatch, error):
+    result = _corpus_run(tmp_path, monkeypatch, error, fail_at=0)
+
+    assert result.run_state is RunState.INCOMPLETE
+    assert result.baseline.state is BaselineState.UNKNOWN
+    assert result.native_artifacts[:-1] == ()
+    assert result.baseline.native_evidence == (result.native_artifacts[-1],)
+
+
+def test_patch_corpus_later_entry_failure_keeps_earlier_entries(tmp_path, monkeypatch):
+    result = _corpus_run(tmp_path, monkeypatch, _left_behind, fail_at=2)
+
+    assert result.run_state is RunState.INCOMPLETE
+    assert result.reason_code == "cgroup-cleanup-failed"
+    assert result.baseline.state is BaselineState.PASSED
+    # Baseline, first entry, and the failing second entry.
+    assert len(result.command_receipts) == 3
+    assert result.command_receipts[0] == result.baseline.command_receipt
+    paths = [a.relative_run_path for a in result.native_artifacts]
+    assert paths == [
+        "results/corpus.json",
+        "results/event-drop-empty-guard.json",
+        "results/cleanup-failure.json",
+    ]
+    _assert_reported(result, tmp_path, "cleanup-failure.json")

@@ -179,10 +179,15 @@ def _bounded(text: str) -> str:
 def attach_note(exc: BaseException, note: str) -> None:
     """Add ``note`` to ``exc`` without ever replacing it.
 
-    A failure while recording the note (for example MemoryError) is dropped,
-    so the error in flight is the one that propagates.
+    A note already on ``exc`` is not added again: a start failure noted by
+    Supervisor.start can be noted with the same cleanup failure by the
+    caller's teardown. A failure while recording the note (for example
+    MemoryError) is dropped, so the error in flight is the one that
+    propagates.
     """
     try:
+        if note in getattr(exc, "__notes__", ()):
+            return
         BaseException.add_note(exc, note)
     except BaseException:  # noqa: BLE001, S110 - a note must never mask the failure
         pass

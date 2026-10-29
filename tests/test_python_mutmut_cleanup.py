@@ -153,6 +153,21 @@ def test_in_flight_error_survives_a_cleanup_failure(tmp_path, runs, error):
     assert thread.joined
 
 
+def test_cleanup_note_already_added_at_start_is_not_repeated(tmp_path, runs):
+    # Supervisor.start already noted the run cgroup left behind; the
+    # teardown here fails with the same message.
+    scripts, _ = runs
+    error = isolate.IsolationUnavailable("limit readback mismatch")
+    error.add_note(_LEFT_BEHIND)
+    scripts.append({"start_error": error, "cleanup_fails": True})
+
+    with pytest.raises(isolate.IsolationUnavailable) as info:
+        _sandboxed(tmp_path)
+
+    assert info.value.__notes__ == [_LEFT_BEHIND]
+    assert str(info.value.cleanup_failure) == _LEFT_BEHIND
+
+
 def test_in_flight_error_survives_when_the_note_cannot_be_added(tmp_path, runs):
     scripts, made = runs
     error = RuntimeError("start failed")
