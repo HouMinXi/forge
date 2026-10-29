@@ -11,7 +11,11 @@ overrides never reach pytest, shutil or other threads' code.
 
 import errno
 import os
+import re
 import shutil
+import signal
+import subprocess
+import threading
 import time
 from collections import Counter
 from types import SimpleNamespace
@@ -35,6 +39,38 @@ _MISSING_BINARY = ("/nonexistent/forge-bwrap",)
 
 # The real removal, kept before ``plain_root`` replaces it with rmtree.
 _REAL_REMOVE_CGROUP = Supervisor._remove_cgroup
+
+# Seconds one test may take. Each test here takes well under a second. A
+# regression that blocks on a read or loops forever must fail its test, not
+# hang the run until the CI step times out (pytest-timeout is not installed).
+_TEST_TIME_LIMIT = 15
+
+
+class _TestHung(AssertionError):
+    """Raised in the main thread when a test runs past ``_TEST_TIME_LIMIT``."""
+
+
+@pytest.fixture(autouse=True)
+def _time_limit():
+    """Fail a test that runs past the limit, using SIGALRM in the main thread.
+
+    The handler raises in the main thread, which interrupts a blocked read,
+    a lock wait or a busy loop there. Forked children do not inherit the timer.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def expire(signum, frame):
+        raise _TestHung("test did not finish within %d s" % _TEST_TIME_LIMIT)
+
+    previous = signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, _TEST_TIME_LIMIT)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 @pytest.fixture
@@ -97,7 +133,28 @@ def _supervisor(root, argv=("/bin/true",)):
     return sup
 
 
-def _start_error(root, argv=("/bin/true",), expected=IsolationError):
+def _stop(thread, sup):
+    """Join the supervisor thread and reap its child, killing a stuck child.
+
+    A child stuck before exec keeps the thread blocked on the status pipe.
+    Killing the child closes its end of the pipe, so the thread finishes and
+    no process outlives the test.
+    """
+    thread.join(timeout=5)
+    if sup._process is None:
+        return
+    if thread.is_alive():
+        sup._process.kill()
+        thread.join(timeout=5)
+    try:
+        sup._process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        sup._process.kill()
+        sup._process.wait(timeout=5)
+
+
+def _failed_start(root, argv=("/bin/true",), expected=IsolationError):
+    """Start a supervisor that must fail; return it and the raised error."""
     sup = _supervisor(root, argv)
     thread = SupervisorThread(sup)
     thread.start()
@@ -105,10 +162,12 @@ def _start_error(root, argv=("/bin/true",), expected=IsolationError):
         with pytest.raises(expected) as info:
             thread.wait_started(30)
     finally:
-        thread.join(timeout=30)
-        if sup._process is not None:
-            sup._process.wait(timeout=30)
-    return str(info.value)
+        _stop(thread, sup)
+    return sup, info.value
+
+
+def _start_error(root, argv=("/bin/true",), expected=IsolationError):
+    return str(_failed_start(root, argv, expected)[1])
 
 
 def _open_fds():
@@ -184,6 +243,56 @@ def test_gate_failure_reports_gate_stage(plain_root, monkeypatch):
     assert message == (
         "payload failed to exec bubblewrap (error stage=gate type=OSError errno=%d)" % errno.EIO
     )
+
+
+def test_gate_closed_without_opening_reports_gate_stage(plain_root, monkeypatch):
+    # Instead of writing the gate byte, the parent swaps its write end of the
+    # gate for /dev/null, which closes the pipe, so the child reads EOF. The
+    # child must report the gate stage and exit, not spin on empty reads.
+    parent = os.getpid()
+    devnull = os.open(os.devnull, os.O_WRONLY)
+
+    def write(fd, data):
+        if not _in_child_of(parent) and data == b"1":
+            os.dup2(devnull, fd)
+            return 1
+        return os.write(fd, data)
+
+    _scoped_os(monkeypatch, write=write)
+    try:
+        sup, error = _failed_start(plain_root)
+    finally:
+        os.close(devnull)
+
+    assert str(error) == (
+        "payload failed to exec bubblewrap (error stage=gate type=EOFError errno=none)"
+    )
+    assert sup._process.poll() == 127
+
+
+def test_failure_right_after_fork_kills_and_reaps_the_child(plain_root, monkeypatch):
+    # The parent's first close after fork fails (after really closing the fd).
+    # The child is recorded before that close, so the failed start kills and
+    # reaps it instead of leaving it blocked at the gate.
+    parent = os.getpid()
+    failed = []
+
+    def close(fd):
+        os.close(fd)
+        if not _in_child_of(parent) and not failed:
+            failed.append(fd)
+            raise OSError(errno.EIO, "injected close failure")
+
+    _scoped_os(monkeypatch, close=close)
+    before = _open_fds()
+
+    sup, error = _failed_start(plain_root, expected=OSError)
+
+    assert "injected close failure" in str(error)
+    assert sup._process is not None
+    assert sup._process.poll() == -signal.SIGKILL
+    assert _open_fds() == before
+    assert not (plain_root / "forge-diag").exists()
 
 
 def test_stdio_failure_reports_stdio_stage(plain_root, monkeypatch):
@@ -358,8 +467,7 @@ def test_start_failure_with_a_busy_cgroup_waits_once(plain_root, monkeypatch):
         with pytest.raises(IsolationError) as info:
             thread.wait_started(30)
     finally:
-        thread.join(timeout=30)
-        sup._process.wait(timeout=30)
+        _stop(thread, sup)
 
     detail = (
         "run cgroup was not removed before the deadline (last rmdir error type=OSError errno=%d)"
@@ -367,7 +475,7 @@ def test_start_failure_with_a_busy_cgroup_waits_once(plain_root, monkeypatch):
     )
     assert type(info.value) is IsolationError
     assert str(info.value).startswith("payload process was not placed in the run cgroup")
-    assert info.value.__notes__ == ["%s: %s" % (sup.cgroup_path, detail)]
+    assert info.value.__notes__ == ["%s: %s" % (detail, sup.cgroup_path)]
     assert sup.cleanup_error == detail
     assert len(rmdir_calls) == 1
 
@@ -436,9 +544,11 @@ def test_successful_exec_raises_nothing_and_leaks_no_fd(plain_root, monkeypatch)
     sup = _supervisor(plain_root)
     thread = SupervisorThread(sup)
     thread.start()
-    thread.wait_started(30)
-    assert sup.wait(timeout=30) == 0
-    thread.join(timeout=30)
+    try:
+        thread.wait_started(30)
+        assert sup.wait(timeout=30) == 0
+    finally:
+        _stop(thread, sup)
     sup.teardown()
     assert _open_fds() == before
 
@@ -496,6 +606,27 @@ def test_read_diagnostic_does_not_hide_a_read_error(monkeypatch):
     assert info.value.errno == errno.EBADF
 
 
+def test_read_diagnostic_makes_the_pipe_non_blocking():
+    # Data is already buffered, so this read returns either way; the pipe must
+    # still be non-blocking, or a read with nothing buffered would wait on a
+    # writer that another thread's fork keeps open.
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, b"x")
+        assert isolate._read_startup_diagnostic(read_fd) == "x"
+        assert os.get_blocking(read_fd) is False
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+def test_error_detail_ignores_an_errno_that_is_not_an_int():
+    # Only an int errno is printed; any other value reads as none.
+    odd = type("Odd", (Exception,), {"errno": "x"})
+
+    assert isolate._error_detail(odd()) == "type=Odd errno=none"
+
+
 def test_read_diagnostic_keeps_only_200_bytes():
     read_fd, write_fd = os.pipe()
     try:
@@ -547,8 +678,9 @@ def _removal(tmp_path, monkeypatch, rmdir_errors):
         calls.append(path)
         if len(calls) <= len(rmdir_errors):
             raise rmdir_errors[len(calls) - 1]
-        # cgroupfs removes a cgroup directory together with its interface files.
-        shutil.rmtree(path)
+        # cgroupfs removes a cgroup directory together with its interface
+        # files. A path that cannot exist (too long) counts as removed.
+        shutil.rmtree(path, ignore_errors=True)
 
     _scoped_os(monkeypatch, rmdir=rmdir)
     ticks = iter([0.0, 9.99])
@@ -584,7 +716,7 @@ def test_cgroup_still_present_at_deadline_is_reported(tmp_path, monkeypatch, err
         error.errno,
     )
     assert sup.cleanup_error == detail
-    assert str(info.value) == "%s: %s" % (sup.cgroup_path, detail)
+    assert str(info.value) == "%s: %s" % (detail, sup.cgroup_path)
     assert isinstance(info.value, IsolationError)
     # One attempt before the deadline check, one retry, then the deadline.
     assert calls == [sup.cgroup_path, sup.cgroup_path]
@@ -601,7 +733,7 @@ def test_cleanup_error_is_bounded_and_printable(tmp_path, monkeypatch):
 
     message = str(info.value)
     assert len(message) == 400
-    assert message.startswith(str(tmp_path) + "/?[31mppp")
+    assert message.startswith(sup.cleanup_error + ": " + str(tmp_path) + "/?[31mppp")
     assert all(" " <= ch <= "~" for ch in message)
     assert isinstance(info.value.__cause__, odd)
 
@@ -609,6 +741,25 @@ def test_cleanup_error_is_bounded_and_printable(tmp_path, monkeypatch):
     assert len(sup.cleanup_error) == 200
     assert sup.cleanup_error.startswith(prefix)
     assert all(" " <= ch <= "~" for ch in sup.cleanup_error)
+
+
+def test_cleanup_error_keeps_type_and_errno_ahead_of_a_long_path(tmp_path, monkeypatch):
+    # The message is cut to 400 characters; a long path must not push the
+    # error type and errno past the cut.
+    sup, _ = _removal(tmp_path, monkeypatch, [OSError(errno.EBUSY, "busy")] * 5)
+    os.rmdir(sup.cgroup_path)
+    sup.cgroup_path = os.path.join(str(tmp_path), "p" * 600)
+
+    with pytest.raises(CgroupCleanupError) as info:
+        sup._remove_cgroup()
+
+    detail = (
+        "run cgroup was not removed before the deadline (last rmdir error type=OSError errno=%d)"
+        % errno.EBUSY
+    )
+    message = str(info.value)
+    assert len(message) == 400
+    assert message.startswith(detail + ": " + str(tmp_path) + "/ppp")
 
 
 def test_absent_cgroup_counts_as_removed(tmp_path, monkeypatch):
@@ -718,17 +869,15 @@ def test_the_same_note_is_attached_once():
 
 def test_notes_that_share_a_long_prefix_are_both_kept():
     # A start failure and its teardown can fail on the same cgroup with
-    # different errno values: the notes differ only at the end.
-    left = (
-        "/sys/fs/cgroup/forge-run: run cgroup was not removed before the deadline"
-        " (last rmdir error type=OSError errno="
-    )
+    # different errno values: the notes differ only in the errno.
+    left = "run cgroup was not removed before the deadline (last rmdir error type=OSError errno="
+    right = "): /sys/fs/cgroup/forge-run"
     error = RuntimeError("in flight")
 
-    isolate.attach_note(error, left + "16)")
-    isolate.attach_note(error, left + "39)")
+    isolate.attach_note(error, left + "16" + right)
+    isolate.attach_note(error, left + "39" + right)
 
-    assert error.__notes__ == [left + "16)", left + "39)"]
+    assert error.__notes__ == [left + "16" + right, left + "39" + right]
 
 
 @pytest.mark.parametrize(
@@ -799,15 +948,29 @@ def test_a_note_anywhere_in_the_list_is_not_repeated():
     assert error.__notes__ == ["first", "second"]
 
 
+class _Interrupt(BaseException):
+    """Not an Exception, like KeyboardInterrupt, but pytest reports it as a failure."""
+
+
 def test_interrupt_while_noting_never_replaces_the_error():
-    # Reading __notes__ raises KeyboardInterrupt, which is not an Exception:
-    # the note is dropped and the caller still re-raises its own error.
+    # Reading __notes__ raises a BaseException that is not an Exception: the
+    # note is dropped, with no second attempt to add it, and the caller still
+    # re-raises its own error.
+    reads = []
+
     class Interrupting(RuntimeError):
         @property
         def __notes__(self):
-            raise KeyboardInterrupt
+            reads.append("__notes__")
+            raise _Interrupt
 
-    isolate.attach_note(Interrupting("in flight"), "cleanup failed")
+    try:
+        result = isolate.attach_note(Interrupting("in flight"), "cleanup failed")
+    except _Interrupt:
+        pytest.fail("attach_note let a BaseException from __notes__ escape")
+
+    assert result is None
+    assert reads == ["__notes__"]
 
 
 # --- probe cleanup ----------------------------------------------------------
@@ -847,12 +1010,17 @@ def test_probe_cgroup_left_behind_is_reported(tmp_path, monkeypatch):
         check()
 
     assert info.value.reason == "probe_cleanup_failed"
-    assert info.value.detail.startswith("probe cgroup %s/.forge-probe-" % tmp_path)
-    assert info.value.detail.endswith("was not removed (type=OSError errno=%d)" % errno.EBUSY)
+    assert re.fullmatch(
+        r"probe cgroup was not removed \(type=OSError errno=%d\): %s/\.forge-probe-\w+"
+        % (errno.EBUSY, re.escape(str(tmp_path))),
+        info.value.detail,
+    )
     assert len(info.value.detail) <= 200
 
 
 def test_probe_cleanup_report_is_bounded(tmp_path, monkeypatch):
+    # The detail is cut to 200 characters; the 250-character path comes after
+    # the error type and errno, so the cut takes only the path's end.
     root = tmp_path / ("r" * 250)
     root.mkdir()
     check = _probe(root, monkeypatch, True, OSError(errno.EBUSY, "Device or resource busy"))
@@ -860,8 +1028,9 @@ def test_probe_cleanup_report_is_bounded(tmp_path, monkeypatch):
     with pytest.raises(isolate.IsolationUnavailable) as info:
         check()
 
+    head = "probe cgroup was not removed (type=OSError errno=%d): " % errno.EBUSY
     assert len(info.value.detail) == 200
-    assert info.value.detail == ("probe cgroup %s/.forge-probe-" % root)[:200]
+    assert info.value.detail == (head + str(root))[:200]
 
 
 def test_probe_cleanup_failure_is_a_note_on_the_probe_error(tmp_path, monkeypatch):
@@ -873,7 +1042,9 @@ def test_probe_cleanup_failure_is_a_note_on_the_probe_error(tmp_path, monkeypatc
     assert info.value.reason == "isolation_unavailable"
     assert "lacks memory.max" in info.value.detail
     assert len(info.value.__notes__) == 1
-    assert info.value.__notes__[0].endswith("errno=%d)" % errno.EBUSY)
+    assert info.value.__notes__[0].startswith(
+        "probe cgroup was not removed (type=OSError errno=%d): %s/" % (errno.EBUSY, tmp_path)
+    )
 
 
 def test_probe_cgroup_removed_is_silent(tmp_path, monkeypatch):
@@ -904,7 +1075,7 @@ def test_failed_start_keeps_its_error_and_notes_the_cleanup_failure(plain_root, 
 
     def stuck(self, force=False):
         assert force
-        raise CgroupCleanupError("forge-diag: run cgroup was not removed before the deadline")
+        raise CgroupCleanupError("run cgroup was not removed before the deadline: forge-diag")
 
     monkeypatch.setattr(Supervisor, "_remove_cgroup", stuck)
     sup = _supervisor(plain_root)
@@ -914,11 +1085,10 @@ def test_failed_start_keeps_its_error_and_notes_the_cleanup_failure(plain_root, 
         with pytest.raises(IsolationError) as info:
             thread.wait_started(30)
     finally:
-        thread.join(timeout=30)
-        sup._process.wait(timeout=30)
+        _stop(thread, sup)
 
     assert type(info.value) is IsolationError
     assert str(info.value).startswith(
         "payload process was not placed in the run cgroup (child exit 127;"
     )
-    assert info.value.__notes__ == ["forge-diag: run cgroup was not removed before the deadline"]
+    assert info.value.__notes__ == ["run cgroup was not removed before the deadline: forge-diag"]

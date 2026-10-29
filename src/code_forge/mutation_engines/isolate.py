@@ -106,8 +106,9 @@ def verify_isolation_support(cgroup_root: str) -> None:
             pass
         except OSError as exc:
             # A probe cgroup left behind is a cleanup failure (#31): report it,
-            # without replacing an error that is already on its way out.
-            detail = _bounded("probe cgroup %s was not removed (%s)" % (probe, _error_detail(exc)))
+            # without replacing an error that is already on its way out. The
+            # path comes last, so a long one cannot cut off the type and errno.
+            detail = _bounded("probe cgroup was not removed (%s): %s" % (_error_detail(exc), probe))
             if failure is None:
                 raise IsolationUnavailable(detail, reason="probe_cleanup_failed") from exc
             attach_note(failure, detail)
@@ -156,7 +157,7 @@ def _read(path: str) -> str:
 
 # Bytes of child startup diagnostic the parent keeps (#31).
 _STARTUP_DIAGNOSTIC_LIMIT = 200
-# A cleanup error names the cgroup path as well as the 200-character detail.
+# A cleanup error names the cgroup path after the 200-character detail.
 _CLEANUP_MESSAGE_LIMIT = 400
 
 
@@ -384,9 +385,10 @@ class Supervisor:
                     os.write(procs_fd, str(os.getpid()).encode())
                     os.close(procs_fd)
                     stage = "gate"
-                    buf = b""
-                    while not buf:
-                        buf = os.read(gate_r, 1)
+                    # EOF means the parent closed the gate without opening
+                    # it; waiting on would spin on empty reads forever.
+                    if not os.read(gate_r, 1):
+                        raise EOFError("gate closed before it was opened")
                     os.close(gate_r)
                     stage = "stdio"
                     devnull = os.open(os.devnull, os.O_RDWR)
@@ -406,11 +408,13 @@ class Supervisor:
                     finally:
                         os._exit(127)
 
+            # Recorded before anything else can fail, so a failed start
+            # always kills and reaps the child.
+            self._process = _ChildProcess(pid)
+            self.payload_pid = pid
             close_parent_fd(gate_r)
             close_parent_fd(procs_fd)
             close_parent_fd(status_w)
-            self._process = _ChildProcess(pid)
-            self.payload_pid = pid
 
             deadline = time.monotonic() + 10
             placed = False
@@ -525,8 +529,9 @@ class Supervisor:
             "run cgroup was not removed before the deadline (last rmdir error %s)"
             % _error_detail(last_error)
         )
+        # The path comes last, so a long one cannot cut off the type and errno.
         raise CgroupCleanupError(
-            _printable("%s: %s" % (self.cgroup_path, self.cleanup_error))[:_CLEANUP_MESSAGE_LIMIT]
+            _printable("%s: %s" % (self.cleanup_error, self.cgroup_path))[:_CLEANUP_MESSAGE_LIMIT]
         ) from last_error
 
     def teardown(self) -> None:

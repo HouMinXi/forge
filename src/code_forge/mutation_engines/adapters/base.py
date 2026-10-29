@@ -222,7 +222,6 @@ def sandbox_failure_result(
     baseline: BaselineRecord | None = None,
     receipts: Sequence[CommandReceipt] = (),
     artifacts: Sequence[ArtifactReference] = (),
-    infra_errors: Sequence[InfrastructureError] = (),
 ) -> TargetResult:
     """Report a run stopped by the sandbox as incomplete, keeping its evidence.
 
@@ -296,7 +295,7 @@ def sandbox_failure_result(
         outcomes=(),
         native_artifacts=tuple(artifacts) + (evidence,),
         command_receipts=kept_receipts,
-        infrastructure_errors=tuple(infra_errors) + new_errors,
+        infrastructure_errors=new_errors,
         cleanup=Cleanup(
             state=CleanupState.INCOMPLETE if cleanup_errors else CleanupState.COMPLETE,
             owned_group_empty=not group_left,

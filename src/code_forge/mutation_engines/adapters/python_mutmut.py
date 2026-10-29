@@ -494,7 +494,7 @@ class MutmutAdapter:
             )
         except (isolate.CgroupCleanupError, isolate.IsolationUnavailable) as exc:
             return sandbox_failure_result(
-                exc, identity, run_directory, baseline_record, receipts, artifacts, infra_errors
+                exc, identity, run_directory, baseline_record, receipts, artifacts
             )
         finally:
             shutil.rmtree(workspace, ignore_errors=True)

@@ -25,7 +25,7 @@ from code_forge.mutation_engines.schemas import (
 )
 from code_forge.mutation_engines.targets import TargetSelection
 
-_LEFT_BEHIND = "/sys/fs/cgroup/forge-run: run cgroup was not removed before the deadline"
+_LEFT_BEHIND = "run cgroup was not removed before the deadline: /sys/fs/cgroup/forge-run"
 
 
 class _FakeSupervisor:
