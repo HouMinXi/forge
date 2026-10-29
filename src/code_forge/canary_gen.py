@@ -408,7 +408,7 @@ def run_inline_canary(
         cite_result = reverify_finding_cites(list(partition.real), source_lookup)
         return Verdict.DELEGATED, list(cite_result.verified)
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - any dispatch failure falls back to DELEGATED
         print(
             "code-forge: canary: dispatch failed: %s, falling back to DELEGATED" % exc,
             file=sys.stderr,
