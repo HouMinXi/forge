@@ -31,6 +31,7 @@ from pathlib import Path
 
 import pytest
 
+import code_forge.machine as machine_mod
 from code_forge import cli, llm_invoke, verify
 from code_forge.autofix import NoChangeAutoFixer
 from code_forge.backend import BackendConfig
@@ -2413,3 +2414,155 @@ def test_fix8_second_run_records_identical_receipt_error(offline_workspace, monk
     second = [e for e in _state(root)[0].infra_errors if "receipt write failed" in e]
     assert second[: len(first)] == first
     assert len(second) == len(first) + 1, second
+
+
+def _secondary_interrupt_before_demotion(mp, machine):
+    """Ctrl-C after the final save; a second Ctrl-C hits the failed path before its demotion."""
+    real = machine_mod.is_host_round
+    flag = {"armed": False, "fired": False}
+
+    def interrupt():
+        flag["armed"] = True
+        raise _AfterRoundInterrupt("constructed primary Ctrl-C after the final save")
+
+    def host_round(row):
+        if flag["armed"] and not flag["fired"]:
+            flag["fired"] = True
+            raise KeyboardInterrupt("constructed second Ctrl-C inside the failed path")
+        return real(row)
+
+    mp.setattr(machine, "_check_mutation_infra_can_still_converge", interrupt)
+    mp.setattr(machine_mod, "is_host_round", host_round)
+    return flag
+
+
+def test_f9_secondary_interrupt_before_demotion_then_rerun(offline_workspace, monkeypatch):
+    """Joint J-N1: run 1's failed path never reaches its demotion, so its guard stays set.
+
+    Run 1 settles round 2 `preserved`, then fails after the final save; a
+    second Ctrl-C inside the failed path stops it before the demotion, so the
+    failed attempt's `preserved` row (credit 2) stays on disk (pre-existing,
+    documented). A second run() on the same instance then fails before its
+    first attempt; only the run() entry reset keeps it from demoting that row.
+    """
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="coverage")
+    with monkeypatch.context() as mp:
+        armed = _spy_actions(mp, machine)
+        flag = _secondary_interrupt_before_demotion(mp, machine)
+        with pytest.raises(_AfterRoundInterrupt):
+            machine.run()
+    assert armed["actions"] == ["preserved"], armed
+    assert flag["fired"]
+    expected = _ledger(_state(root)[0])
+    rows, credit, _ = expected
+    assert rows[-1]["clean_credit_action"] == "preserved" and credit == 2
+    with monkeypatch.context() as mp:
+        _interrupt_continuation_index(mp, machine)
+        with pytest.raises(_AfterRoundInterrupt, match="continuation index"):
+            machine.run()
+    assert _ledger(_state(root)[0]) == expected
+    assert _ledger(machine._state) == expected
+
+
+def _run1_receipt_error_then_hook(mp, machine):
+    _fail_receipt_writes(mp)
+    _raise_in_hook(machine, RuntimeError("constructed post-round failure"))
+    return RuntimeError
+
+
+def _run1_preserved(mp, machine):
+    return None
+
+
+def _run1_secondary_interrupt(mp, machine):
+    _secondary_interrupt_before_demotion(mp, machine)
+    return _AfterRoundInterrupt
+
+
+# fix10 (CR2F9-L1): what the first run() on an instance leaves in memory.
+_FIX10_RUN1 = {
+    # P21: a receipt-write error the failed path booked, then the run raised.
+    "receipt-error-then-hook": ("schema", _run1_receipt_error_then_hook),
+    # P13: round 2 settled `preserved`; run() returned ESCALATED.
+    "preserved-returned": ("coverage", _run1_preserved),
+    # J-N1: the failed path stopped before its demotion.
+    "secondary-interrupt": ("coverage", _run1_secondary_interrupt),
+}
+
+_FIX10_RUN2 = {
+    "preflight": _interrupt_preflight,
+    "continuation-index": _interrupt_continuation_index,
+}
+
+
+def _fix10_run1(root, monkeypatch, case):
+    fault, inject = _FIX10_RUN1[case]
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault=fault)
+    with monkeypatch.context() as mp:
+        error = inject(mp, machine)
+        if error is None:
+            machine.run()
+        else:
+            with pytest.raises(error):
+                machine.run()
+    return machine
+
+
+def _fix10_run2(mp, machine, second):
+    _FIX10_RUN2[second](mp, machine)
+    with pytest.raises(_AfterRoundInterrupt):
+        machine.run()
+
+
+@pytest.mark.parametrize("second", list(_FIX10_RUN2))
+@pytest.mark.parametrize("case", ["receipt-error-then-hook", "preserved-returned"])
+def test_fix10_second_run_early_failure_records_nothing_twice(
+    offline_workspace, monkeypatch, case, second
+):
+    """CR2F9-L1 P21 / P13: a second run() failing before its first attempt adds nothing.
+
+    Run 1 either logs one receipt-write error and raises (P21) or settles
+    round 2 `preserved` and returns (P13). Run 2 on the same instance fails
+    before its first attempt. Each receipt-write error is still on disk
+    exactly once, and the ledger and verdict reload unchanged. At 23dfad66
+    run 1's phase findings and receipt-write errors were still in memory, so
+    run 2 logged the error a second time and saved a FAIL verdict.
+    """
+    root = offline_workspace
+    machine = _fix10_run1(root, monkeypatch, case)
+    before, _ = _state(root)
+    logged = [e for e in before.infra_errors if "receipt write failed" in e]
+    assert len(logged) == (1 if case == "receipt-error-then-hook" else 0), logged
+    with monkeypatch.context() as mp:
+        _fix10_run2(mp, machine, second)
+    after, _ = _state(root)
+    assert [e for e in after.infra_errors if "receipt write failed" in e] == logged
+    assert after.infra_errors == before.infra_errors
+    assert _ledger(after) == _ledger(before)
+    assert after.verdict is before.verdict
+
+
+@pytest.mark.parametrize("second", list(_FIX10_RUN2))
+@pytest.mark.parametrize("case", list(_FIX10_RUN1))
+def test_fix10_second_run_saves_what_a_new_instance_saves(offline_workspace, monkeypatch, case, second):
+    """CR2F9-L1, generic: no per-run state of run 1 reaches run 2's saved state.
+
+    After run 1, the same failure before the first attempt is run twice from
+    the same disk: once by run 1's instance, once by a new instance. Both
+    must leave the same state.json, byte for byte.
+    """
+    root = offline_workspace
+    machine = _fix10_run1(root, monkeypatch, case)
+    path = root / ".code-forge" / "state.json"
+    after_run1 = path.read_bytes()
+    with monkeypatch.context() as mp:
+        _fix10_run2(mp, machine, second)
+    same_instance = path.read_bytes()
+    path.write_bytes(after_run1)
+    fresh, _ = _new_machine(root, monkeypatch, fault=_FIX10_RUN1[case][0])
+    with monkeypatch.context() as mp:
+        _fix10_run2(mp, fresh, second)
+    assert same_instance == path.read_bytes()
