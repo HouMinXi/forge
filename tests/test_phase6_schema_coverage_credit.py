@@ -989,7 +989,7 @@ def test_c3_negative_beside_companion_keeps_reset(tmp_path, monkeypatch, case):
     sm, _, _ = _c3_machine(tmp_path, monkeypatch)
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
     _C3_NEGATIVES[case](sm)
-    # FTD-04 guard: every `_fixpoint_reached` call below, direct or through the
+    # Side-effect guard: every `_fixpoint_reached` call below, direct or through the
     # counterfactual, is compared against a snapshot of the machine's instance
     # attributes taken before it (instance attributes only).
     record = _sc._guard_fixpoint(monkeypatch, sm)
@@ -1016,7 +1016,7 @@ def _falsify_failed(sm):
     sm._falsify_failed_findings = [_new_product("fp-failed", "P3: failed", Disposition.UNCERTAIN)]
 
 
-# FTD-04 R1 (L2): one case per return of `_fixpoint_reached`, in source order,
+# One case per return of `_fixpoint_reached`, in source order,
 # each with the result that proves the return was the one taken.
 _FIXPOINT_RETURNS = {
     "new-confirmed": (lambda sm: _add(sm, _new_product("fp-new", "P3: new nit")), _FixpointResult.RESET),
@@ -1043,7 +1043,7 @@ _FIXPOINT_RETURNS = {
 
 
 @pytest.mark.parametrize("case", list(_FIXPOINT_RETURNS))
-def test_ftd04_every_fixpoint_return_leaves_instance_state_unchanged(tmp_path, monkeypatch, case):
+def test_every_fixpoint_return_leaves_instance_state_unchanged(tmp_path, monkeypatch, case):
     """Each return of `_fixpoint_reached` leaves the machine's instance attributes as they were.
 
     The machine carries only the case's findings, so the expected result

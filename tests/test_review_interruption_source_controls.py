@@ -251,7 +251,7 @@ def _apply_reviewer_fault(body, fault):
     elif fault == "literal":
         body["code_excerpts"][0]["content"] = CONTENT["control.ts"].replace("value = 2", "value = 200")
     elif fault == "inadmissible-dict":
-        # FTD-05 (L-A real path): a schema-invalid dict the audit writer cannot
+        # Real path: a schema-invalid dict the audit writer cannot
         # encode (a tuple is not built-in JSON data), so the factory records
         # schema-fail and marks the pass "audit payload unavailable".
         body["findings"] = "not an array"
@@ -3031,7 +3031,7 @@ def test_fix12_reused_ci_instance_drops_a_fixed_trusted_config_refusal(tmp_path,
     assert saved_reused["verdict"] == saved_new["verdict"]
 
 
-# --- FTD-04 (C1-2g): `_fixpoint_reached` stays side-effect-free -------------
+# --- `_fixpoint_reached` stays side-effect-free ------------------------------
 #
 # `_fixpoint_without` evaluates the counterfactual by swapping
 # `_state.findings` in place and calling `_fixpoint_reached`; the main path,
@@ -3172,8 +3172,8 @@ def _fixpoint_case_failed_attempt(root, monkeypatch):
     ],
     ids=["earned-clean", "c3-companion-counterfactual", "recurring-p3-coverage", "failed-attempt"],
 )
-def test_ftd04_fixpoint_reached_has_no_side_effects_on_real_runs(offline_workspace, monkeypatch, case):
-    """FTD-04 / C1-2g: every real call leaves the machine's instance attributes
+def test_fixpoint_reached_has_no_side_effects_on_real_runs(offline_workspace, monkeypatch, case):
+    """Every real call leaves the machine's instance attributes
     unchanged and repeats its result. Instance attributes only; file system,
     module and class state are outside the snapshot."""
     record, sites = case(offline_workspace, monkeypatch)
@@ -3182,8 +3182,8 @@ def test_ftd04_fixpoint_reached_has_no_side_effects_on_real_runs(offline_workspa
     assert sites <= set(record["sites"]), record["sites"]
 
 
-def test_ftd04_counterfactual_restores_the_same_findings_list(offline_workspace, monkeypatch):
-    """FTD-04: `_fixpoint_without` hands back the identical list object, contents untouched."""
+def test_counterfactual_restores_the_same_findings_list(offline_workspace, monkeypatch):
+    """`_fixpoint_without` hands back the identical list object, contents untouched."""
     root = offline_workspace
     _earned_prefix(root, monkeypatch)
     machine, _ = _new_machine(root, monkeypatch, fault="schema-findings")
@@ -3201,7 +3201,7 @@ def test_ftd04_counterfactual_restores_the_same_findings_list(offline_workspace,
     assert machine._fixpoint_reached() is direct and _machine_snapshot(machine) == before
 
 
-# --- FTD-05 (C1-2f): run-level P3 density/distinct negatives ---------------
+# --- Run-level P3 density/distinct negatives ---------------------------------
 
 
 def _p3_prefix_thresholds(root, monkeypatch, *, density, distinct_per_file):
@@ -3231,7 +3231,7 @@ def _coverage_round_with_counterfactual(root, monkeypatch):
 
     Every `_fixpoint_reached` call in this round, including the counterfactual
     that reaches the P3 density and distinct CYCLE_RESTART returns, runs under
-    the FTD-04 side-effect guard.
+    the side-effect guard.
     """
     machine, calls = _new_machine(
         root, monkeypatch, fault="coverage", mixed_product=True, product_severity="P3"
@@ -3271,8 +3271,8 @@ def _assert_round_four(state, product, proof, over):
 @pytest.mark.parametrize(
     "over", [False, True], ids=["within-threshold-preserves", "over-threshold-resets"]
 )
-def test_ftd05_run_level_p3_density_over_threshold_resets(offline_workspace, monkeypatch, over):
-    """FTD-05 / C1-2f: a recurring P3 over the production density threshold beside
+def test_run_level_p3_density_over_threshold_resets(offline_workspace, monkeypatch, over):
+    """A recurring P3 over the production density threshold beside
     incomplete-coverage is not (iii)-only, so the earned window is wiped (no companion)."""
     from code_forge import flow_contract
     from code_forge.diff import count_diff_lines
@@ -3299,8 +3299,8 @@ def test_ftd05_run_level_p3_density_over_threshold_resets(offline_workspace, mon
 @pytest.mark.parametrize(
     "over", [False, True], ids=["within-threshold-preserves", "over-threshold-resets"]
 )
-def test_ftd05_run_level_p3_distinct_over_threshold_resets(offline_workspace, monkeypatch, over):
-    """FTD-05 / C1-2f: a recurring P3 whose file exceeds the distinct-per-file
+def test_run_level_p3_distinct_over_threshold_resets(offline_workspace, monkeypatch, over):
+    """A recurring P3 whose file exceeds the distinct-per-file
     threshold beside incomplete-coverage is not (iii)-only, so the window is wiped.
 
     The production threshold (5 distinct rules in one file) cannot be reached on
@@ -3310,7 +3310,7 @@ def test_ftd05_run_level_p3_distinct_over_threshold_resets(offline_workspace, mo
     threshold below that single rule (1 > 0) for cycle 4 only; density is
     switched off throughout so only the distinct rule decides.
 
-    Division of proof (CoS ruling 2026-10-30): the production threshold values
+    Division of proof: the production threshold values
     are pinned by the `_p3_over_threshold` unit negatives in
     test_phase6_schema_coverage_credit.py; this integration test proves that
     the distinct-per-file rule, once it fires, drives the real run to the
@@ -3327,16 +3327,16 @@ def test_ftd05_run_level_p3_distinct_over_threshold_resets(offline_workspace, mo
     _assert_round_four(state, product, proof, over)
 
 
-# --- FTD-05 (C1-2f): L-A inadmissible-dict pin on the real path -------------
+# --- Inadmissible-dict pin on the real path ----------------------------------
 
 
 @pytest.mark.parametrize(
     "io_error", [False, True], ids=["audit-unavailable", "audit-unavailable-plus-io"]
 )
-def test_ftd05_la_inadmissible_dict_beside_attempted_schema_wipes_on_real_path(
+def test_unencodable_dict_beside_attempted_schema_wipes_on_real_path(
     offline_workspace, monkeypatch, io_error
 ):
-    """FTD-05 / C1-2f: the L-A pin without injected gate errors.
+    """The audit-unavailable pin without injected gate errors.
 
     The adversarial reply is an admissible schema-invalid dict (attempted
     payload); the qodo reply is a schema-invalid dict the audit writer cannot
