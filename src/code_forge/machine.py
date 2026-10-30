@@ -838,14 +838,32 @@ class StateMachine:
         return [f for f in self._state.findings if is_receipt_audit(f)]
 
     def __post_init__(self) -> None:
-        """Initialize per-round cost accumulator (CLI-08 H3)."""
+        """Initialize instance state; per-run state comes from `_reset_run_state`."""
+        # Kept for the life of the instance: advisories (with the buffer that
+        # feeds them) accumulate across runs, and the mutation source retains
+        # the initial review subject across autofix rounds.
+        self._advisories: list[AdvisoryFinding] = []
+        self._preexisting_buf: list[AdvisoryFinding] = []
+        self._mutation_source_review = None
+        self._mutation_source_subject = None
+        self._mutation_source_guard = None
+        self._reset_run_state()
+
+    def _reset_run_state(self) -> None:
+        """Reset all per-run, per-attempt and per-round state.
+
+        Called from `__post_init__` and as the first step of every run(), so a
+        second run() on the same instance starts from the same state as a new
+        instance and never re-records or re-acts on what an earlier run left
+        (fix10, CR2F9-L1). The saved state itself is reloaded by
+        `_maybe_load_prior_state`.
+        """
+        # CLI-08 H3: per-round cost accumulator.
         self._round_input_tokens: int = 0
         self._round_output_tokens: int = 0
         self._round_cached_tokens: int = 0
         self._round_duration: float = 0.0
         self._round_pass_usage: list[dict] | None = None
-        self._advisories: list[AdvisoryFinding] = []
-        self._preexisting_buf: list[AdvisoryFinding] = []
         # Cycle numbers of the receipts THIS run wrote (round 0 -> cycle
         # 1, etc.), collected so terminal acceptance can attest exactly
         # the current run's window and never a stale one from disk.
@@ -874,8 +892,10 @@ class StateMachine:
         # same attempt can turn the settled `preserved` row back into a reset.
         self._c3_stripped_dispositions: dict[str, str] = {}
         # fix8 (CR3R2-L1): the round whose `preserved` row this attempt settled.
-        # Cleared before every attempt begins, so a failure between rounds or
-        # right after resume never demotes a preserve an earlier attempt saved.
+        # Cleared here at run() entry and before every attempt begins, so a
+        # failure within the same run(), before the next attempt begins, is the
+        # only one that can demote it; a preserve an earlier attempt or an
+        # earlier run() saved is never demoted.
         self._settled_preserve_round: int | None = None
         # fix7 (CR2R2-L1): receipt-write errors already logged to infra_errors
         # (directly or as a receipt gate finding). fix8: reset with
@@ -895,9 +915,6 @@ class StateMachine:
         self._attempt_snapshot: dict | None = None
         self._attempt_findings: list[StateFinding] | None = None
         self._other_source_state: State | None = None
-        self._mutation_source_review = None
-        self._mutation_source_subject = None
-        self._mutation_source_guard = None
         self._mutation_bound_failure = False
         # #157: CI refusal of the trusted gate (outside root / untracked);
         # the CI verdict FAILs with this reason instead of using defaults.
@@ -909,6 +926,11 @@ class StateMachine:
         # #114: this round's L2 infrastructure error (typed, not a product
         # finding). None when the mutation layer worked or cleanly skipped.
         self._l2_infra_error: str | None = None
+        # #143: the untracked-gate pin is taken on this run's first gate load.
+        self._untracked_gate_pin = None
+        self._untracked_gate_pinned = False
+        self._trusted_gate_cache = None
+        self._mutation_measurement_eligible = False
 
     def _capture_mutation_review_source(self) -> None:
         """Retain the initial subject across autofix rounds; never refresh its guard."""
@@ -939,15 +961,12 @@ class StateMachine:
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
+        # fix10 (CR2F9-L1): nothing an earlier run() on this instance left is
+        # this run's; reset before any step can fail. This includes the fix9
+        # (CR3R3-L1) clear of `_settled_preserve_round`: a row a previous run()
+        # settled is never this run's to demote.
+        self._reset_run_state()
         self._note_gate_yaml_edit()
-        # #143: the untracked-gate pin is taken on this run's first gate load.
-        self._untracked_gate_pin = None
-        self._untracked_gate_pinned = False
-        self._trusted_gate_cache = None
-        self._trusted_config_refusal = None
-        # fix9 (CR3R3-L1): a row a previous run() settled is never this run's to
-        # demote, even if this run fails before its first attempt begins.
-        self._settled_preserve_round = None
         admission_error = mutation_review_admission_error(
             target_kind=self.resolved_review.target_kind,
             git_diff=self.resolved_review.git_diff,
@@ -963,8 +982,6 @@ class StateMachine:
         # cycles do no git I/O for ledger / rulepack / suppression switches. Done
         # after the admission check: run() start itself spawns nothing (#143).
         self._trusted_gate_cache = self._resolve_trusted_gate_data()
-        self._acquisition_receipts = ()
-        self._acquisition_authority = None
         progress.reset()
         progress.emit(f"run start: mode={self.mode.value}")
         self._maybe_load_prior_state()
@@ -2174,7 +2191,8 @@ class StateMachine:
         """fix7 (CR3R-L1): a failed attempt never keeps a preserved row it settled.
 
         fix8 scope: only the row this attempt settled (`_settled_preserve_round`),
-        for any failure after the settle and before the next attempt begins.
+        for any failure after the settle within the same run(), before the next
+        attempt begins.
         Rows settled by earlier attempts and earned rows are unchanged, as on main.
         The row becomes the reset the main path records for the same round:
         credit and the earned window are wiped, the C3 companion fingerprints
