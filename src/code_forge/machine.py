@@ -840,13 +840,25 @@ class StateMachine:
     def __post_init__(self) -> None:
         """Initialize instance state; per-run state comes from `_reset_run_state`."""
         # Kept for the life of the instance: advisories (with the buffer that
-        # feeds them) accumulate across runs, and the mutation source retains
-        # the initial review subject across autofix rounds.
+        # feeds them) accumulate across runs, the mutation source retains
+        # the initial review subject across autofix rounds, and the receipt
+        # cycle windows below span every run() on the instance.
         self._advisories: list[AdvisoryFinding] = []
         self._preexisting_buf: list[AdvisoryFinding] = []
         self._mutation_source_review = None
         self._mutation_source_subject = None
         self._mutation_source_guard = None
+        # Receipt cycle windows are also kept across run() calls on the same
+        # instance: a reused instance attests (and detects a stale window
+        # over) every cycle it wrote, as on main.
+        # Cycle numbers of the receipts this instance wrote (round 0 -> cycle
+        # 1, etc.), collected so terminal acceptance attests the written
+        # window and never a stale one from disk.
+        self._written_cycles: list[int] = []
+        # The last clean window's cycles: rounds that reached the clean
+        # fixpoint. Terminal attestation scopes to these, so an earlier
+        # resolved finding cannot poison the clean tail.
+        self._clean_window_cycles: list[int] = []
         self._reset_run_state()
 
     def _reset_run_state(self) -> None:
@@ -864,15 +876,7 @@ class StateMachine:
         self._round_cached_tokens: int = 0
         self._round_duration: float = 0.0
         self._round_pass_usage: list[dict] | None = None
-        # Cycle numbers of the receipts THIS run wrote (round 0 -> cycle
-        # 1, etc.), collected so terminal acceptance can attest exactly
-        # the current run's window and never a stale one from disk.
-        self._written_cycles: list[int] = []
         self._written_pass_outcomes: tuple[tuple[int, int, str], ...] = ()
-        # The last clean window's cycles: rounds that reached the clean
-        # fixpoint. Terminal attestation scopes to these, so an earlier
-        # resolved finding cannot poison the clean tail.
-        self._clean_window_cycles: list[int] = []
         self._last_receipt_write_errors: list[str] = []
         self._excerpts_last_round: list[dict] = []
         self._attempted_last_round: list[dict] = []
