@@ -2923,13 +2923,6 @@ def _fix12_double_fault(mp, machine, primary):
     return error, flag
 
 
-def _interrupt_receipt_diff(mp, machine):
-    def diff(*_args, **_kwargs):
-        raise _AfterRoundInterrupt("constructed interrupt before the earned-window restore")
-
-    mp.setattr(machine, "_receipt_diff", diff)
-
-
 @pytest.mark.parametrize("primary", ["crash", "l1-timeout"])
 def test_fix12_double_fault_then_early_second_run_saves_nothing(offline_workspace, monkeypatch, primary):
     """fix12 (J-N6): a second run() that stops before its first attempt does not finish run 1's attempt.
