@@ -2796,7 +2796,13 @@ _FIX11_CI_RUN1 = {
 
 @pytest.mark.parametrize("case", list(_FIX11_CI_RUN1))
 def test_fix11_second_ci_run_saves_what_a_new_instance_saves(offline_workspace, monkeypatch, case):
-    """fix11: the CI path of the differential above; run 2 is a healthy CI run.
+    """fix11: the CI path of the differential above; run 2 has no injected fault.
+
+    Run 2 still FAILs: this workspace is not a git checkout, so its in-tree
+    gate.yaml is untracked and CI refuses to measure mutation with it (and the
+    carried State keeps run 1's infra errors). The new instance FAILs the same
+    way. test_fix12_ci_outside_root_runs_reach_the_measurement below covers a
+    run 2 that does reach the measurement.
 
     CI never reloads state.json, and the in-memory State is not per-run state:
     a reused instance keeps it (main pins this in
@@ -2825,3 +2831,200 @@ def test_fix11_second_ci_run_saves_what_a_new_instance_saves(offline_workspace, 
     state = ".code-forge/state.json"
     assert json.loads(same_instance[state]) == json.loads(fresh[state])
     assert same_instance == fresh
+
+
+_FIX12_O2 = "evidence-only attestation requires one cycle"
+
+
+def test_fix12_ci_outside_root_runs_reach_the_measurement(
+    offline_workspace, monkeypatch, tmp_path_factory
+):
+    """fix12 (J-N2): the CI differential with a trusted gate config, so the runs reach the measurement.
+
+    Both instances read gate.yaml from a plain copy outside the reviewed tree
+    (--test-config-root), so CI does not refuse it as untracked. Run 1 measures
+    and PASSes. Run 2 on the same instance measures again, then FAILs at
+    receipt acceptance: the receipt cycle windows are kept for the life of the
+    instance by design, and a second run's evidence-only attestation is
+    refused. A reused CI instance therefore cannot reach PASS in run 2. The new
+    instance starts from copies of the State and those windows, and must save
+    the same files.
+    """
+    root = offline_workspace
+    outside = tmp_path_factory.mktemp("forge-config")
+    (outside / ".code-forge").mkdir()
+    (outside / ".code-forge" / "gate.yaml").write_bytes(
+        (root / ".code-forge" / "gate.yaml").read_bytes()
+    )
+    measured = []
+
+    def trusted_root(mp, machine):
+        machine.test_config_root = outside
+        runner = machine.l2_runner
+
+        def l2(*args, **kwargs):
+            measured.append(kwargs["baseline_timeout"])
+            return runner(*args, **kwargs)
+
+        machine.l2_runner = l2
+
+    _earned_prefix(root, monkeypatch)
+    machine = _fix11_round(root, monkeypatch, None, trusted_root, rounds=1, start=0, mode=Mode.CI)
+    run1 = json.loads((root / ".code-forge" / "state.json").read_text())
+    assert run1["verdict"] == Verdict.PASS.value, run1["infra_errors"]
+    assert len(measured) == 1
+    carried = copy.deepcopy((machine._state, machine._written_cycles, machine._clean_window_cycles))
+    after_run1 = _files(root)
+    _fix11_round(root, monkeypatch, None, machine=machine, mode=Mode.CI)
+    assert len(measured) == 2  # run 2 reached the measurement
+    same_instance = _files(root)
+    _restore_files(root, after_run1)
+    assert _files(root) == after_run1
+    _fix11_round(root, monkeypatch, None, trusted_root, mode=Mode.CI, state=carried)
+    assert len(measured) == 3
+    fresh = _files(root)
+    state = ".code-forge/state.json"
+    saved = json.loads(same_instance[state])
+    assert saved["verdict"] == Verdict.FAIL.value
+    assert [e for e in saved["infra_errors"] if _FIX12_O2 in e], saved["infra_errors"]
+    assert not [e for e in saved["infra_errors"] if "untracked gate.yaml" in e], saved["infra_errors"]
+    assert set(fresh) - set(after_run1), "run 2 wrote nothing"
+    assert saved == json.loads(fresh[state])
+    assert same_instance == fresh
+
+
+# fix12 (J-N6): run 1 double-faults, so its failed path never finishes the host
+# attempt and leaves the attempt's round open. Run 2 on the same instance then
+# stops before its first attempt.
+def _fix12_double_fault(mp, machine, primary):
+    """`primary` raises inside the round; a second Ctrl-C hits the failed path's first is_host_round."""
+    real = machine_mod.is_host_round
+    flag = {"armed": False, "fired": False}
+    if primary == "crash":
+        _crash_before_publish(mp, machine)
+        error = RuntimeError
+    else:
+        _timeout_after_l1(mp, machine)
+        error = TimeoutBreaker
+    failed_path = machine._finish_failed_host_attempt
+
+    def finish_failed(primary_error):
+        flag["armed"] = True
+        return failed_path(primary_error)
+
+    def host_round(row):
+        if flag["armed"] and not flag["fired"]:
+            flag["fired"] = True
+            raise KeyboardInterrupt("constructed second Ctrl-C inside the failed path")
+        return real(row)
+
+    mp.setattr(machine, "_finish_failed_host_attempt", finish_failed)
+    mp.setattr(machine_mod, "is_host_round", host_round)
+    return error, flag
+
+
+def _interrupt_receipt_diff(mp, machine):
+    def diff(*_args, **_kwargs):
+        raise _AfterRoundInterrupt("constructed interrupt before the earned-window restore")
+
+    mp.setattr(machine, "_receipt_diff", diff)
+
+
+@pytest.mark.parametrize("primary", ["crash", "l1-timeout"])
+def test_fix12_double_fault_then_early_second_run_saves_nothing(offline_workspace, monkeypatch, primary):
+    """fix12 (J-N6): a second run() that stops before its first attempt does not finish run 1's attempt.
+
+    Run 1 fails in round 2, and a second Ctrl-C inside its failed path stops it
+    before it finishes the host attempt, so round 2's row stays open on disk.
+    Run 2 on the same instance is interrupted at `_receipt_diff`, before its
+    first attempt. A new instance from the same files saves nothing here; the
+    reused instance must not finalize run 1's round-2 row or turn the verdict
+    to FAIL. Red before fix10's run() entry reset (23dfad66, main).
+    """
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="schema")
+    with monkeypatch.context() as mp:
+        error, flag = _fix12_double_fault(mp, machine, primary)
+        with pytest.raises(error):
+            machine.run()
+    assert flag["fired"]
+    path = root / ".code-forge" / "state.json"
+    after_run1 = path.read_bytes()
+    with monkeypatch.context() as mp:
+        _interrupt_receipt_diff(mp, machine)
+        with pytest.raises(_AfterRoundInterrupt):
+            machine.run()
+    same_instance = path.read_bytes()
+    path.write_bytes(after_run1)
+    fresh, _ = _new_machine(root, monkeypatch, fault="schema")
+    with monkeypatch.context() as mp:
+        _interrupt_receipt_diff(mp, fresh)
+        with pytest.raises(_AfterRoundInterrupt):
+            fresh.run()
+    assert path.read_bytes() == after_run1  # the new instance saved nothing
+    saved = json.loads(same_instance)
+    assert saved["verdict"] == json.loads(after_run1)["verdict"], saved["infra_errors"]
+    assert same_instance == after_run1
+
+
+_FIX12_REFUSED = "CI: trusted gate config refused:"
+
+
+def test_fix12_reused_ci_instance_drops_a_fixed_trusted_config_refusal(tmp_path, monkeypatch):
+    """fix12 (J-N1): run 2 does not keep run 1's refusal of the outside gate root.
+
+    CI run 1 refuses the outside test config root (its gate.yaml is a hard
+    link, st_nlink > 1) and FAILs with the refusal. The operator replaces the
+    link with a plain copy. Run 2 on the same instance must save what a new
+    instance saves. As in the CI differential above, the new instance starts
+    from copies of the State and the receipt cycle windows (instance-lifetime by
+    design). The round is stubbed as in main's
+    test_ci_refused_trusted_gate_data_fails_even_without_mutation, so the
+    verdict comes from the gate data alone. Only run() is called.
+    """
+    from code_forge import mutation
+    from tests import test_trusted_test_config as trusted
+
+    repo, base = trusted._repo(tmp_path, gate_at_base=True)
+    outside = tmp_path / "forge-config"
+    (outside / ".code-forge").mkdir(parents=True)
+    os.link(repo / trusted.GATE, outside / trusted.GATE)  # refused: st_nlink > 1
+    monkeypatch.setattr(mutation.shutil, "which", lambda name: None)
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
+
+    def make():
+        machine = trusted._machine(repo, base, mode=Mode.CI)
+        machine.test_config_root = outside
+        return machine
+
+    state_path = repo / ".code-forge" / "state.json"
+    reused = make()
+    assert reused.run() == Verdict.FAIL
+    run1 = json.loads(state_path.read_text())
+    assert any(e.startswith(_FIX12_REFUSED) for e in run1["infra_errors"]), run1["infra_errors"]
+    carried = copy.deepcopy((reused._state, reused._written_cycles, reused._clean_window_cycles))
+    data = (outside / trusted.GATE).read_bytes()
+    (outside / trusted.GATE).unlink()
+    (outside / trusted.GATE).write_bytes(data)  # the operator's fix: nlink 1
+    files = repo / ".code-forge"
+    before = {p: p.read_bytes() for p in files.rglob("*") if p.is_file()}
+    second = reused.run()
+    saved_reused = json.loads(state_path.read_text())
+    for p in [p for p in files.rglob("*") if p.is_file() and p not in before]:
+        p.unlink()
+    for p, data in before.items():
+        p.write_bytes(data)
+    fresh = make()
+    fresh._state = copy.deepcopy(carried[0])
+    fresh._written_cycles, fresh._clean_window_cycles = list(carried[1]), list(carried[2])
+    new = fresh.run()
+    saved_new = json.loads(state_path.read_text())
+    assert new == Verdict.PASS, saved_new["infra_errors"]
+    assert second == new, saved_reused["infra_errors"]
+    refused = [e for e in run1["infra_errors"] if e.startswith(_FIX12_REFUSED)]
+    # the carried State keeps run 1's entry; run 2 adds no refusal of its own
+    assert [e for e in saved_reused["infra_errors"] if e.startswith(_FIX12_REFUSED)] == refused
+    assert saved_reused["infra_errors"] == saved_new["infra_errors"]
+    assert saved_reused["verdict"] == saved_new["verdict"]

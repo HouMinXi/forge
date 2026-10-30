@@ -862,13 +862,13 @@ class StateMachine:
         self._reset_run_state()
 
     def _reset_run_state(self) -> None:
-        """Reset all per-run, per-attempt and per-round state.
+        """Reset the per-run, per-attempt, per-round and L2-phase state below (fix10, CR2F9-L1).
 
-        Called from `__post_init__` and as the first step of every run(), so a
-        second run() on the same instance starts from the same state as a new
-        instance and never re-records or re-acts on what an earlier run left
-        (fix10, CR2F9-L1). The saved state itself is reloaded by
-        `_maybe_load_prior_state`.
+        Called from `__post_init__` and as the first step of every run(). Kept across runs on the
+        same instance: `_state` and the 7 lifetime attributes set in `__post_init__` (advisories
+        and their preexisting buffer, the mutation source review/subject/guard, and the written
+        and clean receipt cycle windows). `_maybe_load_prior_state` replaces `_state` only when a
+        matching state.json loads, which never happens in CI.
         """
         # CLI-08 H3: per-round cost accumulator.
         self._round_input_tokens: int = 0
