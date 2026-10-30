@@ -985,8 +985,17 @@ def test_c3_negative_beside_companion_keeps_reset(tmp_path, monkeypatch, case):
     sm, _, _ = _c3_machine(tmp_path, monkeypatch)
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
     _C3_NEGATIVES[case](sm)
+    # FTD-04 guard: every `_fixpoint_reached` call below, direct or through the
+    # counterfactual, is compared against a snapshot of the machine's instance
+    # attributes taken before it (instance attributes only).
+    record = _sc._guard_fixpoint(monkeypatch, sm)
+    before = _sc._machine_snapshot(sm)
+    sm._fixpoint_reached()
+    assert _sc._machine_snapshot(sm) == before
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
     assert sm._c3_strip_fps == set()
+    assert record["violations"] == []
+    assert "test_c3_negative_beside_companion_keeps_reset" in record["sites"]
 
 
 def test_c3_companion_eligibility_is_per_pass(tmp_path, monkeypatch):

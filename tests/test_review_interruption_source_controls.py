@@ -24,6 +24,7 @@ import copy
 import dataclasses
 import datetime
 import enum
+import errno
 import hashlib
 import io
 import json
@@ -3035,8 +3036,10 @@ def test_fix12_reused_ci_instance_drops_a_fixed_trusted_config_refusal(tmp_path,
 # `_fixpoint_without` evaluates the counterfactual by swapping
 # `_state.findings` in place and calling `_fixpoint_reached`; the main path,
 # the counterfactual and the failed-attempt path all read the same machine.
-# These tests snapshot the whole machine (identity and contents, recursively)
-# around every real call and require the same result on repeated calls.
+# These tests snapshot the machine's instance attributes (identity and
+# contents, recursively) around every real call and require the same result
+# on repeated calls. The snapshot covers instance attributes only: file
+# system, module-level and class-level state are outside it.
 
 
 def _freeze(value, seen=frozenset()):
@@ -3075,12 +3078,17 @@ def _freeze(value, seen=frozenset()):
 
 
 def _machine_snapshot(machine):
-    """Every instance attribute except the guard itself, keyed by name."""
+    """Every instance attribute except the guard itself, keyed by name.
+
+    Instance attributes only: writes to files, module globals or class
+    attributes are not part of this snapshot.
+    """
     return {name: _freeze(value) for name, value in vars(machine).items() if name != "_fixpoint_reached"}
 
 
 def _guard_fixpoint(monkeypatch, machine):
-    """Wrap the real `_fixpoint_reached`; record call site, result and any side effect.
+    """Wrap the real `_fixpoint_reached`; record call site, result and any change
+    to the machine's instance attributes (see `_machine_snapshot` for the scope).
 
     Failures are recorded, not raised: `_finish_failed_host_attempt` swallows
     secondary exceptions, so an assertion raised there would be lost.
@@ -3165,7 +3173,9 @@ def _fixpoint_case_failed_attempt(root, monkeypatch):
     ids=["earned-clean", "c3-companion-counterfactual", "recurring-p3-coverage", "failed-attempt"],
 )
 def test_ftd04_fixpoint_reached_has_no_side_effects_on_real_runs(offline_workspace, monkeypatch, case):
-    """FTD-04 / C1-2g: every real call leaves the whole machine unchanged and repeats its result."""
+    """FTD-04 / C1-2g: every real call leaves the machine's instance attributes
+    unchanged and repeats its result. Instance attributes only; file system,
+    module and class state are outside the snapshot."""
     record, sites = case(offline_workspace, monkeypatch)
     assert record["violations"] == []
     # Non-vacuous: the guard saw each call site this case is meant to exercise.
@@ -3217,10 +3227,16 @@ def _p3_prefix_thresholds(root, monkeypatch, *, density, distinct_per_file):
 
 
 def _coverage_round_with_counterfactual(root, monkeypatch):
-    """Cycle 4: the same recurring P3 plus a new incomplete-coverage finding."""
+    """Cycle 4: the same recurring P3 plus a new incomplete-coverage finding.
+
+    Every `_fixpoint_reached` call in this round, including the counterfactual
+    that reaches the P3 density and distinct CYCLE_RESTART returns, runs under
+    the FTD-04 side-effect guard.
+    """
     machine, calls = _new_machine(
         root, monkeypatch, fault="coverage", mixed_product=True, product_severity="P3"
     )
+    record = _guard_fixpoint(monkeypatch, machine)
     without = machine._fixpoint_without
     counterfactuals = []
 
@@ -3232,6 +3248,8 @@ def _coverage_round_with_counterfactual(root, monkeypatch):
     monkeypatch.setattr(machine, "_fixpoint_without", spy)
     assert machine.run() is Verdict.ESCALATED
     _assert_calls(calls, [4])
+    assert record["violations"] == []
+    assert {"_run_local", "_fixpoint_without"} <= set(record["sites"]), record["sites"]
     state, _ = _state(root)
     return state, counterfactuals
 
@@ -3323,8 +3341,11 @@ def test_ftd05_la_inadmissible_dict_beside_attempted_schema_wipes_on_real_path(
     The adversarial reply is an admissible schema-invalid dict (attempted
     payload); the qodo reply is a schema-invalid dict the audit writer cannot
     encode, so the real factory marks qodo "audit payload unavailable". The
-    I/O variant makes the real receipt writes fail: the receipts directory is
-    read-only for this round. Both are (iii)-only by finding, so the predicate
+    I/O variant makes the real receipt writes fail for this round: creating a
+    new file directly under the receipts directory raises a genuine
+    PermissionError (errno EACCES), as a read-only directory would. This is a
+    monkeypatch rather than a file mode, so it holds for any uid, root
+    included. Both are (iii)-only by finding, so the predicate
     alone would preserve; the real gate damage decides the M6 wipe. The older
     monkeypatched pin (test_la_audit_unavailable_beside_attempted_schema_wipes)
     stays as the narrower gate-contract control.
@@ -3342,14 +3363,23 @@ def test_ftd05_la_inadmissible_dict_beside_attempted_schema_wipes_on_real_path(
         return decision
 
     monkeypatch.setattr(machine, "_schema_coverage_credit_preserve", spy)
-    mode = receipts.stat().st_mode
-    if io_error:
-        receipts.chmod(0o555)  # real EACCES on this round's receipt writes
-    try:
+    write_text = Path.write_text
+    denied = []
+
+    def deny_new_receipt(path, *args, **kwargs):
+        if path.parent == receipts and not path.exists():
+            denied.append(path.name)
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(path))
+        return write_text(path, *args, **kwargs)
+
+    with monkeypatch.context() as io_patch:
+        if io_error:
+            io_patch.setattr(Path, "write_text", deny_new_receipt)
         assert machine.run() is Verdict.FAIL
         errors = machine._receipt_gate_round_errors()
-    finally:
-        receipts.chmod(mode)
+    assert Path.write_text is write_text
+    # Non-vacuous: the I/O variant really refused a receipt write.
+    assert bool(denied) is io_error, denied
     _assert_calls(calls, [3])
     assert decisions == [True]
     # Outcome first, so a lost audit-unavailable signal fails on the wipe itself.
@@ -3361,4 +3391,5 @@ def test_ftd05_la_inadmissible_dict_beside_attempted_schema_wipes_on_real_path(
     assert [item["pass_name"] for item in machine._attempted_last_round] == ["adversarial"]
     assert machine_mod._ATTEMPTED_EVIDENCE_GATE_ERROR in errors and _AUDIT_UNAVAILABLE in errors
     assert any(err.startswith("receipt write failed: ") for err in errors) is io_error
+    assert any(f"[Errno {errno.EACCES}]" in err for err in errors) is io_error
     _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
