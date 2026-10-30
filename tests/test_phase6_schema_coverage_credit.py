@@ -978,6 +978,10 @@ _C3_NEGATIVES = {
     "stale-prior-round-companion": _stale,
 }
 
+# Cases that `_schema_coverage_credit_preserve` rejects before it calls
+# `_fixpoint_without`.
+_C3_BEFORE_COUNTERFACTUAL = {"hold-fp"}
+
 
 @pytest.mark.parametrize("case", list(_C3_NEGATIVES))
 def test_c3_negative_beside_companion_keeps_reset(tmp_path, monkeypatch, case):
@@ -989,13 +993,14 @@ def test_c3_negative_beside_companion_keeps_reset(tmp_path, monkeypatch, case):
     # counterfactual, is compared against a snapshot of the machine's instance
     # attributes taken before it (instance attributes only).
     record = _sc._guard_fixpoint(monkeypatch, sm)
-    before = _sc._machine_snapshot(sm)
     sm._fixpoint_reached()
-    assert _sc._machine_snapshot(sm) == before
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
     assert sm._c3_strip_fps == set()
     assert record["violations"] == []
     assert "test_c3_negative_beside_companion_keeps_reset" in record["sites"]
+    # The hold gate returns before the counterfactual; every other case
+    # reaches it with the schema-fail finding and its companions excluded.
+    assert ("_fixpoint_without" in record["sites"]) is (case not in _C3_BEFORE_COUNTERFACTUAL)
 
 
 def _protocol_then_confirmed(sm):
@@ -1051,9 +1056,7 @@ def test_ftd04_every_fixpoint_return_leaves_instance_state_unchanged(tmp_path, m
     setup, expected = _FIXPOINT_RETURNS[case]
     setup(sm)
     record = _sc._guard_fixpoint(monkeypatch, sm)
-    before = _sc._machine_snapshot(sm)
     assert sm._fixpoint_reached() is expected
-    assert _sc._machine_snapshot(sm) == before
     assert record["violations"] == []
     assert record["results"] == [expected]
 
