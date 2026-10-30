@@ -21,11 +21,15 @@ damage and unknown execution still refuse automatic inherited credit.
 
 import contextlib
 import copy
+import dataclasses
+import datetime
 import hashlib
 import io
 import json
+import os
 import sys
 import threading
+import types
 from collections import Counter
 from pathlib import Path
 
@@ -2566,3 +2570,258 @@ def test_fix10_second_run_saves_what_a_new_instance_saves(offline_workspace, mon
     with monkeypatch.context() as mp:
         _fix10_run2(mp, fresh, second)
     assert same_instance == path.read_bytes()
+
+
+# fix11: run 1 stops after its round began; run 2 on the same instance then
+# completes a round. Both runs see deterministic usage and wall time, so the
+# saved state of run 2 can be compared with a new instance's, byte for byte.
+_FIX11_USAGE = llm_invoke.Usage(11, 7, 3)
+
+
+def _metered(mp, start):
+    """Fixed reviewer usage, 1.5 s per L1 phase, and receipt stamps one second apart from `start`."""
+    transport = llm_invoke._invoke_api
+
+    def metered(*args, **kwargs):
+        return dataclasses.replace(transport(*args, **kwargs), usage=_FIX11_USAGE)
+
+    clock = {"now": 0.0, "stamps": 0}
+
+    def monotonic():
+        clock["now"] += 0.75
+        return clock["now"]
+
+    class Stamp(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            clock["stamps"] += 1
+            return cls(2099, 1, 1, tzinfo=tz) + datetime.timedelta(seconds=start + clock["stamps"])
+
+    mp.setattr(llm_invoke, "_invoke_api", metered)
+    mp.setattr(
+        "code_forge.factories.time", types.SimpleNamespace(monotonic=monotonic, sleep=lambda _s: None)
+    )
+    mp.setattr(
+        "code_forge.receipt.datetime", types.SimpleNamespace(datetime=Stamp, timezone=datetime.timezone)
+    )
+
+
+def _fix11_l1_timeout(mp, machine):
+    _timeout_after_l1(mp, machine)
+    return TimeoutBreaker
+
+
+def _fix11_hook(mp, machine):
+    def hook(_index):
+        raise RuntimeError("constructed post-round failure")
+
+    mp.setattr(machine, "post_round_hook", hook)
+    return RuntimeError
+
+
+def _fix11_receipt_error_then_hook(mp, machine):
+    _fail_receipt_writes(mp)
+    return _fix11_hook(mp, machine)
+
+
+_FIX11_RUN1 = {
+    # Run 1 is stopped after L1 accumulated its usage, before the round folded it.
+    "l1-timeout": ("schema", _fix11_l1_timeout),
+    # Run 1 completes its round, then the post-round hook raises.
+    "post-round-hook": ("schema", _fix11_hook),
+    "receipt-error-then-hook": ("schema", _fix11_receipt_error_then_hook),
+    "preserved-returned": ("coverage", _run1_preserved),
+    # More run-1 stops, each after L1 ran in run 1's round.
+    "workspace-blocker": (
+        "schema",
+        lambda mp, m: _fix11_raising(mp, m, _workspace_blocker_after_round, TimeoutBreaker),
+    ),
+    "gate-recorded-then-error": (
+        "schema",
+        lambda mp, m: _fix11_raising(mp, m, _raise_after_gate_recorded, RuntimeError, True),
+    ),
+    "state-save-after-publish": (
+        "schema",
+        lambda mp, m: _fix11_raising(mp, m, _fail_state_save_after_publish, OSError),
+    ),
+    "crash-before-publish": (
+        "schema",
+        lambda mp, m: _fix11_raising(mp, m, _crash_before_publish, RuntimeError),
+    ),
+    "gate-read-failure": ("schema", lambda mp, m: _fix11_raising(mp, m, _raise_in_gate, OSError)),
+    "l1-timeout-coverage": ("coverage", _fix11_l1_timeout),
+    "preserved-then-save-fails": (
+        "coverage",
+        lambda mp, m: _fix11_raising(mp, m, _fail_first_save_after_preserve, OSError),
+    ),
+    "preserved-then-hook": ("coverage", _fix11_hook),
+    "hold-check-interrupt": (
+        "coverage",
+        lambda mp, m: _fix11_raising(mp, m, _interrupt_in_hold_check, _AfterRoundInterrupt),
+    ),
+    "secondary-interrupt": ("coverage", _run1_secondary_interrupt),
+}
+
+
+def _fix11_raising(mp, machine, inject, error, receipt_error=False):
+    if receipt_error:
+        _fail_receipt_writes(mp)
+    inject(mp, machine)
+    return error
+
+
+def _fix11_round(
+    root,
+    monkeypatch,
+    fault,
+    inject=None,
+    machine=None,
+    rounds=4,
+    start=10_000,
+    mode=Mode.LOCAL,
+    state=None,
+):
+    """One run() of at most `rounds` rounds.
+
+    A given `machine` is reused, with a new instance's reviewer seam for `fault`.
+    A new instance starts from a copy of `state` when one is given: the
+    State, then the written and clean receipt cycle windows.
+    """
+    fresh, _ = _new_machine(root, monkeypatch, fault=fault, rounds=rounds, mode=mode)
+    if state is not None:
+        fresh._state = copy.deepcopy(state[0])
+        fresh._written_cycles, fresh._clean_window_cycles = list(state[1]), list(state[2])
+    machine = fresh if machine is None else machine
+    machine.max_total_rounds = rounds
+    with monkeypatch.context() as mp:
+        _metered(mp, start)
+        error = None if inject is None else inject(mp, machine)
+        if error is None:
+            machine.run()
+        else:
+            with pytest.raises(error):
+                machine.run()
+    return machine
+
+
+def _files(root):
+    """Every file the review wrote or read in the workspace, by relative path."""
+    return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def _restore_files(root, files):
+    for path in [p for p in root.rglob("*") if p.is_file()]:
+        if str(path.relative_to(root)) not in files:
+            path.unlink()
+    for name, data in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_bytes(data)
+
+
+@pytest.mark.parametrize("case", list(_FIX11_RUN1))
+def test_fix11_second_full_run_saves_what_a_new_instance_saves(offline_workspace, monkeypatch, case):
+    """fix11: run 2 on run 1's instance completes its rounds and writes what a new instance writes.
+
+    Run 1 stops after its round began (or returns). From the same files, run
+    2 runs once on run 1's instance and once on a new instance, with the same
+    reviewer replies, usage and wall time. Every file both leave in the
+    workspace (state.json, receipts, ledger) must be byte-identical.
+    """
+    root = offline_workspace
+    fault, inject = _FIX11_RUN1[case]
+    _earned_prefix(root, monkeypatch)
+    machine = _fix11_round(root, monkeypatch, fault, inject, rounds=1, start=0)
+    after_run1 = _files(root)
+    _fix11_round(root, monkeypatch, None, machine=machine)
+    same_instance = _files(root)
+    _restore_files(root, after_run1)
+    assert _files(root) == after_run1
+    _fix11_round(root, monkeypatch, None)
+    fresh = _files(root)
+    # Advisories are kept for the life of the instance (machine.py:842-847):
+    # the reused instance's file lists run 1's advisories, then run 2's.
+    advisories = ".code-forge/advisory-findings.json"
+    reused, new = json.loads(same_instance.pop(advisories)), json.loads(fresh.pop(advisories))
+    assert reused[len(reused) - len(new) :] == new
+    assert {a["id"] for a in reused[: len(reused) - len(new)]} <= {a["id"] for a in new}
+    assert sorted(same_instance) == sorted(fresh)
+    state = ".code-forge/state.json"
+    before, after = json.loads(after_run1[state]), json.loads(fresh[state])
+    # Run 2 reviewed at least one more round and paid for it.
+    assert after["round"] > before["round"], after["infra_errors"]
+    assert after["cost"]["total_input_tokens"] > before["cost"]["total_input_tokens"]
+    assert json.loads(same_instance[state]) == after
+    assert same_instance == fresh
+
+
+def test_fix11_second_run_pins_a_gate_edited_after_the_first(offline_workspace, monkeypatch):
+    """fix11: each run() pins the untracked gate it starts with.
+
+    Run 1 pins gate.yaml, then fails after its round. The gate is edited
+    between runs. Run 2 on the same instance pins the edited gate, as a new
+    instance does: no "changed during this review" refusal, same files.
+    """
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine = _fix11_round(root, monkeypatch, "schema", _fix11_hook, rounds=1, start=0)
+    gate = root / ".code-forge" / "gate.yaml"
+    gate.write_text(gate.read_text().replace("timeout_seconds: 1", "timeout_seconds: 2"))
+    record = Path(os.environ["XDG_CONFIG_HOME"]) / "code-forge" / "untracked-gates.json"
+    after_run1, record_after_run1 = _files(root), record.read_bytes()
+    _fix11_round(root, monkeypatch, None, machine=machine)
+    same_instance = _files(root)
+    _restore_files(root, after_run1)
+    record.write_bytes(record_after_run1)
+    _fix11_round(root, monkeypatch, None)
+    fresh = _files(root)
+    state = ".code-forge/state.json"
+    reused = json.loads(same_instance[state])
+    assert not [e for e in reused["infra_errors"] if "during this review" in e], reused["infra_errors"]
+    advisories = ".code-forge/advisory-findings.json"
+    new = json.loads(fresh.pop(advisories))
+    assert "UNTRACKED_GATE_CHANGED" in {a["id"] for a in new}
+    assert json.loads(same_instance.pop(advisories))[-len(new) :] == new
+    assert json.loads(same_instance[state]) == json.loads(fresh[state])
+    assert same_instance == fresh
+
+
+_FIX11_CI_RUN1 = {
+    "schema": ("schema", None),
+    "coverage": ("coverage", None),
+    "no-json": ("no-json", None),
+    "receipt-error": ("schema", lambda mp, m: _fail_receipt_writes(mp)),
+    "falsifier-timeout-then-hook": ("timeout-empty-kind", _fix11_hook),
+}
+
+
+@pytest.mark.parametrize("case", list(_FIX11_CI_RUN1))
+def test_fix11_second_ci_run_saves_what_a_new_instance_saves(offline_workspace, monkeypatch, case):
+    """fix11: the CI path of the differential above; run 2 is a healthy CI run.
+
+    CI never reloads state.json, and the in-memory State is not per-run state:
+    a reused instance keeps it (main pins this in
+    test_mutation_ledger_ci_controls.py). The receipt cycle windows are kept
+    for the life of the instance by design (machine.__post_init__). So the
+    new instance starts from copies of those three, and everything else must
+    match.
+    """
+    root = offline_workspace
+    fault, inject = _FIX11_CI_RUN1[case]
+    _earned_prefix(root, monkeypatch)
+    machine = _fix11_round(root, monkeypatch, fault, inject, rounds=1, start=0, mode=Mode.CI)
+    carried = (machine._state, machine._written_cycles, machine._clean_window_cycles)
+    carried = copy.deepcopy(carried)
+    after_run1 = _files(root)
+    _fix11_round(root, monkeypatch, None, machine=machine, mode=Mode.CI)
+    same_instance = _files(root)
+    _restore_files(root, after_run1)
+    assert _files(root) == after_run1
+    _fix11_round(root, monkeypatch, None, mode=Mode.CI, state=carried)
+    fresh = _files(root)
+    advisories = ".code-forge/advisory-findings.json"
+    reused, new = json.loads(same_instance.pop(advisories)), json.loads(fresh.pop(advisories))
+    assert reused[len(reused) - len(new) :] == new
+    assert set(fresh) - set(after_run1), "run 2 wrote nothing"
+    state = ".code-forge/state.json"
+    assert json.loads(same_instance[state]) == json.loads(fresh[state])
+    assert same_instance == fresh
