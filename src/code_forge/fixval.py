@@ -20,6 +20,7 @@ import glob
 import logging
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -34,6 +35,7 @@ import unidiff
 
 from . import progress
 from .advisory import AdvisoryFinding
+from ._fixval_junit import AddedNames, added_names, red_witness
 from ._fixval_transaction import FixvalTransaction, TransactionError
 from ._mutation_process import child_sigint_options
 from .disposition import Disposition
@@ -327,9 +329,9 @@ def _transaction_block(message: str, recovery: str) -> FixvalResult:
 # #252: only a judged test failure counts as "fails on the reverted code".
 # pytest's exit codes have fixed meanings; other runners' codes don't (make
 # uses 2 for a failed recipe), so they keep "nonzero = fails" except signals.
-# Exit 1 (tests failed) and exit 2 (interrupted or collection error) count as
-# failing, exactly as before #252: a test importing a name the fix adds exits
-# 2 on the reverted code. Whether collection errors are RED witnesses is #28.
+# Exits 1 (tests failed) and 2 (interrupted or collection error) can be
+# failing; the JUnit report then decides whether they are (#28, see
+# red_witness in _fixval_junit).
 _PYTEST_JUDGED = frozenset({1, 2})
 _PYTEST_EXIT = {
     3: "internal error",
@@ -502,8 +504,9 @@ def _runs_pytest(cmd: list[str]) -> bool:
 def _judged_failure(cmd: list[str], result: subprocess.CompletedProcess) -> str | None:
     """Return None when a nonzero run judged the tests as failing, else why not.
 
-    A signal death never judged anything. For pytest, exits 1 and 2 are
-    judgements (2 pending #28); 3, 4, 5 and unknown codes are not.
+    A signal death never judged anything. For pytest, exits 1 and 2 may be
+    judgements (the JUnit report decides, #28); 3, 4, 5 and unknown codes
+    are not.
     """
     code = result.returncode
     if code < 0:
@@ -586,17 +589,79 @@ def _witnessed_failure(cmd: list[str], result: subprocess.CompletedProcess) -> b
     return _PYTEST_FAILED_ENTRY.search(output) is not None
 
 
+def _read_report(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
 def _test_reverted_candidate(
-    candidate, scoped_cmd, run_env, repo_root, reverted_files=None, *, require_witness=False, timeout=600
+    candidate,
+    scoped_cmd,
+    run_env,
+    repo_root,
+    reverted_files=None,
+    *,
+    require_witness=False,
+    timeout=600,
+    added: AddedNames | None = None,
 ) -> FixvalResult | None:
     """Run the tests on reverted code. With `require_witness`, a nonzero run
-    that did not show a failing test returns None (no verdict)."""
+    that did not show a failing test returns None (no verdict).
+
+    Otherwise a pytest run writes a JUnit report, and exit 1 or 2 is RED
+    only when that report shows a failed test or an import of a name in
+    `added` (#28); without it the run is inconclusive."""
     # #183: each bounded FIXVAL test run starts with a progress line, so the
     # MCP job's inactivity watchdog never sees two runs as one silent span.
     progress.emit("fixval: reverted-fix run")
+    report_dir = report = None
+    if not require_witness and _runs_pytest(scoped_cmd):
+        report_dir = tempfile.mkdtemp(prefix="fixval-junit-")
+        report = os.path.join(report_dir, "junit.xml")
+    try:
+        return _judge_reverted_run(
+            candidate,
+            scoped_cmd,
+            run_env,
+            repo_root,
+            reverted_files,
+            require_witness,
+            timeout,
+            added,
+            report,
+        )
+    finally:
+        if report_dir is not None:
+            shutil.rmtree(report_dir, ignore_errors=True)
+
+
+def _with_junitxml(cmd: list[str], report: str) -> list[str]:
+    """`cmd` with `--junitxml=<report>` added as a pytest option.
+
+    pytest reads every argument after a bare `--` as a path, so the flag
+    goes before the first `--` among pytest's own arguments. A `--` that
+    belongs to a wrapper (`uv run -- pytest`) comes before the pytest part
+    and is left alone."""
+    flag = "--junitxml=%s" % report
+    argv = _unwrap_runner([str(arg) for arg in cmd])
+    # argv is a suffix of cmd; `coverage run` swaps its prefix for one
+    # "python", so the offset holds for every argument after the program.
+    if "--" in argv:
+        at = len(cmd) - len(argv) + argv.index("--")
+        return [*cmd[:at], flag, *cmd[at:]]
+    return [*cmd, flag]
+
+
+def _judge_reverted_run(
+    candidate, scoped_cmd, run_env, repo_root, reverted_files, require_witness, timeout, added, report
+) -> FixvalResult | None:
+    cmd = scoped_cmd if report is None else _with_junitxml(scoped_cmd, report)
     try:
         result = subprocess.run(
-            scoped_cmd,
+            cmd,
             env=run_env,
             capture_output=True,
             text=True,
@@ -619,6 +684,12 @@ def _test_reverted_candidate(
                 return None
             return FixvalResult(status=FixvalStatus.PASS, findings=[], advisories=[])
         reason = _judged_failure(scoped_cmd, result)
+        if reason is None and report is not None:
+            if not red_witness(_read_report(report), added or AddedNames(frozenset(), frozenset())):
+                reason = (
+                    "pytest exit %d without a failed test or an import of a name the fix adds"
+                    % result.returncode
+                )
         if reason is not None:
             return _inconclusive_block(reason, result.stderr or result.stdout or "")
         return FixvalResult(status=FixvalStatus.PASS, findings=[], advisories=[])
@@ -1032,6 +1103,7 @@ def _reverted_run(
                 changed_files_in_order(non_test_patch),
                 require_witness=require_witness,
                 timeout=timeout,
+                added=added_names(non_test_patch),
             )
     except (OSError, ValueError, TransactionError, subprocess.SubprocessError) as exc:
         errors.append(str(exc))
