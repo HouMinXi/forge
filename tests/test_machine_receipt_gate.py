@@ -891,14 +891,19 @@ def test_healthy_acquired_receipts_keep_normal_order(tmp_path, monkeypatch):
     assert not list((tmp_path / ".code-forge/receipts/attempted").glob("*.json"))
 
 
-def _assert_local_early_attempt(machine, *, round_index):
+def _assert_local_early_attempt(machine, *, round_index, credit_action="reset"):
+    """A failed attempt whose later phases never ran stays a reset (M6 behaviour).
+
+    Phase 6 preserve requires every round phase returned (#332 PR #319 H1), so
+    a schema_fail observed before L2/E2E/coverage ran cannot keep credit.
+    """
     history = machine._state.round_history
     assert len({row["round"] for row in history}) == len(history)
     row = history[-1]
     assert row["round"] == round_index
     assert row["source_hash"] == machine.source_hash
     assert row["reviewed_repositories"] is None
-    assert row["clean_credit_action"] == "reset"
+    assert row["clean_credit_action"] == credit_action
     assert row["phase_status"] == {
         "l0": "returned",
         "rulepack": "returned",
@@ -912,6 +917,7 @@ def _assert_local_early_attempt(machine, *, round_index):
     assert row["clean_rounds_after"] == machine._state.consecutive_clean_rounds == 0
     assert row["dispositions"]
     assert row["l2_fingerprints"] == row["e2e_fingerprints"] == []
+    # These early-attempt fixtures seed no earned window; both actions leave empty.
     assert machine._state.earned_clean_window["cycles"] == []
 
 
@@ -1147,7 +1153,8 @@ def _assert_terminal_round_unchanged(case, prior, returned):
         if key.startswith("cost_") or key == "exec_evidence":
             assert disk[key] == value
     assert disk["round_history"][:-1] == prior["round_history"]
-    _assert_local_early_attempt(machine, round_index=expected_round)
+    # findings=True fixtures mix schema-fail with product CONFIRMED → still reset.
+    _assert_local_early_attempt(machine, round_index=expected_round, credit_action="reset")
     assert disk["round_history"][-1]["dispositions"] == {
         finding["fingerprint"]: finding["disposition"] for finding in disk["findings"]
     }

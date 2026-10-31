@@ -115,7 +115,7 @@ def _run_chunk(
         raw = ""
         try:
             raw = spawn_fn(pass_name, chunk_diff)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any spawn failure becomes an INFRA finding
             findings.append(
                 StateFinding(
                     id="l1-%s-spawn-fail" % pass_name,
@@ -133,6 +133,9 @@ def _run_chunk(
             if rejection_state is not None:
                 rejection_state.acquisition_failures.append(findings[-1])
             continue
+        # C3 rule 2a: one received response, counted before validation.
+        if rejection_state is not None:
+            rejection_state.record_reviewer_response(pass_name)
         original_exact_dict = type(raw) is dict
         raw_snapshot = _snapshot_raw_response(raw)
         try:

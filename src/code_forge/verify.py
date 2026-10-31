@@ -25,6 +25,12 @@ from enum import Enum
 from itertools import combinations
 from pathlib import Path
 
+from .basis import (
+    AUTHORITY_DETERMINISTIC_EXECUTED,
+    AUTHORITY_LLM_DOCS_LATEST,
+    AUTHORITY_LLM_DOCS_PINNED,
+    AUTHORITY_LLM_TRAINED,
+)
 from .diff import parse_diff_hunks, path_from_plus_header
 from .disposition import Disposition
 from .errors import CorruptedReceiptError, UnreadableGateError
@@ -389,19 +395,26 @@ def _capture_earned_cycle(
 
 
 def _validate_evidence_rejection(
-    cwd: Path, diff_sha256: str, diff_text: str | None, row: dict,
-    *, receipt_records: tuple[_ReceiptRecord, ...] | None = None,
+    cwd: Path,
+    diff_sha256: str,
+    diff_text: str | None,
+    row: dict,
+    *,
+    receipt_records: tuple[_ReceiptRecord, ...] | None = None,
 ) -> VerifyResult:
     """Recheck a non-earning ordinary rejection against its exact retained audit."""
     from .receipt import _attempted_artifact_path
     from .reviewer_json import (
-        ExcerptEvidenceError, require_l1_excerpt_evidence, validate_reviewer_json,
+        ExcerptEvidenceError,
+        require_l1_excerpt_evidence,
+        validate_reviewer_json,
     )
     from .state import _PASS_NAMES
 
     refused = VerifyResult(False, "rejected evidence audit does not establish a pure rejection", 1, 0)
     if (
-        type(diff_text) is not str or not diff_text
+        type(diff_text) is not str
+        or not diff_text
         or row.get("source_hash") != diff_sha256
         or row.get("reviewed_repositories") is not None
         or row.get("dispositions") != {}
@@ -422,11 +435,17 @@ def _validate_evidence_rejection(
             if (
                 receipt["diff_sha256"] != diff_sha256
                 or "reviewed_repositories" in receipt
-                or receipt["findings"] != [] or receipt["findings_count"] != 0
+                or receipt["findings"] != []
+                or receipt["findings_count"] != 0
                 or receipt.get("excerpt_validation_errors")
-                or receipt.get("pass_status") != ("incomplete" if role in rejected_roles else "completed")
+                or receipt.get("pass_status")
+                != ("incomplete" if role in rejected_roles else "completed")
                 or (role in rejected_roles and receipt["code_excerpts"] != [])
-                or (role not in rejected_roles and _requires_l1_excerpts(diff_text) and not receipt["code_excerpts"])
+                or (
+                    role not in rejected_roles
+                    and _requires_l1_excerpts(diff_text)
+                    and not receipt["code_excerpts"]
+                )
                 or validate_excerpts_against_diff(diff_text, receipt["code_excerpts"], cwd=cwd)
             ):
                 return refused
@@ -441,7 +460,8 @@ def _validate_evidence_rejection(
                 type(audit) is not dict
                 or set(audit) != {"attempted", "cycle", "pass_name", "payload"}
                 or audit["attempted"] is not True
-                or type(audit["cycle"]) is not int or audit["cycle"] != cycle
+                or type(audit["cycle"]) is not int
+                or audit["cycle"] != cycle
                 or audit["pass_name"] != role
                 or type(audit["payload"]) is not dict
                 or audit["payload"].get("pass_name") != role
@@ -611,13 +631,28 @@ def _evidence_downgrade_refusal(cwd: Path, diff_sha256: str) -> VerifyResult | N
     except FileNotFoundError:
         return None
     except OSError as exc:
-        return VerifyResult(False, f"unavailable earned state: unreadable state.json (evidence downgrade check): {exc}", 1, 0)
+        return VerifyResult(
+            False,
+            f"unavailable earned state: unreadable state.json (evidence downgrade check): {exc}",
+            1,
+            0,
+        )
     try:
         data = json.loads(raw)
     except (ValueError, RecursionError) as exc:
-        return VerifyResult(False, f"unavailable earned state: malformed state.json (evidence downgrade check): {exc}", 1, 0)
+        return VerifyResult(
+            False,
+            f"unavailable earned state: malformed state.json (evidence downgrade check): {exc}",
+            1,
+            0,
+        )
     if type(data) is not dict:
-        return VerifyResult(False, "unavailable earned state: malformed state.json: not an object (evidence downgrade check)", 1, 0)
+        return VerifyResult(
+            False,
+            "unavailable earned state: malformed state.json: not an object (evidence downgrade check)",
+            1,
+            0,
+        )
     if data.get("source_hash") != diff_sha256:
         return None
     findings = data.get("findings")
@@ -873,9 +908,7 @@ def _fresh_reviewer_responses(receipts: list[dict], a: int, b: int) -> bool:
     if {h for h, _ in first.values()} & {h for h, _ in second.values()}:
         return False
     return not any(
-        _near_duplicate(left, right)
-        for _, left in first.values()
-        for _, right in second.values()
+        _near_duplicate(left, right) for _, left in first.values() for _, right in second.values()
     )
 
 
@@ -896,6 +929,26 @@ def _open_findings(items: list) -> list:
             continue
         open_items.append(item)
     return open_items
+
+
+def _has_unverified_basis(finding: dict) -> bool:
+    """Absent legacy basis is accepted; present basis needs known authority.
+
+    Unknown authorities intentionally fail closed. Normalize only for the
+    comparison so unresolved snapshots retain the original receipt evidence.
+    """
+    if "basis" not in finding:
+        return False
+    basis = finding["basis"]
+    if not isinstance(basis, dict):
+        return True
+    authority = basis.get("authority")
+    return not isinstance(authority, str) or authority.strip().lower() not in (
+        AUTHORITY_DETERMINISTIC_EXECUTED,
+        AUTHORITY_LLM_TRAINED,
+        AUTHORITY_LLM_DOCS_LATEST,
+        AUTHORITY_LLM_DOCS_PINNED,
+    )
 
 
 def _constant_offset(
@@ -1123,12 +1176,8 @@ def assess_excerpt_evidence(
     # Only a frozen source can prove those extra lines are the real next
     # lines, so the count gate lets that one case through to the byte check.
     if not excerpt_line_count_matches(text, claimed):
-        two_short_with_source = (
-            post_image is not None and claimed == len(actual_lines) + 2
-        )
-        two_long_with_source = (
-            post_image is not None and len(actual_lines) == claimed + 2
-        )
+        two_short_with_source = post_image is not None and claimed == len(actual_lines) + 2
+        two_long_with_source = post_image is not None and len(actual_lines) == claimed + 2
         if not (two_short_with_source or two_long_with_source):
             return ExcerptAssessment(invalid, count_error)
     if hunk_map is None:
@@ -1154,8 +1203,7 @@ def assess_excerpt_evidence(
         # starting at the declared start. A mismatch stays a miscount.
         carried = {exc_start + i: line for i, line in enumerate(actual_lines)}
         exact = all(
-            n in file_lines and _line_content_matches(line, file_lines[n])
-            for n, line in carried.items()
+            n in file_lines and _line_content_matches(line, file_lines[n]) for n, line in carried.items()
         )
         if exact:
             return _anchored_assessment(untrusted, count_error, carried, hunks, location)
@@ -1173,10 +1221,7 @@ def assess_excerpt_evidence(
         tail_blank = tail is not None and not tail.strip()
         penultimate = file_lines.get(exc_end - 1) if short_by_two else None
         two_blank_tail = (
-            short_by_two
-            and tail_blank
-            and penultimate is not None
-            and not penultimate.strip()
+            short_by_two and tail_blank and penultimate is not None and not penultimate.strip()
         )
         head_blank = head is not None and not head.strip()
         prefix = {exc_start + i: line for i, line in enumerate(actual_lines)}
@@ -1572,7 +1617,7 @@ def normalize_finding_path(file, known, *, cwd=None):
     if cwd is not None and raw.startswith("/"):
         root = str(Path(cwd).resolve()).rstrip("/") + "/"
         if raw.startswith(root):
-            candidates.append(raw[len(root):])
+            candidates.append(raw[len(root) :])
     stripped = raw
     while stripped.startswith("./"):
         stripped = stripped[2:]
@@ -1633,14 +1678,11 @@ def finding_excerpt_binding(diff_text, file, line, excerpt, *, cwd=None):
     n = len(quoted)
     starts = range(max(1, line - n + 1), line + 1) if line >= 1 else sorted(source)
     for start in starts:
-        if line < 1 and not any(
-            h["start"] <= start + n - 1 and start <= h["end"] for h in hunks
-        ):
+        if line < 1 and not any(h["start"] <= start + n - 1 and start <= h["end"] for h in hunks):
             # File-level quote must touch a hunk line, not just context.
             continue
         if all(
-            source.get(start + k) is not None and norm(source[start + k]) == quoted[k]
-            for k in range(n)
+            source.get(start + k) is not None and norm(source[start + k]) == quoted[k] for k in range(n)
         ):
             return True
     return False
@@ -2164,20 +2206,21 @@ def _run_verify_impl(
     # incomplete role cannot exempt independent findings in any role.
     if require_convergence or incomplete:
         for r in attested:
-            for finding in r["findings"]:
-                basis = finding.get("basis")
-                if (
-                    finding.get("disposition") in ("CONFIRMED", "UNCERTAIN")
-                    and isinstance(basis, dict)
-                    and basis.get("authority") == "infra-unavailable"
-                ):
-                    unresolved.append((
-                        r["cycle"], r["pass"], r["diff_sha256"],
-                        json.dumps(finding, sort_keys=True, separators=(",", ":")),
-                    ))
+            unresolved.extend(
+                (
+                    r["cycle"],
+                    r["pass"],
+                    r["diff_sha256"],
+                    json.dumps(finding, sort_keys=True, separators=(",", ":")),
+                )
+                for finding in _open_findings(r["findings"])
+                if _has_unverified_basis(finding)
+            )
     if unresolved:
         cycle, number, _, _ = unresolved[0]
-        reason = f"unresolved unverified product finding c{cycle}p{number} -- convergence not established"
+        reason = (
+            f"unresolved unverified product finding c{cycle}p{number} -- convergence not established"
+        )
         if incomplete:
             # #50: a pass that did not complete (e.g. status=schema_fail) is the
             # primary diagnostic; name it first. Verdict, failure_kind and the

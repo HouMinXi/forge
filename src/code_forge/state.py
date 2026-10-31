@@ -21,6 +21,13 @@ from typing import Any, Literal
 
 from .disposition import DISPOSITION_PROTOCOL_VERSION, Disposition
 from .errors import CorruptedStateError, SchemaVersionMismatchError
+from .state_preserved import (  # re-exported: preserved-row validation (D-v11-1)
+    _MUTATION_INFRA_FP as _MUTATION_INFRA_FP,
+    _PRESERVED_III_FP as _PRESERVED_III_FP,
+    _RECEIPT_AUDIT_FP as _RECEIPT_AUDIT_FP,
+    _recurring_confirmed as _recurring_confirmed,
+    _validate_preserved_dispositions as _validate_preserved_dispositions,
+)
 
 SCHEMA_VERSION: int = 1
 MUTATION_SURVIVOR_COUNTER_VERSION: int = 1
@@ -179,10 +186,15 @@ def provider_failure_snapshot(metadata: dict | None) -> dict | None:
     usage = metadata.get("usage")
     return {
         key: (
-            {name: scalar(usage.get(name)) for name in (
-                "input_tokens", "output_tokens", "cached_input_tokens"
-            )} if type(usage) is dict else None
-        ) if key == "usage" else scalar(metadata.get(key))
+            {
+                name: scalar(usage.get(name))
+                for name in ("input_tokens", "output_tokens", "cached_input_tokens")
+            }
+            if type(usage) is dict
+            else None
+        )
+        if key == "usage"
+        else scalar(metadata.get(key))
         for key in ("kind", "duration_s", "exit_code", "stderr", "usage")
     }
 
@@ -194,24 +206,31 @@ def record_provider_failure(finding: StateFinding, error: Exception) -> None:
     if not isinstance(error, LLMInvokeError):
         return
     finding.is_timeout = error.is_timeout
-    finding.provider_failure = provider_failure_snapshot({
-        "kind": error.kind,
-        "duration_s": error.duration_s,
-        "exit_code": error.exit_code,
-        "stderr": error.stderr,
-        "usage": None if type(error.usage) is not Usage else {
-            "input_tokens": error.usage.input_tokens,
-            "output_tokens": error.usage.output_tokens,
-            "cached_input_tokens": error.usage.cached_input_tokens,
-        },
-    })
+    finding.provider_failure = provider_failure_snapshot(
+        {
+            "kind": error.kind,
+            "duration_s": error.duration_s,
+            "exit_code": error.exit_code,
+            "stderr": error.stderr,
+            "usage": None
+            if type(error.usage) is not Usage
+            else {
+                "input_tokens": error.usage.input_tokens,
+                "output_tokens": error.usage.output_tokens,
+                "cached_input_tokens": error.usage.cached_input_tokens,
+            },
+        }
+    )
     if error.kind == "truncated":
         finding.diagnostic_kind = FindingDiagnosticKind.PROVIDER_CAPACITY
 
 
 def _host_diagnostic_shape(finding: StateFinding) -> bool:
     return (
-        all(type(value) is str for value in (finding.id, finding.fingerprint, finding.source, finding.file))
+        all(
+            type(value) is str
+            for value in (finding.id, finding.fingerprint, finding.source, finding.file)
+        )
         and finding.source == "INFRA"
         and finding.disposition is Disposition.CONFIRMED
         and type(finding.line_range) is list
@@ -266,8 +285,11 @@ def is_mutation_infra_diagnostic(finding: StateFinding) -> bool:
 def reporting_product_findings(findings: list[StateFinding]) -> list[StateFinding]:
     """Shared product projection; raw findings remain available for diagnosis."""
     return [
-        f for f in findings
-        if not is_receipt_audit(f) and not is_provider_diagnostic(f) and not is_mutation_infra_diagnostic(f)
+        f
+        for f in findings
+        if not is_receipt_audit(f)
+        and not is_provider_diagnostic(f)
+        and not is_mutation_infra_diagnostic(f)
     ]
 
 
@@ -299,7 +321,9 @@ def derive_pass_outcomes(
             if f.id == f"l1-{pass_name}-spawn-fail":
                 candidate = (
                     PassOutcome.TIMEOUT
-                    if type(f.provider_failure) is not dict or type(f.provider_failure.get("kind")) is not str or f.is_timeout
+                    if type(f.provider_failure) is not dict
+                    or type(f.provider_failure.get("kind")) is not str
+                    or f.is_timeout
                     else PassOutcome.ERROR
                 )
             elif f.id == f"l1-{pass_name}-invoke-fail":
@@ -448,7 +472,7 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
     if not isinstance(history, list):
         raise CorruptedStateError("invalid round history container")
     previous = -1
-    for row in history:
+    for position, row in enumerate(history):
         if not isinstance(row, dict):
             raise CorruptedStateError("invalid round history row")
         index = row.get("round")
@@ -461,7 +485,13 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             raise CorruptedStateError("incomplete host round authority")
         action = row["clean_credit_action"]
         if action not in (
-            "pending", "earned", "interrupted", "reset", "unavailable", "evidence_rejected"
+            "pending",
+            "earned",
+            "interrupted",
+            "reset",
+            "unavailable",
+            "evidence_rejected",
+            "preserved",
         ):
             raise CorruptedStateError("invalid host clean credit action")
         if action == "evidence_rejected":
@@ -471,7 +501,9 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             identities = set()
             for rejection in rejections:
                 if not isinstance(rejection, dict) or set(rejection) != {
-                    "pass_name", "attempt_index", "artifact_sha256"
+                    "pass_name",
+                    "attempt_index",
+                    "artifact_sha256",
                 }:
                     raise CorruptedStateError("invalid evidence rejection identity")
                 name = rejection["pass_name"]
@@ -505,6 +537,8 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             or not all(value in ("not_run", "returned", "failed") for value in phases.values())
         ):
             raise CorruptedStateError("invalid host phase status")
+        if action == "unavailable" and phases["l1"] != "returned" and "fixpoint" in row:
+            raise CorruptedStateError("unavailable host round has fixpoint without L1 observation")
         if (
             not isinstance(row["source_hash"], str)
             or not row["source_hash"]
@@ -530,9 +564,8 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             if name not in _PASS_NAMES or failure["outcome"] not in ("error", "timeout"):
                 raise CorruptedStateError("invalid acquisition failure outcome")
             kind = "spawn" if failure["id"] == f"l1-{name}-spawn-fail" else "invoke"
-            if (
-                failure["id"] != f"l1-{name}-{kind}-fail"
-                or (failure["fingerprint"] != f"{kind}-fail-{name}")
+            if failure["id"] != f"l1-{name}-{kind}-fail" or (
+                failure["fingerprint"] != f"{kind}-fail-{name}"
             ):
                 raise CorruptedStateError("invalid acquisition producer marker")
         observed = any(value == "returned" for value in phases.values())
@@ -589,8 +622,24 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             or row.get("fixpoint") not in ("RESET", "CYCLE_RESTART")
         ):
             raise CorruptedStateError("reset host round lacks reset observation")
-        if action in ("earned", "interrupted", "reset", "evidence_rejected") and "dispositions" not in row:
+        # Phase 6: schema_fail / incomplete-coverage may observe fixpoint RESET
+        # while the credit side skips the wipe and keeps the prior earned
+        # window (preserved). Only a fully returned round can carry it.
+        if action == "preserved" and (
+            not row["reset_observed"]
+            or failures
+            or protocol_failures
+            or row.get("fixpoint") not in ("RESET", "CYCLE_RESTART")
+            or not all(value == "returned" for value in phases.values())
+        ):
+            raise CorruptedStateError("preserved host round lacks schema/coverage reset observation")
+        if (
+            action in ("earned", "interrupted", "reset", "evidence_rejected", "preserved")
+            and "dispositions" not in row
+        ):
             raise CorruptedStateError("finalized host round lacks product snapshot")
+        if action == "preserved":
+            _validate_preserved_dispositions(row, history[:position])
     if round_index is not None and (
         type(round_index) is not int
         or round_index < 0
@@ -598,6 +647,21 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
         or (not history and round_index != 0)
     ):
         raise CorruptedStateError("stored round disagrees with attempt history")
+
+
+def _project_product_row(row: dict) -> dict | None:
+    """One finalized product snapshot as the fixpoint sees it, or None."""
+    if not is_host_round(row):
+        return row
+    if row["clean_credit_action"] == "pending" or "dispositions" not in row:
+        return None
+    row = dict(row)
+    collisions = {
+        fp for name in ("l0", "l2", "e2e", "rulepack") for fp in row.get(f"{name}_fingerprints", [])
+    }
+    synthetic = {f["fingerprint"] for f in row["acquisition_failures"]} - collisions
+    row["dispositions"] = {fp: disp for fp, disp in row["dispositions"].items() if fp not in synthetic}
+    return row
 
 
 def product_round_history(history: list[dict], *, before_round: int | None = None) -> list[dict]:
@@ -608,20 +672,9 @@ def product_round_history(history: list[dict], *, before_round: int | None = Non
     for row in history:
         if before_round is not None and row.get("round", -1) >= before_round:
             continue
-        if is_host_round(row):
-            if row["clean_credit_action"] == "pending" or "dispositions" not in row:
-                continue
-            row = dict(row)
-            collisions = {
-                fp
-                for name in ("l0", "l2", "e2e", "rulepack")
-                for fp in row.get(f"{name}_fingerprints", [])
-            }
-            synthetic = {f["fingerprint"] for f in row["acquisition_failures"]} - collisions
-            row["dispositions"] = {
-                fp: disp for fp, disp in row["dispositions"].items() if fp not in synthetic
-            }
-        projected.append(row)
+        row = _project_product_row(row)
+        if row is not None:
+            projected.append(row)
     return projected
 
 
@@ -640,7 +693,7 @@ def earned_history_cycles(state: State, source_hash: str, manifest: dict | None)
                 earned.append(row["round"] + 1)
             elif action == "reset":
                 earned.clear()
-            elif action not in ("interrupted", "pending", "evidence_rejected") and earned:
+            elif action not in ("interrupted", "pending", "evidence_rejected", "preserved") and earned:
                 if action == "unavailable" and all(
                     value == "not_run" for value in row["phase_status"].values()
                 ):
@@ -689,8 +742,7 @@ def _finding_from_dict(d: dict) -> StateFinding:
         falsify_reasoning=d.get("falsify_reasoning"),
         evidence_downgrade=d.get("evidence_downgrade"),
         diagnostic_kind=(
-            None if d.get("diagnostic_kind") is None
-            else FindingDiagnosticKind(d["diagnostic_kind"])
+            None if d.get("diagnostic_kind") is None else FindingDiagnosticKind(d["diagnostic_kind"])
         ),
         provider_failure=d.get("provider_failure"),
     )

@@ -26,7 +26,6 @@ from .assertion_outcome import (
     AssertionOutcome,
     AssertionStage,
     AssertionStatus,
-    legacy_progress_outcome,
 )
 from .runner import capture_tool_version
 from .sarif import build_sarif_log, format_classification_line, format_summary
@@ -66,6 +65,7 @@ from .factories import (
 )
 from .git import is_git_repo, machine_diff_command
 from .hold import HoldAborted, run_hold_ui
+from .local_assertion_report import clear_local_assertion_report, emit_local_assertion_report
 from .lock import ForgeLock, ForgeLockBusy
 from .machine import StateMachine, TimeoutBreaker
 from .mode_resolver import resolve_mode
@@ -1531,12 +1531,22 @@ def _run_test_assertion_phase(
             sys.stderr.write("[test-assertion] %s\n" % finding.description)
         if len(results) == 1 and type(results[0]) is AssertionOutcome:
             candidate = results[0]
-            if candidate.finding_count == len(findings) or (
-                candidate.finding_count is None and not findings
-            ):
-                result = candidate
-        legacy = legacy_progress_outcome(legacy_results[0]) if len(legacy_results) == 1 else "unreported"
-        outcome = result.legacy_outcome() if result is not None else legacy
+            try:
+                metadata = AssertionOutcome.to_metadata(candidate)
+            except (TypeError, ValueError, AttributeError):
+                metadata = None
+            if metadata is not None:
+                count = metadata["finding_count"]
+                if count == len(findings) or (count is None and not findings):
+                    result = candidate
+        if result is None:
+            result = AssertionOutcome(
+                AssertionStatus.FAILED,
+                None,
+                AssertionStage.REPORTING,
+                AssertionKind.INCONSISTENT_OUTCOME,
+            )
+        outcome = AssertionOutcome.legacy_outcome(result)
     finally:
         diagnostic = ""
         if result is not None and result.stage is not None:
@@ -4685,6 +4695,8 @@ def _run(args, env, cwd: Path) -> Verdict:
     # Step 7: lock + run
     try:
         with ForgeLock(lock_path):
+            if mode == Mode.LOCAL:
+                clear_local_assertion_report(state_path)
             verdict = _run_hold_loop(
                 test_config_root=test_config_root,
                 mode=mode,
@@ -4736,6 +4748,8 @@ def _run(args, env, cwd: Path) -> Verdict:
                     manifest=_manifest_a,
                     assertion_outcome=assertion_outcome,
                 )
+            elif mode == Mode.LOCAL:
+                emit_local_assertion_report(state_path, assertion_outcome)
     except LLMInvokeError as exc:
         # re-wrap LLMInvokeError as CliError
         raise CliError("backend %s: %s" % (backend.name, exc)) from exc

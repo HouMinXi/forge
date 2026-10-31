@@ -22,6 +22,7 @@ class AssertionStage(str, Enum):
     INVOCATION = "invocation"
     VALIDATION = "validation"
     CONVERSION = "conversion"
+    REPORTING = "reporting"
 
 
 class AssertionKind(str, Enum):
@@ -29,6 +30,7 @@ class AssertionKind(str, Enum):
     NO_GIT_DIFF = "no_git_diff"
     TIMEOUT = "timeout"
     ERROR = "error"
+    INCONSISTENT_OUTCOME = "inconsistent_outcome"
 
 
 _LEGACY_OUTCOMES = {
@@ -66,18 +68,21 @@ class AssertionOutcome:
             raise TypeError("assertion kind must be an AssertionKind or None")
         if self.status in (AssertionStatus.COMPLETED_EMPTY, AssertionStatus.COMPLETED_FINDINGS):
             valid_count = (
-                self.finding_count == 0 if self.status is AssertionStatus.COMPLETED_EMPTY
+                self.finding_count == 0
+                if self.status is AssertionStatus.COMPLETED_EMPTY
                 else self.finding_count is not None and self.finding_count > 0
             )
             valid = valid_count and self.stage is None and self.kind is None
         elif self.status is AssertionStatus.NOT_APPLICABLE:
             valid = (
-                self.finding_count == 0 and self.stage is AssertionStage.ELIGIBILITY
+                self.finding_count == 0
+                and self.stage is AssertionStage.ELIGIBILITY
                 and self.kind is AssertionKind.NO_TEST_FILES
             )
         elif self.status is AssertionStatus.SKIPPED:
             valid = (
-                self.finding_count is None and self.stage is AssertionStage.ELIGIBILITY
+                self.finding_count is None
+                and self.stage is AssertionStage.ELIGIBILITY
                 and self.kind is AssertionKind.NO_GIT_DIFF
             )
         else:
@@ -87,6 +92,7 @@ class AssertionOutcome:
                 (AssertionStage.INVOCATION, AssertionKind.TIMEOUT),
                 (AssertionStage.VALIDATION, AssertionKind.ERROR),
                 (AssertionStage.CONVERSION, AssertionKind.ERROR),
+                (AssertionStage.REPORTING, AssertionKind.INCONSISTENT_OUTCOME),
             }
         if not valid:
             raise ValueError("inconsistent assertion outcome")
