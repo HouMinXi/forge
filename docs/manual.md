@@ -248,6 +248,27 @@ honest about being un-enforced).
 真跑过的证据。inline 跑不产出真 receipt、不产出真 verdict——这是有意的(它对"未被
 强制"这件事诚实)。
 
+**LOCAL assertion advice:** ordinary single-repository LOCAL subprocess reviews
+write `local-assertion-report.json` beside the state file (normally
+`.code-forge/local-assertion-report.json`) and a `code-forge: test_assertion=...`
+stderr line. The JSON contains only `testAssertion` execution metadata; an
+unreported outcome writes `{}` and no status line. This is advisory metadata,
+not full review-completion evidence, and does not change the primary verdict,
+exit code, state, receipts, or stdout; it is valid even for LOCAL `PENDING`.
+
+The previous sidecar is cleared when that execution acquires the review lock,
+then atomically replaced after assertion advice. Preflight errors, no-change
+early returns, subagent/inline paths, busy locks, and CI do not touch it: it is
+**not every invocation's result**. A clear failure warns that the old report is
+not this run's result; a write failure warns without changing the verdict.
+
+**LOCAL 断言建议:** 普通单仓库 LOCAL subprocess 在 state 文件旁写入
+`local-assertion-report.json`, 并向 stderr 输出 `test_assertion` 状态。
+它只有建议执行元数据,不是完整 review 完成证明,不会改变主 verdict、退出码或
+state/receipt。取得 review 锁时才清除旧报告,建议结束后原子替换；前置错误、
+无变更提前返回、subagent/inline、锁忙与 CI 不碰该文件,不能把它当作每次调用的结果。
+未上报 outcome 时写 `{}` 且无状态行；清除或写入失败只输出固定警告。
+
 A `subprocess` FAIL with confirmed findings (rather than a self-narrated inline
 PASS) is forge working as intended: an independent process caught what the
 in-session narration would have rubber-stamped.
