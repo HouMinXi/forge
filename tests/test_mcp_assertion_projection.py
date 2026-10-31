@@ -48,6 +48,7 @@ VALID = [
             ("invocation", "timeout"),
             ("validation", "error"),
             ("conversion", "error"),
+            ("reporting", "inconsistent_outcome"),
         ]
     ],
 ]
@@ -136,6 +137,15 @@ async def test_valid_assertions_all_routes(monkeypatch, route, status, exit_code
 
 
 INVALID = [
+    *[
+        {"status": "failed", "finding_count": None, "stage": stage, "kind": kind}
+        for stage, kind in [
+            ("reporting", "error"),
+            ("reporting", "timeout"),
+            ("invocation", "inconsistent_outcome"),
+            ("unknown", "inconsistent_outcome"),
+        ]
+    ],
     None,
     [],
     "completed_empty",

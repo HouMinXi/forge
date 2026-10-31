@@ -38,15 +38,19 @@ CODE_DIFF = (
     " VALUE = 1\n"
     "+VALUE = 2\n"
 )
-VALID_REVIEW = json.dumps({
-    "findings": [],
-    "code_excerpts": [{
-        "file": "tests/test_example.py",
-        "start_line": 1,
-        "end_line": 3,
-        "content": "def test_example():\n    assert 2 == 2\n    assert 1 == 1\n",
-    }],
-})
+VALID_REVIEW = json.dumps(
+    {
+        "findings": [],
+        "code_excerpts": [
+            {
+                "file": "tests/test_example.py",
+                "start_line": 1,
+                "end_line": 3,
+                "content": "def test_example():\n    assert 2 == 2\n    assert 1 == 1\n",
+            }
+        ],
+    }
+)
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -64,8 +68,18 @@ def _review_repo(tmp_path: Path, *, test_file: bool = True) -> Path:
     source.parent.mkdir(exist_ok=True)
     source.write_text("def test_example():\n    assert 1 == 1\n")
     _git(repo, "add", "-A")
-    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-         "-c", "core.hooksPath=/dev/null", "commit", "-qm", "fixture")
+    _git(
+        repo,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-qm",
+        "fixture",
+    )
     source.write_text("def test_example():\n    assert 2 == 2\n    assert 1 == 1\n")
     return repo
 
@@ -80,12 +94,22 @@ def _prepare_main(monkeypatch, repo: Path, outlet: str, verdict: Verdict) -> Non
     monkeypatch.setenv("XDG_CACHE_HOME", str(cache_dir))
     monkeypatch.delenv("FORGE_BACKEND", raising=False)
     monkeypatch.chdir(repo)
-    monkeypatch.setattr(sys, "argv", [
-        "code-forge", "review", "--mode", "ci", "--falsification-engine", "stub",
-        "--allow-main",
-    ])
     monkeypatch.setattr(
-        "code_forge.outlet_resolver.resolve_outlet", lambda *args, **kwargs: outlet,
+        sys,
+        "argv",
+        [
+            "code-forge",
+            "review",
+            "--mode",
+            "ci",
+            "--falsification-engine",
+            "stub",
+            "--allow-main",
+        ],
+    )
+    monkeypatch.setattr(
+        "code_forge.outlet_resolver.resolve_outlet",
+        lambda *args, **kwargs: outlet,
     )
     monkeypatch.setattr(cli, "_run_hold_loop", lambda **kwargs: verdict)
     monkeypatch.setattr("code_forge.outlet_c.run_outlet_c", lambda **kwargs: verdict)
@@ -225,16 +249,21 @@ def test_memory_error_aborts_phase_without_claiming_success(monkeypatch, capsys)
 
 
 def test_advisory_output_precedes_phase_end(monkeypatch, capsys):
-    def findings(*args, on_outcome, **kwargs):
+    def findings(*args, on_outcome, on_result, **kwargs):
+        from code_forge.assertion_outcome import AssertionOutcome, AssertionStatus
+
         on_outcome("done")
+        on_result(AssertionOutcome(AssertionStatus.COMPLETED_FINDINGS, 1))
         return [SimpleNamespace(description="check this assertion")]
 
     monkeypatch.setattr(cli, "_run_test_assertion_review", findings)
     cli._run_test_assertion_phase(TEST_DIFF)
     stderr = capsys.readouterr().err
-    assert stderr.index("test-assertion phase start") < stderr.index(
-        "[test-assertion] check this assertion"
-    ) < stderr.index("test-assertion phase done: findings=1")
+    assert (
+        stderr.index("test-assertion phase start")
+        < stderr.index("[test-assertion] check this assertion")
+        < stderr.index("test-assertion phase done: findings=1")
+    )
 
 
 def test_offline_cli_subprocess_stays_live_during_post_review(tmp_path):
@@ -269,20 +298,25 @@ def test_offline_cli_subprocess_stays_live_during_post_review(tmp_path):
         "raise SystemExit(cli.main())\n"
     )
     env = dict(os.environ)
-    env.update({
-        "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "FORGE_CONFIG_DIR": str(config_dir),
-        "XDG_CACHE_HOME": str(cache_dir),
-        "FORGE_TEST_ENTERED": str(entered),
-        "FORGE_TEST_RELEASE": str(release),
-        "FORGE_TEST_REVIEW_JSON": VALID_REVIEW,
-    })
+    env.update(
+        {
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "FORGE_CONFIG_DIR": str(config_dir),
+            "XDG_CACHE_HOME": str(cache_dir),
+            "FORGE_TEST_ENTERED": str(entered),
+            "FORGE_TEST_RELEASE": str(release),
+            "FORGE_TEST_REVIEW_JSON": VALID_REVIEW,
+        }
+    )
     env.pop("FORGE_BACKEND", None)
     with log.open("w+") as stderr:
         proc = subprocess.Popen(
-            [sys.executable, "-c", child], cwd=repo, env=env,
-            stdout=subprocess.DEVNULL, stderr=stderr,
+            [sys.executable, "-c", child],
+            cwd=repo,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr,
         )
         try:
             deadline = time.monotonic() + 10
