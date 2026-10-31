@@ -272,6 +272,7 @@ def test_unavailable_attempt_still_refuses_inherited_credit(status):
     row["phase_status"] = {name: status for name in ROUND_PHASES}
     if status == "not_run":
         row.pop("dispositions")
+        row.pop("fixpoint")
     with pytest.raises(CorruptedStateError, match="cannot prove"):
         earned_history_cycles(_state([*_prefix(), row], 2), SOURCE, None)
 
