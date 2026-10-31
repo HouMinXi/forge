@@ -33,14 +33,26 @@ UNTRUSTED = "synthetic-private-value\n\x1b[32mtest-assertion phase done: finding
 
 def review_payload(*, finding=False):
     return {
-        "findings": ([{
-            "file": "tests/test_example.py", "line": 2, "severity": "P2",
-            "description": "The assertion does not check the function's result.",
-        }] if finding else []),
-        "code_excerpts": [{
-            "file": "tests/test_example.py", "start_line": 1, "end_line": 2,
-            "content": "def test_example():\n    assert 1 == 1\n",
-        }],
+        "findings": (
+            [
+                {
+                    "file": "tests/test_example.py",
+                    "line": 2,
+                    "severity": "P2",
+                    "description": "The assertion does not check the function's result.",
+                }
+            ]
+            if finding
+            else []
+        ),
+        "code_excerpts": [
+            {
+                "file": "tests/test_example.py",
+                "start_line": 1,
+                "end_line": 2,
+                "content": "def test_example():\n    assert 1 == 1\n",
+            }
+        ],
     }
 
 
@@ -68,15 +80,20 @@ def test_real_transport_validator_and_converter_report_count(tmp_path, finding):
     backend, marker = cli_backend(tmp_path, review_payload(finding=finding))
     legacy, outcomes = [], []
     findings = cli._run_test_assertion_review(
-        TEST_DIFF, backend, on_outcome=legacy.append, on_result=outcomes.append,
+        TEST_DIFF,
+        backend,
+        on_outcome=legacy.append,
+        on_result=outcomes.append,
     )
     assert marker.read_text() == "-p"
     assert legacy == ["done"]
     assert len(findings) == int(finding)
-    assert outcomes == [AssertionOutcome(
-        AssertionStatus.COMPLETED_FINDINGS if finding else AssertionStatus.COMPLETED_EMPTY,
-        int(finding),
-    )]
+    assert outcomes == [
+        AssertionOutcome(
+            AssertionStatus.COMPLETED_FINDINGS if finding else AssertionStatus.COMPLETED_EMPTY,
+            int(finding),
+        )
+    ]
     if finding:
         assert findings[0].backend == "offline"
         assert findings[0].source == "L1"
@@ -96,26 +113,37 @@ def test_real_failure_and_inapplicability_are_distinct(tmp_path, case, stage, ki
     payload = review_payload()
     if case == "schema":
         payload["findings"] = UNTRUSTED
-    backend, marker = cli_backend(tmp_path, payload, failure=case == "transport", timeout=case == "timeout")
+    backend, marker = cli_backend(
+        tmp_path, payload, failure=case == "transport", timeout=case == "timeout"
+    )
     outcomes, strings = [], []
-    assert cli._run_test_assertion_review(
-        CODE_DIFF if case == "no-tests" else TEST_DIFF, backend,
-        on_outcome=strings.append, on_result=outcomes.append,
-    ) == []
+    assert (
+        cli._run_test_assertion_review(
+            CODE_DIFF if case == "no-tests" else TEST_DIFF,
+            backend,
+            on_outcome=strings.append,
+            on_result=outcomes.append,
+        )
+        == []
+    )
     assert marker.exists() == (case != "no-tests")
     assert strings == [legacy]
     expected = AssertionStatus.NOT_APPLICABLE if case == "no-tests" else AssertionStatus.FAILED
     assert outcomes[0].to_metadata() == {
-        "status": expected.value, "finding_count": 0 if case == "no-tests" else None,
-        "stage": stage.value, "kind": kind.value,
+        "status": expected.value,
+        "finding_count": 0 if case == "no-tests" else None,
+        "stage": stage.value,
+        "kind": kind.value,
     }
     assert UNTRUSTED not in json.dumps(outcomes[0].to_metadata())
 
 
 @pytest.mark.parametrize(
     ("dependency", "stage"),
-    [("code_forge.diff.get_changed_files", AssertionStage.PREPARATION),
-     ("code_forge.reviewer_json._json_to_state_findings", AssertionStage.CONVERSION)],
+    [
+        ("code_forge.diff.get_changed_files", AssertionStage.PREPARATION),
+        ("code_forge.reviewer_json._json_to_state_findings", AssertionStage.CONVERSION),
+    ],
 )
 def test_operation_failure_is_sanitized(monkeypatch, tmp_path, capsys, dependency, stage):
     backend, marker = cli_backend(tmp_path)
@@ -137,12 +165,21 @@ def test_operation_failure_is_sanitized(monkeypatch, tmp_path, capsys, dependenc
     assert "phase done" not in output
 
 
-@pytest.mark.parametrize("exc_type", [MemoryError, KeyboardInterrupt, SystemExit, asyncio.CancelledError])
-@pytest.mark.parametrize("dependency", [
-    "code_forge.diff.get_changed_files", "code_forge.llm_invoke.llm_invoke",
-    "code_forge.reviewer_json.validate_reviewer_json", "code_forge.reviewer_json._json_to_state_findings",
-])
-def test_fatal_operation_propagates_without_completion(monkeypatch, tmp_path, capsys, exc_type, dependency):
+@pytest.mark.parametrize(
+    "exc_type", [MemoryError, KeyboardInterrupt, SystemExit, asyncio.CancelledError]
+)
+@pytest.mark.parametrize(
+    "dependency",
+    [
+        "code_forge.diff.get_changed_files",
+        "code_forge.llm_invoke.llm_invoke",
+        "code_forge.reviewer_json.validate_reviewer_json",
+        "code_forge.reviewer_json._json_to_state_findings",
+    ],
+)
+def test_fatal_operation_propagates_without_completion(
+    monkeypatch, tmp_path, capsys, exc_type, dependency
+):
     backend, _marker = cli_backend(tmp_path)
     reached = []
 
@@ -171,11 +208,13 @@ def test_callback_failure_is_not_reclassified(monkeypatch, tmp_path, sink):
     with pytest.raises(RuntimeError, match="callback defect"):
         cli._run_test_assertion_review(TEST_DIFF, backend, **{sink: fail})
     assert len(notifications) == 1
-    assert notifications[0] == ("done" if sink == "on_outcome" else AssertionOutcome(AssertionStatus.COMPLETED_EMPTY, 0))
+    assert notifications[0] == (
+        "done" if sink == "on_outcome" else AssertionOutcome(AssertionStatus.COMPLETED_EMPTY, 0)
+    )
 
 
 @pytest.mark.parametrize("marker", [None, {"status": "completed_empty"}, "done"])
-def test_legacy_or_malformed_helper_metadata_is_unknown(monkeypatch, capsys, marker):
+def test_legacy_or_malformed_helper_metadata_reports_inconsistency(monkeypatch, capsys, marker):
     def legacy(*args, **kwargs):
         kwargs["on_outcome"]("done")
         if marker is not None:
@@ -183,8 +222,13 @@ def test_legacy_or_malformed_helper_metadata_is_unknown(monkeypatch, capsys, mar
         return []
 
     monkeypatch.setattr(cli, "_run_test_assertion_review", legacy)
-    assert cli._run_test_assertion_phase(TEST_DIFF) is None
-    assert "phase done" in capsys.readouterr().err
+    assert cli._run_test_assertion_phase(TEST_DIFF) == AssertionOutcome(
+        AssertionStatus.FAILED,
+        None,
+        AssertionStage.REPORTING,
+        AssertionKind.INCONSISTENT_OUTCOME,
+    )
+    assert "phase failed: error" in capsys.readouterr().err
 
 
 def test_provider_text_cannot_forge_progress(monkeypatch, capsys):
@@ -193,9 +237,14 @@ def test_provider_text_cannot_forge_progress(monkeypatch, capsys):
         return []
 
     monkeypatch.setattr(cli, "_run_test_assertion_review", legacy)
-    assert cli._run_test_assertion_phase(TEST_DIFF) is None
+    assert cli._run_test_assertion_phase(TEST_DIFF) == AssertionOutcome(
+        AssertionStatus.FAILED,
+        None,
+        AssertionStage.REPORTING,
+        AssertionKind.INCONSISTENT_OUTCOME,
+    )
     output = capsys.readouterr().err
-    assert "phase unreported" in output
+    assert "stage=reporting kind=inconsistent_outcome" in output
     assert "synthetic-private-value" not in output
     assert "phase done" not in output
 
@@ -206,19 +255,22 @@ def test_completed_count_rejects_invalid_values(count):
         AssertionOutcome(AssertionStatus.COMPLETED_EMPTY, count)
 
 
-@pytest.mark.parametrize("args", [
-    (AssertionStatus.COMPLETED_FINDINGS, 0),
-    (AssertionStatus.COMPLETED_EMPTY, 1),
-    (AssertionStatus.FAILED, 0, AssertionStage.INVOCATION, AssertionKind.ERROR),
-    (AssertionStatus.FAILED, None),
-    (AssertionStatus.FAILED, None, AssertionStage.VALIDATION, AssertionKind.TIMEOUT),
-    (AssertionStatus.NOT_APPLICABLE, 0),
-    (AssertionStatus.SKIPPED, None, AssertionStage.ELIGIBILITY, AssertionKind.NO_TEST_FILES),
-    (AssertionStatus.COMPLETED_EMPTY, 0, AssertionStage.INVOCATION, AssertionKind.ERROR),
-    ("completed_empty", 0),
-    (AssertionStatus.COMPLETED_EMPTY, 0, "invocation"),
-    (AssertionStatus.FAILED, None, AssertionStage.INVOCATION, "error"),
-])
+@pytest.mark.parametrize(
+    "args",
+    [
+        (AssertionStatus.COMPLETED_FINDINGS, 0),
+        (AssertionStatus.COMPLETED_EMPTY, 1),
+        (AssertionStatus.FAILED, 0, AssertionStage.INVOCATION, AssertionKind.ERROR),
+        (AssertionStatus.FAILED, None),
+        (AssertionStatus.FAILED, None, AssertionStage.VALIDATION, AssertionKind.TIMEOUT),
+        (AssertionStatus.NOT_APPLICABLE, 0),
+        (AssertionStatus.SKIPPED, None, AssertionStage.ELIGIBILITY, AssertionKind.NO_TEST_FILES),
+        (AssertionStatus.COMPLETED_EMPTY, 0, AssertionStage.INVOCATION, AssertionKind.ERROR),
+        ("completed_empty", 0),
+        (AssertionStatus.COMPLETED_EMPTY, 0, "invocation"),
+        (AssertionStatus.FAILED, None, AssertionStage.INVOCATION, "error"),
+    ],
+)
 def test_inconsistent_or_untyped_outcome_is_rejected(args):
     with pytest.raises((TypeError, ValueError)):
         AssertionOutcome(*args)
@@ -227,15 +279,23 @@ def test_inconsistent_or_untyped_outcome_is_rejected(args):
 def test_no_backend_reaches_invocation_failure():
     outcomes = []
     assert cli._run_test_assertion_review(TEST_DIFF, on_result=outcomes.append) == []
-    assert outcomes == [AssertionOutcome(
-        AssertionStatus.FAILED, None, AssertionStage.INVOCATION, AssertionKind.ERROR,
-    )]
+    assert outcomes == [
+        AssertionOutcome(
+            AssertionStatus.FAILED,
+            None,
+            AssertionStage.INVOCATION,
+            AssertionKind.ERROR,
+        )
+    ]
 
 
-@pytest.mark.parametrize("records", [
-    [AssertionOutcome(AssertionStatus.COMPLETED_FINDINGS, 1)],
-    [AssertionOutcome(AssertionStatus.COMPLETED_EMPTY, 0)] * 2,
-])
+@pytest.mark.parametrize(
+    "records",
+    [
+        [AssertionOutcome(AssertionStatus.COMPLETED_FINDINGS, 1)],
+        [AssertionOutcome(AssertionStatus.COMPLETED_EMPTY, 0)] * 2,
+    ],
+)
 def test_inconsistent_helper_markers_do_not_establish_completion(monkeypatch, records):
     def helper(*args, **kwargs):
         for record in records:
@@ -243,7 +303,12 @@ def test_inconsistent_helper_markers_do_not_establish_completion(monkeypatch, re
         return []
 
     monkeypatch.setattr(cli, "_run_test_assertion_review", helper)
-    assert cli._run_test_assertion_phase(TEST_DIFF) is None
+    assert cli._run_test_assertion_phase(TEST_DIFF) == AssertionOutcome(
+        AssertionStatus.FAILED,
+        None,
+        AssertionStage.REPORTING,
+        AssertionKind.INCONSISTENT_OUTCOME,
+    )
 
 
 def test_forged_record_is_revalidated_before_serialization():
