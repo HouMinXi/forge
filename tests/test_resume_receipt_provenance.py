@@ -612,6 +612,7 @@ def test_falsifier_protocol_failure_preserves_only_prior_credit(
 
         monkeypatch.setattr(machine, "_run_l2_phase", failed_l2)
     with monkeypatch.context() as patch:
+
         def answer(*args, **kwargs):
             if isinstance(reply, Exception):
                 raise reply
@@ -641,11 +642,10 @@ def test_falsifier_protocol_failure_preserves_only_prior_credit(
             assert state.verdict == Verdict.FAIL
         assert state.verdict != Verdict.PASS
         if not later_failure:
-            receipt = json.loads(
-                (root / ".code-forge" / "receipts" / "receipt-c2p1.json").read_text()
-            )
+            receipt = json.loads((root / ".code-forge" / "receipts" / "receipt-c2p1.json").read_text())
             candidate = next(
-                finding for finding in receipt["findings"]
+                finding
+                for finding in receipt["findings"]
                 if finding["description"].startswith("P1: new candidate")
             )
             assert candidate["disposition"] == "UNCERTAIN"
@@ -746,9 +746,7 @@ def test_confirmed_hold_reset_survives_unstarted_pending_attempt(review_workspac
     assert not _verify(root).passed
 
 
-def test_first_semantic_confirmation_after_protocol_failure_resets_credit(
-    review_workspace, monkeypatch
-):
+def test_first_semantic_confirmation_after_protocol_failure_resets_credit(review_workspace, monkeypatch):
     root = review_workspace
     added = ["const value = 2;"] + [f"const x{i} = {i};" for i in range(19)]
     lines = ["const context = 1;"] + added + ["const end = 3;"]
@@ -764,12 +762,14 @@ def test_first_semantic_confirmation_after_protocol_failure_resets_credit(
         start, end = (1, 14) if machine._state.round < 3 else (9, 22)
         return {
             "findings": [],
-            "code_excerpts": [{
-                "file": "control.ts",
-                "start_line": start,
-                "end_line": end,
-                "content": "\n".join(lines[start - 1:end]) + "\n",
-            }],
+            "code_excerpts": [
+                {
+                    "file": "control.ts",
+                    "start_line": start,
+                    "end_line": end,
+                    "content": "\n".join(lines[start - 1 : end]) + "\n",
+                }
+            ],
         }
 
     def machine_with_candidate(*, rounds=1, candidate=False):
@@ -800,9 +800,12 @@ def test_first_semantic_confirmation_after_protocol_failure_resets_credit(
     with monkeypatch.context() as patch:
         patch.setattr(
             "code_forge.falsify_real.llm_invoke",
-            lambda *args, **kwargs: llm_invoke.LLMResult({
-                "verdict": "CONFIRMED", "reasoning": "first semantic adjudication",
-            }),
+            lambda *args, **kwargs: llm_invoke.LLMResult(
+                {
+                    "verdict": "CONFIRMED",
+                    "reasoning": "first semantic adjudication",
+                }
+            ),
         )
         assert machine_with_candidate(candidate=True).run() != Verdict.PASS
     state = load_state(path)
@@ -975,8 +978,7 @@ def test_duplicate_receipts_keep_each_pass_falsifier_result(
     machine.falsifier = RealFalsifier(diff_text=DIFF)
     replies = iter(
         llm_invoke.LLMResult(
-            {"verdict": verdict, "reasoning": "semantic result"}
-            if name == semantic_pass else "not JSON"
+            {"verdict": verdict, "reasoning": "semantic result"} if name == semantic_pass else "not JSON"
         )
         for name in ("qodo", "expert")
     )
@@ -1018,18 +1020,15 @@ def test_duplicate_receipts_keep_each_pass_falsifier_result(
     ],
     ids=["protocol", "backend", "runtime"],
 )
-def test_ci_falsifier_failure_cannot_attest_clean_pass(
-    review_workspace, monkeypatch, reply, error_text
-):
+def test_ci_falsifier_failure_cannot_attest_clean_pass(review_workspace, monkeypatch, reply, error_text):
     root = review_workspace
     machine = _machine(root, monkeypatch, rounds=1, threshold=1)
     machine.mode = Mode.CI
-    machine.resolved_review = replace(
-        machine.resolved_review, base_sha="a" * 40, head_sha="b" * 40
-    )
+    machine.resolved_review = replace(machine.resolved_review, base_sha="a" * 40, head_sha="b" * 40)
     _attach_falsifier_candidate(machine)
     machine.falsifier = RealFalsifier(diff_text=DIFF)
     with monkeypatch.context() as patch:
+
         def answer(*args, **kwargs):
             if isinstance(reply, Exception):
                 raise reply
@@ -1042,11 +1041,10 @@ def test_ci_falsifier_failure_cannot_attest_clean_pass(
         verdict = machine.run()
 
     state = load_state(root / ".code-forge" / "state.json")
-    receipt = json.loads(
-        (root / ".code-forge" / "receipts" / "receipt-c1p1.json").read_text()
-    )
+    receipt = json.loads((root / ".code-forge" / "receipts" / "receipt-c1p1.json").read_text())
     candidate = next(
-        finding for finding in receipt["findings"]
+        finding
+        for finding in receipt["findings"]
         if finding["description"].startswith("P1: new candidate")
     )
     ledger = root / ".code-forge" / "ledger.jsonl"
@@ -1073,9 +1071,7 @@ def test_ci_falsifier_failure_cannot_attest_clean_pass(
     [llm_invoke.LLMInvokeError("owned outage"), RuntimeError("owned failure")],
     ids=["backend", "runtime"],
 )
-def test_local_falsifier_failure_receipt_grants_no_clean_credit(
-    review_workspace, monkeypatch, error
-):
+def test_local_falsifier_failure_receipt_grants_no_clean_credit(review_workspace, monkeypatch, error):
     root = review_workspace
     (root / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 2\n")
     assert _machine(root, monkeypatch, rounds=1, threshold=2).run() != Verdict.PASS
@@ -1086,6 +1082,7 @@ def test_local_falsifier_failure_receipt_grants_no_clean_credit(
     _attach_falsifier_candidate(machine)
     machine.falsifier = RealFalsifier(diff_text=DIFF)
     with monkeypatch.context() as patch:
+
         def answer(*args, **kwargs):
             raise error
 
@@ -1093,11 +1090,10 @@ def test_local_falsifier_failure_receipt_grants_no_clean_credit(
         assert machine.run() != Verdict.PASS
 
     state = load_state(root / ".code-forge" / "state.json")
-    receipt = json.loads(
-        (root / ".code-forge" / "receipts" / "receipt-c2p1.json").read_text()
-    )
+    receipt = json.loads((root / ".code-forge" / "receipts" / "receipt-c2p1.json").read_text())
     candidate = next(
-        finding for finding in receipt["findings"]
+        finding
+        for finding in receipt["findings"]
         if finding["description"].startswith("P1: new candidate")
     )
     row = state.round_history[-1]
@@ -1115,26 +1111,28 @@ def test_local_falsifier_failure_receipt_grants_no_clean_credit(
     [llm_invoke.LLMInvokeError("owned outage"), RuntimeError("owned failure")],
     ids=["backend", "runtime"],
 )
-def test_ci_failed_duplicate_keeps_independent_confirmed_result(
-    review_workspace, monkeypatch, error
-):
+def test_ci_failed_duplicate_keeps_independent_confirmed_result(review_workspace, monkeypatch, error):
     root = review_workspace
     monkeypatch.setenv("FORGE_FALSIFY_WORKERS", "1")
     machine = _machine(root, monkeypatch, rounds=1, threshold=1)
     machine.mode = Mode.CI
-    machine.resolved_review = replace(
-        machine.resolved_review, base_sha="a" * 40, head_sha="b" * 40
-    )
+    machine.resolved_review = replace(machine.resolved_review, base_sha="a" * 40, head_sha="b" * 40)
     producer = machine.l1_provider
 
     def two_pass_candidates():
         findings, excerpts, usage, duration = producer()
-        return findings + [_falsifier_candidate("qodo"), _falsifier_candidate("expert")], excerpts, usage, duration
+        return (
+            findings + [_falsifier_candidate("qodo"), _falsifier_candidate("expert")],
+            excerpts,
+            usage,
+            duration,
+        )
 
     machine.l1_provider = two_pass_candidates
     machine.falsifier = RealFalsifier(diff_text=DIFF)
     replies = iter([{"verdict": "CONFIRMED", "reasoning": "semantic result"}, error])
     with monkeypatch.context() as patch:
+
         def answer(*args, **kwargs):
             reply = next(replies)
             if isinstance(reply, Exception):
@@ -1158,8 +1156,7 @@ def test_ci_failed_duplicate_keeps_independent_confirmed_result(
     assert failure["basis"]["authority"] == "infra-unavailable"
     assert failure["basis"]["falsification_survived"] is False
     ledger = [
-        json.loads(line)
-        for line in (root / ".code-forge" / "ledger.jsonl").read_text().splitlines()
+        json.loads(line) for line in (root / ".code-forge" / "ledger.jsonl").read_text().splitlines()
     ]
     assert any(row["fingerprint"] == "new-falsifier-candidate" for row in ledger)
     assert all(row["evidence_class"] != "clean_pass" for row in ledger)
@@ -1181,9 +1178,7 @@ def test_ci_failed_duplicate_keeps_independent_confirmed_result(
     ],
     ids=["dismissed-backend", "dismissed-runtime", "backend-protocol", "protocol-backend"],
 )
-def test_local_mixed_falsifier_failure_resets_and_recovers(
-    review_workspace, monkeypatch, replies
-):
+def test_local_mixed_falsifier_failure_resets_and_recovers(review_workspace, monkeypatch, replies):
     root = review_workspace
     monkeypatch.setenv("FORGE_FALSIFY_WORKERS", "1")
     (root / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 2\n")
@@ -1196,12 +1191,18 @@ def test_local_mixed_falsifier_failure_resets_and_recovers(
 
     def two_pass_candidates():
         findings, excerpts, usage, duration = producer()
-        return findings + [_falsifier_candidate("qodo"), _falsifier_candidate("expert")], excerpts, usage, duration
+        return (
+            findings + [_falsifier_candidate("qodo"), _falsifier_candidate("expert")],
+            excerpts,
+            usage,
+            duration,
+        )
 
     machine.l1_provider = two_pass_candidates
     machine.falsifier = RealFalsifier(diff_text=DIFF)
     sequence = iter(replies)
     with monkeypatch.context() as patch:
+
         def answer(*args, **kwargs):
             reply = next(sequence)
             if isinstance(reply, Exception):
@@ -1256,6 +1257,7 @@ def test_local_sticky_dismissal_cannot_hide_later_falsifier_failure(
     _attach_falsifier_candidate(second)
     second.falsifier = RealFalsifier(diff_text=DIFF)
     with monkeypatch.context() as patch:
+
         def outage(*args, **kwargs):
             raise error
 
@@ -1286,7 +1288,12 @@ def test_same_fingerprint_dismissal_and_protocol_error_earns_no_new_credit(
 
     def repeated_candidate():
         findings, excerpts, usage, duration = producer()
-        return findings + [_falsifier_candidate("qodo"), _falsifier_candidate("expert")], excerpts, usage, duration
+        return (
+            findings + [_falsifier_candidate("qodo"), _falsifier_candidate("expert")],
+            excerpts,
+            usage,
+            duration,
+        )
 
     machine.l1_provider = repeated_candidate
     machine.falsifier = RealFalsifier(diff_text=DIFF)
@@ -1314,8 +1321,14 @@ def test_same_fingerprint_dismissal_and_protocol_error_earns_no_new_credit(
 @pytest.mark.parametrize(
     "damage",
     [
-        "empty", "duplicate", "wrong_fingerprint", "missing_disposition", "l1_not_returned",
-        "clean_fixpoint", "earned", "reset_action",
+        "empty",
+        "duplicate",
+        "wrong_fingerprint",
+        "missing_disposition",
+        "l1_not_returned",
+        "clean_fixpoint",
+        "earned",
+        "reset_action",
     ],
 )
 def test_protocol_interruption_requires_host_observation(review_workspace, monkeypatch, damage):
@@ -2034,6 +2047,7 @@ def test_product_history_readers_use_observed_product_projection(review_workspac
             phase_status={name: "not_run" for name in latest["phase_status"]},
         )
         latest.pop("dispositions")
+        latest.pop("fixpoint")
     machine._begin_host_attempt(3)
     finding = StateFinding(
         "actual-product", fp, "L0", Disposition.CONFIRMED, "control.ts", [2, 2], "P3: actual product"
@@ -3925,7 +3939,11 @@ def test_rejected_excerpt_preserves_verified_prefix_and_resumes_fresh_cycle(
         ):
             values[name] = subprocess.run(
                 ["git", "-c", "core.hooksPath=/dev/null", *args],
-                cwd=root, capture_output=True, text=True, check=True, timeout=5,
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5,
             ).stdout
         values["source"] = (root / "control.ts").read_bytes()
         return values
@@ -3957,21 +3975,35 @@ def test_rejected_excerpt_preserves_verified_prefix_and_resumes_fresh_cycle(
     independently_verified = []
     for cycle, expected in zip((1, 2), proof["cycles"], strict=True):
         entry, result = verify._capture_earned_cycle(
-            root, source_hash, diff_files, cycle=cycle, diff_text=diff,
+            root,
+            source_hash,
+            diff_files,
+            cycle=cycle,
+            diff_text=diff,
         )
         assert result.passed, result.reason
         assert entry == expected
         independently_verified.append(cycle)
     entry, rejected = verify._capture_earned_cycle(
-        root, source_hash, diff_files, cycle=3, diff_text=diff,
+        root,
+        source_hash,
+        diff_files,
+        cycle=3,
+        diff_text=diff,
     )
     assert entry is None and not rejected.passed
     assert "completed status" in rejected.reason
-    print(json.dumps({
-        "old_cycles_verified_after_rejection": independently_verified,
-        "failed_cycle_earned": False, "old_receipt_bytes_unchanged": True,
-        "actual_target_context_unchanged": context() == subject,
-    }, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "old_cycles_verified_after_rejection": independently_verified,
+                "failed_cycle_earned": False,
+                "old_receipt_bytes_unchanged": True,
+                "actual_target_context_unchanged": context() == subject,
+            },
+            sort_keys=True,
+        )
+    )
     dispatches = []
 
     def healthy_payload(machine, prompt):
@@ -3980,8 +4012,12 @@ def test_rejected_excerpt_preserves_verified_prefix_and_resumes_fresh_cycle(
 
     recovered = _machine(root, monkeypatch, payload=healthy_payload, rounds=1, diff=diff)
     verdict = recovered.run()
-    print(json.dumps({"fresh_healthy_verdict": verdict.value,
-                      "fresh_healthy_dispatches": dispatches}, sort_keys=True))
+    print(
+        json.dumps(
+            {"fresh_healthy_verdict": verdict.value, "fresh_healthy_dispatches": dispatches},
+            sort_keys=True,
+        )
+    )
     assert verdict is Verdict.PASS, "valid old proof must permit a genuinely fresh healthy cycle"
     assert dispatches == [4, 4, 4]
     final = load_state(root / ".code-forge" / "state.json")
@@ -4024,7 +4060,9 @@ def test_typed_rejection_audit_preserves_only_verified_prefix(
     assert row["fixpoint"] == "CLEAN" and not row["reset_observed"]
     assert all(value == "returned" for value in row["phase_status"].values())
     assert state.consecutive_clean_rounds == prefix
-    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == list(range(1, prefix + 1))
+    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == list(
+        range(1, prefix + 1)
+    )
     assert len(row["evidence_rejections"]) == (3 if all_roles else 1)
     from code_forge.receipt import _attempted_artifact_path
 
@@ -4038,7 +4076,8 @@ def test_typed_rejection_audit_preserves_only_verified_prefix(
     assert (resumed.run() is Verdict.PASS) is bool(prefix)
     assert resumed._state.consecutive_clean_rounds == prefix + 1
     assert [entry["cycle"] for entry in resumed._state.earned_clean_window["cycles"]] == [
-        *range(1, prefix + 1), prefix + 2,
+        *range(1, prefix + 1),
+        prefix + 2,
     ]
 
 
@@ -4056,11 +4095,25 @@ def test_rejected_latest_attempt_cannot_spend_an_already_sufficient_window(
     assert _verify(root).passed
 
 
-@pytest.mark.parametrize("damage", [
-    "invocation", "observation-copy", "observation-empty", "attempt-copy", "attempt-payload",
-    "attempt-extra", "attempt-list-copy", "writer-attempt-copy", "raw-observation", "status-snapshot",
-    "audit-bytes", "receipt-bytes", "receipt-missing", "provider-mimic",
-])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "invocation",
+        "observation-copy",
+        "observation-empty",
+        "attempt-copy",
+        "attempt-payload",
+        "attempt-extra",
+        "attempt-list-copy",
+        "writer-attempt-copy",
+        "raw-observation",
+        "status-snapshot",
+        "audit-bytes",
+        "receipt-bytes",
+        "receipt-missing",
+        "provider-mimic",
+    ],
+)
 def test_rejected_evidence_requires_unchanged_call_and_writer_membership(
     review_workspace, monkeypatch, damage
 ):
@@ -4109,9 +4162,17 @@ def test_rejected_evidence_requires_unchanged_call_and_writer_membership(
     assert not _verify(root).passed
 
 
-@pytest.mark.parametrize("damage", [
-    "error", "legacy-return", "missing-audit", "audit-payload", "bad-status", "bad-literal",
-])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "error",
+        "legacy-return",
+        "missing-audit",
+        "audit-payload",
+        "bad-status",
+        "bad-literal",
+    ],
+)
 def test_rejected_evidence_does_not_exempt_writer_or_sibling_failure(
     review_workspace, monkeypatch, damage
 ):
@@ -4152,14 +4213,26 @@ def test_rejected_evidence_does_not_exempt_writer_or_sibling_failure(
     assert _machine(root, monkeypatch, rounds=1).run() is Verdict.FAIL
 
 
-@pytest.mark.parametrize("damage", [
-    "missing", "bytes", "healthy-rehashed", "schema-rehashed", "candidate-rehashed",
-    "group-rehashed", "role-rehashed", "cycle-rehashed", "completed", "sibling-literal", "old-proof",
-    "snapshot-product", "receipt-missing", "receipt-malformed",
-])
-def test_rejected_audit_is_revalidated_before_a_fresh_dispatch(
-    review_workspace, monkeypatch, damage
-):
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing",
+        "bytes",
+        "healthy-rehashed",
+        "schema-rehashed",
+        "candidate-rehashed",
+        "group-rehashed",
+        "role-rehashed",
+        "cycle-rehashed",
+        "completed",
+        "sibling-literal",
+        "old-proof",
+        "snapshot-product",
+        "receipt-missing",
+        "receipt-malformed",
+    ],
+)
+def test_rejected_audit_is_revalidated_before_a_fresh_dispatch(review_workspace, monkeypatch, damage):
     from code_forge.receipt import _attempted_artifact_path
 
     root = review_workspace
@@ -4189,11 +4262,15 @@ def test_rejected_audit_is_revalidated_before_a_fresh_dispatch(
         elif damage == "schema-rehashed":
             audit["payload"].pop("code_excerpts")
         elif damage == "candidate-rehashed":
-            audit["payload"]["findings"] = [{"file": "control.ts", "line": 2,
-                                           "severity": "P1", "description": "candidate"}]
+            audit["payload"]["findings"] = [
+                {"file": "control.ts", "line": 2, "severity": "P1", "description": "candidate"}
+            ]
         elif damage == "group-rehashed":
-            audit["group_scope"] = {"name": "forged", "diff_sha256": SOURCE_HASH,
-                                    "source_files": ["control.ts"]}
+            audit["group_scope"] = {
+                "name": "forged",
+                "diff_sha256": SOURCE_HASH,
+                "source_files": ["control.ts"],
+            }
         elif damage == "role-rehashed":
             audit["pass_name"] = "qodo"
         else:
@@ -4202,9 +4279,17 @@ def test_rejected_audit_is_revalidated_before_a_fresh_dispatch(
         entry["artifact_sha256"] = hashlib.sha256(audit_path.read_bytes()).hexdigest()
         save_state(state, path)
     else:
-        receipt_path = root / ".code-forge" / "receipts" / (
-            "receipt-c1p1.json" if damage == "old-proof" else
-            "receipt-c3p3.json" if damage == "completed" else "receipt-c3p1.json"
+        receipt_path = (
+            root
+            / ".code-forge"
+            / "receipts"
+            / (
+                "receipt-c1p1.json"
+                if damage == "old-proof"
+                else "receipt-c3p3.json"
+                if damage == "completed"
+                else "receipt-c3p1.json"
+            )
         )
         receipt = json.loads(receipt_path.read_bytes())
         if damage == "receipt-malformed":
@@ -4218,7 +4303,9 @@ def test_rejected_audit_is_revalidated_before_a_fresh_dispatch(
         receipt_path.write_text(json.dumps(receipt))
     before = path.read_bytes()
     dispatches = []
-    resumed = _machine(root, monkeypatch, rounds=1, payload=lambda *args: dispatches.append(True) or VALID)
+    resumed = _machine(
+        root, monkeypatch, rounds=1, payload=lambda *args: dispatches.append(True) or VALID
+    )
     assert resumed.run() is Verdict.FAIL
     assert dispatches == [] and path.read_bytes() == before
     assert not _verify(root).passed
@@ -4250,33 +4337,41 @@ def test_outlet_c_actual_full_diff_typed_catch_preserves_recoverable_prefix(
     monkeypatch.setattr(outlet_c, "StateMachine", construct)
     monkeypatch.setenv("FORGE_DIFF_CHUNK_THRESHOLD_KB", "100")
     verdict = outlet_c.run_outlet_c(
-        ResolvedReview([Path("control.ts")], None, DIFF, "git"), SOURCE_HASH, root, spawn,
-        falsifier=StubFalsifier(), max_total_rounds=1, registry={},
+        ResolvedReview([Path("control.ts")], None, DIFF, "git"),
+        SOURCE_HASH,
+        root,
+        spawn,
+        falsifier=StubFalsifier(),
+        max_total_rounds=1,
+        registry={},
     )
     assert verdict is Verdict.FAIL
     assert captured[0]._state.round_history[-1]["clean_credit_action"] == "evidence_rejected"
     assert _machine(root, monkeypatch, rounds=1).run() is Verdict.PASS
 
 
-def test_grouped_typed_rejection_has_no_unproved_global_scope_authority(
-    review_workspace, monkeypatch
-):
+def test_grouped_typed_rejection_has_no_unproved_global_scope_authority(review_workspace, monkeypatch):
     root = review_workspace
     _machine(root, monkeypatch, rounds=2).run()
     machine = _pure_rejected_machine(root, monkeypatch)
     machine.l1_provider = build_grouped_l1_provider(
-        "auto", [{"name": name, "resolved": machine.resolved_review} for name in ("first", "second")],
-        backend=BackendConfig(name="owned-offline", type="api", format="openai",
-                              model="offline", base_url="http://127.0.0.1:1"), max_attempts=1,
+        "auto",
+        [{"name": name, "resolved": machine.resolved_review} for name in ("first", "second")],
+        backend=BackendConfig(
+            name="owned-offline",
+            type="api",
+            format="openai",
+            model="offline",
+            base_url="http://127.0.0.1:1",
+        ),
+        max_attempts=1,
     )
     assert machine.run() is Verdict.FAIL
     assert machine._state.round_history[-1]["clean_credit_action"] == "unavailable"
     assert _machine(root, monkeypatch, rounds=1).run() is Verdict.FAIL
 
 
-def test_outlet_c_actual_chunk_scope_does_not_borrow_full_diff_authority(
-    review_workspace, monkeypatch
-):
+def test_outlet_c_actual_chunk_scope_does_not_borrow_full_diff_authority(review_workspace, monkeypatch):
     from code_forge import outlet_c
 
     root = review_workspace
@@ -4310,8 +4405,12 @@ def test_outlet_c_actual_chunk_scope_does_not_borrow_full_diff_authority(
     monkeypatch.setenv("FORGE_DIFF_CHUNK_THRESHOLD_KB", "-1")
     verdict = outlet_c.run_outlet_c(
         ResolvedReview([Path("control.ts"), Path("other.ts")], None, full_diff, "git"),
-        compute_source_hash(git_diff=full_diff), root, spawn,
-        falsifier=StubFalsifier(), max_total_rounds=1, registry={},
+        compute_source_hash(git_diff=full_diff),
+        root,
+        spawn,
+        falsifier=StubFalsifier(),
+        max_total_rounds=1,
+        registry={},
     )
     assert verdict is Verdict.FAIL and len(calls) == 6
     machine = captured[0]
@@ -4325,10 +4424,20 @@ def test_rejected_excerpt_cannot_hide_a_real_product_reset(review_workspace, mon
     _machine(root, monkeypatch, rounds=2).run()
     machine = _pure_rejected_machine(root, monkeypatch)
     machine.autofixer = NoChangeAutoFixer()
-    machine.l0_runner = lambda *args: ([StateFinding(
-        "actual-product", "actual-product", "L0", Disposition.CONFIRMED,
-        "control.ts", [2, 2], "P1: actual product defect",
-    )], [])
+    machine.l0_runner = lambda *args: (
+        [
+            StateFinding(
+                "actual-product",
+                "actual-product",
+                "L0",
+                Disposition.CONFIRMED,
+                "control.ts",
+                [2, 2],
+                "P1: actual product defect",
+            )
+        ],
+        [],
+    )
     assert machine.run() is Verdict.FAIL
     row = machine._state.round_history[-1]
     assert row["clean_credit_action"] == "reset" and row["reset_observed"]
@@ -4338,9 +4447,7 @@ def test_rejected_excerpt_cannot_hide_a_real_product_reset(review_workspace, mon
     assert _machine(root, monkeypatch, rounds=1).run() is not Verdict.PASS
 
 
-def test_reused_real_call_clears_rejection_authority_before_healthy_work(
-    review_workspace, monkeypatch
-):
+def test_reused_real_call_clears_rejection_authority_before_healthy_work(review_workspace, monkeypatch):
     root = review_workspace
     _machine(root, monkeypatch, rounds=2).run()
     rejected = _pure_rejected_machine(root, monkeypatch)
