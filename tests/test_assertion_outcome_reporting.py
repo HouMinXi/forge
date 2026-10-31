@@ -26,14 +26,26 @@ from tests.test_cli_phase_progress import _prepare_main, _review_repo
 OUTCOMES = [
     AssertionOutcome(AssertionStatus.COMPLETED_EMPTY, 0),
     AssertionOutcome(AssertionStatus.COMPLETED_FINDINGS, 1),
-    AssertionOutcome(AssertionStatus.NOT_APPLICABLE, 0, AssertionStage.ELIGIBILITY, AssertionKind.NO_TEST_FILES),
-    AssertionOutcome(AssertionStatus.SKIPPED, None, AssertionStage.ELIGIBILITY, AssertionKind.NO_GIT_DIFF),
-    *[AssertionOutcome(AssertionStatus.FAILED, None, stage, AssertionKind.ERROR) for stage in (
-        AssertionStage.PREPARATION, AssertionStage.INVOCATION, AssertionStage.VALIDATION, AssertionStage.CONVERSION,
-    )],
+    AssertionOutcome(
+        AssertionStatus.NOT_APPLICABLE, 0, AssertionStage.ELIGIBILITY, AssertionKind.NO_TEST_FILES
+    ),
+    AssertionOutcome(
+        AssertionStatus.SKIPPED, None, AssertionStage.ELIGIBILITY, AssertionKind.NO_GIT_DIFF
+    ),
+    *[
+        AssertionOutcome(AssertionStatus.FAILED, None, stage, AssertionKind.ERROR)
+        for stage in (
+            AssertionStage.PREPARATION,
+            AssertionStage.INVOCATION,
+            AssertionStage.VALIDATION,
+            AssertionStage.CONVERSION,
+        )
+    ],
     AssertionOutcome(AssertionStatus.FAILED, None, AssertionStage.INVOCATION, AssertionKind.TIMEOUT),
+    AssertionOutcome(
+        AssertionStatus.FAILED, None, AssertionStage.REPORTING, AssertionKind.INCONSISTENT_OUTCOME
+    ),
 ]
-
 
 
 def _legacy_stderr_ok(err: str, legacy_summary: str, *, exact_first_line: bool = False) -> None:
@@ -57,6 +69,7 @@ def _legacy_stderr_ok(err: str, legacy_summary: str, *, exact_first_line: bool =
 def _sarif_without_report_classification(doc: dict) -> dict:
     """Return SARIF dict copy with additive IC-02 report_classification stripped."""
     import copy
+
     out = copy.deepcopy(doc)
     for run in out.get("runs") or []:
         props = run.get("properties")
@@ -77,7 +90,9 @@ def test_saved_state_writer_adds_only_advisory_metadata(tmp_path, capsys, outcom
     save_state(state, state_path)
     original = state_path.read_bytes()
     hooks = []
-    cli._emit_ci_output(state_path, {}, lambda: hooks.append(True), None, None, None, assertion_outcome=outcome)
+    cli._emit_ci_output(
+        state_path, {}, lambda: hooks.append(True), None, None, None, assertion_outcome=outcome
+    )
     output = capsys.readouterr()
     actual = json.loads(output.out)
     expected = build_sarif_log(load_state(state_path), {}, cli.__version__)
@@ -122,10 +137,22 @@ def prepare_consumer(monkeypatch, tmp_path, *, verdict=Verdict.PASS, outlet="sub
     payload = review_payload(finding=case == "findings")
     if case == "schema":
         payload["findings"] = UNTRUSTED
-    backend, marker = cli_backend(tmp_path, payload, failure=case == "transport", timeout=case == "timeout")
-    (tmp_path / "user-config" / "config.yaml").write_text(json.dumps({"backends": {"offline": {
-        "type": "cli", "model": "", "command": backend.command,
-    }}}))
+    backend, marker = cli_backend(
+        tmp_path, payload, failure=case == "transport", timeout=case == "timeout"
+    )
+    (tmp_path / "user-config" / "config.yaml").write_text(
+        json.dumps(
+            {
+                "backends": {
+                    "offline": {
+                        "type": "cli",
+                        "model": "",
+                        "command": backend.command,
+                    }
+                }
+            }
+        )
+    )
     monkeypatch.setattr("code_forge.user_config.load_user_backends", real_load_user_backends)
     monkeypatch.setenv("FORGE_LLM_TIMEOUT_S", "1")
     monkeypatch.setattr(sys, "argv", [*sys.argv, "--backend", "offline"])
@@ -137,11 +164,21 @@ def prepare_consumer(monkeypatch, tmp_path, *, verdict=Verdict.PASS, outlet="sub
     receipt.parent.mkdir()
     receipt.write_text('{"static_evidence":"retained"}\n')
     state = State(
-        verdict=verdict, mode=Mode.CI, round=3, consecutive_clean_rounds=3,
-        findings=[StateFinding(
-            id="static", fingerprint="static", source="L0", disposition=Disposition.DISMISSED,
-            file="example.py", line_range=[1, 1], description="Static primary finding",
-        )],
+        verdict=verdict,
+        mode=Mode.CI,
+        round=3,
+        consecutive_clean_rounds=3,
+        findings=[
+            StateFinding(
+                id="static",
+                fingerprint="static",
+                source="L0",
+                disposition=Disposition.DISMISSED,
+                file="example.py",
+                line_range=[1, 1],
+                description="Static primary finding",
+            )
+        ],
     )
     saved = []
 
@@ -156,23 +193,37 @@ def prepare_consumer(monkeypatch, tmp_path, *, verdict=Verdict.PASS, outlet="sub
 
 
 @pytest.mark.parametrize("verdict", [Verdict.PASS, Verdict.FAIL, Verdict.PENDING])
-@pytest.mark.parametrize(("case", "status", "stage", "kind"), [
-    ("empty", "completed_empty", None, None),
-    ("findings", "completed_findings", None, None),
-    ("no-tests", "not_applicable", "eligibility", "no_test_files"),
-    ("no-diff", "skipped", "eligibility", "no_git_diff"),
-    ("transport", "failed", "invocation", "error"),
-    ("timeout", "failed", "invocation", "timeout"),
-    ("schema", "failed", "validation", "error"),
-    ("conversion", "failed", "conversion", "error"),
-])
+@pytest.mark.parametrize(
+    ("case", "status", "stage", "kind"),
+    [
+        ("empty", "completed_empty", None, None),
+        ("findings", "completed_findings", None, None),
+        ("no-tests", "not_applicable", "eligibility", "no_test_files"),
+        ("no-diff", "skipped", "eligibility", "no_git_diff"),
+        ("transport", "failed", "invocation", "error"),
+        ("timeout", "failed", "invocation", "timeout"),
+        ("schema", "failed", "validation", "error"),
+        ("conversion", "failed", "conversion", "error"),
+    ],
+)
 def test_actual_cli_ci_carries_outcome_without_changing_primary(
-    monkeypatch, tmp_path, capsys, verdict, case, status, stage, kind,
+    monkeypatch,
+    tmp_path,
+    capsys,
+    verdict,
+    case,
+    status,
+    stage,
+    kind,
 ):
-    repo, marker, state_path, receipt, saved = prepare_consumer(monkeypatch, tmp_path, verdict=verdict, case=case)
+    repo, marker, state_path, receipt, saved = prepare_consumer(
+        monkeypatch, tmp_path, verdict=verdict, case=case
+    )
     if case == "conversion":
+
         def fail_conversion(*args, **kwargs):
             raise RuntimeError(UNTRUSTED)
+
         monkeypatch.setattr("code_forge.reviewer_json._json_to_state_findings", fail_conversion)
     receipt_before = receipt.read_bytes()
     result = cli.main()
@@ -181,9 +232,10 @@ def test_actual_cli_ci_carries_outcome_without_changing_primary(
     assert result == expected_exit, output.err
     run = json.loads(output.out)["runs"][0]
     metadata = run["properties"]["testAssertion"]
-    expected = {"status": status, "finding_count": 1 if case == "findings" else (
-        None if status in ("failed", "skipped") else 0
-    )}
+    expected = {
+        "status": status,
+        "finding_count": 1 if case == "findings" else (None if status in ("failed", "skipped") else 0),
+    }
     if stage is not None:
         expected.update(stage=stage, kind=kind)
     assert metadata == expected
@@ -198,12 +250,16 @@ def test_actual_cli_ci_carries_outcome_without_changing_primary(
     assert [f.id for f in loaded.findings] == ["static"]
     assert not (repo / ".code-forge" / "code-forge.lock").exists()
     lines = output.err.splitlines()
-    summary = next(i for i, line in enumerate(lines) if line.startswith(f"code-forge: {verdict.value} findings="))
+    summary = next(
+        i for i, line in enumerate(lines) if line.startswith(f"code-forge: {verdict.value} findings=")
+    )
     assert f"test_assertion={status}" in lines[summary]
     assert "findings=1 confirmed=0 uncertain=0 dismissed=1 fixed=0" in lines[summary]
     if case != "no-diff":
         starts = [i for i, line in enumerate(lines) if "test-assertion phase start" in line]
-        ends = [i for i, line in enumerate(lines) if "test-assertion phase " in line and "elapsed=" in line]
+        ends = [
+            i for i, line in enumerate(lines) if "test-assertion phase " in line and "elapsed=" in line
+        ]
         assert len(starts) == len(ends) == 1
         assert starts[0] < ends[0] < summary
     assert "synthetic-private-value" not in output.err
@@ -244,13 +300,19 @@ def test_actual_ci_lock_spans_transport_and_writer(monkeypatch, tmp_path, capsys
     assert cli.main() == 0
     output = capsys.readouterr()
     assert events == ["advice", "report"]
-    assert json.loads(output.out)["runs"][0]["properties"]["testAssertion"]["status"] == "completed_empty"
+    assert (
+        json.loads(output.out)["runs"][0]["properties"]["testAssertion"]["status"] == "completed_empty"
+    )
     assert not lock_path.exists()
 
 
 def test_actual_subagent_cli_keeps_phase_and_primary_verdict(monkeypatch, tmp_path, capsys):
     repo, marker, state_path, receipt, saved = prepare_consumer(
-        monkeypatch, tmp_path, verdict=Verdict.FAIL, outlet="subagent", case="findings",
+        monkeypatch,
+        tmp_path,
+        verdict=Verdict.FAIL,
+        outlet="subagent",
+        case="findings",
     )
     receipt_before = receipt.read_bytes()
     assert cli.main() == 1
@@ -296,8 +358,13 @@ def test_legacy_helper_cannot_supply_structured_completion(monkeypatch, tmp_path
     monkeypatch.setattr(cli, "_run_test_assertion_review", legacy)
     assert cli.main() == 0
     output = capsys.readouterr()
-    assert "testAssertion" not in json.loads(output.out)["runs"][0].get("properties", {})
-    assert "test_assertion=" not in output.err
+    assert json.loads(output.out)["runs"][0]["properties"]["testAssertion"] == {
+        "status": "failed",
+        "finding_count": None,
+        "stage": "reporting",
+        "kind": "inconsistent_outcome",
+    }
+    assert "test_assertion=failed stage=reporting kind=inconsistent_outcome" in output.err
 
 
 def test_outcome_reporting_does_not_mutate_in_memory_state():

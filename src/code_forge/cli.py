@@ -26,7 +26,6 @@ from .assertion_outcome import (
     AssertionOutcome,
     AssertionStage,
     AssertionStatus,
-    legacy_progress_outcome,
 )
 from .runner import capture_tool_version
 from .sarif import build_sarif_log, format_classification_line, format_summary
@@ -1529,12 +1528,22 @@ def _run_test_assertion_phase(
             sys.stderr.write("[test-assertion] %s\n" % finding.description)
         if len(results) == 1 and type(results[0]) is AssertionOutcome:
             candidate = results[0]
-            if candidate.finding_count == len(findings) or (
-                candidate.finding_count is None and not findings
-            ):
-                result = candidate
-        legacy = legacy_progress_outcome(legacy_results[0]) if len(legacy_results) == 1 else "unreported"
-        outcome = result.legacy_outcome() if result is not None else legacy
+            try:
+                metadata = AssertionOutcome.to_metadata(candidate)
+            except (TypeError, ValueError, AttributeError):
+                metadata = None
+            if metadata is not None:
+                count = metadata["finding_count"]
+                if count == len(findings) or (count is None and not findings):
+                    result = candidate
+        if result is None:
+            result = AssertionOutcome(
+                AssertionStatus.FAILED,
+                None,
+                AssertionStage.REPORTING,
+                AssertionKind.INCONSISTENT_OUTCOME,
+            )
+        outcome = AssertionOutcome.legacy_outcome(result)
     finally:
         diagnostic = ""
         if result is not None and result.stage is not None:
