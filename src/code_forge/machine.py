@@ -1889,6 +1889,13 @@ class StateMachine:
                     "outcome": outcomes[name].value,
                 }
             )
+        if (
+            action == "unavailable"
+            and self._phase_status["l1"] != "returned"
+            and fixpoint == _FixpointResult.CLEAN
+        ):
+            # Empty pre-L1 findings are not a completed review observation.
+            fixpoint = None
         row.update(
             clean_credit_action=action,
             phase_status=dict(self._phase_status),
@@ -1901,6 +1908,8 @@ class StateMachine:
         )
         if fixpoint is not None:
             row["fixpoint"] = fixpoint.name
+        else:
+            row.pop("fixpoint", None)
         if evidence_rejections is not None:
             row["evidence_rejections"] = evidence_rejections
         self._host_attempt_round = None

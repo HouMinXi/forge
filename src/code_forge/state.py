@@ -537,6 +537,8 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             or not all(value in ("not_run", "returned", "failed") for value in phases.values())
         ):
             raise CorruptedStateError("invalid host phase status")
+        if action == "unavailable" and phases["l1"] != "returned" and "fixpoint" in row:
+            raise CorruptedStateError("unavailable host round has fixpoint without L1 observation")
         if (
             not isinstance(row["source_hash"], str)
             or not row["source_hash"]
