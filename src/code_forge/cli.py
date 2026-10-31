@@ -65,7 +65,11 @@ from .factories import (
 )
 from .git import is_git_repo, machine_diff_command
 from .hold import HoldAborted, run_hold_ui
-from .local_assertion_report import clear_local_assertion_report, emit_local_assertion_report
+from .local_assertion_report import (
+    clear_local_assertion_report,
+    emit_local_assertion_report,
+    format_assertion_summary,
+)
 from .lock import ForgeLock, ForgeLockBusy
 from .machine import StateMachine, TimeoutBreaker
 from .mode_resolver import resolve_mode
@@ -3725,7 +3729,17 @@ def _dispatch_subagent(
     )
     # Advisory findings stay outside the receipt gate.
     if resolved.git_diff:
-        _run_test_assertion_phase(resolved.git_diff, backend)
+        assertion_outcome = _run_test_assertion_phase(resolved.git_diff, backend)
+    else:
+        assertion_outcome = AssertionOutcome(
+            AssertionStatus.SKIPPED,
+            None,
+            AssertionStage.ELIGIBILITY,
+            AssertionKind.NO_GIT_DIFF,
+        )
+    if assertion_outcome is not None:
+        metadata = AssertionOutcome.to_metadata(assertion_outcome)
+        print(format_assertion_summary(metadata), file=sys.stderr)
     return verdict
 
 

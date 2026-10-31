@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""Advisory-only reporting for ordinary LOCAL subprocess reviews."""
+"""Advisory summaries and ordinary LOCAL subprocess report publication."""
 
 from __future__ import annotations
 
@@ -14,6 +14,16 @@ from .assertion_outcome import AssertionOutcome
 
 
 _REPORT_NAME = "local-assertion-report.json"
+
+
+def format_assertion_summary(metadata: dict[str, object]) -> str:
+    """Render fixed fields from validated AssertionOutcome.to_metadata output."""
+    line = f"code-forge: test_assertion={metadata['status']}"
+    if metadata["finding_count"] is not None:
+        line += f" assertion_findings={metadata['finding_count']}"
+    if "stage" in metadata:
+        line += f" stage={metadata['stage']} kind={metadata['kind']}"
+    return line
 
 
 def clear_local_assertion_report(state_path: Path) -> None:
@@ -34,12 +44,7 @@ def emit_local_assertion_report(state_path: Path, outcome: AssertionOutcome | No
     payload = {"testAssertion": metadata} if metadata is not None else {}
     serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n"
     if metadata is not None:
-        line = f"code-forge: test_assertion={metadata['status']}"
-        if metadata["finding_count"] is not None:
-            line += f" assertion_findings={metadata['finding_count']}"
-        if "stage" in metadata:
-            line += f" stage={metadata['stage']} kind={metadata['kind']}"
-        print(line, file=sys.stderr)
+        print(format_assertion_summary(metadata), file=sys.stderr)
 
     destination = state_path.parent / _REPORT_NAME
     temporary: Path | None = None
