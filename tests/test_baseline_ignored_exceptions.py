@@ -18,7 +18,9 @@ _LONG_PATH = "/home/box/.local/share/uv/python/cpython-3.12.15-linux-x86_64-gnu/
 
 
 def _clean(detail):
-    return not any(word in detail for word in ("ChildProcessError", "ResourceTracker", "Exception ignored"))
+    return not any(
+        word in detail for word in ("ChildProcessError", "ResourceTracker", "Exception ignored")
+    )
 
 
 def test_echild_shutdown_noise_is_not_the_cause():
@@ -34,7 +36,9 @@ def test_echild_noise_with_real_paths_is_dropped_from_the_fallback_excerpt():
 
 
 def test_short_output_is_filtered():
-    detail = _output_detail("Exception ignored in: <x>\nChildProcessError: [Errno 10] No child processes\n", None)
+    detail = _output_detail(
+        "Exception ignored in: <x>\nChildProcessError: [Errno 10] No child processes\n", None
+    )
     assert detail == "", detail
 
 
@@ -61,11 +65,7 @@ def test_real_cause_after_ignored_report_is_kept():
 
 
 def test_real_cause_before_ignored_report_is_kept():
-    real = (
-        "Traceback (most recent call last):\n"
-        '  File "x.py", line 1, in <module>\n'
-        "ValueError: bad\n"
-    )
+    real = 'Traceback (most recent call last):\n  File "x.py", line 1, in <module>\nValueError: bad\n'
     detail = _output_detail(real + _ECHILD + _PAD, None)
     assert "ValueError: bad" in detail
 
@@ -217,7 +217,7 @@ def test_chained_ignored_report_is_dropped_entirely():
     )
     detail = _output_detail(noise + _PAD, None)
     assert _clean(detail) and "OSError" not in detail, detail
-    real = "Traceback (most recent call last):\n  File \"x.py\", line 1, in <module>\nValueError: real\n"
+    real = 'Traceback (most recent call last):\n  File "x.py", line 1, in <module>\nValueError: real\n'
     assert "ValueError: real" in _output_detail(noise + real + _PAD, None)
 
 

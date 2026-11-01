@@ -133,7 +133,9 @@ class GraphTriageSource:
         from .graph_triage import _detect_backend
 
         self._backend_selection = None
-        gate_config = self._trusted_gate_cfg() if self.gate_config is not None else _gate_cfg(self.repo_root)
+        gate_config = (
+            self._trusted_gate_cfg() if self.gate_config is not None else _gate_cfg(self.repo_root)
+        )
         backend = _detect_backend(self.repo_root, gate_config)
         self._backend_selection = (backend, gate_config)
         if backend is None or backend[0] != "graphdb":
@@ -952,24 +954,33 @@ class GitHistorySource:
             out = self.runner(cmd, self.timeout)
         else:
             proc = subprocess.run(
-                cmd, cwd=self.root, capture_output=True,
-                timeout=self.timeout, check=False,
+                cmd,
+                cwd=self.root,
+                capture_output=True,
+                timeout=self.timeout,
+                check=False,
             )
             # Text mode would turn a subject's bare CR into a record boundary.
             out = proc.stdout.decode("utf-8", errors="replace")
             if proc.returncode != 0:
                 raise subprocess.CalledProcessError(
-                    proc.returncode, cmd, out, proc.stderr.decode("utf-8", errors="replace"))
+                    proc.returncode, cmd, out, proc.stderr.decode("utf-8", errors="replace")
+                )
         rows = []
         # Git flattens subject newlines; only its LF terminates a record.
         for line in out.split("\n"):
             if not line.strip():
                 continue
             short, _, subject = line.partition(" ")
-            rows.append(FactRow(
-                entity=subject, file="", downstream="",
-                dependents=short, source=self.name,
-            ))
+            rows.append(
+                FactRow(
+                    entity=subject,
+                    file="",
+                    downstream="",
+                    dependents=short,
+                    source=self.name,
+                )
+            )
         return rows
 
 
@@ -1028,13 +1039,15 @@ class KnowledgeSource:
         src = sources[0]
         passage = (payload.get("answer") or "")[:400]
         note = ("%s %s" % (src.get("chunk_id") or "", passage)).strip()
-        return [FactRow(
-            entity=src.get("doc_title") or "",
-            file=src.get("source_url") or "",
-            downstream="",
-            dependents=note,
-            source=self.name,
-        )]
+        return [
+            FactRow(
+                entity=src.get("doc_title") or "",
+                file=src.get("source_url") or "",
+                downstream="",
+                dependents=note,
+                source=self.name,
+            )
+        ]
 
 
 def knowledge_enabled(repo_root, gate_data: Optional[object] = None):
@@ -1084,8 +1097,10 @@ def knowledge_client(query, timeout):
         raise RuntimeError("YINHE_RAG_BASE_URL must be http or https")
     body = json.dumps({"query": query, "top_k": 1, "mode": "kb"}).encode()
     req = urllib.request.Request(  # noqa: S310 - scheme checked on the line above
-        url, data=body,
-        headers={"Content-Type": "application/json"}, method="POST",
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
         return json.loads(resp.read().decode())

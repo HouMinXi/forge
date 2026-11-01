@@ -57,8 +57,9 @@ def test_mid_review_edit_is_refused(untracked):
     m = _started(repo, base)
     _write_gate(repo, BASE_CMD, timeout=1)  # the agent edits it between rounds
     assert _l2_calls(m) == []
-    assert any("untracked .code-forge/gate.yaml changed during this review" in e
-               for e in m._state.infra_errors), m._state.infra_errors
+    assert any(
+        "untracked .code-forge/gate.yaml changed during this review" in e for e in m._state.infra_errors
+    ), m._state.infra_errors
 
 
 def test_mid_review_delete_is_refused(untracked):
@@ -268,9 +269,17 @@ def test_mutation_globs_come_from_the_loaded_block_not_a_reread(untracked, monke
     repo, base = untracked
     m = _started(repo, base)
     config = m._load_trusted_gate_config()
-    (repo / GATE).write_text(yaml.safe_dump({"test": {
-        "command": PR_CMD, "timeout_seconds": 999, "mutation_skip_globs": ["src/**"],
-    }}))  # edited after the post-load check
+    (repo / GATE).write_text(
+        yaml.safe_dump(
+            {
+                "test": {
+                    "command": PR_CMD,
+                    "timeout_seconds": 999,
+                    "mutation_skip_globs": ["src/**"],
+                }
+            }
+        )
+    )  # edited after the post-load check
     reads = []
     monkeypatch.setattr(gate_check, "load_trusted_gate_config", lambda **kw: reads.append(kw) or {})
     assert m._trusted_mutation_globs(config["test"]) == (None, None)
@@ -281,10 +290,18 @@ def test_pinned_globs_are_taken_from_the_loaded_block(untracked):
     import yaml
 
     repo, base = untracked
-    (repo / GATE).write_text(yaml.safe_dump({"test": {
-        "command": PR_CMD, "timeout_seconds": 999,
-        "mutation_skip_globs": ["a/**"], "mutation_include_globs": ["b/**"],
-    }}))
+    (repo / GATE).write_text(
+        yaml.safe_dump(
+            {
+                "test": {
+                    "command": PR_CMD,
+                    "timeout_seconds": 999,
+                    "mutation_skip_globs": ["a/**"],
+                    "mutation_include_globs": ["b/**"],
+                }
+            }
+        )
+    )
     m = _started(repo, base)
     config = m._load_trusted_gate_config()
     assert m._trusted_mutation_globs(config["test"]) == (["a/**"], ["b/**"])

@@ -174,20 +174,36 @@ def test_ordered_names_do_not_promote_hunk_body_headers(git_header, complete):
 @pytest.mark.parametrize(
     "packet,expected",
     [
-        ("diff --git a/new.py b/new.py\nnew file mode 100644\n"
-         "--- /dev/null\n+++ b/new.py\n@@ -0,0 +1 @@\n+x\n", "new.py"),
-        ("diff --git a/old.py b/old.py\ndeleted file mode 100644\n"
-         "--- a/old.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n", "old.py"),
-        ("diff --git a/old.py b/new.py\nsimilarity index 100%\n"
-         "rename from old.py\nrename to new.py\n", "new.py"),
-        ("diff --git a/old.py b/copy.py\nsimilarity index 100%\n"
-         "copy from old.py\ncopy to copy.py\n", "copy.py"),
+        (
+            "diff --git a/new.py b/new.py\nnew file mode 100644\n"
+            "--- /dev/null\n+++ b/new.py\n@@ -0,0 +1 @@\n+x\n",
+            "new.py",
+        ),
+        (
+            "diff --git a/old.py b/old.py\ndeleted file mode 100644\n"
+            "--- a/old.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n",
+            "old.py",
+        ),
+        (
+            "diff --git a/old.py b/new.py\nsimilarity index 100%\n"
+            "rename from old.py\nrename to new.py\n",
+            "new.py",
+        ),
+        (
+            "diff --git a/old.py b/copy.py\nsimilarity index 100%\ncopy from old.py\ncopy to copy.py\n",
+            "copy.py",
+        ),
         ("diff --git a/mode.py b/mode.py\nold mode 100644\nnew mode 100755\n", "mode.py"),
-        ("diff --git a/data.bin b/data.bin\n"
-         "Binary files a/data.bin and b/data.bin differ\n", "data.bin"),
+        (
+            "diff --git a/data.bin b/data.bin\nBinary files a/data.bin and b/data.bin differ\n",
+            "data.bin",
+        ),
         ("diff --git a/partial.py b/partial.py\n", "partial.py"),
-        ("diff --git a/partial.py b/partial.py\n--- a/partial.py\n+++ b/partial.py\n"
-         "@@ -1,3 +1,3 @@\n-old\n+new\n", "partial.py"),
+        (
+            "diff --git a/partial.py b/partial.py\n--- a/partial.py\n+++ b/partial.py\n"
+            "@@ -1,3 +1,3 @@\n-old\n+new\n",
+            "partial.py",
+        ),
     ],
     ids=["addition", "deletion", "rename", "copy", "mode", "binary", "header-only", "partial"],
 )
@@ -230,9 +246,7 @@ def test_ordered_names_bind_metadata_to_its_own_frame(tmp_path, change, reverse)
     preimage = tmp_path / "preimage"
     preimage.mkdir()
     _git(preimage, "init", "-q")
-    (preimage / metadata.name).write_bytes(
-        b"\x00old binary\n" if change == "binary" else b"value = 0\n"
-    )
+    (preimage / metadata.name).write_bytes(b"\x00old binary\n" if change == "binary" else b"value = 0\n")
     (preimage / plain.name).write_text("value = 1\n", encoding="utf-8")
     _git(preimage, "apply", "--check", "-", packet=packet.encode("utf-8"))
     assert changed_files_in_order(packet) == [name for _, name in frames]

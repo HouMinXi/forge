@@ -40,9 +40,14 @@ def assert_cause(findings):
     assert "stderr: /caller-marker/python3: No module named pytest" in finding.description
     assert "stdout:" not in finding.description
     assert "flaky" not in finding.description
-    assert (finding.id, finding.source, finding.disposition, finding.file, finding.line_range, finding.fingerprint) == (
-        "MUTATION_SKIPPED", "MUTANT", Disposition.DISMISSED, "", [], "mutation-flaky"
-    )
+    assert (
+        finding.id,
+        finding.source,
+        finding.disposition,
+        finding.file,
+        finding.line_range,
+        finding.fingerprint,
+    ) == ("MUTATION_SKIPPED", "MUTANT", Disposition.DISMISSED, "", [], "mutation-flaky")
 
 
 def recording_runner(calls, retry, healthy):
@@ -50,7 +55,9 @@ def recording_runner(calls, retry, healthy):
         calls.append((list(argv), {**kwargs, "env": dict(kwargs["env"])}))
         if healthy and (not retry or len(calls) > 1):
             return subprocess.CompletedProcess(argv, 0, "", "")
-        return subprocess.CompletedProcess(argv, 11, "", "/caller-marker/python3: No module named pytest\n")
+        return subprocess.CompletedProcess(
+            argv, 11, "", "/caller-marker/python3: No module named pytest\n"
+        )
 
     return run
 
@@ -60,8 +67,14 @@ def assert_calls(calls, root, retry, healthy, timeout):
     for index, (argv, kwargs) in enumerate(calls):
         assert argv == CMD + ["tests/test_mod.py"]
         assert kwargs == dict(
-            env=kwargs["env"], capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout, check=False, cwd=str(root),
+            env=kwargs["env"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+            cwd=str(root),
         )
         assert kwargs["env"]["PYTHONPATH"] == str(root / "src")
         assert ("VIRTUAL_ENV" in kwargs["env"]) is (retry and index == 0)
@@ -92,7 +105,9 @@ def test_mutation_cause_uses_owned_runner_at_each_site(private_project, monkeypa
     monkeypatch.setattr(mutation, "_resolve_mutmut_invocation", stop_engine)
     if healthy:
         with pytest.raises(RuntimeError, match="qualified baseline reached resolver"):
-            mutation.run_mutation(["src/pkg/mod.py"], CMD + ["tests/test_mod.py"], cwd=root, baseline_timeout=7)
+            mutation.run_mutation(
+                ["src/pkg/mod.py"], CMD + ["tests/test_mod.py"], cwd=root, baseline_timeout=7
+            )
     else:
         findings, infra = mutation.run_mutation(
             ["src/pkg/mod.py"], CMD + ["tests/test_mod.py"], cwd=root, baseline_timeout=7
@@ -123,6 +138,7 @@ def test_fixval_cause_survives_findings_only_skip(private_project, monkeypatch, 
         raise RuntimeError("qualified baseline reached transaction")
 
     allocate = fixval.tempfile.mkstemp
+
     def stop_allocation(*args, **kwargs):
         assert healthy, "unexpected patch allocation after skip"
         return allocate(*args, **kwargs, dir=root)
@@ -148,7 +164,9 @@ def test_fixval_cause_survives_findings_only_skip(private_project, monkeypatch, 
 @pytest.mark.parametrize("caller", ["mutation", "fixval"])
 @pytest.mark.parametrize("retry", [False, True], ids=["initial", "retry"])
 @pytest.mark.parametrize("module", ["pytest", "pytest_project_helper"], ids=["exact", "prefix"])
-def test_failed_runner_text_skips_each_caller_before_engine(private_project, monkeypatch, caller, retry, module):
+def test_failed_runner_text_skips_each_caller_before_engine(
+    private_project, monkeypatch, caller, retry, module
+):
     root = private_project
     calls = []
     if retry:

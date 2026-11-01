@@ -264,8 +264,7 @@ class BaselineGateInvalid(ValueError):
 
 
 GATE_NOT_FOUND_NOT_MEASURED = (
-    "mutation not measured -- no gate.yaml found; add .code-forge/gate.yaml "
-    "or use --test-config-root"
+    "mutation not measured -- no gate.yaml found; add .code-forge/gate.yaml or use --test-config-root"
 )
 
 GATE_NOT_ON_BASELINE_NOT_MEASURED = (
@@ -302,8 +301,14 @@ _LINK_MODES = {"120000": "a symlink", "160000": "a submodule"}
 def _git_out(source_root, *args) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(
-            ["git", *args], cwd=str(source_root), capture_output=True, text=True,
-            encoding="utf-8", errors="surrogateescape", timeout=10, check=False,
+            ["git", *args],
+            cwd=str(source_root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="surrogateescape",
+            timeout=10,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise UntrustedGateConfigError(f"cannot inspect .code-forge/gate.yaml with git: {exc}") from exc
@@ -457,7 +462,9 @@ def _load_gate_nofollow(
     parse=_parse_validated,
 ) -> dict:
     text = _read_gate_nofollow(
-        root, refuse_hardlinks=refuse_hardlinks, expected_sha256=expected_sha256,
+        root,
+        refuse_hardlinks=refuse_hardlinks,
+        expected_sha256=expected_sha256,
     )
     return parse(Path(root) / ".code-forge" / "gate.yaml", text)
 
@@ -533,7 +540,11 @@ def _load_outside_gate(config_root, source_root, parse=_parse_validated) -> dict
 
 
 def load_trusted_gate_data(
-    *, config_root, source_root, base_sha: str | None, allow_untracked: bool = True,
+    *,
+    config_root,
+    source_root,
+    base_sha: str | None,
+    allow_untracked: bool = True,
     expected_sha256: str | None = None,
 ) -> dict:
     """#141: the raw top-level gate.yaml mapping from the same trusted source
@@ -542,13 +553,21 @@ def load_trusted_gate_data(
     same errors; callers of review-time switches treat FileNotFoundError and
     UntrustedGateConfigError as "no trusted gate.yaml" (built-in defaults)."""
     return load_trusted_gate_config(
-        config_root=config_root, source_root=source_root, base_sha=base_sha,
-        allow_untracked=allow_untracked, expected_sha256=expected_sha256, _parse=_parse_raw,
+        config_root=config_root,
+        source_root=source_root,
+        base_sha=base_sha,
+        allow_untracked=allow_untracked,
+        expected_sha256=expected_sha256,
+        _parse=_parse_raw,
     )
 
 
 def trusted_gate_data_or_error(
-    *, config_root, source_root, base_sha: str | None, allow_untracked: bool = True,
+    *,
+    config_root,
+    source_root,
+    base_sha: str | None,
+    allow_untracked: bool = True,
 ) -> "dict | Exception":
     """#150: :func:`load_trusted_gate_data` for advisory/context switches.
 
@@ -560,7 +579,9 @@ def trusted_gate_data_or_error(
     to the reviewed tree's copy."""
     try:
         data = load_trusted_gate_data(
-            config_root=config_root, source_root=source_root, base_sha=base_sha,
+            config_root=config_root,
+            source_root=source_root,
+            base_sha=base_sha,
             allow_untracked=allow_untracked,
         )
     except (FileNotFoundError, UntrustedGateConfigError):
@@ -571,7 +592,11 @@ def trusted_gate_data_or_error(
 
 
 def load_trusted_gate_config(
-    *, config_root, source_root, base_sha: str | None, allow_untracked: bool = True,
+    *,
+    config_root,
+    source_root,
+    base_sha: str | None,
+    allow_untracked: bool = True,
     expected_sha256: str | None = None,
     _parse=_parse_validated,
 ) -> dict:
@@ -607,7 +632,9 @@ def load_trusted_gate_config(
         except GateNotFound:
             raise
         except FileNotFoundError as exc:
-            raise GateNotFound(f"no .code-forge/gate.yaml in the test config root {config_root}") from exc
+            raise GateNotFound(
+                f"no .code-forge/gate.yaml in the test config root {config_root}"
+            ) from exc
         except GateWithoutTestSection:
             raise  # well-formed, mutation simply not configured: unchanged
         except (OSError, ValueError) as exc:
@@ -615,7 +642,10 @@ def load_trusted_gate_config(
                 f"invalid .code-forge/gate.yaml in the test config root {config_root}: {exc}"
             ) from exc
     working = Path(source_root) / ".code-forge" / "gate.yaml"
-    in_git = any((d / ".git").exists() for d in (Path(source_root).resolve(), *Path(source_root).resolve().parents))
+    in_git = any(
+        (d / ".git").exists()
+        for d in (Path(source_root).resolve(), *Path(source_root).resolve().parents)
+    )
     if not in_git:
         if not allow_untracked:
             _refuse_untracked_gate(working)
@@ -1702,8 +1732,11 @@ def _baseline_pack_files(source_root, base_sha: str, name: str) -> dict[str, byt
             continue  # load_pack reports the missing file
         try:
             shown = subprocess.run(
-                ["git", "show", f"{base_sha}:./{path}"], cwd=str(source_root),
-                capture_output=True, timeout=10, check=False,
+                ["git", "show", f"{base_sha}:./{path}"],
+                cwd=str(source_root),
+                capture_output=True,
+                timeout=10,
+                check=False,
             )
         except subprocess.TimeoutExpired as exc:
             # #177: a reported refusal (infra error), not a crash of the round.
@@ -1723,7 +1756,9 @@ def _tree_pack_files(root, name: str, *, refuse_hardlinks: bool) -> dict[str, by
     for fname in _PACK_FILES:
         try:
             files[fname] = _read_nofollow(
-                root, (".code-forge", "packs", name, fname), refuse_hardlinks=refuse_hardlinks,
+                root,
+                (".code-forge", "packs", name, fname),
+                refuse_hardlinks=refuse_hardlinks,
             )
         except FileNotFoundError:
             continue
@@ -1731,16 +1766,25 @@ def _tree_pack_files(root, name: str, *, refuse_hardlinks: bool) -> dict[str, by
 
 
 def materialize_trusted_packs(
-    *, config_root, source_root, base_sha: str | None, allow_untracked: bool,
-    names, dest,
+    *,
+    config_root,
+    source_root,
+    base_sha: str | None,
+    allow_untracked: bool,
+    names,
+    dest,
 ) -> tuple[Path, list[str]]:
     """See :func:`_materialize_trusted_packs`. A refusal of an explicit
     outside config root's packs raises OutsideConfigRootRefused (#157)."""
     outside = config_root_is_outside_review(config_root, source_root)
     try:
         return _materialize_trusted_packs(
-            config_root=config_root, source_root=source_root, base_sha=base_sha,
-            allow_untracked=allow_untracked, names=names, dest=dest,
+            config_root=config_root,
+            source_root=source_root,
+            base_sha=base_sha,
+            allow_untracked=allow_untracked,
+            names=names,
+            dest=dest,
         )
     except OutsideConfigRootRefused:
         raise
@@ -1751,8 +1795,13 @@ def materialize_trusted_packs(
 
 
 def _materialize_trusted_packs(
-    *, config_root, source_root, base_sha: str | None, allow_untracked: bool,
-    names, dest,
+    *,
+    config_root,
+    source_root,
+    base_sha: str | None,
+    allow_untracked: bool,
+    names,
+    dest,
 ) -> tuple[Path, list[str]]:
     """Copy the named repo-local rule packs from a source the reviewed change
     cannot edit into ``dest/<name>/`` and return ``(dest, notes)``.
@@ -1787,7 +1836,9 @@ def _materialize_trusted_packs(
             if base_sha:
                 files = _baseline_pack_files(source_root, base_sha, name)
             if files is None and allow_untracked:
-                tracked = _git_ok(source_root, "ls-files", "-z", "--", f".code-forge/packs/{name}").stdout
+                tracked = _git_ok(
+                    source_root, "ls-files", "-z", "--", f".code-forge/packs/{name}"
+                ).stdout
                 if not tracked:
                     files = _tree_pack_files(source_root, name, refuse_hardlinks=False)
         if files is None:

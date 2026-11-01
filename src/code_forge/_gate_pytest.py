@@ -52,6 +52,7 @@ def child_sigint_options() -> dict:
         return {}
     return {"preexec_fn": reset_child_sigint}  # rare: non-main thread under SIG_IGN
 
+
 PLUGIN = "forge-gate-pytest"
 QUALIFIED_RUNTIMES = frozenset(
     {("cpython-39", "8.4.2"), ("cpython-314", "9.1.0"), ("cpython-312", "9.1.1")}

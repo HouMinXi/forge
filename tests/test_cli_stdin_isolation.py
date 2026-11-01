@@ -71,8 +71,12 @@ def test_argv_cli_does_not_block_on_an_inherited_open_pipe(tmp_path):
     read_end, write_end = os.pipe()  # we hold write_end open: stdin never reaches EOF
     try:
         child = subprocess.Popen(
-            [sys.executable, "-c", driver], stdin=read_end, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, env=env,
+            [sys.executable, "-c", driver],
+            stdin=read_end,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
         )
         os.close(read_end)
         try:

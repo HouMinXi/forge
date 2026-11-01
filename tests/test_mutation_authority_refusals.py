@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Physical source and context denials cannot acquire mutation authority."""
+
 from copy import deepcopy
 from dataclasses import replace
 from functools import partial
@@ -14,17 +15,30 @@ from code_forge.cli import _build_parser, _run_mutation_check
 from code_forge.disposition import Disposition
 from code_forge.ledger import append_row
 from tests.test_mutation_ledger_ci_controls import (
-    ci_project as ci_project, _machine, _measure, _payload,
-    _review, _row, _rule, SOURCE_A, SOURCE_B,
+    ci_project as ci_project,
+    _machine,
+    _measure,
+    _payload,
+    _review,
+    _row,
+    _rule,
+    SOURCE_A,
+    SOURCE_B,
 )
 
 
 def _capture(project, **changes):
     review = _review(project)
-    values = dict(source_root=project.root, target_kind="WORKING",
-                  base_sha=review.base_sha, head_sha=review.head_sha,
-                  git_diff=review.git_diff, paths=("calc.py",),
-                  diff_paths=("calc.py",), selection="WORKING")
+    values = dict(
+        source_root=project.root,
+        target_kind="WORKING",
+        base_sha=review.base_sha,
+        head_sha=review.head_sha,
+        git_diff=review.git_diff,
+        paths=("calc.py",),
+        diff_paths=("calc.py",),
+        selection="WORKING",
+    )
     values.update(changes)
     return mutation.capture_mutation_source_guard(**values)
 
@@ -44,10 +58,15 @@ def test_guard_head_requires_an_actual_commit(ci_project, monkeypatch):
         mutation._guard_head(root)
 
 
-@pytest.mark.parametrize("selection,paths", [
-    ("UNSUPPORTED", ()), ("TRACKED_WORKING", ("calc.py",)),
-    ("invalid-base", ()),
-], ids=["unsupported", "tracked-with-paths", "unresolvable-base"])
+@pytest.mark.parametrize(
+    "selection,paths",
+    [
+        ("UNSUPPORTED", ()),
+        ("TRACKED_WORKING", ("calc.py",)),
+        ("invalid-base", ()),
+    ],
+    ids=["unsupported", "tracked-with-paths", "unresolvable-base"],
+)
 def test_guard_diff_refuses_unsupported_or_unresolvable_selection(ci_project, selection, paths):
     review = _review(ci_project)
     base = review.base_sha
@@ -99,21 +118,25 @@ def test_guard_entries_refuses_observed_endpoint_races(ci_project, monkeypatch, 
     original_lstat = Path.lstat
     parent_observations = []
     if kind.endswith("parent-change"):
+
         def changed_parent(self, *args, **kwargs):
             if self == parent:
                 parent_observations.append(original_lstat(self, *args, **kwargs).st_ino)
                 if len(parent_observations) >= 2:
                     return original_lstat(other, *args, **kwargs)
             return original_lstat(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "lstat", changed_parent)
         message = "parents changed during " + ("absence" if kind.startswith("missing") else "endpoint")
     else:
         original_read = mutation._read_inventory_file
+
         def changed_endpoint(asked):
             raw = original_read(asked)
             if asked == path:
                 asked.write_bytes(SOURCE_B)
             return raw
+
         monkeypatch.setattr(mutation, "_read_inventory_file", changed_endpoint)
         message = "source changed during endpoint capture"
     with pytest.raises(ValueError, match=message):
@@ -128,7 +151,9 @@ def test_guard_entries_refuses_observed_endpoint_races(ci_project, monkeypatch, 
     assert ci_project.measurements == []
 
 
-@pytest.mark.parametrize("kind", ["linked-root", "rename", "copy", "wrong-head", "endpoint-race", "missing-scope"])
+@pytest.mark.parametrize(
+    "kind", ["linked-root", "rename", "copy", "wrong-head", "endpoint-race", "missing-scope"]
+)
 def test_capture_refuses_unbound_source_authority(ci_project, monkeypatch, kind):
     p = ci_project
     changes = {}
@@ -145,12 +170,14 @@ def test_capture_refuses_unbound_source_authority(ci_project, monkeypatch, kind)
     else:
         original = mutation._guard_entries
         observations = []
+
         def changed_entries(root, paths):
             value = original(root, paths)
             observations.append(value)
             if len(observations) == 1:
                 (p.root / "calc.py").write_bytes(SOURCE_B)
             return value
+
         monkeypatch.setattr(mutation, "_guard_entries", changed_entries)
     assert _capture(p, **changes) is None
     assert p.measurements == [] and p.launches == []
@@ -171,10 +198,12 @@ def test_guard_match_refuses_root_or_metadata_denial(ci_project, monkeypatch, ki
         guard = replace(guard, source_root=str(root))
     else:
         original = Path.lstat
+
         def denied(self, *args, **kwargs):
             if self == root:
                 raise OSError("RECORDED_ROOT_METADATA_DENIAL")
             return original(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "lstat", denied)
     assert mutation.mutation_source_guard_matches(guard, source_root=root) is False
     assert (p.root / "calc.py").read_bytes() == SOURCE_A
@@ -183,11 +212,20 @@ def test_guard_match_refuses_root_or_metadata_denial(ci_project, monkeypatch, ki
 
 def test_context_constructor_refuses_malformed_source_root(ci_project):
     review = _review(ci_project)
-    assert mutation_findings.mutation_review_context(source_root=object(),
-        base_sha=review.base_sha, head_sha=review.head_sha, git_diff=review.git_diff) is None
+    assert (
+        mutation_findings.mutation_review_context(
+            source_root=object(),
+            base_sha=review.base_sha,
+            head_sha=review.head_sha,
+            git_diff=review.git_diff,
+        )
+        is None
+    )
 
 
-@pytest.mark.parametrize("kind", ["invalid-sha", "invalid-digest", "resolve-oserror", "resolve-valueerror"])
+@pytest.mark.parametrize(
+    "kind", ["invalid-sha", "invalid-digest", "resolve-oserror", "resolve-valueerror"]
+)
 def test_bound_decoder_refuses_context_identity_denial(ci_project, monkeypatch, kind):
     p = ci_project
     payload, findings = _payload(p)
@@ -199,15 +237,21 @@ def test_bound_decoder_refuses_context_identity_denial(ci_project, monkeypatch, 
     else:
         original = Path.resolve
         error_type = OSError if kind == "resolve-oserror" else ValueError
+
         def denied(self, *args, **kwargs):
             if self == p.root:
                 raise error_type("RECORDED_CONTEXT_PATH_DENIAL")
             return original(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "resolve", denied)
         assert p.state.resolve() == p.state, "unrelated physical path must retain ordinary resolution"
     payload["review_context"] = context
-    assert mutation_findings.decode_mutation_survivor_details(
-        payload, review_context=context, include_timeout_diagnostics=True) is None
+    assert (
+        mutation_findings.decode_mutation_survivor_details(
+            payload, review_context=context, include_timeout_diagnostics=True
+        )
+        is None
+    )
     assert findings[0].disposition is Disposition.CONFIRMED
 
 
@@ -220,15 +264,25 @@ def test_ledger_path_resolution_denial_cannot_dismiss_survivor(ci_project, monke
     append_row(p.root, replace(_row(p, findings[0]), repo_root=str(denied_path)))
     original = Path.resolve
     calls = []
+
     def denied(self, *args, **kwargs):
         if self == denied_path:
             calls.append(str(self))
             raise error_type("RECORDED_LEDGER_PATH_DENIAL")
         return original(self, *args, **kwargs)
+
     monkeypatch.setattr(Path, "resolve", denied)
-    assert mutation_findings.apply_mutation_ledger_dispositions(findings,
-        source_root=p.root, base_sha=review.base_sha, head_sha=review.head_sha,
-        git_diff=review.git_diff, eligible_measurement=True) == []
+    assert (
+        mutation_findings.apply_mutation_ledger_dispositions(
+            findings,
+            source_root=p.root,
+            base_sha=review.base_sha,
+            head_sha=review.head_sha,
+            git_diff=review.git_diff,
+            eligible_measurement=True,
+        )
+        == []
+    )
     assert calls == [str(denied_path)]
     assert findings[0].disposition is Disposition.CONFIRMED
     assert not denied_path.exists()
@@ -250,11 +304,13 @@ def test_standalone_head_read_error_preserves_current_survivor(ci_project, monke
     _rule(p, findings)
     original = subprocess.run
     calls = []
+
     def denied(argv, *args, **kwargs):
         if list(argv) == ["git", "rev-parse", "HEAD"] and Path(kwargs.get("cwd", ".")) == p.root:
             calls.append(list(argv))
             raise OSError("RECORDED_HEAD_READ_DENIAL")
         return original(argv, *args, **kwargs)
+
     monkeypatch.setattr(subprocess, "run", denied)
     args = _build_parser().parse_args(["mutation-check"])
     assert _run_mutation_check(args, p.root) == 1
@@ -279,7 +335,9 @@ def test_guard_entries_refuses_same_tick_same_size_rewrite(ci_project, monkeypat
     path.write_bytes(SOURCE_A)
     frozen = path.lstat()
     original_lstat = Path.lstat
-    monkeypatch.setattr(Path, "lstat", lambda self, *a, **kw: frozen if self == path else original_lstat(self, *a, **kw))
+    monkeypatch.setattr(
+        Path, "lstat", lambda self, *a, **kw: frozen if self == path else original_lstat(self, *a, **kw)
+    )
     original_read = mutation._read_inventory_file
     reads = []
 

@@ -41,7 +41,10 @@ from pathlib import Path
 from typing import Literal, NotRequired, TypedDict
 
 from ._mutation_process import (
-    MutationProcessError, _bind_cancellation_evidence, limit_address_space, run_owned_command,
+    MutationProcessError,
+    _bind_cancellation_evidence,
+    limit_address_space,
+    run_owned_command,
 )
 from ._mutation_workspace import MutationWorkspace, MutationWorkspaceError, OrphanMutationContainerError
 from .disposition import Disposition
@@ -80,9 +83,17 @@ class MutationOutcome(TypedDict):
 
 
 def _mutation_outcome(
-    findings: list[StateFinding], infra: list[str], evidence: dict, *, review_context: dict | None = None,
+    findings: list[StateFinding],
+    infra: list[str],
+    evidence: dict,
+    *,
+    review_context: dict | None = None,
 ) -> MutationOutcome:
-    from .mutation_findings import is_mutation_diagnostic, is_mutation_survivor, mutation_survivor_details
+    from .mutation_findings import (
+        is_mutation_diagnostic,
+        is_mutation_survivor,
+        mutation_survivor_details,
+    )
 
     errors = [f.description for f in findings if f.id == "MUTATION_ERROR" or is_mutation_diagnostic(f)]
     skipped = [f.description for f in findings if f.id == "MUTATION_SKIPPED"]
@@ -106,8 +117,15 @@ def _mutation_outcome(
     }
     # Preserve failure/cleanup metadata for the bound consumer. Dropping a
     # failed cleanup marker would manufacture a successful canonical carrier.
-    for key in ("publication_error", "cancellation_type", "cleanup_error", "process_failure",
-                "cancelled", "cleanup_complete", "baseline_env_retry"):
+    for key in (
+        "publication_error",
+        "cancellation_type",
+        "cleanup_error",
+        "process_failure",
+        "cancelled",
+        "cleanup_complete",
+        "baseline_env_retry",
+    ):
         if key in evidence:
             outcome[key] = evidence[key]
     if review_context is not None:
@@ -661,9 +679,14 @@ class MutationSourceGuard:
 
 def _guard_head(root: Path) -> str:
     result = subprocess.run(
-        ["git", "rev-parse", "--verify", "HEAD^{commit}"], cwd=root,
-        capture_output=True, text=True, encoding="utf-8", errors="strict",
-        check=False, timeout=15,
+        ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        check=False,
+        timeout=15,
     )
     if result.returncode != 0:
         raise ValueError("mutation source guard cannot resolve HEAD")
@@ -678,16 +701,23 @@ def _guard_diff(root: Path, base_sha: str, paths: tuple[str, ...], selection: st
     if selection != "TRACKED_WORKING" or paths:
         raise ValueError("unsupported mutation review diff selection")
     result = subprocess.run(
-        ["git", "diff", *_MACHINE_DIFF_OPTIONS, base_sha], cwd=root,
-        capture_output=True, text=True, encoding="utf-8", errors="strict",
-        check=False, timeout=15,
+        ["git", "diff", *_MACHINE_DIFF_OPTIONS, base_sha],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        check=False,
+        timeout=15,
     )
     if result.returncode != 0:
         raise ValueError("mutation source guard cannot repeat reviewed diff")
     return result.stdout
 
 
-def _guard_entries(root: Path, paths: tuple[str, ...]) -> tuple[tuple[str, int | None, bytes | None], ...]:
+def _guard_entries(
+    root: Path, paths: tuple[str, ...]
+) -> tuple[tuple[str, int | None, bytes | None], ...]:
     entries = []
     for name in paths:
         path = root / _lexical_source(name, root)
@@ -703,8 +733,10 @@ def _guard_entries(root: Path, paths: tuple[str, ...]) -> tuple[tuple[str, int |
         try:
             before = path.lstat()
         except FileNotFoundError as exc:
-            if any((node.lstat().st_dev, node.lstat().st_ino, node.lstat().st_mode) != (dev, ino, mode)
-                   for node, dev, ino, mode in parents):
+            if any(
+                (node.lstat().st_dev, node.lstat().st_ino, node.lstat().st_mode) != (dev, ino, mode)
+                for node, dev, ino, mode in parents
+            ):
                 raise ValueError("mutation source parents changed during absence capture") from exc
             entries.append((relative, None, None))
             continue
@@ -715,11 +747,15 @@ def _guard_entries(root: Path, paths: tuple[str, ...]) -> tuple[tuple[str, int |
         fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns", "st_nlink")
         # Coarse kernel timestamps (~4 ms) can hide a same-size rewrite from
         # every stat field, so confirm the bytes too.
-        if (any(getattr(before, field) != getattr(after, field) for field in fields)
-                or _read_inventory_file(path) != raw):
+        if (
+            any(getattr(before, field) != getattr(after, field) for field in fields)
+            or _read_inventory_file(path) != raw
+        ):
             raise ValueError("mutation source changed during endpoint capture")
-        if any((node.lstat().st_dev, node.lstat().st_ino, node.lstat().st_mode) != (dev, ino, mode)
-               for node, dev, ino, mode in parents):
+        if any(
+            (node.lstat().st_dev, node.lstat().st_ino, node.lstat().st_mode) != (dev, ino, mode)
+            for node, dev, ino, mode in parents
+        ):
             raise ValueError("mutation source parents changed during endpoint capture")
         entries.append((relative, before.st_mode, raw))
     if len({row[0] for row in entries}) != len(entries):
@@ -728,16 +764,30 @@ def _guard_entries(root: Path, paths: tuple[str, ...]) -> tuple[tuple[str, int |
 
 
 def capture_mutation_source_guard(
-    *, source_root: Path, target_kind: str | None, base_sha: str | None,
-    head_sha: str | None, git_diff: str | None, paths: tuple[str, ...],
-    diff_paths: tuple[str, ...] | None, selection: str = "WORKING",
+    *,
+    source_root: Path,
+    target_kind: str | None,
+    base_sha: str | None,
+    head_sha: str | None,
+    git_diff: str | None,
+    paths: tuple[str, ...],
+    diff_paths: tuple[str, ...] | None,
+    selection: str = "WORKING",
 ) -> MutationSourceGuard | None:
     """Refuse an unsupported/incoherent WORKING review before native execution."""
-    if (target_kind != "WORKING" or type(git_diff) is not str or not git_diff
-            or type(paths) is not tuple or not paths or type(diff_paths) is not tuple
-            or any(type(path) is not str or not path for path in paths + diff_paths)
-            or any(type(value) is not str or re.fullmatch(r"[0-9a-f]{40}", value) is None
-                   for value in (base_sha, head_sha))):
+    if (
+        target_kind != "WORKING"
+        or type(git_diff) is not str
+        or not git_diff
+        or type(paths) is not tuple
+        or not paths
+        or type(diff_paths) is not tuple
+        or any(type(path) is not str or not path for path in paths + diff_paths)
+        or any(
+            type(value) is not str or re.fullmatch(r"[0-9a-f]{40}", value) is None
+            for value in (base_sha, head_sha)
+        )
+    ):
         return None
     try:
         root = Path(os.path.abspath(source_root))
@@ -761,8 +811,9 @@ def capture_mutation_source_guard(
         removed = set(get_removed_files(git_diff))
         if any(raw is None and name not in removed for name, _mode, raw in after):
             return None
-        return MutationSourceGuard(str(root), base_sha, head_sha, git_diff, paths,
-                                   diff_paths, selection, after)
+        return MutationSourceGuard(
+            str(root), base_sha, head_sha, git_diff, paths, diff_paths, selection, after
+        )
     except (OSError, ValueError, TypeError, BaselineResolutionError, subprocess.SubprocessError):
         return None
 
@@ -778,10 +829,12 @@ def mutation_source_guard_matches(guard: MutationSourceGuard | None, *, source_r
         for node in (*reversed(root.parents), root):
             if not stat.S_ISDIR(node.lstat().st_mode):
                 return False
-        return (_guard_head(root) == guard.head_sha
-                and _guard_entries(root, guard.paths) == guard.entries
-                and _guard_entries(root, guard.paths) == guard.entries
-                and _guard_head(root) == guard.head_sha)
+        return (
+            _guard_head(root) == guard.head_sha
+            and _guard_entries(root, guard.paths) == guard.entries
+            and _guard_entries(root, guard.paths) == guard.entries
+            and _guard_head(root) == guard.head_sha
+        )
     except (OSError, ValueError, TypeError, BaselineResolutionError, subprocess.SubprocessError):
         return False
 
@@ -801,7 +854,9 @@ def is_native_mutation_runner(runner, *, source_root: Path) -> bool:
     return False
 
 
-def executable_review_sources(source_files: list[Path], git_diff: str | None, source_root: Path) -> list[Path]:
+def executable_review_sources(
+    source_files: list[Path], git_diff: str | None, source_root: Path
+) -> list[Path]:
     """Project semantic scope onto entries with a reviewed post-image."""
     if git_diff is None:
         return source_files
@@ -818,8 +873,13 @@ def _valid_globs(value) -> list[str] | None:
 
 
 def trusted_mutation_globs(
-    *, config_root, source_root, base_sha: str | None, config_test: dict | None = None,
-    notes: list[str] | None = None, allow_untracked: bool = True,
+    *,
+    config_root,
+    source_root,
+    base_sha: str | None,
+    config_test: dict | None = None,
+    notes: list[str] | None = None,
+    allow_untracked: bool = True,
 ) -> tuple[list[str] | None, list[str] | None]:
     """Mutation skip/include globs from a source the reviewed change cannot edit
     (#134), by the same rule as every other ``test.*`` key (#140): see
@@ -840,10 +900,15 @@ def trusted_mutation_globs(
         test = config_test
     else:
         try:
-            test = load_trusted_gate_config(
-                config_root=config_root, source_root=source_root, base_sha=base_sha,
-                allow_untracked=allow_untracked,
-            ).get("test") or {}
+            test = (
+                load_trusted_gate_config(
+                    config_root=config_root,
+                    source_root=source_root,
+                    base_sha=base_sha,
+                    allow_untracked=allow_untracked,
+                ).get("test")
+                or {}
+            )
         except FileNotFoundError:
             return (None, None)
         except (OSError, ValueError, TypeError) as exc:
@@ -853,13 +918,22 @@ def trusted_mutation_globs(
                     f"({exc}); using the default test-path globs"
                 )
             return (None, None)
-    return _valid_globs(test.get("mutation_skip_globs")), _valid_globs(test.get("mutation_include_globs"))
+    return _valid_globs(test.get("mutation_skip_globs")), _valid_globs(
+        test.get("mutation_include_globs")
+    )
 
 
 def mutation_review_admission_error(
-    *, target_kind: str | None, git_diff: str | None, source_files: list[Path],
-    source_root: Path, config_root: Path, runner, ci_detached: bool = False,
-    base_sha: str | None = None, allow_untracked: bool = True,
+    *,
+    target_kind: str | None,
+    git_diff: str | None,
+    source_files: list[Path],
+    source_root: Path,
+    config_root: Path,
+    runner,
+    ci_detached: bool = False,
+    base_sha: str | None = None,
+    allow_untracked: bool = True,
 ) -> str | None:
     """Reject unsupported staged/committed native work before it starts."""
     if target_kind not in {"INDEX", "COMMIT"} or not git_diff:
@@ -877,7 +951,9 @@ def mutation_review_admission_error(
         return None
     try:
         test = load_trusted_gate_config(
-            config_root=config_root, source_root=source_root, base_sha=base_sha,
+            config_root=config_root,
+            source_root=source_root,
+            base_sha=base_sha,
             allow_untracked=allow_untracked,
         )["test"]
     except (OSError, ValueError, TypeError):
@@ -888,12 +964,17 @@ def mutation_review_admission_error(
     except ValueError:
         return None
     skip, include = trusted_mutation_globs(
-        config_root=config_root, source_root=source_root, base_sha=base_sha, config_test=test,
+        config_root=config_root,
+        source_root=source_root,
+        base_sha=base_sha,
+        config_test=test,
         allow_untracked=allow_untracked,
     )
     selected = native and any(not _is_test_path(path, skip, include, source_root) for path in py_files)
     if detached:
-        selected = selected or any(not _is_test_path(path, skip, include, source_root) for path in py_files)
+        selected = selected or any(
+            not _is_test_path(path, skip, include, source_root) for path in py_files
+        )
     if not selected:
         return None
     if target_kind == "COMMIT":
@@ -1138,13 +1219,18 @@ def run_mutation(
             cleanup_complete = getattr(exc, "cleanup_complete", False) is True
             ownership = getattr(exc, "ownership", {})
             workspace.cleanup_complete = cleanup_allowed and cleanup_complete
-            evidence.update(process_failure=ownership, cancelled=True,
-                            baseline_passed=False, completed_measurement=False)
+            evidence.update(
+                process_failure=ownership,
+                cancelled=True,
+                baseline_passed=False,
+                completed_measurement=False,
+            )
         except BaseException as evidence_exc:  # noqa: BLE001 - an interrupted proof cannot authorize restoration
             workspace.cleanup_complete = False
             _bind_cancellation_evidence(exc, cleanup_complete=False, cleanup_evidence_error=evidence_exc)
-            evidence.update(process_failure={}, cancelled=True,
-                            baseline_passed=False, completed_measurement=False)
+            evidence.update(
+                process_failure={}, cancelled=True, baseline_passed=False, completed_measurement=False
+            )
 
     try:
         try:
@@ -1179,8 +1265,9 @@ def run_mutation(
         except BaseException as evidence_exc:  # noqa: BLE001 - retain the selected object if metadata dispatch is interrupted
             workspace.cleanup_complete = False
             _bind_cancellation_evidence(exc, cleanup_complete=False, cleanup_evidence_error=evidence_exc)
-            evidence.update(process_failure={}, cancelled=True,
-                            baseline_passed=False, completed_measurement=False)
+            evidence.update(
+                process_failure={}, cancelled=True, baseline_passed=False, completed_measurement=False
+            )
     finally:
         try:
             try:
@@ -1190,7 +1277,9 @@ def run_mutation(
                     workspace_error = exc
                     workspace.cleanup_complete = False
                     _bind_cancellation_evidence(
-                        cancellation, cleanup_complete=False, workspace_cleanup_error=exc,
+                        cancellation,
+                        cleanup_complete=False,
+                        workspace_cleanup_error=exc,
                         note=f"mutation workspace cleanup failed: {exc}",
                     )
                     evidence["cleanup_error"] = str(exc)
@@ -1209,13 +1298,22 @@ def run_mutation(
                     record_cancellation(evidence_exc, cleanup_allowed)
                 except BaseException as secondary:  # noqa: BLE001 - a later interruption cannot replace the selected object
                     workspace.cleanup_complete = False
-                    _bind_cancellation_evidence(evidence_exc, cleanup_complete=False, cleanup_evidence_error=secondary)
-                    evidence.update(process_failure={}, cancelled=True,
-                                    baseline_passed=False, completed_measurement=False)
+                    _bind_cancellation_evidence(
+                        evidence_exc, cleanup_complete=False, cleanup_evidence_error=secondary
+                    )
+                    evidence.update(
+                        process_failure={},
+                        cancelled=True,
+                        baseline_passed=False,
+                        completed_measurement=False,
+                    )
             else:
                 _bind_cancellation_evidence(
-                    cancellation, cleanup_complete=False,
-                    workspace_cleanup_error=workspace_error if workspace_error is not None else evidence_exc,
+                    cancellation,
+                    cleanup_complete=False,
+                    workspace_cleanup_error=workspace_error
+                    if workspace_error is not None
+                    else evidence_exc,
                     cleanup_evidence_error=evidence_exc,
                 )
         finally:
@@ -1408,8 +1506,12 @@ def _run_mutation(
     def _announce(reasons: list[str]) -> None:
         if not announced:
             announced.append("yes")
-            print("code-forge: mutation: waiting for an idle host before the baseline: " + "; ".join(reasons),
-                  file=sys.stderr, flush=True)
+            print(
+                "code-forge: mutation: waiting for an idle host before the baseline: "
+                + "; ".join(reasons),
+                file=sys.stderr,
+                flush=True,
+            )
 
     idle = host_idle.wait_for_idle(idle_cfg, on_wait=_announce)
     evidence["host_idle"] = idle.record()
@@ -1463,7 +1565,9 @@ def _run_mutation(
         if status == "needs_strip_retry":
             # #246: record the strip before retrying so a passing retry (and
             # the measurement under the stripped env) is still attributable.
-            evidence["baseline_env_retry"] = env_retry_record(retry_cause[0] if retry_cause else None, run_env)
+            evidence["baseline_env_retry"] = env_retry_record(
+                retry_cause[0] if retry_cause else None, run_env
+            )
             run_env = _strip_venv_from_env(run_env)
             run_env["PYTHONPATH"] = pythonpath
             status, guard_findings, guard_infra = _run_baseline_guard(
@@ -1709,20 +1813,29 @@ def _run_mutation(
 
 
 def _publish_mutation_error(
-    result_path: Path, data: dict, error: BaseException, evidence: dict,
+    result_path: Path,
+    data: dict,
+    error: BaseException,
+    evidence: dict,
     publication_error: BaseException | None = None,
 ) -> None:
     """Publish terminal non-measurement evidence without changing cleanup proof."""
     cancelled = not isinstance(error, Exception)
     data.update(
-        status="error", cancelled=cancelled,
+        status="error",
+        cancelled=cancelled,
         cancellation_type=type(error).__name__ if cancelled else None,
         cleanup_complete=getattr(error, "cleanup_complete", None),
         process_failure=evidence.get("process_failure", {}),
         cleanup_error=evidence.get("cleanup_error"),
-        baseline_passed=False, completed_measurement=False, survivors=[],
-        survivor_details=[], review_context=None,
-        message=str(error), skipped=[], infra_errors=[str(error)],
+        baseline_passed=False,
+        completed_measurement=False,
+        survivors=[],
+        survivor_details=[],
+        review_context=None,
+        message=str(error),
+        skipped=[],
+        infra_errors=[str(error)],
         inventory=evidence.get("inventory", {}),
     )
     if publication_error is not None:
@@ -1732,7 +1845,11 @@ def _publish_mutation_error(
 
 
 def _record_mutation_publication_failure(
-    error: BaseException, failure: BaseException, *, attribute: str, note_prefix: str,
+    error: BaseException,
+    failure: BaseException,
+    *,
+    attribute: str,
+    note_prefix: str,
 ) -> BaseException:
     """Retain a pending cancellation while best-effort publication diagnostics run."""
     try:
@@ -1741,8 +1858,9 @@ def _record_mutation_publication_failure(
         if isinstance(error, Exception) and not isinstance(diagnostic_error, Exception):
             error = diagnostic_error
         try:
-            _bind_cancellation_evidence(error, **{attribute: failure},
-                                        detached_publication_diagnostic_error=diagnostic_error)
+            _bind_cancellation_evidence(
+                error, **{attribute: failure}, detached_publication_diagnostic_error=diagnostic_error
+            )
         except BaseException as fallback_error:  # noqa: BLE001 - select the first control interruption
             if isinstance(error, Exception) and not isinstance(fallback_error, Exception):
                 error = fallback_error

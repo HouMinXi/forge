@@ -363,10 +363,10 @@ class KernelContextSource:
         rows = []
         for match in _GUARD.finditer(text):
             directive = match[1] or match[2]
-            for symbol in sorted(set(_PREFIX.findall(text)) or {"unparsed"}):
-                rows.append(
-                    _row(f"guard:{side}:{line}:{directive}:{symbol}", path, line, "expr=" + text)
-                )
+            rows.extend(
+                (_row(f"guard:{side}:{line}:{directive}:{symbol}", path, line, "expr=" + text))
+                for symbol in sorted(set(_PREFIX.findall(text)) or {"unparsed"})
+            )
         if PurePosixPath(path).suffix in {".dts", ".dtsi", ".dtso"}:
             node = re.fullmatch(r"\s*((?:[\w-]+\s*:\s*)?[\w,@/+-]+|&(?:[\w]+|\{/[^}]*\}))\s*\{\s*", text)
             ref = re.findall(r"&(?:[A-Za-z_][\w]*|\{/[^}]*\})", text)
@@ -385,10 +385,10 @@ class KernelContextSource:
             elif node:
                 kind, target = "node", node[1]
             elif ref and '"' not in text:
-                for target in ref:
-                    rows.append(
-                        _row(f"dt:{side}:{line}:ref:{target}", path, line, "role=ref; value=" + text)
-                    )
+                rows.extend(
+                    (_row(f"dt:{side}:{line}:ref:{target}", path, line, "role=ref; value=" + text))
+                    for target in ref
+                )
                 return rows
             else:
                 kind, target = "unparsed", "unparsed"

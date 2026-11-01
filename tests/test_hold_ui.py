@@ -44,7 +44,7 @@ class TestConfirmInput:
             state,
             state_path,
             input_fn=lambda prompt: next(inputs),
-            output_fn=lambda msg: output.append(msg),
+            output_fn=output.append,
         )
         assert finding.disposition == Disposition.CONFIRMED
         # H5: dispositions keyed by f.id
@@ -66,7 +66,7 @@ class TestDismissInput:
             state,
             state_path,
             input_fn=lambda prompt: next(inputs),
-            output_fn=lambda msg: output.append(msg),
+            output_fn=output.append,
         )
         assert finding.disposition == Disposition.DISMISSED
 
@@ -86,7 +86,7 @@ class TestSkipInput:
             state,
             state_path,
             input_fn=lambda prompt: next(inputs),
-            output_fn=lambda msg: output.append(msg),
+            output_fn=output.append,
         )
         assert finding.disposition == Disposition.UNCERTAIN
 
@@ -106,7 +106,7 @@ class TestInvalidInput:
             state,
             state_path,
             input_fn=lambda prompt: next(inputs),
-            output_fn=lambda msg: output.append(msg),
+            output_fn=output.append,
         )
         assert finding.disposition == Disposition.CONFIRMED
         assert any("invalid input" in m for m in output)
@@ -142,7 +142,7 @@ class TestZeroUncertain:
             state,
             state_path,
             input_fn=lambda prompt: "should not be called",
-            output_fn=lambda msg: output.append(msg),
+            output_fn=output.append,
         )
         assert len(output) == 0
         assert state.hold_reason is None

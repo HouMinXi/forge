@@ -583,7 +583,7 @@ def main():
 
     if failed_count > 0:
         print("Failed dimensions need SKILL.md prompt improvement:")
-        for stem, target, p, detail in results:
+        for _stem, target, p, detail in results:
             if p is False:
                 print("  - %s: %s" % (target, detail))
         print()

@@ -30,17 +30,19 @@ from typing import List, Optional, Tuple
 # Constants
 # ---------------------------------------------------------------------------
 
-_PROPOSAL_DIR = os.path.join('.forge', 'proposals')
-_DIM_NAME_RE = re.compile(r'^[a-z0-9_]+$')
-_VALID_STATUSES = {'pending', 'proposed', 'shadow', 'active', 'archived'}
+_PROPOSAL_DIR = os.path.join(".forge", "proposals")
+_DIM_NAME_RE = re.compile(r"^[a-z0-9_]+$")
+_VALID_STATUSES = {"pending", "proposed", "shadow", "active", "archived"}
 
 
 def _set_status(state: dict, new_status: str) -> None:
     """Set dimension status with validation."""
     if new_status not in _VALID_STATUSES:
         raise ValueError("Invalid dimension status: '%s'" % new_status)
-    state['status'] = new_status
-_DIM_SANITIZE_RE = re.compile(r'[^a-z0-9_]')
+    state["status"] = new_status
+
+
+_DIM_SANITIZE_RE = re.compile(r"[^a-z0-9_]")
 _MAX_DIM_NAME_LEN = 40
 _MAX_ACTIVE_DIMENSIONS = 20
 _SHADOW_TIMEOUT_DAYS = 180
@@ -50,16 +52,17 @@ _SUBPROCESS_TIMEOUT_NETWORK = 300
 _LLM_MAX_RETRIES = 3
 _LLM_RETRY_BASE_DELAY = 2
 _TRICORDER_CRITERIA = [
-    'Understandable',
-    'Actionable',
-    '<10% ToolFP',
-    'Significant Impact',
+    "Understandable",
+    "Actionable",
+    "<10% ToolFP",
+    "Significant Impact",
 ]
 
 
 # ---------------------------------------------------------------------------
 # Proposal generation (D6)
 # ---------------------------------------------------------------------------
+
 
 def _sanitize_dim_name(raw_name, group_id):
     """Sanitize dimension name for directory naming.
@@ -69,11 +72,11 @@ def _sanitize_dim_name(raw_name, group_id):
     if empty after sanitization.
     """
     name = raw_name.lower()
-    name = _DIM_SANITIZE_RE.sub('_', name)
-    name = name.strip('_')
+    name = _DIM_SANITIZE_RE.sub("_", name)
+    name = name.strip("_")
     name = name[:_MAX_DIM_NAME_LEN]
     if not name:
-        name = 'dim_%s' % group_id[:8]
+        name = "dim_%s" % group_id[:8]
     return name
 
 
@@ -84,20 +87,19 @@ def _build_keywords(candidates, external_data):
     referenced by candidates (via finding_id), deduplicated, sorted.
     """
     keywords = set()
-    ext_map = {
-        f['id']: f for f in external_data.get('findings', [])
-    }
+    ext_map = {f["id"]: f for f in external_data.get("findings", [])}
     for candidate in candidates:
-        finding_id = candidate.get('finding_id')
+        finding_id = candidate.get("finding_id")
         if finding_id and finding_id in ext_map:
             for kw in ext_map[finding_id].get(
-                'suggested_keywords', [],
+                "suggested_keywords",
+                [],
             ):
                 keywords.add(str(kw).lower())
     return sorted(keywords)
 
 
-def _validate_patch(patch_path, skill_md_path='skills/forge/SKILL.md'):
+def _validate_patch(patch_path, skill_md_path="skills/forge/SKILL.md"):
     """Post-edit validation of SKILL.md.patch (two-step).
 
     Step 1: git apply --check to verify patch applies cleanly.
@@ -106,73 +108,76 @@ def _validate_patch(patch_path, skill_md_path='skills/forge/SKILL.md'):
     Returns (valid, error_message).
     """
     if not os.path.isfile(skill_md_path):
-        return False, 'SKILL.md not found at %s' % skill_md_path
+        return False, "SKILL.md not found at %s" % skill_md_path
 
     # Step 1: git apply --check
     result = subprocess.run(
-        ['git', 'apply', '--check', patch_path],
-        capture_output=True, text=True, check=False,
+        ["git", "apply", "--check", patch_path],
+        capture_output=True,
+        text=True,
+        check=False,
         timeout=_SUBPROCESS_TIMEOUT_LOCAL,
     )
     if result.returncode != 0:
         return (
             False,
-            'Patch does not apply cleanly: %s'
-            % result.stderr.strip(),
+            "Patch does not apply cleanly: %s" % result.stderr.strip(),
         )
 
     # Step 2: apply to temp copy, validate result
-    with open(skill_md_path, 'r', encoding='utf-8') as f:
+    with open(skill_md_path, "r", encoding="utf-8") as f:
         original_content = f.read()
-    original_lines = original_content.split('\n')
+    original_lines = original_content.split("\n")
 
     tmpdir = tempfile.mkdtemp()
     try:
         # Create matching directory structure
-        skill_dir = os.path.join(tmpdir, 'skills', 'forge')
+        skill_dir = os.path.join(tmpdir, "skills", "forge")
         os.makedirs(skill_dir, exist_ok=True)
-        tmp_skill = os.path.join(skill_dir, 'SKILL.md')
-        with open(tmp_skill, 'w', encoding='utf-8') as f:
+        tmp_skill = os.path.join(skill_dir, "SKILL.md")
+        with open(tmp_skill, "w", encoding="utf-8") as f:
             f.write(original_content)
 
         abs_patch = os.path.abspath(patch_path)
         result = subprocess.run(
-            ['git', 'apply', abs_patch],
+            ["git", "apply", abs_patch],
             cwd=tmpdir,
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
             timeout=_SUBPROCESS_TIMEOUT_LOCAL,
         )
         if result.returncode != 0:
             return (
                 False,
-                'Patch apply failed in temp dir: %s'
-                % result.stderr.strip(),
+                "Patch apply failed in temp dir: %s" % result.stderr.strip(),
             )
 
-        with open(tmp_skill, 'r', encoding='utf-8') as f:
+        with open(tmp_skill, "r", encoding="utf-8") as f:
             patched_content = f.read()
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     # Check: at least one heading
-    if '#' not in patched_content:
-        return False, 'Patched SKILL.md has no headings'
+    if "#" not in patched_content:
+        return False, "Patched SKILL.md has no headings"
 
     # Check: not shorter than minimum ratio
-    patched_lines = patched_content.split('\n')
+    patched_lines = patched_content.split("\n")
     if len(original_lines) > 0:
         ratio = len(patched_lines) / len(original_lines)
         if ratio < _PATCH_MIN_LENGTH_RATIO:
             return (
                 False,
-                'Patched SKILL.md is %.0f%% shorter than original '
-                '(%.0f%% threshold)' % (
+                "Patched SKILL.md is %.0f%% shorter than original "
+                "(%.0f%% threshold)"
+                % (
                     (1 - ratio) * 100,
                     (1 - _PATCH_MIN_LENGTH_RATIO) * 100,
                 ),
             )
 
-    return True, 'OK'
+    return True, "OK"
 
 
 def _increment_edit_corruption():
@@ -180,19 +185,17 @@ def _increment_edit_corruption():
     try:
         from escalation import load_escalation_status, ESCALATION_FILE
         from file_utils import atomic_write
+
         status = load_escalation_status()
-        metrics = status.get('metrics', {})
-        metrics['edit_corruption_count'] = (
-            metrics.get('edit_corruption_count', 0) + 1
-        )
-        status['metrics'] = metrics
+        metrics = status.get("metrics", {})
+        metrics["edit_corruption_count"] = metrics.get("edit_corruption_count", 0) + 1
+        status["metrics"] = metrics
         atomic_write(ESCALATION_FILE, status)
     except ImportError as exc:
         msg = str(exc)
-        if 'escalation' not in msg and 'file_utils' not in msg:
+        if "escalation" not in msg and "file_utils" not in msg:
             print(
-                "forge: warning: unexpected import error in "
-                "_increment_edit_corruption: %s" % exc,
+                "forge: warning: unexpected import error in _increment_edit_corruption: %s" % exc,
                 file=sys.stderr,
             )
 
@@ -208,32 +211,37 @@ def _git_branch_state():
     original_branch = None
     try:
         result = subprocess.run(
-            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-            capture_output=True, text=True, check=True,
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
             timeout=_SUBPROCESS_TIMEOUT_LOCAL,
         )
         original_branch = result.stdout.strip()
-        if original_branch == 'HEAD':
+        if original_branch == "HEAD":
             result = subprocess.run(
-                ['git', 'rev-parse', 'HEAD'],
-                capture_output=True, text=True, check=True,
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
                 timeout=_SUBPROCESS_TIMEOUT_LOCAL,
             )
             original_branch = result.stdout.strip()
 
         result = subprocess.run(
-            ['git', 'status', '--porcelain'],
-            capture_output=True, text=True, check=True,
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True,
             timeout=_SUBPROCESS_TIMEOUT_LOCAL,
         )
         if result.stdout.strip():
             print(
-                "forge: warning: uncommitted changes detected, "
-                "stashing before branch creation",
+                "forge: warning: uncommitted changes detected, stashing before branch creation",
                 file=sys.stderr,
             )
             subprocess.run(
-                ['git', 'stash', '--include-untracked'],
+                ["git", "stash", "--include-untracked"],
                 check=True,
                 timeout=_SUBPROCESS_TIMEOUT_LOCAL,
             )
@@ -243,20 +251,22 @@ def _git_branch_state():
     finally:
         if original_branch:
             subprocess.run(
-                ['git', 'checkout', original_branch],
-                capture_output=True, check=False,
+                ["git", "checkout", original_branch],
+                capture_output=True,
+                check=False,
                 timeout=_SUBPROCESS_TIMEOUT_LOCAL,
             )
         if stashed:
             result = subprocess.run(
-                ['git', 'stash', 'pop'],
-                capture_output=True, text=True, check=False,
+                ["git", "stash", "pop"],
+                capture_output=True,
+                text=True,
+                check=False,
                 timeout=_SUBPROCESS_TIMEOUT_LOCAL,
             )
             if result.returncode != 0:
                 print(
-                    "forge: warning: git stash pop failed: %s"
-                    % result.stderr,
+                    "forge: warning: git stash pop failed: %s" % result.stderr,
                     file=sys.stderr,
                 )
 
@@ -275,21 +285,23 @@ def _run_pr_pipeline(
     try:
         with _git_branch_state() as _original_branch:
             # Step 1: branch
-            branch_name = 'forge/dim-%s' % dim_name
+            branch_name = "forge/dim-%s" % dim_name
             result = subprocess.run(
-                ['git', 'rev-parse', '--verify', branch_name],
-                capture_output=True, text=True, check=False,
+                ["git", "rev-parse", "--verify", branch_name],
+                capture_output=True,
+                text=True,
+                check=False,
                 timeout=_SUBPROCESS_TIMEOUT_LOCAL,
             )
             if result.returncode == 0:
                 subprocess.run(
-                    ['git', 'checkout', branch_name],
+                    ["git", "checkout", branch_name],
                     check=True,
                     timeout=_SUBPROCESS_TIMEOUT_LOCAL,
                 )
             else:
                 subprocess.run(
-                    ['git', 'checkout', '-b', branch_name],
+                    ["git", "checkout", "-b", branch_name],
                     check=True,
                     timeout=_SUBPROCESS_TIMEOUT_LOCAL,
                 )
@@ -297,34 +309,33 @@ def _run_pr_pipeline(
             # Step 2: stage proposal files
             proposal_dir = os.path.join(_PROPOSAL_DIR, dim_name)
             subprocess.run(
-                ['git', 'add', '-f', '%s/' % proposal_dir],
+                ["git", "add", "-f", "%s/" % proposal_dir],
                 check=True,
                 timeout=_SUBPROCESS_TIMEOUT_LOCAL,
             )
 
             # Step 3: check for staged changes
             result = subprocess.run(
-                ['git', 'diff', '--cached', '--quiet'],
-                capture_output=True, check=False,
+                ["git", "diff", "--cached", "--quiet"],
+                capture_output=True,
+                check=False,
                 timeout=_SUBPROCESS_TIMEOUT_LOCAL,
             )
             if result.returncode != 0:
                 commit_msg = (
-                    'forge: propose new dimension %s\n\n'
-                    'Based on %d external review findings '
-                    'suggesting a gap in %s coverage.'
-                    % (dim_name, len(candidate_ids), dim_name)
+                    "forge: propose new dimension %s\n\n"
+                    "Based on %d external review findings "
+                    "suggesting a gap in %s coverage." % (dim_name, len(candidate_ids), dim_name)
                 )
                 subprocess.run(
-                    ['git', 'commit', '-m', commit_msg],
+                    ["git", "commit", "-m", commit_msg],
                     check=True,
                     timeout=_SUBPROCESS_TIMEOUT_LOCAL,
                 )
 
             # Step 4: push
             subprocess.run(
-                ['git', 'push', '-u', 'origin',
-                 'forge/dim-%s' % dim_name],
+                ["git", "push", "-u", "origin", "forge/dim-%s" % dim_name],
                 check=True,
                 timeout=_SUBPROCESS_TIMEOUT_NETWORK,
             )
@@ -350,15 +361,24 @@ def _run_pr_pipeline(
                 "keywords.json\n"
                 "```\n"
                 % (
-                    dim_name, len(candidate_ids), description,
-                    len(keywords), dim_name, dim_name,
+                    dim_name,
+                    len(candidate_ids),
+                    description,
+                    len(keywords),
+                    dim_name,
+                    dim_name,
                 )
             )
             subprocess.run(
-                ['gh', 'pr', 'create',
-                 '--title',
-                 'forge: add dimension %s' % dim_name,
-                 '--body', body_text],
+                [
+                    "gh",
+                    "pr",
+                    "create",
+                    "--title",
+                    "forge: add dimension %s" % dim_name,
+                    "--body",
+                    body_text,
+                ],
                 check=True,
                 timeout=_SUBPROCESS_TIMEOUT_NETWORK,
             )
@@ -366,18 +386,16 @@ def _run_pr_pipeline(
             return True
 
     except FileNotFoundError as exc:
-        tool = str(exc).split("'")[-2] if "'" in str(exc) else ''
-        if 'gh' in tool:
+        tool = str(exc).split("'")[-2] if "'" in str(exc) else ""
+        if "gh" in tool:
             print(
-                "forge: warning: gh CLI not found -- proposal "
-                "written locally, create PR manually",
+                "forge: warning: gh CLI not found -- proposal written locally, create PR manually",
                 file=sys.stderr,
             )
             return True
-        if 'git' in tool:
+        if "git" in tool:
             print(
-                "forge: warning: git not found -- proposal "
-                "written locally only",
+                "forge: warning: git not found -- proposal written locally only",
                 file=sys.stderr,
             )
             return True
@@ -388,13 +406,12 @@ def _run_pr_pipeline(
         return False
 
     except subprocess.CalledProcessError as exc:
-        step_name = 'unknown'
-        cmd = getattr(exc, 'cmd', [])
+        step_name = "unknown"
+        cmd = getattr(exc, "cmd", [])
         if isinstance(cmd, list) and len(cmd) > 0:
             step_name = cmd[0]
         print(
-            "forge: error: PR pipeline failed at step %s: %s"
-            % (step_name, exc),
+            "forge: error: PR pipeline failed at step %s: %s" % (step_name, exc),
             file=sys.stderr,
         )
         return False
@@ -411,26 +428,24 @@ def _validate_group_for_proposal(
     from gap_manager import load_gap_groups
 
     groups_data = load_gap_groups()
-    groups = groups_data.get('groups', [])
+    groups = groups_data.get("groups", [])
 
     group = None
     for g in groups:
-        if g.get('group_id') == group_id:
+        if g.get("group_id") == group_id:
             group = g
             break
     if group is None:
         print(
-            "forge: error: group '%s' not found in "
-            "gap_groups.json" % group_id,
+            "forge: error: group '%s' not found in gap_groups.json" % group_id,
             file=sys.stderr,
         )
         sys.exit(1)
 
-    if group.get('status') != 'pending':
+    if group.get("status") != "pending":
         print(
             "forge: error: group '%s' has status '%s' "
-            "(expected 'pending')"
-            % (group_id, group.get('status')),
+            "(expected 'pending')" % (group_id, group.get("status")),
             file=sys.stderr,
         )
         sys.exit(1)
@@ -468,7 +483,8 @@ def _build_proposal_prompt(
         "Return ONLY valid JSON. No markdown fences, "
         "no explanation."
         % (
-            dim_name, description,
+            dim_name,
+            description,
             json.dumps(source_findings, indent=2),
             dim_name,
         )
@@ -488,25 +504,24 @@ def _write_proposal_bundle(
     os.makedirs(tmp_dir, exist_ok=True)
 
     file_map = {
-        'SKILL.md.patch': proposal_data.get('skill_md_patch'),
-        'evidence.md': proposal_data.get('evidence_md'),
-        'seed_test.diff': proposal_data.get('seed_test_diff'),
-        'README.md': proposal_data.get('readme_md'),
+        "SKILL.md.patch": proposal_data.get("skill_md_patch"),
+        "evidence.md": proposal_data.get("evidence_md"),
+        "seed_test.diff": proposal_data.get("seed_test_diff"),
+        "README.md": proposal_data.get("readme_md"),
     }
     for filename, content in file_map.items():
         if content is None:
             print(
-                "forge: warning: LLM response missing '%s' key"
-                % filename,
+                "forge: warning: LLM response missing '%s' key" % filename,
                 file=sys.stderr,
             )
             continue
         fpath = os.path.join(tmp_dir, filename)
-        with open(fpath, 'w', encoding='utf-8') as f:
+        with open(fpath, "w", encoding="utf-8") as f:
             f.write(content)
 
-    kw_path = os.path.join(tmp_dir, 'keywords.json')
-    with open(kw_path, 'w', encoding='utf-8') as f:
+    kw_path = os.path.join(tmp_dir, "keywords.json")
+    with open(kw_path, "w", encoding="utf-8") as f:
         json.dump(keywords, f, indent=2, ensure_ascii=False)
 
 
@@ -521,13 +536,13 @@ def _finalize_proposal_state(
     from gap_detector import GAP_CANDIDATES_FILE
     from file_utils import atomic_write
 
-    candidates = candidates_data.get('candidates', [])
+    candidates = candidates_data.get("candidates", [])
     for c in candidates:
-        if c.get('id') in candidate_ids:
-            c['status'] = 'proposed'
+        if c.get("id") in candidate_ids:
+            c["status"] = "proposed"
     atomic_write(GAP_CANDIDATES_FILE, candidates_data)
 
-    group['status'] = 'proposed'
+    group["status"] = "proposed"
     atomic_write(GAP_GROUPS_FILE, groups_data)
 
 
@@ -541,7 +556,8 @@ def run_propose(group_id: str) -> None:
     """
     from gap_manager import GAP_TERMINAL
     from gap_detector import (
-        load_external_findings, load_gap_candidates,
+        load_external_findings,
+        load_gap_candidates,
     )
     from forge_cli import load_config
 
@@ -552,70 +568,67 @@ def run_propose(group_id: str) -> None:
 
     # Load candidates and re-check live count
     candidates_data = load_gap_candidates()
-    candidates = candidates_data.get('candidates', [])
-    candidate_ids = group.get('candidate_ids', [])
+    candidates = candidates_data.get("candidates", [])
+    candidate_ids = group.get("candidate_ids", [])
 
     live_candidates = [
-        c for c in candidates
-        if c.get('id') in candidate_ids
-        and c.get('status') not in GAP_TERMINAL
+        c for c in candidates if c.get("id") in candidate_ids and c.get("status") not in GAP_TERMINAL
     ]
     if len(live_candidates) < 3:
         print(
             "forge: error: group '%s' has %d non-terminal "
-            "candidates (need >= 3)"
-            % (group_id, len(live_candidates)),
+            "candidates (need >= 3)" % (group_id, len(live_candidates)),
             file=sys.stderr,
         )
         sys.exit(1)
 
     # Load external findings for candidate data
     external_data = load_external_findings()
-    ext_map = {
-        f['id']: f for f in external_data.get('findings', [])
-    }
+    ext_map = {f["id"]: f for f in external_data.get("findings", [])}
 
     # Validate finding_ids exist, skip missing
     valid_candidates = []
     for c in live_candidates:
-        fid = c.get('finding_id')
+        fid = c.get("finding_id")
         if fid and fid in ext_map:
             valid_candidates.append(c)
         else:
             print(
                 "forge: warning: candidate '%s' has missing "
-                "finding_id '%s', skipping"
-                % (c.get('id'), fid),
+                "finding_id '%s', skipping" % (c.get("id"), fid),
                 file=sys.stderr,
             )
     if len(valid_candidates) < 3:
         print(
             "forge: error: only %d candidates have valid "
-            "finding_ids (need >= 3)"
-            % len(valid_candidates),
+            "finding_ids (need >= 3)" % len(valid_candidates),
             file=sys.stderr,
         )
         sys.exit(1)
 
     proposed_dimension = group.get(
-        'proposed_dimension', 'unknown',
+        "proposed_dimension",
+        "unknown",
     )
     dim_name = _sanitize_dim_name(proposed_dimension, group_id)
-    description = group.get('description', '')
+    description = group.get("description", "")
 
     # Build source findings for LLM prompt
     source_findings = []
     for c in valid_candidates:
-        ext = ext_map[c['finding_id']]
-        source_findings.append({
-            'text': ext.get('text', ''),
-            'dimension_raw': ext.get('dimension_raw', ''),
-            'suggested_keywords': ext.get(
-                'suggested_keywords', [],
-            ),
-            'file': ext.get('file'),
-            'line': ext.get('line'),
-        })
+        ext = ext_map[c["finding_id"]]
+        source_findings.append(
+            {
+                "text": ext.get("text", ""),
+                "dimension_raw": ext.get("dimension_raw", ""),
+                "suggested_keywords": ext.get(
+                    "suggested_keywords",
+                    [],
+                ),
+                "file": ext.get("file"),
+                "line": ext.get("line"),
+            }
+        )
 
     keywords = _build_keywords(valid_candidates, external_data)
 
@@ -623,22 +636,24 @@ def run_propose(group_id: str) -> None:
 
     # Build prompt
     prompt = _build_proposal_prompt(
-        proposed_dimension, description, source_findings,
+        proposed_dimension,
+        description,
+        source_findings,
     )
 
     # Call LLM with retry on transient failures
     proposal_data = None
     from llm_parser import _get_client, _parse_json_response
+
     client = _get_client()
     if client is None:
         print(
-            "forge: error: LLM client not available for "
-            "proposal generation",
+            "forge: error: LLM client not available for proposal generation",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    model = config.get('default_model', 'claude-haiku-3.5')
+    model = config.get("default_model", "claude-haiku-3.5")
     last_exc = None
     for attempt in range(_LLM_MAX_RETRIES):
         try:
@@ -653,49 +668,50 @@ def run_propose(group_id: str) -> None:
             proposal_data = _parse_json_response(response_text)
             if proposal_data is not None:
                 break
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- Backend failures are collected by the bounded retry loop.
             last_exc = exc
             if attempt < _LLM_MAX_RETRIES - 1:
-                delay = _LLM_RETRY_BASE_DELAY * (2 ** attempt)
+                delay = _LLM_RETRY_BASE_DELAY * (2**attempt)
                 print(
                     "forge: warning: LLM call attempt %d/%d "
                     "failed: %s, retrying in %ds"
                     % (
-                        attempt + 1, _LLM_MAX_RETRIES,
-                        exc, delay,
+                        attempt + 1,
+                        _LLM_MAX_RETRIES,
+                        exc,
+                        delay,
                     ),
                     file=sys.stderr,
                 )
                 time.sleep(delay)
 
     if proposal_data is None:
-        msg = str(last_exc) if last_exc else 'parse failure'
+        msg = str(last_exc) if last_exc else "parse failure"
         print(
             "forge: error: LLM proposal generation failed "
-            "after %d attempts: %s"
-            % (_LLM_MAX_RETRIES, msg),
+            "after %d attempts: %s" % (_LLM_MAX_RETRIES, msg),
             file=sys.stderr,
         )
         sys.exit(1)
 
     # Write proposal files with crash safety
     tmp_dir = os.path.join(
-        _PROPOSAL_DIR, '.tmp-%s' % dim_name,
+        _PROPOSAL_DIR,
+        ".tmp-%s" % dim_name,
     )
     final_dir = os.path.join(_PROPOSAL_DIR, dim_name)
 
     _write_proposal_bundle(tmp_dir, proposal_data, keywords)
 
     # Post-edit validation of SKILL.md.patch
-    patch_path = os.path.join(tmp_dir, 'SKILL.md.patch')
+    patch_path = os.path.join(tmp_dir, "SKILL.md.patch")
     if os.path.isfile(patch_path):
         valid, err_msg = _validate_patch(patch_path)
         if not valid:
             _increment_edit_corruption()
             shutil.rmtree(tmp_dir, ignore_errors=True)
             print(
-                "forge: error: SKILL.md.patch validation "
-                "failed: %s" % err_msg,
+                "forge: error: SKILL.md.patch validation failed: %s" % err_msg,
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -713,26 +729,30 @@ def run_propose(group_id: str) -> None:
             os.rename(tmp_dir, final_dir)
         except OSError as exc:
             print(
-                "forge: error: failed to rename proposal dir "
-                f"after retry: {exc}",
+                f"forge: error: failed to rename proposal dir after retry: {exc}",
                 file=sys.stderr,
             )
             sys.exit(1)
 
     # PR pipeline (LEARN-06)
     pr_success = _run_pr_pipeline(
-        dim_name, candidate_ids, description, keywords,
+        dim_name,
+        candidate_ids,
+        description,
+        keywords,
     )
 
     # Mark candidates and group as proposed
     _finalize_proposal_state(
-        candidates_data, groups_data, candidate_ids, group,
+        candidates_data,
+        groups_data,
+        candidate_ids,
+        group,
     )
 
     if pr_success:
         print(
-            "forge: proposal written to .forge/proposals/%s/ "
-            "and PR created" % dim_name,
+            "forge: proposal written to .forge/proposals/%s/ and PR created" % dim_name,
         )
     else:
         print(
@@ -744,6 +764,7 @@ def run_propose(group_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Dimension lifecycle (D7/D8)
 # ---------------------------------------------------------------------------
+
 
 def add_dimension(
     dim_name: str,
@@ -760,8 +781,7 @@ def add_dimension(
 
     if not _DIM_NAME_RE.match(dim_name):
         print(
-            "forge: error: dimension name must match "
-            "^[a-z0-9_]+$ (got '%s')" % dim_name,
+            "forge: error: dimension name must match ^[a-z0-9_]+$ (got '%s')" % dim_name,
             file=sys.stderr,
         )
         sys.exit(1)
@@ -769,22 +789,20 @@ def add_dimension(
     config = load_config()
 
     # Check conflicts
-    dim_states = config.get('dimension_states', {})
-    kw_dicts = config.get('keyword_dictionaries', {})
+    dim_states = config.get("dimension_states", {})
+    kw_dicts = config.get("keyword_dictionaries", {})
 
     if dim_name in kw_dicts:
         state = dim_states.get(dim_name, {})
-        if state.get('status') == 'archived':
+        if state.get("status") == "archived":
             print(
                 "forge: error: dimension '%s' is archived; "
-                "remove manually from config.json to reuse name"
-                % dim_name,
+                "remove manually from config.json to reuse name" % dim_name,
                 file=sys.stderr,
             )
             sys.exit(1)
         print(
-            "forge: error: dimension '%s' already exists"
-            % dim_name,
+            "forge: error: dimension '%s' already exists" % dim_name,
             file=sys.stderr,
         )
         sys.exit(1)
@@ -793,41 +811,38 @@ def add_dimension(
     keywords = []
     if keywords_file:
         try:
-            with open(keywords_file, 'r', encoding='utf-8') as f:
+            with open(keywords_file, "r", encoding="utf-8") as f:
                 keywords = json.load(f)
             if not isinstance(keywords, list):
                 print(
                     "forge: error: keywords file must contain a "
-                    "JSON array (got %s)"
-                    % type(keywords).__name__,
+                    "JSON array (got %s)" % type(keywords).__name__,
                     file=sys.stderr,
                 )
                 sys.exit(1)
         except FileNotFoundError:
             print(
-                "forge: error: keywords file not found: %s"
-                % keywords_file,
+                "forge: error: keywords file not found: %s" % keywords_file,
                 file=sys.stderr,
             )
             sys.exit(1)
         except json.JSONDecodeError as exc:
             print(
-                "forge: error: invalid JSON in keywords "
-                "file %s: %s" % (keywords_file, exc),
+                "forge: error: invalid JSON in keywords file %s: %s" % (keywords_file, exc),
                 file=sys.stderr,
             )
             sys.exit(1)
 
     # Add to keyword_dictionaries
-    if 'keyword_dictionaries' not in config:
-        config['keyword_dictionaries'] = {}
-    config['keyword_dictionaries'][dim_name] = keywords
+    if "keyword_dictionaries" not in config:
+        config["keyword_dictionaries"] = {}
+    config["keyword_dictionaries"][dim_name] = keywords
 
     # Create dimension_states entry
     now = datetime.now(timezone.utc).isoformat()
-    if 'dimension_states' not in config:
-        config['dimension_states'] = {}
-    config['dimension_states'][dim_name] = {
+    if "dimension_states" not in config:
+        config["dimension_states"] = {}
+    config["dimension_states"][dim_name] = {
         "status": "shadow",
         "last_seen": None,
         "finding_count": 0,
@@ -841,18 +856,25 @@ def add_dimension(
 
     # Run seed test if proposal seed_test.diff exists
     seed_diff = os.path.join(
-        _PROPOSAL_DIR, dim_name, 'seed_test.diff',
+        _PROPOSAL_DIR,
+        dim_name,
+        "seed_test.diff",
     )
     if os.path.isfile(seed_diff):
         seed_tests_path = os.path.join(
-            'tests', 'seed_tests', 'run_seed_tests.py',
+            "tests",
+            "seed_tests",
+            "run_seed_tests.py",
         )
         try:
             subprocess.run(
                 [
-                    sys.executable, seed_tests_path,
-                    '--dimension', dim_name,
-                    '--diff', seed_diff,
+                    sys.executable,
+                    seed_tests_path,
+                    "--dimension",
+                    dim_name,
+                    "--diff",
+                    seed_diff,
                 ],
                 check=False,
                 timeout=_SUBPROCESS_TIMEOUT_LOCAL,
@@ -866,8 +888,7 @@ def add_dimension(
             )
 
     print(
-        "forge: added shadow dimension '%s' (%d keywords)"
-        % (dim_name, len(keywords)),
+        "forge: added shadow dimension '%s' (%d keywords)" % (dim_name, len(keywords)),
     )
 
 
@@ -879,6 +900,7 @@ def _get_permanent_shadow_dims() -> set:
     """
     try:
         from migration import SHADOW_DIMENSIONS
+
         return set(SHADOW_DIMENSIONS)
     except (ImportError, AttributeError):
         return set()
@@ -892,18 +914,19 @@ def promote_dimension(dim_name: str) -> None:
     Updates findings.json shadow flags and config.
     """
     from forge_cli import (
-        load_config, CONFIG_FILE,
-        load_findings, FINDINGS_FILE,
+        load_config,
+        CONFIG_FILE,
+        load_findings,
+        FINDINGS_FILE,
     )
     from file_utils import atomic_write
 
     config = load_config()
-    dim_states = config.get('dimension_states', {})
+    dim_states = config.get("dimension_states", {})
 
     if dim_name not in dim_states:
         print(
-            "forge: error: dimension '%s' not found in "
-            "dimension_states" % dim_name,
+            "forge: error: dimension '%s' not found in dimension_states" % dim_name,
             file=sys.stderr,
         )
         sys.exit(1)
@@ -913,67 +936,58 @@ def promote_dimension(dim_name: str) -> None:
 
     if dim_name in permanent_shadow:
         print(
-            "forge: error: '%s' is a permanent shadow dimension "
-            "and cannot be promoted" % dim_name,
+            "forge: error: '%s' is a permanent shadow dimension and cannot be promoted" % dim_name,
             file=sys.stderr,
         )
         sys.exit(1)
 
     state = dim_states[dim_name]
-    status = state.get('status')
+    status = state.get("status")
 
-    if status == 'active':
+    if status == "active":
         print(
-            "forge: error: dimension '%s' is already active"
-            % dim_name,
+            "forge: error: dimension '%s' is already active" % dim_name,
             file=sys.stderr,
         )
         sys.exit(1)
-    if status == 'archived':
+    if status == "archived":
         print(
-            "forge: error: dimension '%s' is archived and "
-            "cannot be promoted" % dim_name,
+            "forge: error: dimension '%s' is archived and cannot be promoted" % dim_name,
             file=sys.stderr,
         )
         sys.exit(1)
-    if status != 'shadow':
+    if status != "shadow":
         print(
-            "forge: error: dimension '%s' has unexpected "
-            "status '%s'" % (dim_name, status),
+            "forge: error: dimension '%s' has unexpected status '%s'" % (dim_name, status),
             file=sys.stderr,
         )
         sys.exit(1)
 
     # Check 20-cap
-    active_count = sum(
-        1 for s in dim_states.values()
-        if s.get('status') == 'active'
-    )
+    active_count = sum(1 for s in dim_states.values() if s.get("status") == "active")
     if active_count >= _MAX_ACTIVE_DIMENSIONS:
         print(
             "forge: error: active dimension cap reached "
             "(%d/%d); review with 'forge --eval' and retire "
-            "underperforming dimensions first"
-            % (active_count, _MAX_ACTIVE_DIMENSIONS),
+            "underperforming dimensions first" % (active_count, _MAX_ACTIVE_DIMENSIONS),
             file=sys.stderr,
         )
         print("\nActive dimensions:", file=sys.stderr)
         for name, s in sorted(dim_states.items()):
-            if s.get('status') == 'active':
+            if s.get("status") == "active":
                 print("  - %s" % name, file=sys.stderr)
         sys.exit(1)
 
     # Set status to active
-    dim_states[dim_name]['status'] = 'active'
+    dim_states[dim_name]["status"] = "active"
 
     # Update findings.json: shadow=False for promoted dim
     data = load_findings()
-    findings = data.get('findings', [])
+    findings = data.get("findings", [])
     promoted = 0
     for f in findings:
-        if (f.get('dimension') == dim_name
-                and f.get('shadow', False)):
-            f['shadow'] = False
+        if f.get("dimension") == dim_name and f.get("shadow", False):
+            f["shadow"] = False
             promoted += 1
     if promoted > 0:
         atomic_write(FINDINGS_FILE, data)
@@ -982,8 +996,7 @@ def promote_dimension(dim_name: str) -> None:
     atomic_write(CONFIG_FILE, config)
 
     print(
-        "forge: promoted '%s' from shadow to active "
-        "(%d findings updated)" % (dim_name, promoted),
+        "forge: promoted '%s' from shadow to active (%d findings updated)" % (dim_name, promoted),
     )
 
 
@@ -996,25 +1009,23 @@ def retire_dimension(dim_name: str) -> None:
     from file_utils import atomic_write
 
     config = load_config()
-    dim_states = config.get('dimension_states', {})
+    dim_states = config.get("dimension_states", {})
 
     if dim_name not in dim_states:
         print(
-            "forge: error: dimension '%s' not found in "
-            "dimension_states" % dim_name,
+            "forge: error: dimension '%s' not found in dimension_states" % dim_name,
             file=sys.stderr,
         )
         sys.exit(1)
 
     state = dim_states[dim_name]
-    if state.get('status') == 'archived':
+    if state.get("status") == "archived":
         print(
-            "forge: dimension '%s' is already archived"
-            % dim_name,
+            "forge: dimension '%s' is already archived" % dim_name,
         )
         return
 
-    state['status'] = 'archived'
+    state["status"] = "archived"
     atomic_write(CONFIG_FILE, config)
 
     print("forge: retired dimension '%s' (archived)" % dim_name)
@@ -1024,6 +1035,7 @@ def retire_dimension(dim_name: str) -> None:
 # Eval extensions (D7/D9)
 # ---------------------------------------------------------------------------
 
+
 def eval_shadow(include_archived=False):
     """Interactive shadow dimension evaluation (Tricorder 4 criteria).
 
@@ -1032,28 +1044,29 @@ def eval_shadow(include_archived=False):
     consecutive failures.
     """
     from forge_cli import (
-        load_config, load_findings, CONFIG_FILE,
+        load_config,
+        load_findings,
+        CONFIG_FILE,
     )
     from file_utils import atomic_write
     from gap_detector import load_external_findings
 
     config = load_config()
-    dim_states = config.get('dimension_states', {})
+    dim_states = config.get("dimension_states", {})
     findings_data = load_findings()
-    internal_findings = findings_data.get('findings', [])
+    internal_findings = findings_data.get("findings", [])
     external_data = load_external_findings()
-    external_findings = external_data.get('findings', [])
+    external_findings = external_data.get("findings", [])
 
     modified = False
 
     # Filter dimensions to evaluate
     dims_to_eval = []
     for dim_name, state in sorted(dim_states.items()):
-        status = state.get('status')
-        if status == 'shadow':
+        status = state.get("status")
+        if status == "shadow":
             dims_to_eval.append((dim_name, state, False))
-        elif (include_archived and status == 'archived'
-              and state.get('added_at') is not None):
+        elif include_archived and status == "archived" and state.get("added_at") is not None:
             dims_to_eval.append((dim_name, state, True))
 
     if not dims_to_eval:
@@ -1067,27 +1080,19 @@ def eval_shadow(include_archived=False):
 
     for dim_name, state, read_only in dims_to_eval:
         # Gather findings
-        int_finds = [
-            f for f in internal_findings
-            if f.get('dimension') == dim_name
-        ]
-        ext_finds = [
-            f for f in external_findings
-            if f.get('validated_dimension') == dim_name
-        ]
+        int_finds = [f for f in internal_findings if f.get("dimension") == dim_name]
+        ext_finds = [f for f in external_findings if f.get("validated_dimension") == dim_name]
 
         total = len(int_finds) + len(ext_finds)
         print(
-            "--- %s (status: %s, findings: %d) ---"
-            % (dim_name, state.get('status'), total),
+            "--- %s (status: %s, findings: %d) ---" % (dim_name, state.get("status"), total),
         )
 
         if int_finds:
             print("  Internal findings: %d" % len(int_finds))
             for f in int_finds[:5]:
                 print(
-                    "    - [%s] %s"
-                    % (f.get('file', '?'), f.get('text', '')[:60]),
+                    "    - [%s] %s" % (f.get("file", "?"), f.get("text", "")[:60]),
                 )
             if len(int_finds) > 5:
                 print("    ... and %d more" % (len(int_finds) - 5))
@@ -1096,8 +1101,7 @@ def eval_shadow(include_archived=False):
             print("  External findings: %d" % len(ext_finds))
             for f in ext_finds[:5]:
                 print(
-                    "    - [%s] %s"
-                    % (f.get('file', '?'), f.get('text', '')[:60]),
+                    "    - [%s] %s" % (f.get("file", "?"), f.get("text", "")[:60]),
                 )
             if len(ext_finds) > 5:
                 print("    ... and %d more" % (len(ext_finds) - 5))
@@ -1114,9 +1118,13 @@ def eval_shadow(include_archived=False):
         for criterion in _TRICORDER_CRITERIA:
             while True:
                 try:
-                    choice = input(
-                        "  %s? [p]ass / [f]ail: " % criterion,
-                    ).strip().lower()
+                    choice = (
+                        input(
+                            "  %s? [p]ass / [f]ail: " % criterion,
+                        )
+                        .strip()
+                        .lower()
+                    )
                 except (EOFError, KeyboardInterrupt):
                     print()
                     if modified:
@@ -1126,10 +1134,10 @@ def eval_shadow(include_archived=False):
                         )
                     return
 
-                if choice in ('p', 'pass'):
+                if choice in ("p", "pass"):
                     print("    -> passed")
                     break
-                if choice in ('f', 'fail'):
+                if choice in ("f", "fail"):
                     all_passed = False
                     print("    -> failed")
                     break
@@ -1137,29 +1145,26 @@ def eval_shadow(include_archived=False):
 
         # Update state
         if all_passed:
-            state['consecutive_eval_failures'] = 0
+            state["consecutive_eval_failures"] = 0
             print(
-                "  Passed -- run --promote %s to activate."
-                % dim_name,
+                "  Passed -- run --promote %s to activate." % dim_name,
             )
         else:
-            failures = state.get('consecutive_eval_failures')
+            failures = state.get("consecutive_eval_failures")
             if failures is None:
                 failures = 1
             else:
                 failures += 1
-            state['consecutive_eval_failures'] = failures
+            state["consecutive_eval_failures"] = failures
 
             if failures >= 2:
-                state['status'] = 'archived'
+                state["status"] = "archived"
                 print(
-                    "  Auto-archived: %s (2 consecutive "
-                    "evaluation failures)" % dim_name,
+                    "  Auto-archived: %s (2 consecutive evaluation failures)" % dim_name,
                 )
             else:
                 print(
-                    "  Failed (%d consecutive failure(s))"
-                    % failures,
+                    "  Failed (%d consecutive failure(s))" % failures,
                 )
         modified = True
         print()
@@ -1179,24 +1184,24 @@ def eval_external(include_archived=False, json_format=False):
     from gap_detector import load_external_findings
 
     config = load_config()
-    dim_states = config.get('dimension_states', {})
+    dim_states = config.get("dimension_states", {})
     external_data = load_external_findings()
-    findings = external_data.get('findings', [])
+    findings = external_data.get("findings", [])
 
     # Filter archived if needed
     if not include_archived:
         filtered = []
         for f in findings:
-            vd = f.get('validated_dimension')
+            vd = f.get("validated_dimension")
             if vd and vd in dim_states:
-                if dim_states[vd].get('status') == 'archived':
+                if dim_states[vd].get("status") == "archived":
                     continue
             filtered.append(f)
         findings = filtered
 
     # Sort by timestamp descending
     findings.sort(
-        key=lambda f: f.get('timestamp', ''),
+        key=lambda f: f.get("timestamp", ""),
         reverse=True,
     )
 
@@ -1213,27 +1218,28 @@ def eval_external(include_archived=False, json_format=False):
     print("External Findings")
     print("=" * 100)
     print()
-    header = (
-        "%-12s %-20s %-12s %-12s %-15s %-4s %s"
-        % (
-            'ID', 'Timestamp', 'Source', 'Tool',
-            'Dimension', 'Gap', 'Text',
-        )
+    header = "%-12s %-20s %-12s %-12s %-15s %-4s %s" % (
+        "ID",
+        "Timestamp",
+        "Source",
+        "Tool",
+        "Dimension",
+        "Gap",
+        "Text",
     )
     print(header)
     print("-" * 100)
 
     for f in findings:
-        fid = f.get('id', '')[:10]
-        ts = f.get('timestamp', '')[:19]
-        src = f.get('source', '')[:10]
-        tool = f.get('source_tool', '')[:10]
-        dim = (f.get('validated_dimension') or 'unknown')[:13]
-        gap = 'Y' if f.get('gap') else 'N'
-        text = (f.get('text') or '')[:40]
+        fid = f.get("id", "")[:10]
+        ts = f.get("timestamp", "")[:19]
+        src = f.get("source", "")[:10]
+        tool = f.get("source_tool", "")[:10]
+        dim = (f.get("validated_dimension") or "unknown")[:13]
+        gap = "Y" if f.get("gap") else "N"
+        text = (f.get("text") or "")[:40]
         print(
-            "%-12s %-20s %-12s %-12s %-15s %-4s %s"
-            % (fid, ts, src, tool, dim, gap, text),
+            "%-12s %-20s %-12s %-12s %-15s %-4s %s" % (fid, ts, src, tool, dim, gap, text),
         )
 
     print("-" * 100)
@@ -1245,6 +1251,7 @@ def eval_external(include_archived=False, json_format=False):
 # Shadow timeout check (D7)
 # ---------------------------------------------------------------------------
 
+
 def check_shadow_timeouts(config):
     """Check shadow dimension timeouts (180 days from added_at).
 
@@ -1255,18 +1262,18 @@ def check_shadow_timeouts(config):
     # Permanent shadow dimensions are never auto-archived
     permanent_shadow = _get_permanent_shadow_dims()
 
-    dim_states = config.get('dimension_states', {})
+    dim_states = config.get("dimension_states", {})
     now = datetime.now(timezone.utc)
     archived = []
 
     for dim_name, state in list(dim_states.items()):
-        if state.get('status') != 'shadow':
+        if state.get("status") != "shadow":
             continue
 
         if dim_name in permanent_shadow:
             continue
 
-        added_at = state.get('added_at')
+        added_at = state.get("added_at")
         if added_at is None:
             continue
 
@@ -1284,15 +1291,14 @@ def check_shadow_timeouts(config):
         ):
             continue
 
-        finding_count = state.get('finding_count', 0)
-        failures = state.get('consecutive_eval_failures')
+        finding_count = state.get("finding_count", 0)
+        failures = state.get("consecutive_eval_failures")
 
         if finding_count >= 20:
             print(
                 "forge: warning: shadow dimension '%s' is "
                 "past 180-day timeout with %d findings -- "
-                "run 'forge --eval --shadow' to evaluate"
-                % (dim_name, finding_count),
+                "run 'forge --eval --shadow' to evaluate" % (dim_name, finding_count),
                 file=sys.stderr,
             )
         elif finding_count > 0 and failures is None:
@@ -1301,12 +1307,11 @@ def check_shadow_timeouts(config):
                 "past 180-day timeout with %d findings "
                 "(never evaluated) -- "
                 "run 'forge --eval --shadow' for early "
-                "evaluation"
-                % (dim_name, finding_count),
+                "evaluation" % (dim_name, finding_count),
                 file=sys.stderr,
             )
         elif finding_count == 0:
-            state['status'] = 'archived'
+            state["status"] = "archived"
             archived.append(dim_name)
 
     return archived

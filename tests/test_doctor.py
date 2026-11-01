@@ -506,7 +506,8 @@ def fixed_hook_invocation(monkeypatch):
     from code_forge import install_hooks as hooks
 
     monkeypatch.setattr(
-        hooks, "_resolve_forge_invocation",
+        hooks,
+        "_resolve_forge_invocation",
         lambda: hooks._ForgeInvocationResolution("/fixture/code-forge gate-check", "primary_ok", ""),
     )
 
@@ -932,6 +933,7 @@ def hook_version_transport(monkeypatch):
     primary = "/fixture bin/it's/code-forge"
     real_run, real_access, real_which = subprocess.run, os.access, hooks.shutil.which
     calls, outcomes = [], []
+
     def run(argv, *args, **kwargs):
         if argv == [primary, "--version"]:
             calls.append(argv)
@@ -944,29 +946,39 @@ def hook_version_transport(monkeypatch):
             if outcome == "subprocess":
                 raise subprocess.SubprocessError("fixture failure")
             return subprocess.CompletedProcess(
-                argv, 7 if outcome == "exit" else 0,
-                "wrong" if outcome == "invalid" else "code-forge fixture\n", "",
+                argv,
+                7 if outcome == "exit" else 0,
+                "wrong" if outcome == "invalid" else "code-forge fixture\n",
+                "",
             )
         return real_run(argv, *args, **kwargs)
+
     monkeypatch.setattr(hooks.subprocess, "run", run)
-    monkeypatch.setattr(hooks.shutil, "which", lambda name, *a, **kw:
-                        primary if name == "code-forge" else real_which(name, *a, **kw))
-    monkeypatch.setattr(hooks.os, "access", lambda path, mode:
-                        True if path == primary else real_access(path, mode))
+    monkeypatch.setattr(
+        hooks.shutil,
+        "which",
+        lambda name, *a, **kw: primary if name == "code-forge" else real_which(name, *a, **kw),
+    )
+    monkeypatch.setattr(
+        hooks.os, "access", lambda path, mode: True if path == primary else real_access(path, mode)
+    )
     return outcomes, calls
 
 
 @pytest.mark.parametrize("chained", [False, True])
-@pytest.mark.parametrize("install_probe,doctor_probe,expected_kind", [
-    ("success", "timeout", "cannot verify invocation"),
-    ("timeout", "success", "equivalence is unverified"),
-    ("success", "success", "current"),
-    ("timeout", "timeout", "cannot verify invocation"),
-    ("success", "oserror", "cannot verify invocation"),
-    ("success", "subprocess", "cannot verify invocation"),
-    ("success", "exit", "cannot verify invocation"),
-    ("success", "invalid", "cannot verify invocation"),
-])
+@pytest.mark.parametrize(
+    "install_probe,doctor_probe,expected_kind",
+    [
+        ("success", "timeout", "cannot verify invocation"),
+        ("timeout", "success", "equivalence is unverified"),
+        ("success", "success", "current"),
+        ("timeout", "timeout", "cannot verify invocation"),
+        ("success", "oserror", "cannot verify invocation"),
+        ("success", "subprocess", "cannot verify invocation"),
+        ("success", "exit", "cannot verify invocation"),
+        ("success", "invalid", "cannot verify invocation"),
+    ],
+)
 def test_hook_invocation_probe_directions(
     tmp_path, hook_version_transport, chained, install_probe, doctor_probe, expected_kind
 ):
@@ -1027,9 +1039,20 @@ def test_hook_configuration_error_retains_early_return(tmp_path, monkeypatch, er
 
 
 @pytest.mark.usefixtures("fixed_hook_invocation")
-@pytest.mark.parametrize("change", [
-    "review", "gate", "shell", "arbitrary", "historical", "mixed", "stale", "config", "chain",
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "review",
+        "gate",
+        "shell",
+        "arbitrary",
+        "historical",
+        "mixed",
+        "stale",
+        "config",
+        "chain",
+    ],
+)
 def test_hook_alternate_classification_never_accepts_tampering(tmp_path, monkeypatch, change):
     from code_forge import install_hooks as hooks
     from code_forge.doctor import _check_hook_drift
@@ -1053,7 +1076,8 @@ def test_hook_alternate_classification_never_accepts_tampering(tmp_path, monkeyp
     elif change == "chain":
         config = hooks._collect_hook_config(tmp_path)
         text = hooks.generate_hook_content(
-            old + " gate-check", path.parent / "arbitrary-backup",
+            old + " gate-check",
+            path.parent / "arbitrary-backup",
             presubmit_entries=config.presubmit_entries,
             non_ascii_mode=config.non_ascii_mode,
             planning_leak_guard=config.planning_leak_guard,
@@ -1064,7 +1088,9 @@ def test_hook_alternate_classification_never_accepts_tampering(tmp_path, monkeyp
     if change != "config":
         assert text != path.read_text()
     path.write_text(text)
-    monkeypatch.setattr(hooks, "_interpreter_invocation", lambda: "/fixture/python -m code_forge gate-check")
+    monkeypatch.setattr(
+        hooks, "_interpreter_invocation", lambda: "/fixture/python -m code_forge gate-check"
+    )
     calls = _guard_hook_processes(monkeypatch)
     results = _check_hook_drift(tmp_path)
     assert results[0][0] is False
@@ -1079,8 +1105,11 @@ def test_hook_unavailable_invocation_still_checks_commit_msg(tmp_path, monkeypat
 
     _init_repo(tmp_path)
     _install(tmp_path)
-    monkeypatch.setattr(hooks, "_resolve_forge_invocation", lambda:
-                        hooks._ForgeInvocationResolution(None, "no_usable_invocation", "unavailable"))
+    monkeypatch.setattr(
+        hooks,
+        "_resolve_forge_invocation",
+        lambda: hooks._ForgeInvocationResolution(None, "no_usable_invocation", "unavailable"),
+    )
     results = _check_hook_drift(tmp_path)
     assert [ok for ok, _ in results] == [False, True]
     assert "cannot verify invocation" in results[0][1]
@@ -1091,8 +1120,11 @@ def test_hook_no_primary_fallback_is_current(tmp_path, monkeypatch):
     from code_forge.doctor import _check_hook_drift
 
     real_which = hooks.shutil.which
-    monkeypatch.setattr(hooks.shutil, "which", lambda name, *a, **kw:
-                        None if name == "code-forge" else real_which(name, *a, **kw))
+    monkeypatch.setattr(
+        hooks.shutil,
+        "which",
+        lambda name, *a, **kw: None if name == "code-forge" else real_which(name, *a, **kw),
+    )
     _init_repo(tmp_path)
     _install(tmp_path)
     assert [ok for ok, _ in _check_hook_drift(tmp_path)] == [True, True]
@@ -1121,16 +1153,20 @@ def test_hook_doctor_preserves_configuration_resolution_order(tmp_path, monkeypa
     events = []
     real_config, real_is_file = hooks.load_gate_config, Path.is_file
     resolution = hooks._resolve_forge_invocation()
+
     def config(path):
         events.append("config")
         return real_config(path)
+
     def is_file(path):
         if path == tmp_path / "src" / "code_forge" / "__init__.py":
             events.append("planning")
         return real_is_file(path)
+
     def resolve():
         events.append("resolution")
         return resolution
+
     monkeypatch.setattr(hooks, "load_gate_config", config)
     monkeypatch.setattr(Path, "is_file", is_file)
     monkeypatch.setattr(hooks, "_resolve_forge_invocation", resolve)
@@ -1146,7 +1182,9 @@ def test_hook_resolver_exception_does_not_mask_commit_msg_drift(tmp_path, monkey
     _init_repo(tmp_path)
     commit_msg = _install(tmp_path) / "commit-msg"
     commit_msg.write_text(commit_msg.read_text().replace("head -5", "head -3"))
-    monkeypatch.setattr(hooks, "_resolve_forge_invocation", MagicMock(side_effect=ValueError("unexpected")))
+    monkeypatch.setattr(
+        hooks, "_resolve_forge_invocation", MagicMock(side_effect=ValueError("unexpected"))
+    )
     results = _check_hook_drift(tmp_path)
     assert [ok for ok, _ in results] == [False, False]
     assert "cannot verify invocation" in results[0][1]
@@ -1183,15 +1221,14 @@ def _guard_hook_processes(monkeypatch):
 
 @pytest.mark.parametrize("status", ["future_status", "primary_timeout"])
 @pytest.mark.parametrize("stale_commit_msg", [False, True])
-def test_hook_uncertain_exact_fallback_is_not_current(
-    tmp_path, monkeypatch, status, stale_commit_msg
-):
+def test_hook_uncertain_exact_fallback_is_not_current(tmp_path, monkeypatch, status, stale_commit_msg):
     from code_forge import install_hooks as hooks
     from code_forge.doctor import _check_hook_drift
 
     invocation = "/fixture/python -m code_forge gate-check"
     monkeypatch.setattr(
-        hooks, "_resolve_forge_invocation",
+        hooks,
+        "_resolve_forge_invocation",
         lambda: hooks._ForgeInvocationResolution(invocation, "fallback_no_primary", ""),
     )
     _init_repo(tmp_path)
@@ -1203,7 +1240,8 @@ def test_hook_uncertain_exact_fallback_is_not_current(
         assert changed != original
         path.write_text(changed)
     monkeypatch.setattr(
-        hooks, "_resolve_forge_invocation",
+        hooks,
+        "_resolve_forge_invocation",
         lambda: hooks._ForgeInvocationResolution(invocation, status, "unverified"),
     )
     calls = _guard_hook_processes(monkeypatch)
@@ -1272,15 +1310,24 @@ def test_hook_tampering_with_uncertain_probe_stays_unverified(
     assert processes
 
 
-@pytest.mark.parametrize("install_probe,doctor_probe,kind,expected_rc", [
-    ("success", "success", "current", 0),
-    ("success", "timeout", "cannot verify invocation", 1),
-    ("timeout", "success", "equivalence is unverified", 1),
-    ("timeout", "timeout", "cannot verify invocation", 1),
-])
+@pytest.mark.parametrize(
+    "install_probe,doctor_probe,kind,expected_rc",
+    [
+        ("success", "success", "current", 0),
+        ("success", "timeout", "cannot verify invocation", 1),
+        ("timeout", "success", "equivalence is unverified", 1),
+        ("timeout", "timeout", "cannot verify invocation", 1),
+    ],
+)
 def test_run_doctor_invocation_status_and_exit(
-    tmp_path, monkeypatch, capsys, hook_version_transport,
-    install_probe, doctor_probe, kind, expected_rc,
+    tmp_path,
+    monkeypatch,
+    capsys,
+    hook_version_transport,
+    install_probe,
+    doctor_probe,
+    kind,
+    expected_rc,
 ):
     from code_forge import doctor
 
@@ -1290,7 +1337,9 @@ def test_run_doctor_invocation_status_and_exit(
     _install(tmp_path)
     # Isolate unrelated checks, preserving the public orchestrator and hook path.
     monkeypatch.setattr(doctor, "_check_workspace", lambda *a: (True, "fixture", tmp_path))
-    monkeypatch.setattr(doctor, "_check_gate_yaml", lambda *a: (True, "fixture", {"outlet": "subprocess"}))
+    monkeypatch.setattr(
+        doctor, "_check_gate_yaml", lambda *a: (True, "fixture", {"outlet": "subprocess"})
+    )
     monkeypatch.setattr(doctor, "_check_trust", lambda *a: (True, "fixture"))
     monkeypatch.setattr(doctor, "_check_backends", lambda *a, **kw: ([], []))
     monkeypatch.setattr(doctor, "_check_outlet", lambda *a: (True, "fixture"))
@@ -1325,7 +1374,8 @@ def test_hook_unavailable_invocation_preserves_stale_commit_msg(tmp_path, monkey
     assert changed != original
     path.write_text(changed)
     monkeypatch.setattr(
-        hooks, "_resolve_forge_invocation",
+        hooks,
+        "_resolve_forge_invocation",
         lambda: hooks._ForgeInvocationResolution(None, "no_usable_invocation", "unavailable"),
     )
     results = _check_hook_drift(tmp_path)
@@ -1342,14 +1392,15 @@ def test_hook_resolver_exception_detail_is_bounded(tmp_path, monkeypatch):
     _init_repo(tmp_path)
     _install(tmp_path)
     monkeypatch.setattr(
-        hooks, "_resolve_forge_invocation",
+        hooks,
+        "_resolve_forge_invocation",
         MagicMock(side_effect=ValueError("unexpected\n" + "x" * 1000)),
     )
     results = _check_hook_drift(tmp_path)
     prefix = "pre-commit: cannot verify invocation: "
     assert results[0][0] is False
     assert results[0][1].startswith(prefix)
-    assert len(results[0][1][len(prefix):]) == 240
+    assert len(results[0][1][len(prefix) :]) == 240
     assert results[0][1].endswith("...")
     assert "\n" not in results[0][1]
     assert results[1][0] is True
@@ -1363,13 +1414,16 @@ def test_hook_alternate_resolution_error_is_not_current(tmp_path, monkeypatch, c
     _init_repo(tmp_path)
     _install(tmp_path)
     monkeypatch.setattr(
-        hooks, "_resolve_forge_invocation",
+        hooks,
+        "_resolve_forge_invocation",
         lambda: hooks._ForgeInvocationResolution("/other/code-forge gate-check", "primary_ok", ""),
     )
     alternate = MagicMock(side_effect=ValueError("identity\n" + "x" * 1000))
     monkeypatch.setattr(hooks, "_interpreter_invocation", alternate)
     monkeypatch.setattr(doctor, "_check_workspace", lambda *a: (True, "fixture", tmp_path))
-    monkeypatch.setattr(doctor, "_check_gate_yaml", lambda *a: (True, "fixture", {"outlet": "subprocess"}))
+    monkeypatch.setattr(
+        doctor, "_check_gate_yaml", lambda *a: (True, "fixture", {"outlet": "subprocess"})
+    )
     monkeypatch.setattr(doctor, "_check_trust", lambda *a: (True, "fixture"))
     monkeypatch.setattr(doctor, "_check_backends", lambda *a, **kw: ([], []))
     monkeypatch.setattr(doctor, "_check_outlet", lambda *a: (True, "fixture"))

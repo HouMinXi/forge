@@ -72,18 +72,22 @@ Existing signatures, `context_sources.py:98-106`, `context_sources.py:376`, `con
 ```python
 class ContextSource(Protocol):
     name: str
+
     def snapshot_sha(self) -> Optional[str]: ...
     def facts(self, changed_files: list[str], diff_text: str) -> list[FactRow]: ...
 
-def _lines_at(self, locations: list[str]) -> tuple[dict, dict]:
-    ...
+
+def _lines_at(self, locations: list[str]) -> tuple[dict, dict]: ...
+
 
 def gather(
-    sources: list[ContextSource], changed_files: list[str], diff_text: str,
-    head_sha: Optional[str], allow_unsnapshotted: bool = False,
+    sources: list[ContextSource],
+    changed_files: list[str],
+    diff_text: str,
+    head_sha: Optional[str],
+    allow_unsnapshotted: bool = False,
     on_error: Optional[Callable[[str, str], None]] = None,
-) -> GatherResult:
-    ...
+) -> GatherResult: ...
 ```
 
 FACT: the `_lines_at` method belongs to `RemovedSymbolReaders`. Its `locations` come from host-collected grep results, not admitted model tool arguments. It strips ` (test)`, parses `path:line`, caches the entire current file, and returns one source line plus a nearest less-indented def/class header. `None` cache entries trigger reads; zero/negative/out-of-range or non-integer coordinates are omitted; an OSError becomes cached `[]`. Those are existing advisory semantics, not the new reader refusal protocol.
@@ -96,8 +100,7 @@ result.snapshot_shas[name] = snap
 if snap is not None and not allow_unsnapshotted:
     if head_sha is None or snap != head_sha:
         result.skipped.append(
-            "%s: index at %s, review head %s"
-            % (name, (snap or "?")[:12], (head_sha or "unknown")[:12])
+            "%s: index at %s, review head %s" % (name, (snap or "?")[:12], (head_sha or "unknown")[:12])
         )
         result.skipped_sources.append(name)
         continue
@@ -122,9 +125,17 @@ FACT: exceptions are captured separately in `errors`; failures before acquisitio
 @dataclass(frozen=True)
 class SemAcquisition:
     status: Literal[
-        "completed", "completed_empty", "disabled", "unavailable",
-        "inapplicable", "execution_error", "timeout", "parse_error",
-        "schema_error", "impact_incomplete", "configuration_error",
+        "completed",
+        "completed_empty",
+        "disabled",
+        "unavailable",
+        "inapplicable",
+        "execution_error",
+        "timeout",
+        "parse_error",
+        "schema_error",
+        "impact_incomplete",
+        "configuration_error",
     ]
     entities: list[dict] = field(default_factory=list)
     diagnostic: str = ""
@@ -140,12 +151,17 @@ Full existing interfaces:
 # graph_triage.py:395 and 509-513
 def _run_graphdb(db_path: str, diff_files: list[str]) -> SemAcquisition: ...
 def find_entity_dependents(
-    entity_name: str, file_path: str, repo_root: Path,
+    entity_name: str,
+    file_path: str,
+    repo_root: Path,
 ) -> list[str]: ...
+
 
 # dead_code.py:285-289
 def _live_callers(
-    cursor: sqlite3.Cursor, target_name: str, module_name: str,
+    cursor: sqlite3.Cursor,
+    target_name: str,
+    module_name: str,
 ) -> list[LiveCaller]: ...
 ```
 
@@ -179,14 +195,15 @@ Full current public signature, `llm_invoke.py:1306-1315`:
 
 ```python
 def llm_invoke(
-    prompt: str, backend: Optional[BackendConfig] = None,
+    prompt: str,
+    backend: Optional[BackendConfig] = None,
     timeout_s: Optional[int] = None,
     expected_keys: frozenset[str] | None = None,
-    max_attempts: int = 5, initial_delay_s: float = 2.0,
+    max_attempts: int = 5,
+    initial_delay_s: float = 2.0,
     continuation_breaker: "TruncationBreaker | None" = None,
     retry_timeout: bool = False,
-) -> LLMResult:
-    ...
+) -> LLMResult: ...
 ```
 
 FACT: `backend=None` refuses before spawn (`1346-1355`); timeout resolution is delegated (`1356`). Expected keys default to the review envelope on API paths; falsifier uses its separate keys. Generic inference also serves contract summaries, daemon/runtime advisories, doctor, tests and falsifier, so keep tools behind an explicit review-only adapter rather than enabling them for every `llm_invoke` caller.
@@ -195,21 +212,30 @@ Full factory setup interface, `factories.py:304-323`:
 
 ```python
 def build_l1_provider(
-    engine: str, resolved: "ResolvedReview", backend=None,
-    conventions_digest: str = "", post_image: str = "",
-    graph_impact_context: str = "", contract_spec: str = "",
-    focus_spec: str = "", manifest_spec: str = "", breaker=None,
-    max_attempts: int = 5, initial_delay_s: float = 2.0,
-    continuation_breaker=None, split_context: str = "",
+    engine: str,
+    resolved: "ResolvedReview",
+    backend=None,
+    conventions_digest: str = "",
+    post_image: str = "",
+    graph_impact_context: str = "",
+    contract_spec: str = "",
+    focus_spec: str = "",
+    manifest_spec: str = "",
+    breaker=None,
+    max_attempts: int = 5,
+    initial_delay_s: float = 2.0,
+    continuation_breaker=None,
+    split_context: str = "",
     context_sources_text: str = "",
     reviewed_repositories: dict[str, str] | None = None,
-    retry_timeout: bool = False, pass_stagger_s: float = 0.0,
-) -> "_L1Call":
-    ...
+    retry_timeout: bool = False,
+    pass_stagger_s: float = 0.0,
+) -> "_L1Call": ...
 def build_grouped_l1_provider(
-    engine: str, group_specs: list[dict], **shared_kwargs,
-) -> "Callable":
-    ...
+    engine: str,
+    group_specs: list[dict],
+    **shared_kwargs,
+) -> "Callable": ...
 ```
 
 FACT: provider return remains `(findings, excerpts, Usage, duration_s)`, with instance-owned `attempted_excerpts`. `engine="stub"` has a trusted setup marker (`factories.py:338-350`); empty diff resets attempted state and returns zeros (`369-372`); API passes run concurrently, CLI passes serially (`424-473`); results fold in trusted qodo/expert/adversarial order (`484`). API duration is parallel wall time (`699-705`), not sum of work durations. The plan must distinguish those metrics.
@@ -253,6 +279,7 @@ class Usage:
     output_tokens: int = 0
     cached_input_tokens: int = 0
 
+
 @dataclass(frozen=True)
 class LLMResult:
     content: Any
@@ -290,6 +317,7 @@ class ReviewGroupScope:
     diff_sha256: str
     source_files: tuple[str, ...]
 
+
 class GroupedReviewAttempt(dict):
     def __init__(self, payload: dict, scope: ReviewGroupScope):
         super().__init__(payload)
@@ -302,17 +330,21 @@ Full existing writer contract, `receipt.py:153-168`:
 
 ```python
 def write_receipts(
-    receipts_dir: Path, round_index: int, l1_findings: list[StateFinding],
-    diff_sha256: str, source_files: list[Path], cwd: Path,
+    receipts_dir: Path,
+    round_index: int,
+    l1_findings: list[StateFinding],
+    diff_sha256: str,
+    source_files: list[Path],
+    cwd: Path,
     diff_files: dict[str, list[int]] | None = None,
-    diff_text: str | None = None, reviewer_excerpts: list[dict] | None = None,
+    diff_text: str | None = None,
+    reviewer_excerpts: list[dict] | None = None,
     manifest: Optional[EnvManifest | ManifestTier | dict[str, Any] | str] = None,
     manifest_tier: Optional[ManifestTier] = None,
     exec_evidence: Optional[dict[str, Any] | str] = None,
     attempted_excerpts: list[dict] | None = None,
     reviewed_repositories: dict[str, str] | None = None,
-) -> list[Path]:
-    ...
+) -> list[Path]: ...
 ```
 
 FACT: writes accepted `receipt-cNpM.json`, then attempted JSON beneath `attempted/` (`receipt.py:336-366`). Discovery only loads nonrecursive `receipt-*.json` (`verify.py:288`). `None`/empty attempted list means no attempted artifacts; no automatic attempted pruning is present. `json.dumps` currently permits NaN/Infinity; type/cycle failure is not an OSError. Writer is not an append-only crash-safe journal and creates files directly. `snapshot.py:89-91` offers temp-write/replace precedent, but its shared `.tmp` name and absent fsync are not sufficient for parallel durable attempt starts/outcomes.
@@ -354,13 +386,18 @@ Existing async interfaces, `mcp_jobs.py:87-94,140-143`:
 
 ```python
 def start_job(
-    comm_task: asyncio.Task[Any], proc: asyncio.subprocess.Process,
-    tempfile_path: str | None = None, focus_tempfile_path: str | None = None,
-    stderr_log_path: str | None = None, max_lifetime_s: float | None = None,
+    comm_task: asyncio.Task[Any],
+    proc: asyncio.subprocess.Process,
+    tempfile_path: str | None = None,
+    focus_tempfile_path: str | None = None,
+    stderr_log_path: str | None = None,
+    max_lifetime_s: float | None = None,
 ) -> str: ...
 
+
 async def _terminate_and_reap(
-    proc: asyncio.subprocess.Process, grace: float = 5.0,
+    proc: asyncio.subprocess.Process,
+    grace: float = 5.0,
 ) -> None: ...
 ```
 

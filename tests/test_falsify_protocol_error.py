@@ -151,10 +151,12 @@ def local_falsifier_api(monkeypatch):
             replies["requests"].append(request)
             body = json.dumps(
                 {
-                    "choices": [{
-                        "message": {"content": replies["content"]},
-                        "finish_reason": replies.get("finish_reason", "stop"),
-                    }],
+                    "choices": [
+                        {
+                            "message": {"content": replies["content"]},
+                            "finish_reason": replies.get("finish_reason", "stop"),
+                        }
+                    ],
                     "usage": {
                         "prompt_tokens": 17,
                         "completion_tokens": 9,

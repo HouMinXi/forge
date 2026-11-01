@@ -1,15 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Run ruff on the Python files a change touches, not on the whole tree (#105).
+"""Run pinned Ruff over the repository or a selected Python diff.
 
-The repository is not ruff-clean, so a repo-wide ruff run cannot gate
-anything. This script lints only the files a pull request adds,
-modifies or renames, using ``ruff check`` and ``ruff format --check`` with the
-repository's own configuration. Deleted files are never passed to ruff, and
-an empty selection exits 0 without calling ruff, because ``ruff check`` with
-no paths lints the current directory.
+CI uses ``--all`` so pre-existing findings cannot hide outside a PR's diff.
+``--base`` remains a fast local check: deleted/non-Python files are omitted,
+and an empty selection succeeds without invoking Ruff. Both modes honor the
+repository configuration, including intentionally excluded corpus fixtures.
 
 Usage::
 
+    python scripts/lint_changed.py --all
     python scripts/lint_changed.py --base origin/main
     python scripts/lint_changed.py --print-requirement
 """
@@ -121,11 +120,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     group.add_argument(
         "--print-requirement", action="store_true", help="print the pinned ruff requirement"
     )
+    group.add_argument("--all", action="store_true", help="check the entire repository")
     args = parser.parse_args(argv)
     if args.print_requirement:
         print(ruff_requirement(REPO_ROOT / "pyproject.toml"))
         return 0
-    return run_ruff(changed_python_files(args.base))
+    return run_ruff(["."] if args.all else changed_python_files(args.base))
 
 
 if __name__ == "__main__":

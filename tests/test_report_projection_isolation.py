@@ -1,8 +1,8 @@
 """Phase 1 isolation / frozen-helper / whitelist tests (Forge #332 slice §5)."""
+
 from __future__ import annotations
 
 import ast
-import copy
 import hashlib
 from pathlib import Path
 
@@ -75,7 +75,11 @@ def test_control_modules_do_not_import_report_projection():
                 hits.append((str(p), n.lineno, "import"))
             if isinstance(n, ast.ImportFrom):
                 mod = n.module or ""
-                if mod == "code_forge.report_projection" or mod.endswith(".report_projection") or mod == "report_projection":
+                if (
+                    mod == "code_forge.report_projection"
+                    or mod.endswith(".report_projection")
+                    or mod == "report_projection"
+                ):
                     hits.append((str(p), n.lineno, "importfrom-mod"))
                 if any(a.name in ("report_projection", "classify_report_records") for a in n.names):
                     hits.append((str(p), n.lineno, "importfrom-name"))
@@ -131,7 +135,10 @@ def _ast_hash_defs(path: Path, names: set[str]) -> dict[str, str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     out = {}
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name in names:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and node.name in names
+        ):
             # Prefer the first (outermost walk order); methods are found via walk.
             out.setdefault(
                 node.name,
@@ -155,8 +162,23 @@ def test_frozen_helper_bodies_unchanged():
     state_p = REPO_SRC / "code_forge" / "state.py"
     machine_p = REPO_SRC / "code_forge" / "machine.py"
     got = {}
-    got.update(_ast_hash_defs(state_p, {"reporting_product_findings", "is_provider_diagnostic", "is_provider_capacity", "is_receipt_audit", "product_round_history"}))
-    got.update(_ast_hash_defs(machine_p, {"active_findings", "_count", "_confirmed_hold_fingerprints", "_product_history"}))
+    got.update(
+        _ast_hash_defs(
+            state_p,
+            {
+                "reporting_product_findings",
+                "is_provider_diagnostic",
+                "is_provider_capacity",
+                "is_receipt_audit",
+                "product_round_history",
+            },
+        )
+    )
+    got.update(
+        _ast_hash_defs(
+            machine_p, {"active_findings", "_count", "_confirmed_hold_fingerprints", "_product_history"}
+        )
+    )
     for name, expect in PINNED_HELPER.items():
         assert got[name] == expect, (name, got[name], expect)
 
@@ -168,16 +190,37 @@ def test_frozen_dependencies_unchanged():
     state_p = REPO_SRC / "code_forge" / "state.py"
     disp_p = REPO_SRC / "code_forge" / "disposition.py"
     got = {}
-    got.update(_ast_hash_defs(state_p, {"derive_pass_outcomes", "_host_diagnostic_shape", "PassOutcome", "FindingDiagnosticKind", "StateFinding", "_PASS_NAMES", "_SEVERITY"}))
+    got.update(
+        _ast_hash_defs(
+            state_p,
+            {
+                "derive_pass_outcomes",
+                "_host_diagnostic_shape",
+                "PassOutcome",
+                "FindingDiagnosticKind",
+                "StateFinding",
+                "_PASS_NAMES",
+                "_SEVERITY",
+            },
+        )
+    )
     got.update(_ast_hash_defs(disp_p, {"Disposition"}))
     for name, expect in PINNED_DEPS.items():
         assert got[name] == expect, (name, got[name], expect)
 
-    H = lambda s: hashlib.sha256(s.encode()).hexdigest()
+    def H(s):
+        return hashlib.sha256(s.encode()).hexdigest()
+
     assert H(repr(st._PASS_NAMES)) == PINNED_RUNTIME["_PASS_NAMES repr"]
-    assert H(repr(sorted((k.value, v) for k, v in st._SEVERITY.items()))) == PINNED_RUNTIME["_SEVERITY repr"]
+    assert (
+        H(repr(sorted((k.value, v) for k, v in st._SEVERITY.items())))
+        == PINNED_RUNTIME["_SEVERITY repr"]
+    )
     assert H(repr([(m.name, m.value) for m in st.PassOutcome])) == PINNED_RUNTIME["PassOutcome members"]
-    assert H(repr([(m.name, m.value) for m in st.FindingDiagnosticKind])) == PINNED_RUNTIME["FindingDiagnosticKind members"]
+    assert (
+        H(repr([(m.name, m.value) for m in st.FindingDiagnosticKind]))
+        == PINNED_RUNTIME["FindingDiagnosticKind members"]
+    )
     assert H(repr([(m.name, m.value) for m in Disposition])) == PINNED_RUNTIME["Disposition members"]
 
 
@@ -197,11 +240,14 @@ def test_control_equivalence_with_and_without_projection_call(tmp_path):
             "<llm-invoke>",
             [0, 0],
             "cap",
-            diagnostic_kind=__import__("code_forge.state", fromlist=["FindingDiagnosticKind"]).FindingDiagnosticKind.PROVIDER_CAPACITY,
+            diagnostic_kind=__import__(
+                "code_forge.state", fromlist=["FindingDiagnosticKind"]
+            ).FindingDiagnosticKind.PROVIDER_CAPACITY,
             provider_failure={"kind": "truncated"},
         ),
     ]
     from code_forge.state import Verdict, Mode
+
     state = State(findings=findings, verdict=Verdict.FAIL, mode=Mode.CI)
     save_state(state, d / "state.json")
     loaded = load_state(d / "state.json")

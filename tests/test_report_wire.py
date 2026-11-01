@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """IC-01 wire schema / reader stage tests (§3, §4, §5, §6.1)."""
+
 from __future__ import annotations
 
 import json
@@ -11,13 +12,6 @@ from code_forge.report_presentation import (
     FIELD_INVENTORY,
     PROJECTION_SCHEMA_V1,
     SCHEMA_V1,
-    DiagnosticObservation,
-    HostDiagnostic,
-    ProductRecord,
-    RecordView,
-    ReportClassificationWire,
-    WireClassificationError,
-    WireFallbackRecord,
     build_renderer_fallback,
     parse_block_dict,
     parse_report_classification,
@@ -112,8 +106,7 @@ def test_unavailable_block_all_other_fields_null():
 def test_reader_stages_no_report_legacy_invalid_unsupported_available():
     # empty
     assert (
-        parse_report_classification(None, legacy_report_state="empty").unavailable_reason
-        == "no-report"
+        parse_report_classification(None, legacy_report_state="empty").unavailable_reason == "no-report"
     )
     # rejected
     assert (
@@ -513,7 +506,6 @@ def test_cross_envelope_host_only_empty_results_available():
     assert len(got.gate or ()) == 1
 
 
-
 def test_cross_envelope_missing_results_invalid_block():
     """Accepted run without a list results under active preconditions → invalid-block."""
     block = _available_empty()
@@ -766,9 +758,7 @@ def test_wp2_x1_does_not_change_host_diagnostic_kinds():
         description="invoke fail",
         provider_failure={"kind": "credentials"},
     )
-    proj = classify_report_records(
-        State(findings=[finding], mode=Mode.CI, verdict=Verdict.PASS)
-    )
+    proj = classify_report_records(State(findings=[finding], mode=Mode.CI, verdict=Verdict.PASS))
     wire = serialize_projection(proj)
     assert len(wire.product) == 1
     assert wire.product[0].host_failure_kind == "PROVIDER_AUTH"

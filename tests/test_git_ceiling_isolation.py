@@ -10,7 +10,7 @@ from pathlib import Path
 from code_forge._mutation_process import run_owned_command
 
 
-_PROBE = '''import json
+_PROBE = """import json
 import os
 from pathlib import Path
 
@@ -50,7 +50,7 @@ def test_git_discovery_stops_at_temporary_boundary(tmp_path):
         "GIT_CEILING_ISOLATION: uninitialized fixture discovered an enclosing repository: "
         + negative.stdout
     )
-'''
+"""
 
 
 def test_explicit_basetemp_does_not_discover_enclosing_repository(tmp_path):
@@ -62,15 +62,29 @@ def test_explicit_basetemp_does_not_discover_enclosing_repository(tmp_path):
         enclosing = scratch / "enclosing"
         enclosing.mkdir()
         initialized = run_owned_command(
-            ["git", "init", "--quiet", "--template="], timeout=10, cwd=str(enclosing),
-            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
-                 "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
-            memory_limit_bytes=536870912, text=True,
+            ["git", "init", "--quiet", "--template="],
+            timeout=10,
+            cwd=str(enclosing),
+            env={
+                "PATH": "/usr/bin:/bin",
+                "LANG": "C.UTF-8",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+            },
+            memory_limit_bytes=536870912,
+            text=True,
         )
         with (results / "enclosing-init.json").open("x") as stream:
-            json.dump({"argv": initialized.args, "returncode": initialized.returncode,
-                       "stdout": initialized.stdout,
-                       "stderr": initialized.stderr, "ownership": initialized.ownership}, stream)
+            json.dump(
+                {
+                    "argv": initialized.args,
+                    "returncode": initialized.returncode,
+                    "stdout": initialized.stdout,
+                    "stderr": initialized.stderr,
+                    "ownership": initialized.ownership,
+                },
+                stream,
+            )
         assert initialized.ownership["cleanup_complete"] is True
         assert initialized.returncode == 0
 
@@ -80,15 +94,32 @@ def test_explicit_basetemp_does_not_discover_enclosing_repository(tmp_path):
         (tests / "conftest.py").write_bytes(Path(__file__).with_name("conftest.py").read_bytes())
         (tests / "test_probe.py").write_text(_PROBE, encoding="utf-8")
         nested = run_owned_command(
-            [sys.executable, "-B", "-m", "pytest", "-q", "-c", os.devnull,
-             "--rootdir=" + str(suite), "--confcutdir=" + str(suite),
-             "--basetemp=" + str(enclosing / "pytest-base"),
-             "--junitxml=" + str(tmp_path / "nested.xml"), str(tests / "test_probe.py")],
-            timeout=60, cwd=str(suite),
-            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
-                 "PYTHONPATH": str(source_root / "src"), "PYTHONDONTWRITEBYTECODE": "1",
-                 "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "FORGE_GIT_CEILING_RESULTS": str(results)},
-            memory_limit_bytes=536870912, text=True,
+            [
+                sys.executable,
+                "-B",
+                "-m",
+                "pytest",
+                "-q",
+                "-c",
+                os.devnull,
+                "--rootdir=" + str(suite),
+                "--confcutdir=" + str(suite),
+                "--basetemp=" + str(enclosing / "pytest-base"),
+                "--junitxml=" + str(tmp_path / "nested.xml"),
+                str(tests / "test_probe.py"),
+            ],
+            timeout=60,
+            cwd=str(suite),
+            env={
+                "PATH": "/usr/bin:/bin",
+                "LANG": "C.UTF-8",
+                "PYTHONPATH": str(source_root / "src"),
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+                "FORGE_GIT_CEILING_RESULTS": str(results),
+            },
+            memory_limit_bytes=536870912,
+            text=True,
         )
         for name, body in (("nested.stdout", nested.stdout), ("nested.stderr", nested.stderr)):
             with (tmp_path / name).open("x") as stream:

@@ -172,6 +172,7 @@ A credential, API key, or password embedded directly in source code.
 # _canary_NNN.py
 import boto3
 
+
 def get_client():
     return boto3.client(
         "s3",
@@ -226,10 +227,9 @@ parameterized queries.
 # _canary_NNN.py
 import sqlite3
 
+
 def find_user(db: sqlite3.Connection, username: str):
-    cursor = db.execute(
-        "SELECT * FROM users WHERE name = '" + username + "'"
-    )
+    cursor = db.execute("SELECT * FROM users WHERE name = '" + username + "'")
     return cursor.fetchone()
 ```
 
@@ -291,9 +291,7 @@ Matching is by file path prefix, not fuzzy matching:
 # Illustrative -- not implementation code
 canary_prefix = "_canary_"
 canary_findings = [
-    f for f in l1_candidates
-    if f.file.startswith(canary_prefix)
-       or ("/" + canary_prefix) in f.file
+    f for f in l1_candidates if f.file.startswith(canary_prefix) or ("/" + canary_prefix) in f.file
 ]
 ```
 
@@ -433,9 +431,7 @@ following the same dependency-injection pattern as `l1_provider`
 
 ```python
 # Illustrative addition to StateMachine dataclass
-canary_injector: Callable = field(
-    default=lambda diff_text, round_index: (diff_text, None)
-)
+canary_injector: Callable = field(default=lambda diff_text, round_index: (diff_text, None))
 # Returns: (modified_diff_text, canary_metadata_or_None)
 # Default: no-op (returns diff unchanged, no canary)
 ```
@@ -518,11 +514,12 @@ defect templates as frozen dataclasses:
 from dataclasses import dataclass
 from typing import Literal
 
+
 @dataclass(frozen=True)
 class CanaryTemplate:
-    defect_type: str                    # e.g. "hardcoded_secret"
-    language: str                       # e.g. "python"
-    template: str                       # code with {placeholders}
+    defect_type: str  # e.g. "hardcoded_secret"
+    language: str  # e.g. "python"
+    template: str  # code with {placeholders}
     expected_keywords: tuple[str, ...]  # keywords a finding should contain
     difficulty: Literal["easy", "medium", "hard"]
 ```

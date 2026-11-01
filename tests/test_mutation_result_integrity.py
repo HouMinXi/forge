@@ -630,6 +630,7 @@ def test_results_timeout_restores_workspace_without_proving_clean_result(tmp_pat
 
 def test_missing_baseline_runner_retains_default_guard_skip_and_false_proof(tmp_path, monkeypatch):
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+
     def missing(*_args, **_kwargs):
         raise FileNotFoundError("MEASURED_MISSING_RUNNER")
 

@@ -1117,9 +1117,7 @@ async def test_forge_job_status_signal_output_is_exact(stdout, stderr, expected_
     ):
         result = await forge_job_status(job_id="abc")
     assert result.structuredContent["result"]["output"] == expected_output
-    assert result.content[0].text == (
-        "Job abc failed: SIGNALED(SIGKILL) (exit -9)\n" + expected_output
-    )
+    assert result.content[0].text == ("Job abc failed: SIGNALED(SIGKILL) (exit -9)\n" + expected_output)
 
 
 @pytest.mark.parametrize(
@@ -1183,7 +1181,10 @@ async def test_forge_job_status_signaled_verdict_without_exit_code_gets_no_note(
     # Without a real exit code there is no signal to name; never guess SIGHUP.
     with patch(
         "code_forge.mcp_server.get_job",
-        return_value={"status": "failed", "result": {"stdout": "", "stderr": "", "verdict": "SIGNALED(SIGKILL)"}},
+        return_value={
+            "status": "failed",
+            "result": {"stdout": "", "stderr": "", "verdict": "SIGNALED(SIGKILL)"},
+        },
     ):
         result = await forge_job_status(job_id="abc")
     assert result.structuredContent["result"]["output"] == ""
@@ -2546,7 +2547,9 @@ def test_job_cap_s_env_override_wins():
         assert _job_cap_s(Path("/tmp")) == 50.0
 
 
-@pytest.mark.parametrize("raw,message", [("junk", "not an int"), ("-1", "not positive"), ("0", "not positive")])
+@pytest.mark.parametrize(
+    "raw,message", [("junk", "not an int"), ("-1", "not positive"), ("0", "not positive")]
+)
 def test_job_cap_s_bad_env_means_no_total_cap(caplog, raw, message):
     import logging
 
@@ -2834,7 +2837,11 @@ def _git_repo(path):
     import subprocess
 
     path.mkdir(parents=True, exist_ok=True)
-    for args in (["init", "-q"], ["config", "user.email", "t@example.invalid"], ["config", "user.name", "t"]):
+    for args in (
+        ["init", "-q"],
+        ["config", "user.email", "t@example.invalid"],
+        ["config", "user.name", "t"],
+    ):
         subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
     return path
 
@@ -2861,16 +2868,34 @@ def _idle_with_gate(tmp_path, gate_text, monkeypatch):
         return _job_idle_s(repo)
 
 
-@pytest.mark.parametrize("gate_text,expected", [
-    ("test:\n  command: [pytest]\n  timeout_seconds: 2400\n", 2400.0 + 600),
-    # #183: an unset mutation_timeout_seconds is mutmut's real default, 600.
-    ("test:\n  command: [pytest]\n  timeout_seconds: 60\n", 600.0 + 600),
-    ("test:\n  command: [pytest]\n  timeout_seconds: 60\n  mutation_timeout_seconds: 100\n", 900.0),  # invoke 300 dominates
-    ("test:\n  command: [pytest]\n  timeout_seconds: 600\n  mutation_timeout_seconds: 1800\n", 1800.0 + 600),
-    ("test:\n  timeout_seconds: 2400\n", 900.0),
-    ("backends: {}\n", 900.0),
-    (None, 900.0),
-], ids=["explicit", "default-mutation-step", "invoke-dominates", "mutation-step", "no-command", "no-test", "absent"])
+@pytest.mark.parametrize(
+    "gate_text,expected",
+    [
+        ("test:\n  command: [pytest]\n  timeout_seconds: 2400\n", 2400.0 + 600),
+        # #183: an unset mutation_timeout_seconds is mutmut's real default, 600.
+        ("test:\n  command: [pytest]\n  timeout_seconds: 60\n", 600.0 + 600),
+        (
+            "test:\n  command: [pytest]\n  timeout_seconds: 60\n  mutation_timeout_seconds: 100\n",
+            900.0,
+        ),  # invoke 300 dominates
+        (
+            "test:\n  command: [pytest]\n  timeout_seconds: 600\n  mutation_timeout_seconds: 1800\n",
+            1800.0 + 600,
+        ),
+        ("test:\n  timeout_seconds: 2400\n", 900.0),
+        ("backends: {}\n", 900.0),
+        (None, 900.0),
+    ],
+    ids=[
+        "explicit",
+        "default-mutation-step",
+        "invoke-dominates",
+        "mutation-step",
+        "no-command",
+        "no-test",
+        "absent",
+    ],
+)
 def test_job_idle_s_covers_one_silent_test_step(tmp_path, monkeypatch, gate_text, expected):
     assert _idle_with_gate(tmp_path, gate_text, monkeypatch) == expected
 
@@ -2880,7 +2905,8 @@ def test_job_idle_s_reads_the_outside_test_config_root(tmp_path, monkeypatch):
     outside = tmp_path / "cfg"
     (outside / ".code-forge").mkdir(parents=True)
     (outside / ".code-forge" / "gate.yaml").write_text(
-        "test:\n  command: [pytest]\n  timeout_seconds: 2400\n", encoding="utf-8")
+        "test:\n  command: [pytest]\n  timeout_seconds: 2400\n", encoding="utf-8"
+    )
     repo = _git_repo(tmp_path / "repo")
     monkeypatch.setenv("FORGE_TEST_CONFIG_ROOT", str(outside))
     be = _make_backend(backend_type="cli", timeout_s=0)
@@ -2897,7 +2923,8 @@ def test_job_idle_s_ignores_an_uncommitted_edit_of_a_tracked_gate(tmp_path, monk
     repo = _git_repo(tmp_path / "repo")
     _commit_gate(repo, "test:\n  command: [pytest]\n  timeout_seconds: 1200\n")
     (repo / ".code-forge" / "gate.yaml").write_text(
-        "test:\n  command: [pytest]\n  timeout_seconds: 99999\n", encoding="utf-8")
+        "test:\n  command: [pytest]\n  timeout_seconds: 99999\n", encoding="utf-8"
+    )
     be = _make_backend(backend_type="cli", timeout_s=0)
     with (
         patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
@@ -2918,8 +2945,12 @@ def test_baseline_guard_runs_at_most_baseline_max_runs(monkeypatch):
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr(baseline_guard, "BASELINE_MAX_RUNS", 2)
-    assert baseline_guard._run_baseline_guard(
-        ["true"], {}, "/private", allow_strip_retry=False, run_command=execute)[0] == "passed"
+    assert (
+        baseline_guard._run_baseline_guard(
+            ["true"], {}, "/private", allow_strip_retry=False, run_command=execute
+        )[0]
+        == "passed"
+    )
     assert len(calls) == 2
 
 
@@ -2929,6 +2960,8 @@ def test_silent_step_is_zero_without_a_test_command():
 
     with patch("code_forge.mcp_server._trusted_test_block", return_value={"timeout_seconds": 2400}):
         assert _silent_step_s(Path("/tmp")) == 0
-    with patch("code_forge.mcp_server._trusted_test_block",
-               return_value={"command": ["pytest"], "timeout_seconds": 2400}):
+    with patch(
+        "code_forge.mcp_server._trusted_test_block",
+        return_value={"command": ["pytest"], "timeout_seconds": 2400},
+    ):
         assert _silent_step_s(Path("/tmp")) == 2400

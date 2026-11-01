@@ -65,7 +65,9 @@ def _reference_hash(repo):
 
 def test_verify_reads_changed_files_under_noprefix(noprefix_repo, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["code-forge", "verify"])
-    with patch("code_forge.verify.run_verify", return_value=VerifyResult(True, "ok", 1, 1)) as run_verify:
+    with patch(
+        "code_forge.verify.run_verify", return_value=VerifyResult(True, "ok", 1, 1)
+    ) as run_verify:
         assert cli.main() == 0
     args, _ = run_verify.call_args
     diff_sha, diff_files = args[1], args[2]
@@ -170,7 +172,9 @@ def test_verify_diff_keeps_binary_patch_for_the_review_hash(binary_noprefix_repo
     review_diff = _review_diff_with_binary(binary_noprefix_repo)
     assert "GIT binary patch" in review_diff
     monkeypatch.setattr(sys, "argv", ["code-forge", "verify"])
-    with patch("code_forge.verify.run_verify", return_value=VerifyResult(True, "ok", 1, 1)) as run_verify:
+    with patch(
+        "code_forge.verify.run_verify", return_value=VerifyResult(True, "ok", 1, 1)
+    ) as run_verify:
         assert cli.main() == 0
     assert run_verify.call_args.args[1] == compute_source_hash(git_diff=review_diff)
 

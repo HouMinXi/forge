@@ -27,9 +27,7 @@ NESTED_TRUNCATION = (
     '"description":"risk","details":{"surfaces":[],"findings":[]}}'
 )
 # Complete JSON with deeply nested inert metadata; decoder capacity varies.
-DEEPLY_NESTED_JSON = (
-    '{"surfaces":[],"findings":[],"metadata":' + '[' * 10_000 + '0' + ']' * 10_000 + '}'
-)
+DEEPLY_NESTED_JSON = '{"surfaces":[],"findings":[],"metadata":' + "[" * 10_000 + "0" + "]" * 10_000 + "}"
 
 
 def _finding(**changes):
@@ -123,7 +121,7 @@ def test_line_requires_integer_excluding_bool(value, invoke, tmp_path):
     _assert_refusal(runner, runner.run(DIFF, tmp_path))
 
 
-@pytest.mark.parametrize("line", [-10**30, -1, 0, 1, 10**30])
+@pytest.mark.parametrize("line", [-(10**30), -1, 0, 1, 10**30])
 def test_integer_boundaries_preserved(line, invoke, tmp_path):
     runner = runtime.RuntimeRunner(backend=object())
     _deliver(invoke, _payload(findings=[_finding(line=line)]))
@@ -132,22 +130,28 @@ def test_integer_boundaries_preserved(line, invoke, tmp_path):
     assert runner.infra_errors == []
 
 
-@pytest.mark.parametrize("wrapper", [lambda p: p, lambda p: [p], json.dumps,
-                                     lambda p: json.dumps([p])])
+@pytest.mark.parametrize("wrapper", [lambda p: p, lambda p: [p], json.dumps, lambda p: json.dumps([p])])
 @pytest.mark.parametrize("empty", [False, True])
 def test_valid_complete_payloads_preserved(wrapper, empty, invoke, tmp_path):
     content = {"surfaces": [], "findings": []} if empty else _payload()
     runner = runtime.RuntimeRunner(backend=object())
     _deliver(invoke, wrapper(content))
     result = runner.run(DIFF, tmp_path)
-    expected = [] if empty else [
-        AdvisoryFinding("runtime-0", "RUNTIME", "a.py", [7, 7], "risk", "runtime-axis/llm"),
-        AdvisoryFinding(
-            "runtime-smoke-summary", "RUNTIME", "", [0, 0],
-            "smoke: 0/1 surfaces verified; NOT VERIFIED: [network]",
-            "runtime-axis/smoke-evidence",
-        ),
-    ]
+    expected = (
+        []
+        if empty
+        else [
+            AdvisoryFinding("runtime-0", "RUNTIME", "a.py", [7, 7], "risk", "runtime-axis/llm"),
+            AdvisoryFinding(
+                "runtime-smoke-summary",
+                "RUNTIME",
+                "",
+                [0, 0],
+                "smoke: 0/1 surfaces verified; NOT VERIFIED: [network]",
+                "runtime-axis/smoke-evidence",
+            ),
+        ]
+    )
     assert result == expected
     assert runner.last_surfaces == content["surfaces"]
     assert runner.infra_errors == []
@@ -180,25 +184,34 @@ def test_rejects_unsupported_decoded_roots(content, invoke, tmp_path):
     _assert_refusal(runner, runner.run(DIFF, tmp_path))
 
 
-@pytest.mark.parametrize("content", [
-    "", "null", "true", "1", '"surfaces"', "[]", "[{} , {}]",
-    '{"surfaces":[],"findings":[]} {"surfaces":[],"findings":[]}',
-    'prefix {"surfaces":[],"findings":[]}',
-    '{"surfaces":[],"findings":[]} trailing-private-content',
-    '```json\n{"surfaces":[],"findings":[]}\n```',
-    NESTED_TRUNCATION,
-    '{"surfaces":[],"surfaces":["private"],"findings":[]}',
-    '{"surfaces":[],"findings":[],"findings":[]}',
-    '{"surfaces":[],"findings":[],"meta":{"duplicate":1,"duplicate":2}}',
-    '{"surfaces":[],"findings":[],"meta":{"a":1,"\\u0061":2}}',
-    '{"surfaces":["network"],"findings":[{"file":"a.py","line":1,"line":2,"description":"risk"}]}',
-    '{"surfaces":[],"findings":[],"meta":NaN}',
-    '{"surfaces":[],"findings":[],"meta":Infinity}',
-    '{"surfaces":[],"findings":[],"meta":-Infinity}',
-    '{"surfaces":[],"findings":[],"meta":1e999}',
-    '{"surfaces":[],"findings":[],"meta":-1e999}',
-    '[{"surfaces":[],"findings":[],"meta":NaN}]',
-])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "",
+        "null",
+        "true",
+        "1",
+        '"surfaces"',
+        "[]",
+        "[{} , {}]",
+        '{"surfaces":[],"findings":[]} {"surfaces":[],"findings":[]}',
+        'prefix {"surfaces":[],"findings":[]}',
+        '{"surfaces":[],"findings":[]} trailing-private-content',
+        '```json\n{"surfaces":[],"findings":[]}\n```',
+        NESTED_TRUNCATION,
+        '{"surfaces":[],"surfaces":["private"],"findings":[]}',
+        '{"surfaces":[],"findings":[],"findings":[]}',
+        '{"surfaces":[],"findings":[],"meta":{"duplicate":1,"duplicate":2}}',
+        '{"surfaces":[],"findings":[],"meta":{"a":1,"\\u0061":2}}',
+        '{"surfaces":["network"],"findings":[{"file":"a.py","line":1,"line":2,"description":"risk"}]}',
+        '{"surfaces":[],"findings":[],"meta":NaN}',
+        '{"surfaces":[],"findings":[],"meta":Infinity}',
+        '{"surfaces":[],"findings":[],"meta":-Infinity}',
+        '{"surfaces":[],"findings":[],"meta":1e999}',
+        '{"surfaces":[],"findings":[],"meta":-1e999}',
+        '[{"surfaces":[],"findings":[],"meta":NaN}]',
+    ],
+)
 def test_raw_json_requires_one_complete_unambiguous_root(content, invoke, tmp_path):
     runner = runtime.RuntimeRunner(backend=object())
     _deliver(invoke, content)
@@ -213,7 +226,9 @@ def test_complete_raw_json_with_whitespace_and_finite_metadata(invoke, tmp_path)
 
 
 @pytest.mark.parametrize("bad", [None, _finding(line="private-line"), _finding(description=None)])
-def test_invalid_second_finding_cannot_publish_prefix_or_read_receipts(bad, invoke, monkeypatch, tmp_path):
+def test_invalid_second_finding_cannot_publish_prefix_or_read_receipts(
+    bad, invoke, monkeypatch, tmp_path
+):
     runner = runtime.RuntimeRunner(backend=object())
     receipt_reader = Mock(side_effect=AssertionError("receipts read before full validation"))
     monkeypatch.setattr(runtime, "read_smoke_receipts", receipt_reader)
@@ -270,7 +285,9 @@ def test_all_conversions_precede_receipts_and_fresh_surface_publication(invoke, 
 
 @pytest.mark.parametrize("target", ["read_smoke_receipts", "_build_smoke_summary"])
 @pytest.mark.parametrize("error", [ValueError, RecursionError])
-def test_unrelated_receipt_summary_errors_propagate_without_publication(target, error, invoke, monkeypatch, tmp_path):
+def test_unrelated_receipt_summary_errors_propagate_without_publication(
+    target, error, invoke, monkeypatch, tmp_path
+):
     runner = runtime.RuntimeRunner(backend=object())
     monkeypatch.setattr(runtime, target, Mock(side_effect=error("receipt-error")))
     _deliver(invoke, _payload())
@@ -319,10 +336,17 @@ def test_repeated_valid_invalid_valid_run_replaces_state_without_aliasing(invoke
     assert runner.infra_errors == []
 
 
-@pytest.mark.parametrize("content", [_payload(findings=[_finding(), _finding(line="private-line")]),
-                                     NESTED_TRUNCATION, {"surfaces": [], "findings": []},
-                                     ])
-def test_actual_runner_advisory_display_keeps_refusal_distinct_from_empty(content, invoke, tmp_path, capsys):
+@pytest.mark.parametrize(
+    "content",
+    [
+        _payload(findings=[_finding(), _finding(line="private-line")]),
+        NESTED_TRUNCATION,
+        {"surfaces": [], "findings": []},
+    ],
+)
+def test_actual_runner_advisory_display_keeps_refusal_distinct_from_empty(
+    content, invoke, tmp_path, capsys
+):
     from code_forge.machine import _FixpointResult
 
     runner = runtime.RuntimeRunner(backend=object())
@@ -360,7 +384,10 @@ def _make_machine(runner, tmp_path):
         autofixer=StubAutoFixer(),
         revert_fn=lambda f: None,
         resolved_review=ResolvedReview(
-            source_files=[Path("a.py")], baseline_content=None, git_diff=DIFF, mode_hint="git",
+            source_files=[Path("a.py")],
+            baseline_content=None,
+            git_diff=DIFF,
+            mode_hint="git",
         ),
         source_hash="contract-control",
         baseline_spec_repr="empty",
@@ -372,7 +399,9 @@ def _make_machine(runner, tmp_path):
     return machine
 
 
-def test_deep_valid_metadata_respects_actual_decoder_capacity(invoke, tmp_path, record_testsuite_property):
+def test_deep_valid_metadata_respects_actual_decoder_capacity(
+    invoke, tmp_path, record_testsuite_property
+):
     runner = runtime.RuntimeRunner(backend=object())
     _deliver(invoke, DEEPLY_NESTED_JSON)
     try:
@@ -411,7 +440,9 @@ def test_decoder_recursion_is_atomic_sanitized_and_does_not_read_receipts(invoke
     receipts.assert_not_called()
 
 
-def test_actual_machine_decoder_recursion_is_visible_and_sanitized(invoke, monkeypatch, tmp_path, capsys):
+def test_actual_machine_decoder_recursion_is_visible_and_sanitized(
+    invoke, monkeypatch, tmp_path, capsys
+):
     from code_forge.machine import _FixpointResult
 
     runner = runtime.RuntimeRunner(backend=object())

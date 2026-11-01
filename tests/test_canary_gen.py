@@ -282,8 +282,8 @@ def _make_review_provider_hitting_canaries(manifest_ref):
 
     def provider(prompt: str) -> str:
         findings = []
-        for c in manifest_ref:
-            findings.append(
+        findings.extend(
+            (
                 {
                     "file": c.file,
                     "line": c.line,
@@ -291,6 +291,8 @@ def _make_review_provider_hitting_canaries(manifest_ref):
                     "description": "found bug at %s:%d" % (c.file, c.line),
                 }
             )
+            for c in manifest_ref
+        )
         return json.dumps({"findings": findings})
 
     return provider
@@ -361,11 +363,8 @@ def test_gate_pass():
     def smart_reviewer(prompt: str) -> str:
         findings = []
         # Parse appended canary hunks from the prompt to hit all canaries.
-        for m in re.finditer(
-            r"\+\+\+ b/(\S+\.py)\n@@ -0,0 \+1,(\d+) @@",
-            prompt,
-        ):
-            findings.append(
+        findings.extend(
+            (
                 {
                     "file": m.group(1),
                     "line": 1,
@@ -373,6 +372,11 @@ def test_gate_pass():
                     "description": "caught canary",
                 }
             )
+            for m in re.finditer(
+                r"\+\+\+ b/(\S+\.py)\n@@ -0,0 \+1,(\d+) @@",
+                prompt,
+            )
+        )
         # Add a real finding too.
         findings.append(
             {

@@ -408,7 +408,7 @@ class TestNonConvergenceScenario:
         lines = [982, 982, 982, 979, 981, 979, 979]
 
         fps = set()
-        for desc, line in zip(descriptions, lines):
+        for desc, line in zip(descriptions, lines, strict=False):
             data = {
                 "findings": [
                     {"file": "chat.ts", "line": line, "severity": "P2", "description": desc},

@@ -45,7 +45,10 @@ def _gate_repo(tmp_path, base_gate):
 
 def _trusted(repo, base, mode=Mode.LOCAL):
     return gate_check.trusted_gate_data_or_error(
-        config_root=repo, source_root=repo, base_sha=base, allow_untracked=mode is not Mode.CI,
+        config_root=repo,
+        source_root=repo,
+        base_sha=base,
+        allow_untracked=mode is not Mode.CI,
     )
 
 
@@ -200,7 +203,8 @@ def test_cli_knowledge_source_follows_the_trusted_gate(sem_controls, cli_pipelin
         outside = root.parent / f"{root.name}-forge-config"
         (outside / ".code-forge").mkdir(parents=True)
         (outside / ".code-forge/gate.yaml").write_text(
-            yaml.safe_dump({"test": TEST, "knowledge": {"enabled": True}}), encoding="utf-8")
+            yaml.safe_dump({"test": TEST, "knowledge": {"enabled": True}}), encoding="utf-8"
+        )
         args.test_config_root = str(outside)
     args.mode = "ci"
     names = []

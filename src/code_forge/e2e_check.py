@@ -419,7 +419,7 @@ def check_layer_2(
     # Compute hub set by reverse-scanning depends_on. A component is a hub
     # when other components list it in their depends_on.
     hubs: set[str] = set()
-    for name, info in components["components"].items():
+    for info in components["components"].values():
         for target in info.get("depends_on", []):
             hubs.add(target)
 
@@ -445,7 +445,7 @@ def check_layer_2(
         )
 
     # HUB+DEPENDENT arm (one-level only; co-occurrence, not blast-radius).
-    for h_name, h_info in components["components"].items():
+    for h_name in components["components"].keys():
         if h_name not in hubs:
             continue
         if h_name not in touched_components:

@@ -51,12 +51,12 @@ def _make_finding(
     disposition: Disposition,
     fingerprint: str = "fp-test",
     file: str = "src/test.py",
-    line_range: list = None,
+    line_range: list | None = None,
     description: str = "test finding",
     source: str = "L0",
-    anchor: dict = None,
-    evidence_files: list = None,
-    error: str = None,
+    anchor: dict | None = None,
+    evidence_files: list | None = None,
+    error: str | None = None,
 ) -> StateFinding:
     """Helper to create StateFinding with defaults."""
     return StateFinding(
@@ -75,7 +75,7 @@ def _make_finding(
 
 def _make_state(
     verdict: Verdict = Verdict.PASS,
-    findings: list = None,
+    findings: list | None = None,
 ) -> State:
     """Helper to create State with defaults."""
     return State(

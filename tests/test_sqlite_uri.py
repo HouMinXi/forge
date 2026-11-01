@@ -17,26 +17,38 @@ from code_forge._sqlite_uri import _readonly_uri_from_path_uri, readonly_uri
     [
         ("file:///tmp/graph.db", "file:///tmp/graph.db?mode=ro"),
         ("file:////server/share/graph.db", "file:////server/share/graph.db?mode=ro"),
-        ("file:///tmp/graph%23%3F%2523%20x%E6%95%B0%E6%8D%AE.db",
-         "file:///tmp/graph%23%3F%2523%20x%E6%95%B0%E6%8D%AE.db?mode=ro"),
+        (
+            "file:///tmp/graph%23%3F%2523%20x%E6%95%B0%E6%8D%AE.db",
+            "file:///tmp/graph%23%3F%2523%20x%E6%95%B0%E6%8D%AE.db?mode=ro",
+        ),
         ("file:///C:/graphs/graph.db", "file:///C:/graphs/graph.db?mode=ro"),
-        ("file:///C:/graphs/graph%23%3F%2523%20x%E6%95%B0%E6%8D%AE.db",
-         "file:///C:/graphs/graph%23%3F%2523%20x%E6%95%B0%E6%8D%AE.db?mode=ro"),
+        (
+            "file:///C:/graphs/graph%23%3F%2523%20x%E6%95%B0%E6%8D%AE.db",
+            "file:///C:/graphs/graph%23%3F%2523%20x%E6%95%B0%E6%8D%AE.db?mode=ro",
+        ),
         ("file://Server/share/graph.db", "file:////Server/share/graph.db?mode=ro"),
-        ("file://localhost/share/graph.db",
-         "file:////localhost/share/graph.db?mode=ro"),
-        ("file://LOCALHOST/share/graph.db",
-         "file:////LOCALHOST/share/graph.db?mode=ro"),
-        ("file://Server/share/graph%23%3F%2523%20x%E6%95%B0%E6%8D%AE.db",
-         "file:////Server/share/graph%23%3F%2523%20x%E6%95%B0%E6%8D%AE.db?mode=ro"),
-        ("file://Server/share%2523/graph%20%23.db",
-         "file:////Server/share%2523/graph%20%23.db?mode=ro"),
-        ("file://%3F/UNC/server/share/graph.db",
-         "file:////%3F/UNC/server/share/graph.db?mode=ro"),
+        ("file://localhost/share/graph.db", "file:////localhost/share/graph.db?mode=ro"),
+        ("file://LOCALHOST/share/graph.db", "file:////LOCALHOST/share/graph.db?mode=ro"),
+        (
+            "file://Server/share/graph%23%3F%2523%20x%E6%95%B0%E6%8D%AE.db",
+            "file:////Server/share/graph%23%3F%2523%20x%E6%95%B0%E6%8D%AE.db?mode=ro",
+        ),
+        ("file://Server/share%2523/graph%20%23.db", "file:////Server/share%2523/graph%20%23.db?mode=ro"),
+        ("file://%3F/UNC/server/share/graph.db", "file:////%3F/UNC/server/share/graph.db?mode=ro"),
     ],
-    ids=["posix", "posix-double-slash", "posix-escaped", "windows-drive",
-         "windows-drive-escaped", "unc", "unc-localhost", "unc-localhost-case",
-         "unc-escaped", "unc-share-escaped", "windows-extended-prefix"],
+    ids=[
+        "posix",
+        "posix-double-slash",
+        "posix-escaped",
+        "windows-drive",
+        "windows-drive-escaped",
+        "unc",
+        "unc-localhost",
+        "unc-localhost-case",
+        "unc-escaped",
+        "unc-share-escaped",
+        "windows-extended-prefix",
+    ],
 )
 def test_absolute_path_representation(generated_uri, expected):
     # Explicit pathlib-generated representations keep other-platform
@@ -57,21 +69,34 @@ def test_relative_paths_are_rejected(path):
         readonly_uri(path)
 
 
-@pytest.mark.parametrize("value", [
-    "file://server/share/graph.db", "/tmp/graph.db",
-    PurePosixPath("/tmp/graph.db"), PurePosixPath("graph.db"),
-    PureWindowsPath("C:/graph.db"), PureWindowsPath("graph.db"),
-    PureWindowsPath("C:graph.db"), PureWindowsPath("/graph.db"),
-])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "file://server/share/graph.db",
+        "/tmp/graph.db",
+        PurePosixPath("/tmp/graph.db"),
+        PurePosixPath("graph.db"),
+        PureWindowsPath("C:/graph.db"),
+        PureWindowsPath("graph.db"),
+        PureWindowsPath("C:graph.db"),
+        PureWindowsPath("/graph.db"),
+    ],
+)
 def test_public_helper_requires_concrete_path(value):
     with pytest.raises(TypeError, match="filesystem path"):
         readonly_uri(value)
 
 
-@pytest.mark.parametrize("uri", [
-    "https://server/graph.db", "file:relative.db", "file://server",
-    "file:///tmp/graph.db?mode=rw", "file:///tmp/graph.db#fragment",
-])
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://server/graph.db",
+        "file:relative.db",
+        "file://server",
+        "file:///tmp/graph.db?mode=rw",
+        "file:///tmp/graph.db#fragment",
+    ],
+)
 def test_private_formatter_requires_generated_absolute_file_uri(uri):
     with pytest.raises(ValueError, match="Path.as_uri"):
         _readonly_uri_from_path_uri(uri)

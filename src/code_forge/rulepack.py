@@ -286,7 +286,10 @@ def discover_packs(repo_root: Path, *, local_root: Path | None = None) -> dict[s
 
 
 def resolve_active_packs(
-    gate_config: dict, repo_root: Path, *, local_root: Path | None = None,
+    gate_config: dict,
+    repo_root: Path,
+    *,
+    local_root: Path | None = None,
 ) -> list[RulepackManifest]:
     """Resolve allowlisted packs from gate.yaml.
 
@@ -553,8 +556,8 @@ class RulepackRunner:
     def _findings_to_advisories(self, pack_name: str, findings: list[Finding]) -> list[AdvisoryFinding]:
         """Convert parser Finding objects to AdvisoryFinding for a pack."""
         advisories: list[AdvisoryFinding] = []
-        for f in findings:
-            advisories.append(
+        advisories.extend(
+            (
                 AdvisoryFinding(
                     id="rulepack:%s:%s:%s:%s" % (pack_name, f.file, f.line, f.rule_id),
                     axis="rulepack:%s" % pack_name,
@@ -564,6 +567,8 @@ class RulepackRunner:
                     attribution="semgrep-ce/rulepack",
                 )
             )
+            for f in findings
+        )
         return advisories
 
     def _build_matrix(
@@ -586,7 +591,7 @@ class RulepackRunner:
                 if isinstance(meta, dict):
                     pack_dict["version"] = meta.get("version", "")
                     pack_dict["source"] = meta.get("source", "")
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110 -- Optional metadata failure must not discard valid rule findings.
                 pass
             pack_statuses = statuses.get(pack.name, {})
             pack_reasons = reasons.get(pack.name, {})

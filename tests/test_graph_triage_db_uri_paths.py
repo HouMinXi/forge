@@ -212,9 +212,15 @@ def test_connections_are_read_only_and_closed(reader, tmp_path, monkeypatch):
     assert db.read_bytes() == before
 
 
-@pytest.mark.parametrize("filename", ["missing.db", "missing#graph.db",
-                                     pytest.param("missing?graph.db", marks=_WINDOWS_INVALID),
-                                     "missing%23graph.db"])
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "missing.db",
+        "missing#graph.db",
+        pytest.param("missing?graph.db", marks=_WINDOWS_INVALID),
+        "missing%23graph.db",
+    ],
+)
 def test_missing_database_is_execution_error_without_creation(filename, tmp_path):
     missing = tmp_path / filename
 
@@ -227,8 +233,13 @@ def test_missing_database_is_execution_error_without_creation(filename, tmp_path
     assert _files_under(tmp_path) == {}
 
 
-@pytest.mark.parametrize("root_name", ["checkout#with%23characters",
-                                     pytest.param("checkout#with?literal%23characters", marks=_WINDOWS_INVALID)])
+@pytest.mark.parametrize(
+    "root_name",
+    [
+        "checkout#with%23characters",
+        pytest.param("checkout#with?literal%23characters", marks=_WINDOWS_INVALID),
+    ],
+)
 def test_dependents_default_database_precedes_environment(root_name, tmp_path, monkeypatch):
     root = tmp_path / root_name
     caller = _write_graph(root / ".code-review-graph" / "graph.db")

@@ -377,7 +377,7 @@ def select_instances(instances: list[dict], cap: int = 8, seed: int = 20260830):
     picked = []
     for repo in sorted(by_repo):
         pool = sorted(by_repo[repo], key=lambda i: i["instance_id"])
-        rng = random.Random("%d:%s" % (seed, repo))
+        rng = random.Random("%d:%s" % (seed, repo))  # noqa: S311 -- Reproducible sampling/jitter, not cryptography or credential generation.
         if len(pool) <= cap:
             picked.extend(pool)
         else:

@@ -44,7 +44,7 @@ def _make_finding(
 
 def _make_state(
     verdict: Verdict = Verdict.PASS,
-    findings: list = None,
+    findings: list | None = None,
     mode: Mode = Mode.CI,
 ) -> State:
     """Helper to create State with defaults."""

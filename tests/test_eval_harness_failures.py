@@ -343,7 +343,10 @@ class TestExplicitSeedContext:
     @staticmethod
     def git(repo, *args):
         return subprocess.run(
-            ["git", *args], cwd=repo, capture_output=True, check=True,
+            ["git", *args],
+            cwd=repo,
+            capture_output=True,
+            check=True,
         ).stdout
 
     @staticmethod
@@ -370,7 +373,9 @@ class TestExplicitSeedContext:
         assert blocked.returncode != 0 and not blocked.stdout
         without_ceiling = os.environ.copy()
         without_ceiling.pop("GIT_CEILING_DIRECTORIES")
-        visible = subprocess.run(command, cwd=child, env=without_ceiling, capture_output=True, check=False)
+        visible = subprocess.run(
+            command, cwd=child, env=without_ceiling, capture_output=True, check=False
+        )
         assert visible.returncode == 0
         assert pathlib.Path(os.fsdecode(visible.stdout).strip()).resolve() == tmp_path.resolve()
         record_property("ceiling", os.environ["GIT_CEILING_DIRECTORIES"])
@@ -444,12 +449,23 @@ class TestExplicitSeedContext:
             (repo / "m.py").write_bytes(b"a = 1\n")
             self.git(repo, "init", "-b", "main")
             self.git(repo, "add", "m.py")
-            self.git(repo, "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-m", "existing")
+            self.git(
+                repo,
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "existing",
+            )
         with pytest.raises(_PreparationStopped):
             runner._run_single(_stub_entry(), patch, str(repo), "harness", corpus_dir=corpus)
         assert (repo / "m.py").read_bytes() == b"a = 2\n"
 
-    @pytest.mark.parametrize("operation", ["init", "initial-commit", "add", "explicit-add", "seed-commit"])
+    @pytest.mark.parametrize(
+        "operation", ["init", "initial-commit", "add", "explicit-add", "seed-commit"]
+    )
     @pytest.mark.parametrize("failure", ["status", "oserror"])
     def test_git_preparation_failures_stop_before_gate(self, monkeypatch, tmp_path, operation, failure):
         repo, corpus, seed, patch = self.fixture(tmp_path)
@@ -482,7 +498,9 @@ class TestExplicitSeedContext:
 
         monkeypatch.setattr(runner.subprocess, "run", run)
         monkeypatch.setattr(runner, "_create_gate_yaml", self.forbidden)
-        flagged, reason = runner._run_single(_stub_entry(), patch, str(repo), "harness", corpus_dir=corpus)
+        flagged, reason = runner._run_single(
+            _stub_entry(), patch, str(repo), "harness", corpus_dir=corpus
+        )
         assert flagged is False and reason.startswith("infra:")
         assert failed == [operation]
         assert commands[-1] == operation

@@ -61,6 +61,7 @@ import shutil
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 USER_CONFIG = pathlib.Path.home() / ".config/code-forge/config.yaml"
@@ -79,8 +80,14 @@ GATE_GLOBS = [
 # Paths that contain a gate.yaml but are not a checkout anyone reviews from:
 # container layers, archived review output, scratch dirs from finished jobs.
 SKIP_PARTS = {
-    ".local", ".cache", ".venv", "node_modules", "site-packages",
-    ".planning", ".git", "__pycache__",
+    ".local",
+    ".cache",
+    ".venv",
+    "node_modules",
+    "site-packages",
+    ".planning",
+    ".git",
+    "__pycache__",
 }
 BACKUP_FMT = ".bak-provider-%Y%m%d-%H%M%S-%f"
 # Reasoning models spend output budget on hidden thinking before the first
@@ -134,18 +141,14 @@ def yaml_scalar(value: str, field: str) -> str:
         raise ValueError(f"{field}: contains a quote character")
     if not re.fullmatch(r"[A-Za-z0-9 ._:/@+()\[\]-]+", value):
         raise ValueError(
-            f"{field}: {value!r} has characters that are not safe to write "
-            "unquoted into YAML"
+            f"{field}: {value!r} has characters that are not safe to write unquoted into YAML"
         )
     # Anything left is safe bare EXCEPT the words and shapes YAML resolves to
     # something other than a string. A model literally named `no` parses as
     # False, and `0755` as 493 -- both silently, both far from the edit.
     reserved = {"true", "false", "yes", "no", "on", "off", "null", "none", "~"}
-    numeric = re.fullmatch(r"[+-]?(\d[\d_]*(\.\d*)?|\.\d+)([eE][+-]?\d+)?",
-                           value)
-    if (re.fullmatch(r"[A-Za-z0-9._-]+", value)
-            and value.lower() not in reserved
-            and not numeric):
+    numeric = re.fullmatch(r"[+-]?(\d[\d_]*(\.\d*)?|\.\d+)([eE][+-]?\d+)?", value)
+    if re.fullmatch(r"[A-Za-z0-9._-]+", value) and value.lower() not in reserved and not numeric:
         return value
     return '"' + value + '"'
 
@@ -156,15 +159,38 @@ def yaml_scalar(value: str, field: str) -> str:
 # script. Grammar here must stay a subset of what forge will load.
 _HEADER_NAME_RE = re.compile(r"[-!#$%&'*+.^_`|~0-9A-Za-z]+")
 _HEADER_VALUE_RE = re.compile(r"(?:[\x21-\x7e]+(?:[ \t]+[\x21-\x7e]+)*)?")
-_PROTECTED_HEADER_KEYS = frozenset({
-    "authorization", "x-api-key", "content-type", "anthropic-version",
-    "accept-charset", "accept-encoding", "access-control-request-headers",
-    "access-control-request-method", "connection", "content-length",
-    "cookie", "cookie2", "date", "dnt", "expect", "host", "keep-alive",
-    "origin", "referer", "set-cookie", "te", "trailer",
-    "transfer-encoding", "upgrade", "via",
-    "x-http-method", "x-http-method-override", "x-method-override",
-})
+_PROTECTED_HEADER_KEYS = frozenset(
+    {
+        "authorization",
+        "x-api-key",
+        "content-type",
+        "anthropic-version",
+        "accept-charset",
+        "accept-encoding",
+        "access-control-request-headers",
+        "access-control-request-method",
+        "connection",
+        "content-length",
+        "cookie",
+        "cookie2",
+        "date",
+        "dnt",
+        "expect",
+        "host",
+        "keep-alive",
+        "origin",
+        "referer",
+        "set-cookie",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "via",
+        "x-http-method",
+        "x-http-method-override",
+        "x-method-override",
+    }
+)
 _PROTECTED_HEADER_PREFIXES = ("proxy-", "sec-")
 
 
@@ -187,17 +213,12 @@ def parse_headers(pairs):
         if not _HEADER_NAME_RE.fullmatch(name):
             raise ValueError(f"header: {name!r} is not a valid HTTP field name")
         if not _HEADER_VALUE_RE.fullmatch(value):
-            raise ValueError(
-                f"header: value for {name!r} is not a valid HTTP field value")
+            raise ValueError(f"header: value for {name!r} is not a valid HTTP field value")
         folded = name.lower()
-        if folded in _PROTECTED_HEADER_KEYS or folded.startswith(
-                _PROTECTED_HEADER_PREFIXES):
-            raise ValueError(
-                f"header: {name!r} is reserved (credential, framing, or method)")
+        if folded in _PROTECTED_HEADER_KEYS or folded.startswith(_PROTECTED_HEADER_PREFIXES):
+            raise ValueError(f"header: {name!r} is reserved (credential, framing, or method)")
         if folded in seen:
-            raise ValueError(
-                f"header: {name!r} repeats {seen[folded]!r} (names are "
-                "case-insensitive)")
+            raise ValueError(f"header: {name!r} repeats {seen[folded]!r} (names are case-insensitive)")
         # Refuse here, not at write time, so a bad pair cannot leave the
         # earlier files in a fleet half-applied.
         yaml_scalar(name, "header-name")
@@ -213,8 +234,8 @@ def render_headers(headers, field_indent):
     lines = [f"{field_indent}headers:\n"]
     for name, value in headers.items():
         lines.append(
-            f"{nested}{yaml_scalar(name, 'header-name')}: "
-            f"{yaml_scalar(value, 'header-value')}\n")
+            f"{nested}{yaml_scalar(name, 'header-name')}: {yaml_scalar(value, 'header-value')}\n"
+        )
     return lines
 
 
@@ -229,12 +250,12 @@ def write_headers(path, name, headers, stamp, dry_run):
     span = find_backend(text, name)
     if not span:
         return False, None
-    body = text[span[0]:span[1]]
+    body = text[span[0] : span[1]]
     hit = re.search(r"^([ \t]*)headers:[ \t\r]*$", body, re.MULTILINE)
     old = None
     if hit:
         hdr_indent = hit.group(1)
-        after = body[hit.end():]
+        after = body[hit.end() :]
         end_rel = len(after)
         for m in re.finditer(r"^([ \t]*)(\S.*?)[\r]*$", after, re.MULTILINE):
             if m.group(2).startswith("#"):
@@ -245,10 +266,10 @@ def write_headers(path, name, headers, stamp, dry_run):
         nested = hdr_indent + "  "
         old = {}
         for m in re.finditer(
-                rf"^{re.escape(nested)}([^:\r\n]+):[ \t]*(.+?)(?=[ \t]*\r?$)",
-                after[:end_rel], re.MULTILINE):
+            rf"^{re.escape(nested)}([^:\r\n]+):[ \t]*(.+?)(?=[ \t]*\r?$)", after[:end_rel], re.MULTILINE
+        ):
             raw_name, raw_val = m.group(1).strip(), m.group(2).strip()
-            if len(raw_val) >= 2 and raw_val[0] == raw_val[-1] and raw_val[0] in "\"\'":
+            if len(raw_val) >= 2 and raw_val[0] == raw_val[-1] and raw_val[0] in "\"'":
                 raw_val = raw_val[1:-1]
             old[raw_name] = raw_val
         if old == headers:
@@ -256,7 +277,7 @@ def write_headers(path, name, headers, stamp, dry_run):
         field_indent = hdr_indent
         new_block = "".join(render_headers(headers, field_indent))
         rest = after[end_rel:]
-        new_body = body[:hit.start()] + new_block + rest
+        new_body = body[: hit.start()] + new_block + rest
     else:
         fields = re.search(r"^([ \t]+)\S", body, re.MULTILINE)
         field_indent = fields.group(1) if fields else "    "
@@ -264,9 +285,8 @@ def write_headers(path, name, headers, stamp, dry_run):
         new_body = body.rstrip("\n") + "\n" + new_block
     if not dry_run:
         backup(path, stamp)
-        write_config(path, text[:span[0]] + new_body + text[span[1]:])
+        write_config(path, text[: span[0]] + new_body + text[span[1] :])
     return True, old
-
 
 
 def backends_block(text: str):
@@ -319,8 +339,7 @@ def find_backend(text: str, name: str):
     region = text[lo:hi]
 
     key_indent = None
-    for m in re.finditer(r"^([ \t]+)([^\s#][^:\r\n]*):[ \t]*(\S*)[ \t\r]*$",
-                         region, re.MULTILINE):
+    for m in re.finditer(r"^([ \t]+)([^\s#][^:\r\n]*):[ \t]*(\S*)[ \t\r]*$", region, re.MULTILINE):
         if key_indent is None:
             key_indent = len(m.group(1))
         if len(m.group(1)) != key_indent:
@@ -333,8 +352,7 @@ def find_backend(text: str, name: str):
             # nothing here to edit and rewriting it would detach the alias.
             return None
         start = min(lo + m.end() + 1, hi)
-        for nxt in re.finditer(r"^([ \t]*)(\S.*?)[\r]*$", text[start:hi],
-                               re.MULTILINE):
+        for nxt in re.finditer(r"^([ \t]*)(\S.*?)[\r]*$", text[start:hi], re.MULTILINE):
             if nxt.group(2).startswith("#"):
                 continue
             if len(nxt.group(1)) <= key_indent:
@@ -349,7 +367,7 @@ def read_field(text: str, name: str, field: str):
         return None
     hit = re.search(
         rf"^[ \t]*{re.escape(field)}:[ \t]*(.+?)(?=[ \t]*\r?$)",
-        text[span[0]:span[1]],
+        text[span[0] : span[1]],
         re.MULTILINE,
     )
     if not hit:
@@ -376,13 +394,12 @@ def list_backends(text: str):
     span = backends_block(text)
     if not span:
         return []
-    body = text[span[0]:span[1]]
+    body = text[span[0] : span[1]]
     first = re.match(r"^([ \t]+)", body)
     if not first:
         return []
     indent = re.escape(first.group(1))
-    return re.findall(rf"^{indent}([\w.-]+):[ \t]*(?:[&*]\S+)?[ \t\r]*$",
-                      body, re.MULTILINE)
+    return re.findall(rf"^{indent}([\w.-]+):[ \t]*(?:[&*]\S+)?[ \t\r]*$", body, re.MULTILINE)
 
 
 def read_config(path: pathlib.Path) -> str:
@@ -428,9 +445,8 @@ def write_field(path, name, field, value, stamp, dry_run):
     span = find_backend(text, name)
     if not span:
         return False, None
-    body = text[span[0]:span[1]]
-    hit = re.search(rf"^([ \t]*{re.escape(field)}:[ \t]*)(.+?)(?=[ \t]*\r?$)", body,
-                    re.MULTILINE)
+    body = text[span[0] : span[1]]
+    hit = re.search(rf"^([ \t]*{re.escape(field)}:[ \t]*)(.+?)(?=[ \t]*\r?$)", body, re.MULTILINE)
     if not hit:
         return False, None
     old = hit.group(2).strip()
@@ -442,13 +458,11 @@ def write_field(path, name, field, value, stamp, dry_run):
     # every run even when nothing moved.
     if old == str(value):
         return False, old
-    rendered = value if isinstance(value, int) else yaml_scalar(str(value),
-                                                                field)
-    new_body = (body[:hit.start()] + f"{hit.group(1)}{rendered}"
-                + body[hit.end():])
+    rendered = value if isinstance(value, int) else yaml_scalar(str(value), field)
+    new_body = body[: hit.start()] + f"{hit.group(1)}{rendered}" + body[hit.end() :]
     if not dry_run:
         backup(path, stamp)
-        write_config(path, text[:span[0]] + new_body + text[span[1]:])
+        write_config(path, text[: span[0]] + new_body + text[span[1] :])
     return True, old
 
 
@@ -464,14 +478,13 @@ def insert_backend(path, spec, stamp, dry_run):
     if not span:
         return False, "no backends: block"
 
-    body = text[span[0]:span[1]]
+    body = text[span[0] : span[1]]
     first = re.match(r"^(\s+)", body)
     indent = first.group(1) if first else "  "
     field = indent + "  "
 
     lines = [
-        f"\n{indent}# added by forge-provider.py "
-        f"{dt.date.today().isoformat()}\n",
+        f"\n{indent}# added by forge-provider.py {dt.datetime.now().astimezone().date().isoformat()}\n",
         f"{indent}{yaml_scalar(spec['name'], 'name')}:\n",
         f"{field}type: api\n",
         f"{field}format: {yaml_scalar(spec['format'], 'format')}\n",
@@ -487,8 +500,7 @@ def insert_backend(path, spec, stamp, dry_run):
         lines.extend(render_headers(headers, field))
     if not dry_run:
         backup(path, stamp)
-        write_config(path, text[:span[1]].rstrip("\n") + "\n"
-                        + "".join(lines) + text[span[1]:])
+        write_config(path, text[: span[1]].rstrip("\n") + "\n" + "".join(lines) + text[span[1] :])
     return True, None
 
 
@@ -537,23 +549,20 @@ def set_default(path, name, stamp, dry_run):
         span = find_backend(text, other)
         if not span:
             continue
-        key_line = re.search(rf"^([ \t]*){re.escape(other)}:[ \t\r]*$", text,
-                             re.MULTILINE)
+        key_line = re.search(rf"^([ \t]*){re.escape(other)}:[ \t\r]*$", text, re.MULTILINE)
         indent_of = len(key_line.group(1)) if key_line else 2
-        body = text[span[0]:span[1]]
+        body = text[span[0] : span[1]]
         has = re.search(r"^[ \t]*default:[ \t]*true[ \t\r]*$", body, re.MULTILINE)
         if other == name and not has:
             fields = re.search(r"^([ \t]+)\S", body, re.MULTILINE)
             # A backend with no field lines of its own gives no indent to
             # copy; one level deeper than its key is the only safe guess.
             pad = fields.group(1) if fields else " " * (indent_of + 2)
-            text = (text[:span[1]].rstrip("\n") + f"\n{pad}default: true\n"
-                    + text[span[1]:])
+            text = text[: span[1]].rstrip("\n") + f"\n{pad}default: true\n" + text[span[1] :]
             changed = True
         elif other != name and has:
-            new_body = re.sub(r"^[ \t]*default:[ \t]*true[ \t\r]*$\n?", "",
-                              body, flags=re.MULTILINE)
-            text = text[:span[0]] + new_body + text[span[1]:]
+            new_body = re.sub(r"^[ \t]*default:[ \t]*true[ \t\r]*$\n?", "", body, flags=re.MULTILINE)
+            text = text[: span[0]] + new_body + text[span[1] :]
             changed = True
 
     if changed and not dry_run:
@@ -585,8 +594,11 @@ def reseal_trust(paths, dry_run):
         import yaml  # noqa: PLC0415 - optional, only needed when re-sealing
         from code_forge.trust import record_trust  # noqa: PLC0415
     except ImportError as exc:
-        print(f"\ncould not re-seal trust ({exc}); run `code-forge trust` "
-              "in each repo before its next review", file=sys.stderr)
+        print(
+            f"\ncould not re-seal trust ({exc}); run `code-forge trust` "
+            "in each repo before its next review",
+            file=sys.stderr,
+        )
         return 0
 
     sealed = 0
@@ -621,25 +633,36 @@ def report_trust(sealed, dry_run):
 
 def probe(base_url, model, key, fmt):
     """Send one real request. A 401 here beats a careful diff."""
+    if urllib.parse.urlsplit(base_url).scheme not in {"http", "https"}:
+        return False, "provider probe requires an http or https URL"
     base = base_url.rstrip("/")
     if fmt == "anthropic":
-        url, headers = base + "/v1/messages", {
-            "x-api-key": key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
+        url, headers = (
+            base + "/v1/messages",
+            {
+                "x-api-key": key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+        )
     else:
-        url, headers = base + "/chat/completions", {
-            "Authorization": f"Bearer {key}",
-            "content-type": "application/json",
-        }
-    payload = {"model": model, "max_tokens": PROBE_MAX_TOKENS,
-               "messages": [{"role": "user", "content": "ping"}]}
-    req = urllib.request.Request(
+        url, headers = (
+            base + "/chat/completions",
+            {
+                "Authorization": f"Bearer {key}",
+                "content-type": "application/json",
+            },
+        )
+    payload = {
+        "model": model,
+        "max_tokens": PROBE_MAX_TOKENS,
+        "messages": [{"role": "user", "content": "ping"}],
+    }
+    req = urllib.request.Request(  # noqa: S310 -- scheme restricted to HTTP(S) above
         url, data=json.dumps(payload).encode(), headers=headers, method="POST"
     )
     try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
+        with urllib.request.urlopen(req, timeout=90) as resp:  # noqa: S310 -- validated HTTP(S) Request
             raw = resp.read()[:2000].decode(errors="replace")
             if resp.status != 200:
                 return False, f"HTTP {resp.status}"
@@ -653,8 +676,7 @@ def probe(base_url, model, key, fmt):
                 err = doc["error"]
                 msg = err.get("message") if isinstance(err, dict) else err
                 return False, f"HTTP 200 with an error body: {str(msg)[:120]}"
-            has_text = ("content" in doc or "choices" in doc) \
-                if isinstance(doc, dict) else False
+            has_text = ("content" in doc or "choices" in doc) if isinstance(doc, dict) else False
             if not has_text:
                 return False, "HTTP 200 but no completion in the body"
             return True, "HTTP 200"
@@ -678,8 +700,7 @@ def resolve_key(key_pass, key_env):
     """
     if key_pass:
         try:
-            out = subprocess.run(["pass", key_pass], capture_output=True,
-                                 text=True, timeout=30)
+            out = subprocess.run(["pass", key_pass], capture_output=True, text=True, timeout=30)
             if out.returncode == 0 and out.stdout.strip():
                 return out.stdout.splitlines()[0].strip()
             reason = (out.stderr or "").strip().splitlines()
@@ -706,12 +727,10 @@ def cmd_list(args):
                 continue
             url = read_field(text, name, "base_url") or "?"
             model = read_field(text, name, "model") or "?"
-            is_def = bool(re.search(
-                r"^[ \t]*default:[ \t]*true[ \t\r]*$",
-                text[span[0]:span[1]], re.MULTILINE
-            ))
-            seen.setdefault(name, {"urls": {}, "model": model, "n": 0,
-                                   "default_in": 0})
+            is_def = bool(
+                re.search(r"^[ \t]*default:[ \t]*true[ \t\r]*$", text[span[0] : span[1]], re.MULTILINE)
+            )
+            seen.setdefault(name, {"urls": {}, "model": model, "n": 0, "default_in": 0})
             seen[name]["urls"].setdefault(url, 0)
             seen[name]["urls"][url] += 1
             seen[name]["n"] += 1
@@ -724,16 +743,17 @@ def cmd_list(args):
             note = "  <-- disagrees" if len(info["urls"]) > 1 else ""
             print(f"      {url}  ({count}){note}")
         if 0 < info["default_in"] < info["n"]:
-            print(f"      default flag set in only {info['default_in']}"
-                  f" of {info['n']} -- a review's backend depends on the repo")
+            print(
+                f"      default flag set in only {info['default_in']}"
+                f" of {info['n']} -- a review's backend depends on the repo"
+            )
     return 0
 
 
 def cmd_add(args):
     key = resolve_key(args.key_pass, args.key_env)
     if not key:
-        print(f"could not resolve a key from "
-              f"{args.key_pass or args.key_env}", file=sys.stderr)
+        print(f"could not resolve a key from {args.key_pass or args.key_env}", file=sys.stderr)
         return 2
 
     spec = {
@@ -741,8 +761,7 @@ def cmd_add(args):
         "base_url": args.base_url,
         "model": args.model,
         "format": args.format,
-        "key_env": args.key_env or (args.name.upper().replace("-", "_")
-                                    + "_API_KEY"),
+        "key_env": args.key_env or (args.name.upper().replace("-", "_") + "_API_KEY"),
         "max_tokens": args.max_tokens,
         "timeout_s": args.timeout_s,
     }
@@ -764,15 +783,14 @@ def cmd_add(args):
             print(f"refusing to write: {exc}", file=sys.stderr)
             return 2
 
-    print(f"probing {spec['base_url']} ({spec['format']}, {spec['model']})"
-          " ... ", end="", flush=True)
+    print(f"probing {spec['base_url']} ({spec['format']}, {spec['model']}) ... ", end="", flush=True)
     ok, detail = probe(spec["base_url"], spec["model"], key, spec["format"])
     print(detail)
     if not ok:
         print("\nendpoint did not answer; nothing written", file=sys.stderr)
         return 3
 
-    stamp = dt.datetime.now().strftime(BACKUP_FMT)
+    stamp = dt.datetime.now().astimezone().strftime(BACKUP_FMT)
     configs = find_configs()
     added = skipped = 0
     written = []
@@ -787,22 +805,21 @@ def cmd_add(args):
                 print(f"  skipped {path}: {why}")
 
     verb = "would add" if args.dry_run else "added"
-    print(f"\n{verb} '{spec['name']}' to {added} file(s), "
-          f"{skipped} skipped")
+    print(f"\n{verb} '{spec['name']}' to {added} file(s), {skipped} skipped")
     if added:
         report_trust(reseal_trust(written, args.dry_run), args.dry_run)
     if added and not args.dry_run:
         print(f"backups: <file>{stamp}")
-        print(f"\nexport {spec['key_env']} in your shell rc "
-              + (f"(pass {args.key_pass})" if args.key_pass else ""))
-        print(f"make it the review default: "
-              f"{pathlib.Path(sys.argv[0]).name} default {spec['name']}")
+        print(
+            f"\nexport {spec['key_env']} in your shell rc "
+            + (f"(pass {args.key_pass})" if args.key_pass else "")
+        )
+        print(f"make it the review default: {pathlib.Path(sys.argv[0]).name} default {spec['name']}")
     return 0
 
 
 def cmd_set(args):
-    configs = [p for p in find_configs()
-               if find_backend(read_config(p), args.name)]
+    configs = [p for p in find_configs() if find_backend(read_config(p), args.name)]
     if not configs:
         print(f"no config declares '{args.name}'", file=sys.stderr)
         return 1
@@ -817,44 +834,53 @@ def cmd_set(args):
     except ValueError as exc:
         print(f"refusing to write: {exc}", file=sys.stderr)
         return 2
-    edits = [(f, v) for f, v in (
-        ("base_url", args.base_url), ("model", args.model),
-        ("max_tokens", args.max_tokens), ("timeout_s", args.timeout_s),
-        ("api_key_env", args.key_env), ("format", args.format),
-    ) if v is not None]
+    edits = [
+        (f, v)
+        for f, v in (
+            ("base_url", args.base_url),
+            ("model", args.model),
+            ("max_tokens", args.max_tokens),
+            ("timeout_s", args.timeout_s),
+            ("api_key_env", args.key_env),
+            ("format", args.format),
+        )
+        if v is not None
+    ]
     if not edits and headers is None:
         print("nothing to change", file=sys.stderr)
         return 2
 
-    key = resolve_key(args.key_pass, args.key_env
-                      or read_field(text, args.name, "api_key_env"))
+    key = resolve_key(args.key_pass, args.key_env or read_field(text, args.name, "api_key_env"))
 
     # The probe uses one file's credentials. If the configs disagree about
     # which env var holds the key, a pass here does not vouch for the rest.
-    envs = {read_field(read_config(p), args.name, "api_key_env") or "(unset)"
-            for p in configs}
+    envs = {read_field(read_config(p), args.name, "api_key_env") or "(unset)" for p in configs}
     if len(envs) > 1:
-        print(f"note: '{args.name}' reads its key from {sorted(envs)} across "
-              "these configs; the probe covers only the first",
-              file=sys.stderr)
+        print(
+            f"note: '{args.name}' reads its key from {sorted(envs)} across "
+            "these configs; the probe covers only the first",
+            file=sys.stderr,
+        )
     routing = any(f in ("base_url", "model", "format") for f, _ in edits)
     if routing and key and url and model:
         print(f"probing {url} ({fmt}, {model}) ... ", end="", flush=True)
         ok, detail = probe(url, model, key, fmt)
         print(detail)
         if not ok:
-            print("\nendpoint did not answer; nothing written",
-                  file=sys.stderr)
+            print("\nendpoint did not answer; nothing written", file=sys.stderr)
             return 3
     elif routing:
         # Retargeting without a probe is how a backend ends up pointing at an
         # endpoint nobody checked. Fields like timeout_s cannot break routing,
         # so those still go through.
-        print("cannot probe: no key resolved. Pass --key-pass or --key-env, "
-              "or change only non-routing fields.", file=sys.stderr)
+        print(
+            "cannot probe: no key resolved. Pass --key-pass or --key-env, "
+            "or change only non-routing fields.",
+            file=sys.stderr,
+        )
         return 3
 
-    stamp = dt.datetime.now().strftime(BACKUP_FMT)
+    stamp = dt.datetime.now().astimezone().strftime(BACKUP_FMT)
 
     # Validate every value before touching the first file. yaml_scalar raises
     # on a value it will not write, and discovering that on the second field
@@ -873,8 +899,7 @@ def cmd_set(args):
     for path in configs:
         hits = []
         for field, value in edits:
-            did, old = write_field(path, args.name, field, value, stamp,
-                                   args.dry_run)
+            did, old = write_field(path, args.name, field, value, stamp, args.dry_run)
             if did:
                 hits.append(f"{field}: {old} -> {value}")
         if hits:
@@ -886,8 +911,7 @@ def cmd_set(args):
 
     if headers is not None:
         for path in configs:
-            did, old = write_headers(path, args.name, headers, stamp,
-                                     args.dry_run)
+            did, old = write_headers(path, args.name, headers, stamp, args.dry_run)
             if did:
                 if path not in written:
                     written.append(path)
@@ -921,12 +945,10 @@ def cmd_sync(args):
     """
     key = resolve_key(args.key_pass, args.key_env)
     if not key:
-        print(f"could not resolve a key from "
-              f"{args.key_pass or args.key_env}", file=sys.stderr)
+        print(f"could not resolve a key from {args.key_pass or args.key_env}", file=sys.stderr)
         return 2
 
-    key_env = args.key_env or (args.name.upper().replace("-", "_")
-                               + "_API_KEY")
+    key_env = args.key_env or (args.name.upper().replace("-", "_") + "_API_KEY")
     spec = {
         "name": args.name,
         "base_url": args.base_url,
@@ -952,15 +974,14 @@ def cmd_sync(args):
 
     # One probe for the whole run. The individual subcommands each probe,
     # which on a four-step setup means four identical round trips.
-    print(f"probing {spec['base_url']} ({spec['format']}, {spec['model']})"
-          " ... ", end="", flush=True)
+    print(f"probing {spec['base_url']} ({spec['format']}, {spec['model']}) ... ", end="", flush=True)
     ok, detail = probe(spec["base_url"], spec["model"], key, spec["format"])
     print(detail)
     if not ok:
         print("\nendpoint did not answer; nothing written", file=sys.stderr)
         return 3
 
-    stamp = dt.datetime.now().strftime(BACKUP_FMT)
+    stamp = dt.datetime.now().astimezone().strftime(BACKUP_FMT)
     dry = args.dry_run
     # The five passes below only edit files, they never add or remove a
     # gate.yaml, so the directory walk happens once.
@@ -1002,9 +1023,14 @@ def cmd_sync(args):
     # declared this backend -- an older base_url, a retired key env. Those
     # are exactly the drift this command exists to remove.
     updated = []
-    edits = [("base_url", args.base_url), ("model", args.model),
-             ("format", args.format), ("api_key_env", key_env),
-             ("max_tokens", args.max_tokens), ("timeout_s", args.timeout_s)]
+    edits = [
+        ("base_url", args.base_url),
+        ("model", args.model),
+        ("format", args.format),
+        ("api_key_env", key_env),
+        ("max_tokens", args.max_tokens),
+        ("timeout_s", args.timeout_s),
+    ]
     for path in configs:
         if path in added or not find_backend(read_config(path), args.name):
             continue
@@ -1044,22 +1070,26 @@ def cmd_sync(args):
         for path in defaulted:
             print(f"  {verb} '{args.name}' the default in {path}")
 
-    print(f"\n{'would touch' if dry else 'touched'} "
-          f"{len(set(touched))} file(s): "
-          f"{len(renamed)} renamed, {len(added)} added, "
-          f"{len(updated)} updated, {len(defaulted)} defaulted")
+    print(
+        f"\n{'would touch' if dry else 'touched'} "
+        f"{len(set(touched))} file(s): "
+        f"{len(renamed)} renamed, {len(added)} added, "
+        f"{len(updated)} updated, {len(defaulted)} defaulted"
+    )
 
     if touched:
         report_trust(reseal_trust(sorted(set(touched)), dry), dry)
     if touched and not dry:
         print(f"backups: <file>{stamp}")
-        print(f"\nexport {key_env} in your shell rc "
-              + (f"(pass {args.key_pass})" if args.key_pass else ""))
+        print(
+            f"\nexport {key_env} in your shell rc "
+            + (f"(pass {args.key_pass})" if args.key_pass else "")
+        )
     return 0
 
 
 def cmd_default(args):
-    stamp = dt.datetime.now().strftime(BACKUP_FMT)
+    stamp = dt.datetime.now().astimezone().strftime(BACKUP_FMT)
     configs = find_configs()
     changed = missing = 0
     written = []
@@ -1073,8 +1103,7 @@ def cmd_default(args):
     verb = "would set" if args.dry_run else "set"
     print(f"{verb} '{args.name}' default in {changed} file(s)")
     if missing:
-        print(f"{missing} file(s) do not declare it -- run "
-              f"`add {args.name}` there first")
+        print(f"{missing} file(s) do not declare it -- run `add {args.name}` there first")
     if changed:
         report_trust(reseal_trust(written, args.dry_run), args.dry_run)
     if changed and not args.dry_run:
@@ -1120,7 +1149,7 @@ def cmd_trust(args):
             continue
         try:
             data = yaml.safe_load(read_config(path))
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S112 -- Malformed optional provider config is skipped while scanning usable entries.
             continue
         if not isinstance(data, dict) or "backends" not in data:
             continue
@@ -1130,13 +1159,14 @@ def cmd_trust(args):
             if not is_trusted(path, data):
                 untrusted.append(path)
 
-    print(f"{checked} gate.yaml file(s) checked, "
-          f"{len(untrusted)} not trusted")
+    print(f"{checked} gate.yaml file(s) checked, {len(untrusted)} not trusted")
     for path in untrusted:
         print(f"  {path}")
     if untrusted:
-        print("\nforge drops the backends block of an untrusted file and "
-              "falls back to whatever else resolves.")
+        print(
+            "\nforge drops the backends block of an untrusted file and "
+            "falls back to whatever else resolves."
+        )
         if args.fix:
             sealed = reseal_trust(untrusted, args.dry_run)
             report_trust(sealed, args.dry_run)
@@ -1147,7 +1177,7 @@ def cmd_trust(args):
 
 def cmd_rename(args):
     """Rename a backend everywhere, carrying its default flag and trust."""
-    stamp = dt.datetime.now().strftime(BACKUP_FMT)
+    stamp = dt.datetime.now().astimezone().strftime(BACKUP_FMT)
     configs = find_configs()
     touched = []
     clashes = []
@@ -1162,8 +1192,10 @@ def cmd_rename(args):
         touched.append(path)
 
     if clashes:
-        print(f"'{args.new}' already exists in {len(clashes)} file(s); "
-              "resolve those by hand first:", file=sys.stderr)
+        print(
+            f"'{args.new}' already exists in {len(clashes)} file(s); resolve those by hand first:",
+            file=sys.stderr,
+        )
         for path in clashes:
             print(f"  {path}", file=sys.stderr)
         return 1
@@ -1172,8 +1204,7 @@ def cmd_rename(args):
         return 1
 
     for path in touched:
-        did, why = rename_backend(path, args.old, args.new, stamp,
-                                  args.dry_run)
+        did, why = rename_backend(path, args.old, args.new, stamp, args.dry_run)
         if did:
             print(f"  {path}")
         elif why:
@@ -1202,14 +1233,14 @@ def main():
     p.add_argument("name")
     p.add_argument("--base-url", required=True)
     p.add_argument("--model", required=True)
-    p.add_argument("--format", choices=["anthropic", "openai"],
-                   default="openai")
+    p.add_argument("--format", choices=["anthropic", "openai"], default="openai")
     p.add_argument("--key-pass", help="pass(1) entry holding the key")
     p.add_argument("--key-env", help="env var name (default: NAME_API_KEY)")
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     p.add_argument("--timeout-s", type=int, default=DEFAULT_TIMEOUT_S)
-    p.add_argument("--header", action="append", metavar="NAME:VALUE",
-                   help="extra request header; repeatable")
+    p.add_argument(
+        "--header", action="append", metavar="NAME:VALUE", help="extra request header; repeatable"
+    )
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(fn=cmd_add)
 
@@ -1222,8 +1253,9 @@ def main():
     p.add_argument("--key-env")
     p.add_argument("--max-tokens", type=int)
     p.add_argument("--timeout-s", type=int)
-    p.add_argument("--header", action="append", metavar="NAME:VALUE",
-                   help="extra request header; repeatable")
+    p.add_argument(
+        "--header", action="append", metavar="NAME:VALUE", help="extra request header; repeatable"
+    )
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(fn=cmd_set)
 
@@ -1231,24 +1263,27 @@ def main():
         "sync",
         help="one command: point this whole machine at one backend",
         description="Rename any older names onto NAME, declare it where it "
-                    "is missing, align its fields, and make it the review "
-                    "default -- with a single probe and a single trust "
-                    "re-seal. This is the command for setting up a machine.",
+        "is missing, align its fields, and make it the review "
+        "default -- with a single probe and a single trust "
+        "re-seal. This is the command for setting up a machine.",
     )
     p.add_argument("name")
     p.add_argument("--base-url", required=True)
     p.add_argument("--model", required=True)
-    p.add_argument("--format", choices=["anthropic", "openai"],
-                   default="anthropic")
-    p.add_argument("--from-name", action="append", metavar="OLD",
-                   help="an older backend name to rename onto NAME; "
-                        "repeatable")
+    p.add_argument("--format", choices=["anthropic", "openai"], default="anthropic")
+    p.add_argument(
+        "--from-name",
+        action="append",
+        metavar="OLD",
+        help="an older backend name to rename onto NAME; repeatable",
+    )
     p.add_argument("--key-pass", help="pass(1) entry holding the key")
     p.add_argument("--key-env", help="env var name (default: NAME_API_KEY)")
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     p.add_argument("--timeout-s", type=int, default=DEFAULT_TIMEOUT_S)
-    p.add_argument("--header", action="append", metavar="NAME:VALUE",
-                   help="extra request header; repeatable")
+    p.add_argument(
+        "--header", action="append", metavar="NAME:VALUE", help="extra request header; repeatable"
+    )
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(fn=cmd_sync)
 
@@ -1263,10 +1298,8 @@ def main():
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(fn=cmd_rename)
 
-    p = sub.add_parser("trust",
-                       help="show which gate.yaml files forge refuses")
-    p.add_argument("--fix", action="store_true",
-                   help="re-seal every untrusted file")
+    p = sub.add_parser("trust", help="show which gate.yaml files forge refuses")
+    p.add_argument("--fix", action="store_true", help="re-seal every untrusted file")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(fn=cmd_trust)
 

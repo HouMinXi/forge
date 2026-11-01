@@ -1188,7 +1188,9 @@ def test_factory_binds_actual_mutation_baseline_cwd(tmp_path, monkeypatch):
         "check": False,
     }
     assert json.loads(witness.read_text()) == {
-        "cwd": str(repo), "pythonpath": str(repo / "src"), "argv": ["cwd-boundary"]
+        "cwd": str(repo),
+        "pythonpath": str(repo / "src"),
+        "argv": ["cwd-boundary"],
     }
     assert baseline_results[0].returncode == 1
     assert baseline_results[0].stdout == "controlled baseline failure\n"

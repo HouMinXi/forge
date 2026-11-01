@@ -87,7 +87,7 @@ def resolve_ledger_root(cwd: Path) -> Path:
             if out:
                 common_dir = Path(out).resolve()
                 return common_dir.parent
-    except Exception:
+    except Exception:  # noqa: S110, BLE001 -- Ledger root discovery is best-effort; failure falls back to cwd.
         pass
     return cwd
 
@@ -156,7 +156,9 @@ def _ledger_guard_backend() -> tuple[Callable, Callable, Callable]:
         methods = (guard.acquire, guard._is_owned, guard.release)
     except AttributeError as exc:
         raise OSError("ledger: native process locking unavailable") from exc
-    if any(not isinstance(method, BuiltinMethodType) or method.__self__ is not guard for method in methods):
+    if any(
+        not isinstance(method, BuiltinMethodType) or method.__self__ is not guard for method in methods
+    ):
         raise OSError("ledger: native process locking unavailable")
     return methods
 
@@ -230,8 +232,10 @@ def _locked_ledger_writer(
                 else:
                     lock(fd, acquire_mode)
             except OSError as exc:
-                contention = (errno.EACCES,) if platform == "nt" else (
-                    errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES
+                contention = (
+                    (errno.EACCES,)
+                    if platform == "nt"
+                    else (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES)
                 )
                 if exc.errno != errno.EINTR and exc.errno not in contention:
                     raise
@@ -432,13 +436,29 @@ def iter_rows(cwd: Path, *, strict: bool = False) -> Iterator[LedgerRow]:
                 if strict:
                     if not isinstance(data, dict) or set(data) - {f.name for f in fields(LedgerRow)}:
                         raise ValueError("unknown ledger fields or non-object row")
-                    for key in ("fingerprint", "repo_root", "base_sha", "head_sha", "file",
-                                "axis_claim", "pass_provenance", "terminal_state", "evidence_class", "ts"):
+                    for key in (
+                        "fingerprint",
+                        "repo_root",
+                        "base_sha",
+                        "head_sha",
+                        "file",
+                        "axis_claim",
+                        "pass_provenance",
+                        "terminal_state",
+                        "evidence_class",
+                        "ts",
+                    ):
                         if type(data[key]) is not str:
                             raise ValueError("non-string ledger field: " + key)
                     if not data["fingerprint"] or type(data["line"]) is not int or data["line"] < 0:
                         raise ValueError("invalid fingerprint or line")
-                    for key in ("version_sensitive", "ctx_graph_triage", "ctx_contract", "ctx_whole_file", "ctx_canary"):
+                    for key in (
+                        "version_sensitive",
+                        "ctx_graph_triage",
+                        "ctx_contract",
+                        "ctx_whole_file",
+                        "ctx_canary",
+                    ):
                         if key in data and type(data[key]) is not bool:
                             raise ValueError("non-boolean ledger field: " + key)
                     for key in ("backend", "suppression_key"):

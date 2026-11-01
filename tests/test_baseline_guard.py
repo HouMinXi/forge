@@ -123,17 +123,29 @@ def test_unavailable_runner_cause_survives_final_skip(env, retry):
 
     def execute(argv, **kwargs):
         calls.append((argv, kwargs))
-        return subprocess.CompletedProcess(argv, 17, "", "/stderr-marker/python3: No module named pytest\n")
+        return subprocess.CompletedProcess(
+            argv, 17, "", "/stderr-marker/python3: No module named pytest\n"
+        )
 
     status, findings, infra = _run_baseline_guard(
-        ["python3", "-m", "pytest"], env, "/private", allow_strip_retry=retry, timeout=7, run_command=execute
+        ["python3", "-m", "pytest"],
+        env,
+        "/private",
+        allow_strip_retry=retry,
+        timeout=7,
+        run_command=execute,
     )
     assert status == "skip" and len(calls) == 1
     assert env == original
     finding = findings[0]
-    assert (finding.id, finding.source, finding.disposition, finding.file, finding.line_range, finding.fingerprint) == (
-        "MUTATION_SKIPPED", "MUTANT", Disposition.DISMISSED, "", [], "mutation-flaky"
-    )
+    assert (
+        finding.id,
+        finding.source,
+        finding.disposition,
+        finding.file,
+        finding.line_range,
+        finding.fingerprint,
+    ) == ("MUTATION_SKIPPED", "MUTANT", Disposition.DISMISSED, "", [], "mutation-flaky")
     for text in (finding.description, infra[0]):
         assert "baseline runner unavailable" in text
         assert "run 1" in text and "returncode 17" in text
@@ -142,7 +154,14 @@ def test_unavailable_runner_cause_survives_final_skip(env, retry):
         assert "flaky" not in text
         assert ("after env retry" in text) is (not retry)
     assert calls[0][1] == dict(
-        env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=7, check=False, cwd="/private"
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=7,
+        check=False,
+        cwd="/private",
     )
 
 
@@ -158,7 +177,11 @@ def test_missing_runner_retry_keeps_empty_channels(venv, missing_binary):
         return subprocess.CompletedProcess(argv, 1, "", "No module named pytest")
 
     assert _run_baseline_guard(
-        ["python3", "-m", "pytest"], {"VIRTUAL_ENV": venv}, "/private", allow_strip_retry=True, run_command=execute
+        ["python3", "-m", "pytest"],
+        {"VIRTUAL_ENV": venv},
+        "/private",
+        allow_strip_retry=True,
+        run_command=execute,
     ) == ("needs_strip_retry", [], [])
     assert len(calls) == 1
 
@@ -168,7 +191,9 @@ def test_missing_binary_cause_is_bounded(retry):
     def execute(*args, **kwargs):
         raise FileNotFoundError("absent-executable " + "z" * 250)
 
-    status, findings, infra = _run_baseline_guard(["missing"], {}, "/private", allow_strip_retry=retry, run_command=execute)
+    status, findings, infra = _run_baseline_guard(
+        ["missing"], {}, "/private", allow_strip_retry=retry, run_command=execute
+    )
     assert status == "skip" and findings[0].fingerprint == "mutation-flaky"
     for text in (findings[0].description, infra[0]):
         assert "run 1: runner could not start" in text
@@ -176,12 +201,15 @@ def test_missing_binary_cause_is_bounded(retry):
         assert "flaky" not in text
 
 
-@pytest.mark.parametrize("output,error,expected", [
-    (b"out\xff\n marker", b"err\xfe\t marker", "stderr: err\ufffd marker; stdout: out\ufffd marker"),
-    ("out\n marker", "err\t marker", "stderr: err marker; stdout: out marker"),
-    (None, None, ""),
-    ("", " \n\t", ""),
-])
+@pytest.mark.parametrize(
+    "output,error,expected",
+    [
+        (b"out\xff\n marker", b"err\xfe\t marker", "stderr: err\ufffd marker; stdout: out\ufffd marker"),
+        ("out\n marker", "err\t marker", "stderr: err marker; stdout: out marker"),
+        (None, None, ""),
+        ("", " \n\t", ""),
+    ],
+)
 def test_timeout_cause_accepts_captured_stream_types(output, error, expected):
     calls = []
 
@@ -190,7 +218,11 @@ def test_timeout_cause_accepts_captured_stream_types(output, error, expected):
         raise subprocess.TimeoutExpired(argv, 7, output=output, stderr=error)
 
     status, findings, infra = _run_baseline_guard(
-        ["python3", "-m", "pytest"], {"VIRTUAL_ENV": "/venv"}, "/private", allow_strip_retry=True, timeout=7,
+        ["python3", "-m", "pytest"],
+        {"VIRTUAL_ENV": "/venv"},
+        "/private",
+        allow_strip_retry=True,
+        timeout=7,
         run_command=execute,
     )
     assert status == "skip" and len(calls) == 1
@@ -215,7 +247,11 @@ def test_failed_baseline_cause_keeps_run_nodes_and_output(first_pass, error):
         return subprocess.CompletedProcess(argv, 19, nodes, error)
 
     status, findings, infra = _run_baseline_guard(
-        ["python3", "-m", "pytest"], {"VIRTUAL_ENV": "/venv"}, "/private", allow_strip_retry=True, run_command=execute
+        ["python3", "-m", "pytest"],
+        {"VIRTUAL_ENV": "/venv"},
+        "/private",
+        allow_strip_retry=True,
+        run_command=execute,
     )
     assert status == "skip" and len(calls) == 1 + first_pass
     for text in (findings[0].description, infra[0]):
@@ -229,7 +265,9 @@ def test_long_cause_normalizes_and_caps_each_stream():
     def execute(argv, **kwargs):
         return subprocess.CompletedProcess(argv, 3, " \n" + "x" * 201 + "\t", "\n " + "y" * 201)
 
-    _, findings, infra = _run_baseline_guard(["pytest"], {}, "/private", allow_strip_retry=True, run_command=execute)
+    _, findings, infra = _run_baseline_guard(
+        ["pytest"], {}, "/private", allow_strip_retry=True, run_command=execute
+    )
     expected = "stderr: " + "y" * 200 + "; stdout: " + "x" * 200
     for text in (findings[0].description, infra[0]):
         assert expected in text
@@ -241,21 +279,29 @@ def test_empty_failure_cause_keeps_only_observed_run_and_code():
     def execute(argv, **kwargs):
         return subprocess.CompletedProcess(argv, 23, None, None)
 
-    status, findings, infra = _run_baseline_guard([], {}, "/private", allow_strip_retry=True, run_command=execute)
+    status, findings, infra = _run_baseline_guard(
+        [], {}, "/private", allow_strip_retry=True, run_command=execute
+    )
     assert status == "skip"
     for text in (findings[0].description, infra[0]):
         assert text == "run 1: baseline failed (returncode 23)"
 
 
 @pytest.mark.parametrize("retry", [True, False], ids=["initial", "exhausted"])
-@pytest.mark.parametrize("stderr,stdout", [
-    ("No module named pytest_project_helper", ""),
-    ("No module named pytest.extra", ""),
-    ("No module named pytest stderr-marker", ""),
-    ("ModuleNotFoundError: No module named 'pytest'\nTraceback marker", ""),
-    ("No module named pytest", "FAILED tests/test_probe.py::test_runner - assertion\n"),
-    ("", "E AssertionError: /usr/bin/python3: No module named pytest\nFAILED tests/test_probe.py::test_runner\n"),
-])
+@pytest.mark.parametrize(
+    "stderr,stdout",
+    [
+        ("No module named pytest_project_helper", ""),
+        ("No module named pytest.extra", ""),
+        ("No module named pytest stderr-marker", ""),
+        ("ModuleNotFoundError: No module named 'pytest'\nTraceback marker", ""),
+        ("No module named pytest", "FAILED tests/test_probe.py::test_runner - assertion\n"),
+        (
+            "",
+            "E AssertionError: /usr/bin/python3: No module named pytest\nFAILED tests/test_probe.py::test_runner\n",
+        ),
+    ],
+)
 def test_runner_text_in_test_failure_is_not_startup_diagnosis(retry, stderr, stdout):
     def execute(argv, **kwargs):
         return subprocess.CompletedProcess(argv, 1, stdout, stderr)
@@ -290,8 +336,12 @@ def test_real_pytest_failure_containing_missing_runner_text(tmp_path, module):
         return result
 
     status, findings, infra = _run_baseline_guard(
-        [sys.executable, "-B", "-m", "pytest", "-q", str(test)], env, str(tmp_path),
-        allow_strip_retry=True, timeout=5, run_command=execute,
+        [sys.executable, "-B", "-m", "pytest", "-q", str(test)],
+        env,
+        str(tmp_path),
+        allow_strip_retry=True,
+        timeout=5,
+        run_command=execute,
     )
     assert len(calls) == 1 and calls[0].returncode == 1
     assert f"No module named {module}" in calls[0].stdout
@@ -303,7 +353,9 @@ def test_real_pytest_failure_containing_missing_runner_text(tmp_path, module):
 
 
 @pytest.mark.parametrize("module", ["pytest", "runner.with.dot"])
-@pytest.mark.parametrize("prefix,quoted", [("", False), ("/usr/bin/python3: ", False), ("python3: ", True)])
+@pytest.mark.parametrize(
+    "prefix,quoted", [("", False), ("/usr/bin/python3: ", False), ("python3: ", True)]
+)
 def test_exact_startup_diagnostic_identifies_configured_module(module, prefix, quoted):
     missing = repr(module) if quoted else module
 
@@ -311,22 +363,32 @@ def test_exact_startup_diagnostic_identifies_configured_module(module, prefix, q
         return subprocess.CompletedProcess(argv, 1, "", f"{prefix}No module named {missing}\n")
 
     status, findings, infra = _run_baseline_guard(
-        ["python3", "-W", "ignore", "-m", module], {}, "/private", allow_strip_retry=True, run_command=execute
+        ["python3", "-W", "ignore", "-m", module],
+        {},
+        "/private",
+        allow_strip_retry=True,
+        run_command=execute,
     )
     assert status == "skip" and infra == [findings[0].description]
     assert "baseline runner unavailable" in findings[0].description
 
 
-@pytest.mark.parametrize("stdout,stderr", [
-    ("", "No module named pytest_project_helper"),
-    ("", "/usr/bin/python3: No module named pytest\n"),
-    ("", "No module named 'pytest'"),
-])
+@pytest.mark.parametrize(
+    "stdout,stderr",
+    [
+        ("", "No module named pytest_project_helper"),
+        ("", "/usr/bin/python3: No module named pytest\n"),
+        ("", "No module named 'pytest'"),
+    ],
+)
 def test_existing_retry_eligibility_is_preserved_for_runner_text(stdout, stderr):
     result = subprocess.CompletedProcess([], 1, stdout, stderr)
     assert _is_runner_missing(["python3", "-m", "pytest"], result, None)
     assert _run_baseline_guard(
-        ["python3", "-m", "pytest"], {"VIRTUAL_ENV": ""}, "/private", allow_strip_retry=True,
+        ["python3", "-m", "pytest"],
+        {"VIRTUAL_ENV": ""},
+        "/private",
+        allow_strip_retry=True,
         run_command=lambda *_a, **_k: result,
     ) == ("needs_strip_retry", [], [])
 
@@ -336,15 +398,21 @@ def test_existing_retry_eligibility_is_preserved_for_runner_text(stdout, stderr)
 _SUMMARY = "198 failed, 26650 passed, 172 skipped in 1300.44s"
 
 
-@pytest.mark.parametrize("stdout,stderr", [
-    (f"FAILED tests/test_probe.py::test_runner\nNo module named pytest\n{_SUMMARY}\n", ""),
-    (f"E   /usr/bin/python3: No module named 'pytest'\n{_SUMMARY}\n", ""),
-    ("ERROR tests/test_probe.py - boom\n", "No module named pytest"),
-    ("collected 3 items\n", "/usr/bin/python3: No module named pytest\n"),
-    ("============================= test session starts ==============================\n",
-     "No module named pytest"),
-    ("No module named pytest\n1 failed in 0.01s\n", ""),
-], ids=["failed-node+summary", "quoted+summary", "error-node", "collected", "banner", "summary-only"])
+@pytest.mark.parametrize(
+    "stdout,stderr",
+    [
+        (f"FAILED tests/test_probe.py::test_runner\nNo module named pytest\n{_SUMMARY}\n", ""),
+        (f"E   /usr/bin/python3: No module named 'pytest'\n{_SUMMARY}\n", ""),
+        ("ERROR tests/test_probe.py - boom\n", "No module named pytest"),
+        ("collected 3 items\n", "/usr/bin/python3: No module named pytest\n"),
+        (
+            "============================= test session starts ==============================\n",
+            "No module named pytest",
+        ),
+        ("No module named pytest\n1 failed in 0.01s\n", ""),
+    ],
+    ids=["failed-node+summary", "quoted+summary", "error-node", "collected", "banner", "summary-only"],
+)
 def test_session_output_with_runner_text_is_not_a_strip_retry(stdout, stderr):
     result = subprocess.CompletedProcess([], 1, stdout, stderr)
     calls = []
@@ -355,7 +423,10 @@ def test_session_output_with_runner_text_is_not_a_strip_retry(stdout, stderr):
 
     assert _is_runner_missing(["python3", "-m", "pytest"], result, None) is False
     status, findings, infra = _run_baseline_guard(
-        ["python3", "-m", "pytest"], {"VIRTUAL_ENV": "/venv"}, "/private", allow_strip_retry=True,
+        ["python3", "-m", "pytest"],
+        {"VIRTUAL_ENV": "/venv"},
+        "/private",
+        allow_strip_retry=True,
         run_command=execute,
     )
     assert len(calls) == 1
@@ -374,8 +445,12 @@ def test_real_pytest_run_printing_runner_text_under_venv_is_not_retried(tmp_path
         "def test_ok():\n"
         "    pass\n"
     )
-    env = {**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTHONDONTWRITEBYTECODE": "1",
-           "VIRTUAL_ENV": str(tmp_path / "venv")}
+    env = {
+        **os.environ,
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "VIRTUAL_ENV": str(tmp_path / "venv"),
+    }
     calls = []
 
     def execute(argv, **kwargs):
@@ -384,8 +459,12 @@ def test_real_pytest_run_printing_runner_text_under_venv_is_not_retried(tmp_path
         return result
 
     status, findings, infra = _run_baseline_guard(
-        [sys.executable, "-B", "-m", "pytest", "-q", str(test)], env, str(tmp_path),
-        allow_strip_retry=True, timeout=30, run_command=execute,
+        [sys.executable, "-B", "-m", "pytest", "-q", str(test)],
+        env,
+        str(tmp_path),
+        allow_strip_retry=True,
+        timeout=30,
+        run_command=execute,
     )
     assert len(calls) == 1 and "No module named pytest" in calls[0].stdout
     assert "1 failed, 1 passed" in calls[0].stdout
@@ -445,6 +524,9 @@ def test_crashed_quiet_session_end_to_end_is_not_a_strip_retry(tmp_path):
     env = {**os.environ, "VIRTUAL_ENV": str(tmp_path / "venv")}
     outcome = _run_baseline_guard(
         [sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "test_crash.py"],
-        env, str(tmp_path), timeout=60, allow_strip_retry=True,
+        env,
+        str(tmp_path),
+        timeout=60,
+        allow_strip_retry=True,
     )
     assert outcome[0] != "needs_strip_retry"
