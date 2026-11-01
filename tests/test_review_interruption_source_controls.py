@@ -3021,3 +3021,124 @@ def test_fix12_reused_ci_instance_drops_a_fixed_trusted_config_refusal(tmp_path,
     assert [e for e in saved_reused["infra_errors"] if e.startswith(_FIX12_REFUSED)] == refused
     assert saved_reused["infra_errors"] == saved_new["infra_errors"]
     assert saved_reused["verdict"] == saved_new["verdict"]
+
+
+# P7-1 (Phase 7, PR #319 "Reused-instance review state"): a later LOCAL run()
+# on an instance whose state.json is gone, or belongs to another diff, starts
+# from an empty State, as a new instance does. Before P7-1 it kept the State
+# run 1 left in memory: its rounds, dispositions and clean credit.
+_P7_OTHER_DIFF = compute_source_hash(git_diff=DIFF + "\n# P7-1 other diff\n")
+
+
+def _p7_drop_state(root, how):
+    path = root / ".code-forge" / "state.json"
+    if how == "deleted":
+        path.unlink()
+    else:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw["source_hash"] = _P7_OTHER_DIFF
+        path.write_text(json.dumps(raw), encoding="utf-8")
+
+
+def _p7_no_manifest_probe(mp):
+    # A State that starts empty has no env manifest; a new fixture instance
+    # has `{}`. The probe would spawn toolchains, which the offline fixture
+    # forbids, so both get the same empty manifest.
+    mp.setattr("code_forge.manifest.extract_manifest", lambda cwd: types.SimpleNamespace(to_dict=dict))
+
+
+_P7_RUN1 = {
+    "earned": (None, None),
+    "preserved-returned": ("coverage", None),
+    "post-round-hook": ("schema", _fix11_hook),
+    "l1-timeout": ("schema", _fix11_l1_timeout),
+}
+
+
+@pytest.mark.parametrize("how", ["deleted", "other-diff"])
+@pytest.mark.parametrize("case", list(_P7_RUN1))
+def test_p7_reused_local_instance_without_matching_state_saves_what_a_new_instance_saves(
+    offline_workspace, monkeypatch, case, how
+):
+    """P7-1: no matching state.json means run 2 starts empty on a reused instance too.
+
+    Run 1 reviews one more round on top of an earned window (and returns, or
+    fails after its round). Its state.json is then deleted, or rewritten as
+    another diff's. Run 2 runs once on run 1's instance and once on a new
+    instance, from the same files and with the same reviewer replies, usage
+    and wall time. state.json, the receipts and the ledger must match byte
+    for byte; only the instance-lifetime advisories may list run 1's too.
+    Red before P7-1: the reused instance resumed run 1's rounds and credit.
+    """
+    root = offline_workspace
+    fault, inject = _P7_RUN1[case]
+    _earned_prefix(root, monkeypatch)
+    machine = _fix11_round(root, monkeypatch, fault, inject, rounds=1, start=0)
+    assert machine._state.round == 2 and len(machine._state.round_history) >= 2
+    _p7_drop_state(root, how)
+    after_run1 = _files(root)
+    with monkeypatch.context() as mp:
+        _p7_no_manifest_probe(mp)
+        _fix11_round(root, monkeypatch, None, machine=machine)
+    same_instance = _files(root)
+    _restore_files(root, after_run1)
+    assert _files(root) == after_run1
+    with monkeypatch.context() as mp:
+        _p7_no_manifest_probe(mp)
+        fresh_machine = _fix11_round(root, monkeypatch, None)
+    fresh = _files(root)
+    advisories = ".code-forge/advisory-findings.json"
+    reused, new = json.loads(same_instance.pop(advisories)), json.loads(fresh.pop(advisories))
+    assert reused[len(reused) - len(new) :] == new
+    state = ".code-forge/state.json"
+    saved = json.loads(same_instance[state])
+    # Run 2 started empty: no round row (rounds 0-2) or earned cycle of the
+    # prefix and run 1 was carried over. Cycle numbers still continue after
+    # the receipts on disk (_continuation_round_index), as for any new review.
+    assert saved["round_history"] and saved["round_history"][0]["round"] == 3, saved["round_history"]
+    assert [row["round"] for row in saved["round_history"]] == list(
+        range(3, 3 + len(saved["round_history"]))
+    )
+    assert all(entry["cycle"] > 3 for entry in (saved["earned_clean_window"] or {}).get("cycles", []))
+    assert saved["source_hash"] == compute_source_hash(git_diff=DIFF)
+    assert saved == json.loads(fresh[state])
+    assert sorted(same_instance) == sorted(fresh)
+    assert same_instance == fresh
+    assert machine._state.round == fresh_machine._state.round
+
+
+def test_p7_first_run_keeps_a_seeded_state(offline_workspace, monkeypatch):
+    """P7-1 boundary: the first run() starts from the State the instance was built or seeded with.
+
+    The fixture seeds `env_manifest = {}` on a new instance with no state.json;
+    the first run must keep that seed (no manifest probe runs, which the
+    offline fixture would refuse), while a second run without a state file
+    starts from an empty State and probes again.
+    """
+    root = offline_workspace
+    machine, _ = _new_machine(root, monkeypatch, rounds=1)
+    assert machine.run() is Verdict.ESCALATED
+    assert machine._state.env_manifest == {}
+    (root / ".code-forge" / "state.json").unlink()
+    probes = []
+    with monkeypatch.context() as mp:
+        mp.setattr(
+            "code_forge.manifest.extract_manifest",
+            lambda cwd: probes.append(cwd) or types.SimpleNamespace(to_dict=lambda: {"probed": True}),
+        )
+        assert machine.run() is Verdict.ESCALATED
+    assert probes == [root]
+    assert machine._state.env_manifest == {"probed": True}
+    assert [row["round"] for row in machine._state.round_history] == [1]
+
+
+def test_p7_reused_ci_instance_still_carries_its_state(offline_workspace, monkeypatch):
+    """P7-1 boundary: CI never reloads state.json and keeps the in-memory State, as on main."""
+    root = offline_workspace
+    machine, _ = _new_machine(root, monkeypatch, rounds=1, mode=Mode.CI)
+    machine.run()
+    first = len(machine._state.round_history)
+    assert first == 1
+    (root / ".code-forge" / "state.json").unlink()
+    machine.run()
+    assert len(machine._state.round_history) == first + 1
