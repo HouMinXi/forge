@@ -49,7 +49,8 @@ def test_cli_backend_without_http_fields_reaches_the_subprocess(monkeypatch):
     """The refusal above must not fire on a backend that carries no HTTP fields."""
     seen = {}
 
-    def fake_cli(prompt, backend, timeout_s, *, reply_keys=None):
+    def fake_cli(prompt, backend, timeout_s, *, reply_keys=None, strict_response=False):
+        assert strict_response is False
         seen["prompt"] = prompt
         raise LLMInvokeError("sentinel from cli", retryable=True)
 

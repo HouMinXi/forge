@@ -244,3 +244,15 @@ def test_strict_response_without_keys_does_not_repair_excerpts(api):
     result = invoke.llm_invoke("prompt", backend=runner._backend, strict_response=True)
     assert result.content == RISK
     assert request.call_count == 1
+
+
+def test_runtime_forwards_strict_policy_to_cli(monkeypatch, tmp_path):
+    def fake_cli(prompt, backend, timeout_s, *, reply_keys=None, strict_response=False):
+        assert strict_response is True
+        assert reply_keys.top == {"surfaces", "findings"}
+        return invoke.LLMResult(content=RISK, usage=invoke.Usage())
+
+    monkeypatch.setattr(invoke, "_invoke_cli", fake_cli)
+    runner = RuntimeRunner(backend=BackendConfig(name="runtime-cli", type="cli", model="test"))
+    assert any(f.description == "risk" for f in runner.run(DIFF, tmp_path))
+    assert not runner.infra_errors

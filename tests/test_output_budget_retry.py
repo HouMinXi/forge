@@ -245,11 +245,13 @@ def test_limit_is_protected_and_api_only(transport, monkeypatch):
 
 def test_cli_zero_limit_preserves_existing_route_without_http(transport, monkeypatch):
     calls = []
-    monkeypatch.setattr(
-        invoke,
-        "_invoke_cli",
-        lambda *args, reply_keys=None: calls.append(args) or invoke.LLMResult(ENVELOPE, invoke.Usage()),
-    )
+
+    def fake_cli(*args, reply_keys=None, strict_response=False):
+        assert strict_response is False
+        calls.append(args)
+        return invoke.LLMResult(ENVELOPE, invoke.Usage())
+
+    monkeypatch.setattr(invoke, "_invoke_cli", fake_cli)
     config = BackendConfig(name="cli", type="cli", model="")
     assert invoke.llm_invoke("prompt", backend=config).content == ENVELOPE
     assert len(calls) == 1

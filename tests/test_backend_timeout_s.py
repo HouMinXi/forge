@@ -72,7 +72,8 @@ def test_cli_timeout_reaches_subprocess_communicate(monkeypatch):
     monkeypatch.delenv("FORGE_LLM_TIMEOUT_S", raising=False)
     seen = {}
 
-    def fake_cli(prompt, backend, timeout_s, *, reply_keys=None):
+    def fake_cli(prompt, backend, timeout_s, *, reply_keys=None, strict_response=False):
+        assert strict_response is False
         seen["timeout_s"] = timeout_s
         return invoke.LLMResult(content={"ok": True}, usage=invoke.Usage(), duration_s=0.0)
 
