@@ -2012,7 +2012,8 @@ def test_baseline_timeout_exemption_allows_mixed_language_note():
     )
 
 
-def test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline(ci_project):
+@pytest.mark.parametrize("detached_available", [False, True])
+def test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline(ci_project, detached_available):
     """A null test.timeout_seconds is refused by the gate loader: no baseline
     runs, so no baseline-timeout reason can be formatted from it."""
     p = ci_project
@@ -2023,12 +2024,27 @@ def test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline(ci_proj
         path.write_text(json.dumps(gate), encoding="utf-8")
         record_trust(path, gate)
     p.baseline_hook = _baseline_timeout
+    if detached_available:
+        _discover_mutmut(p)
     machine = _machine(p, runner=mutation.run_mutation)
-    machine.run()
-    saved = load_state(p.state / ".code-forge/state.json")
-    assert any("'test.timeout_seconds' must be an integer" in e for e in saved.infra_errors)
-    assert "baseline" not in p.stages
-    assert not any(e.startswith("CI: mutation not measured") for e in saved.infra_errors)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    # Invalid config is truthfully reported as mutation not measured, but it
+    # must never masquerade as an executed baseline timing out or failing.
+    expected = (
+        "CI: mutation not measured -- invalid .code-forge/gate.yaml in the test config root "
+        f"{p.state}: 'test.timeout_seconds' must be an integer"
+    )
+    assert expected in saved.infra_errors
+    assert p.stages == []
+    assert p.launches == []
+    assert not any(
+        f.fingerprint in {"mutation-baseline-timeout", "mutation-flaky"} for f in saved.findings
+    )
+    assert not any(
+        e.startswith("CI: mutation not measured: baseline") or "Nones" in e or "after None" in e
+        for e in saved.infra_errors
+    )
 
 
 @pytest.mark.parametrize(

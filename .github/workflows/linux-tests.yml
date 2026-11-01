@@ -185,9 +185,7 @@ jobs:
           #    7d9a476b3, #114).
           # 2. Needs the `sem` CLI, which is not installed here (same cause as
           #    several tests/test_cli_integration.py failures on a dev machine).
-          # 3. Expects no timeout-config infra error from a null baseline
-          #    deadline; fails on main.
-          # 4. #291 (fe4c10757) added src/code_forge/report_presentation.py,
+          # 3. #291 (fe4c10757) added src/code_forge/report_presentation.py,
           #    which imports code_forge.report_projection at line 46. The
           #    control-module isolation test rejects that import. The code or
           #    the test has to change; neither belongs in the CI workflow.
@@ -199,7 +197,6 @@ jobs:
             --deselect tests/test_report_projection_isolation.py::test_control_modules_do_not_import_report_projection \
             --deselect tests/test_integration.py::TestIntegrationPass::test_pass_on_clean_code \
             --deselect tests/test_integration.py::TestIntegrationBaseline::test_baseline_preexisting_not_shown \
-            --deselect tests/test_mutation_ledger_ci_controls.py::test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline \
             --junitxml="$EVIDENCE/pytest.xml" 2>&1 | tee "$EVIDENCE/pytest.log"
 
       - name: Run local process integration tests
