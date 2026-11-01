@@ -269,6 +269,18 @@ state/receipt。取得 review 锁时才清除旧报告,建议结束后原子替�
 无变更提前返回、subagent/inline、锁忙与 CI 不碰该文件,不能把它当作每次调用的结果。
 未上报 outcome 时写 `{}` 且无状态行；清除或写入失败只输出固定警告。
 
+**Interrupted assertion advice:** a `KeyboardInterrupt`, cancellation or
+`MemoryError` during the assertion phase emits the best-effort fixed stderr line
+`code-forge: test_assertion=interrupted stage=reporting kind=interrupted`, then
+propagates the original exception. The reporting stage names this notification
+boundary, not a diagnosed provider failure. No finding count or completed-review
+claim is made. This human-only line replaces the phase-end progress line on
+these fatal paths; a broken stderr may prevent it. It is not an
+`AssertionOutcome` metadata tuple, trusted evidence or durable status: no state,
+receipt, LOCAL sidecar, SARIF or MCP structured result is created on this path.
+Structured interruption transport and complete-review claim enforcement remain
+separate requirements. Normal summaries and exit behavior are unchanged.
+
 **Unsupported assertion advice:** after outlet resolution, inline and enabled
 kernel-context on a non-subprocess outlet emit
 `test_assertion=skipped stage=eligibility kind=unsupported_outlet` on stderr

@@ -192,7 +192,16 @@ def test_fatal_operation_propagates_without_completion(
         cli._run_test_assertion_phase(TEST_DIFF, backend)
     assert reached == [True]
     output = capsys.readouterr().err
-    assert "phase aborted" in output
+    if exc_type is SystemExit:
+        assert "phase aborted" in output
+        assert "test_assertion=interrupted" not in output
+    else:
+        assert (
+            output.splitlines().count(
+                "code-forge: test_assertion=interrupted stage=reporting kind=interrupted"
+            )
+            == 1
+        )
     assert "phase done" not in output
 
 

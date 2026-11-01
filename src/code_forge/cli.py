@@ -10,6 +10,7 @@ Bare invocation (no subcommand) routes to review for backward compatibility.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -1524,6 +1525,7 @@ def _run_test_assertion_phase(
     results: list[AssertionOutcome] = []
     legacy_results: list[str] = []
     result: AssertionOutcome | None = None
+    interrupted = False
     try:
         findings = _run_test_assertion_review(
             diff_text,
@@ -1551,14 +1553,25 @@ def _run_test_assertion_phase(
                 AssertionKind.INCONSISTENT_OUTCOME,
             )
         outcome = AssertionOutcome.legacy_outcome(result)
+    except (KeyboardInterrupt, asyncio.CancelledError, MemoryError):
+        interrupted = True
+        # Human-readable only: do not reload state or publish a completed
+        # review while unwinding. Keep this literal bounded even on OOM.
+        try:
+            sys.stderr.write("code-forge: test_assertion=interrupted stage=reporting kind=interrupted\n")
+            sys.stderr.flush()
+        except BaseException:  # noqa: BLE001, S110 -- Preserve the entering fatal exception.
+            pass
+        raise
     finally:
-        diagnostic = ""
-        if result is not None and result.stage is not None:
-            diagnostic = " stage=%s kind=%s" % (result.stage.value, result.kind.value)
-        progress.emit(
-            "test-assertion phase %s: findings=%d elapsed=%.1fs%s"
-            % (outcome, len(findings), time.monotonic() - started, diagnostic)
-        )
+        if not interrupted:
+            diagnostic = ""
+            if result is not None and result.stage is not None:
+                diagnostic = " stage=%s kind=%s" % (result.stage.value, result.kind.value)
+            progress.emit(
+                "test-assertion phase %s: findings=%d elapsed=%.1fs%s"
+                % (outcome, len(findings), time.monotonic() - started, diagnostic)
+            )
     return result
 
 

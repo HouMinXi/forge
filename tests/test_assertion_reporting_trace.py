@@ -254,8 +254,16 @@ def test_helper_exception_is_not_a_reporting_fallback(monkeypatch, capsys, excep
         cli._run_test_assertion_phase(DIFF)
     assert caught.value is error
     output = capsys.readouterr().err
-    assert "phase aborted" in output
-    assert "stage=reporting" not in output
+    if exception_type in (MemoryError, KeyboardInterrupt, asyncio.CancelledError):
+        assert (
+            output.splitlines().count(
+                "code-forge: test_assertion=interrupted stage=reporting kind=interrupted"
+            )
+            == 1
+        )
+    else:
+        assert "phase aborted" in output
+        assert "stage=reporting" not in output
     assert "phase done" not in output
 
 
@@ -274,8 +282,16 @@ def test_validation_fatal_or_unexpected_exception_propagates(monkeypatch, capsys
         cli._run_test_assertion_phase(DIFF)
     assert caught.value is error
     output = capsys.readouterr().err
-    assert "phase aborted" in output
-    assert "stage=reporting" not in output
+    if exception_type in (MemoryError, KeyboardInterrupt, asyncio.CancelledError):
+        assert (
+            output.splitlines().count(
+                "code-forge: test_assertion=interrupted stage=reporting kind=interrupted"
+            )
+            == 1
+        )
+    else:
+        assert "phase aborted" in output
+        assert "stage=reporting" not in output
 
 
 @pytest.mark.parametrize("exception_type", [TypeError, ValueError, AttributeError])
@@ -328,5 +344,8 @@ def test_finding_write_failure_remains_aborted(monkeypatch, exception_type):
         cli._run_test_assertion_phase(DIFF)
     assert caught.value is error
     assert events[0] == "test-assertion phase start"
-    assert "phase aborted: findings=1" in events[-1]
+    if exception_type is MemoryError:
+        assert events == ["test-assertion phase start"]
+    else:
+        assert "phase aborted: findings=1" in events[-1]
     assert not any("stage=reporting" in event for event in events)
