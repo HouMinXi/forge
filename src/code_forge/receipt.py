@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 from .basis import derive_basis
 from .diff import describe_fabricated_lines, parse_diff_hunks
+from .llm_invoke import loads_reply_json
 from .manifest import EnvManifest, ManifestTier
 from .reviewer_json import GroupedReviewAttempt, read_source_lines
 from .state import (
@@ -152,9 +153,7 @@ def _warn_on_fabricated_excerpts(
             )
 
 
-def _attempted_artifact_path(
-    receipts_dir: Path, cycle: int, pass_name: str, attempt_index: int
-) -> Path:
+def _attempted_artifact_path(receipts_dir: Path, cycle: int, pass_name: str, attempt_index: int) -> Path:
     """Use the writer's existing ordinal and pass mapping for audit artifacts."""
     pass_num = _PASS_NAMES.index(pass_name) + 1 if pass_name in _PASS_NAMES else 0
     return receipts_dir / "attempted" / ("attempted-c%dp%d-%d.json" % (cycle, pass_num, attempt_index))
@@ -183,7 +182,7 @@ def _canonical_response(raw: str) -> str:
         text = body.rsplit("```", 1)[0].strip()
     try:
         return json.dumps(
-            _normalize_response_value(json.loads(text)),
+            _normalize_response_value(loads_reply_json(text)),
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
@@ -450,7 +449,9 @@ def write_receipts(
         if response_sha is not None:
             receipt["reviewer_response_sha256"] = response_sha
             # #240: near-duplicate evidence (token shingle hashes, no text).
-            receipt["reviewer_response_shingles"] = _pass_response_shingles(pending_raw_responses, pass_name)
+            receipt["reviewer_response_shingles"] = _pass_response_shingles(
+                pending_raw_responses, pass_name
+            )
         if pass_name in excerpt_validation_errors:
             receipt["excerpt_validation_errors"] = excerpt_validation_errors[pass_name]
         if repository_manifest is not None:
@@ -471,7 +472,8 @@ def write_receipts(
     # Only this writer's physical rejection publishes pending accepted text.
     # Keep prior artifact ordinals and all existing authority lanes unchanged.
     artifact_payloads.extend(
-        response for response in pending_raw_responses or []
+        response
+        for response in pending_raw_responses or []
         if isinstance(response, dict)
         and type(response.get("pass_name")) is str
         and response["pass_name"] in excerpt_validation_errors

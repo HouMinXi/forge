@@ -54,12 +54,20 @@ class TestExtractJsonFromTextContract:
         assert _is_forge_envelope(envelope, keys) is True
         assert _extract_json_from_text(json.dumps(envelope), expected_keys=keys) == envelope
 
-    def test_extract_json_returns_first_matching_dict(self):
-        text = (
-            'preamble {"unrelated": 1} {"findings": [{"id": "first"}]} {"findings": [{"id": "second"}]}'
-        )
-        got = _extract_json_from_text(text)
-        assert got == {"findings": [{"id": "first"}]}
+    def test_extract_json_skips_unrelated_dicts(self):
+        text = 'preamble {"unrelated": 1} {"findings": [{"id": "first"}]} {"other": 2}'
+        assert _extract_json_from_text(text) == {"findings": [{"id": "first"}]}
+
+        explicit_keys = frozenset({"verdict", "reasoning"})
+        falsify_text = 'prose {"findings": []} {"verdict": "CONFIRMED", "reasoning": "first"}'
+        got_falsify = _extract_json_from_text(falsify_text, expected_keys=explicit_keys)
+        assert got_falsify == {"verdict": "CONFIRMED", "reasoning": "first"}
+
+    def test_extract_json_refuses_two_matching_dicts(self):
+        # Either could be the reply: prose may quote an example envelope before
+        # the real one, or the model may correct itself after it (#264).
+        text = 'preamble {"findings": [{"id": "first"}]} {"findings": [{"id": "second"}]}'
+        assert _extract_json_from_text(text) is None
 
         explicit_keys = frozenset({"verdict", "reasoning"})
         falsify_text = (
@@ -67,8 +75,7 @@ class TestExtractJsonFromTextContract:
             '{"verdict": "CONFIRMED", "reasoning": "first"} '
             '{"verdict": "DISMISSED", "reasoning": "second"}'
         )
-        got_falsify = _extract_json_from_text(falsify_text, expected_keys=explicit_keys)
-        assert got_falsify == {"verdict": "CONFIRMED", "reasoning": "first"}
+        assert _extract_json_from_text(falsify_text, expected_keys=explicit_keys) is None
 
     def test_extract_json_unspecified_keys_uses_defaults(self):
         assert _extract_json_from_text('{"findings": []}') == {"findings": []}
