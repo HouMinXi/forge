@@ -40,7 +40,7 @@ from . import progress
 from .autofix import AutoFixer, FixOutcome
 from .baseline import ResolvedReview
 from .claim import derive_claim_type
-from .diagnose import diagnose_non_convergence
+from .diagnose import diagnose_non_convergence, preserved_credit_note
 from .disposition import (
     MAX_FIX_ATTEMPTS_PER_FINGERPRINT,
     Disposition,
@@ -340,6 +340,7 @@ _FAILURE_EVIDENCE_KEYS = ("publication_error", "cancellation_type", "cleanup_err
 # none (run_mutation pre-seeds "inventory" as empty, so that one must be empty).
 _MUTANT_PHASE_KEYS = ("results_sha256", "metadata_sha256")
 _ATTEMPTED_EVIDENCE_GATE_ERROR = "review evidence rejected in current round; see receipts/attempted"
+_AUDIT_UNAVAILABLE_GATE_ERROR = "review evidence rejected in current round; audit payload unavailable"
 # L-B: the CYCLE_RESTART log line, one per action (fix7 also rewrites it on demotion).
 _CYCLE_RESTART_LOG = "tiered-reset: P2/P3-density -- restarting cycle %d"
 _CYCLE_PRESERVED_LOG = (
@@ -858,8 +859,8 @@ class StateMachine:
         # resolved finding cannot poison the clean tail.
         self._clean_window_cycles: list[int] = []
         # P7-1: the State the last run() used, recorded once its state load
-        # returned. A later LOCAL run drops it before loading; a State a caller
-        # put in its place, or one no run reached, is kept.
+        # returned. A later run drops it before loading; a State a caller put
+        # in its place, or one no run reached, is kept.
         self._state_of_last_run: State | None = None
         self._reset_run_state()
 
@@ -904,8 +905,12 @@ class StateMachine:
         # Cleared here at run() entry and before every attempt begins, so a
         # failure within the same run(), before the next attempt begins, is the
         # only one that can demote it; a preserve an earlier attempt or an
-        # earlier run() saved is never demoted.
+        # earlier run() saved is never demoted. W2-10: the mutation-infra
+        # breaker also clears it after its save, so its stop keeps the row.
         self._settled_preserve_round: int | None = None
+        # TD-P6-C3d: the preserved-credit note this run wrote before an
+        # ESCALATED line, so a demotion of that preserve can retract exactly it.
+        self._preserved_note_written: str | None = None
         # fix7 (CR2R2-L1): receipt-write errors already logged to infra_errors
         # (directly or as a receipt gate finding). fix8: reset with
         # `_last_receipt_write_errors` when each attempt's L1 starts, so a
@@ -1058,13 +1063,15 @@ class StateMachine:
         or different hash is left on disk and the run starts empty
         (CorruptedStateError still propagates per 02-01).
 
-        P7-1: a LOCAL run first drops the State the previous run() on this
-        instance used, so without a matching file it starts where a new
-        instance would. A State the instance was built or seeded with, and
-        one a caller assigned after the previous run, is kept. CI keeps its
-        in-memory State across runs on one instance.
+        P7-1 (W2-9 for CI): a run first drops the State the previous run()
+        on this instance used, so without a matching file (and always in CI)
+        it starts where a new instance would. A State the instance was built
+        or seeded with, and one a caller assigned after the previous run, is
+        kept.
         """
         state_path = self.cwd / ".code-forge" / "state.json"
+        if self._state is self._state_of_last_run:
+            self._state = State()
         if self.mode == Mode.CI:
             if state_path.exists():
                 logging.getLogger("code_forge").warning(
@@ -1075,8 +1082,6 @@ class StateMachine:
                     "iterative multi-round review"
                 )
             return
-        if self._state is self._state_of_last_run:
-            self._state = State()
         if state_path.exists():
             loaded = load_state(state_path)
             if loaded is not None:
@@ -1929,11 +1934,10 @@ class StateMachine:
             row["fixpoint"] = fixpoint.name
         else:
             row.pop("fixpoint", None)
-        # #114: this round's L2 returned an infrastructure error. The fixpoint
-        # turns CLEAN into INCOMPLETE for it, and the loader needs the cause to
-        # accept that INCOMPLETE row; it also requires that L2 returned
-        # (state.validate_round_history).
-        if self._l2_infra_error is not None and self._phase_status["l2"] == "returned":
+        # #114: the fixpoint turns CLEAN into INCOMPLETE for this round's L2
+        # infrastructure error, and the loader needs the cause to accept that
+        # INCOMPLETE row (state.validate_round_history).
+        if self._l2_infra_observed():
             row["l2_infra_error"] = True
         else:
             row.pop("l2_infra_error", None)
@@ -2016,12 +2020,7 @@ class StateMachine:
         protocol_ids = {id(finding) for finding in self._falsify_protocol_findings}
         if any(id(finding) not in protocol_ids for finding in self._falsify_failed_findings):
             return False
-        schema_coverage = [
-            finding
-            for finding in self._product_findings()
-            if not is_mutation_infra_diagnostic(finding)
-            and self._is_schema_or_incomplete_coverage_finding(finding)
-        ]
+        schema_coverage = self._schema_coverage_findings()
         if not schema_coverage:
             return False
         companions = self._schema_fail_companions(schema_coverage)
@@ -2039,6 +2038,70 @@ class StateMachine:
             }
         return preserve
 
+    def _schema_coverage_findings(self) -> list[StateFinding]:
+        """This round's Q2=(iii) findings: L1 schema-fail and incomplete-coverage."""
+        return [
+            finding
+            for finding in self._product_findings()
+            if not is_mutation_infra_diagnostic(finding)
+            and self._is_schema_or_incomplete_coverage_finding(finding)
+        ]
+
+    def _c3_producer(self):
+        """The `_L1Call` both C3 seams require, with no scoped repositories, else None."""
+        from .factories import _L1Call
+
+        producer = self.l1_provider
+        if type(producer) is not _L1Call or self.reviewed_repositories is not None:
+            return None
+        return producer
+
+    def _single_schema_failed_reply(
+        self, name: str, producer, schema_coverage: list[StateFinding], payloads: int
+    ) -> bool:
+        """`name` holds its schema-fail finding from exactly one response.
+
+        That response left `payloads` attempted (parsed) payloads and no typed
+        excerpt rejection. The per-pass seam of `_schema_fail_companions`
+        (one payload) and `_unavailable_audit_is_schema_fail` (none).
+        """
+        if not any(
+            finding.id == f"l1-{name}-schema-fail" and finding.fingerprint == f"schema-fail-{name}"
+            for finding in schema_coverage
+        ):
+            return False
+        if self._responses_last_round is None or self._responses_last_round.get(name) != 1:
+            return False
+        attempted = [
+            item
+            for item in self._attempted_last_round
+            if type(item) is dict and item.get("pass_name") == name
+        ]
+        if len(attempted) != payloads:
+            return False
+        return not any(rejection.pass_name == name for rejection in producer.excerpt_rejections)
+
+    def _unavailable_audit_is_schema_fail(self) -> bool:
+        """W2-8: every audit-unavailable pass is a single schema-failed reply.
+
+        A reply the audit writer cannot encode (an inadmissible dict) leaves
+        no payload to keep and no companion to exclude: its schema-fail
+        finding is the whole observation, as for a non-JSON reply, so the
+        gate error it raises does not by itself wipe a (iii)-only round. The
+        verdict stays FAIL. Fail-closed: an empty set, another producer,
+        scoped repositories, or any pass that is not one schema-failed reply
+        without a payload keeps the M6 wipe.
+        """
+        passes = self._unavailable_rejected_passes_last_round
+        producer = self._c3_producer()
+        if not passes or producer is None:
+            return False
+        schema_coverage = self._schema_coverage_findings()
+        return all(
+            self._single_schema_failed_reply(name, producer, schema_coverage, payloads=0)
+            for name in passes
+        )
+
     def _schema_fail_companions(self, schema_coverage: list[StateFinding]) -> list[StateFinding]:
         """C3 (narrow): UNTRUSTED companions of a single parsed schema-fail response.
 
@@ -2047,34 +2110,18 @@ class StateMachine:
         excerpt rejection, no unavailable payload, an `_L1Call` producer and
         no scoped repositories. Every check is fail-closed: an ineligible
         companion stays in the counterfactual and its UNCERTAIN resets.
-        This is the single seam a later widening would change.
+        The producer and per-pass checks are shared with
+        `_unavailable_audit_is_schema_fail`.
         """
-        from .factories import _L1Call
-
-        producer = self.l1_provider
-        if type(producer) is not _L1Call or self.reviewed_repositories is not None:
+        producer = self._c3_producer()
+        if producer is None:
             return []
-        eligible = set()
-        for name in ("qodo", "expert", "adversarial"):
-            if not any(
-                finding.id == f"l1-{name}-schema-fail" and finding.fingerprint == f"schema-fail-{name}"
-                for finding in schema_coverage
-            ):
-                continue
-            if self._responses_last_round is None or self._responses_last_round.get(name) != 1:
-                continue
-            attempts = [
-                item
-                for item in self._attempted_last_round
-                if type(item) is dict and item.get("pass_name") == name
-            ]
-            if len(attempts) != 1:
-                continue
-            if any(rejection.pass_name == name for rejection in producer.excerpt_rejections):
-                continue
-            if name in self._unavailable_rejected_passes_last_round:
-                continue
-            eligible.add(name)
+        eligible = {
+            name
+            for name in ("qodo", "expert", "adversarial")
+            if self._single_schema_failed_reply(name, producer, schema_coverage, payloads=1)
+            and name not in self._unavailable_rejected_passes_last_round
+        }
         if not eligible:
             return []
         this_round = {id(finding) for finding in self._phase_findings.get("l1", ())}
@@ -2113,11 +2160,23 @@ class StateMachine:
         """
         return bool(self._falsify_protocol_findings) and self._host_attempt_round is not None
 
+    def _l2_infra_observed(self) -> bool:
+        """This round's L2 returned an infrastructure error (#114).
+
+        The L2 cause of an INCOMPLETE fixpoint, read by `_fixpoint_reached`,
+        `_l2_only_incomplete` and the host row writer, so the fixpoint and the
+        row's `l2_infra_error` field agree. In a host attempt it also requires
+        that L2 returned, as state.validate_round_history does. Side-effect-free.
+        """
+        if self._l2_infra_error is None:
+            return False
+        return self._host_attempt_round is None or self._phase_status["l2"] == "returned"
+
     def _l2_only_incomplete(self, fixpoint: _FixpointResult) -> bool:
         """INCOMPLETE only because of this round's L2 infrastructure error, not a protocol stop."""
         return (
             fixpoint == _FixpointResult.INCOMPLETE
-            and self._l2_infra_error is not None
+            and self._l2_infra_observed()
             and not self._protocol_stop()
         )
 
@@ -2263,13 +2322,16 @@ class StateMachine:
 
         fix8 scope: only the row this attempt settled (`_settled_preserve_round`),
         for any failure after the settle within the same run(), before the next
-        attempt begins.
+        attempt begins, except the mutation-infra breaker's stop after its save
+        (W2-10), which clears that round first.
         Rows settled by earlier attempts and earned rows are unchanged, as on main.
+        An ESCALATED note naming the preserve is retracted (TD-P6-C3d).
         The row becomes the reset the main path records for the same round:
         credit and the earned window are wiped, the C3 companion fingerprints
         the writer omitted return to `dispositions`. HOLD needs no clearing: the
         preserve predicate already required it empty.
         """
+        self._retract_preserved_credit_note()
         row["clean_credit_action"] = "reset"
         if row.get("fixpoint") == "CYCLE_RESTART":
             # L-B: the log names the action the ledger records. This attempt
@@ -2379,13 +2441,15 @@ class StateMachine:
             # written fails fast with persisted non-PASS state instead of
             # accumulating clean rounds toward a false PASS.
             gate_errors = self._receipt_gate_round_errors()
-            if _preserve_schema_coverage and any(
-                err != _ATTEMPTED_EVIDENCE_GATE_ERROR for err in gate_errors
-            ):
-                # Literal/IO/unavailable-audit damage alongside a (iii)
-                # finding is not a (iii)-only round: decide the M6 wipe
-                # before anything reports preserved credit.
-                _preserve_schema_coverage = False
+            if _preserve_schema_coverage:
+                tolerated = {_ATTEMPTED_EVIDENCE_GATE_ERROR}
+                if self._unavailable_audit_is_schema_fail():
+                    tolerated.add(_AUDIT_UNAVAILABLE_GATE_ERROR)
+                # Literal/IO damage, or an unavailable audit payload that is
+                # not a schema-failed reply, alongside a (iii) finding is not
+                # a (iii)-only round: decide the M6 wipe before anything
+                # reports preserved credit.
+                _preserve_schema_coverage = not any(err not in tolerated for err in gate_errors)
             if _fp == _FixpointResult.CYCLE_RESTART:
                 if not _preserve_schema_coverage:
                     self._reset_clean_credit()
@@ -2527,6 +2591,7 @@ class StateMachine:
             if _fp != _FixpointResult.CLEAN and self._stalled_on_identical_round():
                 self._state.verdict = Verdict.ESCALATED
                 self._state.converged = False
+                self._append_preserved_credit_note()
                 self._state.infra_errors.append(self._stall_reason())
                 self._persist_state()
                 return Verdict.ESCALATED
@@ -2535,6 +2600,8 @@ class StateMachine:
         category = diagnose_non_convergence(self._product_history(), self._state.infra_errors)
         self._state.verdict = Verdict.ESCALATED
         self._state.converged = False
+        # After the diagnosis, which reads infra_errors.
+        self._append_preserved_credit_note()
         self._state.infra_errors.append(f"ESCALATED category={category}")
         self._persist_state()
         return Verdict.ESCALATED
@@ -2835,6 +2902,10 @@ class StateMachine:
         self._state.verdict = Verdict.FAIL
         self._state.converged = False
         self._persist_state()
+        # W2-10: a deliberate stop after this round's final save is not a failed
+        # attempt, so a `preserved` row the round settled stands. Cleared after
+        # the save: a failed save still demotes it, as any post-settle failure does.
+        self._settled_preserve_round = None
         raise TimeoutBreaker(
             "stopped: mutation infrastructure error in %d consecutive rounds "
             "(not a code finding and not an LLM timeout; raising FORGE_LLM_TIMEOUT_S "
@@ -3548,7 +3619,7 @@ class StateMachine:
         if self._attempted_last_round:
             errors.append(_ATTEMPTED_EVIDENCE_GATE_ERROR)
         if self._unavailable_rejected_passes_last_round:
-            errors.append("review evidence rejected in current round; audit payload unavailable")
+            errors.append(_AUDIT_UNAVAILABLE_GATE_ERROR)
         diff_text = self._receipt_diff()
         excerpts = self._excerpts_last_round
         if diff_text and excerpts:
@@ -4512,7 +4583,7 @@ class StateMachine:
         # #114: a typed L2 infra diagnostic is not a product finding. It
         # never resets credit by itself; it only stops this round earning.
         product_findings = [f for f in self._product_findings() if not is_mutation_infra_diagnostic(f)]
-        incomplete_l2 = self._l2_infra_error is not None
+        incomplete_l2 = self._l2_infra_observed()
         current_disps = {f.fingerprint: f.disposition for f in product_findings}
 
         # Previous round's dispositions, for clause (b) only (a FIXED
@@ -4736,6 +4807,20 @@ class StateMachine:
             fp not in self._state.promoted_fingerprints and fp not in skipped for fp in l0_confirmed
         )
         return not budget_left
+
+    def _append_preserved_credit_note(self) -> None:
+        """TD-P6-C3d: before an ESCALATED line, name the preserved rounds behind it."""
+        note = preserved_credit_note(self._state.round_history, self._state.consecutive_clean_rounds)
+        if note is not None:
+            self._state.infra_errors.append(note)
+            self._preserved_note_written = note
+
+    def _retract_preserved_credit_note(self) -> None:
+        """Drop the note this run wrote, when the preserve it names is demoted."""
+        note, self._preserved_note_written = self._preserved_note_written, None
+        errors = self._state.infra_errors
+        if note is not None and note in errors:
+            del errors[len(errors) - 1 - errors[::-1].index(note)]
 
     # Longest fingerprint list a stall reason spells out; the rest is counted.
     _STALL_REASON_MAX_FINGERPRINTS = 10

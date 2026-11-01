@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from code_forge import llm_invoke
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
@@ -32,13 +33,13 @@ from code_forge.state import (
     save_state,
     validate_round_history,
 )
-from tests import test_review_interruption_source_controls as _sc
+from tests import _review_harness as _harness
 
 # Re-export the shared fixture by plain assignment, not `from ... import`, so test
 # parameters named `offline_workspace` are not ruff F811 redefinitions of an
 # unused import. pytest registers a fixture under its module attribute name, so
 # the attribute must stay `offline_workspace`.
-offline_workspace = _sc.offline_workspace
+offline_workspace = _harness.offline_workspace
 
 
 SOURCE = "a" * 64
@@ -1040,7 +1041,7 @@ def test_c3_negative_beside_companion_keeps_reset(tmp_path, monkeypatch, case):
     # Side-effect guard: every `_fixpoint_reached` call below, direct or through the
     # counterfactual, is compared against a snapshot of the machine's instance
     # attributes taken before it (instance attributes only).
-    record = _sc._guard_fixpoint(monkeypatch, sm)
+    record = _harness._guard_fixpoint(monkeypatch, sm)
     sm._fixpoint_reached()
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
     assert sm._c3_strip_fps == set()
@@ -1103,7 +1104,7 @@ def test_every_fixpoint_return_leaves_instance_state_unchanged(tmp_path, monkeyp
     sm._phase_findings["l1"] = []
     setup, expected = _FIXPOINT_RETURNS[case]
     setup(sm)
-    record = _sc._guard_fixpoint(monkeypatch, sm)
+    record = _harness._guard_fixpoint(monkeypatch, sm)
     assert sm._fixpoint_reached() is expected
     assert record["violations"] == []
     assert record["results"] == [expected]
@@ -1119,6 +1120,77 @@ def test_c3_companion_eligibility_is_per_pass(tmp_path, monkeypatch):
     sm._unavailable_rejected_passes_last_round = {"expert"}
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
     assert sm._c3_strip_fps == {_C3_FP}
+
+
+def _w28_machine(tmp_path, monkeypatch, name="qodo"):
+    """W2-8: one schema-failed reply for `name` the audit writer could not encode.
+
+    No attempted payload and no companion; the pass is in the unavailable set.
+    The response count enters through a real _L1Call recorder, as in _c3_machine.
+    """
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm.l1_provider = _L1Call(lambda call: call.record_reviewer_response(name))
+    sm.l1_provider()
+    sm._capture_reviewer_responses()
+    schema = _schema_finding(name)
+    sm._state.findings = [schema]
+    sm._phase_findings = {"l1": [schema]}
+    sm._attempted_last_round = []
+    sm._unavailable_rejected_passes_last_round = {name}
+    sm._state.round_history = [{"dispositions": {}}, {}]
+    return sm
+
+
+def _w28_second_response(sm):
+    sm.l1_provider.record_reviewer_response("qodo")
+    sm._capture_reviewer_responses()
+
+
+_W28_NEGATIVES = {
+    "empty-unavailable-set": lambda sm: setattr(sm, "_unavailable_rejected_passes_last_round", set()),
+    "unavailable-pass-without-schema-fail": lambda sm: setattr(
+        sm, "_unavailable_rejected_passes_last_round", {"qodo", "expert"}
+    ),
+    "coverage-cause-only": lambda sm: setattr(sm._state, "findings", [_coverage_finding("qodo")]),
+    "schema-fail-near-miss": lambda sm: setattr(sm._state.findings[0], "file", "<llm-invoke>"),
+    "two-responses": _w28_second_response,
+    "responses-never-recorded": lambda sm: setattr(sm, "_responses_last_round", None),
+    "attempted-payload-same-pass": lambda sm: setattr(
+        sm, "_attempted_last_round", [{"pass_name": "qodo"}]
+    ),
+    "excerpt-rejection-same-pass": lambda sm: setattr(
+        sm.l1_provider, "_excerpt_rejections", (_rejection(sm.l1_provider, "qodo"),)
+    ),
+    "reviewed-repositories-set": lambda sm: setattr(sm, "reviewed_repositories", {"repo": "0" * 40}),
+    "non-l1call-provider": lambda sm: setattr(sm, "l1_provider", lambda: ([], [], Usage(), 0.0)),
+}
+
+
+def test_w28_unavailable_schema_fail_reply_is_tolerated(tmp_path, monkeypatch):
+    """W2-8: the audit-unavailable pass is exactly one schema-failed reply."""
+    sm = _w28_machine(tmp_path, monkeypatch)
+    assert sm._unavailable_audit_is_schema_fail() is True
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+
+
+def test_w28_eligibility_is_per_pass(tmp_path, monkeypatch):
+    """An attempted payload, a rejection or a second response on ANOTHER pass does not disqualify."""
+    sm = _w28_machine(tmp_path, monkeypatch)
+    sm._attempted_last_round = [{"pass_name": "adversarial"}]
+    sm.l1_provider._excerpt_rejections = (_rejection(sm.l1_provider, "expert"),)
+    sm.l1_provider.record_reviewer_response("expert")
+    sm.l1_provider.record_reviewer_response("expert")
+    sm._capture_reviewer_responses()
+    assert sm._unavailable_audit_is_schema_fail() is True
+
+
+@pytest.mark.parametrize("case", list(_W28_NEGATIVES))
+def test_w28_negative_keeps_the_audit_unavailable_wipe(tmp_path, monkeypatch, case):
+    """Fail-closed: any other shape behind the audit-unavailable error is not tolerated."""
+    sm = _w28_machine(tmp_path, monkeypatch)
+    assert sm._unavailable_audit_is_schema_fail() is True
+    _W28_NEGATIVES[case](sm)
+    assert sm._unavailable_audit_is_schema_fail() is False
 
 
 def _host_rows(sm, prior_dispositions=None):
@@ -1301,13 +1373,13 @@ def _c3v2_wrap_body(machine, after):
 
 
 def _c3v2_run_reset(root, monkeypatch, after, *, fault="schema-findings"):
-    machine, calls = _sc._new_machine(root, monkeypatch, fault=fault)
+    machine, calls = _harness._new_machine(root, monkeypatch, fault=fault)
     _c3v2_wrap_body(machine, after)
-    seen = _sc._inject_gate_errors(monkeypatch, machine, [])
+    seen = _harness._inject_gate_errors(monkeypatch, machine, [])
     assert machine.run() is not Verdict.PASS
     assert len(seen) == 1 and seen[0][0] is False, seen
-    _sc._c3_companion(machine)
-    state, _ = _sc._state(root)
+    _harness._c3_companion(machine)
+    state, _ = _harness._state(root)
     latest = state.round_history[-1]
     assert latest["clean_credit_action"] == "reset"
     return machine, latest
@@ -1319,13 +1391,13 @@ def _adversarial_attempts(call):
 
 def test_c3v2_run_control_single_response_preserves(offline_workspace, monkeypatch):
     """Control for T10-T15: the same run without the extra effect preserves."""
-    machine, calls = _sc._new_machine(offline_workspace, monkeypatch, fault="schema-findings")
+    machine, calls = _harness._new_machine(offline_workspace, monkeypatch, fault="schema-findings")
     _c3v2_wrap_body(machine, lambda call: None)
-    seen = _sc._inject_gate_errors(monkeypatch, machine, [])
+    seen = _harness._inject_gate_errors(monkeypatch, machine, [])
     machine.run()
     assert seen[0][0] is True
     assert machine._responses_last_round == {"qodo": 1, "expert": 1, "adversarial": 1}
-    assert _sc._state(offline_workspace)[0].round_history[-1]["clean_credit_action"] == "preserved"
+    assert _harness._state(offline_workspace)[0].round_history[-1]["clean_credit_action"] == "preserved"
 
 
 def test_c3v2_rule2_count2_one_attempt_resets(offline_workspace, monkeypatch):
@@ -1409,7 +1481,7 @@ def test_c3v2_rule2_count_none_or_malformed_resets(offline_workspace, monkeypatc
 def test_c3v2_snapshot_cleared_before_l1(offline_workspace, monkeypatch):
     """T14: round N captures a snapshot; L1 raises in N+1 -> snapshot None
     (cleared before L1, never carried over)."""
-    machine, calls = _sc._new_machine(offline_workspace, monkeypatch, rounds=2)
+    machine, calls = _harness._new_machine(offline_workspace, monkeypatch, rounds=2)
     provider = machine.l1_provider
     original = provider._body
     at_l1 = []
@@ -1450,7 +1522,7 @@ def test_c3v2_rule3_injected_rejection_resets(offline_workspace, monkeypatch):
             ExcerptEvidenceError("constructed excerpt rejection"),
             "adversarial",
             attempt,
-            diff_text=_sc.DIFF,
+            diff_text=_harness.DIFF,
         )
         assert [r.pass_name for r in call._excerpt_rejections] == ["adversarial"]
 
@@ -1463,24 +1535,24 @@ def _c3v2_group_transport(monkeypatch, groups):
     adversarial pass of the control.ts group returns the schema-findings decoy."""
 
     def transport(prompt, *args, **kwargs):
-        files = [name for name in _sc.CONTENT if f"diff --git a/{name}" in prompt]
+        files = [name for name in _harness.CONTENT if f"diff --git a/{name}" in prompt]
         assert files and tuple(files) in groups
         body = {
             "findings": [],
             "code_excerpts": [
-                {"file": name, "start_line": 1, "end_line": 3, "content": _sc.CONTENT[name]}
+                {"file": name, "start_line": 1, "end_line": 3, "content": _harness.CONTENT[name]}
                 for name in files
             ],
         }
-        if _sc._reviewer_role(prompt) == "adversarial" and "control.ts" in files:
-            body = _sc._apply_reviewer_fault(body, "schema-findings")
-        return _sc.llm_invoke.LLMResult(body)
+        if _harness._reviewer_role(prompt) == "adversarial" and "control.ts" in files:
+            body = _harness._apply_reviewer_fault(body, "schema-findings")
+        return llm_invoke.LLMResult(body)
 
-    monkeypatch.setattr(_sc.llm_invoke, "_invoke_api", transport)
+    monkeypatch.setattr(llm_invoke, "_invoke_api", transport)
 
 
 def _c3v2_section(name):
-    parts = _sc.DIFF.split("diff --git ")
+    parts = _harness.DIFF.split("diff --git ")
     (part,) = [p for p in parts if p.startswith(f"a/{name} ")]
     return "diff --git " + part
 
@@ -1496,7 +1568,7 @@ def test_c3v2_grouped_resets(offline_workspace, monkeypatch, groups):
     from code_forge.factories import build_grouped_l1_provider
     from code_forge.reviewer_json import GroupedReviewAttempt
 
-    machine, _ = _sc._new_machine(offline_workspace, monkeypatch, fault="schema-findings")
+    machine, _ = _harness._new_machine(offline_workspace, monkeypatch, fault="schema-findings")
     _c3v2_group_transport(monkeypatch, groups)
     backend = BackendConfig(
         name="constructed-offline",
@@ -1514,18 +1586,18 @@ def test_c3v2_grouped_resets(offline_workspace, monkeypatch, groups):
                 "name": f"g{index}",
                 "conventions_digest": "",
                 "split_context": "",
-                "post_image": "".join(f"# {n}\n{_sc.CONTENT[n]}" for n in files),
+                "post_image": "".join(f"# {n}\n{_harness.CONTENT[n]}" for n in files),
                 "resolved": ResolvedReview([Path(n) for n in files], None, diff, "git"),
             }
         )
     machine.l1_provider = build_grouped_l1_provider("auto", specs, backend=backend, max_attempts=1)
     assert type(machine.l1_provider) is _L1Call
-    seen = _sc._inject_gate_errors(monkeypatch, machine, [])
+    seen = _harness._inject_gate_errors(monkeypatch, machine, [])
     machine.run()
     assert machine._responses_last_round is None
     attempts = [a for a in machine._attempted_last_round if a.get("pass_name") == "adversarial"]
     assert [type(a) for a in attempts] == [GroupedReviewAttempt]
-    _sc._c3_companion(machine)
+    _harness._c3_companion(machine)
     assert len(seen) == 1 and seen[0][0] is False
-    state, _ = _sc._state(offline_workspace)
+    state, _ = _harness._state(offline_workspace)
     assert state.round_history[-1]["clean_credit_action"] == "reset"
