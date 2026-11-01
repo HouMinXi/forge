@@ -529,9 +529,14 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             raise CorruptedStateError("invalid host phase status")
         if action == "unavailable" and phases["l1"] != "returned" and "fixpoint" in row:
             raise CorruptedStateError("unavailable host round has fixpoint without L1 observation")
-        # #114: written only as True, and only when this round's L2 returned.
+        # #114: written only as True, only when this round's L2 returned, and an
+        # L2 error turns CLEAN into INCOMPLETE, so it never sits beside CLEAN.
         l2_infra = "l2_infra_error" in row
-        if l2_infra and (row["l2_infra_error"] is not True or phases["l2"] != "returned"):
+        if l2_infra and (
+            row["l2_infra_error"] is not True
+            or phases["l2"] != "returned"
+            or row.get("fixpoint") not in ("INCOMPLETE", "RESET", "CYCLE_RESTART")
+        ):
             raise CorruptedStateError("invalid L2 infrastructure observation")
         if (
             not isinstance(row["source_hash"], str)
@@ -597,7 +602,6 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             or failures
             or row["reset_observed"]
             or row.get("fixpoint") != "CLEAN"
-            or l2_infra
         ):
             raise CorruptedStateError(f"{action} host round lacks CLEAN observation")
         # An L2 infrastructure error alone turns CLEAN into INCOMPLETE (#114):
@@ -612,12 +616,13 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             )
         ):
             raise CorruptedStateError("interrupted host round lacks nonreset acquisition observation")
-        # An unavailable round may be INCOMPLETE only through its L2 error: the
-        # receipt gate refused its evidence, and the L2 error may not keep it.
+        # An unavailable round may be INCOMPLETE only through its L2 error: it
+        # could not prove its evidence (failed attempt, refused receipt gate,
+        # survivor breaker), and the L2 error may not keep it.
         if row.get("fixpoint") == "INCOMPLETE" and not (
             action == "interrupted" or (action == "unavailable" and l2_infra)
         ):
-            raise CorruptedStateError("incomplete host round lacks protocol interruption")
+            raise CorruptedStateError("incomplete host round lacks a protocol or L2 cause")
         if action == "reset" and (
             not row["reset_observed"]
             or row["clean_rounds_after"] != 0
