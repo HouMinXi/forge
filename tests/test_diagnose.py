@@ -5,7 +5,9 @@
 import json
 from pathlib import Path
 
-from code_forge.diagnose import diagnose_non_convergence
+import pytest
+
+from code_forge.diagnose import diagnose_non_convergence, preserved_credit_note
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "machine_scenarios"
 
@@ -174,3 +176,58 @@ class TestDefaultFallback:
     def test_single_round(self):
         history = [{"dispositions": {"fp-1": "CONFIRMED"}}]
         assert diagnose_non_convergence(history, []) == "A"
+
+
+def _host(round_index, action, held=1):
+    return {
+        "round": round_index,
+        "clean_credit_action": action,
+        "clean_rounds_after": held,
+        "dispositions": {},
+    }
+
+
+class TestPreservedCreditNote:
+    """TD-P6-C3d: the preserved rounds since the last reset, report-only."""
+
+    def test_no_preserved_round_is_no_note(self):
+        history = [_host(0, "earned"), _host(1, "earned"), _host(2, "unavailable")]
+        assert preserved_credit_note(history, 2) is None
+
+    def test_names_preserved_cycles_and_the_held_count(self):
+        history = [_host(0, "earned"), _host(1, "earned"), _host(2, "preserved"), _host(3, "preserved")]
+        assert preserved_credit_note(history, 2) == (
+            "credit kept by preserved round(s) at cycle(s) 3, 4 "
+            "(schema/coverage failures only, not earned); 2 clean round(s) held in total"
+        )
+
+    def test_a_reset_drops_earlier_preserves(self):
+        history = [_host(0, "preserved"), _host(1, "reset"), _host(2, "earned"), _host(3, "preserved")]
+        assert preserved_credit_note(history, 1).startswith(
+            "credit kept by preserved round(s) at cycle(s) 4 "
+        )
+
+    def test_a_preserve_that_held_nothing_is_not_named(self):
+        history = [_host(0, "preserved", held=0), _host(1, "earned"), _host(2, "earned", held=2)]
+        assert preserved_credit_note(history, 2) is None
+        history.append(_host(3, "preserved", held=2))
+        assert preserved_credit_note(history, 2).startswith(
+            "credit kept by preserved round(s) at cycle(s) 4 ("
+        )
+
+    def test_no_note_when_no_clean_round_is_held(self):
+        assert preserved_credit_note([_host(0, "preserved"), _host(1, "preserved")], 0) is None
+
+    def test_preserved_then_reset_is_no_note(self):
+        assert preserved_credit_note([_host(0, "preserved"), _host(1, "reset")], 1) is None
+
+    def test_legacy_rows_change_nothing(self):
+        legacy = {"round": 1, "dispositions": {"fp": "CONFIRMED"}}
+        assert preserved_credit_note([legacy], 1) is None
+        note = preserved_credit_note([_host(0, "preserved"), legacy], 1)
+        assert note.startswith("credit kept by preserved round(s) at cycle(s) 1 ")
+
+    @pytest.mark.parametrize("count,shown", [(5, "1, 2, 3, 4, 5 ("), (7, "1, 2, 3, 4, 5 (+2 more) (")])
+    def test_listing_is_bounded(self, count, shown):
+        history = [_host(index, "preserved") for index in range(count)]
+        assert f"cycle(s) {shown}" in preserved_credit_note(history, 1)
