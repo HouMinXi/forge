@@ -379,7 +379,13 @@ class RuntimeRunner:
         # str.replace NOT str.format: diffs can contain literal { or }.
         prompt = RUNTIME_LIFECYCLE_QUESTION.replace("{diff_text}", prompt_diff)
         try:
-            result = llm_invoke(prompt, backend=self._backend, reply_keys=RUNTIME_REPLY_KEYS)
+            result = llm_invoke(
+                prompt,
+                backend=self._backend,
+                reply_keys=RUNTIME_REPLY_KEYS,
+                expected_keys=RUNTIME_REPLY_KEYS.top,
+                strict_response=True,
+            )
         except LLMInvokeError as exc:
             reason = str(exc)
             self.infra_errors.append("RUNTIME axis LLM call failed: %s" % reason)
