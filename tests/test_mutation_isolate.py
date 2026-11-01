@@ -408,12 +408,15 @@ def test_remove_cgroup_force_rewrites_kill(tmp_path, monkeypatch):
 
     fast_clock.now = 0.0
     monkeypatch.setattr(iso.time, "monotonic", fast_clock)
-    sup._remove_cgroup(force=True)
+    # The cgroup never goes away, so each call ends in a cleanup failure (#31).
+    with pytest.raises(iso.CgroupCleanupError):
+        sup._remove_cgroup(force=True)
     force_writes = len(writes)
 
     writes.clear()
     fast_clock.now = 0.0
-    sup._remove_cgroup(force=False)
+    with pytest.raises(iso.CgroupCleanupError):
+        sup._remove_cgroup(force=False)
     assert force_writes > len(writes) > 0
 
 

@@ -1026,6 +1026,10 @@ _C3_NEGATIVES = {
     "stale-prior-round-companion": _stale,
 }
 
+# Cases that `_schema_coverage_credit_preserve` rejects before it calls
+# `_fixpoint_without`.
+_C3_BEFORE_COUNTERFACTUAL = {"hold-fp"}
+
 
 @pytest.mark.parametrize("case", list(_C3_NEGATIVES))
 def test_c3_negative_beside_companion_keeps_reset(tmp_path, monkeypatch, case):
@@ -1033,8 +1037,76 @@ def test_c3_negative_beside_companion_keeps_reset(tmp_path, monkeypatch, case):
     sm, _, _ = _c3_machine(tmp_path, monkeypatch)
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
     _C3_NEGATIVES[case](sm)
+    # Side-effect guard: every `_fixpoint_reached` call below, direct or through the
+    # counterfactual, is compared against a snapshot of the machine's instance
+    # attributes taken before it (instance attributes only).
+    record = _sc._guard_fixpoint(monkeypatch, sm)
+    sm._fixpoint_reached()
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
     assert sm._c3_strip_fps == set()
+    assert record["violations"] == []
+    assert "test_c3_negative_beside_companion_keeps_reset" in record["sites"]
+    # The hold gate returns before the counterfactual; every other case
+    # reaches it with the schema-fail finding and its companions excluded.
+    assert ("_fixpoint_without" in record["sites"]) is (case not in _C3_BEFORE_COUNTERFACTUAL)
+
+
+def _protocol_then_confirmed(sm):
+    finding = _new_product("fp-proto", "P3: protocol")
+    _add(sm, finding)
+    sm._state.round_history = [
+        {"dispositions": {"fp-proto": "UNCERTAIN"}, "falsify_protocol_failures": ["fp-proto"]},
+        {},
+    ]
+
+
+def _falsify_failed(sm):
+    sm._falsify_failed_findings = [_new_product("fp-failed", "P3: failed", Disposition.UNCERTAIN)]
+
+
+# One case per return of `_fixpoint_reached`, in source order,
+# each with the result that proves the return was the one taken.
+_FIXPOINT_RETURNS = {
+    "new-confirmed": (lambda sm: _add(sm, _new_product("fp-new", "P3: new nit")), _FixpointResult.RESET),
+    "fixed-reversion": (
+        lambda sm: _recurring(sm, _new_product("fp-p3", "P3: nit"), prior="FIXED"),
+        _FixpointResult.RESET,
+    ),
+    "protocol-then-confirmed": (_protocol_then_confirmed, _FixpointResult.RESET),
+    "hold": (lambda sm: setattr(sm, "_hold_confirmed_fingerprints", ["held-fp"]), _FixpointResult.RESET),
+    "falsify-failed": (_falsify_failed, _FixpointResult.RESET),
+    "uncertain": (
+        lambda sm: _add(sm, _new_product("fp-unsure", "P3: unsure", Disposition.UNCERTAIN)),
+        _FixpointResult.RESET,
+    ),
+    "clean": (lambda sm: None, _FixpointResult.CLEAN),
+    "recurring-p1": (lambda sm: _recurring(sm, _new_product("fp-p1", "P1: bug")), _FixpointResult.RESET),
+    "recurring-p2": (
+        lambda sm: _recurring(sm, _new_product("fp-p2", "P2: bug")),
+        _FixpointResult.CYCLE_RESTART,
+    ),
+    "p3-distinct-over-threshold": (_p3_over_threshold, _FixpointResult.CYCLE_RESTART),
+    "p3-density-over-threshold": (_p3_density, _FixpointResult.CYCLE_RESTART),
+}
+
+
+@pytest.mark.parametrize("case", list(_FIXPOINT_RETURNS))
+def test_every_fixpoint_return_leaves_instance_state_unchanged(tmp_path, monkeypatch, case):
+    """Each return of `_fixpoint_reached` leaves the machine's instance attributes as they were.
+
+    The machine carries only the case's findings, so the expected result
+    pins which return was taken. Instance attributes only; file system,
+    module and class state are outside the snapshot.
+    """
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._state.findings = []
+    sm._phase_findings["l1"] = []
+    setup, expected = _FIXPOINT_RETURNS[case]
+    setup(sm)
+    record = _sc._guard_fixpoint(monkeypatch, sm)
+    assert sm._fixpoint_reached() is expected
+    assert record["violations"] == []
+    assert record["results"] == [expected]
 
 
 def test_c3_companion_eligibility_is_per_pass(tmp_path, monkeypatch):

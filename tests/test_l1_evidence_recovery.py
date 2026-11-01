@@ -80,7 +80,7 @@ def test_scoped_empty_evidence_gets_one_repair(monkeypatch, kind, root, with_fin
     assert "for those findings" not in prompt
     assert calls[1][0][2] == 7
     if kind == "api":
-        assert calls[1][1] == {"expected_keys": None, "max_attempts": 1}
+        assert calls[1][1] == {"expected_keys": None, "max_attempts": 1, "reply_keys": None}
 
 
 @pytest.mark.parametrize(
@@ -830,7 +830,9 @@ def test_failed_response_normalizes_partial_usage(
     # bbdda80: a partial report is observed usage, never the complete error Usage.
     assert caught.value.usage is None
     assert caught.value.observed_usage == invoke.Usage(0, 7, 4)
-    assert caught.value.observed_usage.known_fields == frozenset({"output_tokens", "cached_input_tokens"})
+    assert caught.value.observed_usage.known_fields == frozenset(
+        {"output_tokens", "cached_input_tokens"}
+    )
     if kind == "no_json":
         assert caught.value.raw_response == content
 

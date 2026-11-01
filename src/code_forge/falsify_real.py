@@ -15,7 +15,7 @@ from .backend import BackendConfig
 from .disposition import Disposition
 from .falsify import Falsifier
 from .falsify_receipt import check_receipt
-from .llm_invoke import FalsifyProtocolError, llm_invoke
+from .llm_invoke import FalsifyProtocolError, ReplyKeys, llm_invoke
 from .state import StateFinding
 
 _PROMPT_PREFIX = (
@@ -44,6 +44,13 @@ _PROMPT_PREFIX = (
 
 
 _DIFF_CAP = 8 * 1024
+
+# The keys _PROMPT_PREFIX asks for; checked only on a reply that needed
+# quote repair (#264).
+_FALSIFY_REPLY_KEYS = ReplyKeys(
+    top=frozenset({"verdict", "reasoning", "receipt"}),
+    items={"receipt": frozenset({"command", "output"})},
+)
 
 _DIFF_SECTION = (
     "\n## Diff (the change under review, this file only)\n"
@@ -179,9 +186,7 @@ def _anchored_diff_excerpt(section: str, text: str, line_range: Optional[list[in
     return ""
 
 
-def _diff_for_file(
-    diff_text: Optional[str], path: str, line_range: Optional[list[int]] = None
-) -> str:
+def _diff_for_file(diff_text: Optional[str], path: str, line_range: Optional[list[int]] = None) -> str:
     """Annotated hunks for one file, or "" when the file has none."""
     if not diff_text or not path:
         return ""
@@ -197,8 +202,7 @@ def _diff_for_file(
             return anchored
         notice = (
             "\n... [anchor unavailable; cited code not located; prefix truncated to %d characters; "
-            "omitted diff text]\n"
-            % _DIFF_CAP
+            "omitted diff text]\n" % _DIFF_CAP
         )
         text = text[: _DIFF_CAP - len(notice)] + notice
     return text
@@ -266,6 +270,7 @@ class RealFalsifier(Falsifier):
             prompt,
             backend=self._backend,
             expected_keys=frozenset({"verdict", "reasoning"}),
+            reply_keys=_FALSIFY_REPLY_KEYS,
         )
         response = result.content
 

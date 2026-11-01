@@ -61,7 +61,7 @@ def test_cli_backend_gets_repair_prompt_and_keeps_findings(monkeypatch):
     assert repair_prompt == invoke._excerpt_repair_prompt(_PARSED, "review a.py")
     assert got_backend is backend
     assert got_timeout == 90
-    assert kwargs == {}
+    assert kwargs == {"reply_keys": None}
     assert repaired is not _PARSED
     assert repaired["findings"] == _PARSED["findings"]
     assert repaired["code_excerpts"] == _EXCERPTS

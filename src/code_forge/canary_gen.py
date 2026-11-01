@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import json
 import random
 import re
 import sys
@@ -36,7 +35,13 @@ from .canary import (
 )
 from .evidence import reverify_finding_cites
 from .findings import finding_line  # noqa: F401 -- re-export awareness
+from .llm_invoke import ReplyKeys, loads_reply_json
 from .state import Verdict
+
+# The canary review reply's keys (#264): only the top key, since a model may
+# add its own finding keys (title, fix, confidence) and the canary validator
+# ignores them. A duplicate or unknown top key in a repaired reply is refused.
+CANARY_REVIEW_REPLY_KEYS = ReplyKeys(top=frozenset({"findings"}))
 
 
 # ---------------------------------------------------------------------------
@@ -348,8 +353,8 @@ def dispatch_canary_review(
     raw = provider(prompt)
 
     try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+        data = loads_reply_json(raw)
+    except (ValueError, TypeError):
         print("code-forge: canary: cannot parse reviewer response as JSON", file=sys.stderr)
         return []
 
@@ -402,7 +407,7 @@ def run_inline_canary(
         cite_result = reverify_finding_cites(list(partition.real), source_lookup)
         return Verdict.DELEGATED, list(cite_result.verified)
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - any dispatch failure falls back to DELEGATED
         print(
             "code-forge: canary: dispatch failed: %s, falling back to DELEGATED" % exc,
             file=sys.stderr,
