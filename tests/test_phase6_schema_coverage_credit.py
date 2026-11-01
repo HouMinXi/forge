@@ -28,6 +28,7 @@ from code_forge.state import (
     Verdict,
     earned_history_cycles,
     load_state,
+    product_round_history,
     save_state,
     validate_round_history,
 )
@@ -657,13 +658,18 @@ def test_m4_loader_accepts_recurring_uncertain_then_confirmed_without_protocol()
     validate_round_history(rows, 2)
 
 
-def test_i9_state_project_product_row_patch_reaches_preserved_validation(monkeypatch):
-    """Joint I-9: patching `state._project_product_row` reaches the split-out validator too."""
+def test_i9_product_history_and_preserved_validation_share_the_projection(monkeypatch):
+    """Joint I-9: the fixpoint history and the split-out validator both project through one function.
+
+    Each module binds the shared definition at import; spying on both bindings
+    shows `product_round_history` and the preserved-row validator call it.
+    """
     import sys
 
     from code_forge import state as state_module
+    from code_forge import state_preserved, state_rows
 
-    original = state_module._project_product_row
+    original = state_rows._project_product_row
     callers = []
 
     def spy(row):
@@ -671,6 +677,7 @@ def test_i9_state_project_product_row_patch_reaches_preserved_validation(monkeyp
         return original(row)
 
     monkeypatch.setattr(state_module, "_project_product_row", spy)
+    monkeypatch.setattr(state_preserved, "_project_product_row", spy)
     rows = [
         _m4_prior_row(0, {"fp-p3": "CONFIRMED"}),
         _m4_prior_row(1, {"fp-p3": "CONFIRMED"}),
@@ -678,19 +685,26 @@ def test_i9_state_project_product_row_patch_reaches_preserved_validation(monkeyp
     ]
     validate_round_history(rows, 2)
     assert "code_forge.state_preserved" in callers
+    callers.clear()
+    product_round_history(rows)
+    assert "code_forge.state" in callers
 
 
 def test_i3_project_product_row_has_one_definition():
-    """fix8 I-3: one real definition (in state.py), one call-time shim, and it pickles again."""
+    """fix8 I-3: one real definition, in the leaf module state_rows; no call-time shim; it pickles."""
     import pickle
 
     from code_forge import state as state_module
-    from code_forge import state_preserved
+    from code_forge import state_preserved, state_rows
 
-    real = state_module._project_product_row
-    assert real.__module__ == "code_forge.state" and real.__qualname__ == "_project_product_row"
+    real = state_rows._project_product_row
+    assert real.__module__ == "code_forge.state_rows" and real.__qualname__ == "_project_product_row"
     assert pickle.loads(pickle.dumps(real)) is real  # noqa: S301 - our own function object
-    assert state_preserved._project_product_row is not real
+    assert state_module._project_product_row is real
+    assert state_preserved._project_product_row is real
+    assert state_module.is_host_round is state_rows.is_host_round
+    assert state_module.HOST_ROUND_FIELDS is state_rows.HOST_ROUND_FIELDS
+    assert not hasattr(state_preserved, "is_host_round")
     assert not hasattr(state_preserved, "_moved_project_product_row")
 
 

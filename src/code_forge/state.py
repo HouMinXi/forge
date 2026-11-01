@@ -28,21 +28,16 @@ from .state_preserved import (  # re-exported: preserved-row validation (D-v11-1
     _recurring_confirmed as _recurring_confirmed,
     _validate_preserved_dispositions as _validate_preserved_dispositions,
 )
+from .state_rows import (  # re-exported: host round-row shape, defined once
+    HOST_ROUND_FIELDS as HOST_ROUND_FIELDS,
+    _project_product_row as _project_product_row,
+    is_host_round as is_host_round,
+)
 
 SCHEMA_VERSION: int = 1
 MUTATION_SURVIVOR_COUNTER_VERSION: int = 1
 EARNED_WINDOW_VERSION = 1
 ROUND_PHASES = ("l0", "rulepack", "l1", "l2", "e2e", "coverage")
-HOST_ROUND_FIELDS = frozenset(
-    {
-        "clean_credit_action",
-        "phase_status",
-        "acquisition_failures",
-        "reset_observed",
-        "source_hash",
-        "reviewed_repositories",
-    }
-)
 
 # Canonical pass names (shared by receipt.py, outlet_c.py, sarif.py).
 _PASS_NAMES = ("qodo", "expert", "adversarial")
@@ -462,11 +457,6 @@ def validate_earned_clean_window(window: dict) -> None:
         previous = cycle
 
 
-def is_host_round(row: dict) -> bool:
-    """Presence of any authority field prevents legacy interpretation."""
-    return bool(HOST_ROUND_FIELDS.intersection(row)) or "evidence_rejections" in row
-
-
 def validate_round_history(history: list[dict], round_index: int | None = None) -> None:
     """Validate immutable attempt IDs and modern host observations."""
     if not isinstance(history, list):
@@ -647,21 +637,6 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
         or (not history and round_index != 0)
     ):
         raise CorruptedStateError("stored round disagrees with attempt history")
-
-
-def _project_product_row(row: dict) -> dict | None:
-    """One finalized product snapshot as the fixpoint sees it, or None."""
-    if not is_host_round(row):
-        return row
-    if row["clean_credit_action"] == "pending" or "dispositions" not in row:
-        return None
-    row = dict(row)
-    collisions = {
-        fp for name in ("l0", "l2", "e2e", "rulepack") for fp in row.get(f"{name}_fingerprints", [])
-    }
-    synthetic = {f["fingerprint"] for f in row["acquisition_failures"]} - collisions
-    row["dispositions"] = {fp: disp for fp, disp in row["dispositions"].items() if fp not in synthetic}
-    return row
 
 
 def product_round_history(history: list[dict], *, before_round: int | None = None) -> list[dict]:
