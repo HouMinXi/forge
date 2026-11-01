@@ -956,13 +956,13 @@ def _unresolved_finding_label(finding: object) -> str:
     """Name an unresolved unverified finding by what its receipt basis shows, and no more.
 
     Wording only: the finding stays in `unresolved_findings` and the result is
-    unchanged. The host writes authority infra-unavailable for INFRA
-    diagnostics and for UNTRUSTED reviewer output alike, and a receipt finding
-    does not carry the source that tells them apart (its file and description
-    can come from the reviewer). So that label claims neither a product defect
-    nor a trusted infrastructure diagnostic, and still names the product
-    candidate an untrusted response may hold. Nothing from the receipt is
-    echoed.
+    unchanged. The host writes authority infra-unavailable for three kinds of
+    finding: a product candidate whose falsification failed (published as
+    INFRA/UNCERTAIN), UNTRUSTED reviewer output, and INFRA diagnostics. A
+    receipt finding does not carry what tells them apart (its file and
+    description can come from the reviewer). So the label names a product
+    candidate first, never discounts it, and claims no trusted infrastructure
+    diagnostic. Nothing from the receipt is echoed.
     """
     basis = finding.get("basis") if isinstance(finding, dict) else None
     authority = basis.get("authority") if isinstance(basis, dict) else None
@@ -970,8 +970,8 @@ def _unresolved_finding_label(finding: object) -> str:
         return "unresolved finding with a malformed basis"
     if authority.strip().lower() == AUTHORITY_INFRA_UNAVAILABLE:
         return (
-            "unresolved finding without verified evidence (an infrastructure failure, "
-            "or a product candidate in untrusted reviewer output)"
+            "unresolved finding without verified evidence (a product candidate the host "
+            "could not verify, or an infrastructure failure)"
         )
     return "unresolved finding with an unrecognized basis authority"
 

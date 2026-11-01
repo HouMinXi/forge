@@ -131,45 +131,53 @@ def test_evidence_only_option_cannot_attest_multiple_cycles(tmp_path):
     assert result.reason == "evidence-only attestation requires one cycle"
 
 
-# INFRA and UNTRUSTED receipts both carry authority infra-unavailable; the
-# reason names both and claims neither a product defect nor trusted infra.
+# Authority infra-unavailable covers a product candidate whose falsification
+# failed, UNTRUSTED reviewer output and INFRA diagnostics; the reason names a
+# product candidate first and claims no trusted infrastructure diagnostic.
 _INFRA_UNAVAILABLE_LABEL = (
-    "unresolved finding without verified evidence (an infrastructure failure, "
-    "or a product candidate in untrusted reviewer output)"
+    "unresolved finding without verified evidence (a product candidate the host "
+    "could not verify, or an infrastructure failure)"
 )
 _MALFORMED_LABEL = "unresolved finding with a malformed basis"
 _UNRECOGNIZED_LABEL = "unresolved finding with an unrecognized basis authority"
 
+_MISSING = object()
+# Each unverified basis shape with the label its reason must carry, written
+# out rather than derived, so the table is an independent oracle.
+_UNVERIFIED_LABELS = [
+    (None, _MALFORMED_LABEL),
+    (False, _MALFORMED_LABEL),
+    (0, _MALFORMED_LABEL),
+    ("infra-unavailable", _MALFORMED_LABEL),
+    ([], _MALFORMED_LABEL),
+    (["authority"], _MALFORMED_LABEL),
+    ({}, _MALFORMED_LABEL),
+    ({"authority": None}, _MALFORMED_LABEL),
+    ({"authority": False}, _MALFORMED_LABEL),
+    ({"authority": 0}, _MALFORMED_LABEL),
+    ({"authority": []}, _MALFORMED_LABEL),
+    ({"authority": {}}, _MALFORMED_LABEL),
+    ({"authority": "infra-unavailable"}, _INFRA_UNAVAILABLE_LABEL),
+    ({"authority": " INFRA-UNAVAILABLE\t"}, _INFRA_UNAVAILABLE_LABEL),
+    ({"authority": ""}, _MALFORMED_LABEL),
+    ({"authority": " \t\n"}, _MALFORMED_LABEL),
+    ({"authority": "future-authority"}, _UNRECOGNIZED_LABEL),
+]
+_UNVERIFIED_BASES = [basis for basis, _ in _UNVERIFIED_LABELS]
+# Also used by the earned-cycle capture test below.
+_EXTRA_LABELS = [({"authority": "unknown"}, _UNRECOGNIZED_LABEL)]
+
 
 def _expected_label(basis):
-    authority = basis.get("authority") if isinstance(basis, dict) else None
-    if not isinstance(authority, str) or not authority.strip():
-        return _MALFORMED_LABEL
-    if authority.strip().lower() == "infra-unavailable":
-        return _INFRA_UNAVAILABLE_LABEL
-    return _UNRECOGNIZED_LABEL
+    (label,) = [
+        label
+        for known, label in _UNVERIFIED_LABELS + _EXTRA_LABELS
+        # JSON, not ==: {"authority": False} == {"authority": 0} in Python.
+        if json.dumps(known, sort_keys=True) == json.dumps(basis, sort_keys=True)
+    ]
+    return label
 
 
-_MISSING = object()
-_UNVERIFIED_BASES = [
-    None,
-    False,
-    0,
-    "infra-unavailable",
-    [],
-    ["authority"],
-    {},
-    {"authority": None},
-    {"authority": False},
-    {"authority": 0},
-    {"authority": []},
-    {"authority": {}},
-    {"authority": "infra-unavailable"},
-    {"authority": " INFRA-UNAVAILABLE\t"},
-    {"authority": ""},
-    {"authority": " \t\n"},
-    {"authority": "future-authority"},
-]
 _KNOWN_AUTHORITIES = [
     "deterministic-executed",
     "llm-trained",
