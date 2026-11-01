@@ -3150,6 +3150,29 @@ def test_p7_first_run_keeps_a_seeded_state(offline_workspace, monkeypatch):
     assert [row["round"] for row in machine._state.round_history] == [1]
 
 
+def test_p7_run_that_fails_before_the_state_load_leaves_the_seeded_state(offline_workspace, monkeypatch):
+    """P7-1 boundary: a run() that raises before it reaches the state load did not use the seed.
+
+    Run 1 fails while resolving the trusted gate, before `_maybe_load_prior_state`.
+    Run 2 is then the first run that uses the built State: it keeps the seeded
+    `env_manifest = {}` and probes nothing (the offline fixture refuses a probe).
+    """
+    root = offline_workspace
+    machine, _ = _new_machine(root, monkeypatch, rounds=1)
+    seeded = machine._state
+    with monkeypatch.context() as mp:
+
+        def refuse():
+            raise _AfterRoundInterrupt("constructed failure before the state load")
+
+        mp.setattr(machine, "_resolve_trusted_gate_data", refuse)
+        with pytest.raises(_AfterRoundInterrupt, match="before the state load"):
+            machine.run()
+    assert machine._state is seeded
+    assert machine.run() is Verdict.ESCALATED
+    assert machine._state is seeded and machine._state.env_manifest == {}
+
+
 def test_p7_reused_ci_instance_still_carries_its_state(offline_workspace, monkeypatch):
     """P7-1 boundary: CI never reloads state.json and keeps the in-memory State, as on main."""
     root = offline_workspace
