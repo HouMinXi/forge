@@ -8,9 +8,9 @@ Public pure interfaces only:
 Phase 1 DTO → wire mapping (actual shipped shapes, not Part B sketch):
   ReportRecord → RecordView.fields (18-key inventory) + ProductRecord /
     HostDiagnostic. Copied fields: id←finding_id, fingerprint, file,
-    line_range (tuple→list), description, disposition. AssociatedDiagnostic
+    line_range (tuple→list), description, disposition, source (W2-6). AssociatedDiagnostic
     reason is also copied into fields.error / fields.evidence_downgrade for
-    §3.2 local coherence. Fields absent from ReportRecord (source, anchor,
+    §3.2 local coherence. Fields absent from ReportRecord (anchor,
     evidence_files, is_timeout, backend, severity, excerpt, falsify_reasoning,
     diagnostic_kind, provider_failure) are emitted as JSON null.
   ReportRecord.host_failure_kind (Phase 5 WP2, naming-domain b) is a
@@ -137,6 +137,9 @@ HOST_FAILURE_KINDS: frozenset[str] = frozenset(
         "PROVIDER_EMPTY",
         "PROVIDER_PROTOCOL",
         "RECEIPT_INVALID_GATE",
+        "RECEIPT_SCHEMA",
+        "RECEIPT_COVERAGE",
+        "RECEIPT_EVIDENCE",
     }
 )
 
@@ -480,6 +483,7 @@ def _record_view_from_report_record(r: ReportRecord) -> RecordView:
     fields["line_range"] = list(r.line_range)
     fields["description"] = r.description
     fields["disposition"] = r.disposition
+    fields["source"] = r.source
     # Restore field slots implied by associated diagnostics (owned reason copy).
     for d in r.associated_diagnostics:
         if d.kind == "falsifier-failure":

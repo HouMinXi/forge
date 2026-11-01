@@ -411,6 +411,8 @@ def _legacy_state(path):
             "acquisition_failures",
             "reset_observed",
             "phase_status",
+            "untrusted_fingerprints",
+            "preserve_basis",
         ):
             row.pop(key, None)
     path.write_text(json.dumps(data))

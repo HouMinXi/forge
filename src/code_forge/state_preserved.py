@@ -50,6 +50,7 @@ def _validate_preserved_dispositions(row: dict, prior: list[dict]) -> None:
     history = [projected for past in prior if (projected := _project_product_row(past)) is not None]
     previous = history[-1].get("dispositions", {}) if history else {}
     open_values = {Disposition.CONFIRMED.value, Disposition.UNCERTAIN.value}
+    recurring = set()
     for fp, disp in disps.items():
         if disp not in open_values or fp in causes:
             continue
@@ -58,13 +59,64 @@ def _validate_preserved_dispositions(row: dict, prior: list[dict]) -> None:
         if _RECEIPT_AUDIT_FP.match(fp) and disp == Disposition.UNCERTAIN.value:
             continue
         if disp == Disposition.CONFIRMED.value and _recurring_confirmed(fp, history, previous):
+            recurring.add(fp)
             continue
         raise CorruptedStateError("preserved host round lacks (iii)-only product dispositions")
+
+    if "preserve_basis" not in row:
+        return  # Phase 6 compatibility; load_state warns once per load.
+    if any(not isinstance(fp, str) or not fp for fp in l1):
+        raise CorruptedStateError("invalid preserve basis L1 fingerprints")
+    basis = row["preserve_basis"]
+    if not isinstance(basis, dict) or set(basis) != {
+        "version",
+        "causes",
+        "companions",
+        "counterfactual",
+        "recurring",
+        "density_passed",
+    }:
+        raise CorruptedStateError("invalid preserve basis shape")
+    if type(basis["version"]) is not int or basis["version"] != 1:
+        raise CorruptedStateError("invalid preserve basis version")
+    for name in ("causes", "companions"):
+        values = basis[name]
+        if (
+            not isinstance(values, list)
+            or any(not isinstance(fp, str) or not fp for fp in values)
+            or len(values) != len(set(values))
+        ):
+            raise CorruptedStateError("invalid preserve basis fingerprints")
+    if set(basis["causes"]) != set(causes):
+        raise CorruptedStateError("preserve basis causes disagree with dispositions")
+    companions = set(basis["companions"])
+    if (
+        "untrusted_fingerprints" not in row
+        or not companions.issubset(set(l1))
+        or companions.intersection(disps)
+        or companions != set(row["untrusted_fingerprints"]) - set(disps)
+    ):
+        raise CorruptedStateError("preserve basis companions disagree with snapshot")
+    if (
+        not isinstance(basis["recurring"], dict)
+        or set(basis["recurring"]) != recurring
+        or any(tier != "P3" for tier in basis["recurring"].values())
+    ):
+        raise CorruptedStateError("preserve basis recurring severity is not credit-neutral")
+    if basis["counterfactual"] not in ("CLEAN", "INCOMPLETE") or (
+        (basis["counterfactual"] == "INCOMPLETE") != (row.get("l2_infra_error") is True)
+    ):
+        raise CorruptedStateError("preserve basis counterfactual disagrees with L2 observation")
+    if basis["density_passed"] is not True:
+        raise CorruptedStateError("preserve basis density check did not pass")
 
 
 def _recurring_confirmed(fp: str, history: list[dict], previous: dict) -> bool:
     """Mirror fixpoint clauses (a), (b) and the protocol rule for one fingerprint."""
-    if not any(fp in past.get("dispositions", {}) for past in history):
+    if not any(
+        fp in past.get("dispositions", {}) and fp not in past.get("untrusted_fingerprints", [])
+        for past in history
+    ):
         return False
     if previous.get(fp) == Disposition.FIXED.value:
         return False

@@ -72,3 +72,30 @@ without earning.
   the stall line or the `ESCALATED category=` line. Report-only.
 
 No row field changes; older versions load these rows.
+
+## Phase 7 wave 2b: recorded preservation basis
+
+New finalized host snapshots record `untrusted_fingerprints`, a unique list
+of host-classified UNTRUSTED fingerprints. The original dispositions remain
+(except the existing preserved-row companion stripping). A trusted finding
+at the same fingerprint takes precedence. Fixpoint clause (a)'s `ever_seen`
+skips the recorded UNTRUSTED fingerprints; a later first trusted confirmation
+is therefore new. Old rows without the list keep their previous interpretation.
+
+New `preserved` rows also record `preserve_basis`:
+
+- `version: 1`;
+- `causes`: exactly the CONFIRMED schema/coverage fingerprints observed by L1;
+- `companions`: UNTRUSTED L1 fingerprints omitted from dispositions;
+- `counterfactual`: `CLEAN`, or `INCOMPLETE` with a recorded L2 infra error;
+- `recurring`: every other recurring CONFIRMED product fingerprint, with `P3` severity;
+- `density_passed: true`: the machine's existing density/distinct-rule checks passed.
+
+The loader validates this record and rejects malformed or inconsistent present
+fields. Density remains a recorded machine result, not a loader recomputation:
+the history does not store the reviewed diff line count. A same-attempt failure
+that demotes a preserve removes its basis and restores companion dispositions,
+but retains their UNTRUSTED origin. Basisless legacy preserved rows still load,
+with one warning per load. These records are consistency checks, not authentication
+against a coordinated local rewrite (architecture r5 section 3). Old readers
+ignore the optional fields and retain their older, weaker history interpretation.
