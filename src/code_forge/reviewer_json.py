@@ -15,12 +15,13 @@ tests/test_reviewer_json_contract.py.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+from .llm_invoke import ReplyKeys, loads_reply_json
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,21 @@ _REQUIRED_FIELDS = {"findings", "code_excerpts"}
 _FINDING_REQUIRED = {"file", "line", "severity", "description"}
 _EXCERPT_REQUIRED = {"file", "start_line", "end_line", "content"}
 _VALID_SEVERITIES = {"P0", "P1", "P2", "P3"}
+
+# The keys REVIEW_JSON_CONTRACT asks for, plus a finding's nested
+# code_excerpts (hoisted by _hoist_nested_excerpts) and the excerpt
+# spellings _normalize_excerpt_aliases accepts. A reply that parses only
+# after quote repair and carries any other key is rejected (#264).
+REVIEW_REPLY_KEYS = ReplyKeys(
+    top=frozenset({"findings", "code_excerpts", "context_quotes"}),
+    items={
+        "findings": frozenset({"file", "line", "severity", "description", "excerpt", "code_excerpts"}),
+        "code_excerpts": frozenset(
+            {"file", "start_line", "end_line", "content", "line_start", "line_end", "code"}
+        ),
+        "context_quotes": frozenset({"file", "content"}),
+    },
+)
 
 # The half of every L1 review prompt that describes the JSON to return. It
 # lives next to the validator that enforces that JSON so the two cannot
@@ -60,9 +76,9 @@ REVIEW_JSON_CONTRACT = (
     "change, a caller in another file -- goes in an optional "
     '"context_quotes": [{"file": "...", "content": "..."}] instead. It '
     "carries no line numbers because it asserts nothing about them.\n"
-    "Each finding MUST carry its own \"excerpt\": the verbatim post-image "
+    'Each finding MUST carry its own "excerpt": the verbatim post-image '
     "source line(s) of that finding's file, contiguous and including its "
-    "\"line\". Root code_excerpts do not count as a finding's evidence.\n"
+    '"line". Root code_excerpts do not count as a finding\'s evidence.\n'
     "start_line and end_line are post-image line numbers of the new file; "
     "the @@ header's old-side start is not a source line.\n"
 )
@@ -466,7 +482,7 @@ def _strip_fence(raw: str) -> str:
     fails closed on it.
     """
     if not isinstance(raw, str):
-        # Non-string input reaches json.loads as before, whose
+        # Non-string input reaches the JSON parse as before, whose
         # TypeError the caller converts to ValueError -- this helper
         # must not raise an AttributeError ahead of that contract.
         return raw
@@ -548,7 +564,10 @@ def _normalize_root_finding(data: dict) -> None:
         or abs(data["line"]) > sys.maxsize
         or type(data.get("description")) is not str
         or not data["description"].strip()
-        or not any(type(data.get("excerpt")) is native for native in (str, type(None), bool, int, float, list, dict))
+        or not any(
+            type(data.get("excerpt")) is native
+            for native in (str, type(None), bool, int, float, list, dict)
+        )
     ):
         return
     if "\x00" in data["file"]:
@@ -658,8 +677,8 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         data = dict(raw) if type(raw) is dict else {key: value for key, value in dict.items(raw)}
     else:
         try:
-            data = json.loads(_strip_fence(raw))
-        except (json.JSONDecodeError, TypeError) as e:
+            data = loads_reply_json(_strip_fence(raw))
+        except (ValueError, TypeError) as e:
             raise ValueError(f"not valid JSON: {e}") from e
 
     if not isinstance(data, dict):
@@ -671,8 +690,14 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         # Hoisting copies finding dictionaries but retains excerpt objects.
         # Isolate alias writes without traversing arbitrary model metadata.
         data["code_excerpts"] = [
-            (dict(excerpt) if type(excerpt) is dict else {key: value for key, value in dict.items(excerpt)})
-            if isinstance(excerpt, dict) else excerpt for excerpt in data["code_excerpts"]
+            (
+                dict(excerpt)
+                if type(excerpt) is dict
+                else {key: value for key, value in dict.items(excerpt)}
+            )
+            if isinstance(excerpt, dict)
+            else excerpt
+            for excerpt in data["code_excerpts"]
         ]
     _normalize_excerpt_aliases(data)
 

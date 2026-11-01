@@ -17,7 +17,7 @@ from code_forge.baseline import ResolvedReview
 from code_forge.falsify import StubFalsifier
 from code_forge.llm_invoke import LLMResult, Usage
 from code_forge.outlet_c import run_outlet_c
-from code_forge.state import Verdict, load_state
+from code_forge.state import Verdict, load_state, validate_round_history
 from code_forge.verify import parse_diff_files, run_verify
 
 _DIFF_TEXT = (
@@ -568,9 +568,7 @@ class TestOutletCInfraSourceTagging:
         assert calls == [(name, _DIFF_TEXT) for name in pass_names]
         findings = {finding.id: finding for finding in state.findings}
         assert len(state.findings) == 4
-        assert set(findings) == {"l1-%s-spawn-fail" % name for name in pass_names} | {
-            "RECEIPT_INVALID"
-        }
+        assert set(findings) == {"l1-%s-spawn-fail" % name for name in pass_names} | {"RECEIPT_INVALID"}
         for name in pass_names:
             finding = findings["l1-%s-spawn-fail" % name]
             assert finding.fingerprint == "spawn-fail-%s" % name
@@ -939,3 +937,307 @@ class TestAttemptedNoRetentionAcrossInvocations:
             fp.read_text() for fp in (run2 / ".code-forge" / "receipts" / "attempted").glob("*.json")
         ]
         assert all("run1" not in t for t in texts)
+
+
+# ---------------------------------------------------------------------------
+# C3 v3 (fix4): rule 2a counts every received reviewer response per pass per
+# round at the single _run_chunk site. Chunked Outlet C with two chunks gives
+# a count of 2, so a schema-fail decoy in one chunk can no longer earn credit
+# by masking a trusted finding from the other chunk (H-1 / P1d).
+# Each test uses its own fresh tmp_path state dir (TD-P6-C3f).
+# ---------------------------------------------------------------------------
+
+_C3_A_POST = "def a():\n    return 1\n"
+_C3_B_POST = "def b():\n    x = 1\n    y = 2\n    return 1\n"
+_C3_DIFF_A = (
+    "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,2 @@\n def a():\n+    return 1\n"
+)
+_C3_DIFF_B = (
+    "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1,2 +1,4 @@\n def b():\n"
+    "+    x = 1\n+    y = 2\n     return 1\n"
+)
+_C3_EXC_A = [{"file": "a.py", "start_line": 1, "end_line": 2, "content": _C3_A_POST}]
+_C3_EXC_B = [{"file": "b.py", "start_line": 1, "end_line": 4, "content": _C3_B_POST}]
+_C3_DEFECT = {
+    "file": "b.py",
+    "line": 2,
+    "severity": "P1",
+    "description": "real defect in b.py",
+    "excerpt": "    x = 1\n",
+}
+
+_C3_P_POST = "def p():\n    return 1\n"
+_C3_DIFF_P = (
+    "diff --git a/p.py b/p.py\n--- a/p.py\n+++ b/p.py\n@@ -1,1 +1,2 @@\n def p():\n+    return 1\n"
+)
+_C3_EXC_P = [{"file": "p.py", "start_line": 1, "end_line": 2, "content": _C3_P_POST}]
+_C3_DIFF_Q_DEL = (
+    "diff --git a/q.py b/q.py\n--- a/q.py\n+++ b/q.py\n@@ -1,3 +1,1 @@\n def q():\n"
+    "-    check_auth()\n-    return 0\n"
+)
+_C3_TRUSTED_P0 = {"file": "q.py", "line": 2, "severity": "P0", "description": "auth check removed"}
+
+
+def _c3_run_chunked(tmp_path, monkeypatch, files, diff, spawn, *, rounds=3, threshold_kb="0"):
+    """Real run_outlet_c over a per-file chunked diff on a fresh state dir."""
+    monkeypatch.setenv("FORGE_DIFF_CHUNK_THRESHOLD_KB", threshold_kb)
+    for name, text in files.items():
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    resolved = ResolvedReview(
+        source_files=[Path(name) for name in files],
+        baseline_content=None,
+        git_diff=diff,
+        mode_hint="git",
+    )
+    verdict = run_outlet_c(
+        resolved_review=resolved,
+        source_hash=hashlib.sha256(diff.encode()).hexdigest(),
+        cwd=tmp_path,
+        spawn_fn=spawn,
+        falsifier=StubFalsifier(),
+        max_total_rounds=rounds,
+        clean_round_threshold=3,
+    )
+    return verdict, load_state(tmp_path / ".code-forge" / "state.json")
+
+
+def _c3_round_of(calls, per_round=6):
+    calls["n"] += 1
+    return (calls["n"] - 1) // per_round + 1
+
+
+def _c3_assert_decoy_round_reset(state, companion_id):
+    rows = state.round_history
+    assert [row["clean_credit_action"] for row in rows] == ["earned", "earned", "reset"]
+    latest = rows[-1]
+    assert latest["fixpoint"] == "RESET" and latest["clean_rounds_after"] == 0
+    comps = [f for f in state.findings if f.id == companion_id and f.source == "UNTRUSTED"]
+    assert len(comps) == 1
+    fp = comps[0].fingerprint
+    # The companion stays in the persisted row: nothing was stripped.
+    assert latest["dispositions"][fp] == "UNCERTAIN"
+    # Window wiped: the two earned cycles are gone.
+    assert state.consecutive_clean_rounds == 0
+    assert state.earned_clean_window["cycles"] == []
+    assert not any("clean credit preserved" in err for err in state.infra_errors)
+    return fp
+
+
+def test_c3v2_outlet_c_chunked_decoy_resets(tmp_path, monkeypatch):
+    """T1 (CR1 dedup probe, run-level): chunk A's schema-fail decoy claims F in
+    b.py; chunk B's accepted expert response carries the trusted F. The fold
+    keeps the decoy's companion and drops F, but expert received 2 responses in
+    the round, so rule 2a makes it ineligible and the round resets."""
+    calls = {"n": 0}
+
+    def spawn(pass_name, chunk):
+        cycle = _c3_round_of(calls)
+        if "b.py" in chunk:
+            findings = [_C3_DEFECT] if (cycle == 3 and pass_name == "expert") else []
+            return json.dumps({"findings": findings, "code_excerpts": _C3_EXC_B})
+        if cycle == 3 and pass_name == "expert":
+            return json.dumps({"findings": [_C3_DEFECT], "code_excerpts": "x"})
+        return json.dumps({"findings": [], "code_excerpts": _C3_EXC_A})
+
+    verdict, state = _c3_run_chunked(
+        tmp_path,
+        monkeypatch,
+        {"a.py": _C3_A_POST, "b.py": _C3_B_POST},
+        _C3_DIFF_A + _C3_DIFF_B,
+        spawn,
+    )
+    assert verdict is not Verdict.PASS and calls["n"] == 18
+    comps = [f for f in state.findings if f.source == "UNTRUSTED"]
+    assert len(comps) == 1 and comps[0].id.startswith("l1-expert-untrusted-")
+    fp = _c3_assert_decoy_round_reset(state, comps[0].id)
+    # The trusted copy lost the first-in-wins dedup (pre-existing residual).
+    assert [f.source for f in state.findings if f.fingerprint == fp] == ["UNTRUSTED"]
+    assert state.round_history[-1]["dispositions"]["schema-fail-expert"] == "CONFIRMED"
+
+
+def test_c3v2_outlet_c_pure_deletion_chunk_resets_without_belt(tmp_path, monkeypatch):
+    """T2 (P1d): chunk B is an accepted, excerpt-exempt pure-deletion response
+    with a P0 at F and `code_excerpts: []`. It appends no attempt and no
+    excerpt, but the pre-branch site counts it, so adversarial received 2
+    responses and the round resets by the count alone (no receipt-diff belt)."""
+    from code_forge.reviewer_json import _requires_l1_excerpts
+
+    assert _requires_l1_excerpts(_C3_DIFF_Q_DEL) is False
+    calls = {"n": 0}
+
+    def spawn(pass_name, chunk):
+        cycle = _c3_round_of(calls)
+        if "q.py" in chunk:
+            if cycle == 3 and pass_name == "adversarial":
+                return json.dumps({"findings": [_C3_TRUSTED_P0], "code_excerpts": []})
+            return json.dumps({"findings": [], "code_excerpts": []})
+        if cycle == 3 and pass_name == "adversarial":
+            decoy = dict(_C3_TRUSTED_P0, severity="P9")
+            return json.dumps({"findings": [decoy], "code_excerpts": _C3_EXC_P})
+        return json.dumps({"findings": [], "code_excerpts": _C3_EXC_P})
+
+    verdict, state = _c3_run_chunked(
+        tmp_path,
+        monkeypatch,
+        {"p.py": _C3_P_POST, "q.py": "def q():\n"},
+        _C3_DIFF_P + _C3_DIFF_Q_DEL,
+        spawn,
+    )
+    assert verdict is not Verdict.PASS and calls["n"] == 18
+    comps = [f for f in state.findings if f.source == "UNTRUSTED"]
+    assert len(comps) == 1 and comps[0].id.startswith("l1-adversarial-untrusted-")
+    fp = _c3_assert_decoy_round_reset(state, comps[0].id)
+    assert not [f for f in state.findings if f.source == "L1" and f.fingerprint == fp]
+
+
+def _c3_counting_call():
+    from code_forge.factories import _L1Call
+
+    call = _L1Call(lambda c: None)
+    call()
+    assert call.reviewer_responses is None
+    return call
+
+
+def test_c3v2_run_chunk_counts_every_outcome_and_sums_chunks(tmp_path, monkeypatch):
+    """T8: _run_chunk counts accepted, exempt, schema-fail and non-JSON responses
+    once each; chunks sum on one owner; a spawn exception and an ownerless call
+    record nothing."""
+    from code_forge.outlet_c import _run_chunk
+
+    outcomes = {
+        "qodo": json.dumps({"findings": [], "code_excerpts": _C3_EXC_P}),  # accepted
+        "expert": json.dumps({"findings": "not a list", "code_excerpts": _C3_EXC_P}),  # schema-fail
+        "adversarial": "no json here at all",  # non-JSON
+    }
+    call = _c3_counting_call()
+    attempted: list[dict] = []
+    _run_chunk(
+        _C3_DIFF_P,
+        lambda p, d: outcomes[p],
+        ("qodo", "expert", "adversarial"),
+        attempted=attempted,
+        rejection_state=call,
+    )
+    assert call.reviewer_responses == {"qodo": 1, "expert": 1, "adversarial": 1}
+
+    # Excerpt-exempt (pure deletion, missing excerpts) still counts 1.
+    exempt = _c3_counting_call()
+    _run_chunk(
+        _C3_DIFF_Q_DEL,
+        lambda p, d: json.dumps({"findings": [], "code_excerpts": []}),
+        ("qodo",),
+        attempted=[],
+        rejection_state=exempt,
+    )
+    assert exempt.reviewer_responses == {"qodo": 1}
+
+    # Two chunks on one owner sum to 2 per pass.
+    summed = _c3_counting_call()
+    for chunk, exc in ((_C3_DIFF_P, _C3_EXC_P), (_C3_DIFF_A, _C3_EXC_A)):
+        _run_chunk(
+            chunk,
+            lambda p, d, exc=exc: json.dumps({"findings": [], "code_excerpts": exc}),
+            ("qodo", "expert"),
+            attempted=[],
+            rejection_state=summed,
+        )
+    assert summed.reviewer_responses == {"qodo": 2, "expert": 2}
+
+    # A spawn exception yields no response: nothing recorded for that pass.
+    def boom(p, d):
+        if p == "expert":
+            raise RuntimeError("constructed spawn failure")
+        return outcomes["qodo"]
+
+    failed = _c3_counting_call()
+    _run_chunk(_C3_DIFF_P, boom, ("qodo", "expert"), attempted=[], rejection_state=failed)
+    assert failed.reviewer_responses == {"qodo": 1}
+
+    # No owner: nothing anywhere records (count-without-owner). Every owner
+    # used above is a live bystander of this ownerless run and must keep its
+    # exact count; the ownerless run itself must still complete.
+    _run_chunk(_C3_DIFF_P, lambda p, d: outcomes[p], ("qodo", "expert", "adversarial"))
+    assert call.reviewer_responses == {"qodo": 1, "expert": 1, "adversarial": 1}
+    assert exempt.reviewer_responses == {"qodo": 1}
+    assert summed.reviewer_responses == {"qodo": 2, "expert": 2}
+    assert failed.reviewer_responses == {"qodo": 1}
+
+
+def test_c3v2_run_outlet_c_counts_per_round_sum_and_single_chunk(tmp_path, monkeypatch):
+    """T8 (provider level): over the threshold, 2 chunks -> 2 per pass; exactly
+    1 chunk over the threshold -> 1; the count restarts every invocation."""
+    import code_forge.outlet_c as outlet_c
+
+    captured = {}
+
+    class _Capture:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+        def run(self):
+            return None
+
+    monkeypatch.setattr(outlet_c, "StateMachine", _Capture)
+    monkeypatch.setenv("FORGE_DIFF_CHUNK_THRESHOLD_KB", "0")
+
+    def spawn(pass_name, chunk):
+        exc = _C3_EXC_A if "a.py" in chunk else _C3_EXC_P
+        return json.dumps({"findings": [], "code_excerpts": exc})
+
+    for diff, expected in ((_C3_DIFF_A + _C3_DIFF_P, 2), (_C3_DIFF_P, 1)):
+        rr = ResolvedReview(
+            source_files=[Path("a.py"), Path("p.py")],
+            baseline_content=None,
+            git_diff=diff,
+            mode_hint="git",
+        )
+        outlet_c.run_outlet_c(
+            resolved_review=rr, source_hash="h", cwd=tmp_path, spawn_fn=spawn, falsifier=StubFalsifier()
+        )
+        provider = captured["l1_provider"]
+        for _ in range(2):
+            provider()
+            assert provider.reviewer_responses == dict.fromkeys(
+                ("qodo", "expert", "adversarial"), expected
+            )
+
+
+@pytest.mark.parametrize("threshold_kb", ["1000", "0"], ids=["unchunked", "single-chunk-over-threshold"])
+def test_c3v2_outlet_c_single_response_preserves(tmp_path, monkeypatch, threshold_kb):
+    """J-L2n (promoted from the CR2 fix4 probe): the positive Outlet C run-level
+    case. One file, so every pass receives exactly one response per round
+    (unchunked, or a single chunk over the threshold). Round 3's adversarial
+    response is schema-invalid but parses into a dict with a finding at its own
+    location; rule 2a sees a count of 1, the companion is stripped from the
+    preserved row and the earned window is kept (spec v3 §1.2 eligibility)."""
+    calls = {"n": 0}
+
+    def spawn(pass_name, chunk):
+        cycle = _c3_round_of(calls, per_round=3)
+        if cycle == 3 and pass_name == "adversarial":
+            decoy = {
+                "file": "p.py",
+                "line": 2,
+                "severity": "P9",
+                "description": "own-location candidate",
+                "excerpt": "    return 1\n",
+            }
+            return json.dumps({"findings": [decoy], "code_excerpts": _C3_EXC_P})
+        return json.dumps({"findings": [], "code_excerpts": _C3_EXC_P})
+
+    verdict, state = _c3_run_chunked(
+        tmp_path, monkeypatch, {"p.py": _C3_P_POST}, _C3_DIFF_P, spawn, threshold_kb=threshold_kb
+    )
+    assert verdict is not Verdict.PASS and calls["n"] == 9
+    rows = state.round_history
+    assert [row["clean_credit_action"] for row in rows] == ["earned", "earned", "preserved"]
+    assert rows[-1]["dispositions"]["schema-fail-adversarial"] == "CONFIRMED"
+    comps = [f for f in state.findings if f.source == "UNTRUSTED"]
+    assert len(comps) == 1 and comps[0].id.startswith("l1-adversarial-untrusted-")
+    fp = comps[0].fingerprint
+    # Writer strip: the companion is omitted from dispositions, kept in l1_fingerprints.
+    assert fp not in rows[-1]["dispositions"]
+    assert fp in rows[-1]["l1_fingerprints"]
+    assert state.earned_clean_window["cycles"] != []
+    validate_round_history(state.round_history, state.round)

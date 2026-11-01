@@ -909,8 +909,6 @@ class TestInvokeFailureHandling:
             assert call.kwargs.get("retry_timeout") is True
 
 
-
-
 class TestParallelL1:
     """Parallel execution: determinism, no-lost-work, failure isolation."""
 
@@ -1170,8 +1168,6 @@ class TestParallelL1:
         assert len(l1) == 2
 
 
-
-
 class TestDurationWallClock:
     """38.1-6: parallel paths report wall-clock, not sum of durations."""
 
@@ -1252,7 +1248,6 @@ class TestDurationWallClock:
 
         # 3 passes * 0.1s = ~0.3s sum
         assert duration > 0.28, f"serial duration should be sum; got {duration:.3f}"
-
 
     def test_failed_pass_duration_counted(self):
         """LLMInvokeError duration_s is accumulated (serial path)."""
@@ -1396,7 +1391,7 @@ class TestSharedPromptPrefix:
         # The role NAMES are what differ; each must fall past the shared
         # prefix. ("You are a " itself is common to all three and may sit
         # inside the prefix -- only the role that follows it is per-pass.)
-        for prompt, role in zip(prompts, ROLE_NAMES):
+        for prompt, role in zip(prompts, ROLE_NAMES, strict=True):
             assert role not in common, f"role {role!r} appears in the shared prefix"
             assert role in prompt[len(common) :], f"role {role!r} is not in this pass's divergent tail"
         tails = [p[len(common) :] for p in prompts]
@@ -1417,8 +1412,6 @@ class TestSharedPromptPrefix:
             from code_forge.lenses import LENS_BLOCK
 
             assert LENS_BLOCK in common, "the lens block must sit in the shared prefix"
-
-
 
 
 class TestSplitContextInPrompt:
@@ -1590,3 +1583,145 @@ class TestGroupedL1Provider:
         # _stub_llm_response returns Usage(10, 10) per call, 6 calls total
         assert usage.input_tokens == 60
         assert usage.output_tokens == 60
+
+
+# ---------------------------------------------------------------------------
+# C3 v3 (fix4): per-pass reviewer response count on _L1Call (rule 2a/2g).
+# ---------------------------------------------------------------------------
+
+_C3_DIFF = "diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n@@ -1,2 +1,3 @@\n line1\n+added\n line2\n"
+_C3_EXCERPTS = [{"file": "src/a.py", "start_line": 1, "end_line": 3, "content": "line1\nadded\nline2"}]
+
+
+def _c3_role(prompt):
+    if "senior engineer" in prompt:
+        return "expert"
+    if "adversarial QE" in prompt:
+        return "adversarial"
+    return "qodo"
+
+
+def _c3_provider_call(replies):
+    """Real build_l1_provider; only llm_invoke is faked, dispatched by role."""
+    from code_forge.factories import build_l1_provider
+
+    def invoke(prompt, *a, **kw):
+        reply = replies[_c3_role(prompt)]
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    with patch("code_forge.llm_invoke.llm_invoke", side_effect=invoke):
+        provider = build_l1_provider("real", _make_resolved_with_diff(_C3_DIFF), max_attempts=1)
+        findings = provider()[0]
+    return provider, findings
+
+
+def test_c3v2_provider_counts_every_outcome():
+    """T7: accepted, schema-fail dict and non-JSON each count 1; an invoke
+    exception that yields no response is absent."""
+    from code_forge.llm_invoke import InvalidJSONResponseError, LLMInvokeError, LLMResult
+    from code_forge.llm_invoke import Usage as LLMUsage
+
+    schema_dict = LLMResult(
+        content=json.dumps({"findings": "not a list", "code_excerpts": _C3_EXCERPTS}),
+        usage=LLMUsage(input_tokens=1, output_tokens=1),
+        duration_s=0.0,
+    )
+    non_json = InvalidJSONResponseError(
+        "constructed final JSON rejection",
+        raw_response="constructed non-JSON response",
+        kind="no_json",
+        exit_code=0,
+        retryable=False,
+    )
+    provider, findings = _c3_provider_call(
+        {
+            "qodo": _stub_llm_response([], _C3_EXCERPTS),
+            "expert": schema_dict,
+            "adversarial": non_json,
+        }
+    )
+    fps = {f.fingerprint for f in findings}
+    assert "schema-fail-expert" in fps and "schema-fail-qodo" not in fps
+    assert provider.acquisition_failures  # non-JSON still trips m:1815
+    assert provider.reviewer_responses == {"qodo": 1, "expert": 1, "adversarial": 1}
+
+    provider, findings = _c3_provider_call(
+        {
+            "qodo": _stub_llm_response([], _C3_EXCERPTS),
+            "expert": _stub_llm_response([], _C3_EXCERPTS),
+            "adversarial": LLMInvokeError("constructed timeout", is_timeout=True, retryable=False),
+        }
+    )
+    assert any("invoke-fail" in f.fingerprint for f in findings)
+    assert provider.reviewer_responses == {"qodo": 1, "expert": 1}
+
+
+def test_c3v2_counter_reset_per_invocation():
+    """T9: each __call__ starts from None; two calls give 1, not 2."""
+    from code_forge.factories import build_l1_provider
+
+    resp = _stub_llm_response([], _C3_EXCERPTS)
+    with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
+        provider = build_l1_provider("real", _make_resolved_with_diff(_C3_DIFF), max_attempts=1)
+        assert provider.reviewer_responses is None
+        provider()
+        assert provider.reviewer_responses == {"qodo": 1, "expert": 1, "adversarial": 1}
+        provider()
+        assert provider.reviewer_responses == {"qodo": 1, "expert": 1, "adversarial": 1}
+
+
+def test_c3v2_recorder_ignores_unknown_pass_names():
+    from code_forge.factories import _L1Call
+
+    call = _L1Call(lambda c: (c.record_reviewer_response("l2"), c.record_reviewer_response("qodo")))
+    call()
+    assert call.reviewer_responses == {"qodo": 1}
+    call = _L1Call(lambda c: c.record_reviewer_response("nope"))
+    call()
+    assert call.reviewer_responses is None
+
+
+def test_c3v2_composite_reports_none(monkeypatch):
+    """T5: the real build_grouped_l1_provider; each child records through
+    record_reviewer_response, and the composite's own count stays None."""
+    import code_forge.factories as factories
+    from code_forge.factories import _L1Call, build_grouped_l1_provider
+    from code_forge.llm_invoke import Usage as LLMUsage
+
+    children = []
+
+    def child_factory(engine, resolved, **kwargs):
+        def body(call):
+            call.pass_usage = []
+            call.attempted_excerpts = [{"findings": "not a list", "pass_name": "expert"}]
+            call.record_reviewer_response("expert")
+            return ([], [], LLMUsage(), 0.0)
+
+        child = _L1Call(body)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(factories, "build_l1_provider", child_factory)
+    specs = [
+        {
+            "name": name,
+            "resolved": _make_resolved_with_diff(_C3_DIFF),
+            "post_image": "",
+            "conventions_digest": "",
+            "split_context": "",
+        }
+        for name in ("g1", "g2")
+    ]
+    composite = build_grouped_l1_provider("auto", specs)
+    assert type(composite) is _L1Call and len(children) == 2
+    composite()
+    assert [child.reviewer_responses for child in children] == [{"expert": 1}, {"expert": 1}]
+    assert composite.reviewer_responses is None
+    # G=1: one child counted 1, the composite still reports None.
+    children.clear()
+    single = build_grouped_l1_provider("auto", specs[:1])
+    single()
+    assert [child.reviewer_responses for child in children] == [{"expert": 1}]
+    assert single.reviewer_responses is None

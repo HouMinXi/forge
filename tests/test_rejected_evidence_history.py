@@ -152,7 +152,10 @@ def test_rejected_evidence_requires_the_authority_field():
         validate_round_history([row])
 
 
-@pytest.mark.parametrize("action", ["pending", "earned", "interrupted", "reset", "unavailable"])
+@pytest.mark.parametrize(
+    "action",
+    ["pending", "earned", "interrupted", "reset", "unavailable", "preserved"],
+)
 def test_rejection_authority_is_illegal_on_other_actions(action):
     row = _row(0, "earned", 1)
     row["clean_credit_action"] = action
@@ -161,15 +164,29 @@ def test_rejection_authority_is_illegal_on_other_actions(action):
         row.pop("dispositions")
         row["phase_status"] = {name: "not_run" for name in ROUND_PHASES}
     elif action == "interrupted":
-        row["acquisition_failures"] = [{
-            "id": "l1-qodo-invoke-fail", "fingerprint": "invoke-fail-qodo",
-            "pass_name": "qodo", "outcome": "error",
-        }]
+        row["acquisition_failures"] = [
+            {
+                "id": "l1-qodo-invoke-fail",
+                "fingerprint": "invoke-fail-qodo",
+                "pass_name": "qodo",
+                "outcome": "error",
+            }
+        ]
     elif action == "reset":
         row.update(reset_observed=True, clean_rounds_after=0, fixpoint="RESET")
+    elif action == "preserved":
+        row.update(
+            reset_observed=True,
+            clean_rounds_after=1,
+            fixpoint="RESET",
+            dispositions={"schema-fail-qodo": "CONFIRMED"},
+            l1_fingerprints=["schema-fail-qodo"],
+        )
     validate_round_history([row])
     row["evidence_rejections"] = [_rejection()]
-    with pytest.raises(CorruptedStateError):
+    with pytest.raises(
+        CorruptedStateError, match="evidence rejection authority has incompatible action"
+    ):
         validate_round_history([row])
 
 
@@ -206,10 +223,17 @@ def test_rejected_evidence_requires_every_phase_returned(phase, status):
         ("reset_observed", 0),
         ("dispositions", None),
         ("dispositions", {"candidate": "invalid"}),
-        ("acquisition_failures", [{
-            "id": "l1-qodo-invoke-fail", "fingerprint": "invoke-fail-qodo",
-            "pass_name": "qodo", "outcome": "error",
-        }]),
+        (
+            "acquisition_failures",
+            [
+                {
+                    "id": "l1-qodo-invoke-fail",
+                    "fingerprint": "invoke-fail-qodo",
+                    "pass_name": "qodo",
+                    "outcome": "error",
+                }
+            ],
+        ),
         ("falsify_protocol_failures", ["candidate"]),
     ],
 )
@@ -248,6 +272,7 @@ def test_unavailable_attempt_still_refuses_inherited_credit(status):
     row["phase_status"] = {name: status for name in ROUND_PHASES}
     if status == "not_run":
         row.pop("dispositions")
+        row.pop("fixpoint")
     with pytest.raises(CorruptedStateError, match="cannot prove"):
         earned_history_cycles(_state([*_prefix(), row], 2), SOURCE, None)
 
@@ -271,10 +296,14 @@ def test_existing_legacy_and_modern_transition_semantics_stay_compatible():
     rows.append(pending)
     assert earned_history_cycles(_state(rows, 2), SOURCE, None) == [1, 2]
     interrupted = _row(2, "interrupted", 2)
-    interrupted["acquisition_failures"] = [{
-        "id": "l1-qodo-invoke-fail", "fingerprint": "invoke-fail-qodo",
-        "pass_name": "qodo", "outcome": "error",
-    }]
+    interrupted["acquisition_failures"] = [
+        {
+            "id": "l1-qodo-invoke-fail",
+            "fingerprint": "invoke-fail-qodo",
+            "pass_name": "qodo",
+            "outcome": "error",
+        }
+    ]
     rows[-1] = interrupted
     assert earned_history_cycles(_state(rows, 2), SOURCE, None) == [1, 2]
     reset = _row(3, "reset", 0)

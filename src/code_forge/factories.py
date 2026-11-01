@@ -84,8 +84,10 @@ def _assess_raw_response(response) -> tuple[dict | None, bool]:
         return None, False
     if type(response) is dict:
         return (response if _admissible_raw_value(response) else None), True
+    from .llm_invoke import loads_reply_json
+
     try:
-        data = json.loads(_strip_fence(response))
+        data = loads_reply_json(_strip_fence(response))
     except (ValueError, TypeError):
         return None, False
     if type(data) is not dict:
@@ -353,6 +355,20 @@ class _L1Call:
         self.is_stub_l1 = False
         self._excerpt_invocation = object()
         self._excerpt_rejections: tuple[_ExcerptRejection, ...] = ()
+        # C3 rule 2a: received reviewer responses per pass in this
+        # invocation, counted at the producer before validation (any
+        # outcome). None means the producer recorded nothing.
+        self.reviewer_responses: dict[str, int] | None = None
+
+    def record_reviewer_response(self, pass_name: str) -> None:
+        """Count one received reviewer response for `pass_name`."""
+        from .state import _PASS_NAMES
+
+        if pass_name not in _PASS_NAMES:
+            return
+        if self.reviewer_responses is None:
+            self.reviewer_responses = {}
+        self.reviewer_responses[pass_name] = self.reviewer_responses.get(pass_name, 0) + 1
 
     def record_excerpt_rejection(
         self, error: Exception, pass_name: str, attempted: dict, *, diff_text: str
@@ -368,10 +384,15 @@ class _L1Call:
             or not _admissible_raw_value(attempted)
         ):
             return
-        self._excerpt_rejections += (_ExcerptRejection(
-            self._excerpt_invocation, pass_name, attempted,
-            json.dumps(attempted, sort_keys=True, separators=(",", ":")), diff_text,
-        ),)
+        self._excerpt_rejections += (
+            _ExcerptRejection(
+                self._excerpt_invocation,
+                pass_name,
+                attempted,
+                json.dumps(attempted, sort_keys=True, separators=(",", ":")),
+                diff_text,
+            ),
+        )
 
     @property
     def unavailable_rejected_evidence(self) -> bool:
@@ -386,15 +407,18 @@ class _L1Call:
         self.pending_raw_responses = []
         self.acquisition_failures = []
         self.unavailable_rejected_passes = set()
+        self.reviewer_responses = None
         result = self._body(self)
         # Snapshot before attaching observations: grouped calls may already
         # carry child audit data, which must never reference itself.
         observations: dict[str, list[dict]] = {}
         for finding in self.acquisition_failures:
-            observations.setdefault(finding.fingerprint, []).append({
-                "description": finding.description,
-                "provider_failure": provider_failure_snapshot(finding.provider_failure),
-            })
+            observations.setdefault(finding.fingerprint, []).append(
+                {
+                    "description": finding.description,
+                    "provider_failure": provider_failure_snapshot(finding.provider_failure),
+                }
+            )
         for finding in self.acquisition_failures:
             original = observations[finding.fingerprint]
             if len(original) > 1:
@@ -460,6 +484,7 @@ def build_l1_provider(
     from .llm_invoke import InvalidJSONResponseError, LLMInvokeError, llm_invoke
     from .reviewer_json import (
         REVIEW_JSON_CONTRACT,
+        REVIEW_REPLY_KEYS,
         ExcerptEvidenceError,
         MissingExcerptEvidenceError,
         _collect_excerpts,
@@ -535,7 +560,9 @@ def build_l1_provider(
             # after the role sentence and the shared prefix stays shared.
             from .lenses import selection_line
 
-            prompts = [p + selection_line(pn) for p, (pn, _role) in zip(prompts, pass_configs, strict=True)]
+            prompts = [
+                p + selection_line(pn) for p, (pn, _role) in zip(prompts, pass_configs, strict=True)
+            ]
 
         # -- Execute passes ---------------------------------------------
         # CLI backends use a module-global _active_proc that is not
@@ -561,6 +588,7 @@ def build_l1_provider(
                 l1_evidence_required=_requires_l1_excerpts(
                     diff_text, reviewed_repositories=reviewed_repositories
                 ),
+                reply_keys=REVIEW_REPLY_KEYS,
             )
             if r.usage.input_tokens > 0 or r.usage.output_tokens > 0 or r.usage.cached_input_tokens > 0:
                 bname = backend.name if backend else "unknown"
@@ -605,22 +633,39 @@ def build_l1_provider(
 
         for i, (pass_name, _role) in enumerate(pass_configs):
             pr = pass_results[i]
+            if not isinstance(pr, Exception) or isinstance(pr, InvalidJSONResponseError):
+                call.record_reviewer_response(pass_name)
             observed_usage = (
-                pr.observed_usage if isinstance(pr, LLMInvokeError) else
-                pr.usage if not isinstance(pr, Exception) else None
+                pr.observed_usage
+                if isinstance(pr, LLMInvokeError)
+                else pr.usage
+                if not isinstance(pr, Exception)
+                else None
             )
-            known_fields = getattr(observed_usage, "known_fields", (
-                {"input_tokens", "output_tokens", "cached_input_tokens"} if observed_usage is not None else set()
-            ))
+            known_fields = getattr(
+                observed_usage,
+                "known_fields",
+                (
+                    {"input_tokens", "output_tokens", "cached_input_tokens"}
+                    if observed_usage is not None
+                    else set()
+                ),
+            )
             available = {"input_tokens", "output_tokens", "cached_input_tokens"} <= known_fields
-            call.pass_usage.append({
-                "pass_name": pass_name,
-                "input": observed_usage.input_tokens if "input_tokens" in known_fields else None,
-                "output": observed_usage.output_tokens if "output_tokens" in known_fields else None,
-                "cached": observed_usage.cached_input_tokens if "cached_input_tokens" in known_fields else None,
-                "duration_s": pr.duration_s if not isinstance(pr, Exception) or known_fields else None,
-                "available": available,
-            })
+            call.pass_usage.append(
+                {
+                    "pass_name": pass_name,
+                    "input": observed_usage.input_tokens if "input_tokens" in known_fields else None,
+                    "output": observed_usage.output_tokens if "output_tokens" in known_fields else None,
+                    "cached": observed_usage.cached_input_tokens
+                    if "cached_input_tokens" in known_fields
+                    else None,
+                    "duration_s": pr.duration_s
+                    if not isinstance(pr, Exception) or known_fields
+                    else None,
+                    "available": available,
+                }
+            )
             if observed_usage is not None:
                 total_input += observed_usage.input_tokens
                 total_output += observed_usage.output_tokens
@@ -740,9 +785,7 @@ def build_l1_provider(
                         attempted = dict(raw_data)
                         attempted["pass_name"] = pass_name
                         all_attempted.append(attempted)
-                        call.record_excerpt_rejection(
-                            exc, pass_name, attempted, diff_text=diff_text
-                        )
+                        call.record_excerpt_rejection(exc, pass_name, attempted, diff_text=diff_text)
                     elif original_exact_dict or parsed_dict_seen:
                         call.unavailable_rejected_passes.add(pass_name)
                 if raw_data is None and raw_snapshot is not _RAW_RESPONSE_REFUSED:
@@ -941,6 +984,9 @@ def build_grouped_l1_provider(
             total_output += usage.output_tokens
             total_cached += usage.cached_input_tokens
             total_duration += duration
+        # C3 rule 2g: a grouped review never reports a response count, so
+        # every grouped pass stays ineligible. Do not sum the children.
+        call.reviewer_responses = None
         return (
             all_findings,
             all_excerpts,

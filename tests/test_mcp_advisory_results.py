@@ -39,7 +39,6 @@ def _without_report_classification(payload):
     return out
 
 
-
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
     """These formatting fixtures must not contact a provider or launch a CLI."""
@@ -114,6 +113,7 @@ async def test_terminal_text_preserves_exact_structured_output(
             "findings_count_status": UNPARSEABLE,
             "findings": None,
             "receipt_audit": None,
+            "test_assertion": None,
             "duration_s": 12.345,
             "output": expected_output,
         },
@@ -130,10 +130,14 @@ async def test_terminal_text_preserves_exact_structured_output(
 @pytest.mark.parametrize("status,verdict,exit_code", TERMINAL_CASES)
 @pytest.mark.parametrize("output", ["", " \t\r\n"], ids=["empty", "whitespace"])
 async def test_terminal_empty_and_whitespace_output(monkeypatch, status, verdict, exit_code, output):
-    monkeypatch.setattr(server, "get_job", lambda job_id: {
-        "status": status,
-        "result": {"stdout": output, "stderr": " \t\n", "verdict": verdict, "exit_code": exit_code},
-    })
+    monkeypatch.setattr(
+        server,
+        "get_job",
+        lambda job_id: {
+            "status": status,
+            "result": {"stdout": output, "stderr": " \t\n", "verdict": verdict, "exit_code": exit_code},
+        },
+    )
 
     result = await poll(True)
 
@@ -144,8 +148,12 @@ async def test_terminal_empty_and_whitespace_output(monkeypatch, status, verdict
 
 @pytest.mark.parametrize(
     "exit_code,verdict,advisory_status",
-    [(0, "PASS", UNPARSEABLE), (1, "FAIL", UNPARSEABLE),
-     (2, "CLI_ERROR", NO_REPORT), (6, "TIMEOUT", NO_REPORT)],
+    [
+        (0, "PASS", UNPARSEABLE),
+        (1, "FAIL", UNPARSEABLE),
+        (2, "CLI_ERROR", NO_REPORT),
+        (6, "TIMEOUT", NO_REPORT),
+    ],
 )
 @pytest.mark.parametrize("stdout", [OUTPUT, "", " \t\n"], ids=["advisory", "empty", "whitespace"])
 def test_immediate_result_keeps_current_text_format(exit_code, verdict, advisory_status, stdout):
@@ -160,6 +168,7 @@ def test_immediate_result_keeps_current_text_format(exit_code, verdict, advisory
         "findings_count_status": advisory_status if stdout == OUTPUT else NO_REPORT,
         "findings": None,
         "receipt_audit": None,
+        "test_assertion": None,
         "duration_s": 12.35,
         "output": expected_output,
     }
@@ -186,7 +195,10 @@ async def test_running_status_keeps_progress_format(monkeypatch, tmp_path, sdk, 
         expected_text += "\n--- progress ---\n" + progress.strip()
     assert result.content[0].text == expected_text
     assert result.structuredContent == {
-        "job_id": "job", "status": "running", "poll_after_seconds": 10, "result": None,
+        "job_id": "job",
+        "status": "running",
+        "poll_after_seconds": 10,
+        "result": None,
     }
     assert entry == before
     assert log.read_text(encoding="utf-8") == progress
@@ -232,11 +244,20 @@ async def test_cancelled_poll_does_not_change_running_job(monkeypatch):
 @pytest.mark.asyncio
 async def test_stdout_lost_note_is_visible_on_exit_zero(monkeypatch):
     note = "stdout lost: process exited at timeout boundary\n"
-    monkeypatch.setattr(server, "get_job", lambda job_id: {
-        "status": "completed",
-        "result": {"stdout": "", "stderr": note, "verdict": "UNRELIABLE",
-                   "exit_code": 0, "stdout_lost": True},
-    })
+    monkeypatch.setattr(
+        server,
+        "get_job",
+        lambda job_id: {
+            "status": "completed",
+            "result": {
+                "stdout": "",
+                "stderr": note,
+                "verdict": "UNRELIABLE",
+                "exit_code": 0,
+                "stdout_lost": True,
+            },
+        },
+    )
     result = await poll(False)
     data = result.structuredContent["result"]
     assert data["verdict"] == "UNRELIABLE"

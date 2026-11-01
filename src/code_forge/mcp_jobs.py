@@ -99,6 +99,8 @@ class ForgeResult(BaseModel):
     findings_count_status: str | None = None
     findings: list[dict] | None = None  # compact finding summaries for MCP
     receipt_audit: list[dict] | None = None  # metadata diagnostics, not product findings
+    # Validated optional advisory outcome; None means no validated outcome.
+    test_assertion: dict[str, Any] | None = None
     duration_s: float
     output: str
     # Additive #332 report_classification block (IC-03 include routes).
@@ -404,9 +406,7 @@ async def _wait_for_job(job_id: str) -> None:
                 "stderr": ("stdout lost: process exited at timeout boundary\n" + stderr_tail),
                 "exit_code": proc.returncode,
                 # Exit 0 with the report lost is not a PASS: nothing was read.
-                "verdict": (
-                    "UNRELIABLE" if proc.returncode == 0 else exit_to_verdict(proc.returncode)
-                ),
+                "verdict": ("UNRELIABLE" if proc.returncode == 0 else exit_to_verdict(proc.returncode)),
                 "stdout_lost": True,
                 "duration_s": elapsed,
             }
