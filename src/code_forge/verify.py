@@ -27,6 +27,7 @@ from pathlib import Path
 
 from .basis import (
     AUTHORITY_DETERMINISTIC_EXECUTED,
+    AUTHORITY_INFRA_UNAVAILABLE,
     AUTHORITY_LLM_DOCS_LATEST,
     AUTHORITY_LLM_DOCS_PINNED,
     AUTHORITY_LLM_TRAINED,
@@ -949,6 +950,30 @@ def _has_unverified_basis(finding: dict) -> bool:
         AUTHORITY_LLM_DOCS_LATEST,
         AUTHORITY_LLM_DOCS_PINNED,
     )
+
+
+def _unresolved_finding_label(finding: object) -> str:
+    """Name an unresolved unverified finding by what its receipt basis shows, and no more.
+
+    Wording only: the finding stays in `unresolved_findings` and the result is
+    unchanged. The host writes authority infra-unavailable for INFRA
+    diagnostics and for UNTRUSTED reviewer output alike, and a receipt finding
+    does not carry the source that tells them apart (its file and description
+    can come from the reviewer). So that label claims neither a product defect
+    nor a trusted infrastructure diagnostic, and still names the product
+    candidate an untrusted response may hold. Nothing from the receipt is
+    echoed.
+    """
+    basis = finding.get("basis") if isinstance(finding, dict) else None
+    authority = basis.get("authority") if isinstance(basis, dict) else None
+    if not isinstance(authority, str) or not authority.strip():
+        return "unresolved finding with a malformed basis"
+    if authority.strip().lower() == AUTHORITY_INFRA_UNAVAILABLE:
+        return (
+            "unresolved finding without verified evidence (an infrastructure failure, "
+            "or a product candidate in untrusted reviewer output)"
+        )
+    return "unresolved finding with an unrecognized basis authority"
 
 
 def _constant_offset(
@@ -2202,24 +2227,29 @@ def _run_verify_impl(
                 cp,
             )
     unresolved = []
+    first_unresolved = None
     # Healthy CI checks one invocation without claiming convergence. An
     # incomplete role cannot exempt independent findings in any role.
     if require_convergence or incomplete:
         for r in attested:
-            unresolved.extend(
-                (
-                    r["cycle"],
-                    r["pass"],
-                    r["diff_sha256"],
-                    json.dumps(finding, sort_keys=True, separators=(",", ":")),
+            for finding in _open_findings(r["findings"]):
+                if not _has_unverified_basis(finding):
+                    continue
+                if not unresolved:
+                    first_unresolved = finding
+                unresolved.append(
+                    (
+                        r["cycle"],
+                        r["pass"],
+                        r["diff_sha256"],
+                        json.dumps(finding, sort_keys=True, separators=(",", ":")),
+                    )
                 )
-                for finding in _open_findings(r["findings"])
-                if _has_unverified_basis(finding)
-            )
     if unresolved:
         cycle, number, _, _ = unresolved[0]
         reason = (
-            f"unresolved unverified product finding c{cycle}p{number} -- convergence not established"
+            f"{_unresolved_finding_label(first_unresolved)} c{cycle}p{number} "
+            "-- convergence not established"
         )
         if incomplete:
             # #50: a pass that did not complete (e.g. status=schema_fail) is the
