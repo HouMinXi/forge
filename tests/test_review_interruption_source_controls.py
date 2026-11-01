@@ -1172,6 +1172,20 @@ def test_current_falsifier_protocol_and_transport_keep_candidate_but_differ_on_c
     assert failed["basis"]["authority"] == "infra-unavailable"
     assert failed["basis"]["falsification_survived"] is False
     assert _restore_result(root).passed and not _verify(root).passed
+    # The candidate came from a validated reply; only its falsification failed.
+    # Verification must name it as a product candidate first, not discount it.
+    proof3, captured = verify._capture_earned_cycle(
+        root,
+        compute_source_hash(git_diff=DIFF),
+        verify.parse_diff_files(DIFF),
+        cycle=3,
+        diff_text=DIFF,
+    )
+    assert proof3 is None and len(captured.unresolved_findings) == 1
+    assert captured.reason == (
+        "unresolved finding without verified evidence (a product candidate the host could not "
+        "verify, or an infrastructure failure) c3p1 -- convergence not established"
+    )
     # The real reporting consumer deliberately rejects unresolved LOCAL HOLD.
     # Do not manufacture a CI state or a FAIL just to make it render.
     with pytest.raises(ValueError, match="PENDING verdict on a LOCAL"):

@@ -586,7 +586,7 @@ def test_independent_unresolved_completed_role_wins_before_incomplete(review_wor
     )
     assert proof is None and not result.passed
     assert result.failure_kind is None
-    assert "unresolved finding without verified evidence (an infrastructure failure" in result.reason
+    assert "unresolved finding without verified evidence (a product candidate the host" in result.reason
     assert "product finding" not in result.reason
 
 
