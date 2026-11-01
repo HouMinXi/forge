@@ -20,10 +20,10 @@ from code_forge.errors import CorruptedStateError
 from code_forge.llm_invoke import Usage
 from code_forge.machine import TimeoutBreaker
 from code_forge.state import ROUND_PHASES, StateFinding, Verdict, validate_round_history
-from tests import test_review_interruption_source_controls as _sc
+from tests import _review_harness as _harness
 
 # Plain assignment so pytest registers the shared fixture under this name.
-offline_workspace = _sc.offline_workspace
+offline_workspace = _harness.offline_workspace
 
 _MUTATION_ERROR_TEXT = "mutation baseline failed: constructed"
 
@@ -58,31 +58,31 @@ def _l2_failing(how, rounds=None):
 @pytest.mark.parametrize("how", ["raise", "typed"])
 def test_l2_infra_round_keeps_the_window_and_reloads(offline_workspace, monkeypatch, how):
     root = offline_workspace
-    proof, original = _sc._earned_prefix(root, monkeypatch)
-    machine, _ = _sc._new_machine(root, monkeypatch, rounds=1)
+    proof, original = _harness._earned_prefix(root, monkeypatch)
+    machine, _ = _harness._new_machine(root, monkeypatch, rounds=1)
     machine.l2_runner = _l2_failing(how)
     assert machine.run() is Verdict.ESCALATED
-    state, _ = _sc._state(root)  # loads, validates and round-trips
+    state, _ = _harness._state(root)  # loads, validates and round-trips
     assert state.consecutive_clean_rounds == 2 and state.earned_clean_window == proof
     row = state.round_history[-1]
     assert row["round"] == 2
     assert row["clean_credit_action"] == "interrupted" and row["fixpoint"] == "INCOMPLETE"
     assert row["l2_infra_error"] is True and row["phase_status"]["l2"] == "returned"
     assert row["reset_observed"] is False and row["clean_rounds_after"] == 2
-    assert not _sc._verify(root).passed
+    assert not _harness._verify(root).passed
     # The window was kept, not refreshed: the next healthy round earns cycle 4.
-    _sc._recover(root, monkeypatch, original, [1, 2, 4])
+    _harness._recover(root, monkeypatch, original, [1, 2, 4])
 
 
 @pytest.mark.parametrize("how", ["raise", "typed"])
 def test_persistent_l2_infra_stops_with_the_breaker_not_corruption(offline_workspace, monkeypatch, how):
     root = offline_workspace
-    proof, _ = _sc._earned_prefix(root, monkeypatch)
-    machine, _ = _sc._new_machine(root, monkeypatch, rounds=5)
+    proof, _ = _harness._earned_prefix(root, monkeypatch)
+    machine, _ = _harness._new_machine(root, monkeypatch, rounds=5)
     machine.l2_runner = _l2_failing(how)
     with pytest.raises(TimeoutBreaker, match="mutation infrastructure error in 3 consecutive rounds"):
         machine.run()
-    state, _ = _sc._state(root)
+    state, _ = _harness._state(root)
     assert state.consecutive_clean_rounds == 2 and state.earned_clean_window == proof
     rows = state.round_history[2:]
     assert [row["clean_credit_action"] for row in rows] == ["interrupted"] * 3
@@ -99,12 +99,14 @@ def test_round_failing_before_l2_does_not_inherit_the_previous_round_l2_error(
     fixpoint its L1 observed.
     """
     root = offline_workspace
-    _sc._earned_prefix(root, monkeypatch)
-    machine, _ = _sc._new_machine(root, monkeypatch, rounds=2)
+    _harness._earned_prefix(root, monkeypatch)
+    machine, _ = _harness._new_machine(root, monkeypatch, rounds=2)
     machine.l2_runner = _l2_failing("raise", rounds={1})
-    with pytest.raises(_sc._p7_raise_after_l1(monkeypatch, machine, nth=2), match="after L1 returned"):
+    with pytest.raises(
+        _harness._p7_raise_after_l1(monkeypatch, machine, nth=2), match="after L1 returned"
+    ):
         machine.run()
-    state, _ = _sc._state(root)
+    state, _ = _harness._state(root)
     first, second = state.round_history[2:]
     assert first["clean_credit_action"] == "interrupted" and first["l2_infra_error"] is True
     assert second["clean_credit_action"] == "unavailable" and second["fixpoint"] == "CLEAN"
@@ -112,7 +114,7 @@ def test_round_failing_before_l2_does_not_inherit_the_previous_round_l2_error(
     # As for any attempt that failed after L1: the count stays, but an
     # unavailable round cannot prove the inherited window, so it is not restored.
     assert state.consecutive_clean_rounds == 2
-    result = _sc._restore_result(root)
+    result = _harness._restore_result(root)
     assert not result.passed and "unavailable host attempt" in result.reason
 
 
@@ -128,30 +130,30 @@ def test_receipt_damage_beside_an_l2_error_fails_closed_as_with_a_healthy_l2(
     the next run fails without calling a reviewer, exactly as with a healthy L2.
     """
     root = offline_workspace
-    _, original = _sc._earned_prefix(root, monkeypatch)
-    machine, _ = _sc._new_machine(root, monkeypatch, qodo_fault="literal")
+    _, original = _harness._earned_prefix(root, monkeypatch)
+    machine, _ = _harness._new_machine(root, monkeypatch, qodo_fault="literal")
     if l2 != "healthy":
         machine.l2_runner = _l2_failing(l2)
     assert machine.run() is Verdict.FAIL
-    state, _ = _sc._state(root)
+    state, _ = _harness._state(root)
     row = state.round_history[-1]
     assert row["clean_credit_action"] == "unavailable"
     if l2 == "healthy":
         assert row["fixpoint"] == "CLEAN" and "l2_infra_error" not in row
     else:
         assert row["fixpoint"] == "INCOMPLETE" and row["l2_infra_error"] is True
-    result = _sc._restore_result(root)
+    result = _harness._restore_result(root)
     assert not result.passed and "unavailable host attempt" in result.reason
-    recovery, recovery_calls = _sc._new_machine(root, monkeypatch)
+    recovery, recovery_calls = _harness._new_machine(root, monkeypatch)
     assert recovery.run() is Verdict.FAIL
     assert recovery_calls == []  # no blind healthy retry after unproved execution
-    _sc._assert_original_receipts(original)
+    _harness._assert_original_receipts(original)
 
 
 _FAILED_AFTER_L2 = {
-    "crash-before-publish": (_sc._crash_before_publish, RuntimeError),
-    "gate-read-failure": (_sc._raise_in_gate, OSError),
-    "state-save-after-publish": (_sc._fail_state_save_after_publish, OSError),
+    "crash-before-publish": (_harness._crash_before_publish, RuntimeError),
+    "gate-read-failure": (_harness._raise_in_gate, OSError),
+    "state-save-after-publish": (_harness._fail_state_save_after_publish, OSError),
 }
 
 
@@ -168,8 +170,8 @@ def test_attempt_failing_after_l2_is_unavailable_with_or_without_an_l2_error(
     an interruption that keeps the window.
     """
     root = offline_workspace
-    _, original = _sc._earned_prefix(root, monkeypatch)
-    machine, _ = _sc._new_machine(root, monkeypatch)
+    _, original = _harness._earned_prefix(root, monkeypatch)
+    machine, _ = _harness._new_machine(root, monkeypatch)
     if l2 != "healthy":
         machine.l2_runner = _l2_failing(l2)
     inject, error = _FAILED_AFTER_L2[failure]
@@ -177,19 +179,19 @@ def test_attempt_failing_after_l2_is_unavailable_with_or_without_an_l2_error(
         inject(mp, machine)
         with pytest.raises(error):
             machine.run()
-    state, _ = _sc._state(root)
+    state, _ = _harness._state(root)
     row = state.round_history[-1]
     assert row["round"] == 2 and row["clean_credit_action"] == "unavailable", row
     if l2 == "healthy":
         assert "l2_infra_error" not in row
     else:
         assert row["fixpoint"] == "INCOMPLETE" and row["l2_infra_error"] is True
-    result = _sc._restore_result(root)
+    result = _harness._restore_result(root)
     assert not result.passed and "unavailable host attempt" in result.reason
-    recovery, recovery_calls = _sc._new_machine(root, monkeypatch)
+    recovery, recovery_calls = _harness._new_machine(root, monkeypatch)
     assert recovery.run() is Verdict.FAIL
     assert recovery_calls == []
-    _sc._assert_original_receipts(original)
+    _harness._assert_original_receipts(original)
 
 
 @pytest.mark.parametrize("l2", ["healthy", "raise", "typed"])
@@ -203,23 +205,23 @@ def test_unverifiable_evidence_beside_an_l2_error_fails_closed_as_with_a_healthy
     L2 error beside it must not skip the check and keep the window.
     """
     root = offline_workspace
-    _, original = _sc._earned_prefix(root, monkeypatch)
-    machine, _ = _sc._new_machine(root, monkeypatch)
+    _, original = _harness._earned_prefix(root, monkeypatch)
+    machine, _ = _harness._new_machine(root, monkeypatch)
     machine.l1_provider = lambda: ([], [], Usage(), 0.0)
     if l2 != "healthy":
         machine.l2_runner = _l2_failing(l2)
     assert machine.run() is Verdict.FAIL
-    state, _ = _sc._state(root)
+    state, _ = _harness._state(root)
     row = state.round_history[-1]
     assert row["round"] == 2 and row["clean_credit_action"] == "unavailable", row
     assert row["fixpoint"] == ("CLEAN" if l2 == "healthy" else "INCOMPLETE")
     assert [e for e in state.infra_errors if "receipt acceptance: unwitnessed hunk" in e]
-    result = _sc._restore_result(root)
+    result = _harness._restore_result(root)
     assert not result.passed and "unavailable host attempt" in result.reason
-    recovery, recovery_calls = _sc._new_machine(root, monkeypatch)
+    recovery, recovery_calls = _harness._new_machine(root, monkeypatch)
     assert recovery.run() is Verdict.FAIL
     assert recovery_calls == []
-    _sc._assert_original_receipts(original)
+    _harness._assert_original_receipts(original)
 
 
 def test_survivor_breaker_beside_an_l2_error_is_unavailable(offline_workspace, monkeypatch):
@@ -232,13 +234,13 @@ def test_survivor_breaker_beside_an_l2_error_is_unavailable(offline_workspace, m
     """
     root = offline_workspace
     monkeypatch.setattr("code_forge.flow_contract.P3_DENSITY_THRESHOLD", 1.0)
-    machine, _ = _sc._new_machine(root, monkeypatch, rounds=3)
+    machine, _ = _harness._new_machine(root, monkeypatch, rounds=3)
     machine.l2_runner = lambda *_a, **_k: (
-        [_sc._survivor("P3"), _typed_mutation_error()],
+        [_harness._survivor("P3"), _typed_mutation_error()],
         [_MUTATION_ERROR_TEXT],
     )
     assert machine.run() is Verdict.FAIL
-    state, _ = _sc._state(root)
+    state, _ = _harness._state(root)
     assert "mutation: surviving mutants reported in 3 consecutive rounds" in state.infra_errors
     rows = state.round_history
     assert [row["clean_credit_action"] for row in rows] == ["reset", "interrupted", "unavailable"]
@@ -256,16 +258,16 @@ def test_survivor_breaker_beside_a_protocol_stop_is_interrupted(offline_workspac
     """
     root = offline_workspace
     monkeypatch.setattr("code_forge.flow_contract.P3_DENSITY_THRESHOLD", 1.0)
-    machine, _ = _sc._new_machine(root, monkeypatch, rounds=3, falsifier_reply="not JSON")
-    candidate = _sc._candidate_payload
+    machine, _ = _harness._new_machine(root, monkeypatch, rounds=3, falsifier_reply="not JSON")
+    candidate = _harness._candidate_payload
     monkeypatch.setattr(
-        _sc,
+        _harness,
         "_candidate_payload",
         lambda body, *args: candidate(body, *args) if machine._state.round == 2 else body,
     )
-    machine.l2_runner = lambda *_a, **_k: ([_sc._survivor("P3")], [])
+    machine.l2_runner = lambda *_a, **_k: ([_harness._survivor("P3")], [])
     assert machine.run() is Verdict.FAIL
-    state, _ = _sc._state(root)
+    state, _ = _harness._state(root)
     assert "mutation: surviving mutants reported in 3 consecutive rounds" in state.infra_errors
     last = state.round_history[-1]
     assert last["clean_credit_action"] == "interrupted" and last["fixpoint"] == "INCOMPLETE", last
@@ -284,14 +286,14 @@ def test_pure_excerpt_rejection_loses_its_kept_window_beside_an_l2_error(
     Stricter than either cause alone, on purpose (fail closed).
     """
     root = offline_workspace
-    _sc._earned_prefix(root, monkeypatch)
-    machine, _ = _sc._new_machine(root, monkeypatch, fault=fault)
+    _harness._earned_prefix(root, monkeypatch)
+    machine, _ = _harness._new_machine(root, monkeypatch, fault=fault)
     if l2 != "healthy":
         machine.l2_runner = _l2_failing(l2)
     assert machine.run() is Verdict.FAIL
-    state, _ = _sc._state(root)
+    state, _ = _harness._state(root)
     row = state.round_history[-1]
-    result = _sc._restore_result(root)
+    result = _harness._restore_result(root)
     if l2 == "healthy":
         assert row["clean_credit_action"] == "evidence_rejected" and row["fixpoint"] == "CLEAN"
         assert result.passed
@@ -310,8 +312,8 @@ def test_attempt_failing_before_its_round_carries_no_earlier_l2_error(offline_wo
     that this round's L2 returned is a second line of defence.
     """
     root = offline_workspace
-    _sc._earned_prefix(root, monkeypatch)
-    machine, _ = _sc._new_machine(root, monkeypatch, rounds=2)
+    _harness._earned_prefix(root, monkeypatch)
+    machine, _ = _harness._new_machine(root, monkeypatch, rounds=2)
     machine.l2_runner = _l2_failing("raise", rounds={1})
     real = machine._start_host_execution
     seen = {"n": 0}
@@ -325,7 +327,7 @@ def test_attempt_failing_before_its_round_carries_no_earlier_l2_error(offline_wo
     monkeypatch.setattr(machine, "_start_host_execution", start)
     with pytest.raises(RuntimeError, match="before the round"):
         machine.run()
-    state, _ = _sc._state(root)
+    state, _ = _harness._state(root)
     first, second = state.round_history[2:]
     assert first["l2_infra_error"] is True
     assert second["phase_status"]["l2"] == "not_run" and "l2_infra_error" not in second
@@ -340,12 +342,12 @@ def test_acquisition_failure_beside_an_l2_error_keeps_the_window(offline_workspa
     the window is kept and restorable, with or without an L2 error beside it.
     """
     root = offline_workspace
-    proof, _ = _sc._earned_prefix(root, monkeypatch)
-    machine, _ = _sc._new_machine(root, monkeypatch, fault="no-json")
+    proof, _ = _harness._earned_prefix(root, monkeypatch)
+    machine, _ = _harness._new_machine(root, monkeypatch, fault="no-json")
     if l2 != "healthy":
         machine.l2_runner = _l2_failing(l2)
     assert machine.run() is Verdict.FAIL
-    state, _ = _sc._state(root)
+    state, _ = _harness._state(root)
     row = state.round_history[-1]
     assert row["clean_credit_action"] == "interrupted" and row["acquisition_failures"], row
     if l2 == "healthy":
@@ -353,7 +355,46 @@ def test_acquisition_failure_beside_an_l2_error_keeps_the_window(offline_workspa
     else:
         assert row["fixpoint"] == "INCOMPLETE" and row["l2_infra_error"] is True
     assert state.consecutive_clean_rounds == 2 and state.earned_clean_window == proof
-    assert _sc._restore_result(root).passed
+    assert _harness._restore_result(root).passed
+
+
+def test_mutation_infra_breaker_keeps_a_preserve_its_round_settled(offline_workspace, monkeypatch):
+    """W2-10: the breaker stops after the round's final save; that round's preserve stands.
+
+    Three rounds with a typed L2 error after an earned window: rounds 1-2 are
+    `interrupted`, round 3 also has an incomplete-coverage finding and settles
+    `preserved`. The mutation infrastructure breaker then stops the review. It
+    is not a failed attempt, so the preserved row and the window are kept.
+    """
+    root = offline_workspace
+    proof, _ = _harness._earned_prefix(root, monkeypatch)
+    machine, _ = _harness._new_machine(root, monkeypatch, rounds=3, fault="coverage", fault_rounds={5})
+    machine.l2_runner = _l2_failing("typed")
+    with pytest.raises(TimeoutBreaker, match="mutation infrastructure error in 3 consecutive rounds"):
+        machine.run()
+    state, _ = _harness._state(root)
+    rows = state.round_history[2:]
+    assert [row["clean_credit_action"] for row in rows] == ["interrupted", "interrupted", "preserved"]
+    assert rows[2]["l2_infra_error"] is True
+    assert state.consecutive_clean_rounds == 2 and state.earned_clean_window == proof
+    assert _harness._restore_result(root).passed
+
+
+@pytest.mark.parametrize("l2", ["healthy", "raise"])
+def test_acquisition_failure_beside_literal_damage_keeps_the_window(offline_workspace, monkeypatch, l2):
+    """W2-3 pin: an acquisition failure interrupts on the gate path even beside literal damage."""
+    root = offline_workspace
+    proof, _ = _harness._earned_prefix(root, monkeypatch)
+    machine, _ = _harness._new_machine(root, monkeypatch, fault="no-json", qodo_fault="literal")
+    if l2 != "healthy":
+        machine.l2_runner = _l2_failing(l2)
+    assert machine.run() is Verdict.FAIL
+    state, _ = _harness._state(root)
+    row = state.round_history[-1]
+    assert row["clean_credit_action"] == "interrupted" and row["acquisition_failures"], row
+    assert any("excerpt content mismatch" in err for err in state.infra_errors), state.infra_errors
+    assert state.consecutive_clean_rounds == 2 and state.earned_clean_window == proof
+    assert _harness._restore_result(root).passed
 
 
 # Loader: the L2 infrastructure observation on a host row.

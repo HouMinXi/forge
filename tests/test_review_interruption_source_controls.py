@@ -4,14 +4,8 @@ Source base: 295885b3b484e15082140e65b1afaa5959bfd2be. This module is
 portable control SOURCE, not evidence that it has been collected or executed.
 Execution and native qualification require their separate runtime reports.
 
-The reviewer transport sequence is constructed at llm_invoke._invoke_api;
-exception fields match current emitting sites, but their transport constructors
-are NOT exercised. L0/L2/E2E command runners are explicit empty-result seams.
-Ledger-root discovery is an explicit fixture seam; fixture ledger consumption is
-real. No provider, subprocess, native mutation, or full Forge acceptance is claimed.
-Factory, exact _L1Call identity, machine accounting, receipt writing/verification,
-state serialization and cli._emit_ci_output are real. Receipt proof is produced
-and checked by those consumers; no receipt or verifier success is fabricated.
+The seams these controls run on (what is constructed and what is real) are
+described in tests/_review_harness.py.
 
 Current outcomes deliberately differ: invoke failures preserve prior credit but
 remain product-visible; schema/coverage preserve prior earned (preserved). Pure typed excerpt rejection
@@ -19,71 +13,60 @@ preserves an individually reverified prefix while earning no new cycle; literal
 damage and unknown execution still refuse automatic inherited credit.
 """
 
-import contextlib
 import copy
 import dataclasses
 import datetime
-import enum
 import errno
-import hashlib
-import io
 import json
 import os
 import shutil
 import sys
-import threading
 import types
-from collections import Counter
 from pathlib import Path
 
 import pytest
 
 import code_forge.machine as machine_mod
 from code_forge import cli, llm_invoke, verify
-from code_forge.autofix import NoChangeAutoFixer
-from code_forge.backend import BackendConfig
-from code_forge.baseline import ResolvedReview
 from code_forge.errors import CorruptedStateError
-from code_forge.factories import build_l1_provider
-from code_forge.falsify import StubFalsifier
-from code_forge.falsify_real import RealFalsifier
 from code_forge.machine import StateMachine, TimeoutBreaker
 from code_forge.source import compute_source_hash
 from code_forge.state import Mode, Verdict, load_state, save_state
+from tests import _review_harness as _harness
+from tests._review_harness import (
+    ACQUISITION_CASES,
+    CHANGED_DIFF,
+    CONTENT,
+    DELETED_CONTENT,
+    DELETION_DIFF,
+    DIFF,
+    _assert_calls,
+    _assert_original_receipts,
+    _c3_companion,
+    _crash_before_publish,
+    _cycle_receipts,
+    _earned_prefix,
+    _fail_state_save_after_publish,
+    _guard_fixpoint,
+    _healthy,
+    _inject_gate_errors,
+    _machine_snapshot,
+    _new_machine,
+    _p7_raise_after_l1,
+    _raise_in_gate,
+    _recover,
+    _report,
+    _restore_result,
+    _state,
+    _survivor,
+    _verify,
+)
+
+# Re-export the shared fixture by plain assignment (see test_phase6_schema_coverage_credit.py).
+offline_workspace = _harness.offline_workspace
 
 
 SOURCE_PIN = "295885b3b484e15082140e65b1afaa5959bfd2be"
-ROLES = ("qodo", "expert", "adversarial")
-CONTENT = {
-    "control.ts": "const context = 1;\nconst value = 2;\nconst end = 3;\n",
-    "other.ts": "const context = 4;\nconst value = 5;\nconst end = 6;\n",
-}
-DIFF = (
-    "diff --git a/control.ts b/control.ts\n--- a/control.ts\n+++ b/control.ts\n"
-    "@@ -1,2 +1,3 @@\n const context = 1;\n+const value = 2;\n const end = 3;\n"
-    "diff --git a/other.ts b/other.ts\n--- a/other.ts\n+++ b/other.ts\n"
-    "@@ -1,2 +1,3 @@\n const context = 4;\n+const value = 5;\n const end = 6;\n"
-)
-CHANGED_DIFF = DIFF.replace("const value = 2;", "const value = 20;")
-# C3 v3 T3: the same review plus an excerpt-exempt pure-deletion section.
-DELETED_CONTENT = {"legacy.ts": "const keep = 7;\n"}
-DELETION_DIFF = DIFF + (
-    "diff --git a/legacy.ts b/legacy.ts\n--- a/legacy.ts\n+++ b/legacy.ts\n"
-    "@@ -1,3 +1,1 @@\n const keep = 7;\n-const drop = 8;\n-const gone = 9;\n"
-)
-
-# Acquisition: case, observed pass status, current kind/timeout/exit.
-ACQUISITION_CASES = [
-    ("no-json", "error", "no_json", False, 0),
-    ("timeout-empty-kind", "timeout", "", True, -1),
-    ("connect-timeout", "timeout", "conn", True, -1),
-    ("credentials", "error", "credentials", False, -1),
-    ("http-401", "error", "", False, 401),
-    ("http-429", "error", "", False, 429),
-    ("http-503", "error", "", False, 503),
-    ("capacity", "error", "truncated", False, -1),
-    ("generic-host-error", "error", None, False, None),
-]
 # Evidence: case, pass status, action, numeric count, product count, verdict, marker.
 EVIDENCE_CASES = [
     ("schema", "schema_fail", "preserved", 2, 2, "FAIL", "schema-fail"),
@@ -92,309 +75,6 @@ EVIDENCE_CASES = [
     ("excerpt-line-count", "incomplete", "evidence_rejected", 2, 1, "FAIL", None),
     ("literal", "schema_fail", "unavailable", 2, 1, "FAIL", None),
 ]
-
-
-class _ForbiddenExternalOperation(BaseException):
-    """Production catches Exception; a forbidden operation must escape that fold."""
-
-
-@pytest.fixture
-def offline_workspace(tmp_path, monkeypatch):
-    """No command is allowed; the request-count and forbidden-call logs are oracles."""
-    active = [True]
-    forbidden = []
-
-    def audit(event, args):
-        if active[0] and (
-            event.startswith("socket.")
-            or event.startswith(
-                ("subprocess.Popen", "os.system", "os.fork", "os.posix_spawn", "os.exec")
-            )
-        ):
-            forbidden.append(event)
-            raise _ForbiddenExternalOperation("unexpected external operation: " + event)
-
-    sys.addaudithook(audit)
-    try:
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("FORGE_FALSIFY_WORKERS", "1")
-
-        def fixture_ledger_root(cwd):
-            assert Path(cwd) == tmp_path
-            return tmp_path
-
-        monkeypatch.setattr("code_forge.machine.resolve_ledger_root", fixture_ledger_root)
-        monkeypatch.setattr("code_forge.ledger.resolve_ledger_root", fixture_ledger_root)
-        for name, content in CONTENT.items():
-            (tmp_path / name).write_text(content, encoding="utf-8")
-        config = tmp_path / ".code-forge"
-        config.mkdir()
-        # The declared command is never executed: l2_runner below is a seam,
-        # and these source filenames are not FIXVAL test-file candidates.
-        (config / "gate.yaml").write_text(
-            "verify:\n  required_cycles: 3\n"
-            "test:\n  command: [python, -m, pytest, -q]\n  timeout_seconds: 1\n",
-            encoding="utf-8",
-        )
-        yield tmp_path
-    finally:
-        active[0] = False
-        assert forbidden == [], "external operation attempted, even if caught: " + repr(forbidden)
-
-
-def _healthy(diff=DIFF):
-    content = dict(CONTENT)
-    if diff == CHANGED_DIFF:
-        content["control.ts"] = content["control.ts"].replace("const value = 2;", "const value = 20;")
-    elif diff == DELETION_DIFF:
-        content.update(DELETED_CONTENT)
-    else:
-        assert diff == DIFF, "fixture supports only its explicit source versions"
-    return {
-        "findings": [],
-        "code_excerpts": [
-            {"file": name, "start_line": 1, "end_line": text.count("\n"), "content": text}
-            for name, text in content.items()
-        ],
-    }
-
-
-def _reviewer_role(prompt):
-    # This fixture selects constructed replies; this is NOT production trust
-    # derived from prompt text. The production factory owns role attribution.
-    role_sentence = prompt.rsplit("\nYou are a ", 1)[-1]
-    prefixes = ("structural code reviewer:", "senior engineer:", "adversarial QE:")
-    matches = [
-        role for role, prefix in zip(ROLES, prefixes, strict=True) if role_sentence.startswith(prefix)
-    ]
-    assert len(matches) == 1, "unexpected reviewer prompt at the explicit transport seam"
-    return matches[0]
-
-
-def _acquisition_error(case):
-    if case == "generic-host-error":
-        return RuntimeError("constructed unexpected host failure")
-    if case == "no-json":
-        return llm_invoke.InvalidJSONResponseError(
-            "constructed final JSON rejection",
-            raw_response="constructed non-JSON response",
-            kind="no_json",
-            exit_code=0,
-            retryable=False,
-        )
-    if case == "timeout-empty-kind":
-        return llm_invoke.LLMInvokeError("constructed body timeout", is_timeout=True, retryable=False)
-    if case == "connect-timeout":
-        return llm_invoke.LLMInvokeError("constructed connect timeout", kind="conn", is_timeout=True)
-    if case == "credentials":
-        return llm_invoke.LLMInvokeError(
-            "constructed missing credentials", kind="credentials", retryable=False
-        )
-    if case.startswith("http-"):
-        code = int(case.split("-", 1)[1])
-        return llm_invoke.LLMInvokeError(
-            "constructed HTTP failure", exit_code=code, retryable=code in (429, 503)
-        )
-    if case == "capacity":
-        return llm_invoke.LLMInvokeError(
-            "constructed capacity failure", kind="truncated", retryable=False
-        )
-    raise AssertionError("unknown constructed acquisition case: " + case)
-
-
-def _candidate_payload(payload, severity="P1"):
-    payload["findings"] = [
-        {
-            "file": "control.ts",
-            "line": 2,
-            "severity": severity,
-            "description": "constructed product defect",
-            "excerpt": "const value = 2;",
-        }
-    ]
-    return payload
-
-
-def _apply_reviewer_fault(body, fault):
-    """Mutate one constructed reviewer reply into the named receipt fault."""
-    if fault == "schema":
-        body["findings"] = "not an array"
-    elif fault == "coverage":
-        body["code_excerpts"] = body["code_excerpts"][:1]
-    elif fault == "missing-excerpts":
-        body["code_excerpts"] = []
-    elif fault == "excerpt-line-count":
-        body["code_excerpts"][0]["content"] = "const value = 2;\n"
-    elif fault == "schema-findings":
-        # C3: schema-invalid (severity) but the findings list and the excerpts
-        # are intact, so the factory yields schema-fail + one UNTRUSTED companion.
-        body["findings"] = [
-            {
-                "file": "control.ts",
-                "line": 2,
-                "severity": "P9",
-                "description": "constructed schema-invalid candidate",
-                "excerpt": "const value = 2;",
-            }
-        ]
-    elif fault == "schema-findings-two":
-        # C3 T6: one schema-invalid response, two candidates -> two companions.
-        body = _apply_reviewer_fault(body, "schema-findings")
-        body["findings"].append(
-            {
-                "file": "other.ts",
-                "line": 2,
-                "severity": "P9",
-                "description": "second schema-invalid candidate",
-                "excerpt": "const value = 5;",
-            }
-        )
-    elif fault == "literal":
-        body["code_excerpts"][0]["content"] = CONTENT["control.ts"].replace("value = 2", "value = 200")
-    elif fault == "inadmissible-dict":
-        # Real path: a schema-invalid dict the audit writer cannot
-        # encode (a tuple is not built-in JSON data), so the factory records
-        # schema-fail and marks the pass "audit payload unavailable".
-        body["findings"] = "not an array"
-        body["constructed_unencodable"] = ("tuple",)
-    else:
-        raise AssertionError("unknown constructed reviewer fault: " + str(fault))
-    return body
-
-
-def _new_machine(
-    root,
-    monkeypatch,
-    *,
-    fault=None,
-    rounds=1,
-    mode=Mode.LOCAL,
-    diff=DIFF,
-    mixed_product=False,
-    falsifier_reply=None,
-    threshold=3,
-    qodo_fault=None,
-    product_severity="P1",
-    fault_rounds=None,
-):
-    """Keep production _L1Call intact; inject candidates through reviewer JSON."""
-    calls = []
-    lock = threading.Lock()
-    holder = {}
-
-    def transport(prompt, *args, **kwargs):
-        role = _reviewer_role(prompt)
-        phase = (
-            "excerpt-repair"
-            if prompt.startswith(
-                "The previous JSON is a review response without required code_excerpts."
-            )
-            else "review"
-        )
-        with lock:
-            calls.append((holder["machine"]._state.round + 1, role, phase))
-        body = _healthy(diff)
-        if role == "qodo" and qodo_fault is not None:
-            return llm_invoke.LLMResult(_apply_reviewer_fault(body, qodo_fault))
-        if role == "qodo" and (mixed_product or falsifier_reply is not None):
-            return llm_invoke.LLMResult(_candidate_payload(body, product_severity))
-        cycle = holder["machine"]._state.round + 1
-        if (
-            role != "adversarial"
-            or fault is None
-            or (fault_rounds is not None and cycle not in fault_rounds)
-        ):
-            return llm_invoke.LLMResult(body)
-        if fault in {row[0] for row in ACQUISITION_CASES}:
-            raise _acquisition_error(fault)
-        return llm_invoke.LLMResult(_apply_reviewer_fault(body, fault))
-
-    monkeypatch.setattr(llm_invoke, "_invoke_api", transport)
-    backend = BackendConfig(
-        name="constructed-offline",
-        type="api",
-        format="openai",
-        model="offline",
-        base_url="http://127.0.0.1:1",
-        timeout_s=1,
-    )
-    # Supplied diff identity is sufficient for these receipt controls. Leave
-    # base/head/target absent: this is not #67 native WORKING-source authority.
-    # Its real capture guard returns None before any Git command in this seam.
-    resolved = ResolvedReview([Path(name) for name in CONTENT], None, diff, "git")
-    provider = build_l1_provider("auto", resolved, backend=backend, max_attempts=1)
-    falsifier = StubFalsifier()
-    if mixed_product or falsifier_reply is not None:
-        falsifier = RealFalsifier(backend=backend, diff_text=diff)
-
-        def falsify_transport(*args, **kwargs):
-            reply = falsifier_reply
-            if mixed_product:
-                reply = {"verdict": "CONFIRMED", "reasoning": "constructed diff-local defect"}
-            if isinstance(reply, Exception):
-                raise reply
-            return llm_invoke.LLMResult(copy.deepcopy(reply))
-
-        monkeypatch.setattr("code_forge.falsify_real.llm_invoke", falsify_transport)
-    machine = StateMachine(
-        mode=mode,
-        falsifier=falsifier,
-        autofixer=NoChangeAutoFixer(),
-        revert_fn=lambda finding: None,
-        resolved_review=resolved,
-        source_hash=compute_source_hash(git_diff=diff),
-        baseline_spec_repr="issue70 constructed offline diff",
-        cwd=root,
-        registry={},
-        l0_runner=lambda *args: ([], []),
-        l1_provider=provider,
-        l2_runner=lambda *args, **kwargs: ([], []),
-        e2e_runner=lambda *args: ([], []),
-        max_total_rounds=rounds,
-        clean_round_threshold=threshold,
-    )
-    machine._state.env_manifest = {}  # explicit fixture manifest, no environment discovery
-    holder["machine"] = machine
-    return machine, calls
-
-
-def _state(root):
-    path = root / ".code-forge" / "state.json"
-    loaded = load_state(path)
-    assert loaded is not None
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    # Exercise a genuine second serialization/load, without overwriting source
-    # state or using that copy as authority for the machine under test.
-    roundtrip = root / ".code-forge" / "issue70-roundtrip.json"
-    save_state(loaded, roundtrip)
-    assert json.loads(roundtrip.read_text(encoding="utf-8")) == raw
-    again = load_state(roundtrip)
-    assert again.consecutive_clean_rounds == loaded.consecutive_clean_rounds
-    assert again.earned_clean_window == loaded.earned_clean_window
-    assert again.round_history == loaded.round_history
-    return loaded, raw
-
-
-def _report(root):
-    stdout, stderr = io.StringIO(), io.StringIO()
-    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-        cli._emit_ci_output(root / ".code-forge" / "state.json", {})
-    log = json.loads(stdout.getvalue())
-    assert log["version"] == "2.1.0" and len(log["runs"]) == 1
-    return stderr.getvalue(), log["runs"][0]
-
-
-def _verify(root, diff=DIFF):
-    return verify.run_verify(
-        root, compute_source_hash(git_diff=diff), verify.parse_diff_files(diff), diff_text=diff
-    )
-
-
-def _cycle_receipts(root, cycle):
-    return [
-        json.loads((root / ".code-forge" / "receipts" / f"receipt-c{cycle}p{number}.json").read_text())
-        for number in (1, 2, 3)
-    ]
 
 
 def _assert_healthy_siblings(receipts, diff=DIFF, *, product_in_qodo=False):
@@ -410,75 +90,6 @@ def _assert_healthy_siblings(receipts, diff=DIFF, *, product_in_qodo=False):
             assert receipt["findings"][0]["description"] == "[qodo] constructed product defect"
         else:
             assert receipt["findings_count"] == 0 and receipt["findings"] == []
-
-
-def _assert_calls(calls, cycles, *, missing_excerpt_repair=False):
-    expected = Counter((cycle, role, "review") for cycle in cycles for role in ROLES)
-    if missing_excerpt_repair:
-        # Real llm_invoke asks once outside max_attempts. The constructed
-        # follow-up stays empty; do not skip or fabricate repair success.
-        expected[(cycles[-1], "adversarial", "excerpt-repair")] += 1
-    assert Counter(calls) == expected
-
-
-def _earned_prefix(root, monkeypatch, diff=DIFF):
-    machine, calls = _new_machine(root, monkeypatch, rounds=2, diff=diff)
-    assert machine.run() is Verdict.ESCALATED  # two is below the unchanged floor
-    _assert_calls(calls, [1, 2])
-    state, _ = _state(root)
-    assert state.consecutive_clean_rounds == 2
-    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == [1, 2]
-    assert [row["clean_credit_action"] for row in state.round_history] == ["earned", "earned"]
-    original = {}
-    for cycle, stored in zip((1, 2), state.earned_clean_window["cycles"], strict=True):
-        entry, result = verify._capture_earned_cycle(
-            root,
-            compute_source_hash(git_diff=diff),
-            verify.parse_diff_files(diff),
-            cycle=cycle,
-            diff_text=diff,
-        )
-        assert result.passed and result.checks_run == result.checks_passed == 8, result.reason
-        assert entry == stored
-        assert [receipt["pass_status"] for receipt in _cycle_receipts(root, cycle)] == ["completed"] * 3
-        for number in (1, 2, 3):
-            path = root / ".code-forge" / "receipts" / f"receipt-c{cycle}p{number}.json"
-            original[path] = path.read_bytes()
-            assert hashlib.sha256(original[path]).hexdigest() == stored["receipt_sha256"][str(number)]
-    assert not _verify(root, diff).passed
-    return copy.deepcopy(state.earned_clean_window), original
-
-
-def _assert_original_receipts(original):
-    assert {path: path.read_bytes() for path in original} == original
-
-
-def _restore_result(root, diff=DIFF):
-    # Restoration is the real machine's independently verified proof operation,
-    # distinct from public terminal verification and from the stored number.
-    loaded = load_state(root / ".code-forge" / "state.json")
-    return verify._restore_earned_window(
-        loaded,
-        root,
-        compute_source_hash(git_diff=diff),
-        verify.parse_diff_files(diff),
-        diff_text=diff,
-        reviewed_repositories=None,
-    )
-
-
-def _recover(root, monkeypatch, original, expected_cycles, *, rounds=1, diff=DIFF):
-    machine, calls = _new_machine(root, monkeypatch, rounds=rounds, diff=diff)
-    assert machine.run() is Verdict.PASS
-    _assert_calls(calls, expected_cycles[-rounds:])
-    state, _ = _state(root)
-    assert state.converged is True
-    assert state.consecutive_clean_rounds == 3
-    assert [entry["cycle"] for entry in state.earned_clean_window["cycles"]] == expected_cycles
-    assert _verify(root, diff).passed
-    summary, _ = _report(root)
-    assert "code-forge: PASS " in summary
-    _assert_original_receipts(original)
 
 
 @pytest.mark.parametrize(
@@ -743,6 +354,8 @@ _PRESERVED_LOG = (
 )
 _RESTART_LOG = "tiered-reset: P2/P3-density -- restarting cycle %d"
 _AUDIT_UNAVAILABLE = "review evidence rejected in current round; audit payload unavailable"
+# TD-P6-C3d: the start of the ESCALATED note naming preserved rounds.
+_C3D_NOTE = "credit kept by preserved round(s) at cycle(s) "
 
 
 def _assert_log_matches_ledger(state, cycle):
@@ -758,27 +371,17 @@ def _assert_log_matches_ledger(state, cycle):
         assert restart_line and not preserved_line
 
 
-def _inject_gate_errors(monkeypatch, machine, extra):
-    """Append gate errors; record what the predicate and real gate saw at that moment."""
-    original = machine._receipt_gate_round_errors
-    seen = []
-
-    def errors():
-        observed = original()
-        seen.append((machine._schema_coverage_credit_preserve(machine._fixpoint_reached()), observed))
-        return observed + list(extra)
-
-    monkeypatch.setattr(machine, "_receipt_gate_round_errors", errors)
-    return seen
-
-
 @pytest.mark.parametrize(
     "extra",
     [[_AUDIT_UNAVAILABLE], [_AUDIT_UNAVAILABLE, "receipt write failed: constructed I/O error"]],
     ids=["audit-unavailable", "audit-unavailable-plus-io"],
 )
 def test_la_audit_unavailable_beside_attempted_schema_wipes(offline_workspace, monkeypatch, extra):
-    """L-A pin: attempted + audit-unavailable (+ I/O) gate errors wipe like M6 (deliberate narrowing)."""
+    """L-A pin: attempted + audit-unavailable (+ I/O) gate errors wipe like M6 (deliberate narrowing).
+
+    The injected audit-unavailable error has no unavailable pass behind it,
+    so W2-8's schema-failed-reply tolerance does not apply.
+    """
     root = offline_workspace
     _, original = _earned_prefix(root, monkeypatch)
     machine, calls = _new_machine(root, monkeypatch, fault="schema")
@@ -949,16 +552,6 @@ def test_m4_new_confirmed_product_plus_schema_resets_on_real_run(offline_workspa
     _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
 
 
-def _c3_companion(machine):
-    companions = [
-        f
-        for f in machine._state.findings
-        if f.source == "UNTRUSTED" and f.id == f"l1-adversarial-untrusted-{f.fingerprint}"
-    ]
-    assert len(companions) == 1 and companions[0].disposition.value == "UNCERTAIN"
-    return companions[0].fingerprint
-
-
 def test_c3_schema_invalid_findings_preserve_on_real_run(offline_workspace, monkeypatch):
     """C3 §4.7: real factories path. One parsed schema-invalid response with valid
     excerpts yields schema-fail + an UNTRUSTED companion; the round preserves and
@@ -1060,24 +653,6 @@ def test_c3_companion_with_gate_damage_wipes_and_keeps_fingerprint(
     assert state.round_history[-1]["dispositions"][fp] == "UNCERTAIN"
     assert not any("clean credit preserved" in err for err in state.infra_errors)
     _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
-
-
-def _survivor(severity):
-    from code_forge.state import StateFinding
-    from code_forge.disposition import Disposition
-
-    finding = StateFinding(
-        id="mutant-control.x_mutmut_1",
-        fingerprint="mutant:control.x_mutmut_1",
-        source="MUTANT",
-        disposition=Disposition.CONFIRMED,
-        file="control.ts",
-        line_range=[0, 0],
-        description="mutant survived: control.x_mutmut_1",
-    )
-    if severity is not None:
-        finding.severity = severity
-    return finding
 
 
 @pytest.mark.parametrize(
@@ -1410,43 +985,6 @@ def _raise_in_hook(machine, error):
         raise error
 
     machine.post_round_hook = hook
-
-
-def _fail_state_save_after_publish(mp, machine):
-    """Fail the round-end save once this round's receipts were published (no test seam)."""
-    publish = machine._publish_l1_receipts
-    save = machine._persist_state
-    armed = {"published": False, "raised": False}
-
-    def published(*args, **kwargs):
-        try:
-            return publish(*args, **kwargs)
-        finally:
-            armed["published"] = True
-
-    def failing_save():
-        if armed["published"] and not armed["raised"]:
-            armed["raised"] = True
-            raise OSError(5, "constructed state save failure")
-        return save()
-
-    mp.setattr(machine, "_publish_l1_receipts", published)
-    mp.setattr(machine, "_persist_state", failing_save)
-    return armed
-
-
-def _raise_in_gate(mp, machine):
-    def gate():
-        raise OSError(5, "constructed receipt gate read failure")
-
-    mp.setattr(machine, "_receipt_gate_round_errors", gate)
-
-
-def _crash_before_publish(mp, machine):
-    def publish(*_args, **_kwargs):
-        raise RuntimeError("constructed crash before receipt publication")
-
-    mp.setattr(machine, "_publish_l1_receipts", publish)
 
 
 def _workspace_blocker_after_round(mp, machine):
@@ -2313,12 +1851,9 @@ def _max_rounds_save_fails(mp, machine):
     )
 
 
+# A mutation-infra breaker stop after the final save is not a failed attempt
+# (test_w2_10_breaker_after_saved_preserve_keeps_it).
 _FIX8_SAME_ATTEMPT = {
-    "mutation-infra-breaker": (
-        _real_mutation_infra_breaker,
-        TimeoutBreaker,
-        "mutation infrastructure error in 3 consecutive rounds",
-    ),
     "ctrl-c-in-hold-check": (
         _interrupt_in_hold_check,
         _AfterRoundInterrupt,
@@ -2351,6 +1886,69 @@ def test_fix8_same_attempt_failure_after_saved_preserve_resets(offline_workspace
     _assert_calls(calls, [3])
     state = _assert_wiped(root)
     assert state.verdict is not Verdict.PASS and state.converged is False
+    # TD-P6-C3d: the escalation note this attempt wrote is retracted with the preserve.
+    assert not [e for e in state.infra_errors if e.startswith(_C3D_NOTE)], state.infra_errors
+
+
+def test_w2_10_breaker_after_saved_preserve_keeps_it(offline_workspace, monkeypatch):
+    """W2-10: the real #114 breaker after the final save is a stop, not a failed attempt.
+
+    Same injection as the fix8 cases: `preserved` (credit 2) is on disk when
+    the breaker raises. The row, credit and window stay; the verdict is FAIL.
+    """
+    root = offline_workspace
+    proof, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="coverage")
+    with monkeypatch.context() as mp:
+        armed = _real_mutation_infra_breaker(mp, machine)
+        with pytest.raises(
+            TimeoutBreaker, match="mutation infrastructure error in 3 consecutive rounds"
+        ):
+            machine.run()
+    assert armed["raised"] and armed["actions"] == ["preserved"], armed
+    assert armed["disk_before"][1] == 2
+    _assert_calls(calls, [3])
+    state, _ = _state(root)
+    latest = state.round_history[-1]
+    assert latest["clean_credit_action"] == "preserved" and latest["clean_rounds_after"] == 2
+    assert state.consecutive_clean_rounds == 2 and state.earned_clean_window == proof
+    assert state.verdict is Verdict.FAIL and state.converged is False
+    assert _restore_result(root).passed and not _verify(root).passed
+    _recover(root, monkeypatch, original, [1, 2, 4])
+
+
+def test_w2_10_failed_breaker_save_still_demotes(offline_workspace, monkeypatch):
+    """W2-10 boundary: the breaker's own save failing is a failed attempt, as in fix8."""
+    root = offline_workspace
+    _, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="coverage")
+    with monkeypatch.context() as mp:
+        armed = _real_mutation_infra_breaker(mp, machine)
+        breaker, save = machine._check_mutation_infra_can_still_converge, machine._persist_state
+        inside = {"breaker": False, "failed": False}
+
+        def check():
+            inside["breaker"] = "preserved" in armed["actions"]
+            try:
+                return breaker()
+            finally:
+                inside["breaker"] = False
+
+        def failing_save():
+            if inside["breaker"]:
+                inside["failed"] = True
+                raise OSError(5, "constructed breaker save failure")
+            return save()
+
+        mp.setattr(machine, "_check_mutation_infra_can_still_converge", check)
+        mp.setattr(machine, "_persist_state", failing_save)
+        with pytest.raises(OSError, match="constructed breaker save failure"):
+            machine.run()
+    assert armed["raised"] and inside["failed"] and armed["actions"] == ["preserved"], armed
+    _assert_calls(calls, [3])
+    state = _assert_wiped(root)
+    assert state.verdict is not Verdict.PASS and state.converged is False
+    _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
 
 
 def test_fix8_earned_row_kept_after_post_settle_failure(offline_workspace, monkeypatch):
@@ -2705,21 +2303,23 @@ def _fix11_round(
     rounds=4,
     start=10_000,
     mode=Mode.LOCAL,
-    state=None,
+    windows=None,
 ):
     """One run() of at most `rounds` rounds.
 
     A given `machine` is reused, with a new instance's reviewer seam for `fault`.
-    A new instance starts from a copy of `state` when one is given: the
-    State, then the written and clean receipt cycle windows.
+    A new instance starts from copies of `windows` when given: the written and
+    clean receipt cycle windows (instance-lifetime by design). A State a
+    reused instance drops (P7-1, W2-9) has no env manifest, so the run gets
+    the empty one a new fixture instance has (`_p7_no_manifest_probe`).
     """
     fresh, _ = _new_machine(root, monkeypatch, fault=fault, rounds=rounds, mode=mode)
-    if state is not None:
-        fresh._state = copy.deepcopy(state[0])
-        fresh._written_cycles, fresh._clean_window_cycles = list(state[1]), list(state[2])
+    if windows is not None:
+        fresh._written_cycles, fresh._clean_window_cycles = list(windows[0]), list(windows[1])
     machine = fresh if machine is None else machine
     machine.max_total_rounds = rounds
     with monkeypatch.context() as mp:
+        _p7_no_manifest_probe(mp)
         _metered(mp, start)
         error = None if inject is None else inject(mp, machine)
         if error is None:
@@ -2825,30 +2425,27 @@ def test_fix11_second_ci_run_saves_what_a_new_instance_saves(offline_workspace, 
     """fix11: the CI path of the differential above; run 2 has no injected fault.
 
     Run 2 still FAILs: this workspace is not a git checkout, so its in-tree
-    gate.yaml is untracked and CI refuses to measure mutation with it (and the
-    carried State keeps run 1's infra errors). The new instance FAILs the same
-    way. test_fix12_ci_outside_root_runs_reach_the_measurement below covers a
-    run 2 that does reach the measurement.
+    gate.yaml is untracked and CI refuses to measure mutation with it. The new
+    instance FAILs the same way. test_fix12_ci_outside_root_runs_reach_the_measurement
+    below covers a run 2 that does reach the measurement.
 
-    CI never reloads state.json, and the in-memory State is not per-run state:
-    a reused instance keeps it (main pins this in
-    test_mutation_ledger_ci_controls.py). The receipt cycle windows are kept
-    for the life of the instance by design (machine.__post_init__). So the
-    new instance starts from copies of those three, and everything else must
-    match.
+    CI never reloads state.json, and a later CI run on an instance drops the
+    State its previous run used (W2-9), as a new instance starts empty.
+    The receipt cycle windows are kept for the life of the instance by design
+    (machine.__post_init__). So the new instance starts from copies of those
+    two, and everything else must match.
     """
     root = offline_workspace
     fault, inject = _FIX11_CI_RUN1[case]
     _earned_prefix(root, monkeypatch)
     machine = _fix11_round(root, monkeypatch, fault, inject, rounds=1, start=0, mode=Mode.CI)
-    carried = (machine._state, machine._written_cycles, machine._clean_window_cycles)
-    carried = copy.deepcopy(carried)
+    windows = copy.deepcopy((machine._written_cycles, machine._clean_window_cycles))
     after_run1 = _files(root)
     _fix11_round(root, monkeypatch, None, machine=machine, mode=Mode.CI)
     same_instance = _files(root)
     _restore_files(root, after_run1)
     assert _files(root) == after_run1
-    _fix11_round(root, monkeypatch, None, mode=Mode.CI, state=carried)
+    _fix11_round(root, monkeypatch, None, mode=Mode.CI, windows=windows)
     fresh = _files(root)
     advisories = ".code-forge/advisory-findings.json"
     reused, new = json.loads(same_instance.pop(advisories)), json.loads(fresh.pop(advisories))
@@ -2873,8 +2470,8 @@ def test_fix12_ci_outside_root_runs_reach_the_measurement(
     receipt acceptance: the receipt cycle windows are kept for the life of the
     instance by design, and a second run's evidence-only attestation is
     refused. A reused CI instance therefore cannot reach PASS in run 2. The new
-    instance starts from copies of the State and those windows, and must save
-    the same files.
+    instance starts from copies of those windows (its State starts empty, as the
+    reused one's does), and must save the same files.
     """
     root = offline_workspace
     outside = tmp_path_factory.mktemp("forge-config")
@@ -2899,14 +2496,14 @@ def test_fix12_ci_outside_root_runs_reach_the_measurement(
     run1 = json.loads((root / ".code-forge" / "state.json").read_text())
     assert run1["verdict"] == Verdict.PASS.value, run1["infra_errors"]
     assert len(measured) == 1
-    carried = copy.deepcopy((machine._state, machine._written_cycles, machine._clean_window_cycles))
+    windows = copy.deepcopy((machine._written_cycles, machine._clean_window_cycles))
     after_run1 = _files(root)
     _fix11_round(root, monkeypatch, None, machine=machine, mode=Mode.CI)
     assert len(measured) == 2  # run 2 reached the measurement
     same_instance = _files(root)
     _restore_files(root, after_run1)
     assert _files(root) == after_run1
-    _fix11_round(root, monkeypatch, None, trusted_root, mode=Mode.CI, state=carried)
+    _fix11_round(root, monkeypatch, None, trusted_root, mode=Mode.CI, windows=windows)
     assert len(measured) == 3
     fresh = _files(root)
     state = ".code-forge/state.json"
@@ -2997,8 +2594,9 @@ def test_fix12_reused_ci_instance_drops_a_fixed_trusted_config_refusal(tmp_path,
     link, st_nlink > 1) and FAILs with the refusal. The operator replaces the
     link with a plain copy. Run 2 on the same instance must save what a new
     instance saves. As in the CI differential above, the new instance starts
-    from copies of the State and the receipt cycle windows (instance-lifetime by
-    design). The round is stubbed as in main's
+    from copies of the receipt cycle windows (instance-lifetime by design); its
+    State starts empty, as the reused one's does. The round is
+    stubbed as in main's
     test_ci_refused_trusted_gate_data_fails_even_without_mutation, so the
     verdict comes from the gate data alone. Only run() is called.
     """
@@ -3023,7 +2621,7 @@ def test_fix12_reused_ci_instance_drops_a_fixed_trusted_config_refusal(tmp_path,
     assert reused.run() == Verdict.FAIL
     run1 = json.loads(state_path.read_text())
     assert any(e.startswith(_FIX12_REFUSED) for e in run1["infra_errors"]), run1["infra_errors"]
-    carried = copy.deepcopy((reused._state, reused._written_cycles, reused._clean_window_cycles))
+    windows = copy.deepcopy((reused._written_cycles, reused._clean_window_cycles))
     data = (outside / trusted.GATE).read_bytes()
     (outside / trusted.GATE).unlink()
     (outside / trusted.GATE).write_bytes(data)  # the operator's fix: nlink 1
@@ -3036,15 +2634,13 @@ def test_fix12_reused_ci_instance_drops_a_fixed_trusted_config_refusal(tmp_path,
     for p, data in before.items():
         p.write_bytes(data)
     fresh = make()
-    fresh._state = copy.deepcopy(carried[0])
-    fresh._written_cycles, fresh._clean_window_cycles = list(carried[1]), list(carried[2])
+    fresh._written_cycles, fresh._clean_window_cycles = list(windows[0]), list(windows[1])
     new = fresh.run()
     saved_new = json.loads(state_path.read_text())
     assert new == Verdict.PASS, saved_new["infra_errors"]
     assert second == new, saved_reused["infra_errors"]
-    refused = [e for e in run1["infra_errors"] if e.startswith(_FIX12_REFUSED)]
-    # the carried State keeps run 1's entry; run 2 adds no refusal of its own
-    assert [e for e in saved_reused["infra_errors"] if e.startswith(_FIX12_REFUSED)] == refused
+    # W2-9: run 2 starts from an empty State, so run 1's refusal is gone too.
+    assert not [e for e in saved_reused["infra_errors"] if e.startswith(_FIX12_REFUSED)]
     assert saved_reused["infra_errors"] == saved_new["infra_errors"]
     assert saved_reused["verdict"] == saved_new["verdict"]
 
@@ -3069,25 +2665,6 @@ def _p7_no_manifest_probe(mp):
     # has `{}`. The probe would spawn toolchains, which the offline fixture
     # forbids, so both get the same empty manifest.
     mp.setattr("code_forge.manifest.extract_manifest", lambda cwd: types.SimpleNamespace(to_dict=dict))
-
-
-def _p7_raise_after_l1(mp, machine, nth=1):
-    """Fail the `nth` attempt after its L1 returned and before L2 starts.
-
-    `_downgrade_one_line_slips` runs after L1 and before this attempt's
-    receipt-write bookings are cleared, which the relog test depends on.
-    """
-    real = machine._downgrade_one_line_slips
-    calls = {"n": 0}
-
-    def downgrade(*args, **kwargs):
-        calls["n"] += 1
-        if calls["n"] == nth:
-            raise RuntimeError("constructed failure after L1 returned")
-        return real(*args, **kwargs)
-
-    mp.setattr(machine, "_downgrade_one_line_slips", downgrade)
-    return RuntimeError
 
 
 def _p7_l2_runner_fails(mp, machine):
@@ -3295,16 +2872,36 @@ def test_p7_run_that_raised_before_the_flush_leaves_no_preexisting_advisory(
     assert not [a.id for a in machine._advisories if a.id.startswith("pre-existing-")]
 
 
-def test_p7_reused_ci_instance_carries_its_state(offline_workspace, monkeypatch):
-    """P7-1 boundary: CI never reloads state.json and keeps the in-memory State."""
+def test_p7_reused_ci_instance_starts_from_an_empty_state(offline_workspace, monkeypatch):
+    """W2-9: CI never reloads state.json, and a later CI run drops the previous run's State.
+
+    Run 1's State, a human DISMISSED disposition included, does not reach run
+    2: its history holds only its own round (the receipt windows, kept for
+    the life of the instance, still number it). A State the caller assigns
+    between runs is kept.
+    """
+    from code_forge.disposition import Disposition
+    from code_forge.state import StateFinding
+
     root = offline_workspace
     machine, _ = _new_machine(root, monkeypatch, rounds=1, mode=Mode.CI)
     machine.run()
-    first = len(machine._state.round_history)
-    assert first == 1
-    (root / ".code-forge" / "state.json").unlink()
+    assert [row["round"] for row in machine._state.round_history] == [0]
+    run1 = machine._state
+    run1.findings.append(
+        StateFinding("human", "human-fp", "L1", Disposition.DISMISSED, "other.ts", [1, 1], "dismissed")
+    )
+    with monkeypatch.context() as mp:
+        _p7_no_manifest_probe(mp)
+        machine.run()
+    assert machine._state is not run1
+    assert len(machine._state.round_history) == 1
+    assert not [f for f in machine._state.findings if f.fingerprint == "human-fp"]
+    seeded = copy.deepcopy(run1)
+    machine._state = seeded
     machine.run()
-    assert len(machine._state.round_history) == first + 1
+    assert machine._state is seeded
+    assert len(seeded.round_history) == 2  # run 1's round, then this run's
 
 
 def test_p7_second_run_failing_after_l1_does_not_relog_run1_receipt_error(
@@ -3381,82 +2978,6 @@ def test_p7_second_run_failing_before_l2_ignores_run1_l2_error(offline_workspace
 # contents, recursively) around every real call and require the same result
 # on repeated calls. The snapshot covers instance attributes only: file
 # system, module-level and class-level state are outside it.
-
-
-def _freeze(value, seen=frozenset()):
-    """Comparable deep snapshot: contents plus object identity of containers."""
-    if value is None or type(value) in (bool, int, float, str, bytes):
-        return (type(value), value)
-    if isinstance(value, enum.Enum):
-        return ("enum", type(value).__name__, value.value)
-    if isinstance(value, Path):
-        return ("path", str(value))
-    if id(value) in seen:
-        return ("cycle", id(value))
-    if isinstance(value, (type, types.ModuleType, types.FunctionType, types.BuiltinFunctionType)):
-        return ("ref", id(value))
-    if isinstance(value, types.MethodType):
-        return ("method", value.__func__.__qualname__, id(value.__self__))
-    inner = seen | {id(value)}
-    if isinstance(value, dict):
-        items = tuple((_freeze(key, inner), _freeze(item, inner)) for key, item in value.items())
-        return ("dict", type(value).__name__, id(value), items)
-    if isinstance(value, (set, frozenset)):
-        members = tuple(sorted(repr(_freeze(item, inner)) for item in value))
-        return ("set", type(value).__name__, id(value), members)
-    if isinstance(value, (list, tuple)):
-        return ("seq", type(value).__name__, id(value), tuple(_freeze(item, inner) for item in value))
-    if dataclasses.is_dataclass(value):
-        fields = tuple(
-            (field.name, _freeze(getattr(value, field.name), inner))
-            for field in dataclasses.fields(value)
-        )
-        return ("dataclass", type(value).__name__, id(value), fields)
-    attributes = getattr(value, "__dict__", None)
-    if type(attributes) is dict:
-        return ("object", type(value).__name__, id(value), _freeze(attributes, inner))
-    return ("opaque", type(value).__name__, id(value))
-
-
-def _machine_snapshot(machine):
-    """Every instance attribute except the guard itself, keyed by name.
-
-    Instance attributes only: writes to files, module globals or class
-    attributes are not part of this snapshot.
-    """
-    return {name: _freeze(value) for name, value in vars(machine).items() if name != "_fixpoint_reached"}
-
-
-def _guard_fixpoint(monkeypatch, machine):
-    """Wrap the real `_fixpoint_reached`; record call site, result and any change
-    to the machine's instance attributes (see `_machine_snapshot` for the scope).
-
-    Failures are recorded, not raised: `_finish_failed_host_attempt` swallows
-    secondary exceptions, so an assertion raised there would be lost.
-    """
-    original = machine._fixpoint_reached
-    record = {"sites": [], "results": [], "violations": []}
-
-    def guarded():
-        site = sys._getframe(1).f_code.co_name
-        results = []
-        for _ in range(3):
-            before = _machine_snapshot(machine)
-            results.append(original())
-            after = _machine_snapshot(machine)
-            if after != before:
-                changed = sorted(
-                    name for name in before.keys() | after.keys() if before.get(name) != after.get(name)
-                )
-                record["violations"].append((site, "machine state changed", changed))
-        record["sites"].append(site)
-        record["results"].append(results[0])
-        if any(result is not results[0] for result in results[1:]):
-            record["violations"].append((site, "not idempotent", results))
-        return results[0]
-
-    monkeypatch.setattr(machine, "_fixpoint_reached", guarded)
-    return record
 
 
 @pytest.mark.parametrize("mutation", ["none", "append", "replace", "rotate", "result"])
@@ -3762,9 +3283,7 @@ def test_run_level_p3_distinct_over_threshold_resets(offline_workspace, monkeypa
 @pytest.mark.parametrize(
     "io_error", [False, True], ids=["audit-unavailable", "audit-unavailable-plus-io"]
 )
-def test_unencodable_dict_beside_attempted_schema_wipes_on_real_path(
-    offline_workspace, monkeypatch, io_error
-):
+def test_unencodable_dict_beside_attempted_schema_on_real_path(offline_workspace, monkeypatch, io_error):
     """The audit-unavailable pin without injected gate errors.
 
     The adversarial reply is an admissible schema-invalid dict (attempted
@@ -3774,13 +3293,16 @@ def test_unencodable_dict_beside_attempted_schema_wipes_on_real_path(
     new file directly under the receipts directory raises a genuine
     PermissionError (errno EACCES), as a read-only directory would. This is a
     monkeypatch rather than a file mode, so it holds for any uid, root
-    included. Both are (iii)-only by finding, so the predicate
-    alone would preserve; the real gate damage decides the M6 wipe. The older
-    monkeypatched pin (test_la_audit_unavailable_beside_attempted_schema_wipes)
-    stays as the narrower gate-contract control.
+    included. Both are (iii)-only by finding, so the predicate alone would
+    preserve. W2-8: the unavailable payload is qodo's schema-failed reply
+    itself, so without I/O damage the round preserves (verdict FAIL); the
+    real I/O damage still decides the M6 wipe. The monkeypatched pin
+    (test_la_audit_unavailable_beside_attempted_schema_wipes) stays as the
+    gate-contract control for an audit-unavailable error with no
+    schema-failed reply behind it.
     """
     root = offline_workspace
-    _, original = _earned_prefix(root, monkeypatch)
+    proof, original = _earned_prefix(root, monkeypatch)
     receipts = root / ".code-forge" / "receipts"
     machine, calls = _new_machine(root, monkeypatch, fault="schema", qodo_fault="inadmissible-dict")
     predicate = machine._schema_coverage_credit_preserve
@@ -3811,8 +3333,11 @@ def test_unencodable_dict_beside_attempted_schema_wipes_on_real_path(
     assert bool(denied) is io_error, denied
     _assert_calls(calls, [3])
     assert decisions == [True]
-    # Outcome first, so a lost audit-unavailable signal fails on the wipe itself.
-    state = _assert_wiped(root)
+    # Outcome first, so a lost signal fails on the credit outcome itself.
+    if io_error:
+        state = _assert_wiped(root)
+    else:
+        state = _assert_preserved(root, proof, fixpoint="RESET")
     latest = state.round_history[-1]
     assert {"schema-fail-qodo", "schema-fail-adversarial"} <= set(latest["dispositions"])
     assert not any("clean credit preserved" in err for err in state.infra_errors)
@@ -3821,4 +3346,107 @@ def test_unencodable_dict_beside_attempted_schema_wipes_on_real_path(
     assert machine_mod._ATTEMPTED_EVIDENCE_GATE_ERROR in errors and _AUDIT_UNAVAILABLE in errors
     assert any(err.startswith("receipt write failed: ") for err in errors) is io_error
     assert any(f"[Errno {errno.EACCES}]" in err for err in errors) is io_error
+    if io_error:
+        _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+    else:
+        _recover(root, monkeypatch, original, [1, 2, 4])
+
+
+def test_unencodable_schema_reply_alone_preserves_on_real_path(offline_workspace, monkeypatch):
+    """W2-8: an inadmissible dict that is the round's only defect keeps the window.
+
+    The qodo reply is a schema-invalid dict the audit writer cannot encode:
+    no attempted payload and no companion, only its schema-fail finding, as
+    for a non-JSON reply. The gate still refuses the round (verdict FAIL),
+    and the refusal does not wipe the earned window.
+    """
+    root = offline_workspace
+    proof, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, qodo_fault="inadmissible-dict")
+    assert machine.run() is Verdict.FAIL
+    _assert_calls(calls, [3])
+    state = _assert_preserved(root, proof, fixpoint="RESET")
+    assert state.round_history[-1]["dispositions"]["schema-fail-qodo"] == "CONFIRMED"
+    assert machine._unavailable_rejected_passes_last_round == {"qodo"}
+    assert machine._attempted_last_round == []
+    assert machine._receipt_gate_round_errors() == [_AUDIT_UNAVAILABLE]
+    assert any(f.description == _AUDIT_UNAVAILABLE for f in state.findings)
+    _recover(root, monkeypatch, original, [1, 2, 4])
+
+
+def test_unencodable_schema_reply_beside_literal_damage_wipes(offline_workspace, monkeypatch):
+    """W2-8 boundary: literal receipt damage on another pass still takes the M6 wipe."""
+    root = offline_workspace
+    _, original = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="literal", qodo_fault="inadmissible-dict")
+    assert machine.run() is Verdict.FAIL
+    _assert_calls(calls, [3])
+    state = _assert_wiped(root)
+    assert machine._unavailable_rejected_passes_last_round == {"qodo"}
+    assert any("excerpt content mismatch" in err for err in state.infra_errors)
     _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
+
+
+def test_c3d_max_rounds_escalation_names_the_preserved_round(offline_workspace, monkeypatch):
+    """TD-P6-C3d: the max-rounds ESCALATED line follows a note naming the preserve."""
+    root = offline_workspace
+    proof, _ = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="coverage")
+    assert machine.run() is Verdict.ESCALATED
+    _assert_calls(calls, [3])
+    state = _assert_preserved(root, proof, fixpoint="RESET")
+    note = _C3D_NOTE + "3 (schema/coverage failures only, not earned); 2 clean round(s) held in total"
+    assert state.infra_errors[-2] == note
+    assert state.infra_errors[-1].startswith("ESCALATED category=")
+
+
+def test_c3d_stall_escalation_names_the_preserved_round(offline_workspace, monkeypatch):
+    """TD-P6-C3d: the stall line follows the note; the stall reason itself is unchanged.
+
+    Three preserved rounds in a row trip the failed-pass breaker first, so the
+    stall is forced, as in `_stall_save_fails`.
+    """
+    root = offline_workspace
+    proof, _ = _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="coverage")
+    monkeypatch.setattr(machine, "_stalled_on_identical_round", lambda: True)
+    assert machine.run() is Verdict.ESCALATED
+    _assert_calls(calls, [3])
+    state = _assert_preserved(root, proof, fixpoint="RESET")
+    note = _C3D_NOTE + "3 (schema/coverage failures only, not earned); 2 clean round(s) held in total"
+    assert state.infra_errors[-2:] == [note, machine._stall_reason()]
+    assert state.infra_errors[-1].startswith("review stalled: ")
+
+
+def test_c3d_no_note_after_a_reset(offline_workspace, monkeypatch):
+    """A reset after a preserve leaves nothing preserved to name at the next ESCALATED exit."""
+    from code_forge.disposition import Disposition
+    from code_forge.state import StateFinding
+
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="coverage")
+    assert machine.run() is Verdict.ESCALATED
+    assert _state(root)[0].infra_errors[-2].startswith(_C3D_NOTE)
+    # Next run: a new L0 finding resets the window, the next round earns, then
+    # the round limit escalates with one clean round held.
+    machine, _ = _new_machine(root, monkeypatch, rounds=2)
+    finding = StateFinding(
+        "l0-lint", "l0-lint-fp", "L0", Disposition.CONFIRMED, "other.ts", [2, 2], "constructed lint"
+    )
+    first = iter([[finding]])
+    machine.l0_runner = lambda *_args: (next(first, []), [])
+    notes = []
+    real = machine_mod.preserved_credit_note
+    monkeypatch.setattr(
+        machine_mod,
+        "preserved_credit_note",
+        lambda *args: notes.append(real(*args)) or notes[-1],
+    )
+    assert machine.run() is Verdict.ESCALATED
+    state, _ = _state(root)
+    actions = [row["clean_credit_action"] for row in state.round_history[2:]]
+    assert actions == ["preserved", "reset", "earned"] and state.consecutive_clean_rounds == 1
+    assert notes == [None]  # the writer ran at the ESCALATED exit and named nothing
+    assert state.infra_errors[-1].startswith("ESCALATED category=")
+    assert len([e for e in state.infra_errors if e.startswith(_C3D_NOTE)]) == 1  # run 1's only
