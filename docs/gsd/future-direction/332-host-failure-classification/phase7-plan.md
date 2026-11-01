@@ -1,6 +1,6 @@
 # Forge #332 -- Phase 7: follow-ups after the Phase 6 credit preserve
 
-Status: **wave 1 delivered; wave 2 needs owner decisions**
+Status: **wave 1 merged (PR #346); wave 2a pushed for review (section 5); wave 2b decided, not started**
 Base: `main` 20b4ace (Phase 6 landed as PR #319, head 22d9fa98, merged 2026-10-30)
 Scope source: PR #319 "Not in this PR" and "Deferred / tech debt", plus the
 2026-10-30 comment on issue #70 (INFRA/UNTRUSTED findings reported as
@@ -41,10 +41,10 @@ used, before it looks for `state.json`, so a missing, other-diff or corrupt
 file leaves it where a new instance starts. Only that State object is
 dropped: a State the instance was built or seeded with, one a caller assigned
 after the previous run, and one no run used (because the run raised before
-or inside its state load) are kept. CI is unchanged: it never reloads
-`state.json` and keeps its in-memory State (W2-9). Edits made in place on
-the State the previous run used are dropped with it; assign a new State to
-seed a later run. The pre-existing L0 advisory buffer is reset at every
+or inside its state load) are kept. CI was unchanged in wave 1 (it kept
+its in-memory State); wave 2a extends the drop to CI (W2-9). Edits made in
+place on the State the previous run used are dropped with it; assign a new
+State to seed a later run. The pre-existing L0 advisory buffer is reset at every
 `run()` entry, so a run that raised before the advisory flush cannot hand its
 entries to the next run.
 
@@ -53,7 +53,7 @@ files, over 4 run-1 shapes x {state.json deleted, rewritten for another
 diff} (fail on 20b4ace), three more two-run scenarios from section 2, and
 boundary cases: seeded State kept by the first run, by a run after one that
 raised before or inside the load, and a State assigned between runs; CI
-carry-over pinned; the buffer case.
+carry-over pinned (inverted by W2-9, section 5); the buffer case.
 
 ### 1.2 W1-8: L2 infrastructure errors in host-receipt rounds
 
@@ -222,7 +222,8 @@ the round (`_mutation_bound_failure`, `_mutation_not_applicable`,
 ## 3. Wave 2: needs an owner decision
 
 Each item: what happens today, why it matters, options, and a recommendation.
-Nothing here is implemented.
+The text below is the analysis as written before the owner's decisions of
+2026-11-01; section 5 records the decisions and what wave 2a implemented.
 
 ### W2-1. TD-P6-C3a -- companions in non-preserved rows seed `ever_seen`
 
@@ -427,3 +428,108 @@ waits for the owner.
   recorded in section 3 (W2-8, W2-9, W2-10).
 - Not run: forge's own LLM review cycles (no backend in this environment) and
   native mutmut. The sweep in section 2 is a manual, targeted one.
+
+## 5. Wave 2: owner decisions (2026-11-01) and wave 2a
+
+Decisions:
+
+| Item | Decision | Wave |
+| --- | --- | --- |
+| W2-1, W2-2 | Persist a `preserve_basis` on new `preserved` rows and the UNTRUSTED fingerprints per row (skipped by `ever_seen`); the loader checks the basis; legacy `preserved` rows are accepted with a warning. | 2b |
+| W2-3, W2-4, W2-5 | No credit change; add the missing acquisition plus literal damage test. | 2a |
+| W2-6 | Host-written `source`/`channel` on receipt findings, covered by the receipt digest; trusted INFRA/UNTRUSTED split in `verify` and the report; receipt gate subtype labels; old receipts handled as today. | 2b |
+| W2-7 | Dropped (section 3). | -- |
+| W2-8 | All four: the inadmissible dict joins the companion rule, stall/diagnose show `preserved`, one reader for the INCOMPLETE L2 cause, the shared test harness. | 2a |
+| W2-9 | CI also starts from an empty State on a reused instance; CI tests seed State explicitly. | 2a |
+| W2-10 | The mutation-infra breaker keeps a `preserved` row its round settled. | 2a |
+
+### 5.1 What wave 2a changes
+
+- W2-10: `_check_mutation_infra_can_still_converge` clears the settled
+  preserve after its save and before its raise, so the failed-attempt path
+  does not demote it; a failed breaker save still demotes, as do other
+  failures after the settle in the same attempt (fix8 cases). Tests: the real
+  breaker after three L2-infra rounds whose last settles `preserved`, the
+  fix8 injection with the breaker, and a failing breaker save; the breaker
+  case left the fix8 table.
+- W2-3: `test_acquisition_failure_beside_literal_damage_keeps_the_window`
+  (healthy and raised L2): an acquisition failure beside literal receipt
+  damage on the gate path records `interrupted` and keeps the window, as the
+  protocol case does.
+- W2-9: `_maybe_load_prior_state` drops the State the previous `run()` used
+  before the CI branch, so a later CI run starts empty like a new instance;
+  a State the caller assigns between runs is kept. Production builds one
+  instance per review, so this is reachable only through the Python API.
+  CI tests that staged history by reusing an instance now seed a copy
+  (`_seed_carried_state` in `tests/test_mutation_ledger_ci_controls.py`,
+  four tests); the fix11/fix12 CI differentials give the new instance only
+  the receipt cycle windows (instance-lifetime by design);
+  `test_p7_reused_ci_instance_carries_its_state` became
+  `test_p7_reused_ci_instance_starts_from_an_empty_state`.
+- W2-8, inadmissible dict: `_unavailable_audit_is_schema_fail` lets the
+  "audit payload unavailable" gate error stand beside a (iii)-only round when
+  every unavailable pass is one schema-failed reply: an `_L1Call` producer,
+  no scoped repositories, and per pass its schema-fail finding, exactly one
+  response, no attempted payload and no typed excerpt rejection. Those checks
+  are shared with `_schema_fail_companions` (`_c3_producer`, and
+  `_single_schema_failed_reply`, which takes the expected payload count).
+  The round then records `preserved` with verdict FAIL, as a parsed
+  schema-fail payload does. Literal or I/O damage still takes the M6 wipe;
+  an injected audit-unavailable error with no unavailable pass behind it
+  still wipes (`test_la_*`, `test_c3_companion_with_gate_damage_*`). Tests:
+  real path alone and beside literal damage; the real-path pin beside an
+  attempted payload now splits (preserve without I/O damage, wipe with it);
+  decision-level positive, per-pass and 10 negatives; removing any one check
+  fails a negative.
+- W2-8, stall/diagnose: `diagnose.preserved_credit_note` names the
+  `preserved` cycles since the last reset that held clean rounds
+  (`clean_rounds_after` above 0), and the clean rounds held in total; no
+  note when none is held. The machine writes it just before the stall line
+  and the max-rounds `ESCALATED category=` line (after the diagnosis); the
+  stall reason and the category are unchanged. A same-attempt failure that
+  demotes the preserve retracts the note the run wrote (kept in
+  `_preserved_note_written`), as it already rewrites the tiered-reset log
+  line (L-B). A stall right after three preserved rounds is not reachable
+  (the failed-pass breaker fires first), so its test forces the stall.
+- W2-8, INCOMPLETE cause: `_l2_infra_observed` is the one reader of the L2
+  cause for `_fixpoint_reached`, `_l2_only_incomplete` and the row writer;
+  in a host attempt it also requires that L2 returned, as the loader does.
+  The per-attempt clear stays: the verdict and the breaker read the error
+  directly. No behaviour change.
+- W2-8, harness: the helpers the other modules shared, and what they depend
+  on (34 names), moved to `tests/_review_harness.py` with the seam
+  description; `tests/test_l2_infra_host_rounds.py` and
+  `tests/test_phase6_schema_coverage_credit.py` import it, and
+  `tests/test_review_interruption_source_controls.py` imports the names
+  back. Same test functions; the moved definitions are unchanged apart from
+  import order in one helper.
+- `tests/test_mutation_ledger_ci_controls.py` is formatted in its own commit
+  (AST unchanged) because a touched file must be left lint-clean.
+
+### 5.2 Left for later
+
+- The producer records only the pass name in `unavailable_rejected_passes`;
+  the machine infers that the unavailable payload was the schema-failed
+  reply from finding ids and counts (fail-closed). Recording the cause where
+  the producer marks the pass belongs with the W2-6 receipt subtype labels,
+  which need that cause too.
+- The note's reported path: the CLI prints `infra_errors` lines only for CI
+  output, and the note is written only at LOCAL ESCALATED exits, so it never
+  displaces a printed reason today. In `state.json` the stall or
+  `ESCALATED category=` line stays the last entry.
+
+### 5.3 Review status of wave 2a and what is next
+
+- Reviews done: three rounds of security/correctness, code quality,
+  redundancy/style and blast radius (the third found nothing to fix), and
+  two rounds of a general code review whose findings are fixed or recorded
+  in 5.2. Not yet run: the third general code review and the final
+  verify-and-dedup pass over all findings.
+- Full suite on the round-2 tree (4 shards): only the 169 failures that
+  also fail on the base in the cloud container (credentials, git
+  environment, root, gate evidence, doctor, dogfood and the known four).
+  The round-3 delta was run on the touched modules only (1195 passed).
+- Next: finish the two reviews above, then wave 2b (W2-1/W2-2
+  `preserve_basis` and per-row UNTRUSTED fingerprints with legacy rows
+  accepted with a warning; W2-6 host-written receipt `source`/`channel`,
+  subtype labels and the producer-side unavailable cause from 5.2).

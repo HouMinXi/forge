@@ -18,9 +18,16 @@ Categories:
       (ANY infra_errors entry: binary trigger per R3 MED2)
 
 Tie-breaker priority: D > A > B > C
+
+`preserved_credit_note` is the report-only line that goes with an ESCALATED
+review whose rounds since the last reset include a `preserved` round that held
+clean rounds.
 """
 
 from typing import Literal
+
+# Longest list of preserved cycles the note spells out; the rest is counted.
+_PRESERVED_NOTE_MAX_CYCLES = 5
 
 
 def diagnose_non_convergence(
@@ -118,3 +125,36 @@ def _has_uncertain_growth(history: list[dict]) -> bool:
         if counts[i] >= counts[i + 1]:
             return False
     return True
+
+
+def preserved_credit_note(round_history: list[dict], clean_rounds: int) -> str | None:
+    """TD-P6-C3d: name the host rounds since the last reset that kept clean credit.
+
+    A `preserved` round (schema/coverage failures only) keeps the earned
+    window without earning, so an ESCALATED review that ran through such
+    rounds can still hold credit. A preserved row that held no clean round
+    (`clean_rounds_after` 0) kept nothing and is not named. Report-only: the
+    line changes no verdict, category or credit. None when no clean round is
+    held. Cycles are `round + 1`, as in the earned window and the receipt
+    names.
+    """
+    cycles: list[int] = []
+    for row in round_history:
+        # A legacy row has no credit action and changes nothing here.
+        action = row.get("clean_credit_action")
+        if action == "reset":
+            cycles = []
+        elif action == "preserved" and row.get("clean_rounds_after", 0) > 0:
+            cycles.append(row["round"] + 1)
+    if not cycles or clean_rounds == 0:
+        return None
+    shown = ", ".join(str(cycle) for cycle in cycles[:_PRESERVED_NOTE_MAX_CYCLES])
+    extra = len(cycles) - _PRESERVED_NOTE_MAX_CYCLES
+    if extra > 0:
+        shown += f" (+{extra} more)"
+    # Not the tiered-reset log's "clean credit preserved" wording, which
+    # names one cycle's decision.
+    return (
+        f"credit kept by preserved round(s) at cycle(s) {shown} "
+        f"(schema/coverage failures only, not earned); {clean_rounds} clean round(s) held in total"
+    )
