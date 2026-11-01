@@ -398,7 +398,7 @@ class _L1Call:
 
     @property
     def excerpt_invocation(self) -> object:
-        """The current invocation's token: a new object on every call, owned by its rejections."""
+        """The current invocation's token: a new object on every call; rejections record it."""
         return self._excerpt_invocation
 
     @property

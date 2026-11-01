@@ -4,8 +4,7 @@
 
 A leaf module: it imports nothing from this package. `state` re-exports every
 name here, and `state_preserved` (which `state` imports at module level)
-imports them directly, so both modules bind the same function objects and
-neither needs a call-time import to break a cycle.
+imports the projection from here, so both bind the same function object.
 """
 
 from __future__ import annotations

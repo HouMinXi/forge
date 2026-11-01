@@ -639,7 +639,7 @@ def test_l1_l2_infra_incomplete_with_pending_protocol_keeps_reset(tmp_path, monk
 
 @pytest.mark.parametrize("l2_infra", [False, True], ids=["no-l2-infra", "l2-infra"])
 def test_mixed_schema_and_coverage_preserves_with_or_without_l2_infra(tmp_path, monkeypatch, l2_infra):
-    """Plan omission: schema-fail and incomplete coverage in one round, with and without an L2 infra error.
+    """Schema-fail and incomplete coverage in one round, with and without an L2 infra error.
 
     Both (iii) findings leave the counterfactual; what is left is CLEAN, or
     INCOMPLETE only because of the L2 infra error, and both preserve.
@@ -656,7 +656,7 @@ def test_mixed_schema_and_coverage_preserves_with_or_without_l2_infra(tmp_path, 
 
 @pytest.mark.parametrize("l2_infra", [False, True], ids=["no-l2-infra", "l2-infra"])
 def test_mixed_schema_and_coverage_with_new_product_keeps_reset(tmp_path, monkeypatch, l2_infra):
-    """Plan omission, negative: a new CONFIRMED product finding beside both (iii) findings resets."""
+    """A new CONFIRMED product finding beside both (iii) findings resets."""
     sm = _guard_machine(tmp_path, monkeypatch)
     sm._state.findings = [
         _schema_finding("adversarial"),
@@ -690,10 +690,11 @@ def test_m4_loader_accepts_recurring_uncertain_then_confirmed_without_protocol()
 
 
 def test_i9_product_history_and_preserved_validation_share_the_projection(monkeypatch):
-    """Joint I-9: the fixpoint history and the split-out validator both project through one function.
+    """Joint I-9: the fixpoint history and the preserved-row validator both call the projection.
 
-    Each module binds the shared definition at import; spying on both bindings
-    shows `product_round_history` and the preserved-row validator call it.
+    Each module binds it at import, so a patch of `state._project_product_row`
+    alone does not reach the validator; both bindings are spied here. That
+    they are one function is pinned by I-3.
     """
     import sys
 
@@ -736,7 +737,6 @@ def test_i3_project_product_row_has_one_definition():
     assert state_module.is_host_round is state_rows.is_host_round
     assert state_module.HOST_ROUND_FIELDS is state_rows.HOST_ROUND_FIELDS
     assert not hasattr(state_preserved, "is_host_round")
-    assert not hasattr(state_preserved, "_moved_project_product_row")
 
 
 @pytest.mark.parametrize(

@@ -2,7 +2,7 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Preserved host-round validation, split out of state.py (user decision D-v11-1).
 
-Moved verbatim; state.py imports and re-exports every name defined here.
+state.py imports and re-exports every name defined here.
 This module must not import `state` at module level (state imports it); the
 row projection it needs comes from the leaf module `state_rows`, which both
 modules import, so there is one definition and no call-time import.
