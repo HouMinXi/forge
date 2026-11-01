@@ -15,6 +15,7 @@ import dataclasses
 import http.client
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -1135,6 +1136,36 @@ def _loads_model_json(text: str, reply_keys: ReplyKeys | None = None):
     return _parse_model_json(text, reply_keys)[0]
 
 
+def _decode_reply(text: str, reply_keys: ReplyKeys | None, strict_response: bool):
+    """Decode a complete response without losing root provenance when requested."""
+    if not strict_response:
+        return _loads_model_json(text, reply_keys)
+
+    def finite_float(value):
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError("Non-finite JSON number")
+        return result
+
+    def refuse_constant(value):
+        raise ValueError("Non-finite JSON constant")
+
+    try:
+        parsed = json.loads(
+            text,
+            object_pairs_hook=_refuse_duplicate_keys,
+            parse_float=finite_float,
+            parse_constant=refuse_constant,
+        )
+        if not isinstance(parsed, (dict, list)):
+            raise json.JSONDecodeError("Response root must be an object or array", text, 0)
+        return parsed
+    except json.JSONDecodeError:
+        raise
+    except (_DuplicateKey, ValueError, RecursionError) as exc:
+        raise json.JSONDecodeError("Invalid complete JSON response", text, 0) from exc
+
+
 # Bounds on the quote repair and on the embedded-object scan (#264). Each
 # repair attempt parses the whole text again, so the work is the text
 # length times the attempts. A review reply is a few kilobytes.
@@ -2102,6 +2133,7 @@ def llm_invoke(
     *,
     l1_evidence_required: bool = False,
     reply_keys: ReplyKeys | None = None,
+    strict_response: bool = False,
 ) -> LLMResult:
     """Invoke LLM via backend (cli subprocess or api HTTP).
 
@@ -2129,6 +2161,12 @@ def llm_invoke(
         l1_evidence_required: Host-computed L1 applicability. Ask once for
             missing inspection evidence even on a quiet review; callers
             still validate the returned excerpts against source.
+        strict_response: Non-L1 response policy: require one complete JSON
+            object or array, without quote
+            repair, embedded extraction, fences, or continuation replacement.
+            Callers still validate their own schema. Default preserves legacy
+            review/falsifier recovery. Disables L1 excerpt repair and cannot
+            be combined with l1_evidence_required.
         reply_keys: The keys the reply may carry, per level. When a reply
             parses only after quote repair and carries a key not listed,
             the repair is discarded and the parse fails (#264); api
@@ -2141,8 +2179,12 @@ def llm_invoke(
     Raises:
         LLMInvokeError: on timeout, nonzero exit, HTTP error, or JSON parse failure
     """
+    if type(strict_response) is not bool:
+        raise ValueError("strict_response must be a bool")
     if type(l1_evidence_required) is not bool:
         raise ValueError("l1_evidence_required must be a bool")
+    if strict_response and l1_evidence_required:
+        raise ValueError("strict_response is incompatible with l1_evidence_required")
     if backend is None:
         # Fail closed: the old fallthrough to DEFAULT_BACKEND spawned an
         # implicit claude -p subprocess (session-default cli backend),
@@ -2185,7 +2227,9 @@ def llm_invoke(
                     "applied. Remove them, or make this an api backend." % (backend.name, field),
                     retryable=False,
                 )
-        result = _invoke_cli(prompt, backend, timeout_s, reply_keys=reply_keys)
+        result = _invoke_cli(
+            prompt, backend, timeout_s, reply_keys=reply_keys, strict_response=strict_response
+        )
     elif backend.type == "api":
         result = _invoke_api(
             prompt,
@@ -2197,11 +2241,14 @@ def llm_invoke(
             continuation_breaker=continuation_breaker,
             retry_timeout=retry_timeout,
             reply_keys=reply_keys,
+            strict_response=strict_response,
         )
     else:
         raise LLMInvokeError("unsupported backend type: %r" % backend.type)
 
-    if _needs_excerpt_repair(result.content, expected_keys, l1_evidence_required=l1_evidence_required):
+    if not strict_response and _needs_excerpt_repair(
+        result.content, expected_keys, l1_evidence_required=l1_evidence_required
+    ):
         repaired, extra, extra_s = _repair_missing_excerpts(
             result.content,
             prompt,
@@ -2246,6 +2293,7 @@ def _invoke_cli(
     timeout_s: int,
     *,
     reply_keys: ReplyKeys | None = None,
+    strict_response: bool = False,
 ) -> LLMResult:
     """Invoke LLM via cli subprocess. Returns LLMResult with Usage(0,0)"""
     # Resolve binary: use backend.command if set, else default to "claude"
@@ -2351,7 +2399,7 @@ def _invoke_cli(
             duration_s=duration,
         )
 
-    stdout = _strip_fences(stdout_data)
+    stdout = stdout_data if strict_response else _strip_fences(stdout_data)
 
     def refused(exc: json.JSONDecodeError, text: str) -> LLMInvokeError:
         # A refused repair or key (#264) fails the call: keeping the raw
@@ -2367,7 +2415,10 @@ def _invoke_cli(
     try:
         # No reply_keys: an envelope's own keys are not the reply's. A
         # duplicate key is refused here all the same.
-        parsed, stdout_repaired = _parse_model_json(stdout)
+        if strict_response:
+            parsed, stdout_repaired = _decode_reply(stdout, None, True), False
+        else:
+            parsed, stdout_repaired = _parse_model_json(stdout)
     except RepairRefused as exc:
         raise refused(exc, stdout) from exc
     except json.JSONDecodeError as exc:
@@ -2416,12 +2467,14 @@ def _invoke_cli(
         usage_data = parsed.get("usage") or {}
         raw_result = parsed["result"]
         if isinstance(raw_result, str):
-            stripped = _strip_fences(raw_result)
+            stripped = raw_result if strict_response else _strip_fences(raw_result)
             try:
-                content = _loads_model_json(stripped, reply_keys)
+                content = _decode_reply(stripped, reply_keys, strict_response)
             except RepairRefused as exc:
                 raise refused(exc, stripped) from exc
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                if strict_response:
+                    raise refused(exc, stripped) from exc
                 # Plain text with no repair tried: the caller's own strict
                 # parse decides what it is.
                 content = raw_result
@@ -2637,7 +2690,7 @@ _CONTINUE_DELAY_S = 2.0
 _WIDER_RETRY_FACTOR = 2
 
 
-def _is_forge_envelope(parsed, expected_keys):
+def _is_forge_envelope(parsed, expected_keys, *, strict_response=False):
     """The recovery path's acceptance test for a parsed dict.
 
     A forge review envelope carries both findings and code_excerpts;
@@ -2645,6 +2698,8 @@ def _is_forge_envelope(parsed, expected_keys):
     later. Callers that pass explicit expected_keys accept full
     coverage of their own key set instead.
     """
+    if strict_response and isinstance(parsed, list) and len(parsed) == 1:
+        parsed = parsed[0]
     if not isinstance(parsed, dict):
         return False
     if expected_keys is not None:
@@ -2672,6 +2727,7 @@ def _continue_truncated(
     budget: int = 2,
     breaker: "TruncationBreaker | None" = None,
     reply_keys: ReplyKeys | None = None,
+    strict_response: bool = False,
 ):
     """Recover a truncated reply with a bounded continuation.
 
@@ -2767,7 +2823,9 @@ def _continue_truncated(
                 continue
             if not isinstance(cont, str):
                 cont = ""
-            parsed = _continued_reply(truncated.content, cont, expected_keys, reply_keys)
+            parsed = _continued_reply(
+                truncated.content, cont, expected_keys, reply_keys, strict_response
+            )
             if isinstance(parsed, str):
                 last_failure = parsed
                 continue
@@ -2797,6 +2855,7 @@ def _continued_reply(
     cont: str,
     expected_keys: frozenset[str] | None,
     reply_keys: ReplyKeys | None,
+    strict_response: bool = False,
 ):
     """The reply from a cut partial and its continuation, or why not (a str).
 
@@ -2811,29 +2870,33 @@ def _continued_reply(
       reply, which is taken only when it parses strictly with no fallback.
     """
     readings = [partial + cont]
-    if _ECHO_ONLY.fullmatch(cont):
+    if not strict_response and _ECHO_ONLY.fullmatch(cont):
         readings.append(partial)
     failure = "combined output is not valid JSON"
     for text in readings:
-        cleaned = _strip_fences(text)
+        cleaned = text if strict_response else _strip_fences(text)
         try:
-            parsed = _loads_model_json(cleaned, reply_keys)
+            parsed = _decode_reply(cleaned, reply_keys, strict_response)
         except json.JSONDecodeError as parse_error:
-            parsed = _fallback_reply(cleaned, parse_error, expected_keys, reply_keys)
+            parsed = (
+                None
+                if strict_response
+                else _fallback_reply(cleaned, parse_error, expected_keys, reply_keys)
+            )
             if parsed is None:
                 continue
         # Completing the JSON is not enough: the combined shape must be
         # a full forge envelope, or the continuation is a failed attempt.
-        if _is_forge_envelope(parsed, expected_keys):
+        if _is_forge_envelope(parsed, expected_keys, strict_response=strict_response):
             return parsed
         failure = "combined output is not a forge envelope"
     restated = _strip_fences(cont)
-    if restated.startswith("{"):
+    if not strict_response and restated.startswith("{"):
         try:
             parsed = _loads_model_json(restated, reply_keys)
         except json.JSONDecodeError:
             return failure
-        if _is_forge_envelope(parsed, expected_keys):
+        if _is_forge_envelope(parsed, expected_keys, strict_response=strict_response):
             return parsed
     return failure
 
@@ -2845,6 +2908,7 @@ def _retry_with_more_headroom(
     timeout_s: int,
     expected_keys: frozenset[str] | None,
     reply_keys: ReplyKeys | None = None,
+    strict_response: bool = False,
 ):
     """Re-ask for the whole answer with a wider output cap.
 
@@ -2905,12 +2969,14 @@ def _retry_with_more_headroom(
 
     if not isinstance(content, str):
         return None
-    cleaned = _strip_fences(content)
+    cleaned = content if strict_response else _strip_fences(content)
     try:
-        parsed = _loads_model_json(cleaned, reply_keys)
+        parsed = _decode_reply(cleaned, reply_keys, strict_response)
     except json.JSONDecodeError as parse_error:
-        parsed = _fallback_reply(cleaned, parse_error, expected_keys, reply_keys)
-    if not _is_forge_envelope(parsed, expected_keys):
+        parsed = (
+            None if strict_response else _fallback_reply(cleaned, parse_error, expected_keys, reply_keys)
+        )
+    if not _is_forge_envelope(parsed, expected_keys, strict_response=strict_response):
         return None
 
     return parsed, _observed_usage(usage_data, backend.format)
@@ -2926,6 +2992,7 @@ def _invoke_api(
     continuation_breaker: "TruncationBreaker | None" = None,
     retry_timeout: bool = False,
     reply_keys: ReplyKeys | None = None,
+    strict_response: bool = False,
 ) -> LLMResult:
     """Invoke LLM via HTTP API (openai or anthropic format). Returns LLMResult."""
     # Look up API key (not needed for vertex which uses OAuth2)
@@ -3057,11 +3124,16 @@ def _invoke_api(
                 # is the model's complete output; replaying it five times
                 # produced the same delimiter error on live agnes-cn.
                 raw_content = content
-                content = _strip_fences(content)
+                if not strict_response:
+                    content = _strip_fences(content)
                 try:
-                    parsed_content = _loads_model_json(content, reply_keys)
+                    parsed_content = _decode_reply(content, reply_keys, strict_response)
                 except json.JSONDecodeError as exc:
-                    parsed_content = _fallback_reply(content, exc, expected_keys, reply_keys)
+                    parsed_content = (
+                        None
+                        if strict_response
+                        else _fallback_reply(content, exc, expected_keys, reply_keys)
+                    )
                     if parsed_content is None:
                         finish_reason = ""
                         if isinstance(usage_data, dict):
@@ -3144,6 +3216,7 @@ def _invoke_api(
                         expected_keys,
                         breaker=breaker,
                         reply_keys=reply_keys,
+                        strict_response=strict_response,
                     )
                 except TruncationBreakerError:
                     raise
@@ -3176,6 +3249,7 @@ def _invoke_api(
                         timeout_s,
                         expected_keys,
                         reply_keys=reply_keys,
+                        strict_response=strict_response,
                     )
                 if wider is not None:
                     parsed, usage = wider
