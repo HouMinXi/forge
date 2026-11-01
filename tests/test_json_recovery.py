@@ -71,8 +71,6 @@ def test_api_corrects_complete_syntax_error(monkeypatch, caplog):
     ]
 
 
-
-
 def parse_error(text):
     try:
         json.loads(text, strict=False)
@@ -96,6 +94,11 @@ def parse_error(text):
         '{"a":undefined}',
         '{"a":"head="" tail"}',
         r'{"a":"\uZZZZ"}',
+        # #264: any reply holding a '{' may be retried, so a scan refusal
+        # costs one call rather than a failed review.
+        "\ufeff" + BAD,
+        "\u200b" + BAD,
+        "Here: " + BAD,
     ],
 )
 def test_complete_syntax_classes_request_correction(text):
@@ -114,8 +117,6 @@ def test_complete_syntax_classes_request_correction(text):
         " ",
         "refused",
         "X not JSON",
-        "\ufeff" + BAD,
-        "\u200b" + BAD,
         '{"a":',
         '{"a":"unfinished',
         "[1,",
@@ -234,7 +235,6 @@ def test_legal_inputs_remain_unchanged(monkeypatch, value):
 @pytest.mark.parametrize(
     "text",
     [
-        '{"a":1,"a":2}',
         '{"a":NaN}',
         '{"a":Infinity}',
         '{"excerpt":"raw\n\tline\r\n"}',
@@ -249,6 +249,14 @@ def test_existing_nonstandard_compatibility(monkeypatch, text):
     assert request.call_count == 1
 
 
+def test_duplicate_key_is_refused(monkeypatch):
+    # #264: json keeps the last of a repeated key, so a quoted
+    # `"findings": []` would replace the real list. The reply is refused.
+    monkeypatch.setenv("JSON_TEST_KEY", "local-test")
+    request = Mock(return_value=('{"a":1,"a":2}', {}))
+    monkeypatch.setattr(invoke, "_invoke_openai", request)
+    with pytest.raises(invoke.InvalidJSONResponseError, match='Duplicate key "a"'):
+        invoke._invoke_api("task", backend(), 7)
 
 
 @pytest.mark.parametrize("fmt", ["anthropic", "vertex"])
@@ -275,8 +283,6 @@ def test_other_api_formats_sum_usage(monkeypatch, fmt):
     assert result.usage == invoke.Usage(21, 41, 7)
     assert request.call_count == 2
     assert request.call_args_list[0].args[1:] == request.call_args_list[1].args[1:]
-
-
 
 
 @pytest.mark.parametrize("status", [429, 503])

@@ -572,6 +572,49 @@ class FixvalTransaction:
             self._move(entry.parent, entry.leaf, entry.saved, entry.original)
             entry.saved_identity = self.saved_entries[entry.saved]
 
+    def python_sources(self, *, reverted: bool = False) -> dict[str, bytes | None]:
+        """Read complete Python images through this transaction's bound identities.
+
+        None proves absence; an omitted key is not usable source evidence.
+        Oversized or non-regular images cannot establish an import witness.
+        """
+        self._check_directory()
+        self._check_parents()
+        if reverted and not self.reverted:
+            raise TransactionError("reverse image is not available")
+        sources: dict[str, bytes | None] = {}
+        for entry in self.entries:
+            if not entry.path.endswith(".py"):
+                continue
+            if reverted:
+                parent, leaf, expected = entry.parent, entry.leaf, entry.reverted
+                if self._entry_identity(entry.path, parent) != expected:
+                    raise TransactionError("reverse source changed: " + entry.path)
+            else:
+                parent, leaf = self.saved_fd, entry.snapshot
+                expected = self.saved_entries.get(leaf) if leaf is not None else None
+                if entry.original is not None and expected is None:
+                    raise TransactionError("source snapshot is missing: " + entry.path)
+            if expected is None:
+                sources[entry.path] = None
+                continue
+            if not stat.S_ISREG(expected[2]) or expected[4] > 1024 * 1024:
+                continue
+            fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            with os.fdopen(fd, "rb") as stream:
+                opened = os.fstat(fd)
+                if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != expected[:2]:
+                    raise TransactionError("source image changed while opening: " + entry.path)
+                payload = stream.read(1024 * 1024 + 1)
+            if len(payload) > 1024 * 1024 or hashlib.sha256(payload).hexdigest() != expected[-1]:
+                raise TransactionError("source image bytes changed: " + entry.path)
+            if _identity(parent, leaf) != expected:
+                raise TransactionError("source image changed while reading: " + entry.path)
+            sources[entry.path] = payload
+        self._check_directory()
+        self._check_parents()
+        return sources
+
     def git_environment(self, image=None):
         """Scope local apply to its explicit working tree, without inherited routing."""
         environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
