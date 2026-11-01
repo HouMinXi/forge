@@ -105,10 +105,8 @@ def test_prompt_names_traditional_sibling_without_projecting_its_hunks(
     sibling_git, anchored_git, reverse
 ):
     sibling = (
-        ("diff --git a/value.py b/value.py\n" if sibling_git else "")
-        + "--- a/value.py\n+++ b/value.py\n@@ -1 +1 @@\n"
-        "-SIBLING_SENTINEL = 1\n+SIBLING_SENTINEL = 2\n"
-    )
+        "diff --git a/value.py b/value.py\n" if sibling_git else ""
+    ) + "--- a/value.py\n+++ b/value.py\n@@ -1 +1 @@\n-SIBLING_SENTINEL = 1\n+SIBLING_SENTINEL = 2\n"
     anchored = (
         ("diff --git a/tests/test_case.py b/tests/test_case.py\n" if anchored_git else "")
         + "--- a/tests/test_case.py\n+++ b/tests/test_case.py\n@@ -1 +1 @@\n"
@@ -125,21 +123,25 @@ def test_prompt_names_traditional_sibling_without_projecting_its_hunks(
     "metadata,path",
     [
         ("diff --git a/mode.py b/mode.py\nold mode 100644\nnew mode 100755\n", "mode.py"),
-        ("diff --git a/old.py b/new.py\nsimilarity index 100%\n"
-         "rename from old.py\nrename to new.py\n", "new.py"),
-        ("diff --git a/old.py b/copy.py\nsimilarity index 100%\n"
-         "copy from old.py\ncopy to copy.py\n", "copy.py"),
-        ("diff --git a/data.bin b/data.bin\n"
-         "Binary files a/data.bin and b/data.bin differ\n", "data.bin"),
+        (
+            "diff --git a/old.py b/new.py\nsimilarity index 100%\n"
+            "rename from old.py\nrename to new.py\n",
+            "new.py",
+        ),
+        (
+            "diff --git a/old.py b/copy.py\nsimilarity index 100%\ncopy from old.py\ncopy to copy.py\n",
+            "copy.py",
+        ),
+        (
+            "diff --git a/data.bin b/data.bin\nBinary files a/data.bin and b/data.bin differ\n",
+            "data.bin",
+        ),
     ],
     ids=["mode", "rename", "copy", "binary"],
 )
 @pytest.mark.parametrize("reverse", [False, True], ids=["metadata-first", "traditional-first"])
 def test_prompt_names_traditional_sibling_beside_metadata(metadata, path, reverse):
-    plain = (
-        "--- a/plain.py\n+++ b/plain.py\n@@ -1 +1 @@\n"
-        "-SIBLING_SENTINEL = 1\n+SIBLING_SENTINEL = 2\n"
-    )
+    plain = "--- a/plain.py\n+++ b/plain.py\n@@ -1 +1 @@\n-SIBLING_SENTINEL = 1\n+SIBLING_SENTINEL = 2\n"
     packet = plain + metadata if reverse else metadata + plain
     prompt = _capture(RealFalsifier(diff_text=packet), _finding(file=path, lr=(1, 1)))
     assert "\nplain.py\n" in prompt
@@ -184,9 +186,7 @@ def _large_diff(tail="", values=None):
     values = values or ["padding_%d = '%s'" % (n, "x" * 60) for n in range(700)]
     return (
         "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n"
-        "@@ -0,0 +1,%d @@\n" % len(values)
-        + "".join("+%s\n" % value for value in values)
-        + tail
+        "@@ -0,0 +1,%d @@\n" % len(values) + "".join("+%s\n" % value for value in values) + tail
     )
 
 
@@ -463,7 +463,7 @@ def test_run_outlet_c_forwards_context_rows_to_build_falsifier(monkeypatch):
             engine="auto",
             context_rows=rows,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- Only pre-dispatch builder arguments are under test here.
         pass  # the machine may not run to completion on this stub; the
         # assertion is about what reached build_falsifier
     assert seen.get("rows") is rows

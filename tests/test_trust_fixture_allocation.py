@@ -72,9 +72,7 @@ def test_collision_never_reuses_existing_child(_trust_store_parent):
         assert home == _trust_store_parent / "trust-fresh"
         assert home != existing and not list(home.iterdir())
     after = existing.stat()
-    assert (before.st_dev, before.st_ino, before.st_mode) == (
-        after.st_dev, after.st_ino, after.st_mode
-    )
+    assert (before.st_dev, before.st_ino, before.st_mode) == (after.st_dev, after.st_ino, after.st_mode)
     assert marker.read_text() == "existing owner"
 
 
@@ -96,7 +94,7 @@ def test_allocation_failure_propagates_without_environment_fallback(_trust_store
     assert calls == [(_trust_store_parent, "trust-")]
 
 
-_CHILD_CONFTEST = '''
+_CHILD_CONFTEST = """
 import json
 import os
 from pathlib import Path
@@ -123,9 +121,9 @@ def pytest_sessionfinish(session, exitstatus):
     report = {"children": [str(path) for path in seen],
               "restored": os.environ["XDG_CONFIG_HOME"] == original}
     Path(os.environ["TRUST_ALLOCATION_REPORT"]).write_text(json.dumps(report))
-'''
+"""
 
-_CHILD_TEST = '''
+_CHILD_TEST = """
 import os
 from pathlib import Path
 
@@ -139,7 +137,7 @@ def test_first(dependent, tmp_path, monkeypatch):
 def test_second(dependent):
     assert os.environ["XDG_CONFIG_HOME"] == str(dependent)
     (dependent / "owned").write_text("retained")
-'''
+"""
 
 
 def test_real_sessions_keep_distinct_parents_and_dependent_teardown(tmp_path):
@@ -165,8 +163,18 @@ def test_real_sessions_keep_distinct_parents_and_dependent_teardown(tmp_path):
         env["XDG_CONFIG_HOME"] = str(original_home)
         env["TRUST_ALLOCATION_REPORT"] = str(report)
         result = subprocess.run(
-            [sys.executable, "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider",
-             "--basetemp", str(base), "test_lifetime.py"],
+            [
+                sys.executable,
+                "-B",
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                "--basetemp",
+                str(base),
+                "test_lifetime.py",
+            ],
             cwd=project,
             env=env,
             capture_output=True,

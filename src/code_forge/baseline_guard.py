@@ -137,7 +137,10 @@ def env_retry_record(first_attempt: str | None, inherited_env: dict[str, str]) -
 def env_retry_note(record: dict[str, str | None]) -> str:
     return (
         "baseline env-strip retry: VIRTUAL_ENV %s and its PATH entry were dropped; first attempt: %s"
-        % (record.get("stripped_virtual_env") or "(unset)", record.get("first_attempt") or "(not recorded)")
+        % (
+            record.get("stripped_virtual_env") or "(unset)",
+            record.get("first_attempt") or "(not recorded)",
+        )
     )
 
 
@@ -192,7 +195,7 @@ def _traceback_summary(lines: list[str]) -> str | None:
             if not line.startswith(margin):
                 margin = None
                 continue
-            content = line[len(margin):]
+            content = line[len(margin) :]
             if pending_message:
                 if content.strip():
                     summary += " " + content.strip()
@@ -310,14 +313,19 @@ def _output_detail(stderr: str | bytes | None, stdout: str | bytes | None) -> st
             # The continuation heuristic may have eaten the real cause; never
             # leave the cause silently empty (#182 review).
             count = omitted[0]
-            normalized = "(%d line%s after an ignored-exception report omitted)" % (count, "" if count == 1 else "s")
+            normalized = "(%d line%s after an ignored-exception report omitted)" % (
+                count,
+                "" if count == 1 else "s",
+            )
         excerpt = normalized[:200]
         if len(normalized) > 200:
-            for priority, pattern in enumerate((
-                r"^E\s+(?!\[\s*\d+%\]\s*$)\S",
-                r"^(?:[\w.]*(?:Error|Exception)|SystemExit|KeyboardInterrupt):(?:\s|$)",
-                r"^(?:ERROR(?:\s|:)|FAILED\s|Traceback \(most recent call last\):)",
-            )):
+            for priority, pattern in enumerate(
+                (
+                    r"^E\s+(?!\[\s*\d+%\]\s*$)\S",
+                    r"^(?:[\w.]*(?:Error|Exception)|SystemExit|KeyboardInterrupt):(?:\s|$)",
+                    r"^(?:ERROR(?:\s|:)|FAILED\s|Traceback \(most recent call last\):)",
+                )
+            ):
                 diagnostic = next((line for line in lines if re.match(pattern, line.strip())), None)
                 if priority == 1:
                     diagnostic = _traceback_summary(lines) or diagnostic

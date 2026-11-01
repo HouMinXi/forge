@@ -23,16 +23,26 @@ INFRA_TEXT = "mutation owner failed: ChildProcessError: [Errno 10] No child proc
 
 def _infra():
     return StateFinding(
-        id="MUTATION_ERROR", fingerprint="mutation-evidence-error", source="INFRA",
-        disposition=Disposition.CONFIRMED, file="", line_range=[], description=INFRA_TEXT,
+        id="MUTATION_ERROR",
+        fingerprint="mutation-evidence-error",
+        source="INFRA",
+        disposition=Disposition.CONFIRMED,
+        file="",
+        line_range=[],
+        description=INFRA_TEXT,
     )
 
 
 def _survivor(n=1):
     return StateFinding(
-        id=f"mutant-{n}", fingerprint=f"mutant-fp-{n}", source="MUTANT",
-        disposition=Disposition.CONFIRMED, file="calc.py", line_range=[2, 2],
-        description="surviving mutant: return max -> return min", severity="P1",
+        id=f"mutant-{n}",
+        fingerprint=f"mutant-fp-{n}",
+        source="MUTANT",
+        disposition=Disposition.CONFIRMED,
+        file="calc.py",
+        line_range=[2, 2],
+        description="surviving mutant: return max -> return min",
+        severity="P1",
     )
 
 
@@ -65,7 +75,10 @@ def _machine(tmp_path, l2, *, mode=Mode.LOCAL, source_hash="h1", threshold=3):
         autofixer=StubAutoFixer(),
         revert_fn=lambda f: None,
         resolved_review=ResolvedReview(
-            source_files=[Path("calc.py")], baseline_content=None, git_diff=None, mode_hint="git",
+            source_files=[Path("calc.py")],
+            baseline_content=None,
+            git_diff=None,
+            mode_hint="git",
         ),
         source_hash=source_hash,
         baseline_spec_repr="empty",
@@ -181,15 +194,24 @@ def test_l2_infra_does_not_exempt_a_falsifier_protocol_violation(tmp_path, with_
         def falsify(self, finding):
             raise FalsifyProtocolError("invalid verdict", raw={})
 
-    m = _machine(tmp_path, Script([[], [], [_infra] if with_infra else [], [], [], [], [], []]), threshold=4)
+    m = _machine(
+        tmp_path, Script([[], [], [_infra] if with_infra else [], [], [], [], [], []]), threshold=4
+    )
     m.falsifier = ProtoFalsifier()
     calls = {"n": 0}
 
     def provider():
         calls["n"] += 1
         if calls["n"] == 3:
-            f = StateFinding(id="f1", fingerprint="fp-1", source="L1", disposition=Disposition.CONFIRMED,
-                             file="calc.py", line_range=[1, 2], description="off by one")
+            f = StateFinding(
+                id="f1",
+                fingerprint="fp-1",
+                source="L1",
+                disposition=Disposition.CONFIRMED,
+                file="calc.py",
+                line_range=[1, 2],
+                description="off by one",
+            )
             f.excerpt = "def minimum(a, b):\n"
             return [f], [], Usage(), 0.0
         return [], [], Usage(), 0.0

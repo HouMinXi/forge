@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Actual consumers refuse untrusted sibling evidence with synthetic acquisition."""
+
 from dataclasses import asdict
 import json
 import os
@@ -14,21 +15,43 @@ from code_forge.ledger import iter_rows
 from code_forge.mutation_findings import is_mutation_survivor
 from code_forge.state import Verdict
 from tests.test_mutation_ledger_ci_controls import (
-    ci_project as ci_project, _context, _measure, _machine, _put_result,
-    _saved, _assert_timeouts, _payload, _rule, _row, _one,
-    SOURCE_A, SOURCE_B, _identity, _timeout_text,
+    ci_project as ci_project,
+    _context,
+    _measure,
+    _machine,
+    _put_result,
+    _saved,
+    _assert_timeouts,
+    _payload,
+    _rule,
+    _row,
+    _one,
+    SOURCE_A,
+    SOURCE_B,
+    _identity,
+    _timeout_text,
 )
 
 
-@pytest.mark.parametrize("key,value", [
-    ("cleanup_complete", False),
-    ("publication_error", "RECORDED_PUBLICATION_FAILURE"),
-    ("cancellation_type", "KeyboardInterrupt"),
-    ("cleanup_error", "RECORDED_CLEANUP_FAILURE"),
-    ("process_failure", {"cleanup_complete": False}),
-    ("cancelled", True),
-], ids=["cleanup-false", "publication-error", "cancellation-type",
-        "cleanup-error", "process-failure", "cancelled"])
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("cleanup_complete", False),
+        ("publication_error", "RECORDED_PUBLICATION_FAILURE"),
+        ("cancellation_type", "KeyboardInterrupt"),
+        ("cleanup_error", "RECORDED_CLEANUP_FAILURE"),
+        ("process_failure", {"cleanup_complete": False}),
+        ("cancelled", True),
+    ],
+    ids=[
+        "cleanup-false",
+        "publication-error",
+        "cancellation-type",
+        "cleanup-error",
+        "process-failure",
+        "cancelled",
+    ],
+)
 def test_native_failure_marker_survives_outcome_and_blocks_ci(ci_project, key, value):
     p = ci_project
     p.codes, p.statuses = (1,), ("killed",)
@@ -36,7 +59,10 @@ def test_native_failure_marker_survives_outcome_and_blocks_ci(ci_project, key, v
     # These are synthetic failure markers on an otherwise actual physical proof.
     evidence[key] = value
     payload = mutation._mutation_outcome(
-        findings, errors, evidence, review_context=_context(p),
+        findings,
+        errors,
+        evidence,
+        review_context=_context(p),
     )
     _put_result(p, payload)
     machine = _machine(p)
@@ -102,7 +128,7 @@ def test_nonfinite_raw_carrier_and_unknown_legacy_status_are_refused(ci_project,
         raw = b'{"status":"unrecognized"}'
     else:
         encoded = json.dumps(payload).encode()
-        raw = encoded[:-1] + b',"metadata":' + token.encode() + b'}'
+        raw = encoded[:-1] + b',"metadata":' + token.encode() + b"}"
     result = p.state / ".code-forge/mutation-result.json"
     result.write_bytes(raw)
     (p.artifacts / (token + ".raw")).write_bytes(raw)
@@ -118,7 +144,10 @@ def test_nonfinite_raw_carrier_and_unknown_legacy_status_are_refused(ci_project,
         assert "CI: mutation-result.json invalid status field" in saved.infra_errors
         assert not result.exists()
     else:
-        assert "CI: failed to read mutation-result.json: non-JSON mutation result constant" in saved.infra_errors
+        assert (
+            "CI: failed to read mutation-result.json: non-JSON mutation result constant"
+            in saved.infra_errors
+        )
         assert result.read_bytes() == raw
 
 
@@ -126,8 +155,11 @@ def test_nonfinite_raw_carrier_and_unknown_legacy_status_are_refused(ci_project,
 def test_failed_current_native_is_not_downgraded_by_legacy_running(ci_project, pid_kind):
     p = ci_project
     p.fault = "deadline"
-    marker = {"status": "running", "pid": None if pid_kind == "fresh-no-pid" else os.getpid(),
-              "started_at": time.time()}
+    marker = {
+        "status": "running",
+        "pid": None if pid_kind == "fresh-no-pid" else os.getpid(),
+        "started_at": time.time(),
+    }
     result = _put_result(p, marker)
     original = result.read_bytes()
     machine = _machine(p, runner=mutation.run_mutation)

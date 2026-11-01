@@ -158,28 +158,35 @@ class TestReplayEntry:
             pytest.param(("TRUST",), None, (True,), 1, 1, "HOLD", id="default-trust"),
             pytest.param(("SEC",), None, (False,), 1, 0, "PASS", id="default-sec"),
             pytest.param(("FIXVAL",), None, (True,), 1, 1, "HOLD", id="default-fixval"),
+            pytest.param(("RUNTIME",), None, (True, False, True), 3, 2, "HOLD", id="default-runtime"),
+            pytest.param(("LEGACY",), None, (True, False, False), 3, 1, "PASS", id="default-legacy"),
+            pytest.param(("INTENT",), None, (False, True, True), 3, 2, "HOLD", id="default-intent"),
             pytest.param(
-                ("RUNTIME",), None, (True, False, True), 3, 2, "HOLD", id="default-runtime"
-            ),
-            pytest.param(
-                ("LEGACY",), None, (True, False, False), 3, 1, "PASS", id="default-legacy"
-            ),
-            pytest.param(
-                ("INTENT",), None, (False, True, True), 3, 2, "HOLD", id="default-intent"
-            ),
-            pytest.param(
-                ("TRUST",), 5, (True, False, True, False, True), 5, 3, "HOLD",
+                ("TRUST",),
+                5,
+                (True, False, True, False, True),
+                5,
+                3,
+                "HOLD",
                 id="override-trust-five",
             ),
             pytest.param(
-                ("RUNTIME",), 5, (False, True, False, True, False), 5, 2, "PASS",
+                ("RUNTIME",),
+                5,
+                (False, True, False, True, False),
+                5,
+                2,
+                "PASS",
                 id="override-runtime-five",
             ),
+            pytest.param(("RUNTIME", "TRUST"), None, (False,), 1, 0, "PASS", id="mixed-llm-first"),
             pytest.param(
-                ("RUNTIME", "TRUST"), None, (False,), 1, 0, "PASS", id="mixed-llm-first"
-            ),
-            pytest.param(
-                ("TRUST", "RUNTIME"), None, (True,), 1, 1, "HOLD",
+                ("TRUST", "RUNTIME"),
+                None,
+                (True,),
+                1,
+                1,
+                "HOLD",
                 id="mixed-deterministic-first",
             ),
         ],
@@ -223,8 +230,7 @@ class TestReplayEntry:
         popen.assert_not_called()
         assert run.call_count == expected_runs
         assert run.call_args_list == [
-            call(entry, diff_path, str(path), "test-backend", None, corpus_dir)
-            for path in temp_paths
+            call(entry, diff_path, str(path), "test-backend", None, corpus_dir) for path in temp_paths
         ]
         assert all(args.args[0] is entry for args in run.call_args_list)
         assert len(temp_paths) == len(set(temp_paths)) == expected_runs

@@ -23,8 +23,13 @@ def _child(*argv):
     # exactly like such a run, however this suite itself was launched.
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "COV_"))}
     return subprocess.run(
-        [sys.executable, *argv], cwd=_REPO, env=env, preexec_fn=_ignore_sigint,
-        capture_output=True, text=True, timeout=120,
+        [sys.executable, *argv],
+        cwd=_REPO,
+        env=env,
+        preexec_fn=_ignore_sigint,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
 
 
@@ -38,6 +43,8 @@ def test_conftest_restores_default_int_handler_when_launched_with_sigint_ignored
     started = _child("-c", "import signal; print(signal.getsignal(signal.SIGINT) is signal.SIG_IGN)")
     assert started.stdout.strip() == "True", started.stderr  # the child really starts ignored
 
-    probe = _child("-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist", "-p", "no:randomly", _PROBE)
+    probe = _child(
+        "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist", "-p", "no:randomly", _PROBE
+    )
     assert probe.returncode == 0, probe.stdout + probe.stderr
     assert "1 passed" in probe.stdout, probe.stdout

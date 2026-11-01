@@ -57,10 +57,17 @@ def _machine(tmp_path, mode=Mode.CI, diff=DIFF):
 
 
 ENVELOPE_ONLY = {
-    "findings": [{"file": "calc.py", "line": 2, "severity": "P1",
-                  "description": "minimum returns the maximum"}],
-    "code_excerpts": [{"file": "calc.py", "start_line": 1, "end_line": 2,
-                       "content": "def minimum(a, b):\n    return max(a, b)"}],
+    "findings": [
+        {"file": "calc.py", "line": 2, "severity": "P1", "description": "minimum returns the maximum"}
+    ],
+    "code_excerpts": [
+        {
+            "file": "calc.py",
+            "start_line": 1,
+            "end_line": 2,
+            "content": "def minimum(a, b):\n    return max(a, b)",
+        }
+    ],
 }
 
 
@@ -108,7 +115,10 @@ def test_envelope_only_confirmed_does_not_pass_ci(tmp_path, monkeypatch):
 def test_invalid_owned_excerpt_does_not_pass_ci(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_FALSIFY_WORKERS", "1")
     m = _machine(tmp_path)
-    data = {**ENVELOPE_ONLY, "findings": [{**ENVELOPE_ONLY["findings"][0], "excerpt": "    return min(a, b)"}]}
+    data = {
+        **ENVELOPE_ONLY,
+        "findings": [{**ENVELOPE_ONLY["findings"][0], "excerpt": "    return min(a, b)"}],
+    }
     cands = _json_to_state_findings(data, "qodo")
     m.l1_provider = lambda: (cands, data["code_excerpts"], Usage(), 0.0)
     result, _ = m._run_l1_phase()
@@ -120,7 +130,10 @@ def test_invalid_owned_excerpt_does_not_pass_ci(tmp_path, monkeypatch):
 def test_bound_confirmed_stays_blocking(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_FALSIFY_WORKERS", "1")
     m = _machine(tmp_path)
-    data = {**ENVELOPE_ONLY, "findings": [{**ENVELOPE_ONLY["findings"][0], "excerpt": "    return max(a, b)"}]}
+    data = {
+        **ENVELOPE_ONLY,
+        "findings": [{**ENVELOPE_ONLY["findings"][0], "excerpt": "    return max(a, b)"}],
+    }
     cands = _json_to_state_findings(data, "qodo")
     m.l1_provider = lambda: (cands, data["code_excerpts"], Usage(), 0.0)
     result, _ = m._run_l1_phase()
@@ -152,11 +165,17 @@ def test_path_normalization_binds(path):
 
 
 def test_absolute_repo_path_binds(tmp_path):
-    assert finding_excerpt_binding(DIFF, str(tmp_path / "calc.py"), 2, "    return max(a, b)", cwd=tmp_path) is True
+    assert (
+        finding_excerpt_binding(DIFF, str(tmp_path / "calc.py"), 2, "    return max(a, b)", cwd=tmp_path)
+        is True
+    )
 
 
 def test_absolute_outside_repo_does_not_bind(tmp_path):
-    assert finding_excerpt_binding(DIFF, "/elsewhere/calc.py", 2, "    return max(a, b)", cwd=tmp_path) is False
+    assert (
+        finding_excerpt_binding(DIFF, "/elsewhere/calc.py", 2, "    return max(a, b)", cwd=tmp_path)
+        is False
+    )
 
 
 def test_normalize_never_guesses_unknown():
@@ -172,8 +191,17 @@ def test_file_level_finding_binds_on_hunk_lines(line):
 def test_file_level_confirmed_from_json_stays_confirmed(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_FALSIFY_WORKERS", "1")
     m = _machine(tmp_path)
-    data = {**ENVELOPE_ONLY, "findings": [{"file": "calc.py", "severity": "P1",
-            "description": "wrong", "excerpt": "def minimum(a, b):\n    return max(a, b)"}]}
+    data = {
+        **ENVELOPE_ONLY,
+        "findings": [
+            {
+                "file": "calc.py",
+                "severity": "P1",
+                "description": "wrong",
+                "excerpt": "def minimum(a, b):\n    return max(a, b)",
+            }
+        ],
+    }
     cands = _json_to_state_findings(data, "qodo")
     m.l1_provider = lambda: (cands, data["code_excerpts"], Usage(), 0.0)
     result, _ = m._run_l1_phase()
@@ -189,16 +217,27 @@ def test_nfc_nfd_equivalent_quote_binds():
 def test_cross_repo_binds_against_owning_repo_diff(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_FALSIFY_WORKERS", "1")
     sib_diff = DIFF.replace("calc.py", "lib/x.py")
-    primary_diff = "diff --git a/main.py b/main.py\n--- a/main.py\n+++ b/main.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n"
+    primary_diff = (
+        "diff --git a/main.py b/main.py\n--- a/main.py\n+++ b/main.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n"
+    )
     inner = Confirming()
-    rf = RepositoryFalsifier(inner, {"app@r1": inner, "lib@r2": inner},
-                             {"app@r1": primary_diff, "lib@r2": sib_diff})
+    rf = RepositoryFalsifier(
+        inner, {"app@r1": inner, "lib@r2": inner}, {"app@r1": primary_diff, "lib@r2": sib_diff}
+    )
     m = _machine(tmp_path, diff=primary_diff)
     m.falsifier = rf
 
     def mk(fp, file, excerpt):
-        return StateFinding(id=fp, fingerprint=fp, source="L1", disposition=Disposition.UNCERTAIN,
-                            file=file, line_range=[2, 2], description="d", excerpt=excerpt)
+        return StateFinding(
+            id=fp,
+            fingerprint=fp,
+            source="L1",
+            disposition=Disposition.UNCERTAIN,
+            file=file,
+            line_range=[2, 2],
+            description="d",
+            excerpt=excerpt,
+        )
 
     good = mk("good", "lib@r2/lib/x.py", "    return max(a, b)")
     wrong_repo = mk("wrong", "app@r1/lib/x.py", "    return max(a, b)")
@@ -225,10 +264,19 @@ def test_downgrade_persists_and_verify_refuses(tmp_path):
     (directory / "receipts").mkdir(parents=True)
     (directory / "gate.yaml").write_text("verify:\n  required_cycles: 1\n")
     sha = compute_source_hash(git_diff=DIFF)
-    f = StateFinding(id="x", fingerprint="x", source="L1", disposition=Disposition.UNCERTAIN,
-                     file="calc.py", line_range=[2, 2], description="d",
-                     evidence_downgrade="falsifier returned CONFIRMED; host downgraded")
-    state = State(round=1, mode=Mode.CI, source_hash=sha, findings=[f], rounds_with_evidence_incomplete=1)
+    f = StateFinding(
+        id="x",
+        fingerprint="x",
+        source="L1",
+        disposition=Disposition.UNCERTAIN,
+        file="calc.py",
+        line_range=[2, 2],
+        description="d",
+        evidence_downgrade="falsifier returned CONFIRMED; host downgraded",
+    )
+    state = State(
+        round=1, mode=Mode.CI, source_hash=sha, findings=[f], rounds_with_evidence_incomplete=1
+    )
     save_state(state, directory / "state.json")
     disk = json.loads((directory / "state.json").read_text())
     assert disk["rounds_with_evidence_incomplete"] == 1
@@ -279,13 +327,22 @@ def _ci_run(tmp_path, payload, verdict):
     with patch("code_forge.llm_invoke.llm_invoke", return_value=LLMResult(payload, Usage(), 0.0)):
         provider = build_l1_provider("auto", resolved)
         m = StateMachine(
-            mode=Mode.CI, falsifier=Fixed(verdict), autofixer=StubAutoFixer(),
-            revert_fn=lambda f: None, resolved_review=resolved,
-            source_hash=compute_source_hash(git_diff=TS_DIFF), baseline_spec_repr="issue46",
-            cwd=tmp_path, test_config_root=outside_gate_root(tmp_path),  # #160
-            registry={}, l0_runner=lambda *a: ([], []), l1_provider=provider,
-            l2_runner=lambda *a, **kw: ([], []), e2e_runner=lambda *a: ([], []),
-            max_total_rounds=3, clean_round_threshold=3,
+            mode=Mode.CI,
+            falsifier=Fixed(verdict),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=resolved,
+            source_hash=compute_source_hash(git_diff=TS_DIFF),
+            baseline_spec_repr="issue46",
+            cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
+            registry={},
+            l0_runner=lambda *a: ([], []),
+            l1_provider=provider,
+            l2_runner=lambda *a, **kw: ([], []),
+            e2e_runner=lambda *a: ([], []),
+            max_total_rounds=3,
+            clean_round_threshold=3,
         )
         m._state.env_manifest = {"tier": "declared"}
         return m.run(), m
@@ -296,7 +353,9 @@ FINDING = {"file": TS, "line": 2, "severity": "P1", "description": "minimum retu
 
 
 def test_ci_full_run_envelope_only_confirmed_fails(isolated):
-    verdict, m = _ci_run(isolated, {"findings": [FINDING], "code_excerpts": EXCERPTS}, Disposition.CONFIRMED)
+    verdict, m = _ci_run(
+        isolated, {"findings": [FINDING], "code_excerpts": EXCERPTS}, Disposition.CONFIRMED
+    )
     disk = json.loads((isolated / ".code-forge/state.json").read_text())
     assert verdict == Verdict.FAIL
     assert disk["verdict"] == "FAIL" and disk["converged"] is False
@@ -305,7 +364,9 @@ def test_ci_full_run_envelope_only_confirmed_fails(isolated):
 
 def test_ci_full_run_bound_confirmed_fails_as_confirmed(isolated):
     owned = {**FINDING, "excerpt": "  return Math.max(a, b);"}
-    verdict, m = _ci_run(isolated, {"findings": [owned], "code_excerpts": EXCERPTS}, Disposition.CONFIRMED)
+    verdict, m = _ci_run(
+        isolated, {"findings": [owned], "code_excerpts": EXCERPTS}, Disposition.CONFIRMED
+    )
     disk = json.loads((isolated / ".code-forge/state.json").read_text())
     assert verdict == Verdict.FAIL
     assert any(f["disposition"] == "CONFIRMED" for f in disk["findings"])
@@ -319,7 +380,9 @@ def test_ci_full_run_clean_empty_passes(isolated):
 
 def test_ci_full_run_valid_uncertain_keeps_existing_policy(isolated):
     owned = {**FINDING, "excerpt": "  return Math.max(a, b);"}
-    verdict, m = _ci_run(isolated, {"findings": [owned], "code_excerpts": EXCERPTS}, Disposition.UNCERTAIN)
+    verdict, m = _ci_run(
+        isolated, {"findings": [owned], "code_excerpts": EXCERPTS}, Disposition.UNCERTAIN
+    )
     assert verdict == Verdict.PASS  # ordinary bound UNCERTAIN: unchanged CI policy
     assert m._state.rounds_with_evidence_incomplete == 0
 
@@ -335,9 +398,14 @@ CTX_DIFF = (
 
 def test_file_level_quote_must_touch_hunk(monkeypatch):
     lines = ["pass"] * 9 + ["def f():", "    return 2"]
-    monkeypatch.setattr("code_forge.verify._diff_validation_context",
-                        lambda diff, cwd=None: ({"ctx.py": {i + 1: t for i, t in enumerate(lines)}},
-                                                {"ctx.py": [{"start": 10, "end": 11}]}, []))
+    monkeypatch.setattr(
+        "code_forge.verify._diff_validation_context",
+        lambda diff, cwd=None: (
+            {"ctx.py": {i + 1: t for i, t in enumerate(lines)}},
+            {"ctx.py": [{"start": 10, "end": 11}]},
+            [],
+        ),
+    )
     assert finding_excerpt_binding(CTX_DIFF, "ctx.py", 0, "pass") is False  # context only
     assert finding_excerpt_binding(CTX_DIFF, "ctx.py", 0, "pass\ndef f():") is True  # touches hunk
     assert finding_excerpt_binding(CTX_DIFF, "ctx.py", 0, "    return 2") is True
@@ -363,9 +431,16 @@ def test_cross_repo_absolute_path_resolves_against_owning_root(tmp_path, monkeyp
     rf = RepositoryFalsifier(inner, {"lib@r2": inner}, {"lib@r2": sib_diff}, {"lib@r2": sib_root})
     m = _machine(tmp_path / "primary" if (tmp_path / "primary").mkdir() is None else tmp_path)
     m.falsifier = rf
-    f = StateFinding(id="a", fingerprint="a", source="L1", disposition=Disposition.UNCERTAIN,
-                     file="lib@r2/" + str(sib_root / "lib/x.py"), line_range=[2, 2],
-                     description="d", excerpt="    return max(a, b)")
+    f = StateFinding(
+        id="a",
+        fingerprint="a",
+        source="L1",
+        disposition=Disposition.UNCERTAIN,
+        file="lib@r2/" + str(sib_root / "lib/x.py"),
+        line_range=[2, 2],
+        description="d",
+        excerpt="    return max(a, b)",
+    )
     assert rf.evidence_scope(f) == (sib_diff, str(sib_root / "lib/x.py"), sib_root)
     m.l1_provider = lambda: ([f], [], Usage(), 0.0)
     result, _ = m._run_l1_phase()
@@ -376,14 +451,25 @@ def _downgraded_state(tmp_path, source_hash, downgrade=True):
     directory = tmp_path / ".code-forge"
     (directory / "receipts").mkdir(parents=True, exist_ok=True)
     (directory / "gate.yaml").write_text("verify:\n  required_cycles: 1\n")
-    f = StateFinding(id="x", fingerprint="x", source="L1", disposition=Disposition.UNCERTAIN,
-                     file="calc.py", line_range=[2, 2], description="d",
-                     evidence_downgrade="host downgraded" if downgrade else None)
-    save_state(State(round=1, mode=Mode.CI, source_hash=source_hash, findings=[f]), directory / "state.json")
+    f = StateFinding(
+        id="x",
+        fingerprint="x",
+        source="L1",
+        disposition=Disposition.UNCERTAIN,
+        file="calc.py",
+        line_range=[2, 2],
+        description="d",
+        evidence_downgrade="host downgraded" if downgrade else None,
+    )
+    save_state(
+        State(round=1, mode=Mode.CI, source_hash=source_hash, findings=[f]), directory / "state.json"
+    )
 
 
-@pytest.mark.parametrize("kwargs", [{}, {"cycles": [1]}, {"require_convergence": False},
-                                    {"cycles": [1], "require_convergence": False}])
+@pytest.mark.parametrize(
+    "kwargs",
+    [{}, {"cycles": [1]}, {"require_convergence": False}, {"cycles": [1], "require_convergence": False}],
+)
 def test_verify_refuses_downgrade_on_every_path(tmp_path, kwargs):
     sha = compute_source_hash(git_diff=DIFF)
     _downgraded_state(tmp_path, sha)
@@ -410,6 +496,7 @@ def test_verify_downgrade_gate_explicit_outcomes(tmp_path):
 # LOCAL multi-round: a downgraded round earns no clean credit, and once later
 # rounds no longer report it, it no longer blocks verify.
 
+
 def _local_run(tmp_path, payloads, verdict, rounds=6):
     resolved = ResolvedReview([Path(TS)], None, TS_DIFF, "git")
     calls = []
@@ -421,13 +508,22 @@ def _local_run(tmp_path, payloads, verdict, rounds=6):
     with patch("code_forge.llm_invoke.llm_invoke", side_effect=transport):
         provider = build_l1_provider("auto", resolved)
         m = StateMachine(
-            mode=Mode.LOCAL, falsifier=Fixed(verdict), autofixer=StubAutoFixer(),
-            revert_fn=lambda f: None, resolved_review=resolved,
-            source_hash=compute_source_hash(git_diff=TS_DIFF), baseline_spec_repr="issue46",
-            cwd=tmp_path, test_config_root=outside_gate_root(tmp_path),  # #160
-            registry={}, l0_runner=lambda *a: ([], []), l1_provider=provider,
-            l2_runner=lambda *a, **kw: ([], []), e2e_runner=lambda *a: ([], []),
-            max_total_rounds=rounds, clean_round_threshold=3,
+            mode=Mode.LOCAL,
+            falsifier=Fixed(verdict),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=resolved,
+            source_hash=compute_source_hash(git_diff=TS_DIFF),
+            baseline_spec_repr="issue46",
+            cwd=tmp_path,
+            test_config_root=outside_gate_root(tmp_path),  # #160
+            registry={},
+            l0_runner=lambda *a: ([], []),
+            l1_provider=provider,
+            l2_runner=lambda *a, **kw: ([], []),
+            e2e_runner=lambda *a: ([], []),
+            max_total_rounds=rounds,
+            clean_round_threshold=3,
         )
         m._state.env_manifest = {"tier": "declared"}
         try:

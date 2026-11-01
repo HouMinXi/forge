@@ -30,10 +30,16 @@ GATE = {
 }
 META = {
     "name": "mypack",
-    "rules": [{
-        "id": "no-eval", "title": "t", "category": "security", "impact_tier": "high",
-        "languages": ["python"], "source": "fixture",
-    }],
+    "rules": [
+        {
+            "id": "no-eval",
+            "title": "t",
+            "category": "security",
+            "impact_tier": "high",
+            "languages": ["python"],
+            "source": "fixture",
+        }
+    ],
 }
 BASE_RULES = "rules:\n- id: no-eval\n  pattern: eval(...)\n  message: BASELINE RULE\n  languages: [python]\n  severity: ERROR\n"
 PR_RULES = "rules:\n- id: no-eval\n  pattern: never_matches_anything(...)\n  message: PR RULE\n  languages: [python]\n  severity: ERROR\n"
@@ -41,7 +47,12 @@ PR_RULES = "rules:\n- id: no-eval\n  pattern: never_matches_anything(...)\n  mes
 
 def _git(repo, *args):
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8",
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     ).stdout.strip()
 
 
@@ -76,8 +87,11 @@ def _machine(repo, base, mode=Mode.CI):
         autofixer=StubAutoFixer(),
         revert_fn=lambda finding: None,
         resolved_review=ResolvedReview(
-            source_files=[repo / "src" / "mod.py"], baseline_content=None,
-            git_diff="--- a/src/mod.py\n+++ b/src/mod.py\n", mode_hint="git", base_sha=base,
+            source_files=[repo / "src" / "mod.py"],
+            baseline_content=None,
+            git_diff="--- a/src/mod.py\n+++ b/src/mod.py\n",
+            mode_hint="git",
+            base_sha=base,
         ),
         source_hash="h",
         baseline_spec_repr="h",
@@ -98,12 +112,29 @@ def semgrep(monkeypatch):
             return real_run(argv, **kwargs)  # noqa: PLW1510
         rules = Path(argv[argv.index("--config") + 1]).read_text(encoding="utf-8")
         seen.append(rules)
-        hits = [] if "BASELINE RULE" not in rules else [{
-            "ruleId": "no-eval", "level": "error", "message": {"text": "eval"},
-            "locations": [{"physicalLocation": {
-                "artifactLocation": {"uri": "src/mod.py"}, "region": {"startLine": 1}}}],
-        }]
-        sarif = {"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "semgrep"}}, "results": hits}]}
+        hits = (
+            []
+            if "BASELINE RULE" not in rules
+            else [
+                {
+                    "ruleId": "no-eval",
+                    "level": "error",
+                    "message": {"text": "eval"},
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {"uri": "src/mod.py"},
+                                "region": {"startLine": 1},
+                            }
+                        }
+                    ],
+                }
+            ]
+        )
+        sarif = {
+            "version": "2.1.0",
+            "runs": [{"tool": {"driver": {"name": "semgrep"}}, "results": hits}],
+        }
         return subprocess.CompletedProcess(argv, 1 if hits else 0, json.dumps(sarif), "")
 
     monkeypatch.setattr("code_forge.rulepack.subprocess.run", run)
@@ -140,7 +171,9 @@ def test_pr_added_pack_is_not_used_in_ci(tmp_path, semgrep, staged):
         _git(repo, "add", str(PACK))
     m = _machine(repo, base)
     assert _blocking(m) == [] and semgrep == []
-    assert any("rulepack mypack: no trusted copy" in e for e in m._state.infra_errors), m._state.infra_errors
+    assert any("rulepack mypack: no trusted copy" in e for e in m._state.infra_errors), (
+        m._state.infra_errors
+    )
 
 
 def test_local_staged_pack_is_not_used_but_a_never_tracked_one_is(tmp_path, semgrep):
@@ -188,7 +221,9 @@ def _symlink_pack_dir(repo, outside):
 
 
 def _symlink_packs_parent(repo, outside):
-    (outside / ".code-forge" / "packs").symlink_to(repo / ".code-forge" / "packs", target_is_directory=True)
+    (outside / ".code-forge" / "packs").symlink_to(
+        repo / ".code-forge" / "packs", target_is_directory=True
+    )
 
 
 def _symlink_pack_dir_elsewhere(repo, outside):
@@ -206,14 +241,22 @@ def _symlink_rules_elsewhere(repo, outside):
     (outside / PACK / "rules.yaml").symlink_to(other)
 
 
-@pytest.mark.parametrize("link", [
-    _hardlink_rules, _symlink_pack_dir, _symlink_packs_parent, _symlink_pack_dir_elsewhere,
-    _symlink_rules_elsewhere,
-])
+@pytest.mark.parametrize(
+    "link",
+    [
+        _hardlink_rules,
+        _symlink_pack_dir,
+        _symlink_packs_parent,
+        _symlink_pack_dir_elsewhere,
+        _symlink_rules_elsewhere,
+    ],
+)
 def test_outside_pack_leading_elsewhere_is_refused(tmp_path, semgrep, link):
     m = _outside_with(tmp_path, link)
     assert _blocking(m) == [] and semgrep == []
-    assert any("rulepack: trusted packs refused" in e for e in m._state.infra_errors), m._state.infra_errors
+    assert any("rulepack: trusted packs refused" in e for e in m._state.infra_errors), (
+        m._state.infra_errors
+    )
     assert not any("Unknown rulepack" in e for e in m._state.infra_errors)
 
 
@@ -227,7 +270,9 @@ def test_baseline_pack_symlink_is_refused(tmp_path, semgrep):
     _git(repo, "commit", "-qm", "link")
     m = _machine(repo, _git(repo, "rev-parse", "HEAD"))
     assert _blocking(m) == [] and semgrep == []
-    assert any("is a symlink in the review baseline" in e for e in m._state.infra_errors), m._state.infra_errors
+    assert any("is a symlink in the review baseline" in e for e in m._state.infra_errors), (
+        m._state.infra_errors
+    )
 
 
 def test_builtin_only_runs_no_git_and_ignores_tree_packs(tmp_path, semgrep, monkeypatch):
@@ -285,9 +330,15 @@ else:
 def _unshare_ok():
     import shutil
 
-    return shutil.which("unshare") is not None and subprocess.run(
-        ["unshare", "-rm", "true"], capture_output=True, check=False,
-    ).returncode == 0
+    return (
+        shutil.which("unshare") is not None
+        and subprocess.run(
+            ["unshare", "-rm", "true"],
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
 
 
 @pytest.mark.skipif(not _unshare_ok(), reason="unprivileged user/mount namespaces unavailable")
@@ -298,7 +349,9 @@ def test_outside_packs_root_that_is_a_bind_mount_alias_is_refused(tmp_path):
     scratch.mkdir()
     out = subprocess.run(
         ["unshare", "-rm", sys.executable, "-c", _ALIAS, str(repo), base, str(scratch)],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
         env={**os.environ, "PYTHONPATH": str(Path(gate_check.__file__).parents[1])},
     )
     assert out.returncode == 0, out.stderr
@@ -363,7 +416,9 @@ def test_baseline_show_timeout_is_a_reported_refusal(tmp_path, semgrep, monkeypa
     monkeypatch.setattr(gate_check.subprocess, "run", run)
     m = _machine(repo, base)
     assert _blocking(m) == [] and semgrep == []
-    assert any("timed out" in e and "refusing pack mypack" in e for e in m._state.infra_errors), m._state.infra_errors
+    assert any("timed out" in e and "refusing pack mypack" in e for e in m._state.infra_errors), (
+        m._state.infra_errors
+    )
 
 
 @pytest.mark.parametrize("failure", ["timeout", "exit"])

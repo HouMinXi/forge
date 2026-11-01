@@ -92,9 +92,7 @@ def assert_required_pass_terminal_refusal(machine):
         assert machine._state.earned_clean_window["cycles"] == []
         assert machine._state.consecutive_clean_rounds == 0
         assert machine._state.converged is False
-        assert errors == [
-            "receipt acceptance: earned window has 0 cycles; verifier floor demands 3"
-        ]
+        assert errors == ["receipt acceptance: earned window has 0 cycles; verifier floor demands 3"]
     else:
         assert "status=incomplete" in ";".join(errors)
 

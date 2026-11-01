@@ -44,22 +44,33 @@ def _make_proc(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess:
 @contextmanager
 def _mock_git(stdout: str = "abc123\n", returncode: int = 0):
     """Mock a synthetic commit and an already-verified source roster."""
+
     def source_roster(repo_path, _commit_hash):
         return {
-            path.relative_to(repo_path) for path in repo_path.rglob("*")
-            if path.is_file() and cr._is_convention_file(path.name)
+            path.relative_to(repo_path)
+            for path in repo_path.rglob("*")
+            if path.is_file()
+            and cr._is_convention_file(path.name)
             and not any(part in cr._SKIP_DIRS for part in path.relative_to(repo_path).parts[:-1])
         }
 
-    with patch(
-        "code_forge.conventions_resolver.subprocess.run",
-        return_value=_make_proc(stdout, returncode),
-    ) as mock_run, patch(
-        "code_forge.conventions_resolver._tracked_convention_files", side_effect=source_roster,
-    ), patch(
-        "code_forge.conventions_resolver._scan_matches_commit", return_value=True,
-    ), patch(
-        "code_forge.conventions_resolver._source_cache_eligible", return_value=True,
+    with (
+        patch(
+            "code_forge.conventions_resolver.subprocess.run",
+            return_value=_make_proc(stdout, returncode),
+        ) as mock_run,
+        patch(
+            "code_forge.conventions_resolver._tracked_convention_files",
+            side_effect=source_roster,
+        ),
+        patch(
+            "code_forge.conventions_resolver._scan_matches_commit",
+            return_value=True,
+        ),
+        patch(
+            "code_forge.conventions_resolver._source_cache_eligible",
+            return_value=True,
+        ),
     ):
         yield mock_run
 
@@ -85,9 +96,20 @@ def _multilang_git_fixture(tmp_path):
     for command in (
         ["git", "init", "-q", str(sibling)],
         ["git", "-C", str(sibling), "add", "-A"],
-        ["git", "-C", str(sibling), "-c", "user.name=Test",
-         "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-         "commit", "-qm", "fixture"],
+        [
+            "git",
+            "-C",
+            str(sibling),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
     ):
         subprocess.run(command, capture_output=True, text=True, check=True)
     return cwd, sibling, outside, selected
@@ -109,7 +131,9 @@ def _cache_ancestor_fixture(tmp_path):
 def _assert_real_git_commit(repo, commit):
     result = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "--show-object-format"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert len(commit) == {"sha1": 40, "sha256": 64}[result.stdout.strip()]
 
@@ -131,7 +155,7 @@ def _run_nonfaulted_probe(run, command, *args, **kwargs):
     return run(command, *args, **kwargs)
 
 
-_PYTHON312_LOOP_CLI = r'''
+_PYTHON312_LOOP_CLI = r"""
 import json
 import os
 from pathlib import Path
@@ -266,10 +290,10 @@ with tempfile.TemporaryDirectory(prefix="forge-convention-loop-") as directory:
         assert len(events) == 1, (case, events)
         assert "LocalOnly" in post and "GoodSibling" in digest, (case, digest)
     print(json.dumps({"case": case, "result": "PASS"}), flush=True)
-'''
+"""
 
 
-_PYTHON312_METADATA_CLI = r'''
+_PYTHON312_METADATA_CLI = r"""
 import json
 import os
 from pathlib import Path
@@ -298,7 +322,7 @@ with tempfile.TemporaryDirectory(prefix="forge-optional-metadata-") as directory
         denied.chmod(0o700)
     assert "LocalOnly" in digest and "GoodSibling" in digest, (case, digest)
     print(json.dumps({"case": case, "result": "PASS"}), flush=True)
-'''
+"""
 
 
 def _python312_interpreter():
@@ -316,7 +340,9 @@ def _python312_interpreter():
         try:
             version = subprocess.run(
                 [executable, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
         except (OSError, subprocess.TimeoutExpired):
             continue
@@ -330,14 +356,19 @@ def _run_python312_loop_cli(case, script=None):
     if script is None:
         script = _PYTHON312_LOOP_CLI
     env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join((
-        str(Path(cr.__file__).parents[2] / "src"),
-        str(Path(sys.modules["yaml"].__file__).parent.parent),
-    ))
+    env["PYTHONPATH"] = os.pathsep.join(
+        (
+            str(Path(cr.__file__).parents[2] / "src"),
+            str(Path(sys.modules["yaml"].__file__).parent.parent),
+        )
+    )
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     result = subprocess.run(
-        [str(interpreter), "-c", script, case], env=env,
-        capture_output=True, text=True, timeout=25,
+        [str(interpreter), "-c", script, case],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=25,
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["result"] == "PASS"
@@ -347,12 +378,11 @@ def _warm_component_alias_fixture(tmp_path, *, two=False):
     cwd = tmp_path / "consumer"
     sibling = tmp_path / "sibling"
     (cwd / ".code-forge").mkdir(parents=True)
-    (cwd / ".code-forge" / "conventions.yaml").write_text(
-        "siblings: [../sibling]\n"
-    )
+    (cwd / ".code-forge" / "conventions.yaml").write_text("siblings: [../sibling]\n")
     labels = (
         {"build": ("OldA", "NewA"), "dist": ("OldB", "NewB")}
-        if two else {"build": ("OriginalName", "RevisedName")}
+        if two
+        else {"build": ("OriginalName", "RevisedName")}
     )
     for component, (old, new) in labels.items():
         for label in (old, new):
@@ -360,7 +390,8 @@ def _warm_component_alias_fixture(tmp_path, *, two=False):
             directory.mkdir(parents=True)
             (directory / "api.py").write_text(f"def {label}(): pass\n")
         (sibling / component).symlink_to(
-            "node_modules/" + old, target_is_directory=True,
+            "node_modules/" + old,
+            target_is_directory=True,
         )
         alias = "alias" + component.title() + ".py" if two else "alias.py"
         (sibling / alias).symlink_to(component + "/api.py")
@@ -368,9 +399,20 @@ def _warm_component_alias_fixture(tmp_path, *, two=False):
     for command in (
         ["git", "init", "-q", str(sibling)],
         ["git", "-C", str(sibling), "add", "-f", "-A"],
-        ["git", "-C", str(sibling), "-c", "user.name=Test",
-         "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-         "commit", "-qm", "component aliases"],
+        [
+            "git",
+            "-C",
+            str(sibling),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            "component aliases",
+        ],
     ):
         subprocess.run(command, capture_output=True, check=True)
     return cwd, sibling
@@ -380,9 +422,7 @@ def _warm_leaf_alias_fixture(tmp_path, *, variant):
     cwd = tmp_path / "consumer"
     sibling = tmp_path / "sibling"
     (cwd / ".code-forge").mkdir(parents=True)
-    (cwd / ".code-forge" / "conventions.yaml").write_text(
-        "siblings: [../sibling]\n"
-    )
+    (cwd / ".code-forge" / "conventions.yaml").write_text("siblings: [../sibling]\n")
     (sibling / "node_modules").mkdir(parents=True)
     for letter in "AB":
         if variant == "leaf_chain":
@@ -390,9 +430,7 @@ def _warm_leaf_alias_fixture(tmp_path, *, variant):
                 target = sibling / "node_modules" / (prefix + letter) / "api.py"
                 target.parent.mkdir()
                 target.write_text(f"def {prefix}{letter}(): pass\n")
-            (sibling / ("bridge" + letter)).symlink_to(
-                "node_modules/Old" + letter + "/api.py"
-            )
+            (sibling / ("bridge" + letter)).symlink_to("node_modules/Old" + letter + "/api.py")
             alias_target = "bridge" + letter
         else:
             target = sibling / "node_modules" / (letter + ".bin")
@@ -402,9 +440,20 @@ def _warm_leaf_alias_fixture(tmp_path, *, variant):
     for command in (
         ["git", "init", "-q", str(sibling)],
         ["git", "-C", str(sibling), "add", "-f", "-A"],
-        ["git", "-C", str(sibling), "-c", "user.name=Test",
-         "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-         "commit", "-qm", "leaf aliases"],
+        [
+            "git",
+            "-C",
+            str(sibling),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            "leaf aliases",
+        ],
     ):
         subprocess.run(command, capture_output=True, check=True)
     return cwd, sibling
@@ -416,15 +465,28 @@ def _two_clean_heads_fixture(tmp_path):
     (selected / "one.py").write_text("def OnlyOnB(): pass\n")
     for command in (
         ["git", "-C", str(sibling), "add", "src/sub/one.py"],
-        ["git", "-C", str(sibling), "-c", "user.name=Test",
-         "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-         "commit", "-qm", "B"],
+        [
+            "git",
+            "-C",
+            str(sibling),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            "B",
+        ],
     ):
         subprocess.run(command, capture_output=True, text=True, check=True)
     b = cr._get_git_commit(sibling)
     subprocess.run(
         ["git", "-C", str(sibling), "checkout", "-q", "--detach", a],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return cwd, sibling, selected, a, b
 
@@ -823,9 +885,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         commit = cr._get_git_commit(sibling)
@@ -843,7 +916,11 @@ class TestCaching:
                 selected.symlink_to(outside)
                 swaps.append(str(path))
             return real_open(
-                path, root, flags, scan_root_fd=scan_root_fd, scan_status=scan_status,
+                path,
+                root,
+                flags,
+                scan_root_fd=scan_root_fd,
+                scan_status=scan_status,
             )
 
         try:
@@ -873,7 +950,13 @@ class TestCaching:
         ],
     )
     def test_transient_root_replacement_during_walk_retries_same_head(
-        self, tmp_path, monkeypatch, extension, declaration, name, walk_index,
+        self,
+        tmp_path,
+        monkeypatch,
+        extension,
+        declaration,
+        name,
+        walk_index,
     ):
         from code_forge import conventions
 
@@ -889,9 +972,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         committed_head = cr._get_git_commit(sibling)
@@ -937,7 +1031,11 @@ class TestCaching:
         ],
     )
     def test_admitted_child_moved_outside_before_leaf_open_is_rejected(
-        self, tmp_path, monkeypatch, extension, name,
+        self,
+        tmp_path,
+        monkeypatch,
+        extension,
+        name,
     ):
         from code_forge import conventions
 
@@ -982,24 +1080,40 @@ class TestCaching:
         ("extension", "inside_declaration", "outside_declaration", "inside_name", "outside_name"),
         [
             (
-                ".py", "def inside_python(): pass\n", "def outside_python(): pass\n",
-                "inside_python", "outside_python",
+                ".py",
+                "def inside_python(): pass\n",
+                "def outside_python(): pass\n",
+                "inside_python",
+                "outside_python",
             ),
             (
-                ".ts", "export function inside_typescript() {}\n",
-                "export function outside_typescript() {}\n", "inside_typescript", "outside_typescript",
+                ".ts",
+                "export function inside_typescript() {}\n",
+                "export function outside_typescript() {}\n",
+                "inside_typescript",
+                "outside_typescript",
             ),
             (".go", "func InsideGo() {}\n", "func OutsideGo() {}\n", "InsideGo", "OutsideGo"),
             (
-                ".rs", "pub fn inside_rust() {}\n", "pub fn outside_rust() {}\n",
-                "inside_rust", "outside_rust",
+                ".rs",
+                "pub fn inside_rust() {}\n",
+                "pub fn outside_rust() {}\n",
+                "inside_rust",
+                "outside_rust",
             ),
         ],
     )
     @pytest.mark.parametrize("mutation", ["replace", "rewrite_restore"])
     def test_moved_root_requires_the_exact_admitted_file_stamp(
-        self, tmp_path, monkeypatch, extension, inside_declaration, outside_declaration,
-        inside_name, outside_name, mutation,
+        self,
+        tmp_path,
+        monkeypatch,
+        extension,
+        inside_declaration,
+        outside_declaration,
+        inside_name,
+        outside_name,
+        mutation,
     ):
         from code_forge import conventions
 
@@ -1017,9 +1131,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         committed_head = cr._get_git_commit(sibling)
@@ -1132,9 +1257,15 @@ class TestCaching:
     def test_direct_extract_includes_nested_names_without_status(self, tmp_path):
         cwd, _sibling, _outside, _selected = _multilang_git_fixture(tmp_path)
         result = extract_conventions(resolve_sources(cwd)[0])
-        assert all(name in result for name in (
-            "PySelected", "TsSelected", "GoSelected", "RustSelected",
-        ))
+        assert all(
+            name in result
+            for name in (
+                "PySelected",
+                "TsSelected",
+                "GoSelected",
+                "RustSelected",
+            )
+        )
 
     def test_untracked_selected_file_keeps_its_names(self, tmp_path):
         cwd, _sibling, _outside, selected = _multilang_git_fixture(tmp_path)
@@ -1148,9 +1279,21 @@ class TestCaching:
         (sibling / ".gitignore").write_text("generated/\n")
         subprocess.run(["git", "-C", str(sibling), "add", ".gitignore"], check=True)
         subprocess.run(
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "ignore generated"], check=True,
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "ignore generated",
+            ],
+            check=True,
         )
         first = get_cross_repo_digest(cwd)
         generated = sibling / "generated"
@@ -1161,9 +1304,7 @@ class TestCaching:
         assert "IgnoredName" in second
         assert "IgnoredName" not in first
 
-    def test_untracked_file_added_after_scan_prevents_cache_write(
-        self, tmp_path, monkeypatch
-    ):
+    def test_untracked_file_added_after_scan_prevents_cache_write(self, tmp_path, monkeypatch):
         cwd, _sibling, _outside, selected = _multilang_git_fixture(tmp_path)
         extra = selected / "extra.js"
         original_roster = cr._tracked_convention_files
@@ -1184,9 +1325,7 @@ class TestCaching:
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
         assert "LateName" in get_cross_repo_digest(cwd)
 
-    def test_transient_untracked_scan_names_do_not_poison_clean_cache(
-        self, tmp_path, monkeypatch
-    ):
+    def test_transient_untracked_scan_names_do_not_poison_clean_cache(self, tmp_path, monkeypatch):
         cwd, _sibling, _outside, selected = _multilang_git_fixture(tmp_path)
         extra = selected / "extra.js"
         original_extract = cr.extract_conventions
@@ -1210,9 +1349,7 @@ class TestCaching:
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
         assert "TransientName" not in get_cross_repo_digest(cwd)
 
-    def test_clean_head_switch_back_during_scan_cannot_cache_other_content(
-        self, tmp_path, monkeypatch
-    ):
+    def test_clean_head_switch_back_during_scan_cannot_cache_other_content(self, tmp_path, monkeypatch):
         cwd, sibling, _selected, a, b = _two_clean_heads_fixture(tmp_path)
         original_extract = cr.extract_conventions
         switches = []
@@ -1220,14 +1357,18 @@ class TestCaching:
         def scan_other_commit(*args, **kwargs):
             subprocess.run(
                 ["git", "-C", str(sibling), "checkout", "-q", "--detach", b],
-                capture_output=True, text=True, check=True,
+                capture_output=True,
+                text=True,
+                check=True,
             )
             try:
                 result = original_extract(*args, **kwargs)
             finally:
                 subprocess.run(
                     ["git", "-C", str(sibling), "checkout", "-q", "--detach", a],
-                    capture_output=True, text=True, check=True,
+                    capture_output=True,
+                    text=True,
+                    check=True,
                 )
             switches.append(1)
             return result
@@ -1260,15 +1401,28 @@ class TestCaching:
         (selected / filename).write_text(declaration)
         for command in (
             ["git", "-C", str(sibling), "add", "src/sub/" + filename],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "B"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "B",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         b = cr._get_git_commit(sibling)
         subprocess.run(
             ["git", "-C", str(sibling), "checkout", "-q", "--detach", a],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         original_extract = cr.extract_conventions
         original_roster = cr._tracked_convention_files
@@ -1277,7 +1431,9 @@ class TestCaching:
         def scan_other_commit(*args, **kwargs):
             subprocess.run(
                 ["git", "-C", str(sibling), "checkout", "-q", "--detach", b],
-                capture_output=True, text=True, check=True,
+                capture_output=True,
+                text=True,
+                check=True,
             )
             switches.append("scan-b")
             return original_extract(*args, **kwargs)
@@ -1286,7 +1442,9 @@ class TestCaching:
             roster = original_roster(*args, **kwargs)
             subprocess.run(
                 ["git", "-C", str(sibling), "checkout", "-q", "--detach", a],
-                capture_output=True, text=True, check=True,
+                capture_output=True,
+                text=True,
+                check=True,
             )
             switches.append("restore-a")
             return roster
@@ -1307,34 +1465,52 @@ class TestCaching:
         cwd = tmp_path / "repo"
         sibling = tmp_path / "sibling"
         (cwd / ".code-forge").mkdir(parents=True)
-        (cwd / ".code-forge" / "conventions.yaml").write_text(
-            "siblings: [../sibling]\n"
-        )
+        (cwd / ".code-forge" / "conventions.yaml").write_text("siblings: [../sibling]\n")
         sibling.mkdir()
         subprocess.run(
             ["git", "init", "-q", str(sibling)],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         (sibling / ".gitattributes").write_text("*.py ident\n")
         source = sibling / "api.py"
         source.write_text("# $Id$\ndef FilteredName(): pass\n")
         for command in (
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "A"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "A",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         source.unlink()
         subprocess.run(
             ["git", "-C", str(sibling), "checkout", "-q", "--", "api.py"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         assert "$Id:" in source.read_text()
-        assert subprocess.run(
-            ["git", "-C", str(sibling), "status", "--porcelain"],
-            capture_output=True, text=True, check=True,
-        ).stdout == ""
+        assert (
+            subprocess.run(
+                ["git", "-C", str(sibling), "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            == ""
+        )
         first = get_cross_repo_digest(cwd)
         assert "FilteredName" in first
         assert get_cross_repo_digest(cwd) == first
@@ -1344,15 +1520,28 @@ class TestCaching:
         source.write_text("# $Id$\ndef OtherFilteredName(): pass\n")
         for command in (
             ["git", "-C", str(sibling), "add", "api.py"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "B"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "B",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         b = cr._get_git_commit(sibling)
         subprocess.run(
             ["git", "-C", str(sibling), "checkout", "-q", "--detach", a],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         original_extract = cr.extract_conventions
         original_current_reads = cr._scanned_reads_still_current
@@ -1361,7 +1550,9 @@ class TestCaching:
         def scan_b(*args, **kwargs):
             subprocess.run(
                 ["git", "-C", str(sibling), "checkout", "-q", "--detach", b],
-                capture_output=True, text=True, check=True,
+                capture_output=True,
+                text=True,
+                check=True,
             )
             switches.append("scan-b")
             return original_extract(*args, **kwargs)
@@ -1370,13 +1561,20 @@ class TestCaching:
             current = original_current_reads(*args, **kwargs)
             subprocess.run(
                 ["git", "-C", str(sibling), "checkout", "-q", "--detach", a],
-                capture_output=True, text=True, check=True,
+                capture_output=True,
+                text=True,
+                check=True,
             )
             switches.append("restore-a-after-read")
             return current
 
-        with patch.object(cr, "extract_conventions", side_effect=scan_b), patch.object(
-            cr, "_scanned_reads_still_current", side_effect=restore_after_read,
+        with (
+            patch.object(cr, "extract_conventions", side_effect=scan_b),
+            patch.object(
+                cr,
+                "_scanned_reads_still_current",
+                side_effect=restore_after_read,
+            ),
         ):
             raced = get_cross_repo_digest(cwd)
         assert switches == ["scan-b", "restore-a-after-read"]
@@ -1400,9 +1598,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         head = cr._get_git_commit(sibling)
@@ -1436,7 +1645,8 @@ class TestCaching:
             patcher.setattr(conventions, "_path_fallback_supported", lambda: True)
             patcher.setattr(cr, "_path_fallback_supported", lambda: True)
             patcher.setattr(
-                conventions, "_opened_file_path",
+                conventions,
+                "_opened_file_path",
                 lambda fd: Path(os.readlink(f"/proc/self/fd/{fd}")),
             )
             assert "portable_sibling" in get_cross_repo_digest(cwd)
@@ -1464,7 +1674,8 @@ class TestCaching:
             if path == sibling / "node_modules" / "OriginalName" / "api.py" and not retargeted:
                 (sibling / "build").unlink()
                 (sibling / "build").symlink_to(
-                    "node_modules/RevisedName", target_is_directory=True,
+                    "node_modules/RevisedName",
+                    target_is_directory=True,
                 )
                 retargeted.append(True)
             return original_read(path, *args, **kwargs)
@@ -1509,7 +1720,8 @@ class TestCaching:
             if proof is True and not retargeted:
                 (sibling / "build").unlink()
                 (sibling / "build").symlink_to(
-                    "node_modules/RevisedName", target_is_directory=True,
+                    "node_modules/RevisedName",
+                    target_is_directory=True,
                 )
                 retargeted.append(True)
             return proof
@@ -1521,10 +1733,13 @@ class TestCaching:
         assert list((cwd / ".code-forge").glob("conventions-cache-*.json")) == []
 
     @pytest.mark.parametrize(
-        "target", ["../outside.py", "missing/api.py", "alias.py", "a/" * 1025 + "api.py"],
+        "target",
+        ["../outside.py", "missing/api.py", "alias.py", "a/" * 1025 + "api.py"],
     )
     def test_committed_alias_proof_rejects_unbounded_or_missing_path(
-        self, tmp_path, target,
+        self,
+        tmp_path,
+        target,
     ):
         sibling = tmp_path / "sibling"
         sibling.mkdir()
@@ -1533,9 +1748,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "unsafe committed alias"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "unsafe committed alias",
+            ],
         ):
             subprocess.run(command, capture_output=True, check=True)
         status = cr._ScanStatus()
@@ -1552,9 +1778,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "source alias"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "source alias",
+            ],
         ):
             subprocess.run(command, capture_output=True, check=True)
         status = cr._ScanStatus()
@@ -1566,18 +1803,27 @@ class TestCaching:
         cwd = tmp_path / "consumer"
         sibling = tmp_path / "sibling"
         (cwd / ".code-forge").mkdir(parents=True)
-        (cwd / ".code-forge" / "conventions.yaml").write_text(
-            "siblings: [../sibling]\n"
-        )
+        (cwd / ".code-forge" / "conventions.yaml").write_text("siblings: [../sibling]\n")
         sibling.mkdir()
         (sibling / "other.js").write_text("export function UnrelatedJs() {}\n")
         (sibling / "src").symlink_to("missing-directory", target_is_directory=True)
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-f", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "dangling src alias"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "dangling src alias",
+            ],
         ):
             subprocess.run(command, capture_output=True, check=True)
         (sibling / "src").unlink()
@@ -1588,13 +1834,13 @@ class TestCaching:
 
     @pytest.mark.parametrize("corruption", ["empty_link", "invalid_intermediate_mode"])
     def test_committed_alias_proof_rejects_malformed_git_object(
-        self, tmp_path, corruption,
+        self,
+        tmp_path,
+        corruption,
     ):
         cwd = tmp_path / "consumer"
         (cwd / ".code-forge").mkdir(parents=True)
-        (cwd / ".code-forge/conventions.yaml").write_text(
-            "siblings: [../sibling]\n"
-        )
+        (cwd / ".code-forge/conventions.yaml").write_text("siblings: [../sibling]\n")
         sibling = tmp_path / "sibling"
         (sibling / "weird").mkdir(parents=True)
         (sibling / "weird" / "api.py").write_text("def SafeName(): pass\n")
@@ -1602,9 +1848,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "alias proof"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "alias proof",
+            ],
         ):
             subprocess.run(command, capture_output=True, check=True)
         status = cr._ScanStatus()
@@ -1625,10 +1882,12 @@ class TestCaching:
                 injected.append(corruption)
                 blob = original_run(
                     ["git", "-C", str(sibling), "rev-parse", "HEAD:weird/api.py"],
-                    capture_output=True, check=True,
+                    capture_output=True,
+                    check=True,
                 ).stdout.strip()
                 result = subprocess.CompletedProcess(
-                    command, 0,
+                    command,
+                    0,
                     result.stdout + b"040000 blob " + blob + b" 1\tweird\0",
                     result.stderr,
                 )
@@ -1639,38 +1898,51 @@ class TestCaching:
         assert injected == [corruption]
 
     @pytest.mark.parametrize(
-        "state", [
-            "untracked_target", "missing_target", "retargeted_component", "outside_escape",
+        "state",
+        [
+            "untracked_target",
+            "missing_target",
+            "retargeted_component",
+            "outside_escape",
         ],
     )
     def test_component_symlink_does_not_certify_unsafe_source(
-        self, tmp_path, state,
+        self,
+        tmp_path,
+        state,
     ):
         cwd = tmp_path / "consumer"
         sibling = tmp_path / "sibling"
         (cwd / ".code-forge").mkdir(parents=True)
         (sibling / "dist").mkdir(parents=True)
-        (cwd / ".code-forge" / "conventions.yaml").write_text(
-            "siblings: [../sibling]\n"
-        )
+        (cwd / ".code-forge" / "conventions.yaml").write_text("siblings: [../sibling]\n")
         (sibling / "dist" / "anchor.txt").write_text("committed\n")
         (sibling / "api.js").write_text("export function UnrelatedJs() {}\n")
         (sibling / "build").symlink_to("dist", target_is_directory=True)
         if state == "retargeted_component":
             (sibling / "dist" / "api.py").write_text("def CommittedName(): pass\n")
             (sibling / "node_modules").mkdir()
-            (sibling / "node_modules" / "api.py").write_text(
-                "def ChangedName(): pass\n"
-            )
+            (sibling / "node_modules" / "api.py").write_text("def ChangedName(): pass\n")
         target = "build/../../outside.py" if state == "outside_escape" else "build/api.py"
         (sibling / "alias.py").symlink_to(target)
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
             ["git", "-C", str(sibling), "add", "-f", "dist/anchor.txt"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "alias control"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "alias control",
+            ],
         ):
             subprocess.run(command, check=True)
         if state == "untracked_target":
@@ -1703,9 +1975,7 @@ class TestCaching:
             assert "UntrackedName" not in digest
 
     @pytest.mark.parametrize("unsafe", ["loop", "escape"])
-    def test_unsafe_committed_symlink_chain_keeps_only_direct_names(
-        self, tmp_path, unsafe
-    ):
+    def test_unsafe_committed_symlink_chain_keeps_only_direct_names(self, tmp_path, unsafe):
         cwd, sibling, outside, selected = _multilang_git_fixture(tmp_path)
         alias = selected / "alias.py"
         alias2 = selected / "alias2.py"
@@ -1718,9 +1988,20 @@ class TestCaching:
             alias2.symlink_to(outside / "outside.py")
         subprocess.run(["git", "-C", str(sibling), "add", "-A"], check=True)
         subprocess.run(
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "unsafe chain"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "unsafe chain",
+            ],
             check=True,
         )
         digest = get_cross_repo_digest(cwd)
@@ -1781,7 +2062,6 @@ class TestCaching:
         if len(non_empty) > 1:
             assert result.count("\n\n") == len(non_empty) - 1
 
-
     @pytest.mark.parametrize(
         ("extension", "declaration", "name"),
         [
@@ -1805,9 +2085,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         commit = cr._get_git_commit(sibling)
@@ -1841,23 +2132,38 @@ class TestCaching:
         ("extension", "inside_declaration", "outside_declaration", "inside_name", "outside_name"),
         [
             (
-                ".py", "def inside_python(): pass\n", "def outside_python(): pass\n",
-                "inside_python", "outside_python",
+                ".py",
+                "def inside_python(): pass\n",
+                "def outside_python(): pass\n",
+                "inside_python",
+                "outside_python",
             ),
             (
-                ".ts", "export function inside_typescript() {}\n",
-                "export function outside_typescript() {}\n", "inside_typescript", "outside_typescript",
+                ".ts",
+                "export function inside_typescript() {}\n",
+                "export function outside_typescript() {}\n",
+                "inside_typescript",
+                "outside_typescript",
             ),
             (".go", "func InsideGo() {}\n", "func OutsideGo() {}\n", "InsideGo", "OutsideGo"),
             (
-                ".rs", "pub fn inside_rust() {}\n", "pub fn outside_rust() {}\n",
-                "inside_rust", "outside_rust",
+                ".rs",
+                "pub fn inside_rust() {}\n",
+                "pub fn outside_rust() {}\n",
+                "inside_rust",
+                "outside_rust",
             ),
         ],
     )
     def test_root_replacement_during_read_is_uncacheable_and_recovers(
-        self, tmp_path, monkeypatch, extension, inside_declaration, outside_declaration,
-        inside_name, outside_name,
+        self,
+        tmp_path,
+        monkeypatch,
+        extension,
+        inside_declaration,
+        outside_declaration,
+        inside_name,
+        outside_name,
     ):
         from code_forge import conventions
 
@@ -1875,9 +2181,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         committed_head = cr._get_git_commit(sibling)
@@ -1937,7 +2254,12 @@ class TestCaching:
         ],
     )
     def test_transient_root_replacement_during_stat_retries_same_head(
-        self, tmp_path, monkeypatch, extension, declaration, name,
+        self,
+        tmp_path,
+        monkeypatch,
+        extension,
+        declaration,
+        name,
     ):
         work = tmp_path / "work"
         cwd = work / "repo"
@@ -1953,9 +2275,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         committed_head = cr._get_git_commit(sibling)
@@ -1995,23 +2328,39 @@ class TestCaching:
         ("extension", "inside_declaration", "outside_declaration", "inside_name", "outside_name"),
         [
             (
-                ".py", "def inside_python(): pass\n", "def outside_python(): pass\n",
-                "inside_python", "outside_python",
+                ".py",
+                "def inside_python(): pass\n",
+                "def outside_python(): pass\n",
+                "inside_python",
+                "outside_python",
             ),
             (
-                ".ts", "export function inside_typescript() {}\n",
-                "export function outside_typescript() {}\n", "inside_typescript", "outside_typescript",
+                ".ts",
+                "export function inside_typescript() {}\n",
+                "export function outside_typescript() {}\n",
+                "inside_typescript",
+                "outside_typescript",
             ),
             (".go", "func InsideGo() {}\n", "func OutsideGo() {}\n", "InsideGo", "OutsideGo"),
             (
-                ".rs", "pub fn inside_rust() {}\n", "pub fn outside_rust() {}\n",
-                "inside_rust", "outside_rust",
+                ".rs",
+                "pub fn inside_rust() {}\n",
+                "pub fn outside_rust() {}\n",
+                "inside_rust",
+                "outside_rust",
             ),
         ],
     )
     def test_source_root_swap_after_head_retries_without_outside_names(
-        self, tmp_path, monkeypatch, extension, inside_declaration, outside_declaration,
-        inside_name, outside_name, replacement,
+        self,
+        tmp_path,
+        monkeypatch,
+        extension,
+        inside_declaration,
+        outside_declaration,
+        inside_name,
+        outside_name,
+        replacement,
     ):
         work = tmp_path / "work"
         cwd = work / "repo"
@@ -2026,9 +2375,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         committed_head = cr._get_git_commit(sibling)
@@ -2147,9 +2507,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         (cwd / ".code-forge" / "conventions.yaml").write_text("siblings: [../sibling]\n")
@@ -2209,9 +2580,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         commit = cr._get_git_commit(sibling)
@@ -2253,12 +2635,17 @@ class TestCaching:
         cache_files = list(cache_dir.glob("conventions-cache-*.json"))
         assert cache_files == []
 
-    @pytest.mark.parametrize("late_skip", [
-        pytest.param("nonregular", marks=pytest.mark.skipif(
-            not hasattr(os, "mkfifo"), reason="requires POSIX FIFO")),
-        "fstat_oversize",
-        "read_oversize",
-    ])
+    @pytest.mark.parametrize(
+        "late_skip",
+        [
+            pytest.param(
+                "nonregular",
+                marks=pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires POSIX FIFO"),
+            ),
+            "fstat_oversize",
+            "read_oversize",
+        ],
+    )
     @pytest.mark.parametrize(
         ("extension", "declaration", "name"),
         [
@@ -2282,9 +2669,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         commit = cr._get_git_commit(sibling)
@@ -2376,15 +2774,27 @@ class TestCaching:
         assert len(statuses) == 1 and statuses[0].complete is False
         # The changed parent cannot prove even the unaffected child's row.
         assert partial == ""
-        assert not any(name in partial for name in (
-            "PySelected", "TsSelected", "GoSelected", "RustSelected",
-        ))
+        assert not any(
+            name in partial
+            for name in (
+                "PySelected",
+                "TsSelected",
+                "GoSelected",
+                "RustSelected",
+            )
+        )
         cache_dir = cwd / ".code-forge"
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
         recovered = get_cross_repo_digest(cwd)
-        assert all(name in recovered for name in (
-            "PySelected", "TsSelected", "GoSelected", "RustSelected",
-        ))
+        assert all(
+            name in recovered
+            for name in (
+                "PySelected",
+                "TsSelected",
+                "GoSelected",
+                "RustSelected",
+            )
+        )
         assert "Always" in recovered and "OutsideOnly" not in recovered
         assert recovered == extract_conventions(resolve_sources(cwd)[0])
         assert cr._get_git_commit(sibling) == head
@@ -2393,9 +2803,7 @@ class TestCaching:
             assert get_cross_repo_digest(cwd) == recovered
         assert scan.call_count == 1
 
-    def test_directory_removed_between_language_passes_retries_same_head(
-        self, tmp_path, monkeypatch
-    ):
+    def test_directory_removed_between_language_passes_retries_same_head(self, tmp_path, monkeypatch):
         cwd, sibling, _outside, selected = _multilang_git_fixture(tmp_path)
         saved = tmp_path / "sub.saved"
         original_js = cr._extract_js_ts_names
@@ -2417,15 +2825,26 @@ class TestCaching:
                 saved.rename(selected)
         assert moves == [1]
         assert "PySelected" in partial
-        assert not any(name in partial for name in (
-            "TsSelected", "GoSelected", "RustSelected",
-        ))
+        assert not any(
+            name in partial
+            for name in (
+                "TsSelected",
+                "GoSelected",
+                "RustSelected",
+            )
+        )
         cache_dir = cwd / ".code-forge"
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
         recovered = get_cross_repo_digest(cwd)
-        assert all(name in recovered for name in (
-            "PySelected", "TsSelected", "GoSelected", "RustSelected",
-        ))
+        assert all(
+            name in recovered
+            for name in (
+                "PySelected",
+                "TsSelected",
+                "GoSelected",
+                "RustSelected",
+            )
+        )
         assert cr._get_git_commit(sibling) == head
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
 
@@ -2458,16 +2877,20 @@ class TestCaching:
         cache_dir = cwd / ".code-forge"
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
         recovered = get_cross_repo_digest(cwd)
-        assert all(name in recovered for name in (
-            "PySelected", "TsSelected", "GoSelected", "RustSelected",
-        ))
+        assert all(
+            name in recovered
+            for name in (
+                "PySelected",
+                "TsSelected",
+                "GoSelected",
+                "RustSelected",
+            )
+        )
         assert cr._get_git_commit(sibling) == head
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
 
     @pytest.mark.parametrize("restore_before_js", [True, False])
-    def test_tracked_file_omission_retries_same_head(
-        self, tmp_path, monkeypatch, restore_before_js
-    ):
+    def test_tracked_file_omission_retries_same_head(self, tmp_path, monkeypatch, restore_before_js):
         cwd, sibling, _outside, selected = _multilang_git_fixture(tmp_path)
         python_file = selected / "one.py"
         hidden = tmp_path / "hidden-one.py"
@@ -2501,20 +2924,29 @@ class TestCaching:
         cache_dir = cwd / ".code-forge"
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
         recovered = get_cross_repo_digest(cwd)
-        assert all(name in recovered for name in (
-            "PySelected", "TsSelected", "GoSelected", "RustSelected",
-        ))
+        assert all(
+            name in recovered
+            for name in (
+                "PySelected",
+                "TsSelected",
+                "GoSelected",
+                "RustSelected",
+            )
+        )
         assert cr._get_git_commit(sibling) == head
-        assert subprocess.run(
-            ["git", "-C", str(sibling), "status", "--porcelain"],
-            check=True, capture_output=True, text=True,
-        ).stdout == ""
+        assert (
+            subprocess.run(
+                ["git", "-C", str(sibling), "status", "--porcelain"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            == ""
+        )
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
 
     @pytest.mark.parametrize("as_symlink", [False, True])
-    def test_untracked_addition_bypasses_existing_cache_until_removed(
-        self, tmp_path, as_symlink
-    ):
+    def test_untracked_addition_bypasses_existing_cache_until_removed(self, tmp_path, as_symlink):
         cwd, sibling, _outside, selected = _multilang_git_fixture(tmp_path)
         first = get_cross_repo_digest(cwd)
         head = cr._get_git_commit(sibling)
@@ -2550,9 +2982,7 @@ class TestCaching:
         assert "UntrackedName" not in second
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
 
-    def test_untracked_outside_symlink_bypasses_cache_without_outside_names(
-        self, tmp_path
-    ):
+    def test_untracked_outside_symlink_bypasses_cache_without_outside_names(self, tmp_path):
         cwd, _sibling, outside, selected = _multilang_git_fixture(tmp_path)
         first = get_cross_repo_digest(cwd)
         outside_file = outside / "extra.js"
@@ -2582,12 +3012,8 @@ class TestCaching:
         assert "ChangedPython" not in first
         assert list((cwd / ".code-forge").glob("conventions-cache-*.json")) == []
 
-    @pytest.mark.parametrize(
-        "failure", ["timeout", "nonzero", "text", "malformed", "oversized"]
-    )
-    def test_source_listing_failure_keeps_digest_uncached(
-        self, tmp_path, monkeypatch, failure
-    ):
+    @pytest.mark.parametrize("failure", ["timeout", "nonzero", "text", "malformed", "oversized"])
+    def test_source_listing_failure_keeps_digest_uncached(self, tmp_path, monkeypatch, failure):
         cwd, _sibling, _outside, _selected = _multilang_git_fixture(tmp_path)
         original_run = subprocess.run
         failures = []
@@ -2601,10 +3027,7 @@ class TestCaching:
                     return subprocess.CompletedProcess(command, 1, b"", b"error")
                 if failure == "text":
                     return subprocess.CompletedProcess(command, 0, "api.py\0", b"")
-                raw = (
-                    b"api.py" if failure == "malformed"
-                    else b"x" * (cr._MAX_SOURCE_STATUS_BYTES + 1)
-                )
+                raw = b"api.py" if failure == "malformed" else b"x" * (cr._MAX_SOURCE_STATUS_BYTES + 1)
                 return subprocess.CompletedProcess(command, 0, raw, b"")
             return original_run(command, *args, **kwargs)
 
@@ -2618,9 +3041,7 @@ class TestCaching:
         assert get_cross_repo_digest(cwd) == digest
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
 
-    def test_clean_head_switch_after_key_cannot_cache_other_commit(
-        self, tmp_path, monkeypatch
-    ):
+    def test_clean_head_switch_after_key_cannot_cache_other_commit(self, tmp_path, monkeypatch):
         cwd, sibling, _selected, a, b = _two_clean_heads_fixture(tmp_path)
         original_get = cr._get_git_commit
         switches = []
@@ -2630,7 +3051,9 @@ class TestCaching:
             if not switches:
                 subprocess.run(
                     ["git", "-C", str(sibling), "checkout", "-q", "--detach", b],
-                    capture_output=True, text=True, check=True,
+                    capture_output=True,
+                    text=True,
+                    check=True,
                 )
                 switches.append(key)
             return key
@@ -2645,15 +3068,15 @@ class TestCaching:
         assert cr._get_git_commit(sibling) == b
         subprocess.run(
             ["git", "-C", str(sibling), "checkout", "-q", "--detach", a],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         recovered = get_cross_repo_digest(cwd)
         assert "PySelected" in recovered and "OnlyOnB" not in recovered
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
 
-    def test_clean_head_switch_after_scan_cannot_cache_old_key(
-        self, tmp_path, monkeypatch
-    ):
+    def test_clean_head_switch_after_scan_cannot_cache_old_key(self, tmp_path, monkeypatch):
         cwd, sibling, _selected, a, b = _two_clean_heads_fixture(tmp_path)
         original_roster = cr._tracked_convention_files
         switches = []
@@ -2662,7 +3085,9 @@ class TestCaching:
             roster = original_roster(*args, **kwargs)
             subprocess.run(
                 ["git", "-C", str(sibling), "checkout", "-q", "--detach", b],
-                capture_output=True, text=True, check=True,
+                capture_output=True,
+                text=True,
+                check=True,
             )
             switches.append(1)
             return roster
@@ -2677,7 +3102,9 @@ class TestCaching:
         assert cr._get_git_commit(sibling) == b
         subprocess.run(
             ["git", "-C", str(sibling), "checkout", "-q", "--detach", a],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         recovered = get_cross_repo_digest(cwd)
         assert "PySelected" in recovered and "OnlyOnB" not in recovered
@@ -2687,30 +3114,48 @@ class TestCaching:
         cwd = tmp_path / "repo"
         sibling = tmp_path / "sibling"
         (cwd / ".code-forge").mkdir(parents=True)
-        (cwd / ".code-forge" / "conventions.yaml").write_text(
-            "siblings: [../sibling]\n"
-        )
+        (cwd / ".code-forge" / "conventions.yaml").write_text("siblings: [../sibling]\n")
         sibling.mkdir()
         subprocess.run(
             ["git", "init", "-q", str(sibling)],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         subprocess.run(
             ["git", "-C", str(sibling), "config", "core.autocrlf", "true"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         (sibling / "api.py").write_bytes(b"def NormalizedName(): pass\r\n")
         for command in (
             ["git", "-C", str(sibling), "add", "api.py"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "A"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "A",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
-        assert subprocess.run(
-            ["git", "-C", str(sibling), "status", "--porcelain"],
-            capture_output=True, text=True, check=True,
-        ).stdout == ""
+        assert (
+            subprocess.run(
+                ["git", "-C", str(sibling), "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            == ""
+        )
         first = get_cross_repo_digest(cwd)
         assert "NormalizedName" in first
         cache = list((cwd / ".code-forge").glob("conventions-cache-*.json"))
@@ -2734,26 +3179,36 @@ class TestCaching:
             patcher.setattr(subprocess, "run", timeout_roster)
             partial = get_cross_repo_digest(cwd)
         assert calls == [1]
-        assert all(name in partial for name in (
-            "PySelected", "TsSelected", "GoSelected", "RustSelected",
-        ))
+        assert all(
+            name in partial
+            for name in (
+                "PySelected",
+                "TsSelected",
+                "GoSelected",
+                "RustSelected",
+            )
+        )
         cache_dir = cwd / ".code-forge"
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
         assert get_cross_repo_digest(cwd) == partial
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
 
-    def test_bounded_file_roster_skips_cache_without_losing_names(
-        self, tmp_path, monkeypatch
-    ):
+    def test_bounded_file_roster_skips_cache_without_losing_names(self, tmp_path, monkeypatch):
         from code_forge import conventions
 
         cwd, _sibling, _outside, _selected = _multilang_git_fixture(tmp_path)
         with monkeypatch.context() as patcher:
             patcher.setattr(conventions, "_MAX_ROSTER_FILES", 1)
             digest = get_cross_repo_digest(cwd)
-        assert all(name in digest for name in (
-            "PySelected", "TsSelected", "GoSelected", "RustSelected",
-        ))
+        assert all(
+            name in digest
+            for name in (
+                "PySelected",
+                "TsSelected",
+                "GoSelected",
+                "RustSelected",
+            )
+        )
         cache_dir = cwd / ".code-forge"
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
         assert get_cross_repo_digest(cwd) == digest
@@ -2780,9 +3235,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         head = cr._get_git_commit(sibling)
@@ -2809,9 +3275,10 @@ class TestCaching:
             patcher.setattr(os, "supports_dir_fd", os.supports_dir_fd | {swap_at_child_open})
             with patch.object(cr, "extract_conventions", wraps=cr.extract_conventions) as scan:
                 baseline = get_cross_repo_digest(cwd)
-                assert all(name in baseline for name in (
-                    "PySelected", "TsSelected", "GoSelected", "RustSelected"
-                ))
+                assert all(
+                    name in baseline
+                    for name in ("PySelected", "TsSelected", "GoSelected", "RustSelected")
+                )
                 assert get_cross_repo_digest(cwd) == baseline
                 assert scan.call_count == 2
             cache_dir = cwd / ".code-forge"
@@ -2820,15 +3287,15 @@ class TestCaching:
         assert len(swaps) == 4
         assert "Always" in partial
         assert "OutsideOnly" not in partial
-        assert not any(name in partial for name in (
-            "PySelected", "TsSelected", "GoSelected", "RustSelected"
-        ))
+        assert not any(
+            name in partial for name in ("PySelected", "TsSelected", "GoSelected", "RustSelected")
+        )
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
         recovered = get_cross_repo_digest(cwd)
         assert recovered == baseline
-        assert all(name in recovered for name in (
-            "PySelected", "TsSelected", "GoSelected", "RustSelected"
-        ))
+        assert all(
+            name in recovered for name in ("PySelected", "TsSelected", "GoSelected", "RustSelected")
+        )
         assert cr._get_git_commit(sibling) == head
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
 
@@ -2851,9 +3318,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         head = cr._get_git_commit(sibling)
@@ -2880,9 +3358,10 @@ class TestCaching:
             patcher.setattr(os, "supports_dir_fd", os.supports_dir_fd | {swap_at_root_open})
             with patch.object(cr, "extract_conventions", wraps=cr.extract_conventions) as scan:
                 baseline = get_cross_repo_digest(cwd)
-                assert all(name in baseline for name in (
-                    "PySelected", "TsSelected", "GoSelected", "RustSelected"
-                ))
+                assert all(
+                    name in baseline
+                    for name in ("PySelected", "TsSelected", "GoSelected", "RustSelected")
+                )
                 assert get_cross_repo_digest(cwd) == baseline
                 assert scan.call_count == 2
             cache_dir = cwd / ".code-forge"
@@ -2892,9 +3371,9 @@ class TestCaching:
         assert list(cache_dir.glob("conventions-cache-*.json")) == []
         recovered = get_cross_repo_digest(cwd)
         assert recovered == baseline
-        assert all(name in recovered for name in (
-            "PySelected", "TsSelected", "GoSelected", "RustSelected"
-        ))
+        assert all(
+            name in recovered for name in ("PySelected", "TsSelected", "GoSelected", "RustSelected")
+        )
         assert cr._get_git_commit(sibling) == head
 
     def test_portable_posix_open_preserves_all_languages_and_cache(self, tmp_path, monkeypatch):
@@ -2915,9 +3394,20 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "fixture"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
         ):
             subprocess.run(command, capture_output=True, text=True, check=True)
         head = cr._get_git_commit(sibling)
@@ -2925,9 +3415,9 @@ class TestCaching:
             patcher.setattr(conventions, "_OPENAT2_SYSCALL_NUMBER", None)
             patcher.setattr(conventions, "_SYSCALL", None)
             digest = get_cross_repo_digest(cwd)
-            assert all(name in digest for name in (
-                "PySelected", "TsSelected", "GoSelected", "RustSelected"
-            ))
+            assert all(
+                name in digest for name in ("PySelected", "TsSelected", "GoSelected", "RustSelected")
+            )
             with patch.object(cr, "extract_conventions", wraps=cr.extract_conventions) as scan:
                 assert get_cross_repo_digest(cwd) == digest
             assert scan.call_count == 1
@@ -2959,16 +3449,22 @@ class TestCaching:
         relative = "src/sub/" + filename
         subprocess.run(
             ["git", "-C", str(sibling), "update-index", flag, relative],
-            capture_output=True, check=True,
+            capture_output=True,
+            check=True,
         )
         source.write_text(original + declaration)
-        assert subprocess.run(
-            ["git", "-C", str(sibling), "status", "--porcelain=v1"],
-            capture_output=True, check=True,
-        ).stdout == b""
+        assert (
+            subprocess.run(
+                ["git", "-C", str(sibling), "status", "--porcelain=v1"],
+                capture_output=True,
+                check=True,
+            ).stdout
+            == b""
+        )
         assert subprocess.run(
             ["git", "-C", str(sibling), "ls-files", "-v", "-z", "--", relative],
-            capture_output=True, check=True,
+            capture_output=True,
+            check=True,
         ).stdout.startswith(tag + b" ")
 
         with patch.object(cr, "extract_conventions", wraps=cr.extract_conventions) as scan:
@@ -2979,18 +3475,15 @@ class TestCaching:
         source.write_text(original)
         subprocess.run(
             ["git", "-C", str(sibling), "update-index", "--no-" + flag[2:], relative],
-            capture_output=True, check=True,
+            capture_output=True,
+            check=True,
         )
         with patch.object(cr, "extract_conventions", wraps=cr.extract_conventions) as scan:
             assert get_cross_repo_digest(cwd) == baseline
         assert scan.call_count == 1
 
-    @pytest.mark.parametrize(
-        "failure", ["timeout", "nonzero", "text", "malformed", "oversized"]
-    )
-    def test_unverifiable_git_index_forces_direct_scan(
-        self, tmp_path, monkeypatch, failure
-    ):
+    @pytest.mark.parametrize("failure", ["timeout", "nonzero", "text", "malformed", "oversized"])
+    def test_unverifiable_git_index_forces_direct_scan(self, tmp_path, monkeypatch, failure):
         cwd, _sibling, _outside, _selected = _multilang_git_fixture(tmp_path)
         baseline = get_cross_repo_digest(cwd)
         assert list((cwd / ".code-forge").glob("conventions-cache-*.json")) == []
@@ -3006,10 +3499,7 @@ class TestCaching:
                     return subprocess.CompletedProcess(command, 1, b"", b"")
                 if failure == "text":
                     return subprocess.CompletedProcess(command, 0, "H file\0", b"")
-                output = (
-                    b"H src/sub/one.py" if failure == "malformed"
-                    else b"H x\0" * 1_100_000
-                )
+                output = b"H src/sub/one.py" if failure == "malformed" else b"H x\0" * 1_100_000
                 return subprocess.CompletedProcess(command, 0, output, b"")
             return original_run(command, *args, **kwargs)
 
@@ -3029,27 +3519,33 @@ class TestCaching:
             ("one.rs", "pub fn Added() {}\n"),
         ],
     )
-    def test_clean_filter_cannot_hide_changed_source_from_cache(
-        self, tmp_path, filename, added
-    ):
+    def test_clean_filter_cannot_hide_changed_source_from_cache(self, tmp_path, filename, added):
         cwd, sibling, _outside, selected = _multilang_git_fixture(tmp_path)
         extension = Path(filename).suffix
-        (sibling / ".gitattributes").write_text(
-            "*" + extension + " filter=strip_added\n"
-        )
+        (sibling / ".gitattributes").write_text("*" + extension + " filter=strip_added\n")
         for command in (
             ["git", "-C", str(sibling), "add", ".gitattributes"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "filter"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "filter",
+            ],
         ):
             subprocess.run(command, capture_output=True, check=True)
         baseline = get_cross_repo_digest(cwd)
         assert list((cwd / ".code-forge").glob("conventions-cache-*.json")) == []
         head = cr._get_git_commit(sibling)
         for command in (
-            ["git", "-C", str(sibling), "config", "filter.strip_added.clean",
-             "sed '/Added/d'"],
+            ["git", "-C", str(sibling), "config", "filter.strip_added.clean", "sed '/Added/d'"],
             ["git", "-C", str(sibling), "config", "filter.strip_added.smudge", "cat"],
         ):
             subprocess.run(command, capture_output=True, check=True)
@@ -3058,16 +3554,22 @@ class TestCaching:
         source.write_text(original + added)
         subprocess.run(
             ["git", "-C", str(sibling), "add", "src/sub/" + filename],
-            capture_output=True, check=True,
+            capture_output=True,
+            check=True,
         )
         assert cr._get_git_commit(sibling) == head
-        assert subprocess.run(
-            ["git", "-C", str(sibling), "status", "--porcelain=v1"],
-            capture_output=True, check=True,
-        ).stdout == b""
+        assert (
+            subprocess.run(
+                ["git", "-C", str(sibling), "status", "--porcelain=v1"],
+                capture_output=True,
+                check=True,
+            ).stdout
+            == b""
+        )
         assert subprocess.run(
             ["git", "-C", str(sibling), "ls-files", "-v", "--", "src/sub/" + filename],
-            capture_output=True, check=True,
+            capture_output=True,
+            check=True,
         ).stdout.startswith(b"H ")
 
         with patch.object(cr, "extract_conventions", wraps=cr.extract_conventions) as scan:
@@ -3078,26 +3580,28 @@ class TestCaching:
         source.write_text(original)
         subprocess.run(
             ["git", "-C", str(sibling), "add", "src/sub/" + filename],
-            capture_output=True, check=True,
+            capture_output=True,
+            check=True,
         )
         with patch.object(cr, "extract_conventions", wraps=cr.extract_conventions) as scan:
             assert get_cross_repo_digest(cwd) == baseline
         assert scan.call_count == 1
         subprocess.run(
             ["git", "-C", str(sibling), "config", "--unset", "filter.strip_added.clean"],
-            capture_output=True, check=True,
+            capture_output=True,
+            check=True,
         )
         with patch.object(cr, "extract_conventions", wraps=cr.extract_conventions) as scan:
             assert get_cross_repo_digest(cwd) == baseline
         assert scan.call_count == 1
-
 
     def test_component_alias_stable_dirty_target_returns_direct(self, tmp_path):
         cwd, sibling = _warm_component_alias_fixture(tmp_path)
         baseline = get_cross_repo_digest(cwd)
         (sibling / "build").unlink()
         (sibling / "build").symlink_to(
-            "node_modules/RevisedName", target_is_directory=True,
+            "node_modules/RevisedName",
+            target_is_directory=True,
         )
         direct = extract_conventions(resolve_sources(cwd)[0])
         assert "OriginalName" in baseline and "RevisedName" in direct
@@ -3116,17 +3620,32 @@ class TestCaching:
         for command in (
             ["git", "init", "-q", str(sibling)],
             ["git", "-C", str(sibling), "add", "-A"],
-            ["git", "-C", str(sibling), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "root source"],
+            [
+                "git",
+                "-C",
+                str(sibling),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "root source",
+            ],
         ):
             subprocess.run(command, check=True)
         src = sibling / "src"
         src.mkdir()
-        assert subprocess.run(
-            ["git", "-C", str(sibling), "status", "--porcelain=v1"],
-            capture_output=True, check=True,
-        ).stdout == b""
+        assert (
+            subprocess.run(
+                ["git", "-C", str(sibling), "status", "--porcelain=v1"],
+                capture_output=True,
+                check=True,
+            ).stdout
+            == b""
+        )
         direct = extract_conventions(cr.resolve_sources(cwd)[0])
         assert "StillHere" in direct and "GoStill" in direct and "RustStill" in direct
         assert get_cross_repo_digest(cwd) == direct
@@ -3194,9 +3713,7 @@ class TestIntegration:
 class TestInputReadSafety:
     @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
     @pytest.mark.parametrize("helper", ["fsmonitor", "clean-filter", "post-index-change"])
-    def test_cli_sibling_git_callbacks_are_passive(
-        self, tmp_path, helper, object_format
-    ):
+    def test_cli_sibling_git_callbacks_are_passive(self, tmp_path, helper, object_format):
         from code_forge.cli import _assemble_post_image
 
         cwd, sibling = tmp_path / "consumer", tmp_path / "sibling"
@@ -3211,13 +3728,24 @@ class TestInputReadSafety:
 
         def git(*args):
             return subprocess.run(
-                ["git", "-C", str(sibling), *args], capture_output=True, check=True,
+                ["git", "-C", str(sibling), *args],
+                capture_output=True,
+                check=True,
             ).stdout
 
         git("init", "-q", "--object-format=" + object_format)
         git("add", "-A")
-        git("-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-            "-c", "core.hooksPath=" + os.devnull, "commit", "-qm", "fixture")
+        git(
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "core.hooksPath=" + os.devnull,
+            "commit",
+            "-qm",
+            "fixture",
+        )
         _assert_real_git_commit(sibling, cr._get_git_commit(sibling))
         marker = tmp_path / "callback-called"
         callback = "printf called\\n >> " + shlex.quote(str(marker))
@@ -3248,8 +3776,13 @@ class TestInputReadSafety:
 
     @pytest.mark.parametrize(
         ("scope", "kind"),
-        [("local", "clean"), ("global", "clean"), ("includeIf", "clean"),
-         ("global", "process"), ("includeIf", "process")],
+        [
+            ("local", "clean"),
+            ("global", "clean"),
+            ("includeIf", "clean"),
+            ("global", "process"),
+            ("includeIf", "process"),
+        ],
     )
     def test_cli_effective_filter_configuration_forces_direct_digest(
         self, tmp_path, monkeypatch, scope, kind
@@ -3266,19 +3799,16 @@ class TestInputReadSafety:
         if scope == "local":
             subprocess.run(
                 ["git", "-C", str(sibling), "config", "filter.probe." + kind, command],
-                capture_output=True, check=True,
+                capture_output=True,
+                check=True,
             )
         else:
             global_config = tmp_path / "global.gitconfig"
             if scope == "global":
-                global_config.write_text(
-                    '[filter "probe"]\n\t' + kind + " = " + command + "\n"
-                )
+                global_config.write_text('[filter "probe"]\n\t' + kind + " = " + command + "\n")
             else:
                 included = tmp_path / "included.gitconfig"
-                included.write_text(
-                    '[filter "probe"]\n\t' + kind + " = " + command + "\n"
-                )
+                included.write_text('[filter "probe"]\n\t' + kind + " = " + command + "\n")
                 global_config.write_text(
                     '[includeIf "gitdir:' + str(sibling / ".git") + '"]\n'
                     "\tpath = " + str(included) + "\n"
@@ -3291,8 +3821,9 @@ class TestInputReadSafety:
             for _temperature in ("cold", "warm"):
                 _post, digest = _assemble_post_image(cwd, _local_cli_diff())
                 assert "LocalOnly" in digest
-                assert ("ReplacedName" if kind == "clean" and scope != "local"
-                        else "PySelected") in digest
+                assert (
+                    "ReplacedName" if kind == "clean" and scope != "local" else "PySelected"
+                ) in digest
                 if kind == "clean" and scope != "local":
                     assert "PySelected" not in digest
         assert scan.call_count == 2
@@ -3355,15 +3886,14 @@ class TestInputReadSafety:
         assert any("ls-files" in command for command in rejected)
         assert scan.call_count == 1
         assert digest == expected_digest
-        assert all(name in digest for name in (
-            "LocalOnly", "PySelected", "TsSelected", "GoSelected", "RustSelected"
-        ))
+        assert all(
+            name in digest
+            for name in ("LocalOnly", "PySelected", "TsSelected", "GoSelected", "RustSelected")
+        )
         assert list((cwd / ".code-forge").glob("conventions-cache-*.json")) == []
 
     @pytest.mark.parametrize("changed_source", [False, True])
-    def test_cli_filter_config_race_cannot_run_callback(
-        self, tmp_path, monkeypatch, changed_source
-    ):
+    def test_cli_filter_config_race_cannot_run_callback(self, tmp_path, monkeypatch, changed_source):
         from code_forge.cli import _assemble_post_image
 
         cwd, sibling, _outside, selected_dir = _multilang_git_fixture(tmp_path)
@@ -3382,7 +3912,8 @@ class TestInputReadSafety:
             if "config" in args and "--get-regexp" in args and not switches:
                 original_run(
                     ["git", "-C", str(sibling), "config", "filter.probe.clean", command],
-                    capture_output=True, check=True,
+                    capture_output=True,
+                    check=True,
                 )
                 switches.append(1)
             return result
@@ -3407,39 +3938,56 @@ class TestInputReadSafety:
         monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
         monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
         monkeypatch.setenv("GIT_SSH_VARIANT", "ssh")
-        origin, sibling, cwd = (
-            tmp_path / "origin", tmp_path / "sibling", tmp_path / "consumer"
-        )
+        origin, sibling, cwd = (tmp_path / "origin", tmp_path / "sibling", tmp_path / "consumer")
         origin.mkdir()
         cwd.mkdir()
 
         def git(repo, *args):
             return subprocess.run(
-                ["git", "-C", str(repo), *args], capture_output=True,
-                check=True, timeout=20,
+                ["git", "-C", str(repo), *args],
+                capture_output=True,
+                check=True,
+                timeout=20,
             ).stdout.strip()
 
         git(origin, "init", "-q", "--object-format=" + object_format)
         (origin / "api.py").write_text("def SiblingOnly(): pass\n")
         (origin / "asset.bin").write_bytes(b"unneeded asset\n")
         git(origin, "add", "-A")
-        git(origin, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-            "-c", "core.hooksPath=" + os.devnull, "commit", "-qm", "fixture")
+        git(
+            origin,
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "core.hooksPath=" + os.devnull,
+            "commit",
+            "-qm",
+            "fixture",
+        )
         git(origin, "config", "uploadpack.allowFilter", "true")
-        missing_oid = git(origin, "rev-parse", "HEAD:asset.bin" if object_filter == "blob:none"
-                          else "HEAD^{tree}")
+        missing_oid = git(
+            origin, "rev-parse", "HEAD:asset.bin" if object_filter == "blob:none" else "HEAD^{tree}"
+        )
         api_oid = git(origin, "rev-parse", "HEAD:api.py")
-        git(tmp_path, "clone", "-q", "--filter=" + object_filter, "--no-checkout",
-            origin.as_uri(), str(sibling))
+        git(
+            tmp_path,
+            "clone",
+            "-q",
+            "--filter=" + object_filter,
+            "--no-checkout",
+            origin.as_uri(),
+            str(sibling),
+        )
         if object_filter == "blob:none":
             git(sibling, "checkout", "HEAD", "--", "api.py")
         else:
             (sibling / "api.py").write_text("def SiblingOnly(): pass\n")
-            git(sibling, "update-index", "--add", "--cacheinfo",
-                "100644," + api_oid.decode() + ",api.py")
-        present = git(
-            sibling, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)"
-        )
+            git(
+                sibling, "update-index", "--add", "--cacheinfo", "100644," + api_oid.decode() + ",api.py"
+            )
+        present = git(sibling, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)")
         assert missing_oid not in present.splitlines()
         assert git(sibling, "config", "--get", "remote.origin.promisor") == b"true"
         _assert_real_git_commit(sibling, cr._get_git_commit(sibling))
@@ -3448,8 +3996,12 @@ class TestInputReadSafety:
         (cwd / "AGENTS.md").write_text("---\nrelated: [../sibling]\n---\n")
         marker = tmp_path / "transport-called"
         git(sibling, "config", "remote.origin.url", "ssh://not-used.invalid/repo")
-        git(sibling, "config", "core.sshCommand",
-            "printf called\\n >> " + shlex.quote(str(marker)) + "; exit 1")
+        git(
+            sibling,
+            "config",
+            "core.sshCommand",
+            "printf called\\n >> " + shlex.quote(str(marker)) + "; exit 1",
+        )
         if inherited_no_lazy is None:
             monkeypatch.delenv("GIT_NO_LAZY_FETCH", raising=False)
         else:
@@ -3459,9 +4011,12 @@ class TestInputReadSafety:
             _post, digest = _assemble_post_image(cwd, "")
             assert "LocalOnly" in digest and "SiblingOnly" in digest
             assert not marker.exists()
-            assert missing_oid not in git(
-                sibling, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)"
-            ).splitlines()
+            assert (
+                missing_oid
+                not in git(
+                    sibling, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)"
+                ).splitlines()
+            )
             assert list((cwd / ".code-forge").glob("conventions-cache-*.json")) == []
         assert os.environ.get("GIT_NO_LAZY_FETCH") == inherited_no_lazy
 
@@ -3476,16 +4031,16 @@ class TestInputReadSafety:
         monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
         monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
         monkeypatch.setenv("GIT_SSH_VARIANT", "ssh")
-        origin, sibling, cwd = (
-            tmp_path / "origin", tmp_path / "sibling", tmp_path / "consumer"
-        )
+        origin, sibling, cwd = (tmp_path / "origin", tmp_path / "sibling", tmp_path / "consumer")
         origin.mkdir()
         cwd.mkdir()
 
         def git(repo, *args):
             return subprocess.run(
-                ["git", "-C", str(repo), *args], capture_output=True,
-                check=True, timeout=20,
+                ["git", "-C", str(repo), *args],
+                capture_output=True,
+                check=True,
+                timeout=20,
             ).stdout.strip()
 
         git(origin, "init", "-q", "--object-format=" + object_format)
@@ -3494,23 +4049,35 @@ class TestInputReadSafety:
         (origin / "outside/deep").mkdir(parents=True)
         (origin / "outside/deep/asset.bin").write_bytes(b"unused\n")
         git(origin, "add", "-A")
-        git(origin, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-            "-c", "core.hooksPath=" + os.devnull, "commit", "-qm", "fixture")
+        git(
+            origin,
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "core.hooksPath=" + os.devnull,
+            "commit",
+            "-qm",
+            "fixture",
+        )
         git(origin, "config", "uploadpack.allowFilter", "true")
         missing_tree = git(origin, "rev-parse", "HEAD:outside")
-        git(tmp_path, "clone", "-q", "--filter=tree:0", "--no-checkout",
-            origin.as_uri(), str(sibling))
+        git(tmp_path, "clone", "-q", "--filter=tree:0", "--no-checkout", origin.as_uri(), str(sibling))
         git(sibling, "sparse-checkout", "init", "--cone", "--sparse-index")
         git(sibling, "sparse-checkout", "set", "src")
         git(sibling, "checkout", "HEAD")
         assert git(sibling, "ls-files", "--sparse", "-v").splitlines() == [
-            b"S outside/", b"H src/one.py",
+            b"S outside/",
+            b"H src/one.py",
         ]
 
         # Checkout materializes the promised tree. Keep every other object
         # locally and remove only that tree from this disposable partial clone.
         objects = git(
-            sibling, "cat-file", "--batch-all-objects",
+            sibling,
+            "cat-file",
+            "--batch-all-objects",
             "--batch-check=%(objectname) %(objecttype)",
         ).splitlines()
         assert any(record.startswith(missing_tree + b" ") for record in objects)
@@ -3520,12 +4087,16 @@ class TestInputReadSafety:
                 continue
             content = subprocess.run(
                 ["git", "-C", str(sibling), "cat-file", kind.decode(), oid.decode()],
-                capture_output=True, check=True, timeout=20,
+                capture_output=True,
+                check=True,
+                timeout=20,
             ).stdout
             written = subprocess.run(
-                ["git", "-C", str(sibling), "hash-object", "-w", "--stdin",
-                 "-t", kind.decode()],
-                input=content, capture_output=True, check=True, timeout=20,
+                ["git", "-C", str(sibling), "hash-object", "-w", "--stdin", "-t", kind.decode()],
+                input=content,
+                capture_output=True,
+                check=True,
+                timeout=20,
             ).stdout.strip()
             assert written == oid
         for pack_file in (sibling / ".git/objects/pack").iterdir():
@@ -3543,8 +4114,12 @@ class TestInputReadSafety:
         (cwd / "AGENTS.md").write_text("---\nrelated: [../sibling]\n---\n")
         marker = tmp_path / "transport-called"
         git(sibling, "config", "remote.origin.url", "ssh://not-used.invalid/repo")
-        git(sibling, "config", "core.sshCommand",
-            "printf called\\n >> " + shlex.quote(str(marker)) + "; exit 1")
+        git(
+            sibling,
+            "config",
+            "core.sshCommand",
+            "printf called\\n >> " + shlex.quote(str(marker)) + "; exit 1",
+        )
         if inherited_no_lazy is None:
             monkeypatch.delenv("GIT_NO_LAZY_FETCH", raising=False)
         else:
@@ -3569,17 +4144,15 @@ class TestInputReadSafety:
         assert scan.call_count == 2
         assert any("--cached" in command for command, _env in listings)
         assert any("--ignored" in command for command, _env in listings)
-        assert any("--others" in command and "--ignored" not in command
-                   for command, _env in listings)
-        assert all(command[:2] == ["git", "--no-lazy-fetch"]
-                   and env["GIT_NO_LAZY_FETCH"] == "1"
-                   for command, env in listings)
+        assert any("--others" in command and "--ignored" not in command for command, _env in listings)
+        assert all(
+            command[:2] == ["git", "--no-lazy-fetch"] and env["GIT_NO_LAZY_FETCH"] == "1"
+            for command, env in listings
+        )
         assert os.environ.get("GIT_NO_LAZY_FETCH") == inherited_no_lazy
 
     @pytest.mark.parametrize("listing", ["others", "ignored", "cached"])
-    def test_cli_unsupported_passive_listing_keeps_direct_digest(
-        self, tmp_path, monkeypatch, listing
-    ):
+    def test_cli_unsupported_passive_listing_keeps_direct_digest(self, tmp_path, monkeypatch, listing):
         from code_forge.cli import _assemble_post_image
 
         cwd, _sibling, _outside, _selected = _multilang_git_fixture(tmp_path)
@@ -3593,13 +4166,16 @@ class TestInputReadSafety:
                 assert kwargs["env"]["GIT_NO_LAZY_FETCH"] == "1"
                 assert "core.fsmonitor=false" in command
                 assert f"core.hooksPath={os.devnull}" in command
-                kind = ("cached" if "--cached" in command else
-                        "ignored" if "--ignored" in command else "others")
+                kind = (
+                    "cached"
+                    if "--cached" in command
+                    else "ignored"
+                    if "--ignored" in command
+                    else "others"
+                )
                 if kind == listing:
                     rejected.append(kind)
-                    return subprocess.CompletedProcess(
-                        command, 129, b"", b"unsupported --no-lazy-fetch"
-                    )
+                    return subprocess.CompletedProcess(command, 129, b"", b"unsupported --no-lazy-fetch")
             return _run_nonfaulted_probe(original_run, command, *args, **kwargs)
 
         with monkeypatch.context() as patcher:
@@ -3611,9 +4187,7 @@ class TestInputReadSafety:
         assert list((cwd / ".code-forge").glob("conventions-cache-*.json")) == []
 
     @pytest.mark.parametrize("probe", ["roster", "sizes", "symlink"])
-    def test_cli_unavailable_object_probe_keeps_direct_digest(
-        self, tmp_path, monkeypatch, probe
-    ):
+    def test_cli_unavailable_object_probe_keeps_direct_digest(self, tmp_path, monkeypatch, probe):
         from code_forge.cli import _assemble_post_image
 
         cwd, sibling, _outside, selected = _multilang_git_fixture(tmp_path)
@@ -3623,10 +4197,20 @@ class TestInputReadSafety:
             (selected / "alias.py").symlink_to("one.py")
             for args in (
                 ["git", "-C", str(sibling), "add", "src/sub/alias.py"],
-                ["git", "-C", str(sibling), "-c", "user.name=Test",
-                 "-c", "user.email=test@example.invalid",
-                 "-c", "core.hooksPath=" + os.devnull,
-                 "commit", "-qm", "alias"],
+                [
+                    "git",
+                    "-C",
+                    str(sibling),
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "-c",
+                    "core.hooksPath=" + os.devnull,
+                    "commit",
+                    "-qm",
+                    "alias",
+                ],
             ):
                 subprocess.run(args, capture_output=True, check=True)
         original_run = subprocess.run
@@ -3636,15 +4220,18 @@ class TestInputReadSafety:
             if command[:2] == ["git", "--no-lazy-fetch"]:
                 assert kwargs["env"]["GIT_NO_LAZY_FETCH"] == "1"
                 match = (
-                    probe == "roster" and "ls-tree" in command and "--name-only" in command
-                    or probe == "sizes" and "ls-tree" in command and "-l" in command
-                    or probe == "symlink" and "cat-file" in command
+                    probe == "roster"
+                    and "ls-tree" in command
+                    and "--name-only" in command
+                    or probe == "sizes"
+                    and "ls-tree" in command
+                    and "-l" in command
+                    or probe == "symlink"
+                    and "cat-file" in command
                 )
                 if match:
                     failed.append(probe)
-                    return subprocess.CompletedProcess(
-                        command, 129, b"", b"unsupported --no-lazy-fetch"
-                    )
+                    return subprocess.CompletedProcess(command, 129, b"", b"unsupported --no-lazy-fetch")
             return _run_nonfaulted_probe(original_run, command, *args, **kwargs)
 
         with monkeypatch.context() as patcher:
@@ -3666,32 +4253,45 @@ class TestInputReadSafety:
         monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
         monkeypatch.setenv("GIT_SSH_VARIANT", "ssh")
         monkeypatch.delenv("GIT_NO_LAZY_FETCH", raising=False)
-        origin, sibling, cwd = (
-            tmp_path / "origin", tmp_path / "sibling", tmp_path / "consumer"
-        )
+        origin, sibling, cwd = (tmp_path / "origin", tmp_path / "sibling", tmp_path / "consumer")
         origin.mkdir()
         cwd.mkdir()
 
         def git(repo, *args, input=None):
             return subprocess.run(
-                ["git", "-C", str(repo), *args], input=input, capture_output=True,
-                check=True, timeout=20,
+                ["git", "-C", str(repo), *args],
+                input=input,
+                capture_output=True,
+                check=True,
+                timeout=20,
             ).stdout.strip()
 
         git(origin, "init", "-q", "--object-format=" + object_format)
         (origin / "api.py").write_text("def SiblingOnly(): pass\n")
         (origin / "alias.py").symlink_to("api.py")
         git(origin, "add", "-A")
-        git(origin, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-            "-c", "core.hooksPath=" + os.devnull, "commit", "-qm", "fixture")
+        git(
+            origin,
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "core.hooksPath=" + os.devnull,
+            "commit",
+            "-qm",
+            "fixture",
+        )
         git(origin, "config", "uploadpack.allowFilter", "true")
         alias_oid = git(origin, "rev-parse", "HEAD:alias.py")
-        git(tmp_path, "clone", "-q", "--filter=blob:none", "--no-checkout",
-            origin.as_uri(), str(sibling))
+        git(
+            tmp_path, "clone", "-q", "--filter=blob:none", "--no-checkout", origin.as_uri(), str(sibling)
+        )
         git(sibling, "checkout", "HEAD", "--", "api.py")
         (sibling / "alias.py").symlink_to("api.py")
-        git(sibling, "update-index", "--add", "--cacheinfo",
-            "120000," + alias_oid.decode() + ",alias.py")
+        git(
+            sibling, "update-index", "--add", "--cacheinfo", "120000," + alias_oid.decode() + ",alias.py"
+        )
         present = git(sibling, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)")
         assert alias_oid not in present.splitlines()
         assert git(sibling, "hash-object", "-w", "--stdin", input=b"api.py") == alias_oid
@@ -3702,8 +4302,12 @@ class TestInputReadSafety:
         (cwd / "AGENTS.md").write_text("---\nrelated: [../sibling]\n---\n")
         marker = tmp_path / "transport-called"
         git(sibling, "config", "remote.origin.url", "ssh://not-used.invalid/repo")
-        git(sibling, "config", "core.sshCommand",
-            "printf called\\n >> " + shlex.quote(str(marker)) + "; exit 1")
+        git(
+            sibling,
+            "config",
+            "core.sshCommand",
+            "printf called\\n >> " + shlex.quote(str(marker)) + "; exit 1",
+        )
         original_run = subprocess.run
         evictions = []
 
@@ -3719,17 +4323,18 @@ class TestInputReadSafety:
         assert evictions == [1] and not loose.exists()
         assert "LocalOnly" in digest and "SiblingOnly" in digest
         assert not marker.exists()
-        assert alias_oid not in git(
-            sibling, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)"
-        ).splitlines()
+        assert (
+            alias_oid
+            not in git(
+                sibling, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)"
+            ).splitlines()
+        )
         assert list((cwd / ".code-forge").glob("conventions-cache-*.json")) == []
 
     def test_cli_unavailable_root_alias_omits_cross_repo_metadata(self, tmp_path):
         from code_forge.cli import _assemble_post_image
 
-        cwd, _sibling, _workspace, _external, _external_cache = (
-            _cache_ancestor_fixture(tmp_path)
-        )
+        cwd, _sibling, _workspace, _external, _external_cache = _cache_ancestor_fixture(tmp_path)
         with patch.object(cr, "_consumer_root_alias", return_value=None):
             post, digest = _assemble_post_image(cwd, _local_cli_diff())
         assert "LocalOnly" in post and "LocalOnly" in digest
@@ -3739,13 +4344,14 @@ class TestInputReadSafety:
     @pytest.mark.parametrize("stage", ["before_pin", "after_pin"])
     @pytest.mark.parametrize("metadata", ["config", "agents"])
     def test_cli_consumer_ancestor_cannot_switch_metadata(
-        self, tmp_path, stage, metadata,
+        self,
+        tmp_path,
+        stage,
+        metadata,
     ):
         from code_forge.cli import _assemble_post_image
 
-        cwd, _sibling, workspace, external, external_cache = (
-            _cache_ancestor_fixture(tmp_path)
-        )
+        cwd, _sibling, workspace, external, external_cache = _cache_ancestor_fixture(tmp_path)
         poison = external / "poison/src"
         poison.mkdir(parents=True)
         (poison / "api.py").write_text("def OutsideOnly(): pass\n")
@@ -3763,10 +4369,7 @@ class TestInputReadSafety:
         _post, warm_digest = _assemble_post_image(cwd, _local_cli_diff())
         assert "PySelected" in warm_digest
         cache_dir = cwd / ".code-forge"
-        before = {
-            path.name: path.read_bytes()
-            for path in cache_dir.glob("conventions-cache-*.json")
-        }
+        before = {path.name: path.read_bytes() for path in cache_dir.glob("conventions-cache-*.json")}
         assert before == {}
         original_pin = cr._pin_consumer_root
         saved = tmp_path / "saved-workspace"
@@ -3796,17 +4399,23 @@ class TestInputReadSafety:
         if stage == "before_pin":
             assert "PySelected" not in digest
             assert {
-                path.name: path.read_bytes()
-                for path in cache_dir.glob("conventions-cache-*.json")
+                path.name: path.read_bytes() for path in cache_dir.glob("conventions-cache-*.json")
             } == before
         else:
             assert "PySelected" in digest
             assert list(cache_dir.glob("conventions-cache-*.json")) == []
 
     @pytest.mark.skipif(os.name != "posix", reason="requires POSIX byte-name paths")
-    @pytest.mark.parametrize("kind", [
-        "custom-relative", "custom-absolute", "agents", "package-file", "parent-custom",
-    ])
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            "custom-relative",
+            "custom-absolute",
+            "agents",
+            "package-file",
+            "parent-custom",
+        ],
+    )
     def test_cli_byte_name_path_keeps_later_sibling(self, tmp_path, kind):
         from code_forge.cli import _assemble_post_image
 
@@ -3820,14 +4429,25 @@ class TestInputReadSafety:
         for command in (
             ["git", "init", "-q", str(byte_repo)],
             ["git", "-C", str(byte_repo), "add", "-A"],
-            ["git", "-C", str(byte_repo), "-c", "user.name=Test",
-             "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=/dev/null",
-             "commit", "-qm", "byte name"],
+            [
+                "git",
+                "-C",
+                str(byte_repo),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "byte name",
+            ],
         ):
             subprocess.run(command, capture_output=True, check=True)
 
-        bad = str(byte_repo) if kind == "custom-absolute" else "../" + str(
-            byte_repo.relative_to(tmp_path)
+        bad = (
+            str(byte_repo) if kind == "custom-absolute" else "../" + str(byte_repo.relative_to(tmp_path))
         )
         if kind in {"custom-relative", "custom-absolute", "parent-custom"}:
             (cwd / ".code-forge/conventions.yaml").write_text(
@@ -3840,9 +4460,16 @@ class TestInputReadSafety:
                     "---\n" + json.dumps({"related": [bad, "../sibling"]}) + "\n---\n"
                 )
             else:
-                (cwd / "package.json").write_text(json.dumps({"dependencies": {
-                    "byte": "file:" + bad, "later": "file:../sibling",
-                }}))
+                (cwd / "package.json").write_text(
+                    json.dumps(
+                        {
+                            "dependencies": {
+                                "byte": "file:" + bad,
+                                "later": "file:../sibling",
+                            }
+                        }
+                    )
+                )
 
         post_image, digest = _assemble_post_image(cwd, _local_cli_diff())
         assert "LocalOnly" in post_image and "LocalOnly" in digest
@@ -3865,22 +4492,29 @@ class TestInputReadSafety:
         else:
             loop.symlink_to(loop.name)
         if kind == "custom-self":
-            (cwd / ".code-forge/conventions.yaml").write_text(
-                "siblings: [../loop, ../sibling]\n"
-            )
+            (cwd / ".code-forge/conventions.yaml").write_text("siblings: [../loop, ../sibling]\n")
         else:
             (cwd / ".code-forge/conventions.yaml").unlink()
             if kind == "agents-two-link":
                 (cwd / "AGENTS.md").write_text("---\nrelated: [../loop, ../sibling]\n---\n")
             else:
-                (cwd / "package.json").write_text(json.dumps({"dependencies": {
-                    "loop": "file:../loop", "later": "file:../sibling",
-                }}))
+                (cwd / "package.json").write_text(
+                    json.dumps(
+                        {
+                            "dependencies": {
+                                "loop": "file:../loop",
+                                "later": "file:../sibling",
+                            }
+                        }
+                    )
+                )
         env = dict(os.environ)
-        env["PYTHONPATH"] = os.pathsep.join((
-            str(Path(conventions_resolver.__file__).parents[2] / "src"),
-            str(Path(sys.modules["yaml"].__file__).parent.parent),
-        ))
+        env["PYTHONPATH"] = os.pathsep.join(
+            (
+                str(Path(conventions_resolver.__file__).parents[2] / "src"),
+                str(Path(sys.modules["yaml"].__file__).parent.parent),
+            )
+        )
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         script = (
             "from pathlib import Path; from code_forge.cli import _assemble_post_image; "
@@ -3890,8 +4524,12 @@ class TestInputReadSafety:
             "assert 'LocalOnly' in post and 'LocalOnly' in digest and 'PySelected' in digest"
         )
         result = subprocess.run(
-            [str(interpreter), "-c", script, str(cwd)], cwd=cwd, env=env,
-            capture_output=True, text=True, timeout=20,
+            [str(interpreter), "-c", script, str(cwd)],
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
         )
         assert result.returncode == 0, result.stderr
 
@@ -3899,11 +4537,22 @@ class TestInputReadSafety:
     def test_python312_cli_sibling_src_loop_keeps_other_languages(self, case):
         _run_python312_loop_cli(case)
 
-    @pytest.mark.parametrize("case", [
-        "same-python", "sibling-python", "sibling-ts", "sibling-go",
-        "sibling-rs", "alias-final", "warm-leaf", "warm-src",
-        "resolver-guard", "resolver-dedup", "context-dedup",
-    ])
+    @pytest.mark.parametrize(
+        "case",
+        [
+            "same-python",
+            "sibling-python",
+            "sibling-ts",
+            "sibling-go",
+            "sibling-rs",
+            "alias-final",
+            "warm-leaf",
+            "warm-src",
+            "resolver-guard",
+            "resolver-dedup",
+            "context-dedup",
+        ],
+    )
     def test_python312_cli_path_switch_keeps_later_sibling(self, case):
         _run_python312_loop_cli(case)
 
@@ -3916,7 +4565,9 @@ class TestInputReadSafety:
             pytest.fail("A usable Python 3.12 must not be skipped by a file probe")
 
     def test_python312_resolver_loop_runs_without_path_is_file_probe(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         _python312_interpreter()
         monkeypatch.setattr(Path, "is_file", lambda _path: False)
@@ -3940,25 +4591,38 @@ class TestInputReadSafety:
     def test_python312_selector_validates_config_then_path(self, monkeypatch):
         monkeypatch.setattr(sys, "version_info", (3, 14))
         monkeypatch.setenv("FORGE_TEST_PYTHON312", "/configured/python")
-        with patch.object(shutil, "which", return_value="/path/python3.12"), patch.object(
-            subprocess, "run", side_effect=[
-                subprocess.CompletedProcess([], 0, stdout="3.14\n", stderr=""),
-                subprocess.CompletedProcess([], 0, stdout="3.12\n", stderr=""),
-            ],
-        ) as probe:
+        with (
+            patch.object(shutil, "which", return_value="/path/python3.12"),
+            patch.object(
+                subprocess,
+                "run",
+                side_effect=[
+                    subprocess.CompletedProcess([], 0, stdout="3.14\n", stderr=""),
+                    subprocess.CompletedProcess([], 0, stdout="3.12\n", stderr=""),
+                ],
+            ) as probe,
+        ):
             assert _python312_interpreter() == Path("/path/python3.12")
         assert [call.args[0][0] for call in probe.call_args_list] == [
-            "/configured/python", "/path/python3.12",
+            "/configured/python",
+            "/path/python3.12",
         ]
 
     def test_python312_selector_missing_command_uses_path(self, monkeypatch):
         monkeypatch.setattr(sys, "version_info", (3, 14))
         monkeypatch.setenv("FORGE_TEST_PYTHON312", "missing-python")
-        with patch.object(shutil, "which", side_effect=lambda name: (
-            None if name == "missing-python" else "/path/python3.12"
-        )), patch.object(subprocess, "run", return_value=subprocess.CompletedProcess(
-            [], 0, stdout="3.12\n", stderr=""
-        )) as probe:
+        with (
+            patch.object(
+                shutil,
+                "which",
+                side_effect=lambda name: None if name == "missing-python" else "/path/python3.12",
+            ),
+            patch.object(
+                subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess([], 0, stdout="3.12\n", stderr=""),
+            ) as probe,
+        ):
             assert _python312_interpreter() == Path("/path/python3.12")
         assert probe.call_count == 1
 
@@ -3970,18 +4634,14 @@ class TestInputReadSafety:
 
     @pytest.mark.skipif(os.name != "posix", reason="requires a relative PATH symlink")
     @pytest.mark.parametrize("source", ["configured", "path", "configured-command"])
-    def test_python312_relative_interpreter_survives_cli_cwd(
-        self, tmp_path, monkeypatch, source
-    ):
+    def test_python312_relative_interpreter_survives_cli_cwd(self, tmp_path, monkeypatch, source):
         actual = _python312_interpreter()
         if source == "configured":
             relative = os.path.relpath(actual, Path.cwd())
             monkeypatch.setenv("FORGE_TEST_PYTHON312", relative)
             expected = Path(os.path.abspath(relative))
         else:
-            executable = tmp_path / "bin" / (
-                "python3.12" if source == "path" else "custom-python312"
-            )
+            executable = tmp_path / "bin" / ("python3.12" if source == "path" else "custom-python312")
             executable.parent.mkdir()
             executable.symlink_to(actual)
             relative_dir = os.path.relpath(executable.parent, Path.cwd())
@@ -4003,12 +4663,23 @@ class TestInputReadSafety:
             pytest.skip("requires unprivileged POSIX permissions")
         _run_python312_loop_cli(case, _PYTHON312_METADATA_CLI)
 
-    @pytest.mark.parametrize("kind", [
-        "custom-nul", "custom-absolute-nul", "agents-nul",
-        "package-file-nul", "package-relative-nul", "gitmodules-nul",
-        "pyproject-nul", "gomod-nul", "cargo-nul",
-        "custom-surrogate", "agents-surrogate", "package-file-surrogate",
-    ])
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            "custom-nul",
+            "custom-absolute-nul",
+            "agents-nul",
+            "package-file-nul",
+            "package-relative-nul",
+            "gitmodules-nul",
+            "pyproject-nul",
+            "gomod-nul",
+            "cargo-nul",
+            "custom-surrogate",
+            "agents-surrogate",
+            "package-file-surrogate",
+        ],
+    )
     def test_invalid_repo_path_keeps_cli_conventions(self, tmp_path, kind):
         from code_forge.cli import _assemble_post_image
 
@@ -4035,9 +4706,14 @@ class TestInputReadSafety:
             elif source == "package":
                 target = cwd / "package.json"
                 prefix = "file:" if "file" in kind else ""
-                content = json.dumps({"dependencies": {
-                    "bad": prefix + bad, "good": prefix + "../sibling",
-                }})
+                content = json.dumps(
+                    {
+                        "dependencies": {
+                            "bad": prefix + bad,
+                            "good": prefix + "../sibling",
+                        }
+                    }
+                )
             elif source == "gitmodules":
                 target = cwd / ".gitmodules"
                 content = "path = " + bad + "\npath = ../sibling\n"
@@ -4091,8 +4767,9 @@ class TestInputReadSafety:
         assert list((cwd / ".code-forge").glob("conventions-cache-*.json")) == []
 
     @pytest.mark.skipif(not hasattr(__import__("os"), "mkfifo"), reason="requires POSIX FIFO")
-    @pytest.mark.parametrize("kind", ["custom", "agents", "context", "gitmodules",
-                                     "package", "pyproject", "gomod", "cargo"])
+    @pytest.mark.parametrize(
+        "kind", ["custom", "agents", "context", "gitmodules", "package", "pyproject", "gomod", "cargo"]
+    )
     def test_regular_document_replaced_by_fifo(self, tmp_path, monkeypatch, kind):
         import os
         import stat
@@ -4125,9 +4802,17 @@ class TestInputReadSafety:
                 path.unlink()
                 os.mkfifo(path)
                 swapped.append(path.stat())
-                print(json.dumps({"kind": kind, "fifo": str(path),
-                                  "regular_inode": regular_inode,
-                                  "fifo_inode": swapped[0].st_ino}), flush=True)
+                print(
+                    json.dumps(
+                        {
+                            "kind": kind,
+                            "fifo": str(path),
+                            "regular_inode": regular_inode,
+                            "fifo_inode": swapped[0].st_ino,
+                        }
+                    ),
+                    flush=True,
+                )
             return answer
 
         monkeypatch.setattr(Path, "is_file", replace_after_check)
@@ -4152,7 +4837,6 @@ class TestInputReadSafety:
     def test_package_json_wrong_shape_is_ignored(self, tmp_path):
         (tmp_path / "package.json").write_text("[]")
         assert cr.resolve_sources(tmp_path) == []
-
 
     def test_python_json_decoder_recursion_is_ignored(self, tmp_path, monkeypatch):
         decoder = json.JSONDecoder()
@@ -4194,7 +4878,10 @@ class TestDirectScanNoDiskCache:
 
     @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
     def test_cli_cold_and_repeat_leave_consumer_unmodified(
-        self, tmp_path, monkeypatch, object_format,
+        self,
+        tmp_path,
+        monkeypatch,
+        object_format,
     ):
         from code_forge.cli import _assemble_post_image
 
@@ -4212,14 +4899,20 @@ class TestDirectScanNoDiskCache:
             repeat = _assemble_post_image(cwd, _local_cli_diff())
         assert cold == repeat
         assert "LocalOnly" in cold[0] and "LocalOnly" in cold[1]
-        assert all(name in cold[1] for name in ("PySelected", "TsSelected", "GoSelected", "RustSelected"))
+        assert all(
+            name in cold[1] for name in ("PySelected", "TsSelected", "GoSelected", "RustSelected")
+        )
         assert scan.call_count == 2
         assert {entry.name: entry.read_bytes() for entry in config.iterdir()} == before
 
     @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
     @pytest.mark.parametrize("entry_kind", ["primary", "legacy"])
     def test_cli_ignores_forged_existing_cache_entry(
-        self, tmp_path, monkeypatch, object_format, entry_kind,
+        self,
+        tmp_path,
+        monkeypatch,
+        object_format,
+        entry_kind,
     ):
         from code_forge.cli import _assemble_post_image
 
@@ -4236,9 +4929,15 @@ class TestDirectScanNoDiskCache:
         primary = config / f"conventions-cache-{path_hash}_{commit}.json"
         # V43 creates a structurally valid entry on the cold call. Reuse that
         # payload for the RED control; V44 deliberately never creates one.
-        payload = json.loads(primary.read_text()) if primary.exists() else {
-            "digest": "", "repo": str(sibling), "commit": commit,
-        }
+        payload = (
+            json.loads(primary.read_text())
+            if primary.exists()
+            else {
+                "digest": "",
+                "repo": str(sibling),
+                "commit": commit,
+            }
+        )
         payload["digest"] = "FORGED_ONLY_FROM_CACHE"
         if entry_kind == "legacy":
             legacy = config / "conventions-cache"
@@ -4259,11 +4958,22 @@ class TestDirectScanNoDiskCache:
         assert target.read_bytes() == before
 
     @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
-    @pytest.mark.parametrize("mode", [
-        "create", "write", "replace", "orphan-unlink", "stale-unlink",
-    ])
+    @pytest.mark.parametrize(
+        "mode",
+        [
+            "create",
+            "write",
+            "replace",
+            "orphan-unlink",
+            "stale-unlink",
+        ],
+    )
     def test_cli_moved_cache_parent_cannot_mutate_external_entries(
-        self, tmp_path, monkeypatch, object_format, mode,
+        self,
+        tmp_path,
+        monkeypatch,
+        object_format,
+        mode,
     ):
         from code_forge.cli import _assemble_post_image
 
@@ -4299,8 +5009,11 @@ class TestDirectScanNoDiskCache:
         def trace(frame, event, _arg):
             if frame.f_code.co_filename != cr.__file__ or events:
                 return trace
-            if (event == "line" and frame.f_code.co_name == historical_function
-                    and frame.f_lineno == historical_line):
+            if (
+                event == "line"
+                and frame.f_code.co_name == historical_function
+                and frame.f_lineno == historical_line
+            ):
                 relocate("v43-mutation-boundary")
             elif event == "return" and frame.f_code.co_name == "_collect_cross_repo_digest":
                 # V44 has no cache mutation boundary. Move the directory at

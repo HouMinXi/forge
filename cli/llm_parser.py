@@ -29,11 +29,11 @@ def _get_client():
     """
     try:
         import anthropic
+
         return anthropic.Anthropic()
     except ImportError:
         print(
-            "forge: warning: anthropic SDK not available, "
-            "LLM parsing disabled",
+            "forge: warning: anthropic SDK not available, LLM parsing disabled",
             file=sys.stderr,
         )
         return None
@@ -72,8 +72,8 @@ def _parse_json_response(text: str) -> Optional[dict]:
 
     # Try to extract from markdown code blocks
     patterns = [
-        r'```json\s*\n(.*?)\n\s*```',
-        r'```\s*\n(.*?)\n\s*```',
+        r"```json\s*\n(.*?)\n\s*```",
+        r"```\s*\n(.*?)\n\s*```",
     ]
     for pattern in patterns:
         match = re.search(pattern, search_text, re.DOTALL)
@@ -101,34 +101,34 @@ def _validate_extracted(data: dict) -> Optional[ExtractedFinding]:
     if not isinstance(data, dict):
         return None
 
-    dimension_raw = str(data.get('dimension_raw', ''))
+    dimension_raw = str(data.get("dimension_raw", ""))
     if not dimension_raw:
         return None
 
     # Confidence: float, clamped to 0-1
     try:
-        confidence = float(data.get('confidence', 0.5))
+        confidence = float(data.get("confidence", 0.5))
     except (TypeError, ValueError):
         confidence = 0.5
     confidence = max(0.0, min(1.0, confidence))
 
     # Keywords: must be a list of strings
-    keywords = data.get('suggested_keywords', [])
+    keywords = data.get("suggested_keywords", [])
     if not isinstance(keywords, list):
         keywords = []
     keywords = [str(k) for k in keywords if k]
 
-    text = str(data.get('text', ''))
+    text = str(data.get("text", ""))
 
     # File: str or None
-    file_path = data.get('file', None)
+    file_path = data.get("file", None)
     if file_path is not None:
         file_path = str(file_path)
-        if not file_path or file_path.lower() == 'null':
+        if not file_path or file_path.lower() == "null":
             file_path = None
 
     # Line: int or None
-    line = data.get('line', None)
+    line = data.get("line", None)
     if line is not None:
         try:
             line = int(line)
@@ -193,6 +193,7 @@ def extract_finding_from_comment(
 
     try:
         import anthropic
+
         response = client.messages.create(
             model=model,
             max_tokens=300,
@@ -264,11 +265,8 @@ def extract_findings(
 
     results: List[tuple] = []
     for canonical in canonical_findings:
-        diff_hunk = canonical.context.get('diff_hunk')
-        file_info = (
-            canonical.context.get('path')
-            or canonical.context.get('file')
-        )
+        diff_hunk = canonical.context.get("diff_hunk")
+        file_info = canonical.context.get("path") or canonical.context.get("file")
 
         extracted = extract_finding_from_comment(
             raw_text=canonical.raw_source,
@@ -281,8 +279,7 @@ def extract_findings(
             results.append((canonical, extracted))
         else:
             print(
-                f"forge: warning: extraction failed for "
-                f"source_id={canonical.source_id}",
+                f"forge: warning: extraction failed for source_id={canonical.source_id}",
                 file=sys.stderr,
             )
 
@@ -301,4 +298,4 @@ def compute_text_hash(text: str) -> str:
     Returns:
         Hex-encoded SHA-256 hash.
     """
-    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()

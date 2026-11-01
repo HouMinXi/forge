@@ -18,12 +18,15 @@ from file_utils import atomic_write
 # File path constants
 # ---------------------------------------------------------------------------
 
-GAP_GROUPS_FILE = os.path.join('.forge', 'gap_groups.json')
+GAP_GROUPS_FILE = os.path.join(".forge", "gap_groups.json")
 
 # Terminal state constants (D5 spec)
-GAP_TERMINAL = {'proposed', 'dismissed', 'reclassified', 'auto_dismissed'}
+GAP_TERMINAL = {"proposed", "dismissed", "reclassified", "auto_dismissed"}
 EXPANSION_TERMINAL = {
-    'approved', 'rejected', 'auto_dismissed', 'reclassified',
+    "approved",
+    "rejected",
+    "auto_dismissed",
+    "reclassified",
 }
 
 # Staleness thresholds (days)
@@ -39,7 +42,7 @@ _MIN_GROUP_SIZE = 3
 # prevent unbounded prompt construction.
 MAX_CANDIDATES_FOR_LLM = 500
 
-_LOCK_FILE = os.path.join('.forge', '.gaps.lock')
+_LOCK_FILE = os.path.join(".forge", ".gaps.lock")
 
 
 # ---------------------------------------------------------------------------
@@ -63,8 +66,7 @@ def _file_lock(lockfile):
             if age > _LOCK_STALE_SECONDS:
                 os.unlink(lockfile)
                 print(
-                    f"forge: warning: removed stale lock "
-                    f"({age:.0f}s old)",
+                    f"forge: warning: removed stale lock ({age:.0f}s old)",
                     file=sys.stderr,
                 )
         except OSError:
@@ -93,6 +95,7 @@ def _file_lock(lockfile):
 # Interactive choice helper
 # ---------------------------------------------------------------------------
 
+
 def _get_user_choice(prompt, valid_choices):
     """Prompt user for a choice from valid_choices.
 
@@ -117,15 +120,14 @@ def _get_user_choice(prompt, valid_choices):
             return valid_choices[raw]
         if raw in valid_choices.values():
             return raw
-        valid_keys = '/'.join(
-            f"[{k}]{v[1:]}" for k, v in valid_choices.items()
-        )
+        valid_keys = "/".join(f"[{k}]{v[1:]}" for k, v in valid_choices.items())
         print(f"  Invalid choice. Use {valid_keys}.")
 
 
 # ---------------------------------------------------------------------------
 # Loader functions
 # ---------------------------------------------------------------------------
+
 
 def load_gap_groups():
     """Load .forge/gap_groups.json.
@@ -134,15 +136,16 @@ def load_gap_groups():
     Returns empty structure if file is missing or corrupted.
     """
     try:
-        with open(GAP_GROUPS_FILE, 'r', encoding='utf-8') as f:
+        with open(GAP_GROUPS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, IOError):
-        return {'version': 1, 'generated_at': None, 'groups': []}
+        return {"version": 1, "generated_at": None, "groups": []}
 
 
 # ---------------------------------------------------------------------------
 # Staleness sweeps
 # ---------------------------------------------------------------------------
+
 
 def _sweep_stale_expansions(exp_data, ext_data, now):
     """Auto-dismiss keyword expansions pending > 90 days.
@@ -161,21 +164,18 @@ def _sweep_stale_expansions(exp_data, ext_data, now):
         int: Count of auto-dismissed expansions.
     """
     count = 0
-    ext_by_id = {
-        f['id']: f for f in ext_data.get('findings', [])
-    }
+    ext_by_id = {f["id"]: f for f in ext_data.get("findings", [])}
 
-    for exp in exp_data.get('expansions', []):
-        if exp.get('status') != 'pending':
+    for exp in exp_data.get("expansions", []):
+        if exp.get("status") != "pending":
             continue
 
-        created_at = exp.get('created_at', '')
+        created_at = exp.get("created_at", "")
         try:
             created_dt = datetime.fromisoformat(created_at)
         except (ValueError, TypeError):
             print(
-                "forge: warning: failed to parse expansion "
-                f"created_at for id={exp.get('id', '?')!r}",
+                f"forge: warning: failed to parse expansion created_at for id={exp.get('id', '?')!r}",
                 file=sys.stderr,
             )
             continue
@@ -184,22 +184,19 @@ def _sweep_stale_expansions(exp_data, ext_data, now):
         if age.days <= _EXPANSION_STALE_DAYS:
             continue
 
-        exp['status'] = 'auto_dismissed'
+        exp["status"] = "auto_dismissed"
         count += 1
 
         # Update associated external finding
-        finding_id = exp.get('finding_id')
+        finding_id = exp.get("finding_id")
         if finding_id and finding_id in ext_by_id:
             ext_finding = ext_by_id[finding_id]
-            if ext_finding.get('validated_dimension') is None:
-                ext_finding['gap'] = True
-                ext_finding['validated_dimension'] = 'unknown'
+            if ext_finding.get("validated_dimension") is None:
+                ext_finding["gap"] = True
+                ext_finding["validated_dimension"] = "unknown"
 
     if count > 0:
-        print(
-            f"forge: auto-dismissed {count} stale expansion(s) "
-            f"(>{_EXPANSION_STALE_DAYS} days)"
-        )
+        print(f"forge: auto-dismissed {count} stale expansion(s) (>{_EXPANSION_STALE_DAYS} days)")
     return count
 
 
@@ -217,12 +214,12 @@ def _sweep_stale_candidates(gap_data, now):
         int: Count of auto-dismissed candidates.
     """
     count = 0
-    for candidate in gap_data.get('candidates', []):
-        status = candidate.get('status', '')
-        if status not in ('pending', 'grouped'):
+    for candidate in gap_data.get("candidates", []):
+        status = candidate.get("status", "")
+        if status not in ("pending", "grouped"):
             continue
 
-        created_at = candidate.get('created_at', '')
+        created_at = candidate.get("created_at", "")
         try:
             created_dt = datetime.fromisoformat(created_at)
         except (ValueError, TypeError):
@@ -237,20 +234,18 @@ def _sweep_stale_candidates(gap_data, now):
         if age.days <= _CANDIDATE_STALE_DAYS:
             continue
 
-        candidate['status'] = 'auto_dismissed'
+        candidate["status"] = "auto_dismissed"
         count += 1
 
     if count > 0:
-        print(
-            f"forge: auto-dismissed {count} stale candidate(s) "
-            f"(>{_CANDIDATE_STALE_DAYS} days)"
-        )
+        print(f"forge: auto-dismissed {count} stale candidate(s) (>{_CANDIDATE_STALE_DAYS} days)")
     return count
 
 
 # ---------------------------------------------------------------------------
 # Keyword expansion interactive review
 # ---------------------------------------------------------------------------
+
 
 def _review_expansions(exp_data, ext_data, gap_data, config):
     """Interactively review pending keyword expansions.
@@ -273,10 +268,7 @@ def _review_expansions(exp_data, ext_data, gap_data, config):
     # Lazy import to avoid circular dependency
     from migration import ensure_dimension_state
 
-    pending = [
-        exp for exp in exp_data.get('expansions', [])
-        if exp.get('status') == 'pending'
-    ]
+    pending = [exp for exp in exp_data.get("expansions", []) if exp.get("status") == "pending"]
 
     if not pending:
         print("No pending keyword expansions to review.")
@@ -284,117 +276,108 @@ def _review_expansions(exp_data, ext_data, gap_data, config):
 
     print(f"\nforge: {len(pending)} pending keyword expansion(s)\n")
 
-    ext_by_id = {
-        f['id']: f for f in ext_data.get('findings', [])
-    }
+    ext_by_id = {f["id"]: f for f in ext_data.get("findings", [])}
     modified = False
     now = datetime.now(timezone.utc).isoformat()
 
     for seq, exp in enumerate(pending, 1):
         print(f"--- Expansion {seq}/{len(pending)} ---")
-        print(
-            f"  Dimension:  {exp.get('proposed_dimension', 'unknown')}"
-        )
+        print(f"  Dimension:  {exp.get('proposed_dimension', 'unknown')}")
         print(f"  Text:       {exp.get('unmatched_text', '')}")
-        print(
-            f"  Keywords:   "
-            f"{', '.join(exp.get('suggested_keywords', []))}"
-        )
+        print(f"  Keywords:   {', '.join(exp.get('suggested_keywords', []))}")
         print()
 
         choice = _get_user_choice(
             "  [a]pprove / [r]eject / [s]kip / [q]uit: ",
-            {'a': 'approve', 'r': 'reject', 's': 'skip', 'q': 'quit'},
+            {"a": "approve", "r": "reject", "s": "skip", "q": "quit"},
         )
 
-        if choice is None or choice == 'quit':
+        if choice is None or choice == "quit":
             return modified
 
-        if choice == 'approve':
-            exp['status'] = 'approved'
+        if choice == "approve":
+            exp["status"] = "approved"
             modified = True
 
             # Merge keywords into config
-            dim = exp.get('proposed_dimension', '')
+            dim = exp.get("proposed_dimension", "")
             kw_dicts = config.setdefault(
-                'keyword_dictionaries', {},
+                "keyword_dictionaries",
+                {},
             )
             existing_kw = set(kw_dicts.get(dim, []))
-            for kw in exp.get('suggested_keywords', []):
+            for kw in exp.get("suggested_keywords", []):
                 existing_kw.add(kw)
             kw_dicts[dim] = sorted(existing_kw)
 
             # Update external finding
-            finding_id = exp.get('finding_id')
+            finding_id = exp.get("finding_id")
             if finding_id and finding_id in ext_by_id:
-                ext_by_id[finding_id]['validated_dimension'] = dim
-                ext_by_id[finding_id]['gap'] = False
+                ext_by_id[finding_id]["validated_dimension"] = dim
+                ext_by_id[finding_id]["gap"] = False
 
             # Update dimension_states
             ensure_dimension_state(config, dim)
-            state = config['dimension_states'][dim]
-            state['finding_count'] = (
-                state.get('finding_count', 0) + 1
-            )
-            state['last_seen'] = now
+            state = config["dimension_states"][dim]
+            state["finding_count"] = state.get("finding_count", 0) + 1
+            state["last_seen"] = now
 
             print("  -> approved\n")
 
-        elif choice == 'reject':
-            exp['status'] = 'rejected'
+        elif choice == "reject":
+            exp["status"] = "rejected"
             modified = True
 
             # Create gap candidate from rejected expansion
             gap_id = f"gap-{uuid.uuid4()}"
-            exp['reclassified_to'] = gap_id
+            exp["reclassified_to"] = gap_id
 
             # Update external finding
-            finding_id = exp.get('finding_id')
+            finding_id = exp.get("finding_id")
             if finding_id and finding_id in ext_by_id:
                 ext_finding = ext_by_id[finding_id]
-                ext_finding['gap'] = True
-                ext_finding['validated_dimension'] = 'unknown'
+                ext_finding["gap"] = True
+                ext_finding["validated_dimension"] = "unknown"
 
                 # M9: dedup check before creating gap candidate
-                existing_gap_fids = {
-                    c.get('finding_id')
-                    for c in gap_data.get('candidates', [])
-                }
+                existing_gap_fids = {c.get("finding_id") for c in gap_data.get("candidates", [])}
                 if finding_id not in existing_gap_fids:
                     gap_entry = {
-                        'id': gap_id,
-                        'finding_id': finding_id,
-                        'timestamp': ext_finding.get(
-                            'timestamp', '',
+                        "id": gap_id,
+                        "finding_id": finding_id,
+                        "timestamp": ext_finding.get(
+                            "timestamp",
+                            "",
                         ),
-                        'created_at': now,
-                        'dimension_raw': ext_finding.get(
-                            'dimension_raw', '',
+                        "created_at": now,
+                        "dimension_raw": ext_finding.get(
+                            "dimension_raw",
+                            "",
                         ),
-                        'text': ext_finding.get('text', ''),
-                        'text_hash': ext_finding.get(
-                            'text_hash', '',
+                        "text": ext_finding.get("text", ""),
+                        "text_hash": ext_finding.get(
+                            "text_hash",
+                            "",
                         ),
-                        'file': ext_finding.get('file'),
-                        'line': ext_finding.get('line'),
-                        'source': ext_finding.get('source', ''),
-                        'status': 'pending',
-                        'group_id': None,
-                        'reclassified_from': exp.get('id'),
+                        "file": ext_finding.get("file"),
+                        "line": ext_finding.get("line"),
+                        "source": ext_finding.get("source", ""),
+                        "status": "pending",
+                        "group_id": None,
+                        "reclassified_from": exp.get("id"),
                     }
-                    gap_data.setdefault('candidates', []).append(
+                    gap_data.setdefault("candidates", []).append(
                         gap_entry,
                     )
                 else:
                     print(
-                        "forge: warning: gap candidate already "
-                        f"exists for finding {finding_id}",
+                        f"forge: warning: gap candidate already exists for finding {finding_id}",
                         file=sys.stderr,
                     )
 
             print("  -> rejected (created gap candidate)\n")
 
-        elif choice == 'skip':
+        elif choice == "skip":
             print("  -> skipped\n")
 
     return modified
@@ -403,6 +386,7 @@ def _review_expansions(exp_data, ext_data, gap_data, config):
 # ---------------------------------------------------------------------------
 # LLM grouping
 # ---------------------------------------------------------------------------
+
 
 def _group_candidates(gap_data, ext_data):
     """Group pending gap candidates via LLM.
@@ -420,16 +404,13 @@ def _group_candidates(gap_data, ext_data):
         dict or None: Gap groups data dict, or None on failure.
     """
     # Step 4: reset non-terminal candidates
-    for candidate in gap_data.get('candidates', []):
-        if candidate.get('status') not in GAP_TERMINAL:
-            candidate['status'] = 'pending'
-            candidate['group_id'] = None
+    for candidate in gap_data.get("candidates", []):
+        if candidate.get("status") not in GAP_TERMINAL:
+            candidate["status"] = "pending"
+            candidate["group_id"] = None
 
     # Collect all pending candidates
-    pending = [
-        c for c in gap_data.get('candidates', [])
-        if c.get('status') == 'pending'
-    ]
+    pending = [c for c in gap_data.get("candidates", []) if c.get("status") == "pending"]
 
     if not pending:
         print("No gap candidates to group.")
@@ -451,9 +432,7 @@ def _group_candidates(gap_data, ext_data):
     candidate_texts = []
     for i, c in enumerate(pending, 1):
         candidate_texts.append(
-            f"{i}. [id={c['id']}] "
-            f"dimension_raw={c.get('dimension_raw', '')}, "
-            f"text={c.get('text', '')}"
+            f"{i}. [id={c['id']}] dimension_raw={c.get('dimension_raw', '')}, text={c.get('text', '')}"
         )
     candidate_block = "\n".join(candidate_texts)
 
@@ -474,6 +453,7 @@ def _group_candidates(gap_data, ext_data):
     # Call LLM
     try:
         from llm_parser import _get_client, _parse_json_response
+
         client = _get_client()
         if client is None:
             print(
@@ -490,27 +470,25 @@ def _group_candidates(gap_data, ext_data):
 
         resp_text = ""
         for block in response.content:
-            if hasattr(block, 'text'):
+            if hasattr(block, "text"):
                 resp_text += block.text
 
         groups_raw = _parse_json_response(resp_text)
         if groups_raw is None:
             print(
-                "forge: error: LLM returned unparseable "
-                "response for gap grouping",
+                "forge: error: LLM returned unparseable response for gap grouping",
                 file=sys.stderr,
             )
             return None
 
         if not isinstance(groups_raw, list):
             print(
-                "forge: error: LLM returned non-array "
-                "response for gap grouping",
+                "forge: error: LLM returned non-array response for gap grouping",
                 file=sys.stderr,
             )
             return None
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- Grouping backend failures become an explicit CLI diagnostic.
         print(
             f"forge: error: LLM gap grouping failed: {exc}",
             file=sys.stderr,
@@ -518,7 +496,7 @@ def _group_candidates(gap_data, ext_data):
         return None
 
     # Build candidate ID lookup for validation
-    valid_ids = {c['id'] for c in pending}
+    valid_ids = {c["id"] for c in pending}
 
     # Step 5: create gap_groups structure
     now = datetime.now(timezone.utc).isoformat()
@@ -529,49 +507,48 @@ def _group_candidates(gap_data, ext_data):
             continue
 
         proposed_dim = str(
-            raw_group.get('proposed_dimension', ''),
+            raw_group.get("proposed_dimension", ""),
         )
         # Sanitize to [a-z0-9_] per T-03-12
-        proposed_dim = re.sub(r'[^a-z0-9_]', '_', proposed_dim.lower())
-        proposed_dim = proposed_dim.strip('_')
+        proposed_dim = re.sub(r"[^a-z0-9_]", "_", proposed_dim.lower())
+        proposed_dim = proposed_dim.strip("_")
         if not proposed_dim:
             continue
 
-        description = str(raw_group.get('description', ''))
+        description = str(raw_group.get("description", ""))
 
-        candidate_ids = raw_group.get('candidate_ids', [])
+        candidate_ids = raw_group.get("candidate_ids", [])
         # M6: validate candidate_ids is actually a list
         if not isinstance(candidate_ids, list):
             continue
         # Validate candidate_ids against existing candidates
-        valid_cids = [
-            cid for cid in candidate_ids
-            if isinstance(cid, str) and cid in valid_ids
-        ]
+        valid_cids = [cid for cid in candidate_ids if isinstance(cid, str) and cid in valid_ids]
         if not valid_cids:
             continue
 
         group_id = f"grp-{uuid.uuid4()}"
 
         # Update candidates with group assignment
-        for candidate in gap_data.get('candidates', []):
-            if candidate['id'] in valid_cids:
-                candidate['status'] = 'grouped'
-                candidate['group_id'] = group_id
+        for candidate in gap_data.get("candidates", []):
+            if candidate["id"] in valid_cids:
+                candidate["status"] = "grouped"
+                candidate["group_id"] = group_id
 
-        groups.append({
-            'group_id': group_id,
-            'proposed_dimension': proposed_dim,
-            'description': description,
-            'candidate_ids': valid_cids,
-            'count': len(valid_cids),
-            'status': 'pending',
-        })
+        groups.append(
+            {
+                "group_id": group_id,
+                "proposed_dimension": proposed_dim,
+                "description": description,
+                "candidate_ids": valid_cids,
+                "count": len(valid_cids),
+                "status": "pending",
+            }
+        )
 
     gap_groups = {
-        'version': 1,
-        'generated_at': now,
-        'groups': groups,
+        "version": 1,
+        "generated_at": now,
+        "groups": groups,
     }
 
     print(f"forge: created {len(groups)} gap group(s)")
@@ -581,6 +558,7 @@ def _group_candidates(gap_data, ext_data):
 # ---------------------------------------------------------------------------
 # Group decision interaction
 # ---------------------------------------------------------------------------
+
 
 def _process_groups(gap_data, ext_data, exp_data, config, gap_groups):
     """Interactively process proposal-ready gap groups.
@@ -605,10 +583,8 @@ def _process_groups(gap_data, ext_data, exp_data, config, gap_groups):
     if gap_groups is None:
         return False
 
-    groups = gap_groups.get('groups', [])
-    pending_groups = [
-        g for g in groups if g.get('status') == 'pending'
-    ]
+    groups = gap_groups.get("groups", [])
+    pending_groups = [g for g in groups if g.get("status") == "pending"]
 
     if not pending_groups:
         print("No pending gap groups to process.")
@@ -617,12 +593,8 @@ def _process_groups(gap_data, ext_data, exp_data, config, gap_groups):
     print(f"\nforge: {len(pending_groups)} pending gap group(s)\n")
 
     # Build lookups
-    cand_by_id = {
-        c['id']: c for c in gap_data.get('candidates', [])
-    }
-    ext_by_id = {
-        f['id']: f for f in ext_data.get('findings', [])
-    }
+    cand_by_id = {c["id"]: c for c in gap_data.get("candidates", [])}
+    ext_by_id = {f["id"]: f for f in ext_data.get("findings", [])}
 
     modified = False
     now = datetime.now(timezone.utc).isoformat()
@@ -630,19 +602,15 @@ def _process_groups(gap_data, ext_data, exp_data, config, gap_groups):
     for seq, group in enumerate(pending_groups, 1):
         # Compute live non-terminal candidate count
         live_cids = [
-            cid for cid in group.get('candidate_ids', [])
-            if cid in cand_by_id
-            and cand_by_id[cid].get('status') not in GAP_TERMINAL
+            cid
+            for cid in group.get("candidate_ids", [])
+            if cid in cand_by_id and cand_by_id[cid].get("status") not in GAP_TERMINAL
         ]
         live_count = len(live_cids)
 
         print(f"--- Group {seq}/{len(pending_groups)} ---")
-        print(
-            f"  Dimension: {group.get('proposed_dimension', '')}"
-        )
-        print(
-            f"  Description: {group.get('description', '')}"
-        )
+        print(f"  Dimension: {group.get('proposed_dimension', '')}")
+        print(f"  Description: {group.get('description', '')}")
         print(f"  Candidates: {live_count} live")
 
         # Show candidate details
@@ -654,60 +622,52 @@ def _process_groups(gap_data, ext_data, exp_data, config, gap_groups):
         print()
 
         if live_count < _MIN_GROUP_SIZE:
-            print(
-                "  (insufficient evidence -- "
-                f"need {_MIN_GROUP_SIZE}+ candidates)\n"
-            )
+            print(f"  (insufficient evidence -- need {_MIN_GROUP_SIZE}+ candidates)\n")
             continue
 
         choice = _get_user_choice(
-            "  [p]ropose / [r]eclassify to dim / "
-            "[d]ismiss / [s]kip / [q]uit: ",
+            "  [p]ropose / [r]eclassify to dim / [d]ismiss / [s]kip / [q]uit: ",
             {
-                'p': 'propose', 'r': 'reclassify',
-                'd': 'dismiss', 's': 'skip', 'q': 'quit',
+                "p": "propose",
+                "r": "reclassify",
+                "d": "dismiss",
+                "s": "skip",
+                "q": "quit",
             },
         )
 
-        if choice is None or choice == 'quit':
+        if choice is None or choice == "quit":
             return modified
 
-        if choice == 'propose':
+        if choice == "propose":
             # Set all live candidates to proposed
             for cid in live_cids:
                 if cid in cand_by_id:
-                    cand_by_id[cid]['status'] = 'proposed'
-            group['status'] = 'proposed'
+                    cand_by_id[cid]["status"] = "proposed"
+            group["status"] = "proposed"
             modified = True
-            print(
-                "  -> proposed (use --propose to "
-                "generate bundle)\n"
-            )
+            print("  -> proposed (use --propose to generate bundle)\n")
 
-        elif choice == 'reclassify':
+        elif choice == "reclassify":
             try:
-                target_dim = input(
-                    "  Target dimension: "
-                ).strip().lower()
+                target_dim = input("  Target dimension: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 print()
                 return modified
 
             # Validate target dimension
-            kw_dicts = config.get('keyword_dictionaries', {})
-            dim_states = config.get('dimension_states', {})
+            kw_dicts = config.get("keyword_dictionaries", {})
+            dim_states = config.get("dimension_states", {})
             if target_dim not in kw_dicts:
                 print(
-                    f"  forge: error: dimension '{target_dim}' "
-                    "not in keyword_dictionaries",
+                    f"  forge: error: dimension '{target_dim}' not in keyword_dictionaries",
                     file=sys.stderr,
                 )
                 continue
             state = dim_states.get(target_dim, {})
-            if state.get('status') == 'archived':
+            if state.get("status") == "archived":
                 print(
-                    f"  forge: error: dimension '{target_dim}' "
-                    "is archived",
+                    f"  forge: error: dimension '{target_dim}' is archived",
                     file=sys.stderr,
                 )
                 continue
@@ -721,35 +681,36 @@ def _process_groups(gap_data, ext_data, exp_data, config, gap_groups):
                     continue
 
                 # Update external finding
-                fid = c.get('finding_id')
+                fid = c.get("finding_id")
                 if fid and fid in ext_by_id:
-                    ext_by_id[fid]['validated_dimension'] = (
-                        target_dim
-                    )
-                    ext_by_id[fid]['gap'] = False
+                    ext_by_id[fid]["validated_dimension"] = target_dim
+                    ext_by_id[fid]["gap"] = False
 
                 # Collect keywords from the finding
                 if fid and fid in ext_by_id:
                     kws = ext_by_id[fid].get(
-                        'suggested_keywords', [],
+                        "suggested_keywords",
+                        [],
                     )
                     all_keywords.update(kws)
 
-                c['status'] = 'reclassified'
+                c["status"] = "reclassified"
                 reclassified_count += 1
 
                 # Audit record in expansion queue
-                exp_data.setdefault('expansions', []).append({
-                    'id': f"exp-{uuid.uuid4()}",
-                    'finding_id': c.get('finding_id'),
-                    'created_at': now,
-                    'proposed_dimension': target_dim,
-                    'unmatched_text': c.get('text', ''),
-                    'text_hash': c.get('text_hash', ''),
-                    'suggested_keywords': list(all_keywords),
-                    'status': 'approved',
-                    'reclassified_to': None,
-                })
+                exp_data.setdefault("expansions", []).append(
+                    {
+                        "id": f"exp-{uuid.uuid4()}",
+                        "finding_id": c.get("finding_id"),
+                        "created_at": now,
+                        "proposed_dimension": target_dim,
+                        "unmatched_text": c.get("text", ""),
+                        "text_hash": c.get("text_hash", ""),
+                        "suggested_keywords": list(all_keywords),
+                        "status": "approved",
+                        "reclassified_to": None,
+                    }
+                )
 
             # Merge keywords
             existing_kw = set(kw_dicts.get(target_dim, []))
@@ -758,40 +719,34 @@ def _process_groups(gap_data, ext_data, exp_data, config, gap_groups):
 
             # Update dimension_states
             ensure_dimension_state(config, target_dim)
-            ds = config['dimension_states'][target_dim]
-            ds['finding_count'] = (
-                ds.get('finding_count', 0) + reclassified_count
-            )
-            ds['last_seen'] = now
+            ds = config["dimension_states"][target_dim]
+            ds["finding_count"] = ds.get("finding_count", 0) + reclassified_count
+            ds["last_seen"] = now
 
             # Update group
             remaining_cids = [
-                cid for cid in group.get('candidate_ids', [])
-                if cid in cand_by_id
-                and cand_by_id[cid].get('status')
-                not in GAP_TERMINAL
+                cid
+                for cid in group.get("candidate_ids", [])
+                if cid in cand_by_id and cand_by_id[cid].get("status") not in GAP_TERMINAL
             ]
-            group['candidate_ids'] = remaining_cids
-            group['count'] = len(remaining_cids)
-            if group['count'] == 0:
-                group['status'] = 'dismissed'
+            group["candidate_ids"] = remaining_cids
+            group["count"] = len(remaining_cids)
+            if group["count"] == 0:
+                group["status"] = "dismissed"
 
             modified = True
-            print(
-                f"  -> reclassified {reclassified_count} "
-                f"candidate(s) to '{target_dim}'\n"
-            )
+            print(f"  -> reclassified {reclassified_count} candidate(s) to '{target_dim}'\n")
 
-        elif choice == 'dismiss':
+        elif choice == "dismiss":
             # Dismiss all live candidates
             for cid in live_cids:
                 if cid in cand_by_id:
-                    cand_by_id[cid]['status'] = 'dismissed'
-            group['status'] = 'dismissed'
+                    cand_by_id[cid]["status"] = "dismissed"
+            group["status"] = "dismissed"
             modified = True
             print("  -> dismissed\n")
 
-        elif choice == 'skip':
+        elif choice == "skip":
             print("  -> skipped\n")
 
     return modified
@@ -800,6 +755,7 @@ def _process_groups(gap_data, ext_data, exp_data, config, gap_groups):
 # ---------------------------------------------------------------------------
 # Main entry points
 # ---------------------------------------------------------------------------
+
 
 def run_gaps(approve_expansion_id=None):
     """Run the full --gaps interactive workflow.
@@ -856,7 +812,11 @@ def run_gaps(approve_expansion_id=None):
         # Process groups (interactive)
         if gap_groups is not None:
             _process_groups(
-                gap_data, ext_data, exp_data, config, gap_groups,
+                gap_data,
+                ext_data,
+                exp_data,
+                config,
+                gap_groups,
             )
             # Write gap groups
             atomic_write(GAP_GROUPS_FILE, gap_groups)
@@ -894,8 +854,8 @@ def approve_expansion_noninteractive(expansion_id):
 
     # Find expansion by ID
     target = None
-    for exp in exp_data.get('expansions', []):
-        if exp.get('id') == expansion_id:
+    for exp in exp_data.get("expansions", []):
+        if exp.get("id") == expansion_id:
             target = exp
             break
 
@@ -906,10 +866,9 @@ def approve_expansion_noninteractive(expansion_id):
         )
         sys.exit(1)
 
-    if target.get('status') != 'pending':
+    if target.get("status") != "pending":
         print(
-            f"forge: error: expansion '{expansion_id}' is not "
-            f"pending (status: {target.get('status')})",
+            f"forge: error: expansion '{expansion_id}' is not pending (status: {target.get('status')})",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -917,39 +876,34 @@ def approve_expansion_noninteractive(expansion_id):
     now = datetime.now(timezone.utc).isoformat()
 
     # Apply same side effects as interactive approve
-    target['status'] = 'approved'
+    target["status"] = "approved"
 
-    dim = target.get('proposed_dimension', '')
-    kw_dicts = config.setdefault('keyword_dictionaries', {})
+    dim = target.get("proposed_dimension", "")
+    kw_dicts = config.setdefault("keyword_dictionaries", {})
     existing_kw = set(kw_dicts.get(dim, []))
-    for kw in target.get('suggested_keywords', []):
+    for kw in target.get("suggested_keywords", []):
         existing_kw.add(kw)
     kw_dicts[dim] = sorted(existing_kw)
 
     # Update external finding
-    ext_by_id = {
-        f['id']: f for f in ext_data.get('findings', [])
-    }
-    finding_id = target.get('finding_id')
+    ext_by_id = {f["id"]: f for f in ext_data.get("findings", [])}
+    finding_id = target.get("finding_id")
     if finding_id and finding_id in ext_by_id:
-        ext_by_id[finding_id]['validated_dimension'] = dim
-        ext_by_id[finding_id]['gap'] = False
+        ext_by_id[finding_id]["validated_dimension"] = dim
+        ext_by_id[finding_id]["gap"] = False
 
     # Update dimension_states
     ensure_dimension_state(config, dim)
-    state = config['dimension_states'][dim]
-    state['finding_count'] = state.get('finding_count', 0) + 1
-    state['last_seen'] = now
+    state = config["dimension_states"][dim]
+    state["finding_count"] = state.get("finding_count", 0) + 1
+    state["last_seen"] = now
 
     # Atomic write all
     atomic_write(EXTERNAL_FINDINGS_FILE, ext_data)
     atomic_write(KEYWORD_EXPANSION_FILE, exp_data)
     atomic_write(CONFIG_FILE, config)
 
-    print(
-        f"forge: approved expansion '{expansion_id}' "
-        f"-> dimension '{dim}'"
-    )
+    print(f"forge: approved expansion '{expansion_id}' -> dimension '{dim}'")
 
 
 def run_reclassify(finding_id, target_dim):
@@ -991,19 +945,18 @@ def run_reclassify(finding_id, target_dim):
     config = load_config()
 
     # Validate target_dim
-    kw_dicts = config.get('keyword_dictionaries', {})
-    dim_states = config.get('dimension_states', {})
+    kw_dicts = config.get("keyword_dictionaries", {})
+    dim_states = config.get("dimension_states", {})
 
     if target_dim not in kw_dicts:
         print(
-            f"forge: error: dimension '{target_dim}' "
-            "not in keyword_dictionaries",
+            f"forge: error: dimension '{target_dim}' not in keyword_dictionaries",
             file=sys.stderr,
         )
         sys.exit(1)
 
     state = dim_states.get(target_dim, {})
-    if state.get('status') == 'archived':
+    if state.get("status") == "archived":
         print(
             f"forge: error: dimension '{target_dim}' is archived",
             file=sys.stderr,
@@ -1012,8 +965,8 @@ def run_reclassify(finding_id, target_dim):
 
     # Find external finding
     ext_finding = None
-    for f in ext_data.get('findings', []):
-        if f.get('id') == finding_id:
+    for f in ext_data.get("findings", []):
+        if f.get("id") == finding_id:
             ext_finding = f
             break
 
@@ -1027,22 +980,20 @@ def run_reclassify(finding_id, target_dim):
     now = datetime.now(timezone.utc).isoformat()
 
     # Side effect 1: update external finding
-    old_dim = ext_finding.get('validated_dimension')
-    ext_finding['validated_dimension'] = target_dim
-    ext_finding['gap'] = False
+    old_dim = ext_finding.get("validated_dimension")
+    ext_finding["validated_dimension"] = target_dim
+    ext_finding["gap"] = False
 
     # Side effect 2: update derived entries
     derived_found = False
-    for candidate in gap_data.get('candidates', []):
-        if (candidate.get('finding_id') == finding_id
-                and candidate.get('status') not in GAP_TERMINAL):
-            candidate['status'] = 'reclassified'
+    for candidate in gap_data.get("candidates", []):
+        if candidate.get("finding_id") == finding_id and candidate.get("status") not in GAP_TERMINAL:
+            candidate["status"] = "reclassified"
             derived_found = True
 
-    for exp in exp_data.get('expansions', []):
-        if (exp.get('finding_id') == finding_id
-                and exp.get('status') not in EXPANSION_TERMINAL):
-            exp['status'] = 'reclassified'
+    for exp in exp_data.get("expansions", []):
+        if exp.get("finding_id") == finding_id and exp.get("status") not in EXPANSION_TERMINAL:
+            exp["status"] = "reclassified"
             derived_found = True
 
     if not derived_found:
@@ -1054,24 +1005,22 @@ def run_reclassify(finding_id, target_dim):
         )
 
     # Side effect 3: merge keywords
-    suggested_kw = ext_finding.get('suggested_keywords', [])
+    suggested_kw = ext_finding.get("suggested_keywords", [])
     existing_kw = set(kw_dicts.get(target_dim, []))
     existing_kw.update(suggested_kw)
     kw_dicts[target_dim] = sorted(existing_kw)
 
     # Side effect 4: update dimension_states
     ensure_dimension_state(config, target_dim)
-    target_state = config['dimension_states'][target_dim]
-    target_state['finding_count'] = (
-        target_state.get('finding_count', 0) + 1
-    )
-    target_state['last_seen'] = now
+    target_state = config["dimension_states"][target_dim]
+    target_state["finding_count"] = target_state.get("finding_count", 0) + 1
+    target_state["last_seen"] = now
 
     # Decrement old dimension (skip if unknown/None)
-    if old_dim and old_dim != 'unknown':
-        if old_dim in config.get('dimension_states', {}):
-            old_state = config['dimension_states'][old_dim]
-            old_count = old_state.get('finding_count', 0)
+    if old_dim and old_dim != "unknown":
+        if old_dim in config.get("dimension_states", {}):
+            old_state = config["dimension_states"][old_dim]
+            old_count = old_state.get("finding_count", 0)
             if old_count <= 0:
                 print(
                     f"forge: warning: dimension '{old_dim}' "
@@ -1079,33 +1028,34 @@ def run_reclassify(finding_id, target_dim):
                     file=sys.stderr,
                 )
             else:
-                old_state['finding_count'] = old_count - 1
+                old_state["finding_count"] = old_count - 1
 
     # Side effect 5: audit entry in expansion queue
-    text_hash = ext_finding.get('text_hash', '')
+    text_hash = ext_finding.get("text_hash", "")
 
     # Check for dedup collision
     collision = None
-    for exp in exp_data.get('expansions', []):
-        if (exp.get('proposed_dimension') == target_dim
-                and exp.get('text_hash') == text_hash):
+    for exp in exp_data.get("expansions", []):
+        if exp.get("proposed_dimension") == target_dim and exp.get("text_hash") == text_hash:
             collision = exp
             break
 
     if collision is not None:
-        collision['status'] = 'approved'
+        collision["status"] = "approved"
     else:
-        exp_data.setdefault('expansions', []).append({
-            'id': f"exp-{uuid.uuid4()}",
-            'finding_id': finding_id,
-            'created_at': now,
-            'proposed_dimension': target_dim,
-            'unmatched_text': ext_finding.get('text', ''),
-            'text_hash': text_hash,
-            'suggested_keywords': suggested_kw,
-            'status': 'approved',
-            'reclassified_to': None,
-        })
+        exp_data.setdefault("expansions", []).append(
+            {
+                "id": f"exp-{uuid.uuid4()}",
+                "finding_id": finding_id,
+                "created_at": now,
+                "proposed_dimension": target_dim,
+                "unmatched_text": ext_finding.get("text", ""),
+                "text_hash": text_hash,
+                "suggested_keywords": suggested_kw,
+                "status": "approved",
+                "reclassified_to": None,
+            }
+        )
 
     # Atomic write all
     atomic_write(EXTERNAL_FINDINGS_FILE, ext_data)
@@ -1113,7 +1063,4 @@ def run_reclassify(finding_id, target_dim):
     atomic_write(KEYWORD_EXPANSION_FILE, exp_data)
     atomic_write(CONFIG_FILE, config)
 
-    print(
-        f"forge: reclassified '{finding_id}' "
-        f"-> dimension '{target_dim}'"
-    )
+    print(f"forge: reclassified '{finding_id}' -> dimension '{target_dim}'")

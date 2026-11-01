@@ -378,8 +378,8 @@ class TestAcquireAtomicLink:
         def _link_as_permission_error(src, dst):
             try:
                 real_link(src, dst)
-            except FileExistsError:
-                raise PermissionError("simulated non-Linux errno")
+            except FileExistsError as exc:
+                raise PermissionError("simulated non-Linux errno") from exc
 
         monkeypatch.setattr(os, "link", _link_as_permission_error)
         with pytest.raises(OSError, match="is a directory"):

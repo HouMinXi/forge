@@ -11,6 +11,7 @@ counts were recorded, so they carry verdicts only; 58-4 arms carry both.
 The analyser reports what each ledger can support and says so, rather than
 inventing zeros for fields that were never written.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,11 +25,7 @@ from collections import Counter
 def load(path: pathlib.Path) -> list[dict]:
     if not path.exists():
         return []
-    return [
-        json.loads(line)
-        for line in path.read_text().splitlines()
-        if line.strip()
-    ]
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
 def _mean_se(values: list[float]) -> tuple[float | None, float | None]:
@@ -62,9 +59,7 @@ def summarise(rows: list[dict], label: str) -> dict:
     checked -- and checking is the only thing that separates a measurement
     from an assertion.
     """
-    scored = [
-        (i, r) for i, r in enumerate(rows, 1) if "finding_hits" in r
-    ]
+    scored = [(i, r) for i, r in enumerate(rows, 1) if "finding_hits" in r]
     walls = [r["wall_s"] for r in rows if r.get("wall_s") is not None]
     wall_mean, wall_se = _mean_se(walls)
 
@@ -124,30 +119,37 @@ def _lines(nums: list[int], cap: int = 6) -> str:
 
 def print_arm(s: dict, source: pathlib.Path) -> None:
     print("%s  (n=%d, %s)" % (s["label"], s["entries"], source.name))
-    verdicts = ", ".join(
-        "%s=%d" % (k, v) for k, v in sorted(s["verdicts"].items())
-    )
+    verdicts = ", ".join("%s=%d" % (k, v) for k, v in sorted(s["verdicts"].items()))
     print("  verdicts:   %s" % verdicts)
     for name in sorted(s["verdict_lines"]):
-        print("    %-9s lines %s" % (
-            name, _lines(s["verdict_lines"][name])))
-    print("  wall/entry: %s s (SE %s)  total %.1f h" % (
-        "%.0f" % s["wall_mean"] if s["wall_mean"] is not None else "n/a",
-        "%.0f" % s["wall_se"] if s["wall_se"] is not None else "n/a",
-        s["wall_total_h"],
-    ))
+        print("    %-9s lines %s" % (name, _lines(s["verdict_lines"][name])))
+    print(
+        "  wall/entry: %s s (SE %s)  total %.1f h"
+        % (
+            "%.0f" % s["wall_mean"] if s["wall_mean"] is not None else "n/a",
+            "%.0f" % s["wall_se"] if s["wall_se"] is not None else "n/a",
+            s["wall_total_h"],
+        )
+    )
     if s["scored"]:
-        print("  findings:   hits=%d misses=%d fps=%d  (scored %d/%d)" % (
-            s["hits"], s["misses"], s["fps"], s["scored"], s["entries"]))
+        print(
+            "  findings:   hits=%d misses=%d fps=%d  (scored %d/%d)"
+            % (s["hits"], s["misses"], s["fps"], s["scored"], s["entries"])
+        )
         print("    scored lines %s" % _lines(s["scored_lines"]))
-        print("  precision=%s recall=%s f1=%s" % (
-            _fmt(s["precision"], pct=True),
-            _fmt(s["recall"], pct=True),
-            _fmt(s["f1"]),
-        ))
+        print(
+            "  precision=%s recall=%s f1=%s"
+            % (
+                _fmt(s["precision"], pct=True),
+                _fmt(s["recall"], pct=True),
+                _fmt(s["f1"]),
+            )
+        )
     else:
-        print("  findings:   not recorded in this ledger "
-              "(verdict-only; arm predates finding-count recording)")
+        print(
+            "  findings:   not recorded in this ledger "
+            "(verdict-only; arm predates finding-count recording)"
+        )
     print()
 
 
@@ -169,10 +171,10 @@ def main(argv=None) -> int:
         # An arm whose rows disagree about their own coordinates did not run
         # one experiment, and averaging across it would hide that.
         if len(depths) > 1 or len(engines) > 1:
-            print("%s: MIXED COORDINATES depth=%s engine=%s -- not scorable"
-                  % (path,
-                     sorted(str(d) for d in depths),
-                     sorted(str(e) for e in engines)))
+            print(
+                "%s: MIXED COORDINATES depth=%s engine=%s -- not scorable"
+                % (path, sorted(str(d) for d in depths), sorted(str(e) for e in engines))
+            )
             continue
         label = "depth=%s engine=%s" % (depths.pop(), engines.pop())
         s = summarise(rows, label)
@@ -189,16 +191,16 @@ def main(argv=None) -> int:
                 if a is None or b is None:
                     print("  %-10s %s: n/a" % (metric, s["label"]))
                     continue
-                print("  %-10s %s: %+.1f pts" % (
-                    metric, s["label"], (b - a) * 100))
+                print("  %-10s %s: %+.1f pts" % (metric, s["label"], (b - a) * 100))
         print()
-        print("Note: differences are point estimates at one run per entry. "
-              "With no within-entry replicates there is no standard error "
-              "to compare them against, so a small difference is not "
-              "evidence of a difference.")
+        print(
+            "Note: differences are point estimates at one run per entry. "
+            "With no within-entry replicates there is no standard error "
+            "to compare them against, so a small difference is not "
+            "evidence of a difference."
+        )
     elif summaries:
-        print("Only %d arm(s) carry finding counts; no comparison possible."
-              % len(scored))
+        print("Only %d arm(s) carry finding counts; no comparison possible." % len(scored))
     return 0
 
 

@@ -100,7 +100,7 @@ def _prepare_append(fd: int) -> bytes:
             raise OSError("short read while scanning ledger tail")
         newline = chunk.rfind(b"\n")
         if newline >= 0:
-            chunks.append(chunk[newline + 1:])
+            chunks.append(chunk[newline + 1 :])
             start = offset + newline + 1
             break
         chunks.append(chunk)

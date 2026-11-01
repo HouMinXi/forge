@@ -9,7 +9,6 @@ drain-blocked rehearsal evidence hooks (drain-blocked must NOT fake success).
 
 from __future__ import annotations
 
-import asyncio
 import json
 from copy import deepcopy
 from io import StringIO
@@ -105,16 +104,14 @@ class TestPayloadReplay:
         # Legacy reader path (pre-#332): drop unknown properties, keep results.
         legacy_view = deepcopy(doc)
         legacy_view["runs"][0]["properties"].pop("report_classification", None)
-        findings_count, findings, receipt_audit, status = (
-            server._sarif_projection_with_status(json.dumps(legacy_view))
+        findings_count, findings, receipt_audit, status = server._sarif_projection_with_status(
+            json.dumps(legacy_view)
         )
         assert findings_count == 1
         assert findings == doc["runs"][0]["results"]
         assert status is None
 
-    def test_old_stdout_without_block_yields_unavailable_legacy_report(
-        self, state_dir, registry
-    ):
+    def test_old_stdout_without_block_yields_unavailable_legacy_report(self, state_dir, registry):
         """Old→New: legacy SARIF without additive block → unavailable/legacy-report."""
         # Build legacy-shaped SARIF by stripping the property after emit, or via
         # build_sarif_log alone (pre-wire bytes).
@@ -138,11 +135,7 @@ class TestPayloadReplay:
         assert rc["schema"] == "forge-report-classification/v1"
         # Round-trip via parse helpers.
         doc = json.loads(stdout)
-        wire = wire_to_json(
-            parse_report_classification(
-                doc["runs"][0], legacy_report_state="accepted"
-            )
-        )
+        wire = wire_to_json(parse_report_classification(doc["runs"][0], legacy_report_state="accepted"))
         assert wire["availability"] == "available"
 
     def test_unknown_schema_version_unavailable(self):

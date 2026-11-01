@@ -54,12 +54,11 @@ class CanonicalFinding:
 
     def __post_init__(self) -> None:
         """Validate required fields are non-empty strings."""
-        for field_name in ('source', 'source_id', 'timestamp'):
+        for field_name in ("source", "source_id", "timestamp"):
             value = getattr(self, field_name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(
-                    f"CanonicalFinding.{field_name} must be a "
-                    f"non-empty string, got {value!r}"
+                    f"CanonicalFinding.{field_name} must be a non-empty string, got {value!r}"
                 )
 
 
@@ -118,8 +117,7 @@ class BaseAdapter(ABC):
         result = self._do_fetch(source_ref)
         if result is None:
             print(
-                "forge: warning: adapter returned None, "
-                "coercing to empty list",
+                "forge: warning: adapter returned None, coercing to empty list",
                 file=sys.stderr,
             )
             return []

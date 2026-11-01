@@ -45,9 +45,22 @@ def working_review(root, rel, *, base="def sample():\n    return 0\n"):
 
     def git(*args):
         return subprocess.run(
-            ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false",
-             "-c", "core.hooksPath=/dev/null", *args],
-            cwd=root, check=True, capture_output=True, text=True,
+            [
+                "git",
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                *args,
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
         ).stdout.strip()
 
     git("init", "-q")

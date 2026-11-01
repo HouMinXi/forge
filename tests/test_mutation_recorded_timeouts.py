@@ -23,11 +23,34 @@ from code_forge.state import Verdict
 
 TIMEOUT_CODES = (36, -24, 24, 152, 255)
 REFUSED_CODES = (
-    None, True, False, 36.0, "36", 900, 5, 33, 34, 35, 2, -11, -9,
+    None,
+    True,
+    False,
+    36.0,
+    "36",
+    900,
+    5,
+    33,
+    34,
+    35,
+    2,
+    -11,
+    -9,
 )
 REFUSED_IDS = (
-    "null", "true", "false", "float", "string", "unknown", "no-tests-5", "no-tests-33",
-    "skipped", "suspicious", "interrupted", "segfault-11", "segfault-9",
+    "null",
+    "true",
+    "false",
+    "float",
+    "string",
+    "unknown",
+    "no-tests-5",
+    "no-tests-33",
+    "skipped",
+    "suspicious",
+    "interrupted",
+    "segfault-11",
+    "segfault-9",
 )
 SOURCE = b"def allows(n):\n    return n > 1\n"
 CONFIG = b"[unrelated]\nvalue=preserve\n"
@@ -43,15 +66,14 @@ def _write_evidence(root, codes, statuses):
     mirror = root / "mutants/src/calc.py"
     mirror.parent.mkdir(parents=True, exist_ok=True)
     generated = "\n".join(
-        f"def x_allows__mutmut_{i}(n):\n    return n >= {i}\n"
-        for i in range(1, len(codes) + 1)
+        f"def x_allows__mutmut_{i}(n):\n    return n >= {i}\n" for i in range(1, len(codes) + 1)
     ).encode("utf-8")
-    metadata = json.dumps({
-        "exit_code_by_key": {_identity(i): code for i, code in enumerate(codes, 1)}
-    }).encode("utf-8")
-    results = "".join(
-        f"    {_identity(i)}: {status}\n" for i, status in enumerate(statuses, 1)
+    metadata = json.dumps(
+        {"exit_code_by_key": {_identity(i): code for i, code in enumerate(codes, 1)}}
     ).encode("utf-8")
+    results = "".join(f"    {_identity(i)}: {status}\n" for i, status in enumerate(statuses, 1)).encode(
+        "utf-8"
+    )
     mirror.write_bytes(generated)
     mirror.with_name("calc.py.meta").write_bytes(metadata)
     # Keep physical raw evidence outside the workspace-owned mirror cleanup.
@@ -119,7 +141,11 @@ def _install_executor(root, monkeypatch, codes, statuses, fault=None):
 def _run(root):
     evidence = {}
     findings, infra = mutation.run_mutation(
-        ["src/calc.py"], BASELINE, cwd=root, max_children=1, _evidence=evidence,
+        ["src/calc.py"],
+        BASELINE,
+        cwd=root,
+        max_children=1,
+        _evidence=evidence,
     )
     return findings, infra, evidence
 
@@ -165,14 +191,17 @@ def test_recorded_timeout_note_preserves_completed_mixed_inventory(tmp_path, mon
     assert infra == [] and evidence["infra_errors"] == [] and evidence["skipped"] == []
     assert evidence["baseline_passed"] is True and evidence["completed_measurement"] is True
     assert evidence["inventory"] == {
-        _identity(1): "timeout", _identity(2): "killed", _identity(3): "survived",
+        _identity(1): "timeout",
+        _identity(2): "killed",
+        _identity(3): "survived",
     }
     assert evidence["metadata_sha256"] == {
         "src/calc.py": hashlib.sha256((tmp_path / "recorded/calc.py.meta").read_bytes()).hexdigest()
     }
-    assert evidence["results_sha256"] == hashlib.sha256(
-        (tmp_path / "recorded/results.txt").read_bytes()
-    ).hexdigest()
+    assert (
+        evidence["results_sha256"]
+        == hashlib.sha256((tmp_path / "recorded/results.txt").read_bytes()).hexdigest()
+    )
     assert len(findings) == 2
     survivor = findings[0]
     assert survivor.id == f"mutant-{_identity(3)}"
@@ -194,7 +223,12 @@ def test_recorded_timeout_note_preserves_completed_mixed_inventory(tmp_path, mon
     ids=["timeout-only", "multiple-timeouts", "no-timeouts"],
 )
 def test_timeout_note_cardinality_and_non_timeout_controls(
-    tmp_path, monkeypatch, codes, statuses, timeout_ids, survivor_ids,
+    tmp_path,
+    monkeypatch,
+    codes,
+    statuses,
+    timeout_ids,
+    survivor_ids,
 ):
     _install_executor(tmp_path, monkeypatch, codes, statuses)
     findings, infra, evidence = _run(tmp_path)
@@ -245,13 +279,26 @@ def test_timeout_inventory_keeps_identity_and_regular_file_guards(tmp_path, dama
 @pytest.mark.parametrize(
     "fault",
     [
-        "missing", "extra", "contradiction", "duplicate", "malformed", "unknown-status", "empty",
-        "run-nonzero", "run-timeout", "results-nonzero", "results-timeout",
+        "missing",
+        "extra",
+        "contradiction",
+        "duplicate",
+        "malformed",
+        "unknown-status",
+        "empty",
+        "run-nonzero",
+        "run-timeout",
+        "results-nonzero",
+        "results-timeout",
     ],
 )
 def test_timeout_notes_require_complete_command_and_transport_proof(tmp_path, monkeypatch, fault):
     stages = _install_executor(
-        tmp_path, monkeypatch, (36, 1, 0), ("timeout", "killed", "survived"), fault,
+        tmp_path,
+        monkeypatch,
+        (36, 1, 0),
+        ("timeout", "killed", "survived"),
+        fault,
     )
     findings, infra, evidence = _run(tmp_path)
     assert _notes(findings) == []
@@ -296,7 +343,10 @@ def test_late_cleanup_failure_invalidates_proof_without_erasing_notes(tmp_path, 
 
 @pytest.mark.parametrize("mixed", [False, True], ids=["timeout-only", "mixed"])
 def test_timeout_outcome_and_source_cli_keep_existing_survivor_policy(
-    tmp_path, monkeypatch, capsys, mixed,
+    tmp_path,
+    monkeypatch,
+    capsys,
+    mixed,
 ):
     from code_forge.cli import EXIT_FAIL, EXIT_PASS, main
 
@@ -335,7 +385,10 @@ def test_timeout_outcome_and_source_cli_keep_existing_survivor_policy(
 
 @pytest.mark.parametrize("mixed", [False, True], ids=["timeout-only", "mixed"])
 def test_generated_detached_carrier_retains_raw_timeout_inventory(
-    tmp_path, monkeypatch, run_detached_payload, mixed,
+    tmp_path,
+    monkeypatch,
+    run_detached_payload,
+    mixed,
 ):
     codes = (36, 1, 0) if mixed else (36,)
     statuses = ("timeout", "killed", "survived") if mixed else ("timeout",)
@@ -351,7 +404,11 @@ def test_generated_detached_carrier_retains_raw_timeout_inventory(
     monkeypatch.setattr(mutation.subprocess, "Popen", capture)
     result_path = tmp_path / ".code-forge/mutation-result.json"
     assert mutation.launch_detached_mutation(
-        ["src/calc.py"], BASELINE, tmp_path, result_path, max_children=1,
+        ["src/calc.py"],
+        BASELINE,
+        tmp_path,
+        result_path,
+        max_children=1,
     )
     assert len(scripts) == 1
     selected_src = str(Path(mutation.__file__).resolve().parent.parent)

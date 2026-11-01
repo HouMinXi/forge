@@ -974,7 +974,12 @@ def graphdb_controls(sem_controls, monkeypatch):
                 raise OSError("controlled owned SQLite close refusal")
 
     def connect(database, *args, **kwargs):
-        assert str(database) in {str(db), "file:%s?mode=ro" % db, db.absolute().as_uri() + "?mode=ro", readonly_uri(db.absolute())}
+        assert str(database) in {
+            str(db),
+            "file:%s?mode=ro" % db,
+            db.absolute().as_uri() + "?mode=ro",
+            readonly_uri(db.absolute()),
+        }
         connection = actual_connect(database, *args, **kwargs)
         controls["connections"].append(str(database))
         controls["objects"].append(connection)

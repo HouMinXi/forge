@@ -142,7 +142,9 @@ def build_sarif_log(
     if getattr(state, "exec_evidence", None) is not None:
         run.setdefault("properties", {})["exec_evidence"] = state.exec_evidence
     if assertion_outcome is not None:
-        run.setdefault("properties", {})["testAssertion"] = AssertionOutcome.to_metadata(assertion_outcome)
+        run.setdefault("properties", {})["testAssertion"] = AssertionOutcome.to_metadata(
+            assertion_outcome
+        )
     return {
         "$schema": SARIF_SCHEMA_URI,
         "version": SARIF_VERSION,
@@ -514,6 +516,5 @@ def format_classification_line(block: Any) -> str:
         "code-forge: classification product=%s "
         "[not adjudicated: confirmed=%d dismissed=%d fixed=%d style=%d; "
         "with-observations=%d] unresolved=%s [uncertain; with-observations=%d] "
-        "quarantine=%d [unverified]"
-        % (p, c, d, f, s, o, u_s, v, q)
+        "quarantine=%d [unverified]" % (p, c, d, f, s, o, u_s, v, q)
     )

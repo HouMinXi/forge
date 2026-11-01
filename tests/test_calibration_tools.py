@@ -10,6 +10,8 @@ out before the rmtree; the calibration scripts build on that.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -118,8 +120,6 @@ def test_replay_entry_keep_tolerates_missing_state(
 
 # ---- run_falsify_calibration.py -------------------------------------------
 
-import subprocess
-import sys
 
 _RUNNER = Path(__file__).resolve().parent.parent / "scripts" / "run_falsify_calibration.py"
 

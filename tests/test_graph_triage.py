@@ -81,8 +81,8 @@ def _make_entity(
 def _make_diff(files: list[str]) -> str:
     """Build a minimal unified diff touching the given files."""
     parts = []
-    for f in files:
-        parts.append(
+    parts.extend(
+        (
             "diff --git a/%(f)s b/%(f)s\n"
             "--- a/%(f)s\n"
             "+++ b/%(f)s\n"
@@ -91,6 +91,8 @@ def _make_diff(files: list[str]) -> str:
             "+new line\n"
             " more\n" % {"f": f}
         )
+        for f in files
+    )
     return "".join(parts)
 
 
@@ -897,8 +899,9 @@ class TestGraphSourceAndConfigRoots:
         source_gate = root / ".code-forge/gate.yaml"
         source_gate.parent.mkdir()
         source_gate.write_text(
-            yaml.safe_dump({"test": {"command": ["never-executed"]},
-                            "graph_triage": {"enabled": False}}),
+            yaml.safe_dump(
+                {"test": {"command": ["never-executed"]}, "graph_triage": {"enabled": False}}
+            ),
             encoding="utf-8",
         )
         cwd = self._state_cwd(tmp_path, monkeypatch, config)
@@ -921,8 +924,7 @@ class TestGraphSourceAndConfigRoots:
         source_gate = root / ".code-forge/gate.yaml"
         source_gate.parent.mkdir()
         source_gate.write_text(
-            yaml.safe_dump({"test": {"command": ["never-executed"]},
-                            "graph_triage": {"enabled": True}}),
+            yaml.safe_dump({"test": {"command": ["never-executed"]}, "graph_triage": {"enabled": True}}),
             encoding="utf-8",
         )
         policy_config = {"enabled": False if policy == "disabled" else "invalid"}
@@ -933,8 +935,9 @@ class TestGraphSourceAndConfigRoots:
         runner = GraphTriageRunner()
         sm = self._machine(root, cwd, [runner])
         sm._run_advisory_axes()
-        expected = {"disabled": "disabled", "invalid": "configuration_error",
-                    "missing": "completed"}[policy]
+        expected = {"disabled": "disabled", "invalid": "configuration_error", "missing": "completed"}[
+            policy
+        ]
         assert runner.acquisition_outcome.status == expected
         assert len(sm._advisories) == (1 if policy == "missing" else 0)
         assert bool(sm._state.infra_errors) == (policy == "invalid")

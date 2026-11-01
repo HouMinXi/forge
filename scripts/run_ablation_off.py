@@ -7,6 +7,7 @@ with no fixture defaults to CONFIRMED -- Fact 2).
 
 Records: rounds taken, final verdict, wall time.
 """
+
 from __future__ import annotations
 
 import json
@@ -55,12 +56,26 @@ def main():
     try:
         # Init git repo
         subprocess.run(
-            ["git", "init"], cwd=temp_dir, capture_output=True, check=True,
+            ["git", "init"],
+            cwd=temp_dir,
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
-            ["git", "-c", "user.name=eval", "-c", "user.email=eval@test",
-             "commit", "--allow-empty", "-m", "init"],
-            cwd=temp_dir, capture_output=True, check=True,
+            [
+                "git",
+                "-c",
+                "user.name=eval",
+                "-c",
+                "user.email=eval@test",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+            cwd=temp_dir,
+            capture_output=True,
+            check=True,
         )
 
         # Copy base files
@@ -73,18 +88,32 @@ def main():
                     shutil.copy2(f, dst)
             subprocess.run(
                 ["git", "add", "."],
-                cwd=temp_dir, capture_output=True, check=True,
+                cwd=temp_dir,
+                capture_output=True,
+                check=True,
             )
             subprocess.run(
-                ["git", "-c", "user.name=eval", "-c", "user.email=eval@test",
-                 "commit", "-m", "seed base files"],
-                cwd=temp_dir, capture_output=True, check=False,
+                [
+                    "git",
+                    "-c",
+                    "user.name=eval",
+                    "-c",
+                    "user.email=eval@test",
+                    "commit",
+                    "-m",
+                    "seed base files",
+                ],
+                cwd=temp_dir,
+                capture_output=True,
+                check=False,
             )
 
         # Apply diff
         apply_result = subprocess.run(
             ["git", "apply", str(diff_path.resolve())],
-            cwd=temp_dir, capture_output=True, check=False,
+            cwd=temp_dir,
+            capture_output=True,
+            check=False,
         )
         if apply_result.returncode != 0:
             stderr_text = apply_result.stderr.decode("utf-8", errors="replace")
@@ -109,20 +138,24 @@ def main():
 
         # Create tools.yaml (noop)
         (gate_dir / "tools.yaml").write_text(
-            yaml.safe_dump({
-                "tools": {
-                    "noop": {
-                        "command": "true",
-                        "file_patterns": ["*.nomatch"],
-                        "output_format": "sarif",
+            yaml.safe_dump(
+                {
+                    "tools": {
+                        "noop": {
+                            "command": "true",
+                            "file_patterns": ["*.nomatch"],
+                            "output_format": "sarif",
+                        }
                     }
-                }
-            }, default_flow_style=False),
+                },
+                default_flow_style=False,
+            ),
         )
 
         # Trust the backend
         sys.path.insert(0, str(REPO_ROOT / "src"))
         from code_forge.trust import record_trust
+
         trust_dir = repo_path / ".xdg-config" / "code-forge"
         trust_dir.mkdir(parents=True, exist_ok=True)
         gate_path = gate_dir / "gate.yaml"
@@ -148,8 +181,11 @@ def main():
 
         t0 = time.monotonic()
         proc = subprocess.run(
-            cmd, cwd=temp_dir, env=env,
-            capture_output=True, timeout=3600,
+            cmd,
+            cwd=temp_dir,
+            env=env,
+            capture_output=True,
+            timeout=3600,
         )
         wall_s = time.monotonic() - t0
 

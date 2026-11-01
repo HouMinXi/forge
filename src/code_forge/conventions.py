@@ -50,8 +50,12 @@ def _is_convention_file(name: str) -> bool:
 
 def _file_stamp(info: os.stat_result) -> _FileStamp:
     return (
-        info.st_dev, info.st_ino, info.st_mode, info.st_size,
-        info.st_mtime_ns, info.st_ctime_ns,
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
     )
 
 
@@ -67,8 +71,7 @@ def _directory_stamp(info: os.stat_result) -> _DirectoryStamp:
 
 
 _OPENAT2_SYSCALL_NUMBER = (
-    437 if sys.platform == "linux" and os.uname().machine in {"x86_64", "aarch64", "riscv64"}
-    else None
+    437 if sys.platform == "linux" and os.uname().machine in {"x86_64", "aarch64", "riscv64"} else None
 )
 _RESOLVE_NO_SYMLINKS = 0x04
 _RESOLVE_BENEATH = 0x08
@@ -89,9 +92,14 @@ class _ScanStatus:
         self.committed_alias = False
         self.unproven_bytes = False
         self._walks: dict[
-            tuple[int, int], list[tuple[
-                Path, dict[Path, _DirectoryStamp], dict[Path, _FileStamp],
-            ]],
+            tuple[int, int],
+            list[
+                tuple[
+                    Path,
+                    dict[Path, _DirectoryStamp],
+                    dict[Path, _FileStamp],
+                ]
+            ],
         ] = {}
 
     def fail(self, _error: Optional[OSError] = None) -> None:
@@ -110,7 +118,11 @@ class _ScanStatus:
             self.fail()
 
     def record_admitted_file(
-        self, path: Path, scan_root: Path, scan_root_fd: int, observed: os.stat_result,
+        self,
+        path: Path,
+        scan_root: Path,
+        scan_root_fd: int,
+        observed: os.stat_result,
     ) -> None:
         """Bind a size-checked candidate to this root fd and its exact inode."""
         try:
@@ -120,14 +132,20 @@ class _ScanStatus:
             self.fail()
             return
         proof = (
-            scan_root_fd, root_info.st_dev, root_info.st_ino, _file_stamp(observed),
+            scan_root_fd,
+            root_info.st_dev,
+            root_info.st_ino,
+            _file_stamp(observed),
         )
         previous = self.admitted_files.setdefault(relative, proof)
         if previous != proof:
             self.fail()
 
     def matches_admitted_file(
-        self, relative: Path, scan_root_fd: int, fd: int,
+        self,
+        relative: Path,
+        scan_root_fd: int,
+        fd: int,
     ) -> bool:
         """Allow a moved root only for a candidate proved before the move."""
         expected = self.admitted_files.get(relative)
@@ -139,7 +157,9 @@ class _ScanStatus:
         except OSError:
             return False
         return expected[1:] == (
-            root_info.st_dev, root_info.st_ino, _file_stamp(file_info),
+            root_info.st_dev,
+            root_info.st_ino,
+            _file_stamp(file_info),
         )
 
     def record_read(self, path: Path, scan_root: Path, data: bytes) -> None:
@@ -151,12 +171,11 @@ class _ScanStatus:
             return
         normalized = data.replace(b"\r\n", b"\n")
         raw_blob = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
-        normalized_blob = (
-            b"blob " + str(len(normalized)).encode("ascii") + b"\0" + normalized
-        )
+        normalized_blob = b"blob " + str(len(normalized)).encode("ascii") + b"\0" + normalized
         hashes = (
-            hashlib.sha1(raw_blob).hexdigest(), hashlib.sha256(raw_blob).hexdigest(),
-            hashlib.sha1(normalized_blob).hexdigest(),
+            hashlib.sha1(raw_blob, usedforsecurity=False).hexdigest(),
+            hashlib.sha256(raw_blob).hexdigest(),
+            hashlib.sha1(normalized_blob, usedforsecurity=False).hexdigest(),
             hashlib.sha256(normalized_blob).hexdigest(),
         )
         previous = self.read_blobs.setdefault(relative, hashes)
@@ -175,7 +194,9 @@ class _ScanStatus:
             self.fail()
 
     def record_walk(
-        self, root_identity: tuple[int, int], walk_root: Path,
+        self,
+        root_identity: tuple[int, int],
+        walk_root: Path,
         directories: dict[Path, _DirectoryStamp],
         files: dict[Path, _FileStamp],
     ) -> None:
@@ -187,23 +208,23 @@ class _ScanStatus:
                     self.fail()
             elif previous_root in walk_root.parents:
                 overlapping_dirs = {
-                    path: identity for path, identity in previous_dirs.items()
+                    path: identity
+                    for path, identity in previous_dirs.items()
                     if path == walk_root or walk_root in path.parents
                 }
                 overlapping_files = {
-                    path: stamp for path, stamp in previous_files.items()
-                    if walk_root in path.parents
+                    path: stamp for path, stamp in previous_files.items() if walk_root in path.parents
                 }
                 if overlapping_dirs != directories or overlapping_files != files:
                     self.fail()
             elif walk_root in previous_root.parents:
                 overlapping_dirs = {
-                    path: identity for path, identity in directories.items()
+                    path: identity
+                    for path, identity in directories.items()
                     if path == previous_root or previous_root in path.parents
                 }
                 overlapping_files = {
-                    path: stamp for path, stamp in files.items()
-                    if previous_root in path.parents
+                    path: stamp for path, stamp in files.items() if previous_root in path.parents
                 }
                 if previous_dirs != overlapping_dirs or previous_files != overlapping_files:
                     self.fail()
@@ -247,7 +268,9 @@ def _openat_beneath_portable(directory_fd: int, relative: Path, flags: int) -> i
         raise OSError(errno.EINVAL, "invalid rooted path", str(relative))
     directory_flags = (
         getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY))
-        | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0)
     )
     current_fd = os.dup(directory_fd)
     try:
@@ -256,7 +279,8 @@ def _openat_beneath_portable(directory_fd: int, relative: Path, flags: int) -> i
             os.close(current_fd)
             current_fd = next_fd
         return os.open(
-            relative.parts[-1], flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+            relative.parts[-1],
+            flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
             dir_fd=current_fd,
         )
     finally:
@@ -287,7 +311,10 @@ def _opened_file_path(fd: int) -> Optional[Path]:
 
     get_path = ctypes.windll.kernel32.GetFinalPathNameByHandleW
     get_path.argtypes = [
-        ctypes.c_void_p, ctypes.POINTER(ctypes.c_wchar), ctypes.c_uint32, ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_wchar),
+        ctypes.c_uint32,
+        ctypes.c_uint32,
     ]
     get_path.restype = ctypes.c_uint32
     buffer = ctypes.create_unicode_buffer(32768)
@@ -350,9 +377,9 @@ def _root_fd_matches_path(root_fd: int, scan_root: Path) -> bool:
         named = os.stat(scan_root, follow_symlinks=False)
     except OSError:
         return False
-    return (
-        stat.S_ISDIR(opened.st_mode)
-        and (opened.st_dev, opened.st_ino) == (named.st_dev, named.st_ino)
+    return stat.S_ISDIR(opened.st_mode) and (opened.st_dev, opened.st_ino) == (
+        named.st_dev,
+        named.st_ino,
     )
 
 
@@ -401,7 +428,11 @@ def _open_scan_root(scan_root: Path) -> Optional[int]:
 
 
 def _open_scan_file(
-    path: Path, scan_root: Path, flags: int, *, scan_root_fd: Optional[int] = None,
+    path: Path,
+    scan_root: Path,
+    flags: int,
+    *,
+    scan_root_fd: Optional[int] = None,
     scan_status: Optional[_ScanStatus] = None,
 ) -> Optional[int]:
     """Open beneath a pinned root and verify an available final-handle path."""
@@ -429,7 +460,9 @@ def _open_scan_file(
         return None
     try:
         fd = _open_beneath(
-            root_fd, relative, flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+            root_fd,
+            relative,
+            flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
         )
         admitted = False
         try:
@@ -458,17 +491,16 @@ def _open_scan_file(
             # both handle paths are available. A direct root-fd leaf remains
             # safe when this host cannot expose final handle paths.
             admitted_path_is_rooted = (
-                opened_root is not None and opened_file is not None
+                opened_root is not None
+                and opened_file is not None
                 and opened_file == opened_root / relative
             )
             if not bound and not (
-                scan_status is not None and scan_root_fd is not None
+                scan_status is not None
+                and scan_root_fd is not None
                 and (
                     admitted_path_is_rooted
-                    or (
-                        len(relative.parts) == 1
-                        and (opened_root is None or opened_file is None)
-                    )
+                    or (len(relative.parts) == 1 and (opened_root is None or opened_file is None))
                 )
                 and scan_status.matches_admitted_file(relative, scan_root_fd, fd)
             ):
@@ -484,7 +516,9 @@ def _open_scan_file(
 
 
 def _walk_source(
-    root: Path, scan_root: Path, scan_root_fd: Optional[int],
+    root: Path,
+    scan_root: Path,
+    scan_root_fd: Optional[int],
     scan_status: Optional[_ScanStatus],
 ):
     """Walk the selected directory by descriptor when a bound root is available.
@@ -519,9 +553,7 @@ def _walk_source(
             if scan_status is not None:
                 scan_status.fail()
             return
-        expected: dict[Path, _DirectoryStamp] = {
-            Path(walk_path): _directory_stamp(root_info)
-        }
+        expected: dict[Path, _DirectoryStamp] = {Path(walk_path): _directory_stamp(root_info)}
         visited: set[Path] = set()
         inventory: dict[Path, _DirectoryStamp] = {}
         file_inventory: dict[Path, _FileStamp] = {}
@@ -529,8 +561,10 @@ def _walk_source(
         scan_identity = (scan_info.st_dev, scan_info.st_ino)
         scan_stamp = _directory_stamp(scan_info)
         for dirpath, dirs, files, dir_fd in os.fwalk(
-            walk_path, dir_fd=scan_root_fd,
-            follow_symlinks=False, onerror=onerror,
+            walk_path,
+            dir_fd=scan_root_fd,
+            follow_symlinks=False,
+            onerror=onerror,
         ):
             current = Path(dirpath)
             visited.add(current)
@@ -558,9 +592,13 @@ def _walk_source(
                         scan_status.fail()
                         continue
                     try:
-                        stamp = _file_stamp(os.stat(
-                            name, dir_fd=dir_fd, follow_symlinks=False,
-                        ))
+                        stamp = _file_stamp(
+                            os.stat(
+                                name,
+                                dir_fd=dir_fd,
+                                follow_symlinks=False,
+                            )
+                        )
                     except OSError as exc:
                         scan_status.fail(exc)
                         continue
@@ -591,23 +629,28 @@ def _walk_source(
                         scan_status.fail(exc)
                     continue
                 if (old.st_mode, _directory_stamp(old)) != (
-                    now.st_mode, _directory_stamp(now)
+                    now.st_mode,
+                    _directory_stamp(now),
                 ) and scan_status is not None:
                     scan_status.fail()
                 if stat.S_ISDIR(old.st_mode):
                     expected[current / name] = _directory_stamp(old)
         if scan_status is not None:
-            if (
-                _directory_stamp(os.fstat(scan_root_fd)) != scan_stamp
-                or _directory_stamp(os.stat(
-                    walk_path, dir_fd=scan_root_fd, follow_symlinks=False,
-                )) != _directory_stamp(root_info)
-            ):
+            if _directory_stamp(os.fstat(scan_root_fd)) != scan_stamp or _directory_stamp(
+                os.stat(
+                    walk_path,
+                    dir_fd=scan_root_fd,
+                    follow_symlinks=False,
+                )
+            ) != _directory_stamp(root_info):
                 scan_status.fail()
             if expected.keys() - visited:
                 scan_status.fail()
             scan_status.record_walk(
-                scan_identity, Path(walk_path), inventory, file_inventory,
+                scan_identity,
+                Path(walk_path),
+                inventory,
+                file_inventory,
             )
     except OSError as exc:
         if scan_status is not None:
@@ -615,8 +658,11 @@ def _walk_source(
 
 
 def _source_file_size(
-    path: Path, scan_root: Path, scan_root_fd: Optional[int],
-    *, observed: Optional[os.stat_result] = None,
+    path: Path,
+    scan_root: Path,
+    scan_root_fd: Optional[int],
+    *,
+    observed: Optional[os.stat_result] = None,
 ) -> int:
     """Use the admitted root for size decisions and reject a changed path."""
     path_info = path.stat()
@@ -649,8 +695,16 @@ def _read_regular_text(
     """Read a regular file, recording access failures for source scans."""
     try:
         flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
-        fd = os.open(path, flags) if scan_root is None else _open_scan_file(
-            path, scan_root, flags, scan_root_fd=scan_root_fd, scan_status=scan_status,
+        fd = (
+            os.open(path, flags)
+            if scan_root is None
+            else _open_scan_file(
+                path,
+                scan_root,
+                flags,
+                scan_root_fd=scan_root_fd,
+                scan_status=scan_status,
+            )
         )
         if fd is None:
             if scan_status is not None:
@@ -689,7 +743,6 @@ def _read_regular_text(
         if scan_status is not None:
             scan_status.fail()
         return None
-
 
 
 def _extract_python_public_names(
@@ -765,10 +818,7 @@ def _extract_python_public_names(
     public_classes: set[str] = set()
     if scan_status is not None:
         selected_root = walk_root.relative_to(scan_root)
-        if (
-            scan_status.python_walk_root is not None
-            and scan_status.python_walk_root != selected_root
-        ):
+        if scan_status.python_walk_root is not None and scan_status.python_walk_root != selected_root:
             scan_status.fail()
         scan_status.python_walk_root = selected_root
 
@@ -803,11 +853,17 @@ def _extract_python_public_names(
             # Only an admitted file may be skipped as intentionally oversized.
             try:
                 size = _source_file_size(
-                    real_path, scan_root, scan_root_fd, observed=candidate_info,
+                    real_path,
+                    scan_root,
+                    scan_root_fd,
+                    observed=candidate_info,
                 )
                 if scan_status is not None and scan_root_fd is not None:
                     scan_status.record_admitted_file(
-                        real_path, scan_root, scan_root_fd, candidate_info,
+                        real_path,
+                        scan_root,
+                        scan_root_fd,
+                        candidate_info,
                     )
                 if size > 100_000:
                     if scan_status is not None:
@@ -821,7 +877,9 @@ def _extract_python_public_names(
             # Parse file content.
             try:
                 content = _read_regular_text(
-                    real_path, max_bytes=100_000, scan_root=scan_root,
+                    real_path,
+                    max_bytes=100_000,
+                    scan_root=scan_root,
                     scan_root_fd=scan_root_fd,
                     scan_status=scan_status,
                 )

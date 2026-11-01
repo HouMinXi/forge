@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Real LOCAL, CI, and CLI consumers require the same exact native ruling."""
+
 from copy import deepcopy
 from dataclasses import replace
 from functools import partial
@@ -20,15 +21,22 @@ from code_forge.factories import build_l2_runner
 from code_forge.falsify import StubFalsifier
 from code_forge.git import _MACHINE_DIFF_OPTIONS
 from code_forge.ledger import (
-    TerminalState, append_row, finding_suppression_key, iter_rows, resolve_ledger_root,
+    TerminalState,
+    append_row,
+    finding_suppression_key,
+    iter_rows,
+    resolve_ledger_root,
 )
 from code_forge.machine import StateMachine
 from code_forge.mutation_findings import is_mutation_survivor
 from code_forge.state import Mode, Verdict, load_state
 from tests.test_mutation_ledger_disposition import matching_row as _original_matching_row
 from tests.test_mutation_ledger_transport import (
-    bound_context, bound_outcome, native_measurement as native_measurement,
-    native_project as native_project, working_review as source_review,
+    bound_context,
+    bound_outcome,
+    native_measurement as native_measurement,
+    native_project as native_project,
+    working_review as source_review,
 )
 
 
@@ -36,8 +44,12 @@ def matching_row(root, finding, state=TerminalState.DISPROVED):
     row = _original_matching_row(root, finding, state)
     review = source_review(root)
     key = finding_suppression_key(
-        base_sha=review.base_sha, head_sha=review.head_sha, git_diff=review.git_diff,
-        file=finding.file, line=finding.line_range[0], source=finding.source,
+        base_sha=review.base_sha,
+        head_sha=review.head_sha,
+        git_diff=review.git_diff,
+        file=finding.file,
+        line=finding.line_range[0],
+        source=finding.source,
         description=finding.description,
     )
     return replace(row, base_sha=review.base_sha, head_sha=review.head_sha, suppression_key=key)
@@ -45,12 +57,21 @@ def matching_row(root, finding, state=TerminalState.DISPROVED):
 
 def make_machine(project, *, mode=Mode.LOCAL, runner=None):
     values = dict(
-        mode=mode, falsifier=StubFalsifier(), autofixer=StubAutoFixer(), revert_fn=lambda _f: None,
+        mode=mode,
+        falsifier=StubFalsifier(),
+        autofixer=StubAutoFixer(),
+        revert_fn=lambda _f: None,
         resolved_review=source_review(project.root),
-        source_hash="bound-mutation-control", baseline_spec_repr="owned process substitute",
-        cwd=project.state, source_root=project.root, registry={}, l0_runner=lambda *_a: ([], []),
-        coverage_l1_active=False, coverage_exempt_patterns=["*.py"],
-        clean_round_threshold=3, max_total_rounds=3,
+        source_hash="bound-mutation-control",
+        baseline_spec_repr="owned process substitute",
+        cwd=project.state,
+        source_root=project.root,
+        registry={},
+        l0_runner=lambda *_a: ([], []),
+        coverage_l1_active=False,
+        coverage_exempt_patterns=["*.py"],
+        clean_round_threshold=3,
+        max_total_rounds=3,
     )
     if runner is not None:
         values["l2_runner"] = runner
@@ -67,7 +88,10 @@ def put_result(project, payload):
 
 @pytest.mark.parametrize("factory", [False, True], ids=["direct-native", "exact-factory-partial"])
 def test_local_exact_native_ruling_keeps_three_round_survivor_counter_zero(
-    native_project, native_measurement, monkeypatch, factory,
+    native_project,
+    native_measurement,
+    monkeypatch,
+    factory,
 ):
     findings, infra, proof = native_measurement()
     assert infra == [] and proof["completed_measurement"] is True
@@ -84,8 +108,10 @@ def test_local_exact_native_ruling_keeps_three_round_survivor_counter_zero(
     saved = load_state(native_project.state / ".code-forge/state.json")
     assert saved.consecutive_survivor_rounds == 0
     assert not any("3 consecutive rounds" in message for message in saved.infra_errors)
-    assert any(item.fingerprint == fingerprint and item.disposition is Disposition.DISMISSED
-               for item in saved.findings)
+    assert any(
+        item.fingerprint == fingerprint and item.disposition is Disposition.DISMISSED
+        for item in saved.findings
+    )
     assert all(Path(kwargs["cwd"]) == native_project.root for _argv, kwargs in native_project.calls)
 
 
@@ -98,18 +124,23 @@ def test_local_mixed_known_unknown_keeps_unknown_active(native_project, native_m
     assert machine._state.consecutive_survivor_rounds == 3
     active = [item for item in machine._state.findings if is_mutation_survivor(item)]
     assert [item.fingerprint for item in active] == [findings[1].fingerprint]
-    assert any(item.fingerprint == findings[0].fingerprint and item.disposition is Disposition.DISMISSED
-               for item in machine._state.findings)
+    assert any(
+        item.fingerprint == findings[0].fingerprint and item.disposition is Disposition.DISMISSED
+        for item in machine._state.findings
+    )
 
 
 @pytest.mark.parametrize("kind", ["custom", "extra-partial-keyword", "foreign-partial-root"])
 def test_custom_and_non_factory_forms_gain_no_native_proof(
-    native_project, native_measurement, kind,
+    native_project,
+    native_measurement,
+    kind,
 ):
     findings, _, _ = native_measurement()
     append_row(native_project.root, matching_row(native_project.root, findings[0]))
     received = []
     if kind == "custom":
+
         def runner(diff_files, baseline_cmd, *, baseline_timeout=120):
             received.append((diff_files, baseline_cmd, baseline_timeout))
             return deepcopy(findings), []
@@ -131,7 +162,8 @@ def test_custom_and_non_factory_forms_gain_no_native_proof(
 
 @pytest.mark.parametrize("early_exit", ["no-files", "missing-gate", "custom", "native-error"])
 def test_native_proof_is_reset_before_every_call_and_early_exit(
-    native_project, early_exit,
+    native_project,
+    early_exit,
 ):
     machine = make_machine(native_project, runner=mutation.run_mutation)
     assert machine._run_l2_phase() and machine._mutation_measurement_eligible is True
@@ -147,14 +179,18 @@ def test_native_proof_is_reset_before_every_call_and_early_exit(
     assert machine._mutation_measurement_eligible is False
 
 
-@pytest.mark.parametrize("later", ["changed-key", "foreign-root", "unkeyed", "escaped", "unadjudicated", "malformed"])
+@pytest.mark.parametrize(
+    "later", ["changed-key", "foreign-root", "unkeyed", "escaped", "unadjudicated", "malformed"]
+)
 def test_local_later_row_revokes_prior_round_dismissal(native_project, native_measurement, later):
     findings, _, _ = native_measurement()
     row = matching_row(native_project.root, findings[0])
     append_row(native_project.root, row)
     changes = {
-        "changed-key": {"suppression_key": "changed"}, "foreign-root": {"repo_root": "/other"},
-        "unkeyed": {"suppression_key": ""}, "escaped": {"terminal_state": TerminalState.ESCAPED},
+        "changed-key": {"suppression_key": "changed"},
+        "foreign-root": {"repo_root": "/other"},
+        "unkeyed": {"suppression_key": ""},
+        "escaped": {"terminal_state": TerminalState.ESCAPED},
         "unadjudicated": {"terminal_state": TerminalState.UNADJUDICATED},
     }.get(later)
     machine = make_machine(native_project, runner=mutation.run_mutation)
@@ -184,7 +220,9 @@ def test_local_native_dismissal_does_not_leak_into_later_custom_run(native_proje
 
 @pytest.mark.parametrize("authority", ["known", "revoked", "unproved"])
 def test_current_l2_survivor_does_not_inherit_prior_promotion(
-    native_project, native_measurement, authority,
+    native_project,
+    native_measurement,
+    authority,
 ):
     findings, _, _ = native_measurement()
     row = matching_row(native_project.root, findings[0])
@@ -220,7 +258,9 @@ def test_non_mutant_custom_claim_retains_ordinary_carry_forward(native_project, 
 
 
 def test_ci_bound_native_result_is_consumed_once_with_original_audit_count(
-    native_project, native_measurement, monkeypatch,
+    native_project,
+    native_measurement,
+    monkeypatch,
 ):
     payload = bound_outcome(native_project, native_measurement)
     findings, _, _ = native_measurement()
@@ -242,14 +282,20 @@ def test_ci_bound_native_result_is_consumed_once_with_original_audit_count(
 
 @pytest.mark.parametrize("case", ["valid-custom", "valid-extra", "absent-member", "killed-member"])
 def test_ci_actual_inventory_binding_precedes_matching_custom_fingerprint_ruling(
-    native_project, native_measurement, monkeypatch, case,
+    native_project,
+    native_measurement,
+    monkeypatch,
+    case,
 ):
     findings, infra, evidence = native_measurement()
     assert infra == [] and evidence["completed_measurement"] is True
     item = findings[0]
     item.fingerprint = "example"
     payload = mutation._mutation_outcome(
-        findings, infra, evidence, review_context=bound_context(native_project.root),
+        findings,
+        infra,
+        evidence,
+        review_context=bound_context(native_project.root),
     )
     actual_id = item.id
     if case == "valid-extra":
@@ -258,7 +304,7 @@ def test_ci_actual_inventory_binding_precedes_matching_custom_fingerprint_ruling
         payload["survivors"][0] = "mutant-never-measured"
         payload["survivor_details"][0]["id"] = "mutant-never-measured"
     elif case == "killed-member":
-        payload["inventory"][actual_id[len("mutant-"):]] = "killed"
+        payload["inventory"][actual_id[len("mutant-") :]] = "killed"
     append_row(native_project.root, matching_row(native_project.root, item))
     result = put_result(native_project, payload)
     frozen = deepcopy(payload)
@@ -279,7 +325,10 @@ def test_ci_actual_inventory_binding_precedes_matching_custom_fingerprint_ruling
 
 @pytest.mark.parametrize("case", ["unknown", "later-row", "legacy-integers", "location-only"])
 def test_ci_unresolved_or_unbound_survivors_still_fail(
-    native_project, native_measurement, monkeypatch, case,
+    native_project,
+    native_measurement,
+    monkeypatch,
+    case,
 ):
     payload = bound_outcome(native_project, native_measurement)
     findings, _, _ = native_measurement()
@@ -299,13 +348,22 @@ def test_ci_unresolved_or_unbound_survivors_still_fail(
     assert machine._state.converged is False and not result.exists()
 
 
-@pytest.mark.parametrize("invalid", [{}, False, "bad", "unknown-version", "bool-version", "null-version"])
+@pytest.mark.parametrize(
+    "invalid", [{}, False, "bad", "unknown-version", "bool-version", "null-version"]
+)
 def test_ci_bound_invalid_empty_original_fails_before_legacy_clean_verdict(
-    native_project, native_measurement, monkeypatch, invalid,
+    native_project,
+    native_measurement,
+    monkeypatch,
+    invalid,
 ):
     native_project.mutants = {"x_example__mutmut_1": "killed"}
     findings, infra, evidence = native_measurement()
-    context = bound_context(native_project.root) if isinstance(invalid, str) and "version" in invalid else invalid
+    context = (
+        bound_context(native_project.root)
+        if isinstance(invalid, str) and "version" in invalid
+        else invalid
+    )
     payload = mutation._mutation_outcome(findings, infra, evidence, review_context=context)
     if invalid == "unknown-version":
         payload["survivor_details_version"] = 2
@@ -319,14 +377,25 @@ def test_ci_bound_invalid_empty_original_fails_before_legacy_clean_verdict(
     machine = make_machine(native_project, mode=Mode.CI)
     assert machine.run() is Verdict.FAIL
     assert "CI: invalid bound mutation survivor details" in machine._state.infra_errors
-    assert not result.exists() and not any(is_mutation_survivor(item) for item in machine._state.findings)
+    assert not result.exists() and not any(
+        is_mutation_survivor(item) for item in machine._state.findings
+    )
 
 
-@pytest.mark.parametrize("case,expected", [
-    ("clean", Verdict.PASS), ("survivor", Verdict.FAIL), ("error", Verdict.PASS),
-])
+@pytest.mark.parametrize(
+    "case,expected",
+    [
+        ("clean", Verdict.PASS),
+        ("survivor", Verdict.FAIL),
+        ("error", Verdict.PASS),
+    ],
+)
 def test_ci_old_external_no_context_outcomes_keep_legacy_behavior(
-    native_project, native_measurement, monkeypatch, case, expected,
+    native_project,
+    native_measurement,
+    monkeypatch,
+    case,
+    expected,
 ):
     if case == "clean":
         native_project.mutants = {"x_example__mutmut_1": "killed"}
@@ -356,18 +425,22 @@ def test_ci_receipt_refusal_precedes_result_consumption(native_project, native_m
 
 
 def test_ci_launch_forwards_real_bound_context_to_generated_native_payload(
-    native_project, monkeypatch, run_detached_payload,
+    native_project,
+    monkeypatch,
+    run_detached_payload,
 ):
     scripts = []
     original_popen = mutation.subprocess.Popen
 
     def capture(argv, **kwargs):
-        if (len(argv) != 3 or list(argv[:2]) != [sys.executable, "-c"]
-                or kwargs.get("start_new_session") is not True
-                or kwargs.get("close_fds") is not True
-                or kwargs.get("cwd") != native_project.root
-                or any(kwargs.get(name) != subprocess.DEVNULL
-                       for name in ("stdin", "stdout", "stderr"))):
+        if (
+            len(argv) != 3
+            or list(argv[:2]) != [sys.executable, "-c"]
+            or kwargs.get("start_new_session") is not True
+            or kwargs.get("close_fds") is not True
+            or kwargs.get("cwd") != native_project.root
+            or any(kwargs.get(name) != subprocess.DEVNULL for name in ("stdin", "stdout", "stderr"))
+        ):
             return original_popen(argv, **kwargs)
         scripts.append(argv[2])
         return SimpleNamespace(pid=1234, wait=lambda timeout: 0)
@@ -389,24 +462,43 @@ def git_project(native_project):
     (root / ".code-forge").mkdir(exist_ok=True)
     shutil.copyfile(native_project.state / ".code-forge/gate.yaml", root / ".code-forge/gate.yaml")
     native_project.head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True,
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     native_project.diff = subprocess.run(
-        ["git", "diff", *_MACHINE_DIFF_OPTIONS, "HEAD"], cwd=root, check=True, capture_output=True, text=True,
+        ["git", "diff", *_MACHINE_DIFF_OPTIONS, "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout
     return native_project
 
 
 def cli_row(project, finding, state=TerminalState.DISPROVED):
     key = finding_suppression_key(
-        base_sha=project.head, head_sha=project.head, git_diff=project.diff, file=finding.file,
-        line=finding.line_range[0], source=finding.source, description=finding.description,
+        base_sha=project.head,
+        head_sha=project.head,
+        git_diff=project.diff,
+        file=finding.file,
+        line=finding.line_range[0],
+        source=finding.source,
+        description=finding.description,
     )
-    return replace(matching_row(project.root, finding, state), base_sha=project.head,
-                   head_sha=project.head, suppression_key=key)
+    return replace(
+        matching_row(project.root, finding, state),
+        base_sha=project.head,
+        head_sha=project.head,
+        suppression_key=key,
+    )
 
 
-@pytest.mark.parametrize("state", [TerminalState.FIXED, TerminalState.DISPROVED, TerminalState.DUPLICATE])
+@pytest.mark.parametrize(
+    "state", [TerminalState.FIXED, TerminalState.DISPROVED, TerminalState.DUPLICATE]
+)
 def test_cli_native_exact_ruling_reports_pass(git_project, native_measurement, capsys, state):
     findings, infra, proof = native_measurement()
     assert not infra and proof["completed_measurement"] is True
@@ -418,9 +510,15 @@ def test_cli_native_exact_ruling_reports_pass(git_project, native_measurement, c
     assert findings[0].fingerprint in output.err and "dismissed" in output.err
 
 
-@pytest.mark.parametrize("case", ["unknown", "revoked", "unkeyed", "unbound-diff", "head-drift", "mixed"])
+@pytest.mark.parametrize(
+    "case", ["unknown", "revoked", "unkeyed", "unbound-diff", "head-drift", "mixed"]
+)
 def test_cli_unknown_revoked_and_unbound_measurements_still_fail(
-    git_project, native_measurement, monkeypatch, capsys, case,
+    git_project,
+    native_measurement,
+    monkeypatch,
+    capsys,
+    case,
 ):
     if case == "mixed":
         git_project.mutants["x_example__mutmut_2"] = "survived"
@@ -429,7 +527,9 @@ def test_cli_unknown_revoked_and_unbound_measurements_still_fail(
     if case != "unknown":
         append_row(git_project.root, row)
     if case in {"revoked", "unkeyed"}:
-        append_row(git_project.root, replace(row, suppression_key="" if case == "unkeyed" else "changed"))
+        append_row(
+            git_project.root, replace(row, suppression_key="" if case == "unkeyed" else "changed")
+        )
     argv = ["mutation-check"]
     if case == "unbound-diff":
         patch = git_project.root.parent / "unbound.patch"
@@ -482,10 +582,14 @@ def test_key_writers_bind_source_root_and_append_changed_claim(native_project, n
 
 @pytest.mark.parametrize("changed_shas", [False, True])
 def test_adjudication_retains_key_only_for_same_review_shas(
-    native_project, native_measurement, changed_shas,
+    native_project,
+    native_measurement,
+    changed_shas,
 ):
     findings, _, _ = native_measurement()
-    append_row(native_project.root, matching_row(native_project.root, findings[0], TerminalState.UNADJUDICATED))
+    append_row(
+        native_project.root, matching_row(native_project.root, findings[0], TerminalState.UNADJUDICATED)
+    )
     argv = ["ledger", "adjudicate", findings[0].fingerprint, "DISPROVED", "--evidence", "owned ruling"]
     if changed_shas:
         argv += ["--base-sha", "c" * 40, "--head-sha", "d" * 40]
@@ -496,9 +600,6 @@ def test_adjudication_retains_key_only_for_same_review_shas(
     assert rows[-1].file == rows[0].file and rows[-1].line == rows[0].line
 
 
-
-
-
 def _append_owned_row(project, row):
     root = project.root.absolute()
     assert root.resolve() == root
@@ -507,22 +608,34 @@ def _append_owned_row(project, row):
 
 
 def _record_inventory_observation(project, payload, verdict, errors):
-    (project.state / ".code-forge/inventory-carrier-observation.json").write_text(json.dumps({
-        "inventory": payload["inventory"], "survivors": payload["survivors"],
-        "details": payload["survivor_details"], "verdict": verdict.value,
-        "infra_errors": errors,
-    }))
+    (project.state / ".code-forge/inventory-carrier-observation.json").write_text(
+        json.dumps(
+            {
+                "inventory": payload["inventory"],
+                "survivors": payload["survivors"],
+                "details": payload["survivor_details"],
+                "verdict": verdict.value,
+                "infra_errors": errors,
+            }
+        )
+    )
 
 
 @pytest.mark.parametrize("retained", [1, 0], ids=["missing-second", "missing-all"])
 def test_ci_missing_survived_inventory_identity_cannot_be_erased_by_matching_ruling(
-    native_project, native_measurement, monkeypatch, retained,
+    native_project,
+    native_measurement,
+    monkeypatch,
+    retained,
 ):
     native_project.mutants["x_example__mutmut_2"] = "survived"
     findings, infra, evidence = native_measurement()
     assert infra == [] and evidence["completed_measurement"] is True
     payload = mutation._mutation_outcome(
-        findings, infra, evidence, review_context=bound_context(native_project.root),
+        findings,
+        infra,
+        evidence,
+        review_context=bound_context(native_project.root),
     )
     payload["survivors"] = payload["survivors"][:retained]
     payload["survivor_details"] = payload["survivor_details"][:retained]
@@ -538,12 +651,18 @@ def test_ci_missing_survived_inventory_identity_cannot_be_erased_by_matching_rul
 
 @pytest.mark.parametrize("status", ["pending", "unknown", "not checked", "skipped", "SURVIVED"])
 def test_ci_nonterminal_inventory_cannot_be_erased_by_matching_ruling(
-    native_project, native_measurement, monkeypatch, status,
+    native_project,
+    native_measurement,
+    monkeypatch,
+    status,
 ):
     findings, infra, evidence = native_measurement()
     assert infra == [] and evidence["completed_measurement"] is True
     payload = mutation._mutation_outcome(
-        findings, infra, evidence, review_context=bound_context(native_project.root),
+        findings,
+        infra,
+        evidence,
+        review_context=bound_context(native_project.root),
     )
     payload["inventory"]["calc.x_extra__mutmut_9"] = status
     _append_owned_row(native_project, matching_row(native_project.root, findings[0]))

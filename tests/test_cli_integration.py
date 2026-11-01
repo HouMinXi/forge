@@ -66,7 +66,8 @@ def _write_measured_gate(repo_path):
     forge_dir = repo_path / ".code-forge"
     forge_dir.mkdir(parents=True, exist_ok=True)
     (forge_dir / "gate.yaml").write_text(
-        "test:\n  command: [%s, -m, pytest, -q, -p, no:cacheprovider, test_a.py]\n" % json.dumps(sys.executable)
+        "test:\n  command: [%s, -m, pytest, -q, -p, no:cacheprovider, test_a.py]\n"
+        % json.dumps(sys.executable)
     )
     (repo_path / "test_a.py").write_text("from a import f\n\n\ndef test_f():\n    assert f() == 1\n")
 
@@ -314,8 +315,16 @@ class TestReviewAutoDetect:
             monkeypatch.setattr(
                 sys,
                 "argv",
-                ["code-forge", "--falsification-engine", "stub", "--mode", "ci",
-                 "--test-config-root", str(outside_gate_root(repo)), "a.py"],  # #160
+                [
+                    "code-forge",
+                    "--falsification-engine",
+                    "stub",
+                    "--mode",
+                    "ci",
+                    "--test-config-root",
+                    str(outside_gate_root(repo)),
+                    "a.py",
+                ],  # #160
             )
             monkeypatch.setattr(
                 "code_forge.outlet_resolver.resolve_outlet",
@@ -371,8 +380,16 @@ class TestReviewAutoDetect:
             monkeypatch.setattr(
                 sys,
                 "argv",
-                ["code-forge", "--falsification-engine", "stub", "--mode", "ci",
-                 "--test-config-root", str(outside_gate_root(repo)), "a.py"],  # #160
+                [
+                    "code-forge",
+                    "--falsification-engine",
+                    "stub",
+                    "--mode",
+                    "ci",
+                    "--test-config-root",
+                    str(outside_gate_root(repo)),
+                    "a.py",
+                ],  # #160
             )
             monkeypatch.setattr(
                 "code_forge.outlet_resolver.resolve_outlet",
@@ -659,10 +676,13 @@ class TestCostSummaryStderr:
         def clean_review(prompt, *args, **kwargs):
             return LLMResult(content={"findings": [], "code_excerpts": []})
 
-        with patch(
-            "code_forge.outlet_resolver.resolve_outlet",
-            return_value="subprocess",
-        ), patch("code_forge.llm_invoke.llm_invoke", side_effect=clean_review) as l1:
+        with (
+            patch(
+                "code_forge.outlet_resolver.resolve_outlet",
+                return_value="subprocess",
+            ),
+            patch("code_forge.llm_invoke.llm_invoke", side_effect=clean_review) as l1,
+        ):
             _main()
 
         assert l1.call_count >= 1, "the cost line must come from a completed L1 pass"

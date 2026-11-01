@@ -492,7 +492,11 @@ class TestExcerptFieldAliases:
     def test_root_aliases_get_canonical_fields(self):
         payload = {"findings": [], "code_excerpts": [self._alias_excerpt()]}
         excerpt = validate_reviewer_json(json.dumps(payload))["code_excerpts"][0]
-        assert (excerpt["start_line"], excerpt["end_line"], excerpt["content"]) == (1, 1, "actual_name = 1")
+        assert (excerpt["start_line"], excerpt["end_line"], excerpt["content"]) == (
+            1,
+            1,
+            "actual_name = 1",
+        )
 
     def test_nested_aliases_are_hoisted_then_normalized(self):
         finding = {

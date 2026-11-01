@@ -511,7 +511,7 @@ class TestDoNotFlagIntegration:
         # Level 1: old strict matcher misses it
         lines = content.split("\n")
         dnf_old = ""
-        for i, line in enumerate(lines):
+        for _i, line in enumerate(lines):
             if line.strip().lower() == "## do not flag":
                 dnf_old = line
                 break

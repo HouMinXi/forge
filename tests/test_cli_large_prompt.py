@@ -15,7 +15,7 @@ from code_forge.backend import BackendConfig
 
 # A fake CLI honouring the documented contract: prompt as the positional
 # after -p, or on stdin when no prompt argument is given.
-RECORDER = r'''#!{python}
+RECORDER = r"""#!{python}
 import json, sys
 args = sys.argv[1:]
 prompt = None
@@ -26,7 +26,7 @@ else:
 with open({out!r}, "w") as f:
     json.dump({{"via": via, "len": len(prompt.encode()), "head": prompt[:20], "tail": prompt[-20:], "argv": args[:1] + [a for a in args[1:] if a.startswith("--")]}}, f)
 sys.stdout.write(json.dumps({{"type": "result", "result": json.dumps({{"ok": True}})}}))
-'''
+"""
 
 
 @pytest.fixture
@@ -86,7 +86,9 @@ def test_prompt_via_config():
     from code_forge.backend import load_backend_configs
     from code_forge.errors import CliError
 
-    (cfg,) = load_backend_configs({"backends": {"c": {"type": "cli", "command": "x", "prompt_via": "stdin"}}})
+    (cfg,) = load_backend_configs(
+        {"backends": {"c": {"type": "cli", "command": "x", "prompt_via": "stdin"}}}
+    )
     assert cfg.prompt_via == "stdin"
     (cfg,) = load_backend_configs({"backends": {"c": {"type": "cli", "command": "x"}}})
     assert cfg.prompt_via == "auto"
@@ -96,7 +98,9 @@ def test_prompt_via_config():
 
 def test_custom_proxy_auto_large_prompt_fails_loudly(fake_cli, monkeypatch):
     calls = []
-    monkeypatch.setattr(invoke.subprocess, "Popen", lambda *a, **k: calls.append(a) or pytest.fail("spawned"))
+    monkeypatch.setattr(
+        invoke.subprocess, "Popen", lambda *a, **k: calls.append(a) or pytest.fail("spawned")
+    )
     with pytest.raises(invoke.LLMInvokeError) as caught:
         invoke._invoke_cli("x" * 200_000, _backend(command="/usr/local/bin/my-proxy"), timeout_s=60)
     assert "prompt_via: stdin" in str(caught.value)
@@ -123,7 +127,9 @@ def test_windows_threshold(monkeypatch):
 
 
 def test_windows_mid_size_prompt_uses_stdin_for_claude(fake_cli, monkeypatch):
-    monkeypatch.setattr(invoke, "_argv_prompt_limit", lambda binary="": invoke.CLI_ARGV_PROMPT_LIMIT_WINDOWS)
+    monkeypatch.setattr(
+        invoke, "_argv_prompt_limit", lambda binary="": invoke.CLI_ARGV_PROMPT_LIMIT_WINDOWS
+    )
     invoke._invoke_cli("z" * 20_000, _backend(), timeout_s=60)
     assert json.loads(fake_cli.read_text())["via"] == "stdin"
 
@@ -141,8 +147,14 @@ def test_prompt_via_rejected_on_api_backend():
     from code_forge.backend import load_backend_configs
     from code_forge.errors import CliError
 
-    entry = {"type": "api", "format": "openai", "base_url": "https://example.invalid/v1",
-             "api_key_env": "K", "model": "m", "prompt_via": "stdin"}
+    entry = {
+        "type": "api",
+        "format": "openai",
+        "base_url": "https://example.invalid/v1",
+        "api_key_env": "K",
+        "model": "m",
+        "prompt_via": "stdin",
+    }
     with pytest.raises(CliError, match="only valid on cli"):
         load_backend_configs({"backends": {"a": entry}})
 
@@ -167,7 +179,11 @@ def test_prompt_via_null_means_default_like_other_fields():
     # Same as other optional backend fields (e.g. timeout_s: null -> default).
     from code_forge.backend import load_backend_configs
 
-    (cfg,) = load_backend_configs({"backends": {"c": {"type": "cli", "command": "x", "prompt_via": None}}})
+    (cfg,) = load_backend_configs(
+        {"backends": {"c": {"type": "cli", "command": "x", "prompt_via": None}}}
+    )
     assert cfg.prompt_via == "auto"
-    (other,) = load_backend_configs({"backends": {"c": {"type": "cli", "command": "x", "timeout_s": None}}})
+    (other,) = load_backend_configs(
+        {"backends": {"c": {"type": "cli", "command": "x", "timeout_s": None}}}
+    )
     assert other.timeout_s == 0

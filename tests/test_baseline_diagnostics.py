@@ -44,13 +44,22 @@ def _recording_runner(monkeypatch, root):
             row.update(returncode=result.returncode, stdout=result.stdout, stderr=result.stderr)
             return result
         except (FileNotFoundError, subprocess.TimeoutExpired) as error:
-            row.update(exception=type(error).__name__, stdout=getattr(error, "output", None),
-                       stderr=getattr(error, "stderr", None))
+            row.update(
+                exception=type(error).__name__,
+                stdout=getattr(error, "output", None),
+                stderr=getattr(error, "stderr", None),
+            )
             raise
         finally:
-            row["identities"] = [dict(pid=p.pid, start_ticks=t, returncode=p.poll(),
-                                      identity_closed=t is None or _ticks(p.pid) != t)
-                                 for p, t in processes]
+            row["identities"] = [
+                dict(
+                    pid=p.pid,
+                    start_ticks=t,
+                    returncode=p.poll(),
+                    identity_closed=t is None or _ticks(p.pid) != t,
+                )
+                for p, t in processes
+            ]
             serial = dict(row)
             for key in ("stdout", "stderr"):
                 if isinstance(serial.get(key), bytes):
@@ -69,20 +78,43 @@ def _environment():
 def _failure(root, monkeypatch, argv, *, timeout=10, fingerprint="mutation-flaky"):
     execute, calls = _recording_runner(monkeypatch, root)
     status, findings, infra = _run_baseline_guard(
-        argv, _environment(), str(root), allow_strip_retry=True, timeout=timeout, run_command=execute,
+        argv,
+        _environment(),
+        str(root),
+        allow_strip_retry=True,
+        timeout=timeout,
+        run_command=execute,
     )
     assert status == "skip" and len(calls) == 1 and len(findings) == 1
     finding = findings[0]
-    assert (finding.id, finding.source, finding.disposition, finding.file, finding.line_range,
-            finding.fingerprint) == ("MUTATION_SKIPPED", "MUTANT", Disposition.DISMISSED, "", [], fingerprint)
+    assert (
+        finding.id,
+        finding.source,
+        finding.disposition,
+        finding.file,
+        finding.line_range,
+        finding.fingerprint,
+    ) == ("MUTATION_SKIPPED", "MUTANT", Disposition.DISMISSED, "", [], fingerprint)
     assert infra == [finding.description]
-    assert all(row["returncode"] is not None and row["identity_closed"] for row in calls[0]["identities"])
+    assert all(
+        row["returncode"] is not None and row["identity_closed"] for row in calls[0]["identities"]
+    )
     return finding.description, calls[0]
 
 
-@pytest.mark.parametrize("stream,placement", [
-    (stream, placement) for stream in ("stdout", "stderr") for placement in ("short", "leading", "trailing", "both")
-], ids=[f"{stream}-{placement}" for stream in ("stdout", "stderr") for placement in ("short", "leading", "trailing", "both")])
+@pytest.mark.parametrize(
+    "stream,placement",
+    [
+        (stream, placement)
+        for stream in ("stdout", "stderr")
+        for placement in ("short", "leading", "trailing", "both")
+    ],
+    ids=[
+        f"{stream}-{placement}"
+        for stream in ("stdout", "stderr")
+        for placement in ("short", "leading", "trailing", "both")
+    ],
+)
 def test_real_python_diagnostic(tmp_path, monkeypatch, stream, placement):
     payload = f"import sys\ns = sys.{stream}\n"
     if placement in ("leading", "both"):
@@ -97,9 +129,19 @@ def test_real_python_diagnostic(tmp_path, monkeypatch, stream, placement):
     assert CAUSE in detail, "baseline diagnostic missing"
 
 
-@pytest.mark.parametrize("kind,placement", [
-    (kind, placement) for kind in ("assertion", "setup", "collection") for placement in ("leading", "trailing")
-], ids=[f"{kind}-{placement}" for kind in ("assertion", "setup", "collection") for placement in ("leading", "trailing")])
+@pytest.mark.parametrize(
+    "kind,placement",
+    [
+        (kind, placement)
+        for kind in ("assertion", "setup", "collection")
+        for placement in ("leading", "trailing")
+    ],
+    ids=[
+        f"{kind}-{placement}"
+        for kind in ("assertion", "setup", "collection")
+        for placement in ("leading", "trailing")
+    ],
+)
 def test_real_pytest_diagnostic(tmp_path, monkeypatch, kind, placement):
     marker = f"diagnostic-{kind}-322"
     body = {
@@ -109,9 +151,24 @@ def test_real_pytest_diagnostic(tmp_path, monkeypatch, kind, placement):
     }[kind]
     (tmp_path / "test_probe.py").write_text(body)
     (tmp_path / "pytest.ini").write_text("[pytest]\n")
-    child_argv = [sys.executable, "-B", "-m", "pytest", "-q", "--tb=short", "--color=no",
-                  "-c", str(tmp_path / "pytest.ini"), "--confcutdir", str(tmp_path),
-                  "-p", "no:cacheprovider", "--junitxml", str(tmp_path / "child-junit.xml"), "test_probe.py"]
+    child_argv = [
+        sys.executable,
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "--color=no",
+        "-c",
+        str(tmp_path / "pytest.ini"),
+        "--confcutdir",
+        str(tmp_path),
+        "-p",
+        "no:cacheprovider",
+        "--junitxml",
+        str(tmp_path / "child-junit.xml"),
+        "test_probe.py",
+    ]
     launcher = (
         "import json, pathlib, subprocess, sys\n"
         f"placement = {placement!r}\n"
@@ -160,8 +217,13 @@ def test_physical_failure_wiring(tmp_path, monkeypatch, kind):
         assert marker in detail, "runner-start detail lost"
     elif kind == "timeout":
         payload = f"import time\nprint('ERROR: {marker}', flush=True)\ntime.sleep(20)\n"
-        detail, raw = _failure(tmp_path, monkeypatch, [sys.executable, "-B", "-c", payload],
-                               timeout=2, fingerprint="mutation-baseline-timeout")
+        detail, raw = _failure(
+            tmp_path,
+            monkeypatch,
+            [sys.executable, "-B", "-c", payload],
+            timeout=2,
+            fingerprint="mutation-baseline-timeout",
+        )
         assert raw["exception"] == "TimeoutExpired" and marker in raw["stdout"].decode()
         assert "timed out after 2s" in detail
         assert marker in detail, "timeout detail lost"
@@ -172,34 +234,61 @@ def test_physical_failure_wiring(tmp_path, monkeypatch, kind):
         assert marker in detail, "nonzero detail lost"
 
 
-@pytest.mark.parametrize("stderr,stdout,expected", [
-    ("err", "out", "; stderr: err; stdout: out"),
-    (None, None, ""),
-    (" \n\t", " ", ""),
-    (b"err\xff\n x", b"out\xfe\t y", "; stderr: err\ufffd x; stdout: out\ufffd y"),
-    (" err\n x ", "out\t y", "; stderr: err x; stdout: out y"),
-    ("y" * 250, "x" * 250, "; stderr: " + "y" * 200 + "; stdout: " + "x" * 200),
-    (None, "." * 250 + "\nERROR heading\nValueError: exception\nE first cause\nE second cause\n",
-     "; stdout: E first cause"),
-    ("." * 250 + "\nValueError: " + "s" * 250, "." * 250 + "\nERROR: " + "o" * 250,
-     "; stderr: " + ("ValueError: " + "s" * 250)[:200] + "; stdout: " + ("ERROR: " + "o" * 250)[:200]),
-], ids=["mixed-short", "none", "blank", "bytes", "whitespace", "fallback", "priority", "independent-caps"])
+@pytest.mark.parametrize(
+    "stderr,stdout,expected",
+    [
+        ("err", "out", "; stderr: err; stdout: out"),
+        (None, None, ""),
+        (" \n\t", " ", ""),
+        (b"err\xff\n x", b"out\xfe\t y", "; stderr: err\ufffd x; stdout: out\ufffd y"),
+        (" err\n x ", "out\t y", "; stderr: err x; stdout: out y"),
+        ("y" * 250, "x" * 250, "; stderr: " + "y" * 200 + "; stdout: " + "x" * 200),
+        (
+            None,
+            "." * 250 + "\nERROR heading\nValueError: exception\nE first cause\nE second cause\n",
+            "; stdout: E first cause",
+        ),
+        (
+            "." * 250 + "\nValueError: " + "s" * 250,
+            "." * 250 + "\nERROR: " + "o" * 250,
+            "; stderr: "
+            + ("ValueError: " + "s" * 250)[:200]
+            + "; stdout: "
+            + ("ERROR: " + "o" * 250)[:200],
+        ),
+    ],
+    ids=[
+        "mixed-short",
+        "none",
+        "blank",
+        "bytes",
+        "whitespace",
+        "fallback",
+        "priority",
+        "independent-caps",
+    ],
+)
 def test_formatter_compatibility(stderr, stdout, expected):
     detail = _output_detail(stderr, stdout)
     assert detail == expected and len(detail) <= 420
 
 
-@pytest.mark.parametrize("stream,placement", [
-    (stream, placement) for stream in ("stdout", "stderr") for placement in ("leading", "trailing")
-], ids=[f"{stream}-{placement}" for stream in ("stdout", "stderr") for placement in ("leading", "trailing")])
+@pytest.mark.parametrize(
+    "stream,placement",
+    [(stream, placement) for stream in ("stdout", "stderr") for placement in ("leading", "trailing")],
+    ids=[
+        f"{stream}-{placement}"
+        for stream in ("stdout", "stderr")
+        for placement in ("leading", "trailing")
+    ],
+)
 def test_real_python_bare_exception(tmp_path, monkeypatch, stream, placement):
     marker = "diagnostic-base-exception"
     payload = f"import sys, traceback\ns = sys.{stream}\n"
     if placement == "leading":
         payload += "print('.' * 250, file=s, flush=True)\n"
     payload += (
-        f"try:\n    raise Exception({marker!r})\n"
-        "except Exception:\n    traceback.print_exc(file=s)\n"
+        f"try:\n    raise Exception({marker!r})\nexcept Exception:\n    traceback.print_exc(file=s)\n"
     )
     if placement == "trailing":
         payload += "print('.' * 250, file=s, flush=True)\n"
@@ -208,13 +297,24 @@ def test_real_python_bare_exception(tmp_path, monkeypatch, stream, placement):
     assert raw["returncode"] == 1 and marker in raw[stream]
     assert "Traceback (most recent call last):" in raw[stream]
     assert "baseline failed" in detail and "returncode 1" in detail
-    assert detail == f"run 1: baseline failed (returncode 1); {stream}: Exception: {marker}", "bare exception diagnostic missing"
+    assert detail == f"run 1: baseline failed (returncode 1); {stream}: Exception: {marker}", (
+        "bare exception diagnostic missing"
+    )
 
 
-@pytest.mark.parametrize("kind", ["StopIteration", "StopAsyncIteration", "GeneratorExit", "Aborted", "ExceptionGroup", "chain"])
-@pytest.mark.parametrize("stream,placement", [
-    (stream, placement) for stream in ("stdout", "stderr") for placement in ("leading", "trailing")
-], ids=[f"{stream}-{placement}" for stream in ("stdout", "stderr") for placement in ("leading", "trailing")])
+@pytest.mark.parametrize(
+    "kind",
+    ["StopIteration", "StopAsyncIteration", "GeneratorExit", "Aborted", "ExceptionGroup", "chain"],
+)
+@pytest.mark.parametrize(
+    "stream,placement",
+    [(stream, placement) for stream in ("stdout", "stderr") for placement in ("leading", "trailing")],
+    ids=[
+        f"{stream}-{placement}"
+        for stream in ("stdout", "stderr")
+        for placement in ("leading", "trailing")
+    ],
+)
 def test_real_python_traceback_terminal(tmp_path, monkeypatch, kind, stream, placement):
     marker = f"diagnostic-{kind}"
     payload = f"import sys, traceback\ns = sys.{stream}\nclass Aborted(Exception):\n    pass\n"
@@ -238,43 +338,68 @@ def test_real_python_traceback_terminal(tmp_path, monkeypatch, kind, stream, pla
     detail, raw = _failure(tmp_path, monkeypatch, [sys.executable, "-B", "-c", payload])
     assert raw["returncode"] == 1 and summary in raw[stream]
     assert "Traceback (most recent call last):" in raw[stream]
-    assert detail == f"run 1: baseline failed (returncode 1); {stream}: {summary}", "traceback terminal cause missing"
+    assert detail == f"run 1: baseline failed (returncode 1); {stream}: {summary}", (
+        "traceback terminal cause missing"
+    )
 
 
 @pytest.mark.parametrize("stream", ["stderr", "stdout"])
-@pytest.mark.parametrize("content,expected", [
-    ("INFO: preparation complete\n", "." * 200),
-    ("metadata: revision abc123\n", "." * 200),
-    ("    Aborted: source-looking label\n", "." * 200),
-    ("Traceback (most recent call last):\nINFO: no frame\n", "Traceback (most recent call last):"),
-    ('  File "probe.py", line 1, in run\nAborted: orphan frame\n', "." * 200),
-    ('  + Exception Group Traceback (most recent call last):\nINFO: broken margin\n  |   File "probe.py", line 1, in run\n  | Aborted: orphan group\n', "." * 200),
-], ids=["info", "metadata", "indented-source", "header-only", "orphan-frame", "broken-group-margin"])
+@pytest.mark.parametrize(
+    "content,expected",
+    [
+        ("INFO: preparation complete\n", "." * 200),
+        ("metadata: revision abc123\n", "." * 200),
+        ("    Aborted: source-looking label\n", "." * 200),
+        ("Traceback (most recent call last):\nINFO: no frame\n", "Traceback (most recent call last):"),
+        ('  File "probe.py", line 1, in run\nAborted: orphan frame\n', "." * 200),
+        (
+            '  + Exception Group Traceback (most recent call last):\nINFO: broken margin\n  |   File "probe.py", line 1, in run\n  | Aborted: orphan group\n',
+            "." * 200,
+        ),
+    ],
+    ids=["info", "metadata", "indented-source", "header-only", "orphan-frame", "broken-group-margin"],
+)
 def test_non_traceback_colons(stream, content, expected):
     channels = {"stderr": None, "stdout": None, stream: "." * 250 + "\n" + content}
     assert _output_detail(**channels) == f"; {stream}: {expected}"
 
 
-@pytest.mark.parametrize("stream,placement", [
-    (stream, placement) for stream in ("stdout", "stderr") for placement in ("leading", "trailing")
-], ids=[f"{stream}-{placement}" for stream in ("stdout", "stderr") for placement in ("leading", "trailing")])
+@pytest.mark.parametrize(
+    "stream,placement",
+    [(stream, placement) for stream in ("stdout", "stderr") for placement in ("leading", "trailing")],
+    ids=[
+        f"{stream}-{placement}"
+        for stream in ("stdout", "stderr")
+        for placement in ("leading", "trailing")
+    ],
+)
 def test_real_python_empty_traceback(tmp_path, monkeypatch, stream, placement):
     payload = f"import sys, traceback\ns = sys.{stream}\n"
     if placement == "leading":
         payload += "print('.' * 250, file=s, flush=True)\n"
-    payload += "try:\n    raise GeneratorExit()\nexcept BaseException:\n    traceback.print_exc(file=s)\n"
+    payload += (
+        "try:\n    raise GeneratorExit()\nexcept BaseException:\n    traceback.print_exc(file=s)\n"
+    )
     if placement == "trailing":
         payload += "print('.' * 250, file=s, flush=True)\n"
     payload += "sys.exit(1)\n"
     detail, raw = _failure(tmp_path, monkeypatch, [sys.executable, "-B", "-c", payload])
     assert raw["returncode"] == 1 and "\nGeneratorExit\n" in raw[stream]
-    assert detail == f"run 1: baseline failed (returncode 1); {stream}: GeneratorExit", "traceback terminal cause missing"
+    assert detail == f"run 1: baseline failed (returncode 1); {stream}: GeneratorExit", (
+        "traceback terminal cause missing"
+    )
 
 
 @pytest.mark.parametrize("blank_lines", [1, 2])
-@pytest.mark.parametrize("stream,placement", [
-    (stream, placement) for stream in ("stdout", "stderr") for placement in ("leading", "trailing")
-], ids=[f"{stream}-{placement}" for stream in ("stdout", "stderr") for placement in ("leading", "trailing")])
+@pytest.mark.parametrize(
+    "stream,placement",
+    [(stream, placement) for stream in ("stdout", "stderr") for placement in ("leading", "trailing")],
+    ids=[
+        f"{stream}-{placement}"
+        for stream in ("stdout", "stderr")
+        for placement in ("leading", "trailing")
+    ],
+)
 def test_real_python_blank_first_message(tmp_path, monkeypatch, blank_lines, stream, placement):
     marker = "diagnostic-newline-message"
     message = "\n" * blank_lines + marker
@@ -287,4 +412,6 @@ def test_real_python_blank_first_message(tmp_path, monkeypatch, blank_lines, str
     payload += "sys.exit(1)\n"
     detail, raw = _failure(tmp_path, monkeypatch, [sys.executable, "-B", "-c", payload])
     assert raw["returncode"] == 1 and f"StopIteration: {message}\n" in raw[stream]
-    assert detail == f"run 1: baseline failed (returncode 1); {stream}: StopIteration: {marker}", "empty message cause missing"
+    assert detail == f"run 1: baseline failed (returncode 1); {stream}: StopIteration: {marker}", (
+        "empty message cause missing"
+    )

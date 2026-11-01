@@ -137,13 +137,15 @@ class TestEnvReachesPoolChild:
         # and arm 3 silently replayed it.
         seen = []
         with ProcessPoolExecutor(max_workers=1) as ex:
-            for depth in ("1", "3"):
-                seen.append(
+            seen.extend(
+                (
                     ex.submit(
                         _apply_and_read,
                         {"FORGE_CLEAN_ROUND_THRESHOLD": depth},
                     ).result()
                 )
+                for depth in ("1", "3")
+            )
         assert seen == ["1", "3"], (
             "second arm saw %r; a stale value means arms are not independent" % seen
         )

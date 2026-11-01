@@ -39,7 +39,9 @@ def default_sigint():
 
 
 def _child(**kwargs):
-    return subprocess.run([sys.executable, "-c", PROBE], capture_output=True, text=True, **kwargs).stdout.strip()
+    return subprocess.run(
+        [sys.executable, "-c", PROBE], capture_output=True, text=True, **kwargs
+    ).stdout.strip()
 
 
 def test_inherited_sig_ign_reaches_an_unprotected_child(ignored_sigint):

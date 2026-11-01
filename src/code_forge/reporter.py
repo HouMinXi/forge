@@ -56,14 +56,13 @@ def format_report(
         lines.append("")
 
         # Show violations
-        for f in delta_violations:
-            lines.append(
-                "  %s:%d: [%s/%s] %s: %s" % (f.file, f.line, f.tool_name, f.rule_id, f.level, f.message)
-            )
+        lines.extend(
+            ("  %s:%d: [%s/%s] %s: %s" % (f.file, f.line, f.tool_name, f.rule_id, f.level, f.message))
+            for f in delta_violations
+        )
 
         # Show tool errors
-        for e in delta_errors:
-            lines.append("  [%s] ERROR: %s" % (e.tool_name, e.message))
+        lines.extend(("  [%s] ERROR: %s" % (e.tool_name, e.message)) for e in delta_errors)
 
         lines.append("")
 
@@ -104,7 +103,6 @@ def format_report(
     if tool_versions:
         lines.append("")
         lines.append("tool versions:")
-        for name in sorted(tool_versions.keys()):
-            lines.append("  %s: %s" % (name, tool_versions[name]))
+        lines.extend(("  %s: %s" % (name, tool_versions[name])) for name in sorted(tool_versions.keys()))
 
     return "\n".join(lines)

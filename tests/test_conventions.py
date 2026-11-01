@@ -99,9 +99,7 @@ class TestGetDigest:
         monkeypatch.delattr(os, "O_SEARCH", raising=False)
         assert "portable_name" in get_same_repo_digest(tmp_path)
 
-    def test_portable_component_walk_rejects_transient_outside_link(
-        self, tmp_path, monkeypatch
-    ):
+    def test_portable_component_walk_rejects_transient_outside_link(self, tmp_path, monkeypatch):
         from code_forge import conventions
 
         root = tmp_path / "repo"
@@ -190,9 +188,7 @@ class TestGetDigest:
         def move_root_before_leaf(path, flags, *args, **kwargs):
             if path == "api.py" and kwargs.get("dir_fd") is not None and not swaps:
                 root.rename(moved)
-                (moved / "src" / "sub" / "api.py").write_text(
-                    "def outside_name(): pass\n"
-                )
+                (moved / "src" / "sub" / "api.py").write_text("def outside_name(): pass\n")
                 swaps.append(1)
             return original_open(path, flags, *args, **kwargs)
 
@@ -204,9 +200,7 @@ class TestGetDigest:
                 assert conventions._read_regular_text(source, scan_root=root) is None
         finally:
             if moved.exists():
-                (moved / "src" / "sub" / "api.py").write_text(
-                    "def inside_name(): pass\n"
-                )
+                (moved / "src" / "sub" / "api.py").write_text("def inside_name(): pass\n")
                 moved.rename(root)
         assert swaps == [1]
 
@@ -235,9 +229,7 @@ class TestGetDigest:
             assert conventions._read_regular_text(source, scan_root=root) is None
         assert deletions == [1]
 
-    def test_portable_open_rejects_stale_reported_leaf_path(
-        self, tmp_path, monkeypatch
-    ):
+    def test_portable_open_rejects_stale_reported_leaf_path(self, tmp_path, monkeypatch):
         from code_forge import conventions
 
         root = tmp_path / "repo"
@@ -267,9 +259,7 @@ class TestGetDigest:
         assert replacements == [1]
         assert "replacement_name" in get_same_repo_digest(root)
 
-    def test_portable_nested_open_fails_closed_without_fd_paths(
-        self, tmp_path, monkeypatch
-    ):
+    def test_portable_nested_open_fails_closed_without_fd_paths(self, tmp_path, monkeypatch):
         from code_forge import conventions
 
         root = tmp_path / "repo"
@@ -289,7 +279,8 @@ class TestGetDigest:
             )
 
     @pytest.mark.skipif(
-        sys.platform not in ("linux", "darwin"), reason="requires final fd paths",
+        sys.platform not in ("linux", "darwin"),
+        reason="requires final fd paths",
     )
     def test_portable_clean_nested_source_keeps_name(self, tmp_path, monkeypatch):
         from code_forge import conventions
@@ -308,7 +299,9 @@ class TestGetDigest:
 
         monkeypatch.setattr(fcntl, "F_GETPATH", 50, raising=False)
         monkeypatch.setattr(
-            fcntl, "fcntl", lambda _fd, _command, _buffer: b"/tmp/api.py\0".ljust(1024, b"\0"),
+            fcntl,
+            "fcntl",
+            lambda _fd, _command, _buffer: b"/tmp/api.py\0".ljust(1024, b"\0"),
         )
         assert conventions._darwin_opened_fd_path(7) == Path("/tmp/api.py")
         with monkeypatch.context() as patcher:
@@ -317,7 +310,9 @@ class TestGetDigest:
         monkeypatch.setattr(fcntl, "fcntl", lambda _fd, _command, _buffer: b"x" * 1024)
         assert conventions._darwin_opened_fd_path(7) is None
         monkeypatch.setattr(
-            fcntl, "fcntl", lambda _fd, _command, _buffer: b"relative.py\0".ljust(1024, b"\0"),
+            fcntl,
+            "fcntl",
+            lambda _fd, _command, _buffer: b"relative.py\0".ljust(1024, b"\0"),
         )
         assert conventions._darwin_opened_fd_path(7) is None
 
@@ -330,9 +325,7 @@ class TestGetDigest:
         assert conventions._darwin_opened_fd_path(7) is None
 
     @pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="requires fd-path probe")
-    def test_unbound_handle_path_fallback_keeps_names_and_rejects_outside(
-        self, tmp_path, monkeypatch
-    ):
+    def test_unbound_handle_path_fallback_keeps_names_and_rejects_outside(self, tmp_path, monkeypatch):
         from code_forge import conventions
 
         root = tmp_path / "repo"
@@ -344,7 +337,8 @@ class TestGetDigest:
         monkeypatch.setattr(conventions, "_open_scan_root", lambda _root: None)
         monkeypatch.setattr(conventions, "_path_fallback_supported", lambda: True)
         monkeypatch.setattr(
-            conventions, "_opened_file_path",
+            conventions,
+            "_opened_file_path",
             lambda fd: Path(os.readlink(f"/proc/self/fd/{fd}")),
         )
         assert "inside_name" in get_same_repo_digest(root)
@@ -372,9 +366,7 @@ class TestGetDigest:
         assert swaps == [1]
         assert "outside_name" not in get_same_repo_digest(root)
 
-    def test_walk_marks_visited_child_with_changed_inode_incomplete(
-        self, tmp_path, monkeypatch
-    ):
+    def test_walk_marks_visited_child_with_changed_inode_incomplete(self, tmp_path, monkeypatch):
         from code_forge import conventions
 
         root = tmp_path / "root"
@@ -550,9 +542,7 @@ class TestExtractPythonPublicNames:
         assert moves == [True]
         assert status.complete is False
 
-    def test_walk_rejects_child_move_restore_after_parent_yield(
-        self, tmp_path, monkeypatch
-    ):
+    def test_walk_rejects_child_move_restore_after_parent_yield(self, tmp_path, monkeypatch):
         from code_forge import conventions
 
         root = tmp_path / "repo"
@@ -608,9 +598,7 @@ class TestExtractPythonPublicNames:
         finally:
             os.close(root_fd)
 
-    def test_listed_file_disappearing_before_roster_stat_marks_incomplete(
-        self, tmp_path, monkeypatch
-    ):
+    def test_listed_file_disappearing_before_roster_stat_marks_incomplete(self, tmp_path, monkeypatch):
         from code_forge import conventions
 
         root = tmp_path / "repo"
@@ -692,7 +680,9 @@ class TestExtractPythonPublicNames:
         try:
             rows = list(conventions._walk_source(tmp_path / "src", tmp_path, root_fd, None))
             names = conventions._extract_python_public_names(
-                tmp_path, scan_root=tmp_path, scan_root_fd=root_fd,
+                tmp_path,
+                scan_root=tmp_path,
+                scan_root_fd=root_fd,
             )
         finally:
             os.close(root_fd)
@@ -701,9 +691,7 @@ class TestExtractPythonPublicNames:
         assert isinstance(names, tuple) and len(names) == 2
         assert names == (["NestedName"], [])
 
-    def test_observed_src_symlink_target_stat_failure_marks_incomplete(
-        self, tmp_path, monkeypatch
-    ):
+    def test_observed_src_symlink_target_stat_failure_marks_incomplete(self, tmp_path, monkeypatch):
         from code_forge import conventions
 
         actual = tmp_path / "actual"
@@ -727,7 +715,10 @@ class TestExtractPythonPublicNames:
                 patcher.setattr(os, "stat", fail_target_stat)
                 patcher.setattr(conventions, "_walk_source", lambda *_args: iter(()))
                 conventions._extract_python_public_names(
-                    tmp_path, scan_status=status, scan_root=tmp_path, scan_root_fd=root_fd,
+                    tmp_path,
+                    scan_status=status,
+                    scan_root=tmp_path,
+                    scan_root_fd=root_fd,
                 )
         finally:
             os.close(root_fd)
@@ -892,9 +883,7 @@ class TestRegularFileDiscovery:
         }
         (sibling / ("ordinary" + extensions[language])).write_text(contents[language])
         (cwd / ".code-forge").mkdir()
-        (cwd / ".code-forge" / "conventions.yaml").write_text(
-            json.dumps({"siblings": ["../sibling"]})
-        )
+        (cwd / ".code-forge" / "conventions.yaml").write_text(json.dumps({"siblings": ["../sibling"]}))
         return cwd, sibling, extensions[language]
 
     @pytest.mark.parametrize("language", ["python", "js", "go", "rust"])
@@ -914,8 +903,12 @@ class TestRegularFileDiscovery:
         fifo = sibling / ("blocked" + extension)
         os.mkfifo(fifo)
         before = fifo.stat()
-        print(json.dumps({"fifo": str(fifo), "inode": before.st_ino,
-                          "mode": before.st_mode, "language": language}), flush=True)
+        print(
+            json.dumps(
+                {"fifo": str(fifo), "inode": before.st_ino, "mode": before.st_mode, "language": language}
+            ),
+            flush=True,
+        )
         digest = get_digest(cwd)
         assert "ordinary_local" in digest
         assert ("OrdinarySibling" if language == "go" else "ordinary_sibling") in digest
@@ -923,17 +916,18 @@ class TestRegularFileDiscovery:
         assert stat.S_ISFIFO(after.st_mode)
         assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
 
-
     @pytest.mark.parametrize("language", ["python", "js", "go", "rust"])
     def test_public_digest_checks_opened_file_size(self, tmp_path, monkeypatch, language):
         from code_forge import conventions
 
         cwd, sibling, extension = self._repos(tmp_path, language)
         changed = sibling / ("growing" + extension)
-        declarations = {"python": "def oversized_name(): pass\n",
-                        "js": "export function oversized_name() {}\n",
-                        "go": "func OversizedName() {}\n",
-                        "rust": "pub fn oversized_name() {}\n"}
+        declarations = {
+            "python": "def oversized_name(): pass\n",
+            "js": "export function oversized_name() {}\n",
+            "go": "func OversizedName() {}\n",
+            "rust": "pub fn oversized_name() {}\n",
+        }
         changed.write_text(declarations[language])
         original_open = conventions._open_beneath
         replacements = []
@@ -953,9 +947,7 @@ class TestRegularFileDiscovery:
 
 
 class TestRootBoundScans:
-    def test_ancestor_moved_outside_before_leaf_open_omits_outside_inode(
-        self, tmp_path, monkeypatch
-    ):
+    def test_ancestor_moved_outside_before_leaf_open_omits_outside_inode(self, tmp_path, monkeypatch):
         from code_forge import conventions
 
         root = tmp_path / "repo"
@@ -982,9 +974,7 @@ class TestRootBoundScans:
         assert "outside_only_name" not in digest
 
     @pytest.mark.parametrize("missing", ["no-follow", "dir-fd"])
-    def test_missing_secure_rooted_open_capability_fails_closed(
-        self, tmp_path, monkeypatch, missing
-    ):
+    def test_missing_secure_rooted_open_capability_fails_closed(self, tmp_path, monkeypatch, missing):
         from code_forge import conventions
 
         root = tmp_path / "root"
@@ -1102,12 +1092,11 @@ class TestRootBoundScans:
         assert "outside_name" not in digest
         assert "ordinary_local" in digest
 
+
 @pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="requires POSIX permissions")
 class TestSearchOnlyAncestors:
     @pytest.mark.parametrize("case", ["same-python", "cross-python", "js", "go", "rust"])
-    def test_public_digest_reads_beneath_search_only_ancestor(
-        self, tmp_path, case
-    ):
+    def test_public_digest_reads_beneath_search_only_ancestor(self, tmp_path, case):
         language = "python" if case.endswith("python") else case
         ancestor = tmp_path / "search_only"
         ancestor.mkdir()
@@ -1259,10 +1248,20 @@ class TestRegularTextReader:
             os.close(descriptors[0])
         assert error.value.errno == errno.EBADF
 
-    @pytest.mark.parametrize("branch", ["regular", "oversize",
-                                       pytest.param("directory", marks=pytest.mark.skipif(
-                                           os.name == "nt", reason="requires directory descriptors")),
-                                       "decode_error", "fstat_error", "stream_error"])
+    @pytest.mark.parametrize(
+        "branch",
+        [
+            "regular",
+            "oversize",
+            pytest.param(
+                "directory",
+                marks=pytest.mark.skipif(os.name == "nt", reason="requires directory descriptors"),
+            ),
+            "decode_error",
+            "fstat_error",
+            "stream_error",
+        ],
+    )
     def test_descriptor_closes_on_every_branch(self, tmp_path, monkeypatch, branch):
         import errno
         from code_forge.conventions import _read_regular_text
@@ -1282,12 +1281,16 @@ class TestRegularTextReader:
 
         monkeypatch.setattr(os, "open", tracked_open)
         if branch == "fstat_error":
+
             def broken_fstat(fd):
                 raise OSError(errno.EIO, "unreadable descriptor")
+
             monkeypatch.setattr(os, "fstat", broken_fstat)
         if branch == "stream_error":
+
             def broken_stream(*args, **kwargs):
                 raise RuntimeError("unexpected stream bug")
+
             monkeypatch.setattr(os, "fdopen", broken_stream)
         if branch == "decode_error":
             with pytest.raises(UnicodeDecodeError):
@@ -1313,10 +1316,12 @@ class TestRegularTextReader:
         os.mkfifo(fifo)
         actual_open = os.open
         captured = []
+
         def tracked_open(*args, **kwargs):
             fd = actual_open(*args, **kwargs)
             captured.append(fd)
             return fd
+
         monkeypatch.setattr(os, "open", tracked_open)
         assert _read_regular_text(fifo) is None
         assert len(captured) == 1

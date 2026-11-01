@@ -115,11 +115,7 @@ def test_run_estimates_with_exactly_the_lens_helper_text():
     assert _is_name(on.value.func, "estimate_lens_text")
     assert not on.value.args and not on.value.keywords
     assert isinstance(off.value, ast.Constant) and off.value.value == ""
-    imports = [
-        n
-        for n in ast.walk(branch)
-        if isinstance(n, ast.ImportFrom) and n.module == "lenses"
-    ]
+    imports = [n for n in ast.walk(branch) if isinstance(n, ast.ImportFrom) and n.module == "lenses"]
     assert [a.name for i in imports for a in i.names] == ["estimate_lens_text"]
 
 

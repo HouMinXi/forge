@@ -27,8 +27,24 @@ from code_forge import mcp_jobs, mcp_server as server
 TOOLS = ("forge_review", "forge_gate_check")
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src"
 INVALID = (
-    False, True, "1", "", 0, -1, float("nan"), float("inf"), -float("inf"), [], {},
-    "null", " null ", "\tnull\r\n", "true", "false", "[]", "{}",
+    False,
+    True,
+    "1",
+    "",
+    0,
+    -1,
+    float("nan"),
+    float("inf"),
+    -float("inf"),
+    [],
+    {},
+    "null",
+    " null ",
+    "\tnull\r\n",
+    "true",
+    "false",
+    "[]",
+    "{}",
 )
 
 
@@ -113,12 +129,16 @@ async def test_concurrent_timeout_isolation(preflight, monkeypatch):
         server.forge_gate_check(timeout_s=31),
         server.forge_review(),
     )
-    assert sorted(seen) == sorted([("review", 0.3, 0.3), ("gate-check", 31, 31), ("review", 444.0, None)])
+    assert sorted(seen) == sorted(
+        [("review", 0.3, 0.3), ("gate-check", 31, 31), ("review", 444.0, None)]
+    )
     assert os.environ["FORGE_MCP_JOB_TIMEOUT_S"] == "444"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("limit,elapsed,remaining", [(50.0, 20.0, 30.0), (0.5, 0.5, 0.0), (0.5, 0.7, 0.0)])
+@pytest.mark.parametrize(
+    "limit,elapsed,remaining", [(50.0, 20.0, 30.0), (0.5, 0.5, 0.0), (0.5, 0.7, 0.0)]
+)
 async def test_dispatch_handoff_uses_one_deadline(tmp_path, monkeypatch, limit, elapsed, remaining):
     clock = SimpleNamespace(now=100.0)
     monkeypatch.setattr(server, "time", SimpleNamespace(monotonic=lambda: clock.now))
@@ -272,7 +292,9 @@ async def test_real_sdk_inline_with_timeout(owned_cli, name):
 async def test_real_legacy_relative_cap_keeps_diagnostic(owned_cli):
     root, processes, paths, _, _ = owned_cli
     communication, process, stderr_path = await server._run_cli_budgeted(
-        "review", workspace=root, budget=0.01,
+        "review",
+        workspace=root,
+        budget=0.01,
     )
     job_id = mcp_jobs.start_job(communication, process, max_lifetime_s=1.2, stderr_log_path=stderr_path)
     job = mcp_jobs.get_job(job_id)
@@ -363,16 +385,26 @@ async def wire_server(tmp_path):
     )
     env = dict(os.environ)
     env.update(
-        HOME=str(tmp_path / "home"), XDG_CONFIG_HOME=str(tmp_path / "config"),
+        HOME=str(tmp_path / "home"),
+        XDG_CONFIG_HOME=str(tmp_path / "config"),
         FORGE_PROJECT_DIR=str(tmp_path),
-        PYTHONPATH=os.pathsep.join([str(SOURCE_ROOT),
-                                   *[p for p in sys.path if p and "site-packages" in p]]),
+        PYTHONPATH=os.pathsep.join(
+            [str(SOURCE_ROOT), *[p for p in sys.path if p and "site-packages" in p]]
+        ),
     )
     env.pop("FORGE_OUTLET", None)
     with (tmp_path / "server-stderr.txt").open("wb") as stderr:
         process = await asyncio.create_subprocess_exec(
-            sys.executable, "-B", "-u", "-c", bootstrap, cwd=tmp_path, env=env,
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=stderr,
+            sys.executable,
+            "-B",
+            "-u",
+            "-c",
+            bootstrap,
+            cwd=tmp_path,
+            env=env,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=stderr,
         )
 
         async def send(message):
@@ -387,11 +419,18 @@ async def wire_server(tmp_path):
             return json.loads(line)
 
         try:
-            reply = await request({
-                "jsonrpc": "2.0", "id": 0, "method": "initialize",
-                "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                           "clientInfo": {"name": "timeout-wire", "version": "1"}},
-            })
+            reply = await request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "timeout-wire", "version": "1"},
+                    },
+                }
+            )
             assert reply["id"] == 0 and "result" in reply
             await send({"jsonrpc": "2.0", "method": "notifications/initialized"})
             yield request, observations
@@ -411,7 +450,7 @@ async def test_stdio_rejects_nonfinite_before_sdk_dump(wire_server, name):
     for request_id, token in enumerate(("1e309", "-1e309", "NaN", "Infinity", "-Infinity"), 1):
         reply = await request(
             '{"jsonrpc":"2.0","id":' + str(request_id) + ',"method":"tools/call",'
-            '"params":{"name":' + json.dumps(name) + ',"arguments":{"timeout_s":' + token + '}}}'
+            '"params":{"name":' + json.dumps(name) + ',"arguments":{"timeout_s":' + token + "}}}"
         )
         assert reply["id"] == request_id
         assert reply.get("error", {}).get("code") == -32602, reply
@@ -419,14 +458,26 @@ async def test_stdio_rejects_nonfinite_before_sdk_dump(wire_server, name):
         assert not observations.exists(), "invalid timeout entered workspace preflight"
 
     for request_id, malformed_name in enumerate(([], {}), 10):
-        reply = await request({"jsonrpc": "2.0", "id": request_id, "method": "tools/call",
-                               "params": {"name": malformed_name, "arguments": {"timeout_s": 1}}})
+        reply = await request(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/call",
+                "params": {"name": malformed_name, "arguments": {"timeout_s": 1}},
+            }
+        )
         assert reply["id"] == request_id and reply.get("error", {}).get("code") == -32602
         assert not observations.exists()
 
     for request_id, arguments in enumerate(({}, {"timeout_s": None}, {"timeout_s": 1}), 20):
-        reply = await request({"jsonrpc": "2.0", "id": request_id, "method": "tools/call",
-                               "params": {"name": name, "arguments": arguments}})
+        reply = await request(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            }
+        )
         assert reply["id"] == request_id and "error" not in reply
         assert not reply["result"].get("isError", False), reply
         result = reply["result"]["structuredContent"]
@@ -439,20 +490,31 @@ async def test_stdio_rejects_nonfinite_before_sdk_dump(wire_server, name):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("params", [
-    None, {"name": []}, {"name": {}}, {"name": "forge_init", "arguments": {"timeout_s": float("inf")}},
-    {"name": "forge_review"}, {"name": "forge_review", "arguments": []},
-    {"name": "forge_review", "arguments": {}},
-    {"name": "forge_gate_check", "arguments": {"timeout_s": None}},
-    {"name": "forge_review", "arguments": {"timeout_s": 2}},
-])
+@pytest.mark.parametrize(
+    "params",
+    [
+        None,
+        {"name": []},
+        {"name": {}},
+        {"name": "forge_init", "arguments": {"timeout_s": float("inf")}},
+        {"name": "forge_review"},
+        {"name": "forge_review", "arguments": []},
+        {"name": "forge_review", "arguments": {}},
+        {"name": "forge_gate_check", "arguments": {"timeout_s": None}},
+        {"name": "forge_review", "arguments": {"timeout_s": 2}},
+    ],
+)
 async def test_timeout_stream_preserves_request_and_metadata(params):
     message = SessionMessage(
-        message=JSONRPCMessage(JSONRPCRequest(jsonrpc="2.0", id="same-id", method="tools/call", params=params)),
+        message=JSONRPCMessage(
+            JSONRPCRequest(jsonrpc="2.0", id="same-id", method="tools/call", params=params)
+        ),
         metadata=object(),
     )
     attributes = {object(): lambda: "original attribute"}
-    incoming = SimpleNamespace(receive=AsyncMock(return_value=message), aclose=AsyncMock(), extra_attributes=attributes)
+    incoming = SimpleNamespace(
+        receive=AsyncMock(return_value=message), aclose=AsyncMock(), extra_attributes=attributes
+    )
     outgoing = SimpleNamespace(send=AsyncMock())
     stream = server._TimeoutReceiveStream(incoming, outgoing)
     assert stream.extra_attributes is attributes
@@ -463,12 +525,15 @@ async def test_timeout_stream_preserves_request_and_metadata(params):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("root", [
-    JSONRPCNotification(jsonrpc="2.0", method="notifications/cancelled", params={"requestId": 8}),
-    JSONRPCResponse(jsonrpc="2.0", id=8, result={}),
-    JSONRPCRequest(jsonrpc="2.0", id=8, method="tools/list"),
-    ValueError("original parser error"),
-])
+@pytest.mark.parametrize(
+    "root",
+    [
+        JSONRPCNotification(jsonrpc="2.0", method="notifications/cancelled", params={"requestId": 8}),
+        JSONRPCResponse(jsonrpc="2.0", id=8, result={}),
+        JSONRPCRequest(jsonrpc="2.0", id=8, method="tools/list"),
+        ValueError("original parser error"),
+    ],
+)
 async def test_timeout_stream_preserves_other_messages(root):
     message = root if isinstance(root, Exception) else SessionMessage(message=JSONRPCMessage(root))
     incoming = SimpleNamespace(receive=AsyncMock(return_value=message))
@@ -490,11 +555,19 @@ async def test_timeout_stream_propagates_receive_interruption(exception):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name", TOOLS)
 async def test_timeout_stream_consumes_rejection_then_returns_next_message(name):
-    invalid = SessionMessage(message=JSONRPCMessage(JSONRPCRequest(
-        jsonrpc="2.0", id="invalid-id", method="tools/call",
-        params={"name": name, "arguments": {"timeout_s": float("inf")}},
-    )))
-    accepted = SessionMessage(message=JSONRPCMessage(JSONRPCRequest(jsonrpc="2.0", id=9, method="tools/list")))
+    invalid = SessionMessage(
+        message=JSONRPCMessage(
+            JSONRPCRequest(
+                jsonrpc="2.0",
+                id="invalid-id",
+                method="tools/call",
+                params={"name": name, "arguments": {"timeout_s": float("inf")}},
+            )
+        )
+    )
+    accepted = SessionMessage(
+        message=JSONRPCMessage(JSONRPCRequest(jsonrpc="2.0", id=9, method="tools/list"))
+    )
     incoming = SimpleNamespace(receive=AsyncMock(side_effect=[invalid, accepted]))
     outgoing = SimpleNamespace(send=AsyncMock())
     assert await server._TimeoutReceiveStream(incoming, outgoing).receive() is accepted
@@ -529,20 +602,40 @@ async def test_stdio_adapter_runs_real_session_and_exits_on_eof(monkeypatch):
 
     task = asyncio.create_task(instance.run_stdio_async())
     try:
-        initialized = await exchange(json.dumps({
-            "jsonrpc": "2.0", "id": 0, "method": "initialize",
-            "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                       "clientInfo": {"name": "timeout-test", "version": "1"}},
-        }))
+        initialized = await exchange(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "timeout-test", "version": "1"},
+                    },
+                }
+            )
+        )
         assert initialized.id == 0
-        await incoming_send.send(SessionMessage(message=JSONRPCMessage(JSONRPCNotification(
-            jsonrpc="2.0", method="notifications/initialized",
-        ))))
-        rejected = await exchange('{"jsonrpc":"2.0","id":1,"method":"tools/call",'
-                                  '"params":{"name":"forge_review","arguments":{"timeout_s":1e309}}}')
+        await incoming_send.send(
+            SessionMessage(
+                message=JSONRPCMessage(
+                    JSONRPCNotification(
+                        jsonrpc="2.0",
+                        method="notifications/initialized",
+                    )
+                )
+            )
+        )
+        rejected = await exchange(
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call",'
+            '"params":{"name":"forge_review","arguments":{"timeout_s":1e309}}}'
+        )
         assert rejected.id == 1 and rejected.error.code == -32602
-        accepted = await exchange('{"jsonrpc":"2.0","id":2,"method":"tools/call",'
-                                  '"params":{"name":"forge_review","arguments":{"timeout_s":null}}}')
+        accepted = await exchange(
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call",'
+            '"params":{"name":"forge_review","arguments":{"timeout_s":null}}}'
+        )
         assert accepted.id == 2 and not accepted.result.get("isError", False)
         assert observed == [None]
         await incoming_send.aclose()

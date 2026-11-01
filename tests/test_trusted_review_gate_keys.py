@@ -30,7 +30,12 @@ TEST = {"command": [sys.executable, "-c", "pass"], "timeout_seconds": 60}
 
 def _git(repo, *args):
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8",
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     ).stdout.strip()
 
 
@@ -67,9 +72,12 @@ def _machine(repo, base, mode=Mode.CI):
         autofixer=StubAutoFixer(),
         revert_fn=lambda finding: None,
         resolved_review=ResolvedReview(
-            source_files=[repo / "src" / "mod.py"], baseline_content=None,
-            git_diff="--- a/src/mod.py\n+++ b/src/mod.py\n", mode_hint="git",
-            base_sha=base, head_sha="b" * 40,
+            source_files=[repo / "src" / "mod.py"],
+            baseline_content=None,
+            git_diff="--- a/src/mod.py\n+++ b/src/mod.py\n",
+            mode_hint="git",
+            base_sha=base,
+            head_sha="b" * 40,
         ),
         source_hash="h",
         baseline_spec_repr="h",
@@ -92,6 +100,7 @@ def _ledger_written(machine, monkeypatch):
 
 
 # --- ledger.enabled ---------------------------------------------------------
+
 
 def test_pr_cannot_switch_off_its_own_ci_ledger(tmp_path, monkeypatch):
     repo, base = _repo(tmp_path, {}, {"ledger": {"enabled": False}})
@@ -143,24 +152,37 @@ def test_raw_loader_rejects_a_non_mapping(tmp_path):
     _git(repo, "add", str(GATE))
     _git(repo, "commit", "-qm", "list gate")
     with pytest.raises(ValueError, match="must be a mapping"):
-        load_trusted_gate_data(config_root=repo, source_root=repo,
-                               base_sha=_git(repo, "rev-parse", "HEAD"), allow_untracked=False)
+        load_trusted_gate_data(
+            config_root=repo,
+            source_root=repo,
+            base_sha=_git(repo, "rev-parse", "HEAD"),
+            allow_untracked=False,
+        )
 
 
 # --- pinned_paths / style_downgrade -------------------------------------------
 
+
 def _confirmed(file="src/mod.py", source="L0", description="real bug"):
     return StateFinding(
-        id="f1", fingerprint="f1", source=source, disposition=Disposition.CONFIRMED,
-        file=file, line_range=[1, 1], description=description,
+        id="f1",
+        fingerprint="f1",
+        source=source,
+        disposition=Disposition.CONFIRMED,
+        file=file,
+        line_range=[1, 1],
+        description=description,
     )
 
 
-@pytest.mark.parametrize("key", [
-    {"pinned_paths": ["src/*.py"]},
-    {"style_downgrade": {"pass_names": ["L0"]}},
-    {"style_downgrade": {"keywords": ["bug"]}},
-])
+@pytest.mark.parametrize(
+    "key",
+    [
+        {"pinned_paths": ["src/*.py"]},
+        {"style_downgrade": {"pass_names": ["L0"]}},
+        {"style_downgrade": {"keywords": ["bug"]}},
+    ],
+)
 def test_pr_added_suppression_keys_are_not_applied(tmp_path, key):
     repo, base = _repo(tmp_path, {}, key)
     m = _machine(repo, base)
@@ -169,10 +191,13 @@ def test_pr_added_suppression_keys_are_not_applied(tmp_path, key):
     assert m._state.findings[0].disposition == Disposition.CONFIRMED
 
 
-@pytest.mark.parametrize(("key", "expected"), [
-    ({"pinned_paths": ["src/*.py"]}, Disposition.DISMISSED),
-    ({"style_downgrade": {"keywords": ["bug"]}}, Disposition.STYLE),
-])
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ({"pinned_paths": ["src/*.py"]}, Disposition.DISMISSED),
+        ({"style_downgrade": {"keywords": ["bug"]}}, Disposition.STYLE),
+    ],
+)
 def test_baseline_suppression_keys_still_apply(tmp_path, key, expected):
     repo, base = _repo(tmp_path, key, {})
     m = _machine(repo, base)
@@ -182,6 +207,7 @@ def test_baseline_suppression_keys_still_apply(tmp_path, key, expected):
 
 
 # --- rulepacks / rulepacks_blocking -----------------------------------------
+
 
 class _FakeRunner:
     def __init__(self):
@@ -193,18 +219,26 @@ class _FakeRunner:
         self.seen = gate_config
         if "testpack" not in (gate_config or {}).get("rulepacks", []):
             return []
-        return [AdvisoryFinding(
-            id="rulepack:testpack:src/mod.py:1:rule-a", axis="rulepack:testpack",
-            file="src/mod.py", line_range=(1, 1), description="rule-a hit",
-            attribution="semgrep-ce/rulepack",
-        )]
+        return [
+            AdvisoryFinding(
+                id="rulepack:testpack:src/mod.py:1:rule-a",
+                axis="rulepack:testpack",
+                file="src/mod.py",
+                line_range=(1, 1),
+                description="rule-a hit",
+                attribution="semgrep-ce/rulepack",
+            )
+        ]
 
 
-@pytest.mark.parametrize("pr", [
-    {"rulepacks": ["testpack"]},  # drops rulepacks_blocking
-    {"rulepacks": [], "rulepacks_blocking": ["rule-a"]},  # drops the pack
-    {},
-])
+@pytest.mark.parametrize(
+    "pr",
+    [
+        {"rulepacks": ["testpack"]},  # drops rulepacks_blocking
+        {"rulepacks": [], "rulepacks_blocking": ["rule-a"]},  # drops the pack
+        {},
+    ],
+)
 def test_pr_cannot_unblock_its_own_rulepack_findings(tmp_path, pr):
     base_gate = {"rulepacks": ["testpack"], "rulepacks_blocking": ["rule-a"]}
     repo, base = _repo(tmp_path, base_gate, pr)
@@ -216,7 +250,11 @@ def test_pr_cannot_unblock_its_own_rulepack_findings(tmp_path, pr):
 
 
 def test_pr_cannot_promote_rulepack_blocking_before_baseline(tmp_path):
-    repo, base = _repo(tmp_path, {"rulepacks": ["testpack"]}, {"rulepacks": ["testpack"], "rulepacks_blocking": ["rule-a"]})
+    repo, base = _repo(
+        tmp_path,
+        {"rulepacks": ["testpack"]},
+        {"rulepacks": ["testpack"], "rulepacks_blocking": ["rule-a"]},
+    )
     runner = _FakeRunner()
     with patch("code_forge.rulepack.RulepackRunner", lambda: runner):
         assert _machine(repo, base)._run_rulepack_blocking_phase() == []
@@ -245,11 +283,14 @@ def test_source_root_wiring_passes_the_trusted_gate_to_the_runner(tmp_path):
     assert len(findings) == 1
 
 
-@pytest.mark.parametrize("base_t,pr_t,expected", [
-    (900, 900, 900),  # #175: the trusted timeout reaches the runner
-    (900, 5, 900),  # a PR-only edit does not
-    (None, 5, None),  # nor does a PR-added one
-])
+@pytest.mark.parametrize(
+    "base_t,pr_t,expected",
+    [
+        (900, 900, 900),  # #175: the trusted timeout reaches the runner
+        (900, 5, 900),  # a PR-only edit does not
+        (None, 5, None),  # nor does a PR-added one
+    ],
+)
 def test_trusted_rulepack_timeout_reaches_the_runner(tmp_path, base_t, pr_t, expected):
     def gate(t):
         return {"rulepacks": ["testpack"], "rulepacks_blocking": ["rule-a"]} | (

@@ -153,7 +153,9 @@ class TestRunMutation:
         findings, _infra = run_mutation(["src/app.py", "src/app.ts"], ["pytest"])
         text = " ".join(f.description for f in findings)
         assert "js-stryker" in text
-        assert any("run 1: baseline failed (returncode 1); stderr: FAIL" == f.description for f in findings)
+        assert any(
+            "run 1: baseline failed (returncode 1); stderr: FAIL" == f.description for f in findings
+        )
         assert all("flaky" not in f.description for f in findings)
 
     @patch("code_forge.mutation.run_owned_command")
@@ -785,9 +787,9 @@ def _skip_unless_mutmut_on_path():
 def _assert_strong_mutation_result(findings, infra_errors, evidence):
     """Require a completed native measurement that killed actual mutants."""
     error_findings = [f for f in findings if f.id == "MUTATION_ERROR"]
-    assert error_findings == [], (
-        "mutmut invocation failed: %s\ninfra_errors: %s"
-        % (error_findings, infra_errors)
+    assert error_findings == [], "mutmut invocation failed: %s\ninfra_errors: %s" % (
+        error_findings,
+        infra_errors,
     )
     assert evidence.get("completed_measurement") is True, evidence
     inventory = evidence.get("inventory", {})

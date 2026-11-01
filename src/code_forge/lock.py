@@ -318,7 +318,7 @@ def acquire_lock(path: Path) -> None:
                     os.link(str(tmp_path), str(path))
                 except FileExistsError:
                     pass
-                except FileNotFoundError:
+                except FileNotFoundError as exc:
                     # tmp_path itself is gone -- something with write
                     # access to path.parent removed our own temp file
                     # before we could link it. Not a busy/stale lock at
@@ -328,7 +328,7 @@ def acquire_lock(path: Path) -> None:
                         "temp file for %s disappeared before it could "
                         "be linked into place (concurrent activity in "
                         "%s?)" % (path, path.parent)
-                    )
+                    ) from exc
                 except PermissionError as exc:
                     # A directory at *path* reliably raises
                     # FileExistsError on Linux; some other Unixes have
@@ -373,7 +373,7 @@ def acquire_lock(path: Path) -> None:
                     # entry itself rather than what it resolves to.
                     try:
                         linked_ino = os.lstat(str(path)).st_ino
-                    except FileNotFoundError:
+                    except FileNotFoundError as exc:
                         # *path* existed right after os.link() returned
                         # but is gone by the time we check it -- some
                         # other concurrent activity removed it. We no
@@ -384,7 +384,7 @@ def acquire_lock(path: Path) -> None:
                             "lock file %s disappeared immediately "
                             "after being linked into place (concurrent "
                             "removal?)" % path
-                        )
+                        ) from exc
                     if linked_ino != expected_ino:
                         # A third party could remove *path* between the
                         # stat above and this unlink -- that race must
@@ -409,8 +409,8 @@ def acquire_lock(path: Path) -> None:
                     os.unlink(str(tmp_path))
                 except FileNotFoundError:
                     pass
-    except IsADirectoryError:
-        raise OSError("lock path %s is a directory, not a file (remove it manually)" % path)
+    except IsADirectoryError as exc:
+        raise OSError("lock path %s is a directory, not a file (remove it manually)" % path) from exc
 
 
 def _handle_existing_lock(path: Path) -> None:

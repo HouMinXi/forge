@@ -16,7 +16,9 @@ from code_forge._mutation_workspace import MutationWorkspace, MutationWorkspaceE
 from tests.mutation_result_fixture import write_inventory
 
 
-@pytest.mark.parametrize("phase", ["acquire", "prepare", "restore", "config-read", "config-install", "config-restore"])
+@pytest.mark.parametrize(
+    "phase", ["acquire", "prepare", "restore", "config-read", "config-install", "config-restore"]
+)
 def test_regular_node_replaced_by_fifo_is_refused_before_reading(tmp_path, monkeypatch, phase):
     cache = _cache(tmp_path)
     _configuration(tmp_path)
@@ -82,7 +84,9 @@ def test_regular_node_replaced_by_fifo_is_refused_before_reading(tmp_path, monke
             if phase == "config-read":
                 workspace._read_config(workspace.root_fd, "setup.cfg")
             elif phase == "config-install":
-                workspace.install_configs(b"[mutmut]\nsource_paths=src/calc.py\n", mutation._scoped_pyproject)
+                workspace.install_configs(
+                    b"[mutmut]\nsource_paths=src/calc.py\n", mutation._scoped_pyproject
+                )
             elif phase == "config-restore":
                 workspace.restore_configs()
             else:
@@ -98,7 +102,9 @@ def test_regular_node_replaced_by_fifo_is_refused_before_reading(tmp_path, monke
     current = target.stat()
     assert stat.S_ISFIFO(current.st_mode)
     assert (current.st_dev, current.st_ino, current.st_mode) == (
-        changed[0].st_dev, changed[0].st_ino, changed[0].st_mode
+        changed[0].st_dev,
+        changed[0].st_ino,
+        changed[0].st_mode,
     )
     for fd in opened:
         with pytest.raises(OSError) as error:

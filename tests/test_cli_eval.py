@@ -356,7 +356,7 @@ class TestRunEval:
             rc = _run_eval(mock_args)
 
         assert rc == 0
-        recs = [json.loads(l) for l in ledger.read_text().splitlines() if l.strip()]
+        recs = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
         assert recs[0]["verdict"] == "SKIPPED"
         assert "backend down" in recs[0]["skipped_reason"]
 
@@ -425,7 +425,7 @@ class TestRunEval:
             rc = _run_eval(mock_args)
 
         assert rc == 0
-        recs = [json.loads(l) for l in ledger.read_text().splitlines() if l.strip()]
+        recs = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
         assert recs[0]["skipped_reason"] == captured["results"][0].skipped_reason, (
             "ledger says %r, report says %r"
             % (recs[0]["skipped_reason"], captured["results"][0].skipped_reason)

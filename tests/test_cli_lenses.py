@@ -21,8 +21,7 @@ SKILL = ROOT / "src" / "code_forge" / "skills" / "code-forge" / "SKILL.md"
 PASSES = ("qodo", "expert", "adversarial")
 
 FALLBACK = (
-    "If the command exits non-zero, tell the user its stderr and continue without lenses "
-    "(do not STOP)."
+    "If the command exits non-zero, tell the user its stderr and continue without lenses (do not STOP)."
 )
 SKEW = (
     "If this exits 2 with 'unrecognized arguments', the installed CLI predates lenses; "

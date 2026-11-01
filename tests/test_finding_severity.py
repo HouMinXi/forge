@@ -29,7 +29,7 @@ from code_forge.reviewer_json import _json_to_state_findings, validate_reviewer_
 from code_forge.state import StateFinding, _finding_from_dict
 
 
-def _parse(raw: str, pass_name: str = "qodo") -> list[StateFinding]:
+def _parse(raw: str, pass_name: str = "qodo") -> list[StateFinding]:  # noqa: S107 -- pass_name identifies a review pass, not a password.
     return _json_to_state_findings(validate_reviewer_json(raw), pass_name)
 
 

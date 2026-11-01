@@ -18,28 +18,41 @@ from code_forge.receipt import write_receipts
 from code_forge.state import Disposition
 from code_forge.verify import validate_excerpts_against_diff
 
-DIFF = (
-    "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
-    "@@ -1 +1 @@\n-x = 0\n+x = 1\n"
-)
+DIFF = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x = 0\n+x = 1\n"
 PASSES = ("qodo", "expert", "adversarial")
 INVALID_ROOT_CORE = [
     *[("file", value) for value in (None, False, 1, 1.5, [], {}, ["a.py"], {"path": "a.py"}, "", " ")],
-    *[("line", value) for value in (None, False, True, [], {}, "", "1", 1.0, float("inf"), float("nan"), 10**400)],
-    *[("description", value) for value in (None, False, 1, 1.5, [], {}, ["invalid"], {"text": "invalid"}, "", " ")],
+    *[
+        ("line", value)
+        for value in (None, False, True, [], {}, "", "1", 1.0, float("inf"), float("nan"), 10**400)
+    ],
+    *[
+        ("description", value)
+        for value in (None, False, 1, 1.5, [], {}, ["invalid"], {"text": "invalid"}, "", " ")
+    ],
 ]
-INVALID_ROOT_CORE = [pytest.param(field, value, id=f"{field}-{index}")
-                     for index, (field, value) in enumerate(INVALID_ROOT_CORE)]
+INVALID_ROOT_CORE = [
+    pytest.param(field, value, id=f"{field}-{index}")
+    for index, (field, value) in enumerate(INVALID_ROOT_CORE)
+]
 
 
 def _payload():
     return {
-        "file": "a.py", "line": 1, "severity": "P2", "description": "synthetic boundary finding",
+        "file": "a.py",
+        "line": 1,
+        "severity": "P2",
+        "description": "synthetic boundary finding",
         "pass_name": "model-root-pass",
-        "code_excerpts": [{
-            "file": "a.py", "start_line": 1, "end_line": 1, "content": "x = 1",
-            "pass_name": "model-excerpt-pass",
-        }],
+        "code_excerpts": [
+            {
+                "file": "a.py",
+                "start_line": 1,
+                "end_line": 1,
+                "content": "x = 1",
+                "pass_name": "model-excerpt-pass",
+            }
+        ],
     }
 
 
@@ -50,10 +63,18 @@ def external_guard():
     forbidden = []
 
     def audit(event, args):
-        if active[0] and event.startswith((
-            "socket.connect", "socket.getaddrinfo", "socket.sendto", "subprocess.Popen",
-            "os.system", "os.posix_spawn", "os.fork", "os.exec",
-        )):
+        if active[0] and event.startswith(
+            (
+                "socket.connect",
+                "socket.getaddrinfo",
+                "socket.sendto",
+                "subprocess.Popen",
+                "os.system",
+                "os.posix_spawn",
+                "os.fork",
+                "os.exec",
+            )
+        ):
             forbidden.append(event)
             raise AssertionError("unexpected external operation: " + event)
 
@@ -69,6 +90,7 @@ def _consume(monkeypatch, consumer, payload, encoding):
     calls = []
     attempts = []
     if consumer == "factory":
+
         def transport(*args, **kwargs):
             calls.append(args)
             return LLMResult(raw)
@@ -80,6 +102,7 @@ def _consume(monkeypatch, consumer, payload, encoding):
         findings, excerpts, _, _ = provider()
         attempts = provider.attempted_excerpts
     else:
+
         def spawn(pass_name, diff):
             calls.append((pass_name, diff))
             return raw
@@ -140,8 +163,16 @@ def test_rejected_root_payload_stays_exact_attempted_evidence(
     assert len(findings) == (0 if fault == "empty" else 3)
     assert payload == original
     paths = write_receipts(
-        tmp_path / "receipts", 0, findings, "synthetic-diff", [], tmp_path,
-        reviewer_excerpts=excerpts, attempted_excerpts=attempts, diff_text=DIFF, manifest="declared",
+        tmp_path / "receipts",
+        0,
+        findings,
+        "synthetic-diff",
+        [],
+        tmp_path,
+        reviewer_excerpts=excerpts,
+        attempted_excerpts=attempts,
+        diff_text=DIFF,
+        manifest="declared",
     )
     receipts = [json.loads(path.read_text()) for path in paths]
     expected = "incomplete" if fault == "empty" else "schema_fail"
@@ -166,8 +197,15 @@ def test_real_receipt_writer_checks_normalized_evidence(
     assert all(f.disposition is Disposition.UNCERTAIN and f.excerpt is None for f in findings)
     (tmp_path / "a.py").write_text("x = 1\n")
     paths = write_receipts(
-        tmp_path / "receipts", 0, findings, "synthetic-diff", [Path("a.py")], tmp_path,
-        diff_text=DIFF, reviewer_excerpts=excerpts, manifest="declared",
+        tmp_path / "receipts",
+        0,
+        findings,
+        "synthetic-diff",
+        [Path("a.py")],
+        tmp_path,
+        diff_text=DIFF,
+        reviewer_excerpts=excerpts,
+        manifest="declared",
     )
     receipts = [json.loads(path.read_text()) for path in paths]
     expected = "completed" if fault == "valid" else "schema_fail"
@@ -219,17 +257,24 @@ def test_root_owned_excerpt_subclass_uses_original_consumer_schema_path(
     assert all("missing required field: findings" in f.description for f in findings)
     assert calls == [] and payload["excerpt"] is excerpt and "findings" not in payload
 
-    explicit = payload | {"findings": [{key: payload[key] for key in
-                                      ("file", "line", "severity", "description", "excerpt")} ]}
+    explicit = payload | {
+        "findings": [
+            {key: payload[key] for key in ("file", "line", "severity", "description", "excerpt")}
+        ]
+    }
     with pytest.raises(error_type, match="synthetic owned-excerpt hook"):
         _consume(monkeypatch, consumer, explicit, "dict")
     assert calls == ["strip"] and external_guard == []
 
 
 @pytest.mark.parametrize("consumer", ["factory", "outlet-c"])
-def test_explicit_unhashable_severity_keeps_existing_consumer_failure(monkeypatch, external_guard, consumer):
+def test_explicit_unhashable_severity_keeps_existing_consumer_failure(
+    monkeypatch, external_guard, consumer
+):
     root = _payload() | {"severity": []}
-    payload = root | {"findings": [{key: root[key] for key in ("file", "line", "severity", "description")}]}
+    payload = root | {
+        "findings": [{key: root[key] for key in ("file", "line", "severity", "description")}]
+    }
     with pytest.raises(TypeError, match="unhashable"):
         _consume(monkeypatch, consumer, payload, "dict")
     assert len(payload["findings"]) == 1
@@ -293,7 +338,9 @@ def test_opaque_root_owned_excerpt_uses_original_consumer_schema_path(
 
 
 @pytest.mark.parametrize("consumer", ["factory", "outlet-c"])
-def test_raw_dictionary_copy_reaches_consumers_without_mapping_hooks(monkeypatch, external_guard, consumer):
+def test_raw_dictionary_copy_reaches_consumers_without_mapping_hooks(
+    monkeypatch, external_guard, consumer
+):
     calls = []
 
     class PoisonDict(dict):
@@ -313,7 +360,9 @@ def test_raw_dictionary_copy_reaches_consumers_without_mapping_hooks(monkeypatch
 
 
 @pytest.mark.parametrize("consumer", ["factory", "outlet-c"])
-def test_excerpt_dictionary_copy_reaches_consumers_without_mapping_hooks(monkeypatch, external_guard, consumer):
+def test_excerpt_dictionary_copy_reaches_consumers_without_mapping_hooks(
+    monkeypatch, external_guard, consumer
+):
     calls = []
 
     class PoisonDict(dict):
@@ -333,8 +382,20 @@ def test_excerpt_dictionary_copy_reaches_consumers_without_mapping_hooks(monkeyp
     assert calls == [] and payload["code_excerpts"][0] is excerpt and external_guard == []
 
 
-ROOT_EVIDENCE_FAULTS = ["file", "content", "code", "start_line", "end_line", "line_start", "line_end",
-                        "content-list", "content-item", "content-string-subclass", "outer-list", "entry"]
+ROOT_EVIDENCE_FAULTS = [
+    "file",
+    "content",
+    "code",
+    "start_line",
+    "end_line",
+    "line_start",
+    "line_end",
+    "content-list",
+    "content-item",
+    "content-string-subclass",
+    "outer-list",
+    "entry",
+]
 
 
 def _root_evidence_fault(field):
@@ -390,6 +451,7 @@ def _consume_root_evidence(monkeypatch, consumer, payload, encoding):
         findings, excerpts, attempts = _consume(monkeypatch, consumer, payload, encoding)
         return findings, excerpts, attempts, []
     from code_forge.cli import _run_test_assertion_review
+
     raw = json.dumps(payload) if encoding == "json" else payload
     calls, outcomes = [], []
 
@@ -407,12 +469,16 @@ def _consume_root_evidence(monkeypatch, consumer, payload, encoding):
 @pytest.mark.parametrize("field", ROOT_EVIDENCE_FAULTS)
 def test_root_evidence_hooks_use_original_consumer_refusal(monkeypatch, external_guard, consumer, field):
     payload, calls = _root_evidence_fault(field)
-    findings, excerpts, attempts, outcomes = _consume_root_evidence(monkeypatch, consumer, payload, "dict")
+    findings, excerpts, attempts, outcomes = _consume_root_evidence(
+        monkeypatch, consumer, payload, "dict"
+    )
     assert excerpts == attempts == [] and calls == [] and "findings" not in payload
     if consumer == "cli":
         assert findings == [] and outcomes == ["failed: error"]
     else:
-        assert len(findings) == 3 and all(f.source == "INFRA" and f.file == "<schema-validation>" for f in findings)
+        assert len(findings) == 3 and all(
+            f.source == "INFRA" and f.file == "<schema-validation>" for f in findings
+        )
         assert all("missing required field: findings" in f.description for f in findings)
     assert external_guard == []
 
@@ -427,7 +493,9 @@ def test_native_root_evidence_remains_accepted(monkeypatch, external_guard, cons
     elif shape == "list-content":
         payload["code_excerpts"][0]["content"] = ["x = 1"]
     original = copy.deepcopy(payload)
-    findings, excerpts, attempts, outcomes = _consume_root_evidence(monkeypatch, consumer, payload, encoding)
+    findings, excerpts, attempts, outcomes = _consume_root_evidence(
+        monkeypatch, consumer, payload, encoding
+    )
     assert attempts == [] and payload == original
     if consumer == "cli":
         assert len(findings) == 1 and outcomes == ["done"]
@@ -442,7 +510,9 @@ def test_null_root_filename_consumers_write_schema_failure_receipts(
     monkeypatch, external_guard, tmp_path, consumer, encoding
 ):
     payload = _payload() | {"file": "a\x00.py"}
-    findings, excerpts, attempts, outcomes = _consume_root_evidence(monkeypatch, consumer, payload, encoding)
+    findings, excerpts, attempts, outcomes = _consume_root_evidence(
+        monkeypatch, consumer, payload, encoding
+    )
     assert excerpts == [] and "findings" not in payload
     if consumer == "cli":
         assert findings == [] and outcomes == ["failed: error"]
@@ -451,9 +521,20 @@ def test_null_root_filename_consumers_write_schema_failure_receipts(
         assert all(f.source == "INFRA" and f.file == "<schema-validation>" for f in findings)
         assert all("missing required field: findings" in f.description for f in findings)
         (tmp_path / "a.py").write_text("x = 1\n")
-        paths = write_receipts(tmp_path / "receipts", 0, findings, "synthetic-diff", [], tmp_path,
-                               reviewer_excerpts=excerpts, attempted_excerpts=attempts,
-                               diff_text=DIFF, manifest="declared")
+        paths = write_receipts(
+            tmp_path / "receipts",
+            0,
+            findings,
+            "synthetic-diff",
+            [],
+            tmp_path,
+            reviewer_excerpts=excerpts,
+            attempted_excerpts=attempts,
+            diff_text=DIFF,
+            manifest="declared",
+        )
         receipts = [json.loads(path.read_text()) for path in paths]
-        assert len(receipts) == 3 and all(r["pass_status"] == "schema_fail" and r["anchors"] == [] for r in receipts)
+        assert len(receipts) == 3 and all(
+            r["pass_status"] == "schema_fail" and r["anchors"] == [] for r in receipts
+        )
     assert external_guard == []

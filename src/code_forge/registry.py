@@ -63,12 +63,12 @@ def load_registry(yaml_path: str) -> dict[str, ToolConfig]:
         return {}
 
     if not isinstance(tools, dict):
-        raise ValueError(f"{yaml_path}: 'tools' must be a mapping, got {type(tools).__name__}")
+        raise ValueError(f"{yaml_path}: 'tools' must be a mapping, got {type(tools).__name__}")  # noqa: TRY004 -- Keep the documented ValueError validation API for invalid config/corpus data.
 
     registry = {}
     for name, entry in tools.items():
         if not isinstance(entry, dict):
-            raise ValueError("Tool '%s': entry must be a mapping, got %s" % (name, type(entry).__name__))
+            raise ValueError("Tool '%s': entry must be a mapping, got %s" % (name, type(entry).__name__))  # noqa: TRY004 -- Keep the documented ValueError validation API for invalid config/corpus data.
 
         # Validate required fields
         for req in _REQUIRED_FIELDS:

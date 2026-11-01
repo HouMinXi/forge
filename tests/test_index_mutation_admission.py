@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unsupported staged/committed native subjects stop before review work starts."""
+
 from functools import partial
 from pathlib import Path
 import shutil
@@ -23,8 +24,9 @@ class ReachedWork(RuntimeError):
 
 
 def git(root, *args):
-    result = subprocess.run(["git", *args], cwd=root, check=True,
-                            capture_output=True, text=True, timeout=10)
+    result = subprocess.run(
+        ["git", *args], cwd=root, check=True, capture_output=True, text=True, timeout=10
+    )
     return result.stdout.strip()
 
 
@@ -49,14 +51,18 @@ def project(tmp_path, monkeypatch):
     (root / ".code-forge").mkdir()
     (root / ".code-forge/gate.yaml").write_text(yaml.safe_dump(gate), encoding="utf-8")
     original_which = shutil.which
-    monkeypatch.setattr(shutil, "which", lambda name, *a, **kw:
-                        "/owned/mutmut" if name == "mutmut" else original_which(name, *a, **kw))
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name, *a, **kw: "/owned/mutmut" if name == "mutmut" else original_which(name, *a, **kw),
+    )
     return SimpleNamespace(root=root, source=source, base=base, gate=gate)
 
 
 def reviewed(project, kind="INDEX", paths=None):
-    return resolve_baseline(GitRefBaseline(project.base), GitRefBaseline(kind),
-                            paths or [Path("calc.py")], project.root)
+    return resolve_baseline(
+        GitRefBaseline(project.base), GitRefBaseline(kind), paths or [Path("calc.py")], project.root
+    )
 
 
 def committed_review(project, paths=None):
@@ -85,13 +91,22 @@ def make_machine(project, tmp_path, *, mode=Mode.LOCAL, runner=None, review=None
 
     review = review or reviewed(project)
     sm = machine.StateMachine(
-        mode=mode, falsifier=StubFalsifier(), autofixer=StubAutoFixer(), revert_fn=lambda _f: None,
-        resolved_review=review, source_hash="index-admission-fixture",
+        mode=mode,
+        falsifier=StubFalsifier(),
+        autofixer=StubAutoFixer(),
+        revert_fn=lambda _f: None,
+        resolved_review=review,
+        source_hash="index-admission-fixture",
         baseline_spec_repr="HEAD~1->HEAD" if review.target_kind == "COMMIT" else "HEAD->INDEX",
-        cwd=state_root, source_root=project.root,
-        registry={}, l0_runner=l0, l1_provider=l1,
+        cwd=state_root,
+        source_root=project.root,
+        registry={},
+        l0_runner=l0,
+        l1_provider=l1,
         l2_runner=mutation.run_mutation if runner is None else runner,
-        advisory_runners=[], max_total_rounds=1, coverage_l1_active=False,
+        advisory_runners=[],
+        max_total_rounds=1,
+        coverage_l1_active=False,
     )
     sm._state.env_manifest = {}
     return sm, calls
@@ -107,12 +122,20 @@ def prohibit_native(monkeypatch, calls):
 
 
 @pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
-@pytest.mark.parametrize("mode,runner_kind", [
-    (Mode.LOCAL, "direct"), (Mode.LOCAL, "factory"),
-    (Mode.LOCAL, "direct-without-PATH"), (Mode.LOCAL, "partial-without-PATH"),
-    (Mode.CI, "direct"), (Mode.CI, "detached-custom"),
-])
-def test_native_index_is_rejected_before_any_round(project, tmp_path, monkeypatch, mode, runner_kind, target_kind):
+@pytest.mark.parametrize(
+    "mode,runner_kind",
+    [
+        (Mode.LOCAL, "direct"),
+        (Mode.LOCAL, "factory"),
+        (Mode.LOCAL, "direct-without-PATH"),
+        (Mode.LOCAL, "partial-without-PATH"),
+        (Mode.CI, "direct"),
+        (Mode.CI, "detached-custom"),
+    ],
+)
+def test_native_index_is_rejected_before_any_round(
+    project, tmp_path, monkeypatch, mode, runner_kind, target_kind
+):
     review = committed_review(project) if target_kind == "COMMIT" else reviewed(project)
     head_before = git(project.root, "rev-parse", "HEAD")
     staged_before = git(project.root, "show", ":calc.py")
@@ -120,6 +143,7 @@ def test_native_index_is_rejected_before_any_round(project, tmp_path, monkeypatc
         runner = factories.build_l2_runner(cwd=project.root)
         assert type(runner) is partial and runner.func is mutation.run_mutation
     elif runner_kind == "detached-custom":
+
         def runner(*_a, **_kw):
             return [], []
     elif runner_kind == "partial-without-PATH":
@@ -161,15 +185,21 @@ def test_native_index_is_rejected_before_any_round(project, tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
-@pytest.mark.parametrize("variant", ["unstaged", "index-moved", "assume-unchanged", "skip-worktree", "include-override"])
-def test_index_refusal_does_not_depend_on_accidental_byte_equality(project, tmp_path, monkeypatch, variant, target_kind):
+@pytest.mark.parametrize(
+    "variant", ["unstaged", "index-moved", "assume-unchanged", "skip-worktree", "include-override"]
+)
+def test_index_refusal_does_not_depend_on_accidental_byte_equality(
+    project, tmp_path, monkeypatch, variant, target_kind
+):
     review = committed_review(project) if target_kind == "COMMIT" else reviewed(project)
     if variant == "index-moved":
         project.source.write_text("def value():\n    return 3\n", encoding="utf-8")
         git(project.root, "add", "--", "calc.py")
     elif variant == "include-override":
         project.gate["test"].update(mutation_skip_globs=["*.py"], mutation_include_globs=["calc.py"])
-        (project.root / ".code-forge/gate.yaml").write_text(yaml.safe_dump(project.gate), encoding="utf-8")
+        (project.root / ".code-forge/gate.yaml").write_text(
+            yaml.safe_dump(project.gate), encoding="utf-8"
+        )
     else:
         if variant in {"assume-unchanged", "skip-worktree"}:
             git(project.root, "update-index", "--" + variant, "calc.py")
@@ -192,11 +222,29 @@ def test_index_refusal_does_not_depend_on_accidental_byte_equality(project, tmp_
 
 
 @pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
-@pytest.mark.parametrize("case", [
-    "WORKING", "COMMIT", "unknown", "custom", "extra-partial", "foreign-partial", "positional-partial",
-    "factory-unavailable", "CI-no-native", "no-python", "other-adapter", "tests-only", "deleted-only", "configured-skip", "invalid-config",
-])
-def test_non_native_or_unselected_subject_keeps_its_normal_boundary(project, tmp_path, monkeypatch, case, target_kind):
+@pytest.mark.parametrize(
+    "case",
+    [
+        "WORKING",
+        "COMMIT",
+        "unknown",
+        "custom",
+        "extra-partial",
+        "foreign-partial",
+        "positional-partial",
+        "factory-unavailable",
+        "CI-no-native",
+        "no-python",
+        "other-adapter",
+        "tests-only",
+        "deleted-only",
+        "configured-skip",
+        "invalid-config",
+    ],
+)
+def test_non_native_or_unselected_subject_keeps_its_normal_boundary(
+    project, tmp_path, monkeypatch, case, target_kind
+):
     runner = mutation.run_mutation
     mode = Mode.LOCAL
     review = reviewed(project)
@@ -207,8 +255,10 @@ def test_non_native_or_unselected_subject_keeps_its_normal_boundary(project, tmp
     elif case == "unknown":
         review = ResolvedReview(review.source_files, None, None, "non-git")
     elif case in {"custom", "CI-no-native"}:
+
         def runner(*_a, **_kw):
             return [], []
+
         if case == "CI-no-native":
             mode = Mode.CI
             monkeypatch.setattr(shutil, "which", lambda *_a, **_kw: None)
@@ -222,7 +272,11 @@ def test_non_native_or_unselected_subject_keeps_its_normal_boundary(project, tmp
         monkeypatch.setattr(shutil, "which", lambda *_a, **_kw: None)
         runner = factories.build_l2_runner(cwd=project.root)
     elif case in {"no-python", "other-adapter", "tests-only"}:
-        path = {"no-python": "note.txt", "other-adapter": "script.ts", "tests-only": "tests/test_calc.py"}[case]
+        path = {
+            "no-python": "note.txt",
+            "other-adapter": "script.ts",
+            "tests-only": "tests/test_calc.py",
+        }[case]
         (project.root / path).parent.mkdir(parents=True, exist_ok=True)
         (project.root / path).write_text("value = 2\n", encoding="utf-8")
         git(project.root, "add", "--", path)
@@ -232,7 +286,9 @@ def test_non_native_or_unselected_subject_keeps_its_normal_boundary(project, tmp
         review = reviewed(project)
     elif case == "configured-skip":
         project.gate["test"]["mutation_skip_globs"] = ["*.py"]
-        (project.root / ".code-forge/gate.yaml").write_text(yaml.safe_dump(project.gate), encoding="utf-8")
+        (project.root / ".code-forge/gate.yaml").write_text(
+            yaml.safe_dump(project.gate), encoding="utf-8"
+        )
     elif case == "invalid-config":
         project.gate = {"test": {"command": []}}
     if target_kind == "COMMIT" and case not in {"WORKING", "COMMIT", "unknown"}:
@@ -246,12 +302,15 @@ def test_non_native_or_unselected_subject_keeps_its_normal_boundary(project, tmp
 
 def configure_cli(project, monkeypatch, *, outlet="subprocess", committed=False, mode="ci"):
     from code_forge import outlet_resolver
+
     monkeypatch.chdir(project.root)
     monkeypatch.setattr(outlet_resolver, "resolve_outlet", lambda *_a, **_kw: outlet)
     monkeypatch.setattr(cli, "_load_gate_backends", lambda _path: ([], {}))
     monkeypatch.setattr(cli, "_merge_user_into", lambda cfgs, _data: cfgs)
     monkeypatch.setattr("code_forge.user_config.load_user_retry", lambda: {})
-    backend = BackendConfig(name="owned", type="api", format="openai", base_url="https://unused.invalid/v1", model="owned")
+    backend = BackendConfig(
+        name="owned", type="api", format="openai", base_url="https://unused.invalid/v1", model="owned"
+    )
     monkeypatch.setattr("code_forge.backend.resolve_backend", lambda *_a, **_kw: backend)
     monkeypatch.setattr(cli, "_check_backend_credentials", lambda *_a, **_kw: None)
     tools = project.root / "owned-tools.yaml"
@@ -262,16 +321,32 @@ def configure_cli(project, monkeypatch, *, outlet="subprocess", committed=False,
         # fixture gate from a config root outside the checkout.
         outside = project.root.parent / (project.root.name + "-ci-config")
         (outside / ".code-forge").mkdir(parents=True, exist_ok=True)
-        (outside / ".code-forge/gate.yaml").write_bytes((project.root / ".code-forge/gate.yaml").read_bytes())
+        (outside / ".code-forge/gate.yaml").write_bytes(
+            (project.root / ".code-forge/gate.yaml").read_bytes()
+        )
         monkeypatch.setenv("FORGE_TEST_CONFIG_ROOT", str(outside))
-    return ["forge", "review", "--allow-main", "--backend", "owned", "--registry", str(tools),
-            "--mode", mode, *selection, "calc.py"]
+    return [
+        "forge",
+        "review",
+        "--allow-main",
+        "--backend",
+        "owned",
+        "--registry",
+        str(tools),
+        "--mode",
+        mode,
+        *selection,
+        "calc.py",
+    ]
 
 
 @pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
 @pytest.mark.parametrize("mode", ["local", "ci"])
-def test_cli_index_refuses_before_enrichment_and_mcp_preserves_error(project, monkeypatch, capsys, target_kind, mode):
+def test_cli_index_refuses_before_enrichment_and_mcp_preserves_error(
+    project, monkeypatch, capsys, target_kind, mode
+):
     from code_forge.mcp_server import _make_result
+
     if target_kind == "COMMIT":
         committed_review(project)
     args = configure_cli(project, monkeypatch, committed=target_kind == "COMMIT", mode=mode)
@@ -306,14 +381,18 @@ def test_cli_static_outlets_keep_index_admitted(project, monkeypatch, outlet, ta
     args = configure_cli(project, monkeypatch, outlet=outlet, committed=target_kind == "COMMIT")
     observed = []
     if outlet == "inline":
+
         def inline(*_a, **_kw):
             observed.append("inline")
             return Verdict.DELEGATED
+
         monkeypatch.setattr(cli, "_dispatch_inline_canary", inline)
     else:
+
         def subagent(_outlet, _warn, _contract, _backend, resolved, *_a, **_kw):
             observed.append(resolved.target_kind)
             return Verdict.DELEGATED
+
         monkeypatch.setattr(cli, "_dispatch_subagent", subagent)
     monkeypatch.setattr(sys, "argv", args)
     assert cli.main() == 5
@@ -323,6 +402,7 @@ def test_cli_static_outlets_keep_index_admitted(project, monkeypatch, outlet, ta
 @pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
 def test_actual_outlet_c_retains_its_no_native_index_seam(project, target_kind):
     from code_forge.outlet_c import run_outlet_c
+
     observed = []
 
     class StaticBoundary(BaseException):
@@ -334,6 +414,7 @@ def test_actual_outlet_c_retains_its_no_native_index_seam(project, target_kind):
 
     review = committed_review(project) if target_kind == "COMMIT" else reviewed(project)
     with pytest.raises(StaticBoundary, match="static reviewer boundary"):
-        run_outlet_c(review, "static-snapshot", project.root, spawn,
-                     falsifier=StubFalsifier(), max_total_rounds=1)
+        run_outlet_c(
+            review, "static-snapshot", project.root, spawn, falsifier=StubFalsifier(), max_total_rounds=1
+        )
     assert observed == ["reviewer-boundary"]
