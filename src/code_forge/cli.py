@@ -4084,6 +4084,14 @@ def _run(args, env, cwd: Path) -> Verdict:
         has_explicit_backend=has_explicit_backend,
         reachability_fn=_reachability,
     )
+    if outlet == "inline" or (kernel_cfg.enabled and outlet != "subprocess"):
+        assertion_outcome = AssertionOutcome(
+            AssertionStatus.SKIPPED,
+            None,
+            AssertionStage.ELIGIBILITY,
+            AssertionKind.UNSUPPORTED_OUTLET,
+        )
+        print(format_assertion_summary(AssertionOutcome.to_metadata(assertion_outcome)), file=sys.stderr)
     if kernel_cfg.enabled and outlet != "subprocess":
         raise CliError(
             f"kernel-context: outlet {outlet} is not supported; only the CLI subprocess review path is supported"
