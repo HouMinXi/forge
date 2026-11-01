@@ -32,7 +32,9 @@ PINNED_DEPS = {
     "_host_diagnostic_shape": "1c1bf71383382ca44638b4ae0046d854f7324a5ecf030608ab7ce03ca69557e1",
     "PassOutcome": "f388e795081e7b34ac65ef463ffc711fe59ee64b0aebf82b784b65aceab74b09",
     "FindingDiagnosticKind": "a91891577bbd53345190161d05114fadd7c8afc2577e3d48ab0298f6485a787a",
-    "StateFinding": "33f58d435d10f884ac3b661c3b382d6ba8ac3da4c9e40e8c0d60a719a8fd934f",
+    # W2-6 adds only receipt_subtype: str | None = None; the old class AST
+    # remains pinned separately below, including all control fields/methods.
+    "StateFinding": "fb61977e413c981ff27d39f78160e908eaa2e4809d386a701c1ce6bd674341de",
     "_PASS_NAMES": "9928d9693da1c9706ff45658c83bb70221d29b4f7e8115f204ef11769964ec3c",
     "_SEVERITY": "b08e25560456dc875217b6bc22d6b650a87194c2d2cef60a871fa9bbffba8305",
     "Disposition": "c88655eef53e38c6fe142356996a73599766bb48667077e79fe64a2d420a5eb6",
@@ -314,6 +316,50 @@ def test_frozen_dependencies_unchanged():
         == PINNED_RUNTIME["FindingDiagnosticKind members"]
     )
     assert H(repr([(m.name, m.value) for m in Disposition])) == PINNED_RUNTIME["Disposition members"]
+
+
+_LEGACY_STATE_FINDING_HASH = "33f58d435d10f884ac3b661c3b382d6ba8ac3da4c9e40e8c0d60a719a8fd934f"
+
+
+def _assert_state_finding_metadata_extension(tree):
+    """W2-6 may append optional display metadata, never change control semantics."""
+    node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "StateFinding")
+    fields = [
+        n
+        for n in node.body
+        if isinstance(n, ast.AnnAssign) and getattr(n.target, "id", None) == "receipt_subtype"
+    ]
+    assert len(fields) == 1
+    expected = ast.parse("receipt_subtype: str | None = None").body[0]
+    assert ast.dump(fields[0], include_attributes=False) == ast.dump(expected, include_attributes=False)
+    node.body.remove(fields[0])
+    assert (
+        hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
+        == _LEGACY_STATE_FINDING_HASH
+    )
+
+
+def test_state_finding_adds_only_optional_receipt_metadata():
+    tree = ast.parse((REPO_SRC / "code_forge/state.py").read_text())
+    _assert_state_finding_metadata_extension(tree)
+
+
+@pytest.mark.parametrize("mutation", ["metadata-default", "control-field", "control-method"])
+def test_state_finding_extension_guard_rejects_control_changes(mutation):
+    tree = ast.parse((REPO_SRC / "code_forge/state.py").read_text())
+    node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "StateFinding")
+    if mutation == "control-method":
+        node.body.append(ast.parse("def is_confirmed(self): return False").body[0])
+    else:
+        name = "receipt_subtype" if mutation == "metadata-default" else "disposition"
+        field = next(
+            n
+            for n in node.body
+            if isinstance(n, ast.AnnAssign) and getattr(n.target, "id", None) == name
+        )
+        field.value = ast.Constant(value="CONFIRMED")
+    with pytest.raises(AssertionError):
+        _assert_state_finding_metadata_extension(tree)
 
 
 def test_control_equivalence_with_and_without_projection_call(tmp_path):

@@ -35,6 +35,7 @@ from .basis import (
 from .diff import parse_diff_hunks, path_from_plus_header
 from .disposition import Disposition
 from .errors import CorruptedReceiptError, UnreadableGateError
+from .receipt_provenance import unresolved_receipt_label
 from .reviewer_json import (
     _requires_l1_excerpts,
     excerpt_line_count_matches,
@@ -160,6 +161,8 @@ class VerifyResult:
     incomplete_passes: tuple[int, ...] = ()
     completion_statuses: tuple[tuple[int, int, str | None], ...] = ()
     unresolved_findings: tuple[tuple[int, int, str, str], ...] = ()
+    # Display only; existing failure_kind remains the routing authority.
+    receipt_subtype: str | None = None
 
 
 def parse_diff_files(diff_text: str) -> dict[str, list[int]]:
@@ -1998,7 +2001,13 @@ def _run_verify_impl(
         for exc in all_excerpts:
             assessment = assess_excerpt_evidence(copy.deepcopy(exc), hunk_map, post_image, exempt_files)
             if assessment.status is ExcerptStatus.INVALID:
-                return VerifyResult(False, assessment.diagnostic or "invalid excerpt evidence", 5, cp)
+                return VerifyResult(
+                    False,
+                    assessment.diagnostic or "invalid excerpt evidence",
+                    5,
+                    cp,
+                    receipt_subtype="RECEIPT_EVIDENCE",
+                )
             assessments[id(exc)] = assessment
 
         for file, hunks in hunk_map.items():
@@ -2016,6 +2025,7 @@ def _run_verify_impl(
                         f"unwitnessed hunk {file}:{hunk['start']}-{hunk['end']}",
                         5,
                         cp,
+                        receipt_subtype="RECEIPT_COVERAGE",
                     )
         # 6. excerpt-derived coverage >= 60%
         # The floor deliberately counts test lines: tests do not test
@@ -2052,6 +2062,7 @@ def _run_verify_impl(
                         f"coverage {100 * len(cov) / len(all_diff):.0f}% < 60% cycle {c}; largest uncovered: {_coverage_failure_detail(cov, all_diff)}",
                         6,
                         cp,
+                        receipt_subtype="RECEIPT_COVERAGE",
                     )
         cp += 1
 
@@ -2161,6 +2172,7 @@ def _run_verify_impl(
                         f"coverage {100 * len(cov) / len(all_diff):.0f}% < 60% cycle {c}; largest uncovered: {_coverage_failure_detail(cov, all_diff)}",
                         6,
                         cp,
+                        receipt_subtype="RECEIPT_COVERAGE",
                     )
         cp += 1
 
@@ -2236,6 +2248,8 @@ def _run_verify_impl(
                     continue
                 if first_label is None:
                     first_label = _UNRESOLVED_LABELS[kind]
+                    if kind == AUTHORITY_INFRA_UNAVAILABLE:
+                        first_label = unresolved_receipt_label(finding, first_label)
                 unresolved.append(
                     (
                         r["cycle"],

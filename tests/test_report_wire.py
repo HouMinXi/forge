@@ -712,7 +712,7 @@ def test_wp2_invented_subtype_rejected():
             "observation_scope": "persisted-record-unbound",
             "text": None,
         },
-        "host_failure_kind": "RECEIPT_SCHEMA",  # DEFER'd — not in freeze emit set
+        "host_failure_kind": "RECEIPT_FUTURE",  # Unknown even after W2-6 adds schema/coverage.
     }
     block2 = _available_empty(
         product=[],

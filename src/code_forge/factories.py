@@ -351,6 +351,7 @@ class _L1Call:
         self.pending_raw_responses: list[dict] = []
         self.pass_usage: list[dict] | None = None
         self.unavailable_rejected_passes: set[str] = set()
+        self.unavailable_rejected_causes: dict[str, str] = {}
         self.acquisition_failures: list[StateFinding] = []
         self.is_stub_l1 = False
         self._excerpt_invocation = object()
@@ -421,6 +422,7 @@ class _L1Call:
         self.pending_raw_responses = []
         self.acquisition_failures = []
         self.unavailable_rejected_passes = set()
+        self.unavailable_rejected_causes = {}
         self.reviewer_responses = None
         result = self._body(self)
         # Snapshot before attaching observations: grouped calls may already
@@ -778,6 +780,7 @@ def build_l1_provider(
                             source="INFRA",
                             disposition=Disposition.CONFIRMED,
                             file="<schema-validation>",
+                            receipt_subtype="RECEIPT_SCHEMA",
                             line_range=[0, 0],
                             description=f"schema validation failed: {exc}",
                         )
@@ -802,6 +805,9 @@ def build_l1_provider(
                         call.record_excerpt_rejection(exc, pass_name, attempted, diff_text=diff_text)
                     elif original_exact_dict or parsed_dict_seen:
                         call.unavailable_rejected_passes.add(pass_name)
+                        call.unavailable_rejected_causes[pass_name] = (
+                            "evidence" if isinstance(exc, ExcerptEvidenceError) else "schema"
+                        )
                 if raw_data is None and raw_snapshot is not _RAW_RESPONSE_REFUSED:
                     if _admissible_raw_value(raw_snapshot):
                         call.raw_observations.append(
@@ -890,6 +896,7 @@ def build_l1_provider(
                             source="INFRA",
                             disposition=Disposition.CONFIRMED,
                             file="<coverage-guard>",
+                            receipt_subtype="RECEIPT_COVERAGE",
                             line_range=[0, 0],
                             description=(
                                 "L1 pass '%s' returned 0 findings but "
@@ -994,6 +1001,9 @@ def build_grouped_l1_provider(
                 GroupedReviewAttempt(response, scope) for response in provider.pending_raw_responses
             )
             call.unavailable_rejected_passes.update(provider.unavailable_rejected_passes)
+            for name, cause in provider.unavailable_rejected_causes.items():
+                prior = call.unavailable_rejected_causes.get(name)
+                call.unavailable_rejected_causes[name] = cause if prior in (None, cause) else "mixed"
             total_input += usage.input_tokens
             total_output += usage.output_tokens
             total_cached += usage.cached_input_tokens

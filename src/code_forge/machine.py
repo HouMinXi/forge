@@ -326,6 +326,15 @@ def mutation_result_verdict(result_data: dict) -> "Verdict | None":
     return None
 
 
+class _ReceiptDiagnosticError(str):
+    """Display subtype attached where a round-level receipt error is produced."""
+
+    def __new__(cls, message: str, subtype: str):
+        value = super().__new__(cls, message)
+        value.receipt_subtype = subtype
+        return value
+
+
 class _ReceiptGateFailure(str):
     """The terminal gate's fresh verification result, with compatible text."""
 
@@ -892,12 +901,14 @@ class StateMachine:
         self._raw_observations_last_round: list[dict] = []
         self._pending_raw_responses_last_round: list[dict] = []
         self._unavailable_rejected_passes_last_round: set[str] = set()
+        self._unavailable_rejected_causes_last_round: dict[str, str] = {}
         self._host_attempt_round: int | None = None
         self._phase_status = {name: "not_run" for name in ROUND_PHASES}
         self._phase_findings: dict[str, list[StateFinding]] = {}
         # C3: companion fingerprints the preserve predicate excluded; the
         # writer omits them from a `preserved` row's dispositions only.
         self._c3_strip_fps: set[str] = set()
+        self._preserve_basis: dict | None = None
         # fix7 (CR3R-L1): what the writer stripped, so a failure later in the
         # same attempt can turn the settled `preserved` row back into a reset.
         self._c3_stripped_dispositions: dict[str, str] = {}
@@ -1842,6 +1853,7 @@ class StateMachine:
         self._phase_status = {name: "not_run" for name in ROUND_PHASES}
         self._phase_findings = {}
         self._c3_strip_fps = set()
+        self._preserve_basis = None
         self._acquisition_markers = []
         self._falsify_protocol_findings = []
         self._falsify_failed_findings = []
@@ -1895,6 +1907,9 @@ class StateMachine:
             else {}
         )
         if action == "preserved":
+            if self._preserve_basis is None:
+                raise CorruptedStateError("preserved host round lacks computed basis")
+            row["preserve_basis"] = self._preserve_basis
             # C3 (mechanism C): a preserved row must not seed `ever_seen` with
             # UNTRUSTED companion fingerprints, or a trusted finding first
             # confirmed at the same location next round would skip clause (a).
@@ -2007,6 +2022,7 @@ class StateMachine:
         guard already requires it to be empty.
         """
         self._c3_strip_fps = set()
+        self._preserve_basis = None
         if not self._host_receipt_active():
             return False
         if fixpoint not in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART):
@@ -2035,6 +2051,24 @@ class StateMachine:
                 if finding.disposition == Disposition.UNCERTAIN
                 and [f for f in self._state.findings if f.fingerprint == finding.fingerprint]
                 == [finding]
+            }
+            excluded = {id(f) for f in schema_coverage + companions}
+            self._preserve_basis = {
+                "version": 1,
+                "causes": sorted({f.fingerprint for f in schema_coverage}),
+                "companions": sorted(self._c3_strip_fps),
+                "counterfactual": counterfactual.name,
+                "recurring": {
+                    f.fingerprint: _severity_tier(f)
+                    for f in self._product_findings()
+                    if id(f) not in excluded
+                    and not is_mutation_infra_diagnostic(f)
+                    and f.disposition == Disposition.CONFIRMED
+                },
+                # The loader has no reviewed diff line count. Record the
+                # unchanged fixpoint's density/distinct-rule result, not a
+                # second implementation of its thresholds.
+                "density_passed": True,
             }
         return preserve
 
@@ -2333,6 +2367,7 @@ class StateMachine:
         """
         self._retract_preserved_credit_note()
         row["clean_credit_action"] = "reset"
+        row.pop("preserve_basis", None)
         if row.get("fixpoint") == "CYCLE_RESTART":
             # L-B: the log names the action the ledger records. This attempt
             # logged "clean credit preserved"; it now records the restart.
@@ -3617,15 +3652,28 @@ class StateMachine:
         """
         errors: list[str] = list(self._last_receipt_write_errors)
         if self._attempted_last_round:
-            errors.append(_ATTEMPTED_EVIDENCE_GATE_ERROR)
+            errors.append(
+                _ReceiptDiagnosticError(_ATTEMPTED_EVIDENCE_GATE_ERROR, "RECEIPT_INVALID_GATE")
+            )
         if self._unavailable_rejected_passes_last_round:
-            errors.append(_AUDIT_UNAVAILABLE_GATE_ERROR)
+            causes = self._unavailable_rejected_causes_last_round
+            subtype = (
+                "RECEIPT_SCHEMA"
+                if causes
+                and set(causes) == self._unavailable_rejected_passes_last_round
+                and all(cause == "schema" for cause in causes.values())
+                else "RECEIPT_INVALID_GATE"
+            )
+            errors.append(_ReceiptDiagnosticError(_AUDIT_UNAVAILABLE_GATE_ERROR, subtype))
         diff_text = self._receipt_diff()
         excerpts = self._excerpts_last_round
         if diff_text and excerpts:
             from .verify import validate_excerpts_against_diff
 
-            errors.extend(validate_excerpts_against_diff(diff_text, excerpts, cwd=self.cwd))
+            errors.extend(
+                _ReceiptDiagnosticError(error, "RECEIPT_EVIDENCE")
+                for error in validate_excerpts_against_diff(diff_text, excerpts, cwd=self.cwd)
+            )
         return errors
 
     def _receipt_gate_terminal_errors(self) -> list[str]:
@@ -4118,6 +4166,7 @@ class StateMachine:
     def _capture_acquisition_receipts(self) -> None:
         """Freeze all acquired facts and emitted receipts before downstream mutation."""
         from .basis import derive_basis
+        from .receipt_provenance import receipt_finding_provenance
         from .factories import _L1Call
         from .state import _PASS_NAMES
 
@@ -4168,6 +4217,7 @@ class StateMachine:
                 if finding.id.startswith(f"l1-{role}-")
             )
             entry = {
+                **receipt_finding_provenance(finding),
                 "file": finding.file,
                 "line": finding.line_range[0] if finding.line_range else 0,
                 "description": finding.description,
@@ -4210,6 +4260,13 @@ class StateMachine:
                 line_range=[0, 0],
                 description=str(error),
                 diagnostic_kind=diagnostic_kind,
+                receipt_subtype=(
+                    error.verification.receipt_subtype
+                    if type(error) is _ReceiptGateFailure
+                    else error.receipt_subtype
+                    if type(error) is _ReceiptDiagnosticError
+                    else None
+                ),
             )
         )
         self._state.infra_errors.append(f"receipt: {error}")
@@ -4262,6 +4319,7 @@ class StateMachine:
                 pending_raw_responses=self._pending_raw_responses_last_round,
                 reviewed_repositories=self.reviewed_repositories,
                 unavailable_rejected_passes=self._unavailable_rejected_passes_last_round,
+                unavailable_rejected_causes=self._unavailable_rejected_causes_last_round,
             )
             self._written_cycles.append(round_index + 1)
             # This boundary precedes post_round_hook. Retain only just-written
@@ -4326,6 +4384,7 @@ class StateMachine:
         self._raw_observations_last_round = []
         self._pending_raw_responses_last_round = []
         self._unavailable_rejected_passes_last_round = set()
+        self._unavailable_rejected_causes_last_round = {}
         self._responses_last_round = None
         l1_findings, l1_excerpts = self._run_l1_phase()
         self._raw_observations_last_round = list(
@@ -4338,6 +4397,10 @@ class StateMachine:
         if type(unavailable_passes) is not set:
             raise ValueError("unavailable rejected passes must be a host-owned set")
         self._unavailable_rejected_passes_last_round = unavailable_passes.copy()
+        unavailable_causes = getattr(self.l1_provider, "unavailable_rejected_causes", {})
+        if type(unavailable_causes) is not dict:
+            raise ValueError("unavailable rejected causes must be a host-owned mapping")
+        self._unavailable_rejected_causes_last_round = unavailable_causes.copy()
         self._excerpts_last_round = l1_excerpts
         l1_findings, l1_excerpts = self._downgrade_one_line_slips(
             l1_findings,
@@ -4606,7 +4669,9 @@ class StateMachine:
         # review open is the severity tiers' question below.
         ever_seen: set = set()
         for past in history:
-            ever_seen.update(past.get("dispositions", {}).keys())
+            ever_seen.update(
+                set(past.get("dispositions", {})) - set(past.get("untrusted_fingerprints", []))
+            )
 
         # (a) a CONFIRMED fingerprint no earlier round has seen = full reset
         for fp, disp in current_disps.items():
@@ -5916,6 +5981,12 @@ class StateMachine:
             ],
         }
         if self._host_attempt_round is not None:
+            # A trusted collision must still seed history; source comes from
+            # the host's StateFinding, never from reviewer JSON.
+            trusted = {f.fingerprint for f in self._state.findings if f.source != "UNTRUSTED"}
+            snapshot["untrusted_fingerprints"] = sorted(
+                {f.fingerprint for f in self._state.findings if f.source == "UNTRUSTED"} - trusted
+            )
             if any(value == "returned" for value in self._phase_status.values()):
                 self._attempt_snapshot = snapshot
         else:

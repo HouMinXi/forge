@@ -1325,10 +1325,13 @@ def test_c3_loader_still_refuses_uncertain_companion_in_preserved_row():
         validate_round_history([row])
 
 
-def test_c3a_reset_row_seeds_ever_seen(tmp_path, monkeypatch):
-    """T18 / TD-P6-C3a debt pin: a non-preserved (reset) row keeps the
-    companion fp, so it seeds ever_seen and a trusted first confirmation at F
-    in N+1 is NOT new under clause (a). Pinned as-is; not fixed by C3."""
+def test_c3a_reset_row_retains_companion_but_does_not_seed_ever_seen(tmp_path, monkeypatch):
+    """W2-1 replaces T18's debt pin, preserving the raw disposition snapshot.
+
+    Previously a reset's UNTRUSTED companion seeded ever_seen; the approved
+    per-row source record now makes its first trusted confirmation new.
+    Legacy rows without the new field retain the original behavior below.
+    """
     sm, _, _ = _c3_machine(tmp_path, monkeypatch)
     _host_rows(sm)
     monkeypatch.setattr(sm, "_persist_state", lambda: None)
@@ -1347,6 +1350,10 @@ def test_c3a_reset_row_seeds_ever_seen(tmp_path, monkeypatch):
     sm._state.findings = [trusted]
     sm._phase_findings = {"l1": [trusted]}
     sm._state.round = 3
+    assert row["untrusted_fingerprints"] == [_C3_FP]
+    assert sm._fixpoint_reached() is _FixpointResult.RESET
+    # Negative control: absence means legacy, not retroactive reclassification.
+    row.pop("untrusted_fingerprints")
     assert sm._fixpoint_reached() is not _FixpointResult.RESET
 
 

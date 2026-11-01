@@ -1317,11 +1317,17 @@ def test_diagnostic_writer_parameter_compatibility(tmp_path, option):
     import inspect
     from code_forge.receipt import write_receipts
 
-    assert list(inspect.signature(write_receipts).parameters)[-3:] == [
+    parameters = inspect.signature(write_receipts).parameters
+    assert [
+        name
+        for name, parameter in parameters.items()
+        if parameter.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    ][-3:] == [
         "unavailable_rejected_passes",
         "raw_observations",
         "pending_raw_responses",
-    ], "writer must expose a separate additive diagnostic channel"
+    ], "writer must preserve existing positional diagnostic channels"
+    assert parameters["unavailable_rejected_causes"].kind is inspect.Parameter.KEYWORD_ONLY
     base = [tmp_path / "receipts", 0, [], "offline", [], tmp_path]
     old_optional = [None, None, None, {"tier": "declared"}, None, None, None, None]
     diagnostic = {"raw_response": BROKEN, "pass_name": "expert"}

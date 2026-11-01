@@ -12,10 +12,7 @@ from code_forge.verify import parse_diff_files, run_verify
 
 DIFF = "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n@@ -0,0 +1 @@\n+value = 1\n"
 # The reason's label for each kind of unverified basis (verify._UNRESOLVED_LABELS).
-_INFRA_UNAVAILABLE_LABEL = (
-    "unresolved finding without verified evidence (a product candidate the host "
-    "could not verify, or an infrastructure failure)"
-)
+_INFRA_UNAVAILABLE_LABEL = "unresolved UNTRUSTED product candidate without verified evidence"
 _MALFORMED_LABEL = "unresolved finding with a malformed basis"
 _UNRECOGNIZED_LABEL = "unresolved finding with an unrecognized basis authority"
 

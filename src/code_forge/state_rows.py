@@ -23,7 +23,9 @@ HOST_ROUND_FIELDS = frozenset(
 
 def is_host_round(row: dict) -> bool:
     """Presence of any authority field prevents legacy interpretation."""
-    return bool(HOST_ROUND_FIELDS.intersection(row)) or "evidence_rejections" in row
+    return bool(HOST_ROUND_FIELDS.intersection(row)) or bool(
+        {"evidence_rejections", "preserve_basis", "untrusted_fingerprints"}.intersection(row)
+    )
 
 
 def _project_product_row(row: dict) -> dict | None:

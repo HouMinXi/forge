@@ -19,6 +19,7 @@ from .basis import derive_basis
 from .diff import describe_fabricated_lines, parse_diff_hunks
 from .llm_invoke import loads_reply_json
 from .manifest import EnvManifest, ManifestTier
+from .receipt_provenance import receipt_finding_provenance
 from .reviewer_json import GroupedReviewAttempt, read_source_lines
 from .state import (
     StateFinding,
@@ -269,6 +270,8 @@ def write_receipts(
     unavailable_rejected_passes: set[str] | None = None,
     raw_observations: list[dict] | None = None,
     pending_raw_responses: list[dict] | None = None,
+    *,
+    unavailable_rejected_causes: dict[str, str] | None = None,
 ) -> list[Path]:
     """Write 3 receipt files (one per pass) for a round."""
     unavailable_passes: set[str] = set()
@@ -278,6 +281,12 @@ def write_receipts(
         if any(type(name) is not str or name not in _PASS_NAMES for name in unavailable_rejected_passes):
             raise ValueError("unavailable rejected passes contain an invalid host pass")
         unavailable_passes = unavailable_rejected_passes.copy()
+    unavailable_causes = {} if unavailable_rejected_causes is None else unavailable_rejected_causes
+    if type(unavailable_causes) is not dict or any(
+        name not in unavailable_passes or cause not in ("schema", "evidence", "mixed")
+        for name, cause in unavailable_causes.items()
+    ):
+        raise ValueError("invalid host unavailable rejected cause")
     repository_manifest = None
     if reviewed_repositories is not None:
         from .receipt_scope import repository_scope
@@ -392,6 +401,7 @@ def write_receipts(
             "findings_count": len(pass_findings),
             "findings": [
                 {
+                    **receipt_finding_provenance(f),
                     "file": f.file,
                     "line": f.line_range[0] if f.line_range else 0,
                     "description": f.description,
@@ -454,6 +464,8 @@ def write_receipts(
             )
         if pass_name in excerpt_validation_errors:
             receipt["excerpt_validation_errors"] = excerpt_validation_errors[pass_name]
+        if pass_name in unavailable_causes:
+            receipt["unavailable_cause"] = unavailable_causes[pass_name]
         if repository_manifest is not None:
             receipt["reviewed_repositories"] = repository_manifest
         if exec_evidence_dict is not None:

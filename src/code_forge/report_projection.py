@@ -36,6 +36,9 @@ HostFailureKind = Literal[
     "PROVIDER_EMPTY",
     "PROVIDER_PROTOCOL",
     "RECEIPT_INVALID_GATE",
+    "RECEIPT_SCHEMA",
+    "RECEIPT_COVERAGE",
+    "RECEIPT_EVIDENCE",
 ]
 AssocKind = Literal["falsifier-failure", "evidence-downgrade"]
 FaultStage = Literal["shape", "diagnostics", "record", "projection"]
@@ -92,6 +95,8 @@ class ReportRecord:
     disposition: str
     associated_diagnostics: tuple[AssociatedDiagnostic, ...] = ()
     host_failure_kind: HostFailureKind | None = None
+    # W2-6: origin only, not an assertion that INFRA is a non-product finding.
+    source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -320,6 +325,30 @@ def _derive_host_failure_kind(f: StateFinding, shape: Shape) -> HostFailureKind 
 
     Bound to phase5-evidence/freeze/subtype-include-table.md. No enum writes.
     """
+    # W2-6: producer-owned display tag, never a new channel or policy.
+    # Reviewer UNTRUSTED output and falsifier-associated product failures
+    # cannot acquire infrastructure labels by echoing producer geometry.
+    if (
+        f.source == "INFRA"
+        and f.error is None
+        and f.disposition is Disposition.CONFIRMED
+        and f.line_range == [0, 0]
+        and type(f.receipt_subtype) is str
+        and f.receipt_subtype in ("RECEIPT_SCHEMA", "RECEIPT_COVERAGE", "RECEIPT_EVIDENCE")
+        and (
+            _x2_receipt_invalid_geometry(f)
+            or any(
+                f.id == f"l1-{name}-{suffix}" and f.fingerprint == f"{suffix}-{name}" and f.file == file
+                for name in _PASS_NAMES
+                for suffix, file, subtype in (
+                    ("schema-fail", "<schema-validation>", "RECEIPT_SCHEMA"),
+                    ("incomplete-coverage", "<coverage-guard>", "RECEIPT_COVERAGE"),
+                )
+                if f.receipt_subtype == subtype
+            )
+        )
+    ):
+        return f.receipt_subtype
     # X2 geometry first: never emit capacity labels for integrity (rule 1+6).
     # Wave-1 S2 (CAPACITY_INCOMPLETE) shares geometry — keep CAPACITY_INCOMPLETE via shape==S2.
     if _x2_receipt_invalid_geometry(f) and shape != "S2":
@@ -390,6 +419,7 @@ def _build_record(
         disposition=disposition,
         associated_diagnostics=diags,
         host_failure_kind=_derive_host_failure_kind(f, shape),
+        source=_require_str(f.source, "source"),
     )
 
 

@@ -14,6 +14,7 @@ import math
 import os
 import re
 import stat
+import warnings
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -155,6 +156,8 @@ class StateFinding:
     # Set at trusted acquisition or verified completeness boundaries only.
     diagnostic_kind: FindingDiagnosticKind | None = None
     provider_failure: dict | None = None
+    # Additive display-only label set at a receipt/schema/coverage producer.
+    receipt_subtype: str | None = None
 
 
 def is_receipt_audit(finding: StateFinding) -> bool:
@@ -513,6 +516,8 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
                 identities.add(identity)
         elif "evidence_rejections" in row:
             raise CorruptedStateError("evidence rejection authority has incompatible action")
+        if "preserve_basis" in row and action != "preserved":
+            raise CorruptedStateError("preserve basis has incompatible action")
         protocol_failures = row.get("falsify_protocol_failures", [])
         if (
             not isinstance(protocol_failures, list)
@@ -645,6 +650,23 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             and "dispositions" not in row
         ):
             raise CorruptedStateError("finalized host round lacks product snapshot")
+        if "untrusted_fingerprints" in row:
+            untrusted = row["untrusted_fingerprints"]
+            if (
+                not isinstance(untrusted, list)
+                or any(not isinstance(fp, str) or not fp for fp in untrusted)
+                or len(untrusted) != len(set(untrusted))
+                or (untrusted and not isinstance(row.get("dispositions"), dict))
+                or any(
+                    fp not in row["dispositions"]
+                    and (
+                        not isinstance(row.get("l1_fingerprints"), list)
+                        or fp not in row["l1_fingerprints"]
+                    )
+                    for fp in untrusted
+                )
+            ):
+                raise CorruptedStateError("invalid UNTRUSTED fingerprint snapshot")
         if action == "preserved":
             _validate_preserved_dispositions(row, history[:position])
     if round_index is not None and (
@@ -737,6 +759,7 @@ def _finding_from_dict(d: dict) -> StateFinding:
             None if d.get("diagnostic_kind") is None else FindingDiagnosticKind(d["diagnostic_kind"])
         ),
         provider_failure=d.get("provider_failure"),
+        receipt_subtype=d.get("receipt_subtype"),
     )
 
 
@@ -837,6 +860,15 @@ def load_state(path: Path) -> State | None:
         isinstance(row, dict) and is_host_round(row) for row in state.round_history
     ):
         validate_round_history(state.round_history, state.round)
+    if any(
+        row.get("clean_credit_action") == "preserved" and "preserve_basis" not in row
+        for row in state.round_history
+    ):
+        warnings.warn(
+            "legacy preserved rounds lack preserve_basis; accepted with legacy checks",
+            UserWarning,
+            stacklevel=2,
+        )
     state.rounds_with_failed_pass = data.get("rounds_with_failed_pass", 0)
     state.rounds_with_falsify_infra = data.get("rounds_with_falsify_infra", 0)
     state.rounds_with_mutation_infra = data.get("rounds_with_mutation_infra", 0)
@@ -881,6 +913,7 @@ def _finding_to_dict(f: StateFinding) -> dict:
         "evidence_downgrade": f.evidence_downgrade,
         "diagnostic_kind": None if f.diagnostic_kind is None else f.diagnostic_kind.value,
         "provider_failure": f.provider_failure,
+        "receipt_subtype": f.receipt_subtype,
     }
     return d
 
