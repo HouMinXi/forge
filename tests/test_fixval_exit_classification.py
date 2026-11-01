@@ -2,9 +2,9 @@
 """#252: an unjudged reverted-code run is not FIXVAL PASS.
 
 A signal death is inconclusive for any runner. For pytest, exit 1 (tests
-failed) and exit 2 (interrupted or collection error) count as failing exactly as
-on main, pending #28; 3-5 and other codes are inconclusive. Other runners keep
-"nonzero = fails"."""
+failed) and exit 2 (interrupted or collection error) count as failing only when
+the JUnit report shows it (#28, tests/test_fixval_junit_witness.py); 3-5 and
+other codes are inconclusive. Other runners keep "nonzero = fails"."""
 
 import os
 import stat
@@ -73,8 +73,12 @@ def test_pytest_non_failure_exit_is_inconclusive(tmp_path, code, label):
 
 
 @pytest.mark.parametrize("code", [1, 2])
-def test_pytest_exit_1_and_2_are_pass_as_on_main(tmp_path, code):
-    assert _reverted(tmp_path, _fake_pytest(tmp_path, code)).status == FixvalStatus.PASS
+def test_pytest_exit_1_and_2_without_a_report_are_inconclusive(tmp_path, code):
+    # #28: the fake pytest writes no JUnit report, so nothing shows a failed test
+    _assert_inconclusive(
+        _reverted(tmp_path, _fake_pytest(tmp_path, code)),
+        "pytest exit %d without a failed test or an import of a name the fix adds" % code,
+    )
 
 
 @pytest.mark.parametrize("code", [1, 2, 3, 5, 7, 127])
@@ -150,10 +154,10 @@ def test_real_pytest_failing_test_is_pass(tmp_path):
     )
 
 
-def test_real_pytest_import_of_name_the_fix_adds_is_pass_pending_28(tmp_path):
-    # the reverted code lacks `helper`: collection error, exit 2, counted as failing as on main
+def test_real_pytest_import_error_without_added_names_is_inconclusive(tmp_path):
+    # #28: with no diff saying the fix adds `helper`, this collection error judged nothing
     cmd = _real_pytest(tmp_path, "from added_by_fix import helper\ndef test_it():\n    helper()\n")
-    assert _reverted(tmp_path, cmd).status == FixvalStatus.PASS
+    _assert_inconclusive(_reverted(tmp_path, cmd), "pytest exit 2 without a failed test")
 
 
 def test_real_pytest_no_tests_is_inconclusive(tmp_path):

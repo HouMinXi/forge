@@ -492,8 +492,8 @@ def test_only_a_hollow_first_run_is_retried(tmp_path, monkeypatch, first):
     assert [finding.id for finding in result.findings] == expected
 
 
-def test_first_run_collection_error_stays_pass_as_on_main(tmp_path):
-    # the test imports a name the fix adds: exit 2 on reverted code, judged as on main (#28)
+def test_first_run_import_of_a_name_the_fix_adds_is_pass(tmp_path):
+    # the test imports a name the fix adds: exit 2 on reverted code, RED evidence (#28)
     fixed = {
         "src/calc.py": "value = 2\n\ndef helper():\n    return value\n",
         "tests/test_calc.py": "from calc import helper\n\ndef test_calc():\n    assert helper() == 2\n",
