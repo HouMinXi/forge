@@ -637,6 +637,37 @@ def test_l1_l2_infra_incomplete_with_pending_protocol_keeps_reset(tmp_path, monk
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
 
 
+@pytest.mark.parametrize("l2_infra", [False, True], ids=["no-l2-infra", "l2-infra"])
+def test_mixed_schema_and_coverage_preserves_with_or_without_l2_infra(tmp_path, monkeypatch, l2_infra):
+    """Plan omission: schema-fail and incomplete coverage in one round, with and without an L2 infra error.
+
+    Both (iii) findings leave the counterfactual; what is left is CLEAN, or
+    INCOMPLETE only because of the L2 infra error, and both preserve.
+    """
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._state.findings = [_schema_finding("adversarial"), _coverage_finding("qodo")]
+    if l2_infra:
+        sm._l2_infra_error = "constructed L2 runner failure"
+    expected = _FixpointResult.INCOMPLETE if l2_infra else _FixpointResult.CLEAN
+    assert sm._fixpoint_without(list(sm._state.findings)) is expected
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.CYCLE_RESTART) is True
+
+
+@pytest.mark.parametrize("l2_infra", [False, True], ids=["no-l2-infra", "l2-infra"])
+def test_mixed_schema_and_coverage_with_new_product_keeps_reset(tmp_path, monkeypatch, l2_infra):
+    """Plan omission, negative: a new CONFIRMED product finding beside both (iii) findings resets."""
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._state.findings = [
+        _schema_finding("adversarial"),
+        _coverage_finding("qodo"),
+        _product_finding(desc="P3: constructed new defect"),
+    ]
+    if l2_infra:
+        sm._l2_infra_error = "constructed L2 runner failure"
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+
+
 def test_m4_loader_accepts_recurring_confirmed_beside_iii_cause():
     rows = [
         _m4_prior_row(0, {"fp-p3": "CONFIRMED"}),

@@ -711,11 +711,14 @@ def test_coverage_on_receipt_gate_path_preserves(offline_workspace, monkeypatch)
     _recover(root, monkeypatch, original, [1, 2, 4])
 
 
-@pytest.mark.parametrize(("fault", "qodo_fault"), [("literal", "coverage"), ("coverage", "literal")])
+@pytest.mark.parametrize(
+    ("fault", "qodo_fault"),
+    [("literal", "coverage"), ("coverage", "literal"), ("schema", "literal"), ("literal", "schema")],
+)
 def test_coverage_with_literal_damage_on_gate_path_resets(
     offline_workspace, monkeypatch, fault, qodo_fault
 ):
-    """Gate path: literal damage beside a (iii) finding is not (iii)-only; M6 wipe."""
+    """Gate path: literal damage beside a (iii) finding (coverage or schema-fail) is not (iii)-only; M6 wipe."""
     root = offline_workspace
     _, original = _earned_prefix(root, monkeypatch)
     machine, calls = _new_machine(root, monkeypatch, fault=fault, qodo_fault=qodo_fault)
