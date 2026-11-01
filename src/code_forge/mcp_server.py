@@ -58,6 +58,12 @@ from mcp.types import (
 )
 
 import code_forge
+from code_forge.assertion_outcome import (
+    AssertionKind,
+    AssertionOutcome,
+    AssertionStage,
+    AssertionStatus,
+)
 from code_forge.exit_codes import EXIT_CLI_ERROR, EXIT_TIMEOUT
 from code_forge.llm_invoke import effective_invoke_timeout_s
 from code_forge.mcp_jobs import (
@@ -130,7 +136,8 @@ class _TimeoutReceiveStream(ObjectReceiveStream[SessionMessage | Exception]):
                 _validate_timeout(request.params["arguments"].get("timeout_s"))
             except ToolError as exc:
                 error = JSONRPCError(
-                    jsonrpc="2.0", id=request.id,
+                    jsonrpc="2.0",
+                    id=request.id,
                     error=ErrorData(code=INVALID_PARAMS, message=str(exc)),
                 )
                 await self._outgoing.send(SessionMessage(message=JSONRPCMessage(error)))
@@ -520,16 +527,26 @@ def _trusted_test_block(workspace: Path) -> dict:
 
     root = os.environ.get("FORGE_TEST_CONFIG_ROOT") or str(workspace)
     try:
-        head = subprocess.run(
-            ["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=str(workspace),
-            capture_output=True, text=True, encoding="utf-8", timeout=10, check=False,
-            stdin=subprocess.DEVNULL,
-        ).stdout.strip() or None
+        head = (
+            subprocess.run(
+                ["git", "rev-parse", "--verify", "-q", "HEAD"],
+                cwd=str(workspace),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=10,
+                check=False,
+                stdin=subprocess.DEVNULL,
+            ).stdout.strip()
+            or None
+        )
     except (OSError, subprocess.TimeoutExpired):
         head = None
     try:
         test = load_trusted_gate_config(
-            config_root=Path(root), source_root=workspace, base_sha=head,
+            config_root=Path(root),
+            source_root=workspace,
+            base_sha=head,
         ).get("test")
     except Exception:  # noqa: BLE001 - only sizes a time window
         return {}
@@ -548,7 +565,10 @@ def _silent_step_s(workspace: Path) -> int:
     from .mutation_config import DEFAULT_MUTATION_TIMEOUT
 
     # #183: an unset mutation timeout runs mutmut with its real default.
-    for key, default in (("timeout_seconds", 120), ("mutation_timeout_seconds", DEFAULT_MUTATION_TIMEOUT)):
+    for key, default in (
+        ("timeout_seconds", 120),
+        ("mutation_timeout_seconds", DEFAULT_MUTATION_TIMEOUT),
+    ):
         value = test.get(key, default)
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             value = default
@@ -712,7 +732,9 @@ async def forge_server_status() -> CallToolResult:
         current_digest = None
         source_state = "unreadable"
         source_error_type = type(exc).__name__
-        reason = "Cannot inspect package source. Restore readable source and reconnect this MCP connection."
+        reason = (
+            "Cannot inspect package source. Restore readable source and reconnect this MCP connection."
+        )
     else:
         if current_digest == _loaded_digest:
             source_state = "unchanged"
@@ -1051,10 +1073,42 @@ def _sarif_result_projection(stdout: str) -> tuple[int | None, list[dict] | None
     return _sarif_projection_with_status(stdout)[:3]
 
 
+def _test_assertion_projection(value: object) -> dict[str, Any] | None:
+    """Whitelist optional assertion metadata through the producer's validator."""
+    if type(value) is not dict or "status" not in value or "finding_count" not in value:
+        return None
+    try:
+        status = value["status"]
+        stage = value.get("stage")
+        kind = value.get("kind")
+        if type(status) is not str:
+            return None
+        if stage is not None and type(stage) is not str:
+            return None
+        if kind is not None and type(kind) is not str:
+            return None
+        return AssertionOutcome(
+            status=AssertionStatus(status),
+            finding_count=value["finding_count"],
+            stage=AssertionStage(stage) if stage is not None else None,
+            kind=AssertionKind(kind) if kind is not None else None,
+        ).to_metadata()
+    except (TypeError, ValueError):
+        return None
+
+
 def _sarif_projection_with_status(
     stdout: str,
     exit_code: int | None = None,
 ) -> tuple[int | None, list[dict] | None, list[dict] | None, str | None]:
+    """Compatibility projection retaining the original four fields."""
+    return _sarif_projection_with_assertion(stdout, exit_code)[:4]
+
+
+def _sarif_projection_with_assertion(
+    stdout: str,
+    exit_code: int | None = None,
+) -> tuple[int | None, list[dict] | None, list[dict] | None, str | None, dict[str, Any] | None]:
     """Read presentation from one CLI SARIF document, never review authority.
 
     The 1 MiB-character cutoff limits optional parsing and structured copies
@@ -1071,22 +1125,27 @@ def _sarif_projection_with_status(
     Each projected list includes at most 64 dictionary/list levels so the
     full MCP response envelope retains ample serialization depth headroom.
     """
-    no_report = (
-        type(stdout) is str and not stdout.strip()
-    ) or (
+    no_report = (type(stdout) is str and not stdout.strip()) or (
         exit_code is not None and (exit_code < 0 or exit_code in _NO_REPORT_EXIT_CODES)
     )
     unknown = (
-        None, None, None,
+        None,
+        None,
+        None,
         _NO_REPORT_COUNT_STATUS if no_report else _UNPARSEABLE_COUNT_STATUS,
+        None,
     )
     if type(stdout) is not str:
-        return (None, None, None, None)
+        return (None, None, None, None, None)
     if len(stdout) > _MAX_SARIF_REPORT_CHARS:
-        return (None, None, None, _OVERSIZE_COUNT_STATUS)
+        return (None, None, None, _OVERSIZE_COUNT_STATUS, None)
     try:
-        document = json.loads(stdout, object_pairs_hook=_sarif_object,
-                              parse_float=_sarif_float, parse_constant=_sarif_float)
+        document = json.loads(
+            stdout,
+            object_pairs_hook=_sarif_object,
+            parse_float=_sarif_float,
+            parse_constant=_sarif_float,
+        )
         if type(document) is not dict or document.get("version") != "2.1.0":
             return unknown
         runs = document.get("runs")
@@ -1113,6 +1172,7 @@ def _sarif_projection_with_status(
             return unknown
         # Escaped unpaired surrogates can parse but cannot reach MCP UTF-8.
         json.dumps((findings, audit), ensure_ascii=False, allow_nan=False).encode("utf-8")
+        test_assertion = _test_assertion_projection(properties.get("testAssertion"))
         diagnostics = properties.get("providerDiagnostics")
         if type(diagnostics) is list and any(
             type(row) is dict and row.get("diagnostic_kind") == "capacity-incomplete"
@@ -1120,8 +1180,8 @@ def _sarif_projection_with_status(
         ):
             # #221: a capacity-incomplete review did not acquire every pass;
             # its result list is not a count. Unknown, labelled -- never 0.
-            return None, findings, audit, _CAPACITY_INCOMPLETE_COUNT_STATUS
-        return len(findings), findings, audit, None
+            return None, findings, audit, _CAPACITY_INCOMPLETE_COUNT_STATUS, test_assertion
+        return len(findings), findings, audit, None, test_assertion
     except (ValueError, TypeError, UnicodeError, RecursionError):
         return unknown
 
@@ -1140,27 +1200,17 @@ def _report_classification_from_stdout(stdout: str) -> dict[str, object]:
     )
 
     if type(stdout) is not str or stdout == "":
-        return wire_to_json(
-            parse_report_classification(None, legacy_report_state="empty")
-        )
+        return wire_to_json(parse_report_classification(None, legacy_report_state="empty"))
     try:
         document = json.loads(stdout)
-    except (ValueError, TypeError):
-        return wire_to_json(
-            parse_report_classification(None, legacy_report_state="rejected")
-        )
+    except (ValueError, TypeError, RecursionError):
+        return wire_to_json(parse_report_classification(None, legacy_report_state="rejected"))
     if type(document) is not dict:
-        return wire_to_json(
-            parse_report_classification(None, legacy_report_state="rejected")
-        )
+        return wire_to_json(parse_report_classification(None, legacy_report_state="rejected"))
     runs = document.get("runs")
     if type(runs) is not list or not runs or type(runs[0]) is not dict:
-        return wire_to_json(
-            parse_report_classification(None, legacy_report_state="rejected")
-        )
-    return wire_to_json(
-        parse_report_classification(runs[0], legacy_report_state="accepted")
-    )
+        return wire_to_json(parse_report_classification(None, legacy_report_state="rejected"))
+    return wire_to_json(parse_report_classification(runs[0], legacy_report_state="accepted"))
 
 
 def _make_result(
@@ -1181,7 +1231,9 @@ def _make_result(
     note = signal_exit_note(exit_code)
     if note:
         output = output + ("\n" if output else "") + note
-    findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(stdout, exit_code)
+    findings_count, findings, receipt_audit, count_status, test_assertion = (
+        _sarif_projection_with_assertion(stdout, exit_code)
+    )
     structured = ForgeResult(
         verdict=exit_to_verdict(exit_code),
         exit_code=exit_code,
@@ -1189,6 +1241,7 @@ def _make_result(
         findings_count_status=count_status,
         findings=findings,
         receipt_audit=receipt_audit,
+        test_assertion=test_assertion,
         duration_s=round(elapsed, 2),
         output=output,
         report_classification=_report_classification_from_stdout(stdout),
@@ -1289,9 +1342,7 @@ async def _dispatch_cli(
         if deadline is None:
             result = await _run_cli_budgeted(*cli_args, workspace=workspace, env=env)
         else:
-            result = await _run_cli_budgeted(
-                *cli_args, workspace=workspace, env=env, deadline=deadline
-            )
+            result = await _run_cli_budgeted(*cli_args, workspace=workspace, env=env, deadline=deadline)
     except BaseException:
         _unlink(contract_tmp)
         _unlink(focus_tmp)
@@ -1557,7 +1608,9 @@ async def forge_gate_check(
     # #165 P3: reading the gate/config can block; keep it off the event loop.
     idle_s = await asyncio.to_thread(_job_idle_s, workspace, backend) if timeout_s is None else None
     return await _dispatch_cli(
-        cli_args, workspace, cap,
+        cli_args,
+        workspace,
+        cap,
         **({"timeout_s": timeout_s} if timeout_s is not None else {"idle_s": idle_s}),
     )
 
@@ -1673,16 +1726,16 @@ async def forge_job_status(job_id: str) -> CallToolResult:
         r = entry["result"]
         output = r.get("stdout", "")
         stderr = r.get("stderr", "")
-        if (
-            status == "failed" or r.get("exit_code", 0) != 0 or r.get("stdout_lost")
-        ) and stderr.strip():
+        if (status == "failed" or r.get("exit_code", 0) != 0 or r.get("stdout_lost")) and stderr.strip():
             output = output + "\n--- stderr ---\n" + stderr
         if str(r.get("verdict", "")).startswith("SIGNALED("):
             note = signal_exit_note(r.get("exit_code", 0))
             if note:
                 output = output + ("\n" if output else "") + note
         job_stdout = r.get("stdout", "")
-        findings_count, findings, receipt_audit, count_status = _sarif_projection_with_status(job_stdout, r.get("exit_code"))
+        findings_count, findings, receipt_audit, count_status, test_assertion = (
+            _sarif_projection_with_assertion(job_stdout, r.get("exit_code"))
+        )
         forge_result = ForgeResult(
             verdict=r.get("verdict", UNKNOWN_VERDICT),
             exit_code=r.get("exit_code", UNKNOWN_EXIT_CODE),
@@ -1690,6 +1743,7 @@ async def forge_job_status(job_id: str) -> CallToolResult:
             findings_count_status=count_status,
             findings=findings,
             receipt_audit=receipt_audit,
+            test_assertion=test_assertion,
             duration_s=r.get("duration_s", 0.0),
             output=output,
             report_classification=_report_classification_from_stdout(job_stdout),

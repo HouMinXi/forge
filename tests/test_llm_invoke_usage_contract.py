@@ -22,7 +22,7 @@ def test_repair_usage_and_duration_are_added_to_the_first_call(monkeypatch):
     monkeypatch.setattr(invoke, "_invoke_cli", lambda *a, **k: first)
     repair_calls = []
 
-    def fake_repair(parsed, prompt, backend, timeout_s, *, l1_evidence_required=False):
+    def fake_repair(parsed, prompt, backend, timeout_s, *, l1_evidence_required=False, reply_keys=None):
         assert l1_evidence_required is False
         repair_calls.append((parsed, prompt, backend, timeout_s))
         return ({**parsed, "code_excerpts": _EXCERPTS}, _usage(6, 2, 1), 0.5)

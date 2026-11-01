@@ -248,6 +248,44 @@ honest about being un-enforced).
 真跑过的证据。inline 跑不产出真 receipt、不产出真 verdict——这是有意的(它对"未被
 强制"这件事诚实)。
 
+**LOCAL assertion advice:** ordinary single-repository LOCAL subprocess reviews
+write `local-assertion-report.json` beside the state file (normally
+`.code-forge/local-assertion-report.json`) and a `code-forge: test_assertion=...`
+stderr line. The JSON contains only `testAssertion` execution metadata; an
+unreported outcome writes `{}` and no status line. This is advisory metadata,
+not full review-completion evidence, and does not change the primary verdict,
+exit code, state, receipts, or stdout; it is valid even for LOCAL `PENDING`.
+
+The previous sidecar is cleared when that execution acquires the review lock,
+then atomically replaced after assertion advice. Preflight errors, no-change
+early returns, subagent/inline paths, busy locks, and CI do not touch it: it is
+**not every invocation's result**. A clear failure warns that the old report is
+not this run's result; a write failure warns without changing the verdict.
+
+**LOCAL 断言建议:** 普通单仓库 LOCAL subprocess 在 state 文件旁写入
+`local-assertion-report.json`, 并向 stderr 输出 `test_assertion` 状态。
+它只有建议执行元数据,不是完整 review 完成证明,不会改变主 verdict、退出码或
+state/receipt。取得 review 锁时才清除旧报告,建议结束后原子替换；前置错误、
+无变更提前返回、subagent/inline、锁忙与 CI 不碰该文件,不能把它当作每次调用的结果。
+未上报 outcome 时写 `{}` 且无状态行；清除或写入失败只输出固定警告。
+
+**Subagent assertion advice:** after a normal subagent review return, stderr
+includes the same fixed `test_assertion` summary. A review with no git diff
+reports `skipped` with `stage=eligibility kind=no_git_diff` without invoking
+assertion advice. An unavailable outcome emits no status line. This summary
+changes neither the primary verdict nor stdout, exit codes, state, or receipts.
+It does not create or clear the LOCAL sidecar, create SARIF, or add an MCP
+projected field. Stderr can also contain untrusted finding text: do not parse it
+as structured evidence or treat the summary as full review-completion proof.
+Interrupted reviews are not covered by this reporting path.
+
+**Subagent 断言建议:** subagent review 正常返回后,向 stderr 输出同样的固定状态摘要。
+没有 git diff 时不调用建议阶段,而是报告 `skipped / eligibility / no_git_diff`；
+outcome 不可用时不输出状态行。摘要不改变主 verdict、stdout、退出码或 state/receipt,
+不创建或清除 LOCAL sidecar,不创建 SARIF,也不新增 MCP 投影字段。
+stderr 还可能包含不可信 finding 文本,不可解析成结构化证据或完整 review 完成证明；
+此报告路径不覆盖中断的 review。
+
 A `subprocess` FAIL with confirmed findings (rather than a self-narrated inline
 PASS) is forge working as intended: an independent process caught what the
 in-session narration would have rubber-stamped.

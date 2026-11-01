@@ -3045,7 +3045,7 @@ def test_fix12_reused_ci_instance_drops_a_fixed_trusted_config_refusal(tmp_path,
 def _freeze(value, seen=frozenset()):
     """Comparable deep snapshot: contents plus object identity of containers."""
     if value is None or type(value) in (bool, int, float, str, bytes):
-        return value
+        return (type(value), value)
     if isinstance(value, enum.Enum):
         return ("enum", type(value).__name__, value.value)
     if isinstance(value, Path):
@@ -3098,23 +3098,67 @@ def _guard_fixpoint(monkeypatch, machine):
 
     def guarded():
         site = sys._getframe(1).f_code.co_name
-        before = _machine_snapshot(machine)
-        first = original()
-        repeats = [original(), original()]
-        after = _machine_snapshot(machine)
+        results = []
+        for _ in range(3):
+            before = _machine_snapshot(machine)
+            results.append(original())
+            after = _machine_snapshot(machine)
+            if after != before:
+                changed = sorted(
+                    name for name in before.keys() | after.keys() if before.get(name) != after.get(name)
+                )
+                record["violations"].append((site, "machine state changed", changed))
         record["sites"].append(site)
-        record["results"].append(first)
-        if after != before:
-            changed = sorted(
-                name for name in before.keys() | after.keys() if before.get(name) != after.get(name)
-            )
-            record["violations"].append((site, "machine state changed", changed))
-        if any(result is not first for result in repeats):
-            record["violations"].append((site, "not idempotent", [first, *repeats]))
-        return first
+        record["results"].append(results[0])
+        if any(result is not results[0] for result in results[1:]):
+            record["violations"].append((site, "not idempotent", results))
+        return results[0]
 
     monkeypatch.setattr(machine, "_fixpoint_reached", guarded)
     return record
+
+
+@pytest.mark.parametrize("mutation", ["none", "append", "replace", "rotate", "result"])
+def test_fixpoint_guard_checks_each_call_before_state_can_restore(monkeypatch, mutation):
+    machine = types.SimpleNamespace(items=["a", "b", "c"])
+    calls = []
+
+    def original():
+        calls.append(None)
+        if mutation == "append":
+            machine.items.append("changed")
+        elif mutation == "replace":
+            machine.items = list(machine.items)
+        elif mutation == "rotate":
+            machine.items.append(machine.items.pop(0))
+        return False if mutation == "result" and len(calls) == 2 else True
+
+    machine._fixpoint_reached = original
+    record = _guard_fixpoint(monkeypatch, machine)
+    assert machine._fixpoint_reached() is True
+    assert len(calls) == 3
+    assert record["results"] == [True]
+    state_changes = [item for item in record["violations"] if item[1] == "machine state changed"]
+    result_changes = [item for item in record["violations"] if item[1] == "not idempotent"]
+    assert len(state_changes) == (3 if mutation in {"append", "replace", "rotate"} else 0)
+    assert bool(result_changes) is (mutation == "result")
+    if mutation == "rotate":
+        assert machine.items == ["a", "b", "c"]  # The batch-end snapshot alone would miss this.
+
+
+@pytest.mark.parametrize("before,after", [(True, 1), (False, 0), (1, 1.0), (0, 0.0)])
+def test_fixpoint_guard_detects_equal_primitive_type_changes(monkeypatch, before, after):
+    machine = types.SimpleNamespace(value=before)
+
+    def original():
+        machine.value = after
+        return True
+
+    machine._fixpoint_reached = original
+    record = _guard_fixpoint(monkeypatch, machine)
+    assert machine._fixpoint_reached() is True
+    assert len(record["violations"]) == 1
+    assert record["violations"][0][1:] == ("machine state changed", ["value"])
 
 
 def _fixpoint_case_earned(root, monkeypatch):
@@ -3192,13 +3236,57 @@ def test_counterfactual_restores_the_same_findings_list(offline_workspace, monke
     excluded = findings[:1]
     assert excluded and len(findings) > 1
     before = _machine_snapshot(machine)
-    results = [machine._fixpoint_without(excluded) for _ in range(3)]
-    assert machine._state.findings is findings
-    assert _machine_snapshot(machine) == before
+    results = []
+    for _ in range(3):
+        results.append(machine._fixpoint_without(excluded))
+        assert machine._state.findings is findings
+        assert _machine_snapshot(machine) == before
     assert len(set(results)) == 1
-    # And the direct call agrees with itself before and after the counterfactual.
+    # And each direct call leaves the state unchanged and agrees with the first.
     direct = machine._fixpoint_reached()
-    assert machine._fixpoint_reached() is direct and _machine_snapshot(machine) == before
+    assert _machine_snapshot(machine) == before
+    assert machine._fixpoint_reached() is direct
+    assert _machine_snapshot(machine) == before
+
+
+@pytest.mark.parametrize("mutation", ["none", "rotate", "replace", "direct-restore"])
+def test_counterfactual_oracle_checks_each_return(monkeypatch, tmp_path, mutation):
+    findings = ["a", "b", "c"]
+    machine = types.SimpleNamespace(_state=types.SimpleNamespace(findings=findings))
+    calls = []
+
+    def counterfactual(_excluded):
+        calls.append(None)
+        if mutation == "rotate":
+            findings.append(findings.pop(0))
+        elif mutation == "replace":
+            machine._state.findings = findings if len(calls) == 3 else list(findings)
+        return "CLEAN"
+
+    direct_calls = []
+
+    def direct():
+        direct_calls.append(None)
+        if mutation == "direct-restore":
+            if len(direct_calls) == 1:
+                findings.append("changed")
+            else:
+                findings.pop()
+        return "CLEAN"
+
+    machine._fixpoint_without = counterfactual
+    machine._fixpoint_reached = direct
+    machine.run = lambda: Verdict.FAIL
+    monkeypatch.setattr(sys.modules[__name__], "_earned_prefix", lambda *args: None)
+    monkeypatch.setattr(sys.modules[__name__], "_new_machine", lambda *args, **kwargs: (machine, []))
+    if mutation == "none":
+        test_counterfactual_restores_the_same_findings_list(tmp_path, monkeypatch)
+        assert len(calls) == 3
+    else:
+        with pytest.raises(AssertionError):
+            test_counterfactual_restores_the_same_findings_list(tmp_path, monkeypatch)
+        assert len(calls) == (3 if mutation == "direct-restore" else 1)
+        assert len(direct_calls) == (1 if mutation == "direct-restore" else 0)
 
 
 # --- Run-level P3 density/distinct negatives ---------------------------------
