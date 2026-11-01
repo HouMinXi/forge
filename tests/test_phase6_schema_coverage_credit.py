@@ -114,7 +114,10 @@ _NOT_ONLY = "preserved host round lacks \\(iii\\)-only product dispositions"
     [
         (lambda r: r.update(reset_observed=False), _SHAPE),
         (lambda r: r.update(fixpoint="CLEAN"), _SHAPE),
-        (lambda r: r.update(fixpoint="INCOMPLETE"), "incomplete host round lacks protocol interruption"),
+        (
+            lambda r: r.update(fixpoint="INCOMPLETE"),
+            "incomplete host round lacks a protocol or L2 cause",
+        ),
         (
             lambda r: r.update(
                 acquisition_failures=[

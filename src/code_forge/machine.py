@@ -1821,6 +1821,10 @@ class StateMachine:
 
     def _begin_host_attempt(self, round_index: int) -> None:
         self._settled_preserve_round = None
+        # #114: an attempt that fails before its L2 starts (which clears it
+        # again) must not read an earlier round's error. Above the host-receipt
+        # guard, so non-host LOCAL rounds are covered too.
+        self._l2_infra_error = None
         if not self._host_receipt_active():
             return
         if any(row["round"] == round_index for row in self._state.round_history):
@@ -1927,7 +1931,8 @@ class StateMachine:
             row.pop("fixpoint", None)
         # #114: this round's L2 returned an infrastructure error. The fixpoint
         # turns CLEAN into INCOMPLETE for it, and the loader needs the cause to
-        # accept that `interrupted` row (state.validate_round_history).
+        # accept that INCOMPLETE row; it also requires that L2 returned
+        # (state.validate_round_history).
         if self._l2_infra_error is not None and self._phase_status["l2"] == "returned":
             row["l2_infra_error"] = True
         else:
@@ -1986,7 +1991,8 @@ class StateMachine:
         (a partial or crashed attempt never preserves); no acquisition marker,
         HOLD fingerprint, or falsifier transport failure; at least one (iii)
         finding; and the counterfactual: the unchanged fixpoint, evaluated with
-        the (iii) findings removed, would be CLEAN (plan Q7 / section 2.2). A
+        the (iii) findings removed, would be CLEAN, or INCOMPLETE only through
+        this round's L2 infrastructure error (plan Q7 / section 2.2). A
         recurring sub-threshold P3 beside a schema-fail therefore preserves,
         while a new CONFIRMED, a FIXED->CONFIRMED reversion, P0-P2, or a
         semantic UNCERTAIN finding keeps the reset. C3: the counterfactual also
@@ -2022,11 +2028,7 @@ class StateMachine:
         counterfactual = self._fixpoint_without(schema_coverage + companions)
         # An L2 infra error alone only downgrades CLEAN to INCOMPLETE; it is
         # credit-neutral. A pending falsifier protocol observation is not.
-        preserve = counterfactual == _FixpointResult.CLEAN or (
-            counterfactual == _FixpointResult.INCOMPLETE
-            and self._l2_infra_error is not None
-            and not (protocol_ids and self._host_attempt_round is not None)
-        )
+        preserve = counterfactual == _FixpointResult.CLEAN or self._l2_only_incomplete(counterfactual)
         if preserve:
             self._c3_strip_fps = {
                 finding.fingerprint
@@ -2102,6 +2104,40 @@ class StateMachine:
             self._responses_last_round = None
             return
         self._responses_last_round = dict(responses)
+
+    def _protocol_stop(self) -> bool:
+        """A falsifier protocol observation is pending in this host attempt.
+
+        The protocol cause of an INCOMPLETE fixpoint, read by `_fixpoint_reached`,
+        `_l2_only_incomplete` and `_interrupts`. Side-effect-free.
+        """
+        return bool(self._falsify_protocol_findings) and self._host_attempt_round is not None
+
+    def _l2_only_incomplete(self, fixpoint: _FixpointResult) -> bool:
+        """INCOMPLETE only because of this round's L2 infrastructure error, not a protocol stop."""
+        return (
+            fixpoint == _FixpointResult.INCOMPLETE
+            and self._l2_infra_error is not None
+            and not self._protocol_stop()
+        )
+
+    def _interrupts(self, fixpoint: _FixpointResult) -> bool:
+        """Whether a CLEAN or INCOMPLETE round that cannot prove credit keeps the window.
+
+        For a failed attempt, a refused receipt gate and the survivor breaker;
+        callers decide RESET and CYCLE_RESTART themselves. A falsifier protocol
+        stop or an acquisition failure interrupts. An INCOMPLETE from an L2
+        infrastructure error alone does not: an unrelated mutation failure
+        must not keep credit the round itself could not prove (#114).
+        """
+        protocol = fixpoint == _FixpointResult.INCOMPLETE and self._protocol_stop()
+        return protocol or bool(self._acquisition_markers)
+
+    def _unproved_round_action(self, fixpoint: _FixpointResult, preserve: bool) -> str:
+        """Credit action for a round the receipt gate refused or the survivor breaker stopped."""
+        if fixpoint in (_FixpointResult.CLEAN, _FixpointResult.INCOMPLETE):
+            return "interrupted" if self._interrupts(fixpoint) else "unavailable"
+        return "preserved" if preserve else "reset"
 
     def _fixpoint_without(self, excluded: list[StateFinding]) -> _FixpointResult:
         """Evaluate the unchanged fixpoint as if `excluded` had not been observed."""
@@ -2208,7 +2244,7 @@ class StateMachine:
                 if fixpoint in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART):
                     self._reset_clean_credit()
                     action = "reset"
-                elif fixpoint == _FixpointResult.INCOMPLETE or self._acquisition_markers:
+                elif self._interrupts(fixpoint):
                     action = "interrupted"
             self._state.verdict = Verdict.FAIL
             self._state.converged = False
@@ -2362,7 +2398,13 @@ class StateMachine:
 
             earned_entry = None
             capacity_gate_error = None
-            if active and _fp == _FixpointResult.CLEAN and not gate_errors:
+            # A round that would be CLEAN but for its L2 error gets the same
+            # receipt acceptance: its evidence must not go unchecked (#114).
+            if (
+                active
+                and (_fp == _FixpointResult.CLEAN or self._l2_only_incomplete(_fp))
+                and not gate_errors
+            ):
                 from .verify import _capture_earned_cycle
 
                 earned_entry, captured = _capture_earned_cycle(
@@ -2382,24 +2424,11 @@ class StateMachine:
                         capacity_gate_error = error
             if gate_errors:
                 rejected_evidence = self._pure_evidence_rejections(_fp)
-                if _fp in (_FixpointResult.CLEAN, _FixpointResult.INCOMPLETE):
-                    # Only a falsifier protocol stop or an acquisition failure
-                    # interrupts a damaged round. An L2 infrastructure error
-                    # alone also makes it INCOMPLETE, but must not turn
-                    # receipt damage into kept credit: that round is
-                    # unavailable, as it is with a healthy L2 (#114).
-                    protocol_stop = _fp == _FixpointResult.INCOMPLETE and bool(
-                        self._falsify_protocol_findings
-                    )
-                    gate_action = (
-                        "evidence_rejected"
-                        if rejected_evidence
-                        else "interrupted"
-                        if protocol_stop or self._acquisition_markers
-                        else "unavailable"
-                    )
-                else:
-                    gate_action = "preserved" if _preserve_schema_coverage else "reset"
+                gate_action = (
+                    "evidence_rejected"
+                    if rejected_evidence
+                    else self._unproved_round_action(_fp, _preserve_schema_coverage)
+                )
                 self._finish_host_attempt(
                     gate_action,
                     _fp,
@@ -2430,14 +2459,7 @@ class StateMachine:
                     "mutation: surviving mutants reported in 3 consecutive rounds"
                 )
                 self._finish_host_attempt(
-                    "interrupted"
-                    if _fp == _FixpointResult.INCOMPLETE
-                    else (
-                        "unavailable"
-                        if _fp == _FixpointResult.CLEAN
-                        else ("preserved" if _preserve_schema_coverage else "reset")
-                    ),
-                    _fp,
+                    self._unproved_round_action(_fp, _preserve_schema_coverage), _fp
                 )
                 self._persist_state()
                 return Verdict.FAIL
@@ -4218,10 +4240,6 @@ class StateMachine:
         self._rejected_evidence_entries = ()
         self._rejection_receipt_digests = ()
         self._rejection_written_outcomes = ()
-        # #114: describes this round's L2 only. `_run_l2_phase` also clears it,
-        # but a round that fails before its L2 starts must not see the previous
-        # round's error and record INCOMPLETE for an L2 it never ran.
-        self._l2_infra_error = None
         self._state.converged = False
         self._state.round = round_index
         self._mutation_timeout_emitted = set()
@@ -4473,7 +4491,9 @@ class StateMachine:
           - Semantic UNCERTAIN -> RESET
           - Host-caught non-protocol falsification failure -> RESET
           - Host-caught falsifier protocol failure alone -> INCOMPLETE
-          - Zero CONFIRMED -> CLEAN
+          - Zero CONFIRMED -> CLEAN, or INCOMPLETE when this round has a protocol
+            stop (`_protocol_stop`) or an L2 infrastructure error (#114); the same
+            applies wherever a recurring CONFIRMED tier below would give CLEAN
           - P0 or P1 CONFIRMED -> RESET
           - P2 CONFIRMED (no P0/P1) -> CYCLE_RESTART (resets clean-round counter)
           - Only P3 CONFIRMED -> density check (skipped when no git_diff):
@@ -4551,7 +4571,7 @@ class StateMachine:
         protocol_ids = {id(finding) for finding in self._falsify_protocol_findings}
         if any(id(finding) not in protocol_ids for finding in self._falsify_failed_findings):
             return _FixpointResult.RESET
-        protocol_incomplete = bool(protocol_ids) and self._host_attempt_round is not None
+        protocol_incomplete = self._protocol_stop()
         # #188: an L2 infra error only downgrades CLEAN to INCOMPLETE; it never
         # exempts an unadjudicated protocol-violation finding from the reset.
         incomplete = protocol_incomplete or incomplete_l2
