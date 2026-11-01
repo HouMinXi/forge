@@ -612,7 +612,11 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             )
         ):
             raise CorruptedStateError("interrupted host round lacks nonreset acquisition observation")
-        if row.get("fixpoint") == "INCOMPLETE" and action != "interrupted":
+        # An unavailable round may be INCOMPLETE only through its L2 error: the
+        # receipt gate refused its evidence, and the L2 error may not keep it.
+        if row.get("fixpoint") == "INCOMPLETE" and not (
+            action == "interrupted" or (action == "unavailable" and l2_infra)
+        ):
             raise CorruptedStateError("incomplete host round lacks protocol interruption")
         if action == "reset" and (
             not row["reset_observed"]

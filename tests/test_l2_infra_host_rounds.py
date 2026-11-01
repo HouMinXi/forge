@@ -119,7 +119,43 @@ def test_round_failing_before_l2_does_not_inherit_the_previous_round_l2_error(
     assert first["clean_credit_action"] == "interrupted" and first["l2_infra_error"] is True
     assert second["clean_credit_action"] == "unavailable" and second["fixpoint"] == "CLEAN"
     assert second["phase_status"]["l2"] == "not_run" and "l2_infra_error" not in second
+    # As for any attempt that failed after L1: the count stays, but an
+    # unavailable round cannot prove the inherited window, so it is not restored.
     assert state.consecutive_clean_rounds == 2
+    result = _sc._restore_result(root)
+    assert not result.passed and "unavailable host attempt" in result.reason
+
+
+@pytest.mark.parametrize("l2", ["healthy", "raise", "typed"])
+def test_receipt_damage_beside_an_l2_error_fails_closed_as_with_a_healthy_l2(
+    offline_workspace, monkeypatch, l2
+):
+    """Literal receipt damage makes the round unavailable; an L2 error beside it changes nothing.
+
+    The L2 error alone makes the fixpoint INCOMPLETE, which on the receipt gate
+    would read as an interruption that keeps the window. It must not: the
+    damaged round is unavailable, the inherited window cannot be restored, and
+    the next run fails without calling a reviewer, exactly as with a healthy L2.
+    """
+    root = offline_workspace
+    _, original = _sc._earned_prefix(root, monkeypatch)
+    machine, _ = _sc._new_machine(root, monkeypatch, qodo_fault="literal")
+    if l2 != "healthy":
+        machine.l2_runner = _l2_failing(l2)
+    assert machine.run() is Verdict.FAIL
+    state, _ = _sc._state(root)
+    row = state.round_history[-1]
+    assert row["clean_credit_action"] == "unavailable"
+    if l2 == "healthy":
+        assert row["fixpoint"] == "CLEAN" and "l2_infra_error" not in row
+    else:
+        assert row["fixpoint"] == "INCOMPLETE" and row["l2_infra_error"] is True
+    result = _sc._restore_result(root)
+    assert not result.passed and "unavailable host attempt" in result.reason
+    recovery, recovery_calls = _sc._new_machine(root, monkeypatch)
+    assert recovery.run() is Verdict.FAIL
+    assert recovery_calls == []  # no blind healthy retry after unproved execution
+    _sc._assert_original_receipts(original)
 
 
 # Loader: the L2 infrastructure observation on a host row.
@@ -162,6 +198,14 @@ def test_loader_accepts_an_interrupted_l2_infra_round():
 def test_loader_still_refuses_incomplete_without_a_cause():
     with pytest.raises(CorruptedStateError, match="lacks nonreset acquisition observation"):
         validate_round_history(_history(_row(2, "interrupted", 2, fixpoint="INCOMPLETE")), 2)
+    with pytest.raises(CorruptedStateError, match="lacks protocol interruption"):
+        validate_round_history(_history(_row(2, "unavailable", 2, fixpoint="INCOMPLETE")), 2)
+
+
+def test_loader_accepts_an_unavailable_l2_infra_round():
+    """The receipt gate refused this round's evidence; its INCOMPLETE comes from the L2 error."""
+    row = _row(2, "unavailable", 2, fixpoint="INCOMPLETE", l2_infra_error=True)
+    validate_round_history(_history(row), 2)
 
 
 @pytest.mark.parametrize("value", [False, 1, "true", None, {}])

@@ -2394,11 +2394,19 @@ class StateMachine:
             if gate_errors:
                 rejected_evidence = self._pure_evidence_rejections(_fp)
                 if _fp in (_FixpointResult.CLEAN, _FixpointResult.INCOMPLETE):
+                    # Only a falsifier protocol stop or an acquisition failure
+                    # interrupts a damaged round. An L2 infrastructure error
+                    # alone also makes it INCOMPLETE, but must not turn
+                    # receipt damage into kept credit: that round is
+                    # unavailable, as it is with a healthy L2 (#114).
+                    protocol_stop = _fp == _FixpointResult.INCOMPLETE and bool(
+                        self._falsify_protocol_findings
+                    )
                     gate_action = (
                         "evidence_rejected"
                         if rejected_evidence
                         else "interrupted"
-                        if _fp == _FixpointResult.INCOMPLETE or self._acquisition_markers
+                        if protocol_stop or self._acquisition_markers
                         else "unavailable"
                     )
                 else:
