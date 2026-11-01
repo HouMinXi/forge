@@ -269,6 +269,17 @@ state/receipt。取得 review 锁时才清除旧报告,建议结束后原子替�
 无变更提前返回、subagent/inline、锁忙与 CI 不碰该文件,不能把它当作每次调用的结果。
 未上报 outcome 时写 `{}` 且无状态行；清除或写入失败只输出固定警告。
 
+**Unsupported assertion advice:** after outlet resolution, inline and enabled
+kernel-context on a non-subprocess outlet emit
+`test_assertion=skipped stage=eligibility kind=unsupported_outlet` on stderr
+before dispatch or rejection. This only records that assertion advice cannot
+run on that path; it is not a completed review or an interruption outcome.
+Existing verdicts and configuration errors are unchanged. No SARIF, LOCAL
+sidecar, or MCP structured outcome is created by this summary. Earlier
+configuration/trust errors do not claim an outlet status. Sampling is rejected
+before this reporting point and remains without an advisory status; this change
+does not re-enable it. Do not parse stderr as trusted evidence.
+
 **Subagent assertion advice:** after a normal subagent review return, stderr
 includes the same fixed `test_assertion` summary. A review with no git diff
 reports `skipped` with `stage=eligibility kind=no_git_diff` without invoking
