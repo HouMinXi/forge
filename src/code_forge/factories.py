@@ -84,8 +84,10 @@ def _assess_raw_response(response) -> tuple[dict | None, bool]:
         return None, False
     if type(response) is dict:
         return (response if _admissible_raw_value(response) else None), True
+    from .llm_invoke import loads_reply_json
+
     try:
-        data = json.loads(_strip_fence(response))
+        data = loads_reply_json(_strip_fence(response))
     except (ValueError, TypeError):
         return None, False
     if type(data) is not dict:
@@ -482,6 +484,7 @@ def build_l1_provider(
     from .llm_invoke import InvalidJSONResponseError, LLMInvokeError, llm_invoke
     from .reviewer_json import (
         REVIEW_JSON_CONTRACT,
+        REVIEW_REPLY_KEYS,
         ExcerptEvidenceError,
         MissingExcerptEvidenceError,
         _collect_excerpts,
@@ -585,6 +588,7 @@ def build_l1_provider(
                 l1_evidence_required=_requires_l1_excerpts(
                     diff_text, reviewed_repositories=reviewed_repositories
                 ),
+                reply_keys=REVIEW_REPLY_KEYS,
             )
             if r.usage.input_tokens > 0 or r.usage.output_tokens > 0 or r.usage.cached_input_tokens > 0:
                 bname = backend.name if backend else "unknown"

@@ -1168,7 +1168,7 @@ def _make_subagent_spawn(
     def _spawn(pass_name: str, diff_text: str) -> str:
         from .lenses import LENS_BLOCK, PASS_LENSES, selection_line
         from .llm_invoke import llm_invoke
-        from .reviewer_json import REVIEW_JSON_CONTRACT, _requires_l1_excerpts
+        from .reviewer_json import REVIEW_JSON_CONTRACT, REVIEW_REPLY_KEYS, _requires_l1_excerpts
 
         role = _PASS_ROLES.get(pass_name, "code reviewer")
         prompt = "You are a " + role + ". Review this diff.\n" + REVIEW_JSON_CONTRACT
@@ -1198,7 +1198,10 @@ def _make_subagent_spawn(
         if lens_pass:
             prompt += selection_line(pass_name)
         result = llm_invoke(
-            prompt, backend=backend, l1_evidence_required=_requires_l1_excerpts(diff_text)
+            prompt,
+            backend=backend,
+            l1_evidence_required=_requires_l1_excerpts(diff_text),
+            reply_keys=REVIEW_REPLY_KEYS,
         )
         content = result.content
         if isinstance(content, dict):
@@ -1428,7 +1431,7 @@ def _run_test_assertion_review(
     counter.
     """
     from .llm_invoke import LLMInvokeError, llm_invoke
-    from .reviewer_json import validate_reviewer_json, _json_to_state_findings
+    from .reviewer_json import REVIEW_REPLY_KEYS, validate_reviewer_json, _json_to_state_findings
     from .diff import get_changed_files
 
     findings: list = []
@@ -1467,7 +1470,7 @@ def _run_test_assertion_review(
                 + annotated_diff_prompt_block(diff_text)
             )
             stage = AssertionStage.INVOCATION
-            result = llm_invoke(prompt, backend=backend)
+            result = llm_invoke(prompt, backend=backend, reply_keys=REVIEW_REPLY_KEYS)
             stage = AssertionStage.VALIDATION
             validated = validate_reviewer_json(result.content)
             stage = AssertionStage.CONVERSION
@@ -3503,6 +3506,7 @@ def _dispatch_inline_canary(
             from .canary_gen import run_inline_canary
             from .backend import resolve_backend
             from .llm_invoke import llm_invoke as _llm_invoke
+            from .llm_invoke import loads_reply_json
 
             import subprocess as _sp
 
@@ -3532,7 +3536,6 @@ def _dispatch_inline_canary(
             def _canary_provider(diff_text_arg: str) -> list:
                 if backend is None:
                     return []
-                import json as _json
 
                 prompt = (
                     "You are a code mutation expert. Given this Python diff, "
@@ -3554,7 +3557,7 @@ def _dispatch_inline_canary(
                     content = result.content
                     if isinstance(content, dict):
                         return content.get("mutations", [])
-                    parsed = _json.loads(str(content))
+                    parsed = loads_reply_json(str(content))
                     return parsed.get("mutations", [])
                 except MemoryError:
                     raise
@@ -3569,7 +3572,9 @@ def _dispatch_inline_canary(
                     raise RuntimeError("no backend available for canary review")
                 import json as _json
 
-                result = _llm_invoke(prompt, backend=backend)
+                from .canary_gen import CANARY_REVIEW_REPLY_KEYS
+
+                result = _llm_invoke(prompt, backend=backend, reply_keys=CANARY_REVIEW_REPLY_KEYS)
                 return (
                     _json.dumps(result.content)
                     if isinstance(result.content, dict)
