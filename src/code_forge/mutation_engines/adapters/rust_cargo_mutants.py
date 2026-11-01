@@ -17,11 +17,14 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from code_forge.mutation_engines import isolate
 from code_forge.mutation_engines.adapters.base import (
     CapabilityReport,
     CapabilityState,
     ExecutionContext,
     InputSnapshot,
+    RunEvidence,
+    sandbox_failure_result,
 )
 from code_forge.mutation_engines.adapters.python_mutmut import (
     MutmutAdapter,
@@ -247,8 +250,20 @@ class CargoMutantsAdapter:
         directory = run_dir(context.state_root, context.run_id)
         directory.mkdir(parents=True, exist_ok=True)
         workspace = Path(tempfile.mkdtemp(prefix="forge-rust-", dir=str(directory)))
+        evidence = RunEvidence()
         try:
-            return self._run(target, selection, snapshot, context, directory, workspace)
+            return self._run(target, selection, snapshot, context, directory, workspace, evidence)
+        except (isolate.CgroupCleanupError, isolate.IsolationUnavailable) as exc:
+            # A sandbox failure: an incomplete result, not a crash, that keeps
+            # the baseline and the receipts gathered before it.
+            return sandbox_failure_result(
+                exc,
+                self._identity(snapshot, context, target),
+                directory,
+                evidence.baseline,
+                evidence.receipts,
+                evidence.artifacts,
+            )
         finally:
             if os.environ.get("FORGE_KEEP_WORKSPACE") != "1":
                 shutil.rmtree(workspace, ignore_errors=True)
@@ -261,6 +276,7 @@ class CargoMutantsAdapter:
         context: ExecutionContext,
         directory: Path,
         workspace: Path,
+        evidence: RunEvidence,
     ) -> TargetResult:
         del selection
         runner = MutmutAdapter()
@@ -283,6 +299,7 @@ class CargoMutantsAdapter:
             target.id,
             extra_binds=binds,
         )
+        evidence.receipts.append(baseline_receipt)
         output = baseline_out.read_text(encoding="utf-8") if baseline_out.is_file() else ""
         baseline_state, test_count = baseline_from_cargo(output or None, code)
         if timed_out:
@@ -294,6 +311,8 @@ class CargoMutantsAdapter:
             command_receipt=baseline_receipt,
             native_evidence=(baseline_ref,),
         )
+        evidence.baseline = baseline
+        evidence.artifacts.append(baseline_ref)
         if baseline_state is not BaselineState.PASSED:
             return self._result(
                 identity,
