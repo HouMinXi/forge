@@ -27,6 +27,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sys
 import threading
 import types
@@ -3159,3 +3160,132 @@ def test_p7_reused_ci_instance_still_carries_its_state(offline_workspace, monkey
     (root / ".code-forge" / "state.json").unlink()
     machine.run()
     assert len(machine._state.round_history) == first + 1
+
+
+# P7 sweep: keep-across-runs mutants of `_reset_run_state` that the earlier
+# differentials did not reach. Each scenario runs run 2 on run 1's instance and
+# on a new instance from the same files; every file both write must match.
+def _p7_raise_after_l1(mp, machine):
+    """Fail the first attempt after L1 returned and before L2 starts."""
+
+    def downgrade(*_args, **_kwargs):
+        raise RuntimeError("constructed failure after L1 returned")
+
+    mp.setattr(machine, "_downgrade_one_line_slips", downgrade)
+    return RuntimeError
+
+
+def _p7_l2_runner_fails(mp, machine):
+    def l2(*_args, **_kwargs):
+        raise RuntimeError("constructed L2 runner failure")
+
+    mp.setattr(machine, "l2_runner", l2)
+    return None
+
+
+def _p7_persist_then_fail_preflight(mp, machine):
+    """Save this review's (empty) State, then stop in the mutation preflight."""
+
+    def preflight(*_args, **_kwargs):
+        machine._persist_state()
+        raise _AfterRoundInterrupt("constructed interrupt in mutation preflight")
+
+    mp.setattr(machine, "_preflight_mutation_workspace", preflight)
+    return _AfterRoundInterrupt
+
+
+def _p7_other_diff_state_without_receipts(root):
+    path = root / ".code-forge" / "state.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["source_hash"] = _P7_OTHER_DIFF
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    shutil.rmtree(root / ".code-forge" / "receipts")
+
+
+def _p7_differential(root, monkeypatch, run1, run2, *, prepare=None, run1_rounds=1):
+    """Run 1 on a new instance, then run 2 on it and on a new instance; return both file sets."""
+    _earned_prefix(root, monkeypatch)
+    if prepare is not None:
+        prepare(root)
+    fault, inject = run1
+    machine = _fix11_round(root, monkeypatch, fault, inject, rounds=run1_rounds, start=0)
+    after_run1 = _files(root)
+    with monkeypatch.context() as mp:
+        _p7_no_manifest_probe(mp)
+        _fix11_round(root, monkeypatch, None, run2, machine=machine)
+    same_instance = _files(root)
+    _restore_files(root, after_run1)
+    assert _files(root) == after_run1
+    with monkeypatch.context() as mp:
+        _p7_no_manifest_probe(mp)
+        _fix11_round(root, monkeypatch, None, run2)
+    fresh = _files(root)
+    advisories = ".code-forge/advisory-findings.json"
+    reused = json.loads(same_instance.pop(advisories, b"[]"))
+    new = json.loads(fresh.pop(advisories, b"[]"))
+    assert reused[len(reused) - len(new) :] == new
+    return same_instance, fresh
+
+
+def test_p7_second_run_failing_after_l1_does_not_relog_run1_receipt_error(
+    offline_workspace, monkeypatch
+):
+    """Run 1 cannot write its receipts and fails after the round; run 2 fails after L1.
+
+    Run 2's failed path logs this attempt's receipt-write errors. Kept across
+    runs, run 1's error would be logged a second time by run 2.
+    """
+    root = offline_workspace
+    same_instance, fresh = _p7_differential(
+        root, monkeypatch, ("schema", _fix11_receipt_error_then_hook), _p7_raise_after_l1
+    )
+    state = ".code-forge/state.json"
+    saved = json.loads(same_instance[state])
+    logged = [e for e in saved["infra_errors"] if "receipt write failed" in e]
+    assert len(logged) == 1, saved["infra_errors"]
+    assert saved == json.loads(fresh[state])
+    assert same_instance == fresh
+
+
+def test_p7_second_run_does_not_continue_cycles_of_run1_other_diff_state(offline_workspace, monkeypatch):
+    """Run 1 found another diff's state.json and no receipts, saved its own State, then stopped.
+
+    Run 2 loads run 1's own (empty) State, so nothing else on disk numbers its
+    cycles and it starts at round 0, as a new instance does. Kept across runs,
+    the other diff's history would make run 2 continue after it.
+    """
+    root = offline_workspace
+    same_instance, fresh = _p7_differential(
+        root,
+        monkeypatch,
+        ("schema", _p7_persist_then_fail_preflight),
+        None,
+        prepare=_p7_other_diff_state_without_receipts,
+    )
+    state = ".code-forge/state.json"
+    saved = json.loads(same_instance[state])
+    assert saved["round_history"] and saved["round_history"][0]["round"] == 0, saved["round_history"]
+    assert ".code-forge/receipts/receipt-c1p1.json" in same_instance
+    assert saved == json.loads(fresh[state])
+    assert same_instance == fresh
+
+
+def test_p7_second_run_failing_before_l2_ignores_run1_l2_error(offline_workspace, monkeypatch):
+    """Run 1's L2 runner fails; run 2 fails after L1, before its own L2 phase.
+
+    Run 2's failed attempt evaluates the fixpoint without an L2 observation of
+    its own, so it must see no L2 error: run 1's would turn that CLEAN into
+    INCOMPLETE and the attempt row into `interrupted`. Both the run-entry
+    reset and the clear at the start of every round prevent that; this pins
+    the two-run case (tests/test_l2_infra_host_rounds.py pins the in-run one).
+    """
+    root = offline_workspace
+    same_instance, fresh = _p7_differential(
+        root, monkeypatch, (None, _p7_l2_runner_fails), _p7_raise_after_l1
+    )
+    state = ".code-forge/state.json"
+    saved = json.loads(same_instance[state])
+    row = saved["round_history"][-1]
+    assert row["clean_credit_action"] == "unavailable" and row.get("fixpoint") == "CLEAN", row
+    assert saved == json.loads(fresh[state])
+    assert same_instance == fresh
