@@ -2071,7 +2071,7 @@ class StateMachine:
             ]
             if len(attempts) != 1:
                 continue
-            if any(rejection.pass_name == name for rejection in producer._excerpt_rejections):
+            if any(rejection.pass_name == name for rejection in producer.excerpt_rejections):
                 continue
             if name in self._unavailable_rejected_passes_last_round:
                 continue
@@ -3812,10 +3812,10 @@ class StateMachine:
         producer = self.l1_provider
         self._rejection_authority = _RejectionSnapshot(
             producer,
-            producer._excerpt_invocation,
+            producer.excerpt_invocation,
             self._state.round + 1,
             self.source_hash,
-            producer._excerpt_rejections,
+            producer.excerpt_rejections,
             producer.attempted_excerpts,
         )
 
@@ -3829,13 +3829,13 @@ class StateMachine:
             type(snapshot) is not _RejectionSnapshot
             or type(producer) is not _L1Call
             or snapshot.producer is not producer
-            or snapshot.token is not producer._excerpt_invocation
+            or snapshot.token is not producer.excerpt_invocation
             or snapshot.cycle != self._state.round + 1
             or snapshot.source_hash != self.source_hash
             or self.reviewed_repositories is not None
             or type(snapshot.observations) is not tuple
             or not snapshot.observations
-            or snapshot.observations is not producer._excerpt_rejections
+            or snapshot.observations is not producer.excerpt_rejections
             or type(snapshot.attempts) is not list
             or snapshot.attempts is not producer.attempted_excerpts
             or len(snapshot.attempts) != len(snapshot.observations)
