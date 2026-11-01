@@ -18,15 +18,25 @@ from code_forge.outlet_c import run_outlet_c
 from code_forge.sarif import format_summary
 from code_forge.state import Disposition, StateFinding, Verdict, load_state
 from tests.test_resume_receipt_provenance import (
-    CONTENT, DIFF, SOURCE_HASH, VALID, _machine, _receipts, _verify, review_workspace as review_workspace,
+    CONTENT,
+    DIFF,
+    SOURCE_HASH,
+    VALID,
+    _machine,
+    _receipts,
+    _verify,
+    review_workspace as review_workspace,
 )
 
 
 def _capacity(machine, prompt):
     if machine._state.round == 2 and "adversarial" in prompt.rsplit("You are a ", 1)[-1]:
         return llm_invoke.LLMInvokeError(
-            "provider output cap", kind="truncated", retryable=False,
-            duration_s=0.125, usage=llm_invoke.Usage(17, 19, 3),
+            "provider output cap",
+            kind="truncated",
+            retryable=False,
+            duration_s=0.125,
+            usage=llm_invoke.Usage(17, 19, 3),
         )
     return VALID
 
@@ -54,11 +64,21 @@ def test_capacity_public_pipeline_and_recovery(review_workspace, monkeypatch, ca
 
         monkeypatch.setattr(llm_invoke, "llm_invoke", invoke)
         # The provider captures llm_invoke when constructed.
-        machine.l1_provider = build_l1_provider("auto", machine.resolved_review, backend=backend, max_attempts=1)
+        machine.l1_provider = build_l1_provider(
+            "auto", machine.resolved_review, backend=backend, max_attempts=1
+        )
     elif shape == "grouped":
         machine.l1_provider = build_grouped_l1_provider(
-            "auto", [{"name": name, "resolved": machine.resolved_review} for name in ("a", "b")],
-            backend=BackendConfig(name="owned-offline", type="api", format="openai", model="offline", base_url="http://127.0.0.1:1"), max_attempts=1,
+            "auto",
+            [{"name": name, "resolved": machine.resolved_review} for name in ("a", "b")],
+            backend=BackendConfig(
+                name="owned-offline",
+                type="api",
+                format="openai",
+                model="offline",
+                base_url="http://127.0.0.1:1",
+            ),
+            max_attempts=1,
         )
     assert machine.run() == Verdict.FAIL
     progress = capsys.readouterr().err
@@ -77,15 +97,24 @@ def test_capacity_public_pipeline_and_recovery(review_workspace, monkeypatch, ca
     assert "passes=2/3" in summary
     assert report["results"] == []
     diagnostics = report["properties"]["providerDiagnostics"]
-    assert {item["diagnostic_kind"] for item in diagnostics} == {"provider-capacity", "capacity-incomplete"}
+    assert {item["diagnostic_kind"] for item in diagnostics} == {
+        "provider-capacity",
+        "capacity-incomplete",
+    }
     provider = next(item for item in diagnostics if item["id"].endswith("invoke-fail"))
     assert provider["provider_failure"]["kind"] == "truncated"
     assert provider["provider_failure"]["duration_s"] == 0.125
-    assert provider["provider_failure"]["usage"] == {"input_tokens": 17, "output_tokens": 19, "cached_input_tokens": 3}
+    assert provider["provider_failure"]["usage"] == {
+        "input_tokens": 17,
+        "output_tokens": 19,
+        "cached_input_tokens": 3,
+    }
     latest = [json.loads(p.read_text()) for p in _receipts(root) if "c3p" in p.name]
     assert [r["pass_status"] for r in latest] == ["completed", "completed", "error"]
     assert not _verify(root).passed
-    assert len(state.findings) == 2 and all(f.disposition is Disposition.CONFIRMED for f in state.findings)
+    assert len(state.findings) == 2 and all(
+        f.disposition is Disposition.CONFIRMED for f in state.findings
+    )
     monkeypatch.setattr(llm_invoke, "llm_invoke", original_invoke)
     resumed = _machine(root, monkeypatch, rounds=1)
     assert resumed.run() == Verdict.PASS
@@ -97,7 +126,15 @@ def test_capacity_public_pipeline_and_recovery(review_workspace, monkeypatch, ca
 
 @pytest.mark.parametrize("kind", ["", "conn", "empty"])
 def test_text_truncation_without_typed_capacity_stays_hard(review_workspace, monkeypatch, kind):
-    machine = _machine(review_workspace, monkeypatch, payload=lambda machine, prompt: llm_invoke.LLMInvokeError("output truncated at provider cap", kind=kind, retryable=False) if machine._state.round == 2 and "adversarial" in prompt.rsplit("You are a ", 1)[-1] else VALID)
+    machine = _machine(
+        review_workspace,
+        monkeypatch,
+        payload=lambda machine, prompt: (
+            llm_invoke.LLMInvokeError("output truncated at provider cap", kind=kind, retryable=False)
+            if machine._state.round == 2 and "adversarial" in prompt.rsplit("You are a ", 1)[-1]
+            else VALID
+        ),
+    )
     assert machine.run() == Verdict.FAIL
     summary, report = _reported(review_workspace)
     assert "findings=2 confirmed=2" in summary
@@ -110,7 +147,22 @@ def test_text_truncation_without_typed_capacity_stays_hard(review_workspace, mon
 def test_real_product_reset_and_collision_stay_visible(review_workspace, monkeypatch, collision):
     machine = _machine(review_workspace, monkeypatch, payload=_capacity)
     machine.autofixer = NoChangeAutoFixer()
-    machine.l0_runner = lambda *args: ([StateFinding("actual-product", "invoke-fail-adversarial" if collision else "actual-product", "L0", Disposition.CONFIRMED, "control.ts", [2, 2], "P1: actual product")] if machine._state.round == 2 else [], [])
+    machine.l0_runner = lambda *args: (
+        [
+            StateFinding(
+                "actual-product",
+                "invoke-fail-adversarial" if collision else "actual-product",
+                "L0",
+                Disposition.CONFIRMED,
+                "control.ts",
+                [2, 2],
+                "P1: actual product",
+            )
+        ]
+        if machine._state.round == 2
+        else [],
+        [],
+    )
     assert machine.run() != Verdict.PASS
     assert machine._state.consecutive_clean_rounds == 0
     assert machine._state.earned_clean_window["cycles"] == []
@@ -121,7 +173,9 @@ def test_real_product_reset_and_collision_stay_visible(review_workspace, monkeyp
     assert [r["message"]["text"] for r in report["results"]] == ["P1: actual product"]
 
 
-@pytest.mark.parametrize("damage", ["literal", "schema", "hash", "anchor", "missing", "unreadable", "writer", "scope"])
+@pytest.mark.parametrize(
+    "damage", ["literal", "schema", "hash", "anchor", "missing", "unreadable", "writer", "scope"]
+)
 def test_independent_receipt_damage_with_capacity_is_hard(review_workspace, monkeypatch, damage):
     root = review_workspace
 
@@ -145,7 +199,11 @@ def test_independent_receipt_damage_with_capacity_is_hard(review_workspace, monk
 
     def payload(machine, prompt):
         outcome = _capacity(machine, prompt)
-        if machine._state.round == 2 and "structural code reviewer" in prompt and damage in ("literal", "schema"):
+        if (
+            machine._state.round == 2
+            and "structural code reviewer" in prompt
+            and damage in ("literal", "schema")
+        ):
             body = copy.deepcopy(VALID)
             if damage == "literal":
                 body["code_excerpts"][0]["content"] = CONTENT.replace("value = 2", "value = 200")
@@ -156,6 +214,7 @@ def test_independent_receipt_damage_with_capacity_is_hard(review_workspace, monk
 
     if damage == "writer":
         from code_forge import receipt as receipt_module
+
         original = receipt_module.write_receipts
 
         def writer(**kwargs):
@@ -178,7 +237,20 @@ def test_model_supplied_diagnostic_cannot_hide_product(review_workspace, monkeyp
         result = _capacity(machine, prompt)
         if result is VALID and machine._state.round == 2 and "structural code reviewer" in prompt:
             result = copy.deepcopy(VALID)
-            result["findings"] = [{"id": "l1-qodo-invoke-fail", "source": "INFRA", "fingerprint": "invoke-fail-qodo", "file": "control.ts", "line": 2, "severity": "P1", "description": "provider capacity model mimic", "excerpt": "const value = 2;", "diagnostic_kind": "provider-capacity", "provider_failure": {"kind": "truncated"}}]
+            result["findings"] = [
+                {
+                    "id": "l1-qodo-invoke-fail",
+                    "source": "INFRA",
+                    "fingerprint": "invoke-fail-qodo",
+                    "file": "control.ts",
+                    "line": 2,
+                    "severity": "P1",
+                    "description": "provider capacity model mimic",
+                    "excerpt": "const value = 2;",
+                    "diagnostic_kind": "provider-capacity",
+                    "provider_failure": {"kind": "truncated"},
+                }
+            ]
         return result
 
     machine = _machine(review_workspace, monkeypatch, payload=payload)
@@ -207,10 +279,28 @@ def test_outlet_c_capacity_retains_error_and_reporting(review_workspace, monkeyp
             raise llm_invoke.LLMInvokeError("typed provider capacity", kind="truncated", retryable=False)
         if route == "fallback":
             return {"findings": [], "code_excerpts": []}
-        return {"findings": [], "code_excerpts": [dict(VALID["code_excerpts"][0], file="second.ts" if "second.ts" in chunk else "control.ts")]}
+        return {
+            "findings": [],
+            "code_excerpts": [
+                dict(
+                    VALID["code_excerpts"][0], file="second.ts" if "second.ts" in chunk else "control.ts"
+                )
+            ],
+        }
 
     from code_forge.source import compute_source_hash
-    assert run_outlet_c(resolved, compute_source_hash(git_diff=diff), root, spawn, falsifier=StubFalsifier(), max_total_rounds=1) == Verdict.FAIL
+
+    assert (
+        run_outlet_c(
+            resolved,
+            compute_source_hash(git_diff=diff),
+            root,
+            spawn,
+            falsifier=StubFalsifier(),
+            max_total_rounds=1,
+        )
+        == Verdict.FAIL
+    )
     summary, report = _reported(root)
     assert "findings=0 confirmed=0" in summary
     assert report["results"] == []
@@ -221,20 +311,38 @@ def test_outlet_c_capacity_retains_error_and_reporting(review_workspace, monkeyp
 
 @pytest.mark.parametrize("usage", [None, llm_invoke.Usage()])
 def test_available_zero_and_unavailable_usage_remain_distinct(review_workspace, monkeypatch, usage):
-    machine = _machine(review_workspace, monkeypatch, rounds=1, payload=lambda machine, prompt: llm_invoke.LLMInvokeError("capacity", kind="truncated", retryable=False, usage=usage) if "adversarial" in prompt.rsplit("You are a ", 1)[-1] else VALID)
+    machine = _machine(
+        review_workspace,
+        monkeypatch,
+        rounds=1,
+        payload=lambda machine, prompt: (
+            llm_invoke.LLMInvokeError("capacity", kind="truncated", retryable=False, usage=usage)
+            if "adversarial" in prompt.rsplit("You are a ", 1)[-1]
+            else VALID
+        ),
+    )
     assert machine.run() == Verdict.FAIL
     _, report = _reported(review_workspace)
-    metadata = next(f["provider_failure"] for f in report["properties"]["providerDiagnostics"] if f["id"].endswith("invoke-fail"))
-    assert metadata["usage"] == (None if usage is None else {"input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0})
+    metadata = next(
+        f["provider_failure"]
+        for f in report["properties"]["providerDiagnostics"]
+        if f["id"].endswith("invoke-fail")
+    )
+    assert metadata["usage"] == (
+        None if usage is None else {"input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0}
+    )
 
 
 def test_third_capacity_breaker_truthful_cli(review_workspace, monkeypatch):
     root = review_workspace
+
     def payload(machine, prompt):
         return (
             llm_invoke.LLMInvokeError("capacity", kind="truncated", retryable=False)
-            if "adversarial" in prompt.rsplit("You are a ", 1)[-1] else VALID
+            if "adversarial" in prompt.rsplit("You are a ", 1)[-1]
+            else VALID
         )
+
     for _ in range(2):
         assert _machine(root, monkeypatch, rounds=1, payload=payload).run() == Verdict.FAIL
     machine = _machine(root, monkeypatch, rounds=1, payload=payload)
@@ -262,13 +370,26 @@ def test_ci_real_terminal_and_mcp_report_relay(review_workspace, monkeypatch, ki
     from code_forge.state import Mode
 
     root = review_workspace
-    machine = _machine(root, monkeypatch, rounds=1, payload=lambda machine, prompt: llm_invoke.LLMInvokeError("capacity", kind=kind, retryable=False) if "adversarial" in prompt.rsplit("You are a ", 1)[-1] else VALID)
+    machine = _machine(
+        root,
+        monkeypatch,
+        rounds=1,
+        payload=lambda machine, prompt: (
+            llm_invoke.LLMInvokeError("capacity", kind=kind, retryable=False)
+            if "adversarial" in prompt.rsplit("You are a ", 1)[-1]
+            else VALID
+        ),
+    )
     machine.mode = Mode.CI
     assert machine.run() == Verdict.FAIL
     state = load_state(root / ".code-forge/state.json")
     summary, report = _reported(root)
     assert state.verdict == Verdict.FAIL
-    assert [json.loads(p.read_text())["pass_status"] for p in _receipts(root)] == ["completed", "completed", "error"]
+    assert [json.loads(p.read_text())["pass_status"] for p in _receipts(root)] == [
+        "completed",
+        "completed",
+        "error",
+    ]
     if kind == "truncated":
         assert "FAIL findings=0 confirmed=0" in summary
         assert "provider_capacity=1" in summary and "capacity_incomplete=1" in summary
@@ -278,7 +399,24 @@ def test_ci_real_terminal_and_mcp_report_relay(review_workspace, monkeypatch, ki
         assert len(report["results"]) == 2
         assert "providerDiagnostics" not in report.get("properties", {})
     actual_stdout = json.dumps({"version": "2.1.0", "runs": [report]})
-    monkeypatch.setattr(mcp_server, "get_job", lambda job_id: {"status": "failed", "result": {"stdout": actual_stdout, "stderr": summary, "exit_code": 1, "verdict": "FAIL", "duration_s": 0.0}} if job_id == "owned-capacity" else None)
+    monkeypatch.setattr(
+        mcp_server,
+        "get_job",
+        lambda job_id: (
+            {
+                "status": "failed",
+                "result": {
+                    "stdout": actual_stdout,
+                    "stderr": summary,
+                    "exit_code": 1,
+                    "verdict": "FAIL",
+                    "duration_s": 0.0,
+                },
+            }
+            if job_id == "owned-capacity"
+            else None
+        ),
+    )
     response = asyncio.run(mcp_server.forge_job_status("owned-capacity"))
     result = response.structuredContent["result"]
     assert result["exit_code"] == 1 and result["verdict"] == "FAIL"
@@ -296,6 +434,7 @@ def test_ci_real_terminal_and_mcp_report_relay(review_workspace, monkeypatch, ki
 @pytest.mark.parametrize("damage", ["literal", "hash", "anchor", "schema", "writer"])
 def test_ci_capacity_independent_failure_stays_hard(review_workspace, monkeypatch, damage):
     from code_forge.state import Mode
+
     root = review_workspace
 
     def payload(machine, prompt):
@@ -303,7 +442,13 @@ def test_ci_capacity_independent_failure_stays_hard(review_workspace, monkeypatc
             return llm_invoke.LLMInvokeError("capacity", kind="truncated", retryable=False)
         body = copy.deepcopy(VALID)
         if "structural code reviewer" in prompt and damage in ("literal", "schema"):
-            body["code_excerpts"] = [{"file": "control.ts"}] if damage == "schema" else [dict(VALID["code_excerpts"][0], content=CONTENT.replace("value = 2", "value = 200"))]
+            body["code_excerpts"] = (
+                [{"file": "control.ts"}]
+                if damage == "schema"
+                else [
+                    dict(VALID["code_excerpts"][0], content=CONTENT.replace("value = 2", "value = 200"))
+                ]
+            )
         return body
 
     def hook(round_index):
@@ -319,7 +464,12 @@ def test_ci_capacity_independent_failure_stays_hard(review_workspace, monkeypatc
 
     if damage == "writer":
         from code_forge import receipt as receipt_module
-        monkeypatch.setattr(receipt_module, "write_receipts", lambda **kwargs: (_ for _ in ()).throw(OSError("write failed")))
+
+        monkeypatch.setattr(
+            receipt_module,
+            "write_receipts",
+            lambda **kwargs: (_ for _ in ()).throw(OSError("write failed")),
+        )
     machine = _machine(root, monkeypatch, payload=payload, rounds=1, hook=hook)
     machine.mode = Mode.CI
     assert machine.run() == Verdict.FAIL
@@ -329,11 +479,24 @@ def test_ci_capacity_independent_failure_stays_hard(review_workspace, monkeypatc
     assert "capacity_incomplete=" not in summary
 
 
-@pytest.mark.parametrize("damage", ["enum-string", "source", "file", "fingerprint", "range", "boolean-range", "kind", "disposition"])
+@pytest.mark.parametrize(
+    "damage",
+    ["enum-string", "source", "file", "fingerprint", "range", "boolean-range", "kind", "disposition"],
+)
 def test_diagnostic_projection_rejects_untrusted_structure(review_workspace, monkeypatch, damage):
     from code_forge.state import save_state
+
     root = review_workspace
-    machine = _machine(root, monkeypatch, rounds=1, payload=lambda machine, prompt: llm_invoke.LLMInvokeError("capacity", kind="truncated", retryable=False) if "adversarial" in prompt.rsplit("You are a ", 1)[-1] else VALID)
+    machine = _machine(
+        root,
+        monkeypatch,
+        rounds=1,
+        payload=lambda machine, prompt: (
+            llm_invoke.LLMInvokeError("capacity", kind="truncated", retryable=False)
+            if "adversarial" in prompt.rsplit("You are a ", 1)[-1]
+            else VALID
+        ),
+    )
     machine.run()
     finding = next(f for f in machine._state.findings if f.id.endswith("invoke-fail"))
     if damage == "enum-string":
@@ -365,8 +528,18 @@ def test_diagnostic_projection_rejects_untrusted_structure(review_workspace, mon
 @pytest.mark.parametrize("damage", ["bad-role", "bad-fingerprint", "bad-outcome", "extra-key"])
 def test_acquisition_history_marker_validation_remains_closed(review_workspace, monkeypatch, damage):
     from code_forge.errors import CorruptedStateError
+
     root = review_workspace
-    machine = _machine(root, monkeypatch, rounds=1, payload=lambda machine, prompt: llm_invoke.LLMInvokeError("capacity", kind="truncated", retryable=False) if "adversarial" in prompt.rsplit("You are a ", 1)[-1] else VALID)
+    machine = _machine(
+        root,
+        monkeypatch,
+        rounds=1,
+        payload=lambda machine, prompt: (
+            llm_invoke.LLMInvokeError("capacity", kind="truncated", retryable=False)
+            if "adversarial" in prompt.rsplit("You are a ", 1)[-1]
+            else VALID
+        ),
+    )
     machine.run()
     path = root / ".code-forge/state.json"
     state = json.loads(path.read_text())
@@ -389,19 +562,38 @@ def test_independent_unresolved_completed_role_wins_before_incomplete(review_wor
     _machine(root, monkeypatch, rounds=1).run()
     paths = _receipts(root)
     first = json.loads(paths[0].read_text())
-    first["findings"] = [{"file": "control.ts", "line": 2, "description": "unverified independent product", "disposition": "CONFIRMED", "basis": {"authority": "infra-unavailable", "manifest_tier": "declared", "exec_evidence": None, "falsification_survived": False}}]
+    first["findings"] = [
+        {
+            "file": "control.ts",
+            "line": 2,
+            "description": "unverified independent product",
+            "disposition": "CONFIRMED",
+            "basis": {
+                "authority": "infra-unavailable",
+                "manifest_tier": "declared",
+                "exec_evidence": None,
+                "falsification_survived": False,
+            },
+        }
+    ]
     first["findings_count"] = 1
     paths[0].write_text(json.dumps(first))
     last = json.loads(paths[2].read_text())
     last["pass_status"] = "error"
     paths[2].write_text(json.dumps(last))
-    proof, result = verify._capture_earned_cycle(root, SOURCE_HASH, verify.parse_diff_files(DIFF), cycle=1, diff_text=DIFF)
+    proof, result = verify._capture_earned_cycle(
+        root, SOURCE_HASH, verify.parse_diff_files(DIFF), cycle=1, diff_text=DIFF
+    )
     assert proof is None and not result.passed
-    assert result.failure_kind is None and "unresolved unverified product" in result.reason
+    assert result.failure_kind is None
+    assert "unresolved finding without verified evidence (a product candidate the host" in result.reason
+    assert "product finding" not in result.reason
 
 
 @pytest.mark.parametrize("order", ["capacity-first", "generic-first", "all-capacity"])
-def test_grouped_capacity_and_generic_same_role_deny_companion_exemption(review_workspace, monkeypatch, order):
+def test_grouped_capacity_and_generic_same_role_deny_companion_exemption(
+    review_workspace, monkeypatch, order
+):
     root = review_workspace
     machine = _machine(root, monkeypatch)
     calls = []
@@ -411,14 +603,27 @@ def test_grouped_capacity_and_generic_same_role_deny_companion_exemption(review_
             calls.append(prompt)
             raise llm_invoke.LLMInvokeError(
                 f"owned original acquisition {len(calls)}",
-                kind=("truncated" if order == "all-capacity" or (len(calls) == 1) == (order == "capacity-first") else "conn"), retryable=False,
+                kind=(
+                    "truncated"
+                    if order == "all-capacity" or (len(calls) == 1) == (order == "capacity-first")
+                    else "conn"
+                ),
+                retryable=False,
             )
         return llm_invoke.LLMResult(copy.deepcopy(VALID), llm_invoke.Usage(), 0.0)
 
     monkeypatch.setattr(llm_invoke, "_invoke_api", transport)
     machine.l1_provider = build_grouped_l1_provider(
-        "auto", [{"name": name, "resolved": machine.resolved_review} for name in ("a", "b")],
-        backend=BackendConfig(name="owned-offline", type="api", format="openai", model="offline", base_url="http://127.0.0.1:1"), max_attempts=1,
+        "auto",
+        [{"name": name, "resolved": machine.resolved_review} for name in ("a", "b")],
+        backend=BackendConfig(
+            name="owned-offline",
+            type="api",
+            format="openai",
+            model="offline",
+            base_url="http://127.0.0.1:1",
+        ),
+        max_attempts=1,
     )
     assert machine.run() == Verdict.FAIL
     summary, report = _reported(root)
@@ -427,7 +632,9 @@ def test_grouped_capacity_and_generic_same_role_deny_companion_exemption(review_
     else:
         assert "capacity_incomplete=" not in summary
         assert any(f.id == "RECEIPT_INVALID" for f in machine.active_findings)
-        assert report["results"], "a deduplicated generic acquisition failure borrowed capacity authority"
+        assert report["results"], (
+            "a deduplicated generic acquisition failure borrowed capacity authority"
+        )
     raw = json.loads((root / ".code-forge/state.json").read_text())
     original = next(f for f in raw["findings"] if f["id"].endswith("invoke-fail"))
     observations = original["provider_failure"]["observations"]
@@ -435,7 +642,6 @@ def test_grouped_capacity_and_generic_same_role_deny_companion_exemption(review_
     assert all("observations" not in item["provider_failure"] for item in observations)
     assert "owned original acquisition 1" in json.dumps(report)
     assert "owned original acquisition 2" in json.dumps(report)
-
 
 
 def test_capacity_pause_cannot_lower_new_public_floor(review_workspace, monkeypatch):
@@ -452,6 +658,7 @@ def test_capacity_pause_cannot_lower_new_public_floor(review_workspace, monkeypa
 def test_spawn_real_timeout_and_generic_failure_keep_truthful_outcomes(review_workspace, monkeypatch):
     from code_forge.factories import _L1Call
     from code_forge.outlet_c import _run_chunk
+
     root = review_workspace
     machine = _machine(root, monkeypatch, rounds=1)
 
@@ -462,7 +669,15 @@ def test_spawn_real_timeout_and_generic_failure_keep_truthful_outcomes(review_wo
             raise RuntimeError("generic host spawn")
         return copy.deepcopy(VALID)
 
-    machine.l1_provider = _L1Call(lambda call: _run_chunk(DIFF, spawn, ("qodo", "expert", "adversarial"), attempted=call.attempted_excerpts, rejection_state=call))
+    machine.l1_provider = _L1Call(
+        lambda call: _run_chunk(
+            DIFF,
+            spawn,
+            ("qodo", "expert", "adversarial"),
+            attempted=call.attempted_excerpts,
+            rejection_state=call,
+        )
+    )
     assert machine.run() == Verdict.FAIL
     statuses = [json.loads(p.read_text())["pass_status"] for p in _receipts(root)]
     assert statuses == ["timeout", "completed", "timeout"]
@@ -470,7 +685,9 @@ def test_spawn_real_timeout_and_generic_failure_keep_truthful_outcomes(review_wo
     assert "provider_capacity=" not in summary and report["results"]
 
 
-@pytest.mark.parametrize("order", ["capacity-first", "generic-first", "all-capacity", "unexpected-first"])
+@pytest.mark.parametrize(
+    "order", ["capacity-first", "generic-first", "all-capacity", "unexpected-first"]
+)
 def test_outlet_c_mixed_chunk_acquisition_is_not_capacity_only(review_workspace, monkeypatch, order):
     root = review_workspace
     monkeypatch.setenv("FORGE_DIFF_CHUNK_THRESHOLD_KB", "0")
@@ -483,19 +700,43 @@ def test_outlet_c_mixed_chunk_acquisition_is_not_capacity_only(review_workspace,
         if role == "adversarial":
             if order == "unexpected-first" and not second:
                 raise RuntimeError("independent unexpected original")
-            kind = "truncated" if order == "all-capacity" or second == (order == "generic-first") else "conn"
-            raise llm_invoke.LLMInvokeError("capacity or independent connection", kind=kind, retryable=False)
-        return {"findings": [], "code_excerpts": [dict(VALID["code_excerpts"][0], file="second.ts" if second else "control.ts")]}
+            kind = (
+                "truncated"
+                if order == "all-capacity" or second == (order == "generic-first")
+                else "conn"
+            )
+            raise llm_invoke.LLMInvokeError(
+                "capacity or independent connection", kind=kind, retryable=False
+            )
+        return {
+            "findings": [],
+            "code_excerpts": [
+                dict(VALID["code_excerpts"][0], file="second.ts" if second else "control.ts")
+            ],
+        }
 
     from code_forge.source import compute_source_hash
-    assert run_outlet_c(resolved, compute_source_hash(git_diff=diff), root, spawn, falsifier=StubFalsifier(), max_total_rounds=1) == Verdict.FAIL
+
+    assert (
+        run_outlet_c(
+            resolved,
+            compute_source_hash(git_diff=diff),
+            root,
+            spawn,
+            falsifier=StubFalsifier(),
+            max_total_rounds=1,
+        )
+        == Verdict.FAIL
+    )
     summary, report = _reported(root)
     if order == "all-capacity":
         assert "capacity_incomplete=1" in summary and report["results"] == []
     else:
         assert "capacity_incomplete=" not in summary and report["results"]
     assert [json.loads(p.read_text())["pass_status"] for p in _receipts(root)] == [
-        "completed", "completed", "timeout" if order == "unexpected-first" else "error"
+        "completed",
+        "completed",
+        "timeout" if order == "unexpected-first" else "error",
     ]
     if order == "unexpected-first":
         assert "independent unexpected original" in json.dumps(report)
@@ -523,17 +764,35 @@ def test_reused_provider_does_not_keep_old_generic_acquisition_authority(review_
 
 def test_absent_custom_producer_originals_cannot_authorize_companion(review_workspace, monkeypatch):
     from code_forge.state import FindingDiagnosticKind
+
     root = review_workspace
     machine = _machine(root, monkeypatch, rounds=1)
-    finding = StateFinding("l1-adversarial-invoke-fail", "invoke-fail-adversarial", "INFRA", Disposition.CONFIRMED, "<llm-invoke>", [0, 0], "custom capacity", diagnostic_kind=FindingDiagnosticKind.PROVIDER_CAPACITY, provider_failure={"kind": "truncated"})
-    machine.l1_provider = lambda: ([finding], [dict(item, pass_name=role) for role in ("qodo", "expert") for item in VALID["code_excerpts"]], llm_invoke.Usage(), 0.0)
+    finding = StateFinding(
+        "l1-adversarial-invoke-fail",
+        "invoke-fail-adversarial",
+        "INFRA",
+        Disposition.CONFIRMED,
+        "<llm-invoke>",
+        [0, 0],
+        "custom capacity",
+        diagnostic_kind=FindingDiagnosticKind.PROVIDER_CAPACITY,
+        provider_failure={"kind": "truncated"},
+    )
+    machine.l1_provider = lambda: (
+        [finding],
+        [dict(item, pass_name=role) for role in ("qodo", "expert") for item in VALID["code_excerpts"]],
+        llm_invoke.Usage(),
+        0.0,
+    )
     assert machine.run() == Verdict.FAIL
     summary, report = _reported(root)
     assert "capacity_incomplete=" not in summary and report["results"]
 
 
 @pytest.mark.parametrize("malformed", ["object", "nan", "usage", "dict-subclass"])
-def test_malformed_optional_provider_metadata_does_not_execute_callbacks(review_workspace, monkeypatch, malformed):
+def test_malformed_optional_provider_metadata_does_not_execute_callbacks(
+    review_workspace, monkeypatch, malformed
+):
     class Unsafe:
         def __deepcopy__(self, memo):
             raise AssertionError("arbitrary copy callback")
@@ -564,10 +823,24 @@ def test_malformed_optional_provider_metadata_does_not_execute_callbacks(review_
             raise error
         return copy.deepcopy(VALID)
 
-    assert run_outlet_c(ResolvedReview([Path("control.ts")], None, DIFF, "git"), SOURCE_HASH, root, spawn, falsifier=StubFalsifier(), max_total_rounds=1) == Verdict.FAIL
+    assert (
+        run_outlet_c(
+            ResolvedReview([Path("control.ts")], None, DIFF, "git"),
+            SOURCE_HASH,
+            root,
+            spawn,
+            falsifier=StubFalsifier(),
+            max_total_rounds=1,
+        )
+        == Verdict.FAIL
+    )
     summary, report = _reported(root)
     assert "FAIL findings=0 confirmed=0" in summary
-    metadata = next(f["provider_failure"] for f in report["properties"]["providerDiagnostics"] if f["id"].endswith("spawn-fail"))
+    metadata = next(
+        f["provider_failure"]
+        for f in report["properties"]["providerDiagnostics"]
+        if f["id"].endswith("spawn-fail")
+    )
     if malformed in ("object", "nan"):
         assert metadata["duration_s"] is None
     else:
@@ -578,7 +851,9 @@ def test_malformed_optional_provider_metadata_does_not_execute_callbacks(review_
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
 @pytest.mark.parametrize("omission", ["absent", "null"])
 @pytest.mark.parametrize("capacity", [False, True])
-def test_independent_host_completion_never_borrows_capacity(review_workspace, monkeypatch, mode, omission, capacity):
+def test_independent_host_completion_never_borrows_capacity(
+    review_workspace, monkeypatch, mode, omission, capacity
+):
     from code_forge.state import Mode
 
     root = review_workspace
@@ -601,8 +876,14 @@ def test_independent_host_completion_never_borrows_capacity(review_workspace, mo
     machine.mode = Mode(mode)
     verdict = machine.run()
     legacy = verify.run_verify(
-        root, SOURCE_HASH, verify.parse_diff_files(DIFF), diff_text=DIFF,
-        required_cycles=1, cycles=[1], respect_floor=False, require_convergence=False,
+        root,
+        SOURCE_HASH,
+        verify.parse_diff_files(DIFF),
+        diff_text=DIFF,
+        required_cycles=1,
+        cycles=[1],
+        respect_floor=False,
+        require_convergence=False,
     )
     summary, report = _reported(root)
     if capacity or mode == "LOCAL":
@@ -617,7 +898,11 @@ def test_independent_host_completion_never_borrows_capacity(review_workspace, mo
         assert machine._receipt_gate_terminal_errors() == []
     if mode == "LOCAL":
         proof, captured = verify._capture_earned_cycle(
-            root, SOURCE_HASH, verify.parse_diff_files(DIFF), cycle=1, diff_text=DIFF,
+            root,
+            SOURCE_HASH,
+            verify.parse_diff_files(DIFF),
+            cycle=1,
+            diff_text=DIFF,
         )
         assert proof is None and not captured.passed and captured.failure_kind is None
         assert load_state(root / ".code-forge/state.json").consecutive_clean_rounds == 0
@@ -628,7 +913,9 @@ def test_independent_host_completion_never_borrows_capacity(review_workspace, mo
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
 @pytest.mark.parametrize("omission", ["absent", "null"])
 @pytest.mark.parametrize("damage", ["schema", "hash", "anchor", "literal", "scope"])
-def test_completion_and_capacity_preserve_independent_integrity_priority(review_workspace, monkeypatch, mode, omission, damage):
+def test_completion_and_capacity_preserve_independent_integrity_priority(
+    review_workspace, monkeypatch, mode, omission, damage
+):
     from code_forge.state import Mode
 
     root = review_workspace
@@ -661,8 +948,14 @@ def test_completion_and_capacity_preserve_independent_integrity_priority(review_
     machine.mode = Mode(mode)
     assert machine.run() is Verdict.FAIL
     result = verify.run_verify(
-        root, SOURCE_HASH, verify.parse_diff_files(DIFF), diff_text=DIFF,
-        required_cycles=1, cycles=[1], respect_floor=False, require_convergence=False,
+        root,
+        SOURCE_HASH,
+        verify.parse_diff_files(DIFF),
+        diff_text=DIFF,
+        required_cycles=1,
+        cycles=[1],
+        respect_floor=False,
+        require_convergence=False,
     )
     assert not result.passed and result.failure_kind is None
     assert result.checks_run < 8, "independent checks1-7 must precede completion classification"
@@ -674,17 +967,56 @@ def test_completion_and_capacity_preserve_independent_integrity_priority(review_
 
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
 @pytest.mark.parametrize("kind", ["truncated", "timeout", "schema", "healthy"])
-@pytest.mark.parametrize("status", ["original", "error", "timeout", "schema_fail", "incomplete", "skipped", "completed", None, "absent", "invented", False, {"bad": "status"}], ids=["original", "error", "timeout", "schema", "incomplete", "skipped", "completed", "null", "absent", "invented", "false", "object"])
-def test_actual_writer_outcomes_and_fresh_status_contradictions(review_workspace, monkeypatch, mode, kind, status):
+@pytest.mark.parametrize(
+    "status",
+    [
+        "original",
+        "error",
+        "timeout",
+        "schema_fail",
+        "incomplete",
+        "skipped",
+        "completed",
+        None,
+        "absent",
+        "invented",
+        False,
+        {"bad": "status"},
+    ],
+    ids=[
+        "original",
+        "error",
+        "timeout",
+        "schema",
+        "incomplete",
+        "skipped",
+        "completed",
+        "null",
+        "absent",
+        "invented",
+        "false",
+        "object",
+    ],
+)
+def test_actual_writer_outcomes_and_fresh_status_contradictions(
+    review_workspace, monkeypatch, mode, kind, status
+):
     from code_forge.state import Mode
 
     root = review_workspace
-    expected = {"truncated": "error", "timeout": "timeout", "schema": "schema_fail", "healthy": "completed"}[kind]
+    expected = {
+        "truncated": "error",
+        "timeout": "timeout",
+        "schema": "schema_fail",
+        "healthy": "completed",
+    }[kind]
 
     def payload(machine, prompt):
         if "adversarial" in prompt.rsplit("You are a ", 1)[-1]:
             if kind in ("truncated", "timeout"):
-                return llm_invoke.LLMInvokeError("actual acquired failure", kind=kind, is_timeout=kind == "timeout", retryable=False)
+                return llm_invoke.LLMInvokeError(
+                    "actual acquired failure", kind=kind, is_timeout=kind == "timeout", retryable=False
+                )
             if kind == "schema":
                 return {"findings": "not a list", "code_excerpts": []}
         return VALID
@@ -726,7 +1058,9 @@ def test_actual_writer_outcomes_and_fresh_status_contradictions(review_workspace
 @pytest.mark.parametrize("moment", ["before-return", "after-hook"])
 @pytest.mark.parametrize("role", [1, 3])
 @pytest.mark.parametrize("status", [None, "completed", "timeout", "schema_fail"])
-def test_writer_boundary_and_hook_corruption_cannot_authorize_capacity(review_workspace, monkeypatch, moment, role, status):
+def test_writer_boundary_and_hook_corruption_cannot_authorize_capacity(
+    review_workspace, monkeypatch, moment, role, status
+):
     from code_forge import receipt as receipt_module
     from code_forge.state import Mode
 
@@ -816,7 +1150,9 @@ def test_ci_live_failure_stays_nonpass_without_receipt_attestation(review_worksp
 
 
 @pytest.mark.parametrize("status", ["invented", False, {"bad": "status"}])
-def test_public_verifier_invalid_status_never_gets_typed_incomplete(review_workspace, monkeypatch, status):
+def test_public_verifier_invalid_status_never_gets_typed_incomplete(
+    review_workspace, monkeypatch, status
+):
     from code_forge.state import Mode
 
     machine = _machine(review_workspace, monkeypatch, rounds=1)
@@ -826,7 +1162,16 @@ def test_public_verifier_invalid_status_never_gets_typed_incomplete(review_works
     receipt = json.loads(path.read_text())
     receipt["pass_status"] = status
     path.write_text(json.dumps(receipt))
-    result = verify.run_verify(review_workspace, SOURCE_HASH, verify.parse_diff_files(DIFF), diff_text=DIFF, required_cycles=1, cycles=[1], respect_floor=False, require_convergence=False)
+    result = verify.run_verify(
+        review_workspace,
+        SOURCE_HASH,
+        verify.parse_diff_files(DIFF),
+        diff_text=DIFF,
+        required_cycles=1,
+        cycles=[1],
+        respect_floor=False,
+        require_convergence=False,
+    )
     assert not result.passed and result.failure_kind is None
 
 
@@ -844,7 +1189,17 @@ def test_local_sticky_dismissal_cannot_attest_actual_failed_acquisition(review_w
         path.write_text(json.dumps(receipt))
 
     machine = _machine(review_workspace, monkeypatch, payload=payload, rounds=1, hook=hook)
-    machine._state.findings.append(StateFinding("prior", "invoke-fail-adversarial", "INFRA", Disposition.DISMISSED, "<llm-invoke>", [0, 0], "prior human disposition"))
+    machine._state.findings.append(
+        StateFinding(
+            "prior",
+            "invoke-fail-adversarial",
+            "INFRA",
+            Disposition.DISMISSED,
+            "<llm-invoke>",
+            [0, 0],
+            "prior human disposition",
+        )
+    )
     assert machine.run() is Verdict.FAIL
     state = load_state(review_workspace / ".code-forge/state.json")
     assert state.consecutive_clean_rounds == 0 and state.earned_clean_window["cycles"] == []
@@ -858,8 +1213,12 @@ def test_reused_ci_clears_live_failure_authority_before_transport(review_workspa
 
     def payload(machine, prompt):
         if not stage["fail"]:
-            assert not machine._acquisition_markers, "transport observed an earlier round's failure authority"
-            assert machine._written_pass_outcomes == (), "transport observed an earlier round's completion snapshot"
+            assert not machine._acquisition_markers, (
+                "transport observed an earlier round's failure authority"
+            )
+            assert machine._written_pass_outcomes == (), (
+                "transport observed an earlier round's completion snapshot"
+            )
         if stage["fail"] and "adversarial" in prompt.rsplit("You are a ", 1)[-1]:
             return llm_invoke.LLMInvokeError("first capacity", kind="truncated", retryable=False)
         return VALID
@@ -961,7 +1320,9 @@ def test_local_without_attestation_capacity_pauses_credit(review_workspace, monk
     assert [row["clean_rounds_after"] for row in state.round_history] == expected
     assert all(row["fixpoint"] == "CLEAN" for row in state.round_history)
     assert machine._clean_window_cycles == ([2, 3] if failed_round == 0 else [1, 2])
-    failed = json.loads((review_workspace / f".code-forge/receipts/receipt-c{failed_round + 1}p3.json").read_text())
+    failed = json.loads(
+        (review_workspace / f".code-forge/receipts/receipt-c{failed_round + 1}p3.json").read_text()
+    )
     assert failed["pass_status"] == "error"
     summary, report = _reported(review_workspace)
     assert "confirmed=0" in summary and report["results"] == []
@@ -970,7 +1331,9 @@ def test_local_without_attestation_capacity_pauses_credit(review_workspace, monk
 
 
 @pytest.mark.parametrize("fails", [False, True])
-def test_local_without_attestation_recovers_with_three_healthy_rounds(review_workspace, monkeypatch, fails):
+def test_local_without_attestation_recovers_with_three_healthy_rounds(
+    review_workspace, monkeypatch, fails
+):
     attempted = []
 
     def payload(machine, prompt):
@@ -992,7 +1355,9 @@ def test_local_without_attestation_recovers_with_three_healthy_rounds(review_wor
 
 
 @pytest.mark.parametrize("reuse", [False, True])
-def test_local_satisfied_threshold_cannot_hide_current_acquisition_failure(review_workspace, monkeypatch, reuse):
+def test_local_satisfied_threshold_cannot_hide_current_acquisition_failure(
+    review_workspace, monkeypatch, reuse
+):
     stage = {"fails": False}
 
     def payload(machine, prompt):
@@ -1038,8 +1403,11 @@ def test_outlet_without_diff_counts_only_healthy_rounds(review_workspace, monkey
 
     result = run_outlet_c(
         ResolvedReview([Path("control.ts")], None, None, "non-git"),
-        "owned-no-diff-source", review_workspace, spawn,
-        falsifier=StubFalsifier(), max_total_rounds=rounds,
+        "owned-no-diff-source",
+        review_workspace,
+        spawn,
+        falsifier=StubFalsifier(),
+        max_total_rounds=rounds,
     )
     state = load_state(review_workspace / ".code-forge/state.json")
     assert result is (Verdict.ESCALATED if rounds == 3 else Verdict.PASS)
@@ -1051,8 +1419,12 @@ def test_outlet_without_diff_counts_only_healthy_rounds(review_workspace, monkey
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
 @pytest.mark.parametrize("grouped", [False, True])
 @pytest.mark.parametrize("role", [1, 3])
-@pytest.mark.parametrize("entry", ["none", "product", "sentinel", "copied", "replaced", "extra-flag", "false-line"])
-def test_incomplete_receipt_exemption_requires_exact_host_evidence(review_workspace, monkeypatch, mode, grouped, role, entry):
+@pytest.mark.parametrize(
+    "entry", ["none", "product", "sentinel", "copied", "replaced", "extra-flag", "false-line"]
+)
+def test_incomplete_receipt_exemption_requires_exact_host_evidence(
+    review_workspace, monkeypatch, mode, grouped, role, entry
+):
     from code_forge.state import Mode
 
     root = review_workspace
@@ -1089,8 +1461,16 @@ def test_incomplete_receipt_exemption_requires_exact_host_evidence(review_worksp
     machine.mode = Mode(mode)
     if grouped:
         machine.l1_provider = build_grouped_l1_provider(
-            "auto", [{"name": name, "resolved": machine.resolved_review} for name in ("a", "b")],
-            backend=BackendConfig(name="owned-offline", type="api", format="openai", model="offline", base_url="http://127.0.0.1:1"), max_attempts=1,
+            "auto",
+            [{"name": name, "resolved": machine.resolved_review} for name in ("a", "b")],
+            backend=BackendConfig(
+                name="owned-offline",
+                type="api",
+                format="openai",
+                model="offline",
+                base_url="http://127.0.0.1:1",
+            ),
+            max_attempts=1,
         )
     assert machine.run() is Verdict.FAIL
     summary, report = _reported(root)
@@ -1104,14 +1484,20 @@ def test_incomplete_receipt_exemption_requires_exact_host_evidence(review_worksp
         assert report["results"] and "capacity_incomplete=" not in summary
         assert "RECEIPT_INVALID" in [f.id for f in machine.active_findings]
         proof, captured = verify._capture_earned_cycle(
-            root, SOURCE_HASH, verify.parse_diff_files(DIFF), cycle=1, diff_text=DIFF,
+            root,
+            SOURCE_HASH,
+            verify.parse_diff_files(DIFF),
+            cycle=1,
+            diff_text=DIFF,
         )
         assert proof is None and not captured.passed and captured.failure_kind is None
 
 
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
 @pytest.mark.parametrize("moment", ["before-writer", "after-writer"])
-def test_host_original_mutation_cannot_rewrite_acquisition_receipt_authority(review_workspace, monkeypatch, mode, moment):
+def test_host_original_mutation_cannot_rewrite_acquisition_receipt_authority(
+    review_workspace, monkeypatch, mode, moment
+):
     from code_forge.state import Mode
 
     def payload(machine, prompt):
@@ -1135,7 +1521,9 @@ def test_host_original_mutation_cannot_rewrite_acquisition_receipt_authority(rev
             mutate()
             path = review_workspace / ".code-forge/receipts/receipt-c1p3.json"
             receipt = json.loads(path.read_text())
-            receipt["findings"][0]["description"] = machine.l1_provider.acquisition_failures[0].description
+            receipt["findings"][0]["description"] = machine.l1_provider.acquisition_failures[
+                0
+            ].description
             path.write_text(json.dumps(receipt))
 
     monkeypatch.setattr(machine, "_publish_l1_receipts", writer)
@@ -1167,16 +1555,27 @@ def test_removed_acquisition_diagnostic_cannot_attest_capacity_only(review_works
     summary, report = _reported(review_workspace)
     assert report["results"] and "capacity_incomplete=" not in summary
     result = verify.run_verify(
-        review_workspace, SOURCE_HASH, verify.parse_diff_files(DIFF), diff_text=DIFF,
-        required_cycles=1, cycles=[1], respect_floor=False, require_convergence=False,
+        review_workspace,
+        SOURCE_HASH,
+        verify.parse_diff_files(DIFF),
+        diff_text=DIFF,
+        required_cycles=1,
+        cycles=[1],
+        respect_floor=False,
+        require_convergence=False,
     )
     assert not result.passed and result.failure_kind is verify.VerifyFailureKind.INCOMPLETE_PASS
     assert result.unresolved_findings == ()
 
 
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
-@pytest.mark.parametrize("damage", ["empty", "list", "row", "cycle", "boolean-cycle", "pass", "source", "payload", "duplicate"])
-def test_current_acquisition_snapshot_refuses_invalid_or_stale_authority(review_workspace, monkeypatch, mode, damage):
+@pytest.mark.parametrize(
+    "damage",
+    ["empty", "list", "row", "cycle", "boolean-cycle", "pass", "source", "payload", "duplicate"],
+)
+def test_current_acquisition_snapshot_refuses_invalid_or_stale_authority(
+    review_workspace, monkeypatch, mode, damage
+):
     from code_forge.state import Mode
 
     def payload(machine, prompt):
@@ -1197,7 +1596,13 @@ def test_current_acquisition_snapshot_refuses_invalid_or_stale_authority(review_
         elif damage == "duplicate":
             snapshot += snapshot
         else:
-            index, value = {"cycle": (0, 2), "boolean-cycle": (0, True), "pass": (1, True), "source": (2, "earlier-source"), "payload": (3, {})}[damage]
+            index, value = {
+                "cycle": (0, 2),
+                "boolean-cycle": (0, True),
+                "pass": (1, True),
+                "source": (2, "earlier-source"),
+                "payload": (3, {}),
+            }[damage]
             row[index] = value
             snapshot = (tuple(row),)
         machine._acquisition_receipts = snapshot
@@ -1210,14 +1615,18 @@ def test_current_acquisition_snapshot_refuses_invalid_or_stale_authority(review_
 
 
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
-def test_reused_run_clears_acquisition_receipt_snapshot_before_transport(review_workspace, monkeypatch, mode):
+def test_reused_run_clears_acquisition_receipt_snapshot_before_transport(
+    review_workspace, monkeypatch, mode
+):
     from code_forge.state import Mode
 
     stage = {"capacity": True}
 
     def payload(machine, prompt):
         if not stage["capacity"]:
-            assert machine._acquisition_receipts == (), "previous call's authority reached a fresh acquisition"
+            assert machine._acquisition_receipts == (), (
+                "previous call's authority reached a fresh acquisition"
+            )
             assert machine._acquisition_authority is None
         if stage["capacity"] and "adversarial" in prompt.rsplit("You are a ", 1)[-1]:
             return llm_invoke.LLMInvokeError("actual acquisition", kind="truncated", retryable=False)
@@ -1232,12 +1641,16 @@ def test_reused_run_clears_acquisition_receipt_snapshot_before_transport(review_
     assert machine._acquisition_receipts == ()
     if mode == "CI":
         _, report = _reported(review_workspace)
-        assert any("evidence-only attestation requires one cycle" in result["message"]["text"] for result in report["results"])
+        assert any(
+            "evidence-only attestation requires one cycle" in result["message"]["text"]
+            for result in report["results"]
+        )
 
 
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
 def test_failed_host_attempt_clears_acquisition_receipt_snapshot(review_workspace, monkeypatch, mode):
     from code_forge.state import Mode
+
     def payload(machine, prompt):
         if "adversarial" in prompt.rsplit("You are a ", 1)[-1]:
             return llm_invoke.LLMInvokeError("actual acquisition", kind="truncated", retryable=False)
@@ -1258,7 +1671,9 @@ def test_failed_host_attempt_clears_acquisition_receipt_snapshot(review_workspac
 
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
 @pytest.mark.parametrize("authority", ["tuple", "copied", "absent", "proxy"])
-def test_public_acquisition_requires_retained_original_identity(review_workspace, monkeypatch, mode, authority):
+def test_public_acquisition_requires_retained_original_identity(
+    review_workspace, monkeypatch, mode, authority
+):
     from code_forge.state import Mode
 
     def payload(machine, prompt):
@@ -1298,7 +1713,9 @@ def test_public_acquisition_requires_retained_original_identity(review_workspace
     assert report["results"] and "capacity_incomplete=" not in summary
 
 
-def test_reserved_local_attempt_discards_prior_acquisition_receipt_snapshot(review_workspace, monkeypatch):
+def test_reserved_local_attempt_discards_prior_acquisition_receipt_snapshot(
+    review_workspace, monkeypatch
+):
     from code_forge import machine as machine_module
 
     def payload(machine, prompt):
@@ -1311,7 +1728,9 @@ def test_reserved_local_attempt_discards_prior_acquisition_receipt_snapshot(revi
     assert machine._acquisition_receipts
 
     def frozen(state):
-        assert machine._acquisition_receipts == (), "new reservation retained previous acquisition authority"
+        assert machine._acquisition_receipts == (), (
+            "new reservation retained previous acquisition authority"
+        )
         return True
 
     monkeypatch.setattr(machine_module, "check_escalated_frozen", frozen)
@@ -1350,10 +1769,15 @@ def test_completed_ci_retains_evidence_only_unresolved_semantics(review_workspac
     def hook(round_index):
         path = review_workspace / ".code-forge/receipts/receipt-c1p3.json"
         receipt = json.loads(path.read_text())
-        receipt["findings"].append({
-            "file": "control.ts", "line": 2, "description": "unresolved completed evidence",
-            "disposition": "UNCERTAIN", "basis": {"authority": "infra-unavailable"},
-        })
+        receipt["findings"].append(
+            {
+                "file": "control.ts",
+                "line": 2,
+                "description": "unresolved completed evidence",
+                "disposition": "UNCERTAIN",
+                "basis": {"authority": "infra-unavailable"},
+            }
+        )
         receipt["findings_count"] = len(receipt["findings"])
         path.write_text(json.dumps(receipt))
 
@@ -1364,15 +1788,21 @@ def test_completed_ci_retains_evidence_only_unresolved_semantics(review_workspac
     assert not any("receipt" in r["ruleId"].lower() for r in report["results"])
     assert "provider_capacity=" not in summary
     kwargs = dict(diff_text=DIFF, required_cycles=1, cycles=[1], respect_floor=False)
-    evidence = verify.run_verify(review_workspace, SOURCE_HASH, verify.parse_diff_files(DIFF), require_convergence=False, **kwargs)
-    converged = verify.run_verify(review_workspace, SOURCE_HASH, verify.parse_diff_files(DIFF), require_convergence=True, **kwargs)
+    evidence = verify.run_verify(
+        review_workspace, SOURCE_HASH, verify.parse_diff_files(DIFF), require_convergence=False, **kwargs
+    )
+    converged = verify.run_verify(
+        review_workspace, SOURCE_HASH, verify.parse_diff_files(DIFF), require_convergence=True, **kwargs
+    )
     assert evidence.passed and evidence.unresolved_findings == ()
     assert not converged.passed and converged.failure_kind is None
     assert len(converged.unresolved_findings) == 1 and converged.incomplete_passes == ()
 
 
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
-def test_reused_call_preflight_exception_has_no_old_receipt_authority(review_workspace, monkeypatch, mode):
+def test_reused_call_preflight_exception_has_no_old_receipt_authority(
+    review_workspace, monkeypatch, mode
+):
     from code_forge.state import Mode
 
     def payload(machine, prompt):
@@ -1397,7 +1827,9 @@ def test_reused_call_preflight_exception_has_no_old_receipt_authority(review_wor
 
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
 @pytest.mark.parametrize("phase", ["_run_advisory_axes", "_serialize_advisories", "_display_advisories"])
-def test_terminal_advisory_exception_clears_current_receipt_authority(review_workspace, monkeypatch, mode, phase):
+def test_terminal_advisory_exception_clears_current_receipt_authority(
+    review_workspace, monkeypatch, mode, phase
+):
     from code_forge.state import Mode
 
     def payload(machine, prompt):
@@ -1442,21 +1874,46 @@ def test_each_local_round_clears_prior_acquisition_receipt_authority(review_work
 
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
 @pytest.mark.parametrize("moment", ["before-writer", "after-writer"])
-@pytest.mark.parametrize("scenario", [
-    "capacity-control", "capacity-reorder", "generic-retag", "generic-kind", "generic-enum",
-    "mixed-retag", "mixed-drop", "mixed-reverse-retag", "capacity-add-copy",
-    "capacity-replace-copy", "mixed-replace-duplicate", "capacity-duplicate", "capacity-remove",
-    "timeout-retag", "producer-swap", "marker-copy", "marker-add", "marker-drop",
-])
-def test_acquired_eligibility_and_membership_are_frozen(review_workspace, monkeypatch, mode, moment, scenario):
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "capacity-control",
+        "capacity-reorder",
+        "generic-retag",
+        "generic-kind",
+        "generic-enum",
+        "mixed-retag",
+        "mixed-drop",
+        "mixed-reverse-retag",
+        "capacity-add-copy",
+        "capacity-replace-copy",
+        "mixed-replace-duplicate",
+        "capacity-duplicate",
+        "capacity-remove",
+        "timeout-retag",
+        "producer-swap",
+        "marker-copy",
+        "marker-add",
+        "marker-drop",
+    ],
+)
+def test_acquired_eligibility_and_membership_are_frozen(
+    review_workspace, monkeypatch, mode, moment, scenario
+):
     from code_forge.factories import _L1Call
     from code_forge.state import FindingDiagnosticKind, Mode
 
-    kinds = (["truncated", "conn"] if scenario.startswith("mixed") else
-             ["conn"] if scenario.startswith("generic") else
-             ["timeout"] if scenario == "timeout-retag" else
-             ["truncated", "truncated"] if scenario in ("capacity-control", "capacity-reorder") else
-             ["truncated"])
+    kinds = (
+        ["truncated", "conn"]
+        if scenario.startswith("mixed")
+        else ["conn"]
+        if scenario.startswith("generic")
+        else ["timeout"]
+        if scenario == "timeout-retag"
+        else ["truncated", "truncated"]
+        if scenario in ("capacity-control", "capacity-reorder")
+        else ["truncated"]
+    )
     acquired = []
 
     def payload(machine, prompt):
@@ -1464,20 +1921,37 @@ def test_acquired_eligibility_and_membership_are_frozen(review_workspace, monkey
             return VALID
         kind = kinds[len(acquired)]
         acquired.append(kind)
-        return llm_invoke.LLMInvokeError("same acquisition text", kind=kind, is_timeout=kind == "timeout", retryable=False)
+        return llm_invoke.LLMInvokeError(
+            "same acquisition text", kind=kind, is_timeout=kind == "timeout", retryable=False
+        )
 
     machine = _machine(review_workspace, monkeypatch, payload=payload, rounds=1)
     machine.mode = Mode(mode)
     if len(kinds) > 1:
         machine.l1_provider = build_grouped_l1_provider(
-            "auto", [{"name": str(i), "resolved": machine.resolved_review} for i in range(len(kinds))],
-            backend=BackendConfig(name="owned-offline", type="api", format="openai", model="offline", base_url="http://127.0.0.1:1"), max_attempts=1,
+            "auto",
+            [{"name": str(i), "resolved": machine.resolved_review} for i in range(len(kinds))],
+            backend=BackendConfig(
+                name="owned-offline",
+                type="api",
+                format="openai",
+                model="offline",
+                base_url="http://127.0.0.1:1",
+            ),
+            max_attempts=1,
         )
 
     def mutate():
         originals = machine.l1_provider.acquisition_failures
         assert len(originals) == len(kinds)
-        if scenario in ("generic-retag", "mixed-retag", "mixed-reverse-retag", "timeout-retag", "generic-kind", "generic-enum"):
+        if scenario in (
+            "generic-retag",
+            "mixed-retag",
+            "mixed-reverse-retag",
+            "timeout-retag",
+            "generic-kind",
+            "generic-enum",
+        ):
             for finding in originals:
                 if scenario != "generic-enum":
                     finding.provider_failure["kind"] = "truncated"
@@ -1540,12 +2014,33 @@ def test_acquired_eligibility_and_membership_are_frozen(review_workspace, monkey
 
 
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
-@pytest.mark.parametrize("damage", [
-    "none", "mapping", "producer", "cycle", "boolean-cycle", "source", "facts-list", "fact-list",
-    "outcomes-list", "outcomes-size", "outcomes-string", "markers-list", "empty-facts",
-    "fact-original", "fact-role", "fact-boolean-role", "fact-outcome", "fact-capacity", "fact-emitted",
-])
-def test_acquisition_authority_requires_current_strict_frozen_facts(review_workspace, monkeypatch, mode, damage):
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "none",
+        "mapping",
+        "producer",
+        "cycle",
+        "boolean-cycle",
+        "source",
+        "facts-list",
+        "fact-list",
+        "outcomes-list",
+        "outcomes-size",
+        "outcomes-string",
+        "markers-list",
+        "empty-facts",
+        "fact-original",
+        "fact-role",
+        "fact-boolean-role",
+        "fact-outcome",
+        "fact-capacity",
+        "fact-emitted",
+    ],
+)
+def test_acquisition_authority_requires_current_strict_frozen_facts(
+    review_workspace, monkeypatch, mode, damage
+):
     from dataclasses import replace
     from code_forge.state import Mode
 
@@ -1567,16 +2062,21 @@ def test_acquisition_authority_requires_current_strict_frozen_facts(review_works
         elif damage.startswith("fact-"):
             name, value = {
                 "fact-original": ("original", copy.deepcopy(snapshot.facts[0].original)),
-                "fact-role": ("number", 0), "fact-boolean-role": ("number", True),
-                "fact-outcome": ("outcome", "error"), "fact-capacity": ("capacity", 1),
+                "fact-role": ("number", 0),
+                "fact-boolean-role": ("number", True),
+                "fact-outcome": ("outcome", "error"),
+                "fact-capacity": ("capacity", 1),
                 "fact-emitted": ("emitted", 1),
             }[damage]
             damaged = replace(snapshot, facts=(replace(snapshot.facts[0], **{name: value}),))
         else:
             name, value = {
-                "producer": ("producer", object()), "cycle": ("cycle", 2),
-                "boolean-cycle": ("cycle", True), "source": ("source_hash", "old-source"),
-                "facts-list": ("facts", list(snapshot.facts)), "empty-facts": ("facts", ()),
+                "producer": ("producer", object()),
+                "cycle": ("cycle", 2),
+                "boolean-cycle": ("cycle", True),
+                "source": ("source_hash", "old-source"),
+                "facts-list": ("facts", list(snapshot.facts)),
+                "empty-facts": ("facts", ()),
                 "outcomes-list": ("outcomes", list(snapshot.outcomes)),
                 "outcomes-size": ("outcomes", snapshot.outcomes[:2]),
                 "outcomes-string": ("outcomes", tuple(outcome.value for outcome in snapshot.outcomes)),
@@ -1613,7 +2113,9 @@ def test_acquired_fact_and_envelope_reject_in_place_reclassification(review_work
 
 
 @pytest.mark.parametrize("mode", ["LOCAL", "CI"])
-def test_failed_recapture_discards_all_previous_acquisition_authority(review_workspace, monkeypatch, mode):
+def test_failed_recapture_discards_all_previous_acquisition_authority(
+    review_workspace, monkeypatch, mode
+):
     from code_forge import basis
     from code_forge.state import Mode
 

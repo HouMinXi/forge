@@ -29,6 +29,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sys
 import threading
 import types
@@ -719,11 +720,14 @@ def test_coverage_on_receipt_gate_path_preserves(offline_workspace, monkeypatch)
     _recover(root, monkeypatch, original, [1, 2, 4])
 
 
-@pytest.mark.parametrize(("fault", "qodo_fault"), [("literal", "coverage"), ("coverage", "literal")])
-def test_coverage_with_literal_damage_on_gate_path_resets(
+@pytest.mark.parametrize(
+    ("fault", "qodo_fault"),
+    [("literal", "coverage"), ("coverage", "literal"), ("schema", "literal"), ("literal", "schema")],
+)
+def test_coverage_or_schema_with_literal_damage_on_gate_path_resets(
     offline_workspace, monkeypatch, fault, qodo_fault
 ):
-    """Gate path: literal damage beside a (iii) finding is not (iii)-only; M6 wipe."""
+    """Gate path: literal damage beside a coverage or schema-fail finding is not (iii)-only; M6 wipe."""
     root = offline_workspace
     _, original = _earned_prefix(root, monkeypatch)
     machine, calls = _new_machine(root, monkeypatch, fault=fault, qodo_fault=qodo_fault)
@@ -1177,6 +1181,20 @@ def test_current_falsifier_protocol_and_transport_keep_candidate_but_differ_on_c
     assert failed["basis"]["authority"] == "infra-unavailable"
     assert failed["basis"]["falsification_survived"] is False
     assert _restore_result(root).passed and not _verify(root).passed
+    # The candidate came from a validated reply; only its falsification failed.
+    # Verification must name it as a product candidate first, not discount it.
+    proof3, captured = verify._capture_earned_cycle(
+        root,
+        compute_source_hash(git_diff=DIFF),
+        verify.parse_diff_files(DIFF),
+        cycle=3,
+        diff_text=DIFF,
+    )
+    assert proof3 is None and len(captured.unresolved_findings) == 1
+    assert captured.reason == (
+        "unresolved finding without verified evidence (a product candidate the host could not "
+        "verify, or an infrastructure failure) c3p1 -- convergence not established"
+    )
     # The real reporting consumer deliberately rejects unresolved LOCAL HOLD.
     # Do not manufacture a CI state or a FAIL just to make it render.
     with pytest.raises(ValueError, match="PENDING verdict on a LOCAL"):
@@ -2746,7 +2764,7 @@ def test_fix11_second_full_run_saves_what_a_new_instance_saves(offline_workspace
     assert _files(root) == after_run1
     _fix11_round(root, monkeypatch, None)
     fresh = _files(root)
-    # Advisories are kept for the life of the instance (machine.py:842-847):
+    # Advisories are kept for the life of the instance (machine.__post_init__):
     # the reused instance's file lists run 1's advisories, then run 2's.
     advisories = ".code-forge/advisory-findings.json"
     reused, new = json.loads(same_instance.pop(advisories)), json.loads(fresh.pop(advisories))
@@ -3029,6 +3047,329 @@ def test_fix12_reused_ci_instance_drops_a_fixed_trusted_config_refusal(tmp_path,
     assert [e for e in saved_reused["infra_errors"] if e.startswith(_FIX12_REFUSED)] == refused
     assert saved_reused["infra_errors"] == saved_new["infra_errors"]
     assert saved_reused["verdict"] == saved_new["verdict"]
+
+
+# P7-1: a later LOCAL run() on an instance whose state.json is gone, or
+# belongs to another diff, starts from an empty State, as a new instance does.
+_P7_OTHER_DIFF = compute_source_hash(git_diff=DIFF + "\n# P7-1 other diff\n")
+
+
+def _p7_drop_state(root, how):
+    path = root / ".code-forge" / "state.json"
+    if how == "deleted":
+        path.unlink()
+    else:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw["source_hash"] = _P7_OTHER_DIFF
+        path.write_text(json.dumps(raw), encoding="utf-8")
+
+
+def _p7_no_manifest_probe(mp):
+    # A State that starts empty has no env manifest; a new fixture instance
+    # has `{}`. The probe would spawn toolchains, which the offline fixture
+    # forbids, so both get the same empty manifest.
+    mp.setattr("code_forge.manifest.extract_manifest", lambda cwd: types.SimpleNamespace(to_dict=dict))
+
+
+def _p7_raise_after_l1(mp, machine, nth=1):
+    """Fail the `nth` attempt after its L1 returned and before L2 starts.
+
+    `_downgrade_one_line_slips` runs after L1 and before this attempt's
+    receipt-write bookings are cleared, which the relog test depends on.
+    """
+    real = machine._downgrade_one_line_slips
+    calls = {"n": 0}
+
+    def downgrade(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == nth:
+            raise RuntimeError("constructed failure after L1 returned")
+        return real(*args, **kwargs)
+
+    mp.setattr(machine, "_downgrade_one_line_slips", downgrade)
+    return RuntimeError
+
+
+def _p7_l2_runner_fails(mp, machine):
+    def l2(*_args, **_kwargs):
+        raise RuntimeError("constructed L2 runner failure")
+
+    mp.setattr(machine, "l2_runner", l2)
+    return None
+
+
+def _p7_persist_then_fail_preflight(mp, machine):
+    """Save this review's (empty) State, then stop in the mutation preflight."""
+
+    def preflight(*_args, **_kwargs):
+        machine._persist_state()
+        raise _AfterRoundInterrupt("constructed interrupt in mutation preflight")
+
+    mp.setattr(machine, "_preflight_mutation_workspace", preflight)
+    return _AfterRoundInterrupt
+
+
+def _p7_other_diff_state_without_receipts(root):
+    _p7_drop_state(root, "other-diff")
+    shutil.rmtree(root / ".code-forge" / "receipts")
+
+
+def _p7_differential(root, monkeypatch, run1, run2, *, prepare=None, between=None):
+    """Run 1 on a new instance, then run 2 on it and on a new instance; return both file sets.
+
+    `prepare(root)` runs before run 1, `between(root, machine)` after it.
+    """
+    _earned_prefix(root, monkeypatch)
+    if prepare is not None:
+        prepare(root)
+    fault, inject = run1
+    machine = _fix11_round(root, monkeypatch, fault, inject, rounds=1, start=0)
+    if between is not None:
+        between(root, machine)
+    after_run1 = _files(root)
+    with monkeypatch.context() as mp:
+        _p7_no_manifest_probe(mp)
+        _fix11_round(root, monkeypatch, None, run2, machine=machine)
+    same_instance = _files(root)
+    _restore_files(root, after_run1)
+    assert _files(root) == after_run1
+    with monkeypatch.context() as mp:
+        _p7_no_manifest_probe(mp)
+        _fix11_round(root, monkeypatch, None, run2)
+    fresh = _files(root)
+    advisories = ".code-forge/advisory-findings.json"
+    reused = json.loads(same_instance.pop(advisories, b"[]"))
+    new = json.loads(fresh.pop(advisories, b"[]"))
+    assert reused[len(reused) - len(new) :] == new
+    return same_instance, fresh
+
+
+_P7_RUN1 = {
+    "earned": (None, None),
+    "preserved-returned": ("coverage", None),
+    "post-round-hook": ("schema", _fix11_hook),
+    "l1-timeout": ("schema", _fix11_l1_timeout),
+}
+
+
+@pytest.mark.parametrize("how", ["deleted", "other-diff"])
+@pytest.mark.parametrize("case", list(_P7_RUN1))
+def test_p7_reused_local_instance_without_matching_state_saves_what_a_new_instance_saves(
+    offline_workspace, monkeypatch, case, how
+):
+    """P7-1: no matching state.json means run 2 starts empty on a reused instance too.
+
+    Run 1 reviews one more round on top of an earned window (and returns, or
+    fails after its round). Its state.json is then deleted, or rewritten as
+    another diff's. Run 2 runs once on run 1's instance and once on a new
+    instance, from the same files and with the same reviewer replies, usage
+    and wall time. state.json, the receipts and the ledger must match byte
+    for byte; only the instance-lifetime advisories may list run 1's too.
+    """
+
+    def drop(root, machine):
+        assert machine._state.round == 2 and len(machine._state.round_history) >= 2
+        _p7_drop_state(root, how)
+
+    same_instance, fresh = _p7_differential(
+        offline_workspace, monkeypatch, _P7_RUN1[case], None, between=drop
+    )
+    state = ".code-forge/state.json"
+    saved = json.loads(same_instance[state])
+    # Run 2 started empty: no round row (rounds 0-2) or earned cycle of the
+    # prefix and run 1 was carried over. Cycle numbers still continue after
+    # the receipts on disk (_continuation_round_index), as for any new review.
+    assert saved["round_history"] and saved["round_history"][0]["round"] == 3, saved["round_history"]
+    assert [row["round"] for row in saved["round_history"]] == list(
+        range(3, 3 + len(saved["round_history"]))
+    )
+    assert all(entry["cycle"] > 3 for entry in (saved["earned_clean_window"] or {}).get("cycles", []))
+    assert saved["source_hash"] == compute_source_hash(git_diff=DIFF)
+    assert saved == json.loads(fresh[state])
+    assert same_instance == fresh
+
+
+def test_p7_first_run_keeps_a_seeded_state(offline_workspace, monkeypatch):
+    """P7-1 boundary: the first run() starts from the State the instance was built or seeded with.
+
+    The fixture seeds `env_manifest = {}` on a new instance with no state.json;
+    the first run must keep that seed (no manifest probe runs, which the
+    offline fixture would refuse), while a second run without a state file
+    starts from an empty State and probes again.
+    """
+    root = offline_workspace
+    machine, _ = _new_machine(root, monkeypatch, rounds=1)
+    assert machine.run() is Verdict.ESCALATED
+    assert machine._state.env_manifest == {}
+    (root / ".code-forge" / "state.json").unlink()
+    probes = []
+    with monkeypatch.context() as mp:
+        mp.setattr(
+            "code_forge.manifest.extract_manifest",
+            lambda cwd: probes.append(cwd) or types.SimpleNamespace(to_dict=lambda: {"probed": True}),
+        )
+        assert machine.run() is Verdict.ESCALATED
+    assert probes == [root]
+    assert machine._state.env_manifest == {"probed": True}
+    assert [row["round"] for row in machine._state.round_history] == [1]
+
+
+def test_p7_run_that_fails_before_the_state_load_leaves_the_seeded_state(offline_workspace, monkeypatch):
+    """P7-1 boundary: a run() that raises before it reaches the state load did not use the seed.
+
+    Run 1 fails while resolving the trusted gate, before `_maybe_load_prior_state`.
+    Run 2 is then the first run that uses the built State: it keeps the seeded
+    `env_manifest = {}` and probes nothing (the offline fixture refuses a probe).
+    """
+    root = offline_workspace
+    machine, _ = _new_machine(root, monkeypatch, rounds=1)
+    seeded = machine._state
+    with monkeypatch.context() as mp:
+
+        def refuse():
+            raise _AfterRoundInterrupt("constructed failure before the state load")
+
+        mp.setattr(machine, "_resolve_trusted_gate_data", refuse)
+        with pytest.raises(_AfterRoundInterrupt, match="before the state load"):
+            machine.run()
+    assert machine._state is seeded
+    assert machine.run() is Verdict.ESCALATED
+    assert machine._state is seeded and machine._state.env_manifest == {}
+
+
+def test_p7_state_assigned_between_runs_is_kept(offline_workspace, monkeypatch):
+    """P7-1 boundary: only the State the previous run used is dropped, not one a caller put there."""
+    from code_forge.state import State
+
+    root = offline_workspace
+    machine, _ = _new_machine(root, monkeypatch, rounds=1)
+    assert machine.run() is Verdict.ESCALATED
+    (root / ".code-forge" / "state.json").unlink()
+    staged = State()
+    staged.env_manifest = {"staged": True}  # also keeps the manifest probe from running
+    machine._state = staged
+    assert machine.run() is Verdict.ESCALATED
+    assert machine._state is staged and machine._state.env_manifest == {"staged": True}
+
+
+def test_p7_run_whose_state_load_raised_leaves_the_seeded_state(offline_workspace, monkeypatch):
+    """P7-1 boundary: a run whose state load raised used no State, so the seed stays."""
+    root = offline_workspace
+    machine, _ = _new_machine(root, monkeypatch, rounds=1)
+    seeded = machine._state
+    path = root / ".code-forge" / "state.json"
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(CorruptedStateError):
+        machine.run()
+    assert machine._state is seeded
+    path.unlink()
+    assert machine.run() is Verdict.ESCALATED
+    assert machine._state is seeded and machine._state.env_manifest == {}
+
+
+def test_p7_run_that_raised_before_the_flush_leaves_no_preexisting_advisory(
+    offline_workspace, monkeypatch
+):
+    """Run 1 buffers a pre-existing L0 finding and raises before the advisory flush.
+
+    Run 2 returns without an L0 phase of its own. It must not publish run 1's
+    pre-existing finding as its advisory.
+    """
+    from code_forge.disposition import Disposition
+    from code_forge.state import StateFinding
+
+    root = offline_workspace
+    machine, _ = _new_machine(root, monkeypatch, rounds=1)
+    finding = StateFinding(
+        "l0-lint", "l0-lint-fp", "L0", Disposition.CONFIRMED, "other.ts", [1, 1], "constructed lint"
+    )
+    machine.l0_runner = lambda *_args: ([finding], [])
+    with monkeypatch.context() as mp:
+        with pytest.raises(_p7_raise_after_l1(mp, machine)):
+            machine.run()
+    assert [a.id for a in machine._preexisting_buf] == ["pre-existing-l0-lint-fp"]
+    machine.l0_runner = lambda *_args: ([], [])
+    with monkeypatch.context() as mp:
+        mp.setattr(machine, "_run_local", lambda: Verdict.FAIL)
+        assert machine.run() is Verdict.FAIL
+    assert not [a.id for a in machine._advisories if a.id.startswith("pre-existing-")]
+
+
+def test_p7_reused_ci_instance_carries_its_state(offline_workspace, monkeypatch):
+    """P7-1 boundary: CI never reloads state.json and keeps the in-memory State."""
+    root = offline_workspace
+    machine, _ = _new_machine(root, monkeypatch, rounds=1, mode=Mode.CI)
+    machine.run()
+    first = len(machine._state.round_history)
+    assert first == 1
+    (root / ".code-forge" / "state.json").unlink()
+    machine.run()
+    assert len(machine._state.round_history) == first + 1
+
+
+def test_p7_second_run_failing_after_l1_does_not_relog_run1_receipt_error(
+    offline_workspace, monkeypatch
+):
+    """Run 1 cannot write its receipts and fails after the round; run 2 fails after L1.
+
+    Run 2's failed path logs this attempt's receipt-write errors. Kept across
+    runs, run 1's error would be logged a second time by run 2.
+    """
+    root = offline_workspace
+    same_instance, fresh = _p7_differential(
+        root, monkeypatch, ("schema", _fix11_receipt_error_then_hook), _p7_raise_after_l1
+    )
+    state = ".code-forge/state.json"
+    saved = json.loads(same_instance[state])
+    logged = [e for e in saved["infra_errors"] if "receipt write failed" in e]
+    assert len(logged) == 1, saved["infra_errors"]
+    assert saved == json.loads(fresh[state])
+    assert same_instance == fresh
+
+
+def test_p7_second_run_does_not_continue_cycles_of_run1_other_diff_state(offline_workspace, monkeypatch):
+    """Run 1 found another diff's state.json and no receipts, saved its own State, then stopped.
+
+    Run 2 loads run 1's own (empty) State, so nothing else on disk numbers its
+    cycles and it starts at round 0, as a new instance does. Kept across runs,
+    the other diff's history would make run 2 continue after it.
+    """
+    root = offline_workspace
+    same_instance, fresh = _p7_differential(
+        root,
+        monkeypatch,
+        ("schema", _p7_persist_then_fail_preflight),
+        None,
+        prepare=_p7_other_diff_state_without_receipts,
+    )
+    state = ".code-forge/state.json"
+    saved = json.loads(same_instance[state])
+    assert saved["round_history"] and saved["round_history"][0]["round"] == 0, saved["round_history"]
+    assert ".code-forge/receipts/receipt-c1p1.json" in same_instance
+    assert saved == json.loads(fresh[state])
+    assert same_instance == fresh
+
+
+def test_p7_second_run_failing_before_l2_ignores_run1_l2_error(offline_workspace, monkeypatch):
+    """Run 1's L2 runner fails; run 2 fails after L1, before its own L2 phase.
+
+    Run 2's failed attempt evaluates the fixpoint without an L2 observation of
+    its own, so it must see no L2 error: run 1's would turn that CLEAN into
+    INCOMPLETE, and the `unavailable` row (no L2 fact, since L2 never
+    returned) would not load. Both the run-entry reset and the clear when a
+    host attempt begins prevent that; this pins the two-run case
+    (tests/test_l2_infra_host_rounds.py pins the in-run one).
+    """
+    root = offline_workspace
+    same_instance, fresh = _p7_differential(
+        root, monkeypatch, (None, _p7_l2_runner_fails), _p7_raise_after_l1
+    )
+    state = ".code-forge/state.json"
+    saved = json.loads(same_instance[state])
+    row = saved["round_history"][-1]
+    assert row["clean_credit_action"] == "unavailable" and row.get("fixpoint") == "CLEAN", row
+    assert saved == json.loads(fresh[state])
+    assert same_instance == fresh
 
 
 # --- `_fixpoint_reached` stays side-effect-free ------------------------------

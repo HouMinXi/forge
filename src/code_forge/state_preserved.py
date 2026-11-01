@@ -2,12 +2,10 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Preserved host-round validation, split out of state.py (user decision D-v11-1).
 
-Moved verbatim; state.py imports and re-exports every name defined here
-except the two late-bound helpers below. This module must not import
-`state` at module level (state imports it), so the state helpers it needs,
-`is_host_round` and `_project_product_row`, are looked up at call time.
-`_project_product_row` stays defined in state.py (fix8, I-3/I-9), so
-patching `state._project_product_row` also reaches the callers here.
+state.py imports and re-exports every name defined here.
+This module must not import `state` at module level (state imports it); the
+row projection it needs comes from the leaf module `state_rows`, which both
+modules import, so there is one definition and no call-time import.
 """
 
 from __future__ import annotations
@@ -16,13 +14,7 @@ import re
 
 from .disposition import Disposition
 from .errors import CorruptedStateError
-
-
-def is_host_round(row: dict) -> bool:
-    """Late-bound `state.is_host_round` (no module-level import cycle)."""
-    from .state import is_host_round as state_is_host_round
-
-    return state_is_host_round(row)
+from .state_rows import _project_product_row
 
 
 _PRESERVED_III_FP = re.compile(r"^(?:schema-fail|incomplete-coverage)-(?:qodo|expert|adversarial)$")
@@ -81,10 +73,3 @@ def _recurring_confirmed(fp: str, history: list[dict], previous: dict) -> bool:
     )
     protocol_before = any(fp in past.get("falsify_protocol_failures", []) for past in history)
     return confirmed_before or not protocol_before
-
-
-def _project_product_row(row: dict) -> dict | None:
-    """Late-bound `state._project_product_row` (no module-level import cycle)."""
-    from .state import _project_product_row as state_project_product_row
-
-    return state_project_product_row(row)

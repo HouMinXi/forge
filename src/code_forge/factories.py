@@ -398,6 +398,20 @@ class _L1Call:
     def unavailable_rejected_evidence(self) -> bool:
         return bool(self.unavailable_rejected_passes)
 
+    @property
+    def excerpt_invocation(self) -> object:
+        """The current invocation's token: a new object on every call; rejections record it."""
+        return self._excerpt_invocation
+
+    @property
+    def excerpt_rejections(self) -> tuple[_ExcerptRejection, ...]:
+        """Typed excerpt rejections observed in the current invocation, as stored (read-only).
+
+        The same tuple object is returned until the next record or call, so a
+        caller can bind a snapshot to it by identity.
+        """
+        return self._excerpt_rejections
+
     def __call__(self) -> tuple:
         self._excerpt_invocation = object()
         self._excerpt_rejections = ()

@@ -1725,3 +1725,36 @@ def test_c3v2_composite_reports_none(monkeypatch):
     single()
     assert [child.reviewer_responses for child in children] == [{"expert": 1}]
     assert single.reviewer_responses is None
+
+
+def test_excerpt_rejection_accessors_are_read_only_views_of_the_invocation():
+    """The public accessors return the stored token and tuple by identity, and cannot be set."""
+    from code_forge.factories import _L1Call
+    from code_forge.reviewer_json import ExcerptEvidenceError
+
+    attempt = {"pass_name": "expert", "findings": [], "code_excerpts": []}
+    seen = {}
+
+    def body(call):
+        seen["token"] = call.excerpt_invocation
+        assert call.excerpt_rejections == ()
+        call.record_excerpt_rejection(
+            ExcerptEvidenceError("constructed"), "expert", attempt, diff_text="diff"
+        )
+        call.record_excerpt_rejection(ValueError("untyped"), "expert", attempt, diff_text="diff")
+        return ()
+
+    call = _L1Call(body)
+    call()
+    assert call.excerpt_invocation is seen["token"] is call._excerpt_invocation
+    assert call.excerpt_rejections is call._excerpt_rejections
+    (rejection,) = call.excerpt_rejections
+    assert rejection.owner_token is seen["token"]
+    assert rejection.pass_name == "expert" and rejection.original is attempt
+    for name in ("excerpt_invocation", "excerpt_rejections"):
+        with pytest.raises(AttributeError):
+            setattr(call, name, None)
+    first = seen["token"]
+    call()
+    assert call.excerpt_invocation is seen["token"] is not first
+    assert call.excerpt_rejections[0].owner_token is seen["token"]

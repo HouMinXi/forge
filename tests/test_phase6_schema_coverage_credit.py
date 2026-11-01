@@ -28,6 +28,7 @@ from code_forge.state import (
     Verdict,
     earned_history_cycles,
     load_state,
+    product_round_history,
     save_state,
     validate_round_history,
 )
@@ -113,7 +114,10 @@ _NOT_ONLY = "preserved host round lacks \\(iii\\)-only product dispositions"
     [
         (lambda r: r.update(reset_observed=False), _SHAPE),
         (lambda r: r.update(fixpoint="CLEAN"), _SHAPE),
-        (lambda r: r.update(fixpoint="INCOMPLETE"), "incomplete host round lacks protocol interruption"),
+        (
+            lambda r: r.update(fixpoint="INCOMPLETE"),
+            "incomplete host round lacks a protocol or L2 cause",
+        ),
         (
             lambda r: r.update(
                 acquisition_failures=[
@@ -636,6 +640,37 @@ def test_l1_l2_infra_incomplete_with_pending_protocol_keeps_reset(tmp_path, monk
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
 
 
+@pytest.mark.parametrize("l2_infra", [False, True], ids=["no-l2-infra", "l2-infra"])
+def test_mixed_schema_and_coverage_preserves_with_or_without_l2_infra(tmp_path, monkeypatch, l2_infra):
+    """Schema-fail and incomplete coverage in one round, with and without an L2 infra error.
+
+    Both (iii) findings leave the counterfactual; what is left is CLEAN, or
+    INCOMPLETE only because of the L2 infra error, and both preserve.
+    """
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._state.findings = [_schema_finding("adversarial"), _coverage_finding("qodo")]
+    if l2_infra:
+        sm._l2_infra_error = "constructed L2 runner failure"
+    expected = _FixpointResult.INCOMPLETE if l2_infra else _FixpointResult.CLEAN
+    assert sm._fixpoint_without(list(sm._state.findings)) is expected
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.CYCLE_RESTART) is True
+
+
+@pytest.mark.parametrize("l2_infra", [False, True], ids=["no-l2-infra", "l2-infra"])
+def test_mixed_schema_and_coverage_with_new_product_keeps_reset(tmp_path, monkeypatch, l2_infra):
+    """A new CONFIRMED product finding beside both (iii) findings resets."""
+    sm = _guard_machine(tmp_path, monkeypatch)
+    sm._state.findings = [
+        _schema_finding("adversarial"),
+        _coverage_finding("qodo"),
+        _product_finding(desc="P3: constructed new defect"),
+    ]
+    if l2_infra:
+        sm._l2_infra_error = "constructed L2 runner failure"
+    assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is False
+
+
 def test_m4_loader_accepts_recurring_confirmed_beside_iii_cause():
     rows = [
         _m4_prior_row(0, {"fp-p3": "CONFIRMED"}),
@@ -657,13 +692,19 @@ def test_m4_loader_accepts_recurring_uncertain_then_confirmed_without_protocol()
     validate_round_history(rows, 2)
 
 
-def test_i9_state_project_product_row_patch_reaches_preserved_validation(monkeypatch):
-    """Joint I-9: patching `state._project_product_row` reaches the split-out validator too."""
+def test_i9_product_history_and_preserved_validation_share_the_projection(monkeypatch):
+    """Joint I-9: the fixpoint history and the preserved-row validator both call the projection.
+
+    Each module binds it at import, so a patch of `state._project_product_row`
+    alone does not reach the validator; both bindings are spied here. That
+    they are one function is pinned by I-3.
+    """
     import sys
 
     from code_forge import state as state_module
+    from code_forge import state_preserved, state_rows
 
-    original = state_module._project_product_row
+    original = state_rows._project_product_row
     callers = []
 
     def spy(row):
@@ -671,6 +712,7 @@ def test_i9_state_project_product_row_patch_reaches_preserved_validation(monkeyp
         return original(row)
 
     monkeypatch.setattr(state_module, "_project_product_row", spy)
+    monkeypatch.setattr(state_preserved, "_project_product_row", spy)
     rows = [
         _m4_prior_row(0, {"fp-p3": "CONFIRMED"}),
         _m4_prior_row(1, {"fp-p3": "CONFIRMED"}),
@@ -678,20 +720,26 @@ def test_i9_state_project_product_row_patch_reaches_preserved_validation(monkeyp
     ]
     validate_round_history(rows, 2)
     assert "code_forge.state_preserved" in callers
+    callers.clear()
+    product_round_history(rows)
+    assert "code_forge.state" in callers
 
 
 def test_i3_project_product_row_has_one_definition():
-    """fix8 I-3: one real definition (in state.py), one call-time shim, and it pickles again."""
+    """fix8 I-3: one real definition, in the leaf module state_rows; no call-time shim; it pickles."""
     import pickle
 
     from code_forge import state as state_module
-    from code_forge import state_preserved
+    from code_forge import state_preserved, state_rows
 
-    real = state_module._project_product_row
-    assert real.__module__ == "code_forge.state" and real.__qualname__ == "_project_product_row"
+    real = state_rows._project_product_row
+    assert real.__module__ == "code_forge.state_rows" and real.__qualname__ == "_project_product_row"
     assert pickle.loads(pickle.dumps(real)) is real  # noqa: S301 - our own function object
-    assert state_preserved._project_product_row is not real
-    assert not hasattr(state_preserved, "_moved_project_product_row")
+    assert state_module._project_product_row is real
+    assert state_preserved._project_product_row is real
+    assert state_module.is_host_round is state_rows.is_host_round
+    assert state_module.HOST_ROUND_FIELDS is state_rows.HOST_ROUND_FIELDS
+    assert not hasattr(state_preserved, "is_host_round")
 
 
 @pytest.mark.parametrize(

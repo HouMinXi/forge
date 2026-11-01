@@ -839,12 +839,10 @@ class StateMachine:
 
     def __post_init__(self) -> None:
         """Initialize instance state; per-run state comes from `_reset_run_state`."""
-        # Kept for the life of the instance: advisories (with the buffer that
-        # feeds them) accumulate across runs, the mutation source retains
-        # the initial review subject across autofix rounds, and the receipt
-        # cycle windows below span every run() on the instance.
+        # Kept for the life of the instance: advisories accumulate across
+        # runs, and the mutation source retains the initial review subject
+        # across autofix rounds.
         self._advisories: list[AdvisoryFinding] = []
-        self._preexisting_buf: list[AdvisoryFinding] = []
         self._mutation_source_review = None
         self._mutation_source_subject = None
         self._mutation_source_guard = None
@@ -859,17 +857,24 @@ class StateMachine:
         # fixpoint. Terminal attestation scopes to these, so an earlier
         # resolved finding cannot poison the clean tail.
         self._clean_window_cycles: list[int] = []
+        # P7-1: the State the last run() used, recorded once its state load
+        # returned. A later LOCAL run drops it before loading; a State a caller
+        # put in its place, or one no run reached, is kept.
+        self._state_of_last_run: State | None = None
         self._reset_run_state()
 
     def _reset_run_state(self) -> None:
         """Reset the per-run, per-attempt, per-round and L2-phase state below (fix10, CR2F9-L1).
 
         Called from `__post_init__` and as the first step of every run(). Kept across runs on the
-        same instance: `_state` and the 7 lifetime attributes set in `__post_init__` (advisories
-        and their preexisting buffer, the mutation source review/subject/guard, and the written
-        and clean receipt cycle windows). `_maybe_load_prior_state` replaces `_state` only when a
-        matching state.json loads, which never happens in CI.
+        same instance: the lifetime attributes set in `__post_init__` (advisories, the mutation
+        source review/subject/guard, the written and clean receipt cycle windows, and
+        `_state_of_last_run`). `_state` is not reset here; `_maybe_load_prior_state` decides it.
         """
+        # Pre-existing L0 findings waiting for the advisory flush. Every L0
+        # phase rebinds it; a run that raised before the flush leaves nothing
+        # for the next run.
+        self._preexisting_buf: list[AdvisoryFinding] = []
         # CLI-08 H3: per-round cost accumulator.
         self._round_input_tokens: int = 0
         self._round_output_tokens: int = 0
@@ -965,10 +970,11 @@ class StateMachine:
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
-        # fix10 (CR2F9-L1): nothing an earlier run() on this instance left is
-        # this run's; reset before any step can fail. This includes the fix9
-        # (CR3R3-L1) clear of `_settled_preserve_round`: a row a previous run()
-        # settled is never this run's to demote.
+        # fix10 (CR2F9-L1): no per-run, per-attempt, per-round or L2-phase state
+        # an earlier run() on this instance left is this run's; reset it before
+        # any step can fail. This includes the fix9 (CR3R3-L1) clear of
+        # `_settled_preserve_round`: a row a previous run() settled is never
+        # this run's to demote.
         self._reset_run_state()
         self._note_gate_yaml_edit()
         admission_error = mutation_review_admission_error(
@@ -989,6 +995,7 @@ class StateMachine:
         progress.reset()
         progress.emit(f"run start: mode={self.mode.value}")
         self._maybe_load_prior_state()
+        self._state_of_last_run = self._state
         self._state.mode = self.mode
         self._state.source_hash = self.source_hash
         self._state.baseline_spec_repr = self.baseline_spec_repr
@@ -1045,11 +1052,17 @@ class StateMachine:
     def _maybe_load_prior_state(self) -> None:
         """Load .code-forge/state.json if LOCAL mode; skip if CI (STATE-09).
 
-        CI mode starts fresh every run to avoid inheriting human-
+        CI mode never loads state.json, to avoid inheriting human-
         DISMISSED findings into shared CI runs. LOCAL mode loads a
         file only when its source_hash matches this review. A missing
         or different hash is left on disk and the run starts empty
         (CorruptedStateError still propagates per 02-01).
+
+        P7-1: a LOCAL run first drops the State the previous run() on this
+        instance used, so without a matching file it starts where a new
+        instance would. A State the instance was built or seeded with, and
+        one a caller assigned after the previous run, is kept. CI keeps its
+        in-memory State across runs on one instance.
         """
         state_path = self.cwd / ".code-forge" / "state.json"
         if self.mode == Mode.CI:
@@ -1062,6 +1075,8 @@ class StateMachine:
                     "iterative multi-round review"
                 )
             return
+        if self._state is self._state_of_last_run:
+            self._state = State()
         if state_path.exists():
             loaded = load_state(state_path)
             if loaded is not None:
@@ -1806,6 +1821,10 @@ class StateMachine:
 
     def _begin_host_attempt(self, round_index: int) -> None:
         self._settled_preserve_round = None
+        # #114: an attempt that fails before its L2 starts (which clears it
+        # again) must not read an earlier round's error. Above the host-receipt
+        # guard, so non-host LOCAL rounds are covered too.
+        self._l2_infra_error = None
         if not self._host_receipt_active():
             return
         if any(row["round"] == round_index for row in self._state.round_history):
@@ -1910,6 +1929,14 @@ class StateMachine:
             row["fixpoint"] = fixpoint.name
         else:
             row.pop("fixpoint", None)
+        # #114: this round's L2 returned an infrastructure error. The fixpoint
+        # turns CLEAN into INCOMPLETE for it, and the loader needs the cause to
+        # accept that INCOMPLETE row; it also requires that L2 returned
+        # (state.validate_round_history).
+        if self._l2_infra_error is not None and self._phase_status["l2"] == "returned":
+            row["l2_infra_error"] = True
+        else:
+            row.pop("l2_infra_error", None)
         if evidence_rejections is not None:
             row["evidence_rejections"] = evidence_rejections
         self._host_attempt_round = None
@@ -1964,7 +1991,8 @@ class StateMachine:
         (a partial or crashed attempt never preserves); no acquisition marker,
         HOLD fingerprint, or falsifier transport failure; at least one (iii)
         finding; and the counterfactual: the unchanged fixpoint, evaluated with
-        the (iii) findings removed, would be CLEAN (plan Q7 / section 2.2). A
+        the (iii) findings removed, would be CLEAN, or INCOMPLETE only through
+        this round's L2 infrastructure error (plan Q7 / section 2.2). A
         recurring sub-threshold P3 beside a schema-fail therefore preserves,
         while a new CONFIRMED, a FIXED->CONFIRMED reversion, P0-P2, or a
         semantic UNCERTAIN finding keeps the reset. C3: the counterfactual also
@@ -2000,11 +2028,7 @@ class StateMachine:
         counterfactual = self._fixpoint_without(schema_coverage + companions)
         # An L2 infra error alone only downgrades CLEAN to INCOMPLETE; it is
         # credit-neutral. A pending falsifier protocol observation is not.
-        preserve = counterfactual == _FixpointResult.CLEAN or (
-            counterfactual == _FixpointResult.INCOMPLETE
-            and self._l2_infra_error is not None
-            and not (protocol_ids and self._host_attempt_round is not None)
-        )
+        preserve = counterfactual == _FixpointResult.CLEAN or self._l2_only_incomplete(counterfactual)
         if preserve:
             self._c3_strip_fps = {
                 finding.fingerprint
@@ -2046,7 +2070,7 @@ class StateMachine:
             ]
             if len(attempts) != 1:
                 continue
-            if any(rejection.pass_name == name for rejection in producer._excerpt_rejections):
+            if any(rejection.pass_name == name for rejection in producer.excerpt_rejections):
                 continue
             if name in self._unavailable_rejected_passes_last_round:
                 continue
@@ -2080,6 +2104,40 @@ class StateMachine:
             self._responses_last_round = None
             return
         self._responses_last_round = dict(responses)
+
+    def _protocol_stop(self) -> bool:
+        """A falsifier protocol observation is pending in this host attempt.
+
+        The protocol cause of an INCOMPLETE fixpoint, read by `_fixpoint_reached`,
+        `_l2_only_incomplete` and `_interrupts`. Side-effect-free.
+        """
+        return bool(self._falsify_protocol_findings) and self._host_attempt_round is not None
+
+    def _l2_only_incomplete(self, fixpoint: _FixpointResult) -> bool:
+        """INCOMPLETE only because of this round's L2 infrastructure error, not a protocol stop."""
+        return (
+            fixpoint == _FixpointResult.INCOMPLETE
+            and self._l2_infra_error is not None
+            and not self._protocol_stop()
+        )
+
+    def _interrupts(self, fixpoint: _FixpointResult) -> bool:
+        """Whether a CLEAN or INCOMPLETE round that cannot prove credit keeps the window.
+
+        For a failed attempt, a refused receipt gate and the survivor breaker;
+        callers decide RESET and CYCLE_RESTART themselves. A falsifier protocol
+        stop or an acquisition failure interrupts. An INCOMPLETE from an L2
+        infrastructure error alone does not: an unrelated mutation failure
+        must not keep credit the round itself could not prove (#114).
+        """
+        protocol = fixpoint == _FixpointResult.INCOMPLETE and self._protocol_stop()
+        return protocol or bool(self._acquisition_markers)
+
+    def _unproved_round_action(self, fixpoint: _FixpointResult, preserve: bool) -> str:
+        """Credit action for a round the receipt gate refused or the survivor breaker stopped."""
+        if fixpoint in (_FixpointResult.CLEAN, _FixpointResult.INCOMPLETE):
+            return "interrupted" if self._interrupts(fixpoint) else "unavailable"
+        return "preserved" if preserve else "reset"
 
     def _fixpoint_without(self, excluded: list[StateFinding]) -> _FixpointResult:
         """Evaluate the unchanged fixpoint as if `excluded` had not been observed."""
@@ -2186,7 +2244,7 @@ class StateMachine:
                 if fixpoint in (_FixpointResult.RESET, _FixpointResult.CYCLE_RESTART):
                     self._reset_clean_credit()
                     action = "reset"
-                elif fixpoint == _FixpointResult.INCOMPLETE or self._acquisition_markers:
+                elif self._interrupts(fixpoint):
                     action = "interrupted"
             self._state.verdict = Verdict.FAIL
             self._state.converged = False
@@ -2340,7 +2398,13 @@ class StateMachine:
 
             earned_entry = None
             capacity_gate_error = None
-            if active and _fp == _FixpointResult.CLEAN and not gate_errors:
+            # A round that would be CLEAN but for its L2 error gets the same
+            # receipt acceptance: its evidence must not go unchecked (#114).
+            if (
+                active
+                and (_fp == _FixpointResult.CLEAN or self._l2_only_incomplete(_fp))
+                and not gate_errors
+            ):
                 from .verify import _capture_earned_cycle
 
                 earned_entry, captured = _capture_earned_cycle(
@@ -2360,16 +2424,11 @@ class StateMachine:
                         capacity_gate_error = error
             if gate_errors:
                 rejected_evidence = self._pure_evidence_rejections(_fp)
-                if _fp in (_FixpointResult.CLEAN, _FixpointResult.INCOMPLETE):
-                    gate_action = (
-                        "evidence_rejected"
-                        if rejected_evidence
-                        else "interrupted"
-                        if _fp == _FixpointResult.INCOMPLETE or self._acquisition_markers
-                        else "unavailable"
-                    )
-                else:
-                    gate_action = "preserved" if _preserve_schema_coverage else "reset"
+                gate_action = (
+                    "evidence_rejected"
+                    if rejected_evidence
+                    else self._unproved_round_action(_fp, _preserve_schema_coverage)
+                )
                 self._finish_host_attempt(
                     gate_action,
                     _fp,
@@ -2400,14 +2459,7 @@ class StateMachine:
                     "mutation: surviving mutants reported in 3 consecutive rounds"
                 )
                 self._finish_host_attempt(
-                    "interrupted"
-                    if _fp == _FixpointResult.INCOMPLETE
-                    else (
-                        "unavailable"
-                        if _fp == _FixpointResult.CLEAN
-                        else ("preserved" if _preserve_schema_coverage else "reset")
-                    ),
-                    _fp,
+                    self._unproved_round_action(_fp, _preserve_schema_coverage), _fp
                 )
                 self._persist_state()
                 return Verdict.FAIL
@@ -3506,10 +3558,11 @@ class StateMachine:
         return errors
 
     def _receipt_gate_terminal_errors(self) -> list[str]:
-        """Terminal gate: attest exactly THIS run's receipts, full policy.
+        """Terminal gate: attest exactly this instance's receipts, full policy.
 
-        Pins run_verify to the last clean window this run wrote (CI: its
-        one cycle; LOCAL: the clean rounds that reached the fixpoint), so
+        Pins run_verify to the last clean window this instance wrote (CI:
+        its one cycle; LOCAL: the clean rounds that reached the fixpoint;
+        the receipt cycle windows span every run() on one instance), so
         older higher cycles on disk can neither vouch for nor mask the
         current evidence. Rejects: coverage below the 60% floor,
         unwitnessed hunks, non-consecutive/incomplete windows, stale
@@ -3540,13 +3593,13 @@ class StateMachine:
             return errors
         window = list(self._clean_window_cycles or self._written_cycles)
         if not window:
-            # Nothing was written this run (writer I/O failure, non-git
+            # Nothing was written by this instance (writer I/O failure, non-git
             # review). The round gate already surfaced the write failure
             # as an infra finding; there is no receipt evidence to
             # attest, and reporting "no receipts" here would mask it.
             return errors
         # Fresh-window check: the highest cycle on disk must be this
-        # run's latest written cycle. A valid run writing above the
+        # instance's latest written cycle. A valid run writing above the
         # pre-existing max always satisfies this; a run whose own window
         # is NOT the freshest (later cycles from another run, or a stale
         # directory) is rejected.
@@ -3785,10 +3838,10 @@ class StateMachine:
         producer = self.l1_provider
         self._rejection_authority = _RejectionSnapshot(
             producer,
-            producer._excerpt_invocation,
+            producer.excerpt_invocation,
             self._state.round + 1,
             self.source_hash,
-            producer._excerpt_rejections,
+            producer.excerpt_rejections,
             producer.attempted_excerpts,
         )
 
@@ -3802,13 +3855,13 @@ class StateMachine:
             type(snapshot) is not _RejectionSnapshot
             or type(producer) is not _L1Call
             or snapshot.producer is not producer
-            or snapshot.token is not producer._excerpt_invocation
+            or snapshot.token is not producer.excerpt_invocation
             or snapshot.cycle != self._state.round + 1
             or snapshot.source_hash != self.source_hash
             or self.reviewed_repositories is not None
             or type(snapshot.observations) is not tuple
             or not snapshot.observations
-            or snapshot.observations is not producer._excerpt_rejections
+            or snapshot.observations is not producer.excerpt_rejections
             or type(snapshot.attempts) is not list
             or snapshot.attempts is not producer.attempted_excerpts
             or len(snapshot.attempts) != len(snapshot.observations)
@@ -4438,7 +4491,9 @@ class StateMachine:
           - Semantic UNCERTAIN -> RESET
           - Host-caught non-protocol falsification failure -> RESET
           - Host-caught falsifier protocol failure alone -> INCOMPLETE
-          - Zero CONFIRMED -> CLEAN
+          - Zero CONFIRMED -> CLEAN, or INCOMPLETE when this round has a protocol
+            stop (`_protocol_stop`) or an L2 infrastructure error (#114); the same
+            applies wherever a recurring CONFIRMED tier below would give CLEAN
           - P0 or P1 CONFIRMED -> RESET
           - P2 CONFIRMED (no P0/P1) -> CYCLE_RESTART (resets clean-round counter)
           - Only P3 CONFIRMED -> density check (skipped when no git_diff):
@@ -4516,7 +4571,7 @@ class StateMachine:
         protocol_ids = {id(finding) for finding in self._falsify_protocol_findings}
         if any(id(finding) not in protocol_ids for finding in self._falsify_failed_findings):
             return _FixpointResult.RESET
-        protocol_incomplete = bool(protocol_ids) and self._host_attempt_round is not None
+        protocol_incomplete = self._protocol_stop()
         # #188: an L2 infra error only downgrades CLEAN to INCOMPLETE; it never
         # exempts an unadjudicated protocol-violation finding from the reset.
         incomplete = protocol_incomplete or incomplete_l2
