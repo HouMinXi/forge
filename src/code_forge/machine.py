@@ -862,11 +862,12 @@ class StateMachine:
         # fixpoint. Terminal attestation scopes to these, so an earlier
         # resolved finding cannot poison the clean tail.
         self._clean_window_cycles: list[int] = []
-        # Phase 7 (P7-1): run() calls started on this instance. The first
-        # LOCAL run starts from the State the instance was built (or seeded)
-        # with; a later LOCAL run starts from an empty State unless a
-        # matching state.json loads, as a new instance would.
-        self._runs_started = 0
+        # P7-1: set by the first run() that reaches the state load. That run
+        # starts from the State the instance was built (or seeded) with; a
+        # later LOCAL run starts from an empty State unless a matching
+        # state.json loads, as a new instance would. A run() that raises
+        # before the load leaves the built State unused, so it stays.
+        self._built_state_used = False
         self._reset_run_state()
 
     def _reset_run_state(self) -> None:
@@ -875,10 +876,10 @@ class StateMachine:
         Called from `__post_init__` and as the first step of every run(). Kept across runs on the
         same instance: the 7 lifetime attributes set in `__post_init__` (advisories and their
         preexisting buffer, the mutation source review/subject/guard, and the written and clean
-        receipt cycle windows) and the run counter. `_state` is not reset here:
-        `_maybe_load_prior_state` decides it. In LOCAL mode a run() after the first starts from an
-        empty State unless a matching state.json loads (P7-1); CI keeps the in-memory State across
-        runs on one instance, as on main.
+        receipt cycle windows) and `_built_state_used`. `_state` is not reset here:
+        `_maybe_load_prior_state` decides it. In LOCAL mode a run() after the one that first used
+        the built State starts from an empty State unless a matching state.json loads (P7-1); CI
+        keeps the in-memory State across runs on one instance, as on main.
         """
         # CLI-08 H3: per-round cost accumulator.
         self._round_input_tokens: int = 0
@@ -983,7 +984,6 @@ class StateMachine:
         # `_reset_run_state` are kept, and `_maybe_load_prior_state` decides
         # the review State (P7-1).
         self._reset_run_state()
-        self._runs_started += 1
         self._note_gate_yaml_edit()
         admission_error = mutation_review_admission_error(
             target_kind=self.resolved_review.target_kind,
@@ -1065,18 +1065,19 @@ class StateMachine:
         or different hash is left on disk and the run starts empty
         (CorruptedStateError still propagates per 02-01).
 
-        "Starts empty" (P7-1): the first run() on an instance starts from the
-        State it was built or seeded with. A later LOCAL run() on the same
-        instance first drops the State an earlier run() left in memory, so a
-        missing, other-diff or corrupt state.json leaves it exactly where a
-        new instance would start; it never carries the earlier run's
-        findings, dispositions or clean credit into this review. CI does not
-        reload state.json and keeps the in-memory State across runs on one
-        instance, as on main.
+        "Starts empty" (P7-1): the first run() on an instance that gets here
+        starts from the State it was built or seeded with. A later LOCAL run()
+        on the same instance first drops the State an earlier run() left in
+        memory, so a missing, other-diff or corrupt state.json leaves it
+        exactly where a new instance would start; it never carries the
+        earlier run's findings, dispositions or clean credit into this
+        review. CI does not reload state.json and keeps the in-memory State
+        across runs on one instance, as on main.
         """
         state_path = self.cwd / ".code-forge" / "state.json"
-        if self.mode != Mode.CI and self._runs_started > 1:
+        if self.mode != Mode.CI and self._built_state_used:
             self._state = State()
+        self._built_state_used = True
         if self.mode == Mode.CI:
             if state_path.exists():
                 logging.getLogger("code_forge").warning(
