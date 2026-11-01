@@ -2,6 +2,8 @@
 """#28: a reverted pytest run is RED only when its JUnit report shows a failed
 test, or a collection or setup error importing a name the fix adds."""
 
+import ast
+import difflib
 import os
 import subprocess
 import sys
@@ -24,158 +26,137 @@ NEW_MODULE = AddedNames(frozenset(), frozenset({"pkg.newmod"}))
 NOTHING = AddedNames(frozenset(), frozenset())
 
 
-def _patch(path, removed, added, new_file=False):
-    source = "/dev/null" if new_file else "a/" + path
-    header = "diff --git a/%s b/%s\n" % (path, path)
-    if new_file:
-        header += "new file mode 100644\n"
-    body = "".join("-%s\n" % line for line in removed) + "".join("+%s\n" % line for line in added)
-    hunk = "@@ -%s +1,%d @@\n" % ("0,0" if new_file else "1,%d" % len(removed), len(added))
-    return header + "--- %s\n+++ b/%s\n" % (source, path) + hunk + body
+def _patch(path, before, after):
+    return "diff --git a/%s b/%s\n" % (path, path) + "".join(
+        difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            fromfile="a/" + path,
+            tofile="b/" + path,
+        )
+    )
+
+
+def _added(before, after, path="src/calc.py"):
+    # Fixtures are complete source images, not snippets inferred from hunks.
+    ast.parse(before)
+    ast.parse(after)
+    return added_names(
+        _patch(path, before, after),
+        before={path: before.encode()},
+        after={path: after.encode()},
+    )
 
 
 @pytest.mark.parametrize(
-    ("line", "names"),
+    ("source", "names"),
     [
-        ("def helper(x):", {"helper"}),
-        ("async def fetch():", {"fetch"}),
-        ("class Store:", {"Store"}),
-        ("LIMIT = 3", {"LIMIT"}),
-        ("LIMIT: int = 3", {"LIMIT"}),
-        ("from .impl import run, stop as halt", {"run", "halt"}),
-        ("import json", {"json"}),
-        ("    def method(self):", set()),
-        ("    value = 1", set()),
-        ("value == 1", set()),
-        ("else: x = 1", set()),
-        ("# def commented():", set()),
+        ("def helper(x): pass\n", {"helper"}),
+        ("async def fetch(): pass\n", {"fetch"}),
+        ("class Store: pass\n", {"Store"}),
+        ("LIMIT = 3\n", {"LIMIT"}),
+        ("LIMIT: int = 3\n", {"LIMIT"}),
+        ("from .impl import run, stop as halt\n", {"run", "halt"}),
+        ("import json\n", {"json"}),
+        ("def outer():\n    def method(self): pass\n", {"outer"}),
+        ("def outer():\n    value = 1\n", {"outer"}),
+        ("value == 1\n", set()),
+        ("if False:\n    x = 1\n", set()),
+        ("# def commented():\n", set()),
     ],
 )
-def test_added_names_reads_module_level_bindings(line, names):
-    found = added_names(_patch("src/calc.py", ["pass"], [line]))
+def test_added_names_reads_module_level_bindings(source, names):
+    found = _added("pass\n", source)
     assert {name for _module, name in found.names} == names
     assert found.modules == frozenset()
 
 
 def test_added_names_maps_paths_to_modules_and_skips_names_that_already_existed():
-    patch = _patch("src/calc.py", ["def helper():", "OLD = 1"], ["def helper(x):", "NEW = 2"])
-    patch += _patch("lib/pkg/__init__.py", [], ["def entry():"], new_file=True)
-    patch += _patch("docs/notes.md", [], ["def nothing():"])
-    found = added_names(patch)
-    assert found.names == {
-        ("src.calc", "NEW"),
-        ("calc", "NEW"),
-        ("lib.pkg", "entry"),
-    }
+    before = "def helper(): pass\nOLD = 1\n"
+    after = "def helper(x): pass\nNEW = 2\n"
+    found = _added(before, after)
+    assert found.names == {("src.calc", "NEW"), ("calc", "NEW")}
+    created = "diff --git a/lib/pkg/__init__.py b/lib/pkg/__init__.py\nnew file mode 100644\n--- /dev/null\n+++ b/lib/pkg/__init__.py\n@@ -0,0 +1 @@\n+def entry(): pass\n"
+    found = added_names(
+        created,
+        before={"lib/pkg/__init__.py": None},
+        after={"lib/pkg/__init__.py": b"def entry(): pass\n"},
+    )
+    assert found.names == {("lib.pkg", "entry")}
     assert found.modules == {"lib.pkg"}
+    assert _added("pass\n", "def nothing(): pass\n", "docs/notes.md") == NOTHING
 
 
 def test_a_path_that_is_not_an_importable_module_adds_nothing():
-    # pkg/foo-bar.py cannot be imported, so no import error can name it
-    assert added_names(_patch("pkg/foo-bar.py", ["pass"], ["def helper():"])) == NOTHING
-    assert added_names(_patch("pkg/foo-bar.py", [], ["def helper():"], new_file=True)) == NOTHING
-
-
-def _hunk(path, lines):
-    """A modification hunk; each line starts with "+", "-" or " "."""
-    old = sum(not line.startswith("+") for line in lines)
-    new = sum(not line.startswith("-") for line in lines)
-    head = "diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n" % (path, path, path, path)
-    return head + "@@ -1,%d +1,%d @@\n" % (old, new) + "".join(line + "\n" for line in lines)
+    assert _added("pass\n", "def helper(): pass\n", "pkg/foo-bar.py") == NOTHING
 
 
 @pytest.mark.parametrize(
-    ("lines", "names"),
+    ("before", "after", "names"),
     [
-        # a new multi-line import binds every name inside the parentheses
-        (["+from .impl import (", "+    run,  # see (a)", "+    stop as halt,", "+)"], {"run", "halt"}),
-        # each side keeps its own state: the removed lines leave the old import open
-        (["-from .impl import (", "-    run,", "+from .impl import (stop,", " )"], {"stop"}),
-        # a name added inside an import whose opening line is context
-        ([" from .impl import (", " run,", "+    stop,", " )"], {"stop"}),
-        # a name moved from one line of the import to another is not new
-        ([" from .impl import (", "-    run, stop", "+    run,", "+    stop,", " )"], set()),
-        (["+from .impl import (run,", "+    stop)", "+def after():"], {"run", "stop", "after"}),
-        # after the closing line, indented lines bind nothing again
-        ([" from .impl import (", " run,", " )", "+    value = 1"], set()),
+        ("", "from .impl import (\n    run,  # see (a)\n    stop as halt,\n)\n", {"run", "halt"}),
+        ("from .impl import (\n    run,\n)\n", "from .impl import (stop,\n)\n", {"stop"}),
+        ("from .impl import (\n run,\n)\n", "from .impl import (\n run,\n    stop,\n)\n", {"stop"}),
+        ("from .impl import (\n run, stop\n)\n", "from .impl import (\n run,\n stop,\n)\n", set()),
+        ("", "from .impl import (run,\n    stop)\ndef after(): pass\n", {"run", "stop", "after"}),
+        ("from .impl import (run,)\n", "from .impl import (run,)\nif False:\n    value = 1\n", set()),
     ],
 )
-def test_added_names_reads_multi_line_imports(lines, names):
-    found = added_names(_hunk("src/calc.py", lines))
-    assert {name for _module, name in found.names} == names
+def test_added_names_reads_multi_line_imports(before, after, names):
+    assert {name for _module, name in _added(before, after).names} == names
 
 
 def test_a_comment_on_the_opening_line_still_opens_the_import():
-    lines = ["+from .impl import (  # noqa: F401", "+    helper,", "+)"]
-    found = added_names(_hunk("src/calc.py", lines))
+    found = _added("", "from .impl import (  # noqa: F401\n    helper,\n)\n")
     assert found.names == {("src.calc", "helper"), ("calc", "helper")}
-    # the reverted run's import error for that name is RED
     assert red_witness(_report(_error("collection failure", IMPORT_HELPER)), found) is True
 
 
 def test_a_function_level_parenthesised_import_binds_nothing():
-    lines = [
-        "+def load():",
-        "+    from .impl import (",
-        "+        helper,",
-        "+    )",
-        "+    return helper",
-    ]
-    found = added_names(_hunk("src/calc.py", lines))
+    found = _added(
+        "", "def load():\n    from .impl import (\n        helper,\n    )\n    return helper\n"
+    )
     assert {name for _module, name in found.names} == {"load"}
 
 
 @pytest.mark.parametrize(
-    ("lines", "names"),
+    ("before", "after", "names"),
     [
-        (["+from pkg.o import a, \\", "+    newname"], {"a", "newname"}),
-        (
-            ["+from pkg.o import \\", "+    a, \\", "+    newname", "+VALUE = 1"],
-            {"a", "newname", "VALUE"},
-        ),
-        (["+import json, \\", "+    csv as table"], {"json", "table"}),
-        (["+from pkg.o import a,\\", "+    b,\\", "+    newname  # noqa"], {"a", "b", "newname"}),
-        ([" from pkg.o import a, \\", "+    newname"], {"newname"}),
-        # only an import line continues; an assignment's backslash does not
-        (["+total = 1 + \\", "+    newname"], {"total"}),
-        (["+def f():", "+    from pkg.o import a, \\", "+        b"], {"f"}),
-        # a plain import does not continue onto the next line
-        (["+import json", "+VALUE = 1"], {"json", "VALUE"}),
-        # a parenthesised import is closed by its `)`, even with a `\\` inside
-        (["+from pkg.o import (a, \\", "+    newname)", "+VALUE = 1"], {"a", "newname", "VALUE"}),
-        # a backslash at the end of a comment continues nothing
-        (["+import os  # see \\", "+def helper():"], {"os", "helper"}),
-        (["+from pkg.o import a, \\", "+    b  # c \\", "+VALUE = 1"], {"a", "b", "VALUE"}),
+        ("", "from pkg.o import a, \\\n    newname\n", {"a", "newname"}),
+        ("", "from pkg.o import \\\n    a, \\\n    newname\nVALUE = 1\n", {"a", "newname", "VALUE"}),
+        ("", "import json, \\\n    csv as table\n", {"json", "table"}),
+        ("", "from pkg.o import a,\\\n    b,\\\n    newname  # noqa\n", {"a", "b", "newname"}),
+        ("from pkg.o import a\n", "from pkg.o import a, \\\n    newname\n", {"newname"}),
+        ("", "total = 1 + \\\n    newname\n", {"total"}),
+        ("", "def f():\n    from pkg.o import a, \\\n        b\n", {"f"}),
+        ("", "import json\nVALUE = 1\n", {"json", "VALUE"}),
+        ("", "from pkg.o import (a, \\\n    newname)\nVALUE = 1\n", {"a", "newname", "VALUE"}),
+        ("", "import os  # see \\\ndef helper(): pass\n", {"os", "helper"}),
+        ("", "from pkg.o import a, \\\n    b  # c \\\nVALUE = 1\n", {"a", "b", "VALUE"}),
     ],
 )
-def test_added_names_reads_backslash_continued_imports(lines, names):
-    found = added_names(_hunk("src/calc.py", lines))
-    assert {name for _module, name in found.names} == names
+def test_added_names_reads_backslash_continued_imports(before, after, names):
+    assert {name for _module, name in _added(before, after).names} == names
 
 
 def test_a_backslash_continued_import_of_an_added_name_is_red():
-    found = added_names(_hunk("src/calc.py", [" from pkg.o import a, \\", "+    helper"]))
+    found = _added("from pkg.o import a\n", "from pkg.o import a, \\\n    helper\n")
     assert red_witness(_report(_error("collection failure", IMPORT_HELPER)), found) is True
 
 
 def test_a_definition_after_an_import_whose_comment_ends_in_a_backslash_is_red():
-    lines = ["+import os  # see \\", "+def helper():", "+    return os.sep"]
-    found = added_names(_hunk("src/calc.py", lines))
+    found = _added("", "import os  # see \\\ndef helper():\n    return os.sep\n")
     assert red_witness(_report(_error("collection failure", IMPORT_HELPER)), found) is True
 
 
 def test_an_import_left_open_at_the_end_of_a_hunk_does_not_leak_into_the_next():
-    # The first hunk stops inside `from .impl import (`; the second hunk is
-    # elsewhere in the file, inside a call, where `stop,` binds nothing.
-    patch = (
-        "diff --git a/src/calc.py b/src/calc.py\n--- a/src/calc.py\n+++ b/src/calc.py\n"
-        "@@ -1,1 +1,2 @@\n from .impl import (\n+    run,\n"
-        "@@ -20,2 +21,3 @@\n call(\n+    stop,\n )\n"
+    before = "from .impl import (\n    old,\n)\n" + "# padding\n" * 16 + "call(\n    old,\n)\n"
+    after = before.replace("from .impl import (\n", "from .impl import (\n    run,\n").replace(
+        "call(\n", "call(\n    stop,\n"
     )
-    found = added_names(patch)
+    found = _added(before, after)
     assert {name for _module, name in found.names} == {"run"}
-    # the same with a module-level binding at column 0 in the second hunk
-    found = added_names(patch.replace("+    stop,\n )\n", "+LIMIT = 3\n )\n"))
+    found = _added(before, after + "LIMIT = 3\n")
     assert {name for _module, name in found.names} == {"run", "LIMIT"}
 
 
@@ -193,25 +174,28 @@ rename to src/pkg/newmod.py
 
 
 def test_a_renamed_or_copied_file_adds_its_module():
-    assert added_names(RENAME).modules == {"src.pkg.newmod", "pkg.newmod"}
-    copy = RENAME.replace("rename ", "copy ")
-    assert added_names(copy).modules == {"src.pkg.newmod", "pkg.newmod"}
+    for patch in (RENAME, RENAME.replace("rename ", "copy ")):
+        found = added_names(
+            patch, before={"src/pkg/newmod.py": None}, after={"src/pkg/newmod.py": b"X = 2\n"}
+        )
+        assert found.modules == {"src.pkg.newmod", "pkg.newmod"}
 
 
 def test_a_rename_to_a_name_the_module_already_had_adds_no_module():
-    # src/calc.py was importable as `calc` before the fix moved it to calc.py
     rename = RENAME.replace("src/old.py", "src/calc.py").replace("src/pkg/newmod.py", "calc.py")
-    assert added_names(rename).modules == frozenset()
+    found = added_names(rename, before={"calc.py": None}, after={"calc.py": b"X = 2\n"})
+    assert found.modules == frozenset()
 
 
 def test_a_modified_file_adds_no_module():
-    assert added_names(_hunk("src/calc.py", ["-X = 1", "+X = 2"])).modules == frozenset()
+    assert _added("X = 1\n", "X = 2\n").modules == frozenset()
     plain = "--- a/src/calc.py\n+++ b/src/calc.py\n@@ -1 +1 @@\n-X = 1\n+X = 2\n"
-    assert added_names(plain).modules == frozenset()
+    found = added_names(plain, before={"src/calc.py": b"X = 1\n"}, after={"src/calc.py": b"X = 2\n"})
+    assert found.modules == frozenset()
 
 
 def test_unreadable_patch_adds_nothing():
-    assert added_names("@@ not a diff\n+def helper():\n") == NOTHING
+    assert added_names("@@ not a diff\n+def helper():\n", before={}, after={}) == NOTHING
 
 
 def _report(*cases):
@@ -252,7 +236,11 @@ NEWMOD2 = AddedNames(frozenset(), frozenset({"pkg.newmod2"}))
             NOTHING,
             True,
         ),
-        (_report(_error("failed on setup with &quot;%s&quot;" % IMPORT_HELPER)), CALC_HELPER, True),
+        (
+            _report(_error("failed on setup with &quot;%s&quot;" % IMPORT_HELPER.removeprefix("E   "))),
+            CALC_HELPER,
+            True,
+        ),
         # `from pkg import newmod`, where the fix creates the module pkg/newmod.py
         (_report(_error("collection failure", IMPORT_NEWMOD)), NEW_MODULE, True),
         (

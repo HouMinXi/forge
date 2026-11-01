@@ -1088,6 +1088,8 @@ def _reverted_run(
         preservation = {"recovery_parent": recovery_parent} if recovery_parent is not None else {}
         transaction = FixvalTransaction(cwd, non_test_patch, **preservation)
         transaction.prepare()
+        collect_imports = not require_witness and _runs_pytest(scoped_cmd)
+        fixed_sources = transaction.python_sources() if collect_imports else {}
         revert_result = transaction.reverse(patch_path)
         if revert_result.returncode != 0:
             errors.append("revert patch failed: %s" % revert_result.stderr[:200])
@@ -1103,7 +1105,11 @@ def _reverted_run(
                 changed_files_in_order(non_test_patch),
                 require_witness=require_witness,
                 timeout=timeout,
-                added=added_names(non_test_patch),
+                added=added_names(
+                    non_test_patch,
+                    before=transaction.python_sources(reverted=True) if collect_imports else {},
+                    after=fixed_sources,
+                ),
             )
     except (OSError, ValueError, TransactionError, subprocess.SubprocessError) as exc:
         errors.append(str(exc))
