@@ -14,7 +14,7 @@ changes = separate proposal").
 
 ---
 
-## 1. Wave 1: bounded, no credit-policy change
+## 1. Wave 1: bounded changes
 
 Each item is one or two commits on the branch. W1-1 to W1-7 change no
 verdict, credit action or persisted state shape. W1-8 fixes a crash and adds
@@ -29,7 +29,7 @@ one optional host row field; its credit outcome is the existing #114 rule.
 | W1-5 | issue #70, 2026-10-30 comment (`verify.py:2180`) | The unresolved-finding reason names what the receipt basis shows: "unresolved finding without verified evidence (a product candidate the host could not verify, or an infrastructure failure)", or a finding with a malformed / unrecognized basis. It no longer calls INFRA diagnostics product findings, and it names a product candidate first, because a candidate whose falsification failed is published as INFRA/UNCERTAIN with the same authority. Verdict, `failure_kind` and `unresolved_findings` are unchanged. The receipt-gate diagnostic fingerprints its message, so a failure recorded before and after this change gets a different fingerprint. | An explicit label table for all 17 unverified basis shapes, and the exact reason for the real falsifier protocol / transport producer; restoring the first wording fails 14 tests. |
 | W1-6 | "tests or equivalence proofs for the 30 unproven keep-across-runs mutants" | See section 2: 2 more killed by new tests, 1 made equivalent by W1-8, 31 shown equivalent. | Mutant sweep plus per-attribute analysis. |
 | W1-7 | "Plan omissions: no schema-fail plus gate-damage row ... and no mixed schema-fail/coverage plus L2-infra row" | Test-only. The gate-path literal-damage test also runs schema-fail with literal damage (both pass orders; full reset). Two predicate tests cover a round with both a schema-fail and an incomplete-coverage finding, with and without an L2 infra error (preserve), and the same with a new product finding (reset). The third omission, "a rule that is not testable for mixed rounds", is a plan-wording note, not a test gap. | Dropping the L2-infra arm of the preserve rule fails the mixed L2 case. |
-| W1-8 | Found by the W1-6 analysis (not in PR #319): host-receipt LOCAL reviews stopped with `CorruptedStateError` on any L2 infrastructure error | The fixpoint turned CLEAN into INCOMPLETE and the round was recorded `interrupted`, but the round-history validator accepted INCOMPLETE only beside a falsifier protocol failure, so the machine refused its own row. #114's tests run without host receipts and never saw it. Host rows now carry `"l2_infra_error": true` when this round's L2 returned an infrastructure error; the validator accepts `interrupted` + INCOMPLETE with it and refuses it on earned / evidence-rejected rows, with a non-true value or without a returned L2. The L2 error is also cleared at the start of every round, so a round that fails before its L2 does not inherit the previous round's error. Older code refuses rows with the new field the same way it refused these rounds before. | `tests/test_l2_infra_host_rounds.py` (17 tests); 15 fail without the change, and the round-B test fails without only the per-round clear. Reproduced on 20b4ace. |
+| W1-8 | Found by the W1-6 analysis (not in PR #319): host-receipt LOCAL reviews stopped with `CorruptedStateError` on any L2 infrastructure error | The fixpoint turned CLEAN into INCOMPLETE and the round was recorded `interrupted`, but the round-history validator accepted INCOMPLETE only beside a falsifier protocol failure, so the machine refused its own row. #114's tests run without host receipts and never saw it. Host rows now carry `"l2_infra_error": true` when this round's L2 returned an infrastructure error; the validator accepts `interrupted` + INCOMPLETE with it and refuses it on earned / evidence-rejected rows, with a non-true value or without a returned L2. The L2 error is also cleared at the start of every round, so a round that fails before its L2 does not inherit the previous round's error. On the receipt-gate path an L2-only INCOMPLETE does not interrupt: a round whose evidence the gate refused stays `unavailable` (window not restorable, next run fails without a reviewer call), as with a healthy L2; the validator accepts `unavailable` + INCOMPLETE only with the L2 fact. Older code refuses rows with the new field the same way it refused these rounds before. | `tests/test_l2_infra_host_rounds.py` (21 tests); 15 of the first 17 fail without the change, the round-B test fails without only the per-round clear, and the receipt-damage cases fail with the old gate mapping. Reproduced on 20b4ace. |
 
 Why W1-5 does not say "infrastructure diagnostic": a receipt finding carries
 no `source`, INFRA and UNTRUSTED both get authority `infra-unavailable`, and
@@ -274,18 +274,49 @@ empty whenever an earlier run on the instance ran, and move the CI tests to
 seed State explicitly. Recommendation: the second, as its own change, because
 it rewrites how those CI tests stage history.
 
+### W2-10. The mutation-infra breaker demotes a `preserved` third round
+
+PR #319 accepted that any failure after a round settled `preserved` in the
+same attempt demotes it to `reset`, and named the mutation-infra breaker
+among them. In host-receipt mode that case was unreachable until W1-8,
+because the first L2 infra round crashed. It is reachable now: two L2-infra
+rounds (`interrupted`, window kept), then a third with an L2 error and an
+incomplete-coverage finding settles `preserved`, the breaker raises after
+the save, and the failed-attempt path demotes the row and wipes the window.
+Three plain L2-infra rounds keep the window. Question: should a deliberate
+breaker stop keep a preserve its round already settled? Recommendation:
+yes, by excluding `TimeoutBreaker` raised by
+`_check_mutation_infra_can_still_converge` after the final save from the
+demotion, with a test for both outcomes; it is a credit-policy change, so it
+waits for the owner.
+
 ## 4. Verification record (wave 1)
 
-- Targeted suites per commit, listed in each commit message.
-- All test files that build a `StateMachine` (101 files, 16362 tests) on the
-  W1-1 tree: the only failures are 4 tests that also fail on untouched
-  20b4ace (`test_deleted_scope_consumers.py` x2,
+- Each commit message names the tests it adds and the defect injection that
+  makes them fail.
+- Full suite (`pytest tests`, 30291 collected, 4 shards, pinned ruff first
+  on PATH) at 356b759: 29967 passed, 169 failed. Every one of the 169 fails
+  the same way on untouched 20b4ace, re-run in its own worktree. They are
+  environmental in this container: Vertex credentials (`test_llm_invoke*`),
+  the git environment (`test_conventions_resolver.py`), running as root
+  (`test_contract_flag.py`, `test_fast_fail.py`), the gate pytest evidence and
+  waiver tests, three projection-isolation pins that also fail on the Phase 6
+  heads, `test_doctor.py` live probes, `test_dogfood.py`, and the four known
+  failures (`test_deleted_scope_consumers.py` x2,
   `test_exec_falsify.py::...test_timeout_kills_process_group_descendants`,
-  `test_mutation_ledger_ci_controls.py::test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline`)
-  and the ruff detection contract, which fails only when `ruff` on PATH is
-  not the pinned 0.17.3 (it passes with the pinned binary first on PATH).
+  `test_mutation_ledger_ci_controls.py::test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline`).
+- The last commit (f5a695e, receipt damage beside an L2 error) came after
+  that run: the 11 neighbouring files (2560 tests) pass on it.
+- `tests/test_ruff_detection_contract.py` fails only when `ruff` on PATH is
+  not the pinned 0.17.3; it passes with the pinned binary first on PATH.
 - Lint: `ruff check` and `ruff format --check` (pinned 0.17.3) clean on every
   changed file; `tests/test_provider_capacity_reporting.py` was formatted in
   its own commit (AST unchanged) because a touched file must be left clean.
+- Independent review: two read-only review passes over the behavior
+  commits. Findings acted on: the first verify wording discounted product
+  candidates whose falsification failed (fixed in 2413865); an L2 error beside
+  receipt damage kept credit (fixed in f5a695e); a run that failed before the
+  state load consumed the seeded State (fixed in ad39ff7). Recorded, not
+  changed: W2-9, W2-10.
 - Not run: forge's own LLM review cycles (no backend in this environment) and
-  native mutmut. The mutant sweep in section 2 is a manual, targeted one.
+  native mutmut. The sweep in section 2 is a manual, targeted one.
