@@ -1935,6 +1935,13 @@ class StateMachine:
             row["fixpoint"] = fixpoint.name
         else:
             row.pop("fixpoint", None)
+        # #114: this round's L2 returned an infrastructure error. The fixpoint
+        # turns CLEAN into INCOMPLETE for it, and the loader needs the cause to
+        # accept that `interrupted` row (state.validate_round_history).
+        if self._l2_infra_error is not None and self._phase_status["l2"] == "returned":
+            row["l2_infra_error"] = True
+        else:
+            row.pop("l2_infra_error", None)
         if evidence_rejections is not None:
             row["evidence_rejections"] = evidence_rejections
         self._host_attempt_round = None
@@ -4214,6 +4221,10 @@ class StateMachine:
         self._rejected_evidence_entries = ()
         self._rejection_receipt_digests = ()
         self._rejection_written_outcomes = ()
+        # #114: describes this round's L2 only. `_run_l2_phase` also clears it,
+        # but a round that fails before its L2 starts must not see the previous
+        # round's error and record INCOMPLETE for an L2 it never ran.
+        self._l2_infra_error = None
         self._state.converged = False
         self._state.round = round_index
         self._mutation_timeout_emitted = set()
