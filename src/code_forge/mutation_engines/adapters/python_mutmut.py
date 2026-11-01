@@ -32,6 +32,8 @@ from code_forge.mutation_engines.adapters.base import (
     InputEntry,
     InputSnapshot,
     MutationAdapter,
+    isolation_probe_errors,
+    sandbox_failure_result,
 )
 from code_forge.mutation_engines.pytest_report_plugin import PLUGIN_ID
 from code_forge.mutation_engines.schemas import (
@@ -311,16 +313,7 @@ class MutmutAdapter:
         try:
             isolate.verify_isolation_support(context.cgroup_root)
         except isolate.IsolationUnavailable as exc:
-            errors.append(
-                InfrastructureError(
-                    code="isolation-unavailable",
-                    phase="probe",
-                    target_id=target.id,
-                    message=str(exc),
-                    retryable=False,
-                    evidence_refs=(),
-                )
-            )
+            errors.extend(isolation_probe_errors(exc, target.id))
             return CapabilityReport(
                 state=CapabilityState.UNAVAILABLE_ISOLATION,
                 resolved_tool_version=version,
@@ -365,6 +358,7 @@ class MutmutAdapter:
         workspace = Path(tempfile.mkdtemp(prefix="forge-mutmut-"))
         events_dir = workspace / "events"
         events_dir.mkdir()
+        baseline_record: BaselineRecord | None = None
         try:
             self._materialize(snapshot, workspace)
             sources = self._selected_sources(target, snapshot, workspace)
@@ -498,10 +492,12 @@ class MutmutAdapter:
                     errors=(),
                 ),
             )
+        except (isolate.CgroupCleanupError, isolate.IsolationUnavailable) as exc:
+            return sandbox_failure_result(
+                exc, identity, run_directory, baseline_record, receipts, artifacts
+            )
         finally:
             shutil.rmtree(workspace, ignore_errors=True)
-
-    # -- internals ---------------------------------------------------------
 
     def _materialize(self, snapshot: InputSnapshot, workspace: Path) -> None:
         for entry in snapshot.files:
@@ -617,13 +613,28 @@ class MutmutAdapter:
             except subprocess.TimeoutExpired:
                 timed_out = True
                 code = -1
-        except BaseException:
-            supervisor.teardown()
-            thread.join(timeout=30)
+            # Read inside the try, so an interrupt here still tears down and joins.
+            memory_peak = supervisor.read_resource_peak("memory.peak")
+        except BaseException as exc:
+            # The in-flight error (including KeyboardInterrupt, SystemExit or
+            # CancelledError) is the one that propagates. A cgroup cleanup
+            # failure rides along as a note instead of replacing it.
+            try:
+                supervisor.teardown()
+            except isolate.CgroupCleanupError as cleanup:
+                isolate.attach_note(exc, str(cleanup))
+                if isinstance(exc, isolate.IsolationUnavailable):
+                    exc.cleanup_failure = cleanup
+            finally:
+                thread.join(timeout=30)
             raise
-        memory_peak = supervisor.read_resource_peak("memory.peak")
-        supervisor.teardown()
-        thread.join(timeout=30)
+        cleanup_failure: isolate.CgroupCleanupError | None = None
+        try:
+            supervisor.teardown()
+        except isolate.CgroupCleanupError as cleanup:
+            cleanup_failure = cleanup
+        finally:
+            thread.join(timeout=30)
         python_path = shutil.which(context.approved_python) or context.approved_python
         receipt = CommandReceipt(
             id=receipt_id,
@@ -648,6 +659,14 @@ class MutmutAdapter:
             resource_events={"memory_peak_bytes": memory_peak},
             evidence_refs=(),
         )
+        if cleanup_failure is not None:
+            # Fail closed: a run cgroup left behind means the host is not in
+            # the state the next run assumes, so the run is not reported as
+            # completed. The receipt and exit code stay on the error.
+            cleanup_failure.receipt = receipt
+            cleanup_failure.exit_code = code
+            cleanup_failure.timed_out = timed_out
+            raise cleanup_failure
         return code, timed_out, receipt
 
     def _run_baseline(
