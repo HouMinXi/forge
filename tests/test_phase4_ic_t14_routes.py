@@ -13,7 +13,6 @@ from __future__ import annotations
 import ast
 import json
 import re
-from copy import deepcopy
 from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -23,8 +22,7 @@ import pytest
 from code_forge import mcp_server as server
 from code_forge.cli import _emit_ci_output
 from code_forge.disposition import Disposition
-from code_forge.mcp_jobs import ForgeResult
-from code_forge.sarif import build_sarif_log, format_classification_line, format_summary
+from code_forge.sarif import format_classification_line, format_summary
 from code_forge.state import Mode, State, StateFinding, Verdict, save_state
 
 CLASS_LINE_RE = re.compile(r"^code-forge: classification\b", re.M)
@@ -162,17 +160,11 @@ class TestIncludeMcpRoutes:
         assert rc["availability"] == "available"
         assert rc["product_list_count"] == 1
         # Legacy fields unchanged meaning.
-        assert data["findings_count_status"] is None or isinstance(
-            data["findings_count_status"], str
-        )
+        assert data["findings_count_status"] is None or isinstance(data["findings_count_status"], str)
 
-    async def test_shared_reader_parity_inline_handler_sdk(
-        self, monkeypatch, state_dir, registry
-    ):
+    async def test_shared_reader_parity_inline_handler_sdk(self, monkeypatch, state_dir, registry):
         stdout = _ci_sarif_stdout(state_dir, registry)
-        inline = server._make_result(stdout, 1, 2.0, "").structuredContent[
-            "report_classification"
-        ]
+        inline = server._make_result(stdout, 1, 2.0, "").structuredContent["report_classification"]
 
         entry = {
             "status": "completed",
@@ -188,9 +180,7 @@ class TestIncludeMcpRoutes:
         handler = await server.forge_job_status("job-t14")
         handler_rc = handler.structuredContent["result"]["report_classification"]
 
-        sdk = await server.mcp.call_tool(
-            "forge_job_status", {"job_id": "job-t14"}
-        )
+        sdk = await server.mcp.call_tool("forge_job_status", {"job_id": "job-t14"})
         sdk_rc = sdk.structuredContent["result"]["report_classification"]
 
         assert inline == handler_rc == sdk_rc
@@ -329,9 +319,7 @@ class TestNoClaimInprocess:
 
 
 class TestWiredF1AndSharedReader:
-    def test_legacy_summary_byte_identical_before_classification_line(
-        self, state_dir, registry
-    ):
+    def test_legacy_summary_byte_identical_before_classification_line(self, state_dir, registry):
         findings = [
             _finding(Disposition.CONFIRMED, "fp-c", "f-c"),
             _finding(Disposition.UNCERTAIN, "fp-u", "f-u"),
@@ -349,10 +337,7 @@ class TestWiredF1AndSharedReader:
             availability = "unavailable"
             unavailable_reason = "no-report"
 
-        assert (
-            format_classification_line(_B())
-            == "code-forge: classification unavailable (no-report)"
-        )
+        assert format_classification_line(_B()) == "code-forge: classification unavailable (no-report)"
 
     def test_provider_capacity_legacy_count_unchanged(self, state_dir, registry):
         """PROVIDER_CAPACITY-only does not invent classification / count authority."""

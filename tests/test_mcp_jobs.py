@@ -58,7 +58,9 @@ def test_exit_to_verdict_names_the_killing_signal():
 def test_signal_exit_note():
     from code_forge.mcp_jobs import signal_exit_note
 
-    assert signal_exit_note(-9) == "code-forge was killed by SIGKILL (exit -9) before it produced a report"
+    assert (
+        signal_exit_note(-9) == "code-forge was killed by SIGKILL (exit -9) before it produced a report"
+    )
     assert signal_exit_note(0) is None
     assert signal_exit_note(2) is None
 
@@ -187,7 +189,7 @@ def _write_temp_file(text="", suffix=".log"):
 @pytest.mark.asyncio
 async def test_wait_for_job_deletes_tempfile():
     tmp_name = _write_temp_file("test contract", suffix=".md")
-    assert os.path.exists(tmp_name)
+    assert await asyncio.to_thread(os.path.exists, tmp_name)
 
     async def _comm():
         return (b"output", b"")
@@ -198,7 +200,7 @@ async def test_wait_for_job_deletes_tempfile():
     start_job(task, proc, tempfile_path=tmp_name)
     # Wait for _wait_for_job to complete and delete the file
     await asyncio.sleep(0.1)
-    assert not os.path.exists(tmp_name)
+    assert not await asyncio.to_thread(os.path.exists, tmp_name)
 
 
 @pytest.mark.asyncio
@@ -807,7 +809,7 @@ async def test_watchdog_stderr_tail_preserved():
             proc.kill()
             await proc.wait()
         inner_task.cancel()
-        if os.path.exists(log_path):
+        if await asyncio.to_thread(os.path.exists, log_path):
             os.unlink(log_path)
 
 
@@ -842,7 +844,7 @@ async def test_watchdog_stderr_tail_from_log_file():
             proc.kill()
             await proc.wait()
         inner_task.cancel()
-        if os.path.exists(log_path):
+        if await asyncio.to_thread(os.path.exists, log_path):
             os.unlink(log_path)
 
 
@@ -1105,7 +1107,7 @@ async def test_killpg_kills_entire_process_group():
     # Verify no process in the group survives
     try:
         os.kill(proc.pid, 0)  # should raise ProcessLookupError
-        assert False, "leader PID still alive after killpg cleanup"
+        raise AssertionError("leader PID still alive after killpg cleanup")
     except ProcessLookupError:
         pass  # expected: leader is dead
 

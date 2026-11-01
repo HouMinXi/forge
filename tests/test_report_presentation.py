@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """IC-01 unit tests: prepare_legacy_report / prepare_report_views (§1.1)."""
+
 from __future__ import annotations
 
 import copy
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -18,7 +18,7 @@ from code_forge.report_presentation import (
     parse_report_classification,
     wire_to_json,
 )
-from code_forge.report_projection import ReportProjection, classify_report_records
+from code_forge.report_projection import classify_report_records
 from code_forge.sarif import build_sarif_log
 from code_forge.state import State, StateFinding, Verdict, Mode
 
@@ -68,9 +68,7 @@ def test_prepare_legacy_report_owns_safe_substrate_no_alias():
     # Mutating owned graph must not affect a second prepare
     owned = substrate.sarif_document
     owned["marker"] = "x"
-    again = prepare_legacy_report(
-        json.loads(stdout), stdout=stdout, stderr=stderr
-    )
+    again = prepare_legacy_report(json.loads(stdout), stdout=stdout, stderr=stderr)
     assert "marker" not in again.sarif_document
 
 
@@ -145,9 +143,7 @@ def test_prepare_report_views_empty_safe_projection_available():
     out_doc = json.loads(prepared.stdout)
     assert "report_classification" in out_doc["runs"][0]["properties"]
     # Reader agrees
-    rc = parse_report_classification(
-        out_doc["runs"][0], legacy_report_state="accepted"
-    )
+    rc = parse_report_classification(out_doc["runs"][0], legacy_report_state="accepted")
     assert rc.availability == "available"
     assert wire_to_json(rc)["product"] == []
 
@@ -161,12 +157,8 @@ def test_prepare_report_views_no_classifier_call(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("classifier must not be called from prepare_*")
 
-    monkeypatch.setattr(
-        "code_forge.report_projection.classify_report_records", boom
-    )
-    monkeypatch.setattr(
-        "code_forge.report_presentation.classify_report_records", boom, raising=False
-    )
+    monkeypatch.setattr("code_forge.report_projection.classify_report_records", boom)
+    monkeypatch.setattr("code_forge.report_presentation.classify_report_records", boom, raising=False)
     prepare_report_views(safe, proj)
     prepare_legacy_report(doc, stdout=stdout, stderr="")
 
@@ -456,7 +448,6 @@ def test_wpr2_all_completed_recovery_unchanged_for_s2_and_completion():
 
 def test_wpr2_rao_validator_rule_text_unchanged():
     """RA-O _validate_acq rule text for pass-outcome-not-completed must stay intact."""
-    from pathlib import Path
     import code_forge.report_presentation as rp
 
     src = Path(rp.__file__).read_text()

@@ -273,6 +273,7 @@ def test_findings_cache_is_replaced_not_accumulated(tmp_path, monkeypatch):
 def _repo(path, commits):
     """commits is a list of (file, subject). Each writes that one file."""
     import subprocess
+
     subprocess.run(["git", "init", "-q"], cwd=path, check=True)
     subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=path, check=True)
     subprocess.run(["git", "config", "user.name", "T"], cwd=path, check=True)
@@ -313,7 +314,9 @@ def test_git_history_failure_is_recorded_and_isolated(tmp_path):
 
     res = gather(
         [GitHistorySource(tmp_path, runner=boom), _Other()],
-        ["a.py"], "diff", head_sha=None,
+        ["a.py"],
+        "diff",
+        head_sha=None,
     )
     assert any("git-history" in e and "128" in e for e in res.errors)
     assert res.rows == [other]
@@ -329,7 +332,9 @@ def test_git_history_timeout_uses_the_given_bound(tmp_path):
 
     res = gather(
         [GitHistorySource(tmp_path, runner=block, timeout=0.01)],
-        ["a.py"], "diff", head_sha=None,
+        ["a.py"],
+        "diff",
+        head_sha=None,
     )
     assert any("TimeoutExpired" in e for e in res.errors)
 
@@ -353,8 +358,12 @@ def _raw_git_history(path, monkeypatch, subjects):
     import subprocess
 
     for key in (
-        "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR",
-        "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -363,8 +372,12 @@ def _raw_git_history(path, monkeypatch, subjects):
 
     def git(*args, input=None):
         return subprocess.run(
-            ["git", *args], cwd=path, input=input, capture_output=True,
-            check=True, timeout=10,
+            ["git", *args],
+            cwd=path,
+            input=input,
+            capture_output=True,
+            check=True,
+            timeout=10,
         ).stdout
 
     git("init", "-q")
@@ -379,8 +392,7 @@ def _raw_git_history(path, monkeypatch, subjects):
             body += b"parent " + parent + b"\n"
         body += (
             b"author T <t@example.com> 1000000000 +0000\n"
-            b"committer T <t@example.com> 1000000000 +0000\n\n"
-            + subject + b"\n"
+            b"committer T <t@example.com> 1000000000 +0000\n\n" + subject + b"\n"
         )
         parent = git("hash-object", "-t", "commit", "-w", "--stdin", input=body).strip()
         git("update-ref", "HEAD", parent.decode("ascii"))
@@ -392,7 +404,9 @@ def test_git_history_preserves_malformed_subjects_and_other_commits(tmp_path, mo
     from code_forge.context_sources import GitHistorySource
 
     git, short_ids = _raw_git_history(
-        tmp_path, monkeypatch, [b"valid older subject", b"keep \xff context", b"keep \xfe context"],
+        tmp_path,
+        monkeypatch,
+        [b"valid older subject", b"keep \xff context", b"keep \xfe context"],
     )
     raw = git("log", "--encoding=utf-8", "--format=%h %s", "--", "a.py")
     assert b"keep \xff context" in raw and b"keep \xfe context" in raw
@@ -509,7 +523,9 @@ def test_query_drops_long_tokens_and_caps_identifiers():
     from code_forge.context_sources import query_terms
 
     long = "k" * 41
-    added = "\n".join("+%s" % w for w in ["alpha", "12345", long, "beta"] + ["nn%d" % i for i in range(12)])
+    added = "\n".join(
+        "+%s" % w for w in ["alpha", "12345", long, "beta"] + ["nn%d" % i for i in range(12)]
+    )
     text = query_terms(["src/mod.py"], added)
     assert "mod.py" in text
     assert "12345" not in text
@@ -547,7 +563,9 @@ def test_knowledge_timeout_is_recorded(tmp_path):
 
     res = gather(
         [KnowledgeSource(client=client, enabled=True, timeout=0.01)],
-        ["a.py"], _DIFF, head_sha=None,
+        ["a.py"],
+        _DIFF,
+        head_sha=None,
     )
     assert res.rows == []
     assert any("TimeoutExpired" in e for e in res.errors)
@@ -557,7 +575,8 @@ def test_knowledge_empty_sources_is_not_an_error():
     from code_forge.context_sources import KnowledgeSource
 
     rows = KnowledgeSource(
-        client=lambda q, t: {"answer": "", "sources": []}, enabled=True,
+        client=lambda q, t: {"answer": "", "sources": []},
+        enabled=True,
     ).facts(["a.py"], _DIFF)
     assert rows == []
 

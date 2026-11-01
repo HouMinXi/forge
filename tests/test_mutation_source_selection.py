@@ -31,8 +31,10 @@ def test_excluded_link_aliases_do_not_block_applicable_sources(tmp_path, monkeyp
         "absolute": str(link),
         "backslash": relative.replace("/", "\\"),
     }[alias]
-    before = {path: (path.lstat(), os.readlink(path) if path.is_symlink() else path.read_bytes())
-              for path in [source, target, link]}
+    before = {
+        path: (path.lstat(), os.readlink(path) if path.is_symlink() else path.read_bytes())
+        for path in [source, target, link]
+    }
     commands = []
     transport = ""
 
@@ -49,8 +51,11 @@ def test_excluded_link_aliases_do_not_block_applicable_sources(tmp_path, monkeyp
     evidence = {}
     options = {"mutation_skip_globs": ["excluded/**"], "mutation_include_globs": []} if custom else {}
     findings, infra = mutation.run_mutation(
-        ["src/add.py", selected], [sys.executable, "-m", "pytest"],
-        cwd=tmp_path, _evidence=evidence, **options
+        ["src/add.py", selected],
+        [sys.executable, "-m", "pytest"],
+        cwd=tmp_path,
+        _evidence=evidence,
+        **options,
     )
     assert not findings and not infra
     assert evidence["inventory"] == {"add.x_add__mutmut_1": "killed"}
@@ -59,7 +64,9 @@ def test_excluded_link_aliases_do_not_block_applicable_sources(tmp_path, monkeyp
     for path, (original, raw) in before.items():
         current = path.lstat()
         assert (current.st_dev, current.st_ino, current.st_mode) == (
-            original.st_dev, original.st_ino, original.st_mode
+            original.st_dev,
+            original.st_ino,
+            original.st_mode,
         )
         assert (os.readlink(path) if path.is_symlink() else path.read_bytes()) == raw
 
@@ -73,8 +80,11 @@ def test_excluded_looking_escapes_fail_before_process_or_workspace(tmp_path, mon
     outside = tmp_path / "tests/helper.py"
     outside.parent.mkdir()
     outside.write_text("value = 1\n")
-    selected = {"parent": "../tests/helper.py", "internal-parent": "src/../tests/helper.py",
-                "absolute": str(outside)}[alias]
+    selected = {
+        "parent": "../tests/helper.py",
+        "internal-parent": "src/../tests/helper.py",
+        "absolute": str(outside),
+    }[alias]
     monkeypatch.setattr(mutation, "run_owned_command", lambda *_a, **_k: pytest.fail("process launched"))
     evidence = {}
     findings, infra = mutation.run_mutation(
@@ -169,8 +179,14 @@ def test_include_override_keeps_link_validation_strict(tmp_path, monkeypatch, mi
     monkeypatch.setattr(mutation, "run_owned_command", lambda *_a, **_k: pytest.fail("process launched"))
     evidence = {}
     findings, infra = mutation.run_mutation(
-        [{"relative": "tests/helper.py", "dot": "./tests/helper.py", "absolute": str(source),
-          "backslash": "tests\\helper.py"}[alias]],
+        [
+            {
+                "relative": "tests/helper.py",
+                "dot": "./tests/helper.py",
+                "absolute": str(source),
+                "backslash": "tests\\helper.py",
+            }[alias]
+        ],
         ["unused"],
         cwd=tmp_path,
         mutation_include_globs=["tests/**"],

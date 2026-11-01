@@ -128,8 +128,7 @@ class TestSelection:
     def _pool(self, per_repo):
         out = []
         for repo, n in per_repo.items():
-            for i in range(n):
-                out.append(_inst(instance_id="%s-%d" % (repo, i), repo=repo))
+            out.extend((_inst(instance_id="%s-%d" % (repo, i), repo=repo)) for i in range(n))
         return out
 
     def test_caps_each_repo(self):

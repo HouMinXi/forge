@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """IC-01 publication sequencing: pure prep never publishes (§1.1 / §6)."""
+
 from __future__ import annotations
 
 import io
@@ -15,7 +16,6 @@ from code_forge.report_presentation import (
     prepare_report_views,
     parse_report_classification,
     wire_to_json,
-    _unavailable,
     _MAX_SARIF_REPORT_CHARS,
 )
 from code_forge.report_projection import classify_report_records
@@ -56,9 +56,7 @@ def test_pure_functions_never_write_stdout(monkeypatch):
     doc = _doc()
     stdout = _stdout(doc)
     safe = prepare_legacy_report(doc, stdout=stdout, stderr="s\n")
-    proj = classify_report_records(
-        State(findings=[], mode=Mode.CI, verdict=Verdict.PASS)
-    )
+    proj = classify_report_records(State(findings=[], mode=Mode.CI, verdict=Verdict.PASS))
     prepared = prepare_report_views(safe, proj)
     assert buf.getvalue() == ""
     # Result carries the prepared views; nothing flushed to real stdout
@@ -79,9 +77,7 @@ def test_publication_requires_complete_pure_prepared_report():
     safe = prepare_legacy_report(doc, stdout=stdout, stderr="sum\n")
     assert published == []
     # Stage 2: complete prepared report
-    proj = classify_report_records(
-        State(findings=[], mode=Mode.CI, verdict=Verdict.PASS)
-    )
+    proj = classify_report_records(State(findings=[], mode=Mode.CI, verdict=Verdict.PASS))
     prepared = prepare_report_views(safe, proj)
     assert published == []
     # Stage 3: external publication (outside pure funcs)
@@ -117,9 +113,7 @@ def test_budget_exceeded_selects_canonical_unavailable_or_omit():
     safe = prepare_legacy_report(doc, stdout=stdout, stderr="")
     if safe.sarif_document is None:
         pytest.skip("legacy pad rejected by acceptor")
-    proj = classify_report_records(
-        State(findings=[], mode=Mode.CI, verdict=Verdict.PASS)
-    )
+    proj = classify_report_records(State(findings=[], mode=Mode.CI, verdict=Verdict.PASS))
     prepared = prepare_report_views(safe, proj)
     # Either budget-exceeded canonical block, or omit → legacy-report
     reason = prepared.report_classification.unavailable_reason

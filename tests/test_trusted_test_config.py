@@ -33,14 +33,20 @@ GATE = Path(".code-forge") / "gate.yaml"
 
 def _git(repo, *args):
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8",
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     ).stdout.strip()
 
 
 def _write_gate(repo, command, timeout=111):
     (repo / GATE).parent.mkdir(parents=True, exist_ok=True)
     (repo / GATE).write_text(
-        yaml.safe_dump({"test": {"command": command, "timeout_seconds": timeout}}), encoding="utf-8",
+        yaml.safe_dump({"test": {"command": command, "timeout_seconds": timeout}}),
+        encoding="utf-8",
     )
 
 
@@ -73,8 +79,10 @@ def _machine(repo, base, mode=Mode.LOCAL, files=("src/pkg/mod.py",)):
         autofixer=StubAutoFixer(),
         revert_fn=lambda finding: None,
         resolved_review=ResolvedReview(
-            source_files=[repo / f for f in files], baseline_content=None,
-            git_diff="--- a/src/pkg/mod.py\n+++ b/src/pkg/mod.py\n", mode_hint="git",
+            source_files=[repo / f for f in files],
+            baseline_content=None,
+            git_diff="--- a/src/pkg/mod.py\n+++ b/src/pkg/mod.py\n",
+            mode_hint="git",
             base_sha=base,
         ),
         source_hash="trusted-test-config",
@@ -109,7 +117,8 @@ def test_first_ever_tracked_gate_added_by_the_change_is_refused(tmp_path):
     machine = _machine(repo, base)
     assert _l2_calls(machine) == []
     assert any(
-        "no .code-forge/gate.yaml at review baseline" in e and "takes effect once it is on the baseline" in e
+        "no .code-forge/gate.yaml at review baseline" in e
+        and "takes effect once it is on the baseline" in e
         for e in machine._state.infra_errors
     ), machine._state.infra_errors
 
@@ -148,7 +157,10 @@ def test_fixval_runs_the_baseline_test_command(tmp_path, monkeypatch):
         machine._finalize_local_terminal()
     # The trusted baseline gate's command AND its timeout (111), never the
     # PR's (999) and never the 120s default that cut off #142's FIXVAL.
-    assert seen == [(BASE_CMD, 111)], (machine._state.infra_errors, [f.description for f in machine._state.findings])
+    assert seen == [(BASE_CMD, 111)], (
+        machine._state.infra_errors,
+        [f.description for f in machine._state.findings],
+    )
 
 
 def test_ci_detached_launch_gets_the_baseline_command(tmp_path, monkeypatch):
@@ -178,9 +190,14 @@ def test_admission_reads_the_baseline_not_a_broken_pr_gate(tmp_path, monkeypatch
     (repo / GATE).write_text("test: {command: 5}\n", encoding="utf-8")  # PR breaks it
     monkeypatch.setattr(mutation.shutil, "which", lambda name: "/tools/mutmut")
     error = mutation.mutation_review_admission_error(
-        target_kind="INDEX", git_diff="--- a/src/pkg/mod.py\n+++ b/src/pkg/mod.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n",
-        source_files=[repo / "src" / "pkg" / "mod.py"], source_root=repo, config_root=repo,
-        runner=lambda *a, **k: ([], []), ci_detached=True, base_sha=base,
+        target_kind="INDEX",
+        git_diff="--- a/src/pkg/mod.py\n+++ b/src/pkg/mod.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n",
+        source_files=[repo / "src" / "pkg" / "mod.py"],
+        source_root=repo,
+        config_root=repo,
+        runner=lambda *a, **k: ([], []),
+        ci_detached=True,
+        base_sha=base,
     )
     assert error and "INDEX source is unsupported" in error
 
@@ -188,27 +205,38 @@ def test_admission_reads_the_baseline_not_a_broken_pr_gate(tmp_path, monkeypatch
 def test_loader_units(tmp_path):
     repo, base = _repo(tmp_path, gate_at_base=True)
     _write_gate(repo, PR_CMD)
-    assert load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)["test"]["command"] == BASE_CMD
+    assert (
+        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)["test"]["command"]
+        == BASE_CMD
+    )
     # invalid baseline content is a ValueError, not a silent fallback
     (repo / GATE).write_text("test: {command: 5}\n", encoding="utf-8")
     _git(repo, "commit", "-qam", "broken gate")
     with pytest.raises(ValueError):
-        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=_git(repo, "rev-parse", "HEAD"))
+        load_trusted_gate_config(
+            config_root=repo, source_root=repo, base_sha=_git(repo, "rev-parse", "HEAD")
+        )
     # tracked gate with no baseline revision at all: refused
     with pytest.raises(FileNotFoundError):
         load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=None)
     # not a git checkout: the file is the only config there is
     plain = tmp_path / "plain"
     _write_gate(plain, BASE_CMD)
-    assert load_trusted_gate_config(config_root=plain, source_root=plain, base_sha=None)["test"]["command"] == BASE_CMD
+    assert (
+        load_trusted_gate_config(config_root=plain, source_root=plain, base_sha=None)["test"]["command"]
+        == BASE_CMD
+    )
 
 
 def test_no_note_when_gate_yaml_is_not_in_the_diff(tmp_path):
     repo, base = _repo(tmp_path, gate_at_base=True)
     machine = _machine(repo, base)
     machine.resolved_review = ResolvedReview(
-        source_files=machine.resolved_review.source_files, baseline_content=None,
-        git_diff=_git(repo, "diff", base), mode_hint="git", base_sha=base,
+        source_files=machine.resolved_review.source_files,
+        baseline_content=None,
+        git_diff=_git(repo, "diff", base),
+        mode_hint="git",
+        base_sha=base,
     )
     _l2_calls(machine)
     assert not [a for a in machine._advisories if a.id == "GATE_YAML_EDIT_NOT_APPLIED"]
@@ -217,7 +245,8 @@ def test_no_note_when_gate_yaml_is_not_in_the_diff(tmp_path):
 def _write_globs(repo, skip):
     (repo / GATE).parent.mkdir(parents=True, exist_ok=True)
     (repo / GATE).write_text(
-        yaml.safe_dump({"test": {"command": BASE_CMD, "mutation_skip_globs": skip}}), encoding="utf-8",
+        yaml.safe_dump({"test": {"command": BASE_CMD, "mutation_skip_globs": skip}}),
+        encoding="utf-8",
     )
 
 
@@ -247,7 +276,10 @@ def test_unreadable_baseline_gate_falls_back_to_default_globs_with_a_note(tmp_pa
     bad = _git(repo, "rev-parse", "HEAD")
     notes = []
     assert mutation.trusted_mutation_globs(
-        config_root=repo, source_root=repo, base_sha=bad, notes=notes,
+        config_root=repo,
+        source_root=repo,
+        base_sha=bad,
+        notes=notes,
     ) == (None, None)
     assert len(notes) == 1 and "using the default test-path globs" in notes[0]
     machine = _machine(repo, bad)
@@ -273,7 +305,10 @@ def test_exit_6_docs_row_quotes_the_exact_preflight_message(tmp_path, monkeypatc
     message = str(raised.value)
     documented = message.split("<path>")[0] + "<path>; ...`"
     row = next(
-        line for line in (Path(__file__).parents[1] / "docs" / "setup-ci.md").read_text(encoding="utf-8").splitlines()
+        line
+        for line in (Path(__file__).parents[1] / "docs" / "setup-ci.md")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.startswith("| 6 |")
     )
     assert "`" + documented in row, (documented, row)
@@ -289,8 +324,11 @@ NOTE_ID = "GATE_YAML_EDIT_NOT_APPLIED"
 def _with_diff(machine, repo, base):
     _git(repo, "add", "-A")
     machine.resolved_review = ResolvedReview(
-        source_files=machine.resolved_review.source_files, baseline_content=None,
-        git_diff=_git(repo, "diff", "--cached", base), mode_hint="git", base_sha=base,
+        source_files=machine.resolved_review.source_files,
+        baseline_content=None,
+        git_diff=_git(repo, "diff", "--cached", base),
+        mode_hint="git",
+        base_sha=base,
     )
     return machine
 
@@ -309,7 +347,9 @@ def test_symlinked_code_forge_dir_does_not_bypass_first_ever_refusal(tmp_path):
     repo, base = _symlinked_gate_repo(tmp_path)
     machine = _machine(repo, base)
     assert _l2_calls(machine) == []
-    assert any("is a symlink in the index" in e for e in machine._state.infra_errors), machine._state.infra_errors
+    assert any("is a symlink in the index" in e for e in machine._state.infra_errors), (
+        machine._state.infra_errors
+    )
 
 
 def test_untracked_symlinked_code_forge_dir_is_refused(tmp_path):
@@ -325,7 +365,9 @@ def test_symlinked_gate_file_is_refused_even_with_a_baseline_gate(tmp_path):
     (repo / GATE).unlink()
     (repo / GATE).symlink_to("../cfg/.code-forge/gate.yaml")
     _git(repo, "add", "-A")
-    with pytest.raises(UntrustedGateConfigError, match=r"\.code-forge/gate\.yaml is a symlink in the index"):
+    with pytest.raises(
+        UntrustedGateConfigError, match=r"\.code-forge/gate\.yaml is a symlink in the index"
+    ):
         load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
 
 
@@ -354,7 +396,11 @@ def test_ci_refuses_an_untracked_in_tree_gate_for_test_and_globs(tmp_path):
     assert UNTRACKED_REASON in machine._state.infra_errors, machine._state.infra_errors
     notes = []
     assert mutation.trusted_mutation_globs(
-        config_root=repo, source_root=repo, base_sha=base, notes=notes, allow_untracked=False,
+        config_root=repo,
+        source_root=repo,
+        base_sha=base,
+        notes=notes,
+        allow_untracked=False,
     ) == (None, None)
     assert notes and "CI does not trust" in notes[0]
     # LOCAL keeps the untracked behaviour (#143 tracks the WORKING risk)
@@ -424,6 +470,7 @@ def test_invalid_baseline_never_falls_back_to_a_valid_working_copy(tmp_path):
 
 # --- PR #142 re-review: the outside config root must not lead back into the tree ---
 
+
 def _evil_outside(tmp_path, repo, kind):
     outside = tmp_path / "evil-config"
     outside.mkdir()
@@ -444,8 +491,10 @@ def test_ci_outside_root_symlinked_into_the_tree_is_refused(tmp_path, kind):
     machine = _machine(repo, base, mode=Mode.CI)
     machine.test_config_root = _evil_outside(tmp_path, repo, kind)
     assert _l2_calls(machine) == []
-    assert any("is a symlink; an outside test config root must hold a regular" in e
-               for e in machine._state.infra_errors), machine._state.infra_errors
+    assert any(
+        "is a symlink; an outside test config root must hold a regular" in e
+        for e in machine._state.infra_errors
+    ), machine._state.infra_errors
 
 
 def test_ci_outside_root_hardlinked_to_the_tree_gate_is_refused(tmp_path):
@@ -455,8 +504,10 @@ def test_ci_outside_root_hardlinked_to_the_tree_gate_is_refused(tmp_path):
     machine = _machine(repo, base, mode=Mode.CI)
     machine.test_config_root = _evil_outside(tmp_path, repo, "hardlink")
     assert _l2_calls(machine) == []
-    assert any("hard links; an outside test config root must hold its own single-link" in e
-               for e in machine._state.infra_errors), machine._state.infra_errors
+    assert any(
+        "hard links; an outside test config root must hold its own single-link" in e
+        for e in machine._state.infra_errors
+    ), machine._state.infra_errors
     # Directories cannot be hardlinked (link(2) returns EPERM on Linux), so a
     # .code-forge directory hardlink is not a case: only the file matters.
     with pytest.raises(OSError):
@@ -468,7 +519,9 @@ def test_ci_outside_root_hardlinked_to_a_pr_added_file_is_refused(tmp_path):
     into the outside root -- refuse any checkout inode, not only gate.yaml."""
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
     evil = repo / "evil.yaml"
-    evil.write_text(yaml.safe_dump({"test": {"command": PR_CMD, "timeout_seconds": 999}}), encoding="utf-8")
+    evil.write_text(
+        yaml.safe_dump({"test": {"command": PR_CMD, "timeout_seconds": 999}}), encoding="utf-8"
+    )
     _git(repo, "add", "evil.yaml")
     outside = tmp_path / "evil-config"
     (outside / ".code-forge").mkdir(parents=True)
@@ -476,8 +529,10 @@ def test_ci_outside_root_hardlinked_to_a_pr_added_file_is_refused(tmp_path):
     machine = _machine(repo, base, mode=Mode.CI)
     machine.test_config_root = outside
     assert _l2_calls(machine) == []
-    assert any("hard links; an outside test config root must hold its own single-link" in e
-               for e in machine._state.infra_errors), machine._state.infra_errors
+    assert any(
+        "hard links; an outside test config root must hold its own single-link" in e
+        for e in machine._state.infra_errors
+    ), machine._state.infra_errors
 
 
 def test_outside_root_resolving_into_the_tree_is_refused(tmp_path):
@@ -488,7 +543,9 @@ def test_outside_root_resolving_into_the_tree_is_refused(tmp_path):
     link = tmp_path / "linked-config"
     link.symlink_to(repo / "cfg", target_is_directory=True)
     with pytest.raises(UntrustedGateConfigError, match="resolves into the reviewed checkout"):
-        load_trusted_gate_config(config_root=link, source_root=repo, base_sha=base, allow_untracked=False)
+        load_trusted_gate_config(
+            config_root=link, source_root=repo, base_sha=base, allow_untracked=False
+        )
 
 
 def test_outside_read_does_not_follow_a_symlink_swapped_in_after_the_checks(tmp_path, monkeypatch):
@@ -497,9 +554,14 @@ def test_outside_read_does_not_follow_a_symlink_swapped_in_after_the_checks(tmp_
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
     outside = _evil_outside(tmp_path, repo, "file")
     monkeypatch.setattr("code_forge.gate_check.os.path.islink", lambda _p: False)
-    monkeypatch.setattr("code_forge.gate_check.os.path.realpath", lambda p, *_a, **_k: str(tmp_path / "elsewhere" / Path(p).name))
+    monkeypatch.setattr(
+        "code_forge.gate_check.os.path.realpath",
+        lambda p, *_a, **_k: str(tmp_path / "elsewhere" / Path(p).name),
+    )
     with pytest.raises(UntrustedGateConfigError, match="symlink or not a regular path"):
-        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+        load_trusted_gate_config(
+            config_root=outside, source_root=repo, base_sha=base, allow_untracked=False
+        )
 
 
 def test_in_tree_realpath_check_catches_a_link_the_islink_check_missed(tmp_path, monkeypatch):
@@ -542,7 +604,9 @@ def _fail_git(monkeypatch, *prefix):
 
     def fake(source_root, *args):
         if args[: len(prefix)] == prefix:
-            return subprocess.CompletedProcess(["git", *args], 128, "", "fatal: detected dubious ownership\n")
+            return subprocess.CompletedProcess(
+                ["git", *args], 128, "", "fatal: detected dubious ownership\n"
+            )
         return real(source_root, *args)
 
     monkeypatch.setattr(gate_check, "_git_out", fake)
@@ -562,14 +626,20 @@ def _tracked_evil_hardlink(tmp_path):
 def test_index_listing_failure_refuses_a_staged_first_ever_gate_in_local(tmp_path, monkeypatch):
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=True)
     _fail_git(monkeypatch, "ls-files", "-s")
-    with pytest.raises(UntrustedGateConfigError, match=r"git ls-files -s \.code-forge \.code-forge/gate\.yaml failed \(exit 128\): fatal: detected dubious ownership"):
+    with pytest.raises(
+        UntrustedGateConfigError,
+        match=r"git ls-files -s \.code-forge \.code-forge/gate\.yaml failed \(exit 128\): fatal: detected dubious ownership",
+    ):
         load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
 
 
 def test_baseline_tree_listing_failure_refuses(tmp_path, monkeypatch):
     repo, base = _repo(tmp_path, gate_at_base=True)
     _fail_git(monkeypatch, "ls-tree")
-    with pytest.raises(UntrustedGateConfigError, match=r"git ls-tree [0-9a-f]{40} \.code-forge \.code-forge/gate\.yaml failed \(exit 128\)"):
+    with pytest.raises(
+        UntrustedGateConfigError,
+        match=r"git ls-tree [0-9a-f]{40} \.code-forge \.code-forge/gate\.yaml failed \(exit 128\)",
+    ):
         load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base)
 
 
@@ -587,8 +657,10 @@ def test_ci_outside_root_hardlinked_to_an_untracked_file_is_refused(tmp_path, ig
     machine = _machine(repo, base, mode=Mode.CI)
     machine.test_config_root = outside
     assert _l2_calls(machine) == []
-    assert any("hard links; an outside test config root must hold its own single-link" in e
-               for e in machine._state.infra_errors), machine._state.infra_errors
+    assert any(
+        "hard links; an outside test config root must hold its own single-link" in e
+        for e in machine._state.infra_errors
+    ), machine._state.infra_errors
 
 
 @pytest.mark.parametrize("where", ["root-untracked", "root-tracked", "code-forge-dir"])
@@ -610,6 +682,7 @@ def test_checkout_symlink_to_a_legit_outside_gate_does_not_taint_it(tmp_path, wh
 
 # --- #147/#148/#149: nlink refusal, no checkout scan, full git args ---
 
+
 def _ci_with_outside_link(repo, base, source):
     outside = repo.parent / "evil-config"
     (outside / ".code-forge").mkdir(parents=True)
@@ -627,8 +700,10 @@ def _evil_yaml(path):
 
 def _assert_hardlink_refused(machine):
     assert _l2_calls(machine) == []
-    assert any("hard links; an outside test config root must hold its own single-link" in e
-               for e in machine._state.infra_errors), machine._state.infra_errors
+    assert any(
+        "hard links; an outside test config root must hold its own single-link" in e
+        for e in machine._state.infra_errors
+    ), machine._state.infra_errors
 
 
 def test_ci_outside_root_hardlinked_into_a_nested_untracked_repo_is_refused(tmp_path):
@@ -657,7 +732,9 @@ def test_ci_outside_root_hardlinked_into_a_submodule_work_tree_is_refused(tmp_pa
 
 def test_ci_outside_gate_with_a_second_link_outside_the_checkout_is_refused(tmp_path):
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
-    _assert_hardlink_refused(_ci_with_outside_link(repo, base, _evil_yaml(tmp_path / "elsewhere" / "g.yaml")))
+    _assert_hardlink_refused(
+        _ci_with_outside_link(repo, base, _evil_yaml(tmp_path / "elsewhere" / "g.yaml"))
+    )
 
 
 def test_single_link_outside_gate_loads_without_any_checkout_listing(tmp_path, monkeypatch):
@@ -666,9 +743,15 @@ def test_single_link_outside_gate_loads_without_any_checkout_listing(tmp_path, m
     outside = tmp_path / "ci-config"
     _write_gate(outside, BASE_CMD, timeout=7)
     monkeypatch.setattr(gate_check, "_git_out", lambda *a, **k: pytest.fail(f"git called: {a}"))
-    assert load_trusted_gate_config(
-        config_root=outside, source_root=repo, base_sha=base, allow_untracked=False,
-    )["test"]["command"] == BASE_CMD
+    assert (
+        load_trusted_gate_config(
+            config_root=outside,
+            source_root=repo,
+            base_sha=base,
+            allow_untracked=False,
+        )["test"]["command"]
+        == BASE_CMD
+    )
 
 
 def test_non_utf8_untracked_name_does_not_refuse_a_legit_outside_root(tmp_path):
@@ -738,21 +821,31 @@ def _unshare_available():
 
 
 @pytest.mark.skipif(not _unshare_available(), reason="unprivileged user/mount namespaces unavailable")
-@pytest.mark.parametrize("case", [
-    "root-alias", "forge-alias", "control",
-    "root-alias-via-symlink", "forge-alias-via-symlink", "control-via-symlink",
-])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "root-alias",
+        "forge-alias",
+        "control",
+        "root-alias-via-symlink",
+        "forge-alias-via-symlink",
+        "control-via-symlink",
+    ],
+)
 def test_bind_mount_alias_of_the_checkout_is_refused(tmp_path, case):
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)  # PR-controlled tree gate
     (repo / "cfg" / ".code-forge").mkdir(parents=True)
     (repo / "cfg" / ".code-forge" / "gate.yaml").write_text(
-        yaml.safe_dump({"test": {"command": PR_CMD}}), encoding="utf-8",
+        yaml.safe_dump({"test": {"command": PR_CMD}}),
+        encoding="utf-8",
     )
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     out = subprocess.run(
         ["unshare", "-rm", sys.executable, "-c", _ALIAS_SCRIPT, case, str(repo), base, str(scratch)],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
         env={**os.environ, "PYTHONPATH": str(Path(gate_check.__file__).parents[1])},
     )
     assert out.returncode == 0, out.stderr
@@ -786,7 +879,9 @@ def test_checkout_code_forge_symlinked_to_the_outside_root_is_not_an_alias(tmp_p
     repo, base = _repo(tmp_path, gate_at_base=True)
     outside = _outside_root(tmp_path)
     _pr_symlinks_code_forge_to(repo, outside / ".code-forge")
-    cfg = load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+    cfg = load_trusted_gate_config(
+        config_root=outside, source_root=repo, base_sha=base, allow_untracked=False
+    )
     assert cfg["test"]["command"] == OUTSIDE_CMD
 
 
@@ -835,8 +930,10 @@ def test_ci_refused_outside_config_root_fails_with_the_reason(tmp_path, monkeypa
     verdict, launched = _ci_run(machine, monkeypatch)
     assert launched == []
     assert verdict == Verdict.FAIL, (verdict, machine._state.infra_errors)
-    assert any("CI: mutation not measured -- trusted test config refused:" in e
-               for e in machine._state.infra_errors), machine._state.infra_errors
+    assert any(
+        "CI: mutation not measured -- trusted test config refused:" in e
+        for e in machine._state.infra_errors
+    ), machine._state.infra_errors
 
 
 @pytest.mark.parametrize("mode,expected", [(Mode.CI, True), (Mode.LOCAL, False)])
@@ -849,8 +946,10 @@ def test_l2_refused_trusted_config_is_a_bound_failure_in_ci(tmp_path, mode, expe
     machine.cwd, machine.source_root = outside, repo
     assert _l2_calls(machine) == []
     assert machine._mutation_bound_failure is expected
-    assert any("L2: mutation not measured -- trusted test config refused:" in e
-               for e in machine._state.infra_errors), machine._state.infra_errors
+    assert any(
+        "L2: mutation not measured -- trusted test config refused:" in e
+        for e in machine._state.infra_errors
+    ), machine._state.infra_errors
 
 
 def test_outside_refusal_is_the_subclass_and_in_tree_refusal_is_not(tmp_path):
@@ -858,13 +957,17 @@ def test_outside_refusal_is_the_subclass_and_in_tree_refusal_is_not(tmp_path):
 
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)
     with pytest.raises(UntrustedGateConfigError) as in_tree:
-        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base, allow_untracked=False)
+        load_trusted_gate_config(
+            config_root=repo, source_root=repo, base_sha=base, allow_untracked=False
+        )
     assert not isinstance(in_tree.value, OutsideConfigRootRefused)
     outside = tmp_path / "forge-config"
     (outside / ".code-forge").mkdir(parents=True)
     os.link(repo / GATE, outside / GATE)
     with pytest.raises(OutsideConfigRootRefused):
-        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+        load_trusted_gate_config(
+            config_root=outside, source_root=repo, base_sha=base, allow_untracked=False
+        )
 
 
 def test_ci_untracked_in_tree_gate_is_a_bound_failure(tmp_path):
@@ -915,10 +1018,14 @@ def test_ci_no_gate_anywhere_is_gate_not_found(tmp_path, git):
 
     repo, base = _no_gate_repo(tmp_path, git)
     with pytest.raises(GateNotFound):
-        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base, allow_untracked=False)
+        load_trusted_gate_config(
+            config_root=repo, source_root=repo, base_sha=base, allow_untracked=False
+        )
     _write_gate(repo, PR_CMD)  # present but untracked: the other refusal
     with pytest.raises(UntrackedGateRefused):
-        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base, allow_untracked=False)
+        load_trusted_gate_config(
+            config_root=repo, source_root=repo, base_sha=base, allow_untracked=False
+        )
 
 
 @pytest.mark.parametrize("git", [True, False], ids=["git", "non-git"])
@@ -941,7 +1048,9 @@ def test_ci_outside_root_without_a_gate_fails_with_the_reason(tmp_path, monkeypa
     outside = tmp_path / "forge-config"
     (outside / ".code-forge").mkdir(parents=True)
     with pytest.raises(GateNotFound):
-        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+        load_trusted_gate_config(
+            config_root=outside, source_root=repo, base_sha=base, allow_untracked=False
+        )
     machine = _machine(repo, base, mode=Mode.CI)
     machine.cwd, machine.source_root = outside, repo
     verdict, launched = _ci_run(machine, monkeypatch)
@@ -961,7 +1070,9 @@ def test_local_no_gate_is_unchanged(tmp_path, git):
     assert _l2_calls(machine) == []
     assert machine._mutation_bound_failure is False
     assert NO_GATE_REASON not in machine._state.infra_errors
-    assert any("L2: gate.yaml missing or test.command not configured" in e for e in machine._state.infra_errors)
+    assert any(
+        "L2: gate.yaml missing or test.command not configured" in e for e in machine._state.infra_errors
+    )
 
 
 def test_local_outside_root_without_a_gate_keeps_the_old_note(tmp_path):
@@ -972,7 +1083,9 @@ def test_local_outside_root_without_a_gate_keeps_the_old_note(tmp_path):
     machine.cwd, machine.source_root = outside, repo
     assert _l2_calls(machine) == []
     assert machine._mutation_bound_failure is False
-    assert any("L2: gate.yaml missing or test.command not configured" in e for e in machine._state.infra_errors)
+    assert any(
+        "L2: gate.yaml missing or test.command not configured" in e for e in machine._state.infra_errors
+    )
 
 
 def test_ci_docs_only_diff_never_loads_the_gate(tmp_path, monkeypatch):
@@ -987,16 +1100,19 @@ def test_ci_docs_only_diff_never_loads_the_gate(tmp_path, monkeypatch):
     (repo / "docs").mkdir()
     (repo / "docs" / "guide.md").write_text("# hi\n", encoding="utf-8")
     monkeypatch.setattr(
-        StateMachine, "_load_trusted_gate_config",
+        StateMachine,
+        "_load_trusted_gate_config",
         lambda self: pytest.fail("gate loaded for a docs-only diff"),
     )
 
     def docs_machine():
         machine = _machine(repo, base, mode=Mode.CI, files=("docs/guide.md",))
         machine.resolved_review = ResolvedReview(
-            source_files=[repo / "docs" / "guide.md"], baseline_content=None,
+            source_files=[repo / "docs" / "guide.md"],
+            baseline_content=None,
             git_diff="--- a/docs/guide.md\n+++ b/docs/guide.md\n@@ -0,0 +1 @@\n+# hi\n",
-            mode_hint="git", base_sha=base,
+            mode_hint="git",
+            base_sha=base,
         )
         return machine
 
@@ -1022,7 +1138,9 @@ def test_ci_first_ever_tracked_gate_fails_with_its_own_reason(tmp_path, monkeypa
 
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=True)
     with pytest.raises(GateNotOnBaseline) as caught:
-        load_trusted_gate_config(config_root=repo, source_root=repo, base_sha=base, allow_untracked=False)
+        load_trusted_gate_config(
+            config_root=repo, source_root=repo, base_sha=base, allow_untracked=False
+        )
     assert isinstance(caught.value, GateNotFound)
     machine = _machine(repo, base, mode=Mode.CI)
     assert _l2_calls(machine) == []
@@ -1042,11 +1160,15 @@ def test_local_first_ever_tracked_gate_keeps_the_not_configured_note(tmp_path):
     assert NOT_ON_BASELINE_REASON not in machine._state.infra_errors
 
 
-@pytest.mark.parametrize("content", [
-    "test: [unclosed\n",  # not YAML
-    "- just\n- a list\n",  # not a mapping
-    "test: {command: 5}\n",  # invalid test section
-], ids=["yaml", "not-mapping", "bad-command"])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "test: [unclosed\n",  # not YAML
+        "- just\n- a list\n",  # not a mapping
+        "test: {command: 5}\n",  # invalid test section
+    ],
+    ids=["yaml", "not-mapping", "bad-command"],
+)
 def test_ci_invalid_outside_gate_fails_with_the_reason(tmp_path, monkeypatch, content):
     """User policy: a malformed gate.yaml in an outside config root is a CI FAIL."""
     from code_forge.gate_check import OutsideGateInvalid
@@ -1056,7 +1178,9 @@ def test_ci_invalid_outside_gate_fails_with_the_reason(tmp_path, monkeypatch, co
     (outside / ".code-forge").mkdir(parents=True)
     (outside / GATE).write_text(content, encoding="utf-8")
     with pytest.raises(OutsideGateInvalid):
-        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+        load_trusted_gate_config(
+            config_root=outside, source_root=repo, base_sha=base, allow_untracked=False
+        )
     for run in ("inline", "detached"):
         machine = _machine(repo, base, mode=Mode.CI)
         machine.cwd, machine.source_root = outside, repo
@@ -1067,7 +1191,9 @@ def test_ci_invalid_outside_gate_fails_with_the_reason(tmp_path, monkeypatch, co
             verdict, launched = _ci_run(machine, monkeypatch)
             assert launched == [] and verdict == Verdict.FAIL, (verdict, machine._state.infra_errors)
         assert any(
-            e.startswith("CI: mutation not measured -- invalid .code-forge/gate.yaml in the test config root")
+            e.startswith(
+                "CI: mutation not measured -- invalid .code-forge/gate.yaml in the test config root"
+            )
             for e in machine._state.infra_errors
         ), machine._state.infra_errors
 
@@ -1081,7 +1207,9 @@ def test_local_invalid_outside_gate_keeps_the_old_note(tmp_path):
     machine.cwd, machine.source_root = outside, repo
     assert _l2_calls(machine) == []
     assert machine._mutation_bound_failure is False
-    assert any("L2: gate.yaml missing or test.command not configured" in e for e in machine._state.infra_errors)
+    assert any(
+        "L2: gate.yaml missing or test.command not configured" in e for e in machine._state.infra_errors
+    )
 
 
 def test_ci_outside_gate_without_a_test_section_is_not_malformed(tmp_path):
@@ -1094,7 +1222,9 @@ def test_ci_outside_gate_without_a_test_section_is_not_malformed(tmp_path):
     (outside / ".code-forge").mkdir(parents=True)
     (outside / GATE).write_text("rulepacks: []\n", encoding="utf-8")
     with pytest.raises(GateWithoutTestSection):
-        load_trusted_gate_config(config_root=outside, source_root=repo, base_sha=base, allow_untracked=False)
+        load_trusted_gate_config(
+            config_root=outside, source_root=repo, base_sha=base, allow_untracked=False
+        )
 
 
 def _baseline_gate(tmp_path, text):
@@ -1127,8 +1257,11 @@ def test_baseline_gate_without_test_section_stays_not_configured(tmp_path):
     assert not isinstance(error.value, BaselineGateInvalid)
 
 
-@pytest.mark.parametrize("text,verdict", [*((t, "FAIL") for t in _INVALID[:2]), ("rulepacks: []\n", "PASS")],
-                         ids=["yaml", "no-command", "no-test-section"])
+@pytest.mark.parametrize(
+    "text,verdict",
+    [*((t, "FAIL") for t in _INVALID[:2]), ("rulepacks: []\n", "PASS")],
+    ids=["yaml", "no-command", "no-test-section"],
+)
 def test_ci_invalid_baseline_gate_fails_like_an_outside_root(tmp_path, monkeypatch, text, verdict):
     """#191: CI FAILs with the reason; mutation was not measured."""
     repo, base = _baseline_gate(tmp_path, text)
@@ -1137,8 +1270,10 @@ def test_ci_invalid_baseline_gate_fails_like_an_outside_root(tmp_path, monkeypat
     monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
     assert machine._run_ci().name == verdict, machine._state.infra_errors
     if verdict == "FAIL":
-        assert any(e.startswith("CI: mutation not measured -- invalid gate.yaml at review baseline")
-                   for e in machine._state.infra_errors), machine._state.infra_errors
+        assert any(
+            e.startswith("CI: mutation not measured -- invalid gate.yaml at review baseline")
+            for e in machine._state.infra_errors
+        ), machine._state.infra_errors
 
 
 @pytest.mark.parametrize("text", _INVALID, ids=["yaml", "no-command", "not-mapping"])
@@ -1149,8 +1284,10 @@ def test_ci_inline_l2_invalid_baseline_gate_fails_with_the_reason(tmp_path, text
     machine = _machine(repo, base, mode=Mode.CI)
     assert _l2_calls(machine) == []
     assert machine._mutation_bound_failure is True
-    assert any(e.startswith("CI: mutation not measured -- invalid gate.yaml at review baseline")
-               for e in machine._state.infra_errors), machine._state.infra_errors
+    assert any(
+        e.startswith("CI: mutation not measured -- invalid gate.yaml at review baseline")
+        for e in machine._state.infra_errors
+    ), machine._state.infra_errors
 
 
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])

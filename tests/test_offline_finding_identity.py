@@ -88,9 +88,9 @@ def test_saved_receipt_identity(tmp_path, monkeypatch, case):
             for excerpt in receipt["code_excerpts"]:
                 excerpt["file"] = "forged@" + "0" * 64 + "/main.py"
     unchanged = copy.deepcopy(receipts)
-    for original, restored in zip(originals, unchanged):
+    for original, restored in zip(originals, unchanged, strict=False):
         field = "code_excerpts" if case == "excerpt_wrong_repo" else "findings"
-        for before, after in zip(original[field], restored[field]):
+        for before, after in zip(original[field], restored[field], strict=False):
             after["file"] = before["file"]
     assert unchanged == originals
     write_receipts(receipts)

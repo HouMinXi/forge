@@ -35,8 +35,8 @@ def parse_shellcheck(
 
     findings = []
     try:
-        for item in raw:
-            findings.append(
+        findings.extend(
+            (
                 Finding(
                     file=item["file"],
                     line=item["line"],
@@ -50,6 +50,8 @@ def parse_shellcheck(
                     fix=None,
                 )
             )
+            for item in raw
+        )
     except (KeyError, TypeError, AttributeError):
         return [
             ToolError(

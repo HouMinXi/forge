@@ -261,7 +261,7 @@ def _is_dead_call_site(file_path: str | None, line: int | None) -> bool:
         if detector is None:
             return False
         return detector(file_path, line)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- Detector failure must conservatively treat the call site as live.
         return False
 
 

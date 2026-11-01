@@ -302,7 +302,9 @@ class TestReceiptSchema:
 
     @pytest.mark.parametrize("errors", [[], ["first", "first", 'quote " slash \\ $(true)', "last"]])
     @pytest.mark.parametrize("status", ["completed", "schema_fail"])
-    def test_excerpt_diagnostics_survive_loading_without_changing_verdict(self, tmp_path, errors, status):
+    def test_excerpt_diagnostics_survive_loading_without_changing_verdict(
+        self, tmp_path, errors, status
+    ):
         from code_forge.verify import _load_receipts
 
         sha = _nine_with_one_field_set(tmp_path, "pass_status", status)
@@ -4031,8 +4033,12 @@ def test_a_finding_without_a_line_does_not_inflate_coverage(tmp_path):
         receipt["findings_count"] = 1
         (rd / ("receipt-c1p%d.json" % p)).write_text(json.dumps(receipt))
     result = run_verify(
-        tmp_path, sha, {"src/f.py": list(range(1, 51))},
-        diff_text=diff, required_cycles=1, respect_floor=False,
+        tmp_path,
+        sha,
+        {"src/f.py": list(range(1, 51))},
+        diff_text=diff,
+        required_cycles=1,
+        respect_floor=False,
     )
     assert result.passed, result.reason
 
@@ -4071,7 +4077,9 @@ class TestResponseHashReuse:
         return run_verify(tmp_path, sha, parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
 
     def test_honest_requote_with_fresh_answers_passes(self, tmp_path):
-        r = self._run(tmp_path, lambda c, p: '{"verdict": "CONFIRMED", "reasoning": "cycle %d pass %d"}' % (c, p))
+        r = self._run(
+            tmp_path, lambda c, p: '{"verdict": "CONFIRMED", "reasoning": "cycle %d pass %d"}' % (c, p)
+        )
         assert r.passed, r.reason
 
     def test_copy_paste_answers_fail(self, tmp_path):
@@ -4107,7 +4115,9 @@ class TestResponseHashReuse:
             data = json.loads(path.read_text())
             data["reviewer_response_sha256"] = bad
             path.write_text(json.dumps(data))
-        r = run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        r = run_verify(
+            tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF
+        )
         assert not r.passed and "Jaccard" in r.reason
 
     def test_malformed_hash_keeps_jaccard_failure(self, tmp_path):
@@ -4118,7 +4128,9 @@ class TestResponseHashReuse:
             data = json.loads(path.read_text())
             data["reviewer_response_sha256"] = "short"
             path.write_text(json.dumps(data))
-        r = run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        r = run_verify(
+            tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF
+        )
         assert not r.passed and "Jaccard" in r.reason
 
 
@@ -4159,7 +4171,9 @@ class TestNearDuplicateResponses(TestResponseHashReuse):
 
     def test_one_word_change_fails(self, tmp_path):
         words = ["high", "solid", "strong"]
-        r = self._run(tmp_path, lambda c, p: _answer(_LONG_ANSWER.replace("high", words[c - 1]) + " pass %d" % p))
+        r = self._run(
+            tmp_path, lambda c, p: _answer(_LONG_ANSWER.replace("high", words[c - 1]) + " pass %d" % p)
+        )
         assert not r.passed and "Jaccard" in r.reason
 
     def test_case_change_fails(self, tmp_path):
@@ -4199,9 +4213,13 @@ class TestNearDuplicateResponses(TestResponseHashReuse):
             data = json.loads(path.read_text())
             c, p = data["cycle"], data["pass"]
             ids = range(shared) if c == 2 else range(10)
-            data["reviewer_response_shingles"] = ["%04x%04x%08x" % (p, 0 if c < 3 else 1, i) for i in ids]
+            data["reviewer_response_shingles"] = [
+                "%04x%04x%08x" % (p, 0 if c < 3 else 1, i) for i in ids
+            ]
             path.write_text(json.dumps(data))
-        r = run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        r = run_verify(
+            tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF
+        )
         assert (not r.passed and "Jaccard" in r.reason) if fails else r.passed, r.reason
 
     def test_missing_shingles_keep_jaccard_failure(self, tmp_path):
@@ -4211,7 +4229,9 @@ class TestNearDuplicateResponses(TestResponseHashReuse):
         data = json.loads(path.read_text())
         del data["reviewer_response_shingles"]
         path.write_text(json.dumps(data))
-        r = run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        r = run_verify(
+            tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF
+        )
         assert not r.passed and "Jaccard" in r.reason
 
     @pytest.mark.parametrize("bad", ["x", ["A" * 16], ["a" * 15], ["a" * 16 + "\n"], [1]])
@@ -4222,7 +4242,9 @@ class TestNearDuplicateResponses(TestResponseHashReuse):
             data = json.loads(path.read_text())
             data["reviewer_response_shingles"] = bad
             path.write_text(json.dumps(data))
-        r = run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        r = run_verify(
+            tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF
+        )
         assert not r.passed and "Jaccard" in r.reason
 
 
@@ -4303,7 +4325,11 @@ class TestContainment(TestResponseHashReuse):
     def test_padding_attack_fails(self, tmp_path):
         from code_forge import verify
 
-        texts = {1: _LONG_ANSWER, 2: _LONG_ANSWER + " " + _PADDING[2], 3: _LONG_ANSWER + " " + _PADDING[3]}
+        texts = {
+            1: _LONG_ANSWER,
+            2: _LONG_ANSWER + " " + _PADDING[2],
+            3: _LONG_ANSWER + " " + _PADDING[3],
+        }
         shingles = {c: frozenset(response_shingles(_answer(t))) for c, t in texts.items()}
         # Jaccard alone misses the padding; containment is what catches it.
         assert verify._shingle_jaccard(shingles[1], shingles[2]) < 0.9
@@ -4323,9 +4349,13 @@ class TestContainment(TestResponseHashReuse):
         assert self._run(tmp_path, lambda c, p: "fresh %d %d" % (c, p)).passed
         for path in rd.glob("receipt-c*p*.json"):
             data = json.loads(path.read_text())
-            data["reviewer_response_shingles"] = ["%04x%012x" % (data["pass"], i) for i in sets[data["cycle"]]]
+            data["reviewer_response_shingles"] = [
+                "%04x%012x" % (data["pass"], i) for i in sets[data["cycle"]]
+            ]
             path.write_text(json.dumps(data))
-        return run_verify(tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF)
+        return run_verify(
+            tmp_path, _sha(_HARDEN_DIFF), parse_diff_files(_HARDEN_DIFF), diff_text=_HARDEN_DIFF
+        )
 
     @pytest.mark.parametrize(
         ("small", "shared", "fails"),

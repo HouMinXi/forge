@@ -169,7 +169,7 @@ class TestLoadTrustedYamlFocus:
         gate = tmp_path / "gate.yaml"
         gate.write_text("review_focus: untrusted focus\n")
         warnings = []
-        result = _load_trusted_yaml_focus(gate, lambda msg: warnings.append(msg))
+        result = _load_trusted_yaml_focus(gate, warnings.append)
         assert result == ""
         assert any("not trusted" in w for w in warnings)
 
@@ -179,7 +179,7 @@ class TestLoadTrustedYamlFocus:
         gate = tmp_path / "gate.yaml"
         gate.write_text("review_focus:\n  - item1\n  - item2\n")
         warnings = []
-        result = _load_trusted_yaml_focus(gate, lambda msg: warnings.append(msg))
+        result = _load_trusted_yaml_focus(gate, warnings.append)
         assert result == ""
         assert any("not a string" in w for w in warnings)
 

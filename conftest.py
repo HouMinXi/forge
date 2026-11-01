@@ -8,6 +8,7 @@ installed version (e.g. main-branch editable install at /code/forge/src).
 
 This conftest.py is worktree-specific and is not committed to main.
 """
+
 import sys
 from pathlib import Path
 

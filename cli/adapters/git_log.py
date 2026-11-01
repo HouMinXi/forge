@@ -17,8 +17,8 @@ from cli.adapters.base import (
     TIMEOUT_GIT_SLOW,
 )
 
-_BRANCH_RE = re.compile(r'^[\w\-/\.~\^]+$')
-_SHA_RE = re.compile(r'^[0-9a-f]{7,40}$')
+_BRANCH_RE = re.compile(r"^[\w\-/\.~\^]+$")
+_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 MAX_MATCHES = 10000
 
 
@@ -42,19 +42,18 @@ class GitLogAdapter(BaseAdapter):
         # B2: validate branch name
         if not _BRANCH_RE.match(source_ref):
             print(
-                f"forge: warning: invalid branch name "
-                f"'{source_ref}'",
+                f"forge: warning: invalid branch name '{source_ref}'",
                 file=sys.stderr,
             )
             return []
 
         merge_base = self._get_merge_base(source_ref)
-        range_spec = f'{merge_base}..HEAD'
+        range_spec = f"{merge_base}..HEAD"
 
         findings: List[CanonicalFinding] = []
         seen_shas: set = set()
 
-        for pattern in ['^Revert ', '^fixup! ', '^squash! ']:
+        for pattern in ["^Revert ", "^fixup! ", "^squash! "]:
             matches = self._search_log(pattern, range_spec)
             for sha, timestamp, subject in matches:
                 if sha in seen_shas:
@@ -63,21 +62,20 @@ class GitLogAdapter(BaseAdapter):
 
                 commit_diff = self._get_diff(sha)
 
-                findings.append(CanonicalFinding(
-                    source='git_log',
-                    source_tool='git',
-                    source_id=sha,
-                    timestamp=timestamp,
-                    raw_source=subject[:MAX_RAW_SOURCE],
-                    context={
-                        'diff_hunk': (
-                            commit_diff[:MAX_CONTEXT_EXCERPT]
-                            if commit_diff else None
-                        ),
-                        'commit_sha': sha,
-                        'branch': source_ref,
-                    },
-                ))
+                findings.append(
+                    CanonicalFinding(
+                        source="git_log",
+                        source_tool="git",
+                        source_id=sha,
+                        timestamp=timestamp,
+                        raw_source=subject[:MAX_RAW_SOURCE],
+                        context={
+                            "diff_hunk": (commit_diff[:MAX_CONTEXT_EXCERPT] if commit_diff else None),
+                            "commit_sha": sha,
+                            "branch": source_ref,
+                        },
+                    )
+                )
 
         return findings
 
@@ -92,8 +90,9 @@ class GitLogAdapter(BaseAdapter):
         """
         try:
             result = subprocess.run(
-                ['git', 'merge-base', source_ref, 'HEAD'],
-                capture_output=True, text=True,
+                ["git", "merge-base", source_ref, "HEAD"],
+                capture_output=True,
+                text=True,
                 timeout=TIMEOUT_GIT_FAST,
                 check=False,
             )
@@ -131,9 +130,9 @@ class GitLogAdapter(BaseAdapter):
         """
         try:
             result = subprocess.run(
-                ['git', 'log', f'--grep={pattern}',
-                 '--format=%H|%aI|%s', range_spec],
-                capture_output=True, text=True,
+                ["git", "log", f"--grep={pattern}", "--format=%H|%aI|%s", range_spec],
+                capture_output=True,
+                text=True,
                 timeout=TIMEOUT_GIT_SLOW,
                 check=False,
             )
@@ -148,18 +147,17 @@ class GitLogAdapter(BaseAdapter):
             return []
 
         matches: List[Tuple[str, str, str]] = []
-        for line in result.stdout.strip().split('\n'):
+        for line in result.stdout.strip().split("\n"):
             if len(matches) >= MAX_MATCHES:
                 print(
-                    f"forge: warning: git log search hit "
-                    f"{MAX_MATCHES} match limit, truncating",
+                    f"forge: warning: git log search hit {MAX_MATCHES} match limit, truncating",
                     file=sys.stderr,
                 )
                 break
             line = line.strip()
             if not line:
                 continue
-            parts = line.split('|', 2)
+            parts = line.split("|", 2)
             if len(parts) == 3:
                 matches.append((parts[0], parts[1], parts[2]))
         return matches
@@ -176,27 +174,26 @@ class GitLogAdapter(BaseAdapter):
         # B2: validate SHA format
         if not _SHA_RE.match(sha):
             print(
-                f"forge: warning: invalid commit SHA "
-                f"'{sha}'",
+                f"forge: warning: invalid commit SHA '{sha}'",
                 file=sys.stderr,
             )
-            return ''
+            return ""
 
         try:
             result = subprocess.run(
-                ['git', 'diff', f'{sha}~1..{sha}'],
-                capture_output=True, text=True,
+                ["git", "diff", f"{sha}~1..{sha}"],
+                capture_output=True,
+                text=True,
                 timeout=TIMEOUT_GIT_SLOW,
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             print(
-                f"forge: warning: git diff failed for "
-                f"{sha}: {exc}",
+                f"forge: warning: git diff failed for {sha}: {exc}",
                 file=sys.stderr,
             )
-            return ''
+            return ""
 
         if result.returncode != 0:
-            return ''
+            return ""
         return result.stdout

@@ -37,9 +37,14 @@ def boundaries(monkeypatch, record_property):
         raise AssertionError("external operation attempted")
 
     for owner, name in (
-        (subprocess, "Popen"), (subprocess, "run"), (os, "system"),
-        (os, "kill"), (os, "killpg"), (socket.socket, "connect"),
-        (asyncio, "create_subprocess_exec"), (asyncio, "create_subprocess_shell"),
+        (subprocess, "Popen"),
+        (subprocess, "run"),
+        (os, "system"),
+        (os, "kill"),
+        (os, "killpg"),
+        (socket.socket, "connect"),
+        (asyncio, "create_subprocess_exec"),
+        (asyncio, "create_subprocess_shell"),
     ):
         monkeypatch.setattr(owner, name, forbidden)
     monkeypatch.setattr(jobs, "group_of", lambda proc: None)
@@ -60,8 +65,9 @@ def register(branch, path, code=0):
         await asyncio.Event().wait()
 
     comm = asyncio.create_task(communicate())
-    jid = jobs.start_job(comm, proc, stderr_log_path=str(path),
-                         max_lifetime_s=None if branch == "complete" else 0.01)
+    jid = jobs.start_job(
+        comm, proc, stderr_log_path=str(path), max_lifetime_s=None if branch == "complete" else 0.01
+    )
     return jid, jobs._jobs[jid], proc
 
 
@@ -94,6 +100,7 @@ class BlockedRead:
                 return reader(*args, **kwargs)
             finally:
                 self.finished.set()
+
         return blocked
 
     async def close(self):
@@ -128,8 +135,11 @@ async def test_responsive_log_read(branch, tmp_path, monkeypatch):
             assert block.inputs[0][0] is not entry, "worker received mutable job entry"
             assert block.inputs[0][0] == {"stderr_log_path": str(path)}
             assert result["stderr"].endswith(path_bytes_tail(content))
-            prefix = ("job exceeded 0s cap\n" if branch == "live" else
-                      "stdout lost: process exited at timeout boundary\n")
+            prefix = (
+                "job exceeded 0s cap\n"
+                if branch == "live"
+                else "stdout lost: process exited at timeout boundary\n"
+            )
             assert result["stderr"] == prefix + path_bytes_tail(content)
         expected_verdict = {"live": "TIMEOUT", "complete": "PASS"}.get(branch, "UNRELIABLE")
         assert result["verdict"] == expected_verdict
@@ -262,8 +272,11 @@ async def test_unexpected_read_error_policy(branch, tmp_path, monkeypatch):
     def fail(*args, **kwargs):
         raise error
 
-    monkeypatch.setattr(Path if branch == "complete" else jobs,
-                        "read_text" if branch == "complete" else "_read_stderr_tail", fail)
+    monkeypatch.setattr(
+        Path if branch == "complete" else jobs,
+        "read_text" if branch == "complete" else "_read_stderr_tail",
+        fail,
+    )
     _, entry, proc = register(branch, path)
     if branch == "complete":
         await asyncio.wait_for(entry["wait_task"], 2)

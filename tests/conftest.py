@@ -394,7 +394,8 @@ def pytest_sessionfinish(session, exitstatus):
     own, foreign = _branch_changes(before, after)
     remaining = {line.split(" ", 1)[0] for line in after["refs_heads"].splitlines() if line}
     others = {
-        ref for ref in own
+        ref
+        for ref in own
         if not _ref_made_by(repo_root, ref, before.get("identity"), before.get("writers"), remaining)
     }
     own, foreign = own - others, foreign | others

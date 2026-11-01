@@ -103,8 +103,8 @@ def _prompt_one(
     while True:
         try:
             choice = input_fn("    [c]onfirm / [d]ismiss / [s]kip / [q]uit: ").strip().lower()
-        except EOFError:
-            raise HoldAborted("HOLD UX stopped: input ended (EOF)")
+        except EOFError as exc:
+            raise HoldAborted("HOLD UX stopped: input ended (EOF)") from exc
         if choice in QUIT_INPUTS:
             raise HoldAborted("HOLD UX aborted by user")
         if choice == "s":

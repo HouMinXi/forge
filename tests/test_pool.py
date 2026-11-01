@@ -260,7 +260,7 @@ class TestPoolParallel:
 
         # Verify serial returned correct verdicts
         expected = ["HOLD", "PASS", "HOLD", "PASS"]
-        for i, (pe, exp) in enumerate(zip(serial_results, expected)):
+        for i, (pe, exp) in enumerate(zip(serial_results, expected, strict=False)):
             assert pe.result is not None, "entry %d has no result" % i
             assert pe.result.actual_verdict == exp, "entry %d: expected %s got %s" % (
                 i,
@@ -290,8 +290,7 @@ class TestPoolIsolation:
     @patch("code_forge.eval.pool.replay_entry", side_effect=_tracking_replay)
     def test_no_shared_tempdirs(self, mock_replay):
         """Serial path: each call to replay_entry gets a distinct tempdir."""
-        global _isolation_tracker
-        _isolation_tracker = {}
+        _isolation_tracker.clear()
 
         entries = [_make_entry("iso%d-bug" % i) for i in range(4)]
         run_pool(

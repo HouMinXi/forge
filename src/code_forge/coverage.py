@@ -97,8 +97,8 @@ def build_coverage_findings(
     treats COVERAGE findings as a gate (see machine._run_ci).
     """
     findings: list[StateFinding] = []
-    for filepath in uncovered_files:
-        findings.append(
+    findings.extend(
+        (
             StateFinding(
                 id="coverage-" + filepath,
                 fingerprint="coverage:" + filepath,
@@ -115,6 +115,8 @@ def build_coverage_findings(
                 ),
             )
         )
+        for filepath in uncovered_files
+    )
     return findings
 
 

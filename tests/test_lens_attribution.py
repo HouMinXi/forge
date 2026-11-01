@@ -31,9 +31,8 @@ FORMS = {
     "single": "[lens:L2] ",
     "double": "[lens:L2] [lens:L5] ",
 }
-BIG_DIFF = (
-    "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n@@ -0,0 +1,1000 @@\n"
-    + "\n".join("+line %d" % i for i in range(1000))
+BIG_DIFF = "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n@@ -0,0 +1,1000 @@\n" + "\n".join(
+    "+line %d" % i for i in range(1000)
 )
 
 

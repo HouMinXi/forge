@@ -226,7 +226,13 @@ async def test_retargeted_import_symlink_keeps_loaded_identity_and_refuses_tools
     assert after["source_state"] == "changed"
     assert after["reconnect_required"] is True
     assert after["current_digest"] != before["current_digest"]
-    for field in ("loaded_digest", "package_path", "process_id", "server_instance_id", "module_loaded_at"):
+    for field in (
+        "loaded_digest",
+        "package_path",
+        "process_id",
+        "server_instance_id",
+        "module_loaded_at",
+    ):
         assert after[field] == before[field]
     assert after["package_path"] == str(first)
     with pytest.raises(ToolError, match="source changed"):
@@ -237,9 +243,17 @@ async def test_retargeted_import_symlink_keeps_loaded_identity_and_refuses_tools
 async def test_server_status_reports_stable_loaded_identity(status_package):
     first = await _status()
     assert set(first) == {
-        "package_path", "loaded_digest", "current_digest", "source_state",
-        "reconnect_required", "reason", "process_id", "server_instance_id",
-        "module_loaded_at", "source_error_type", "package_path_is_escaped",
+        "package_path",
+        "loaded_digest",
+        "current_digest",
+        "source_state",
+        "reconnect_required",
+        "reason",
+        "process_id",
+        "server_instance_id",
+        "module_loaded_at",
+        "source_error_type",
+        "package_path_is_escaped",
         "package_path_bytes_hex",
     }
     assert first["package_path"] == str(status_package)
@@ -309,7 +323,13 @@ async def test_server_status_remains_available_after_drift(status_package, chang
     assert after["reconnect_required"] is True
     assert after["source_error_type"] is None
     assert "reconnect" in after["reason"].lower()
-    for field in ("loaded_digest", "package_path", "process_id", "server_instance_id", "module_loaded_at"):
+    for field in (
+        "loaded_digest",
+        "package_path",
+        "process_id",
+        "server_instance_id",
+        "module_loaded_at",
+    ):
         assert after[field] == before[field]
     assert await _status() == after
 
@@ -368,8 +388,14 @@ async def test_server_status_does_not_import_or_launch_work(status_package, monk
         pytest.fail("Status touched an execution or configuration helper")
 
     for name in (
-        "_workspace_for", "_resolve_workspace", "_check_backend", "_backend_names_for",
-        "_run_cli_simple", "_dispatch_cli", "start_job", "load_user_backends",
+        "_workspace_for",
+        "_resolve_workspace",
+        "_check_backend",
+        "_backend_names_for",
+        "_run_cli_simple",
+        "_dispatch_cli",
+        "start_job",
+        "load_user_backends",
     ):
         monkeypatch.setattr(srv, name, forbidden)
     original_import = builtins.__import__
@@ -387,11 +413,21 @@ async def test_server_status_does_not_import_or_launch_work(status_package, monk
     assert {name for name in sys.modules if name.startswith("code_forge.")} == before
 
 
-@pytest.mark.parametrize("name", [
-    "forge_review", "forge_gate_check", "forge_init", "forge_trust",
-    "forge_resolve_outlet", "forge_job_status", "unknown_tool",
-    "forge_server_status_extra", "Forge_server_status", "forge_server_status ",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "forge_review",
+        "forge_gate_check",
+        "forge_init",
+        "forge_trust",
+        "forge_resolve_outlet",
+        "forge_job_status",
+        "unknown_tool",
+        "forge_server_status_extra",
+        "Forge_server_status",
+        "forge_server_status ",
+    ],
+)
 @pytest.mark.asyncio
 async def test_only_exact_status_name_bypasses_source_guard(status_package, monkeypatch, name):
     (status_package / "a.py").write_text("changed = True\n")

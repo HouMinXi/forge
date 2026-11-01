@@ -960,13 +960,28 @@ def _run_single(
                 # Explicit seed context includes files excluded by its own ignores.
                 # Force only copied paths, not unrelated ignored runtime files.
                 setup_error = prepare_git(
-                    ["--literal-pathspecs", "add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"],
+                    [
+                        "--literal-pathspecs",
+                        "add",
+                        "-f",
+                        "--pathspec-from-file=-",
+                        "--pathspec-file-nul",
+                    ],
                     b"\0".join(seed_paths) + b"\0",
                 )
                 if setup_error:
                     return False, setup_error
             setup_error = prepare_git(
-                ["-c", "user.name=eval", "-c", "user.email=eval@test", "commit", "--allow-empty", "-m", "seed base files"]
+                [
+                    "-c",
+                    "user.name=eval",
+                    "-c",
+                    "user.email=eval@test",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    "seed base files",
+                ]
             )
             if setup_error:
                 return False, setup_error

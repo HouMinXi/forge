@@ -86,7 +86,7 @@ def _record(row):
     evidence = row.evidence_class
     marker = "... [truncated]"
     if len(evidence) > 500:
-        evidence = evidence[:500 - len(marker)] + marker
+        evidence = evidence[: 500 - len(marker)] + marker
     data["evidence_class"] = evidence
     return (json.dumps(data, separators=(",", ":")) + "\n").encode("utf-8")
 
@@ -118,8 +118,13 @@ def _cli(root, *args):
     )
     return subprocess.run(
         [sys.executable, "-m", "code_forge", "ledger", *args],
-        cwd=root, env=_subprocess_env(), capture_output=True, text=True,
-        encoding="utf-8", timeout=30, check=False,
+        cwd=root,
+        env=_subprocess_env(),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
     )
 
 
@@ -128,9 +133,13 @@ def _ordinary_finding(fingerprint):
     from code_forge.state import StateFinding
 
     return StateFinding(
-        id=fingerprint, fingerprint=fingerprint, source="L0",
-        disposition=Disposition.CONFIRMED, file="src/example.py",
-        line_range=[7, 7], description="ordinary repeated finding",
+        id=fingerprint,
+        fingerprint=fingerprint,
+        source="L0",
+        disposition=Disposition.CONFIRMED,
+        file="src/example.py",
+        line_range=[7, 7],
+        description="ordinary repeated finding",
     )
 
 
@@ -142,14 +151,23 @@ def _ordinary_machine(root, finding):
     from code_forge.state import Mode
 
     machine = StateMachine(
-        mode=Mode.CI, falsifier=StubFalsifier(), autofixer=StubAutoFixer(),
+        mode=Mode.CI,
+        falsifier=StubFalsifier(),
+        autofixer=StubAutoFixer(),
         revert_fn=lambda finding: None,
         resolved_review=ResolvedReview(
-            source_files=[Path("src/example.py")], baseline_content=None,
-            git_diff=None, mode_hint="git", base_sha="a" * 40, head_sha="b" * 40,
+            source_files=[Path("src/example.py")],
+            baseline_content=None,
+            git_diff=None,
+            mode_hint="git",
+            base_sha="a" * 40,
+            head_sha="b" * 40,
         ),
-        source_hash="boundary-source", baseline_spec_repr="empty", cwd=root,
-        registry={}, l0_runner=lambda registry, files: ([], []),
+        source_hash="boundary-source",
+        baseline_spec_repr="empty",
+        cwd=root,
+        registry={},
+        l0_runner=lambda registry, files: ([], []),
     )
     machine._state.findings.append(finding)
     return machine
@@ -160,37 +178,64 @@ def _native_survivor_and_ruling(root):
     from code_forge.state import StateFinding
 
     finding = StateFinding(
-        id="mutant-example.x_check__mutmut_1", fingerprint="mutant:stable-boundary",
-        source="MUTANT", disposition=Disposition.CONFIRMED,
-        file="src/example.py", line_range=[7, 7],
+        id="mutant-example.x_check__mutmut_1",
+        fingerprint="mutant:stable-boundary",
+        source="MUTANT",
+        disposition=Disposition.CONFIRMED,
+        file="src/example.py",
+        line_range=[7, 7],
         description="mutant survived: example.x_check__mutmut_1",
     )
     diff = "--- a/src/example.py\n+++ b/src/example.py\n@@ -1 +1 @@\n-old\n+new\n"
     key = ledger.finding_suppression_key(
-        base_sha="a" * 40, head_sha="b" * 40, git_diff=diff,
-        file=finding.file, line=7, source=finding.source, description=finding.description,
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        git_diff=diff,
+        file=finding.file,
+        line=7,
+        source=finding.source,
+        description=finding.description,
     )
     ruling = _row(
-        root, finding.fingerprint, pass_provenance="MUTANT",
-        suppression_key=key, axis_claim=finding.description,
+        root,
+        finding.fingerprint,
+        pass_provenance="MUTANT",
+        suppression_key=key,
+        axis_claim=finding.description,
     )
     return finding, ruling, diff
 
 
-@pytest.mark.parametrize("tail_kind", [
-    "absent", "empty", "lf", "crlf", "complete_json", "malformed_only",
-    "valid_then_malformed", "spaces", "final_cr", "invalid_utf8",
-    "complete_line_corruption",
-])
+@pytest.mark.parametrize(
+    "tail_kind",
+    [
+        "absent",
+        "empty",
+        "lf",
+        "crlf",
+        "complete_json",
+        "malformed_only",
+        "valid_then_malformed",
+        "spaces",
+        "final_cr",
+        "invalid_utf8",
+        "complete_line_corruption",
+    ],
+)
 def test_exact_original_bytes_and_one_conditional_separator(tmp_path, tail_kind):
     old = _record(_row(tmp_path, "fp-old"))
     prefixes = {
-        "absent": b"", "empty": b"", "lf": old,
-        "crlf": old[:-1] + b"\r\n", "complete_json": old[:-1],
+        "absent": b"",
+        "empty": b"",
+        "lf": old,
+        "crlf": old[:-1] + b"\r\n",
+        "complete_json": old[:-1],
         "malformed_only": b'{"unfinished":',
         "valid_then_malformed": old + b'{"unfinished":',
-        "spaces": b" \t ", "final_cr": old[:-1] + b"\r",
-        "invalid_utf8": old + b"\xff\xfe", "complete_line_corruption": b"broken\n" + old,
+        "spaces": b" \t ",
+        "final_cr": old[:-1] + b"\r",
+        "invalid_utf8": old + b"\xff\xfe",
+        "complete_line_corruption": b"broken\n" + old,
     }
     before = prefixes[tail_kind]
     if tail_kind != "absent":
@@ -204,7 +249,8 @@ def test_exact_original_bytes_and_one_conditional_separator(tmp_path, tail_kind)
 @pytest.mark.parametrize("evidence_size", [499, 500, 501, 10000])
 def test_large_non_ascii_record_retains_serializer_and_evidence_contract(tmp_path, evidence_size):
     row = _row(
-        tmp_path, axis_claim="\u8fb9\u754c\U0001f30d\n" * 5000,
+        tmp_path,
+        axis_claim="\u8fb9\u754c\U0001f30d\n" * 5000,
         evidence_class="\u8bc1" * evidence_size,
     )
     ledger.append_row(tmp_path, row)
@@ -242,8 +288,16 @@ def test_real_cli_escaped_reopens_and_stops_actual_ordinary_suppression(tmp_path
     assert any("ledger: suppressed" in note for note in control_machine._state.infra_errors)
 
     marked = _cli(
-        tmp_path, "mark", row.fingerprint, "ESCAPED", "--evidence", "reopened",
-        "--base-sha", row.base_sha, "--head-sha", row.head_sha,
+        tmp_path,
+        "mark",
+        row.fingerprint,
+        "ESCAPED",
+        "--evidence",
+        "reopened",
+        "--base-sha",
+        row.base_sha,
+        "--head-sha",
+        row.head_sha,
     )
     assert marked.returncode == 0, (marked.stdout, marked.stderr)
     listed = _cli(tmp_path, "list", "--json", "--fingerprint", row.fingerprint)
@@ -265,9 +319,19 @@ def test_real_cli_escaped_reopens_and_stops_actual_ordinary_suppression(tmp_path
         assert len(list(ledger.iter_rows(tmp_path, strict=True))) == 2
 
 
-@pytest.mark.parametrize("corruption", [
-    b'{"unfinished":', b" \t", b"\xff", b"broken\n", b"{}\n", b"\n", b"\r\n", b"\r",
-])
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        b'{"unfinished":',
+        b" \t",
+        b"\xff",
+        b"broken\n",
+        b"{}\n",
+        b"\n",
+        b"\r\n",
+        b"\r",
+    ],
+)
 def test_actual_strict_mutation_consumer_refuses_all_authority_after_corruption(tmp_path, corruption):
     from code_forge.disposition import Disposition
     from code_forge.mutation_findings import apply_mutation_ledger_dispositions
@@ -277,8 +341,12 @@ def test_actual_strict_mutation_consumer_refuses_all_authority_after_corruption(
     path = _seed(tmp_path, before)
     ledger.append_row(tmp_path, ruling)
     notes = apply_mutation_ledger_dispositions(
-        [finding], source_root=tmp_path, base_sha=ruling.base_sha,
-        head_sha=ruling.head_sha, git_diff=diff, eligible_measurement=True,
+        [finding],
+        source_root=tmp_path,
+        base_sha=ruling.base_sha,
+        head_sha=ruling.head_sha,
+        git_diff=diff,
+        eligible_measurement=True,
     )
     assert finding.disposition == Disposition.CONFIRMED
     assert len(notes) == 1 and "ledger dispositions unavailable" in notes[0]
@@ -293,8 +361,12 @@ def test_actual_strict_mutation_consumer_accepts_valid_non_lf_control(tmp_path):
     path = _seed(tmp_path, _record(ruling)[:-1])
     ledger.append_row(tmp_path, _row(tmp_path, "unrelated"))
     notes = apply_mutation_ledger_dispositions(
-        [finding], source_root=tmp_path, base_sha=ruling.base_sha,
-        head_sha=ruling.head_sha, git_diff=diff, eligible_measurement=True,
+        [finding],
+        source_root=tmp_path,
+        base_sha=ruling.base_sha,
+        head_sha=ruling.head_sha,
+        git_diff=diff,
+        eligible_measurement=True,
     )
     assert finding.disposition == Disposition.DISMISSED
     assert any("dismissed by latest FIXED ruling" in note for note in notes)
@@ -343,8 +415,12 @@ def test_actual_strict_mutation_consumer_unreadable_authority_keeps_survivor(tmp
     with monkeypatch.context() as patch:
         patch.setattr(Path, "open", denied)
         notes = apply_mutation_ledger_dispositions(
-            [finding], source_root=tmp_path, base_sha=ruling.base_sha,
-            head_sha=ruling.head_sha, git_diff=diff, eligible_measurement=True,
+            [finding],
+            source_root=tmp_path,
+            base_sha=ruling.base_sha,
+            head_sha=ruling.head_sha,
+            git_diff=diff,
+            eligible_measurement=True,
         )
     assert finding.disposition == Disposition.CONFIRMED
     assert len(notes) == 1 and "ledger dispositions unavailable" in notes[0]
@@ -442,28 +518,46 @@ def test_serialization_finishes_before_backend_or_creation(tmp_path, monkeypatch
         raise AssertionError("backend selected before serialization finished")
 
     monkeypatch.setattr(ledger, "_ledger_lock_backend", forbidden)
-    row = _row(tmp_path, axis_claim=bad_value) if not isinstance(bad_value, str) else _row(
-        tmp_path, terminal_state=bad_value,
+    row = (
+        _row(tmp_path, axis_claim=bad_value)
+        if not isinstance(bad_value, str)
+        else _row(
+            tmp_path,
+            terminal_state=bad_value,
+        )
     )
     with pytest.raises((TypeError, AttributeError)):
         ledger.append_row(tmp_path, row)
     assert not _path(tmp_path).parent.exists()
 
 
-@pytest.mark.parametrize("platform,module_name,missing", [
-    ("posix", "fcntl", "module"), ("posix", "fcntl", "flock"),
-    ("posix", "fcntl", "LOCK_NB"), ("nt", "msvcrt", "module"),
-    ("nt", "msvcrt", "locking"), ("nt", "msvcrt", "LK_NBLCK"),
-    ("other", "unused", "module"),
-])
-def test_missing_platform_facility_fails_before_creation(tmp_path, monkeypatch, platform, module_name, missing):
+@pytest.mark.parametrize(
+    "platform,module_name,missing",
+    [
+        ("posix", "fcntl", "module"),
+        ("posix", "fcntl", "flock"),
+        ("posix", "fcntl", "LOCK_NB"),
+        ("nt", "msvcrt", "module"),
+        ("nt", "msvcrt", "locking"),
+        ("nt", "msvcrt", "LK_NBLCK"),
+        ("other", "unused", "module"),
+    ],
+)
+def test_missing_platform_facility_fails_before_creation(
+    tmp_path, monkeypatch, platform, module_name, missing
+):
     monkeypatch.setattr(ledger, "os", _OSProxy(name=platform, O_BINARY=0x8000))
     if missing == "module":
         monkeypatch.setitem(sys.modules, module_name, None)
     else:
         fake = SimpleNamespace(
-            flock=lambda *args: None, LOCK_EX=1, LOCK_NB=2, LOCK_UN=4,
-            locking=lambda *args: None, LK_NBLCK=10, LK_UNLCK=11,
+            flock=lambda *args: None,
+            LOCK_EX=1,
+            LOCK_NB=2,
+            LOCK_UN=4,
+            locking=lambda *args: None,
+            LK_NBLCK=10,
+            LK_UNLCK=11,
         )
         delattr(fake, missing)
         monkeypatch.setitem(sys.modules, module_name, fake)
@@ -472,16 +566,30 @@ def test_missing_platform_facility_fails_before_creation(tmp_path, monkeypatch, 
     assert not _path(tmp_path).parent.exists()
 
 
-@pytest.mark.parametrize("platform,module_name,bad_attribute", [
-    ("posix", "fcntl", "flock"), ("posix", "fcntl", "LOCK_EX"),
-    ("posix", "fcntl", "LOCK_NB"), ("posix", "fcntl", "LOCK_UN"),
-    ("nt", "msvcrt", "locking"), ("nt", "msvcrt", "LK_NBLCK"),
-    ("nt", "msvcrt", "LK_UNLCK"), ("nt", "msvcrt", "O_BINARY"),
-])
-def test_invalid_platform_facility_is_rejected_before_mkdir(tmp_path, monkeypatch, platform, module_name, bad_attribute):
+@pytest.mark.parametrize(
+    "platform,module_name,bad_attribute",
+    [
+        ("posix", "fcntl", "flock"),
+        ("posix", "fcntl", "LOCK_EX"),
+        ("posix", "fcntl", "LOCK_NB"),
+        ("posix", "fcntl", "LOCK_UN"),
+        ("nt", "msvcrt", "locking"),
+        ("nt", "msvcrt", "LK_NBLCK"),
+        ("nt", "msvcrt", "LK_UNLCK"),
+        ("nt", "msvcrt", "O_BINARY"),
+    ],
+)
+def test_invalid_platform_facility_is_rejected_before_mkdir(
+    tmp_path, monkeypatch, platform, module_name, bad_attribute
+):
     fake = SimpleNamespace(
-        flock=_noop_lock, LOCK_EX=1, LOCK_NB=2, LOCK_UN=4,
-        locking=_noop_lock, LK_NBLCK=10, LK_UNLCK=11,
+        flock=_noop_lock,
+        LOCK_EX=1,
+        LOCK_NB=2,
+        LOCK_UN=4,
+        locking=_noop_lock,
+        LK_NBLCK=10,
+        LK_UNLCK=11,
     )
     binary_mode = True if bad_attribute == "O_BINARY" else 0x8000
     if bad_attribute != "O_BINARY":
@@ -507,8 +615,13 @@ def test_invalid_platform_facility_is_rejected_before_mkdir(tmp_path, monkeypatc
 def test_backend_uses_only_the_nonblocking_platform_facility(monkeypatch, platform, module_name):
     callback = _noop_lock
     fake = SimpleNamespace(
-        flock=callback, LOCK_EX=2, LOCK_NB=4, LOCK_UN=8,
-        locking=callback, LK_NBLCK=20, LK_UNLCK=21,
+        flock=callback,
+        LOCK_EX=2,
+        LOCK_NB=4,
+        LOCK_UN=8,
+        locking=callback,
+        LK_NBLCK=20,
+        LK_UNLCK=21,
     )
     monkeypatch.setattr(ledger, "os", _OSProxy(name=platform, O_BINARY=0x8000))
     monkeypatch.setitem(sys.modules, module_name, fake)
@@ -519,7 +632,7 @@ def test_backend_uses_only_the_nonblocking_platform_facility(monkeypatch, platfo
 
 @pytest.mark.integration
 def test_import_succeeds_without_either_platform_lock_module(tmp_path):
-    script = '''
+    script = """
 import importlib.abc
 import subprocess
 import sys
@@ -538,10 +651,15 @@ except OSError:
     pass
 else:
     raise AssertionError("missing backend was accepted")
-'''
+"""
     result = subprocess.run(
-        [sys.executable, "-c", script], cwd=tmp_path, env=_subprocess_env(),
-        capture_output=True, text=True, timeout=20, check=False,
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=_subprocess_env(),
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
     )
     assert result.returncode == 0, (result.stdout, result.stderr)
 
@@ -649,7 +767,9 @@ def test_filesystem_lock_unavailable_may_leave_only_empty_created_file(tmp_path,
     assert not _guard_is_locked()
 
 
-@pytest.mark.parametrize("kind", ["descriptor-directory", "named-directory", "zero-inode", "mismatch", "missing"])
+@pytest.mark.parametrize(
+    "kind", ["descriptor-directory", "named-directory", "zero-inode", "mismatch", "missing"]
+)
 def test_identity_unavailability_refuses_before_write(tmp_path, monkeypatch, kind):
     path = _seed(tmp_path, b"tail")
     real_fstat, real_stat = os.fstat, os.stat
@@ -668,7 +788,8 @@ def test_identity_unavailability_refuses_before_write(tmp_path, monkeypatch, kin
             raise FileNotFoundError(errno.ENOENT, "injected missing path")
         result = real_stat(value)
         changes = {
-            "named-directory": {"st_mode": stat.S_IFDIR}, "zero-inode": {"st_ino": 0},
+            "named-directory": {"st_mode": stat.S_IFDIR},
+            "zero-inode": {"st_ino": 0},
             "mismatch": {"st_ino": result.st_ino + 1},
         }
         return changed(result, **changes.get(kind, {}))
@@ -802,7 +923,9 @@ def test_write_failure_or_cancellation_unlocks_closes_and_releases(tmp_path, mon
 
 @pytest.mark.parametrize("cleanup_site", ["unlock", "close", "both"])
 @pytest.mark.parametrize("primary_type", [None, OSError, KeyboardInterrupt, MemoryError])
-def test_cleanup_failure_prevents_success_and_preserves_original(tmp_path, monkeypatch, cleanup_site, primary_type):
+def test_cleanup_failure_prevents_success_and_preserves_original(
+    tmp_path, monkeypatch, cleanup_site, primary_type
+):
     before = b"tail"
     path = _seed(tmp_path, before)
     primary = primary_type("primary write failure") if primary_type is not None else None
@@ -818,11 +941,14 @@ def test_cleanup_failure_prevents_success_and_preserves_original(tmp_path, monke
 
     _noop_backend(monkeypatch, lock)
     opened, closed = _capture_descriptor(
-        monkeypatch, close_error=close_error if cleanup_site in {"close", "both"} else None,
+        monkeypatch,
+        close_error=close_error if cleanup_site in {"close", "both"} else None,
     )
     if primary is not None:
+
         def write(fd, data):
             raise primary
+
         monkeypatch.setattr(ledger.os, "write", write, raising=False)
     with pytest.raises(BaseException) as raised:
         ledger.append_row(tmp_path, _row(tmp_path))
@@ -846,7 +972,9 @@ def test_cleanup_failure_prevents_success_and_preserves_original(tmp_path, monke
 
 @pytest.mark.parametrize("primary_type", [OSError, KeyboardInterrupt, MemoryError])
 @pytest.mark.parametrize("suppress_context", [False, True])
-def test_reused_cleanup_exception_preserves_primary_metadata(tmp_path, monkeypatch, primary_type, suppress_context):
+def test_reused_cleanup_exception_preserves_primary_metadata(
+    tmp_path, monkeypatch, primary_type, suppress_context
+):
     _seed(tmp_path, b"tail")
     primary = primary_type("original")
     cause = ValueError("explicit cause")
@@ -944,7 +1072,8 @@ def test_note_lookup_failure_preserves_primary_and_cleanup(tmp_path, monkeypatch
 
     _noop_backend(monkeypatch, lock)
     opened, closed = _capture_descriptor(
-        monkeypatch, close_error=cleanup_error if cleanup_site == "close" else None,
+        monkeypatch,
+        close_error=cleanup_error if cleanup_site == "close" else None,
     )
     monkeypatch.setattr(ledger.os, "write", write, raising=False)
     with pytest.raises(BaseException) as raised:
@@ -1000,7 +1129,9 @@ class _Guard:
 def _inject_guard(monkeypatch, guard):
     """Use an explicit single-thread model, never a native capability claim."""
     monkeypatch.setattr(ledger, "_LEDGER_APPEND_LOCK", guard)
-    monkeypatch.setattr(ledger, "_ledger_guard_backend", lambda: (guard.acquire, guard._is_owned, guard.release))
+    monkeypatch.setattr(
+        ledger, "_ledger_guard_backend", lambda: (guard.acquire, guard._is_owned, guard.release)
+    )
 
 
 def test_default_cooperative_budget_constants():
@@ -1033,11 +1164,18 @@ def test_one_deadline_covers_guard_and_os_wait(tmp_path, monkeypatch):
     assert path.read_bytes() == b"tail"
 
 
-@pytest.mark.parametrize("platform,error_number", [
-    ("posix", errno.EAGAIN), ("posix", errno.EINTR),
-    ("nt", errno.EACCES), ("nt", errno.EINTR),
-])
-def test_deadline_expiring_inside_contended_attempt_never_sleeps_or_writes(tmp_path, monkeypatch, platform, error_number):
+@pytest.mark.parametrize(
+    "platform,error_number",
+    [
+        ("posix", errno.EAGAIN),
+        ("posix", errno.EINTR),
+        ("nt", errno.EACCES),
+        ("nt", errno.EINTR),
+    ],
+)
+def test_deadline_expiring_inside_contended_attempt_never_sleeps_or_writes(
+    tmp_path, monkeypatch, platform, error_number
+):
     before = b"tail"
     path = _seed(tmp_path, before)
     clock = _Clock()
@@ -1111,12 +1249,19 @@ def test_lock_obtained_after_deadline_is_unlocked_without_write(tmp_path, monkey
     assert path.read_bytes() == b"tail"
 
 
-@pytest.mark.parametrize("platform,error_number,retries", [
-    ("posix", errno.EAGAIN, True), ("posix", errno.EACCES, True),
-    ("posix", errno.EINTR, True), ("posix", errno.EIO, False),
-    ("posix", errno.ENOSYS, False), ("nt", errno.EACCES, True),
-    ("nt", errno.EINTR, True), ("nt", errno.EAGAIN, False),
-])
+@pytest.mark.parametrize(
+    "platform,error_number,retries",
+    [
+        ("posix", errno.EAGAIN, True),
+        ("posix", errno.EACCES, True),
+        ("posix", errno.EINTR, True),
+        ("posix", errno.EIO, False),
+        ("posix", errno.ENOSYS, False),
+        ("nt", errno.EACCES, True),
+        ("nt", errno.EINTR, True),
+        ("nt", errno.EAGAIN, False),
+    ],
+)
 def test_only_recognized_lock_errors_retry(tmp_path, monkeypatch, platform, error_number, retries):
     path = _seed(tmp_path, b"")
     clock = _Clock()
@@ -1280,7 +1425,9 @@ def test_waiter_cannot_open_until_prior_close_attempt_finishes(tmp_path, monkeyp
     assert events == ["first-close-finished", "second-open"]
     outcomes = dict(results.get_nowait() for _ in range(2))
     assert outcomes["second"] is None
-    assert outcomes["first"] is (lock_error if first_failure == "lock" else close_error if first_failure == "close" else None)
+    assert outcomes["first"] is (
+        lock_error if first_failure == "lock" else close_error if first_failure == "close" else None
+    )
     assert not _guard_is_locked()
 
 
@@ -1296,7 +1443,9 @@ def test_real_threads_preserve_prefix_and_each_complete_row(tmp_path, before):
         try:
             start.wait(timeout=5)
             for number in range(4):
-                ledger.append_row(tmp_path, _row(tmp_path, f"thread-{index}-{number}", axis_claim="\u754c" * 2000))
+                ledger.append_row(
+                    tmp_path, _row(tmp_path, f"thread-{index}-{number}", axis_claim="\u754c" * 2000)
+                )
         except BaseException as error:  # noqa: BLE001 - propagate every worker failure to its parent assertion.
             errors.put(error)
 
@@ -1316,7 +1465,7 @@ def test_real_threads_preserve_prefix_and_each_complete_row(tmp_path, before):
     raw = path.read_bytes()
     prefix = before + (b"\n" if before else b"")
     assert raw.startswith(prefix)
-    rows = raw[len(prefix):].splitlines()
+    rows = raw[len(prefix) :].splitlines()
     assert len(rows) == count * 4 and all(rows)
     assert {json.loads(row)["fingerprint"] for row in rows} == {
         f"thread-{index}-{number}" for index in range(count) for number in range(4)
@@ -1325,19 +1474,27 @@ def test_real_threads_preserve_prefix_and_each_complete_row(tmp_path, before):
 
 @pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit, MemoryError])
 @pytest.mark.parametrize("delivery", ["native-return", "after-return-line"])
-def test_guard_cancellation_after_native_acquire_releases_and_allows_next_append(tmp_path, monkeypatch, error_type, delivery):
+def test_guard_cancellation_after_native_acquire_releases_and_allows_next_append(
+    tmp_path, monkeypatch, error_type, delivery
+):
     guard = ledger._LEDGER_APPEND_LOCK
     previous_trace, previous_profile = sys.gettrace(), sys.getprofile()
     error = error_type("cancel acquisition boundary")
     function = ledger._locked_ledger_writer.__wrapped__
     lines, first = inspect.getsourcelines(function)
-    target = first + next(index for index, line in enumerate(lines) if line.strip() == "if time.monotonic() >= deadline:")
+    target = first + next(
+        index for index, line in enumerate(lines) if line.strip() == "if time.monotonic() >= deadline:"
+    )
     fired = []
     opened, closed = _capture_descriptor(monkeypatch)
 
     def observe(frame, event, arg):
         same = frame.f_code is function.__code__
-        at_return = event == "c_return" and getattr(arg, "__self__", None) is guard and getattr(arg, "__name__", None) == "acquire"
+        at_return = (
+            event == "c_return"
+            and getattr(arg, "__self__", None) is guard
+            and getattr(arg, "__name__", None) == "acquire"
+        )
         at_line = event == "line" and frame.f_lineno == target
         if same and not fired and (at_return if delivery == "native-return" else at_line):
             fired.append(guard._is_owned())
@@ -1389,7 +1546,10 @@ def test_same_thread_guard_reentry_preserves_outer_ownership(tmp_path):
     assert list(ledger.iter_rows(tmp_path))[0].fingerprint == "fp-boundary"
 
 
-@pytest.mark.parametrize("invalid", ["primitive", "subclass", "missing-owner", "python-methods", "foreign-methods", "other-runtime"])
+@pytest.mark.parametrize(
+    "invalid",
+    ["primitive", "subclass", "missing-owner", "python-methods", "foreign-methods", "other-runtime"],
+)
 def test_unqualified_guard_capabilities_fail_before_mkdir(tmp_path, monkeypatch, invalid):
     class FakeGuard:
         def acquire(self, *, timeout):
@@ -1451,7 +1611,13 @@ def test_interrupted_nonowner_never_releases_foreign_guard(tmp_path, monkeypatch
             still_owned.append(guard._is_owned())
 
     def observe(frame, event, arg):
-        if frame.f_code.co_name == "_locked_ledger_writer" and event == ("c_call" if delivery == "before-call" else "c_return") and getattr(arg, "__self__", None) is guard and getattr(arg, "__name__", None) == "acquire" and not fired:
+        if (
+            frame.f_code.co_name == "_locked_ledger_writer"
+            and event == ("c_call" if delivery == "before-call" else "c_return")
+            and getattr(arg, "__self__", None) is guard
+            and getattr(arg, "__name__", None) == "acquire"
+            and not fired
+        ):
             fired.append(guard._is_owned())
             raise error
 
@@ -1508,7 +1674,9 @@ def test_foreign_guard_timeout_preserves_owner_and_following_append(tmp_path):
 @pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit, MemoryError])
 @pytest.mark.parametrize("cleanup_site", ["unlock", "close"])
 @pytest.mark.parametrize("has_primary", [False, True])
-def test_cleanup_operation_cancellation_preserves_primary_and_releases(tmp_path, monkeypatch, error_type, cleanup_site, has_primary):
+def test_cleanup_operation_cancellation_preserves_primary_and_releases(
+    tmp_path, monkeypatch, error_type, cleanup_site, has_primary
+):
     before = b"tail"
     path = _seed(tmp_path, before)
     cancellation = error_type("cancel cleanup operation")
@@ -1524,7 +1692,9 @@ def test_cleanup_operation_cancellation_preserves_primary_and_releases(tmp_path,
         raise primary
 
     _noop_backend(monkeypatch, lock)
-    opened, closed = _capture_descriptor(monkeypatch, close_error=cancellation if cleanup_site == "close" else None)
+    opened, closed = _capture_descriptor(
+        monkeypatch, close_error=cancellation if cleanup_site == "close" else None
+    )
     if primary is not None:
         monkeypatch.setattr(ledger.os, "write", write, raising=False)
     with pytest.raises(BaseException) as raised:
@@ -1570,7 +1740,11 @@ def test_guard_methods_remain_bound_through_close_if_global_replaced(tmp_path, m
 
 @pytest.mark.integration
 def test_partial_thread_start_aborts_barrier_and_joins_started_workers(tmp_path, monkeypatch):
-    real_start, real_join, real_barrier = threading.Thread.start, threading.Thread.join, threading.Barrier
+    real_start, real_join, real_barrier = (
+        threading.Thread.start,
+        threading.Thread.join,
+        threading.Barrier,
+    )
     started, joined, barriers, aborts = [], [], [], []
     error = RuntimeError("controlled third worker start failure")
 
@@ -1614,9 +1788,14 @@ def test_partial_thread_start_aborts_barrier_and_joins_started_workers(tmp_path,
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("target", ["guard-native-return", "guard-after-return-line", "foreign-before-call", "foreign-after-timeout"])
+@pytest.mark.parametrize(
+    "target",
+    ["guard-native-return", "guard-after-return-line", "foreign-before-call", "foreign-after-timeout"],
+)
 @pytest.mark.parametrize("force_failure", [False, True])
-def test_cancellation_tests_restore_caller_hooks_on_success_and_failure(tmp_path, monkeypatch, target, force_failure):
+def test_cancellation_tests_restore_caller_hooks_on_success_and_failure(
+    tmp_path, monkeypatch, target, force_failure
+):
     caller_trace, caller_profile = sys.gettrace(), sys.getprofile()
 
     def sentinel_trace(frame, event, arg):
@@ -1626,8 +1805,10 @@ def test_cancellation_tests_restore_caller_hooks_on_success_and_failure(tmp_path
         return None
 
     if force_failure:
+
         def broken_row(*args, **kwargs):
             raise ValueError("controlled observer-test failure")
+
         monkeypatch.setattr(sys.modules[__name__], "_row", broken_row)
     try:
         sys.settrace(sentinel_trace)
@@ -1636,11 +1817,17 @@ def test_cancellation_tests_restore_caller_hooks_on_success_and_failure(tmp_path
         try:
             if target.startswith("guard-"):
                 test_guard_cancellation_after_native_acquire_releases_and_allows_next_append(
-                    tmp_path, monkeypatch, KeyboardInterrupt, target.removeprefix("guard-"),
+                    tmp_path,
+                    monkeypatch,
+                    KeyboardInterrupt,
+                    target.removeprefix("guard-"),
                 )
             else:
                 test_interrupted_nonowner_never_releases_foreign_guard(
-                    tmp_path, monkeypatch, KeyboardInterrupt, target.removeprefix("foreign-"),
+                    tmp_path,
+                    monkeypatch,
+                    KeyboardInterrupt,
+                    target.removeprefix("foreign-"),
                 )
         except AssertionError as error:
             failures.append(error)
@@ -1692,7 +1879,10 @@ def test_real_spawn_processes_preserve_prefix_and_each_complete_row(tmp_path, be
     ctx = multiprocessing.get_context("spawn")
     start, results = ctx.Event(), ctx.Queue()
     ready = [ctx.Event() for _ in range(4)]
-    processes = [ctx.Process(target=_process_append, args=(str(tmp_path), i, ready[i], start, results)) for i in range(4)]
+    processes = [
+        ctx.Process(target=_process_append, args=(str(tmp_path), i, ready[i], start, results))
+        for i in range(4)
+    ]
     try:
         for process in processes:
             process.start()
@@ -1711,7 +1901,7 @@ def test_real_spawn_processes_preserve_prefix_and_each_complete_row(tmp_path, be
     raw = path.read_bytes()
     prefix = before + (b"\n" if before else b"")
     assert raw.startswith(prefix)
-    rows = raw[len(prefix):].splitlines()
+    rows = raw[len(prefix) :].splitlines()
     assert len(rows) == 16 and all(rows)
     assert {json.loads(row)["fingerprint"] for row in rows} == {
         f"process-{index}-{number}" for index in range(4) for number in range(4)

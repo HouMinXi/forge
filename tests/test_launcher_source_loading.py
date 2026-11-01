@@ -3239,7 +3239,9 @@ def test_ownership_relative_empty_package_keeps_original_containment(launcher, t
         ((3, 15, 0), False, True),  # 3.15 moved the decode out of addpackage (#232)
     ],
 )
-def test_pth_decoding_by_version_with_312_bytecode_probe(launcher, monkeypatch, version, has_sig, expected):
+def test_pth_decoding_by_version_with_312_bytecode_probe(
+    launcher, monkeypatch, version, has_sig, expected
+):
     """3.13+ always decodes .pth as utf-8-sig; only 3.12 needs the
     site.addpackage probe, because 3.12.15 backported it."""
     import types

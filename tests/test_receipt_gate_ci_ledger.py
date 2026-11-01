@@ -68,16 +68,24 @@ def test_receipt_gate_failure_reaches_ci_ledger(tmp_path, monkeypatch, capsys, f
     if failure == "writer_io":
         (state_dir / "receipts").write_text("Not a directory.\n", encoding="utf-8")
     resolved = ResolvedReview(
-        [Path("control.ts")], None, DIFF_10B, "git",
-        base_sha="a" * 40, head_sha="b" * 40,
+        [Path("control.ts")],
+        None,
+        DIFF_10B,
+        "git",
+        base_sha="a" * 40,
+        head_sha="b" * 40,
     )
     payload = {
         "findings": [],
-        "code_excerpts": [{
-            "file": "control.ts", "start_line": 1, "end_line": 6,
-            "content": "".join(CONTENT_10B.splitlines(keepends=True)[:6]),
-            "pass_name": "adversarial",
-        }],
+        "code_excerpts": [
+            {
+                "file": "control.ts",
+                "start_line": 1,
+                "end_line": 6,
+                "content": "".join(CONTENT_10B.splitlines(keepends=True)[:6]),
+                "pass_name": "adversarial",
+            }
+        ],
     }
     transport_calls = []
 
@@ -91,11 +99,17 @@ def test_receipt_gate_failure_reaches_ci_ledger(tmp_path, monkeypatch, capsys, f
     monkeypatch.setattr("code_forge.machine.resolve_ledger_root", lambda cwd: cwd)
     provider = build_l1_provider("auto", resolved, backend=None, max_attempts=1)
     machine = StateMachine(
-        mode=Mode.CI, falsifier=StubFalsifier(), autofixer=StubAutoFixer(),
-        revert_fn=lambda finding: None, resolved_review=resolved,
+        mode=Mode.CI,
+        falsifier=StubFalsifier(),
+        autofixer=StubAutoFixer(),
+        revert_fn=lambda finding: None,
+        resolved_review=resolved,
         source_hash=compute_source_hash(git_diff=DIFF_10B),
-        baseline_spec_repr="receipt gate ledger test", cwd=tmp_path, registry={},
-        l0_runner=lambda *args: ([], []), l1_provider=provider,
+        baseline_spec_repr="receipt gate ledger test",
+        cwd=tmp_path,
+        registry={},
+        l0_runner=lambda *args: ([], []),
+        l1_provider=provider,
         l2_runner=lambda *args, **kwargs: ([], []),
     )
     machine._state.env_manifest = {"tier": "declared"}
@@ -106,9 +120,13 @@ def test_receipt_gate_failure_reaches_ci_ledger(tmp_path, monkeypatch, capsys, f
     recorder = machine._record_receipt_gate_failure
     ledger_writer = machine._write_ci_ledger_rows
     following = StateFinding(
-        id="AFTER_RECEIPT", fingerprint="ordinary-finding-after-receipt",
-        source="L0", disposition=Disposition.CONFIRMED,
-        file="control.ts", line_range=[1, 1], description="ordinary finding after receipt",
+        id="AFTER_RECEIPT",
+        fingerprint="ordinary-finding-after-receipt",
+        source="L0",
+        disposition=Disposition.CONFIRMED,
+        file="control.ts",
+        line_range=[1, 1],
+        description="ordinary finding after receipt",
     )
 
     def capture_terminal():

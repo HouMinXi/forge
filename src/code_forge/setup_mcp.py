@@ -151,7 +151,7 @@ def _auto_trust_gate(gate_yaml_path: Path) -> None:
 
         record_trust(gate_yaml_path, gate_data)
         print("Trusted: %s" % gate_yaml_path, file=sys.stderr)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- Optional trust recording failure is reported after config write.
         print(
             "Warning: gate.yaml written but trust recording failed: "
             "%s. Run 'code-forge trust' manually." % exc,

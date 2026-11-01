@@ -38,18 +38,39 @@ def offline(monkeypatch):
 
 @pytest.fixture
 def report():
-    product = StateFinding("bug", "bug-fp", "L1", Disposition.CONFIRMED,
-                           "a.py", [1, 3], "product finding")
-    audit = StateFinding("RECEIPT_UNTRUSTED", "audit-fp", "UNTRUSTED",
-                         Disposition.UNCERTAIN, "a.py", [1, 3], "receipt audit")
-    capacity = StateFinding("l1-qodo-invoke-fail", "invoke-fail-qodo", "INFRA",
-                            Disposition.CONFIRMED, "<llm-invoke>", [0, 0], "capacity")
+    product = StateFinding(
+        "bug", "bug-fp", "L1", Disposition.CONFIRMED, "a.py", [1, 3], "product finding"
+    )
+    audit = StateFinding(
+        "RECEIPT_UNTRUSTED",
+        "audit-fp",
+        "UNTRUSTED",
+        Disposition.UNCERTAIN,
+        "a.py",
+        [1, 3],
+        "receipt audit",
+    )
+    capacity = StateFinding(
+        "l1-qodo-invoke-fail",
+        "invoke-fail-qodo",
+        "INFRA",
+        Disposition.CONFIRMED,
+        "<llm-invoke>",
+        [0, 0],
+        "capacity",
+    )
     record_provider_failure(capacity, LLMInvokeError("capacity", kind="truncated"))
-    generic = StateFinding("l1-expert-invoke-fail", "invoke-fail-expert", "INFRA",
-                           Disposition.CONFIRMED, "<llm-invoke>", [0, 0], "no JSON")
+    generic = StateFinding(
+        "l1-expert-invoke-fail",
+        "invoke-fail-expert",
+        "INFRA",
+        Disposition.CONFIRMED,
+        "<llm-invoke>",
+        [0, 0],
+        "no JSON",
+    )
     record_provider_failure(generic, LLMInvokeError("no JSON", kind="no_json"))
-    state = State(mode=Mode.CI, verdict=Verdict.FAIL,
-                  findings=[product, audit, capacity, generic])
+    state = State(mode=Mode.CI, verdict=Verdict.FAIL, findings=[product, audit, capacity, generic])
     document = build_sarif_log(state, {}, "fixture")
     assert len(document["runs"][0]["results"]) == 2
     assert len(document["runs"][0]["properties"]["receiptAudit"]) == 1
@@ -71,19 +92,37 @@ def test_inline_public_result_preserves_sarif_projection(report):
     assert result.content[0].text == data["output"]
 
 
-async def consume(monkeypatch, route, stdout, *, status="completed", exit_code=1,
-                  verdict="FAIL", stderr="", duration=12.345):
+async def consume(
+    monkeypatch,
+    route,
+    stdout,
+    *,
+    status="completed",
+    exit_code=1,
+    verdict="FAIL",
+    stderr="",
+    duration=12.345,
+):
     if route == "inline":
         result = server._make_result(stdout, exit_code, duration, stderr)
         return result, result.structuredContent
-    entry = {"status": status, "result": {
-        "stdout": stdout, "stderr": stderr, "exit_code": exit_code,
-        "verdict": verdict, "duration_s": duration,
-    }}
+    entry = {
+        "status": status,
+        "result": {
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": exit_code,
+            "verdict": verdict,
+            "duration_s": duration,
+        },
+    }
     before = deepcopy(entry)
     monkeypatch.setattr(server, "get_job", lambda job_id: entry)
-    result = (await server.mcp.call_tool("forge_job_status", {"job_id": "job"})
-              if route == "sdk" else await server.forge_job_status("job"))
+    result = (
+        await server.mcp.call_tool("forge_job_status", {"job_id": "job"})
+        if route == "sdk"
+        else await server.forge_job_status("job")
+    )
     assert result.isError is False
     assert entry == before
     return result, result.structuredContent["result"]
@@ -94,17 +133,23 @@ ROUTES = ["inline", "handler", "sdk"]
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ROUTES)
-@pytest.mark.parametrize("status,exit_code,verdict", [
-    ("completed", 1, "FAIL"), ("completed", 0, "PASS"),
-    ("failed", 6, "TIMEOUT"), ("failed", 0, "CLI_ERROR"),
-])
+@pytest.mark.parametrize(
+    "status,exit_code,verdict",
+    [
+        ("completed", 1, "FAIL"),
+        ("completed", 0, "PASS"),
+        ("failed", 6, "TIMEOUT"),
+        ("failed", 0, "CLI_ERROR"),
+    ],
+)
 async def test_actual_sarif_routes_keep_text_and_metadata(
     monkeypatch, report, route, status, exit_code, verdict
 ):
     stdout = " \n" + json.dumps(report) + "\n\t"
     stderr = " diagnostic\n\n"
-    result, data = await consume(monkeypatch, route, stdout, status=status,
-                                 exit_code=exit_code, verdict=verdict, stderr=stderr)
+    result, data = await consume(
+        monkeypatch, route, stdout, status=status, exit_code=exit_code, verdict=verdict, stderr=stderr
+    )
     assert data["findings_count"] == len(report["runs"][0]["results"])
     assert data["findings"] == report["runs"][0]["results"]
     assert data["receipt_audit"] == report["runs"][0]["properties"]["receiptAudit"]
@@ -196,10 +241,28 @@ def damaged_report(report, damage):
 
 
 DAMAGES = [
-    "root-list", "version", "missing-runs", "runs-null", "runs-object", "runs-empty",
-    "runs-many", "run-null", "tool-null", "driver-null", "producer", "missing-results",
-    "results-null", "results-object", "result-string", "properties-null", "properties-list",
-    "audit-null", "audit-object", "audit-string", "surrogate-result", "surrogate-audit",
+    "root-list",
+    "version",
+    "missing-runs",
+    "runs-null",
+    "runs-object",
+    "runs-empty",
+    "runs-many",
+    "run-null",
+    "tool-null",
+    "driver-null",
+    "producer",
+    "missing-results",
+    "results-null",
+    "results-object",
+    "result-string",
+    "properties-null",
+    "properties-list",
+    "audit-null",
+    "audit-object",
+    "audit-string",
+    "surrogate-result",
+    "surrogate-audit",
 ]
 
 
@@ -217,9 +280,23 @@ async def test_malformed_reports_remain_unknown(monkeypatch, report, route, dama
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ROUTES)
-@pytest.mark.parametrize("invalid", ["empty", "fenced", "trailing", "two-documents", "duplicate",
-                                      "nested-duplicate", "NaN", "Infinity", "-Infinity",
-                                      "1e309", "-1e309", "deep"])
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "empty",
+        "fenced",
+        "trailing",
+        "two-documents",
+        "duplicate",
+        "nested-duplicate",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "1e309",
+        "-1e309",
+        "deep",
+    ],
+)
 async def test_invalid_json_is_not_extracted(monkeypatch, report, route, invalid):
     stdout = json.dumps(report)
     if invalid == "empty":
@@ -279,8 +356,10 @@ def test_report_character_limit_keeps_original_text(report, extra):
 @pytest.mark.parametrize("operation", ["loads", "dumps"])
 def test_memory_error_propagates(report, monkeypatch, operation):
     stdout = json.dumps(report)
+
     def fail(*args, **kwargs):
         raise MemoryError("fixture allocation")
+
     monkeypatch.setattr(server.json, operation, fail)
     with pytest.raises(MemoryError, match="fixture allocation"):
         server._make_result(stdout, 1, 0)
@@ -303,7 +382,8 @@ def test_sdk_serialization_rejects_unpaired_structured_surrogate():
 def full_wire_result(result):
     # Match BaseSession._send_response and the stdio writer's final envelope.
     response = JSONRPCResponse(
-        jsonrpc="2.0", id=1,
+        jsonrpc="2.0",
+        id=1,
         result=result.model_dump(by_alias=True, mode="json", exclude_none=True),
     )
     wire = JSONRPCMessage(response).model_dump_json(by_alias=True, exclude_none=True)
@@ -321,10 +401,12 @@ def nested_containers(count, kind, leaf=0):
 @pytest.mark.parametrize("route", ROUTES)
 async def test_deep_report_keeps_full_mcp_response_serializable(monkeypatch, route):
     document = build_sarif_log(State(mode=Mode.CI, verdict=Verdict.FAIL), {}, "probe")
-    document["runs"][0]["results"] = [{
-        "message": {"text": "depth witness"},
-        "properties": {"nested": nested_containers(300, "list")},
-    }]
+    document["runs"][0]["results"] = [
+        {
+            "message": {"text": "depth witness"},
+            "properties": {"nested": nested_containers(300, "list")},
+        }
+    ]
     stdout = json.dumps(document)
     assert len(stdout) == 920
     result, data = await consume(monkeypatch, route, stdout)
@@ -345,9 +427,7 @@ async def test_deep_report_keeps_full_mcp_response_serializable(monkeypatch, rou
 @pytest.mark.parametrize("section", ["results", "receiptAudit"])
 @pytest.mark.parametrize("kind", ["list", "dict", "mixed"])
 @pytest.mark.parametrize("depth", [64, 65])
-async def test_projection_container_depth_boundary(
-    monkeypatch, report, route, section, kind, depth
-):
+async def test_projection_container_depth_boundary(monkeypatch, report, route, section, kind, depth):
     document = deepcopy(report)
     run = document["runs"][0]
     rows = run["results"] if section == "results" else run["properties"]["receiptAudit"]
@@ -394,7 +474,9 @@ async def test_empty_container_still_counts_at_depth_limit(monkeypatch, report, 
 @pytest.mark.parametrize("route", ROUTES)
 async def test_unprojected_depth_does_not_refuse_shallow_findings(monkeypatch, report, route):
     document = deepcopy(report)
-    document["runs"][0]["properties"]["providerDiagnostics"][0]["ignored"] = nested_containers(300, "list")
+    document["runs"][0]["properties"]["providerDiagnostics"][0]["ignored"] = nested_containers(
+        300, "list"
+    )
     stdout = json.dumps(document)
     result, data = await consume(monkeypatch, route, stdout)
     assert data["findings_count"] == 2
@@ -405,17 +487,16 @@ async def test_unprojected_depth_does_not_refuse_shallow_findings(monkeypatch, r
 
 
 def genuine_width_report(budget):
-    finding = StateFinding("width", "width-fp", "L1", Disposition.CONFIRMED,
-                           "a.py", [1, 1], "w")
+    finding = StateFinding("width", "width-fp", "L1", Disposition.CONFIRMED, "a.py", [1, 1], "w")
     document = build_sarif_log(
         State(mode=Mode.CI, verdict=Verdict.FAIL, findings=[finding]), {}, "probe"
     )
     row = json.dumps(document["runs"][0]["results"][0], separators=(",", ":"))
     assert len(row) == 290
     prefix = '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"code-forge"}},"results":['
-    suffix = ']}]}'
+    suffix = "]}]}"
     count = (budget - len(prefix) - len(suffix) + 1) // (len(row) + 1)
-    return prefix + ((row + ',') * (count - 1)) + row + suffix, count
+    return prefix + ((row + ",") * (count - 1)) + row + suffix, count
 
 
 @pytest.mark.asyncio
@@ -466,16 +547,16 @@ async def test_shallow_container_breadth_at_character_cap(monkeypatch, route, se
     prefix = '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"code-forge"}},'
     if section == "results":
         prefix += '"results":['
-        suffix = ']}]}'
+        suffix = "]}]}"
     elif section == "receiptAudit":
         prefix += '"results":[],"properties":{"receiptAudit":['
-        suffix = ']}}]}'
+        suffix = "]}}]}"
     else:
         prefix += '"results":[{"properties":{"nested":['
-        suffix = ']}}]}]}'
+        suffix = "]}}]}]}"
     count = (1024 * 1024 - len(prefix) - len(suffix) + 1) // 3
-    stdout = prefix + ('{},' * (count - 1)) + '{}' + suffix
-    stdout += ' ' * (1024 * 1024 - len(stdout))
+    stdout = prefix + ("{}," * (count - 1)) + "{}" + suffix
+    stdout += " " * (1024 * 1024 - len(stdout))
     assert len(stdout) == 1024 * 1024 and count > 349000
     result, data = await consume(monkeypatch, route, stdout)
     assert data["findings_count"] == (count if section == "results" else 1 if section == "nested" else 0)
@@ -597,35 +678,52 @@ def test_oversize_label_wins_over_the_exit_code(report, exit_code):
 
 @pytest.mark.asyncio
 async def test_job_status_signal_killed_result_is_labelled_no_report(monkeypatch):
-    monkeypatch.setattr(server, "get_job", lambda job_id: {
-        "status": "failed",
-        "result": {"stdout": "", "stderr": "", "verdict": "UNKNOWN(-9)", "exit_code": -9},
-    })
+    monkeypatch.setattr(
+        server,
+        "get_job",
+        lambda job_id: {
+            "status": "failed",
+            "result": {"stdout": "", "stderr": "", "verdict": "UNKNOWN(-9)", "exit_code": -9},
+        },
+    )
     result = await server.forge_job_status("job")
     status = result.structuredContent["result"]["findings_count_status"]
     assert status == NO_REPORT
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stdout,expected", [
-    ("not json", UNPARSEABLE),
-    ("", NO_REPORT),
-])
+@pytest.mark.parametrize(
+    "stdout,expected",
+    [
+        ("not json", UNPARSEABLE),
+        ("", NO_REPORT),
+    ],
+)
 async def test_job_status_record_without_exit_code_is_not_a_signal(monkeypatch, stdout, expected):
     # A missing exit_code is "unknown", not a signal death: non-blank
     # unparseable stdout must stay "unparseable".
-    monkeypatch.setattr(server, "get_job", lambda job_id: {
-        "status": "completed", "result": {"stdout": stdout, "stderr": ""},
-    })
+    monkeypatch.setattr(
+        server,
+        "get_job",
+        lambda job_id: {
+            "status": "completed",
+            "result": {"stdout": stdout, "stderr": ""},
+        },
+    )
     result = await server.forge_job_status("job")
     assert result.structuredContent["result"]["findings_count_status"] == expected
 
 
 @pytest.mark.asyncio
 async def test_job_status_record_without_exit_code_still_counts_a_report(monkeypatch, report):
-    monkeypatch.setattr(server, "get_job", lambda job_id: {
-        "status": "completed", "result": {"stdout": json.dumps(report), "stderr": ""},
-    })
+    monkeypatch.setattr(
+        server,
+        "get_job",
+        lambda job_id: {
+            "status": "completed",
+            "result": {"stdout": json.dumps(report), "stderr": ""},
+        },
+    )
     data = (await server.forge_job_status("job")).structuredContent["result"]
     assert data["findings_count"] == 2
     assert data["findings_count_status"] is None

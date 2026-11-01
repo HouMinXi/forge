@@ -1,13 +1,12 @@
 """Phase 1 unit tests for code_forge.report_projection (Forge #332 slice §5)."""
+
 from __future__ import annotations
 
 import copy
 import hashlib
-import io
 import os
 from dataclasses import fields, replace
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -17,12 +16,6 @@ from code_forge.report_projection import (
     ClassificationError,
     FallbackRecord,
     ReportProjection,
-    ReportRecord,
-    _assemble,
-    _attach_diagnostics,
-    _build_record,
-    _evaluate_acquisition,
-    _select_shape,
     classify_report_records,
 )
 from code_forge.sarif import _build_run
@@ -40,6 +33,7 @@ from code_forge.state import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _sf(
     *,
@@ -84,7 +78,7 @@ def _uncertain_s0(**kw) -> StateFinding:
     return _sf(**defaults)
 
 
-def _s1_capacity(pass_name: str = "adversarial", kind: str = "invoke") -> StateFinding:
+def _s1_capacity(pass_name: str = "adversarial", kind: str = "invoke") -> StateFinding:  # noqa: S107 -- pass_name identifies a review pass, not a password.
     file = "<llm-invoke>" if kind == "invoke" else "<spawn>"
     return _sf(
         id=f"l1-{pass_name}-{kind}-fail",
@@ -124,7 +118,7 @@ def _s3_receipt_audit() -> StateFinding:
     )
 
 
-def _x1_invoke_fail(pass_name: str = "qodo") -> StateFinding:
+def _x1_invoke_fail(pass_name: str = "qodo") -> StateFinding:  # noqa: S107 -- pass_name identifies a review pass, not a password.
     return _sf(
         id=f"l1-{pass_name}-invoke-fail",
         fingerprint=f"invoke-fail-{pass_name}",
@@ -175,9 +169,11 @@ def _roundtrip(tmp_path: Path, findings: list[StateFinding]) -> State:
 
 def _tree_hash(root: Path) -> str:
     pairs = []
-    for p in sorted(root.rglob("*")):
-        if p.is_file():
-            pairs.append((str(p.relative_to(root)), hashlib.sha256(p.read_bytes()).hexdigest()))
+    pairs.extend(
+        ((str(p.relative_to(root)), hashlib.sha256(p.read_bytes()).hexdigest()))
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    )
     h = hashlib.sha256()
     for rel, digest in pairs:
         h.update(rel.encode())
@@ -227,6 +223,7 @@ def _write_api_guard(monkeypatch):
 # ---------------------------------------------------------------------------
 # Empty / mixed / shapes
 # ---------------------------------------------------------------------------
+
 
 def test_empty_findings_is_classification_complete_and_acquisition_unproven(tmp_path):
     state = _roundtrip(tmp_path, [])
@@ -361,7 +358,13 @@ def test_a1_short_circuits_q4(tmp_path, monkeypatch):
         if armed["v"]:
             q4_calls["n"] += 1
             raise RuntimeError("q4 should not run")
-        return rp.is_provider_diagnostic.__wrapped__(f) if hasattr(rp.is_provider_diagnostic, "__wrapped__") else __import__("code_forge.state", fromlist=["is_provider_diagnostic"]).is_provider_diagnostic(f)
+        return (
+            rp.is_provider_diagnostic.__wrapped__(f)
+            if hasattr(rp.is_provider_diagnostic, "__wrapped__")
+            else __import__(
+                "code_forge.state", fromlist=["is_provider_diagnostic"]
+            ).is_provider_diagnostic(f)
+        )
 
     # Use state module's real function for non-armed path via fresh import binding
     from code_forge import state as st_mod
@@ -464,9 +467,7 @@ def test_evidence_downgrade_keeps_candidate_and_attach_diagnostic(tmp_path):
     assert len(proj.unresolved_product_candidates) == 1
     rec = proj.unresolved_product_candidates[0]
     assert rec.shape == "S5"
-    assert rec.associated_diagnostics == (
-        AssociatedDiagnostic("evidence-downgrade", "excerpt unbound"),
-    )
+    assert rec.associated_diagnostics == (AssociatedDiagnostic("evidence-downgrade", "excerpt unbound"),)
 
 
 def test_s4_and_s5_double_hit_one_record_two_diagnostics_counted_once(tmp_path):
@@ -491,7 +492,14 @@ def test_s4_and_s5_double_hit_one_record_two_diagnostics_counted_once(tmp_path):
 
 @pytest.mark.parametrize(
     "kind",
-    ["x1_conn", "x2_receipt_invalid", "schema_fail", "incomplete_coverage", "coverage", "mutation_skipped_dismissed"],
+    [
+        "x1_conn",
+        "x2_receipt_invalid",
+        "schema_fail",
+        "incomplete_coverage",
+        "coverage",
+        "mutation_skipped_dismissed",
+    ],
 )
 def test_deferred_shapes_stay_s0_on_product_path(tmp_path, kind):
     if kind == "x1_conn":
@@ -510,11 +518,33 @@ def test_deferred_shapes_stay_s0_on_product_path(tmp_path, kind):
     elif kind == "x2_receipt_invalid":
         f = _x2_receipt_invalid()
     elif kind == "schema_fail":
-        f = _sf(id="l1-expert-schema-fail", fingerprint="s", source="INFRA", disposition=Disposition.CONFIRMED, file="<s>", line_range=[0, 0], description="s")
+        f = _sf(
+            id="l1-expert-schema-fail",
+            fingerprint="s",
+            source="INFRA",
+            disposition=Disposition.CONFIRMED,
+            file="<s>",
+            line_range=[0, 0],
+            description="s",
+        )
     elif kind == "incomplete_coverage":
-        f = _sf(id="l1-expert-incomplete-coverage", fingerprint="i", source="INFRA", disposition=Disposition.CONFIRMED, file="<i>", line_range=[0, 0], description="i")
+        f = _sf(
+            id="l1-expert-incomplete-coverage",
+            fingerprint="i",
+            source="INFRA",
+            disposition=Disposition.CONFIRMED,
+            file="<i>",
+            line_range=[0, 0],
+            description="i",
+        )
     elif kind == "coverage":
-        f = _sf(id="cov", fingerprint="cov", source="COVERAGE", disposition=Disposition.CONFIRMED, description="cov")
+        f = _sf(
+            id="cov",
+            fingerprint="cov",
+            source="COVERAGE",
+            disposition=Disposition.CONFIRMED,
+            description="cov",
+        )
     else:
         f = _mutation_skipped_dismissed()
     state = _roundtrip(tmp_path, [f])
@@ -609,13 +639,11 @@ def test_count_invariants_hold_with_quarantined_product_records(tmp_path, monkey
     assert proj.product_list_count is not None
     assert proj.unresolved_candidate_count is not None
     assert proj.product_path_record_count is not None
-    q_product = sum(1 for q in proj.quarantine if q.index in (0, 1, 2))  # all are product-path
+    _q_product = sum(1 for q in proj.quarantine if q.index in (0, 1, 2))  # all are product-path
     # only index 1 quarantined; 0 and 2 classified
     assert len(proj.quarantine) == 1
     assert (
-        proj.product_list_count
-        + proj.unresolved_candidate_count
-        + len(proj.quarantine)
+        proj.product_list_count + proj.unresolved_candidate_count + len(proj.quarantine)
         == proj.product_path_record_count
     )
 
@@ -640,6 +668,7 @@ def test_count_invariants_not_asserted_when_counts_none(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Type rejection (F16)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "case",
@@ -670,7 +699,11 @@ def test_report_record_rejects_wrong_field_types(tmp_path, case):
         return
 
     # Hand-edit state file after save for wrong JSON types that still load.
-    base_findings = [_uncertain_s0(id="t", fingerprint="t", error="falsify() raised: x") if case.startswith("error") or case.startswith("evidence") else _product_s0()]
+    base_findings = [
+        _uncertain_s0(id="t", fingerprint="t", error="falsify() raised: x")
+        if case.startswith("error") or case.startswith("evidence")
+        else _product_s0()
+    ]
     if case == "evidence_downgrade_list":
         base_findings = [_uncertain_s0(id="t", fingerprint="t", evidence_downgrade="ok")]
     d = tmp_path / "d"
@@ -712,6 +745,7 @@ def test_report_record_rejects_wrong_field_types(tmp_path, case):
 # F8 stage faults
 # ---------------------------------------------------------------------------
 
+
 def _fault_free_and_patched(tmp_path, monkeypatch, patch_name, target_builder, raise_on):
     import code_forge.report_projection as rp
 
@@ -746,7 +780,13 @@ def test_fault_before_shape_quarantines_record_keeps_others(tmp_path, monkeypatc
     assert proj.classification_incomplete_reasons == ("record-fault",)
     assert ClassificationError(idx, "shape", "RuntimeError") in proj.classification_errors
     assert any(q.index == idx and q.shape is None for q in proj.quarantine)
-    base_map = {r.index: r for r in baseline.product + baseline.unresolved_product_candidates + baseline.execution + baseline.gate}
+    base_map = {
+        r.index: r
+        for r in baseline.product
+        + baseline.unresolved_product_candidates
+        + baseline.execution
+        + baseline.gate
+    }
     for r in proj.product + proj.unresolved_product_candidates + proj.execution + proj.gate:
         assert r == base_map[r.index]
     assert proj.acquisition_complete == baseline.acquisition_complete
@@ -779,7 +819,11 @@ def test_projection_level_fault_all_fallback_counts_none(tmp_path, monkeypatch, 
     state = _roundtrip(tmp_path, [_product_s0(), _s1_capacity(), _s3_receipt_audit()])
     with monkeypatch.context() as m:
         if which == "P1":
-            m.setattr(rp, "reporting_product_findings", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("p1")))
+            m.setattr(
+                rp,
+                "reporting_product_findings",
+                lambda *a, **k: (_ for _ in ()).throw(RuntimeError("p1")),
+            )
         else:
             m.setattr(rp, "_assemble", lambda *a, **k: (_ for _ in ()).throw(ValueError("p2")))
         proj = classify_report_records(state)
@@ -794,7 +838,14 @@ def test_projection_level_fault_all_fallback_counts_none(tmp_path, monkeypatch, 
 def test_mixed_record_and_projection_fault_merge(tmp_path, monkeypatch):
     import code_forge.report_projection as rp
 
-    state = _roundtrip(tmp_path, [_product_s0(id="a"), _product_s0(id="b", fingerprint="b"), _product_s0(id="c", fingerprint="c")])
+    state = _roundtrip(
+        tmp_path,
+        [
+            _product_s0(id="a"),
+            _product_s0(id="b", fingerprint="b"),
+            _product_s0(id="c", fingerprint="c"),
+        ],
+    )
     target = state.findings[1]
     real_build = rp._build_record
     kept = {}
@@ -804,7 +855,7 @@ def test_mixed_record_and_projection_fault_merge(tmp_path, monkeypatch):
             raise RuntimeError("record")
         return real_build(index, f, shape, selector, diags)
 
-    real_assemble = rp._assemble
+    _real_assemble = rp._assemble
 
     def assemble_wrap(records, fallbacks, path_count):
         for fb in fallbacks:
@@ -831,6 +882,7 @@ def test_mixed_record_and_projection_fault_merge(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Acquisition faults
 # ---------------------------------------------------------------------------
+
 
 def test_acquisition_derive_fault_keeps_records(tmp_path, monkeypatch):
     import code_forge.report_projection as rp
@@ -1031,7 +1083,14 @@ def test_fallback_copies_only_safely_readable_fields_and_never_reclassifies(tmp_
         return wrap
 
     with monkeypatch.context() as m:
-        for name in ("_select_shape", "_attach_diagnostics", "_build_record", "is_receipt_audit", "is_provider_capacity", "is_provider_diagnostic"):
+        for name in (
+            "_select_shape",
+            "_attach_diagnostics",
+            "_build_record",
+            "is_receipt_audit",
+            "is_provider_capacity",
+            "is_provider_diagnostic",
+        ):
             m.setattr(rp, name, spy(name, getattr(rp, name)))
         # Force record fault via raising description during _build_record
         proj = classify_report_records(base)
@@ -1049,13 +1108,18 @@ def test_fallback_copies_only_safely_readable_fields_and_never_reclassifies(tmp_
         if finding is target and name == "_build_record":
             seen_fault = True
             continue
-        if seen_fault and finding is target and name in (
-            "_select_shape",
-            "_attach_diagnostics",
-            "_build_record",
-            "is_receipt_audit",
-            "is_provider_capacity",
-            "is_provider_diagnostic",
+        if (
+            seen_fault
+            and finding is target
+            and name
+            in (
+                "_select_shape",
+                "_attach_diagnostics",
+                "_build_record",
+                "is_receipt_audit",
+                "is_provider_capacity",
+                "is_provider_diagnostic",
+            )
         ):
             # acquisition may still call predicates — only flag classification stages
             if name in ("_select_shape", "_attach_diagnostics", "_build_record"):
@@ -1119,7 +1183,6 @@ def test_fault_path_writes_nothing(tmp_path, monkeypatch):
 )
 def test_adapter_call_leaves_state_file_and_receipts_unchanged(tmp_path, monkeypatch, kind):
     import code_forge.report_projection as rp
-    from code_forge import state as st_mod
 
     d = tmp_path / "D"
     d.mkdir()
@@ -1175,9 +1238,15 @@ def test_adapter_call_leaves_state_file_and_receipts_unchanged(tmp_path, monkeyp
 
             m.setattr(rp, "_build_record", boom)
         elif kind == "projection_fault":
-            m.setattr(rp, "reporting_product_findings", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("p1")))
+            m.setattr(
+                rp,
+                "reporting_product_findings",
+                lambda *a, **k: (_ for _ in ()).throw(RuntimeError("p1")),
+            )
         elif kind == "acquisition_fault":
-            m.setattr(rp, "derive_pass_outcomes", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("q1")))
+            m.setattr(
+                rp, "derive_pass_outcomes", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("q1"))
+            )
         calls = _write_api_guard(m)
         classify_report_records(state)
     assert calls == []
@@ -1186,7 +1255,7 @@ def test_adapter_call_leaves_state_file_and_receipts_unchanged(tmp_path, monkeyp
     assert state._earned_window_present == priv["_earned_window_present"]
     assert state._clean_state_sha256 == priv["_clean_state_sha256"]
     assert state.findings is findings_list_before
-    assert all(a is b for a, b in zip(state.findings, refs_before))
+    assert all(a is b for a, b in zip(state.findings, refs_before, strict=False))
     assert path.read_bytes() == bytes_file_before
     assert _tree_hash(tmp_path) == tree_before
     # fresh scratch save after tree compare
@@ -1194,7 +1263,9 @@ def test_adapter_call_leaves_state_file_and_receipts_unchanged(tmp_path, monkeyp
     assert scratch_path.read_bytes() == bytes_saved_before
 
 
-@pytest.mark.parametrize("case", ["raising_description", "disposition_str", "raising_description_file_int"])
+@pytest.mark.parametrize(
+    "case", ["raising_description", "disposition_str", "raising_description_file_int"]
+)
 def test_in_memory_fault_objects_reduced_invariance(tmp_path, monkeypatch, case):
     d = tmp_path / "D"
     d.mkdir()
@@ -1202,7 +1273,7 @@ def test_in_memory_fault_objects_reduced_invariance(tmp_path, monkeypatch, case)
     save_state(State(findings=[_product_s0(id="t"), _product_s0(id="o", fingerprint="o")]), path)
     base = load_state(path)
     assert base is not None
-    baseline_state = copy.deepcopy(base)
+    _baseline_state = copy.deepcopy(base)
     orig = base.findings[0]
     names = [f.name for f in fields(StateFinding)]
     if case == "disposition_str":
@@ -1219,7 +1290,9 @@ def test_in_memory_fault_objects_reduced_invariance(tmp_path, monkeypatch, case)
     tree_before = _tree_hash(tmp_path)
     findings_list_before = base.findings
     refs_before = list(base.findings)
-    nonfinding_before = {n: copy.deepcopy(getattr(base, n)) for n in [f.name for f in fields(State)] if n != "findings"}
+    nonfinding_before = {
+        n: copy.deepcopy(getattr(base, n)) for n in [f.name for f in fields(State)] if n != "findings"
+    }
     target_vars_before = copy.deepcopy(dict(vars(target)))
     per_field = []
     for f in base.findings:
@@ -1227,7 +1300,7 @@ def test_in_memory_fault_objects_reduced_invariance(tmp_path, monkeypatch, case)
         for fld in fields(StateFinding):
             try:
                 entry[fld.name] = copy.deepcopy(getattr(f, fld.name))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- Capture arbitrary injected accessor failures for invariance comparison.
                 entry[fld.name] = type(exc)
         per_field.append(entry)
     nontarget_copies = [copy.deepcopy(f) for f in base.findings[1:]]
@@ -1239,16 +1312,25 @@ def test_in_memory_fault_objects_reduced_invariance(tmp_path, monkeypatch, case)
     assert path.read_bytes() == bytes_file_before
     assert _tree_hash(tmp_path) == tree_before
     assert base.findings is findings_list_before
-    assert all(a is b for a, b in zip(base.findings, refs_before))
+    assert all(a is b for a, b in zip(base.findings, refs_before, strict=False))
     assert dict(vars(target)) == target_vars_before
     for n, v in nonfinding_before.items():
         assert getattr(base, n) == v
-    for f, c in zip(base.findings[1:], nontarget_copies):
+    for f, c in zip(base.findings[1:], nontarget_copies, strict=False):
         assert f == c
 
 
 def test_no_mutation_and_no_mutable_aliasing(tmp_path):
-    state = _roundtrip(tmp_path, [_product_s0(), _uncertain_s0(error="falsify() raised: x"), _s1_capacity(), _s2_incomplete(), _s3_receipt_audit()])
+    state = _roundtrip(
+        tmp_path,
+        [
+            _product_s0(),
+            _uncertain_s0(error="falsify() raised: x"),
+            _s1_capacity(),
+            _s2_incomplete(),
+            _s3_receipt_audit(),
+        ],
+    )
     # collect mutable objects reachable from input
     mutable_ids = set()
 
@@ -1313,7 +1395,8 @@ def test_no_mutation_and_no_mutable_aliasing(tmp_path):
 # 「未经独立复现」
 # ---------------------------------------------------------------------------
 
-def _x1_with_kind(kind: str, pass_name: str = "qodo") -> StateFinding:
+
+def _x1_with_kind(kind: str, pass_name: str = "qodo") -> StateFinding:  # noqa: S107 -- pass_name identifies a review pass, not a password.
     return _sf(
         id=f"l1-{pass_name}-invoke-fail",
         fingerprint=f"invoke-fail-{pass_name}",

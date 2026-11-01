@@ -24,7 +24,11 @@ def test_package_data_lists_the_notices_for_code_forge():
 
 def test_notices_carry_every_upstream_copyright_and_the_mit_text():
     text = NOTICES.read_text(encoding="utf-8")
-    for holder in ("Copyright (c) 2025 Every", "Copyright (c) 2026 Cursor", "Copyright (c) 2026 Lauren Tan"):
+    for holder in (
+        "Copyright (c) 2025 Every",
+        "Copyright (c) 2026 Cursor",
+        "Copyright (c) 2026 Lauren Tan",
+    ):
         assert holder in text, holder
     # One full MIT text per upstream licence block.
     assert text.count("MIT License") == 3

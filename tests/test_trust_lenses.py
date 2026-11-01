@@ -322,15 +322,11 @@ def test_eval_run_single_trusts_through_the_helper():
     from code_forge.eval import runner
 
     tree = ast.parse(Path(runner.__file__).read_text(encoding="utf-8"))
-    fn = next(
-        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_run_single"
-    )
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_run_single")
     calls = [
         n
         for n in ast.walk(fn)
-        if isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Name)
-        and n.func.id == "_trust_eval_gate"
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_trust_eval_gate"
     ]
     assert len(calls) == 1
     assert [getattr(a, "id", None) for a in calls[0].args] == ["gate_path", "trust_dir"]
@@ -342,15 +338,11 @@ def test_setup_mcp_run_trusts_through_the_helper():
     from code_forge import setup_mcp
 
     tree = ast.parse(Path(setup_mcp.__file__).read_text(encoding="utf-8"))
-    fn = next(
-        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "run_setup_mcp"
-    )
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "run_setup_mcp")
     calls = [
         n
         for n in ast.walk(fn)
-        if isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Name)
-        and n.func.id == "_auto_trust_gate"
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_auto_trust_gate"
     ]
     assert len(calls) == 1
     assert [getattr(a, "id", None) for a in calls[0].args] == ["gate_yaml_path"]

@@ -315,7 +315,7 @@ class TestAppendRepairsTail:
         last = make_record(_key("last"), "HOLD")
         # Preserve formatting, CRLF, blank lines and multibyte UTF-8 exactly.
         prefix = (json.dumps(first, indent=None) + "\r\n\n").encode()
-        prefix += b' \t\n'
+        prefix += b" \t\n"
         complete = json.dumps(make_record(_key("caf\u00e9"), "PASS"), ensure_ascii=False).encode()
         if tail_kind == "valid":
             original = prefix + complete + b" \r\t"
@@ -343,8 +343,10 @@ class TestAppendRepairsTail:
     def test_empty_and_terminated_fast_path(self, tmp_path, monkeypatch, original):
         p = tmp_path / "l.jsonl"
         p.write_bytes(original)
+
         def unexpected_parse(*args, **kwargs):
             pytest.fail("terminated ledger should not be parsed on append")
+
         monkeypatch.setattr(json, "loads", unexpected_parse)
         append_record(p, {"new": 1})
         assert p.read_bytes() == original + b'{"new":1}\n'
@@ -401,12 +403,15 @@ class TestAppendRepairsTail:
         p = tmp_path / "l.jsonl"
         original = b'{}\n{"torn":'
         p.write_bytes(original)
+
         def fail(*args, **kwargs):
             if failure == "short_read":
                 return b""
             raise RuntimeError("injected failure")
-        monkeypatch.setattr(json if failure == "decode" else os,
-                            "loads" if failure == "decode" else "pread", fail)
+
+        monkeypatch.setattr(
+            json if failure == "decode" else os, "loads" if failure == "decode" else "pread", fail
+        )
         with pytest.raises((RuntimeError, OSError)):
             append_record(p, {"new": 1})
         assert p.read_bytes() == original
@@ -415,8 +420,10 @@ class TestAppendRepairsTail:
         p = tmp_path / "l.jsonl"
         p.write_bytes(b"{}")
         real_write = os.write
+
         def short_write(fd, data):
             return real_write(fd, data[:2])
+
         monkeypatch.setattr(os, "write", short_write)
         with pytest.raises(OSError, match="short write"):
             append_record(p, {"new": 1})
@@ -431,6 +438,7 @@ class TestAppendRepairsTail:
         locked = set()
         events = []
         real_flock = fcntl.flock
+
         def flock(fd, operation):
             if operation == fcntl.LOCK_EX:
                 real_flock(fd, operation)
@@ -439,13 +447,16 @@ class TestAppendRepairsTail:
                 assert fd in locked
                 locked.remove(fd)
                 real_flock(fd, operation)
+
         monkeypatch.setattr(fcntl, "flock", flock)
         for name in ("pread", "ftruncate", "write", "fsync"):
             real = getattr(os, name)
+
             def checked(fd, *args, _name=name, _real=real):
                 assert fd in locked, _name + " ran outside LOCK_EX"
                 events.append((_name, fd))
                 return _real(fd, *args)
+
             monkeypatch.setattr(os, name, checked)
         append_record(p, {"new": 1})
         assert not locked
@@ -457,9 +468,11 @@ class TestAppendRepairsTail:
         p.write_bytes(b"{}")
         writes = []
         real_write = os.write
+
         def write(fd, data):
             writes.append(data)
             return real_write(fd, data)
+
         monkeypatch.setattr(os, "write", write)
         append_record(p, {"new": 1})
         assert writes == [b'\n{"new":1}\n']
@@ -478,11 +491,14 @@ class TestAppendRepairsTail:
             from code_forge.eval.ledger_jsonl import ResumeKey, append_record, make_record
             append_record(Path(sys.argv[1]),
                           make_record(ResumeKey(sys.argv[2], 1, "real", "b"), "PASS"))
-            """ % str(src)
+            """
+            % str(src)
         )
         procs = []
         try:
-            procs.extend(subprocess.Popen([sys.executable, "-c", prog, str(p), str(i)]) for i in range(8))
+            procs.extend(
+                subprocess.Popen([sys.executable, "-c", prog, str(p), str(i)]) for i in range(8)
+            )
             for proc in procs:
                 assert proc.wait(timeout=30) == 0
         finally:

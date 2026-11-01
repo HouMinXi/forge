@@ -233,7 +233,7 @@ def run_pool(
                         backend_config=backend_config,
                     )
                     pe.wall_s = time.monotonic() - t0
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 -- One replay failure becomes an error result, not a lost batch.
                     pe.wall_s = time.monotonic() - t0
                     pe.error = str(exc)
                 if progress_cb:
@@ -298,7 +298,7 @@ def run_pool(
             pe = results[idx]
             try:
                 pe.result, pe.wall_s = completed.result()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- One replay failure becomes an error result, not a lost batch.
                 pe.error = "%s: %s" % (type(exc).__name__, exc)
 
             done_count += 1

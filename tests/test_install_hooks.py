@@ -1455,11 +1455,17 @@ class TestInvocationResolutionCompatibility:
                 resolve_forge_path()
             assert str(exc.value) == hooks._NO_FORGE_INVOCATION
         run.assert_called_once_with(
-            [primary, "--version"], capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=1, check=False,
+            [primary, "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1,
+            check=False,
         )
         assert [call.args for call in access.call_args_list] == [
-            (primary, os.X_OK), (interpreter, os.X_OK)
+            (primary, os.X_OK),
+            (interpreter, os.X_OK),
         ]
         if kind == "timeout":
             logger.warning.assert_called_once_with(
@@ -1468,7 +1474,8 @@ class TestInvocationResolutionCompatibility:
         elif kind in errors:
             logger.warning.assert_called_once_with(
                 "code-forge at %s --version raised %s; falling back to sys.executable",
-                primary, errors[kind],
+                primary,
+                errors[kind],
             )
         else:
             logger.warning.assert_called_once_with(
@@ -1476,11 +1483,16 @@ class TestInvocationResolutionCompatibility:
             )
         run.reset_mock()
         resolution = hooks._resolve_forge_invocation()
-        assert resolution.status == {
-            "timeout": "primary_timeout", "oserror": "primary_os_error",
-            "subprocess": "primary_subprocess_error", "exit": "primary_exit_failure",
-            "invalid": "primary_invalid_output",
-        }[kind]
+        assert (
+            resolution.status
+            == {
+                "timeout": "primary_timeout",
+                "oserror": "primary_os_error",
+                "subprocess": "primary_subprocess_error",
+                "exit": "primary_exit_failure",
+                "invalid": "primary_invalid_output",
+            }[kind]
+        )
         assert (resolution.invocation is not None) is fallback_ok
         assert "\n" not in resolution.detail
 
@@ -1490,13 +1502,21 @@ class TestInvocationResolutionCompatibility:
 
         primary = "/fixture directory/code-forge"
         monkeypatch.setattr(hooks.shutil, "which", lambda name: primary)
-        access = Mock(side_effect=lambda path, mode: True if path == primary else pytest.fail(
-            "successful primary accessed fallback"
-        ))
+        access = Mock(
+            side_effect=lambda path, mode: (
+                True if path == primary else pytest.fail("successful primary accessed fallback")
+            )
+        )
         monkeypatch.setattr(hooks.os, "access", access)
-        monkeypatch.setattr(hooks.subprocess, "run", Mock(return_value=subprocess.CompletedProcess(
-            [primary, "--version"], 0, "code-forge 2.0\n", ""
-        )))
+        monkeypatch.setattr(
+            hooks.subprocess,
+            "run",
+            Mock(
+                return_value=subprocess.CompletedProcess(
+                    [primary, "--version"], 0, "code-forge 2.0\n", ""
+                )
+            ),
+        )
         assert resolve_forge_path() == "'/fixture directory/code-forge' gate-check"
         access.assert_called_once_with(primary, os.X_OK)
 
@@ -1534,15 +1554,19 @@ class TestInvocationResolutionCompatibility:
         from code_forge import install_hooks as hooks
 
         events = []
+
         def config(path):
             events.append("config")
             return {}
+
         def planning(path):
             events.append("planning")
             return False
+
         def resolution():
             events.append("resolution")
             return "/fixture/forge gate-check"
+
         monkeypatch.setattr(hooks, "load_gate_config", config)
         monkeypatch.setattr(Path, "is_file", planning)
         monkeypatch.setattr(hooks, "resolve_forge_path", resolution)
@@ -1577,7 +1601,10 @@ class TestHookInputCompatibility:
         monkeypatch.setattr(hooks, "resolve_forge_path", lambda: invocation)
         inputs = hooks.collect_hook_inputs(tmp_path)
         assert hooks.HookInputs._fields == (
-            "forge_invocation", "presubmit_entries", "non_ascii_mode", "planning_leak_guard",
+            "forge_invocation",
+            "presubmit_entries",
+            "non_ascii_mode",
+            "planning_leak_guard",
         )
         assert tuple(inputs) == (invocation, None, "strict", False)
 
@@ -1589,9 +1616,11 @@ class TestHookInputCompatibility:
         monkeypatch.setattr(hooks.shutil, "which", lambda name: None)
         monkeypatch.setattr(hooks.sys, "executable", interpreter)
         access = []
+
         def is_executable(path, mode):
             access.append((path, mode))
             return path == interpreter and mode == os.X_OK
+
         monkeypatch.setattr(hooks.os, "access", is_executable)
         assert hooks.resolve_forge_path() == shlex.quote(interpreter) + " -m code_forge gate-check"
         assert access == [(interpreter, os.X_OK)]

@@ -323,7 +323,7 @@ class TestRunInlineCanaryE2EMimo(unittest.TestCase):
                 review_provider=_mimo_review_provider,
                 source_lookup=_source_lookup,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- Convert arbitrary runner failure into a diagnostic test failure.
             # If run_inline_canary itself raises (should not happen -- it has
             # internal try/except), record and fail with diagnostics.
             self.fail("run_inline_canary raised unexpectedly: %s" % exc)

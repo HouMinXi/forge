@@ -60,7 +60,7 @@ def _check_thresholds(engine_churn: int, integration_churn: int) -> None:
         ("integration_churn", integration_churn, 0),
     ):
         if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError("%s must be an int, got %r" % (name, value))
+            raise ValueError("%s must be an int, got %r" % (name, value))  # noqa: TRY004 -- Keep the documented ValueError validation API for invalid config/corpus data.
         if value < floor:
             raise ValueError("%s must be >= %d, got %d" % (name, floor, value))
     if integration_churn >= engine_churn:
@@ -173,7 +173,7 @@ def thresholds_from_gate_config(config: dict) -> tuple[int, int]:
     if section is None:
         return _ENGINE_CHURN, _INTEGRATION_CHURN
     if not isinstance(section, dict):
-        raise ValueError("gate.yaml 'grouping' section must be a mapping, got %r" % (section,))
+        raise ValueError("gate.yaml 'grouping' section must be a mapping, got %r" % (section,))  # noqa: TRY004 -- Keep the documented ValueError validation API for invalid config/corpus data.
     unknown = sorted(
         set(section)
         - {
@@ -204,10 +204,10 @@ def max_prompt_tokens_from_gate_config(config: dict) -> int:
     """
     section = config.get("grouping") or {}
     if not isinstance(section, dict):
-        raise ValueError("gate.yaml 'grouping' section must be a mapping, got %r" % (section,))
+        raise ValueError("gate.yaml 'grouping' section must be a mapping, got %r" % (section,))  # noqa: TRY004 -- Keep the documented ValueError validation API for invalid config/corpus data.
     value = section.get("max_prompt_tokens", _MAX_PROMPT_TOKENS)
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError("max_prompt_tokens must be an int, got %r" % (value,))
+        raise ValueError("max_prompt_tokens must be an int, got %r" % (value,))  # noqa: TRY004 -- Keep the documented ValueError validation API for invalid config/corpus data.
     if value < 8192:
         raise ValueError("max_prompt_tokens must be >= 8192, got %d" % value)
     return value
@@ -379,8 +379,7 @@ def build_groups(
                 members=sorted(members),
                 passes=(
                     0
-                    if role in _ZERO_PASS_UNLESS_REQUIRED_ROLES
-                    and required_files.isdisjoint(members)
+                    if role in _ZERO_PASS_UNLESS_REQUIRED_ROLES and required_files.isdisjoint(members)
                     else _PASSES_PER_GROUP
                 ),
             )

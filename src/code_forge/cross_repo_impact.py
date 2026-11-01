@@ -139,8 +139,8 @@ def find_cross_repo_callers(
             module_name = sym["module"]
 
             live = _live_callers(cursor, name, module_name)
-            for lc in live:
-                results.append(
+            results.extend(
+                (
                     {
                         "symbol": name,
                         "caller_qualified": lc.qualified,
@@ -148,6 +148,8 @@ def find_cross_repo_callers(
                         "caller_line": lc.line,
                     }
                 )
+                for lc in live
+            )
     finally:
         conn.close()
 

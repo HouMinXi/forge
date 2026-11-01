@@ -27,9 +27,7 @@ pytest.importorskip("mutmut")
 def _project(root: Path) -> None:
     (root / "pkg").mkdir()
     (root / "pkg/__init__.py").write_text("", encoding="utf-8")
-    (root / "pkg/tool.py").write_text(
-        "def answer():\n    return 1\n", encoding="utf-8"
-    )
+    (root / "pkg/tool.py").write_text("def answer():\n    return 1\n", encoding="utf-8")
     (root / "tests").mkdir()
     (root / "tests/test_tool.py").write_text(
         textwrap.dedent(

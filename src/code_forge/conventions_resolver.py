@@ -26,10 +26,16 @@ from typing import Optional
 import yaml
 
 from .conventions import (
-    _MAX_ROSTER_FILES, _SKIP_DIRS, _ScanStatus, _extract_python_public_names,
-    _is_convention_file, _open_scan_root,
+    _MAX_ROSTER_FILES,
+    _SKIP_DIRS,
+    _ScanStatus,
+    _extract_python_public_names,
+    _is_convention_file,
+    _open_scan_root,
     _path_fallback_supported,
-    _read_regular_text, _source_file_size, _walk_source,
+    _read_regular_text,
+    _source_file_size,
+    _walk_source,
 )
 
 _MAX_TRACKED_ROSTER_BYTES = 4_000_000
@@ -118,8 +124,7 @@ def _source_root_is_current(source: ResolvedSource) -> bool:
                 return False
             info = os.lstat(source.repo_path)
             return stat.S_ISDIR(info.st_mode) and (
-                source.root_identity is None
-                or (info.st_dev, info.st_ino) == source.root_identity
+                source.root_identity is None or (info.st_dev, info.st_ino) == source.root_identity
             )
         try:
             info = os.fstat(root_fd)
@@ -342,8 +347,7 @@ def _resolve_source_agents_md(cwd: Path) -> list[ResolvedSource]:
 
     # Always also try regex extraction on the full content (captures paths
     # that appear in the markdown body regardless of frontmatter).
-    for match in _PATH_RE.finditer(content):
-        repo_paths.append(Path(match.group(1)))
+    repo_paths.extend((Path(match.group(1))) for match in _PATH_RE.finditer(content))
 
     # Deduplicate raw paths before resolution to avoid redundant isdir checks
     # when the same path appears in both YAML frontmatter and markdown body.
@@ -381,8 +385,7 @@ def _resolve_source_agent_context(cwd: Path) -> list[ResolvedSource]:
     mdc_dir = cwd / ".cursor" / "rules"
     if _optional_is_dir(mdc_dir):
         try:
-            for mdc_file in sorted(mdc_dir.glob("*.mdc")):
-                context_files.append(mdc_file)
+            context_files.extend((mdc_file) for mdc_file in sorted(mdc_dir.glob("*.mdc")))
         except OSError:
             pass
 
@@ -398,8 +401,7 @@ def _resolve_source_agent_context(cwd: Path) -> list[ResolvedSource]:
             continue
 
         repo_paths: list[Path] = []
-        for match in _PATH_RE.finditer(content):
-            repo_paths.append(Path(match.group(1)))
+        repo_paths.extend((Path(match.group(1))) for match in _PATH_RE.finditer(content))
 
         for src in _resolve_paths_as_sources(repo_paths, cwd, priority=3, source_type="agent_context"):
             key = src.repo_path
@@ -606,15 +608,24 @@ def extract_conventions(source: ResolvedSource, *, scan_status: Optional[_ScanSt
 
         # Every language walks and reads beneath the same opened directory.
         py_funcs, py_classes = _extract_python_public_names(
-            scan_root, scan_status=scan_status, scan_root=scan_root, scan_root_fd=root_fd,
+            scan_root,
+            scan_status=scan_status,
+            scan_root=scan_root,
+            scan_root_fd=root_fd,
         )
         py_names = py_funcs + py_classes
         js_names = _extract_js_ts_names(
-            scan_root, scan_root, scan_status=scan_status, scan_root_fd=root_fd,
+            scan_root,
+            scan_root,
+            scan_status=scan_status,
+            scan_root_fd=root_fd,
         )
         go_names = _extract_go_names(scan_root, scan_root, scan_status=scan_status, scan_root_fd=root_fd)
         rust_names = _extract_rust_names(
-            scan_root, scan_root, scan_status=scan_status, scan_root_fd=root_fd,
+            scan_root,
+            scan_root,
+            scan_status=scan_status,
+            scan_root_fd=root_fd,
         )
     finally:
         if root_fd is not None:
@@ -699,11 +710,17 @@ def _iter_files(
             # Only an admitted file may be skipped as intentionally oversized.
             try:
                 size = _source_file_size(
-                    real_path, scan_root, scan_root_fd, observed=candidate_info,
+                    real_path,
+                    scan_root,
+                    scan_root_fd,
+                    observed=candidate_info,
                 )
                 if scan_status is not None and scan_root_fd is not None:
                     scan_status.record_admitted_file(
-                        real_path, scan_root, scan_root_fd, candidate_info,
+                        real_path,
+                        scan_root,
+                        scan_root_fd,
+                        candidate_info,
                     )
                 if size > 100_000:
                     if scan_status is not None:
@@ -720,7 +737,10 @@ def _iter_files(
 
 
 def _extract_js_ts_names(
-    root: Path, scan_root: Path, *, scan_status: Optional[_ScanStatus] = None,
+    root: Path,
+    scan_root: Path,
+    *,
+    scan_status: Optional[_ScanStatus] = None,
     scan_root_fd: Optional[int] = None,
 ) -> list[str]:
     """Extract exported names from .js and .ts files (excluding .d.ts).
@@ -738,29 +758,37 @@ def _extract_js_ts_names(
 
     names: list[str] = []
     files = _iter_files(
-        root, scan_root, (".js", ".ts"), (".d.ts",),
-        scan_status=scan_status, scan_root_fd=scan_root_fd,
+        root,
+        scan_root,
+        (".js", ".ts"),
+        (".d.ts",),
+        scan_status=scan_status,
+        scan_root_fd=scan_root_fd,
     )
 
     for fpath in files:
         content = _read_regular_text(
-            fpath, max_bytes=100_000, scan_root=scan_root,
-            scan_root_fd=scan_root_fd, scan_status=scan_status,
+            fpath,
+            max_bytes=100_000,
+            scan_root=scan_root,
+            scan_root_fd=scan_root_fd,
+            scan_status=scan_status,
         )
         if content is None:
             continue
         # Pass 1: named exports.
-        for match in _NAMED_EXPORT_RE.finditer(content):
-            names.append(match.group(1))
+        names.extend((match.group(1)) for match in _NAMED_EXPORT_RE.finditer(content))
         # Pass 2: export default.
-        for match in _DEFAULT_EXPORT_RE.finditer(content):
-            names.append(match.group(1))
+        names.extend((match.group(1)) for match in _DEFAULT_EXPORT_RE.finditer(content))
 
     return list(dict.fromkeys(names))[:50]  # deduplicate, cap at 50
 
 
 def _extract_go_names(
-    root: Path, scan_root: Path, *, scan_status: Optional[_ScanStatus] = None,
+    root: Path,
+    scan_root: Path,
+    *,
+    scan_status: Optional[_ScanStatus] = None,
     scan_root_fd: Optional[int] = None,
 ) -> list[str]:
     """Extract exported names from .go files.
@@ -775,19 +803,24 @@ def _extract_go_names(
 
     for fpath in files:
         content = _read_regular_text(
-            fpath, max_bytes=100_000, scan_root=scan_root,
-            scan_root_fd=scan_root_fd, scan_status=scan_status,
+            fpath,
+            max_bytes=100_000,
+            scan_root=scan_root,
+            scan_root_fd=scan_root_fd,
+            scan_status=scan_status,
         )
         if content is None:
             continue
-        for match in _GO_EXPORT_RE.finditer(content):
-            names.append(match.group(1))
+        names.extend((match.group(1)) for match in _GO_EXPORT_RE.finditer(content))
 
     return list(dict.fromkeys(names))[:50]
 
 
 def _extract_rust_names(
-    root: Path, scan_root: Path, *, scan_status: Optional[_ScanStatus] = None,
+    root: Path,
+    scan_root: Path,
+    *,
+    scan_status: Optional[_ScanStatus] = None,
     scan_root_fd: Optional[int] = None,
 ) -> list[str]:
     """Extract public names from .rs files.
@@ -802,13 +835,15 @@ def _extract_rust_names(
 
     for fpath in files:
         content = _read_regular_text(
-            fpath, max_bytes=100_000, scan_root=scan_root,
-            scan_root_fd=scan_root_fd, scan_status=scan_status,
+            fpath,
+            max_bytes=100_000,
+            scan_root=scan_root,
+            scan_root_fd=scan_root_fd,
+            scan_status=scan_status,
         )
         if content is None:
             continue
-        for match in _RUST_PUB_RE.finditer(content):
-            names.append(match.group(1))
+        names.extend((match.group(1)) for match in _RUST_PUB_RE.finditer(content))
 
     return list(dict.fromkeys(names))[:50]
 
@@ -829,12 +864,19 @@ def _run_git_object_probe(repo_path: Path, *args: str) -> subprocess.CompletedPr
     env = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
     command = ["git", "--no-lazy-fetch", "-C", str(repo_path), *args]
     result = subprocess.run(
-        command, env=env, capture_output=True, timeout=5, check=False,
+        command,
+        env=env,
+        capture_output=True,
+        timeout=5,
+        check=False,
     )
     if result.returncode == 129:
         result = subprocess.run(
             ["git", "-C", str(repo_path), *args],
-            env=env, capture_output=True, timeout=5, check=False,
+            env=env,
+            capture_output=True,
+            timeout=5,
+            check=False,
         )
     return result
 
@@ -844,11 +886,19 @@ def _tracked_convention_files(repo_path: Path, commit_hash: str) -> set[Path]:
     if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", commit_hash):
         raise OSError("source has no full Git object ID")
     proc = _run_git_object_probe(
-        repo_path, "ls-tree", "-r", "--name-only", "-z", commit_hash, "--", ".",
+        repo_path,
+        "ls-tree",
+        "-r",
+        "--name-only",
+        "-z",
+        commit_hash,
+        "--",
+        ".",
     )
     raw = proc.stdout
     if (
-        proc.returncode != 0 or not isinstance(raw, bytes)
+        proc.returncode != 0
+        or not isinstance(raw, bytes)
         or len(raw) > _MAX_TRACKED_ROSTER_BYTES
         or (raw and not raw.endswith(b"\0"))
     ):
@@ -860,9 +910,7 @@ def _tracked_convention_files(repo_path: Path, commit_hash: str) -> set[Path]:
         path = Path(os.fsdecode(name))
         if path.is_absolute() or ".." in path.parts:
             raise OSError("invalid committed source path")
-        if _is_convention_file(path.name) and not any(
-            part in _SKIP_DIRS for part in path.parts[:-1]
-        ):
+        if _is_convention_file(path.name) and not any(part in _SKIP_DIRS for part in path.parts[:-1]):
             selected.add(path)
             if len(selected) > _MAX_ROSTER_FILES:
                 raise OSError("committed source roster too large")
@@ -874,7 +922,9 @@ def _git_index_generation(repo_path: Path) -> Optional[tuple[int, int, int, int,
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo_path), "rev-parse", "--git-path", "index"],
-            capture_output=True, timeout=5, check=False,
+            capture_output=True,
+            timeout=5,
+            check=False,
         )
         if proc.returncode != 0 or not isinstance(proc.stdout, bytes):
             return None
@@ -885,7 +935,11 @@ def _git_index_generation(repo_path: Path) -> Optional[tuple[int, int, int, int,
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
     return (
-        info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
     )
 
 
@@ -899,13 +953,13 @@ def _scanned_reads_still_current(repo_path: Path, scan_status: _ScanStatus) -> b
         for path, hashes in scan_status.read_blobs.items():
             current = _ScanStatus()
             content = _read_regular_text(
-                repo_path / path, max_bytes=100_000, scan_root=repo_path,
-                scan_root_fd=root_fd, scan_status=current,
+                repo_path / path,
+                max_bytes=100_000,
+                scan_root=repo_path,
+                scan_root_fd=root_fd,
+                scan_status=current,
             )
-            if (
-                content is None or not current.complete
-                or current.read_blobs.get(path) != hashes
-            ):
+            if content is None or not current.complete or current.read_blobs.get(path) != hashes:
                 return False
         for logical in scan_status.skipped_files:
             resolved = scan_status.candidates[logical]
@@ -920,7 +974,9 @@ def _scanned_reads_still_current(repo_path: Path, scan_status: _ScanStatus) -> b
 
 
 def _scan_matches_commit(
-    repo_path: Path, commit_hash: str, scan_status: _ScanStatus,
+    repo_path: Path,
+    commit_hash: str,
+    scan_status: _ScanStatus,
 ) -> Optional[bool]:
     """Compare scanned source bytes and skip decisions with an immutable tree.
 
@@ -930,13 +986,21 @@ def _scan_matches_commit(
     """
     try:
         proc = _run_git_object_probe(
-            repo_path, "ls-tree", "-r", "-l", "-z", commit_hash, "--", ".",
+            repo_path,
+            "ls-tree",
+            "-r",
+            "-l",
+            "-z",
+            commit_hash,
+            "--",
+            ".",
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
     raw = proc.stdout
     if (
-        proc.returncode != 0 or not isinstance(raw, bytes)
+        proc.returncode != 0
+        or not isinstance(raw, bytes)
         or len(raw) > _MAX_TRACKED_ROSTER_BYTES
         or (raw and not raw.endswith(b"\0"))
     ):
@@ -955,31 +1019,39 @@ def _scan_matches_commit(
         except (ValueError, UnicodeError):
             return None
         if (
-            kind != b"blob" or len(object_id) != len(commit_hash)
+            kind != b"blob"
+            or len(object_id) != len(commit_hash)
             or not re.fullmatch(rb"[0-9a-fA-F]+", object_id)
-            or path.is_absolute() or ".." in path.parts or size < 0
+            or path.is_absolute()
+            or ".." in path.parts
+            or size < 0
         ):
             return None
         tree[path] = (mode, object_id.decode("ascii"), size)
 
-    committed_dirs = {
-        parent for path in tree for parent in path.parents if parent != Path(".")
-    }
+    committed_dirs = {parent for path in tree for parent in path.parents if parent != Path(".")}
 
     def link_target(
-        object_id: str, size: int,
+        object_id: str,
+        size: int,
     ) -> Optional[tuple[bool, tuple[str, ...]]]:
         if size > 4096:
             return None
         try:
             link = _run_git_object_probe(
-                repo_path, "cat-file", "blob", object_id,
+                repo_path,
+                "cat-file",
+                "blob",
+                object_id,
             )
         except (OSError, subprocess.TimeoutExpired):
             return None
         if (
-            link.returncode != 0 or not isinstance(link.stdout, bytes)
-            or len(link.stdout) != size or not link.stdout or b"\0" in link.stdout
+            link.returncode != 0
+            or not isinstance(link.stdout, bytes)
+            or len(link.stdout) != size
+            or not link.stdout
+            or b"\0" in link.stdout
         ):
             return None
         target = Path(os.fsdecode(link.stdout))
@@ -1039,9 +1111,7 @@ def _scan_matches_commit(
         if resolved_src is None:
             return None
         expected_python_root = resolved_src[0]
-        if not any(
-            expected_python_root in path.parents for path in tree
-        ):
+        if not any(expected_python_root in path.parents for path in tree):
             return None
     elif any(Path("src") in path.parents for path in tree):
         expected_python_root = Path("src")
@@ -1108,16 +1178,31 @@ def _passive_git_listing(repo_path: Path, *args: str) -> subprocess.CompletedPro
     See ``_run_git_object_probe`` for why a 129 is retried without the switch.
     """
     env = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
-    base = ["git", "-C", str(repo_path),
-            "-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}",
-            "ls-files", *args]
+    base = [
+        "git",
+        "-C",
+        str(repo_path),
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        f"core.hooksPath={os.devnull}",
+        "ls-files",
+        *args,
+    ]
     result = subprocess.run(
         ["git", "--no-lazy-fetch", *base[1:]],
-        env=env, capture_output=True, timeout=5, check=False,
+        env=env,
+        capture_output=True,
+        timeout=5,
+        check=False,
     )
     if result.returncode == 129:
         result = subprocess.run(
-            base, env=env, capture_output=True, timeout=5, check=False,
+            base,
+            env=env,
+            capture_output=True,
+            timeout=5,
+            check=False,
         )
     return result
 
@@ -1130,7 +1215,8 @@ def _git_index_has_ordinary_entries(repo_path: Path) -> bool:
         return False
     raw = proc.stdout
     if (
-        proc.returncode != 0 or not isinstance(raw, bytes)
+        proc.returncode != 0
+        or not isinstance(raw, bytes)
         or len(raw) > _MAX_SOURCE_STATUS_BYTES
         or (raw and not raw.endswith(b"\0"))
     ):
@@ -1144,15 +1230,23 @@ def _git_filter_config_absent(repo_path: Path) -> bool:
     """Fail closed when any effective clean/process filter may execute."""
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo_path), "config", "--includes", "--null",
-             "--get-regexp", r"^filter\..*\.(clean|process)$"],
-            capture_output=True, timeout=5, check=False,
+            [
+                "git",
+                "-C",
+                str(repo_path),
+                "config",
+                "--includes",
+                "--null",
+                "--get-regexp",
+                r"^filter\..*\.(clean|process)$",
+            ],
+            capture_output=True,
+            timeout=5,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return (
-        proc.returncode == 1 and proc.stdout == b"" and proc.stderr == b""
-    )
+    return proc.returncode == 1 and proc.stdout == b"" and proc.stderr == b""
 
 
 def _source_cache_eligible(repo_path: Path, commit_hash: str) -> bool:
@@ -1176,7 +1270,8 @@ def _source_cache_eligible(repo_path: Path, commit_hash: str) -> bool:
             return False
         raw = proc.stdout
         if (
-            proc.returncode != 0 or not isinstance(raw, bytes)
+            proc.returncode != 0
+            or not isinstance(raw, bytes)
             or len(raw) > _MAX_SOURCE_STATUS_BYTES
             or (raw and not raw.endswith(b"\0"))
         ):
@@ -1226,14 +1321,14 @@ def _scan_snapshot_is_current(source: ResolvedSource, scan_status: _ScanStatus) 
             scan_status.fail()
             return False
         info = os.fstat(root_fd)
-        if (
-            not stat.S_ISDIR(info.st_mode)
-            or source.root_identity != (info.st_dev, info.st_ino)
-        ):
+        if not stat.S_ISDIR(info.st_mode) or source.root_identity != (info.st_dev, info.st_ino):
             scan_status.fail()
             return False
         for _dirpath, dirs, _files in _walk_source(
-            scan_root, scan_root, root_fd, scan_status,
+            scan_root,
+            scan_root,
+            root_fd,
+            scan_status,
         ):
             dirs[:] = [name for name in dirs if name not in _SKIP_DIRS]
     except OSError as exc:
@@ -1242,7 +1337,8 @@ def _scan_snapshot_is_current(source: ResolvedSource, scan_status: _ScanStatus) 
         if root_fd is not None:
             os.close(root_fd)
     return (
-        scan_status.complete and _source_root_is_current(source)
+        scan_status.complete
+        and _source_root_is_current(source)
         and _scanned_aliases_still_current(source, scan_status)
     )
 
@@ -1325,9 +1421,7 @@ def _collect_cross_repo_digest(source_cwd: Path) -> str:
             continue
 
         commit_proof_eligible = _source_cache_eligible(source.repo_path, commit_hash)
-        index_generation = (
-            _git_index_generation(source.repo_path) if commit_proof_eligible else None
-        )
+        index_generation = _git_index_generation(source.repo_path) if commit_proof_eligible else None
         scan_status = _ScanStatus()
         digest = extract_conventions(source, scan_status=scan_status)
         snapshot_current = True
@@ -1353,8 +1447,7 @@ def _collect_cross_repo_digest(source_cwd: Path) -> str:
         if not snapshot_current:
             continue
         if scan_status.unproven_bytes and (
-            index_generation is None
-            or _git_index_generation(source.repo_path) != index_generation
+            index_generation is None or _git_index_generation(source.repo_path) != index_generation
         ):
             continue
         if not _scanned_aliases_still_current(source, scan_status):

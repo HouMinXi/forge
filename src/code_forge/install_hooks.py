@@ -872,7 +872,7 @@ def run_install_hooks(
             f.write(hook_content)
 
         # Step h: chmod 0o755
-        os.chmod(hook_path, 0o755)
+        os.chmod(hook_path, 0o755)  # noqa: S103 -- Installed Git hooks must be executable by their intended users.
 
         # Step i: success message for pre-commit
         info("code-forge: pre-commit hook installed at %s" % hook_path)
@@ -912,7 +912,7 @@ def run_install_hooks(
         )
         with open(commit_msg_path, "w", encoding="utf-8") as f:
             f.write(commit_msg_content)
-        os.chmod(commit_msg_path, 0o755)
+        os.chmod(commit_msg_path, 0o755)  # noqa: S103 -- Installed Git hooks must be executable by their intended users.
         info("code-forge: commit-msg hook installed at %s" % commit_msg_path)
         info(
             "code-forge: code commits now require a passing review. "
@@ -927,7 +927,7 @@ def run_install_hooks(
         try:
             ensure_claude_worktree_hook(cwd)
             info("code-forge: check_worktree.sh registered in .claude/settings.local.json")
-        except Exception as wt_err:
+        except Exception as wt_err:  # noqa: BLE001 -- CLI boundary reports installation failures without a traceback.
             print(
                 "code-forge: warning: could not register check_worktree.sh "
                 "in .claude/settings.local.json: %s" % wt_err,
@@ -936,7 +936,7 @@ def run_install_hooks(
 
         return EXIT_PASS
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- CLI boundary reports installation failures without a traceback.
         print(
             "code-forge: error: install-hooks failed: %s" % e,
             file=stderr,

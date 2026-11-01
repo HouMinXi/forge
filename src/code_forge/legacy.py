@@ -168,7 +168,7 @@ class LegacyRunner:
 
                 runner_fn = _default_l0_runner
             l0_findings, l0_infra = runner_fn(self.registry, list(self.source_files))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- L0 adapter exceptions are recorded as infrastructure failures.
             msg = "L0 re-run failed: %r" % exc
             self.infra_errors.append(msg)
             return [_build_legacy_skipped(msg)]

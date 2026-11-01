@@ -30,8 +30,13 @@ _LITERAL_PATHS = [
     "graph%23one.db",
 ]
 _PATH_IDS = [
-    "plain", "space-unicode", "hash-file", "query-file", "hash-directory",
-    "query-directory", "percent-file",
+    "plain",
+    "space-unicode",
+    "hash-file",
+    "query-file",
+    "hash-directory",
+    "query-directory",
+    "percent-file",
 ]
 
 
@@ -39,7 +44,8 @@ _PATH_IDS = [
 def _isolate_graphdb(monkeypatch):
     actual_which = graph_triage.shutil.which
     monkeypatch.setattr(
-        graph_triage.shutil, "which",
+        graph_triage.shutil,
+        "which",
         lambda name: None if name == "sem" else actual_which(name),
     )
     monkeypatch.delenv("CRG_DB_PATH", raising=False)
@@ -70,7 +76,10 @@ def _gather(root, db, monkeypatch, head_sha=_HEAD, allow_unsnapshotted=False):
     monkeypatch.setenv("CRG_DB_PATH", str(db))
     source = context_sources.GraphTriageSource(root)
     result = context_sources.gather(
-        [source], ["subject.py"], _DIFF, head_sha=head_sha,
+        [source],
+        ["subject.py"],
+        _DIFF,
+        head_sha=head_sha,
         allow_unsnapshotted=allow_unsnapshotted,
     )
     return source, result
@@ -82,10 +91,16 @@ def _assert_admitted(source, result, snapshot=_HEAD):
     assert result.skipped_sources == []
     assert result.refused_sources == []
     assert result.snapshot_shas == {"graph_triage": snapshot}
-    assert result.rows == [context_sources.FactRow(
-        entity="intended", file="subject.py", downstream="0", dependents="",
-        source="graph_triage", origin_line=1,
-    )]
+    assert result.rows == [
+        context_sources.FactRow(
+            entity="intended",
+            file="subject.py",
+            downstream="0",
+            dependents="",
+            source="graph_triage",
+            origin_line=1,
+        )
+    ]
     assert source.acquisition_outcome is not None and source.acquisition_outcome.completed
     assert len(source.findings_cache) == 1
 
@@ -98,8 +113,7 @@ def _assert_skipped(source, result, snapshot, head_sha):
     assert result.snapshot_shas == {"graph_triage": snapshot}
     assert result.skipped_sources == ["graph_triage"]
     assert result.skipped == [
-        "graph_triage: index at %s, review head %s"
-        % (snapshot[:12], (head_sha or "unknown")[:12])
+        "graph_triage: index at %s, review head %s" % (snapshot[:12], (head_sha or "unknown")[:12])
     ]
     assert source.acquisition_outcome is None
     assert source.findings_cache is None
@@ -125,14 +139,20 @@ def test_literal_snapshot_gates_real_graph_facts(relative_db, review_head, tmp_p
 
 @pytest.mark.parametrize(
     ("literal", "decoded"),
-    [("graph%23one.db", "graph#one.db"),
-     pytest.param("graph%3Fone.db", "graph?one.db", marks=_WINDOWS_INVALID),
-     ("graph%2523one.db", "graph%23one.db")],
+    [
+        ("graph%23one.db", "graph#one.db"),
+        pytest.param("graph%3Fone.db", "graph?one.db", marks=_WINDOWS_INVALID),
+        ("graph%2523one.db", "graph%23one.db"),
+    ],
     ids=["hash-decoy", "query-decoy", "percent-decoy"],
 )
 @pytest.mark.parametrize("snapshot", [_HEAD, _STALE], ids=["matching-intended", "stale-intended"])
 def test_snapshot_comes_from_literal_database_not_valid_decoy(
-    literal, decoded, snapshot, tmp_path, monkeypatch,
+    literal,
+    decoded,
+    snapshot,
+    tmp_path,
+    monkeypatch,
 ):
     root = tmp_path / "checkout"
     root.mkdir()
@@ -200,8 +220,13 @@ def test_symlink_snapshot_keeps_literal_alias_and_closes_connections(tmp_path, m
     assert _files_under(tmp_path) == before
 
 
-@pytest.mark.parametrize("root_name", ["checkout#with%23characters",
-                                     pytest.param("checkout#with?literal%23characters", marks=_WINDOWS_INVALID)])
+@pytest.mark.parametrize(
+    "root_name",
+    [
+        "checkout#with%23characters",
+        pytest.param("checkout#with?literal%23characters", marks=_WINDOWS_INVALID),
+    ],
+)
 def test_default_database_snapshot_precedes_environment(root_name, tmp_path, monkeypatch):
     root = tmp_path / root_name
     _write_graph(root / ".code-review-graph" / "graph.db")
@@ -266,15 +291,23 @@ def test_snapshot_connection_is_read_only_and_closed(relative_db, tmp_path, monk
     assert _files_under(tmp_path) == before
 
 
-@pytest.mark.parametrize("filename", ["missing.db", "missing#graph.db",
-                                     pytest.param("missing?graph.db", marks=_WINDOWS_INVALID),
-                                     "missing%23graph.db"])
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "missing.db",
+        "missing#graph.db",
+        pytest.param("missing?graph.db", marks=_WINDOWS_INVALID),
+        "missing%23graph.db",
+    ],
+)
 def test_missing_snapshot_returns_none_without_creating_files(filename, tmp_path):
     assert context_sources._graphdb_head_sha(tmp_path / filename) is None
     assert _files_under(tmp_path) == {}
 
 
-@pytest.mark.parametrize("metadata", ["corrupt", "missing-table", "missing-column", "missing-key", "empty", "null"])
+@pytest.mark.parametrize(
+    "metadata", ["corrupt", "missing-table", "missing-column", "missing-key", "empty", "null"]
+)
 def test_unavailable_metadata_returns_none_and_closes_connection(metadata, tmp_path, monkeypatch):
     db = tmp_path / "graph%23one.db"
     if metadata == "corrupt":
@@ -288,8 +321,10 @@ def test_unavailable_metadata_returns_none_and_closes_connection(metadata, tmp_p
             else:
                 con.execute("CREATE TABLE metadata (key TEXT, value TEXT)")
                 if metadata != "missing-key":
-                    con.execute("INSERT INTO metadata VALUES ('git_head_sha', ?)",
-                                ("" if metadata == "empty" else None,))
+                    con.execute(
+                        "INSERT INTO metadata VALUES ('git_head_sha', ?)",
+                        ("" if metadata == "empty" else None,),
+                    )
             con.commit()
     opened = []
 

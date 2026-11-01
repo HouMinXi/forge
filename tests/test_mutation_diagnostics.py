@@ -50,9 +50,7 @@ def test_process_failure_keeps_both_stream_tails(tmp_path, phase, stdout, stderr
         patch("code_forge.mutation.run_owned_command", side_effect=command),
     ):
         evidence = {}
-        findings, errors = run_mutation(
-            ["source.py"], ["pytest"], cwd=tmp_path, _evidence=evidence
-        )
+        findings, errors = run_mutation(["source.py"], ["pytest"], cwd=tmp_path, _evidence=evidence)
     assert len(findings) == 1
     assert findings[0].id == "MUTATION_ERROR"
     assert findings[0].disposition == Disposition.CONFIRMED
@@ -105,9 +103,7 @@ def test_owned_preflight_refusal_has_no_executed_authority(tmp_path):
         patch("code_forge.mutation._run_baseline_guard") as baseline,
         patch("code_forge.mutation.run_owned_command") as command,
     ):
-        findings, infra = run_mutation(
-            ["source.py"], ["pytest"], cwd=tmp_path, _evidence=evidence
-        )
+        findings, infra = run_mutation(["source.py"], ["pytest"], cwd=tmp_path, _evidence=evidence)
     baseline.assert_not_called()
     command.assert_not_called()
     assert len(findings) == 1
@@ -196,9 +192,7 @@ def test_parsed_survivor_retains_executed_authority(tmp_path):
         patch("code_forge.mutation._resolve_mutmut_invocation", return_value=["mutmut"]),
         patch("code_forge.mutation.run_owned_command", side_effect=command),
     ):
-        findings, infra = run_mutation(
-            ["source.py"], ["pytest"], cwd=tmp_path, _evidence=evidence
-        )
+        findings, infra = run_mutation(["source.py"], ["pytest"], cwd=tmp_path, _evidence=evidence)
     assert infra == [] and len(findings) == 1
     finding = findings[0]
     assert finding.id == "mutant-source.x_example__mutmut_1"

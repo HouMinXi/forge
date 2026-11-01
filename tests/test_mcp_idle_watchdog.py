@@ -29,8 +29,15 @@ async def _job(tmp_path, monkeypatch, *, step, count, tail, **start):
     log = tmp_path / "stderr.log"
     handle = open(log, "wb")  # noqa: SIM115 - the child owns it
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", _CHILD, str(step), str(count), str(tail),
-        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=handle,
+        sys.executable,
+        "-c",
+        _CHILD,
+        str(step),
+        str(count),
+        str(tail),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=handle,
     )
     handle.close()
     task = asyncio.create_task(proc.communicate())
@@ -63,7 +70,13 @@ async def test_silent_job_is_killed_after_the_idle_window(tmp_path, monkeypatch)
 @pytest.mark.asyncio
 async def test_explicit_total_cap_still_applies_while_progressing(tmp_path, monkeypatch):
     job, proc = await _job(
-        tmp_path, monkeypatch, step=0.1, count=100, tail=0, idle_timeout_s=5, max_lifetime_s=1.0,
+        tmp_path,
+        monkeypatch,
+        step=0.1,
+        count=100,
+        tail=0,
+        idle_timeout_s=5,
+        max_lifetime_s=1.0,
     )
     assert job["status"] == "failed"
     assert job["result"]["stderr"].startswith("job exceeded 1s cap")
@@ -94,8 +107,13 @@ async def test_passing_three_run_baseline_guard_is_not_killed(tmp_path, monkeypa
     log = tmp_path / "stderr.log"
     handle = open(log, "wb")  # noqa: SIM115 - the child owns it
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", _GUARD_CHILD, src,
-        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=handle,
+        sys.executable,
+        "-c",
+        _GUARD_CHILD,
+        src,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=handle,
     )
     handle.close()
     task = asyncio.create_task(proc.communicate())

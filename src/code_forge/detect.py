@@ -274,7 +274,7 @@ def _scan_path_for_tools(
     which_fn: Callable[[str], Optional[str]],
     detected: list[str],
     missing: list[str],
-    registry: dict[str, dict] = None,
+    registry: dict[str, dict] | None = None,
 ) -> None:
     """Scan PATH for all entries in the given registry.
 
@@ -461,7 +461,7 @@ def detect_toolchain(
                 primary_lang = lang
 
     # De-duplicate: a tool must not be in both lists
-    for name in list(detected):
+    for name in detected:
         if name in missing:
             missing.remove(name)
 

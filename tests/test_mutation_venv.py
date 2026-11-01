@@ -900,14 +900,18 @@ class TestMutationSkipIncludeGlobs:
         with patch("code_forge.mutation._run_baseline_guard") as mock_guard:
             mock_guard.return_value = ("skip", [], ["baseline stub"])
             findings, _infra = run_mutation(
-                diff_files=["lib/select.py"], baseline_cmd=["pytest", "tests/"], cwd=tmp_path,
+                diff_files=["lib/select.py"],
+                baseline_cmd=["pytest", "tests/"],
+                cwd=tmp_path,
             )
         assert not any("tests-only" in f.description for f in findings)
 
     def test_run_mutation_honors_explicit_trusted_skip_globs(self, tmp_path):
         """Callers pass globs from their trusted config explicitly."""
         findings, _infra = run_mutation(
-            diff_files=["lib/select.py"], baseline_cmd=["pytest", "tests/"], cwd=tmp_path,
+            diff_files=["lib/select.py"],
+            baseline_cmd=["pytest", "tests/"],
+            cwd=tmp_path,
             mutation_skip_globs=["lib/**"],
         )
         assert len(findings) == 1
