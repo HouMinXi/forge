@@ -64,7 +64,7 @@ def test_open_unverified_product_cannot_attest_convergence(tmp_path, hardened, d
     _receipts(tmp_path, disposition)
     result = _verify(tmp_path, hardened=hardened)
     assert result.passed is False
-    assert result.reason == "unresolved unverified product finding c1p1 -- convergence not established"
+    assert result.reason == f"{_INFRA_UNAVAILABLE_LABEL} c1p1 -- convergence not established"
     assert result.checks_run == 8
     assert result.checks_passed == (6 if hardened else 7)
 
@@ -131,6 +131,25 @@ def test_evidence_only_option_cannot_attest_multiple_cycles(tmp_path):
     assert result.reason == "evidence-only attestation requires one cycle"
 
 
+# INFRA and UNTRUSTED receipts both carry authority infra-unavailable; the
+# reason names both and claims neither a product defect nor trusted infra.
+_INFRA_UNAVAILABLE_LABEL = (
+    "unresolved finding without verified evidence (an infrastructure failure, "
+    "or a product candidate in untrusted reviewer output)"
+)
+_MALFORMED_LABEL = "unresolved finding with a malformed basis"
+_UNRECOGNIZED_LABEL = "unresolved finding with an unrecognized basis authority"
+
+
+def _expected_label(basis):
+    authority = basis.get("authority") if isinstance(basis, dict) else None
+    if not isinstance(authority, str) or not authority.strip():
+        return _MALFORMED_LABEL
+    if authority.strip().lower() == "infra-unavailable":
+        return _INFRA_UNAVAILABLE_LABEL
+    return _UNRECOGNIZED_LABEL
+
+
 _MISSING = object()
 _UNVERIFIED_BASES = [
     None,
@@ -180,7 +199,7 @@ def _edit_finding(paths, *, basis=_MISSING, disposition="UNCERTAIN", incomplete=
     return original
 
 
-def _assert_unresolved(result, snapshot, *, incomplete, hardened):
+def _assert_unresolved(result, snapshot, *, incomplete, hardened, label):
     assert not result.passed
     assert result.failure_kind is None
     assert result.checks_run == 8
@@ -192,7 +211,8 @@ def _assert_unresolved(result, snapshot, *, incomplete, hardened):
         (1, 2, "completed"),
         (1, 3, "error" if incomplete else "completed"),
     )
-    assert "unresolved unverified product finding c1p1" in result.reason
+    assert result.reason.endswith(f"{label} c1p1 -- convergence not established")
+    assert "product finding" not in result.reason
     if incomplete:
         assert result.reason.startswith("pass did not complete: c1p3 status=error;")
 
@@ -205,7 +225,9 @@ def test_present_unverified_basis_is_unresolved(tmp_path, hardened, incomplete, 
     snapshot = _edit_finding(paths, basis=basis, incomplete=incomplete)
     before = [path.read_bytes() for path in paths]
     result = _verify(tmp_path, hardened=hardened, require_convergence=not incomplete)
-    _assert_unresolved(result, snapshot, incomplete=incomplete, hardened=hardened)
+    _assert_unresolved(
+        result, snapshot, incomplete=incomplete, hardened=hardened, label=_expected_label(basis)
+    )
     assert [path.read_bytes() for path in paths] == before
 
 
@@ -235,7 +257,9 @@ def test_every_open_disposition_uses_basis_validation(tmp_path, hardened, incomp
         paths, basis={"authority": []}, disposition=disposition, incomplete=incomplete
     )
     result = _verify(tmp_path, hardened=hardened, require_convergence=not incomplete)
-    _assert_unresolved(result, snapshot, incomplete=incomplete, hardened=hardened)
+    _assert_unresolved(
+        result, snapshot, incomplete=incomplete, hardened=hardened, label=_MALFORMED_LABEL
+    )
 
 
 @pytest.mark.parametrize("incomplete", [False, True])
@@ -334,4 +358,4 @@ def test_earned_cycle_capture_inherits_basis_validation(tmp_path, basis):
         tmp_path, "hash", parse_diff_files(DIFF), cycle=1, diff_text=DIFF
     )
     assert proof is None
-    _assert_unresolved(result, snapshot, incomplete=False, hardened=True)
+    _assert_unresolved(result, snapshot, incomplete=False, hardened=True, label=_expected_label(basis))

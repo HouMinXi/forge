@@ -585,7 +585,9 @@ def test_independent_unresolved_completed_role_wins_before_incomplete(review_wor
         root, SOURCE_HASH, verify.parse_diff_files(DIFF), cycle=1, diff_text=DIFF
     )
     assert proof is None and not result.passed
-    assert result.failure_kind is None and "unresolved unverified product" in result.reason
+    assert result.failure_kind is None
+    assert "unresolved finding without verified evidence (an infrastructure failure" in result.reason
+    assert "product finding" not in result.reason
 
 
 @pytest.mark.parametrize("order", ["capacity-first", "generic-first", "all-capacity"])
