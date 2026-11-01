@@ -61,8 +61,12 @@ def _kernel_identity(pid):
         fields = Path(f"/proc/{pid}/stat").read_bytes().rsplit(b") ", 1)[1].split()
     except (FileNotFoundError, ProcessLookupError):
         return None
-    return {"pid": pid, "parent": int(fields[1]), "start_ticks": int(fields[19]),
-            "state": fields[0].decode("ascii")}
+    return {
+        "pid": pid,
+        "parent": int(fields[1]),
+        "start_ticks": int(fields[19]),
+        "state": fields[0].decode("ascii"),
+    }
 
 
 def _rescue_kernel_identity(record):
@@ -173,8 +177,10 @@ def test_opaque_lifecycle_failure_cannot_skip_other_rescue(tmp_path, monkeypatch
             for _ in range(3):
                 child = launch([sys.executable, "-c", "import time; time.sleep(10)"])
                 records.append(_kernel_identity(child.pid))
-            marker.write_text(json.dumps(dict(zip(("child", "driver", "owner"), records, strict=True))),
-                              encoding="utf-8")
+            marker.write_text(
+                json.dumps(dict(zip(("child", "driver", "owner"), records, strict=True))),
+                encoding="utf-8",
+            )
         result = subprocess.CompletedProcess([], 0)
         result.ownership = {"cleanup_complete": True, "owned": []}
         return result
@@ -189,7 +195,7 @@ def test_opaque_lifecycle_failure_cannot_skip_other_rescue(tmp_path, monkeypatch
         with monkeypatch.context() as patch:
             patch.setattr(subprocess, "Popen", launch)
             patch.setattr(process, "run_owned_command", completed)
-            patch.setitem(globals(), "_wait_json", lambda path: real_wait_json(path, timeout=.05))
+            patch.setitem(globals(), "_wait_json", lambda path: real_wait_json(path, timeout=0.05))
             patch.setitem(globals(), "_rescue_kernel_identity", rescue)
             with pytest.raises(AssertionError if failure == "marker" else RuntimeError):
                 test_opaque_descendant_is_cleaned_and_unrelated_child_is_untouched(tmp_path, "normal")
@@ -1128,10 +1134,20 @@ def test_owner_report_and_wrapper_cancellation_are_fail_closed(monkeypatch, case
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
 @pytest.mark.parametrize("secondary_type", [KeyboardInterrupt, SystemExit])
 @pytest.mark.parametrize("transport", [False, True])
-@pytest.mark.parametrize("site", ["note-format", "metadata-call", "note-call", "note-lookup",
-                                  "metadata-attribute", "secondary-report"])
-def test_owner_diagnostic_interruption_keeps_first_cancellation(monkeypatch, exception, secondary_type,
-                                                              transport, site):
+@pytest.mark.parametrize(
+    "site",
+    [
+        "note-format",
+        "metadata-call",
+        "note-call",
+        "note-lookup",
+        "metadata-attribute",
+        "secondary-report",
+    ],
+)
+def test_owner_diagnostic_interruption_keeps_first_cancellation(
+    monkeypatch, exception, secondary_type, transport, site
+):
     secondary = secondary_type("SECOND_CANCEL")
     fired = False
 
@@ -1173,7 +1189,11 @@ def test_owner_diagnostic_interruption_keeps_first_cancellation(monkeypatch, exc
     binder = process._bind_cancellation_evidence
 
     def bind(error, **kwargs):
-        if site == "metadata-call" and "cleanup_complete" in kwargs and "cleanup_evidence_error" not in kwargs:
+        if (
+            site == "metadata-call"
+            and "cleanup_complete" in kwargs
+            and "cleanup_evidence_error" not in kwargs
+        ):
             interrupt()
         if site == "note-call" and "note" in kwargs:
             interrupt()
@@ -1184,12 +1204,19 @@ def test_owner_diagnostic_interruption_keeps_first_cancellation(monkeypatch, exc
     target = None
     if site == "note-lookup":
         lines, start = inspect.getsourcelines(process.run_owned_command)
-        target = start + next(i for i, line in enumerate(lines)
-                              if '_bind_cancellation_evidence(cancellation, note=' in line)
+        target = start + next(
+            i
+            for i, line in enumerate(lines)
+            if "_bind_cancellation_evidence(cancellation, note=" in line
+        )
 
     def trace(frame, event, _arg):
-        if (site == "note-lookup" and event == "line" and
-                frame.f_code is process.run_owned_command.__code__ and frame.f_lineno == target):
+        if (
+            site == "note-lookup"
+            and event == "line"
+            and frame.f_code is process.run_owned_command.__code__
+            and frame.f_lineno == target
+        ):
             interrupt()
         return trace
 
@@ -1208,7 +1235,9 @@ def test_owner_diagnostic_interruption_keeps_first_cancellation(monkeypatch, exc
     assert cancellation.cleanup_error is failure and cancellation.__cause__ is failure
     if site != "secondary-report":
         assert cancellation.cleanup_evidence_error is secondary
-    assert calls == (["communicate", "signal", "communicate"] if transport else ["communicate", "signal"])
+    assert calls == (
+        ["communicate", "signal", "communicate"] if transport else ["communicate", "signal"]
+    )
 
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
@@ -1249,7 +1278,9 @@ def test_owner_success_proof_call_interruption_preserves_first(monkeypatch, exce
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
 @pytest.mark.parametrize("secondary_type", [KeyboardInterrupt, SystemExit])
-def test_owner_first_report_cancellation_survives_secondary_report_failure(monkeypatch, exception, secondary_type):
+def test_owner_first_report_cancellation_survives_secondary_report_failure(
+    monkeypatch, exception, secondary_type
+):
     cancellation = exception("FIRST_CANCEL_AT_REPORT")
     secondary = secondary_type("SECOND_CANCEL_AT_BINDING")
     loads = process.json.loads
@@ -1791,10 +1822,19 @@ def _einval_discover(monkeypatch, recheck_state, recheck_ticks=100):
     tree = process._OwnedTree()
     exiting = process._Identity(999, tree.owner.pid, 100, "S")
     alive = process._Identity(998, tree.owner.pid, 200, "S")
-    reads = {999: [exiting, None if recheck_state is None else process._Identity(999, tree.owner.pid, recheck_ticks, recheck_state)],
-             998: [alive, alive]}
+    reads = {
+        999: [
+            exiting,
+            None
+            if recheck_state is None
+            else process._Identity(999, tree.owner.pid, recheck_ticks, recheck_state),
+        ],
+        998: [alive, alive],
+    }
     monkeypatch.setattr(process, "_children", lambda item: [999, 998] if item == tree.owner else [])
-    monkeypatch.setattr(process, "_identity", lambda pid: reads[pid].pop(0) if len(reads[pid]) > 1 else reads[pid][0])
+    monkeypatch.setattr(
+        process, "_identity", lambda pid: reads[pid].pop(0) if len(reads[pid]) > 1 else reads[pid][0]
+    )
 
     def pidfd_open(pid):
         if pid == 999:
@@ -1872,8 +1912,17 @@ def _slow_owner(monkeypatch, report):
 
 
 def test_late_owner_timeout_report_stays_a_baseline_timeout(monkeypatch):
-    owner = _slow_owner(monkeypatch, {"cleanup_complete": True, "timed_out": True, "cancelled": False,
-                                      "owned": [], "stdout": "", "stderr": ""})
+    owner = _slow_owner(
+        monkeypatch,
+        {
+            "cleanup_complete": True,
+            "timed_out": True,
+            "cancelled": False,
+            "owned": [],
+            "stdout": "",
+            "stderr": "",
+        },
+    )
     with pytest.raises(subprocess.TimeoutExpired) as caught:
         process.run_owned_command(["pytest"], timeout=900)
     assert not isinstance(caught.value, process.MutationProcessError)
@@ -1883,23 +1932,50 @@ def test_late_owner_timeout_report_stays_a_baseline_timeout(monkeypatch):
 
 
 def test_late_owner_timeout_with_incomplete_cleanup_is_not_masked(monkeypatch):
-    _slow_owner(monkeypatch, {"cleanup_complete": False, "timed_out": True, "cancelled": False,
-                              "owned": [{"pid": 9, "start_ticks": 1, "remaining": True}],
-                              "stdout": "", "stderr": ""})
+    _slow_owner(
+        monkeypatch,
+        {
+            "cleanup_complete": False,
+            "timed_out": True,
+            "cancelled": False,
+            "owned": [{"pid": 9, "start_ticks": 1, "remaining": True}],
+            "stdout": "",
+            "stderr": "",
+        },
+    )
     with pytest.raises(process.MutationProcessError, match="did not finish cleanup"):
         process.run_owned_command(["pytest"], timeout=900)
 
 
 def test_late_owner_without_timeout_report_is_still_a_communication_failure(monkeypatch):
-    _slow_owner(monkeypatch, {"cleanup_complete": True, "timed_out": False, "cancelled": True,
-                              "owned": [], "returncode": 0, "stdout": "", "stderr": ""})
+    _slow_owner(
+        monkeypatch,
+        {
+            "cleanup_complete": True,
+            "timed_out": False,
+            "cancelled": True,
+            "owned": [],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "",
+        },
+    )
     with pytest.raises(process.MutationProcessError, match="communication failed"):
         process.run_owned_command(["pytest"], timeout=900)
 
 
 def test_outer_deadline_covers_owner_cleanup_and_report(monkeypatch):
-    owner = _slow_owner(monkeypatch, {"cleanup_complete": True, "timed_out": True, "cancelled": False,
-                                      "owned": [], "stdout": "", "stderr": ""})
+    owner = _slow_owner(
+        monkeypatch,
+        {
+            "cleanup_complete": True,
+            "timed_out": True,
+            "cancelled": False,
+            "owned": [],
+            "stdout": "",
+            "stderr": "",
+        },
+    )
     with pytest.raises(subprocess.TimeoutExpired):
         process.run_owned_command(["pytest"], timeout=900)
     # Both cleanup() calls share one (tree-scaled, capped) cleanup window, but each poll can
@@ -1980,8 +2056,17 @@ def test_outer_waits_cover_the_largest_cleanup_budget(monkeypatch):
     """The real outer waits, not the cap's definition, must cover the largest
     tree-scaled budget (#162 review: the old assertion held by construction)."""
     largest = process._cleanup_budget(10**9)
-    owner = _slow_owner(monkeypatch, {"cleanup_complete": True, "timed_out": True, "cancelled": False,
-                                      "owned": [], "stdout": "", "stderr": ""})
+    owner = _slow_owner(
+        monkeypatch,
+        {
+            "cleanup_complete": True,
+            "timed_out": True,
+            "cancelled": False,
+            "owned": [],
+            "stdout": "",
+            "stderr": "",
+        },
+    )
     with pytest.raises(subprocess.TimeoutExpired):
         process.run_owned_command(["pytest"], timeout=900)
     # Timeout path: both cleanup() calls at the largest budget, plus report slack.

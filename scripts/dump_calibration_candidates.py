@@ -15,6 +15,7 @@ finding from the kept state.json files into <out>/candidates.json.
 Serial on purpose: 20 entries at ~5 min each, and the point is the
 state files, not throughput.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,12 +44,10 @@ def _backend_config(gate_path: Path, name: str) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True, type=Path)
-    ap.add_argument("--entries", required=True,
-                    help="comma-separated entry ids")
+    ap.add_argument("--entries", required=True, help="comma-separated entry ids")
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--backend", default="review-default")
-    ap.add_argument("--gate", type=Path,
-                    default=Path(".code-forge/gate.yaml"))
+    ap.add_argument("--gate", type=Path, default=Path(".code-forge/gate.yaml"))
     ap.add_argument("--depth", type=int, default=1)
     args = ap.parse_args()
 
@@ -66,12 +65,19 @@ def main() -> int:
 
     for i, name in enumerate(wanted, 1):
         t0 = time.monotonic()
-        r = replay_entry(entries[name], corpus_dir, args.backend, runs=1,
-                         backend_config=backend_config,
-                         keep_state_dir=str(args.out))
-        print("[%2d/%d] %-45s %-8s %5.0fs" % (
-            i, len(wanted), name, r.actual_verdict,
-            time.monotonic() - t0), flush=True)
+        r = replay_entry(
+            entries[name],
+            corpus_dir,
+            args.backend,
+            runs=1,
+            backend_config=backend_config,
+            keep_state_dir=str(args.out),
+        )
+        print(
+            "[%2d/%d] %-45s %-8s %5.0fs"
+            % (i, len(wanted), name, r.actual_verdict, time.monotonic() - t0),
+            flush=True,
+        )
 
     candidates = []
     for name in wanted:
@@ -82,18 +88,18 @@ def main() -> int:
         for f in json.loads(p.read_text()).get("findings", []):
             if f.get("source") != "L1" or not f.get("file"):
                 continue
-            candidates.append({
-                "entry": name,
-                "fingerprint": f["fingerprint"],
-                "file": f["file"],
-                "line_range": f["line_range"],
-                "description": f["description"],
-                "disposition": f["disposition"],
-            })
-    (args.out / "candidates.json").write_text(
-        json.dumps(candidates, indent=2) + "\n")
-    print("candidates: %d from %d entries" % (
-        len(candidates), len({c["entry"] for c in candidates})))
+            candidates.append(
+                {
+                    "entry": name,
+                    "fingerprint": f["fingerprint"],
+                    "file": f["file"],
+                    "line_range": f["line_range"],
+                    "description": f["description"],
+                    "disposition": f["disposition"],
+                }
+            )
+    (args.out / "candidates.json").write_text(json.dumps(candidates, indent=2) + "\n")
+    print("candidates: %d from %d entries" % (len(candidates), len({c["entry"] for c in candidates})))
     return 0
 
 

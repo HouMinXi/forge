@@ -45,7 +45,7 @@ def reset() -> None:
     inline outlet) imports once and runs many reviews, so each run
     calls reset() before its first event or its clocks read as hours.
     """
-    global _t0
+    global _t0  # noqa: PLW0603 -- Explicit module-level cache/timer lifecycle; reset must replace this shared value.
     with _emit_lock:
         _t0 = time.monotonic()
 
@@ -69,5 +69,5 @@ def emit(msg: str) -> None:
                 return
             sys.stderr.write("[forge] t+%.1fs %s\n" % (_elapsed(), msg))
             sys.stderr.flush()
-    except Exception:  # noqa: BLE001 -- progress output must never kill the review
+    except Exception:  # noqa: BLE001, S110 -- Best-effort progress output must never terminate a review.
         pass

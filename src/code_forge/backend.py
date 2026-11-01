@@ -857,7 +857,7 @@ def _read_cache(
             return None
         if data["ok"] and (time_fn() - data["timestamp"]) < CACHE_TTL_SECONDS:
             return ProbeResult(ok=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- Cache is optional; any read/validation failure is a cache miss.
         return None
     return None
 

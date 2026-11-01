@@ -259,15 +259,25 @@ class InvocationContext:
     purpose: str
     parent_logical_id: str | None
 
-def investigate_review(prompt: str, backend: BackendConfig, *,
-                       context: InvocationContext, snapshot: ReviewSnapshot,
-                       budget: RunBudget, recorder: AttemptRecorder) -> LLMResult: ...
-def read_source(request: ReadRequest, *, snapshot: ReviewSnapshot,
-                budget: RunBudget) -> ToolObservation: ...
-def query_calls(request: CallQuery, *, snapshot: ReviewSnapshot,
-                budget: RunBudget) -> ToolObservation: ...
-def run_recipe(request: RecipeRequest, *, snapshot: ReviewSnapshot,
-               budget: RunBudget, recorder: AttemptRecorder) -> ToolObservation: ...
+
+def investigate_review(
+    prompt: str,
+    backend: BackendConfig,
+    *,
+    context: InvocationContext,
+    snapshot: ReviewSnapshot,
+    budget: RunBudget,
+    recorder: AttemptRecorder,
+) -> LLMResult: ...
+def read_source(
+    request: ReadRequest, *, snapshot: ReviewSnapshot, budget: RunBudget
+) -> ToolObservation: ...
+def query_calls(
+    request: CallQuery, *, snapshot: ReviewSnapshot, budget: RunBudget
+) -> ToolObservation: ...
+def run_recipe(
+    request: RecipeRequest, *, snapshot: ReviewSnapshot, budget: RunBudget, recorder: AttemptRecorder
+) -> ToolObservation: ...
 ~~~
 
 [PROPOSED] No None budget/snapshot/recorder means unlimited investigation. Zero/expired remaining budget refuses before dispatch. Absent context on legacy generic calls records purpose="generic", round/pass/group=null rather than inventing role attribution; controller still supplies source/run context for all review-owned falsifier/advisory calls. No tools granted to generic calls just because recording is enabled.

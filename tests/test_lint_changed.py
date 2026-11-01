@@ -396,7 +396,7 @@ def test_main_requires_a_mode(capsys):
         lint_changed.main([])
 
     assert excinfo.value.code == 2
-    assert "one of the arguments --base --print-requirement is required" in capsys.readouterr().err
+    assert "one of the arguments --base --print-requirement --all is required" in capsys.readouterr().err
 
 
 def test_base_and_print_requirement_are_mutually_exclusive(capsys):
@@ -465,9 +465,8 @@ def _expected_workflow():
                         "run": INSTALL_RUN,
                     },
                     {
-                        "name": "Lint files changed by this pull request",
-                        "env": {"BASE_REF": "${{ github.base_ref }}"},
-                        "run": 'python scripts/lint_changed.py --base "origin/$BASE_REF"',
+                        "name": "Lint the entire repository",
+                        "run": "python scripts/lint_changed.py --all",
                     },
                 ],
             }
@@ -502,3 +501,31 @@ def test_workflow_action_pins_match_the_linux_tests_workflow():
         used = steps[name]["uses"]
         assert PINNED_ACTION.fullmatch(used), f"{used} is not pinned to a full commit SHA"
         assert used == _linux_tests_pin(action)
+
+
+def test_all_mode_checks_repository_without_git_diff(monkeypatch):
+    selected = []
+
+    def no_diff(*args, **kwargs):
+        raise AssertionError("whole-tree gate must not depend on git history")
+
+    monkeypatch.setattr(lint_changed, "changed_python_files", no_diff)
+    monkeypatch.setattr(lint_changed, "run_ruff", lambda files: selected.append(files) or 7)
+    assert lint_changed.main(["--all"]) == 7
+    assert selected == [["."]]
+
+
+@pytest.mark.parametrize("other", [["--base", "main"], ["--print-requirement"]])
+def test_all_mode_is_exclusive(other):
+    with pytest.raises(SystemExit) as exc:
+        lint_changed.main(["--all", *other])
+    assert exc.value.code == 2
+
+
+def test_all_mode_runs_both_checks_and_preserves_exclusions():
+    commands = []
+    assert lint_changed.run_ruff(["."], lambda command: commands.append(command) or 0) == 0
+    assert commands == [
+        [sys.executable, "-m", "ruff", "check", "--force-exclude", "--", "."],
+        [sys.executable, "-m", "ruff", "format", "--check", "--force-exclude", "--", "."],
+    ]

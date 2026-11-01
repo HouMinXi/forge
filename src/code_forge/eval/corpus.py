@@ -149,10 +149,10 @@ def _parse_expected_findings(raw: list[dict], entry_name: str) -> list[ExpectedF
         # same as the absent key.
         raw = []
     if not isinstance(raw, list):
-        raise ValueError("expected_findings in %r must be a list" % entry_name)
+        raise ValueError("expected_findings in %r must be a list" % entry_name)  # noqa: TRY004 -- Keep the documented ValueError validation API for invalid config/corpus data.
     for item in raw:
         if not isinstance(item, dict):
-            raise ValueError("expected_findings entry in %r is not a mapping" % entry_name)
+            raise ValueError("expected_findings entry in %r is not a mapping" % entry_name)  # noqa: TRY004 -- Keep the documented ValueError validation API for invalid config/corpus data.
         file = item.get("file")
         description = item.get("description")
         if not isinstance(file, str) or not file.strip():

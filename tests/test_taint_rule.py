@@ -45,31 +45,31 @@ f = None  # type: ignore[assignment]
 def example_env_to_subprocess():
     val = os.environ["SECRET"]
     # ruleid: forge-taint-config-to-subprocess
-    subprocess.run(val, shell=True)
+    subprocess.run(val, shell=True)  # noqa: S602 -- Intentional Semgrep source fixture; never execute this example.
 
 
 def example_yaml_to_system():
     data = yaml.safe_load(f)
     # ruleid: forge-taint-config-to-subprocess
-    os.system(data["cmd"])
+    os.system(data["cmd"])  # noqa: S605 -- Intentional Semgrep source fixture; never execute this example.
 
 
 def example_json_to_popen():
     cfg = json.load(f)
     # ruleid: forge-taint-config-to-subprocess
-    os.popen(cfg["script"])
+    os.popen(cfg["script"])  # noqa: S605 -- Intentional Semgrep source fixture; never execute this example.
 
 
 def example_getenv_to_call():
     cmd = os.getenv("CMD")
     # ruleid: forge-taint-config-to-subprocess
-    subprocess.call(cmd, shell=True)
+    subprocess.call(cmd, shell=True)  # noqa: S602 -- Intentional Semgrep source fixture; never execute this example.
 
 
 def example_env_to_urlopen():
     url = os.environ["URL"]
     # ruleid: forge-taint-config-to-network
-    urllib.request.urlopen(url)
+    urllib.request.urlopen(url)  # noqa: S310 -- Intentional Semgrep source fixture; never execute this example.
 
 
 def example_yaml_to_requests_get():
@@ -85,7 +85,7 @@ def example_hardcoded_safe():
 
 def example_literal_system():
     # ok: forge-taint-config-to-subprocess
-    os.system("echo hello")
+    os.system("echo hello")  # noqa: S605 -- Intentional Semgrep source fixture; never execute this example.
 
 
 def example_hardcoded_url():
@@ -190,7 +190,16 @@ def test_semgrep_validate(tmp_path):
     target = tmp_path / "clean.py"
     target.write_text("x = 1\n")
     result = subprocess.run(
-        ["semgrep", "scan", "--metrics=off", "--error", "--config", str(_RULES_PATH), "--quiet", str(target)],
+        [
+            "semgrep",
+            "scan",
+            "--metrics=off",
+            "--error",
+            "--config",
+            str(_RULES_PATH),
+            "--quiet",
+            str(target),
+        ],
         capture_output=True,
         text=True,
         timeout=120,

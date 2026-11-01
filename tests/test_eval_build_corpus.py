@@ -142,7 +142,7 @@ class TestSelectionIsPinned:
             {"instance_id": "r%d-%d" % (r, i), "repo": "o/r%d" % r} for r in range(5) for i in range(20)
         ]
         shuffled = list(pool)
-        random.Random(99).shuffle(shuffled)
+        random.Random(99).shuffle(shuffled)  # noqa: S311 -- Reproducible sampling/jitter, not cryptography or credential generation.
         # The dataset's iteration order is not a contract; a corpus that
         # cannot be regenerated cannot be audited.
         assert sorted(x["instance_id"] for x in select_instances(pool, cap=8)) == sorted(

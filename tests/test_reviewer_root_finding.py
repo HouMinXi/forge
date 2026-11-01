@@ -18,10 +18,7 @@ from code_forge.receipt import write_receipts
 from code_forge.verify import validate_excerpts_against_diff
 from tests.test_l1_root_finding import INVALID_ROOT_CORE, ROOT_EVIDENCE_FAULTS, _root_evidence_fault
 
-DIFF = (
-    "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
-    "@@ -1 +1 @@\n-x = 0\n+x = 1\n"
-)
+DIFF = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x = 0\n+x = 1\n"
 CORE = ("file", "line", "severity", "description")
 
 
@@ -262,7 +259,9 @@ def test_invalid_canonical_excerpt_value_wins_over_valid_alias_without_mutation(
     if nested:
         payload = {"findings": [{key: payload[key] for key in CORE} | {"code_excerpts": [excerpt]}]}
     original = copy.deepcopy(payload)
-    with pytest.raises(ValueError, match="start_line must be int" if nested else "missing required field: findings"):
+    with pytest.raises(
+        ValueError, match="start_line must be int" if nested else "missing required field: findings"
+    ):
         validate_reviewer_json(payload)
     assert payload == original
     assert "end_line" not in excerpt and "content" not in excerpt
@@ -278,10 +277,23 @@ def test_present_root_evidence_does_not_hoist_nested_excerpts():
     assert result["findings"][0]["code_excerpts"] == [{"bad": "nested"}]
 
 
-@pytest.mark.parametrize("excerpt,expected", [
-    ("x = 1", "x = 1"), ("", None), (None, None), (0, None), (False, None),
-    ([], None), ({}, None), (1, None), (True, None), (1.5, None), ([1], None), ({"native": 1}, None),
-])
+@pytest.mark.parametrize(
+    "excerpt,expected",
+    [
+        ("x = 1", "x = 1"),
+        ("", None),
+        (None, None),
+        (0, None),
+        (False, None),
+        ([], None),
+        ({}, None),
+        (1, None),
+        (True, None),
+        (1.5, None),
+        ([1], None),
+        ({"native": 1}, None),
+    ],
+)
 def test_explicit_finding_excerpt_is_preserved_without_inference(excerpt, expected):
     payload = _payload() | {"excerpt": excerpt}
     original = copy.deepcopy(payload)
@@ -317,8 +329,12 @@ def test_unknown_metadata_is_retained_without_recursive_copy_or_hooks(shape):
 
 @pytest.mark.parametrize(
     "change,valid",
-    [({}, True), ({"content": "x = 99"}, False), ({"file": "other.py"}, False),
-     ({"start_line": 100, "end_line": 100}, False)],
+    [
+        ({}, True),
+        ({"content": "x = 99"}, False),
+        ({"file": "other.py"}, False),
+        ({"start_line": 100, "end_line": 100}, False),
+    ],
 )
 def test_real_frozen_diff_checks_remain_authoritative(change, valid):
     payload = _payload()
@@ -485,8 +501,16 @@ def test_null_root_filename_refuses_before_real_receipt_writer(tmp_path, encodin
     excerpts = _collect_excerpts(explicit, pass_name="qodo")
     (tmp_path / "a.py").write_text("x = 1\n")
     with pytest.raises(ValueError, match="embedded null byte"):
-        write_receipts(tmp_path / "receipts", 0, findings, "synthetic-diff", [], tmp_path,
-                       reviewer_excerpts=excerpts, manifest="declared")
+        write_receipts(
+            tmp_path / "receipts",
+            0,
+            findings,
+            "synthetic-diff",
+            [],
+            tmp_path,
+            reviewer_excerpts=excerpts,
+            manifest="declared",
+        )
 
 
 @pytest.mark.parametrize("encoding", ["dict", "json"])
@@ -495,8 +519,15 @@ def test_native_root_filename_writes_real_receipt_anchor(tmp_path, encoding):
     raw = json.dumps(payload) if encoding == "json" else payload
     validated = validate_reviewer_json(raw)
     (tmp_path / "a.py").write_text("x = 1\n")
-    paths = write_receipts(tmp_path / "receipts", 0, _json_to_state_findings(validated, "qodo"),
-                           "synthetic-diff", [], tmp_path,
-                           reviewer_excerpts=_collect_excerpts(validated, pass_name="qodo"), manifest="declared")
+    paths = write_receipts(
+        tmp_path / "receipts",
+        0,
+        _json_to_state_findings(validated, "qodo"),
+        "synthetic-diff",
+        [],
+        tmp_path,
+        reviewer_excerpts=_collect_excerpts(validated, pass_name="qodo"),
+        manifest="declared",
+    )
     assert len(paths) == 3 and json.loads(paths[0].read_text())["anchors"][0]["text"] == "x = 1"
     assert "findings" not in payload

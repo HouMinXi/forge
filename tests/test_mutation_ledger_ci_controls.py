@@ -48,13 +48,18 @@ from code_forge.disposition import Disposition
 from code_forge.factories import build_l1_provider, build_l2_runner
 from code_forge.falsify import StubFalsifier
 from code_forge.ledger import (
-    LedgerRow, TerminalState, append_row, finding_suppression_key,
-    resolve_ledger_root, iter_rows,
+    LedgerRow,
+    TerminalState,
+    append_row,
+    finding_suppression_key,
+    resolve_ledger_root,
+    iter_rows,
 )
 from code_forge.llm_invoke import LLMResult, Usage
 from code_forge.machine import StateMachine
 from code_forge.mutation_findings import (
-    decode_mutation_survivor_details, is_mutation_survivor,
+    decode_mutation_survivor_details,
+    is_mutation_survivor,
     mutation_review_context,
 )
 from code_forge.source import compute_source_hash
@@ -63,8 +68,18 @@ from code_forge.trust import record_trust
 
 
 REVIEW_ARGV = [
-    "code-forge", "review", "--mode", "ci", "--falsification-engine", "stub",
-    "--baseline", "HEAD", "--head", "WORKING", "--allow-main", "calc.py",
+    "code-forge",
+    "review",
+    "--mode",
+    "ci",
+    "--falsification-engine",
+    "stub",
+    "--baseline",
+    "HEAD",
+    "--head",
+    "WORKING",
+    "--allow-main",
+    "calc.py",
 ]
 TIMEOUT_CODES = (36, -24, 24, 152, 255)
 SOURCE_A = b"def example(value):\n    return value + 2\n"
@@ -82,22 +97,30 @@ def _identity(number):
 
 def _git(root, *args):
     return subprocess.run(
-        ["git", *args], cwd=root, check=True, capture_output=True, text=True,
+        ["git", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
 
 
 def _review(project):
     return resolve_baseline(
-        GitRefBaseline("HEAD"), GitRefBaseline("WORKING"),
-        [Path("calc.py")], project.root,
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("WORKING"),
+        [Path("calc.py")],
+        project.root,
     )
 
 
 def _context(project, review=None):
     review = _review(project) if review is None else review
     return mutation_review_context(
-        source_root=project.root, base_sha=review.base_sha,
-        head_sha=review.head_sha, git_diff=review.git_diff,
+        source_root=project.root,
+        base_sha=review.base_sha,
+        head_sha=review.head_sha,
+        git_diff=review.git_diff,
     )
 
 
@@ -110,16 +133,16 @@ def _write_physical_measurement(project, cwd):
         f"def x_example__mutmut_{i}(value):\n    return value + {i}\n"
         for i in range(1, len(project.codes) + 1)
     ).encode("utf-8")
-    metadata = json.dumps({
-        "exit_code_by_key": {
-            _identity(i): code for i, code in enumerate(project.codes, 1)
-        },
-        "durations_by_key": {}, "estimated_durations_by_key": {},
-        "type_check_error_by_key": {},
-    }).encode("utf-8")
+    metadata = json.dumps(
+        {
+            "exit_code_by_key": {_identity(i): code for i, code in enumerate(project.codes, 1)},
+            "durations_by_key": {},
+            "estimated_durations_by_key": {},
+            "type_check_error_by_key": {},
+        }
+    ).encode("utf-8")
     transport = "".join(
-        f"    {_identity(i)}: {status}\n"
-        for i, status in enumerate(project.statuses, 1)
+        f"    {_identity(i)}: {status}\n" for i, status in enumerate(project.statuses, 1)
     ).encode("utf-8")
     mirror.write_bytes(generated)
     mirror.with_name("calc.py.meta").write_bytes(metadata)
@@ -159,21 +182,33 @@ def ci_project(tmp_path, monkeypatch):
     (root / "calc.py").write_bytes(SOURCE_BASE)
     _git(root, "init", "-q")
     _git(root, "add", "calc.py")
-    _git(root, "-c", "user.name=CI Control", "-c",
-         "user.email=ci-control@example.invalid", "commit", "-qm", "fixture base")
+    _git(
+        root,
+        "-c",
+        "user.name=CI Control",
+        "-c",
+        "user.email=ci-control@example.invalid",
+        "commit",
+        "-qm",
+        "fixture base",
+    )
     state = tmp_path / "state"
     _git(root, "worktree", "add", "--detach", str(state), "HEAD")
     gate = {
-        "test": {"command": BASELINE, "timeout_seconds": 120,
-                 "mutation_max_children": 1},
-        "backends": {"recorded-ci-control": {
-            "type": "cli", "command": "never-invoke-recorded-backend",
-        }},
+        "test": {"command": BASELINE, "timeout_seconds": 120, "mutation_max_children": 1},
+        "backends": {
+            "recorded-ci-control": {
+                "type": "cli",
+                "command": "never-invoke-recorded-backend",
+            }
+        },
     }
     for directory in (root, state):
         (directory / "calc.py").write_bytes(SOURCE_A)
         (directory / "setup.cfg").write_bytes(SETUP)
-        (directory / "requirements.txt").write_text("# Declared empty fixture environment.\n", encoding="utf-8")
+        (directory / "requirements.txt").write_text(
+            "# Declared empty fixture environment.\n", encoding="utf-8"
+        )
         config = directory / ".code-forge"
         config.mkdir()
         # JSON is valid YAML; record_trust and the real loaders see the same data.
@@ -182,19 +217,43 @@ def ci_project(tmp_path, monkeypatch):
             json.dumps({"version": 1, "exempt_patterns": ["calc.py"]}),
             encoding="utf-8",
         )
-        (config / "tools.yaml").write_text(json.dumps({"tools": {"nonmatching": {
-            "command": "never-invoke-linter", "output_format": "sarif",
-            "file_patterns": ["*.not-in-this-review"],
-        }}}), encoding="utf-8")
+        (config / "tools.yaml").write_text(
+            json.dumps(
+                {
+                    "tools": {
+                        "nonmatching": {
+                            "command": "never-invoke-linter",
+                            "output_format": "sarif",
+                            "file_patterns": ["*.not-in-this-review"],
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
         record_trust(config / "gate.yaml", gate)
     artifacts = tmp_path / "raw-evidence"
     artifacts.mkdir()
     project = SimpleNamespace(
-        root=root, state=state, artifacts=artifacts, bin_dir=bin_dir,
-        codes=(0,), statuses=("survived",), commands=[], stages=[],
-        measurements=[], transport="", launches=[], unexpected=[],
-        baseline_hook=None, results_hook=None, l0_hook=None, fault=None,
-        advisory_calls=[], git_pids=[], launch_error=None,
+        root=root,
+        state=state,
+        artifacts=artifacts,
+        bin_dir=bin_dir,
+        codes=(0,),
+        statuses=("survived",),
+        commands=[],
+        stages=[],
+        measurements=[],
+        transport="",
+        launches=[],
+        unexpected=[],
+        baseline_hook=None,
+        results_hook=None,
+        l0_hook=None,
+        fault=None,
+        advisory_calls=[],
+        git_pids=[],
+        launch_error=None,
     )
     real_popen = subprocess.Popen
 
@@ -204,15 +263,18 @@ def ci_project(tmp_path, monkeypatch):
             child = real_popen(argv, *args, **kwargs)
             project.git_pids.append(child.pid)
             return child
-        if (isinstance(values, list) and len(values) == 3
-                and values[:2] == [sys.executable, "-c"]
-                and isinstance(values[2], str) and "os.fork()" in values[2]):
+        if (
+            isinstance(values, list)
+            and len(values) == 3
+            and values[:2] == [sys.executable, "-c"]
+            and isinstance(values[2], str)
+            and "os.fork()" in values[2]
+        ):
             assert args == ()
             assert Path(kwargs["cwd"]) == project.root
             assert kwargs["close_fds"] is True
             assert kwargs["start_new_session"] is True
-            assert all(kwargs[name] == subprocess.DEVNULL
-                       for name in ("stdin", "stdout", "stderr"))
+            assert all(kwargs[name] == subprocess.DEVNULL for name in ("stdin", "stdout", "stderr"))
             ast.parse(values[2])
             project.launches.append((values, dict(kwargs)))
             if project.launch_error is not None:
@@ -260,17 +322,37 @@ def ci_project(tmp_path, monkeypatch):
     monkeypatch.setattr(mutation, "run_owned_command", command)
     monkeypatch.setattr(subprocess, "Popen", capture_popen)
     yield project
-    (artifacts / "substitutions.json").write_text(json.dumps({
-        "owned_commands": [{"argv": argv, "options": {
-            key: kwargs[key] for key in ("cwd", "timeout", "capture_output", "text", "check", "memory_limit_bytes")
-            if key in kwargs
-        }} for argv, kwargs in project.commands],
-        "stages": project.stages,
-        "captured_launch_count": len(project.launches),
-        "targeted_launch_error": str(project.launch_error) if project.launch_error else None,
-        "advisory_transport_calls": len(project.advisory_calls),
-        "unexpected_commands": project.unexpected,
-    }, default=str), encoding="utf-8")
+    (artifacts / "substitutions.json").write_text(
+        json.dumps(
+            {
+                "owned_commands": [
+                    {
+                        "argv": argv,
+                        "options": {
+                            key: kwargs[key]
+                            for key in (
+                                "cwd",
+                                "timeout",
+                                "capture_output",
+                                "text",
+                                "check",
+                                "memory_limit_bytes",
+                            )
+                            if key in kwargs
+                        },
+                    }
+                    for argv, kwargs in project.commands
+                ],
+                "stages": project.stages,
+                "captured_launch_count": len(project.launches),
+                "targeted_launch_error": str(project.launch_error) if project.launch_error else None,
+                "advisory_transport_calls": len(project.advisory_calls),
+                "unexpected_commands": project.unexpected,
+            },
+            default=str,
+        ),
+        encoding="utf-8",
+    )
     assert project.unexpected == [], "unexpected acquisition cannot be a passing control"
 
 
@@ -291,12 +373,19 @@ def _machine(project, *, runner=None, l0=None, review=None, active_l1=False):
         return ([], [])
 
     values = dict(
-        mode=Mode.CI, falsifier=StubFalsifier(), autofixer=StubAutoFixer(),
-        revert_fn=lambda _finding: None, resolved_review=review,
+        mode=Mode.CI,
+        falsifier=StubFalsifier(),
+        autofixer=StubAutoFixer(),
+        revert_fn=lambda _finding: None,
+        resolved_review=review,
         source_hash=compute_source_hash(git_diff=review.git_diff or ""),
-        baseline_spec_repr="HEAD..WORKING", cwd=project.state,
-        source_root=project.root, registry={}, l0_runner=l0 or observe_l0,
-        l1_provider=provider, coverage_l1_active=active_l1,
+        baseline_spec_repr="HEAD..WORKING",
+        cwd=project.state,
+        source_root=project.root,
+        registry={},
+        l0_runner=l0 or observe_l0,
+        l1_provider=provider,
+        coverage_l1_active=active_l1,
         coverage_exempt_patterns=["calc.py"],
     )
     if runner is not None:
@@ -309,7 +398,11 @@ def _machine(project, *, runner=None, l0=None, review=None, active_l1=False):
 def _measure(project):
     proof = {}
     findings, errors = mutation.run_mutation(
-        ["calc.py"], BASELINE, cwd=project.root, max_children=1, _evidence=proof,
+        ["calc.py"],
+        BASELINE,
+        cwd=project.root,
+        max_children=1,
+        _evidence=proof,
     )
     assert not errors
     assert proof["completed_measurement"] is True
@@ -317,9 +410,12 @@ def _measure(project):
     assert proof["metadata_sha256"] == {
         "calc.py": hashlib.sha256((artifact / "calc.py.meta").read_bytes()).hexdigest(),
     }
-    assert proof["results_sha256"] == hashlib.sha256(
-        (artifact / "results.txt").read_bytes(),
-    ).hexdigest()
+    assert (
+        proof["results_sha256"]
+        == hashlib.sha256(
+            (artifact / "results.txt").read_bytes(),
+        ).hexdigest()
+    )
     assert not (project.root / "mutants").exists()
     assert (project.root / "setup.cfg").read_bytes() == SETUP
     return findings, errors, proof
@@ -328,7 +424,10 @@ def _measure(project):
 def _payload(project):
     findings, errors, proof = _measure(project)
     return mutation._mutation_outcome(
-        findings, errors, proof, review_context=_context(project),
+        findings,
+        errors,
+        proof,
+        review_context=_context(project),
     ), findings
 
 
@@ -338,15 +437,23 @@ def _row(project, finding, terminal=TerminalState.DISPROVED):
     return LedgerRow(
         fingerprint=finding.fingerprint,
         repo_root=str(resolve_ledger_root(project.root).resolve()),
-        base_sha=review.base_sha, head_sha=review.head_sha,
-        file=finding.file, line=line, axis_claim="mutation",
-        pass_provenance="adjudicated", terminal_state=terminal,
+        base_sha=review.base_sha,
+        head_sha=review.head_sha,
+        file=finding.file,
+        line=line,
+        axis_claim="mutation",
+        pass_provenance="adjudicated",
+        terminal_state=terminal,
         evidence_class="exact synthetic-acquisition control",
         ts="2026-10-12T00:00:00Z",
         suppression_key=finding_suppression_key(
-            base_sha=review.base_sha, head_sha=review.head_sha,
-            git_diff=review.git_diff, file=finding.file, line=line,
-            source=finding.source, description=finding.description,
+            base_sha=review.base_sha,
+            head_sha=review.head_sha,
+            git_diff=review.git_diff,
+            file=finding.file,
+            line=line,
+            source=finding.source,
+            description=finding.description,
         ),
     )
 
@@ -405,13 +512,16 @@ def _outside_ci_config(project, monkeypatch):
     the fixture gate through FORGE_TEST_CONFIG_ROOT outside the checkout."""
     outside = project.root.parent / (project.root.name + "-ci-config")
     (outside / ".code-forge").mkdir(parents=True, exist_ok=True)
-    (outside / ".code-forge/gate.yaml").write_bytes((project.root / ".code-forge/gate.yaml").read_bytes())
+    (outside / ".code-forge/gate.yaml").write_bytes(
+        (project.root / ".code-forge/gate.yaml").read_bytes()
+    )
     monkeypatch.setenv("FORGE_TEST_CONFIG_ROOT", str(outside))
     return outside
 
 
 def _cli(project, monkeypatch, capsys):
     _discover_mutmut(project)
+
     # Advisory model transport only. Runtime parsing and reporting remain real.
     def advisory_transport(prompt, **kwargs):
         assert kwargs["backend"].name == "recorded-ci-control"
@@ -483,9 +593,11 @@ def test_ci_fresh_survivor_excludes_prior_disposition_o4(ci_project, later, prom
         machine._state.round_history[-1]["dispositions"][prior.fingerprint] = "UNCERTAIN"
     fresh = []
     if later == "unproved":
+
         def unproved(*_args, **_kwargs):
             fresh.extend(deepcopy(findings))
             return fresh, []
+
         machine.l2_runner = unproved
     elif later == "changed-key":
         append_row(p.root, replace(row, suppression_key="changed-key"))
@@ -531,9 +643,11 @@ def test_ci_first_observation_latches_before_l0_restoration_o1(ci_project, endpo
     elif endpoint == "incoherent":
         source.write_bytes(SOURCE_B)
     observed = []
+
     def restore():
         observed.append(None if not source.exists() else source.read_bytes())
         source.write_bytes(SOURCE_A)
+
     p.l0_hook = restore
     expected = Verdict.PASS if endpoint == "unchanged" else Verdict.FAIL
     assert machine.run() is expected
@@ -554,9 +668,11 @@ def test_ci_pre_l2_and_post_native_observations_are_independent(ci_project, drif
     observations = []
     if drift == "pre-l2-restored":
         p.l0_hook = lambda: source.write_bytes(SOURCE_B)
+
         def restore():
             observations.append(source.read_bytes())
             source.write_bytes(SOURCE_A)
+
         p.baseline_hook = restore
     elif drift == "post-native":
         p.results_hook = lambda: source.write_bytes(SOURCE_B)
@@ -573,13 +689,19 @@ def test_ci_pre_l2_and_post_native_observations_are_independent(ci_project, drif
 def test_ci_does_not_autofix_observed_source(ci_project):
     p = ci_project
     calls = []
+
     class ForbiddenFixer:
         def fix(self, finding, mode_hint):
             calls.append((finding.id, mode_hint))
             raise AssertionError("CI must never autofix")
+
     ordinary = StateFinding(
-        id="ordinary", fingerprint="ordinary", source="L0",
-        disposition=Disposition.CONFIRMED, file="calc.py", line_range=[2, 2],
+        id="ordinary",
+        fingerprint="ordinary",
+        source="L0",
+        disposition=Disposition.CONFIRMED,
+        file="calc.py",
+        line_range=[2, 2],
         description="ordinary in-diff finding",
     )
     machine = _machine(p, l0=lambda *_args: ([deepcopy(ordinary)], []))
@@ -611,11 +733,23 @@ def test_ci_bound_carrier_consumed_once_counts_original_and_persists(ci_project,
     assert "original survivors" not in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("damage", [
-    "missing-survivor", "extra-survivor", "wrong-context", "missing-inventory",
-    "unknown-status", "pending-status", "timeout-as-survivor", "duplicate-fingerprint",
-    "boolean-version", "boolean-completion", "missing-version", "legacy-location-only",
-])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing-survivor",
+        "extra-survivor",
+        "wrong-context",
+        "missing-inventory",
+        "unknown-status",
+        "pending-status",
+        "timeout-as-survivor",
+        "duplicate-fingerprint",
+        "boolean-version",
+        "boolean-completion",
+        "missing-version",
+        "legacy-location-only",
+    ],
+)
 def test_ci_current_carrier_refuses_incomplete_or_unbound_authority(ci_project, damage):
     p = ci_project
     p.codes, p.statuses = (0, 0), ("survived", "survived")
@@ -669,16 +803,30 @@ def test_ci_real_receipt_gate_precedes_result_consumption(ci_project, monkeypatc
     result = _put_result(p, payload)
     original = result.read_bytes()
     calls = []
+
     def transport(prompt, **kwargs):
         calls.append(prompt)
-        return LLMResult({"findings": [], "code_excerpts": [{
-            "file": "calc.py", "start_line": 1, "end_line": 2,
-            "content": SOURCE_A.decode(),
-        }]}, Usage(), 0.0)
+        return LLMResult(
+            {
+                "findings": [],
+                "code_excerpts": [
+                    {
+                        "file": "calc.py",
+                        "start_line": 1,
+                        "end_line": 2,
+                        "content": SOURCE_A.decode(),
+                    }
+                ],
+            },
+            Usage(),
+            0.0,
+        )
+
     monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", transport)
     machine = _machine(p, active_l1=True)
     sabotaged = []
     if damage != "none":
+
         def remove_receipt(round_index):
             receipt = p.state / f".code-forge/receipts/receipt-c{round_index + 1}p3.json"
             assert receipt.exists()
@@ -689,6 +837,7 @@ def test_ci_real_receipt_gate_precedes_result_consumption(ci_project, monkeypatc
                 data["pass_status"] = "incomplete"
                 receipt.write_text(json.dumps(data), encoding="utf-8")
             sabotaged.append(receipt)
+
         machine.post_round_hook = remove_receipt
     expected = Verdict.PASS if damage == "none" else Verdict.FAIL
     assert machine.run() is expected
@@ -701,9 +850,17 @@ def test_ci_real_receipt_gate_precedes_result_consumption(ci_project, monkeypatc
         assert any("receipt" in error for error in saved.infra_errors)
 
 
-@pytest.mark.parametrize("failure", [
-    "error", "incomplete", "cleanup", "deadline", "interruption", "non-done",
-])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "error",
+        "incomplete",
+        "cleanup",
+        "deadline",
+        "interruption",
+        "non-done",
+    ],
+)
 def test_ci_versioned_bound_failure_never_passes_without_survivors(ci_project, failure):
     p = ci_project
     p.codes, p.statuses = (36, 1), ("timeout", "killed")
@@ -715,8 +872,12 @@ def test_ci_versioned_bound_failure_never_passes_without_survivors(ci_project, f
     elif failure == "cleanup":
         payload.update(cleanup_complete=False, cleanup_error="RECORDED_CLEANUP_FAILURE")
     elif failure == "deadline":
-        payload.update(status="error", completed_measurement=False,
-                       message="RECORDED_OVERALL_DEADLINE", process_failure={"timeout": True})
+        payload.update(
+            status="error",
+            completed_measurement=False,
+            message="RECORDED_OVERALL_DEADLINE",
+            process_failure={"timeout": True},
+        )
     elif failure == "interruption":
         payload.update(status="error", cancelled=True, cancellation_type="KeyboardInterrupt")
     else:
@@ -741,14 +902,36 @@ def test_ci_legacy_unversioned_error_keeps_compatibility_policy(ci_project):
     assert any("RECORDED_LEGACY_ERROR" in error for error in _saved(p, Verdict.PASS).infra_errors)
 
 
-@pytest.mark.parametrize("marker", ["live", "fresh-no-pid", "stale", "dead", "bad-pid", "malformed", "missing-status", "missing-infra", "bad-infra"])
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "live",
+        "fresh-no-pid",
+        "stale",
+        "dead",
+        "bad-pid",
+        "malformed",
+        "missing-status",
+        "missing-infra",
+        "bad-infra",
+    ],
+)
 def test_ci_versioned_running_marker_is_pending_or_refused(ci_project, marker):
     p = ci_project
-    data = {"status": "running", "pid": os.getpid(), "started_at": time.time(),
-            "survivor_details_version": 1, "review_context": _context(p),
-            "infra_errors": [], "baseline_passed": False,
-            "completed_measurement": False, "survivors": [], "survivor_details": [],
-            "inventory": {}, "skipped": []}
+    data = {
+        "status": "running",
+        "pid": os.getpid(),
+        "started_at": time.time(),
+        "survivor_details_version": 1,
+        "review_context": _context(p),
+        "infra_errors": [],
+        "baseline_passed": False,
+        "completed_measurement": False,
+        "survivors": [],
+        "survivor_details": [],
+        "inventory": {},
+        "skipped": [],
+    }
     if marker == "fresh-no-pid":
         data["pid"] = None
     elif marker == "missing-status":
@@ -795,7 +978,12 @@ def test_ci_direct_native_incomplete_measurement_latches_nonpass(ci_project, fau
 @pytest.mark.parametrize("inventory", ["timeout-only", "mixed-unruled", "mixed-ruled"])
 @pytest.mark.parametrize("entry", ["direct-ci", "result-ci", "review-cli"])
 def test_completed_timeout_visibility_at_real_ci_entrypoints(
-    ci_project, monkeypatch, capsys, code, inventory, entry,
+    ci_project,
+    monkeypatch,
+    capsys,
+    code,
+    inventory,
+    entry,
 ):
     p = ci_project
     if inventory == "timeout-only":
@@ -848,7 +1036,10 @@ def test_completed_timeout_visibility_at_real_ci_entrypoints(
 
 @pytest.mark.parametrize("entry", ["result-ci", "review-cli"])
 def test_timeout_rendering_escapes_and_bounds_without_identity_collision(
-    ci_project, monkeypatch, capsys, entry,
+    ci_project,
+    monkeypatch,
+    capsys,
+    entry,
 ):
     p = ci_project
     p.codes, p.statuses = (36,), ("timeout",)
@@ -864,7 +1055,9 @@ def test_timeout_rendering_escapes_and_bounds_without_identity_collision(
     original = deepcopy(payload)
     assert decode_mutation_survivor_details(payload, review_context=_context(p)) == []
     decoded = decode_mutation_survivor_details(
-        payload, review_context=_context(p), include_timeout_diagnostics=True,
+        payload,
+        review_context=_context(p),
+        include_timeout_diagnostics=True,
     )
     assert decoded is not None
     _assert_timeouts(decoded, identities)
@@ -919,7 +1112,8 @@ def test_review_cli_parity_uses_real_review_dispatch(ci_project, monkeypatch, ca
 
 
 @pytest.mark.parametrize(
-    "direct", ["no-op", "unproved", "timeout", "killed", "failed-native", "failed-launch"],
+    "direct",
+    ["no-op", "unproved", "timeout", "killed", "failed-native", "failed-launch"],
 )
 def test_ci_launch_capture_binds_context_without_executing_payload(ci_project, capsys, direct):
     """Starting a bound measurement does not supply its missing completion proof."""
@@ -930,9 +1124,11 @@ def test_ci_launch_capture_binds_context_without_executing_payload(ci_project, c
     if direct == "unproved":
         acquired, errors, proof = _measure(p)
         assert not errors and proof["completed_measurement"] is True
+
         def unproved(*args, **kwargs):
             unproved_calls.append((args, kwargs))
             return deepcopy(acquired), []
+
         runner = unproved
     elif direct in {"timeout", "killed", "failed-native"}:
         runner = mutation.run_mutation
@@ -946,9 +1142,13 @@ def test_ci_launch_capture_binds_context_without_executing_payload(ci_project, c
     machine = _machine(p, runner=runner)
     before = len(p.commands)
     capsys.readouterr()
-    expected = (Verdict.PASS if direct in {"timeout", "killed"} else
-                Verdict.FAIL if direct in {"failed-native", "failed-launch"} else
-                Verdict.PENDING)
+    expected = (
+        Verdict.PASS
+        if direct in {"timeout", "killed"}
+        else Verdict.FAIL
+        if direct in {"failed-native", "failed-launch"}
+        else Verdict.PENDING
+    )
     assert machine.run() is expected
     text = capsys.readouterr().err
     saved = _saved(p, expected)
@@ -987,8 +1187,11 @@ def test_ci_launch_capture_binds_context_without_executing_payload(ci_project, c
     if direct == "timeout":
         assert text.count(_timeout_text(_identity(1))) == 1
     tree = ast.parse(argv[2])
-    constants = [node.value for node in ast.walk(tree)
-                 if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+    constants = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
     assert str(p.root) in constants
     assert str(result) in constants
     assert "review_context" in argv[2]
@@ -1019,8 +1222,13 @@ def test_ci_generic_suppression_cannot_prove_native_survivor(ci_project, guard, 
     machine = _machine(p, runner=lambda *_args, **_kwargs: ([deepcopy(item)], []))
     expected = Verdict.FAIL if native else Verdict.PASS
     assert machine.run() is expected
-    wanted = (Disposition.CONFIRMED if native else
-              Disposition.DISMISSED if guard in {"ledger", "pin"} else Disposition.STYLE)
+    wanted = (
+        Disposition.CONFIRMED
+        if native
+        else Disposition.DISMISSED
+        if guard in {"ledger", "pin"}
+        else Disposition.STYLE
+    )
     assert _one(_saved(p, expected).findings, item.id).disposition is wanted
     assert machine._mutation_measurement_eligible is False
 
@@ -1050,19 +1258,27 @@ def test_timeout_diagnostic_is_not_a_ledger_ruling_or_synthetic_clean_pass(ci_pr
     # Supplementary writer boundary: the real LOCAL terminal writer must not
     # reinterpret a persisted DISMISSED observation as a DISPROVED mutant.
     machine._write_ledger_rows()
-    assert not any(row.fingerprint.startswith("mutation-timeout:")
-                   for row in iter_rows(p.root, strict=True))
+    assert not any(
+        row.fingerprint.startswith("mutation-timeout:") for row in iter_rows(p.root, strict=True)
+    )
 
 
-@pytest.mark.parametrize("current_native", [False, True], ids=["carrier-only", "current-native-preserved"])
+@pytest.mark.parametrize(
+    "current_native", [False, True], ids=["carrier-only", "current-native-preserved"]
+)
 def test_result_ci_refuses_survivor_timeout_fingerprint_collision(ci_project, capsys, current_native):
     p = ci_project
     p.codes, p.statuses = (0, 36), ("survived", "timeout")
     payload, originals = _payload(p)
     payload["survivor_details"][0]["fingerprint"] = "mutation-timeout:" + _identity(2)
-    assert decode_mutation_survivor_details(
-        payload, review_context=_context(p), include_timeout_diagnostics=True,
-    ) is None
+    assert (
+        decode_mutation_survivor_details(
+            payload,
+            review_context=_context(p),
+            include_timeout_diagnostics=True,
+        )
+        is None
+    )
     frozen = deepcopy(payload)
     _put_result(p, payload)
     # The carrier-only refusal materializes nothing. The sibling retains a
@@ -1089,9 +1305,13 @@ def test_timeout_identity_collision_keeps_current_ordinary_blocker(ci_project, c
     p.codes, p.statuses = (36,), ("timeout",)
     payload, _ = _payload(p)
     ordinary = StateFinding(
-        id="ordinary-collision", fingerprint="mutation-timeout:" + _identity(1),
-        source="L0", disposition=Disposition.CONFIRMED,
-        file="calc.py", line_range=[2, 2], description="current ordinary blocker",
+        id="ordinary-collision",
+        fingerprint="mutation-timeout:" + _identity(1),
+        source="L0",
+        disposition=Disposition.CONFIRMED,
+        file="calc.py",
+        line_range=[2, 2],
+        description="current ordinary blocker",
     )
     if entry == "result-ci":
         _put_result(p, payload)
@@ -1141,9 +1361,21 @@ def test_clean_result_cannot_override_failed_current_native_measurement(ci_proje
     assert any("invalid bound mutation measurement" in error for error in saved.infra_errors)
 
 
-@pytest.mark.parametrize("code", [None, True, 36.0, "36", 5, 33, 34, 35, 900],
-                         ids=["null", "boolean", "float", "string", "no-tests5",
-                              "no-tests33", "skipped", "suspicious", "unknown"])
+@pytest.mark.parametrize(
+    "code",
+    [None, True, 36.0, "36", 5, 33, 34, 35, 900],
+    ids=[
+        "null",
+        "boolean",
+        "float",
+        "string",
+        "no-tests5",
+        "no-tests33",
+        "skipped",
+        "suspicious",
+        "unknown",
+    ],
+)
 def test_ci_physical_nonterminal_or_noninteger_metadata_is_not_timeout_proof(ci_project, code):
     p = ci_project
     p.codes, p.statuses = (36, code), ("timeout", "not checked")
@@ -1192,7 +1424,9 @@ def test_ci_fresh_timeout_does_not_inherit_prior_promotion(ci_project):
 
 @pytest.mark.parametrize("ruled", [False, True], ids=["unruled-carrier", "exact-carrier-ruling"])
 def test_result_ci_survivor_cannot_replace_current_timeout_with_same_fingerprint(
-    ci_project, capsys, ruled,
+    ci_project,
+    capsys,
+    ruled,
 ):
     """An individually valid survivor carrier cannot overwrite a current timeout."""
     p = ci_project
@@ -1201,7 +1435,9 @@ def test_result_ci_survivor_cannot_replace_current_timeout_with_same_fingerprint
     assert payload["inventory"] == {_identity(1): "killed", _identity(2): "survived"}
     payload["survivor_details"][0]["fingerprint"] = "mutation-timeout:" + _identity(1)
     isolated = decode_mutation_survivor_details(
-        payload, review_context=_context(p), include_timeout_diagnostics=True,
+        payload,
+        review_context=_context(p),
+        include_timeout_diagnostics=True,
     )
     assert isolated is not None and len(isolated) == 1
     survivor = _one(isolated, "mutant-" + _identity(2))
@@ -1230,13 +1466,27 @@ def test_result_ci_survivor_cannot_replace_current_timeout_with_same_fingerprint
     assert not (p.root / "mutants").exists()
 
 
-@pytest.mark.parametrize("damage", [
-    "duplicate-status", "duplicate-version", "duplicate-completed",
-    "duplicate-infra", "duplicate-inventory-field", "duplicate-inventory-member",
-    "truncated", "malformed", "invalid-utf8", "deep-json",
-    "nonobject-number", "nonobject-list", "nonobject-null",
-    "missing-status-bound", "missing-status-unbound", "read-oserror",
-])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "duplicate-status",
+        "duplicate-version",
+        "duplicate-completed",
+        "duplicate-infra",
+        "duplicate-inventory-field",
+        "duplicate-inventory-member",
+        "truncated",
+        "malformed",
+        "invalid-utf8",
+        "deep-json",
+        "nonobject-number",
+        "nonobject-list",
+        "nonobject-null",
+        "missing-status-bound",
+        "missing-status-unbound",
+        "read-oserror",
+    ],
+)
 def test_ci_raw_result_read_or_parse_ambiguity_is_fail_closed(ci_project, damage):
     """Raw input must be refused before an uncertain binding can become PASS."""
     p = ci_project
@@ -1259,8 +1509,7 @@ def test_ci_raw_result_read_or_parse_ambiguity_is_fail_closed(ci_project, damage
     elif damage == "duplicate-inventory-member":
         valid_inventory = json.dumps(payload["inventory"]).encode()
         duplicate_inventory = (
-            "{" + json.dumps(_identity(1)) + ':"pending",' +
-            json.dumps(_identity(1)) + ':"killed"}'
+            "{" + json.dumps(_identity(1)) + ':"pending",' + json.dumps(_identity(1)) + ':"killed"}'
         ).encode()
         assert encoded.count(valid_inventory) == 1
         raw = encoded.replace(valid_inventory, duplicate_inventory)
@@ -1272,8 +1521,13 @@ def test_ci_raw_result_read_or_parse_ambiguity_is_fail_closed(ci_project, damage
         raw = b'\xff{"status":"done"}'
     elif damage == "deep-json":
         depth = sys.getrecursionlimit() + 128
-        raw = (b'{"status":"done","survivor_details_version":1,"metadata":' +
-               b"[" * depth + b"0" + b"]" * depth + b"}")
+        raw = (
+            b'{"status":"done","survivor_details_version":1,"metadata":'
+            + b"[" * depth
+            + b"0"
+            + b"]" * depth
+            + b"}"
+        )
         # JSON parser depth limits vary independently of Python recursion limits.
         try:
             json.loads(raw)
@@ -1304,11 +1558,15 @@ def test_ci_raw_result_read_or_parse_ambiguity_is_fail_closed(ci_project, damage
         if deep_json_decoded:
             assert "CI: invalid bound mutation survivor details" in saved.infra_errors
         else:
-            assert any(error.startswith("CI: failed to read mutation-result.json:")
-                       for error in saved.infra_errors)
+            assert any(
+                error.startswith("CI: failed to read mutation-result.json:")
+                for error in saved.infra_errors
+            )
     else:
-        assert any("mutation-result.json" in error or "bound mutation measurement" in error
-                   for error in saved.infra_errors)
+        assert any(
+            "mutation-result.json" in error or "bound mutation measurement" in error
+            for error in saved.infra_errors
+        )
     assert not any(is_mutation_survivor(finding) for finding in saved.findings)
     _assert_timeouts(saved.findings, [])
     assert not any(row.evidence_class == "clean_pass" for row in iter_rows(p.root, strict=True))
@@ -1316,7 +1574,12 @@ def test_ci_raw_result_read_or_parse_ambiguity_is_fail_closed(ci_project, damage
         assert result.is_dir()
     elif damage == "deep-json" and deep_json_decoded:
         assert not result.exists()
-    elif damage.startswith("duplicate-") or damage in {"truncated", "malformed", "invalid-utf8", "deep-json"}:
+    elif damage.startswith("duplicate-") or damage in {
+        "truncated",
+        "malformed",
+        "invalid-utf8",
+        "deep-json",
+    }:
         # Unreadable/ambiguous bytes remain available for diagnosis. Known
         # decoded nonobjects or missing-status objects may be consumed.
         assert result.read_bytes() == raw
@@ -1360,29 +1623,28 @@ def test_ci_raw_result_read_recursion_error_is_fail_closed(ci_project, monkeypat
     assert p.launches == []
 
 
-
 def test_ci_raw_explicit_legacy_error_preserves_compatibility(ci_project):
     p = ci_project
-    raw = (b'{"status":"error","message":"RECORDED_RAW_LEGACY_ERROR",'
-           b'"review_context":null}')
+    raw = b'{"status":"error","message":"RECORDED_RAW_LEGACY_ERROR","review_context":null}'
     result = p.state / ".code-forge/mutation-result.json"
     result.write_bytes(raw)
     machine = _machine(p)
     assert machine.run() is Verdict.PASS
     saved = _saved(p, Verdict.PASS)
     assert not result.exists()
-    assert any("CI: mutation error: RECORDED_RAW_LEGACY_ERROR" in error
-               for error in saved.infra_errors)
+    assert any("CI: mutation error: RECORDED_RAW_LEGACY_ERROR" in error for error in saved.infra_errors)
     assert not any("failed to read mutation-result.json" in error for error in saved.infra_errors)
     _assert_timeouts(saved.findings, [])
 
 
 def _unproved_empty_runner(calls):
     """An explicit custom acquisition has no native completion authority."""
+
     def runner(*args, **kwargs):
         calls.append((args, kwargs))
         assert "_evidence" not in kwargs
         return [], []
+
     return runner
 
 
@@ -1404,7 +1666,11 @@ def _assert_captured_running_marker(project, result):
 @pytest.mark.parametrize("direct", ["default-no-op", "unproved"])
 @pytest.mark.parametrize("launch", ["successful", "failed"])
 def test_ci_completed_bound_result_survives_redundant_launch_only_for_current_invocation(
-    ci_project, capsys, inventory, direct, launch,
+    ci_project,
+    capsys,
+    inventory,
+    direct,
+    launch,
 ):
     """Completed result proof applies now; a second invocation must earn its own."""
     p = ci_project
@@ -1494,8 +1760,12 @@ def test_ci_completed_bound_result_does_not_erase_current_failure(ci_project, ca
     if launch == "failed":
         p.launch_error = OSError("RECORDED_REDUNDANT_BOUND_LAUNCH_FAILURE")
     ordinary = StateFinding(
-        id="current-result-blocker", fingerprint="current-result-blocker", source="L0",
-        disposition=Disposition.CONFIRMED, file="calc.py", line_range=[2, 2],
+        id="current-result-blocker",
+        fingerprint="current-result-blocker",
+        source="L0",
+        disposition=Disposition.CONFIRMED,
+        file="calc.py",
+        line_range=[2, 2],
         description="current ordinary failure remains blocking",
     )
     if blocker == "failed-native":
@@ -1584,7 +1854,11 @@ def test_ci_baseline_timeout_fails_with_accurate_reason(ci_project):
     saved = _saved(p, Verdict.FAIL)
     skips = [f for f in saved.findings if f.fingerprint == "mutation-baseline-timeout"]
     assert skips and all(f.disposition is Disposition.DISMISSED for f in skips)
-    reasons = [e for e in saved.infra_errors if e.startswith("CI: mutation not measured: baseline tests timed out")]
+    reasons = [
+        e
+        for e in saved.infra_errors
+        if e.startswith("CI: mutation not measured: baseline tests timed out")
+    ]
     seconds = re.search(r"timed out after (\d+)s", skips[0].description).group(1)
     assert reasons == [f"CI: mutation not measured: baseline tests timed out after {seconds}s"]
     assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
@@ -1604,24 +1878,57 @@ def test_ci_undecodable_native_measurement_still_fails_closed(ci_project):
     assert any("invalid bound mutation measurement" in e for e in saved.infra_errors)
 
 
-def _skip(fingerprint="mutation-baseline-timeout", ident="MUTATION_SKIPPED",
-          disposition=Disposition.DISMISSED, description="run 1: baseline tests timed out after 900s"):
-    return StateFinding(id=ident, fingerprint=fingerprint, source="MUTANT",
-                        disposition=disposition, file="", line_range=[], description=description)
+def _skip(
+    fingerprint="mutation-baseline-timeout",
+    ident="MUTATION_SKIPPED",
+    disposition=Disposition.DISMISSED,
+    description="run 1: baseline tests timed out after 900s",
+):
+    return StateFinding(
+        id=ident,
+        fingerprint=fingerprint,
+        source="MUTANT",
+        disposition=disposition,
+        file="",
+        line_range=[],
+        description=description,
+    )
 
 
 _OTHER = "diff also has files for other adapters"
 _TWO = "run 2: baseline tests timed out after 900s"
 
 
-@pytest.mark.parametrize("case", [
-    "survivor", "other-skip", "extra-infra", "completed", "cleanup_error",
-    "process_failure", "cancellation_type", "publication_error", "cancelled",
-    "cleanup-incomplete", "cleanup-none", "empty", "source-changed",
-    "inventory", "inventory-not-dict", "results_sha256", "metadata_sha256",
-    "confirmed", "uncertain", "wrong-id", "infra-duplicated", "infra-reordered",
-    "two-skips-one-infra", "other-adapter-only", "other-adapter-with-infra",
-])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "survivor",
+        "other-skip",
+        "extra-infra",
+        "completed",
+        "cleanup_error",
+        "process_failure",
+        "cancellation_type",
+        "publication_error",
+        "cancelled",
+        "cleanup-incomplete",
+        "cleanup-none",
+        "empty",
+        "source-changed",
+        "inventory",
+        "inventory-not-dict",
+        "results_sha256",
+        "metadata_sha256",
+        "confirmed",
+        "uncertain",
+        "wrong-id",
+        "infra-duplicated",
+        "infra-reordered",
+        "two-skips-one-infra",
+        "other-adapter-only",
+        "other-adapter-with-infra",
+    ],
+)
 def test_baseline_timeout_exemption_is_narrow(case):
     from code_forge.machine import _is_clean_baseline_timeout_skip
 
@@ -1670,7 +1977,9 @@ def test_baseline_timeout_exemption_is_narrow(case):
         infra = infra + [_OTHER]
     else:
         evidence[case] = "x"
-    assert _is_clean_baseline_timeout_skip(findings, infra, evidence, source_unchanged=unchanged) is False
+    assert (
+        _is_clean_baseline_timeout_skip(findings, infra, evidence, source_unchanged=unchanged) is False
+    )
 
 
 def test_baseline_timeout_exemption_allows_mixed_language_note():
@@ -1679,9 +1988,15 @@ def test_baseline_timeout_exemption_allows_mixed_language_note():
     from code_forge.machine import _is_clean_baseline_timeout_skip
 
     findings = [_skip(), _skip(fingerprint="mutation-other-adapter", description=_OTHER)]
-    assert _is_clean_baseline_timeout_skip(
-        findings, [findings[0].description], {"cleanup_complete": True}, source_unchanged=True,
-    ) is True
+    assert (
+        _is_clean_baseline_timeout_skip(
+            findings,
+            [findings[0].description],
+            {"cleanup_complete": True},
+            source_unchanged=True,
+        )
+        is True
+    )
 
 
 def test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline(ci_project):
@@ -1703,13 +2018,25 @@ def test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline(ci_proj
     assert not any(e.startswith("CI: mutation not measured") for e in saved.infra_errors)
 
 
-@pytest.mark.parametrize("description,expected", [
-    ("run 1: baseline tests timed out after 900s", "CI: mutation not measured: baseline tests timed out after 900s"),
-    ("run 1: baseline tests timed out after 12.5s; stdout: x", "CI: mutation not measured: baseline tests timed out after 12.5s"),
-    ("run 1: baseline tests timed out after Nones", "CI: mutation not measured: baseline tests timed out"),
-    ("run 1: baseline tests timed out", "CI: mutation not measured: baseline tests timed out"),
-    (None, "CI: mutation not measured: baseline tests timed out"),
-])
+@pytest.mark.parametrize(
+    "description,expected",
+    [
+        (
+            "run 1: baseline tests timed out after 900s",
+            "CI: mutation not measured: baseline tests timed out after 900s",
+        ),
+        (
+            "run 1: baseline tests timed out after 12.5s; stdout: x",
+            "CI: mutation not measured: baseline tests timed out after 12.5s",
+        ),
+        (
+            "run 1: baseline tests timed out after Nones",
+            "CI: mutation not measured: baseline tests timed out",
+        ),
+        ("run 1: baseline tests timed out", "CI: mutation not measured: baseline tests timed out"),
+        (None, "CI: mutation not measured: baseline tests timed out"),
+    ],
+)
 def test_baseline_timeout_reason_text(description, expected):
     from code_forge.machine import _baseline_timeout_reason
 
@@ -1729,6 +2056,7 @@ def _injected_timeout_runner(calls):
         calls.append(baseline_timeout)
         skip = _skip(description=f"run 1: baseline tests timed out after {baseline_timeout}s")
         return [skip], [skip.description]
+
     return runner
 
 
@@ -1808,11 +2136,18 @@ def test_failed_baseline_names_the_cause_not_invalid_bound(ci_project, monkeypat
     'invalid bound mutation measurement'."""
     p = ci_project
     _failing_baseline(monkeypatch, p)
-    machine = _machine(p, runner=mutation.run_mutation) if mode is Mode.CI else _local_machine(p, runner=mutation.run_mutation)
+    machine = (
+        _machine(p, runner=mutation.run_mutation)
+        if mode is Mode.CI
+        else _local_machine(p, runner=mutation.run_mutation)
+    )
     verdict = machine.run()
     saved = load_state(p.state / ".code-forge/state.json")
     assert "baseline" in p.stages and "run" not in p.stages
-    assert any(f.fingerprint == "mutation-flaky" and f.disposition is Disposition.DISMISSED for f in saved.findings)
+    assert any(
+        f.fingerprint == "mutation-flaky" and f.disposition is Disposition.DISMISSED
+        for f in saved.findings
+    )
     assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
     reasons = [e for e in saved.infra_errors if e.startswith("CI: mutation not measured")]
     if mode is Mode.CI:
@@ -1828,7 +2163,11 @@ def test_no_adapter_diff_is_a_clean_skip_in_both_modes(ci_project, monkeypatch, 
     """#127: a diff with no registered mutation adapter (docs/config only) is
     'mutation does not apply': a clean skip, no invalid-bound error, no latch."""
     p = ci_project
-    machine = _machine(p, runner=mutation.run_mutation) if mode is Mode.CI else _local_machine(p, runner=mutation.run_mutation)
+    machine = (
+        _machine(p, runner=mutation.run_mutation)
+        if mode is Mode.CI
+        else _local_machine(p, runner=mutation.run_mutation)
+    )
     (p.root / "README.md").write_text("# notes\n", encoding="utf-8")
     monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("README.md")])
     monkeypatch.setattr(machine, "_review_diff_paths", lambda: {"README.md"})
@@ -1841,21 +2180,36 @@ def test_no_adapter_diff_is_a_clean_skip_in_both_modes(ci_project, monkeypatch, 
     assert machine._mutation_bound_failure is False
 
 
-@pytest.mark.parametrize("findings,infra,expected", [
-    ([("mutation-no-adapter", "no registered mutation adapter for this diff")], [], "not-applicable"),
-    ([("mutation-tests-only", "diff is tests-only; nothing to mutate")], [], "not-applicable"),
-    ([("mutation-no-adapter", "x")], ["x"], None),
-    ([("mutation-flaky", "run 1: baseline failed (returncode 1)")], ["run 1: baseline failed (returncode 1)"], "baseline-failed"),
-    ([("mutation-flaky", "a"), ("mutation-other-adapter", "o")], ["a"], "baseline-failed"),
-    ([("mutation-flaky", "a")], [], None),
-    ([("mutation-flaky", "a"), ("mutation-baseline-timeout", "b")], ["a", "b"], None),
-    ([("mutation-flaky", "a"), ("mutation-no-adapter", "n")], ["a"], None),
-    ([("mutation-other-adapter", "o")], [], None),
-    ([("mutation-baseline-timeout", "t")], ["t"], "baseline-timeout"),
-    ([("mutation-host-busy", "host not idle after 1800s: x")], ["host not idle after 1800s: x"], "host-busy"),
-    ([("mutation-host-busy", "h")], [], None),
-    ([("mutation-host-busy", "h"), ("mutation-flaky", "a")], ["h", "a"], None),
-])
+@pytest.mark.parametrize(
+    "findings,infra,expected",
+    [
+        (
+            [("mutation-no-adapter", "no registered mutation adapter for this diff")],
+            [],
+            "not-applicable",
+        ),
+        ([("mutation-tests-only", "diff is tests-only; nothing to mutate")], [], "not-applicable"),
+        ([("mutation-no-adapter", "x")], ["x"], None),
+        (
+            [("mutation-flaky", "run 1: baseline failed (returncode 1)")],
+            ["run 1: baseline failed (returncode 1)"],
+            "baseline-failed",
+        ),
+        ([("mutation-flaky", "a"), ("mutation-other-adapter", "o")], ["a"], "baseline-failed"),
+        ([("mutation-flaky", "a")], [], None),
+        ([("mutation-flaky", "a"), ("mutation-baseline-timeout", "b")], ["a", "b"], None),
+        ([("mutation-flaky", "a"), ("mutation-no-adapter", "n")], ["a"], None),
+        ([("mutation-other-adapter", "o")], [], None),
+        ([("mutation-baseline-timeout", "t")], ["t"], "baseline-timeout"),
+        (
+            [("mutation-host-busy", "host not idle after 1800s: x")],
+            ["host not idle after 1800s: x"],
+            "host-busy",
+        ),
+        ([("mutation-host-busy", "h")], [], None),
+        ([("mutation-host-busy", "h"), ("mutation-flaky", "a")], ["h", "a"], None),
+    ],
+)
 def test_clean_mutation_skip_kind(findings, infra, expected):
     from code_forge.machine import _clean_mutation_skip_kind
 
@@ -1864,16 +2218,26 @@ def test_clean_mutation_skip_kind(findings, infra, expected):
     assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=True) == expected
     if expected is not None:
         assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=False) is None
-        assert _clean_mutation_skip_kind(objs, infra, {**evidence, "cleanup_error": "x"}, source_unchanged=True) is None
-        assert _clean_mutation_skip_kind(objs, infra, {"inventory": {"m": "killed"}}, source_unchanged=True) is None
+        assert (
+            _clean_mutation_skip_kind(
+                objs, infra, {**evidence, "cleanup_error": "x"}, source_unchanged=True
+            )
+            is None
+        )
+        assert (
+            _clean_mutation_skip_kind(objs, infra, {"inventory": {"m": "killed"}}, source_unchanged=True)
+            is None
+        )
 
 
 def test_baseline_failed_reason_text():
     from code_forge.machine import _baseline_failed_reason
 
     desc = "run 1: baseline failed (returncode 1: tests/a.py::t); stdout: lots"
-    assert _baseline_failed_reason([_skip(fingerprint="mutation-flaky", description=desc)]) == \
-        "CI: mutation not measured: baseline failed (returncode 1: tests/a.py::t)"
+    assert (
+        _baseline_failed_reason([_skip(fingerprint="mutation-flaky", description=desc)])
+        == "CI: mutation not measured: baseline failed (returncode 1: tests/a.py::t)"
+    )
     assert _baseline_failed_reason([]) == "CI: mutation not measured: baseline failed"
 
 
@@ -1888,7 +2252,9 @@ def test_ci_latched_failure_skips_detached_launch(ci_project):
     saved = _saved(p, Verdict.FAIL)
     assert p.launches == []
     assert "CI: detached mutation not launched: verdict is already FAIL" in saved.infra_errors
-    assert any(e.startswith("CI: mutation not measured: baseline tests timed out") for e in saved.infra_errors)
+    assert any(
+        e.startswith("CI: mutation not measured: baseline tests timed out") for e in saved.infra_errors
+    )
     assert not (p.state / ".code-forge/mutation-result.json").exists()
 
 
@@ -1907,11 +2273,20 @@ def test_ci_live_running_marker_with_latched_failure_is_fail_not_pending(ci_proj
     """#130 P3: a live, valid running marker would be PENDING, but a failure
     latched by this run's L2 phase makes the CI verdict FAIL, not PENDING."""
     p = ci_project
-    data = {"status": "running", "pid": os.getpid(), "started_at": time.time(),
-            "survivor_details_version": 1, "review_context": _context(p),
-            "infra_errors": [], "baseline_passed": False,
-            "completed_measurement": False, "survivors": [], "survivor_details": [],
-            "inventory": {}, "skipped": []}
+    data = {
+        "status": "running",
+        "pid": os.getpid(),
+        "started_at": time.time(),
+        "survivor_details_version": 1,
+        "review_context": _context(p),
+        "infra_errors": [],
+        "baseline_passed": False,
+        "completed_measurement": False,
+        "survivors": [],
+        "survivor_details": [],
+        "inventory": {},
+        "skipped": [],
+    }
     result = _put_result(p, data)
     p.baseline_hook = _baseline_timeout
     machine = _machine(p, runner=mutation.run_mutation)
@@ -1932,20 +2307,33 @@ def _ci_with_diff(p, monkeypatch, files, *, runner=mutation.run_mutation, diff_p
         path.write_text(text, encoding="utf-8")
     machine = _machine(p, runner=runner)
     monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path(n) for n in files])
-    monkeypatch.setattr(machine, "_review_diff_paths", lambda: set(files) if diff_paths is None else set(diff_paths))
+    monkeypatch.setattr(
+        machine, "_review_diff_paths", lambda: set(files) if diff_paths is None else set(diff_paths)
+    )
     return machine
 
 
-@pytest.mark.parametrize("files", [
-    {"README.md": "# docs\n"},
-    {"docs/guide.md": "Guide\n=====\n", "LICENSE": "MIT\n", "docs/img/logo.png": "png", "evidence/run.md": "x\n", "README.zh-CN.md": "x\n"},
-])
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"README.md": "# docs\n"},
+        {
+            "docs/guide.md": "Guide\n=====\n",
+            "LICENSE": "MIT\n",
+            "docs/img/logo.png": "png",
+            "evidence/run.md": "x\n",
+            "README.zh-CN.md": "x\n",
+        },
+    ],
+)
 def test_ci_docs_only_diff_passes_with_visible_note(ci_project, monkeypatch, files):
     p = ci_project
     machine = _ci_with_diff(p, monkeypatch, files)
     assert machine.run() is Verdict.PASS
     saved = _saved(p, Verdict.PASS)
-    notes = [e for e in saved.infra_errors if e.startswith("L2: mutation not applicable (docs-only diff)")]
+    notes = [
+        e for e in saved.infra_errors if e.startswith("L2: mutation not applicable (docs-only diff)")
+    ]
     assert notes == ["L2: mutation not applicable (docs-only diff): " + ", ".join(sorted(files))]
     assert machine._mutation_bound_failure is False
 
@@ -1962,22 +2350,28 @@ def test_ci_docs_only_switch_off_fails(ci_project, monkeypatch):
     assert "CI: mutation not measured: no mutation adapter covers: README.md" in saved.infra_errors
 
 
-@pytest.mark.parametrize("files", [
-    {"deploy.sh": "#!/bin/sh\nrm -rf \"$X\"/\n"},
-    {"bin/forge-tool": "#!/usr/bin/env python3\nimport os\nos.system('x')\n"},
-    {"notes.txt": "#!/bin/sh\necho hi\n"},
-    {"Main.java": "class Main {}\n"},
-    {"Makefile": "all:\n\ttrue\n"},
-    {"Dockerfile": "FROM scratch\n"},
-    {".github/workflows/ci.yml": "on: push\n"},
-    {"README.md": "# docs\n", "deploy.sh": "#!/bin/sh\n"},
-])
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"deploy.sh": '#!/bin/sh\nrm -rf "$X"/\n'},
+        {"bin/forge-tool": "#!/usr/bin/env python3\nimport os\nos.system('x')\n"},
+        {"notes.txt": "#!/bin/sh\necho hi\n"},
+        {"Main.java": "class Main {}\n"},
+        {"Makefile": "all:\n\ttrue\n"},
+        {"Dockerfile": "FROM scratch\n"},
+        {".github/workflows/ci.yml": "on: push\n"},
+        {"README.md": "# docs\n", "deploy.sh": "#!/bin/sh\n"},
+    ],
+)
 def test_ci_unmeasured_code_without_adapter_fails_with_accurate_reason(ci_project, monkeypatch, files):
     p = ci_project
     machine = _ci_with_diff(p, monkeypatch, files)
     assert machine.run() is Verdict.FAIL
     saved = _saved(p, Verdict.FAIL)
-    assert "CI: mutation not measured: no mutation adapter covers: " + ", ".join(sorted(files)) in saved.infra_errors
+    assert (
+        "CI: mutation not measured: no mutation adapter covers: " + ", ".join(sorted(files))
+        in saved.infra_errors
+    )
     assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
 
 
@@ -1987,7 +2381,9 @@ def test_ci_gate_yaml_only_diff_fails(ci_project, monkeypatch):
     monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path(".code-forge/gate.yaml")])
     assert machine.run() is Verdict.FAIL
     saved = _saved(p, Verdict.FAIL)
-    assert any(e.startswith("CI: mutation not measured: no mutation adapter covers") for e in saved.infra_errors)
+    assert any(
+        e.startswith("CI: mutation not measured: no mutation adapter covers") for e in saved.infra_errors
+    )
 
 
 def test_local_unmeasured_shebang_file_stays_a_skip_with_note(ci_project, monkeypatch):
@@ -1997,7 +2393,10 @@ def test_local_unmeasured_shebang_file_stays_a_skip_with_note(ci_project, monkey
     monkeypatch.setattr(machine, "_executable_source_files", lambda: [Path("deploy.sh")])
     machine._run_l2_phase()
     assert machine._mutation_bound_failure is False
-    assert "L2: mutation not applicable (no mutation adapter covers): deploy.sh" in machine._state.infra_errors
+    assert (
+        "L2: mutation not applicable (no mutation adapter covers): deploy.sh"
+        in machine._state.infra_errors
+    )
 
 
 def test_ci_tests_only_diff_is_clean_end_to_end_without_launch(ci_project, monkeypatch):
@@ -2009,7 +2408,9 @@ def test_ci_tests_only_diff_is_clean_end_to_end_without_launch(ci_project, monke
     assert machine.run() is Verdict.PASS
     saved = _saved(p, Verdict.PASS)
     assert p.launches == []
-    assert "CI: detached mutation not launched: mutation not applicable to this diff" in saved.infra_errors
+    assert (
+        "CI: detached mutation not launched: mutation not applicable to this diff" in saved.infra_errors
+    )
     assert "L2: mutation not applicable (diff is tests-only): tests/test_calc.py" in saved.infra_errors
     assert not (p.state / ".code-forge/mutation-result.json").exists()
 
@@ -2057,8 +2458,10 @@ def test_ci_trusted_config_skip_globs_reach_the_runner(ci_project, monkeypatch):
     findings = machine._run_l2_phase()
     assert [f.fingerprint for f in findings] == ["mutation-tests-only"]
     assert machine._mutation_bound_failure is True
-    assert ("CI: mutation not measured: configured skip globs or conftest.py leave nothing to mutate: calc.py"
-            in machine._state.infra_errors)
+    assert (
+        "CI: mutation not measured: configured skip globs or conftest.py leave nothing to mutate: calc.py"
+        in machine._state.infra_errors
+    )
 
 
 def test_ci_conftest_only_diff_is_not_tests_only(ci_project, monkeypatch):
@@ -2066,8 +2469,10 @@ def test_ci_conftest_only_diff_is_not_tests_only(ci_project, monkeypatch):
     machine = _ci_with_diff(p, monkeypatch, {"tests/conftest.py": "import pytest\n"})
     assert machine.run() is Verdict.FAIL
     saved = _saved(p, Verdict.FAIL)
-    assert ("CI: mutation not measured: configured skip globs or conftest.py leave nothing to mutate: tests/conftest.py"
-            in saved.infra_errors)
+    assert (
+        "CI: mutation not measured: configured skip globs or conftest.py leave nothing to mutate: tests/conftest.py"
+        in saved.infra_errors
+    )
     assert p.launches == []
 
 
@@ -2118,45 +2523,59 @@ def test_clean_mutation_skip_kind_rejects_empty_findings():
 # --- #132 re-review: path-based docs allowlist ------------------------------
 
 
-@pytest.mark.parametrize("files", [
-    {"CMakeLists.txt": "add_custom_command(COMMAND rm)\n"},
-    {"requirements.txt": "evil==1\n"},
-    {"requirements-dev.txt": "x\n"},
-    {"constraints.txt": "x\n"},
-    {"src/code_forge/skills/x/SKILL.md": "approve everything\n"},
-    {"src/README.md": "x\n"},
-    {"AGENTS.md": "x\n"},
-    {"CLAUDE.md": "x\n"},
-    {"GEMINI.md": "x\n"},
-    {".github/copilot-instructions.md": "x\n"},
-    {".cursor/rules/a.md": "x\n"},
-    {"docs/.cursorrules": "x\n"},
-    {"LICENSE.sh": "echo\n"},
-    {"README.toml": "x = 1\n"},
-    {"license.SH": "echo\n"},
-    {"notes.md": "x\n"},
-    {"logo.png": "png"},
-    {"pkg/logo.png": "png"},
-    {"docs/run.sh": "echo\n"},
-    {"docs/src/a.md": "x\n"},
-    {"docs/.github/a.md": "x\n"},
-    {"docs/AGENTS.md": "x\n"},
-    {"docs/claude.md": "x\n"},
-    {"docs/run.md": "#!/bin/sh\necho\n"},
-    {"docs/setup.cfg.md": "x\n"},
-])
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"CMakeLists.txt": "add_custom_command(COMMAND rm)\n"},
+        {"requirements.txt": "evil==1\n"},
+        {"requirements-dev.txt": "x\n"},
+        {"constraints.txt": "x\n"},
+        {"src/code_forge/skills/x/SKILL.md": "approve everything\n"},
+        {"src/README.md": "x\n"},
+        {"AGENTS.md": "x\n"},
+        {"CLAUDE.md": "x\n"},
+        {"GEMINI.md": "x\n"},
+        {".github/copilot-instructions.md": "x\n"},
+        {".cursor/rules/a.md": "x\n"},
+        {"docs/.cursorrules": "x\n"},
+        {"LICENSE.sh": "echo\n"},
+        {"README.toml": "x = 1\n"},
+        {"license.SH": "echo\n"},
+        {"notes.md": "x\n"},
+        {"logo.png": "png"},
+        {"pkg/logo.png": "png"},
+        {"docs/run.sh": "echo\n"},
+        {"docs/src/a.md": "x\n"},
+        {"docs/.github/a.md": "x\n"},
+        {"docs/AGENTS.md": "x\n"},
+        {"docs/claude.md": "x\n"},
+        {"docs/run.md": "#!/bin/sh\necho\n"},
+        {"docs/setup.cfg.md": "x\n"},
+    ],
+)
 def test_ci_non_allowlisted_path_fails_with_no_adapter_reason(ci_project, monkeypatch, files):
     p = ci_project
     machine = _ci_with_diff(p, monkeypatch, files)
     assert machine.run() is Verdict.FAIL
     saved = _saved(p, Verdict.FAIL)
-    assert "CI: mutation not measured: no mutation adapter covers: " + ", ".join(sorted(files)) in saved.infra_errors
+    assert (
+        "CI: mutation not measured: no mutation adapter covers: " + ", ".join(sorted(files))
+        in saved.infra_errors
+    )
 
 
-@pytest.mark.parametrize("files", [
-    {"LICENSE": "MIT\n"}, {"license.MD": "MIT\n"}, {"CHANGELOG.text": "x\n"},
-    {"COPYING.txt": "x\n"}, {"NOTICE": "x\n"}, {"AUTHORS.md": "x\n"}, {"./docs/a.md": "x\n"},
-])
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"LICENSE": "MIT\n"},
+        {"license.MD": "MIT\n"},
+        {"CHANGELOG.text": "x\n"},
+        {"COPYING.txt": "x\n"},
+        {"NOTICE": "x\n"},
+        {"AUTHORS.md": "x\n"},
+        {"./docs/a.md": "x\n"},
+    ],
+)
 def test_ci_allowlisted_path_passes(ci_project, monkeypatch, files):
     p = ci_project
     machine = _ci_with_diff(p, monkeypatch, files)
@@ -2168,13 +2587,17 @@ def test_ci_executable_bit_doc_fails(ci_project, monkeypatch):
     machine = _ci_with_diff(p, monkeypatch, {"docs/run.txt": "rm -rf /\n"})
     (p.root / "docs/run.txt").chmod(0o755)
     assert machine.run() is Verdict.FAIL
-    assert "CI: mutation not measured: no mutation adapter covers: docs/run.txt" in _saved(p, Verdict.FAIL).infra_errors
+    assert (
+        "CI: mutation not measured: no mutation adapter covers: docs/run.txt"
+        in _saved(p, Verdict.FAIL).infra_errors
+    )
 
 
 def test_ci_unreadable_doc_fails_closed(ci_project, monkeypatch):
     p = ci_project
     machine = _ci_with_diff(p, monkeypatch, {"docs/a.md": "x\n"})
     import builtins
+
     real_open = builtins.open
 
     def failing_open(file, *args, **kwargs):
@@ -2184,22 +2607,32 @@ def test_ci_unreadable_doc_fails_closed(ci_project, monkeypatch):
 
     monkeypatch.setattr(builtins, "open", failing_open)
     assert machine.run() is Verdict.FAIL
-    assert "CI: mutation not measured: no mutation adapter covers: docs/a.md" in _saved(p, Verdict.FAIL).infra_errors
+    assert (
+        "CI: mutation not measured: no mutation adapter covers: docs/a.md"
+        in _saved(p, Verdict.FAIL).infra_errors
+    )
 
 
 def test_ci_rename_from_code_to_docs_is_not_docs_only(ci_project, monkeypatch):
     p = ci_project
-    machine = _ci_with_diff(p, monkeypatch, {"docs/tool.md": "x\n"}, diff_paths={"tool.py", "docs/tool.md"})
+    machine = _ci_with_diff(
+        p, monkeypatch, {"docs/tool.md": "x\n"}, diff_paths={"tool.py", "docs/tool.md"}
+    )
     assert machine.run() is Verdict.FAIL
-    assert "CI: mutation not measured: no mutation adapter covers: docs/tool.md" in _saved(p, Verdict.FAIL).infra_errors
+    assert (
+        "CI: mutation not measured: no mutation adapter covers: docs/tool.md"
+        in _saved(p, Verdict.FAIL).infra_errors
+    )
 
 
 def test_diff_paths_reads_both_sides_of_renames_and_deletions():
     from code_forge.machine import _diff_paths
 
-    diff = ("diff --git a/tool.py b/docs/tool.md\nsimilarity index 90%\nrename from tool.py\n"
-            "rename to docs/tool.md\ndiff --git a/old.py b/old.py\ndeleted file mode 100644\n"
-            "--- a/old.py\n+++ /dev/null\n")
+    diff = (
+        "diff --git a/tool.py b/docs/tool.md\nsimilarity index 90%\nrename from tool.py\n"
+        "rename to docs/tool.md\ndiff --git a/old.py b/old.py\ndeleted file mode 100644\n"
+        "--- a/old.py\n+++ /dev/null\n"
+    )
     assert _diff_paths(diff) == {"tool.py", "docs/tool.md", "old.py"}
     assert _diff_paths("rename from tool.py\nrename to docs/tool.md\n") == {"tool.py", "docs/tool.md"}
     assert _diff_paths('diff --git "a/x y.md" "b/x y.md"\n') == {"<unparsed diff header>"}
@@ -2215,7 +2648,10 @@ def test_ci_symlinked_doc_fails_with_accurate_reason(ci_project, monkeypatch):
     assert machine.run() is Verdict.FAIL
     saved = _saved(p, Verdict.FAIL)
     assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
-    assert "CI: mutation not measured: symlinked files are not measured: docs/notes.md" in saved.infra_errors
+    assert (
+        "CI: mutation not measured: symlinked files are not measured: docs/notes.md"
+        in saved.infra_errors
+    )
 
 
 def test_ci_symlink_rejected_by_source_guard_names_symlink(ci_project, monkeypatch):
@@ -2231,7 +2667,10 @@ def test_ci_symlink_rejected_by_source_guard_names_symlink(ci_project, monkeypat
     assert machine.run() is Verdict.FAIL
     saved = _saved(p, Verdict.FAIL)
     assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
-    assert "CI: mutation not measured: symlinked files are not measured: docs/notes.md" in saved.infra_errors
+    assert (
+        "CI: mutation not measured: symlinked files are not measured: docs/notes.md"
+        in saved.infra_errors
+    )
 
 
 def test_dot_prefixed_dir_is_not_tests_dir():
@@ -2259,8 +2698,10 @@ def test_ci_doc_inside_importable_package_fails(ci_project, monkeypatch):
     (p.root / "docs/pkg/__init__.py").write_text("", encoding="utf-8")
     machine = _ci_with_diff(p, monkeypatch, {"docs/pkg/prompt.md": "x\n"})
     assert machine.run() is Verdict.FAIL
-    assert ("CI: mutation not measured: no mutation adapter covers: docs/pkg/prompt.md"
-            in _saved(p, Verdict.FAIL).infra_errors)
+    assert (
+        "CI: mutation not measured: no mutation adapter covers: docs/pkg/prompt.md"
+        in _saved(p, Verdict.FAIL).infra_errors
+    )
 
 
 def test_tests_only_requires_python_and_missing_doc_is_not_docs(tmp_path):
@@ -2276,30 +2717,56 @@ def test_tests_only_requires_python_and_missing_doc_is_not_docs(tmp_path):
 # --- forge P3 on #132: one docs policy, delegated to classify_path ---------
 
 
-@pytest.mark.parametrize("files", [
-    {"evidence/a.svg": "<svg><script>x</script></svg>"},
-    {"docs/a.rst": "Title\n=====\n"},
-    {"docs/a.adoc": "= T\n"},
-    {"docs/a.gif": "GIF89a"},
-    {"docs/a.ico": "x"},
-    {"docs/a.bmp": "BM"},
-    {"CHANGELOG.rst": "x\n"},
-    {"README.png": "png"},
-])
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"evidence/a.svg": "<svg><script>x</script></svg>"},
+        {"docs/a.rst": "Title\n=====\n"},
+        {"docs/a.adoc": "= T\n"},
+        {"docs/a.gif": "GIF89a"},
+        {"docs/a.ico": "x"},
+        {"docs/a.bmp": "BM"},
+        {"CHANGELOG.rst": "x\n"},
+        {"README.png": "png"},
+    ],
+)
 def test_ci_formats_classify_path_does_not_exempt_fail(ci_project, monkeypatch, files):
     p = ci_project
     machine = _ci_with_diff(p, monkeypatch, files)
     assert machine.run() is Verdict.FAIL
-    assert ("CI: mutation not measured: no mutation adapter covers: " + ", ".join(sorted(files))
-            in _saved(p, Verdict.FAIL).infra_errors)
+    assert (
+        "CI: mutation not measured: no mutation adapter covers: " + ", ".join(sorted(files))
+        in _saved(p, Verdict.FAIL).infra_errors
+    )
 
 
 _PARITY_NAMES = [
-    "docs/a.md", "docs/a.MARKDOWN", "docs/a.txt", "docs/a.text", "docs/a.png", "docs/a.JPG",
-    "docs/a.jpeg", "docs/a.webp", "docs/a.svg", "docs/a.rst", "docs/a.adoc", "docs/a.gif",
-    "docs/a.ico", "docs/a.bmp", "docs/a.sh", "docs/a", "docs/.md", "evidence/a.svg",
-    "evidence/r.md", "README.md", "README.rst", "LICENSE.txt", "LICENSE.sh", "CHANGELOG.adoc",
-    "NOTICE.text", "AUTHORS.svg",
+    "docs/a.md",
+    "docs/a.MARKDOWN",
+    "docs/a.txt",
+    "docs/a.text",
+    "docs/a.png",
+    "docs/a.JPG",
+    "docs/a.jpeg",
+    "docs/a.webp",
+    "docs/a.svg",
+    "docs/a.rst",
+    "docs/a.adoc",
+    "docs/a.gif",
+    "docs/a.ico",
+    "docs/a.bmp",
+    "docs/a.sh",
+    "docs/a",
+    "docs/.md",
+    "evidence/a.svg",
+    "evidence/r.md",
+    "README.md",
+    "README.rst",
+    "LICENSE.txt",
+    "LICENSE.sh",
+    "CHANGELOG.adoc",
+    "NOTICE.text",
+    "AUTHORS.svg",
 ]
 _PARITY_FILES = [(0o644, b"plain\n"), (0o755, b"plain\n"), (0o644, b"#!/bin/sh\n"), (0o700, b"#!x")]
 
@@ -2317,13 +2784,23 @@ def test_docs_predicate_never_exempts_what_classify_path_rejects(tmp_path, rel, 
     exempt = _docs_only_files([rel], tmp_path, {rel})
     if classify_path(rel, mode, content).category != CATEGORY_EXEMPT:
         assert exempt is False
-    elif rel.startswith(("docs/", "evidence/")) or rel.split(".")[-1].lower() in {"md", "txt", "text", "markdown"}:
+    elif rel.startswith(("docs/", "evidence/")) or rel.split(".")[-1].lower() in {
+        "md",
+        "txt",
+        "text",
+        "markdown",
+    }:
         assert exempt is True
 
 
-@pytest.mark.parametrize("mode,content,expected", [
-    (0o644, b"MIT\n", True), (0o755, b"MIT\n", False), (0o644, b"#!/bin/sh\n", False),
-])
+@pytest.mark.parametrize(
+    "mode,content,expected",
+    [
+        (0o644, b"MIT\n", True),
+        (0o755, b"MIT\n", False),
+        (0o644, b"#!/bin/sh\n", False),
+    ],
+)
 def test_extensionless_top_level_doc_still_gets_classify_checks(tmp_path, mode, content, expected):
     """Narrow path-layer exception: classify_path rejects every extensionless
     name, so LICENSE is classified as LICENSE.txt; exec bit/shebang still apply."""
@@ -2353,30 +2830,58 @@ def test_deleted_non_doc_under_docs_is_not_docs_only(tmp_path):
 _OTHER_INFRA = "diff has no Python files; other adapters are registered but not invoked here"
 
 
-@pytest.mark.parametrize("findings,infra,evidence,expected", [
-    ([("mutation-other-adapter", "ts: adapter registered")], [_OTHER_INFRA], {}, "other-adapter-only"),
-    ([("mutation-other-adapter", "ts")], [], {}, None),
-    ([("mutation-other-adapter", "ts")], [_OTHER_INFRA, "x"], {}, None),
-    ([("mutation-other-adapter", "ts")], [_OTHER_INFRA], {"results_sha256": "a"}, None),
-    ([("mutation-unavailable", "mutmut not installed (soft dependency)")], [], {}, "unavailable"),
-    ([("mutation-unavailable", "u"), ("mutation-other-adapter", "o")], [], {}, "unavailable"),
-    ([("mutation-unavailable", "u")], ["u"], {}, None),
-    ([("mutation-unavailable", "u")], [], {"metadata_sha256": "m"}, None),
-    ([("mutation-probe-timeout", "probe timed out")], [], {}, "probe-timeout"),
-    ([("mutation-probe-timeout", "p")], [], {"inventory": {"calc.x__mutmut_1": "killed"}}, None),
-    ([("mutation-no-mutants", "none")], [], {"results_sha256": "r", "metadata_sha256": "m"}, "no-mutants"),
-    ([("mutation-no-mutants", "none")], [], {}, None),
-    ([("mutation-no-mutants", "none")], [], {"results_sha256": "r", "inventory": {"calc.x__mutmut_1": "survived"}}, None),
-    ([("mutation-results-timeout", "t")], [], {"metadata_sha256": "m"}, "results-timeout"),
-    ([("mutation-results-timeout", "t")], [], {"metadata_sha256": "m", "inventory": {"calc.x__mutmut_1": "survived"}}, None),
-    ([("mutation-results-timeout", "t")], [], {"inventory": {"calc.x__mutmut_1": "killed"}}, None),
-    ([("mutation-results-timeout", "t")], [], {"inventory": {"calc.x__mutmut_1": "caught by type check"}}, None),
-    ([("mutation-results-timeout", "t")], [], {"inventory": {"calc.x__mutmut_1": "timeout"}}, None),
-    ([("mutation-results-timeout", "t")], [], {"results_sha256": "r"}, None),
-    ([("mutation-results-timeout", "t")], ["t"], {}, None),
-    ([("mutation-unavailable", "u"), ("mutation-probe-timeout", "p")], [], {}, None),
-    ([("mutation-no-adapter", "n")], [], {"results_sha256": "r"}, None),
-])
+@pytest.mark.parametrize(
+    "findings,infra,evidence,expected",
+    [
+        (
+            [("mutation-other-adapter", "ts: adapter registered")],
+            [_OTHER_INFRA],
+            {},
+            "other-adapter-only",
+        ),
+        ([("mutation-other-adapter", "ts")], [], {}, None),
+        ([("mutation-other-adapter", "ts")], [_OTHER_INFRA, "x"], {}, None),
+        ([("mutation-other-adapter", "ts")], [_OTHER_INFRA], {"results_sha256": "a"}, None),
+        ([("mutation-unavailable", "mutmut not installed (soft dependency)")], [], {}, "unavailable"),
+        ([("mutation-unavailable", "u"), ("mutation-other-adapter", "o")], [], {}, "unavailable"),
+        ([("mutation-unavailable", "u")], ["u"], {}, None),
+        ([("mutation-unavailable", "u")], [], {"metadata_sha256": "m"}, None),
+        ([("mutation-probe-timeout", "probe timed out")], [], {}, "probe-timeout"),
+        ([("mutation-probe-timeout", "p")], [], {"inventory": {"calc.x__mutmut_1": "killed"}}, None),
+        (
+            [("mutation-no-mutants", "none")],
+            [],
+            {"results_sha256": "r", "metadata_sha256": "m"},
+            "no-mutants",
+        ),
+        ([("mutation-no-mutants", "none")], [], {}, None),
+        (
+            [("mutation-no-mutants", "none")],
+            [],
+            {"results_sha256": "r", "inventory": {"calc.x__mutmut_1": "survived"}},
+            None,
+        ),
+        ([("mutation-results-timeout", "t")], [], {"metadata_sha256": "m"}, "results-timeout"),
+        (
+            [("mutation-results-timeout", "t")],
+            [],
+            {"metadata_sha256": "m", "inventory": {"calc.x__mutmut_1": "survived"}},
+            None,
+        ),
+        ([("mutation-results-timeout", "t")], [], {"inventory": {"calc.x__mutmut_1": "killed"}}, None),
+        (
+            [("mutation-results-timeout", "t")],
+            [],
+            {"inventory": {"calc.x__mutmut_1": "caught by type check"}},
+            None,
+        ),
+        ([("mutation-results-timeout", "t")], [], {"inventory": {"calc.x__mutmut_1": "timeout"}}, None),
+        ([("mutation-results-timeout", "t")], [], {"results_sha256": "r"}, None),
+        ([("mutation-results-timeout", "t")], ["t"], {}, None),
+        ([("mutation-unavailable", "u"), ("mutation-probe-timeout", "p")], [], {}, None),
+        ([("mutation-no-adapter", "n")], [], {"results_sha256": "r"}, None),
+    ],
+)
 def test_clean_mutation_skip_kind_133(findings, infra, evidence, expected):
     from code_forge.machine import _clean_mutation_skip_kind
 
@@ -2385,24 +2890,48 @@ def test_clean_mutation_skip_kind_133(findings, infra, evidence, expected):
     assert _clean_mutation_skip_kind(objs, infra, full, source_unchanged=True) == expected
 
 
-@pytest.mark.parametrize("kind,fingerprint,description,expected", [
-    ("unavailable", "mutation-unavailable", "mutmut not installed (soft dependency)",
-     "CI: mutation not measured: mutmut not installed (soft dependency)"),
-    ("probe-timeout", "mutation-probe-timeout",
-     "mutmut import probe timed out in baseline test env; not the same as mutmut missing",
-     "CI: mutation not measured: mutmut import probe timed out in baseline test env"),
-    ("no-mutants", "mutation-no-mutants", "mutmut generated no mutants; no mutation measurement was made",
-     "CI: mutation not measured: mutmut generated no mutants"),
-    ("results-timeout", "mutation-results-timeout", "mutmut results timed out",
-     "CI: mutation not measured: mutmut results timed out"),
-    ("other-adapter-only", "mutation-other-adapter", "app.ts: ts adapter registered",
-     "CI: mutation not measured: other-language adapters are not invoked by this run: app.ts: ts adapter registered"),
-])
+@pytest.mark.parametrize(
+    "kind,fingerprint,description,expected",
+    [
+        (
+            "unavailable",
+            "mutation-unavailable",
+            "mutmut not installed (soft dependency)",
+            "CI: mutation not measured: mutmut not installed (soft dependency)",
+        ),
+        (
+            "probe-timeout",
+            "mutation-probe-timeout",
+            "mutmut import probe timed out in baseline test env; not the same as mutmut missing",
+            "CI: mutation not measured: mutmut import probe timed out in baseline test env",
+        ),
+        (
+            "no-mutants",
+            "mutation-no-mutants",
+            "mutmut generated no mutants; no mutation measurement was made",
+            "CI: mutation not measured: mutmut generated no mutants",
+        ),
+        (
+            "results-timeout",
+            "mutation-results-timeout",
+            "mutmut results timed out",
+            "CI: mutation not measured: mutmut results timed out",
+        ),
+        (
+            "other-adapter-only",
+            "mutation-other-adapter",
+            "app.ts: ts adapter registered",
+            "CI: mutation not measured: other-language adapters are not invoked by this run: app.ts: ts adapter registered",
+        ),
+    ],
+)
 def test_ci_skip_reason_133(kind, fingerprint, description, expected):
     from code_forge.machine import _ci_skip_reason
 
-    findings = [_skip(fingerprint="mutation-other-adapter", description="o"),
-                _skip(fingerprint=fingerprint, description=description)]
+    findings = [
+        _skip(fingerprint="mutation-other-adapter", description="o"),
+        _skip(fingerprint=fingerprint, description=description),
+    ]
     if kind == "other-adapter-only":
         findings = findings[1:]
     assert _ci_skip_reason(kind, findings) == expected
@@ -2410,34 +2939,67 @@ def test_ci_skip_reason_133(kind, fingerprint, description, expected):
 
 def _native_skip_runner(fingerprint, description, infra, evidence_extra):
     """A native-identity runner: patches run_mutation's inner result."""
+
     def inner(*_args, _evidence=None, **_kwargs):
         _evidence.update(evidence_extra)
         return [_skip(fingerprint=fingerprint, description=description)], list(infra)
+
     return inner
 
 
 _NATIVE_133 = [
-    ("mutation-unavailable", "mutmut not installed (soft dependency)", [], {},
-     "CI: mutation not measured: mutmut not installed (soft dependency)"),
-    ("mutation-probe-timeout", "mutmut import probe timed out in baseline test env; x", [], {},
-     "CI: mutation not measured: mutmut import probe timed out in baseline test env"),
-    ("mutation-no-mutants", "mutmut generated no mutants; no mutation measurement was made", [],
-     {"results_sha256": "r", "metadata_sha256": "m"}, "CI: mutation not measured: mutmut generated no mutants"),
-    ("mutation-results-timeout", "mutmut results timed out", [],
-     {"metadata_sha256": "m"},
-     "CI: mutation not measured: mutmut results timed out"),
-    ("mutation-other-adapter", "app.ts: ts adapter registered", [_OTHER_INFRA], {},
-     "CI: mutation not measured: other-language adapters are not invoked by this run: app.ts: ts adapter registered"),
+    (
+        "mutation-unavailable",
+        "mutmut not installed (soft dependency)",
+        [],
+        {},
+        "CI: mutation not measured: mutmut not installed (soft dependency)",
+    ),
+    (
+        "mutation-probe-timeout",
+        "mutmut import probe timed out in baseline test env; x",
+        [],
+        {},
+        "CI: mutation not measured: mutmut import probe timed out in baseline test env",
+    ),
+    (
+        "mutation-no-mutants",
+        "mutmut generated no mutants; no mutation measurement was made",
+        [],
+        {"results_sha256": "r", "metadata_sha256": "m"},
+        "CI: mutation not measured: mutmut generated no mutants",
+    ),
+    (
+        "mutation-results-timeout",
+        "mutmut results timed out",
+        [],
+        {"metadata_sha256": "m"},
+        "CI: mutation not measured: mutmut results timed out",
+    ),
+    (
+        "mutation-other-adapter",
+        "app.ts: ts adapter registered",
+        [_OTHER_INFRA],
+        {},
+        "CI: mutation not measured: other-language adapters are not invoked by this run: app.ts: ts adapter registered",
+    ),
 ]
 
 
 @pytest.mark.parametrize("fingerprint,description,infra,extra,reason", _NATIVE_133)
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
-def test_native_133_skips_have_accurate_reason(ci_project, monkeypatch, mode, fingerprint, description, infra, extra, reason):
+def test_native_133_skips_have_accurate_reason(
+    ci_project, monkeypatch, mode, fingerprint, description, infra, extra, reason
+):
     p = ci_project
-    monkeypatch.setattr(mutation, "_run_mutation", _native_skip_runner(fingerprint, description, infra, extra))
-    machine = (_machine(p, runner=mutation.run_mutation) if mode is Mode.CI
-               else _local_machine(p, runner=mutation.run_mutation))
+    monkeypatch.setattr(
+        mutation, "_run_mutation", _native_skip_runner(fingerprint, description, infra, extra)
+    )
+    machine = (
+        _machine(p, runner=mutation.run_mutation)
+        if mode is Mode.CI
+        else _local_machine(p, runner=mutation.run_mutation)
+    )
     findings = machine._run_l2_phase()
     assert [f.fingerprint for f in findings] == [fingerprint]
     errors = machine._state.infra_errors
@@ -2468,8 +3030,11 @@ def test_ci_orphan_container_fails_with_path_and_recovery(ci_project, kind):
     assert machine.run() is Verdict.FAIL
     saved = _saved(p, Verdict.FAIL)
     assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
-    reasons = [e for e in saved.infra_errors
-               if e.startswith("L2: mutation not measured: orphan mutation container")]
+    reasons = [
+        e
+        for e in saved.infra_errors
+        if e.startswith("L2: mutation not measured: orphan mutation container")
+    ]
     assert len(reasons) == 1
     assert str(container) in reasons[0] and "aside" in reasons[0]
     assert container.is_dir(), "orphan must never be deleted automatically"
@@ -2485,13 +3050,17 @@ def test_local_orphan_container_refused_before_round_1(ci_project):
     machine = _local_machine(p, runner=mutation.run_mutation)
     rounds = []
     machine._execute_round = rounds.append
-    with pytest.raises(TimeoutBreaker, match="stopped before round 1: mutation workspace needs manual recovery") as caught:
+    with pytest.raises(
+        TimeoutBreaker, match="stopped before round 1: mutation workspace needs manual recovery"
+    ) as caught:
         machine.run()
     assert str(container) in str(caught.value)
     assert rounds == []
     saved = load_state(p.state / ".code-forge/state.json")
     assert saved.verdict is Verdict.FAIL
-    assert any(e.startswith("L2: mutation not measured: orphan mutation container") for e in saved.infra_errors)
+    assert any(
+        e.startswith("L2: mutation not measured: orphan mutation container") for e in saved.infra_errors
+    )
     assert container.is_dir() and not lock.exists(), "preflight is read-only"
 
 
@@ -2511,7 +3080,9 @@ def test_local_orphan_appearing_mid_run_still_stops_after_that_round(ci_project)
         return original(index)
 
     machine._execute_round = counted
-    with pytest.raises(TimeoutBreaker, match="mutation workspace needs manual recovery \\(not an LLM timeout") as caught:
+    with pytest.raises(
+        TimeoutBreaker, match="mutation workspace needs manual recovery \\(not an LLM timeout"
+    ) as caught:
         machine.run()
     container = p.root / ".code-forge" / "mutation-empty-config"
     assert str(container) in str(caught.value)
@@ -2529,8 +3100,11 @@ def test_local_results_timeout_with_measured_inventory_is_not_clean(ci_project, 
     _mutation_inventory) must not be dismissed by a results timeout."""
     p = ci_project
     extra = {"metadata_sha256": "m", "inventory": {"calc.x__mutmut_1": status}}
-    monkeypatch.setattr(mutation, "_run_mutation",
-                        _native_skip_runner("mutation-results-timeout", "mutmut results timed out", [], extra))
+    monkeypatch.setattr(
+        mutation,
+        "_run_mutation",
+        _native_skip_runner("mutation-results-timeout", "mutmut results timed out", [], extra),
+    )
     machine = _local_machine(p, runner=mutation.run_mutation)
     machine._run_l2_phase()
     assert machine._mutation_bound_failure is True
@@ -2540,8 +3114,10 @@ def test_local_results_timeout_with_measured_inventory_is_not_clean(ci_project, 
 def test_orphan_marker_text_inside_other_infra_line_does_not_stop(ci_project, monkeypatch):
     """#137 P3: only the structured marker counts, not matching text."""
     p = ci_project
-    noisy = ("pytest output: E   orphan mutation container has no completed ownership record: "
-             "/x; it is not removed automatically")
+    noisy = (
+        "pytest output: E   orphan mutation container has no completed ownership record: "
+        "/x; it is not removed automatically"
+    )
 
     def inner(*_args, _evidence=None, **_kwargs):
         err = _skip(fingerprint="mutation-evidence-error", description=noisy)
@@ -2563,7 +3139,6 @@ def test_orphan_error_records_structured_marker(ci_project):
     marker = evidence["workspace_orphan"]
     assert marker["path"] == str(container)
     assert marker["message"].startswith("orphan mutation container has no completed ownership record: ")
-
 
 
 def test_orphan_marker_message_must_be_an_exact_infra_line(ci_project, monkeypatch):
@@ -2664,11 +3239,19 @@ def test_preflight_skips_non_python_diff_and_custom_runner(ci_project, monkeypat
 # --- #135: test code by directory, not by name --------------------------------
 
 
-@pytest.mark.parametrize("path,expected", [
-    ("pkg/test_helpers.py", False), ("pkg/api_test.py", False), ("test_calc.py", False),
-    ("framework/test/select.py", False), ("tests/test_calc.py", True),
-    ("pkg/tests/test_x.py", True), ("conftest.py", True), ("pkg/conftest.py", True),
-])
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("pkg/test_helpers.py", False),
+        ("pkg/api_test.py", False),
+        ("test_calc.py", False),
+        ("framework/test/select.py", False),
+        ("tests/test_calc.py", True),
+        ("pkg/tests/test_x.py", True),
+        ("conftest.py", True),
+        ("pkg/conftest.py", True),
+    ],
+)
 def test_default_test_paths_are_directory_based(path, expected):
     assert mutation._is_test_path(path) is expected
 
@@ -2717,8 +3300,16 @@ def _track_gate(p):
     """Commit the fixture gate.yaml so the review baseline carries it (#140:
     an untracked gate.yaml is not part of any change and is used as-is)."""
     _git(p.root, "add", "-f", ".code-forge/gate.yaml")
-    _git(p.root, "-c", "user.name=CI Control", "-c", "user.email=ci-control@example.invalid",
-         "commit", "-qm", "track gate")
+    _git(
+        p.root,
+        "-c",
+        "user.name=CI Control",
+        "-c",
+        "user.email=ci-control@example.invalid",
+        "commit",
+        "-qm",
+        "track gate",
+    )
 
 
 def _set_root_globs(p, skip, *, commit=False):
@@ -2728,8 +3319,16 @@ def _set_root_globs(p, skip, *, commit=False):
     gate.write_text(json.dumps(data), encoding="utf-8")
     if commit:
         _git(p.root, "add", "-f", ".code-forge/gate.yaml")
-        _git(p.root, "-c", "user.name=CI Control", "-c", "user.email=ci-control@example.invalid",
-             "commit", "-qm", "baseline globs")
+        _git(
+            p.root,
+            "-c",
+            "user.name=CI Control",
+            "-c",
+            "user.email=ci-control@example.invalid",
+            "commit",
+            "-qm",
+            "baseline globs",
+        )
     return gate
 
 
@@ -2819,12 +3418,14 @@ def test_trusted_mutation_globs_sources(tmp_path):
     # A config root that contains the reviewed tree is not "outside" it.
     sub = root / "pkg"
     sub.mkdir()
-    assert trusted_mutation_globs(config_root=root, source_root=sub, base_sha=None,
-                                  config_test=worktree_test) == (None, None)
+    assert trusted_mutation_globs(
+        config_root=root, source_root=sub, base_sha=None, config_test=worktree_test
+    ) == (None, None)
     outside = tmp_path / "state"
     outside.mkdir()
-    assert trusted_mutation_globs(config_root=outside, source_root=root, base_sha=with_gate,
-                                  config_test=worktree_test) == (["edited.py"], None)
+    assert trusted_mutation_globs(
+        config_root=outside, source_root=root, base_sha=with_gate, config_test=worktree_test
+    ) == (["edited.py"], None)
 
 
 def test_admission_uses_baseline_globs(ci_project, monkeypatch):
@@ -2842,8 +3443,13 @@ def test_admission_uses_baseline_globs(ci_project, monkeypatch):
     monkeypatch.setattr(mutation, "trusted_mutation_globs", spy)
     review = _review(p)
     mutation.mutation_review_admission_error(
-        target_kind="COMMIT", git_diff=review.git_diff, source_files=[p.root / "calc.py"],
-        source_root=p.root, config_root=p.root, runner=mutation.run_mutation, base_sha=review.base_sha,
+        target_kind="COMMIT",
+        git_diff=review.git_diff,
+        source_files=[p.root / "calc.py"],
+        source_root=p.root,
+        config_root=p.root,
+        runner=mutation.run_mutation,
+        base_sha=review.base_sha,
     )
     assert calls and calls[0]["base_sha"] == review.base_sha
     assert real(**calls[0]) == (None, None)
@@ -2897,8 +3503,20 @@ def test_cli_admission_receives_review_baseline(ci_project, monkeypatch, capsys)
 
     monkeypatch.setattr(mutation, "mutation_review_admission_error", spy)
     monkeypatch.chdir(p.root)
-    argv = ["code-forge", "review", "--mode", "ci", "--falsification-engine", "stub",
-            "--baseline", "HEAD", "--head", "INDEX", "--allow-main", "calc.py"]
+    argv = [
+        "code-forge",
+        "review",
+        "--mode",
+        "ci",
+        "--falsification-engine",
+        "stub",
+        "--baseline",
+        "HEAD",
+        "--head",
+        "INDEX",
+        "--allow-main",
+        "calc.py",
+    ]
     monkeypatch.setattr(sys, "argv", argv)
     cli.main()
     err = capsys.readouterr().err
@@ -2917,10 +3535,25 @@ def _cli_admission_args(p, monkeypatch, *extra):
 
     monkeypatch.setattr(mutation, "mutation_review_admission_error", spy)
     monkeypatch.chdir(p.root)
-    monkeypatch.setattr(sys, "argv", [
-        "code-forge", "review", "--mode", "ci", "--falsification-engine", "stub",
-        "--baseline", "HEAD", "--head", "INDEX", "--allow-main", *extra, "calc.py",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "code-forge",
+            "review",
+            "--mode",
+            "ci",
+            "--falsification-engine",
+            "stub",
+            "--baseline",
+            "HEAD",
+            "--head",
+            "INDEX",
+            "--allow-main",
+            *extra,
+            "calc.py",
+        ],
+    )
     return cli.main(), seen
 
 
@@ -2944,7 +3577,9 @@ def test_cli_test_config_root_option_and_env(ci_project, monkeypatch, capsys):
     capsys.readouterr()
     code, seen = _cli_admission_args(p, monkeypatch, "--test-config-root", str(inside))
     assert code == 2 and not seen and "must be outside the reviewed checkout" in capsys.readouterr().err
-    code, seen = _cli_admission_args(p, monkeypatch, "--test-config-root", str(p.root.parent / "nowhere"))
+    code, seen = _cli_admission_args(
+        p, monkeypatch, "--test-config-root", str(p.root.parent / "nowhere")
+    )
     assert code == 2 and not seen and "no .code-forge/gate.yaml there" in capsys.readouterr().err
 
 
@@ -2983,12 +3618,21 @@ def test_busy_host_is_an_explicit_skip_not_a_baseline(ci_project, monkeypatch, m
     monkeypatch.setenv("FORGE_MUTATION_IDLE_MAX_WAIT", "0.05")
     monkeypatch.setenv("FORGE_MUTATION_IDLE_POLL", "0.01")
     monkeypatch.setattr(host_idle, "read_signals", lambda: {"load_per_cpu": 3.0})
-    machine = _machine(p, runner=mutation.run_mutation) if mode is Mode.CI else _local_machine(p, runner=mutation.run_mutation)
+    machine = (
+        _machine(p, runner=mutation.run_mutation)
+        if mode is Mode.CI
+        else _local_machine(p, runner=mutation.run_mutation)
+    )
     verdict = machine.run()
     saved = load_state(p.state / ".code-forge/state.json")
     assert "baseline" not in p.stages
-    assert any(f.fingerprint == "mutation-host-busy" and f.disposition is Disposition.DISMISSED for f in saved.findings)
-    assert any(e.startswith("host not idle after") and "loadavg/cpu 3.00 > 0.5" in e for e in saved.infra_errors)
+    assert any(
+        f.fingerprint == "mutation-host-busy" and f.disposition is Disposition.DISMISSED
+        for f in saved.findings
+    )
+    assert any(
+        e.startswith("host not idle after") and "loadavg/cpu 3.00 > 0.5" in e for e in saved.infra_errors
+    )
     assert not any("invalid bound mutation measurement" in e for e in saved.infra_errors)
     reasons = [e for e in saved.infra_errors if e.startswith("CI: mutation not measured")]
     if mode is Mode.CI:

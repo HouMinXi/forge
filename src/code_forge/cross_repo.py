@@ -480,7 +480,9 @@ def run_cross_repo(
                                 for e in repo_entries
                             },
                             {
-                                "%s@%s" % (e["label"], repository_manifest[e["label"]]): Path(e["repo_path"])
+                                "%s@%s" % (e["label"], repository_manifest[e["label"]]): Path(
+                                    e["repo_path"]
+                                )
                                 for e in repo_entries
                             },
                         )
@@ -509,7 +511,7 @@ def run_cross_repo(
                     )
                     verdict = sm.run()
                     results[label] = verdict
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 -- Fan-out worker reports arbitrary backend errors to its caller.
                     errors[label] = exc
                 finally:
                     completed[label].set()

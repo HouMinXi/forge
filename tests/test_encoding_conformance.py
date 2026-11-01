@@ -78,8 +78,12 @@ class TestTextTrueEncoding:
         config = tmp_path / "global.gitconfig"
         config.write_text(f"[i18n]\nlogOutputEncoding = {output_encoding}\n", encoding="utf-8")
         for key in (
-            "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR",
-            "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_COMMON_DIR",
         ):
             monkeypatch.delenv(key, raising=False)
         monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
@@ -94,7 +98,9 @@ class TestTextTrueEncoding:
             subprocess.run(command, cwd=tmp_path, check=True)
         native = subprocess.run(
             ["git", "log", "--format=%s", "--", "a.py"],
-            cwd=tmp_path, capture_output=True, check=True,
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
         )
         assert native.stdout == subject.encode(output_encoding) + b"\n"
         rows = GitHistorySource(tmp_path).facts(["a.py"], "")

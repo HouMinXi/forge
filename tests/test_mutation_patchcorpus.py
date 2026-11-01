@@ -274,7 +274,9 @@ def test_real_corpus_concurrent_runs_keep_distinct_ownership(tmp_path):
         assert result.cleanup.errors == ()
         assert GUARD in (root / SCRIPT).read_text(encoding="utf-8")
         for artifact in result.native_artifacts:
-            data = (Path(context.state_root) / "runs" / context.run_id / artifact.relative_run_path).read_bytes()
+            data = (
+                Path(context.state_root) / "runs" / context.run_id / artifact.relative_run_path
+            ).read_bytes()
             assert hashlib.sha256(data).hexdigest() == artifact.digest
         assert not list(Path(CGROUP_ROOT).glob("forge-" + context.run_id + "-*"))
 

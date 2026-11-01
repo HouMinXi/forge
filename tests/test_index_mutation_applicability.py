@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Boundary controls for native intent, empty scopes and existing source policy."""
+
 from functools import partial
 import os
 from pathlib import Path
@@ -9,12 +10,20 @@ import pytest
 from code_forge import mutation
 from code_forge.state import Mode, State, Verdict, load_state, save_state
 from tests.test_index_mutation_admission import (
-    ReachedWork, committed_review, git, make_machine, prohibit_native, project as project, reviewed,
+    ReachedWork,
+    committed_review,
+    git,
+    make_machine,
+    prohibit_native,
+    project as project,
+    reviewed,
 )
 
 
 @pytest.mark.parametrize("case", ["invalid-partial-root", "empty-INDEX"])
-def test_non_native_or_empty_index_keeps_the_original_work_boundary(project, tmp_path, monkeypatch, case):
+def test_non_native_or_empty_index_keeps_the_original_work_boundary(
+    project, tmp_path, monkeypatch, case
+):
     runner = partial(mutation.run_mutation, cwd=None)
     if case == "empty-INDEX":
         git(project.root, "reset", "--", "calc.py")
@@ -28,12 +37,16 @@ def test_non_native_or_empty_index_keeps_the_original_work_boundary(project, tmp
 
 @pytest.mark.parametrize("include", [False, True])
 @pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
-def test_ci_detached_selection_honors_its_actual_copy_configuration(project, tmp_path, monkeypatch, include, target_kind):
+def test_ci_detached_selection_honors_its_actual_copy_configuration(
+    project, tmp_path, monkeypatch, include, target_kind
+):
     project.gate["test"]["mutation_skip_globs"] = ["*.py"]
     if include:
         project.gate["test"]["mutation_include_globs"] = ["calc.py"]
     review = committed_review(project) if target_kind == "COMMIT" else reviewed(project)
-    sm, calls = make_machine(project, tmp_path, mode=Mode.CI, runner=lambda *_a, **_kw: ([], []), review=review)
+    sm, calls = make_machine(
+        project, tmp_path, mode=Mode.CI, runner=lambda *_a, **_kw: ([], []), review=review
+    )
     prohibit_native(monkeypatch, calls)
     if include:
         assert sm.run() is Verdict.FAIL
@@ -45,7 +58,9 @@ def test_ci_detached_selection_honors_its_actual_copy_configuration(project, tmp
 
 
 @pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
-def test_repeated_refusal_preserves_prior_diagnostic_without_a_new_round(project, tmp_path, monkeypatch, target_kind):
+def test_repeated_refusal_preserves_prior_diagnostic_without_a_new_round(
+    project, tmp_path, monkeypatch, target_kind
+):
     review = committed_review(project) if target_kind == "COMMIT" else reviewed(project)
     sm, calls = make_machine(project, tmp_path, review=review)
     prohibit_native(monkeypatch, calls)
@@ -69,12 +84,15 @@ def test_missing_source_policy_uses_existing_defaults(project, tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
-def test_refusal_preserves_historical_counter_and_existing_audit_bytes(project, tmp_path, monkeypatch, target_kind):
+def test_refusal_preserves_historical_counter_and_existing_audit_bytes(
+    project, tmp_path, monkeypatch, target_kind
+):
     review = committed_review(project) if target_kind == "COMMIT" else reviewed(project)
     sm, calls = make_machine(project, tmp_path, review=review)
     prohibit_native(monkeypatch, calls)
-    prior = State(source_hash=sm.source_hash, verdict=Verdict.PASS, converged=True,
-                  consecutive_clean_rounds=2)
+    prior = State(
+        source_hash=sm.source_hash, verdict=Verdict.PASS, converged=True, consecutive_clean_rounds=2
+    )
     prior.round_history = [{"round": 4, "retained_prior_audit": "original"}]
     state_path = sm.cwd / ".code-forge/state.json"
     save_state(prior, state_path)
@@ -99,7 +117,13 @@ def test_refusal_preserves_historical_counter_and_existing_audit_bytes(project, 
 @pytest.mark.parametrize("route", ["direct", "exact-partial", "CI-detached"])
 @pytest.mark.parametrize("selection", ["production", "true-test", "configured-skip", "include-override"])
 def test_relative_root_uses_native_repository_relative_selection(
-    project, tmp_path, monkeypatch, root_spelling, route, selection, target_kind,
+    project,
+    tmp_path,
+    monkeypatch,
+    root_spelling,
+    route,
+    selection,
+    target_kind,
 ):
     import yaml
 
@@ -122,7 +146,11 @@ def test_relative_root_uses_native_repository_relative_selection(
         project.gate["test"]["mutation_include_globs"] = ["tests/test_calc.py"]
     (project.root / ".code-forge/gate.yaml").write_text(yaml.safe_dump(project.gate), encoding="utf-8")
     source = project.root / name
-    review = committed_review(project, paths=[source]) if target_kind == "COMMIT" else reviewed(project, paths=[source])
+    review = (
+        committed_review(project, paths=[source])
+        if target_kind == "COMMIT"
+        else reviewed(project, paths=[source])
+    )
     assert source.is_absolute() and review.git_diff and review.target_kind == target_kind
     if root_spelling == "dot":
         monkeypatch.chdir(project.root)
@@ -139,12 +167,18 @@ def test_relative_root_uses_native_repository_relative_selection(
     if route == "exact-partial":
         runner = partial(mutation.run_mutation, cwd=root)
     elif route == "CI-detached":
+
         def runner(*_a, **_kw):
             return [], []
     else:
         runner = mutation.run_mutation
-    sm, calls = make_machine(project, tmp_path, mode=Mode.CI if route == "CI-detached" else Mode.LOCAL,
-                             runner=runner, review=review)
+    sm, calls = make_machine(
+        project,
+        tmp_path,
+        mode=Mode.CI if route == "CI-detached" else Mode.LOCAL,
+        runner=runner,
+        review=review,
+    )
     sm.source_root = root
     prohibit_native(monkeypatch, calls)
     before = source.read_bytes()
@@ -154,7 +188,9 @@ def test_relative_root_uses_native_repository_relative_selection(
             verdict = sm.run()
         except ReachedWork:
             verdict = None
-        assert verdict is Verdict.FAIL, "relative source root must reject native snapshot selection before L0/L1"
+        assert verdict is Verdict.FAIL, (
+            "relative source root must reject native snapshot selection before L0/L1"
+        )
         assert calls == []
         saved = load_state(sm.cwd / ".code-forge/state.json")
         assert saved.verdict is Verdict.FAIL and saved.converged is False
@@ -170,13 +206,21 @@ def test_relative_root_uses_native_repository_relative_selection(
 
 @pytest.mark.parametrize("kind", ["outside-root", "parent-traversal"])
 @pytest.mark.parametrize("target_kind", ["INDEX", "COMMIT"])
-def test_invalid_lexical_input_keeps_the_existing_consumer_diagnostic(project, tmp_path, kind, target_kind):
+def test_invalid_lexical_input_keeps_the_existing_consumer_diagnostic(
+    project, tmp_path, kind, target_kind
+):
     source = tmp_path / "outside.py" if kind == "outside-root" else Path("../calc.py")
     with pytest.raises(ValueError, match="outside the project root"):
         mutation._lexical_source(str(source), project.root)
     review = committed_review(project) if target_kind == "COMMIT" else reviewed(project)
     error = mutation.mutation_review_admission_error(
-        target_kind=target_kind, git_diff=review.git_diff, source_files=[source],
-        source_root=project.root, config_root=project.root, runner=mutation.run_mutation,
+        target_kind=target_kind,
+        git_diff=review.git_diff,
+        source_files=[source],
+        source_root=project.root,
+        config_root=project.root,
+        runner=mutation.run_mutation,
     )
-    assert error is None, "invalid lexical input must keep its existing consumer diagnostic, not new admission authority"
+    assert error is None, (
+        "invalid lexical input must keep its existing consumer diagnostic, not new admission authority"
+    )

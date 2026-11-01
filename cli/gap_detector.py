@@ -14,16 +14,18 @@ from file_utils import atomic_write, load_json_file
 # File path constants
 # ---------------------------------------------------------------------------
 
-EXTERNAL_FINDINGS_FILE = os.path.join('.forge', 'external_findings.json')
-GAP_CANDIDATES_FILE = os.path.join('.forge', 'gap_candidates.json')
+EXTERNAL_FINDINGS_FILE = os.path.join(".forge", "external_findings.json")
+GAP_CANDIDATES_FILE = os.path.join(".forge", "gap_candidates.json")
 KEYWORD_EXPANSION_FILE = os.path.join(
-    '.forge', 'keyword_expansion_queue.json',
+    ".forge",
+    "keyword_expansion_queue.json",
 )
 
 
 # ---------------------------------------------------------------------------
 # Loader functions
 # ---------------------------------------------------------------------------
+
 
 def load_external_findings():
     """Load .forge/external_findings.json.
@@ -32,7 +34,8 @@ def load_external_findings():
     Returns empty structure if file is missing or corrupted.
     """
     return load_json_file(
-        EXTERNAL_FINDINGS_FILE, {'version': 1, 'findings': []},
+        EXTERNAL_FINDINGS_FILE,
+        {"version": 1, "findings": []},
     )
 
 
@@ -43,7 +46,8 @@ def load_gap_candidates():
     Returns empty structure if file is missing or corrupted.
     """
     return load_json_file(
-        GAP_CANDIDATES_FILE, {'version': 1, 'candidates': []},
+        GAP_CANDIDATES_FILE,
+        {"version": 1, "candidates": []},
     )
 
 
@@ -54,13 +58,15 @@ def load_keyword_expansion_queue():
     Returns empty structure if file is missing or corrupted.
     """
     return load_json_file(
-        KEYWORD_EXPANSION_FILE, {'version': 1, 'expansions': []},
+        KEYWORD_EXPANSION_FILE,
+        {"version": 1, "expansions": []},
     )
 
 
 # ---------------------------------------------------------------------------
 # Dedup functions
 # ---------------------------------------------------------------------------
+
 
 def is_exact_dup(source, source_id, existing_findings):
     """Check exact dedup via (source, source_id) match.
@@ -77,8 +83,7 @@ def is_exact_dup(source, source_id, existing_findings):
         bool: True if duplicate found.
     """
     for finding in existing_findings:
-        if (finding.get('source') == source
-                and finding.get('source_id') == source_id):
+        if finding.get("source") == source and finding.get("source_id") == source_id:
             return True
     return False
 
@@ -86,14 +91,18 @@ def is_exact_dup(source, source_id, existing_findings):
 # Source priority for cross-source dedup tiebreaker.
 # Lower number = higher priority.
 _SOURCE_PRIORITY = {
-    'github_pr': 0,
-    'git_log': 1,
-    'ci_log': 2,
+    "github_pr": 0,
+    "git_log": 1,
+    "ci_log": 2,
 }
 
 
 def find_cross_source_dup(
-    file_val, line_val, text_hash, timestamp_str, existing_findings,
+    file_val,
+    line_val,
+    text_hash,
+    timestamp_str,
+    existing_findings,
 ):
     """Find cross-source duplicate via (file, line, text_hash) in 7-day window.
 
@@ -118,8 +127,7 @@ def find_cross_source_dup(
         new_ts = datetime.fromisoformat(timestamp_str)
     except (ValueError, TypeError):
         print(
-            "forge: warning: failed to parse new finding "
-            f"timestamp: {timestamp_str!r}",
+            f"forge: warning: failed to parse new finding timestamp: {timestamp_str!r}",
             file=sys.stderr,
         )
         return None
@@ -132,13 +140,15 @@ def find_cross_source_dup(
     best_priority = 999
 
     for finding in existing_findings:
-        if (finding.get('file') != file_val
-                or finding.get('line') != line_val
-                or finding.get('text_hash') != text_hash):
+        if (
+            finding.get("file") != file_val
+            or finding.get("line") != line_val
+            or finding.get("text_hash") != text_hash
+        ):
             continue
 
         try:
-            f_ts = datetime.fromisoformat(finding.get('timestamp', ''))
+            f_ts = datetime.fromisoformat(finding.get("timestamp", ""))
         except (ValueError, TypeError):
             print(
                 "forge: warning: failed to parse existing finding "
@@ -153,20 +163,21 @@ def find_cross_source_dup(
             continue
 
         f_priority = _SOURCE_PRIORITY.get(
-            finding.get('source', ''), 999,
+            finding.get("source", ""),
+            999,
         )
 
         # Pick earliest timestamp; ties broken by source priority
         if best_match is None:
-            best_match = finding.get('id')
+            best_match = finding.get("id")
             best_ts = f_ts
             best_priority = f_priority
         elif f_ts < best_ts:
-            best_match = finding.get('id')
+            best_match = finding.get("id")
             best_ts = f_ts
             best_priority = f_priority
         elif f_ts == best_ts and f_priority < best_priority:
-            best_match = finding.get('id')
+            best_match = finding.get("id")
             best_ts = f_ts
             best_priority = f_priority
 
@@ -176,6 +187,7 @@ def find_cross_source_dup(
 # ---------------------------------------------------------------------------
 # D4 Classification
 # ---------------------------------------------------------------------------
+
 
 def classify_finding(finding_dict, keyword_dicts, dimension_states):
     """Classify a finding via D4 three-outcome algorithm.
@@ -200,21 +212,21 @@ def classify_finding(finding_dict, keyword_dicts, dimension_states):
         outcome is 'outcome_1', 'outcome_2', or 'outcome_3'.
         matched_dim is the dimension name or None.
     """
-    dim_raw = (finding_dict.get('dimension_raw') or '').strip()
-    text = finding_dict.get('text') or ''
-    search_text = (dim_raw + ' ' + text).lower()
+    dim_raw = (finding_dict.get("dimension_raw") or "").strip()
+    text = finding_dict.get("text") or ""
+    search_text = (dim_raw + " " + text).lower()
 
     # Filter to non-archived dimensions
     active_dims = []
     for dim in keyword_dicts:
         state = dimension_states.get(dim, {})
-        status = state.get('status', 'active')
-        if status != 'archived':
+        status = state.get("status", "active")
+        if status != "archived":
             active_dims.append(dim)
 
     # Step 2: no non-archived dims
     if not active_dims:
-        return ('outcome_3', None)
+        return ("outcome_3", None)
 
     # Step 1: count distinct keyword matches per dimension
     dim_counts = {}
@@ -230,7 +242,7 @@ def classify_finding(finding_dict, keyword_dicts, dimension_states):
 
     # All active dims have empty keyword lists -- no classification
     if not dim_counts:
-        return ('outcome_3', None)
+        return ("outcome_3", None)
 
     max_count = max(dim_counts.values())
 
@@ -240,21 +252,22 @@ def classify_finding(finding_dict, keyword_dicts, dimension_states):
         best_dim = sorted(
             [d for d, c in dim_counts.items() if c == max_count],
         )[0]
-        return ('outcome_1', best_dim)
+        return ("outcome_1", best_dim)
 
     # Step 4: dimension_raw name match
     dim_raw_lower = dim_raw.lower()
     for dim in sorted(active_dims):
         if dim_raw_lower == dim.lower():
-            return ('outcome_2', dim)
+            return ("outcome_2", dim)
 
     # Step 5: unrecognized
-    return ('outcome_3', None)
+    return ("outcome_3", None)
 
 
 # ---------------------------------------------------------------------------
 # Main processing function
 # ---------------------------------------------------------------------------
+
 
 def process_learn(adapter_findings, model=None):
     """Process external findings through dedup and D4 classification.
@@ -279,22 +292,25 @@ def process_learn(adapter_findings, model=None):
     config = load_config()
 
     # Run migration if needed
-    if 'dimension_states' not in config:
+    if "dimension_states" not in config:
         skill_md = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            '..', 'skills', 'forge', 'SKILL.md',
+            "..",
+            "skills",
+            "forge",
+            "SKILL.md",
         )
         run_migration_if_needed(
             CONFIG_FILE,
-            os.path.join('.forge', 'findings.json'),
+            os.path.join(".forge", "findings.json"),
             skill_md,
         )
         # Reload config after migration
         reload_config()
         config = load_config()
 
-    keyword_dicts = config.get('keyword_dictionaries', {})
-    dim_states = config.get('dimension_states', {})
+    keyword_dicts = config.get("keyword_dictionaries", {})
+    dim_states = config.get("dimension_states", {})
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -302,8 +318,8 @@ def process_learn(adapter_findings, model=None):
     # check compares. process_learn appends as it goes, so the index
     # is updated below instead of rescanning the whole list.
     by_key = {}
-    for prior in ext_data['findings']:
-        key = (prior.get('file'), prior.get('line'), prior.get('text_hash'))
+    for prior in ext_data["findings"]:
+        key = (prior.get("file"), prior.get("line"), prior.get("text_hash"))
         by_key.setdefault(key, []).append(prior)
 
     # Counters for summary
@@ -319,36 +335,36 @@ def process_learn(adapter_findings, model=None):
         # Build finding dict
         text_hash = compute_text_hash(extracted.text)
         finding = {
-            'id': f"ext-{uuid.uuid4()}",
-            'timestamp': canonical.timestamp,
-            'source': canonical.source,
-            'source_tool': canonical.source_tool,
-            'source_id': canonical.source_id,
-            'file': extracted.file,
-            'line': extracted.line,
-            'text': extracted.text,
-            'dimension_raw': extracted.dimension_raw,
-            'validated_dimension': None,
-            'confidence': extracted.confidence,
-            'gap': False,
-            'suggested_keywords': extracted.suggested_keywords,
-            'text_hash': text_hash,
-            'dedup_of': None,
-            'context': canonical.context,
-            'raw_source': canonical.raw_source,
+            "id": f"ext-{uuid.uuid4()}",
+            "timestamp": canonical.timestamp,
+            "source": canonical.source,
+            "source_tool": canonical.source_tool,
+            "source_id": canonical.source_id,
+            "file": extracted.file,
+            "line": extracted.line,
+            "text": extracted.text,
+            "dimension_raw": extracted.dimension_raw,
+            "validated_dimension": None,
+            "confidence": extracted.confidence,
+            "gap": False,
+            "suggested_keywords": extracted.suggested_keywords,
+            "text_hash": text_hash,
+            "dedup_of": None,
+            "context": canonical.context,
+            "raw_source": canonical.raw_source,
         }
 
         # Exact dedup: skip entirely
         if is_exact_dup(
             canonical.source,
             canonical.source_id,
-            ext_data['findings'],
+            ext_data["findings"],
         ):
             n_dup += 1
             continue
 
         # Store finding in external_findings
-        ext_data['findings'].append(finding)
+        ext_data["findings"].append(finding)
         key = (extracted.file, extracted.line, text_hash)
         by_key.setdefault(key, []).append(finding)
 
@@ -361,71 +377,73 @@ def process_learn(adapter_findings, model=None):
             canonical.timestamp,
             by_key[key],
         )
-        if dup_id and dup_id != finding['id']:
-            finding['dedup_of'] = dup_id
+        if dup_id and dup_id != finding["id"]:
+            finding["dedup_of"] = dup_id
             n_dup += 1
             continue
 
         # D4 classification
         outcome, matched_dim = classify_finding(
-            finding, keyword_dicts, dim_states,
+            finding,
+            keyword_dicts,
+            dim_states,
         )
 
-        if outcome == 'outcome_1':
+        if outcome == "outcome_1":
             # Keyword match: validate and update dimension_states
-            finding['validated_dimension'] = matched_dim
-            finding['gap'] = False
+            finding["validated_dimension"] = matched_dim
+            finding["gap"] = False
             n_outcome_1 += 1
 
             # Update dimension_states
             ensure_dimension_state(config, matched_dim)
-            state = config['dimension_states'][matched_dim]
-            state['finding_count'] = state.get('finding_count', 0) + 1
-            state['last_seen'] = now
+            state = config["dimension_states"][matched_dim]
+            state["finding_count"] = state.get("finding_count", 0) + 1
+            state["last_seen"] = now
 
-        elif outcome == 'outcome_2':
+        elif outcome == "outcome_2":
             # Name match but keywords don't match
-            finding['validated_dimension'] = None
-            finding['gap'] = False
+            finding["validated_dimension"] = None
+            finding["gap"] = False
             n_outcome_2 += 1
 
             # Create keyword expansion queue entry
             exp_entry = {
-                'id': f"exp-{uuid.uuid4()}",
-                'finding_id': finding['id'],
-                'created_at': now,
-                'proposed_dimension': matched_dim,
-                'unmatched_text': finding['text'],
-                'text_hash': finding['text_hash'],
-                'suggested_keywords': finding['suggested_keywords'],
-                'status': 'pending',
-                'reclassified_to': None,
+                "id": f"exp-{uuid.uuid4()}",
+                "finding_id": finding["id"],
+                "created_at": now,
+                "proposed_dimension": matched_dim,
+                "unmatched_text": finding["text"],
+                "text_hash": finding["text_hash"],
+                "suggested_keywords": finding["suggested_keywords"],
+                "status": "pending",
+                "reclassified_to": None,
             }
-            exp_data['expansions'].append(exp_entry)
+            exp_data["expansions"].append(exp_entry)
 
         else:
             # outcome_3: unrecognized
-            finding['validated_dimension'] = 'unknown'
-            finding['gap'] = True
+            finding["validated_dimension"] = "unknown"
+            finding["gap"] = True
             n_outcome_3 += 1
 
             # Create gap candidate
             gap_entry = {
-                'id': f"gap-{uuid.uuid4()}",
-                'finding_id': finding['id'],
-                'timestamp': finding['timestamp'],
-                'created_at': now,
-                'dimension_raw': finding['dimension_raw'],
-                'text': finding['text'],
-                'text_hash': finding['text_hash'],
-                'file': finding['file'],
-                'line': finding['line'],
-                'source': finding['source'],
-                'status': 'pending',
-                'group_id': None,
-                'reclassified_from': None,
+                "id": f"gap-{uuid.uuid4()}",
+                "finding_id": finding["id"],
+                "timestamp": finding["timestamp"],
+                "created_at": now,
+                "dimension_raw": finding["dimension_raw"],
+                "text": finding["text"],
+                "text_hash": finding["text_hash"],
+                "file": finding["file"],
+                "line": finding["line"],
+                "source": finding["source"],
+                "status": "pending",
+                "group_id": None,
+                "reclassified_from": None,
             }
-            gap_data['candidates'].append(gap_entry)
+            gap_data["candidates"].append(gap_entry)
 
     # Atomic write all modified files
     atomic_write(EXTERNAL_FINDINGS_FILE, ext_data)

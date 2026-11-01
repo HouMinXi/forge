@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Stage A endpoint refusal controls; immutable lifetime binding remains open."""
+
 from copy import deepcopy
 import hashlib
 import json
@@ -25,8 +26,9 @@ from tests.test_mutation_ledger_transport import native_measurement as native_me
 
 
 def working_review(project):
-    return resolve_baseline(GitRefBaseline(project.head), GitRefBaseline("WORKING"),
-                            [Path("calc.py")], project.root)
+    return resolve_baseline(
+        GitRefBaseline(project.head), GitRefBaseline("WORKING"), [Path("calc.py")], project.root
+    )
 
 
 def _append_r7_row(project, row):
@@ -35,7 +37,11 @@ def _append_r7_row(project, row):
 
 @pytest.mark.parametrize("drift", [False, True], ids=["unchanged-source", "baseline-source-edit"])
 def test_cli_measured_working_source_requires_the_reviewed_postimage(
-    git_project, native_measurement, monkeypatch, capsys, drift,
+    git_project,
+    native_measurement,
+    monkeypatch,
+    capsys,
+    drift,
 ):
     findings, infra, evidence = native_measurement()
     assert infra == [] and evidence["completed_measurement"] is True
@@ -49,8 +55,13 @@ def test_cli_measured_working_source_requires_the_reviewed_postimage(
         if list(argv) == git_project.baseline and drift:
             source.write_text("def example(value):\n    return value + 3\n")
         if "run" in argv:
-            observed.append({"source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-                             "argv": list(argv), "cwd": str(kwargs["cwd"])})
+            observed.append(
+                {
+                    "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    "argv": list(argv),
+                    "cwd": str(kwargs["cwd"]),
+                }
+            )
         return original_command(argv, **kwargs)
 
     monkeypatch.setattr(mutation, "run_owned_command", execute)
@@ -58,15 +69,26 @@ def test_cli_measured_working_source_requires_the_reviewed_postimage(
     exit_code = _run_mutation_check(args, git_project.root)
     output = capsys.readouterr()
     after = source.read_bytes()
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=git_project.root,
-                          check=True, capture_output=True, text=True).stdout.strip()
-    (git_project.state / ".code-forge/r7-observation.json").write_text(json.dumps({
-        "before_sha256": hashlib.sha256(before).hexdigest(),
-        "after_sha256": hashlib.sha256(after).hexdigest(), "head_before": git_project.head,
-        "head_after": head, "review_diff": git_project.diff, "native_commands": observed,
-        "exit_code": exit_code, "stdout": output.out, "stderr": output.err,
-        "ruling_fingerprint": findings[0].fingerprint, "native_id": findings[0].id,
-    }))
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=git_project.root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    (git_project.state / ".code-forge/r7-observation.json").write_text(
+        json.dumps(
+            {
+                "before_sha256": hashlib.sha256(before).hexdigest(),
+                "after_sha256": hashlib.sha256(after).hexdigest(),
+                "head_before": git_project.head,
+                "head_after": head,
+                "review_diff": git_project.diff,
+                "native_commands": observed,
+                "exit_code": exit_code,
+                "stdout": output.out,
+                "stderr": output.err,
+                "ruling_fingerprint": findings[0].fingerprint,
+                "native_id": findings[0].id,
+            }
+        )
+    )
     assert head == git_project.head and len(observed) == 1
     assert observed[0]["source_sha256"] == hashlib.sha256(after).hexdigest()
     assert (before != after) is drift
@@ -78,7 +100,9 @@ def test_cli_measured_working_source_requires_the_reviewed_postimage(
 
 @pytest.mark.parametrize("drift", [False, True], ids=["unchanged-source", "autofix-source-edit"])
 def test_local_native_ruling_requires_the_postimage_measured_after_autofix(
-    git_project, native_measurement, drift,
+    git_project,
+    native_measurement,
+    drift,
 ):
     findings, infra, evidence = native_measurement()
     assert infra == [] and evidence["completed_measurement"] is True
@@ -97,24 +121,42 @@ def test_local_native_ruling_requires_the_postimage_measured_after_autofix(
             return FixOutcome.SUCCESS
 
     machine.autofixer = WorkingFixer()
-    machine.l0_runner = lambda *_args: ([StateFinding(
-        id="ordinary-source-edit", fingerprint="ordinary-source-edit", source="AST",
-        disposition=Disposition.CONFIRMED, file="calc.py", line_range=[2, 2],
-        description="ordinary source finding",
-    )], [])
+    machine.l0_runner = lambda *_args: (
+        [
+            StateFinding(
+                id="ordinary-source-edit",
+                fingerprint="ordinary-source-edit",
+                source="AST",
+                disposition=Disposition.CONFIRMED,
+                file="calc.py",
+                line_range=[2, 2],
+                description="ordinary source finding",
+            )
+        ],
+        [],
+    )
     machine._execute_round(1)
     current = [item for item in machine._state.findings if item.id == findings[0].id]
     after = source.read_bytes()
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=git_project.root,
-                          check=True, capture_output=True, text=True).stdout.strip()
-    (git_project.state / ".code-forge/r7-observation.json").write_text(json.dumps({
-        "before_sha256": hashlib.sha256(before).hexdigest(),
-        "after_sha256": hashlib.sha256(after).hexdigest(), "head_before": git_project.head,
-        "head_after": head, "review_diff": git_project.diff, "fix_calls": fix_calls,
-        "native_id": findings[0].id, "ruling_fingerprint": findings[0].fingerprint,
-        "current_dispositions": [item.disposition.value for item in current],
-        "native_eligible": machine._mutation_measurement_eligible,
-    }))
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=git_project.root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    (git_project.state / ".code-forge/r7-observation.json").write_text(
+        json.dumps(
+            {
+                "before_sha256": hashlib.sha256(before).hexdigest(),
+                "after_sha256": hashlib.sha256(after).hexdigest(),
+                "head_before": git_project.head,
+                "head_after": head,
+                "review_diff": git_project.diff,
+                "fix_calls": fix_calls,
+                "native_id": findings[0].id,
+                "ruling_fingerprint": findings[0].fingerprint,
+                "current_dispositions": [item.disposition.value for item in current],
+                "native_eligible": machine._mutation_measurement_eligible,
+            }
+        )
+    )
     assert head == git_project.head and len(fix_calls) == 1
     assert (before != after) is drift and len(current) == 1
     assert current[0].disposition is (Disposition.CONFIRMED if drift else Disposition.DISMISSED)
@@ -122,7 +164,10 @@ def test_local_native_ruling_requires_the_postimage_measured_after_autofix(
 
 @pytest.mark.parametrize("factory", [False, True], ids=["direct-native", "exact-factory-partial"])
 def test_working_positive_retains_three_round_native_ruling(
-    git_project, native_measurement, monkeypatch, factory,
+    git_project,
+    native_measurement,
+    monkeypatch,
+    factory,
 ):
     findings, infra, proof = native_measurement()
     assert infra == [] and proof["completed_measurement"] is True
@@ -140,14 +185,19 @@ def test_working_positive_retains_three_round_native_ruling(
     saved = load_state(git_project.state / ".code-forge/state.json")
     assert saved.consecutive_survivor_rounds == 0
     assert not any("3 consecutive rounds" in message for message in saved.infra_errors)
-    assert any(item.fingerprint == fingerprint and item.disposition is Disposition.DISMISSED
-               for item in saved.findings)
+    assert any(
+        item.fingerprint == fingerprint and item.disposition is Disposition.DISMISSED
+        for item in saved.findings
+    )
     assert machine._mutation_measurement_eligible is True
 
 
 @pytest.mark.parametrize("case", ["review-mismatch", "read-failure", "post-native-edit"])
 def test_local_working_refuses_unavailable_or_changed_endpoint(
-    git_project, native_measurement, monkeypatch, case,
+    git_project,
+    native_measurement,
+    monkeypatch,
+    case,
 ):
     findings, _, _ = native_measurement()
     append_row(git_project.root, cli_row(git_project, findings[0]))
@@ -183,7 +233,9 @@ def test_local_working_refuses_unavailable_or_changed_endpoint(
 
 @pytest.mark.parametrize("target_kind", [None, "INDEX", "COMMIT"])
 def test_local_unknown_or_nonworking_subject_has_no_new_eligibility(
-    git_project, native_measurement, target_kind,
+    git_project,
+    native_measurement,
+    target_kind,
 ):
     findings, _, _ = native_measurement()
     append_row(git_project.root, cli_row(git_project, findings[0]))
@@ -191,14 +243,19 @@ def test_local_unknown_or_nonworking_subject_has_no_new_eligibility(
     if target_kind is None:
         review = working_review(git_project)
         machine.resolved_review = ResolvedReview(
-            review.source_files, review.baseline_content, review.git_diff, review.mode_hint,
-            base_sha=review.base_sha, head_sha=review.head_sha,
+            review.source_files,
+            review.baseline_content,
+            review.git_diff,
+            review.mode_hint,
+            base_sha=review.base_sha,
+            head_sha=review.head_sha,
         )
     else:
         machine.resolved_review = resolve_baseline(
             GitRefBaseline(git_project.head),
             GitRefBaseline("INDEX" if target_kind == "INDEX" else git_project.head),
-            [Path("calc.py")], git_project.root,
+            [Path("calc.py")],
+            git_project.root,
         )
     current = machine._run_l2_phase()
     assert len(current) == 1 and is_mutation_survivor(current[0])
@@ -207,7 +264,11 @@ def test_local_unknown_or_nonworking_subject_has_no_new_eligibility(
 
 @pytest.mark.parametrize("case", ["capture-read-failure", "post-native-edit", "capture-diff-mismatch"])
 def test_cli_endpoint_refusal_keeps_actual_survivor_visible(
-    git_project, native_measurement, monkeypatch, capsys, case,
+    git_project,
+    native_measurement,
+    monkeypatch,
+    capsys,
+    case,
 ):
     findings, _, _ = native_measurement()
     append_row(git_project.root, cli_row(git_project, findings[0]))
@@ -233,6 +294,7 @@ def test_cli_endpoint_refusal_keeps_actual_survivor_visible(
         monkeypatch.setattr(mutation, "run_owned_command", post_native_edit)
     else:
         from code_forge.git import _MACHINE_DIFF_OPTIONS
+
         original_run = subprocess.run
 
         def change_after_review_diff(argv, **kwargs):
@@ -250,7 +312,9 @@ def test_cli_endpoint_refusal_keeps_actual_survivor_visible(
 
 
 def test_local_pre_l2_check_is_independent_of_restored_post_endpoint(
-    git_project, native_measurement, monkeypatch,
+    git_project,
+    native_measurement,
+    monkeypatch,
 ):
     findings, _, _ = native_measurement()
     append_row(git_project.root, cli_row(git_project, findings[0]))
@@ -278,7 +342,8 @@ def test_local_pre_l2_check_is_independent_of_restored_post_endpoint(
 
 
 def test_local_original_review_guard_survives_multiple_autofix_rounds(
-    git_project, native_measurement,
+    git_project,
+    native_measurement,
 ):
     findings, _, _ = native_measurement()
     append_row(git_project.root, cli_row(git_project, findings[0]))
@@ -294,25 +359,40 @@ def test_local_original_review_guard_survives_multiple_autofix_rounds(
             return FixOutcome.SUCCESS
 
     machine.autofixer = PersistentFixer()
-    machine.l0_runner = lambda *_args: ([StateFinding(
-        id="ordinary-persistent-edit", fingerprint="ordinary-persistent-edit", source="AST",
-        disposition=Disposition.CONFIRMED, file="calc.py", line_range=[2, 2],
-        description="ordinary source finding",
-    )], [])
+    machine.l0_runner = lambda *_args: (
+        [
+            StateFinding(
+                id="ordinary-persistent-edit",
+                fingerprint="ordinary-persistent-edit",
+                source="AST",
+                disposition=Disposition.CONFIRMED,
+                file="calc.py",
+                line_range=[2, 2],
+                description="ordinary source finding",
+            )
+        ],
+        [],
+    )
     for index in range(3):
         machine._execute_round(index)
         assert machine._mutation_measurement_eligible is False
         current = [item for item in machine._state.findings if item.id == findings[0].id]
         assert len(current) == 1 and current[0].disposition is Disposition.CONFIRMED
     assert fixes and len(machine._state.round_history) == 3
-    assert all(row["dispositions"][findings[0].fingerprint] == "CONFIRMED"
-               for row in machine._state.round_history)
+    assert all(
+        row["dispositions"][findings[0].fingerprint] == "CONFIRMED"
+        for row in machine._state.round_history
+    )
 
 
 @pytest.mark.parametrize("kind", ["ledger", "pin", "pass-name", "keyword"])
 @pytest.mark.parametrize("native", [True, False], ids=["native-refusal", "ordinary-positive"])
 def test_direct_ci_generic_suppression_keeps_native_survivors_blocking(
-    git_project, native_measurement, monkeypatch, kind, native,
+    git_project,
+    native_measurement,
+    monkeypatch,
+    kind,
+    native,
 ):
     findings, _, _ = native_measurement()
     item = deepcopy(findings[0])
@@ -336,7 +416,9 @@ def test_direct_ci_generic_suppression_keeps_native_survivors_blocking(
     machine.resolved_review = working_review(git_project)
     assert machine.run() is (Verdict.FAIL if native else Verdict.PASS)
     current = next(finding for finding in machine._state.findings if finding.id == item.id)
-    expected = Disposition.CONFIRMED if native else (
-        Disposition.DISMISSED if kind in ("ledger", "pin") else Disposition.STYLE
+    expected = (
+        Disposition.CONFIRMED
+        if native
+        else (Disposition.DISMISSED if kind in ("ledger", "pin") else Disposition.STYLE)
     )
     assert current.disposition is expected

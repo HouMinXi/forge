@@ -40,13 +40,13 @@ Phase 1 DTO → wire mapping (actual shipped shapes, not Part B sketch):
 
 No paths, callbacks, clock, publication, logging, network, or workers.
 """
+
 from __future__ import annotations
 
-import copy
 import json
 import math
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Literal
 
 from code_forge.report_projection import (
     AssociatedDiagnostic,
@@ -106,9 +106,7 @@ ACQ_REASONS = frozenset(
     }
 )
 PASS_NAMES = ("qodo", "expert", "adversarial")
-PASS_OUTCOMES = frozenset(
-    {"completed", "timeout", "error", "schema_fail", "incomplete"}
-)
+PASS_OUTCOMES = frozenset({"completed", "timeout", "error", "schema_fail", "incomplete"})
 RECORD_STAGE_CODES = frozenset(
     {
         "unsupported-record-type",
@@ -147,8 +145,7 @@ _MAX_FIELD_CONTAINER_DEPTH = 64
 _MAX_BLOCK_DEPTH = 69
 
 _BUDGET_QUALIFIER = (
-    "Report classification unavailable: additive report budget exceeded; "
-    "legacy report preserved."
+    "Report classification unavailable: additive report budget exceeded; legacy report preserved."
 )
 
 
@@ -273,17 +270,13 @@ def _is_safe_json(value: Any, *, depth: int = 0) -> bool:
     if type(value) is dict:
         if depth >= _MAX_FIELD_CONTAINER_DEPTH:
             return False
-        return all(
-            type(k) is str and _is_safe_json(v, depth=depth + 1) for k, v in value.items()
-        )
+        return all(type(k) is str and _is_safe_json(v, depth=depth + 1) for k, v in value.items())
     return False
 
 
 def _detach_json(value: Any) -> JSONValue:
     """Owned deep copy via JSON domain; rejects non-finite / non-JSON."""
-    return json.loads(
-        json.dumps(value, allow_nan=False, ensure_ascii=False, separators=(",", ":"))
-    )
+    return json.loads(json.dumps(value, allow_nan=False, ensure_ascii=False, separators=(",", ":")))
 
 
 def _legacy_envelope_accepted(stdout: str) -> tuple[bool, dict[str, Any] | None]:
@@ -529,9 +522,7 @@ def _host_diag_for_shape(shape: str) -> DiagnosticObservation:
     )
 
 
-def _fallback_from_phase1(
-    fb: FallbackRecord, reason: str
-) -> WireFallbackRecord:
+def _fallback_from_phase1(fb: FallbackRecord, reason: str) -> WireFallbackRecord:
     safe: dict[str, JSONValue] = {}
     if fb.finding_id is not None:
         safe["id"] = fb.finding_id
@@ -583,9 +574,7 @@ def serialize_projection(
     wire_errors: list[WireClassificationError] = []
     for err in projection.classification_errors:
         stage, code = _map_error_stage_code(err)
-        wire_errors.append(
-            WireClassificationError(record_index=err.index, stage=stage, code=code)
-        )
+        wire_errors.append(WireClassificationError(record_index=err.index, stage=stage, code=code))
         if err.index is not None:
             errors_by_index[err.index] = code
 
@@ -607,9 +596,7 @@ def serialize_projection(
         quarantine.append(_fallback_from_phase1(fb, reason))
 
     product = tuple(_product_from_report_record(r) for r in projection.product)
-    unresolved = tuple(
-        _product_from_report_record(r) for r in projection.unresolved_product_candidates
-    )
+    unresolved = tuple(_product_from_report_record(r) for r in projection.unresolved_product_candidates)
     execution = tuple(_host_from_report_record(r) for r in projection.execution)
     gate = tuple(_host_from_report_record(r) for r in projection.gate)
 
@@ -625,9 +612,7 @@ def serialize_projection(
         "completion-not-provable-from-state",
         "capacity-incomplete-record",
     ):
-        outcomes: tuple[tuple[str, str], ...] | None = tuple(
-            (n, "completed") for n in PASS_NAMES
-        )
+        outcomes: tuple[tuple[str, str], ...] | None = tuple((n, "completed") for n in PASS_NAMES)
     elif acq_reason == "pass-outcome-not-completed":
         outcomes = projection.persisted_pass_outcomes
     else:
@@ -673,21 +658,13 @@ def build_renderer_fallback(projection: ReportProjection) -> ReportClassificatio
         )
 
     for p in base.product or ():
-        by_index[p.record.record_index] = as_fb_from_view(
-            p.record, "renderer-computation-fault"
-        )
+        by_index[p.record.record_index] = as_fb_from_view(p.record, "renderer-computation-fault")
     for p in base.unresolved_product_candidates or ():
-        by_index[p.record.record_index] = as_fb_from_view(
-            p.record, "renderer-computation-fault"
-        )
+        by_index[p.record.record_index] = as_fb_from_view(p.record, "renderer-computation-fault")
     for h in base.execution or ():
-        by_index[h.record.record_index] = as_fb_from_view(
-            h.record, "renderer-computation-fault"
-        )
+        by_index[h.record.record_index] = as_fb_from_view(h.record, "renderer-computation-fault")
     for h in base.gate or ():
-        by_index[h.record.record_index] = as_fb_from_view(
-            h.record, "renderer-computation-fault"
-        )
+        by_index[h.record.record_index] = as_fb_from_view(h.record, "renderer-computation-fault")
     for q in base.quarantine or ():
         # Preserve original reason for already-faulted entries
         by_index[q.record_index] = q
@@ -695,9 +672,7 @@ def build_renderer_fallback(projection: ReportProjection) -> ReportClassificatio
     quarantine = tuple(by_index[i] for i in sorted(by_index))
     errors = list(base.classification_errors or ())
     errors.append(
-        WireClassificationError(
-            record_index=None, stage="render", code="renderer-computation-fault"
-        )
+        WireClassificationError(record_index=None, stage="render", code="renderer-computation-fault")
     )
     return ReportClassificationWire(
         schema=SCHEMA_V1,
@@ -833,7 +808,7 @@ def _validate_product(obj: Any) -> None:
             }
         )
     _require(len(diags) == len(expected))
-    for got, exp in zip(diags, expected):
+    for got, exp in zip(diags, expected, strict=False):
         _validate_obs(got, allowed_kinds=OBS_KINDS_ASSOC, assoc=True)
         _require(got["kind"] == exp["kind"])
         _require(got["text"] == exp["text"])
@@ -864,9 +839,7 @@ def _validate_fallback(obj: Any) -> None:
     _require(not (set(safe) & set(unavail)))
     reason = obj.get("reason")
     _require(
-        reason in RECORD_STAGE_CODES
-        or reason in PROJECTION_STAGE_CODES
-        or reason in RENDER_STAGE_CODES
+        reason in RECORD_STAGE_CODES or reason in PROJECTION_STAGE_CODES or reason in RENDER_STAGE_CODES
     )
 
 
@@ -888,9 +861,7 @@ def _validate_error(obj: Any) -> None:
         raise _BlockInvalid("bad stage")
 
 
-def _validate_acq(
-    complete: Any, reason: Any, outcomes: Any
-) -> None:
+def _validate_acq(complete: Any, reason: Any, outcomes: Any) -> None:
     _require(complete is False or complete is None)
     _require(reason in ACQ_REASONS)
     if outcomes is not None:
@@ -972,7 +943,9 @@ def validate_block_dict(block: Any) -> str | None:
         quarantine = block.get("quarantine")
         unresolved = block.get("unresolved_product_candidates")
         errors = block.get("classification_errors")
-        _require(all(type(x) is list for x in (product, execution, gate, quarantine, unresolved, errors)))
+        _require(
+            all(type(x) is list for x in (product, execution, gate, quarantine, unresolved, errors))
+        )
         for p in product:
             _validate_product(p)
         for p in unresolved:
@@ -994,16 +967,11 @@ def validate_block_dict(block: Any) -> str | None:
 
         # Index union uniqueness 0..N-1
         indexes: list[int] = []
-        for p in product:
-            indexes.append(p["record"]["record_index"])
-        for p in unresolved:
-            indexes.append(p["record"]["record_index"])
-        for h in execution:
-            indexes.append(h["record"]["record_index"])
-        for h in gate:
-            indexes.append(h["record"]["record_index"])
-        for f in quarantine:
-            indexes.append(f["record_index"])
+        indexes.extend((p["record"]["record_index"]) for p in product)
+        indexes.extend((p["record"]["record_index"]) for p in unresolved)
+        indexes.extend((h["record"]["record_index"]) for h in execution)
+        indexes.extend((h["record"]["record_index"]) for h in gate)
+        indexes.extend((f["record_index"]) for f in quarantine)
         _require(len(indexes) == len(set(indexes)))
         if indexes:
             _require(set(indexes) == set(range(max(indexes) + 1)) and min(indexes) == 0)
@@ -1024,11 +992,7 @@ def validate_block_dict(block: Any) -> str | None:
         _require(len(proj_errors) <= 1)
         _require(len(render_errors) <= 1)
         # Order: locals by index, then at most one projection, then at most one render
-        reordered = (
-            sorted(local_errors, key=lambda e: e["record_index"])
-            + proj_errors
-            + render_errors
-        )
+        reordered = sorted(local_errors, key=lambda e: e["record_index"]) + proj_errors + render_errors
         _require(errors == reordered)
         q_by_idx = {f["record_index"]: f for f in quarantine}
         for e in local_errors:
@@ -1140,9 +1104,7 @@ def parse_block_dict(block: dict[str, Any]) -> ReportClassificationWire:
         )
 
     def load_err(d: dict) -> WireClassificationError:
-        return WireClassificationError(
-            record_index=d["record_index"], stage=d["stage"], code=d["code"]
-        )
+        return WireClassificationError(record_index=d["record_index"], stage=d["stage"], code=d["code"])
 
     outcomes = block["persisted_pass_outcomes"]
     typed_outcomes: tuple[tuple[str, str], ...] | None
@@ -1352,23 +1314,18 @@ def prepare_report_views(
     if legacy.sarif_document is not None:
         if projection is None or not isinstance(projection, ReportProjection):
             raise TypeError(
-                "safe substrate requires a completed ReportProjection; "
-                f"got {type(projection).__name__}"
+                f"safe substrate requires a completed ReportProjection; got {type(projection).__name__}"
             )
         # Do not mutate inputs; work on owned copies inside helpers.
         return _prepare_safe_views(legacy, projection)
     if projection is not None:
         raise TypeError(
-            "raw-legacy-only substrate requires projection=None; "
-            f"got {type(projection).__name__}"
+            f"raw-legacy-only substrate requires projection=None; got {type(projection).__name__}"
         )
     return _prepare_raw_legacy_views(legacy)
 
 
-
-def _cross_envelope_cardinality_ok(
-    block: dict[str, Any], accepted_run: dict[str, Any]
-) -> bool:
+def _cross_envelope_cardinality_ok(block: dict[str, Any], accepted_run: dict[str, Any]) -> bool:
     """§3.2 cross-envelope cardinality vs accepted_run['results'].
 
     Returns True when the check does not apply or when it passes.

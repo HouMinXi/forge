@@ -16,7 +16,7 @@ from cli.adapters.base import (
     TIMEOUT_NETWORK,
 )
 
-_REPO_RE = re.compile(r'^[\w\-\.]+/[\w\-\.]+$')
+_REPO_RE = re.compile(r"^[\w\-\.]+/[\w\-\.]+$")
 
 
 def _detect_source_tool(comment: dict) -> str:
@@ -32,21 +32,21 @@ def _detect_source_tool(comment: dict) -> str:
         Tool name ("human", "qodo", "coderabbit", "copilot",
         "github-actions", "unknown").
     """
-    user = comment.get('user', {})
-    user_type = user.get('type', '')
-    login = user.get('login', '').lower()
+    user = comment.get("user", {})
+    user_type = user.get("type", "")
+    login = user.get("login", "").lower()
 
-    if user_type == 'Bot':
-        if 'qodo' in login:
-            return 'qodo'
-        if 'coderabbit' in login:
-            return 'coderabbit'
-        if 'copilot' in login:
-            return 'copilot'
-        if 'github-actions' in login:
-            return 'github-actions'
-        return 'unknown'
-    return 'human'
+    if user_type == "Bot":
+        if "qodo" in login:
+            return "qodo"
+        if "coderabbit" in login:
+            return "coderabbit"
+        if "copilot" in login:
+            return "copilot"
+        if "github-actions" in login:
+            return "github-actions"
+        return "unknown"
+    return "human"
 
 
 class GitHubPRAdapter(BaseAdapter):
@@ -65,11 +65,10 @@ class GitHubPRAdapter(BaseAdapter):
         Returns:
             List of CanonicalFinding objects. Empty list on error.
         """
-        parts = source_ref.split('#')
+        parts = source_ref.split("#")
         if len(parts) != 2:
             print(
-                f"forge: error: invalid PR reference "
-                f"'{source_ref}', expected 'owner/repo#N' format",
+                f"forge: error: invalid PR reference '{source_ref}', expected 'owner/repo#N' format",
                 file=sys.stderr,
             )
             return []
@@ -80,15 +79,13 @@ class GitHubPRAdapter(BaseAdapter):
         # B1: validate repo format and pr_num
         if not _REPO_RE.match(repo):
             print(
-                f"forge: warning: invalid repo format "
-                f"'{repo}', expected 'owner/repo'",
+                f"forge: warning: invalid repo format '{repo}', expected 'owner/repo'",
                 file=sys.stderr,
             )
             return []
         if not pr_num.isdigit():
             print(
-                f"forge: warning: invalid PR number "
-                f"'{pr_num}', expected integer",
+                f"forge: warning: invalid PR number '{pr_num}', expected integer",
                 file=sys.stderr,
             )
             return []
@@ -97,21 +94,19 @@ class GitHubPRAdapter(BaseAdapter):
 
         # Fetch review comments (inline on diff)
         review_comments = self._fetch_endpoint(
-            f'repos/{repo}/pulls/{pr_num}/comments',
+            f"repos/{repo}/pulls/{pr_num}/comments",
         )
 
         # Fetch issue comments (general PR comments)
         issue_comments = self._fetch_endpoint(
-            f'repos/{repo}/issues/{pr_num}/comments',
+            f"repos/{repo}/issues/{pr_num}/comments",
         )
 
         pr_url = f"https://github.com/{repo}/pull/{pr_num}"
 
-        for comment in review_comments:
-            findings.append(self._to_canonical(comment, repo, pr_url))
+        findings.extend((self._to_canonical(comment, repo, pr_url)) for comment in review_comments)
 
-        for comment in issue_comments:
-            findings.append(self._to_canonical(comment, repo, pr_url))
+        findings.extend((self._to_canonical(comment, repo, pr_url)) for comment in issue_comments)
 
         return findings
 
@@ -126,8 +121,10 @@ class GitHubPRAdapter(BaseAdapter):
         """
         try:
             result = subprocess.run(
-                ['gh', 'api', '--paginate', endpoint, '--jq', '.[]'],
-                capture_output=True, text=True, timeout=TIMEOUT_NETWORK,
+                ["gh", "api", "--paginate", endpoint, "--jq", ".[]"],
+                capture_output=True,
+                text=True,
+                timeout=TIMEOUT_NETWORK,
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
@@ -148,7 +145,7 @@ class GitHubPRAdapter(BaseAdapter):
 
         comments: List[dict] = []
         if result.stdout.strip():
-            for line in result.stdout.strip().split('\n'):
+            for line in result.stdout.strip().split("\n"):
                 line = line.strip()
                 if not line:
                     continue
@@ -156,8 +153,7 @@ class GitHubPRAdapter(BaseAdapter):
                     comments.append(json.loads(line))
                 except json.JSONDecodeError:
                     print(
-                        f"forge: warning: skipping malformed JSON "
-                        f"line from {endpoint}",
+                        f"forge: warning: skipping malformed JSON line from {endpoint}",
                         file=sys.stderr,
                     )
         return comments
@@ -178,16 +174,16 @@ class GitHubPRAdapter(BaseAdapter):
         Returns:
             CanonicalFinding instance.
         """
-        raw_body = comment.get('body', '')
+        raw_body = comment.get("body", "")
         return CanonicalFinding(
-            source='github_pr',
+            source="github_pr",
             source_tool=_detect_source_tool(comment),
-            source_id=str(comment.get('id', '')),
-            timestamp=comment.get('created_at', ''),
+            source_id=str(comment.get("id", "")),
+            timestamp=comment.get("created_at", ""),
             raw_source=raw_body[:MAX_RAW_SOURCE],
             context={
-                'diff_hunk': comment.get('diff_hunk', None),
-                'pr_url': pr_url,
-                'path': comment.get('path', None),
+                "diff_hunk": comment.get("diff_hunk", None),
+                "pr_url": pr_url,
+                "path": comment.get("path", None),
             },
         )

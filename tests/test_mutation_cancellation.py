@@ -20,12 +20,27 @@ from code_forge.machine import mutation_result_verdict
 
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
-@pytest.mark.parametrize("cleanup", ["complete", "incomplete", "invalid", "stuck", "signal-error",
-                                     "second-interrupt", "signal-interrupt", "report-interrupt", "attribute-interrupt"])
+@pytest.mark.parametrize(
+    "cleanup",
+    [
+        "complete",
+        "incomplete",
+        "invalid",
+        "stuck",
+        "signal-error",
+        "second-interrupt",
+        "signal-interrupt",
+        "report-interrupt",
+        "attribute-interrupt",
+    ],
+)
 def test_owner_keeps_original_cancellation_and_secondary_cleanup(monkeypatch, exception, cleanup):
     cancellation = exception("CALLER_CANCELLED")
-    report = {"cleanup_complete": cleanup != "incomplete", "cancelled": True,
-              "owned": [{"pid": 11, "start_ticks": 12, "remaining": cleanup == "incomplete"}]}
+    report = {
+        "cleanup_complete": cleanup != "incomplete",
+        "cancelled": True,
+        "owned": [{"pid": 11, "start_ticks": 12, "remaining": cleanup == "incomplete"}],
+    }
     calls = []
 
     class Owner:
@@ -54,11 +69,13 @@ def test_owner_keeps_original_cancellation_and_secondary_cleanup(monkeypatch, ex
         if cleanup == "report-interrupt":
             raise KeyboardInterrupt("SECOND_INTERRUPT_AT_REPORT")
         if cleanup == "attribute-interrupt":
+
             class Report(dict):
                 def get(self, key, default=None):
                     if key == "cleanup_complete":
                         raise SystemExit("SECOND_INTERRUPT_AT_ATTRIBUTE")
                     return super().get(key, default)
+
             return Report(report)
         return original_loads(raw)
 
@@ -68,7 +85,9 @@ def test_owner_keeps_original_cancellation_and_secondary_cleanup(monkeypatch, ex
         process.run_owned_command(["fixture"], timeout=1)
     assert caught.value is cancellation
     assert cancellation.cleanup_complete is (cleanup == "complete")
-    assert cancellation.ownership == (report if cleanup in ("complete", "incomplete", "attribute-interrupt") else {})
+    assert cancellation.ownership == (
+        report if cleanup in ("complete", "incomplete", "attribute-interrupt") else {}
+    )
     if cleanup != "complete":
         assert cancellation.cleanup_error
         assert "mutation cleanup failed" in cancellation.__notes__[0]
@@ -134,6 +153,7 @@ def test_failure_evidence_interruption_keeps_original_cancellation(tmp_path, mon
             raise cleanup
 
     if workspace:
+
         def cancel(*_args, **_kwargs):
             raise cancellation
 
@@ -142,12 +162,15 @@ def test_failure_evidence_interruption_keeps_original_cancellation(tmp_path, mon
 
         monkeypatch.setattr(mutation, "_run_mutation", cancel)
         monkeypatch.setattr(mutation.MutationWorkspace, "release", release)
+
         def call():
             return mutation.run_mutation([], [], cwd=tmp_path)
     else:
         monkeypatch.setattr(process.subprocess, "Popen", lambda *_a, **_k: Owner())
+
         def call():
             return process.run_owned_command(["fixture"], timeout=1)
+
     with pytest.raises(Cancellation) as caught:
         call()
     assert caught.value is cancellation
@@ -159,8 +182,9 @@ def test_failure_evidence_interruption_keeps_original_cancellation(tmp_path, mon
 
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
-@pytest.mark.parametrize("transport,site", [(False, "report"), (True, "signal"),
-                                           (True, "communicate"), (True, "report")])
+@pytest.mark.parametrize(
+    "transport,site", [(False, "report"), (True, "signal"), (True, "communicate"), (True, "report")]
+)
 def test_owner_preserves_new_cancellation_during_cleanup(monkeypatch, exception, transport, site):
     cancellation = exception("CANCEL_DURING_CLEANUP")
     primary = RuntimeError("TRANSPORT_FAILURE") if transport else None
@@ -247,7 +271,9 @@ def _inventory(root):
 
 @pytest.mark.parametrize("site", ["deletion", "baseline", "retry", "probe", "run", "results"])
 @pytest.mark.parametrize("complete", [True, False, None, 0, 1, "true", "missing"])
-def test_public_mutation_preserves_cancellation_and_workspace_truth(tmp_path, monkeypatch, site, complete):
+def test_public_mutation_preserves_cancellation_and_workspace_truth(
+    tmp_path, monkeypatch, site, complete
+):
     (tmp_path / "src").mkdir()
     if site == "deletion":
         (tmp_path / ".git").mkdir()
@@ -265,8 +291,17 @@ def test_public_mutation_preserves_cancellation_and_workspace_truth(tmp_path, mo
     commands = []
 
     def execute(argv, **kwargs):
-        current = ("deletion" if argv[0] == "git" else "run" if "run" in argv else
-                   "results" if "results" in argv else "probe" if "-c" in argv else "baseline")
+        current = (
+            "deletion"
+            if argv[0] == "git"
+            else "run"
+            if "run" in argv
+            else "results"
+            if "results" in argv
+            else "probe"
+            if "-c" in argv
+            else "baseline"
+        )
         commands.append(current)
         if current == "run":
             _inventory(tmp_path)
@@ -281,8 +316,9 @@ def test_public_mutation_preserves_cancellation_and_workspace_truth(tmp_path, mo
         monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "venv"))
     evidence = {}
     with pytest.raises(KeyboardInterrupt) as caught:
-        mutation.run_mutation(["src/calc.py"], [sys.executable, "-m", "pytest"],
-                              cwd=tmp_path, _evidence=evidence)
+        mutation.run_mutation(
+            ["src/calc.py"], [sys.executable, "-m", "pytest"], cwd=tmp_path, _evidence=evidence
+        )
     assert caught.value is cancellation
     assert evidence["cancelled"] and evidence["process_failure"] == report
     assert not evidence["baseline_passed"] and not evidence["completed_measurement"]
@@ -329,9 +365,21 @@ def test_workspace_release_failure_keeps_cancellation_primary(tmp_path, monkeypa
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
 @pytest.mark.parametrize("secondary_type", [KeyboardInterrupt, SystemExit])
-@pytest.mark.parametrize("site", ["note-format", "evidence-format", "evidence-write", "binding",
-                                  "workspace-write", "release-access", "proof-write"])
-def test_workspace_reporting_interruption_keeps_original(tmp_path, monkeypatch, exception, secondary_type, site):
+@pytest.mark.parametrize(
+    "site",
+    [
+        "note-format",
+        "evidence-format",
+        "evidence-write",
+        "binding",
+        "workspace-write",
+        "release-access",
+        "proof-write",
+    ],
+)
+def test_workspace_reporting_interruption_keeps_original(
+    tmp_path, monkeypatch, exception, secondary_type, site
+):
     cancellation = exception("FIRST_CANCEL")
     cancellation.cleanup_complete = True
     cancellation.ownership = {"cleanup_complete": True}
@@ -350,8 +398,12 @@ def test_workspace_reporting_interruption_keeps_original(tmp_path, monkeypatch, 
 
         def __str__(self):
             self.strings += 1
-            if (site == "note-format" and self.strings == 1 or
-                    site == "evidence-format" and self.strings == 2):
+            if (
+                site == "note-format"
+                and self.strings == 1
+                or site == "evidence-format"
+                and self.strings == 2
+            ):
                 interrupt()
             return "JOURNAL_WRITE_FAILED"
 
@@ -404,7 +456,11 @@ def test_workspace_reporting_interruption_keeps_original(tmp_path, monkeypatch, 
     assert cancellation.cleanup_complete is False
     if site != "release-access":
         assert cancellation.cleanup_evidence_error is secondary
-    assert evidence["cancelled"] and not evidence["baseline_passed"] and not evidence["completed_measurement"]
+    assert (
+        evidence["cancelled"]
+        and not evidence["baseline_passed"]
+        and not evidence["completed_measurement"]
+    )
     if site == "proof-write":
         assert released == [False] and evidence["process_failure"] == {}
     elif site == "release-access":
@@ -413,7 +469,9 @@ def test_workspace_reporting_interruption_keeps_original(tmp_path, monkeypatch, 
         assert released == [True] and cancellation.workspace_cleanup_error is cleanup
 
 
-@pytest.mark.parametrize("release_error", [None, OSError("JOURNAL_FAILED"), MutationWorkspaceError("RECOVERY")])
+@pytest.mark.parametrize(
+    "release_error", [None, OSError("JOURNAL_FAILED"), MutationWorkspaceError("RECOVERY")]
+)
 def test_workspace_reporting_preserves_ordinary_outcome_policy(tmp_path, monkeypatch, release_error):
     releases = []
 
@@ -469,7 +527,11 @@ def test_public_cleanup_evidence_read_interruption_retains_recovery(tmp_path, mo
     assert caught.value is cancellation
     assert cancellation.cleanup_complete is False
     assert cancellation.cleanup_evidence_error is secondary
-    assert evidence["cancelled"] and not evidence["completed_measurement"] and not evidence["baseline_passed"]
+    assert (
+        evidence["cancelled"]
+        and not evidence["completed_measurement"]
+        and not evidence["baseline_passed"]
+    )
     journal = json.loads((tmp_path / ".code-forge/mutation-owner.lock").read_text())
     assert journal["phase"] == "incomplete"
     assert (tmp_path / "setup.cfg").read_bytes() != original
@@ -477,7 +539,9 @@ def test_public_cleanup_evidence_read_interruption_retains_recovery(tmp_path, mo
 
 
 @pytest.mark.parametrize("exception", [RuntimeError, SystemExit])
-def test_unexpected_workspace_release_error_keeps_existing_exception_policy(tmp_path, monkeypatch, exception):
+def test_unexpected_workspace_release_error_keeps_existing_exception_policy(
+    tmp_path, monkeypatch, exception
+):
     failure = exception("UNEXPECTED_RELEASE_FAILURE")
 
     def release(_workspace):
@@ -496,7 +560,9 @@ def test_unexpected_workspace_release_error_keeps_existing_exception_policy(tmp_
 
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit])
-def test_detached_cancellation_publishes_error_and_reraises(tmp_path, monkeypatch, run_detached_payload, exception):
+def test_detached_cancellation_publishes_error_and_reraises(
+    tmp_path, monkeypatch, run_detached_payload, exception
+):
     captured = {}
 
     class Launcher:
@@ -529,10 +595,16 @@ def test_detached_cancellation_publishes_error_and_reraises(tmp_path, monkeypatc
     assert mutation_result_verdict(data) is None
 
 
-@pytest.mark.parametrize("site", ["callsite", "cleanup", "evidence", "message", "assembly", "open", "dump", "close"])
+@pytest.mark.parametrize(
+    "site", ["callsite", "cleanup", "evidence", "message", "assembly", "open", "dump", "close"]
+)
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
 def test_detached_secondary_publication_keeps_original_and_terminal_error(
-    tmp_path, monkeypatch, run_detached_payload, site, exception,
+    tmp_path,
+    monkeypatch,
+    run_detached_payload,
+    site,
+    exception,
 ):
     captured = {}
 
@@ -639,7 +711,10 @@ def test_detached_secondary_publication_keeps_original_and_terminal_error(
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, RuntimeError])
 def test_detached_persistent_write_failure_reports_honest_disk_and_keeps_policy(
-    tmp_path, monkeypatch, run_detached_payload, exception,
+    tmp_path,
+    monkeypatch,
+    run_detached_payload,
+    exception,
 ):
     captured = {}
 
@@ -683,7 +758,10 @@ def test_detached_persistent_write_failure_reports_honest_disk_and_keeps_policy(
 
 @pytest.mark.parametrize("cancel_publication", [False, True])
 def test_detached_ordinary_error_and_new_publication_cancellation_keep_policy(
-    tmp_path, monkeypatch, run_detached_payload, cancel_publication,
+    tmp_path,
+    monkeypatch,
+    run_detached_payload,
+    cancel_publication,
 ):
     captured = {}
 
@@ -727,10 +805,25 @@ def test_detached_ordinary_error_and_new_publication_cancellation_keep_policy(
 
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit])
-@pytest.mark.parametrize("site", ["note", "binder", "secondary-binding", "retry-note", "retry-binder",
-                                 "retry-secondary-binding", "retry-promotion", "diagnostic-promotion"])
+@pytest.mark.parametrize(
+    "site",
+    [
+        "note",
+        "binder",
+        "secondary-binding",
+        "retry-note",
+        "retry-binder",
+        "retry-secondary-binding",
+        "retry-promotion",
+        "diagnostic-promotion",
+    ],
+)
 def test_detached_publication_promotion_survives_secondary_reporting(
-    tmp_path, monkeypatch, run_detached_payload, exception, site,
+    tmp_path,
+    monkeypatch,
+    run_detached_payload,
+    exception,
+    site,
 ):
     captured = {}
 
@@ -813,7 +906,9 @@ def test_detached_publication_promotion_survives_secondary_reporting(
     if "secondary-binding" in site:
         assert "fallback" in fired
     if "secondary-binding" not in site:
-        assert first.detached_publication_diagnostic_error is (first if site == "diagnostic-promotion" else secondary)
+        assert first.detached_publication_diagnostic_error is (
+            first if site == "diagnostic-promotion" else secondary
+        )
     data = json.loads(result.read_text())
     if site.startswith("retry-"):
         assert data["status"] == "running" and not data.get("completed_measurement")
@@ -828,9 +923,11 @@ def test_detached_publication_promotion_survives_secondary_reporting(
 def test_actual_sigint_retains_original_object_and_reaps_owner(tmp_path):
     ready = tmp_path / "ready.json"
     script = tmp_path / "blocker.py"
-    script.write_text("import json,os,sys,time\nfrom pathlib import Path\n"
-                      "Path(sys.argv[1]).write_text(json.dumps({'child':os.getpid(),'owner':os.getppid()}))\n"
-                      "time.sleep(10)\n")
+    script.write_text(
+        "import json,os,sys,time\nfrom pathlib import Path\n"
+        "Path(sys.argv[1]).write_text(json.dumps({'child':os.getpid(),'owner':os.getppid()}))\n"
+        "time.sleep(10)\n"
+    )
     cancellation = KeyboardInterrupt("ACTUAL_SIGINT")
     errors = []
 
@@ -872,12 +969,20 @@ def test_actual_detached_sigint_closes_nonmeasurement_result(tmp_path):
     (tmp_path / "src/calc.py").write_text("value = 1\n")
     ready = tmp_path / "ready.json"
     script = tmp_path / "blocker.py"
-    script.write_text("import json,os,sys,time\nfrom pathlib import Path\n"
-                      "Path(sys.argv[1]).write_text(json.dumps({'child':os.getpid(),'owner':os.getppid()}))\n"
-                      "time.sleep(10)\n")
+    script.write_text(
+        "import json,os,sys,time\nfrom pathlib import Path\n"
+        "Path(sys.argv[1]).write_text(json.dumps({'child':os.getpid(),'owner':os.getppid()}))\n"
+        "time.sleep(10)\n"
+    )
     result = tmp_path / "mutation-result.json"
-    assert mutation.launch_detached_mutation(["src/calc.py"], [sys.executable, str(script), str(ready)],
-                                             tmp_path, result, baseline_timeout=5, timeout=5)
+    assert mutation.launch_detached_mutation(
+        ["src/calc.py"],
+        [sys.executable, str(script), str(ready)],
+        tmp_path,
+        result,
+        baseline_timeout=5,
+        timeout=5,
+    )
     deadline = time.monotonic() + 4
     while not ready.exists() and time.monotonic() < deadline:
         time.sleep(0.01)
@@ -911,7 +1016,12 @@ def test_actual_detached_sigint_closes_nonmeasurement_result(tmp_path):
 @pytest.mark.parametrize("diagnostic_type", [KeyboardInterrupt, SystemExit])
 @pytest.mark.parametrize("site", ["note", "metadata", "fallback-call", "fallback-metadata"])
 def test_detached_first_diagnostic_control_is_authoritative(
-    tmp_path, monkeypatch, run_detached_payload, pending_type, diagnostic_type, site,
+    tmp_path,
+    monkeypatch,
+    run_detached_payload,
+    pending_type,
+    diagnostic_type,
+    site,
 ):
     captured = {}
 
@@ -991,15 +1101,33 @@ def test_detached_first_diagnostic_control_is_authoritative(
 
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
-@pytest.mark.parametrize("site", ["process-proof", "process-report", "process-evidence", "process-message",
-                                 "workspace-message", "oserror-message", "baseline-write",
-                                 "completed-write", "infra-write"])
-def test_public_ordinary_diagnostic_first_control_survives_release(tmp_path, monkeypatch, exception, site):
+@pytest.mark.parametrize(
+    "site",
+    [
+        "process-proof",
+        "process-report",
+        "process-evidence",
+        "process-message",
+        "workspace-message",
+        "oserror-message",
+        "baseline-write",
+        "completed-write",
+        "infra-write",
+    ],
+)
+def test_public_ordinary_diagnostic_first_control_survives_release(
+    tmp_path, monkeypatch, exception, site
+):
     first = exception("FIRST_DIAGNOSTIC_CONTROL")
     second = SystemExit("SECOND_RELEASE_CONTROL")
     fired = []
-    base = (MutationWorkspaceError if site == "workspace-message" else OSError
-            if site == "oserror-message" else process.MutationProcessError)
+    base = (
+        MutationWorkspaceError
+        if site == "workspace-message"
+        else OSError
+        if site == "oserror-message"
+        else process.MutationProcessError
+    )
 
     def interrupt():
         if not fired:
@@ -1008,8 +1136,12 @@ def test_public_ordinary_diagnostic_first_control_survives_release(tmp_path, mon
 
     class Failure(base):
         def __getattribute__(self, key):
-            if (site == "process-proof" and key == "cleanup_complete" or
-                    site == "process-report" and key == "report"):
+            if (
+                site == "process-proof"
+                and key == "cleanup_complete"
+                or site == "process-report"
+                and key == "report"
+            ):
                 interrupt()
             return super().__getattribute__(key)
 
@@ -1018,10 +1150,17 @@ def test_public_ordinary_diagnostic_first_control_survives_release(tmp_path, mon
                 interrupt()
             return super().__str__()
 
-    failure = (Failure("ORDINARY_FAILURE", cleanup_complete=True, report={})
-               if base is process.MutationProcessError else Failure("ORDINARY_FAILURE"))
-    keys = {"process-evidence": "process_failure", "baseline-write": "baseline_passed",
-            "completed-write": "completed_measurement", "infra-write": "infra_errors"}
+    failure = (
+        Failure("ORDINARY_FAILURE", cleanup_complete=True, report={})
+        if base is process.MutationProcessError
+        else Failure("ORDINARY_FAILURE")
+    )
+    keys = {
+        "process-evidence": "process_failure",
+        "baseline-write": "baseline_passed",
+        "completed-write": "completed_measurement",
+        "infra-write": "infra_errors",
+    }
 
     class Evidence(dict):
         def __setitem__(self, key, value):
@@ -1047,12 +1186,18 @@ def test_public_ordinary_diagnostic_first_control_survives_release(tmp_path, mon
     assert first.__context__ is failure and first.__cause__ is None
     assert first.workspace_cleanup_error is second and first.cleanup_complete is False
     assert releases == [False]
-    assert evidence["cancelled"] and not evidence["baseline_passed"] and not evidence["completed_measurement"]
+    assert (
+        evidence["cancelled"]
+        and not evidence["baseline_passed"]
+        and not evidence["completed_measurement"]
+    )
 
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
 @pytest.mark.parametrize("proof", [True, False, None, "true"])
-def test_public_diagnostic_after_workspace_start_requires_exact_proof(tmp_path, monkeypatch, exception, proof):
+def test_public_diagnostic_after_workspace_start_requires_exact_proof(
+    tmp_path, monkeypatch, exception, proof
+):
     first = exception("FIRST_DIAGNOSTIC_CONTROL")
     first.cleanup_complete = proof
     first.ownership = {"cleanup_complete": proof}
@@ -1096,7 +1241,9 @@ def test_public_diagnostic_after_workspace_start_requires_exact_proof(tmp_path, 
 
 
 @pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, asyncio.CancelledError])
-@pytest.mark.parametrize("site", ["release-control", "message", "baseline-write", "completed-write", "infra-write"])
+@pytest.mark.parametrize(
+    "site", ["release-control", "message", "baseline-write", "completed-write", "infra-write"]
+)
 def test_public_first_release_diagnostic_control_is_selected(tmp_path, monkeypatch, exception, site):
     first = exception("FIRST_RELEASE_DIAGNOSTIC_CONTROL")
     fired = []
@@ -1113,8 +1260,11 @@ def test_public_first_release_diagnostic_control_is_selected(tmp_path, monkeypat
             return super().__str__()
 
     failure = Failure("ORDINARY_RELEASE_FAILURE")
-    keys = {"baseline-write": "baseline_passed", "completed-write": "completed_measurement",
-            "infra-write": "infra_errors"}
+    keys = {
+        "baseline-write": "baseline_passed",
+        "completed-write": "completed_measurement",
+        "infra-write": "infra_errors",
+    }
 
     class Evidence(dict):
         def __setitem__(self, key, value):
@@ -1175,11 +1325,17 @@ def test_public_selection_dispatch_keeps_authoritative_control(tmp_path, monkeyp
 
     monkeypatch.setattr(mutation, "_run_mutation", run)
     monkeypatch.setattr(mutation.MutationWorkspace, "release", release)
-    helper = next(code for code in mutation.run_mutation.__code__.co_consts
-                  if hasattr(code, "co_name") and code.co_name in ("select_cancellation", "record_cancellation"))
+    helper = next(
+        code
+        for code in mutation.run_mutation.__code__.co_consts
+        if hasattr(code, "co_name") and code.co_name in ("select_cancellation", "record_cancellation")
+    )
     token = helper.co_name + ("(exc" if site == "measurement" else "(evidence_exc")
-    target = next(i for i, line in enumerate(Path(mutation.__file__).read_text().splitlines(), 1)
-                  if line.strip().startswith(token))
+    target = next(
+        i
+        for i, line in enumerate(Path(mutation.__file__).read_text().splitlines(), 1)
+        if line.strip().startswith(token)
+    )
     tool = 4
     sys.monitoring.use_tool_id(tool, "public-selection-dispatch")
 
@@ -1204,7 +1360,11 @@ def test_public_selection_dispatch_keeps_authoritative_control(tmp_path, monkeyp
     assert first.__context__ is ordinary or first.__cause__ is ordinary
     assert first.cleanup_evidence_error is second
     assert workspaces and workspaces[0].cleanup_complete is False
-    assert evidence["cancelled"] and not evidence["baseline_passed"] and not evidence["completed_measurement"]
+    assert (
+        evidence["cancelled"]
+        and not evidence["baseline_passed"]
+        and not evidence["completed_measurement"]
+    )
 
 
 def test_interrupt_drain_gets_the_owner_report_slack():

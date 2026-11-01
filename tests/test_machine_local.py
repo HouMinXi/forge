@@ -553,7 +553,7 @@ class TestPostRoundHook:
             cwd=tmp_path,
             registry={},
             l0_runner=mock_l0,
-            post_round_hook=lambda r: calls.append(r),
+            post_round_hook=calls.append,
         )
         machine.run()
         assert calls == [0, 1, 2]  # 3 consecutive clean rounds
@@ -771,7 +771,7 @@ class TestUnconvergeableRunStopsEarly:
         )
 
     @staticmethod
-    def _invoke_fail(pass_name="qodo"):
+    def _invoke_fail(pass_name="qodo"):  # noqa: S107 -- pass_name identifies a review pass, not a password.
         return StateFinding(
             id="l1-%s-invoke-fail" % pass_name,
             fingerprint="invoke-fail-%s" % pass_name,
@@ -947,7 +947,7 @@ class TestTieredReset:
             "bad-indentation",
         ]
         fps = ["fp-f-%d" % i for i in range(6)]
-        for fp, rule in zip(fps, rules):
+        for fp, rule in zip(fps, rules, strict=False):
             sm._state.findings.append(_sf(fp, "P3: %s" % rule))
         _prime(sm, *fps)
         assert sm._fixpoint_reached() == _FixpointResult.CYCLE_RESTART
@@ -962,7 +962,7 @@ class TestTieredReset:
         files = ["a.py", "b.py", "c.py"]
         fps = ["fp-d-%d" % i for i in range(12)]
         rules = ["rule-%d" % i for i in range(12)]
-        for i, (fp, rule) in enumerate(zip(fps, rules)):
+        for i, (fp, rule) in enumerate(zip(fps, rules, strict=False)):
             fname = files[i % 3]  # 4 findings per file, each a distinct rule type
             sf = StateFinding(
                 id=fp,

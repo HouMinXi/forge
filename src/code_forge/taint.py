@@ -73,8 +73,7 @@ def danger_score_from_diff(
     # Split diff into per-file sections at "diff --git" boundaries.
     # Find all diff --git header positions.
     header_positions: list[int] = []
-    for m in _DIFF_HEADER_RE.finditer(diff_text):
-        header_positions.append(m.start())
+    header_positions.extend((m.start()) for m in _DIFF_HEADER_RE.finditer(diff_text))
 
     if not header_positions:
         return []
@@ -161,8 +160,8 @@ def _findings_to_advisories(
     it must not be appended here again to avoid a double caveat.
     """
     advisories: list[AdvisoryFinding] = []
-    for f in findings:
-        advisories.append(
+    advisories.extend(
+        (
             AdvisoryFinding(
                 id=f"taint:{f.file}:{f.line}:{f.rule_id}",
                 axis="taint",
@@ -172,6 +171,8 @@ def _findings_to_advisories(
                 attribution="semgrep-ce/intraprocedural",
             )
         )
+        for f in findings
+    )
     return advisories
 
 

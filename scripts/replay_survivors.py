@@ -8,6 +8,7 @@ runs the test selection, and reports whether the tests now catch it.
 A mutant whose original line no longer exists is reported as STALE: the
 code moved on, so the old survivor says nothing about today's tests.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -183,9 +184,7 @@ def main() -> int:
                 verdicts["KILLED"] += 1
             else:
                 verdicts["HARNESS_ERROR"] += 1
-                harness_errors.append(
-                    f"{name} rc={proc.returncode} {proc.stderr.strip()[:160]}"
-                )
+                harness_errors.append(f"{name} rc={proc.returncode} {proc.stderr.strip()[:160]}")
             if idx % 20 == 0:
                 print(f"  ... {idx}/{len(entries)} {dict(verdicts)}", flush=True)
     finally:

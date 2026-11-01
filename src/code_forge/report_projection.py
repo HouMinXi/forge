@@ -5,6 +5,7 @@
 classify_report_records(state) -> ReportProjection. No I/O by design; no
 production callers. Imports only the §2 whitelist from code_forge.state.
 """
+
 from __future__ import annotations
 
 import copy
@@ -160,27 +161,27 @@ def _fallback_record(index: int, f: StateFinding) -> FallbackRecord:
     disposition = None
     try:
         finding_id = _safe_str(f.id)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
         finding_id = None
     try:
         fingerprint = _safe_str(f.fingerprint)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
         fingerprint = None
     try:
         file = _safe_str(f.file)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
         file = None
     try:
         line_range = _safe_line_range(f.line_range)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
         line_range = None
     try:
         description = _safe_str(f.description)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
         description = None
     try:
         disposition = _safe_disposition_value(f.disposition)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
         disposition = None
     return FallbackRecord(
         index=index,
@@ -293,12 +294,11 @@ def _channel_for(shape: Shape, disposition: Disposition) -> Channel:
     return "product"
 
 
-
 def _receipt_fp_match(fingerprint: object) -> bool:
     """True iff fingerprint matches receipt-[0-9a-f]{12} (no re import; isolation pin)."""
     if type(fingerprint) is not str or not fingerprint.startswith("receipt-"):
         return False
-    rest = fingerprint[len("receipt-"):]
+    rest = fingerprint[len("receipt-") :]
     if len(rest) != 12:
         return False
     return all(c in "0123456789abcdef" for c in rest)
@@ -449,7 +449,7 @@ def _evaluate_acquisition(findings: list) -> tuple:
         return None, "completion-not-provable-from-state", None
     except (MemoryError, RecursionError):
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
         return None, "acquisition-derivation-fault", None
 
 
@@ -475,7 +475,7 @@ def classify_report_records(state: State) -> ReportProjection:
                 product_path_ids.add(idx)
     except (MemoryError, RecursionError):
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
         projection_error = ClassificationError(None, "projection", type(exc).__name__)
         for i, f in enumerate(findings):
             fallbacks_by_index[i] = _fallback_record(i, f)
@@ -505,7 +505,7 @@ def classify_report_records(state: State) -> ReportProjection:
             shape, selector = _select_shape(f, product_path)
         except (MemoryError, RecursionError):
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
             record_errors.append(ClassificationError(i, "shape", type(exc).__name__))
             fallbacks_by_index[i] = _fallback_record(i, f)
             continue
@@ -516,7 +516,7 @@ def classify_report_records(state: State) -> ReportProjection:
                 diags = _attach_diagnostics(f, shape)
             except (MemoryError, RecursionError):
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
                 record_errors.append(ClassificationError(i, "diagnostics", type(exc).__name__))
                 fallbacks_by_index[i] = _fallback_record(i, f)
                 continue
@@ -525,7 +525,7 @@ def classify_report_records(state: State) -> ReportProjection:
             classified[i] = _build_record(i, f, shape, selector, diags)
         except (MemoryError, RecursionError):
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
             record_errors.append(ClassificationError(i, "record", type(exc).__name__))
             fallbacks_by_index[i] = _fallback_record(i, f)
 
@@ -545,7 +545,7 @@ def classify_report_records(state: State) -> ReportProjection:
         ) = _assemble(records_in_order, fallbacks_in_order, path_count if path_count is not None else 0)
     except (MemoryError, RecursionError):
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
         projection_error = ClassificationError(None, "projection", type(exc).__name__)
         # Every index ends in quarantine exactly once; keep original FallbackRecord objects
         for i, f in enumerate(findings):

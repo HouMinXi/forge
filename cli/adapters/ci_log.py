@@ -19,7 +19,7 @@ from cli.adapters.base import (
 HASH_PREFIX_LEN = 1024
 
 # H4: encoding fallback chain
-_ENCODING_CHAIN = ('utf-8', 'latin-1')
+_ENCODING_CHAIN = ("utf-8", "latin-1")
 
 
 def _read_file_with_fallback(path: str) -> str:
@@ -39,12 +39,12 @@ def _read_file_with_fallback(path: str) -> str:
     """
     for encoding in _ENCODING_CHAIN:
         try:
-            with open(path, 'r', encoding=encoding) as f:
+            with open(path, "r", encoding=encoding) as f:
                 return f.read()
         except UnicodeDecodeError:
             continue
     # Last resort: binary with replacement characters
-    with open(path, 'r', encoding='utf-8', errors='replace') as f:
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
         return f.read()
 
 
@@ -67,8 +67,7 @@ class CILogAdapter(BaseAdapter):
         """
         if not os.path.isfile(source_ref):
             print(
-                f"forge: error: CI log file not found: "
-                f"{source_ref}",
+                f"forge: error: CI log file not found: {source_ref}",
                 file=sys.stderr,
             )
             return []
@@ -77,24 +76,25 @@ class CILogAdapter(BaseAdapter):
             content = _read_file_with_fallback(source_ref)
         except IOError as exc:
             print(
-                f"forge: error: failed to read CI log file "
-                f"'{source_ref}': {exc}",
+                f"forge: error: failed to read CI log file '{source_ref}': {exc}",
                 file=sys.stderr,
             )
             return []
 
         content_hash = hashlib.sha256(
-            content[:HASH_PREFIX_LEN].encode('utf-8'),
+            content[:HASH_PREFIX_LEN].encode("utf-8"),
         ).hexdigest()
 
-        return [CanonicalFinding(
-            source='ci_log',
-            source_tool='ci',
-            source_id=f"{content_hash}-0",
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            raw_source=content[:MAX_RAW_SOURCE],
-            context={
-                'diff_hunk': None,
-                'ci_output_excerpt': content[:MAX_CONTEXT_EXCERPT],
-            },
-        )]
+        return [
+            CanonicalFinding(
+                source="ci_log",
+                source_tool="ci",
+                source_id=f"{content_hash}-0",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                raw_source=content[:MAX_RAW_SOURCE],
+                context={
+                    "diff_hunk": None,
+                    "ci_output_excerpt": content[:MAX_CONTEXT_EXCERPT],
+                },
+            )
+        ]

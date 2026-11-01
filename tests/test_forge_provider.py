@@ -899,10 +899,20 @@ class TestHeaders:
 
     def _args(self, name, dry_run=False, **kw):
         import types
-        fields = dict(name=name, base_url="https://g.example/v1",
-                      model="g-model", format="openai", key_env="G_KEY",
-                      key_pass=None, timeout_s=2400, max_tokens=65536,
-                      header=None, from_name=None, dry_run=dry_run)
+
+        fields = dict(
+            name=name,
+            base_url="https://g.example/v1",
+            model="g-model",
+            format="openai",
+            key_env="G_KEY",
+            key_pass=None,
+            timeout_s=2400,
+            max_tokens=65536,
+            header=None,
+            from_name=None,
+            dry_run=dry_run,
+        )
         fields.update(kw)
         return types.SimpleNamespace(**fields)
 
@@ -918,14 +928,13 @@ class TestHeaders:
 
     def test_add_writes_the_headers_mapping(self, tmp_path, monkeypatch, capsys):
         self._gate(tmp_path, monkeypatch)
-        rc = fp.cmd_add(self._args(
-            "gamma",
-            header=["x-omniroute-no-memory:1",
-                    "x-omniroute-compression:off"]))
+        rc = fp.cmd_add(
+            self._args("gamma", header=["x-omniroute-no-memory:1", "x-omniroute-compression:off"])
+        )
         assert rc == 0
-        entry = yaml.safe_load(fp.read_config(
-            tmp_path / "code" / "repo" / ".code-forge" / "gate.yaml"
-        ))["backends"]["gamma"]
+        entry = yaml.safe_load(fp.read_config(tmp_path / "code" / "repo" / ".code-forge" / "gate.yaml"))[
+            "backends"
+        ]["gamma"]
         assert entry["headers"] == {
             "x-omniroute-no-memory": "1",
             "x-omniroute-compression": "off",
@@ -937,56 +946,71 @@ class TestHeaders:
         self._gate(tmp_path, monkeypatch)
         rc = fp.cmd_add(self._args("gamma"))
         assert rc == 0
-        entry = yaml.safe_load(fp.read_config(
-            tmp_path / "code" / "repo" / ".code-forge" / "gate.yaml"
-        ))["backends"]["gamma"]
+        entry = yaml.safe_load(fp.read_config(tmp_path / "code" / "repo" / ".code-forge" / "gate.yaml"))[
+            "backends"
+        ]["gamma"]
         assert "headers" not in entry
 
-    def test_set_replaces_headers_on_an_existing_backend(
-            self, tmp_path, monkeypatch, capsys):
+    def test_set_replaces_headers_on_an_existing_backend(self, tmp_path, monkeypatch, capsys):
         p = self._gate(tmp_path, monkeypatch)
-        rc = fp.cmd_set(self._args(
-            "beta",
-            base_url=None, model=None, format=None, key_env=None,
-            timeout_s=None, max_tokens=None,
-            header=["x-omniroute-no-memory:1"]))
+        rc = fp.cmd_set(
+            self._args(
+                "beta",
+                base_url=None,
+                model=None,
+                format=None,
+                key_env=None,
+                timeout_s=None,
+                max_tokens=None,
+                header=["x-omniroute-no-memory:1"],
+            )
+        )
         assert rc == 0
         entry = yaml.safe_load(fp.read_config(p))["backends"]["beta"]
         assert entry["headers"] == {"x-omniroute-no-memory": "1"}
         assert entry["model"] == "beta-model"
 
-    def test_set_inserts_headers_when_the_backend_had_none(
-            self, tmp_path, monkeypatch, capsys):
+    def test_set_inserts_headers_when_the_backend_had_none(self, tmp_path, monkeypatch, capsys):
         p = self._gate(tmp_path, monkeypatch)
-        rc = fp.cmd_set(self._args(
-            "alpha",
-            base_url=None, model=None, format=None, key_env=None,
-            timeout_s=None, max_tokens=None,
-            header=["x-omniroute-no-memory:1"]))
+        rc = fp.cmd_set(
+            self._args(
+                "alpha",
+                base_url=None,
+                model=None,
+                format=None,
+                key_env=None,
+                timeout_s=None,
+                max_tokens=None,
+                header=["x-omniroute-no-memory:1"],
+            )
+        )
         assert rc == 0
         entry = yaml.safe_load(fp.read_config(p))["backends"]["alpha"]
         assert entry["headers"] == {"x-omniroute-no-memory": "1"}
         assert entry.get("default") is True
 
-    def test_set_headers_only_does_not_need_a_probe(
-            self, tmp_path, monkeypatch, capsys):
+    def test_set_headers_only_does_not_need_a_probe(self, tmp_path, monkeypatch, capsys):
         p = tmp_path / "code" / "repo" / ".code-forge" / "gate.yaml"
         p.parent.mkdir(parents=True)
         p.write_text(GATE)
         monkeypatch.setattr(fp, "SEARCH_ROOT", tmp_path)
         monkeypatch.setattr(fp, "USER_CONFIG", tmp_path / "none.yaml")
-        monkeypatch.setattr(
-            fp, "probe",
-            lambda *a, **k: (_ for _ in ()).throw(AssertionError("probed")))
-        rc = fp.cmd_set(self._args(
-            "alpha",
-            base_url=None, model=None, format=None, key_env=None,
-            timeout_s=None, max_tokens=None,
-            header=["x-omniroute-no-memory:1"]))
+        monkeypatch.setattr(fp, "probe", lambda *a, **k: (_ for _ in ()).throw(AssertionError("probed")))
+        rc = fp.cmd_set(
+            self._args(
+                "alpha",
+                base_url=None,
+                model=None,
+                format=None,
+                key_env=None,
+                timeout_s=None,
+                max_tokens=None,
+                header=["x-omniroute-no-memory:1"],
+            )
+        )
         assert rc == 0
 
-    def test_sync_writes_headers_on_add_and_on_update(
-            self, tmp_path, monkeypatch, capsys):
+    def test_sync_writes_headers_on_add_and_on_update(self, tmp_path, monkeypatch, capsys):
         one = tmp_path / "code" / "one" / ".code-forge" / "gate.yaml"
         two = tmp_path / "code" / "two" / ".code-forge" / "gate.yaml"
         one.parent.mkdir(parents=True)
@@ -997,14 +1021,16 @@ class TestHeaders:
         monkeypatch.setattr(fp, "USER_CONFIG", tmp_path / "none.yaml")
         monkeypatch.setattr(fp, "resolve_key", lambda *a, **k: "test-key")
         monkeypatch.setattr(fp, "probe", lambda *a, **k: (True, "200 OK"))
-        rc = fp.cmd_sync(self._args(
-            "newname",
-            base_url="https://new.example/v1",
-            model="new-model",
-            format="openai",
-            key_env="NEW_KEY",
-            header=["x-omniroute-no-memory:1",
-                    "x-omniroute-compression:off"]))
+        rc = fp.cmd_sync(
+            self._args(
+                "newname",
+                base_url="https://new.example/v1",
+                model="new-model",
+                format="openai",
+                key_env="NEW_KEY",
+                header=["x-omniroute-no-memory:1", "x-omniroute-compression:off"],
+            )
+        )
         assert rc == 0
         for path in (one, two):
             entry = yaml.safe_load(fp.read_config(path))["backends"]["newname"]
@@ -1013,8 +1039,7 @@ class TestHeaders:
                 "x-omniroute-compression": "off",
             }
 
-    def test_sync_without_headers_leaves_existing_ones(
-            self, tmp_path, monkeypatch, capsys):
+    def test_sync_without_headers_leaves_existing_ones(self, tmp_path, monkeypatch, capsys):
         p = tmp_path / "code" / "one" / ".code-forge" / "gate.yaml"
         p.parent.mkdir(parents=True)
         p.write_text(GATE)
@@ -1022,30 +1047,29 @@ class TestHeaders:
         monkeypatch.setattr(fp, "USER_CONFIG", tmp_path / "none.yaml")
         monkeypatch.setattr(fp, "resolve_key", lambda *a, **k: "test-key")
         monkeypatch.setattr(fp, "probe", lambda *a, **k: (True, "200 OK"))
-        rc = fp.cmd_sync(self._args(
-            "beta",
-            base_url="https://beta.example/v1",
-            model="beta-model",
-            format="openai",
-            key_env="BETA_KEY"))
+        rc = fp.cmd_sync(
+            self._args(
+                "beta",
+                base_url="https://beta.example/v1",
+                model="beta-model",
+                format="openai",
+                key_env="BETA_KEY",
+            )
+        )
         assert rc == 0
         entry = yaml.safe_load(fp.read_config(p))["backends"]["beta"]
         assert entry["headers"] == {"User-Agent": "something/1.0"}
 
     def test_rejects_a_protected_header(self, tmp_path, monkeypatch, capsys):
         self._gate(tmp_path, monkeypatch)
-        rc = fp.cmd_add(self._args(
-            "gamma", header=["Authorization:Bearer x"]))
+        rc = fp.cmd_add(self._args("gamma", header=["Authorization:Bearer x"]))
         assert rc == 2
-        data = yaml.safe_load(fp.read_config(
-            tmp_path / "code" / "repo" / ".code-forge" / "gate.yaml"))
+        data = yaml.safe_load(fp.read_config(tmp_path / "code" / "repo" / ".code-forge" / "gate.yaml"))
         assert "gamma" not in data["backends"]
 
     def test_rejects_a_duplicate_header_name(self, tmp_path, monkeypatch, capsys):
         self._gate(tmp_path, monkeypatch)
-        rc = fp.cmd_add(self._args(
-            "gamma",
-            header=["X-Note:one", "x-note:two"]))
+        rc = fp.cmd_add(self._args("gamma", header=["X-Note:one", "x-note:two"]))
         assert rc == 2
 
     def test_rejects_a_header_without_a_colon(self, tmp_path, monkeypatch, capsys):
@@ -1053,14 +1077,23 @@ class TestHeaders:
         rc = fp.cmd_add(self._args("gamma", header=["not-a-header"]))
         assert rc == 2
 
-    def test_add_with_headers_leaves_the_neighbours_alone(
-            self, tmp_path, monkeypatch, capsys):
+    def test_add_with_headers_leaves_the_neighbours_alone(self, tmp_path, monkeypatch, capsys):
         p = self._gate(tmp_path, monkeypatch)
         before = yaml.safe_load(fp.read_config(p))["backends"]
-        rc = fp.cmd_add(self._args(
-            "gamma",
-            header=["x-omniroute-no-memory:1"]))
+        rc = fp.cmd_add(self._args("gamma", header=["x-omniroute-no-memory:1"]))
         assert rc == 0
         after = yaml.safe_load(fp.read_config(p))["backends"]
         assert after["alpha"] == before["alpha"]
         assert after["beta"] == before["beta"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["file:///tmp/key", "ftp://example.test", "data:text/plain,key", "localhost:8000", "//example.test"],
+)
+def test_probe_rejects_non_http_scheme_before_io(url, monkeypatch):
+    def no_io(*args, **kwargs):
+        raise AssertionError("invalid scheme must not reach request construction")
+
+    monkeypatch.setattr(fp.urllib.request, "Request", no_io)
+    assert fp.probe(url, "m", "k", "openai") == (False, "provider probe requires an http or https URL")

@@ -27,9 +27,7 @@ def test_recording_trust_leaves_the_real_store_untouched(tmp_path, request):
     real = request.node.stash[_real_config_home] / "code-forge" / "trusted.json"
     existed = real.exists()
     gate = tmp_path / "gate.yaml"
-    gate.write_text(
-        "backends: {x: {base_url: https://example.test}}\n", encoding="utf-8"
-    )
+    gate.write_text("backends: {x: {base_url: https://example.test}}\n", encoding="utf-8")
 
     record_trust(
         gate,

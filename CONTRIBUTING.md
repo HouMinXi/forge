@@ -4,22 +4,32 @@ Issues and discussion: <https://github.com/HouMinXi/forge/issues>.
 
 ## Linting
 
-The repository is **not** ruff-clean. At the time of writing, `ruff check .`
-reports about 200 findings and `ruff format --check .` would reformat about
-180 files (see #105). Lint is therefore diff-scoped: the `Lint changed files`
-workflow runs `ruff check` and `ruff format --check` only on the Python files
-a pull request adds, modifies or renames, using the `[tool.ruff]` settings in
-`pyproject.toml`. Files the pull request deletes, and files that are not
-Python, are not linted.
+The repository is Ruff-clean. CI runs both `ruff check` and
+`ruff format --check` over the entire tree using `pyproject.toml` settings.
+The historical `Lint changed files` workflow and check identity are retained
+for compatibility, but its scope is no longer limited to changed files.
+Python code fences in Markdown are also formatted by the pinned formatter.
+Reconstructed corpus base files remain intentionally excluded: they are
+invalid-Python diff inputs, not executable source.
 
-The ruff version is pinned in the `dev` extra (`ruff==...`) so results do not
-change when ruff releases. To run the same check locally:
+Ruff is pinned in the `dev` extra so upgrades are explicit and reviewable:
 
 ```bash
 pip install -e '.[dev]'
+python scripts/lint_changed.py --all
+```
+
+For a fast local check of added, modified or renamed Python files only:
+
+```bash
 python scripts/lint_changed.py --base origin/main
 ```
 
-A pull request that touches a file with old findings has to leave that file
-clean. Fixing the existing debt in files you do not otherwise touch is a
-separate change.
+That convenience command does not replace the full-tree CI gate. Deleted
+and non-Python files are omitted from the diff check.
+
+Prefer fixing findings to suppressing them. A line-local exemption must
+explain an intentional contract (for example, quarantining malformed report
+objects, preserving a public validation exception, or a deliberately unsafe
+Semgrep test fixture). Do not broaden exclusions or disable rules to hide
+new debt. This cleanup follows the baseline debt retained by #105 / #323.

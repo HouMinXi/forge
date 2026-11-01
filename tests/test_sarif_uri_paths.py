@@ -257,7 +257,8 @@ def test_real_git_delta_keeps_encoded_file_and_message_identity(tmp_path, parser
 
 @pytest.mark.parametrize("parser", PARSERS)
 @pytest.mark.parametrize(
-    "subject_name,decoy_name", [("space name.py", "space%20name.py"), ("space%20name.py", "space%2520name.py")]
+    "subject_name,decoy_name",
+    [("space name.py", "space%20name.py"), ("space%20name.py", "space%2520name.py")],
 )
 @pytest.mark.parametrize("change_subject", [False, True])
 def test_real_git_delta_never_assigns_finding_to_clean_percent_decoy(

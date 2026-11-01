@@ -1,4 +1,5 @@
 """Phase 1 compat + paired fault-free oracle (Forge #332 slice §5 / §6.4)."""
+
 from __future__ import annotations
 
 import contextlib
@@ -20,7 +21,6 @@ from code_forge.falsify import StubFalsifier
 from code_forge.report_projection import classify_report_records
 from code_forge.state import (
     Disposition,
-    FindingDiagnosticKind,
     Mode,
     State,
     StateFinding,
@@ -72,7 +72,9 @@ def _extract_sarif_json(stdout: str) -> str:
 
 
 def stable_view(code, stdout, stderr, state_text, w) -> dict:
-    summary = [l for l in stderr.splitlines() if l.startswith("code-forge: ") and " findings=" in l]
+    summary = [
+        line for line in stderr.splitlines() if line.startswith("code-forge: ") and " findings=" in line
+    ]
     assert len(summary) == 1, summary
     sarif_text = _extract_sarif_json(stdout)
     p = mcp_server._sarif_projection_with_status(sarif_text)
@@ -103,7 +105,7 @@ def _paths_differ(a, b, prefix="$"):
         if len(a) != len(b):
             return [prefix + ".length"]
         out = []
-        for i, (x, y) in enumerate(zip(a, b)):
+        for i, (x, y) in enumerate(zip(a, b, strict=False)):
             out += _paths_differ(x, y, f"{prefix}[{i}]")
         return out
     return [] if a == b else [prefix]
@@ -126,6 +128,7 @@ def _product_finding(**kw):
 # ---------------------------------------------------------------------------
 # Real-file loader reactions (classifier not involved for strict rejects)
 # ---------------------------------------------------------------------------
+
 
 def test_unknown_additive_field_real_file(tmp_path):
     path = tmp_path / "state.json"
@@ -154,7 +157,7 @@ def test_unknown_diagnostic_kind_real_file_via_emit_ci_output(tmp_path, monkeypa
 
     monkeypatch.setattr("code_forge.report_projection.classify_report_records", sentinel)
     stdout, stderr = io.StringIO(), io.StringIO()
-    with pytest.raises(Exception):
+    with pytest.raises(CorruptedStateError, match="not-a-real-kind"):
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             cli._emit_ci_output(path, {})
     assert called["n"] == 0
@@ -264,6 +267,7 @@ def test_stable_view_detects_listed_field_difference(tmp_path):
 # Paired fault-free oracle (§6.4)
 # ---------------------------------------------------------------------------
 
+
 def _build_snap(snap: Path, scenario: str):
     snap.mkdir()
     if scenario == "ci_pass_stub":
@@ -308,10 +312,12 @@ def _assert_anchors(scenario, code, stdout, stderr, state_obj):
     run = sarif["runs"][0]
     results = run["results"]
     # Legacy format_summary line (findings=); §5 classification line is separate.
-    summary_lines = [l for l in stderr.splitlines() if l.startswith("code-forge: ") and " findings=" in l]
+    summary_lines = [
+        line for line in stderr.splitlines() if line.startswith("code-forge: ") and " findings=" in line
+    ]
     assert len(summary_lines) == 1, summary_lines
     summary = summary_lines[0]
-    class_lines = [l for l in stderr.splitlines() if l.startswith("code-forge: classification")]
+    class_lines = [line for line in stderr.splitlines() if line.startswith("code-forge: classification")]
     assert class_lines, "IC-05 §5 classification line missing on included CI stderr"
     count, _findings, _audit, status = mcp_server._sarif_projection_with_status(sarif_text)
     verdict = state_obj["verdict"]
@@ -346,7 +352,9 @@ def _assert_anchors(scenario, code, stdout, stderr, state_obj):
         raise AssertionError(scenario)
 
 
-def _run_side(tmp: Path, snap: Path, scenario: str, monkeypatch, label: str, sentinel: bool, fixture: Path):
+def _run_side(
+    tmp: Path, snap: Path, scenario: str, monkeypatch, label: str, sentinel: bool, fixture: Path
+):
     w = tmp / "w"
     assert not w.exists()
     shutil.copytree(snap, w, symlinks=True)

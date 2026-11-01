@@ -273,7 +273,8 @@ class _OwnedTree:
         set from outside (no cleanup_started) stays fixed."""
         if self.cleanup_started is not None:
             self.cleanup_deadline = max(
-                self.cleanup_deadline or 0.0, self.cleanup_started + _cleanup_budget(len(self.identities))
+                self.cleanup_deadline or 0.0,
+                self.cleanup_started + _cleanup_budget(len(self.identities)),
             )
 
     def cleanup(self, driver: subprocess.Popen) -> bool:
@@ -497,16 +498,21 @@ def run_owned_command(
             cause = cleanup_exc if cancellation is interruption else interruption
             try:
                 _bind_cancellation_evidence(
-                    cancellation, cleanup_complete=False, ownership=report,
+                    cancellation,
+                    cleanup_complete=False,
+                    ownership=report,
                     **({"cleanup_error": cause} if cause is not None else {}),
                 )
                 if cause is not None:
-                    label = ("mutation cleanup failed" if cancelled
-                             else "mutation owner communication failed")
+                    label = (
+                        "mutation cleanup failed" if cancelled else "mutation owner communication failed"
+                    )
                     _bind_cancellation_evidence(cancellation, note=f"{label}: {cause}")
             except BaseException as evidence_exc:  # noqa: BLE001 - diagnostic failure is secondary to cancellation
                 _bind_cancellation_evidence(
-                    cancellation, cleanup_complete=False, ownership=report,
+                    cancellation,
+                    cleanup_complete=False,
+                    ownership=report,
                     cleanup_error=cause if cause is not None else evidence_exc,
                     cleanup_evidence_error=evidence_exc,
                 )

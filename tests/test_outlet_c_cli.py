@@ -161,7 +161,7 @@ class TestInlineCanaryEnvPassthrough:
         args = MagicMock()
         try:
             _dispatch_inline_canary("sampling", args, {}, {}, {}, tmp_path)
-            assert False, "should have raised CliError"
+            raise AssertionError("should have raised CliError")
         except CliError:
             pass
 
@@ -440,7 +440,7 @@ class TestContractsYamlGuard:
             # the guard's side-effects even if _run ultimately fails.
             try:
                 _run(args, env, tmp_path)
-            except Exception:
+            except Exception:  # noqa: BLE001 -- Only the pre-serialization empty guard is under test here.
                 pass  # expected: downstream MagicMock serialization
 
         # Guard side-effects: stderr message + empty digest fallback

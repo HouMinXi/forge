@@ -59,8 +59,8 @@ def _parse_env_int(raw: str, name: str, sanity_cap: int) -> int:
     """Parse string env value to int with validation."""
     try:
         value = int(raw.strip())
-    except ValueError:
-        raise CliError("invalid %s: %r (expected int)" % (name, raw))
+    except ValueError as exc:
+        raise CliError("invalid %s: %r (expected int)" % (name, raw)) from exc
     return _validate_int(value, name, sanity_cap)
 
 

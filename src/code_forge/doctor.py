@@ -412,7 +412,8 @@ def _check_hook_drift(
                 )
                 continue
             if resolution.invocation is None or resolution.status not in (
-                "primary_ok", "fallback_no_primary"
+                "primary_ok",
+                "fallback_no_primary",
             ):
                 detail = resolution.detail
                 if resolution.invocation is None:
@@ -431,13 +432,19 @@ def _check_hook_drift(
                     alternate = _interpreter_invocation()
                 except Exception as exc:  # noqa: BLE001  identity uncertainty must fail closed
                     results.append(
-                        (False, "pre-commit: cannot verify invocation: %s" % _invocation_detail(str(exc)))
+                        (
+                            False,
+                            "pre-commit: cannot verify invocation: %s" % _invocation_detail(str(exc)),
+                        )
                     )
                     continue
                 if alternate is not None and installed in expected_for(alternate, inputs, backup):
                     results.append(
-                        (False, "pre-commit: installed invocation differs from current "
-                         "executable selection; equivalence is unverified")
+                        (
+                            False,
+                            "pre-commit: installed invocation differs from current "
+                            "executable selection; equivalence is unverified",
+                        )
                     )
                     continue
 
