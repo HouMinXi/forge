@@ -180,23 +180,13 @@ jobs:
           # Remove a line when its test is fixed. Anything not listed here
           # still fails the job.
           #
-          # 1. Frozen AST hashes are stale: the pins came with dbe5ea7b5, and
-          #    state.py and machine.py have changed since (for example
-          #    7d9a476b3, #114).
-          # 2. Needs the `sem` CLI, which is not installed here (same cause as
-          #    several tests/test_cli_integration.py failures on a dev machine).
-          # 3. Expects no timeout-config infra error from a null baseline
-          #    deadline; fails on main.
-          # 4. #291 (fe4c10757) added src/code_forge/report_presentation.py,
-          #    which imports code_forge.report_projection at line 46. The
-          #    control-module isolation test rejects that import. The code or
-          #    the test has to change; neither belongs in the CI workflow.
+          # Needs the `sem` CLI, which is not installed here (same cause as
+          # several tests/test_cli_integration.py failures on a dev machine).
+          # Expects no timeout-config infra error from a null baseline
+          # deadline; fails on main.
           python -m pytest -q -ra -m 'not real_api and not integration' -p no:cacheprovider \
             --ignore=tests/test_mutation_isolate.py \
             --ignore=tests/test_mutation_patchcorpus.py \
-            --deselect tests/test_report_projection_isolation.py::test_frozen_helper_bodies_unchanged \
-            --deselect tests/test_report_projection_isolation.py::test_frozen_dependencies_unchanged \
-            --deselect tests/test_report_projection_isolation.py::test_control_modules_do_not_import_report_projection \
             --deselect tests/test_integration.py::TestIntegrationPass::test_pass_on_clean_code \
             --deselect tests/test_integration.py::TestIntegrationBaseline::test_baseline_preexisting_not_shown \
             --deselect tests/test_mutation_ledger_ci_controls.py::test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline \
