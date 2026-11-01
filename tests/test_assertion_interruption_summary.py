@@ -15,6 +15,7 @@ import pytest
 
 from code_forge import cli
 from code_forge.assertion_outcome import AssertionOutcome, AssertionStatus
+from code_forge.context_sources import GatherResult
 from code_forge.state import Verdict
 from tests.test_assertion_outcome_reporting import prepare_consumer
 from tests.test_subagent_assertion_summary import prepare_dispatch
@@ -122,6 +123,9 @@ def test_actual_cli_keeps_primary_state_and_fatal_exit(
     # Explicit empty test registry: isolate reporting without detecting or
     # enabling real toolchains. Primary review is already a fixture above.
     monkeypatch.setattr(cli, "load_registry", lambda path: {})
+    # Context providers may discover a real sem executable on hosted CI.
+    # They are pre-phase setup, not part of the advisory interruption oracle.
+    monkeypatch.setattr("code_forge.context_sources.gather", lambda *args, **kwargs: GatherResult())
     monkeypatch.setattr(
         "code_forge.manifest.extract_manifest",
         lambda *args: SimpleNamespace(to_prompt_block=lambda: ""),

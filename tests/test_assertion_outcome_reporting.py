@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from dataclasses import asdict
+from types import SimpleNamespace
 
 import pytest
 
@@ -333,6 +334,16 @@ def test_actual_subagent_cli_keeps_phase_and_primary_verdict(monkeypatch, tmp_pa
 @pytest.mark.parametrize("exc_type", [MemoryError, KeyboardInterrupt, SystemExit])
 def test_interrupted_ci_emits_no_completed_report(monkeypatch, tmp_path, capsys, exc_type):
     repo, _marker, _state_path, _receipt, _saved = prepare_consumer(monkeypatch, tmp_path)
+    # Keep this fatal consumer control independent of installed toolchains.
+    from code_forge.context_sources import GatherResult
+
+    monkeypatch.setattr(cli, "load_registry", lambda path: {})
+    monkeypatch.setattr(sys, "argv", [*sys.argv, "--registry", "isolated-registry"])
+    monkeypatch.setattr("code_forge.context_sources.gather", lambda *args, **kwargs: GatherResult())
+    monkeypatch.setattr(
+        "code_forge.manifest.extract_manifest",
+        lambda *args: SimpleNamespace(to_prompt_block=lambda: ""),
+    )
 
     def fatal(*args, **kwargs):
         raise exc_type()
@@ -346,7 +357,16 @@ def test_interrupted_ci_emits_no_completed_report(monkeypatch, tmp_path, capsys,
         assert cli.main() == (EXIT_FAIL if exc_type is MemoryError else EXIT_CLI_ERROR)
     output = capsys.readouterr()
     assert output.out == ""
-    assert "phase aborted" in output.err
+    if exc_type is SystemExit:
+        assert "phase aborted" in output.err
+        assert "test_assertion=interrupted" not in output.err
+    else:
+        assert (
+            output.err.splitlines().count(
+                "code-forge: test_assertion=interrupted stage=reporting kind=interrupted"
+            )
+            == 1
+        )
     assert "test_assertion=completed" not in output.err
     assert not (repo / ".code-forge" / "code-forge.lock").exists()
 
