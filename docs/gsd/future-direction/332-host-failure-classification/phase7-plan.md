@@ -1,6 +1,6 @@
 # Forge #332 -- Phase 7: follow-ups after the Phase 6 credit preserve
 
-Status: **wave 1 delivered on branch `claude/laughing-bohr-y7r65a`; wave 2 needs owner decisions**
+Status: **wave 1 delivered; wave 2 needs owner decisions**
 Base: `main` 20b4ace (Phase 6 landed as PR #319, head 22d9fa98, merged 2026-10-30)
 Scope source: PR #319 "Not in this PR" and "Deferred / tech debt", plus the
 2026-10-30 comment on issue #70 (INFRA/UNTRUSTED findings reported as
@@ -16,43 +16,128 @@ changes = separate proposal").
 
 ## 1. Wave 1: bounded changes
 
-Each item is one or two commits on the branch. W1-1 to W1-7 change no
-verdict, credit action or persisted state shape. W1-8 fixes a crash and adds
-one optional host row field; its credit outcome is the existing #114 rule.
+What changes behaviour: W1-1 (outcomes of a `StateMachine` whose `run()` is
+called again, reachable only through the Python API), W1-5 (the text, and so
+the fingerprint, of one receipt diagnostic) and W1-8 (a crash fix that adds
+one optional host row field; its credit outcomes follow #114, stricter in one
+case described in 1.2).
+The rest is refactoring, comments and tests. Code comments call W1-1 "P7-1".
 
-| # | Item (PR #319 wording) | What changed | Proof |
+| # | Item (PR #319 wording) | Summary | Proof |
 | --- | --- | --- | --- |
-| W1-1 | "clearing the in-memory review state when no matching state file loads (planned for the next phase)" | A LOCAL `run()` on one `StateMachine` after the run that first used the built State drops the State left in memory before it looks for `state.json`, so a missing, other-diff or corrupt file leaves it where a new instance starts. The first run that reaches the state load still uses the State the instance was built or seeded with; a run that raised before the load does not count. CI is unchanged: it never reloads `state.json` and keeps its in-memory State (see W2-9). | Differential tests (`test_p7_*` in `tests/test_review_interruption_source_controls.py`): 4 run-1 shapes x {state.json deleted, rewritten for another diff}, reused instance vs new instance, byte-identical files; 9 of the first 10 fail on 20b4ace, the CI boundary pin passes on both. The failed-before-load case fails with a run counter instead of the flag. |
-| W1-2 | "a public accessor for excerpt rejections" | `_L1Call.excerpt_invocation` and `_L1Call.excerpt_rejections`, read-only, return the stored objects; the machine's five read sites use them. Backing attributes and tamper tests unchanged. | New accessor test. Returning a copy from the accessor fails 27 existing evidence-rejection tests. |
-| W1-3 | "moving `_project_product_row` out of `state.py`" | New leaf module `state_rows.py` holds `HOST_ROUND_FIELDS`, `is_host_round`, `_project_product_row`. `state` re-exports them; `state_preserved` imports the projection directly. Both call-time shims are gone (the `is_host_round` shim had no caller). | I-3 / I-9 now pin one shared definition across the three modules and that both callers reach it. |
-| W1-4 | the "this run" comments on advisories and the pre-existing buffer | Comments in `__post_init__`, `_reset_run_state`, `run()` and the terminal receipt gate now say which attributes live for the instance and which reset per run. The pre-existing buffer is described as it behaves: reset by every L0 phase, flushed on a normal return. No message text changed. | Comment-only. |
-| W1-5 | issue #70, 2026-10-30 comment (`verify.py:2180`) | The unresolved-finding reason names what the receipt basis shows: "unresolved finding without verified evidence (a product candidate the host could not verify, or an infrastructure failure)", or a finding with a malformed / unrecognized basis. It no longer calls INFRA diagnostics product findings, and it names a product candidate first, because a candidate whose falsification failed is published as INFRA/UNCERTAIN with the same authority. Verdict, `failure_kind` and `unresolved_findings` are unchanged. The receipt-gate diagnostic fingerprints its message, so a failure recorded before and after this change gets a different fingerprint. | An explicit label table for all 17 unverified basis shapes, and the exact reason for the real falsifier protocol / transport producer; restoring the first wording fails 14 tests. |
-| W1-6 | "tests or equivalence proofs for the 30 unproven keep-across-runs mutants" | See section 2: 2 more killed by new tests, 1 made equivalent by W1-8, 31 shown equivalent. | Mutant sweep plus per-attribute analysis. |
-| W1-7 | "Plan omissions: no schema-fail plus gate-damage row ... and no mixed schema-fail/coverage plus L2-infra row" | Test-only. The gate-path literal-damage test also runs schema-fail with literal damage (both pass orders; full reset). Two predicate tests cover a round with both a schema-fail and an incomplete-coverage finding, with and without an L2 infra error (preserve), and the same with a new product finding (reset). The third omission, "a rule that is not testable for mixed rounds", is a plan-wording note, not a test gap. | Dropping the L2-infra arm of the preserve rule fails the mixed L2 case. |
-| W1-8 | Found by the W1-6 analysis (not in PR #319): host-receipt LOCAL reviews stopped with `CorruptedStateError` on any L2 infrastructure error | The fixpoint turned CLEAN into INCOMPLETE and the round was recorded `interrupted`, but the round-history validator accepted INCOMPLETE only beside a falsifier protocol failure, so the machine refused its own row. #114's tests run without host receipts and never saw it. Host rows now carry `"l2_infra_error": true` when this round's L2 returned an infrastructure error; the validator accepts `interrupted` + INCOMPLETE with it and refuses it on earned / evidence-rejected rows, with a non-true value or without a returned L2. The L2 error is also cleared at the start of every round, so a round that fails before its L2 does not inherit the previous round's error. On the receipt-gate path an L2-only INCOMPLETE does not interrupt: a round whose evidence the gate refused stays `unavailable` (window not restorable, next run fails without a reviewer call), as with a healthy L2; the validator accepts `unavailable` + INCOMPLETE only with the L2 fact. Older code refuses rows with the new field the same way it refused these rounds before. | `tests/test_l2_infra_host_rounds.py` (21 tests); 15 of the first 17 fail without the change, the round-B test fails without only the per-round clear, and the receipt-damage cases fail with the old gate mapping. Reproduced on 20b4ace. |
+| W1-1 | "clearing the in-memory review state when no matching state file loads (planned for the next phase)" | A later LOCAL run starts where a new instance would; see 1.1. | `test_p7_*` differentials |
+| W1-2 | "a public accessor for excerpt rejections" | `_L1Call.excerpt_invocation` and `_L1Call.excerpt_rejections`, read-only, return the stored objects; the machine's five read sites use them. Backing attributes and tamper tests unchanged. | Returning a copy fails the evidence-rejection tests (29 at the time of writing). |
+| W1-3 | "moving `_project_product_row` out of `state.py`" | New leaf module `state_rows.py` holds `HOST_ROUND_FIELDS`, `is_host_round`, `_project_product_row`; `state` re-exports them, `state_preserved` imports the projection; both call-time shims are gone. Patching `state._project_product_row` no longer reaches the preserved-row validator. | I-3 pins one shared definition; I-9 that both callers use it. |
+| W1-4 | the "this run" comments on advisories and the pre-existing buffer | Comments say which attributes live for the instance and which reset per run. The pre-existing buffer is now reset per run (see 1.1). | Buffer test in 1.1. |
+| W1-5 | issue #70, 2026-10-30 comment (the `verify.py` reason it quotes) | The unresolved-finding reason names the basis: "unresolved finding without verified evidence (a product candidate the host could not verify, or an infrastructure failure)", or a malformed / unrecognized basis. Verdict, `failure_kind` and `unresolved_findings` unchanged. One classifier (`verify._basis_kind`) feeds the check and the label. | Label table for every unverified basis shape; the exact reason for the real falsifier producer; the infra-failure-first wording fails 15 tests. |
+| W1-6 | "tests or equivalence proofs for the 30 unproven keep-across-runs mutants" | Section 2: 2 more killed by new tests, 1 made equivalent by W1-8, 31 shown equivalent. | Mutant sweep plus per-attribute analysis. |
+| W1-7 | "Plan omissions: no schema-fail plus gate-damage row ... and no mixed schema-fail/coverage plus L2-infra row" | Test-only: schema-fail with literal damage on the gate path (both pass orders; full reset); a round with both a schema-fail and an incomplete-coverage finding, with and without an L2 error (preserve), and with a new product finding (reset). The third omission is a plan-wording note, not a test gap. | Dropping the L2-infra arm of the preserve rule fails the mixed L2 case. |
+| W1-8 | Found by the W1-6 analysis: host-receipt LOCAL reviews stopped with `CorruptedStateError` on any L2 infrastructure error | See 1.2. | `tests/test_l2_infra_host_rounds.py` |
 
-Why W1-5 does not say "infrastructure diagnostic": a receipt finding carries
-no `source`, INFRA and UNTRUSTED both get authority `infra-unavailable`, and
-an UNTRUSTED finding's file and description come from the reviewer (a reply
-can name `<llm-invoke>`). Labelling on those fields would let a product
-candidate present itself as trusted infrastructure, which r5 section 4.3
-forbids. A trusted split needs host facts in the receipt (see W2-6).
+### 1.1 W1-1: a later run on one instance
+
+A LOCAL `run()` drops the State the previous `run()` on the same instance
+used, before it looks for `state.json`, so a missing, other-diff or corrupt
+file leaves it where a new instance starts. Only that State object is
+dropped: a State the instance was built or seeded with, one a caller assigned
+after the previous run, and one no run used (because the run raised before
+or inside its state load) are kept. CI is unchanged: it never reloads
+`state.json` and keeps its in-memory State (W2-9). Edits made in place on
+the State the previous run used are dropped with it; assign a new State to
+seed a later run. The pre-existing L0 advisory buffer is reset at every
+`run()` entry, so a run that raised before the advisory flush cannot hand its
+entries to the next run.
+
+Tests: reused instance vs new instance from the same files, byte-identical
+files, over 4 run-1 shapes x {state.json deleted, rewritten for another
+diff} (fail on 20b4ace), three more two-run scenarios from section 2, and
+boundary cases: seeded State kept by the first run, by a run after one that
+raised before or inside the load, and a State assigned between runs; CI
+carry-over pinned; the buffer case.
+
+### 1.2 W1-8: L2 infrastructure errors in host-receipt rounds
+
+An L2 infrastructure error (a raised L2 runner or a typed MUTATION_ERROR)
+turns CLEAN into INCOMPLETE. In host-receipt mode the round was recorded
+`interrupted`, but the round-history validator accepted INCOMPLETE only
+beside a falsifier protocol failure, so the machine refused its own row and
+the review stopped with `CorruptedStateError` (reproduced on 20b4ace; #114's
+tests run without host receipts). Now:
+
+- A host row carries `"l2_infra_error": true` when this round's L2 returned
+  an infrastructure error. The validator refuses the field unless it is
+  exactly true, L2 returned, and the fixpoint is INCOMPLETE, RESET or
+  CYCLE_RESTART.
+- A completed round with an L2-only INCOMPLETE is `interrupted`: window kept,
+  nothing earned, non-PASS (#114). Three such rounds stop at the mutation
+  infrastructure breaker.
+- A round that would be CLEAN but for its L2 error gets the same receipt
+  acceptance as a CLEAN round (hunk witness, coverage floor, completeness);
+  a refusal goes down the receipt-gate path below.
+- For a round that cannot prove credit (a failed attempt, a refused receipt
+  gate, the survivor breaker) an L2-only INCOMPLETE is `unavailable`, as
+  CLEAN is there: only a falsifier protocol stop or an acquisition failure
+  interrupts (`StateMachine._interrupts`; the gate and the breaker share
+  `_unproved_round_action`; the protocol cause has one definition,
+  `_protocol_stop`). The validator accepts `unavailable` + INCOMPLETE only
+  with the L2 fact.
+- The L2 error is cleared when a host attempt begins (and when the run
+  starts and when L2 starts), and the row records it only when this round's
+  L2 returned, so no attempt inherits an earlier round's error.
+- Stricter than without the L2 error, on purpose: a pure excerpt rejection
+  (which alone is `evidence_rejected` and keeps the window) beside an L2
+  error is `unavailable`, because `evidence_rejected` requires a CLEAN
+  fixpoint. It fails closed; the next run needs a fresh state.
+- Older code refuses an `interrupted` or `unavailable` row whose INCOMPLETE
+  comes from the L2 error alone, even after the review later reached PASS,
+  as it refused these rounds before; it loads the field beside a protocol
+  failure, a reset or a preserve and ignores it. A `state.json` that older
+  code wrote after such an error (an `interrupted` INCOMPLETE row without
+  the field) does not load either: archive `.code-forge/state.json` and
+  `.code-forge/receipts/` and start a fresh review. `docs/round-history.md`
+  documents the field for users.
+- Like every round row, the action word is a consistency record, not an
+  authenticated one: editing `unavailable` to `interrupted` on an L2 row
+  passes the loader. A local rewrite of state is outside the trust model
+  (r5 section 3).
+
+Tests: raised and typed L2 failures keep the window, reload and recover;
+the mutation infrastructure breaker; the survivor breaker; a round failing
+before L2, and an attempt failing before its round; literal receipt damage,
+evidence that receipt acceptance refuses, pure excerpt rejections, and an
+acquisition failure (which keeps the window), each beside a healthy, raising
+and typed L2; the survivor breaker beside a protocol stop (`interrupted`);
+three failures after L2 (crash before publish, receipt-gate read failure,
+state save after publish), each with a healthy, raising and typed L2, all
+`unavailable` and not restorable; loader cases.
+
+### 1.3 Why W1-5 does not say "infrastructure diagnostic"
+
+A receipt finding carries no `source`, INFRA and UNTRUSTED both get
+authority `infra-unavailable`, and an UNTRUSTED finding's file and
+description come from the reviewer (a reply can name `<llm-invoke>`).
+Labelling on those fields would let a product candidate present itself as
+trusted infrastructure, which r5 section 4.3 forbids. A trusted split needs
+host facts in the receipt (see W2-6).
 
 ## 2. Keep-across-runs mutant sweep (W1-6)
 
 Method: one mutant per reset statement in `StateMachine._reset_run_state`
-(44 statements), generated at 26bd5af, when the first-run marker was a run
-counter. Each guards its statement with `if self._runs_started == 0:`, so
-`__post_init__` and the first `run()` still initialize the attribute but a
-later `run()` on the same instance keeps the earlier value. Selection:
+(44 statements), generated before the L2 infrastructure fix, when the
+first-run marker was a run counter. Each guards its statement with a
+first-call guard, so `__post_init__` and the first `run()` still initialize
+the attribute but a later `run()` on the same instance keeps the earlier
+value. (The pre-existing advisory buffer joined `_reset_run_state`
+later, with its own test; see 1.1.) Selection:
 `test_review_interruption_source_controls.py`,
 `test_phase6_schema_coverage_credit.py`, `test_machine_receipt_gate.py`,
 `test_rejected_evidence_history.py`, `test_mutation_ledger_ci_controls.py`,
-run with `-x`. Results are in section 2.1.
+run with `-x`. The generator was a throwaway script and is not committed;
+the method above is enough to regenerate it. Results are in section 2.1.
 
 ### 2.1 Results
 
-Baseline (unmutated, at 26bd5af): 955 passed, 1 deselected (the pre-existing
+Baseline (unmutated, at the time of the sweep): 955 passed, 1 deselected (the pre-existing
 `test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline`
 failure, which also fails on 20b4ace).
 
@@ -101,8 +186,9 @@ Killable, now killed by new two-run differentials (2):
 Killable before, equivalent now (1):
 - `_l2_infra_error`: run 2 failing after L1 and before its own L2 read run
   1's L2 error. The same leak existed between two rounds of one run, and fed
-  the crash fixed by W1-8, so the error is now also cleared at the start of
-  every round; that clear dominates every read.
+  the crash fixed by W1-8, so the error is now also cleared when every host
+  attempt begins; together with the row writer's check that this round's L2
+  returned, that covers every read.
   `test_p7_second_run_failing_before_l2_ignores_run1_l2_error` and
   `test_round_failing_before_l2_does_not_inherit_the_previous_round_l2_error`
   pin both cases.
@@ -196,20 +282,28 @@ Phase 6 states remain.
 ### W2-3. TD-P6-IV -- sibling credit rules
 
 Today: acquisition failures (capacity and generic) on an otherwise CLEAN
-round record `interrupted` (window kept, nothing earned); an L2 infra error
-alone turns CLEAN into INCOMPLETE; a falsifier protocol failure records
-`interrupted` with INCOMPLETE. `unavailable` with an earned window is refused
-on load. These three causes are credited alike.
+round record `interrupted` (window kept, nothing earned). An L2 infra error
+turns CLEAN into INCOMPLETE; a completed round records `interrupted`, but a
+failed attempt or a refused receipt gate records `unavailable` (W1-8). A
+falsifier protocol failure records `interrupted` with INCOMPLETE on every
+path. `unavailable` with an earned window is refused on restore. So the
+three causes already differ where the round cannot prove its evidence.
 
-Question for the owner: should they differ? For example, should a run of
-consecutive `interrupted` rounds bound how long a preserved window can stay
-open, or should a generic transport failure (not typed capacity) reset? The
-breakers (3 rounds with a failed pass, the mutation infra breaker) already
-stop a review that cannot converge, so a credit-side bound may be redundant.
+Question for the owner: should they differ further? For example, should a
+run of consecutive `interrupted` rounds bound how long a kept window can stay
+open, or should a generic transport failure (not typed capacity) reset? And
+should a protocol stop or an acquisition failure still keep the window beside
+literal receipt damage on the gate path, as they do today? (The protocol case
+is pinned by `test_falsifier_protocol_failure_preserves_only_prior_credit` in
+`tests/test_resume_receipt_provenance.py`; the acquisition case has no
+dedicated test.) The breakers (3 rounds with a failed pass, the mutation
+infra breaker) already stop a review that cannot converge, so a credit-side
+bound may be redundant.
 
-Recommendation: no credit change until there is a field case. If a bound is
-wanted, count consecutive non-earning host rounds in the row
-(`non_earning_streak`) and refuse to extend a window past N, enforced by
+Recommendation: no further credit change until there is a field case; pin
+the acquisition plus literal damage outcome with a test either way. If a
+bound is wanted, count consecutive non-earning host rounds in the
+row (`non_earning_streak`) and refuse to extend a window past N, enforced by
 machine and loader together.
 
 ### W2-4. TD-P6-V -- pure excerpt `evidence_rejected` earn/preserve
@@ -247,7 +341,7 @@ old-reader decision (r5 section 4.8).
 r5 section 5 defers it unless a phase proves the need. Nothing in Phase 6 or
 wave 1 does. Recommendation: drop from Phase 7.
 
-### W2-8. Smaller items carried from PR #319
+### W2-8. Smaller items carried from PR #319 and this series
 
 - Payload-shape asymmetry in `factories.py` (non-JSON preserves,
   parsed-with-findings resets outside the narrow C3 case, an inadmissible
@@ -257,6 +351,18 @@ wave 1 does. Recommendation: drop from Phase 7.
 - TD-P6-C3d: stall / `diagnose.py` do not show `preserved`. Report-only;
   can land with W2-2.
 - The plan omissions are covered by W1-7.
+- Test harness: the reused-vs-new differentials and the host-mode L2 tests
+  share private helpers of `tests/test_review_interruption_source_controls.py`.
+  Extracting them into a shared test module is mechanical and deferred.
+- The cause of an INCOMPLETE fixpoint is derived from instance state where it
+  is used (`_protocol_stop`, `_l2_only_incomplete`, the row writer's
+  L2-returned check). Returning the cause with the fixpoint would make the
+  writer and the readers agree by construction; deferred as a refactor.
+- `verify._basis_kind` returns kind strings that index `_UNRESOLVED_LABELS`;
+  an enum would remove the (today unreachable) missing-label path.
+- The machine still imports `_L1Call` and checks `type(...) is _L1Call`; the
+  W1-2 accessors only stop it reading private attributes. Treating `_L1Call`
+  as a package-internal producer type is the intended boundary for now.
 
 ### W2-9. A CI run on an instance that ran before keeps that State
 
@@ -269,7 +375,7 @@ dispositions included, followed by a CI run on the same instance, carries
 those dispositions into CI, which the STATE-09 docstring says CI avoids.
 Production builds one instance per review, so this is reachable only through
 the Python API. Options: leave it (W1-1 pins CI carry-over with
-`test_p7_reused_ci_instance_still_carries_its_state`), or start a CI run
+`test_p7_reused_ci_instance_carries_its_state`), or start a CI run
 empty whenever an earlier run on the instance ran, and move the CI tests to
 seed State explicitly. Recommendation: the second, as its own change, because
 it rewrites how those CI tests stage history.
@@ -292,31 +398,32 @@ waits for the owner.
 
 ## 4. Verification record (wave 1)
 
-- Each commit message names the tests it adds and the defect injection that
-  makes them fail.
-- Full suite (`pytest tests`, 30291 collected, 4 shards, pinned ruff first
-  on PATH) at 356b759: 29967 passed, 169 failed. Every one of the 169 fails
-  the same way on untouched 20b4ace, re-run in its own worktree. They are
-  environmental in this container: Vertex credentials (`test_llm_invoke*`),
-  the git environment (`test_conventions_resolver.py`), running as root
-  (`test_contract_flag.py`, `test_fast_fail.py`), the gate pytest evidence and
-  waiver tests, three projection-isolation pins that also fail on the Phase 6
-  heads, `test_doctor.py` live probes, `test_dogfood.py`, and the four known
-  failures (`test_deleted_scope_consumers.py` x2,
+- Behaviour changes were checked red first: each new test fails on the code
+  before its fix or on an injected defect, as recorded in the commit messages.
+- Full suite (`pytest tests`, 453 collected files, 4 shards, pinned ruff
+  first on PATH) on the final tree: 169 known failures, the same set that
+  fails on untouched 20b4ace in this container. They come from Vertex
+  credentials (`test_llm_invoke*`), the git environment
+  (`test_conventions_resolver.py`), running as root (`test_contract_flag.py`,
+  `test_fast_fail.py`), the gate pytest evidence and waiver tests, three
+  projection-isolation pins that also fail on the Phase 6 heads,
+  `test_doctor.py` live probes, `test_dogfood.py`, and four known failures
+  (`test_deleted_scope_consumers.py` x2,
   `test_exec_falsify.py::...test_timeout_kills_process_group_descendants`,
   `test_mutation_ledger_ci_controls.py::test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline`).
-- The last commit (f5a695e, receipt damage beside an L2 error) came after
-  that run: the 11 neighbouring files (2560 tests) pass on it.
+  One more failed once under the 4-shard load:
+  `test_report_projection_compat.py::test_paired_fault_free_oracle[ci_pass_stub]`
+  (one side of the pair reported one extra advisory). It passes alone and in
+  three concurrent reruns, on this tree and on 20b4ace.
 - `tests/test_ruff_detection_contract.py` fails only when `ruff` on PATH is
   not the pinned 0.17.3; it passes with the pinned binary first on PATH.
 - Lint: `ruff check` and `ruff format --check` (pinned 0.17.3) clean on every
   changed file; `tests/test_provider_capacity_reporting.py` was formatted in
   its own commit (AST unchanged) because a touched file must be left clean.
-- Independent review: two read-only review passes over the behavior
-  commits. Findings acted on: the first verify wording discounted product
-  candidates whose falsification failed (fixed in 2413865); an L2 error beside
-  receipt damage kept credit (fixed in f5a695e); a run that failed before the
-  state load consumed the seeded State (fixed in ad39ff7). Recorded, not
-  changed: W2-9, W2-10.
+- Review: repeated rounds of six independent reviews (security and
+  correctness, code quality, redundancy and style, blast radius, a general
+  code review, and a verify-and-deduplicate pass), until a round found
+  nothing left to fix. Confirmed findings are fixed in this series or
+  recorded in section 3 (W2-8, W2-9, W2-10).
 - Not run: forge's own LLM review cycles (no backend in this environment) and
   native mutmut. The sweep in section 2 is a manual, targeted one.
