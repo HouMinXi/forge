@@ -16,18 +16,20 @@ changes = separate proposal").
 
 ## 1. Wave 1: bounded, no credit-policy change
 
-Each item is one commit on the branch. None changes a verdict, a credit
-action or the persisted state shape.
+Each item is one or two commits on the branch. W1-1 to W1-7 change no
+verdict, credit action or persisted state shape. W1-8 fixes a crash and adds
+one optional host row field; its credit outcome is the existing #114 rule.
 
 | # | Item (PR #319 wording) | What changed | Proof |
 | --- | --- | --- | --- |
-| W1-1 | "clearing the in-memory review state when no matching state file loads (planned for the next phase)" | A LOCAL `run()` after the first on one `StateMachine` drops the State the earlier run left in memory before it looks for `state.json`. The first `run()` still starts from the State the instance was built or seeded with. CI is unchanged: it never reloads `state.json` and keeps its in-memory State (pinned by `test_mutation_ledger_ci_controls.py`). | New differential tests (`test_p7_*` in `tests/test_review_interruption_source_controls.py`): 4 run-1 shapes x {state.json deleted, rewritten for another diff}, reused instance vs new instance, byte-identical files. 9 of 10 fail on 20b4ace; the CI boundary pin passes on both. |
+| W1-1 | "clearing the in-memory review state when no matching state file loads (planned for the next phase)" | A LOCAL `run()` on one `StateMachine` after the run that first used the built State drops the State left in memory before it looks for `state.json`, so a missing, other-diff or corrupt file leaves it where a new instance starts. The first run that reaches the state load still uses the State the instance was built or seeded with; a run that raised before the load does not count. CI is unchanged: it never reloads `state.json` and keeps its in-memory State (see W2-9). | Differential tests (`test_p7_*` in `tests/test_review_interruption_source_controls.py`): 4 run-1 shapes x {state.json deleted, rewritten for another diff}, reused instance vs new instance, byte-identical files; 9 of the first 10 fail on 20b4ace, the CI boundary pin passes on both. The failed-before-load case fails with a run counter instead of the flag. |
 | W1-2 | "a public accessor for excerpt rejections" | `_L1Call.excerpt_invocation` and `_L1Call.excerpt_rejections`, read-only, return the stored objects; the machine's five read sites use them. Backing attributes and tamper tests unchanged. | New accessor test. Returning a copy from the accessor fails 27 existing evidence-rejection tests. |
 | W1-3 | "moving `_project_product_row` out of `state.py`" | New leaf module `state_rows.py` holds `HOST_ROUND_FIELDS`, `is_host_round`, `_project_product_row`. `state` re-exports them; `state_preserved` imports the projection directly. Both call-time shims are gone (the `is_host_round` shim had no caller). | I-3 / I-9 now pin one shared definition across the three modules and that both callers reach it. |
 | W1-4 | the "this run" comments on advisories and the pre-existing buffer | Comments in `__post_init__`, `_reset_run_state`, `run()` and the terminal receipt gate now say which attributes live for the instance and which reset per run. The pre-existing buffer is described as it behaves: reset by every L0 phase, flushed on a normal return. No message text changed. | Comment-only. |
-| W1-5 | issue #70, 2026-10-30 comment (`verify.py:2180`) | The unresolved-finding reason names what the receipt basis shows: "unresolved finding without verified evidence (an infrastructure failure, or a product candidate in untrusted reviewer output)", or a malformed / unrecognized basis. It no longer calls these product findings. Verdict, `failure_kind` and `unresolved_findings` are unchanged. | Label asserted for all 17 unverified basis shapes; restoring the old wording fails 13 tests. |
-| W1-6 | "tests or equivalence proofs for the 30 unproven keep-across-runs mutants" | See section 2. | Mutant sweep. |
+| W1-5 | issue #70, 2026-10-30 comment (`verify.py:2180`) | The unresolved-finding reason names what the receipt basis shows: "unresolved finding without verified evidence (a product candidate the host could not verify, or an infrastructure failure)", or a finding with a malformed / unrecognized basis. It no longer calls INFRA diagnostics product findings, and it names a product candidate first, because a candidate whose falsification failed is published as INFRA/UNCERTAIN with the same authority. Verdict, `failure_kind` and `unresolved_findings` are unchanged. The receipt-gate diagnostic fingerprints its message, so a failure recorded before and after this change gets a different fingerprint. | An explicit label table for all 17 unverified basis shapes, and the exact reason for the real falsifier protocol / transport producer; restoring the first wording fails 14 tests. |
+| W1-6 | "tests or equivalence proofs for the 30 unproven keep-across-runs mutants" | See section 2: 2 more killed by new tests, 1 made equivalent by W1-8, 31 shown equivalent. | Mutant sweep plus per-attribute analysis. |
 | W1-7 | "Plan omissions: no schema-fail plus gate-damage row ... and no mixed schema-fail/coverage plus L2-infra row" | Test-only. The gate-path literal-damage test also runs schema-fail with literal damage (both pass orders; full reset). Two predicate tests cover a round with both a schema-fail and an incomplete-coverage finding, with and without an L2 infra error (preserve), and the same with a new product finding (reset). The third omission, "a rule that is not testable for mixed rounds", is a plan-wording note, not a test gap. | Dropping the L2-infra arm of the preserve rule fails the mixed L2 case. |
+| W1-8 | Found by the W1-6 analysis (not in PR #319): host-receipt LOCAL reviews stopped with `CorruptedStateError` on any L2 infrastructure error | The fixpoint turned CLEAN into INCOMPLETE and the round was recorded `interrupted`, but the round-history validator accepted INCOMPLETE only beside a falsifier protocol failure, so the machine refused its own row. #114's tests run without host receipts and never saw it. Host rows now carry `"l2_infra_error": true` when this round's L2 returned an infrastructure error; the validator accepts `interrupted` + INCOMPLETE with it and refuses it on earned / evidence-rejected rows, with a non-true value or without a returned L2. The L2 error is also cleared at the start of every round, so a round that fails before its L2 does not inherit the previous round's error. Older code refuses rows with the new field the same way it refused these rounds before. | `tests/test_l2_infra_host_rounds.py` (17 tests); 15 fail without the change, and the round-B test fails without only the per-round clear. Reproduced on 20b4ace. |
 
 Why W1-5 does not say "infrastructure diagnostic": a receipt finding carries
 no `source`, INFRA and UNTRUSTED both get authority `infra-unavailable`, and
@@ -39,8 +41,9 @@ forbids. A trusted split needs host facts in the receipt (see W2-6).
 ## 2. Keep-across-runs mutant sweep (W1-6)
 
 Method: one mutant per reset statement in `StateMachine._reset_run_state`
-(44 statements). Each guards its statement with `if self._runs_started == 0:`,
-so `__post_init__` and the first `run()` still initialize the attribute but a
+(44 statements), generated at 26bd5af, when the first-run marker was a run
+counter. Each guards its statement with `if self._runs_started == 0:`, so
+`__post_init__` and the first `run()` still initialize the attribute but a
 later `run()` on the same instance keeps the earlier value. Selection:
 `test_review_interruption_source_controls.py`,
 `test_phase6_schema_coverage_credit.py`, `test_machine_receipt_gate.py`,
@@ -49,8 +52,86 @@ run with `-x`. Results are in section 2.1.
 
 ### 2.1 Results
 
-Pending: the sweep was still running when this file was first committed.
-The results replace this paragraph in a later commit.
+Baseline (unmutated, at 26bd5af): 955 passed, 1 deselected (the pre-existing
+`test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline`
+failure, which also fails on 20b4ace).
+
+Killed (10): `_round_input_tokens`, `_round_output_tokens`,
+`_round_cached_tokens`, `_round_duration` (fix11 l1-timeout differential);
+`_host_attempt_round` (fix12 double fault); `_phase_status`, `_phase_findings`
+(fix10 early second run); `_settled_preserve_round` (fix9 preflight Ctrl-C);
+`_trusted_config_refusal` (fix12 CI refusal); `_untracked_gate_pinned` (fix11).
+
+Survived (34): `_round_pass_usage`, `_written_pass_outcomes`,
+`_last_receipt_write_errors`, `_excerpts_last_round`, `_attempted_last_round`,
+`_responses_last_round`, `_raw_observations_last_round`,
+`_pending_raw_responses_last_round`, `_unavailable_rejected_passes_last_round`,
+`_c3_strip_fps`, `_c3_stripped_dispositions`, `_booked_receipt_write_errors`,
+`_acquisition_markers`, `_falsify_protocol_findings`, `_falsify_failed_findings`,
+`_hold_confirmed_fingerprints`, `_acquisition_receipts`, `_acquisition_authority`,
+`_rejection_authority`, `_rejected_evidence_entries`, `_rejection_receipt_digests`,
+`_rejection_written_outcomes`, `_attempt_snapshot`, `_attempt_findings`,
+`_other_source_state`, `_mutation_bound_failure`, `_mutation_not_applicable`,
+`_mutation_workspace_blocker`, `_mutation_timeout_objects`,
+`_mutation_timeout_emitted`, `_l2_infra_error`, `_untracked_gate_pin`,
+`_trusted_gate_cache`, `_mutation_measurement_eligible`.
+
+A surviving mutant is either equivalent through `run()` (every read in a run
+comes after a per-round or per-attempt write that does not use the old value)
+or reachable by a two-run scenario no test has yet. Section 2.2 classifies
+each one.
+
+### 2.2 Classification of the survivors
+
+Static read of every write and read of each attribute in `machine.py` (no
+other module reads them), checked against the killed resets that always
+hold in a reused run (`_host_attempt_round`, `_phase_status`,
+`_phase_findings`, `_settled_preserve_round`, `_untracked_gate_pinned`).
+
+Killable, now killed by new two-run differentials (2):
+- `_last_receipt_write_errors`: run 1 cannot write receipts and fails after
+  the round; run 2 fails after L1, before the per-attempt clear. The failed
+  path logged run 1's receipt-write error again.
+  `test_p7_second_run_failing_after_l1_does_not_relog_run1_receipt_error`.
+- `_other_source_state`: run 1 finds another diff's state.json and no
+  receipts, saves its own empty State and stops in the preflight; run 2
+  continued the other diff's cycle numbers.
+  `test_p7_second_run_does_not_continue_cycles_of_run1_other_diff_state`.
+
+Killable before, equivalent now (1):
+- `_l2_infra_error`: run 2 failing after L1 and before its own L2 read run
+  1's L2 error. The same leak existed between two rounds of one run, and fed
+  the crash fixed by W1-8, so the error is now also cleared at the start of
+  every round; that clear dominates every read.
+  `test_p7_second_run_failing_before_l2_ignores_run1_l2_error` and
+  `test_round_failing_before_l2_does_not_inherit_the_previous_round_l2_error`
+  pin both cases.
+
+Equivalent with fixed configuration (1):
+- `_hold_confirmed_fingerprints`: in host-receipt mode it is rewritten before
+  every fixpoint read; outside it, it is never non-empty. It differs only if
+  a caller flips `coverage_l1_active` (or the receipt diff) between two runs
+  on one instance, which production never does.
+
+Equivalent (30): each is rewritten, from no old value, before any read on
+every path through a run. The dominating write is at the top of
+`_execute_round` (`_written_pass_outcomes`, `_acquisition_markers`,
+`_acquisition_receipts`, `_acquisition_authority`, `_rejection_authority`,
+`_rejected_evidence_entries`, `_rejection_receipt_digests`,
+`_rejection_written_outcomes`, `_mutation_timeout_emitted`), in the L1 part of
+the round before its readers (`_round_pass_usage`, `_excerpts_last_round`,
+`_attempted_last_round`, `_responses_last_round`,
+`_raw_observations_last_round`, `_pending_raw_responses_last_round`,
+`_unavailable_rejected_passes_last_round`, `_booked_receipt_write_errors`,
+`_falsify_protocol_findings`, `_falsify_failed_findings`, `_attempt_findings`),
+in `_begin_host_attempt` with every reader guarded by an attempt in the same
+run (`_c3_strip_fps`, `_c3_stripped_dispositions`, `_attempt_snapshot`), at
+the start of `_run_l2_phase` with readers only after L2 or only in CI after
+the round (`_mutation_bound_failure`, `_mutation_not_applicable`,
+`_mutation_workspace_blocker`, `_mutation_timeout_objects`,
+`_mutation_measurement_eligible`), next to `_untracked_gate_pinned`
+(`_untracked_gate_pin`), or in `run()` before its only reader
+(`_trusted_gate_cache`).
 
 ## 3. Wave 2: needs an owner decision
 
@@ -176,6 +257,22 @@ wave 1 does. Recommendation: drop from Phase 7.
 - TD-P6-C3d: stall / `diagnose.py` do not show `preserved`. Report-only;
   can land with W2-2.
 - The plan omissions are covered by W1-7.
+
+### W2-9. A CI run on an instance that ran before keeps that State
+
+Today (unchanged by W1-1): CI never reloads `state.json`, and a later CI
+`run()` on the same instance keeps the in-memory State. Existing CI tests
+rely on this to stage prior dispositions
+(`test_ci_fresh_survivor_excludes_prior_disposition_o4` and others). It also
+means a LOCAL run that loaded a matching `state.json`, human DISMISSED
+dispositions included, followed by a CI run on the same instance, carries
+those dispositions into CI, which the STATE-09 docstring says CI avoids.
+Production builds one instance per review, so this is reachable only through
+the Python API. Options: leave it (W1-1 pins CI carry-over with
+`test_p7_reused_ci_instance_still_carries_its_state`), or start a CI run
+empty whenever an earlier run on the instance ran, and move the CI tests to
+seed State explicitly. Recommendation: the second, as its own change, because
+it rewrites how those CI tests stage history.
 
 ## 4. Verification record (wave 1)
 
