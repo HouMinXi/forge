@@ -20,7 +20,7 @@ AUTHORITY_DETERMINISTIC_EXECUTED: Final[str] = "deterministic-executed"
 AUTHORITY_LLM_TRAINED: Final[str] = "llm-trained"
 AUTHORITY_LLM_DOCS_LATEST: Final[str] = "llm-docs-latest"
 AUTHORITY_LLM_DOCS_PINNED: Final[str] = "llm-docs-pinned"
-# The host could not verify the finding: INFRA diagnostics and UNTRUSTED reviewer output.
+# Source INFRA or UNTRUSTED: the host could not verify the finding.
 AUTHORITY_INFRA_UNAVAILABLE: Final[str] = "infra-unavailable"
 
 _DETERMINISTIC_SOURCES: Final[frozenset[str]] = frozenset(
