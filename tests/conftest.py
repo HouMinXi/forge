@@ -154,8 +154,14 @@ def _isolate_trust_store(_trust_store_parent, monkeypatch, request):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
 
 
+@pytest.fixture(scope="session")
+def _probe_cache_parent(tmp_path_factory):
+    """Keep cache children under pytest's normal session retention policy."""
+    return tmp_path_factory.mktemp("probe-caches")
+
+
 @pytest.fixture(autouse=True)
-def _isolate_probe_cache(tmp_path_factory, monkeypatch):
+def _isolate_probe_cache(_probe_cache_parent, monkeypatch):
     """Keep backend probe results out of the real ``~/.cache/code-forge``.
 
     ``backend._default_cache_dir`` reads ``XDG_CACHE_HOME`` when called, so a
@@ -163,7 +169,9 @@ def _isolate_probe_cache(tmp_path_factory, monkeypatch):
     ``backend_probe_cache.json`` and later runs (tests or real reviews) would
     read that stale entry. Tests that set the variable themselves override this.
     """
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path_factory.mktemp("probe-cache")))
+    # Avoid rescanning the growing session directory for every test.
+    home = Path(tempfile.mkdtemp(dir=_probe_cache_parent, prefix="probe-"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(home))
 
 
 @pytest.fixture(autouse=True)
