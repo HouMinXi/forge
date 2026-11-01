@@ -23,6 +23,8 @@ import contextlib
 import copy
 import dataclasses
 import datetime
+import enum
+import errno
 import hashlib
 import io
 import json
@@ -248,6 +250,12 @@ def _apply_reviewer_fault(body, fault):
         )
     elif fault == "literal":
         body["code_excerpts"][0]["content"] = CONTENT["control.ts"].replace("value = 2", "value = 200")
+    elif fault == "inadmissible-dict":
+        # Real path: a schema-invalid dict the audit writer cannot
+        # encode (a tuple is not built-in JSON data), so the factory records
+        # schema-fail and marks the pass "audit payload unavailable".
+        body["findings"] = "not an array"
+        body["constructed_unencodable"] = ("tuple",)
     else:
         raise AssertionError("unknown constructed reviewer fault: " + str(fault))
     return body
@@ -3021,3 +3029,455 @@ def test_fix12_reused_ci_instance_drops_a_fixed_trusted_config_refusal(tmp_path,
     assert [e for e in saved_reused["infra_errors"] if e.startswith(_FIX12_REFUSED)] == refused
     assert saved_reused["infra_errors"] == saved_new["infra_errors"]
     assert saved_reused["verdict"] == saved_new["verdict"]
+
+
+# --- `_fixpoint_reached` stays side-effect-free ------------------------------
+#
+# `_fixpoint_without` evaluates the counterfactual by swapping
+# `_state.findings` in place and calling `_fixpoint_reached`; the main path,
+# the counterfactual and the failed-attempt path all read the same machine.
+# These tests snapshot the machine's instance attributes (identity and
+# contents, recursively) around every real call and require the same result
+# on repeated calls. The snapshot covers instance attributes only: file
+# system, module-level and class-level state are outside it.
+
+
+def _freeze(value, seen=frozenset()):
+    """Comparable deep snapshot: contents plus object identity of containers."""
+    if value is None or type(value) in (bool, int, float, str, bytes):
+        return (type(value), value)
+    if isinstance(value, enum.Enum):
+        return ("enum", type(value).__name__, value.value)
+    if isinstance(value, Path):
+        return ("path", str(value))
+    if id(value) in seen:
+        return ("cycle", id(value))
+    if isinstance(value, (type, types.ModuleType, types.FunctionType, types.BuiltinFunctionType)):
+        return ("ref", id(value))
+    if isinstance(value, types.MethodType):
+        return ("method", value.__func__.__qualname__, id(value.__self__))
+    inner = seen | {id(value)}
+    if isinstance(value, dict):
+        items = tuple((_freeze(key, inner), _freeze(item, inner)) for key, item in value.items())
+        return ("dict", type(value).__name__, id(value), items)
+    if isinstance(value, (set, frozenset)):
+        members = tuple(sorted(repr(_freeze(item, inner)) for item in value))
+        return ("set", type(value).__name__, id(value), members)
+    if isinstance(value, (list, tuple)):
+        return ("seq", type(value).__name__, id(value), tuple(_freeze(item, inner) for item in value))
+    if dataclasses.is_dataclass(value):
+        fields = tuple(
+            (field.name, _freeze(getattr(value, field.name), inner))
+            for field in dataclasses.fields(value)
+        )
+        return ("dataclass", type(value).__name__, id(value), fields)
+    attributes = getattr(value, "__dict__", None)
+    if type(attributes) is dict:
+        return ("object", type(value).__name__, id(value), _freeze(attributes, inner))
+    return ("opaque", type(value).__name__, id(value))
+
+
+def _machine_snapshot(machine):
+    """Every instance attribute except the guard itself, keyed by name.
+
+    Instance attributes only: writes to files, module globals or class
+    attributes are not part of this snapshot.
+    """
+    return {name: _freeze(value) for name, value in vars(machine).items() if name != "_fixpoint_reached"}
+
+
+def _guard_fixpoint(monkeypatch, machine):
+    """Wrap the real `_fixpoint_reached`; record call site, result and any change
+    to the machine's instance attributes (see `_machine_snapshot` for the scope).
+
+    Failures are recorded, not raised: `_finish_failed_host_attempt` swallows
+    secondary exceptions, so an assertion raised there would be lost.
+    """
+    original = machine._fixpoint_reached
+    record = {"sites": [], "results": [], "violations": []}
+
+    def guarded():
+        site = sys._getframe(1).f_code.co_name
+        results = []
+        for _ in range(3):
+            before = _machine_snapshot(machine)
+            results.append(original())
+            after = _machine_snapshot(machine)
+            if after != before:
+                changed = sorted(
+                    name for name in before.keys() | after.keys() if before.get(name) != after.get(name)
+                )
+                record["violations"].append((site, "machine state changed", changed))
+        record["sites"].append(site)
+        record["results"].append(results[0])
+        if any(result is not results[0] for result in results[1:]):
+            record["violations"].append((site, "not idempotent", results))
+        return results[0]
+
+    monkeypatch.setattr(machine, "_fixpoint_reached", guarded)
+    return record
+
+
+@pytest.mark.parametrize("mutation", ["none", "append", "replace", "rotate", "result"])
+def test_fixpoint_guard_checks_each_call_before_state_can_restore(monkeypatch, mutation):
+    machine = types.SimpleNamespace(items=["a", "b", "c"])
+    calls = []
+
+    def original():
+        calls.append(None)
+        if mutation == "append":
+            machine.items.append("changed")
+        elif mutation == "replace":
+            machine.items = list(machine.items)
+        elif mutation == "rotate":
+            machine.items.append(machine.items.pop(0))
+        return False if mutation == "result" and len(calls) == 2 else True
+
+    machine._fixpoint_reached = original
+    record = _guard_fixpoint(monkeypatch, machine)
+    assert machine._fixpoint_reached() is True
+    assert len(calls) == 3
+    assert record["results"] == [True]
+    state_changes = [item for item in record["violations"] if item[1] == "machine state changed"]
+    result_changes = [item for item in record["violations"] if item[1] == "not idempotent"]
+    assert len(state_changes) == (3 if mutation in {"append", "replace", "rotate"} else 0)
+    assert bool(result_changes) is (mutation == "result")
+    if mutation == "rotate":
+        assert machine.items == ["a", "b", "c"]  # The batch-end snapshot alone would miss this.
+
+
+@pytest.mark.parametrize("before,after", [(True, 1), (False, 0), (1, 1.0), (0, 0.0)])
+def test_fixpoint_guard_detects_equal_primitive_type_changes(monkeypatch, before, after):
+    machine = types.SimpleNamespace(value=before)
+
+    def original():
+        machine.value = after
+        return True
+
+    machine._fixpoint_reached = original
+    record = _guard_fixpoint(monkeypatch, machine)
+    assert machine._fixpoint_reached() is True
+    assert len(record["violations"]) == 1
+    assert record["violations"][0][1:] == ("machine state changed", ["value"])
+
+
+def _fixpoint_case_earned(root, monkeypatch):
+    machine, calls = _new_machine(root, monkeypatch, rounds=2)
+    record = _guard_fixpoint(monkeypatch, machine)
+    assert machine.run() is Verdict.ESCALATED
+    _assert_calls(calls, [1, 2])
+    return record, {"_run_local"}
+
+
+def _fixpoint_case_c3_companion(root, monkeypatch):
+    _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="schema-findings")
+    record = _guard_fixpoint(monkeypatch, machine)
+    assert machine.run() is not Verdict.PASS
+    _assert_calls(calls, [3])
+    assert _state(root)[0].round_history[-1]["clean_credit_action"] == "preserved"
+    return record, {"_run_local", "_fixpoint_without"}
+
+
+def _fixpoint_case_p3_coverage(root, monkeypatch):
+    _p3_prefix(root, monkeypatch)
+    machine, calls = _new_machine(
+        root, monkeypatch, fault="coverage", mixed_product=True, product_severity="P3"
+    )
+    record = _guard_fixpoint(monkeypatch, machine)
+    assert machine.run() is Verdict.ESCALATED
+    _assert_calls(calls, [4])
+    assert _state(root)[0].round_history[-1]["clean_credit_action"] == "preserved"
+    return record, {"_run_local", "_fixpoint_without"}
+
+
+def _fixpoint_case_failed_attempt(root, monkeypatch):
+    _earned_prefix(root, monkeypatch)
+    machine, calls = _new_machine(root, monkeypatch, fault="schema")
+
+    def crash(*_args, **_kwargs):
+        raise RuntimeError("constructed L2 crash")
+
+    monkeypatch.setattr(machine, "_run_l2_phase", crash)
+    record = _guard_fixpoint(monkeypatch, machine)
+    with pytest.raises(RuntimeError, match="constructed L2 crash"):
+        machine.run()
+    _assert_calls(calls, [3])
+    return record, {"_finish_failed_host_attempt"}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        _fixpoint_case_earned,
+        _fixpoint_case_c3_companion,
+        _fixpoint_case_p3_coverage,
+        _fixpoint_case_failed_attempt,
+    ],
+    ids=["earned-clean", "c3-companion-counterfactual", "recurring-p3-coverage", "failed-attempt"],
+)
+def test_fixpoint_reached_has_no_side_effects_on_real_runs(offline_workspace, monkeypatch, case):
+    """Every real call leaves the machine's instance attributes
+    unchanged and repeats its result. Instance attributes only; file system,
+    module and class state are outside the snapshot."""
+    record, sites = case(offline_workspace, monkeypatch)
+    assert record["violations"] == []
+    # Non-vacuous: the guard saw each call site this case is meant to exercise.
+    assert sites <= set(record["sites"]), record["sites"]
+
+
+def test_counterfactual_restores_the_same_findings_list(offline_workspace, monkeypatch):
+    """`_fixpoint_without` hands back the identical list object, contents untouched."""
+    root = offline_workspace
+    _earned_prefix(root, monkeypatch)
+    machine, _ = _new_machine(root, monkeypatch, fault="schema-findings")
+    assert machine.run() is not Verdict.PASS
+    findings = machine._state.findings
+    excluded = findings[:1]
+    assert excluded and len(findings) > 1
+    before = _machine_snapshot(machine)
+    results = []
+    for _ in range(3):
+        results.append(machine._fixpoint_without(excluded))
+        assert machine._state.findings is findings
+        assert _machine_snapshot(machine) == before
+    assert len(set(results)) == 1
+    # And each direct call leaves the state unchanged and agrees with the first.
+    direct = machine._fixpoint_reached()
+    assert _machine_snapshot(machine) == before
+    assert machine._fixpoint_reached() is direct
+    assert _machine_snapshot(machine) == before
+
+
+@pytest.mark.parametrize("mutation", ["none", "rotate", "replace", "direct-restore"])
+def test_counterfactual_oracle_checks_each_return(monkeypatch, tmp_path, mutation):
+    findings = ["a", "b", "c"]
+    machine = types.SimpleNamespace(_state=types.SimpleNamespace(findings=findings))
+    calls = []
+
+    def counterfactual(_excluded):
+        calls.append(None)
+        if mutation == "rotate":
+            findings.append(findings.pop(0))
+        elif mutation == "replace":
+            machine._state.findings = findings if len(calls) == 3 else list(findings)
+        return "CLEAN"
+
+    direct_calls = []
+
+    def direct():
+        direct_calls.append(None)
+        if mutation == "direct-restore":
+            if len(direct_calls) == 1:
+                findings.append("changed")
+            else:
+                findings.pop()
+        return "CLEAN"
+
+    machine._fixpoint_without = counterfactual
+    machine._fixpoint_reached = direct
+    machine.run = lambda: Verdict.FAIL
+    monkeypatch.setattr(sys.modules[__name__], "_earned_prefix", lambda *args: None)
+    monkeypatch.setattr(sys.modules[__name__], "_new_machine", lambda *args, **kwargs: (machine, []))
+    if mutation == "none":
+        test_counterfactual_restores_the_same_findings_list(tmp_path, monkeypatch)
+        assert len(calls) == 3
+    else:
+        with pytest.raises(AssertionError):
+            test_counterfactual_restores_the_same_findings_list(tmp_path, monkeypatch)
+        assert len(calls) == (3 if mutation == "direct-restore" else 1)
+        assert len(direct_calls) == (1 if mutation == "direct-restore" else 0)
+
+
+# --- Run-level P3 density/distinct negatives ---------------------------------
+
+
+def _p3_prefix_thresholds(root, monkeypatch, *, density, distinct_per_file):
+    """A recurring P3 product finding earns cycles 2-3 under the given thresholds."""
+    monkeypatch.setattr("code_forge.flow_contract.P3_DENSITY_THRESHOLD", density)
+    monkeypatch.setattr("code_forge.flow_contract.P3_DISTINCT_PER_FILE_THRESHOLD", distinct_per_file)
+    machine, calls = _new_machine(
+        root,
+        monkeypatch,
+        rounds=3,
+        mixed_product=True,
+        product_severity="P3",
+    )
+    machine.run()
+    _assert_calls(calls, [1, 2, 3])
+    state, _ = _state(root)
+    assert [row["clean_credit_action"] for row in state.round_history] == ["reset", "earned", "earned"]
+    proof = copy.deepcopy(state.earned_clean_window)
+    assert [entry["cycle"] for entry in proof["cycles"]] == [2, 3]
+    product = [fp for fp, disp in state.round_history[-1]["dispositions"].items() if disp == "CONFIRMED"]
+    assert len(product) == 1
+    return proof, product
+
+
+def _coverage_round_with_counterfactual(root, monkeypatch):
+    """Cycle 4: the same recurring P3 plus a new incomplete-coverage finding.
+
+    Every `_fixpoint_reached` call in this round, including the counterfactual
+    that reaches the P3 density and distinct CYCLE_RESTART returns, runs under
+    the side-effect guard.
+    """
+    machine, calls = _new_machine(
+        root, monkeypatch, fault="coverage", mixed_product=True, product_severity="P3"
+    )
+    record = _guard_fixpoint(monkeypatch, machine)
+    without = machine._fixpoint_without
+    counterfactuals = []
+
+    def spy(excluded):
+        result = without(excluded)
+        counterfactuals.append(result)
+        return result
+
+    monkeypatch.setattr(machine, "_fixpoint_without", spy)
+    assert machine.run() is Verdict.ESCALATED
+    _assert_calls(calls, [4])
+    assert record["violations"] == []
+    assert {"_run_local", "_fixpoint_without"} <= set(record["sites"]), record["sites"]
+    state, _ = _state(root)
+    return state, counterfactuals
+
+
+def _assert_round_four(state, product, proof, over):
+    latest = state.round_history[-1]
+    assert all(latest["dispositions"][fp] == "CONFIRMED" for fp in product)
+    assert latest["dispositions"]["incomplete-coverage-adversarial"] == "CONFIRMED"
+    assert latest["fixpoint"] == "RESET"  # the new coverage finding is clause (a)
+    if over:
+        assert latest["clean_credit_action"] == "reset" and latest["clean_rounds_after"] == 0
+        assert state.consecutive_clean_rounds == 0 and state.earned_clean_window["cycles"] == []
+        assert not any("clean credit preserved" in err for err in state.infra_errors)
+    else:
+        assert latest["clean_credit_action"] == "preserved" and latest["clean_rounds_after"] == 2
+        assert state.consecutive_clean_rounds == 2 and state.earned_clean_window == proof
+
+
+@pytest.mark.parametrize(
+    "over", [False, True], ids=["within-threshold-preserves", "over-threshold-resets"]
+)
+def test_run_level_p3_density_over_threshold_resets(offline_workspace, monkeypatch, over):
+    """A recurring P3 over the production density threshold beside
+    incomplete-coverage is not (iii)-only, so the earned window is wiped (no companion)."""
+    from code_forge import flow_contract
+    from code_forge.diff import count_diff_lines
+
+    production = flow_contract.P3_DENSITY_THRESHOLD
+    density = 1 / max(1, count_diff_lines(DIFF))
+    assert production < density <= 1.0  # one P3 on this diff is over production, under 1.0
+    root = offline_workspace
+    proof, product = _p3_prefix_thresholds(
+        root,
+        monkeypatch,
+        density=1.0,
+        distinct_per_file=flow_contract.P3_DISTINCT_PER_FILE_THRESHOLD,
+    )
+    if over:
+        monkeypatch.setattr("code_forge.flow_contract.P3_DENSITY_THRESHOLD", production)
+    state, counterfactuals = _coverage_round_with_counterfactual(root, monkeypatch)
+    # The cause is the density rule: with coverage removed, the fixpoint is
+    # CYCLE_RESTART over the threshold and CLEAN within it.
+    assert counterfactuals == ["CYCLE_RESTART" if over else "CLEAN"]
+    _assert_round_four(state, product, proof, over)
+
+
+@pytest.mark.parametrize(
+    "over", [False, True], ids=["within-threshold-preserves", "over-threshold-resets"]
+)
+def test_run_level_p3_distinct_over_threshold_resets(offline_workspace, monkeypatch, over):
+    """A recurring P3 whose file exceeds the distinct-per-file
+    threshold beside incomplete-coverage is not (iii)-only, so the window is wiped.
+
+    The production threshold (5 distinct rules in one file) cannot be reached on
+    this fixture: L1 fingerprints are (file, 10-line bucket, pass), the fixture
+    files are three lines long and only qodo emits the product finding, so one
+    file carries at most one recurring product rule. The run therefore moves the
+    threshold below that single rule (1 > 0) for cycle 4 only; density is
+    switched off throughout so only the distinct rule decides.
+
+    Division of proof: the production threshold values
+    are pinned by the `_p3_over_threshold` unit negatives in
+    test_phase6_schema_coverage_credit.py; this integration test proves that
+    the distinct-per-file rule, once it fires, drives the real run to the
+    reset (a mutant removing that rule from `_fixpoint_reached` is killed
+    here). The per-diff rule is reachable only through more files than this
+    fixture has and is not separately run here.
+    """
+    root = offline_workspace
+    proof, product = _p3_prefix_thresholds(root, monkeypatch, density=100.0, distinct_per_file=1)
+    if over:
+        monkeypatch.setattr("code_forge.flow_contract.P3_DISTINCT_PER_FILE_THRESHOLD", 0)
+    state, counterfactuals = _coverage_round_with_counterfactual(root, monkeypatch)
+    assert counterfactuals == ["CYCLE_RESTART" if over else "CLEAN"]
+    _assert_round_four(state, product, proof, over)
+
+
+# --- Inadmissible-dict pin on the real path ----------------------------------
+
+
+@pytest.mark.parametrize(
+    "io_error", [False, True], ids=["audit-unavailable", "audit-unavailable-plus-io"]
+)
+def test_unencodable_dict_beside_attempted_schema_wipes_on_real_path(
+    offline_workspace, monkeypatch, io_error
+):
+    """The audit-unavailable pin without injected gate errors.
+
+    The adversarial reply is an admissible schema-invalid dict (attempted
+    payload); the qodo reply is a schema-invalid dict the audit writer cannot
+    encode, so the real factory marks qodo "audit payload unavailable". The
+    I/O variant makes the real receipt writes fail for this round: creating a
+    new file directly under the receipts directory raises a genuine
+    PermissionError (errno EACCES), as a read-only directory would. This is a
+    monkeypatch rather than a file mode, so it holds for any uid, root
+    included. Both are (iii)-only by finding, so the predicate
+    alone would preserve; the real gate damage decides the M6 wipe. The older
+    monkeypatched pin (test_la_audit_unavailable_beside_attempted_schema_wipes)
+    stays as the narrower gate-contract control.
+    """
+    root = offline_workspace
+    _, original = _earned_prefix(root, monkeypatch)
+    receipts = root / ".code-forge" / "receipts"
+    machine, calls = _new_machine(root, monkeypatch, fault="schema", qodo_fault="inadmissible-dict")
+    predicate = machine._schema_coverage_credit_preserve
+    decisions = []
+
+    def spy(fixpoint):
+        decision = predicate(fixpoint)
+        decisions.append(decision)
+        return decision
+
+    monkeypatch.setattr(machine, "_schema_coverage_credit_preserve", spy)
+    write_text = Path.write_text
+    denied = []
+
+    def deny_new_receipt(path, *args, **kwargs):
+        if path.parent == receipts and not path.exists():
+            denied.append(path.name)
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(path))
+        return write_text(path, *args, **kwargs)
+
+    with monkeypatch.context() as io_patch:
+        if io_error:
+            io_patch.setattr(Path, "write_text", deny_new_receipt)
+        assert machine.run() is Verdict.FAIL
+        errors = machine._receipt_gate_round_errors()
+    assert Path.write_text is write_text
+    # Non-vacuous: the I/O variant really refused a receipt write.
+    assert bool(denied) is io_error, denied
+    _assert_calls(calls, [3])
+    assert decisions == [True]
+    # Outcome first, so a lost audit-unavailable signal fails on the wipe itself.
+    state = _assert_wiped(root)
+    latest = state.round_history[-1]
+    assert {"schema-fail-qodo", "schema-fail-adversarial"} <= set(latest["dispositions"])
+    assert not any("clean credit preserved" in err for err in state.infra_errors)
+    assert machine._unavailable_rejected_passes_last_round == {"qodo"}
+    assert [item["pass_name"] for item in machine._attempted_last_round] == ["adversarial"]
+    assert machine_mod._ATTEMPTED_EVIDENCE_GATE_ERROR in errors and _AUDIT_UNAVAILABLE in errors
+    assert any(err.startswith("receipt write failed: ") for err in errors) is io_error
+    assert any(f"[Errno {errno.EACCES}]" in err for err in errors) is io_error
+    _recover(root, monkeypatch, original, [4, 5, 6], rounds=3)
