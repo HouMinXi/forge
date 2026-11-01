@@ -529,6 +529,10 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             raise CorruptedStateError("invalid host phase status")
         if action == "unavailable" and phases["l1"] != "returned" and "fixpoint" in row:
             raise CorruptedStateError("unavailable host round has fixpoint without L1 observation")
+        # #114: written only as True, and only when this round's L2 returned.
+        l2_infra = "l2_infra_error" in row
+        if l2_infra and (row["l2_infra_error"] is not True or phases["l2"] != "returned"):
+            raise CorruptedStateError("invalid L2 infrastructure observation")
         if (
             not isinstance(row["source_hash"], str)
             or not row["source_hash"]
@@ -593,14 +597,18 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             or failures
             or row["reset_observed"]
             or row.get("fixpoint") != "CLEAN"
+            or l2_infra
         ):
             raise CorruptedStateError(f"{action} host round lacks CLEAN observation")
+        # An L2 infrastructure error alone turns CLEAN into INCOMPLETE (#114):
+        # the round earns nothing and keeps the window, like a protocol stop.
         if action == "interrupted" and (
             phases["l1"] != "returned"
             or row["reset_observed"]
             or not (
                 (failures and not protocol_failures and row.get("fixpoint") == "CLEAN")
                 or (protocol_failures and row.get("fixpoint") == "INCOMPLETE")
+                or (l2_infra and row.get("fixpoint") == "INCOMPLETE")
             )
         ):
             raise CorruptedStateError("interrupted host round lacks nonreset acquisition observation")
