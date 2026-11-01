@@ -45,6 +45,9 @@ OUTCOMES = [
     AssertionOutcome(
         AssertionStatus.FAILED, None, AssertionStage.REPORTING, AssertionKind.INCONSISTENT_OUTCOME
     ),
+    AssertionOutcome(
+        AssertionStatus.SKIPPED, None, AssertionStage.ELIGIBILITY, AssertionKind.UNSUPPORTED_OUTLET
+    ),
 ]
 
 

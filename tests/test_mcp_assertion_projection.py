@@ -40,6 +40,7 @@ VALID = [
     {"status": "completed_findings", "finding_count": 9},
     {"status": "not_applicable", "finding_count": 0, "stage": "eligibility", "kind": "no_test_files"},
     {"status": "skipped", "finding_count": None, "stage": "eligibility", "kind": "no_git_diff"},
+    {"status": "skipped", "finding_count": None, "stage": "eligibility", "kind": "unsupported_outlet"},
     *[
         {"status": "failed", "finding_count": None, "stage": stage, "kind": kind}
         for stage, kind in [

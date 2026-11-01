@@ -28,6 +28,7 @@ class AssertionStage(str, Enum):
 class AssertionKind(str, Enum):
     NO_TEST_FILES = "no_test_files"
     NO_GIT_DIFF = "no_git_diff"
+    UNSUPPORTED_OUTLET = "unsupported_outlet"
     TIMEOUT = "timeout"
     ERROR = "error"
     INCONSISTENT_OUTCOME = "inconsistent_outcome"
@@ -41,11 +42,16 @@ _LEGACY_OUTCOMES = {
     AssertionStatus.FAILED: "failed: error",
 }
 _TIMEOUT_OUTCOME = "failed: timeout"
+_UNSUPPORTED_OUTCOME = "skipped: unsupported outlet"
 
 
 def legacy_progress_outcome(value: object) -> str:
     """Legacy text is progress only; it cannot establish a typed result."""
-    if type(value) is str and value in (*_LEGACY_OUTCOMES.values(), _TIMEOUT_OUTCOME):
+    if type(value) is str and value in (
+        *_LEGACY_OUTCOMES.values(),
+        _TIMEOUT_OUTCOME,
+        _UNSUPPORTED_OUTCOME,
+    ):
         return value
     return "unreported"
 
@@ -83,7 +89,7 @@ class AssertionOutcome:
             valid = (
                 self.finding_count is None
                 and self.stage is AssertionStage.ELIGIBILITY
-                and self.kind is AssertionKind.NO_GIT_DIFF
+                and self.kind in (AssertionKind.NO_GIT_DIFF, AssertionKind.UNSUPPORTED_OUTLET)
             )
         else:
             valid = self.finding_count is None and (self.stage, self.kind) in {
@@ -112,6 +118,8 @@ class AssertionOutcome:
 
     def legacy_outcome(self) -> str:
         """Keep established CLI callbacks separate from structured metadata."""
+        if self.kind is AssertionKind.UNSUPPORTED_OUTLET:
+            return _UNSUPPORTED_OUTCOME
         if self.kind is AssertionKind.TIMEOUT:
             return _TIMEOUT_OUTCOME
         return _LEGACY_OUTCOMES[self.status]

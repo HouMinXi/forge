@@ -395,6 +395,15 @@ def _machine(project, *, runner=None, l0=None, review=None, active_l1=False):
     return machine
 
 
+def _seed_carried_state(machine):
+    """W2-9: a later CI run on one instance starts from an empty State.
+
+    Tests that stage the previous run's dispositions and history seed a copy
+    of that State between runs, as a caller would; the copy is kept.
+    """
+    machine._state = deepcopy(machine._state)
+
+
 def _measure(project):
     proof = {}
     findings, errors = mutation.run_mutation(
@@ -583,6 +592,7 @@ def test_ci_fresh_survivor_excludes_prior_disposition_o4(ci_project, later, prom
     append_row(p.root, row)
     machine = _machine(p, runner=mutation.run_mutation)
     assert machine.run() is Verdict.PASS
+    _seed_carried_state(machine)
     prior = _one(machine._state.findings, findings[0].id)
     assert prior.disposition is Disposition.DISMISSED
     assert _one(_saved(p, Verdict.PASS).findings, prior.id).disposition is Disposition.DISMISSED
@@ -620,6 +630,7 @@ def test_ci_ordinary_finding_keeps_dismissed_carry_forward(ci_project):
     _rule(p, findings)
     machine = _machine(p, runner=mutation.run_mutation)
     assert machine.run() is Verdict.PASS
+    _seed_carried_state(machine)
     prior = _one(machine._state.findings, findings[0].id)
     append_row(p.root, _row(p, findings[0], TerminalState.UNADJUDICATED))
     ordinary = deepcopy(findings[0])
@@ -1408,6 +1419,7 @@ def test_ci_fresh_timeout_does_not_inherit_prior_promotion(ci_project):
     p.codes, p.statuses = (36,), ("timeout",)
     machine = _machine(p, runner=mutation.run_mutation)
     assert machine.run() is Verdict.PASS
+    _seed_carried_state(machine)
     note_id = "mutation-timeout-" + _identity(1)
     prior = _one(machine._state.findings, note_id)
     assert prior.disposition is Disposition.DISMISSED
@@ -1729,6 +1741,7 @@ def test_ci_completed_bound_result_survives_redundant_launch_only_for_current_in
     result.unlink()
     assert not result.exists()
     capsys.readouterr()
+    _seed_carried_state(machine)
     expected = Verdict.PENDING if launch == "successful" else Verdict.FAIL
     assert machine.run() is expected
     second_text = capsys.readouterr().err
@@ -1999,7 +2012,8 @@ def test_baseline_timeout_exemption_allows_mixed_language_note():
     )
 
 
-def test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline(ci_project):
+@pytest.mark.parametrize("detached_available", [False, True])
+def test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline(ci_project, detached_available):
     """A null test.timeout_seconds is refused by the gate loader: no baseline
     runs, so no baseline-timeout reason can be formatted from it."""
     p = ci_project
@@ -2010,12 +2024,27 @@ def test_ci_null_baseline_deadline_is_a_config_error_before_any_baseline(ci_proj
         path.write_text(json.dumps(gate), encoding="utf-8")
         record_trust(path, gate)
     p.baseline_hook = _baseline_timeout
+    if detached_available:
+        _discover_mutmut(p)
     machine = _machine(p, runner=mutation.run_mutation)
-    machine.run()
-    saved = load_state(p.state / ".code-forge/state.json")
-    assert any("'test.timeout_seconds' must be an integer" in e for e in saved.infra_errors)
-    assert "baseline" not in p.stages
-    assert not any(e.startswith("CI: mutation not measured") for e in saved.infra_errors)
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    # Invalid config is truthfully reported as mutation not measured, but it
+    # must never masquerade as an executed baseline timing out or failing.
+    expected = (
+        "CI: mutation not measured -- invalid .code-forge/gate.yaml in the test config root "
+        f"{p.state}: 'test.timeout_seconds' must be an integer"
+    )
+    assert expected in saved.infra_errors
+    assert p.stages == []
+    assert p.launches == []
+    assert not any(
+        f.fingerprint in {"mutation-baseline-timeout", "mutation-flaky"} for f in saved.findings
+    )
+    assert not any(
+        e.startswith("CI: mutation not measured: baseline") or "Nones" in e or "after None" in e
+        for e in saved.infra_errors
+    )
 
 
 @pytest.mark.parametrize(
