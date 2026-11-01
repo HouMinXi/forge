@@ -839,10 +839,13 @@ class StateMachine:
 
     def __post_init__(self) -> None:
         """Initialize instance state; per-run state comes from `_reset_run_state`."""
-        # Kept for the life of the instance: advisories (with the buffer that
-        # feeds them) accumulate across runs, the mutation source retains
-        # the initial review subject across autofix rounds, and the receipt
-        # cycle windows below span every run() on the instance.
+        # Kept for the life of the instance: advisories accumulate across
+        # runs, the mutation source retains the initial review subject across
+        # autofix rounds, and the receipt cycle windows below span every run()
+        # on the instance. The pre-existing buffer that feeds advisories is
+        # also an instance attribute, but it carries nothing between runs in
+        # practice: every L0 phase starts it empty (`_run_l0_phase`) and a
+        # normal return from the run flushes it into `_advisories`.
         self._advisories: list[AdvisoryFinding] = []
         self._preexisting_buf: list[AdvisoryFinding] = []
         self._mutation_source_review = None
@@ -859,16 +862,23 @@ class StateMachine:
         # fixpoint. Terminal attestation scopes to these, so an earlier
         # resolved finding cannot poison the clean tail.
         self._clean_window_cycles: list[int] = []
+        # Phase 7 (P7-1): run() calls started on this instance. The first
+        # LOCAL run starts from the State the instance was built (or seeded)
+        # with; a later LOCAL run starts from an empty State unless a
+        # matching state.json loads, as a new instance would.
+        self._runs_started = 0
         self._reset_run_state()
 
     def _reset_run_state(self) -> None:
         """Reset the per-run, per-attempt, per-round and L2-phase state below (fix10, CR2F9-L1).
 
         Called from `__post_init__` and as the first step of every run(). Kept across runs on the
-        same instance: `_state` and the 7 lifetime attributes set in `__post_init__` (advisories
-        and their preexisting buffer, the mutation source review/subject/guard, and the written
-        and clean receipt cycle windows). `_maybe_load_prior_state` replaces `_state` only when a
-        matching state.json loads, which never happens in CI.
+        same instance: the 7 lifetime attributes set in `__post_init__` (advisories and their
+        preexisting buffer, the mutation source review/subject/guard, and the written and clean
+        receipt cycle windows) and the run counter. `_state` is not reset here:
+        `_maybe_load_prior_state` decides it. In LOCAL mode a run() after the first starts from an
+        empty State unless a matching state.json loads (P7-1); CI keeps the in-memory State across
+        runs on one instance, as on main.
         """
         # CLI-08 H3: per-round cost accumulator.
         self._round_input_tokens: int = 0
@@ -965,11 +975,15 @@ class StateMachine:
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
-        # fix10 (CR2F9-L1): nothing an earlier run() on this instance left is
-        # this run's; reset before any step can fail. This includes the fix9
-        # (CR3R3-L1) clear of `_settled_preserve_round`: a row a previous run()
-        # settled is never this run's to demote.
+        # fix10 (CR2F9-L1): no per-run, per-attempt, per-round or L2-phase state
+        # an earlier run() on this instance left is this run's; reset it before
+        # any step can fail. This includes the fix9 (CR3R3-L1) clear of
+        # `_settled_preserve_round`: a row a previous run() settled is never
+        # this run's to demote. The instance-lifetime attributes listed in
+        # `_reset_run_state` are kept, and `_maybe_load_prior_state` decides
+        # the review State (P7-1).
         self._reset_run_state()
+        self._runs_started += 1
         self._note_gate_yaml_edit()
         admission_error = mutation_review_admission_error(
             target_kind=self.resolved_review.target_kind,
@@ -1050,8 +1064,19 @@ class StateMachine:
         file only when its source_hash matches this review. A missing
         or different hash is left on disk and the run starts empty
         (CorruptedStateError still propagates per 02-01).
+
+        "Starts empty" (P7-1): the first run() on an instance starts from the
+        State it was built or seeded with. A later LOCAL run() on the same
+        instance first drops the State an earlier run() left in memory, so a
+        missing, other-diff or corrupt state.json leaves it exactly where a
+        new instance would start; it never carries the earlier run's
+        findings, dispositions or clean credit into this review. CI does not
+        reload state.json and keeps the in-memory State across runs on one
+        instance, as on main.
         """
         state_path = self.cwd / ".code-forge" / "state.json"
+        if self.mode != Mode.CI and self._runs_started > 1:
+            self._state = State()
         if self.mode == Mode.CI:
             if state_path.exists():
                 logging.getLogger("code_forge").warning(
@@ -3508,8 +3533,9 @@ class StateMachine:
     def _receipt_gate_terminal_errors(self) -> list[str]:
         """Terminal gate: attest exactly THIS run's receipts, full policy.
 
-        Pins run_verify to the last clean window this run wrote (CI: its
-        one cycle; LOCAL: the clean rounds that reached the fixpoint), so
+        Pins run_verify to the last clean window this instance wrote (CI:
+        its one cycle; LOCAL: the clean rounds that reached the fixpoint;
+        the receipt cycle windows span every run() on one instance), so
         older higher cycles on disk can neither vouch for nor mask the
         current evidence. Rejects: coverage below the 60% floor,
         unwitnessed hunks, non-consecutive/incomplete windows, stale
@@ -3540,13 +3566,14 @@ class StateMachine:
             return errors
         window = list(self._clean_window_cycles or self._written_cycles)
         if not window:
-            # Nothing was written this run (writer I/O failure, non-git
+            # Nothing was written by this instance (writer I/O failure, non-git
             # review). The round gate already surfaced the write failure
             # as an infra finding; there is no receipt evidence to
             # attest, and reporting "no receipts" here would mask it.
             return errors
         # Fresh-window check: the highest cycle on disk must be this
-        # run's latest written cycle. A valid run writing above the
+        # instance's latest written cycle (the message says "this run":
+        # production runs one review per instance). A valid run writing above the
         # pre-existing max always satisfies this; a run whose own window
         # is NOT the freshest (later cycles from another run, or a stale
         # directory) is rejected.
