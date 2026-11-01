@@ -27,6 +27,7 @@ from pathlib import Path
 
 from .basis import (
     AUTHORITY_DETERMINISTIC_EXECUTED,
+    AUTHORITY_INFRA_UNAVAILABLE,
     AUTHORITY_LLM_DOCS_LATEST,
     AUTHORITY_LLM_DOCS_PINNED,
     AUTHORITY_LLM_TRAINED,
@@ -931,24 +932,46 @@ def _open_findings(items: list) -> list:
     return open_items
 
 
-def _has_unverified_basis(finding: dict) -> bool:
-    """Absent legacy basis is accepted; present basis needs known authority.
+_VERIFIED_AUTHORITIES = (
+    AUTHORITY_DETERMINISTIC_EXECUTED,
+    AUTHORITY_LLM_TRAINED,
+    AUTHORITY_LLM_DOCS_LATEST,
+    AUTHORITY_LLM_DOCS_PINNED,
+)
 
-    Unknown authorities intentionally fail closed. Normalize only for the
-    comparison so unresolved snapshots retain the original receipt evidence.
+
+def _basis_kind(finding: dict) -> str | None:
+    """None for an absent (legacy) basis; else verified, infra-unavailable, malformed or unrecognized.
+
+    An absent basis is accepted; a present one needs a known authority, and
+    unknown authorities fail closed. Normalize only for the comparison so
+    unresolved snapshots retain the original receipt evidence.
     """
     if "basis" not in finding:
-        return False
+        return None
     basis = finding["basis"]
-    if not isinstance(basis, dict):
-        return True
-    authority = basis.get("authority")
-    return not isinstance(authority, str) or authority.strip().lower() not in (
-        AUTHORITY_DETERMINISTIC_EXECUTED,
-        AUTHORITY_LLM_TRAINED,
-        AUTHORITY_LLM_DOCS_LATEST,
-        AUTHORITY_LLM_DOCS_PINNED,
-    )
+    authority = basis.get("authority") if isinstance(basis, dict) else None
+    if not isinstance(authority, str) or not authority.strip():
+        return "malformed"
+    authority = authority.strip().lower()
+    if authority in _VERIFIED_AUTHORITIES:
+        return "verified"
+    return AUTHORITY_INFRA_UNAVAILABLE if authority == AUTHORITY_INFRA_UNAVAILABLE else "unrecognized"
+
+
+# How the unresolved-finding reason names each unverified basis. The host
+# writes infra-unavailable for a product candidate whose falsification failed
+# (published as INFRA), for UNTRUSTED reviewer output and for INFRA
+# diagnostics, and a receipt does not say which; so that label names a product
+# candidate first and claims no trusted infrastructure diagnostic.
+_UNRESOLVED_LABELS = {
+    AUTHORITY_INFRA_UNAVAILABLE: (
+        "unresolved finding without verified evidence (a product candidate the host "
+        "could not verify, or an infrastructure failure)"
+    ),
+    "malformed": "unresolved finding with a malformed basis",
+    "unrecognized": "unresolved finding with an unrecognized basis authority",
+}
 
 
 def _constant_offset(
@@ -2202,25 +2225,28 @@ def _run_verify_impl(
                 cp,
             )
     unresolved = []
+    first_label = None
     # Healthy CI checks one invocation without claiming convergence. An
     # incomplete role cannot exempt independent findings in any role.
     if require_convergence or incomplete:
         for r in attested:
-            unresolved.extend(
-                (
-                    r["cycle"],
-                    r["pass"],
-                    r["diff_sha256"],
-                    json.dumps(finding, sort_keys=True, separators=(",", ":")),
+            for finding in _open_findings(r["findings"]):
+                kind = _basis_kind(finding)
+                if kind in (None, "verified"):
+                    continue
+                if first_label is None:
+                    first_label = _UNRESOLVED_LABELS[kind]
+                unresolved.append(
+                    (
+                        r["cycle"],
+                        r["pass"],
+                        r["diff_sha256"],
+                        json.dumps(finding, sort_keys=True, separators=(",", ":")),
+                    )
                 )
-                for finding in _open_findings(r["findings"])
-                if _has_unverified_basis(finding)
-            )
     if unresolved:
         cycle, number, _, _ = unresolved[0]
-        reason = (
-            f"unresolved unverified product finding c{cycle}p{number} -- convergence not established"
-        )
+        reason = f"{first_label} c{cycle}p{number} -- convergence not established"
         if incomplete:
             # #50: a pass that did not complete (e.g. status=schema_fail) is the
             # primary diagnostic; name it first. Verdict, failure_kind and the

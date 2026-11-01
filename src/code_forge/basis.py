@@ -20,6 +20,8 @@ AUTHORITY_DETERMINISTIC_EXECUTED: Final[str] = "deterministic-executed"
 AUTHORITY_LLM_TRAINED: Final[str] = "llm-trained"
 AUTHORITY_LLM_DOCS_LATEST: Final[str] = "llm-docs-latest"
 AUTHORITY_LLM_DOCS_PINNED: Final[str] = "llm-docs-pinned"
+# Source INFRA or UNTRUSTED: the host could not verify the finding.
+AUTHORITY_INFRA_UNAVAILABLE: Final[str] = "infra-unavailable"
 
 _DETERMINISTIC_SOURCES: Final[frozenset[str]] = frozenset(
     {
@@ -97,7 +99,7 @@ def derive_basis(
     # validation, so it attests to nothing -- the same standing as INFRA.
     if finding.source in ("INFRA", "UNTRUSTED"):
         return EpistemicBasis(
-            authority="infra-unavailable",
+            authority=AUTHORITY_INFRA_UNAVAILABLE,
             falsification_survived=False,
             convergence_rounds=convergence_rounds,
         )

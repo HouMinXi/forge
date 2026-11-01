@@ -28,21 +28,16 @@ from .state_preserved import (  # re-exported: preserved-row validation (D-v11-1
     _recurring_confirmed as _recurring_confirmed,
     _validate_preserved_dispositions as _validate_preserved_dispositions,
 )
+from .state_rows import (  # re-exported: host round-row shape, defined once
+    HOST_ROUND_FIELDS as HOST_ROUND_FIELDS,
+    _project_product_row as _project_product_row,
+    is_host_round as is_host_round,
+)
 
 SCHEMA_VERSION: int = 1
 MUTATION_SURVIVOR_COUNTER_VERSION: int = 1
 EARNED_WINDOW_VERSION = 1
 ROUND_PHASES = ("l0", "rulepack", "l1", "l2", "e2e", "coverage")
-HOST_ROUND_FIELDS = frozenset(
-    {
-        "clean_credit_action",
-        "phase_status",
-        "acquisition_failures",
-        "reset_observed",
-        "source_hash",
-        "reviewed_repositories",
-    }
-)
 
 # Canonical pass names (shared by receipt.py, outlet_c.py, sarif.py).
 _PASS_NAMES = ("qodo", "expert", "adversarial")
@@ -462,11 +457,6 @@ def validate_earned_clean_window(window: dict) -> None:
         previous = cycle
 
 
-def is_host_round(row: dict) -> bool:
-    """Presence of any authority field prevents legacy interpretation."""
-    return bool(HOST_ROUND_FIELDS.intersection(row)) or "evidence_rejections" in row
-
-
 def validate_round_history(history: list[dict], round_index: int | None = None) -> None:
     """Validate immutable attempt IDs and modern host observations."""
     if not isinstance(history, list):
@@ -539,6 +529,15 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             raise CorruptedStateError("invalid host phase status")
         if action == "unavailable" and phases["l1"] != "returned" and "fixpoint" in row:
             raise CorruptedStateError("unavailable host round has fixpoint without L1 observation")
+        # #114: written only as True, only when this round's L2 returned, and an
+        # L2 error turns CLEAN into INCOMPLETE, so it never sits beside CLEAN.
+        l2_infra = "l2_infra_error" in row
+        if l2_infra and (
+            row["l2_infra_error"] is not True
+            or phases["l2"] != "returned"
+            or row.get("fixpoint") not in ("INCOMPLETE", "RESET", "CYCLE_RESTART")
+        ):
+            raise CorruptedStateError("invalid L2 infrastructure observation")
         if (
             not isinstance(row["source_hash"], str)
             or not row["source_hash"]
@@ -605,17 +604,25 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             or row.get("fixpoint") != "CLEAN"
         ):
             raise CorruptedStateError(f"{action} host round lacks CLEAN observation")
+        # An L2 infrastructure error alone turns CLEAN into INCOMPLETE (#114):
+        # the round earns nothing and keeps the window, like a protocol stop.
         if action == "interrupted" and (
             phases["l1"] != "returned"
             or row["reset_observed"]
             or not (
                 (failures and not protocol_failures and row.get("fixpoint") == "CLEAN")
                 or (protocol_failures and row.get("fixpoint") == "INCOMPLETE")
+                or (l2_infra and row.get("fixpoint") == "INCOMPLETE")
             )
         ):
             raise CorruptedStateError("interrupted host round lacks nonreset acquisition observation")
-        if row.get("fixpoint") == "INCOMPLETE" and action != "interrupted":
-            raise CorruptedStateError("incomplete host round lacks protocol interruption")
+        # An unavailable round may be INCOMPLETE only through its L2 error: it
+        # could not prove its evidence (failed attempt, refused receipt gate,
+        # survivor breaker), and the L2 error may not keep it.
+        if row.get("fixpoint") == "INCOMPLETE" and not (
+            action == "interrupted" or (action == "unavailable" and l2_infra)
+        ):
+            raise CorruptedStateError("incomplete host round lacks a protocol or L2 cause")
         if action == "reset" and (
             not row["reset_observed"]
             or row["clean_rounds_after"] != 0
@@ -647,21 +654,6 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
         or (not history and round_index != 0)
     ):
         raise CorruptedStateError("stored round disagrees with attempt history")
-
-
-def _project_product_row(row: dict) -> dict | None:
-    """One finalized product snapshot as the fixpoint sees it, or None."""
-    if not is_host_round(row):
-        return row
-    if row["clean_credit_action"] == "pending" or "dispositions" not in row:
-        return None
-    row = dict(row)
-    collisions = {
-        fp for name in ("l0", "l2", "e2e", "rulepack") for fp in row.get(f"{name}_fingerprints", [])
-    }
-    synthetic = {f["fingerprint"] for f in row["acquisition_failures"]} - collisions
-    row["dispositions"] = {fp: disp for fp, disp in row["dispositions"].items() if fp not in synthetic}
-    return row
 
 
 def product_round_history(history: list[dict], *, before_round: int | None = None) -> list[dict]:

@@ -11,6 +11,13 @@ from code_forge.verify import parse_diff_files, run_verify
 
 
 DIFF = "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n@@ -0,0 +1 @@\n+value = 1\n"
+# The reason's label for each kind of unverified basis (verify._UNRESOLVED_LABELS).
+_INFRA_UNAVAILABLE_LABEL = (
+    "unresolved finding without verified evidence (a product candidate the host "
+    "could not verify, or an infrastructure failure)"
+)
+_MALFORMED_LABEL = "unresolved finding with a malformed basis"
+_UNRECOGNIZED_LABEL = "unresolved finding with an unrecognized basis authority"
 
 
 def _receipts(root, disposition=Disposition.UNCERTAIN, source="UNTRUSTED", audit=False):
@@ -64,7 +71,7 @@ def test_open_unverified_product_cannot_attest_convergence(tmp_path, hardened, d
     _receipts(tmp_path, disposition)
     result = _verify(tmp_path, hardened=hardened)
     assert result.passed is False
-    assert result.reason == "unresolved unverified product finding c1p1 -- convergence not established"
+    assert result.reason == f"{_INFRA_UNAVAILABLE_LABEL} c1p1 -- convergence not established"
     assert result.checks_run == 8
     assert result.checks_passed == (6 if hardened else 7)
 
@@ -132,25 +139,28 @@ def test_evidence_only_option_cannot_attest_multiple_cycles(tmp_path):
 
 
 _MISSING = object()
-_UNVERIFIED_BASES = [
-    None,
-    False,
-    0,
-    "infra-unavailable",
-    [],
-    ["authority"],
-    {},
-    {"authority": None},
-    {"authority": False},
-    {"authority": 0},
-    {"authority": []},
-    {"authority": {}},
-    {"authority": "infra-unavailable"},
-    {"authority": " INFRA-UNAVAILABLE\t"},
-    {"authority": ""},
-    {"authority": " \t\n"},
-    {"authority": "future-authority"},
+# Each unverified basis shape with the label its reason must carry, written
+# out rather than derived, so the table is an independent oracle.
+_UNVERIFIED_LABELS = [
+    (None, _MALFORMED_LABEL),
+    (False, _MALFORMED_LABEL),
+    (0, _MALFORMED_LABEL),
+    ("infra-unavailable", _MALFORMED_LABEL),
+    ([], _MALFORMED_LABEL),
+    (["authority"], _MALFORMED_LABEL),
+    ({}, _MALFORMED_LABEL),
+    ({"authority": None}, _MALFORMED_LABEL),
+    ({"authority": False}, _MALFORMED_LABEL),
+    ({"authority": 0}, _MALFORMED_LABEL),
+    ({"authority": []}, _MALFORMED_LABEL),
+    ({"authority": {}}, _MALFORMED_LABEL),
+    ({"authority": "infra-unavailable"}, _INFRA_UNAVAILABLE_LABEL),
+    ({"authority": " INFRA-UNAVAILABLE\t"}, _INFRA_UNAVAILABLE_LABEL),
+    ({"authority": ""}, _MALFORMED_LABEL),
+    ({"authority": " \t\n"}, _MALFORMED_LABEL),
+    ({"authority": "future-authority"}, _UNRECOGNIZED_LABEL),
 ]
+_UNVERIFIED_BASES = [basis for basis, _ in _UNVERIFIED_LABELS]
 _KNOWN_AUTHORITIES = [
     "deterministic-executed",
     "llm-trained",
@@ -180,7 +190,7 @@ def _edit_finding(paths, *, basis=_MISSING, disposition="UNCERTAIN", incomplete=
     return original
 
 
-def _assert_unresolved(result, snapshot, *, incomplete, hardened):
+def _assert_unresolved(result, snapshot, *, incomplete, hardened, label):
     assert not result.passed
     assert result.failure_kind is None
     assert result.checks_run == 8
@@ -192,20 +202,43 @@ def _assert_unresolved(result, snapshot, *, incomplete, hardened):
         (1, 2, "completed"),
         (1, 3, "error" if incomplete else "completed"),
     )
-    assert "unresolved unverified product finding c1p1" in result.reason
+    assert result.reason.endswith(f"{label} c1p1 -- convergence not established")
+    assert "product finding" not in result.reason
     if incomplete:
         assert result.reason.startswith("pass did not complete: c1p3 status=error;")
 
 
+@pytest.mark.parametrize(
+    ("first", "second", "label"),
+    [
+        (None, {"authority": "infra-unavailable"}, _MALFORMED_LABEL),
+        ({"authority": "infra-unavailable"}, None, _INFRA_UNAVAILABLE_LABEL),
+    ],
+)
+def test_reason_names_the_first_unresolved_finding(tmp_path, first, second, label):
+    """Unresolved findings of different basis kinds in c1p1 and c1p2: the reason names c1p1's."""
+    paths = _receipts(tmp_path)
+    receipts = [json.loads(path.read_text()) for path in paths[:2]]
+    finding = receipts[0]["findings"][0]
+    finding["basis"] = first
+    receipts[1]["findings"] = [dict(finding, description="Second candidate", basis=second)]
+    receipts[1]["findings_count"] = 1
+    for path, receipt in zip(paths[:2], receipts, strict=True):
+        path.write_text(json.dumps(receipt))
+    result = _verify(tmp_path)
+    assert result.reason == f"{label} c1p1 -- convergence not established"
+    assert [(cycle, number) for cycle, number, _, _ in result.unresolved_findings] == [(1, 1), (1, 2)]
+
+
 @pytest.mark.parametrize("hardened", [False, True])
 @pytest.mark.parametrize("incomplete", [False, True])
-@pytest.mark.parametrize("basis", _UNVERIFIED_BASES)
-def test_present_unverified_basis_is_unresolved(tmp_path, hardened, incomplete, basis):
+@pytest.mark.parametrize(("basis", "label"), _UNVERIFIED_LABELS)
+def test_present_unverified_basis_is_unresolved(tmp_path, hardened, incomplete, basis, label):
     paths = _receipts(tmp_path)
     snapshot = _edit_finding(paths, basis=basis, incomplete=incomplete)
     before = [path.read_bytes() for path in paths]
     result = _verify(tmp_path, hardened=hardened, require_convergence=not incomplete)
-    _assert_unresolved(result, snapshot, incomplete=incomplete, hardened=hardened)
+    _assert_unresolved(result, snapshot, incomplete=incomplete, hardened=hardened, label=label)
     assert [path.read_bytes() for path in paths] == before
 
 
@@ -235,7 +268,9 @@ def test_every_open_disposition_uses_basis_validation(tmp_path, hardened, incomp
         paths, basis={"authority": []}, disposition=disposition, incomplete=incomplete
     )
     result = _verify(tmp_path, hardened=hardened, require_convergence=not incomplete)
-    _assert_unresolved(result, snapshot, incomplete=incomplete, hardened=hardened)
+    _assert_unresolved(
+        result, snapshot, incomplete=incomplete, hardened=hardened, label=_MALFORMED_LABEL
+    )
 
 
 @pytest.mark.parametrize("incomplete", [False, True])
@@ -324,8 +359,15 @@ def test_malformed_basis_outside_attested_window_is_ignored(tmp_path):
     assert result.passed and result.unresolved_findings == ()
 
 
-@pytest.mark.parametrize("basis", [None, {"authority": []}, {"authority": "unknown"}])
-def test_earned_cycle_capture_inherits_basis_validation(tmp_path, basis):
+@pytest.mark.parametrize(
+    ("basis", "label"),
+    [
+        (None, _MALFORMED_LABEL),
+        ({"authority": []}, _MALFORMED_LABEL),
+        ({"authority": "unknown"}, _UNRECOGNIZED_LABEL),
+    ],
+)
+def test_earned_cycle_capture_inherits_basis_validation(tmp_path, basis, label):
     from code_forge.verify import _capture_earned_cycle
 
     paths = _receipts(tmp_path)
@@ -334,4 +376,4 @@ def test_earned_cycle_capture_inherits_basis_validation(tmp_path, basis):
         tmp_path, "hash", parse_diff_files(DIFF), cycle=1, diff_text=DIFF
     )
     assert proof is None
-    _assert_unresolved(result, snapshot, incomplete=False, hardened=True)
+    _assert_unresolved(result, snapshot, incomplete=False, hardened=True, label=label)
