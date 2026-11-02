@@ -666,12 +666,44 @@ def excerpt_line_count_matches(text: str, claimed: int) -> bool:
     return abs(claimed - actual) <= 1
 
 
-def validate_reviewer_json(raw: str | dict) -> dict:
+def _source_proves_two_line_count(exc: dict, frozen_diff: str | None) -> bool:
+    """Use host-owned patch bytes, never model prose or live working files."""
+    if type(frozen_diff) is not str or not frozen_diff:
+        return False
+    import unidiff
+    from unidiff.errors import UnidiffParseError
+
+    from .verify import ExcerptStatus, _diff_records, _diff_validation_context, assess_excerpt_evidence
+
+    try:
+        patches = unidiff.PatchSet([line + "\n" for line in _diff_records(frozen_diff)])
+    except (UnidiffParseError, ValueError):
+        return False
+    # Duplicate sections or overlapping ranges cannot supply unique source
+    # coordinates. Do not let the post-image dictionary overwrite ambiguity.
+    matching = [patch for patch in patches if patch.path == exc["file"]]
+    if len(matching) != 1:
+        return False
+    end = 0
+    for hunk in matching[0]:
+        if hunk.target_start <= end or hunk.target_length <= 0:
+            return False
+        end = hunk.target_start + hunk.target_length - 1
+    post, hunks, exempt = _diff_validation_context(frozen_diff)
+    result = assess_excerpt_evidence(exc, hunks, post, exempt)
+    return result.status is ExcerptStatus.UNTRUSTED and bool(result.proven_lines)
+
+
+def validate_reviewer_json(raw: str | dict, *, frozen_diff: str | None = None) -> dict:
     """Validate reviewer output against the receipt schema.
 
     Accepts either a JSON string or an already-parsed dict.
     A markdown fence envelope around a JSON string is stripped before
     parsing. Raises ValueError on any schema violation (fail-closed).
+    A host may supply its frozen single-repository patch to admit only the
+    existing source-proven two-line count cases. This is not receipt acceptance:
+    the original coordinates/content survive and the machine rechecks them as
+    UNTRUSTED. Generic consumers retain the one-line shape tolerance.
     """
     if isinstance(raw, dict):
         data = dict(raw) if type(raw) is dict else {key: value for key, value in dict.items(raw)}
@@ -754,7 +786,10 @@ def validate_reviewer_json(raw: str | dict) -> dict:
             logger.warning("code_excerpt[%d] content is empty; skipping it", i)
             continue
         claimed = e - s + 1
-        if not excerpt_line_count_matches(text, claimed):
+        if not excerpt_line_count_matches(text, claimed) and not (
+            abs(claimed - len(excerpt_lines(text))) == 2
+            and _source_proves_two_line_count(exc, frozen_diff)
+        ):
             raise ExcerptEvidenceError(
                 "code_excerpt[%d] %s:%d-%d declares %d lines but carries %d"
                 % (i, exc_file, s, e, claimed, len(excerpt_lines(text)))

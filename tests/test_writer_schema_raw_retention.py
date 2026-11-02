@@ -112,8 +112,8 @@ def _case(tmp_path, monkeypatch, *, grouped=False, failed_role="expert", style="
         acquired[key] = raw
         return raw, {"prompt_tokens": 2, "completion_tokens": 3, "_forge_finish_reason": "stop"}
 
-    def schema(raw):
-        answer = schema_fn(raw)
+    def schema(raw, *, frozen_diff=None):
+        answer = schema_fn(raw, frozen_diff=frozen_diff)
         if sys._getframe(1).f_code.co_name == "_provider":
             accepted[answer["identity"]] += 1
         return answer
