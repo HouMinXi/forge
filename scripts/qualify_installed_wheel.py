@@ -30,6 +30,9 @@ ROSTER = {
     "test_roster_rejects_missing_and_skipped_cases",
     "test_ci_malformed_result_persists_failure",
     "test_ci_synthetic_confirmed_finding_reaches_ledger",
+    "test_ci_nonobject_carrier_cannot_emit_clean_ledger",
+    "test_ci_missing_status_cannot_emit_clean_ledger",
+    "test_ci_invalid_status_cannot_emit_clean_ledger",
 }
 
 

@@ -1,6 +1,6 @@
 # Partial installed-wheel runtime controls (#335)
 
-These twelve controls execute outside the checkout, in a fresh venv installed from
+These fifteen controls execute outside the checkout, in a fresh venv installed from
 an actual wheel. The standalone config deliberately does not inherit the source
 suite's `pythonpath = ["src"]` or `tests/conftest.py`. Ordinary source pytest does
 not collect this directory. The harness freezes the case roster and requires no
