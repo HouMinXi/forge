@@ -14,6 +14,7 @@ import unidiff
 from .backend import BackendConfig
 from .disposition import Disposition
 from .falsify import Falsifier
+from .falsify_api_shape import asserts_external_api_shape
 from .falsify_receipt import check_receipt
 from .llm_invoke import FalsifyProtocolError, ReplyKeys, llm_invoke
 from .state import StateFinding
@@ -300,6 +301,19 @@ class RealFalsifier(Falsifier):
                 "falsifier verdict %r not in Disposition for %s" % (verdict_str, finding.fingerprint),
                 raw=response,
             ) from err
+
+        # #369: API signatures/symbol availability need independently checked
+        # evidence. This LLM-only path has no host-verified evidence channel;
+        # a model-authored receipt or citation cannot supply that provenance.
+        # Keep the change bounded to confirmation of recognised shape claims.
+        if disposition == Disposition.CONFIRMED and any(
+            asserts_external_api_shape(text) for text in (finding.description, response.get("reasoning"))
+        ):
+            finding.falsify_reasoning = (
+                "external API-shape claim without host-verified evidence -- unverified; "
+                "model-authored receipts and citations do not establish provenance"
+            )
+            return Disposition.UNCERTAIN
 
         # A verdict that turns on library behaviour needs an execution
         # receipt. Without one the model is reasoning about behaviour it
