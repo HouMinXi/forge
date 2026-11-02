@@ -244,7 +244,12 @@ def test_memory_error_aborts_phase_without_claiming_success(monkeypatch, capsys)
         cli._run_test_assertion_phase(TEST_DIFF)
     stderr = capsys.readouterr().err
     assert "test-assertion phase start" in stderr
-    assert "test-assertion phase aborted" in stderr
+    assert (
+        stderr.splitlines().count(
+            "code-forge: test_assertion=interrupted stage=reporting kind=interrupted"
+        )
+        == 1
+    )
     assert "test-assertion phase done" not in stderr
 
 
