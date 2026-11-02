@@ -451,3 +451,36 @@ def test_quiet_collection_failure_remains_visible_and_nonzero(tmp_path):
     assert result.returncode == data["exitstatus"] == 2
     assert data["collection_errors"] == ["test_broken.py"]
     assert "visible collection failure" in result.stdout
+
+
+def test_ci_command_pins_repository_config_before_external_receipt_path(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    command = ci.command_for_pytest("full", SHA, tmp_path / "receipt.json", [])
+    assert command[command.index("-c") + 1] == str(root / "pyproject.toml")
+
+
+def test_long_parameter_identity_is_preserved_by_repository_policy(tmp_path):
+    import tomllib
+
+    root = Path(__file__).resolve().parents[1]
+    options = tomllib.loads((root / "pyproject.toml").read_text())["tool"]["pytest"]["ini_options"]
+    assert options["parametrize_long_str_id_strategy"] == "legacy"
+    value = "long-value-" * 15
+    (tmp_path / "pytest.ini").write_text("[pytest]\nparametrize_long_str_id_strategy = legacy\n")
+    (tmp_path / "test_ids.py").write_text(
+        f"import pytest\n@pytest.mark.parametrize('value', [{value!r}])\ndef test_long(value): pass\n"
+    )
+    report = tmp_path / "report.json"
+    result = subprocess.run(
+        ci.command_for_pytest(
+            "shard-0", SHA, report, ["--collect-only", str(tmp_path), "-c", str(tmp_path / "pytest.ini")]
+        ),
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(root)},
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ci.read(report)["collected"] == [f"test_ids.py::test_long[{value}]"]

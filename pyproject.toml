@@ -32,7 +32,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest==9.1.1",
+    "pytest==9.2.0",
     "pytest-asyncio>=1.0",
     "ruff==0.17.3",
     "mutmut>=3.4,<4.0",
@@ -125,6 +125,9 @@ ignore = [
 "tests/*" = ["S108", "S110", "ASYNC230"]
 
 [tool.pytest.ini_options]
+# CI skip receipts and stored node references use full legacy parameter IDs.
+# pytest 9.2 defaults to shortening long values; keep their identity stable.
+parametrize_long_str_id_strategy = "legacy"
 testpaths = ["tests"]
 markers = [
     "real_api: opt-in tests that call real backends (skipped by default)",

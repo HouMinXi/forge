@@ -25,7 +25,7 @@ The original 20/15/90/5-minute execution budgets and Linux setup prerequisites r
 Each pytest process is explicitly instrumented through command-line plugin options,
 not inherited environment variables, so nested pytest processes do not overwrite
 its receipt. Receipts distinguish setup/call/teardown, collection skips, and pytest
-9.1.1 subtests, and record the final session exit code after the Git-state guard.
+9.1.1/9.2.0 subtests, and record the final session exit code after the Git-state guard.
 
 The final gate reconstructs the plan from the original collection manifests. It
 requires exact SHA and policy bindings, exact phase collections, one receipt per
@@ -67,3 +67,28 @@ run. Archives and current artifacts retain the original 14-day lifetime.
 Local pure controls: `python -m pytest tests/test_ci_test_shards.py`.
 The full runtime qualification remains the actual GitHub Linux workflow; a local
 collection proof or synthetic receipt control is not a substitute for it.
+
+## Pytest 9.2 qualification
+
+The dev and ordinary Linux/wheel execution pins are 9.2.0. Each Linux execution
+job additionally provisions 9.1.1 in a separate qualification venv, identified by
+`FORGE_QUALIFICATION_PYTHON`; it does not replace the main or system Python site.
+This keeps the previous CPython 3.12 qualification cases executing instead of
+silently becoming newly skipped after the upgrade. Runtime discovery must probe
+venv entrypoints before resolving the physical interpreter.
+
+Pytest 9.2 shortens automatically generated long parameter IDs by default.
+Comparison with the previous 34,344-node collection found 244 changed identities.
+The repository explicitly selects `parametrize_long_str_id_strategy = "legacy"`
+to preserve existing node references and exact skip receipts; explicit IDs remain
+unchanged. The collection command also names the repository config explicitly so
+an external evidence path cannot change root/config discovery.
+
+Qualification covers startup plugin failures (missing=4, import failure=3),
+warning-as-error during plugin loading/cleanup, original lifecycle negative cases,
+and bytecode cleanup. The stale-bytecode test supports timestamp and checked-hash
+headers: the latter deliberately forges a matching hash around stale code rather
+than claiming pytest 9.2 naturally has a same-second hash collision. Neither
+failure evidence nor cleanup is inferred solely from an allowlist addition.
+
+Upstream reference: [pytest 9.2 changelog](https://docs.pytest.org/en/stable/changelog.html#pytest-9-2-0-2026-10-27).

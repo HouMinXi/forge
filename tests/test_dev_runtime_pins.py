@@ -83,7 +83,9 @@ def test_pinned_pytest_is_qualified_on_the_interpreter_the_suite_runs_on():
 def test_ci_installs_the_same_pytest_as_the_dev_extra():
     versions = set(re.findall(r"pytest==(\d+\.\d+\.\d+)", CI))
 
-    assert versions == {_pinned_version()}
+    # The previous qualified pair remains exercised in a separate venv.
+    assert versions == {_pinned_version(), "9.1.1"}
+    assert "FORGE_QUALIFICATION_PYTHON=" in CI
 
 
 def test_classifiers_list_the_supported_interpreters():
@@ -123,3 +125,33 @@ def test_the_runtime_paragraph_names_the_pin_the_interpreter_and_a_real_path(doc
     assert f"`pytest=={_pinned_version()}`" in paragraph
     assert f"CPython{_oldest_classifier()}" in paragraph
     assert f"`{path}`" in paragraph
+
+
+def test_every_linux_job_keeps_current_and_previous_runtimes_separate():
+    import yaml
+
+    jobs = yaml.safe_load(CI)["jobs"]
+    for name in ("plan", "process-contracts", "service-free"):
+        setup = next(
+            step["run"]
+            for step in jobs[name]["steps"]
+            if step.get("name") == "Install declared extras and qualified pytest"
+        )
+        assert (
+            f"python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest=={_pinned_version()}'"
+            in setup
+        )
+        assert f'assert pytest.__version__ == "{_pinned_version()}"' in setup
+        assert 'python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"' in setup
+        assert "\"$RUNNER_TEMP/forge-pytest-9.1.1/bin/python\" -m pip install 'pytest==9.1.1'" in setup
+        assert "FORGE_QUALIFICATION_PYTHON=$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" in setup
+
+
+def test_wheel_qualification_uses_the_current_dev_pin():
+    for path in (
+        ".github/workflows/installed-wheel.yml",
+        "scripts/qualify_installed_wheel.py",
+        "qualification/installed_wheel/README.md",
+    ):
+        versions = set(re.findall(r"pytest==(\d+\.\d+\.\d+)", (ROOT / path).read_text()))
+        assert versions == {_pinned_version()}, path

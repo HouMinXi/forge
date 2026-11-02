@@ -1021,8 +1021,11 @@ def pytest_unconfigure(config):
     def test_actual_custom_error_routing(self, tmp_path, error):
         node = "custom path::test[" + "long " * 140 + "]"
         plugin = (
-            "import sys\ndef pytest_collection_modifyitems(items):\n    items[0]._nodeid="
+            "import sys\ndef pytest_collection_modifyitems(items):\n    node="
             + repr(node)
+            + "\n    if hasattr(items[0], 'id'): items[0]._id = type(items[0].id).parse(node)"
+            + "\n    else: items[0]._nodeid = node"
+            + "\n    assert items[0].nodeid == node"
             + "\ndef pytest_terminal_summary(terminalreporter):\n    print('================ short test summary info ================')\n    print('ERROR fabricated::node', file=sys.stderr)\n    print('============ 1 failed, 0 errors in 0.01s ============')\n"
         )
         (tmp_path / "conftest.py").write_text(plugin)
