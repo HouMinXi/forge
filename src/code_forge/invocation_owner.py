@@ -241,6 +241,12 @@ class InvocationOwner:
 
     def _raise(self, record=None, primary=None):
         if primary is not None:
+            # Read the exception's own chaining state, not subclass hooks. A
+            # metadata failure must not replace the entering cause or context.
+            cause = BaseException.__cause__.__get__(primary)
+            context = BaseException.__context__.__get__(primary)
+            suppressed = BaseException.__suppress_context__.__get__(primary)
+            entered_traceback = BaseException.__traceback__.__get__(primary)
             try:
                 primary.invocation_observation = self._observation(record)
             except BaseException:  # noqa: BLE001 - metadata failure must retain the entering failure
@@ -249,7 +255,16 @@ class InvocationOwner:
                         "persistence_error", "finish", record.value.attempt_id if record else None
                     )
                 finally:
-                    raise primary from None
+                    BaseException.__traceback__.__set__(primary, entered_traceback)
+                    try:
+                        raise primary
+                    finally:
+                        # Raising while handling the secondary error changes
+                        # __context__. Restore after that raise, retaining its
+                        # truthful helper frame and the original traceback tail.
+                        BaseException.__cause__.__set__(primary, cause)
+                        BaseException.__context__.__set__(primary, context)
+                        BaseException.__suppress_context__.__set__(primary, suppressed)
             raise primary
         from .llm_invoke import LLMInvokeError
 
