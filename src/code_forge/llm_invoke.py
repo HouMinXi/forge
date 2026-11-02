@@ -3193,6 +3193,23 @@ def _invoke_api(
                 ) from exc
         except LLMInvokeError as exc:
             if correction_active:
+                # The first rejected response was still an observed attempt.
+                # Preserve its counts on failure too, without treating an
+                # unreported correction count as a known zero or adding retries.
+                if initial_syntax_usage is not None:
+                    correction_usage = exc.observed_usage
+                    if isinstance(exc, _TruncatedResponse):
+                        correction_usage = _observed_usage(exc.usage_data, backend.format)
+                    observed = _sum_usage(
+                        initial_syntax_usage,
+                        correction_usage
+                        if correction_usage is not None
+                        else Usage(known_fields=frozenset()),
+                    )
+                    exc.observed_usage = observed
+                    exc.usage = (
+                        observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
+                    )
                 exc.retryable = False
                 raise
             if isinstance(exc, _TruncatedResponse):
