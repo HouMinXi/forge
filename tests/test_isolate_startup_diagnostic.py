@@ -475,7 +475,8 @@ def test_start_failure_with_a_busy_cgroup_waits_once(plain_root, monkeypatch):
     )
     assert type(info.value) is IsolationError
     assert str(info.value).startswith("payload process was not placed in the run cgroup")
-    assert info.value.__notes__ == ["%s: %s" % (detail, sup.cgroup_path)]
+    assert info.value.__notes__[:-1] == ["%s: %s" % (detail, sup.cgroup_path)]
+    assert info.value.__notes__[-1].startswith("sandbox startup evidence: startup_ns=")
     assert sup.cleanup_error == detail
     assert len(rmdir_calls) == 1
 
@@ -1091,4 +1092,216 @@ def test_failed_start_keeps_its_error_and_notes_the_cleanup_failure(plain_root, 
     assert str(info.value).startswith(
         "payload process was not placed in the run cgroup (child exit 127;"
     )
-    assert info.value.__notes__ == ["run cgroup was not removed before the deadline: forge-diag"]
+    assert info.value.__notes__[:-1] == ["run cgroup was not removed before the deadline: forge-diag"]
+    assert info.value.__notes__[-1].startswith("sandbox startup evidence: startup_ns=")
+
+
+# Measurements are evidence only, not a substitute for native qualification.
+def test_startup_timing_excludes_removal_and_keeps_placement_evidence(plain_root, monkeypatch):
+    _scoped_os(monkeypatch, procs_flags=os.O_RDONLY, rmdir=shutil.rmtree)
+    monkeypatch.setattr(Supervisor, "_remove_cgroup", _REAL_REMOVE_CGROUP)
+    ticks = iter((100, 140, 150, 250))
+    monkeypatch.setattr(isolate, "_diagnostic_clock_ns", lambda: next(ticks))
+
+    sup, error = _failed_start(plain_root)
+
+    assert sup.startup_elapsed_ns == 40
+    assert sup.cgroup_removal_ns == 100
+    assert sup.placement_verified is False
+    assert sup.startup_gate_opened is False
+    assert error.__notes__[-1] == (
+        "sandbox startup evidence: startup_ns=40 cgroup_removal_ns=100 "
+        "placement_verified=False gate_opened=False"
+    )
+    assert "stage=place type=OSError errno=%d" % errno.EBADF in str(error)
+
+
+def test_exec_failure_records_observed_placement_and_opened_gate(plain_root, monkeypatch):
+    _scoped_os(monkeypatch)
+    sup, error = _failed_start(plain_root, argv=_MISSING_BINARY)
+
+    assert sup.startup_elapsed_ns is not None
+    assert sup.placement_verified is True
+    assert sup.startup_gate_opened is True
+    assert error.__notes__[-1].endswith("placement_verified=True gate_opened=True")
+    assert "stage=exec type=FileNotFoundError errno=%d" % errno.ENOENT in str(error)
+
+
+def test_failed_gate_write_is_not_reported_as_open(plain_root, monkeypatch):
+    parent = os.getpid()
+
+    def write(fd, data):
+        if os.getpid() == parent and data == b"1":
+            raise OSError(errno.EPIPE, "gate write failed")
+        return os.write(fd, data)
+
+    _scoped_os(monkeypatch, write=write)
+    sup, error = _failed_start(plain_root, expected=OSError)
+
+    assert error.errno == errno.EPIPE
+    assert sup.placement_verified is True
+    assert sup.startup_gate_opened is False
+    assert error.__notes__[-1].endswith("placement_verified=True gate_opened=False")
+
+
+@pytest.mark.parametrize("value", [-1, 2**63, True, 1.5, float("inf"), None, "bad"])
+def test_diagnostic_clock_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setattr(isolate, "time", SimpleNamespace(monotonic_ns=lambda: value))
+    assert isolate._diagnostic_clock_ns() is None
+
+
+def test_clock_failure_keeps_early_start_error_and_resets_old_evidence(tmp_path, monkeypatch):
+    sup = _supervisor(tmp_path)
+    sup._bind_thread(threading.current_thread())
+    sup.placement_verified = sup.startup_gate_opened = True
+    sup.cgroup_removal_ns = 999
+    error = IsolationError("original")
+    cause = OSError(errno.EACCES, "original cause")
+    error.__cause__ = cause
+
+    def clock():
+        raise KeyboardInterrupt("diagnostic clock failed")
+
+    def fail():
+        raise error
+
+    monkeypatch.setattr(isolate, "time", SimpleNamespace(monotonic_ns=clock))
+    monkeypatch.setattr(sup, "_start", fail)
+    with pytest.raises(IsolationError) as info:
+        sup.start()
+
+    assert info.value is error
+    assert error.__cause__ is cause
+    assert sup.startup_elapsed_ns is None
+    assert sup.cgroup_removal_ns is None
+    assert error.__notes__ == [
+        "sandbox startup evidence: startup_ns=None cgroup_removal_ns=None "
+        "placement_verified=False gate_opened=False"
+    ]
+
+
+def test_removal_failure_keeps_original_error_and_its_duration(tmp_path, monkeypatch):
+    sup = _supervisor(tmp_path)
+    error = CgroupCleanupError("busy")
+    cause = OSError(errno.EBUSY, "busy")
+    error.__cause__ = cause
+    ticks = iter((20, 70))
+    monkeypatch.setattr(isolate, "_diagnostic_clock_ns", lambda: next(ticks))
+
+    def fail(**kwargs):
+        raise error
+
+    monkeypatch.setattr(sup, "_remove_cgroup_owned", fail)
+    with pytest.raises(CgroupCleanupError) as info:
+        sup._remove_cgroup(force=True)
+
+    assert info.value is error
+    assert error.__cause__ is cause
+    assert sup.cgroup_removal_ns == 50
+    assert error.__notes__ == ["cgroup removal evidence: elapsed_ns=50"]
+
+
+def test_backwards_diagnostic_clock_is_unknown(monkeypatch):
+    monkeypatch.setattr(isolate, "_diagnostic_clock_ns", lambda: 9)
+    assert isolate._diagnostic_elapsed_ns(10) is None
+
+
+def test_failed_note_does_not_replace_start_error(tmp_path, monkeypatch):
+    sup = _supervisor(tmp_path)
+    sup._bind_thread(threading.current_thread())
+    error = IsolationError("original")
+    error.__notes__ = "invalid notes container"
+
+    def fail():
+        raise error
+
+    monkeypatch.setattr(sup, "_start", fail)
+    with pytest.raises(IsolationError) as info:
+        sup.start()
+    assert info.value is error
+    assert error.__notes__ == "invalid notes container"
+
+
+def test_zero_byte_gate_write_is_not_reported_as_open(plain_root, monkeypatch):
+    parent = os.getpid()
+
+    def write(fd, data):
+        if os.getpid() == parent and data == b"1":
+            return 0
+        return os.write(fd, data)
+
+    _scoped_os(monkeypatch, write=write)
+    sup, error = _failed_start(plain_root)
+
+    assert sup.placement_verified is True
+    assert sup.startup_gate_opened is False
+    assert "error stage=gate type=EOFError" in str(error)
+
+
+@pytest.mark.parametrize("helper", ["_finish_startup_measurement", "_diagnostic_elapsed_ns"])
+def test_failed_measurement_cannot_skip_cleanup(plain_root, monkeypatch, helper):
+    _scoped_os(monkeypatch, procs_flags=os.O_RDONLY)
+
+    def fail(*args):
+        raise MemoryError("measurement failed")
+
+    target = Supervisor if helper == "_finish_startup_measurement" else isolate
+    monkeypatch.setattr(target, helper, fail)
+    sup, error = _failed_start(plain_root)
+
+    assert "stage=place type=OSError errno=%d" % errno.EBADF in str(error)
+    assert not os.path.exists(sup.cgroup_path)
+    assert sup._process.poll() is not None
+
+
+def test_failed_removal_measurement_cannot_replace_cleanup_error(tmp_path, monkeypatch):
+    sup = _supervisor(tmp_path)
+    error = CgroupCleanupError("busy")
+
+    def fail(**kwargs):
+        raise error
+
+    def broken_measurement(start):
+        raise MemoryError("measurement failed")
+
+    monkeypatch.setattr(sup, "_remove_cgroup_owned", fail)
+    monkeypatch.setattr(isolate, "_diagnostic_elapsed_ns", broken_measurement)
+    with pytest.raises(CgroupCleanupError) as info:
+        sup._remove_cgroup()
+    assert info.value is error
+    assert sup.cgroup_removal_ns is None
+
+
+def test_startup_failure_note_is_bounded(tmp_path, monkeypatch):
+    sup = _supervisor(tmp_path)
+    sup._bind_thread(threading.current_thread())
+    error = IsolationError("original")
+
+    def fail():
+        sup.startup_elapsed_ns = sup.cgroup_removal_ns = 2**63 - 1
+        sup._startup_measured = True
+        raise error
+
+    monkeypatch.setattr(sup, "_start", fail)
+    with pytest.raises(IsolationError):
+        sup.start()
+    assert len(error.__notes__[0]) <= isolate._STARTUP_DIAGNOSTIC_LIMIT
+    assert all(" " <= char <= "~" for char in error.__notes__[0])
+    assert error.__notes__[0].endswith("placement_verified=False gate_opened=False")
+
+
+def test_wrong_thread_start_does_not_overwrite_owned_attempt_evidence(tmp_path):
+    sup = _supervisor(tmp_path)
+    sup._startup_started_ns = 100
+    sup._startup_measured = True
+    sup.startup_elapsed_ns = 20
+    sup.cgroup_removal_ns = 30
+    sup.placement_verified = sup.startup_gate_opened = True
+    with pytest.raises(IsolationError, match="dedicated long-lived"):
+        sup.start()
+    assert sup._startup_started_ns == 100
+    assert sup._startup_measured is True
+    assert sup.startup_elapsed_ns == 20
+    assert sup.cgroup_removal_ns == 30
+    assert sup.placement_verified is True
+    assert sup.startup_gate_opened is True
