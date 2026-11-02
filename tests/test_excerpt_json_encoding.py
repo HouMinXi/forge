@@ -2,11 +2,12 @@
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
 from code_forge.llm_invoke import loads_reply_json
-from code_forge.reviewer_json import REVIEW_JSON_CONTRACT, validate_reviewer_json
+from code_forge.reviewer_json import L1_JSON_ENCODING_GUIDANCE, validate_reviewer_json
 from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
 
 
@@ -80,7 +81,36 @@ def test_other_mismatches_do_not_claim_halved_encoding(damaged):
 
 
 def test_review_contract_explains_source_and_json_layers():
-    assert "including finding excerpts" in REVIEW_JSON_CONTRACT
-    assert "after JSON decoding, they must match the source literally" in REVIEW_JSON_CONTRACT
-    assert "two consecutive source backslashes require four in JSON" in REVIEW_JSON_CONTRACT
-    assert "Do not interpret source-language string escapes" in REVIEW_JSON_CONTRACT
+    assert "including finding excerpts" in L1_JSON_ENCODING_GUIDANCE
+    assert "after JSON decoding, they must match the source literally" in L1_JSON_ENCODING_GUIDANCE
+    assert "two consecutive source backslashes require four in JSON" in L1_JSON_ENCODING_GUIDANCE
+    assert "Do not interpret source-language string escapes" in L1_JSON_ENCODING_GUIDANCE
+
+
+@pytest.mark.parametrize("review_lenses", [False, True])
+def test_ordinary_l1_prompts_include_encoding_guidance(monkeypatch, review_lenses):
+    from code_forge.baseline import ResolvedReview
+    from code_forge.factories import build_l1_provider
+    from code_forge.llm_invoke import LLMResult, Usage
+    from code_forge.reviewer_json import REVIEW_JSON_CONTRACT
+
+    prompts = []
+
+    def fake_invoke(prompt, **kwargs):
+        prompts.append(prompt)
+        return LLMResult(content={"findings": []}, usage=Usage())
+
+    monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", fake_invoke)
+    resolved = ResolvedReview(
+        source_files=[Path("f.py")],
+        baseline_content=None,
+        git_diff="diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1 +1 @@\n-x\n+y\n",
+        mode_hint="git",
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+    )
+    build_l1_provider("auto", resolved, backend=None, review_lenses=review_lenses)()
+    assert len(prompts) == 3
+    for prompt in prompts:
+        assert prompt.startswith(REVIEW_JSON_CONTRACT)
+        assert prompt.count(L1_JSON_ENCODING_GUIDANCE) == 1

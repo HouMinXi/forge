@@ -66,10 +66,6 @@ REVIEW_JSON_CONTRACT = (
     "covering each changed hunk.\n"
     "code_excerpts content must be actual source code lines, "
     "not diff format -- no +/- prefixes, no @@ headers.\n"
-    "JSON-encode all source strings (including finding excerpts): after JSON decoding, "
-    "they must match the source literally. Escape each source backslash as two JSON "
-    "backslashes; two consecutive source backslashes require four in JSON. "
-    "Do not interpret source-language string escapes or decode the source again.\n"
     "Content must carry exactly end_line - start_line + 1 source lines.\n"
     "Do not span diff gaps between hunks; split into separate excerpts per hunk.\n"
     "Across each review cycle, code_excerpts must cover at least 60% of changed diff lines.\n"
@@ -85,6 +81,15 @@ REVIEW_JSON_CONTRACT = (
     '"line". Root code_excerpts do not count as a finding\'s evidence.\n'
     "start_line and end_line are post-image line numbers of the new file; "
     "the @@ header's old-side start is not a source line.\n"
+)
+
+
+# Ordinary L1 guidance only: Outlet C retains its byte-stable prompt contract.
+L1_JSON_ENCODING_GUIDANCE = (
+    "JSON-encode all source strings (including finding excerpts): after JSON decoding, "
+    "they must match the source literally. Escape each source backslash as two JSON "
+    "backslashes; two consecutive source backslashes require four in JSON. "
+    "Do not interpret source-language string escapes or decode the source again.\n"
 )
 
 
