@@ -20,6 +20,7 @@ import pytest
 from code_forge.cli import _build_parser
 from code_forge.eval.corpus import CorpusEntry
 from code_forge.eval.scorer import EvalResult, EvalSummary
+from tests._descendant_watch import watch_descendant
 
 
 # ---------------------------------------------------------------------------
@@ -730,7 +731,7 @@ class TestAbandonedReviewLeavesNothingBehind:
             "the output is being buffered in memory again" % grew_mb
         )
 
-    def test_a_grandchild_does_not_outlive_the_timeout(self, tmp_path):
+    def test_a_grandchild_does_not_outlive_the_timeout(self, tmp_path, monkeypatch):
         """Killing the direct child alone leaves what it spawned running.
 
         A real review shells out, so the process holding the backend
@@ -739,7 +740,6 @@ class TestAbandonedReviewLeavesNothingBehind:
         init.
         """
         import subprocess as sp
-        import time
 
         from code_forge.eval.runner import _run_review
 
@@ -765,38 +765,13 @@ class TestAbandonedReviewLeavesNothingBehind:
         env["FORGE_TEST_PIDFILE"] = str(pidfile)
         env["FORGE_TEST_CHILD"] = str(grandchild)
 
-        with pytest.raises(sp.TimeoutExpired):
-            _run_review([sys.executable, str(parent)], str(tmp_path), env, 2)
+        command = [sys.executable, str(parent)]
+        with watch_descendant(monkeypatch, command, pidfile) as exited:
+            with pytest.raises(sp.TimeoutExpired):
+                _run_review(command, str(tmp_path), env, 2)
+            exited()
 
-        # exists() goes true the instant the child opens the file, which is
-        # before anything is in it -- measured empty on 200 of 200 tight-loop
-        # trials. Waiting for content rather than for the entry keeps a
-        # slower machine from failing this on int("") and reporting it as
-        # broken test setup instead of as a surviving grandchild.
-        for _ in range(50):
-            if pidfile.exists() and pidfile.read_text().strip():
-                break
-            time.sleep(0.1)
-        recorded = pidfile.read_text().strip() if pidfile.exists() else ""
-        assert recorded, "grandchild never started; test proves nothing"
-        pid = int(recorded)
-
-        # SIGKILL is delivered asynchronously; give the kernel a moment
-        # before concluding the process survived it.
-        for _ in range(50):
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                return
-            time.sleep(0.1)
-
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        pytest.fail("grandchild %d outlived the timeout" % pid)
-
-    def test_a_grandchild_in_its_own_session_is_reached_through_the_review(self, tmp_path):
+    def test_a_grandchild_in_its_own_session_is_reached_through_the_review(self, tmp_path, monkeypatch):
         """A group signal stops at the edge of the group.
 
         The test above works because its grandchild stays in the group.
@@ -815,7 +790,6 @@ class TestAbandonedReviewLeavesNothingBehind:
         SIGTERM the way llm_invoke's handler does.
         """
         import subprocess as sp
-        import time
 
         from code_forge.eval.runner import _run_review
 
@@ -823,6 +797,8 @@ class TestAbandonedReviewLeavesNothingBehind:
         grandchild = tmp_path / "escaped.py"
         grandchild.write_text(
             "import os, time\n"
+            "while not os.path.exists(os.environ['FORGE_TEST_PARENT_READY']):\n"
+            "    time.sleep(0.01)\n"
             "open(os.environ['FORGE_TEST_PIDFILE'], 'w').write(str(os.getpid()))\n"
             "time.sleep(300)\n"
         )
@@ -836,36 +812,20 @@ class TestAbandonedReviewLeavesNothingBehind:
             "    os.killpg(os.getpgid(kid.pid), signal.SIGKILL)\n"
             "    sys.exit(0)\n"
             "signal.signal(signal.SIGTERM, _teardown)\n"
+            "open(os.environ['FORGE_TEST_PARENT_READY'], 'w').close()\n"
             "time.sleep(300)\n"
         )
 
         env = dict(os.environ)
         env["FORGE_TEST_PIDFILE"] = str(pidfile)
         env["FORGE_TEST_CHILD"] = str(grandchild)
+        env["FORGE_TEST_PARENT_READY"] = str(tmp_path / "parent.ready")
 
-        with pytest.raises(sp.TimeoutExpired):
-            _run_review([sys.executable, str(parent)], str(tmp_path), env, 2)
-
-        for _ in range(50):
-            if pidfile.exists() and pidfile.read_text().strip():
-                break
-            time.sleep(0.1)
-        recorded = pidfile.read_text().strip() if pidfile.exists() else ""
-        assert recorded, "grandchild never started; test proves nothing"
-        pid = int(recorded)
-
-        for _ in range(50):
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                return
-            time.sleep(0.1)
-
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        pytest.fail("grandchild %d in its own session outlived the timeout" % pid)
+        command = [sys.executable, str(parent)]
+        with watch_descendant(monkeypatch, command, pidfile) as exited:
+            with pytest.raises(sp.TimeoutExpired):
+                _run_review(command, str(tmp_path), env, 2)
+            exited()
 
     def test_a_child_dying_at_the_timeout_still_raises_timeout(self, tmp_path):
         """The caller needs TimeoutExpired, not whatever the cleanup hit.

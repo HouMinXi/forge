@@ -20,7 +20,6 @@ import hashlib
 import json
 import os
 import sys
-import time
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -28,6 +27,7 @@ from unittest import mock
 import pytest
 
 from tests._outside_gate import outside_gate_root
+from tests._descendant_watch import watch_descendant
 from code_forge.disposition import Disposition
 from code_forge.exec_falsify import (
     ExecEvidence,
@@ -202,7 +202,7 @@ class TestEnvironmentIdentityAndReconstruction:
 
 
 class TestSubprocessIsolationAndCleanup:
-    def test_timeout_kills_process_group_descendants(self, tmp_path):
+    def test_timeout_kills_process_group_descendants(self, tmp_path, monkeypatch):
         lockfile = tmp_path / "requirements.txt"
         lockfile.write_text("pytest\n", encoding="utf-8")
 
@@ -219,16 +219,11 @@ class TestSubprocessIsolationAndCleanup:
             timeout_seconds=1,
             command=[sys.executable, "-c", script],
         )
-        ev = falsifier.run(tmp_path)
-        assert ev.status == ExecStatus.TIMEOUT
-        assert ev.reason == "budget exhausted"
-
-        # Check that grandchild PID was terminated
-        time.sleep(0.2)
-        if pid_file.exists():
-            child_pid = int(pid_file.read_text().strip())
-            with pytest.raises(ProcessLookupError):
-                os.kill(child_pid, 0)
+        with watch_descendant(monkeypatch, [sys.executable, "-c", script], pid_file) as exited:
+            ev = falsifier.run(tmp_path)
+            assert ev.status == ExecStatus.TIMEOUT
+            assert ev.reason == "budget exhausted"
+            exited()
 
     def test_oserror_unavailable_with_reason(self, tmp_path):
         lockfile = tmp_path / "requirements.txt"
