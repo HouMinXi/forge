@@ -12,7 +12,7 @@ Run after provisioning an official dependency wheelhouse (setup may use network)
 
 ```sh
 python -m pip wheel --index-url https://pypi.org/simple --wheel-dir /tmp/forge-wheels \
-  'setuptools>=77' wheel 'pytest==9.1.1' 'pyyaml>=6.0' 'unidiff>=0.7.5,<0.8.0'
+  'setuptools>=77' wheel 'pytest==9.2.0' 'pyyaml>=6.0' 'unidiff>=0.7.5,<0.8.0'
 python scripts/qualify_installed_wheel.py --wheelhouse /tmp/forge-wheels \
   --output /tmp/forge-wheel-evidence
 ```

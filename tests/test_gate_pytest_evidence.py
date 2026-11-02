@@ -440,7 +440,7 @@ def test_escaped_surrogate_identity_refuses():
     assert not verdict.valid
 
 
-@pytest.mark.parametrize("version", ["8.4.2", "9.1.0", "9.1.1"])
+@pytest.mark.parametrize("version", ["8.4.2", "9.1.0", "9.1.1", "9.2.0"])
 def test_known_answer_record(version):
     record = valid_record()
     record["pytest_version"] = version
@@ -651,7 +651,10 @@ def test_reader_complete_fixture_and_violation(tmp_path):
 
 @pytest.fixture(scope="session")
 def measured_runtimes(tmp_path_factory):
-    candidates = {str(Path(sys.executable).resolve())}
+    # Preserve venv entrypoints: resolving the symlink before probing loses its site.
+    candidates = {sys.executable}
+    if previous := os.environ.get("FORGE_QUALIFICATION_PYTHON"):
+        candidates.add(previous)
     candidates.update(
         str(Path(found).resolve())
         for name in ("python3", "python3.9", "python3.12", "python3.14")
@@ -718,6 +721,11 @@ def qualified_runtime(request, measured_runtimes):
             "98b05c2c37d09e1d5c05975efc2d9af98d4aff6ea47de410a8e93956420873c1",
             "8ee2725057ff1811e2ae9ebdf1befb7518195f8f333f9f8ca024d76a4b80780e",
             "17f1eefbd1c2fe5326cb7592ff3af92a773582cf9d01727b09d3ab864906ee50",
+        ),
+        ("cpython-312", "9.2.0"): (
+            "d297eaeba8f6ecfeb73acaa8eef2092203aa49343eb7c77ffedb8ef95b5717ab",
+            "e30aebb8ee741d2cc085012dee508c1a592697d4282acd00d161a01ba8e8c308",
+            "8adcd82d1c4af72e99491666428e0f7fd0eea09fb305b2dfa5994b65691285d8",
         ),
     }
     assert row["source_sha256"] == dict(zip(("config", "main", "rewrite"), sources[pair], strict=True))
@@ -1879,5 +1887,56 @@ def test_recorder_inventory_bounds(tmp_path, monkeypatch, case):
         hooks.pytest_collection_finish(SimpleNamespace(items=[SimpleNamespace(nodeid=n) for n in nodes]))
         assert recorder.invalid
         assert len(recorder.rows) <= 50000
+    finally:
+        assert capture.close()
+
+
+@pytest.mark.parametrize("kind,expected", [("missing", 4), ("broken", 3), ("warning", 3)])
+def test_plugin_startup_errors_cannot_authorize_a_failure_waiver(tmp_path, kind, expected):
+    plugin = "missing_qualification_plugin"
+    if kind != "missing":
+        plugin = "qualification_plugin"
+        source = (
+            "raise RuntimeError('plugin startup failed')\n"
+            if kind == "broken"
+            else "import warnings\nwarnings.warn('plugin import warning', UserWarning)\n"
+        )
+        (tmp_path / (plugin + ".py")).write_text(source)
+    capture, result, verdict = capture_run(
+        tmp_path,
+        args=["-p", plugin, "-W", "error::UserWarning"],
+        env={"PYTHONPATH": str(tmp_path), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
+    )
+    try:
+        assert result.returncode == expected, result.stderr
+        assert not verdict.valid
+    finally:
+        assert capture.close()
+
+
+def test_cleanup_warning_as_error_cannot_authorize_a_failure_waiver(tmp_path):
+    (tmp_path / "conftest.py").write_text(
+        "import warnings\ndef pytest_configure(config):\n"
+        " config.add_cleanup(lambda: warnings.warn('cleanup warning', UserWarning))\n"
+    )
+    capture, result, verdict = capture_run(tmp_path, args=["-W", "error::UserWarning"])
+    try:
+        assert result.returncode != 0
+        assert not verdict.valid
+        assert "cleanup warning" in result.stderr
+    finally:
+        assert capture.close()
+
+
+def test_explicit_bracketed_parameter_identity_survives_real_receipt(tmp_path):
+    source = (
+        "import pytest\n@pytest.mark.parametrize('value', [1], ids=['inside[brackets]::leaf'])\n"
+        "def test_known(value):\n assert False\n"
+    )
+    capture, result, verdict = capture_run(tmp_path, source)
+    try:
+        assert result.returncode == 1
+        assert verdict.valid, verdict.reason
+        assert verdict.failed_nodes == ["test_sample.py::test_known[inside[brackets]::leaf]"]
     finally:
         assert capture.close()

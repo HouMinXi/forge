@@ -1279,29 +1279,32 @@ class TestRegularTextReader:
             captured.append(fd)
             return fd
 
-        monkeypatch.setattr(os, "open", tracked_open)
-        if branch == "fstat_error":
+        # pytest 9.2's fd capture also uses fstat. Limit the fault injection to
+        # the reader call so capture/reporting never inherits a broken OS API.
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "open", tracked_open)
+            if branch == "fstat_error":
 
-            def broken_fstat(fd):
-                raise OSError(errno.EIO, "unreadable descriptor")
+                def broken_fstat(fd):
+                    raise OSError(errno.EIO, "unreadable descriptor")
 
-            monkeypatch.setattr(os, "fstat", broken_fstat)
-        if branch == "stream_error":
+                patch.setattr(os, "fstat", broken_fstat)
+            if branch == "stream_error":
 
-            def broken_stream(*args, **kwargs):
-                raise RuntimeError("unexpected stream bug")
+                def broken_stream(*args, **kwargs):
+                    raise RuntimeError("unexpected stream bug")
 
-            monkeypatch.setattr(os, "fdopen", broken_stream)
-        if branch == "decode_error":
-            with pytest.raises(UnicodeDecodeError):
-                _read_regular_text(path, errors="strict")
-        elif branch == "stream_error":
-            with pytest.raises(RuntimeError, match="unexpected stream bug"):
-                _read_regular_text(path)
-        elif branch == "regular":
-            assert _read_regular_text(path) == "ordinary"
-        else:
-            assert _read_regular_text(path, max_bytes=1 if branch == "oversize" else None) is None
+                patch.setattr(os, "fdopen", broken_stream)
+            if branch == "decode_error":
+                with pytest.raises(UnicodeDecodeError):
+                    _read_regular_text(path, errors="strict")
+            elif branch == "stream_error":
+                with pytest.raises(RuntimeError, match="unexpected stream bug"):
+                    _read_regular_text(path)
+            elif branch == "regular":
+                assert _read_regular_text(path) == "ordinary"
+            else:
+                assert _read_regular_text(path, max_bytes=1 if branch == "oversize" else None) is None
         assert len(captured) == 1
         with pytest.raises(OSError) as error:
             os.close(captured[0])

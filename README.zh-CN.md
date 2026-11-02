@@ -432,7 +432,7 @@ code-forge doctor
 没有这一步，症状要等到很晚才冒出来而且指错方向：`>=3.4` 的要求下装了 mutmut 2.x，
 每次变异测试都以一个模块路径错误中止，看起来像评审自己有 bug。
 
-dev extra 钉死 `pytest==9.1.1`。请在 CPython 3.12 上运行测试套件：在这个钉死版本下，
+dev extra 钉死 `pytest==9.2.0`。请在 CPython 3.12 上运行测试套件：在这个钉死版本下，
 只有它这一组合在 `QUALIFIED_RUNTIMES`（`src/code_forge/_gate_pytest.py`）里。
 Forge 本身可以装在 Python 3.12 或更新的版本上，所以 classifiers 仍然列出 3.13 和 3.14。
 但是 pytest 门禁会拒绝没有认证过的运行时，因此在这些解释器上门禁测试会失败（#102）。

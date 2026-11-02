@@ -133,6 +133,8 @@ def command_for_pytest(phase, sha, report, args):
         sys.executable,
         "-m",
         "pytest",
+        "-c",
+        str(Path(__file__).resolve().parents[1] / "pyproject.toml"),
         "-q",
         "-ra",
         "-p",

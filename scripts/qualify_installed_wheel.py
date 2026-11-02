@@ -134,7 +134,7 @@ def main():
             str(wheelhouse),
             "setuptools>=77",
             "wheel",
-            "pytest==9.1.1",
+            "pytest==9.2.0",
             "pyyaml>=6.0",
             "unidiff>=0.7.5,<0.8.0",
         ]

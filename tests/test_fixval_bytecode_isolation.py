@@ -2,10 +2,10 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """FIXVAL never runs stale bytecode of the files it reverts or restores (#257).
 
-CPython and pytest validate cached bytecode by whole-second source mtime plus
-size. These tests make a revert or restore land on the fixed file's exact
-mtime (same second) with the same size, deterministically, instead of racing
-the clock.
+CPython and older pytest validate cached bytecode by whole-second source mtime
+plus size. pytest 9.2 uses checked source hashes. These controls make stale
+fixed bytecode claim the reverted source is current, with the appropriate
+header for each format, instead of relying on a clock race.
 """
 
 import importlib.util
@@ -93,19 +93,27 @@ def _user_pytest(root: Path) -> subprocess.CompletedProcess:
 
 
 def _restamp(roots, source: Path) -> int:
-    """Make every cached .pyc of `source` (CPython's and pytest's rewritten
-    one) claim the file's current mtime second and size, as if compiled in
-    the same second: the stale case, without racing the clock."""
+    """Make stale cache bytes claim the current source matches their header.
+
+    Timestamp caches model a same-second collision. Checked-hash caches are
+    deliberately forged controls: normal pytest 9.2 would reject stale hashes.
+    Both must be removed before executing reverted code.
+    """
     stat = source.stat()
     header = struct.pack("<II", int(stat.st_mtime) & 0xFFFFFFFF, stat.st_size & 0xFFFFFFFF)
     count = 0
     for root in roots:
         for pyc in Path(root).rglob(source.stem + ".*.pyc"):
             data = bytearray(pyc.read_bytes())
-            if int.from_bytes(data[4:8], "little") == 0:  # timestamp-validated
+            flags = int.from_bytes(data[4:8], "little")
+            if flags == 0:  # timestamp-validated
                 data[8:16] = header
-                pyc.write_bytes(bytes(data))
-                count += 1
+            elif flags == 3:  # pytest 9.2 checked-hash rewritten cache
+                data[8:16] = importlib.util.source_hash(source.read_bytes())
+            else:
+                continue
+            pyc.write_bytes(bytes(data))
+            count += 1
     return count
 
 
