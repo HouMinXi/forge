@@ -193,6 +193,34 @@ def test_real_bounded_command_controls(body, reason):
 def fixture_probe(monkeypatch, tmp_path):
     """Fake systemd/proc topology only; Unix exchange and pidfd are real locally."""
     state = {"launched": False, "stopped": False, "commands": [], "threads": [], "fault": None}
+
+    class FixtureGate:
+        def __init__(self, tool, env, unit, uid, manager_pid):
+            state["unit"] = unit
+
+        def prelaunch(self):
+            pass
+
+        def postlaunch(self, *args):
+            pass
+
+        def summary(self, postchecked=False):
+            return {
+                "status": "OBSERVED_CLEAN",
+                "manager_pid": os.getpid(),
+                "manager_starttime": p.starttime(os.getpid()),
+                "version": "255.4",
+                "unit_path_count": 1,
+                "comment_file_count": 0,
+                "fingerprint": "a" * 64,
+                "prelaunch_rechecked": True,
+                "postlaunch_rechecked": postchecked,
+            }
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(p, "ConfigGate", FixtureGate)
     for name in ("getuid", "geteuid", "getgid", "getegid"):
         monkeypatch.setattr(p.os, name, lambda: 1001)
     monkeypatch.setattr(
@@ -213,7 +241,12 @@ def fixture_probe(monkeypatch, tmp_path):
 
     def show(tool, env, unit, deadline, user=True):
         if not user:
-            return {"ActiveState": "active", "Delegate": "yes", "ControlGroup": p.manager_root(1001)}
+            return {
+                "ActiveState": "active",
+                "Delegate": "yes",
+                "MainPID": os.getpid(),
+                "ControlGroup": p.manager_root(1001),
+            }
         state["unit"] = unit
         active = state["launched"] and not state["stopped"]
         return {
@@ -573,8 +606,9 @@ def test_manager_environment_change_stops(fixture_probe, monkeypatch):
     monkeypatch.setattr(p, "manager_environment", snapshot)
     result = p.probe(context())
     assert result["primary"]["reason"] == "identity_mismatch"
-    assert result["cleanup"]["status"] == "OBSERVED"
-    assert result["observation_status"] == "UNKNOWN"
+    assert result["cleanup"]["status"] == "NOT_RUN"
+    assert fixture_probe["commands"] == []
+    assert result["observation_status"] == "NOT_RUN"
 
 
 @pytest.mark.parametrize(
@@ -605,3 +639,532 @@ def test_socket_close_failures_never_skip_owned_unit_stop(fixture_probe, primary
         assert result["primary"]["reason"] == "identity_mismatch"
     else:
         assert result["primary"] is None
+
+
+@pytest.fixture
+def config_fixture(monkeypatch, tmp_path):
+    """Real local directory scan/pidfd; source-derived fake typed manager replies."""
+    root = tmp_path / "config"
+    root.mkdir()
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    unit = "forge-topology-" + "d" * 32 + ".service"
+    paths = [str(root), str(runtime / "systemd" / "transient")]
+    state = {
+        "paths": paths,
+        "version": "255.4-1ubuntu8.11",
+        "owner": ":1.7",
+        "rows": [],
+        "names": {},
+        "calls": [],
+        "properties": {},
+        "gates": [],
+    }
+
+    def call(tool, env, destination, path, interface, method, signature, args, result_type, deadline):
+        state["calls"].append((destination, path, interface, method, signature, args))
+        if method == "GetNameOwner":
+            return state["owner"]
+        if method == "GetConnectionUnixProcessID":
+            return os.getpid()
+        if method == "ListUnitsByPatterns":
+            assert args == ["0", "1", "*.service"]
+            return state["rows"]
+        assert method == "Get" and interface == "org.freedesktop.DBus.Properties"
+        target, name = args
+        if name == "Version":
+            return {"type": "s", "data": state["version"]}
+        if name == "UnitPath":
+            return {"type": "as", "data": state["paths"]}
+        if name == "Names":
+            return {"type": "as", "data": state["names"][path]}
+        kind, data = state["properties"][name]
+        return {"type": kind, "data": data}
+
+    monkeypatch.setattr(p, "config_call", call)
+
+    def create():
+        gate = p.ConfigGate(p.BUSCTL, {"XDG_RUNTIME_DIR": str(runtime)}, unit, os.getuid(), os.getpid())
+        state["gates"].append(gate)
+        return gate
+
+    state.update(root=root, runtime=runtime, unit=unit, create=create)
+    yield state
+    for gate in state["gates"]:
+        gate.close()
+
+
+def config_row(unit, path):
+    return [unit, "fixture", "loaded", "active", "running", "", path, 0, "", "/"]
+
+
+def test_config_clean_missing_directories_is_real_passing_subset(config_fixture):
+    state = config_fixture
+    gate = state["create"]()
+    gate.prelaunch()
+    result = gate.summary()
+    assert result["status"] == "OBSERVED_CLEAN"
+    assert result["unit_path_count"] == 2
+    assert result["comment_file_count"] == 0
+    assert not result["postlaunch_rechecked"]
+    assert {call[3] for call in state["calls"]} <= {
+        "GetNameOwner",
+        "GetConnectionUnixProcessID",
+        "Get",
+        "ListUnitsByPatterns",
+    }
+    assert not list(state["runtime"].iterdir())
+
+
+def test_config_comment_only_and_actual_unitpath_not_caller_home(config_fixture, monkeypatch):
+    state = config_fixture
+    monkeypatch.setenv("HOME", "/caller/home/is/not/the/manager")
+    target = state["root"] / "forge-topology-.service.d"
+    target.mkdir()
+    (target / "10-note.conf").write_text("# note\r\n; another\n\t\n")
+    gate = state["create"]()
+    gate.prelaunch()
+    assert gate.summary()["comment_file_count"] == 1
+
+
+@pytest.mark.parametrize("stem", ["service", "forge-.service", "forge-topology-.service", "exact"])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "EnvironmentFile=/private\n",
+        "ExecStartPre=/bin/false\n",
+        "[Service]\nUnknownSetting=yes\n",
+        "# safe\\\n",
+        "\x00",
+    ],
+)
+def test_config_all_dropin_levels_stop_before_any_launch(config_fixture, stem, content):
+    state = config_fixture
+    target = state["root"] / ((state["unit"] if stem == "exact" else stem) + ".d")
+    target.mkdir()
+    (target / "10-policy.conf").write_text(content)
+    with pytest.raises(p.ProbeError):
+        state["create"]()
+    assert not any(call[3].startswith(("Start", "Load", "Set", "Reload")) for call in state["calls"])
+
+
+@pytest.mark.parametrize("suffix", [".wants", ".requires", ".upholds"])
+def test_config_dependency_injection_is_not_started(config_fixture, suffix):
+    state = config_fixture
+    target = state["root"] / ("service" + suffix)
+    target.mkdir()
+    (target / "unrelated.service").symlink_to("/unrelated/target")
+    with pytest.raises(p.ProbeError, match="config_dependency"):
+        state["create"]()
+
+
+@pytest.mark.parametrize(
+    "case", ["exact_fragment", "exact_alias", "mask", "fifo", "writable", "too_large"]
+)
+def test_config_unaccepted_files(config_fixture, case):
+    state = config_fixture
+    if case in {"exact_fragment", "exact_alias"}:
+        target = state["root"] / state["unit"]
+        target.write_text("") if case == "exact_fragment" else target.symlink_to("elsewhere.service")
+    else:
+        directory = state["root"] / "service.d"
+        directory.mkdir()
+        target = directory / "policy.conf"
+        if case == "mask":
+            target.symlink_to("/dev/null")
+        elif case == "fifo":
+            os.mkfifo(target)
+        else:
+            target.write_text("#" + "x" * p.LIMIT if case == "too_large" else "# note\n")
+            if case == "writable":
+                target.chmod(0o666)
+    with pytest.raises((p.ProbeError, OSError)):
+        state["create"]()
+
+
+def test_config_alias_only_roster_collision(config_fixture):
+    state = config_fixture
+    obj = "/org/freedesktop/systemd1/unit/other_2eservice"
+    state["rows"] = [config_row("other.service", obj)]
+    state["names"][obj] = ["other.service", state["unit"]]
+    with pytest.raises(p.ProbeError, match="unit_collision"):
+        state["create"]()
+
+
+@pytest.mark.parametrize("change", ["owner", "version", "unitpath", "new_file", "new_prefix", "alias"])
+def test_config_second_snapshot_detects_changes(config_fixture, change):
+    state = config_fixture
+    gate = state["create"]()
+    if change == "owner":
+        state["owner"] = ":1.8"
+    elif change == "version":
+        state["version"] = "255.5"
+    elif change == "unitpath":
+        state["paths"] = [*state["paths"], str(state["root"] / "new")]
+    elif change == "alias":
+        obj = "/org/freedesktop/systemd1/unit/other_2eservice"
+        state["rows"] = [config_row("other.service", obj)]
+        state["names"][obj] = ["other.service", state["unit"]]
+    else:
+        directory = state["root"] / ("service.d" if change == "new_file" else "forge-.service.d")
+        directory.mkdir()
+        (directory / "comment.conf").write_text("# harmless but changed\n")
+    with pytest.raises(p.ProbeError):
+        gate.prelaunch()
+
+
+@pytest.mark.parametrize("case", ["roster", "names", "paths", "entries", "version"])
+def test_config_bounds_fail_closed(config_fixture, case):
+    state = config_fixture
+    if case == "roster":
+        state["rows"] = [None] * 65
+    elif case == "names":
+        obj = "/org/freedesktop/systemd1/unit/other_2eservice"
+        state["rows"] = [config_row("other.service", obj)]
+        state["names"][obj] = [f"name{i}.service" for i in range(65)]
+    elif case == "paths":
+        state["paths"] = [str(state["root"] / str(i)) for i in range(33)]
+    elif case == "entries":
+        target = state["root"] / "service.d"
+        target.mkdir()
+        for index in range(129):
+            (target / f"{index}.ignored").touch()
+    else:
+        state["version"] = "256.1"
+    with pytest.raises(p.ProbeError):
+        state["create"]()
+
+
+def config_post_fixture(state, gate):
+    obj = "/org/freedesktop/systemd1/unit/forge_2etopology"
+    state["rows"] = [config_row(state["unit"], obj)]
+    state["names"][obj] = [state["unit"]]
+    fragment = state["runtime"] / "systemd" / "transient" / state["unit"]
+    fragment.parent.mkdir(parents=True)
+    argv = ["/usr/bin/python3", "-I", "-S", "-B", "/fixture/probe.py"]
+    fragment.write_bytes(generated_bytes(argv))
+    props = {
+        name: (p.EXEC_SIGNATURE, [])
+        for name in (
+            "ExecCondition",
+            "ExecStartPre",
+            "ExecStartPost",
+            "ExecStop",
+            "ExecStopPost",
+            "ExecReload",
+        )
+    }
+    props.update(
+        {name: ("as", []) for name in ("Wants", "Upholds", "OnFailure", "OnSuccess", "Requires")}
+    )
+    props.update(
+        InvocationID=("ay", [204] * 16),
+        Transient=("b", True),
+        DropInPaths=("as", gate.comments),
+        EnvironmentFiles=("a(sb)", []),
+        ExecStart=(p.EXEC_SIGNATURE, [[argv[0], argv, False, 0, 0, 0, 0, 1000, 0, 0]]),
+        FragmentPath=("s", str(fragment)),
+    )
+    props.update(
+        Type=("s", "exec"),
+        KillMode=("s", "control-group"),
+        RuntimeMaxUSec=("t", 15000000),
+        TimeoutStopUSec=("t", 2000000),
+        StandardOutput=("s", "null"),
+        StandardError=("s", "null"),
+        Delegate=("b", False),
+        Environment=("as", []),
+        PassEnvironment=("as", []),
+        UnsetEnvironment=("as", []),
+    )
+    state["properties"] = props
+    return argv, fragment
+
+
+def test_config_postlaunch_accepts_only_owned_generated_delta(config_fixture):
+    state = config_fixture
+    gate = state["create"]()
+    gate.prelaunch()
+    argv, _ = config_post_fixture(state, gate)
+    gate.postlaunch(time.monotonic() + 1, argv, "cc" * 16, description="forge-topology-" + "e" * 64)
+    assert gate.summary(postchecked=True)["postlaunch_rechecked"]
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ["hook", "environment", "fragment_hook", "extra_dropin", "argv", "invocation", "dependencies"],
+)
+def test_config_postlaunch_unexpected_effective_configuration_stops(config_fixture, fault):
+    state = config_fixture
+    gate = state["create"]()
+    gate.prelaunch()
+    argv, fragment = config_post_fixture(state, gate)
+    if fault == "hook":
+        state["properties"]["ExecStartPre"] = (p.EXEC_SIGNATURE, ["unexpected"])
+    elif fault == "environment":
+        state["properties"]["EnvironmentFiles"] = ("a(sb)", [["/private", False]])
+    elif fault == "fragment_hook":
+        fragment.write_text("[Service]\nExecStartPre=/bin/false\n")
+    elif fault == "extra_dropin":
+        state["properties"]["DropInPaths"] = ("as", ["/other.conf"])
+    elif fault == "argv":
+        state["properties"]["ExecStart"][1][0][1] = ["/wrong"]
+    elif fault == "dependencies":
+        state["properties"]["Wants"] = ("as", ["unrelated.service"])
+    else:
+        state["properties"]["InvocationID"] = ("ay", [0] * 16)
+    with pytest.raises(p.ProbeError):
+        gate.postlaunch(time.monotonic() + 1, argv, "cc" * 16, description="forge-topology-" + "e" * 64)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"type":"s","type":"s","data":["x"]}',
+        '{"type":"v","data":[{"type":"as","data":[]}]',
+        "null",
+        '{"type":"s","data":["x"],"extra":1}',
+    ],
+)
+def test_config_bus_json_closed_contract(raw):
+    with pytest.raises(p.ProbeError):
+        p.bus_json(raw)
+
+
+def test_config_bus_call_uses_typed_success_and_no_activation(monkeypatch):
+    calls = []
+
+    def command(argv, env, deadline, limit):
+        calls.append(argv)
+        assert limit == 65536
+        return '{"type":"a(ssssssouso)","data":[[]]}\n'
+
+    monkeypatch.setattr(p, "command", command)
+    assert (
+        p.config_call(
+            p.BUSCTL,
+            {},
+            ":1.7",
+            p.BUS_OBJECT,
+            p.BUS_MANAGER,
+            "ListUnitsByPatterns",
+            "asas",
+            ["0", "1", "*.service"],
+            "a(ssssssouso)",
+            1,
+        )
+        == []
+    )
+    assert "--auto-start=no" in calls[0] and "--allow-interactive-authorization=no" in calls[0]
+    with pytest.raises(p.ProbeError):
+        p.config_call(
+            p.BUSCTL, {}, ":1.7", p.BUS_OBJECT, p.BUS_MANAGER, "LoadUnit", "s", ["bad.service"], "o", 1
+        )
+    assert len(calls) == 1
+
+
+def test_config_failed_bus_call_is_never_absence(monkeypatch):
+    def command(*args, **kwargs):
+        raise p.ProbeError("command_failed", 1)
+
+    monkeypatch.setattr(p, "command", command)
+    with pytest.raises(p.ProbeError, match="command_failed"):
+        p.config_call(
+            p.BUSCTL,
+            {},
+            ":1.7",
+            p.BUS_OBJECT,
+            p.BUS_MANAGER,
+            "ListUnitsByPatterns",
+            "asas",
+            ["0", "1", "*.service"],
+            "a(ssssssouso)",
+            1,
+        )
+
+
+@pytest.mark.parametrize("where", ["constructor", "prelaunch"])
+def test_config_gate_stop_never_launches_or_creates_socket(fixture_probe, monkeypatch, tmp_path, where):
+    base = p.ConfigGate
+
+    class DeniedGate(base):
+        def __init__(self, *args):
+            if where == "constructor":
+                raise p.ProbeError("config_unsupported")
+            super().__init__(*args)
+
+        def prelaunch(self):
+            raise p.ProbeError("config_environment_file")
+
+    monkeypatch.setattr(p, "ConfigGate", DeniedGate)
+    result = p.probe(context())
+    assert result["status"] == "STOP"
+    assert result["configuration_gate"]["status"] == "STOP"
+    assert result["probe_stage"] == "configuration"
+    assert result["observation_status"] == "NOT_RUN"
+    assert fixture_probe["commands"] == []
+    assert not list(tmp_path.iterdir())
+
+
+def test_effective_config_postlaunch_failure_keeps_exact_cleanup(fixture_probe, monkeypatch):
+    base = p.ConfigGate
+
+    class ChangedGate(base):
+        def postlaunch(self, *args):
+            raise p.ProbeError("config_hook")
+
+    monkeypatch.setattr(p, "ConfigGate", ChangedGate)
+    result = p.probe(context())
+    assert result["status"] == "STOP"
+    assert result["primary"]["reason"] == "config_hook"
+    assert result["configuration_gate"]["status"] == "STOP"
+    assert result["cleanup"]["status"] == "OBSERVED"
+    assert fixture_probe["stopped"]
+
+
+def test_config_pidfd_close_error_cannot_skip_service_cleanup(fixture_probe, monkeypatch):
+    base = p.ConfigGate
+
+    class CloseErrorGate(base):
+        def close(self):
+            raise OSError(5, "fixture")
+
+    monkeypatch.setattr(p, "ConfigGate", CloseErrorGate)
+    result = p.probe(context())
+    assert fixture_probe["stopped"]
+    assert result["status"] == "STOP"
+    assert result["channel_cleanup_errors"] == [{"channel": "manager_pidfd", "errno": 5}]
+
+
+@pytest.mark.parametrize(
+    "data,kind", [(["/path with space", "/second"], "as"), ("255.4-1ubuntu8.11", "s")]
+)
+def test_source_derived_properties_get_wrapper_not_get_property(monkeypatch, data, kind):
+    # systemd v255 src/busctl/busctl.c json_transform_variant/message,
+    # source SHA 555d7dc408febed4d4ccecf2f8e3614d463665509a6a99450b5e7153ea8d3cd0.
+    import json
+
+    raw = json.dumps({"type": "v", "data": [{"type": kind, "data": data}]})
+    monkeypatch.setattr(p, "command", lambda *args, **kwargs: raw)
+    gate = object.__new__(p.ConfigGate)
+    gate.tool, gate.env, gate.owner, gate.deadline = p.BUSCTL, {}, ":1.7", 1
+    assert (
+        gate.prop(p.BUS_OBJECT, p.BUS_MANAGER, "UnitPath" if kind == "as" else "Version", kind) == data
+    )
+
+
+def test_config_deadline_is_not_reset_by_second_scan(config_fixture):
+    gate = config_fixture["create"]()
+    gate.deadline = time.monotonic() - 1
+    with pytest.raises(p.ProbeError, match="config_timeout"):
+        gate.prelaunch()
+
+
+def test_config_unreadable_path_is_not_absence(config_fixture, monkeypatch):
+    original = p.os.open
+
+    def denied(path, *args, **kwargs):
+        if path == "config":
+            raise PermissionError(13, "fixture")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(p.os, "open", denied)
+    with pytest.raises(PermissionError):
+        config_fixture["create"]()
+
+
+def test_config_symlink_ancestor_is_not_followed(config_fixture):
+    state = config_fixture
+    other = state["root"] / "real"
+    other.mkdir()
+    linked = state["root"] / "linked"
+    linked.symlink_to(other, target_is_directory=True)
+    state["paths"] = [str(linked)]
+    with pytest.raises(OSError):
+        state["create"]()
+
+
+def test_missing_generated_fragment_never_passes(config_fixture):
+    state = config_fixture
+    gate = state["create"]()
+    gate.prelaunch()
+    argv, fragment = config_post_fixture(state, gate)
+    fragment.unlink()
+    with pytest.raises(p.ProbeError, match="config_changed"):
+        gate.postlaunch(time.monotonic() + 1, argv, "cc" * 16, description="forge-topology-" + "e" * 64)
+
+
+def test_shadowed_comment_only_files_allow_effective_subset(config_fixture):
+    state = config_fixture
+    for stem in ("service", "forge-.service"):
+        directory = state["root"] / (stem + ".d")
+        directory.mkdir()
+        (directory / "10-note.conf").write_text("# no active directive\n")
+    gate = state["create"]()
+    gate.prelaunch()
+    argv, _ = config_post_fixture(state, gate)
+    state["properties"]["DropInPaths"] = ("as", gate.comments[:1])
+    gate.postlaunch(time.monotonic() + 1, argv, "cc" * 16, description="forge-topology-" + "e" * 64)
+
+
+def generated_bytes(argv, unset_names=()):
+    # Source-derived v255: dbus-execute.c reset+unit_concat_strv assignment;
+    # unit.c quotes each argv token, dbus-util.c FORMAT_TIMESPAN formats seconds.
+    return (
+        "# Source-derived fixture, NOT native output\n[Unit]\nDescription=forge-topology-"
+        + "e" * 64
+        + "\n[Service]\nType=exec\nStandardOutput=null\nStandardError=null\nUnsetEnvironment="
+        + " ".join('"' + name + '"' for name in unset_names)
+        + "\nRuntimeMaxSec=15s\nTimeoutStopSec=2s\nKillMode=control-group\nExecStart=\nExecStart="
+        + " ".join('"' + arg + '"' for arg in argv)
+        + "\n"
+    ).encode("ascii")
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "empty",
+        "comments",
+        "missing_exec",
+        "wrong_section",
+        "wrong_argv",
+        "duplicate",
+        "wrong_timeout",
+        "missing_reset",
+        "wrong_unset",
+    ],
+)
+def test_generated_fragment_requires_exact_supported_serialization(fault):
+    argv = ["/usr/bin/python3", "-I", "/fixture/probe.py"]
+    data = generated_bytes(argv, ["LD_PRELOAD", "PATH"])
+    if fault == "empty":
+        data = b""
+    elif fault == "comments":
+        data = b"# only comment\n"
+    elif fault == "missing_exec":
+        data = b"\n".join(line for line in data.split(b"\n") if not line.startswith(b"ExecStart="))
+    elif fault == "wrong_section":
+        data = data.replace(b"[Service]", b"[Unit]")
+    elif fault == "wrong_argv":
+        data = data.replace(b"/fixture/probe.py", b"/wrong/probe.py")
+    elif fault == "duplicate":
+        data += b"Type=exec\n"
+    elif fault == "wrong_timeout":
+        data = data.replace(b"RuntimeMaxSec=15s", b"RuntimeMaxSec=30s")
+    elif fault == "missing_reset":
+        data = data.replace(b"ExecStart=\n", b"")
+    else:
+        data = data.replace(b'"LD_PRELOAD" "PATH"', b'"PATH"')
+    with pytest.raises(p.ProbeError):
+        p.config_generated(data, argv, ["LD_PRELOAD", "PATH"], "forge-topology-" + "e" * 64)
+
+
+def test_generated_fragment_source_derived_reset_and_assign_positive():
+    argv = ["/usr/bin/python3", "-I", "/fixture/probe.py"]
+    p.config_generated(
+        generated_bytes(argv, ["LD_PRELOAD", "PATH"]),
+        argv,
+        ["LD_PRELOAD", "PATH"],
+        "forge-topology-" + "e" * 64,
+    )

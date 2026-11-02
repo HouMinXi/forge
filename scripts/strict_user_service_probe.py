@@ -54,6 +54,15 @@ REASONS = {
     "cleanup_unverified",
     "io_error",
     "source_changed",
+    "config_invalid",
+    "config_limit",
+    "config_unsafe",
+    "config_changed",
+    "config_unsupported",
+    "config_environment_file",
+    "config_hook",
+    "config_dependency",
+    "config_timeout",
 }
 
 
@@ -331,7 +340,7 @@ def verified_source(uid):
     return str(script)
 
 
-def command(argv, env, deadline):
+def command(argv, env, deadline, limit=LIMIT):
     """Bound streams and preserve primary plus direct-child cleanup failures."""
     child = subprocess.Popen(
         argv,
@@ -354,7 +363,7 @@ def command(argv, env, deadline):
                     if not block:
                         selector.unregister(key.fileobj)
                     else:
-                        require(key.data and len(output) + len(block) <= LIMIT, "command_output")
+                        require(key.data and len(output) + len(block) <= limit, "command_output")
                         output.extend(block)
             # Keep the leader unreaped until killpg; its PID cannot be reused.
             while True:
@@ -537,6 +546,548 @@ def empty_group(group, deadline):
     return "empty"
 
 
+# Configuration gate: narrow read-only systemd-255 compatibility profile.
+BUSCTL = "/usr/bin/busctl"
+CONFIG_SECONDS = 5
+BUS_LIMIT = 65536
+BUS_MANAGER = "org.freedesktop.systemd1.Manager"
+BUS_UNIT = "org.freedesktop.systemd1.Unit"
+BUS_SERVICE = "org.freedesktop.systemd1.Service"
+BUS_OBJECT = "/org/freedesktop/systemd1"
+EXEC_SIGNATURE = "a(sasbttttuii)"
+
+
+def bus_json(raw):
+    require(type(raw) is str and len(raw.encode("ascii")) <= BUS_LIMIT, "config_invalid")
+
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            require(key not in result, "config_invalid")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(
+            raw,
+            object_pairs_hook=pairs,
+            parse_constant=lambda _: (_ for _ in ()).throw(ProbeError("config_invalid")),
+        )
+    except (ValueError, RecursionError) as exc:
+        raise ProbeError("config_invalid") from exc
+    return keys(value, {"type", "data"})
+
+
+def config_call(tool, env, destination, path, interface, method, signature, args, result_type, deadline):
+    allowed = {
+        ("org.freedesktop.DBus", "GetNameOwner"),
+        ("org.freedesktop.DBus", "GetConnectionUnixProcessID"),
+        ("org.freedesktop.DBus.Properties", "Get"),
+        (BUS_MANAGER, "ListUnitsByPatterns"),
+    }
+    require((interface, method) in allowed, "config_invalid")
+    raw = command(
+        [
+            tool,
+            "--user",
+            "--auto-start=no",
+            "--allow-interactive-authorization=no",
+            "--json=short",
+            "--timeout=2s",
+            "call",
+            destination,
+            path,
+            interface,
+            method,
+            signature,
+            *args,
+        ],
+        env,
+        deadline,
+        limit=BUS_LIMIT,
+    )
+    reply = bus_json(raw)
+    require(
+        reply["type"] == result_type and type(reply["data"]) is list and len(reply["data"]) == 1,
+        "config_invalid",
+    )
+    return reply["data"][0]
+
+
+def config_strings(value, limit):
+    require(type(value) is list and len(value) <= limit, "config_limit")
+    for item in value:
+        require(
+            type(item) is str and 0 < len(item) <= 1024 and all(" " <= c <= "~" for c in item),
+            "config_invalid",
+        )
+    require(len(value) == len(set(value)), "config_invalid")
+    return value
+
+
+def config_meta(info):
+    return [info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid]
+
+
+def config_safe(info, uid, directory=True):
+    require(
+        (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode))
+        and info.st_uid in {0, uid}
+        and not info.st_mode & 0o022,
+        "config_unsafe",
+    )
+
+
+def config_open_dir(path, uid, deadline):
+    """Return a held descriptor, plus the complete existing ancestor identities."""
+    cpath(path)
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    witness = []
+    try:
+        config_safe(os.fstat(fd), uid)
+        witness.append(config_meta(os.fstat(fd)))
+        parts = PurePosixPath(path).parts[1:]
+        # Only distribution-owned top-level aliases; no arbitrary links followed.
+        if parts and parts[0] in {"lib", "lib64", "bin", "sbin"}:
+            info = os.stat(parts[0], dir_fd=fd, follow_symlinks=False)
+            if stat.S_ISLNK(info.st_mode):
+                require(
+                    info.st_uid == 0
+                    and os.readlink(parts[0], dir_fd=fd) in {"usr/" + parts[0], "/usr/" + parts[0]},
+                    "config_unsafe",
+                )
+                witness.append(config_meta(info))
+                parts = ("usr", *parts)
+        for part in parts:
+            remaining(deadline, "config_timeout")
+            try:
+                next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except FileNotFoundError:
+                os.close(fd)
+                return None, witness
+            try:
+                config_safe(os.fstat(next_fd), uid)
+            except BaseException:
+                os.close(next_fd)
+                raise
+            os.close(fd)
+            fd = next_fd
+            witness.append(config_meta(os.fstat(fd)))
+        return fd, witness
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def config_entries(fd, deadline):
+    entries = []
+    with os.scandir(fd) as iterator:
+        for entry in iterator:
+            remaining(deadline, "config_timeout")
+            require(len(entries) < 128, "config_limit")
+            require(all(" " <= c <= "~" for c in entry.name), "config_invalid")
+            entries.append(entry.name)
+    return sorted(entries)
+
+
+def config_read_file(parent_fd, name, uid):
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+    try:
+        before = os.fstat(fd)
+        config_safe(before, uid, directory=False)
+        require(before.st_size <= LIMIT, "config_limit")
+        data = os.read(fd, LIMIT + 1)
+        after = os.fstat(fd)
+        require(len(data) <= LIMIT and len(data) == before.st_size, "config_limit")
+        require(
+            config_meta(before) == config_meta(after)
+            and before.st_size == after.st_size
+            and before.st_mtime_ns == after.st_mtime_ns,
+            "config_changed",
+        )
+        return data, [*config_meta(after), after.st_size, after.st_mtime_ns]
+    finally:
+        os.close(fd)
+
+
+def config_comment_only(data):
+    try:
+        text = data.decode("ascii")
+    except UnicodeError as exc:
+        raise ProbeError("config_unsupported") from exc
+    require("\x00" not in text and "\\\n" not in text and "\\\r" not in text, "config_unsupported")
+    for line in text.split("\n"):
+        line = line.removesuffix("\r")
+        require(all(c in "\t" or " " <= c <= "~" for c in line), "config_unsupported")
+        stripped = line.lstrip(" \t")
+        if stripped and not stripped.startswith(("#", ";")):
+            if re.match(r"EnvironmentFile\s*=", stripped):
+                raise ProbeError("config_environment_file")
+            if re.match(
+                r"Exec(?:StartPre|StartPost|Start|Stop|StopPost|Condition|Reload)\s*=", stripped
+            ):
+                raise ProbeError("config_hook")
+            raise ProbeError("config_unsupported")
+
+
+def config_generated(data, argv, unset_names, description):
+    """Narrow v255 transient serializer grammar, not a general unit parser."""
+    for arg in argv:
+        pattern(arg, r"[A-Za-z0-9_./-]+")
+    for name in unset_names:
+        pattern(name, r"[A-Za-z_][A-Za-z0-9_]{0,127}")
+    pattern(description, r"forge-topology-[0-9a-f]{64}")
+    quoted_argv = " ".join('"' + arg + '"' for arg in argv)
+    quoted_names = " ".join('"' + name + '"' for name in unset_names)
+    expected = {
+        ("Unit", "Description"): [description],
+        ("Service", "Type"): ["exec"],
+        ("Service", "ExecStart"): ["", quoted_argv],
+        ("Service", "StandardOutput"): ["null"],
+        ("Service", "StandardError"): ["null"],
+        ("Service", "UnsetEnvironment"): [quoted_names],
+        ("Service", "RuntimeMaxSec"): ["15s"],
+        ("Service", "TimeoutStopSec"): ["2s"],
+        ("Service", "KillMode"): ["control-group"],
+    }
+    text = data.decode("ascii")
+    require("\x00" not in text and "\r" not in text and text.endswith("\n"), "config_invalid")
+    observed, section = {}, None
+    for line in text.split("\n"):
+        if not line or line.startswith("#"):
+            continue
+        if line in {"[Unit]", "[Service]"}:
+            section = line[1:-1]
+            continue
+        name, sep, value = line.partition("=")
+        key = (section, name)
+        require(sep == "=" and key in expected, "config_unsupported")
+        values = observed.setdefault(key, [])
+        values.append(value)
+        require(
+            len(values) <= len(expected[key]) and values == expected[key][: len(values)],
+            "config_changed",
+        )
+    require(observed == expected, "config_changed")
+
+
+def config_scan(paths, unit, uid, deadline, generated=None, generated_content=None):
+    stems = ("service", "forge-.service", "forge-topology-.service", unit)
+    result, accepted, total, generated_count = {}, [], 0, 0
+    for base in paths:
+        fd, witness = config_open_dir(base, uid, deadline)
+        records = {}
+        try:
+            for name in (
+                unit,
+                *(
+                    stem + suffix
+                    for stem in stems
+                    for suffix in (".d", ".wants", ".requires", ".upholds")
+                ),
+            ):
+                remaining(deadline, "config_timeout")
+                if fd is None:
+                    records[name] = None
+                    continue
+                try:
+                    info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    records[name] = None
+                    continue
+                full = str(PurePosixPath(base) / name)
+                if name == unit:
+                    require(generated == full, "unit_collision")
+                    data, metadata = config_read_file(fd, name, uid)
+                    require(generated_content is not None, "config_invalid")
+                    config_generated(data, *generated_content)
+                    generated_count += 1
+                    records[name] = None  # Sole expected generated-fragment delta.
+                    continue
+                config_safe(info, uid)
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                try:
+                    require(config_meta(info) == config_meta(os.fstat(child)), "config_changed")
+                    names = config_entries(child, deadline)
+                    require(name.endswith(".d") or not names, "config_dependency")
+                    files = {}
+                    for filename in names:
+                        if not filename.endswith(".conf"):
+                            continue
+                        require(len(accepted) < 64, "config_limit")
+                        data, metadata = config_read_file(child, filename, uid)
+                        total += len(data)
+                        require(total <= 262144, "config_limit")
+                        config_comment_only(data)
+                        file_path = str(PurePosixPath(full) / filename)
+                        accepted.append(file_path)
+                        files[filename] = [metadata, hashlib.sha256(data).hexdigest()]
+                    require(names == config_entries(child, deadline), "config_changed")
+                    records[name] = {"identity": config_meta(info), "entries": names, "files": files}
+                finally:
+                    os.close(child)
+            result[base] = {"witness": witness, "present": fd is not None, "records": records}
+        finally:
+            if fd is not None:
+                os.close(fd)
+    require(generated is None or generated_count == 1, "config_changed")
+    return result, sorted(accepted)
+
+
+def config_same(before, after, generated=None):
+    require(before.keys() == after.keys(), "config_changed")
+    for path, old in before.items():
+        new = after[path]
+        require(old["records"] == new["records"], "config_changed")
+        if generated and str(PurePosixPath(generated).parent) == path and not old["present"]:
+            # systemd may create its transient directory for this first service.
+            require(
+                new["present"] and new["witness"][: len(old["witness"])] == old["witness"],
+                "config_changed",
+            )
+        else:
+            require(
+                old["witness"] == new["witness"] and old["present"] == new["present"], "config_changed"
+            )
+
+
+class ConfigGate:
+    """No start/load/set/reload method is available through this read-only gate."""
+
+    def __init__(self, tool, env, unit, uid, manager_pid):
+        self.tool, self.env, self.unit, self.uid = tool, env, unit, uid
+        self.deadline = time.monotonic() + CONFIG_SECONDS
+        self.prechecked = False
+        self.owner = self.call(
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "GetNameOwner",
+            "s",
+            ["org.freedesktop.systemd1"],
+            "s",
+        )
+        pattern(self.owner, r":[0-9]+\.[0-9]+")
+        self.pid = self.call(
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "GetConnectionUnixProcessID",
+            "s",
+            [self.owner],
+            "u",
+        )
+        require(type(self.pid) is int and self.pid == manager_pid > 0, "config_changed")
+        require(os.stat(f"/proc/{self.pid}").st_uid == uid, "config_unsafe")
+        self.started = starttime(self.pid)
+        self.pidfd = os.pidfd_open(self.pid)
+        try:
+            self.namespace = namespaces(self.pid)
+            require(self.namespace == namespaces(), "config_unsafe")
+            root, own_root = os.stat(f"/proc/{self.pid}/root"), os.stat("/")
+            self.root_identity = (root.st_dev, root.st_ino)
+            require((root.st_dev, root.st_ino) == (own_root.st_dev, own_root.st_ino), "config_unsafe")
+            self.version = self.prop(BUS_OBJECT, BUS_MANAGER, "Version", "s")
+            pattern(self.version, r"255(?:\.[0-9]+)?(?:[-+~ ][A-Za-z0-9.+~_-]+)*")
+            self.paths = config_strings(self.prop(BUS_OBJECT, BUS_MANAGER, "UnitPath", "as"), 32)
+            require(bool(self.paths), "config_invalid")
+            for path in self.paths:
+                cpath(path)
+            self.absent()
+            self.snapshot, self.comments = config_scan(self.paths, unit, uid, self.deadline)
+            self.fingerprint = hashlib.sha256(encode(self.snapshot)).hexdigest()
+        except BaseException as exc:
+            try:
+                os.close(self.pidfd)
+            except OSError as cleanup:
+                exc.child_cleanup = {"reason": "cleanup_unverified", "errno": cleanup.errno}
+            raise
+
+    def call(self, destination, path, interface, method, signature, args, result_type):
+        return config_call(
+            self.tool,
+            self.env,
+            destination,
+            path,
+            interface,
+            method,
+            signature,
+            args,
+            result_type,
+            self.deadline,
+        )
+
+    def prop(self, path, interface, name, kind):
+        value = self.call(
+            self.owner, path, "org.freedesktop.DBus.Properties", "Get", "ss", [interface, name], "v"
+        )
+        keys(value, {"type", "data"})
+        require(value["type"] == kind, "config_invalid")
+        return value["data"]
+
+    def roster(self):
+        rows = self.call(
+            self.owner,
+            BUS_OBJECT,
+            BUS_MANAGER,
+            "ListUnitsByPatterns",
+            "asas",
+            ["0", "1", "*.service"],
+            "a(ssssssouso)",
+        )
+        require(type(rows) is list and len(rows) <= 64, "config_limit")
+        result = {}
+        for row in rows:
+            require(type(row) is list and len(row) == 10, "config_invalid")
+            for index in (0, 1, 2, 3, 4, 5, 6, 8, 9):
+                require(type(row[index]) is str and len(row[index]) <= 1024, "config_invalid")
+            integer(row[7])
+            pattern(row[0], r"[A-Za-z0-9:_.@\\-]+\.service")
+            pattern(row[6], r"/org/freedesktop/systemd1/unit/[A-Za-z0-9_]+")
+            require(row[0] not in result, "config_invalid")
+            names = config_strings(self.prop(row[6], BUS_UNIT, "Names", "as"), 64)
+            require(
+                row[0] in names and all(name.endswith(".service") for name in names), "config_invalid"
+            )
+            result[row[0]] = (row[6], names)
+        return result
+
+    def absent(self):
+        require(all(self.unit not in names for _, names in self.roster().values()), "unit_collision")
+
+    def unchanged_manager(self):
+        live(self.pidfd, self.pid, self.started)
+        root = os.stat(f"/proc/{self.pid}/root")
+        require(
+            namespaces(self.pid) == self.namespace == namespaces()
+            and (root.st_dev, root.st_ino) == self.root_identity,
+            "config_changed",
+        )
+        owner = self.call(
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "GetNameOwner",
+            "s",
+            ["org.freedesktop.systemd1"],
+            "s",
+        )
+        require(
+            owner == self.owner
+            and self.prop(BUS_OBJECT, BUS_MANAGER, "UnitPath", "as") == self.paths
+            and self.prop(BUS_OBJECT, BUS_MANAGER, "Version", "s") == self.version,
+            "config_changed",
+        )
+
+    def prelaunch(self):
+        self.unchanged_manager()
+        self.absent()
+        snapshot, comments = config_scan(self.paths, self.unit, self.uid, self.deadline)
+        config_same(self.snapshot, snapshot)
+        require(comments == self.comments, "config_changed")
+        self.prechecked = True
+
+    def postlaunch(self, deadline, argv, invocation, unset_names=(), description=""):
+        require(self.prechecked, "config_invalid")
+        self.deadline = deadline
+        self.unchanged_manager()
+        roster = self.roster()
+        require(self.unit in roster and roster[self.unit][1] == [self.unit], "config_changed")
+        path = roster[self.unit][0]
+        require(
+            self.prop(path, BUS_UNIT, "InvocationID", "ay") == list(bytes.fromhex(invocation)),
+            "config_changed",
+        )
+        require(self.prop(path, BUS_UNIT, "Transient", "b") is True, "config_changed")
+        require(
+            set(config_strings(self.prop(path, BUS_UNIT, "DropInPaths", "as"), 64))
+            <= set(self.comments),
+            "config_changed",
+        )
+        for name in (
+            "ExecCondition",
+            "ExecStartPre",
+            "ExecStartPost",
+            "ExecStop",
+            "ExecStopPost",
+            "ExecReload",
+        ):
+            require(self.prop(path, BUS_SERVICE, name, EXEC_SIGNATURE) == [], "config_hook")
+        require(
+            self.prop(path, BUS_SERVICE, "EnvironmentFiles", "a(sb)") == [], "config_environment_file"
+        )
+        for name, kind, expected in (
+            ("Type", "s", "exec"),
+            ("KillMode", "s", "control-group"),
+            ("RuntimeMaxUSec", "t", 15000000),
+            ("TimeoutStopUSec", "t", 2000000),
+            ("StandardOutput", "s", "null"),
+            ("StandardError", "s", "null"),
+            ("Delegate", "b", False),
+            ("Environment", "as", []),
+            ("PassEnvironment", "as", []),
+        ):
+            actual = self.prop(path, BUS_SERVICE, name, kind)
+            require(type(actual) is type(expected) and actual == expected, "config_changed")
+        require(
+            sorted(config_strings(self.prop(path, BUS_SERVICE, "UnsetEnvironment", "as"), 256))
+            == sorted(unset_names),
+            "config_changed",
+        )
+        commands = self.prop(path, BUS_SERVICE, "ExecStart", EXEC_SIGNATURE)
+        require(
+            type(commands) is list
+            and len(commands) == 1
+            and type(commands[0]) is list
+            and len(commands[0]) == 10,
+            "config_invalid",
+        )
+        require(
+            commands[0][0] == argv[0] and commands[0][1] == argv and commands[0][2] is False,
+            "config_changed",
+        )
+        for value in commands[0][3:]:
+            integer(value, 0, 2**64 - 1)
+        for name in ("Wants", "Upholds", "OnFailure", "OnSuccess"):
+            require(self.prop(path, BUS_UNIT, name, "as") == [], "config_dependency")
+        requires = config_strings(self.prop(path, BUS_UNIT, "Requires", "as"), 8)
+        require(set(requires) <= {"app.slice", "basic.target"}, "config_dependency")
+        fragment = cpath(self.prop(path, BUS_UNIT, "FragmentPath", "s"))
+        require(
+            PurePosixPath(fragment).name == self.unit
+            and str(PurePosixPath(fragment).parent) in self.paths
+            and str(PurePosixPath(fragment).parent)
+            == self.env["XDG_RUNTIME_DIR"] + "/systemd/transient",
+            "config_changed",
+        )
+        snapshot, comments = config_scan(
+            self.paths,
+            self.unit,
+            self.uid,
+            deadline,
+            generated=fragment,
+            generated_content=(argv, unset_names, description),
+        )
+        config_same(self.snapshot, snapshot, generated=fragment)
+        require(comments == self.comments, "config_changed")
+
+    def summary(self, postchecked=False):
+        return {
+            "status": "OBSERVED_CLEAN",
+            "manager_pid": self.pid,
+            "manager_starttime": self.started,
+            "version": self.version,
+            "unit_path_count": len(self.paths),
+            "comment_file_count": len(self.comments),
+            "fingerprint": self.fingerprint,
+            "prelaunch_rechecked": self.prechecked,
+            "postlaunch_rechecked": postchecked,
+        }
+
+    def close(self):
+        os.close(self.pidfd)
+
+
 def service(socket_path, nonce, context, parent_pid):
     validate_context(context)
     pattern(nonce, r"[0-9a-f]{64}")
@@ -594,6 +1145,7 @@ def probe(context):
         "binding": None,
         "cleanup_evidence": None,
         "channel_cleanup_errors": [],
+        "configuration_gate": None,
         "primary": None,
         "cleanup": {
             "status": "NOT_RUN",
@@ -606,7 +1158,7 @@ def probe(context):
         "boundary": "NOT_RUN",
         "qualification": "NOT_RUN",
     }
-    env = tool = directory = listener = channel = group = invocation = None
+    env = tool = directory = listener = channel = group = invocation = gate = None
     directory_identity = socket_identity = None
     marker = "forge-topology-" + hashlib.sha256(nonce.encode("ascii")).hexdigest()
     attempted, stopped = False, False
@@ -627,14 +1179,17 @@ def probe(context):
             "manager_unavailable",
         )
         environment_names, environment_digest = manager_environment(tool, env, deadline)
-        current = show(tool, env, unit, deadline)
-        require(
-            current["LoadState"] == "not-found"
-            and current["MainPID"] == 0
-            and current["ActiveState"] == "inactive"
-            and current["ControlGroup"] == "",
-            "unit_collision",
-        )
+        receipt["probe_stage"] = "configuration"
+        try:
+            gate = ConfigGate(verified_tool(BUSCTL), env, unit, uid, manager["MainPID"])
+            gate.prelaunch()
+            receipt["configuration_gate"] = gate.summary()
+        except (OSError, ValueError) as exc:
+            receipt["configuration_gate"] = {"status": "STOP", **error_record(exc)}
+            raise
+        deadline = time.monotonic() + START_SECONDS
+        receipt["probe_stage"] = "startup"
+        require(manager_environment(tool, env, deadline)[1] == environment_digest, "identity_mismatch")
         directory = Path(tempfile.mkdtemp(prefix="forge-topology-", dir=env["XDG_RUNTIME_DIR"]))
         directory_identity = (directory.stat().st_dev, directory.stat().st_ino)
         socket_path = directory / "channel"
@@ -643,44 +1198,41 @@ def probe(context):
         socket_identity = (socket_path.lstat().st_dev, socket_path.lstat().st_ino)
         listener.listen(1)
         attempted = True  # Even an ambiguous launch failure requires exact-unit cleanup.
-        command(
-            [
-                launcher,
-                "--user",
-                "--quiet",
-                "--unit=" + unit,
-                "--service-type=exec",
-                "--description=" + marker,
-                "--property=StandardOutput=null",
-                "--property=StandardError=null",
-                "--property=UnsetEnvironment=" + " ".join(environment_names),
-                "--property=RuntimeMaxSec=15s",
-                "--property=TimeoutStopSec=2s",
-                "--property=KillMode=control-group",
-                "--",
-                python,
-                "-I",
-                "-S",
-                "-B",
-                str(Path(__file__).resolve()),
-                "--service",
-                str(socket_path),
-                "--nonce",
-                nonce,
-                "--parent-pid",
-                str(os.getpid()),
-                "--source-sha",
-                context["source_sha"],
-                "--collector-sha256",
-                context["collector_sha256"],
-                "--run-id",
-                context["run_id"],
-                "--run-attempt",
-                str(context["run_attempt"]),
-            ],
-            env,
-            deadline,
-        )
+        launch_argv = [
+            launcher,
+            "--user",
+            "--quiet",
+            "--unit=" + unit,
+            "--service-type=exec",
+            "--description=" + marker,
+            "--property=StandardOutput=null",
+            "--property=StandardError=null",
+            "--property=UnsetEnvironment=" + " ".join(environment_names),
+            "--property=RuntimeMaxSec=15s",
+            "--property=TimeoutStopSec=2s",
+            "--property=KillMode=control-group",
+            "--",
+            python,
+            "-I",
+            "-S",
+            "-B",
+            str(Path(__file__).resolve()),
+            "--service",
+            str(socket_path),
+            "--nonce",
+            nonce,
+            "--parent-pid",
+            str(os.getpid()),
+            "--source-sha",
+            context["source_sha"],
+            "--collector-sha256",
+            context["collector_sha256"],
+            "--run-id",
+            context["run_id"],
+            "--run-attempt",
+            str(context["run_attempt"]),
+        ]
+        command(launch_argv, env, deadline)
         current = show(tool, env, unit, deadline)
         invocation = owned_unit(current, marker)
         group = owned_group(current["ControlGroup"], uid, unit)
@@ -738,6 +1290,19 @@ def probe(context):
                 manager_environment(tool, env, deadline)[1] == environment_digest, "identity_mismatch"
             )
             live(pidfd, pid, before)
+            try:
+                gate.postlaunch(
+                    deadline,
+                    launch_argv[launch_argv.index("--") + 1 :],
+                    invocation,
+                    environment_names,
+                    marker,
+                )
+                receipt["configuration_gate"] = gate.summary(postchecked=True)
+            except (OSError, ValueError) as exc:
+                receipt["configuration_gate"] = {"status": "STOP", **error_record(exc)}
+                raise
+            live(pidfd, pid, before)
             receipt["binding"] = {
                 "peer_pid": pid,
                 "peer_uid": peer_uid,
@@ -760,7 +1325,7 @@ def probe(context):
     except (OSError, ValueError, UnicodeError) as exc:
         receipt["primary"] = error_record(exc)
     finally:
-        for label, endpoint in (("peer", channel), ("listener", listener)):
+        for label, endpoint in (("peer", channel), ("listener", listener), ("manager_pidfd", gate)):
             if endpoint is not None:
                 try:
                     endpoint.close()
@@ -876,6 +1441,7 @@ def validate_receipt(value):
             "binding",
             "cleanup_evidence",
             "channel_cleanup_errors",
+            "configuration_gate",
             "primary",
             "cleanup",
             "boundary",
@@ -888,7 +1454,7 @@ def validate_receipt(value):
     require(value["schema"] == SCHEMA)
     require(
         type(value["probe_stage"]) is str
-        and value["probe_stage"] in {"preflight", "startup", "exchange", "observed"}
+        and value["probe_stage"] in {"preflight", "configuration", "startup", "exchange", "observed"}
     )
     require(
         type(value["observation_status"]) is str
@@ -985,12 +1551,43 @@ def validate_receipt(value):
                 terminal["control_group"] == value["binding"]["control_group"]
                 and terminal["invocation"] == value["binding"]["invocation"]
             )
-    require(type(value["channel_cleanup_errors"]) is list and len(value["channel_cleanup_errors"]) <= 2)
+    require(type(value["channel_cleanup_errors"]) is list and len(value["channel_cleanup_errors"]) <= 3)
     for channel_error in value["channel_cleanup_errors"]:
         keys(channel_error, {"channel", "errno"})
-        require(channel_error["channel"] in ("peer", "listener"))
+        require(channel_error["channel"] in ("peer", "listener", "manager_pidfd"))
         if channel_error["errno"] is not None:
             integer(channel_error["errno"], 0, 4095)
+    gate_record = value["configuration_gate"]
+    if gate_record is not None:
+        require(type(gate_record) is dict and "status" in gate_record)
+        if gate_record["status"] == "STOP":
+            validate_error({k: v for k, v in gate_record.items() if k != "status"})
+        else:
+            keys(
+                gate_record,
+                {
+                    "status",
+                    "manager_pid",
+                    "manager_starttime",
+                    "version",
+                    "unit_path_count",
+                    "comment_file_count",
+                    "fingerprint",
+                    "prelaunch_rechecked",
+                    "postlaunch_rechecked",
+                },
+            )
+            require(gate_record["status"] == "OBSERVED_CLEAN")
+            integer(gate_record["manager_pid"], 1)
+            integer(gate_record["manager_starttime"], 1, 2**64 - 1)
+            pattern(gate_record["version"], r"255(?:\.[0-9]+)?(?:[-+~ ][A-Za-z0-9.+~_-]+)*")
+            integer(gate_record["unit_path_count"], 1, 32)
+            integer(gate_record["comment_file_count"], 0, 64)
+            pattern(gate_record["fingerprint"], r"[0-9a-f]{64}")
+            require(
+                gate_record["prelaunch_rechecked"] is True
+                and type(gate_record["postlaunch_rechecked"]) is bool
+            )
     if value["primary"] is not None:
         validate_error(value["primary"])
     cleanup = keys(
@@ -1008,7 +1605,15 @@ def validate_receipt(value):
         and topology_ready(value["observation"]["topology"])
     )
     require(value["status"] == ("OBSERVED" if observed else "STOP"))
-    require(not observed or value["probe_stage"] == "observed")
+    require(
+        not observed
+        or (
+            value["probe_stage"] == "observed"
+            and gate_record is not None
+            and gate_record["status"] == "OBSERVED_CLEAN"
+            and gate_record["postlaunch_rechecked"] is True
+        )
+    )
     require(len(encode(value)) <= LIMIT)
     return value
 
