@@ -37,12 +37,29 @@ skip identities or reasons require explicit policy review.
 
 ## Policy provenance and maintenance
 
-`scripts/ci_test_policy.json` records weights and existing skip identities/reasons
+The `source_run` and `artifact_sha256` fields in `scripts/ci_test_policy.json`
+identify the original skip-policy baseline, including existing skip identities/reasons,
 from [run 41400661496](https://github.com/HouMinXi/forge/actions/runs/41400661496),
 artifact 13122369995. Its ZIP SHA-256 is
 `3d408a807c5a3ec73163061ab084c4eb300c0c6b805ec43b304b430e2d2bfcbe`.
 The baseline had 78 runtime skips and three collection-skipped modules. The
 collection skips are specifically the absent optional `code_review_graph` package.
+The service-free module weights were refreshed separately from successful run
+[41448274206](https://github.com/HouMinXi/forge/actions/runs/41448274206), exact
+source `e9df2c0970ad93011ecf5a4081d9ca8075e35b52`. Its four shard artifacts are
+13143241738, 13144551500, 13144311630 and 13144137235 (shards 0–3). The refresh
+sums JUnit testcase durations by module, leaves unexecuted module weights and all
+skip policy unchanged, and does not claim a measured wall-clock speedup.
+
+Verified SHA-256 digests of those artifact ZIPs:
+
+| Shard | Artifact | SHA-256 |
+| --- | --- | --- |
+| 0 | 13143241738 | `24bd2ec322eaf88663240db35c806523a2384b8bb0c708a63f9f4f3c2796c1b0` |
+| 1 | 13144551500 | `a38e7f7d1d06c62afd4991e13cdee9daf11d901023cbd063bff048c39e498ab1` |
+| 2 | 13144311630 | `dda806be2a37e82b673d50601c01d8e7120694de8324f4bf13a5e7baf59d0600` |
+| 3 | 13144137235 | `265536ea9fcde66da5ad0e752f03d025448afcce4fda0a1020fa3fe425783e39` |
+
 Weights can be refreshed from a verified JUnit artifact without changing coverage.
 Skip policy changes require reviewing the reason rather than silently regenerating
 a baseline from a failing or reduced run.
