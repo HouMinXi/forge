@@ -394,3 +394,60 @@ def test_retry_preserves_attempt_archives_before_replacing_current_artifacts():
                 assert (
                     step["if"] == "${{ always() && steps." + archive["id"] + ".outcome == 'success' }}"
                 )
+
+
+def test_quiet_collection_keeps_exact_receipt_without_printing_every_node(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pytest.ini").write_text("[pytest]\n")
+    (project / "test_many.py").write_text(
+        "import pytest\n@pytest.mark.parametrize('number', range(80))\n"
+        "def test_number(number): assert number >= 0\n"
+    )
+    receipts, logs = [], []
+    for quiet in (False, True):
+        report = tmp_path / f"collect-{quiet}.json"
+        args = ["--collect-only", str(project), "-c", str(project / "pytest.ini")]
+        if quiet:
+            args.append("-q")
+        result = subprocess.run(
+            ci.command_for_pytest("full", SHA, report, args),
+            cwd=project,
+            env={**os.environ, "PYTHONPATH": str(root)},
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        receipts.append(ci.read(report))
+        logs.append(result.stdout)
+    assert receipts[0] == receipts[1]
+    assert len(receipts[0]["collected"]) == 80
+    assert "::test_number" in logs[0] and "::test_number" not in logs[1]
+    assert "test_many.py: 80" in logs[1]
+
+
+def test_quiet_collection_failure_remains_visible_and_nonzero(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_broken.py").write_text("raise RuntimeError('visible collection failure')\n")
+    report = tmp_path / "report.json"
+    result = subprocess.run(
+        ci.command_for_pytest(
+            "full",
+            SHA,
+            report,
+            ["--collect-only", "-q", str(tmp_path), "-c", str(tmp_path / "pytest.ini")],
+        ),
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(root)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    data = ci.read(report)
+    assert result.returncode == data["exitstatus"] == 2
+    assert data["collection_errors"] == ["test_broken.py"]
+    assert "visible collection failure" in result.stdout

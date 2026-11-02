@@ -278,7 +278,8 @@ def collect_plan(output, sha, policy):
     for phase in ("full", "ownership", "cgroup", "local"):
         report = output / f"collection-{phase}.json"
         subprocess.run(
-            command_for_pytest(phase, sha, report, ["--collect-only", *selection(phase)]), check=True
+            command_for_pytest(phase, sha, report, ["--collect-only", "-q", *selection(phase)]),
+            check=True,
         )
         collections[phase] = read(report)
     write(output / "plan.json", build_plan(collections, sha, policy))
