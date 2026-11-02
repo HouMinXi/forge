@@ -524,6 +524,10 @@ def _live_process(pid):
         raw = Path(f"/proc/{pid}/stat").read_text()
     except FileNotFoundError:
         return False
+    except ProcessLookupError as exc:
+        if exc.errno == errno.ESRCH:
+            return False
+        raise
     return raw.rsplit(")", 1)[1].split()[0] != "Z"
 
 
@@ -871,3 +875,33 @@ def test_v1_receipts_are_not_reinterpreted(observed):
     observed.pop("diagnostics")
     with pytest.raises(admission.ObservationError):
         admission.parse(encode(observed))
+
+
+@pytest.mark.parametrize(
+    "failure, disappeared",
+    [
+        (FileNotFoundError(errno.ENOENT, "fixture"), True),
+        (ProcessLookupError(errno.ESRCH, "fixture"), True),
+        (PermissionError(errno.EACCES, "fixture"), False),
+        (OSError(errno.EIO, "fixture"), False),
+        (OSError(errno.EINVAL, "fixture"), False),
+        (ProcessLookupError(errno.EACCES, "wrong errno fixture"), False),
+    ],
+)
+def test_live_process_read_failure_contract(monkeypatch, failure, disappeared):
+    def read_failure(self, *args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(Path, "read_text", read_failure)
+    if disappeared:
+        assert _live_process(123) is False
+    else:
+        with pytest.raises(type(failure)) as caught:
+            _live_process(123)
+        assert caught.value is failure
+
+
+@pytest.mark.parametrize("state, expected", [("R", True), ("S", True), ("Z", False)])
+def test_live_process_state_contract_unchanged(monkeypatch, state, expected):
+    monkeypatch.setattr(Path, "read_text", lambda self: f"123 (fixture) {state} 1 2 3")
+    assert _live_process(123) is expected
