@@ -248,6 +248,48 @@ def test_ci_synthetic_confirmed_finding_reaches_ledger(project, monkeypatch):
     assert control._mutation_measurement_eligible is False
 
 
+def assert_ci_carrier_refused(project, monkeypatch, raw, reason):
+    """Installed consumer rejection, not native measurement qualification."""
+    monkeypatch.chdir(project)
+    append_row(project, seed_row(project))
+    ledger = project / ".code-forge/ledger.jsonl"
+    before = ledger.read_bytes()
+    carrier = project / ".code-forge/mutation-result.json"
+    carrier.write_text(raw)
+    control = machine(project)
+    assert control.run() is Verdict.FAIL
+    saved = load_state(project / ".code-forge/state.json")
+    assert saved.verdict is Verdict.FAIL and not saved.converged
+    assert reason in saved.infra_errors
+    assert not carrier.exists()
+    assert ledger.read_bytes() == before
+    rows = list(iter_rows(project, strict=True))
+    assert len(rows) == 1 and rows[0].fingerprint == "wheel-control"
+    assert all(row.evidence_class != "clean_pass" for row in rows)
+    assert control._mutation_measurement_eligible is False
+
+
+def test_ci_nonobject_carrier_cannot_emit_clean_ledger(project, monkeypatch):
+    assert_ci_carrier_refused(
+        project, monkeypatch, "[]", "CI: mutation-result.json is not a JSON object"
+    )
+
+
+def test_ci_missing_status_cannot_emit_clean_ledger(project, monkeypatch):
+    assert_ci_carrier_refused(
+        project, monkeypatch, "{}", "CI: mutation-result.json missing status field"
+    )
+
+
+def test_ci_invalid_status_cannot_emit_clean_ledger(project, monkeypatch):
+    assert_ci_carrier_refused(
+        project,
+        monkeypatch,
+        '{"status":"unexpected"}',
+        "CI: mutation-result.json invalid status field",
+    )
+
+
 def test_record_and_wheel_mismatch_rejected(tmp_path, monkeypatch):
     import code_forge
 
