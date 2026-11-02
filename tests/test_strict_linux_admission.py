@@ -527,22 +527,82 @@ def _live_process(pid):
     return raw.rsplit(")", 1)[1].split()[0] != "Z"
 
 
+def _live_group_process(pid, group):
+    if not _live_process(pid):
+        return False
+    try:
+        return os.getpgid(pid) == group
+    except ProcessLookupError as exc:
+        if exc.errno != errno.ESRCH:
+            raise
+        return False
+
+
+def _kill_live_group_process(pid, group):
+    if not _live_group_process(pid, group):
+        return
+    try:
+        os.kill(pid, 9)
+    except ProcessLookupError as exc:
+        if exc.errno != errno.ESRCH:
+            raise
+
+
+@pytest.mark.parametrize("operation", ["getpgid", "kill"])
+@pytest.mark.parametrize(
+    "error",
+    [
+        ProcessLookupError(errno.ESRCH, "gone"),
+        ProcessLookupError(errno.EIO, "io"),
+        PermissionError(errno.EACCES, "denied"),
+    ],
+)
+def test_group_process_handles_only_disappearance(monkeypatch, error, operation):
+    monkeypatch.setattr(sys.modules[__name__], "_live_process", lambda pid: True)
+
+    def disappeared(*args):
+        raise error
+
+    monkeypatch.setattr(os, "getpgid", lambda pid: 123)
+    monkeypatch.setattr(os, operation, disappeared)
+    check = _live_group_process if operation == "getpgid" else _kill_live_group_process
+    if error.errno == errno.ESRCH:
+        assert not check(123, 123)
+    else:
+        with pytest.raises(type(error)) as caught:
+            check(123, 123)
+        assert caught.value is error
+
+
+@pytest.mark.parametrize("startup_delay", [0, 0.45], ids=["ready", "delayed-start"])
 @pytest.mark.parametrize("scenario", ["timeout", "overflow", "leader_exit"])
-def test_query_cleanup_stops_actual_group_descendant(monkeypatch, tmp_path, scenario):
+def test_query_cleanup_stops_actual_group_descendant(monkeypatch, tmp_path, scenario, startup_delay):
     children = []
     real_popen = subprocess.Popen
+    pidfile = tmp_path / "descendant.pid"
 
     def record(*args, **kwargs):
         child = real_popen(*args, **kwargs)
         children.append(child)
-        return child
+        # Popen only confirms exec, not the fixture's fork/pidfile readiness.
+        # Keep fixture startup outside the unchanged 0.3s query/cleanup budget.
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if pidfile.exists():
+                raw_pid = pidfile.read_text()
+                if raw_pid.isdecimal():
+                    pid = int(raw_pid)
+                    if _live_group_process(pid, child.pid):
+                        return child
+            time.sleep(0.01)
+        pytest.fail("descendant fixture did not become ready within 2s")
 
     monkeypatch.setattr(admission.subprocess, "Popen", record)
     monkeypatch.setattr(admission, "COMMAND_SECONDS", 0.3)
     monkeypatch.setattr(admission, "COMMAND_BYTES", 32)
-    pidfile = tmp_path / "descendant.pid"
     program = (
         "import os,time\n"
+        f"time.sleep({startup_delay!r})\n"
         "child=os.fork()\n"
         "if child == 0:\n"
         f"    open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
@@ -575,10 +635,15 @@ def test_query_cleanup_stops_actual_group_descendant(monkeypatch, tmp_path, scen
             except ProcessLookupError:
                 pass
             child.wait(timeout=3)
+            for pipe in (child.stdout, child.stderr):
+                if pipe is not None:
+                    pipe.close()
         if pidfile.exists():
-            pid = int(pidfile.read_text())
-            if _live_process(pid):
-                os.kill(pid, 9)
+            raw_pid = pidfile.read_text()
+            if raw_pid.isdecimal():
+                pid = int(raw_pid)
+                for child in children:
+                    _kill_live_group_process(pid, child.pid)
 
 
 @pytest.mark.parametrize(
