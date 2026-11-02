@@ -29,9 +29,9 @@ artifact digest, source and actual workflow bytes must be reconciled externally.
 
 ## Exact privileged reads
 
-The manager must already be active. Ordinary fixed systemctl and typed D-Bus
-reads cross-check its PID, unique bus owner and UID. The observer holds a pidfd
-and checks start time/liveness around the reads. It never calls LoadUnit,
+The manager must already be active. Ordinary fixed systemctl reads the system manager's active `user@UID.service`
+MainPID. Kernel process UID/starttime/pidfd and a fixed existing private-socket
+peer independently cross-check that PID and UID. The observer holds a pidfd and checks start time/liveness around the reads. It never calls LoadUnit,
 show-environment, starts a manager or reads environment files.
 
 There are at most four privileged attempts (a pre-spawn failure can leave a
@@ -102,10 +102,9 @@ baseline and from the unresolved #376 dependency boundary.
 
 ## Ordinary-command failure diagnostics
 
-Receipt schema `forge-fixed-metadata-v2` adds `ordinary_failure`, null unless an
+Receipt schema `forge-fixed-metadata-v3` retains `ordinary_failure`, null unless an
 ordinary command fails. Its operation is one of `source_head`, `source_tree`,
-`timeout_version`, `systemctl_manager`, `GetNameOwner`, or
-`GetConnectionUnixProcessID`. It retains only exit code or signal, a finite
+`timeout_version`, or `systemctl_manager`. It retains only exit code or signal, a finite
 capture/failure reason, errno, captured stdout length, saturated stderr count,
 and direct-child reaping state. Captured stdout length is not total output size
 when the cap is exceeded. Exceptions before a capture result have zero available
@@ -121,3 +120,42 @@ that old observation, and no host-policy cause has been established.
 Operation and exit status identify the failed call, not necessarily its cause.
 A nonzero command exit with counted stderr can still leave the host mechanism
 unknown; this diagnostic does not parse stderr into authoritative D-Bus errors.
+
+## Existing private-peer identity contract
+
+Version 3 replaces the session-bus-name dependency, not its failure explanation.
+There is no fallback between identity paths. The sole endpoint is the already
+existing `/run/user/UID/systemd/private`; missing/unsafe directories, symlinks,
+non-socket endpoint, mismatching peer PID/UID, changed endpoint metadata or
+process identity all STOP. Runtime and systemd directory ownership/modes and
+root-owned ancestors are checked before and after connecting. The restrictive
+runtime directory limits access even if the socket's own write bits are broad.
+
+A bounded AF_UNIX stream connection reads only kernel SO_PEERCRED: numeric
+PID/UID/GID with exact frame length. The GID is the peer's observed GID, never
+substituted from the caller or used as an authorization grant. No D-Bus messages,
+authentication bytes or other protocol payload are sent or read. Connecting does
+create a short-lived server connection: this is not zero host side effects.
+The client socket is closed, and the held pidfd is closed on every owned exit;
+close failures retain finite secondary labels without replacing a primary error.
+
+After the fixed metadata reads, system MainPID and private-peer identity are
+checked again within the existing shared deadline. The receipt records
+`manager.private_peer`, not `bus_owner`; v1/v2 session-bus observations retain
+their old meaning and cannot be reinterpreted as private-peer evidence.
+The v2 run's GetNameOwner failure mechanism remains unknown. This replacement
+only identifies the target of the approved metadata reads; it is not a service
+admission fix, permission bypass claim, supported runner qualification or a
+resolution of the #376 dependency boundary. Native compatibility remains untested
+until a separately released exact-source run.
+
+Endpoint stability compares the complete recorded metadata fingerprint, including
+ancestor directory size and timestamps, not just inode identity. An unrelated
+directory update can conservatively STOP; that alone does not establish endpoint
+replacement or a hostile change.
+
+Finite `identity_failure` labels distinguish private_path, private_connect,
+private_credentials, identity_recheck and manager_process, with errno and a
+timeout flag. Nested errors retain the most specific observed operation. These
+labels do not include endpoint strings or exception messages and do not infer
+a policy cause.

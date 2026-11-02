@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import stat
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -94,16 +96,14 @@ def fixture_observer(monkeypatch, context_env):
         lambda uid: {
             "pid": os.getpid(),
             "starttime": p.starttime(os.getpid()),
-            "owner": ":1.7",
-            "env": {},
+            "private_peer": {
+                "credentials": {"pid": os.getpid(), "uid": os.getuid(), "gid": os.getgid()},
+                "endpoint": (),
+            },
             "fd": os.pidfd_open(os.getpid()),
         },
     )
-    monkeypatch.setattr(
-        p,
-        "bus",
-        lambda method, argument, kind, env, deadline=None: ":1.7" if kind == "s" else os.getpid(),
-    )
+    monkeypatch.setattr(p, "recheck_manager", lambda *args, **kwargs: None)
 
     def capture(argv, env, deadline, limit=4096, privileged=False, cwd="/"):
         state["calls"].append(argv)
@@ -184,7 +184,7 @@ def test_failure_stops_all_later_privileged_calls(fixture_observer, fault, index
     result = p.observe()
     assert result["status"] == "STOP" and len(fixture_observer["calls"]) == index + 1
     assert result["observations"] is None
-    assert "private" not in json.dumps(result)
+    assert all(marker not in json.dumps(result) for marker in ("private-path", "private-value"))
     if isinstance(fault, Exception) or fault.get("direct_sudo_reaped") is False:
         assert result["direct_command_cleanup"] == "UNKNOWN"
 
@@ -196,7 +196,9 @@ def test_unknown_timeout_version_is_not_run(fixture_observer, monkeypatch):
 
 
 def test_post_read_manager_change_is_not_admission(fixture_observer, monkeypatch):
-    monkeypatch.setattr(p, "bus", lambda *args, **kwargs: ":1.99")
+    monkeypatch.setattr(
+        p, "recheck_manager", lambda *args, **kwargs: (_ for _ in ()).throw(p.Stop("changed"))
+    )
     result = p.observe()
     assert len(fixture_observer["calls"]) == 4 and result["reason"] == "changed"
     assert result["observations"] is None
@@ -337,12 +339,6 @@ def test_source_tree_binds_only_fixed_regular_files(monkeypatch):
     assert len(calls) == 2 and all("diff" not in call and "status" not in call for call in calls)
 
 
-def test_bus_rejects_duplicate_keys(monkeypatch):
-    monkeypatch.setattr(p, "ordinary", lambda *args, **kwargs: b'{"type":"s","type":"s","data":["x"]}')
-    with pytest.raises(p.Stop, match="format"):
-        p.bus("GetNameOwner", "org.freedesktop.systemd1", "s", {})
-
-
 def test_private_directory_and_exclusive_artifact(tmp_path):
     tmp_path.chmod(0o700)
     fd = p.evidence_directory(tmp_path)
@@ -471,13 +467,12 @@ def test_tools_allow_only_sudo_setuid_and_require_elf(monkeypatch):
 def test_shared_postcheck_deadline_cannot_restart_budget(fixture_observer, monkeypatch):
     passed = []
 
-    def bus(method, argument, kind, env, deadline=None):
+    def recheck(identity, uid, deadline):
         passed.append(deadline)
-        return ":1.7" if kind == "s" else os.getpid()
 
-    monkeypatch.setattr(p, "bus", bus)
+    monkeypatch.setattr(p, "recheck_manager", recheck)
     assert p.observe()["status"] == "OBSERVED"
-    assert len(passed) == 2 and passed[0] == passed[1] and passed[0] is not None
+    assert len(passed) == 1 and passed[0] is not None
 
 
 def test_main_invalid_output_directory_never_observes(monkeypatch, tmp_path):
@@ -615,48 +610,16 @@ def test_source_tree_rejects_mismatched_or_ambiguous_blobs(monkeypatch, fault):
         p.source_snapshot("a" * 40)
 
 
-@pytest.mark.parametrize(
-    "operation", ["systemctl_manager", "GetNameOwner", "GetConnectionUnixProcessID"]
-)
-def test_actual_manager_command_sites_preserve_finite_failure(monkeypatch, operation):
-    uid, pid = os.getuid(), os.getpid()
-    original_lstat = Path.lstat
-    calls = []
-
-    def lstat(path, *args, **kwargs):
-        if str(path) == f"/run/user/{uid}":
-            return types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=uid)
-        if str(path) == f"/run/user/{uid}/bus":
-            return types.SimpleNamespace(st_mode=stat.S_IFSOCK | 0o600, st_uid=uid)
-        return original_lstat(path, *args, **kwargs)
-
-    def capture(argv, *args, **kwargs):
-        assert "/usr/bin/sudo" not in argv
-        label = "systemctl_manager" if argv[0] == "/usr/bin/systemctl" else argv[-3]
-        calls.append(label)
-        if label == operation:
-            return capture_result(stdout=b"private-value", exit_code=1, stderr_bytes=9)
-        if label == "systemctl_manager":
-            return capture_result(f"Id=user@{uid}.service\nActiveState=active\nMainPID={pid}\n".encode())
-        return capture_result(b'{"type":"s","data":[":1.7"]}')
-
-    monkeypatch.setattr(Path, "lstat", lstat)
-    monkeypatch.setattr(p, "capture", capture)
+def test_system_manager_command_failure_is_finite(monkeypatch):
+    monkeypatch.setattr(
+        p,
+        "capture",
+        lambda *args, **kwargs: capture_result(stdout=b"private-value", exit_code=1, stderr_bytes=9),
+    )
     with pytest.raises(p.Stop, match="command") as raised:
-        p.manager(uid)
-    expected = ["systemctl_manager", "GetNameOwner", "GetConnectionUnixProcessID"]
-    assert calls == expected[: expected.index(operation) + 1]
+        p.system_manager_pid(os.getuid())
     record = raised.value.command_failure
-    assert record == {
-        "operation": operation,
-        "exit_code": 1,
-        "signal": None,
-        "failure_reason": "stderr",
-        "errno": None,
-        "stdout_captured_bytes": 13,
-        "stderr_bytes": 9,
-        "direct_child_reaped": True,
-    }
+    assert record["operation"] == "systemctl_manager" and record["stderr_bytes"] == 9
     assert "private-value" not in json.dumps(record)
 
 
@@ -715,3 +678,304 @@ def test_unknown_ordinary_label_never_invokes_command(monkeypatch):
     )
     with pytest.raises(p.Stop, match="format"):
         p.ordinary(["/usr/bin/timeout", "--version"], operation="private-value")
+
+
+def test_real_socketpair_credentials_and_pidfd():
+    left, right = socket.socketpair()
+    identity = {
+        "pid": os.getpid(),
+        "starttime": p.starttime(os.getpid()),
+        "fd": os.pidfd_open(os.getpid()),
+    }
+    try:
+        assert p.peer_credentials(left) == {"pid": os.getpid(), "uid": os.getuid(), "gid": os.getgid()}
+        p.live(identity, os.getuid())
+    finally:
+        left.close()
+        right.close()
+        os.close(identity["fd"])
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        b"",
+        b"x" * 11,
+        b"x" * 13,
+        struct.pack("3i", 0, 1, 1),
+        struct.pack("3i", 1, -1, 1),
+        struct.pack("3i", 1, 1, -1),
+    ],
+)
+def test_peer_frame_rejects_malformed(frame):
+    channel = types.SimpleNamespace(getsockopt=lambda *args: frame)
+    with pytest.raises(p.Stop, match="private_credentials"):
+        p.peer_credentials(channel)
+
+
+@pytest.fixture
+def private_fixture(monkeypatch):
+    uid, pid = os.getuid(), os.getpid()
+    state = {
+        "closed": 0,
+        "connects": [],
+        "frame": struct.pack("3i", pid, uid, os.getgid()),
+        "fault": None,
+    }
+
+    class Channel:
+        def settimeout(self, value):
+            assert 0 < value <= 2
+
+        def connect(self, path):
+            state["connects"].append(path)
+            assert path == f"/run/user/{uid}/systemd/private"
+            if state["fault"] == "connect":
+                raise PermissionError(13, "private-value")
+
+        def getsockopt(self, level, option, size):
+            assert (level, option, size) == (socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
+            return state["frame"]
+
+        def close(self):
+            state["closed"] += 1
+            if state["fault"] == "close":
+                raise OSError(5, "private-value")
+
+    monkeypatch.setattr(p.socket, "socket", lambda *args: Channel())
+    monkeypatch.setattr(p, "endpoint_snapshot", lambda uid: (1,))
+    identity = {"pid": pid, "starttime": p.starttime(pid), "fd": os.pidfd_open(pid)}
+    state["identity"] = identity
+    yield state
+    os.close(identity["fd"])
+
+
+def test_private_peer_fixed_endpoint_no_protocol(private_fixture):
+    result = p.private_peer(private_fixture["identity"], os.getuid())
+    assert result["credentials"]["pid"] == os.getpid()
+    assert private_fixture["closed"] == 1 and len(private_fixture["connects"]) == 1
+
+
+@pytest.mark.parametrize("fault", ["pid", "uid", "connect", "close", "drift", "timeout", "dead"])
+def test_private_peer_stops_and_closes(private_fixture, monkeypatch, fault):
+    state = private_fixture
+    state["fault"] = fault
+    if fault in ("pid", "uid"):
+        state["frame"] = struct.pack(
+            "3i", os.getpid() + (fault == "pid"), os.getuid() + (fault == "uid"), os.getgid()
+        )
+    if fault == "drift":
+        values = iter([(1,), (2,)])
+        monkeypatch.setattr(p, "endpoint_snapshot", lambda uid: next(values))
+    if fault == "dead":
+        monkeypatch.setattr(p, "live", lambda *args: (_ for _ in ()).throw(p.Stop("identity")))
+    with pytest.raises(p.Stop) as raised:
+        p.private_peer(
+            state["identity"], os.getuid(), time.monotonic() - 1 if fault == "timeout" else None
+        )
+    assert state["closed"] == (0 if fault in ("timeout", "dead") else 1)
+    assert "private-value" not in str(raised.value)
+    expected_operation = {
+        "pid": "private_credentials",
+        "uid": "private_credentials",
+        "connect": "private_connect",
+        "close": "private_credentials",
+        "drift": "private_path",
+        "timeout": "private_connect",
+        "dead": "identity_recheck",
+    }[fault]
+    assert raised.value.identity_failure["operation"] == expected_operation
+    assert raised.value.identity_failure["timeout"] == (fault == "timeout")
+    if fault == "connect":
+        assert raised.value.reason == "private_connect" and raised.value.errno == 13
+    if fault == "close":
+        assert raised.value.cleanup_errors == ["private_socket"]
+
+
+def test_socket_close_does_not_replace_primary(private_fixture):
+    private_fixture["fault"] = "close"
+    private_fixture["frame"] = struct.pack("3i", os.getpid() + 1, os.getuid(), os.getgid())
+    with pytest.raises(p.Stop, match="private_credentials") as raised:
+        p.private_peer(private_fixture["identity"], os.getuid())
+    assert raised.value.cleanup_errors == ["private_socket"]
+
+
+@pytest.mark.parametrize("fault", [None, "missing", "symlink", "writable", "owner", "socket_type"])
+def test_endpoint_metadata_contract(monkeypatch, fault):
+    uid = os.getuid()
+
+    def lstat(path):
+        name = str(path)
+        socket_path = name.endswith("/private")
+        user_path = name in (f"/run/user/{uid}", f"/run/user/{uid}/systemd")
+        mode = stat.S_IFSOCK | 0o600 if socket_path else stat.S_IFDIR | (0o700 if user_path else 0o755)
+        owner = uid if user_path or socket_path else 0
+        if name == f"/run/user/{uid}/systemd":
+            if fault == "missing":
+                raise FileNotFoundError(2, "private-value")
+            if fault == "symlink":
+                mode = stat.S_IFLNK | 0o777
+            if fault == "writable":
+                mode |= 0o002
+            if fault == "owner":
+                owner += 1
+        if socket_path and fault == "socket_type":
+            mode = stat.S_IFREG | 0o600
+        return types.SimpleNamespace(
+            st_dev=1,
+            st_ino=2,
+            st_mode=mode,
+            st_uid=owner,
+            st_gid=0,
+            st_size=0,
+            st_mtime_ns=0,
+            st_ctime_ns=0,
+        )
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    if fault is None:
+        assert len(p.endpoint_snapshot(uid)) == 6
+    else:
+        with pytest.raises(p.Stop, match="private_endpoint"):
+            p.endpoint_snapshot(uid)
+
+
+def test_manager_failure_closes_owned_pidfd(monkeypatch):
+    monkeypatch.setattr(p, "system_manager_pid", lambda uid: os.getpid())
+    failure = p.Stop("private_connect")
+    monkeypatch.setattr(p, "private_peer", lambda *args: (_ for _ in ()).throw(failure))
+    original = os.pidfd_open
+    owned = []
+
+    def pidfd(pid):
+        fd = original(pid)
+        owned.append(fd)
+        return fd
+
+    monkeypatch.setattr(p.os, "pidfd_open", pidfd)
+    with pytest.raises(p.Stop) as raised:
+        p.manager(os.getuid())
+    assert raised.value is failure
+    with pytest.raises(OSError):
+        os.fstat(owned[0])
+
+
+def test_recheck_passes_single_deadline(monkeypatch):
+    identity = {"pid": 123, "private_peer": {"credentials": {}, "endpoint": ()}}
+    calls = []
+    monkeypatch.setattr(p, "system_manager_pid", lambda uid, deadline: (calls.append(deadline), 123)[1])
+    monkeypatch.setattr(
+        p,
+        "private_peer",
+        lambda identity, uid, deadline: (calls.append(deadline), identity["private_peer"])[1],
+    )
+    monkeypatch.setattr(p, "live", lambda *args: None)
+    p.recheck_manager(identity, 1000, 42)
+    assert calls == [42, 42]
+
+
+def test_real_manager_identity_path_with_mock_existing_peer(monkeypatch):
+    pid, uid = os.getpid(), os.getuid()
+    monkeypatch.setattr(
+        p,
+        "ordinary",
+        lambda *args, **kwargs: f"Id=user@{uid}.service\nActiveState=active\nMainPID={pid}\n".encode(),
+    )
+    expected = {"credentials": {"pid": pid, "uid": uid, "gid": os.getgid()}, "endpoint": ()}
+    monkeypatch.setattr(p, "private_peer", lambda identity, uid: expected)
+    identity = p.manager(uid)
+    try:
+        assert identity["pid"] == pid and identity["private_peer"] == expected
+        p.live(identity, uid)
+    finally:
+        os.close(identity["fd"])
+
+
+@pytest.mark.parametrize("primary", [None, "identity"])
+def test_pidfd_close_failure_secondary(primary, monkeypatch):
+    error = p.Stop(primary) if primary else None
+    monkeypatch.setattr(p.os, "close", lambda fd: (_ for _ in ()).throw(OSError(5, "private-value")))
+    result = p.close_owned(123, "manager_pidfd", error)
+    assert result.reason == (primary or "io") and result.cleanup_errors == ["manager_pidfd"]
+    if error is not None:
+        assert result is error
+
+
+@pytest.mark.parametrize("fault", ["pid", "peer"])
+def test_recheck_rejects_identity_changes(monkeypatch, fault):
+    identity = {"pid": 123, "private_peer": {"credentials": {}, "endpoint": ()}}
+    monkeypatch.setattr(p, "system_manager_pid", lambda *args: 124 if fault == "pid" else 123)
+    monkeypatch.setattr(p, "private_peer", lambda *args: {"credentials": {}, "endpoint": (1,)})
+    monkeypatch.setattr(p, "live", lambda *args: None)
+    with pytest.raises(p.Stop, match="changed"):
+        p.recheck_manager(identity, 1000, time.monotonic() + 1)
+
+
+@pytest.mark.parametrize("failure", [KeyboardInterrupt(), SystemExit(2)])
+def test_manager_interruption_closes_pidfd(monkeypatch, failure):
+    monkeypatch.setattr(p, "system_manager_pid", lambda uid: os.getpid())
+    monkeypatch.setattr(p, "private_peer", lambda *args: (_ for _ in ()).throw(failure))
+    original, owned = os.pidfd_open, []
+
+    def pidfd(pid):
+        fd = original(pid)
+        owned.append(fd)
+        return fd
+
+    monkeypatch.setattr(p.os, "pidfd_open", pidfd)
+    with pytest.raises(type(failure)) as raised:
+        p.manager(os.getuid())
+    assert raised.value is failure
+    with pytest.raises(OSError):
+        os.fstat(owned[0])
+
+
+def test_peer_interruption_still_closes_socket(private_fixture, monkeypatch):
+    failure = KeyboardInterrupt()
+    monkeypatch.setattr(p, "peer_credentials", lambda *args: (_ for _ in ()).throw(failure))
+    with pytest.raises(KeyboardInterrupt) as raised:
+        p.private_peer(private_fixture["identity"], os.getuid())
+    assert raised.value is failure and private_fixture["closed"] == 1
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["private_path", "private_connect", "private_credentials", "identity_recheck", "manager_process"],
+)
+@pytest.mark.parametrize(
+    "failure", [PermissionError(13, "private-value"), TimeoutError(110, "private-value")]
+)
+def test_identity_site_labels_preserve_primary(operation, failure):
+    def action():
+        raise failure
+
+    with pytest.raises(type(failure)) as raised:
+        p.identity_step(operation, action)
+    assert raised.value is failure
+    assert raised.value.identity_failure == {
+        "operation": operation,
+        "errno": failure.errno,
+        "timeout": isinstance(failure, TimeoutError),
+    }
+    assert "private-value" not in json.dumps(raised.value.identity_failure)
+    del failure.identity_failure
+
+
+def test_identity_nested_label_not_overwritten():
+    failure = PermissionError(13, "private-value")
+
+    def inner():
+        raise failure
+
+    with pytest.raises(PermissionError):
+        p.identity_step("identity_recheck", p.identity_step, "private_path", inner)
+    assert failure.identity_failure["operation"] == "private_path"
+
+
+def test_missing_endpoint_failure_retains_site(private_fixture, monkeypatch):
+    failure = FileNotFoundError(2, "private-value")
+    monkeypatch.setattr(p, "endpoint_snapshot", lambda uid: (_ for _ in ()).throw(failure))
+    with pytest.raises(FileNotFoundError) as raised:
+        p.private_peer(private_fixture["identity"], os.getuid())
+    assert raised.value.identity_failure == {"operation": "private_path", "errno": 2, "timeout": False}
+    assert not private_fixture["connects"] and not private_fixture["closed"]

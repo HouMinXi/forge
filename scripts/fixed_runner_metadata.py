@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import select
 import selectors
+import socket
+import struct
 import stat
 import subprocess
 import time
@@ -17,7 +19,7 @@ BRANCH = "forge-fixed-metadata-observer-20261102"
 WORKFLOW = ".github/workflows/strict-linux-admission.yml"
 SOURCE = "scripts/fixed_runner_metadata.py"
 ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"}
-TOOLS = ("git", "systemctl", "busctl", "sudo", "timeout", "stat", "grep")
+TOOLS = ("git", "systemctl", "sudo", "timeout", "stat", "grep")
 NAMES = ("bwrap", "unpriv_bwrap")
 KEYS = (
     "REPOSITORY",
@@ -45,6 +47,9 @@ REASONS = {
     "io",
     "changed",
     "unexpected",
+    "private_endpoint",
+    "private_connect",
+    "private_credentials",
 }
 
 ORDINARY_OPERATIONS = frozenset(
@@ -53,8 +58,6 @@ ORDINARY_OPERATIONS = frozenset(
         "source_tree",
         "timeout_version",
         "systemctl_manager",
-        "GetNameOwner",
-        "GetConnectionUnixProcessID",
     }
 )
 
@@ -293,47 +296,6 @@ def source_snapshot(expected, deadline=None):
     return hashes
 
 
-def unique_pairs(pairs):
-    result = {}
-    for key, value in pairs:
-        need(key not in result, "format")
-        result[key] = value
-    return result
-
-
-def bus(method, argument, kind, env, deadline=None):
-    data = ordinary(
-        [
-            "/usr/bin/busctl",
-            "--user",
-            "--auto-start=no",
-            "--allow-interactive-authorization=no",
-            "--json=short",
-            "--timeout=1s",
-            "call",
-            "org.freedesktop.DBus",
-            "/org/freedesktop/DBus",
-            "org.freedesktop.DBus",
-            method,
-            "s",
-            argument,
-        ],
-        env,
-        deadline=deadline,
-        operation=method,
-    )
-    value = json.loads(data, object_pairs_hook=unique_pairs)
-    need(
-        type(value) is dict
-        and set(value) == {"type", "data"}
-        and value["type"] == kind
-        and type(value["data"]) is list
-        and len(value["data"]) == 1,
-        "format",
-    )
-    return value["data"][0]
-
-
 def starttime(pid):
     with open(f"/proc/{pid}/stat", "rb") as handle:
         raw = handle.read(4097)
@@ -343,16 +305,7 @@ def starttime(pid):
     return int(value)
 
 
-def manager(uid):
-    runtime = Path(f"/run/user/{uid}")
-    info, peer = runtime.lstat(), (runtime / "bus").lstat()
-    need(stat.S_ISDIR(info.st_mode) and info.st_uid == uid and not info.st_mode & 0o077, "manager")
-    need(stat.S_ISSOCK(peer.st_mode) and peer.st_uid == uid, "manager")
-    env = {
-        **ENV,
-        "XDG_RUNTIME_DIR": str(runtime),
-        "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + str(runtime / "bus"),
-    }
+def system_manager_pid(uid, deadline=None):
     raw = ordinary(
         [
             "/usr/bin/systemctl",
@@ -364,6 +317,7 @@ def manager(uid):
             f"user@{uid}.service",
         ],
         operation="systemctl_manager",
+        deadline=deadline,
     )
     pairs = [line.split("=", 1) for line in raw.decode("ascii").splitlines()]
     need(len(pairs) == 3 and all(len(pair) == 2 for pair in pairs), "manager")
@@ -374,14 +328,157 @@ def manager(uid):
         and fields["ActiveState"] == "active",
         "manager",
     )
-    owner = bus("GetNameOwner", "org.freedesktop.systemd1", "s", env)
-    need(type(owner) is str and re.fullmatch(r":[0-9]+\.[0-9]+", owner), "identity")
-    pid = bus("GetConnectionUnixProcessID", owner, "u", env)
-    need(type(pid) is int and 0 < pid < 2**31 and fields["MainPID"] == str(pid), "identity")
-    need(os.stat(f"/proc/{pid}").st_uid == uid, "identity")
-    started = starttime(pid)
-    fd = os.pidfd_open(pid)
-    return {"pid": pid, "starttime": started, "owner": owner, "env": env, "fd": fd}
+    value = fields["MainPID"]
+    need(re.fullmatch(r"[1-9][0-9]{0,9}", value) is not None, "identity")
+    pid = int(value)
+    need(0 < pid < 2**31, "identity")
+    return pid
+
+
+def close_owned(resource, name, error=None):
+    try:
+        if isinstance(resource, int):
+            os.close(resource)
+        else:
+            resource.close()
+    except OSError:
+        error = error or Stop("io")
+        error.cleanup_errors = [*getattr(error, "cleanup_errors", []), name]
+    return error
+
+
+def identity_step(operation, action, *args):
+    need(
+        operation
+        in {
+            "private_path",
+            "private_connect",
+            "private_credentials",
+            "identity_recheck",
+            "manager_process",
+        },
+        "format",
+    )
+    try:
+        return action(*args)
+    except (OSError, Stop) as exc:
+        if not hasattr(exc, "identity_failure"):
+            exc.identity_failure = {
+                "operation": operation,
+                "errno": getattr(exc, "errno", None),
+                "timeout": isinstance(exc, TimeoutError) or getattr(exc, "reason", None) == "timeout",
+            }
+        raise
+
+
+def endpoint_snapshot(uid):
+    path = Path(f"/run/user/{uid}/systemd/private")
+    result = []
+    try:
+        for directory in reversed(path.parents):
+            info = directory.lstat()
+            owner = uid if directory in (path.parent, path.parent.parent) else 0
+            need(
+                stat.S_ISDIR(info.st_mode) and info.st_uid == owner and not info.st_mode & 0o022,
+                "private_endpoint",
+            )
+            if directory == path.parent.parent:
+                need(not info.st_mode & 0o077, "private_endpoint")
+            result.append(fingerprint(info))
+        info = path.lstat()
+        need(stat.S_ISSOCK(info.st_mode) and info.st_uid == uid, "private_endpoint")
+        result.append(fingerprint(info))
+    except OSError as exc:
+        error = Stop("private_endpoint")
+        error.errno = exc.errno
+        raise error from exc
+    return tuple(result)
+
+
+def peer_credentials(channel):
+    raw = channel.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    need(len(raw) == struct.calcsize("3i"), "private_credentials")
+    pid, uid, gid = struct.unpack("3i", raw)
+    need(0 < pid < 2**31 and 0 <= uid < 2**31 and 0 <= gid < 2**31, "private_credentials")
+    return {"pid": pid, "uid": uid, "gid": gid}
+
+
+def private_peer(identity, uid, deadline=None):
+    end = min(time.monotonic() + 2, deadline) if deadline is not None else time.monotonic() + 2
+    identity_step("identity_recheck", live, identity, uid)
+    before = identity_step("private_path", endpoint_snapshot, uid)
+    channel, error, peer = None, None, None
+    stage = "private_connect"
+    try:
+        need(time.monotonic() < end, "timeout")
+        channel = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        remaining = end - time.monotonic()
+        need(remaining > 0, "timeout")
+        channel.settimeout(remaining)
+        identity_step("private_connect", channel.connect, f"/run/user/{uid}/systemd/private")
+        stage = "private_credentials"
+        peer = identity_step("private_credentials", peer_credentials, channel)
+        need(peer["pid"] == identity["pid"] and peer["uid"] == uid, "private_credentials")
+        identity_step(
+            "private_path",
+            need,
+            identity_step("private_path", endpoint_snapshot, uid) == before,
+            "changed",
+        )
+        identity_step("identity_recheck", live, identity, uid)
+        need(time.monotonic() < end, "timeout")
+    except OSError as exc:
+        error = Stop(stage)
+        error.errno = exc.errno
+        error.__cause__ = exc
+        error.identity_failure = getattr(
+            exc,
+            "identity_failure",
+            {"operation": stage, "errno": exc.errno, "timeout": isinstance(exc, TimeoutError)},
+        )
+    except BaseException as exc:  # noqa: BLE001 -- cleanup, then re-raise original interruption.
+        error = exc
+    finally:
+        if channel is not None:
+            error = close_owned(channel, "private_socket", error)
+    if error is not None:
+        if not hasattr(error, "identity_failure"):
+            error.identity_failure = {
+                "operation": stage,
+                "errno": getattr(error, "errno", None),
+                "timeout": getattr(error, "reason", None) == "timeout",
+            }
+        raise error
+    return {"credentials": peer, "endpoint": before}
+
+
+def manager(uid):
+    pid = system_manager_pid(uid)
+    identity_step(
+        "manager_process",
+        need,
+        identity_step("manager_process", os.stat, f"/proc/{pid}").st_uid == uid,
+        "identity",
+    )
+    started = identity_step("manager_process", starttime, pid)
+    identity = {
+        "pid": pid,
+        "starttime": started,
+        "fd": identity_step("manager_process", os.pidfd_open, pid),
+    }
+    try:
+        identity_step("identity_recheck", live, identity, uid)
+        identity["private_peer"] = private_peer(identity, uid)
+        return identity
+    except BaseException as exc:  # Cleanup only; do not swallow process interruption.
+        close_owned(identity["fd"], "manager_pidfd", exc)
+        raise
+
+
+def recheck_manager(identity, uid, deadline):
+    need(system_manager_pid(uid, deadline) == identity["pid"], "changed")
+    need(private_peer(identity, uid, deadline) == identity["private_peer"], "changed")
+    live(identity, uid)
 
 
 def live(identity, uid):
@@ -484,8 +581,10 @@ def privileged(kind, identity, uid, deadline, receipt):
 def observe():
     started = time.monotonic()
     result = {
-        "schema": "forge-fixed-metadata-v2",
+        "schema": "forge-fixed-metadata-v3",
+        "cleanup_errors": [],
         "ordinary_failure": None,
+        "identity_failure": None,
         "duration_ms": 0,
         "status": "STOP",
         "phase": "preflight",
@@ -527,7 +626,7 @@ def observe():
             "pid": identity["pid"],
             "starttime": identity["starttime"],
             "uid": uid,
-            "bus_owner": identity["owner"],
+            "private_peer": identity["private_peer"]["credentials"],
         }
         result["caller"] = self_numbers()
         need(
@@ -540,16 +639,7 @@ def observe():
         profiles = {name: privileged(name, identity, uid, deadline, result) for name in NAMES}
         last = privileged("stat", identity, uid, deadline, result)
         result["phase"] = "recheck"
-        need(
-            bus("GetNameOwner", "org.freedesktop.systemd1", "s", identity["env"], deadline)
-            == identity["owner"],
-            "changed",
-        )
-        need(
-            bus("GetConnectionUnixProcessID", identity["owner"], "u", identity["env"], deadline)
-            == identity["pid"],
-            "changed",
-        )
+        identity_step("identity_recheck", recheck_manager, identity, uid, deadline)
         live(identity, uid)
         need(first == last and self_numbers() == result["caller"], "changed")
         need(
@@ -570,8 +660,10 @@ def observe():
         result["reason"] = (
             exc.reason if isinstance(exc, Stop) else "io" if isinstance(exc, OSError) else "format"
         )
-        result["errno"] = exc.errno if isinstance(exc, OSError) else None
+        result["errno"] = getattr(exc, "errno", None)
+        result["cleanup_errors"] = getattr(exc, "cleanup_errors", [])
         result["ordinary_failure"] = getattr(exc, "command_failure", None)
+        result["identity_failure"] = getattr(exc, "identity_failure", None)
     except Exception:  # noqa: BLE001 -- retain finite STOP evidence without private exception text.
         result["reason"] = "unexpected"
     finally:
@@ -579,7 +671,9 @@ def observe():
             try:
                 os.close(identity["fd"])
             except OSError:
-                result["status"], result["reason"] = "STOP", "io"
+                result["cleanup_errors"].append("manager_pidfd")
+                result["status"] = "STOP"
+                result["reason"] = result["reason"] or "io"
         if result["commands"]:
             result["direct_command_cleanup"] = (
                 "DIRECT_SUDO_REAPED"
