@@ -496,6 +496,7 @@ def format_classification_line(block: Any) -> str:
         )
     c = d = f = s = 0
     o = 0
+    receipt_diagnostics = 0
     for rec in getattr(block, "product", None) or ():
         fields = getattr(getattr(rec, "record", None), "fields", None) or {}
         disp = fields.get("disposition") if isinstance(fields, dict) else None
@@ -509,12 +510,30 @@ def format_classification_line(block: Any) -> str:
             s += 1
         if getattr(rec, "associated_diagnostics", None):
             o += 1
+        # Explain existing host labels without changing product placement or
+        # disposition counts. A reviewer can echo receipt geometry, so a label
+        # alone is insufficient: require host origin and no product observation.
+        if (
+            isinstance(fields, dict)
+            and fields.get("source") == "INFRA"
+            and disp == "CONFIRMED"
+            and not getattr(rec, "associated_diagnostics", None)
+            and getattr(rec, "host_failure_kind", None)
+            in ("RECEIPT_SCHEMA", "RECEIPT_COVERAGE", "RECEIPT_EVIDENCE", "RECEIPT_INVALID_GATE")
+        ):
+            receipt_diagnostics += 1
     unresolved = getattr(block, "unresolved_product_candidates", None) or ()
     v = sum(1 for rec in unresolved if getattr(rec, "associated_diagnostics", None))
     u_s = "unknown" if u is None else str(u)
-    return (
+    line = (
         "code-forge: classification product=%s "
         "[not adjudicated: confirmed=%d dismissed=%d fixed=%d style=%d; "
         "with-observations=%d] unresolved=%s [uncertain; with-observations=%d] "
         "quarantine=%d [unverified]" % (p, c, d, f, s, o, u_s, v, q)
     )
+    if receipt_diagnostics:
+        line += (
+            " host-receipt-diagnostics=%d [included in product/confirmed counts; "
+            "not source-code findings; still block review]" % receipt_diagnostics
+        )
+    return line
