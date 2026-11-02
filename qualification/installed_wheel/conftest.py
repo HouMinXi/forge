@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Standalone wheel controls; never load the source suite's conftest."""
+
 import base64
 import hashlib
 from importlib import metadata
@@ -53,20 +54,30 @@ def audit_event(event, args, *, console):
     for name in child_env:
         assert not name.startswith(("FORGE_", "CODE_FORGE_", "LD_", "DYLD_")), name
         if name.startswith("GIT_"):
-            assert name in {"GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
-                            "GIT_TERMINAL_PROMPT", "GIT_CEILING_DIRECTORIES"}, name
+            assert name in {
+                "GIT_CONFIG_NOSYSTEM",
+                "GIT_CONFIG_GLOBAL",
+                "GIT_CONFIG_SYSTEM",
+                "GIT_TERMINAL_PROMPT",
+                "GIT_CEILING_DIRECTORIES",
+            }, name
     assert child_env.get("PATH") == os.environ["WHEEL_SAFE_PATH"]
     for name in ("PYTHONPATH", "PYTHONHOME"):
         assert name not in child_env, name
     for name, expected in {
-        "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_CONFIG_SYSTEM": os.devnull, "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_TERMINAL_PROMPT": "0",
     }.items():
         assert child_env.get(name) == expected, name
     git = Path(os.environ["WHEEL_GIT"]).resolve()
     if argv[0] == "git" or Path(argv[0]).resolve() == git:
         assert tuple(argv[1:]) in GIT_ARGV, argv
-        assert hashlib.sha256((actual_cwd / ".git/config").read_bytes()).hexdigest() == os.environ["WHEEL_GIT_CONFIG_SHA256"]
+        assert (
+            hashlib.sha256((actual_cwd / ".git/config").read_bytes()).hexdigest()
+            == os.environ["WHEEL_GIT_CONFIG_SHA256"]
+        )
         assert not (actual_cwd / ".git/hooks").exists()
         assert executable == argv[0]
         assert Path(shutil.which(argv[0], path=child_env["PATH"])).resolve() == git
@@ -76,11 +87,18 @@ def audit_event(event, args, *, console):
     else:
         assert console, argv
         assert Path(executable).resolve() == Path(sys.executable).resolve()
-        prefix = [sys.executable, "-I", "-c", CONSOLE_BOOTSTRAP,
-                  str(Path(__file__).resolve()), str(Path(sys.prefix) / "bin/code-forge")]
-        assert list(argv[:len(prefix)]) == prefix, argv
-        assert list(argv[len(prefix):]) in [
-            ["--help"], ["ledger", "list", "--json"],
+        prefix = [
+            sys.executable,
+            "-I",
+            "-c",
+            CONSOLE_BOOTSTRAP,
+            str(Path(__file__).resolve()),
+            str(Path(sys.prefix) / "bin/code-forge"),
+        ]
+        assert list(argv[: len(prefix)]) == prefix, argv
+        assert list(argv[len(prefix) :]) in [
+            ["--help"],
+            ["ledger", "list", "--json"],
         ], argv
     CALLS.append({"argv": list(argv), "cwd": str(cwd)})
 
@@ -92,12 +110,14 @@ def install_guard(*, console=True):
         except AssertionError as exc:
             VIOLATIONS.append(str(exc))
             raise
+
     sys.addaudithook(guard)
 
 
 def verify_install():
     import code_forge
     import code_forge_launcher
+
     distribution = metadata.distribution("code-review-forge")
     prefix = Path(sys.prefix).resolve()
     package = Path(code_forge.__file__).resolve().parent
@@ -119,12 +139,20 @@ def verify_install():
         entry = records[relative]
         assert Path(distribution.locate_file(entry)).resolve() == origin, (name, origin)
         assert entry.hash.mode == "sha256"
-        actual = base64.urlsafe_b64encode(hashlib.sha256(origin.read_bytes()).digest()).rstrip(b"=").decode()
+        actual = (
+            base64.urlsafe_b64encode(hashlib.sha256(origin.read_bytes()).digest()).rstrip(b"=").decode()
+        )
         assert entry.hash.value == actual, (name, origin)
         with zipfile.ZipFile(expected_wheel) as artifact:
-            assert hashlib.sha256(artifact.read(relative)).digest() == hashlib.sha256(origin.read_bytes()).digest()
-        modules[name] = {"path": str(origin), "sha256": hashlib.sha256(origin.read_bytes()).hexdigest(),
-                         "record_sha256_urlsafe": entry.hash.value}
+            assert (
+                hashlib.sha256(artifact.read(relative)).digest()
+                == hashlib.sha256(origin.read_bytes()).digest()
+            )
+        modules[name] = {
+            "path": str(origin),
+            "sha256": hashlib.sha256(origin.read_bytes()).hexdigest(),
+            "record_sha256_urlsafe": entry.hash.value,
+        }
     for entry in sys.path:
         if entry:
             for forbidden in json.loads(os.environ["WHEEL_FORBIDDEN_PATHS"]):
@@ -140,13 +168,19 @@ def wheel_session():
     verify_install()
     yield
     assert not VIOLATIONS, VIOLATIONS
-    output = {"modules": verify_install(), "allowed_processes": CALLS, "violations": VIOLATIONS, "console": CONSOLE_PROOFS}
+    output = {
+        "modules": verify_install(),
+        "allowed_processes": CALLS,
+        "violations": VIOLATIONS,
+        "console": CONSOLE_PROOFS,
+    }
     Path(os.environ["WHEEL_RUNTIME_PROOF"]).write_text(json.dumps(output, indent=2) + "\n")
 
 
 @pytest.fixture
 def project(tmp_path):
     import shutil
+
     root = tmp_path / "project"
     shutil.copytree(Path(os.environ["WHEEL_SANDBOX"]) / "seed", root)
     (root / ".code-forge").mkdir()
