@@ -1,0 +1,48 @@
+name: Strict Linux static observations (not qualification)
+'on':
+  workflow_dispatch: null
+permissions:
+  contents: read
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+    - name: Check out the exact dispatched source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Observe existing host state without changing security
+      env:
+        CONTEXT_REPOSITORY: ${{ github.repository }}
+        CONTEXT_RUN_ID: ${{ github.run_id }}
+        CONTEXT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        CONTEXT_JOB_NAME: ${{ github.job }}
+        CONTEXT_WORKFLOW_REF: ${{ github.workflow_ref }}
+        CONTEXT_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        CONTEXT_SOURCE_SHA: ${{ github.sha }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        evidence=$(mktemp -d "$RUNNER_TEMP/forge-admission.XXXXXXXX")
+        printf 'ADMISSION_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+        # Stdlib only. No package install, security change, service start,
+        # namespace/payload launch or import of capability-probing test modules.
+        /usr/bin/python3 -I -B scripts/strict_linux_admission.py \
+          --repository "$CONTEXT_REPOSITORY" \
+          --run-id "$CONTEXT_RUN_ID" \
+          --run-attempt "$CONTEXT_RUN_ATTEMPT" \
+          --job-name "$CONTEXT_JOB_NAME" \
+          --workflow-ref "$CONTEXT_WORKFLOW_REF" \
+          --workflow-sha "$CONTEXT_WORKFLOW_SHA" \
+          --expected-source-sha "$CONTEXT_SOURCE_SHA" \
+          --output "$evidence/observation.json"
+    - name: Preserve observations including STOP
+      if: ${{ always() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: strict-linux-static-observation-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ env.ADMISSION_EVIDENCE }}/observation.json
+        if-no-files-found: error
+        retention-days: 14
