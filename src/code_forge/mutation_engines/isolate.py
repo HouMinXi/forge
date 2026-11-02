@@ -26,6 +26,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 
 from code_forge.mutation_engines.schemas import valid_identifier
@@ -206,6 +207,22 @@ def attach_note(exc: BaseException, note: str) -> None:
         pass
 
 
+def _diagnostic_clock_ns() -> int | None:
+    """Best-effort evidence only: a failed clock must not replace a run error."""
+    try:
+        value = time.monotonic_ns()
+        if type(value) is int and 0 <= value <= 2**63 - 1:
+            return value
+    except BaseException:  # noqa: BLE001, S110 - diagnostics cannot mask a failure
+        pass
+    return None
+
+
+def _diagnostic_elapsed_ns(start: int | None) -> int | None:
+    end = _diagnostic_clock_ns()
+    return end - start if start is not None and end is not None and end >= start else None
+
+
 def _startup_diagnostic(stage: str, exc: BaseException) -> bytes:
     """Encode why the forked child stopped before exec, bounded and printable ASCII."""
     text = "error stage=%s %s" % (stage, _error_detail(exc))
@@ -297,6 +314,14 @@ class Supervisor:
         self._torn_down = False
         # Set when the run cgroup outlived its removal deadline.
         self.cleanup_error: str | None = None
+        # Last attempt's evidence, not admission predicates. None means no
+        # measurement (not a zero-duration operation).
+        self.startup_elapsed_ns: int | None = None
+        self.cgroup_removal_ns: int | None = None
+        self.placement_verified = False
+        self.startup_gate_opened = False
+        self._startup_started_ns: int | None = None
+        self._startup_measured = False
 
     def _bind_thread(self, thread: "SupervisorThread") -> None:
         self._owner_thread = thread
@@ -335,7 +360,14 @@ class Supervisor:
         argv += list(spec.command)
         return argv
 
+    def _finish_startup_measurement(self) -> None:
+        if not self._startup_measured:
+            self._startup_measured = True
+            self.startup_elapsed_ns = _diagnostic_elapsed_ns(self._startup_started_ns)
+
     def start(self) -> None:
+        # A rejected call from another thread must not overwrite evidence for
+        # the owned attempt that may already be running.
         thread = threading.current_thread()
         if self._owner_thread is None or thread is not self._owner_thread:
             raise IsolationError(
@@ -343,6 +375,38 @@ class Supervisor:
                 "supervisor thread (parent-death signal binds to the forking "
                 "thread)"
             )
+        self._startup_started_ns = _diagnostic_clock_ns()
+        self._startup_measured = False
+        self.startup_elapsed_ns = None
+        self.cgroup_removal_ns = None
+        self.placement_verified = False
+        self.startup_gate_opened = False
+        try:
+            self._start()
+        except BaseException as exc:  # noqa: BLE001 - annotate, never replace
+            # Even formatting/measurement failure must leave the original
+            # exception and its cleanup behavior intact.
+            with suppress(BaseException):
+                self._finish_startup_measurement()
+                attach_note(
+                    exc,
+                    _bounded(
+                        "sandbox startup evidence: startup_ns=%s cgroup_removal_ns=%s "
+                        "placement_verified=%s gate_opened=%s"
+                        % (
+                            self.startup_elapsed_ns,
+                            self.cgroup_removal_ns,
+                            self.placement_verified,
+                            self.startup_gate_opened,
+                        )
+                    ),
+                )
+            raise
+        else:
+            with suppress(BaseException):
+                self._finish_startup_measurement()
+
+    def _start(self) -> None:
         verify_isolation_support(self.cgroup_root)
         if self._process is not None:
             raise IsolationError("supervisor already started")
@@ -434,6 +498,7 @@ class Supervisor:
                 procs = _read(os.path.join(self.cgroup_path, "cgroup.procs"))
                 if str(pid) in procs.split():
                     placed = True
+                    self.placement_verified = True
                     break
                 if self._process.poll() is not None:
                     break
@@ -446,7 +511,8 @@ class Supervisor:
                 )
 
             self.gate_opened_monotonic_ns = time.monotonic_ns()
-            os.write(gate_w, b"1")
+            gate_written = os.write(gate_w, b"1")
+            self.startup_gate_opened = gate_written == 1
             close_parent_fd(gate_w)
             status = b""
             while len(status) < _STARTUP_DIAGNOSTIC_LIMIT:
@@ -460,6 +526,10 @@ class Supervisor:
                     "payload failed to exec bubblewrap (%s)" % _decode_startup_diagnostic(status)
                 )
         except BaseException as exc:  # noqa: BLE001 - cleanup must run on any failure
+            # Stop the startup clock BEFORE killing/closing/removing. The
+            # removal has its own clock; neither measurement changes a deadline.
+            with suppress(BaseException):
+                self._finish_startup_measurement()
             try:
                 if self._process is not None and self._process.poll() is None:
                     self._process.kill()
@@ -505,6 +575,20 @@ class Supervisor:
         return self._process.wait(timeout=timeout)
 
     def _remove_cgroup(self, force: bool = False, timeout: float = 10) -> None:
+        started = _diagnostic_clock_ns()
+        self.cgroup_removal_ns = None
+        try:
+            self._remove_cgroup_owned(force=force, timeout=timeout)
+        except BaseException as exc:  # noqa: BLE001 - annotate, never replace
+            with suppress(BaseException):
+                self.cgroup_removal_ns = _diagnostic_elapsed_ns(started)
+                attach_note(exc, "cgroup removal evidence: elapsed_ns=%s" % self.cgroup_removal_ns)
+            raise
+        else:
+            with suppress(BaseException):
+                self.cgroup_removal_ns = _diagnostic_elapsed_ns(started)
+
+    def _remove_cgroup_owned(self, force: bool = False, timeout: float = 10) -> None:
         kill_file = os.path.join(self.cgroup_path, "cgroup.kill")
         if os.path.exists(kill_file):
             try:
