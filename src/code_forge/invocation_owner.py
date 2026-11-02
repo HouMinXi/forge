@@ -532,7 +532,12 @@ class InvocationOwner:
             if error is primary:
                 raise
             # An interrupted mutex wait must not enter a second recovery wait.
-            self._fault("persistence_error", "finish", record.value.attempt_id if record else None)
+            try:
+                self._fault("persistence_error", "finish", record.value.attempt_id if record else None)
+            except BaseException:  # noqa: BLE001, S110 -- Diagnostic failure cannot replace the entering error.
+                pass
+            # Outside the diagnostic handler, bare raise retains the original
+            # exception and traceback rather than the failed diagnostic.
             if primary is None:
                 raise
             self._raise(record, primary)
