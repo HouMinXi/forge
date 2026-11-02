@@ -22,7 +22,9 @@ User services otherwise inherit their manager environment: the probe takes a
 bounded snapshot, validates every name, and passes **all snapshot names** in
 UnsetEnvironment (including LD_PRELOAD/LD_LIBRARY_PATH when present). It compares
 an internal snapshot digest after launch and acknowledgment; values and digests
-never enter receipts. This detects ordinary concurrent changes, not malicious
+never enter receipts, logs, artifacts, files or exception text. Values are read
+only transiently inside the bounded process for name extraction/digest, not
+exposed to the model or persisted. This detects ordinary concurrent changes, not malicious
 same-UID/privileged ABA changes. It is not a race-free clean-environment proof.
 Systemd may still supply its own runtime variables such as INVOCATION_ID,
 SYSTEMD_EXEC_PID, JOURNAL_STREAM, USER, LOGNAME, HOME, SHELL, PATH and version-
@@ -167,3 +169,46 @@ is relevant to the target Ubuntu manager. Host version compatibility still needs
 a native check rather than extrapolation from a fixture.
 
 Serializer references: [v255 execution serialization](https://github.com/systemd/systemd/blob/v255/src/core/dbus-execute.c), [quoted argv construction](https://github.com/systemd/systemd/blob/v255/src/core/unit.c), and [time serialization](https://github.com/systemd/systemd/blob/v255/src/core/dbus-util.c). Source-derived tests are not execution provenance or provider-bound evidence.
+
+## Dedicated workflow entry point
+
+`strict-linux-user-service.yml` runs only for same-repository PR changes to the
+workflow, collector/wrapper or their focused tests, plus explicit manual dispatch.
+It uses Ubuntu 24.04, a read-only contents token, no workflow-injected secrets, pinned checkout with
+credentials not persisted, and a three-minute job watchdog. Concurrency does not
+automatically cancel an older run in cleanup. Publishing a triggering PR is an
+external execution action and requires the applicable authorization.
+
+The stdlib wrapper first binds the declared head and the exact collector,
+wrapper and workflow bytes to three regular Git tree blobs. It uses only fixed
+Git `rev-parse`/`ls-tree`, not status/diff, external filters or textconv. System /
+global Git configuration is disabled for its child commands, fsmonitor is
+disabled, and the collector is not loaded before this check. The wrapper compiles exactly
+hash-verified captured source bytes into a non-main module; it never loads an
+unverified `.pyc` cache (Python `-B` alone would not prevent cache reads). Unrelated working
+tree files are not claimed clean. Both Git object IDs and SHA256 content hashes
+are checked; SHA1 is used only to reproduce this repository's Git blob IDs.
+
+Collector stdout is capped at 16 KiB; stderr is discarded with a saturated byte
+count. Overflow does not immediately kill the collector while it may be cleaning
+up. A 90-second last-resort wrapper deadline then signals only its direct child
+through a pidfd, with two-second TERM/KILL reap windows. Timeout, missing/invalid
+receipt, wrong UID/context, source changes or reap uncertainty remain STOP with
+cleanup UNKNOWN unless a valid matching terminal receipt establishes its claimed
+cleanup observation. The service's timer alone never proves cleanup. Normal
+collector STOP exits remain nonzero; the wrapper does not turn them green.
+
+An always-run artifact step, gated on the private evidence path having been
+created, uploads only the three fixed structured JSON files:
+declared context, validated observation when available, and wrapper status. No
+raw environment/configuration/stderr, nonce or journal is uploaded. Runner loss
+or hard cancellation may prevent upload entirely; absence is not success.
+
+The envelope includes SHA256 for all three execution files, but explicitly says
+these are the checked-out sources—not authentication of the executed workflow.
+GitHub repository/run/attempt/job/artifact identity and digest, exact source blobs,
+and the actual workflow-definition version must still be reconciled externally.
+PR head and merge-ref identities are distinct. Neither model-authored summaries
+nor self-declared receipts override the execution-provenance restriction added
+by #374. Native service route, serializer compatibility, timing and cleanup must
+be observed on an authorized run; offline wrapper fixtures do not establish them.

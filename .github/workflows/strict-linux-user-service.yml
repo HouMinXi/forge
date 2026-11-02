@@ -1,0 +1,64 @@
+name: Strict Linux user-service observations (not qualification)
+'on':
+  pull_request:
+    branches:
+    - main
+    paths:
+    - .github/workflows/strict-linux-user-service.yml
+    - scripts/strict_user_service_probe.py
+    - scripts/run_user_service_observation.py
+    - tests/test_strict_user_service_probe.py
+    - tests/test_run_user_service_observation.py
+  workflow_dispatch: null
+permissions:
+  contents: read
+concurrency:
+  group: strict-linux-user-service-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  observe:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+    - name: Prepare private structured evidence directory
+      shell: bash
+      run: |
+        set -euo pipefail
+        evidence=$(mktemp -d "$RUNNER_TEMP/forge-user-service.XXXXXXXX")
+        printf 'SERVICE_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+    - name: Check out the exact PR head or dispatched source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+        persist-credentials: false
+    - name: Observe one existing-manager user service and verify owned cleanup
+      env:
+        CONTEXT_REPOSITORY: ${{ github.repository }}
+        CONTEXT_RUN_ID: ${{ github.run_id }}
+        CONTEXT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        CONTEXT_JOB_NAME: ${{ github.job }}
+        CONTEXT_WORKFLOW_REF: ${{ github.workflow_ref }}
+        CONTEXT_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        CONTEXT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        CONTEXT_EVENT_NAME: ${{ github.event_name }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Ordinary UID; stdlib only. No sudo, package/policy/controller changes,
+        # bwrap, namespace/product payload or capability-test imports.
+        # The wrapper preserves STOP and bounds output; declarations are not
+        # authenticated execution provenance. Provider binding is external.
+        /usr/bin/python3 -I -S -B scripts/run_user_service_observation.py \
+          --output-dir "$SERVICE_EVIDENCE"
+    - name: Preserve structured observations including STOP
+      if: ${{ always() && env.SERVICE_EVIDENCE != '' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: strict-linux-user-service-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          ${{ env.SERVICE_EVIDENCE }}/declared-context.json
+          ${{ env.SERVICE_EVIDENCE }}/observation.json
+          ${{ env.SERVICE_EVIDENCE }}/collector-status.json
+        if-no-files-found: error
+        retention-days: 14
