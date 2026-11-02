@@ -754,7 +754,10 @@ def build_l1_provider(
             original_exact_dict = type(response) is dict
             raw_snapshot = _snapshot_raw_response(response)
             try:
-                validated = validate_reviewer_json(response)
+                validated = validate_reviewer_json(
+                    response,
+                    frozen_diff=diff_text if reviewed_repositories is None else None,
+                )
                 require_l1_excerpt_evidence(
                     validated, diff_text, reviewed_repositories=reviewed_repositories
                 )
