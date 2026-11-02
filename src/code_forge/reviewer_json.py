@@ -84,6 +84,15 @@ REVIEW_JSON_CONTRACT = (
 )
 
 
+# Ordinary L1 guidance only: Outlet C retains its byte-stable prompt contract.
+L1_JSON_ENCODING_GUIDANCE = (
+    "JSON-encode all source strings (including finding excerpts): after JSON decoding, "
+    "they must match the source literally. Escape each source backslash as two JSON "
+    "backslashes; two consecutive source backslashes require four in JSON. "
+    "Do not interpret source-language string escapes or decode the source again.\n"
+)
+
+
 class ExcerptEvidenceError(ValueError):
     """Raised when a well-formed response carries excerpt evidence that
     fails to check out.

@@ -1047,6 +1047,18 @@ def _only_leading_ws_differs(quoted: str, actual: str) -> bool:
     )
 
 
+def _has_halved_backslash_runs(quoted: str, actual: str) -> bool:
+    """Diagnose a narrow encoding-loss pattern; never repair or accept it."""
+    source_parts = re.split(r"(\\+)", actual.rstrip())
+    quoted_parts = re.split(r"(\\+)", quoted.rstrip())
+    if len(source_parts) < 3 or len(source_parts) != len(quoted_parts):
+        return False
+    return all(
+        source == quote if i % 2 == 0 else len(source) == 2 * len(quote)
+        for i, (source, quote) in enumerate(zip(source_parts, quoted_parts, strict=True))
+    )
+
+
 def _blank_boundary_slip(
     exc_start: int,
     exc_end: int,
@@ -1410,7 +1422,14 @@ def assess_excerpt_evidence(
                         location,
                         repaired_tail=True,
                     )
-                return ExcerptAssessment(invalid, f"excerpt content mismatch at {location} (line {bad})")
+                diagnostic = f"excerpt content mismatch at {location} (line {bad})"
+                if _has_halved_backslash_runs(quoted[bad], file_lines[bad]):
+                    diagnostic += (
+                        "; possible JSON backslash-escaping damage in reviewer evidence "
+                        "(not a source-code finding): decoded backslash runs are half the "
+                        "frozen source; evidence remains rejected"
+                    )
+                return ExcerptAssessment(invalid, diagnostic)
             return _anchored_assessment(
                 untrusted,
                 f"excerpt indent-stripped at {location}",

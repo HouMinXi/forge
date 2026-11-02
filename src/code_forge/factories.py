@@ -499,6 +499,7 @@ def build_l1_provider(
 
     from .llm_invoke import InvalidJSONResponseError, LLMInvokeError, llm_invoke
     from .reviewer_json import (
+        L1_JSON_ENCODING_GUIDANCE,
         REVIEW_JSON_CONTRACT,
         REVIEW_REPLY_KEYS,
         ExcerptEvidenceError,
@@ -542,6 +543,7 @@ def build_l1_provider(
             from .lenses import LENS_BLOCK
 
             shared += LENS_BLOCK
+        shared += L1_JSON_ENCODING_GUIDANCE
         if manifest_spec:
             shared += "\n" + manifest_spec.strip() + "\n"
         if post_image:
