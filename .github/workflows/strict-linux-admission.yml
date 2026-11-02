@@ -1,17 +1,26 @@
 name: Strict Linux static observations (not qualification)
 'on':
+  pull_request:
+    branches:
+    - main
+    paths:
+    - .github/workflows/strict-linux-admission.yml
+    - scripts/strict_linux_admission.py
+    - tests/test_strict_linux_admission.py
   workflow_dispatch: null
 permissions:
   contents: read
 jobs:
   observe:
+    # This schema declares one repository; fork-head execution is not supported.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
-    - name: Check out the exact dispatched source
+    - name: Check out the exact PR head or dispatched source
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: ${{ github.sha }}
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
         persist-credentials: false
     - name: Observe existing host state without changing security
       env:
@@ -21,7 +30,7 @@ jobs:
         CONTEXT_JOB_NAME: ${{ github.job }}
         CONTEXT_WORKFLOW_REF: ${{ github.workflow_ref }}
         CONTEXT_WORKFLOW_SHA: ${{ github.workflow_sha }}
-        CONTEXT_SOURCE_SHA: ${{ github.sha }}
+        CONTEXT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       shell: bash
       run: |
         set -euo pipefail

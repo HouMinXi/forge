@@ -1,7 +1,11 @@
 # Strict Linux observations: preliminary admission evidence
 
-`strict-linux-admission.yml` is a separate, manually dispatched **static
-observation** job for issue #31. It does not change the existing Linux test lane,
+`strict-linux-admission.yml` is a separate **static observation** job for issue
+#31. It runs for same-repository pull requests targeting `main` only when the A
+workflow, collector script or its test file changes. Fork pull requests are
+skipped; documentation-only changes do not trigger it. Manual dispatch remains a
+fallback once the workflow is present on the default branch. This job does not
+change the existing Linux test lane,
 start a service, run a namespace probe, or execute the product/test suite. It does
 not install dependencies, change AppArmor, adjust cgroup ownership, or run product
 code as root.
@@ -26,9 +30,12 @@ direct child. That is not certification of arbitrary descendant quiescence.
   on common-ancestor access even when a future manager-child launch is possible.
 - `boundary` and `qualification` are always `NOT_RUN`.
 - Run/workflow/source values are explicitly `UNVERIFIED_DECLARED_CONTEXT`; the
-  logical job name is not an authenticated GitHub API job ID. Checkout is pinned
-  to the dispatched SHA, but this collector does not independently authenticate
-  the whole source tree or the provider's job metadata. The collector's own bytes
+  logical job name is not an authenticated GitHub API job ID. PR checkout and
+  declared source SHA both select the actual `pull_request.head.sha`, not the
+  synthetic merge SHA. Manual dispatch uses `github.sha` for both. The workflow
+  ref/SHA remains a distinct identity (which can describe a PR merge-ref workflow)
+  and is never relabeled as the checked-out head. This collector does not
+  independently authenticate the whole source tree or the provider's job metadata. The collector's own bytes
   have a SHA-256. A canonical JSON receipt is not a signed attestation.
 - Bwrap metadata is observed without executing its version or any payload;
   `version` remains null. Metadata alone is not executable/runtime qualification.

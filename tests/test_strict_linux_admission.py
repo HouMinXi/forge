@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scripts import strict_linux_admission as admission
 
@@ -354,16 +355,40 @@ def test_output_is_exclusive_and_stop_is_preserved(observed, monkeypatch, tmp_pa
     assert admission.parse(output.read_bytes())["status"] == "STOP"
 
 
-def test_workflow_is_manual_read_only_and_not_existing_relaxed_lane():
-    text = (Path(__file__).parents[1] / ".github/workflows/strict-linux-admission.yml").read_text()
-    assert "workflow_dispatch: null" in text
-    assert "pull_request:" not in text and "push:" not in text
-    assert "contents: read" in text and "persist-credentials: false" in text
-    assert "ref: ${{ github.sha }}" in text
-    assert "always()" in text
+def test_workflow_limits_pr_scope_and_binds_actual_head():
+    path = Path(__file__).parents[1] / ".github/workflows/strict-linux-admission.yml"
+    text = path.read_text()
+    workflow = yaml.safe_load(text)
+    assert workflow["on"] == {
+        "pull_request": {
+            "branches": ["main"],
+            "paths": [
+                ".github/workflows/strict-linux-admission.yml",
+                "scripts/strict_linux_admission.py",
+                "tests/test_strict_linux_admission.py",
+            ],
+        },
+        "workflow_dispatch": None,
+    }
+    assert workflow["permissions"] == {"contents": "read"}
+    assert set(workflow["jobs"]) == {"observe"}
+    job = workflow["jobs"]["observe"]
+    assert job["if"] == (
+        "${{ github.event_name == 'workflow_dispatch' || "
+        "github.event.pull_request.head.repo.full_name == github.repository }}"
+    )
+    steps = job["steps"]
+    assert len(steps) == 3
+    head_expression = "${{ github.event.pull_request.head.sha || github.sha }}"
+    assert steps[0]["with"]["ref"] == head_expression
+    assert steps[0]["with"]["persist-credentials"] is False
+    assert steps[1]["env"]["CONTEXT_SOURCE_SHA"] == head_expression
+    assert steps[1]["env"]["CONTEXT_WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
+    assert steps[1]["env"]["CONTEXT_WORKFLOW_REF"] == "${{ github.workflow_ref }}"
+    assert steps[2]["if"] == "${{ always() }}"
     assert "sudo " not in text and "sysctl " not in text
     assert "pip install" not in text and "systemd-run" not in text
-    assert "strict_linux_admission.py" in text
+    assert "strict_linux_admission.py" in steps[1]["run"]
 
 
 def test_ambiguous_mount_topology_is_unknown():
