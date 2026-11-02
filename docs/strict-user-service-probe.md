@@ -212,3 +212,22 @@ PR head and merge-ref identities are distinct. Neither model-authored summaries
 nor self-declared receipts override the execution-provenance restriction added
 by #374. Native service route, serializer compatibility, timing and cleanup must
 be observed on an authorized run; offline wrapper fixtures do not establish them.
+
+
+### Configuration I/O diagnostics
+
+Configuration I/O failures use a closed set of operation reasons (manager/caller
+mount and cgroup namespace reads, manager process/start-time/pidfd/root checks,
+caller root, verified bus tool/transport, directory walk and entry
+stat/open/metadata/list/file-read). They preserve the original errno and internal
+exception cause/cleanup detail while replacing the exception type with a finite
+probe error. No OS error text, path, configuration bytes or environment values
+are serialized. Existing semantic STOP predicates and missing-entry handling are
+unchanged. The first native run's generic configuration EACCES cannot be
+retroactively assigned a more specific cause; only a newly collected result can
+supply the operation label.
+
+Only directly propagated `OSError` instances receive the finer label. Errors
+already classified by the bounded command helper retain their original reason,
+errno, cause and cleanup detail, including an existing generic `io_error`.
+Operation-boundary fault injection tests are not native syscall observations.

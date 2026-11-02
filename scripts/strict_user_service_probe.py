@@ -66,6 +66,31 @@ REASONS = {
 }
 
 
+CONFIG_IO_REASONS = frozenset(
+    "config_" + name + "_io"
+    for name in (
+        "tool",
+        "bus",
+        "manager_proc",
+        "manager_starttime",
+        "manager_pidfd",
+        "manager_mnt",
+        "manager_cgroup",
+        "caller_mnt",
+        "caller_cgroup",
+        "manager_root",
+        "caller_root",
+        "dir_walk",
+        "entry_stat",
+        "entry_open",
+        "entry_metadata",
+        "entry_list",
+        "file_read",
+    )
+)
+REASONS.update(CONFIG_IO_REASONS)
+
+
 class ProbeError(ValueError):
     def __init__(self, reason: str, returncode: int | None = None):
         assert reason in REASONS
@@ -578,6 +603,26 @@ def bus_json(raw):
     return keys(value, {"type", "data"})
 
 
+def config_io(reason, action, *args, **kwargs):
+    """Finite diagnostics only: preserve errno/cause, never serialize OS text."""
+    require(reason in CONFIG_IO_REASONS, "config_invalid")
+    try:
+        return action(*args, **kwargs)
+    except OSError as exc:
+        failure = ProbeError(reason)
+        failure.original_errno = exc.errno
+        failure.child_cleanup = getattr(exc, "child_cleanup", None)
+        raise failure from exc
+
+
+def config_namespaces(pid="self"):
+    who = "caller" if pid == "self" else "manager"
+    return {
+        name: config_io(f"config_{who}_{name}_io", os.stat, f"/proc/{pid}/ns/{name}").st_ino
+        for name in ("mnt", "cgroup")
+    }
+
+
 def config_call(tool, env, destination, path, interface, method, signature, args, result_type, deadline):
     allowed = {
         ("org.freedesktop.DBus", "GetNameOwner"),
@@ -775,7 +820,7 @@ def config_scan(paths, unit, uid, deadline, generated=None, generated_content=No
     stems = ("service", "forge-.service", "forge-topology-.service", unit)
     result, accepted, total, generated_count = {}, [], 0, 0
     for base in paths:
-        fd, witness = config_open_dir(base, uid, deadline)
+        fd, witness = config_io("config_dir_walk_io", config_open_dir, base, uid, deadline)
         records = {}
         try:
             for name in (
@@ -795,34 +840,54 @@ def config_scan(paths, unit, uid, deadline, generated=None, generated_content=No
                 except FileNotFoundError:
                     records[name] = None
                     continue
+                except OSError as exc:
+                    failure = ProbeError("config_entry_stat_io")
+                    failure.original_errno = exc.errno
+                    failure.child_cleanup = getattr(exc, "child_cleanup", None)
+                    raise failure from exc
                 full = str(PurePosixPath(base) / name)
                 if name == unit:
                     require(generated == full, "unit_collision")
-                    data, metadata = config_read_file(fd, name, uid)
+                    data, metadata = config_io("config_file_read_io", config_read_file, fd, name, uid)
                     require(generated_content is not None, "config_invalid")
                     config_generated(data, *generated_content)
                     generated_count += 1
                     records[name] = None  # Sole expected generated-fragment delta.
                     continue
                 config_safe(info, uid)
-                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                child = config_io(
+                    "config_entry_open_io",
+                    os.open,
+                    name,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=fd,
+                )
                 try:
-                    require(config_meta(info) == config_meta(os.fstat(child)), "config_changed")
-                    names = config_entries(child, deadline)
+                    require(
+                        config_meta(info)
+                        == config_meta(config_io("config_entry_metadata_io", os.fstat, child)),
+                        "config_changed",
+                    )
+                    names = config_io("config_entry_list_io", config_entries, child, deadline)
                     require(name.endswith(".d") or not names, "config_dependency")
                     files = {}
                     for filename in names:
                         if not filename.endswith(".conf"):
                             continue
                         require(len(accepted) < 64, "config_limit")
-                        data, metadata = config_read_file(child, filename, uid)
+                        data, metadata = config_io(
+                            "config_file_read_io", config_read_file, child, filename, uid
+                        )
                         total += len(data)
                         require(total <= 262144, "config_limit")
                         config_comment_only(data)
                         file_path = str(PurePosixPath(full) / filename)
                         accepted.append(file_path)
                         files[filename] = [metadata, hashlib.sha256(data).hexdigest()]
-                    require(names == config_entries(child, deadline), "config_changed")
+                    require(
+                        names == config_io("config_entry_list_io", config_entries, child, deadline),
+                        "config_changed",
+                    )
                     records[name] = {"identity": config_meta(info), "entries": names, "files": files}
                 finally:
                     os.close(child)
@@ -878,13 +943,17 @@ class ConfigGate:
             "u",
         )
         require(type(self.pid) is int and self.pid == manager_pid > 0, "config_changed")
-        require(os.stat(f"/proc/{self.pid}").st_uid == uid, "config_unsafe")
-        self.started = starttime(self.pid)
-        self.pidfd = os.pidfd_open(self.pid)
+        require(
+            config_io("config_manager_proc_io", os.stat, f"/proc/{self.pid}").st_uid == uid,
+            "config_unsafe",
+        )
+        self.started = config_io("config_manager_starttime_io", starttime, self.pid)
+        self.pidfd = config_io("config_manager_pidfd_io", os.pidfd_open, self.pid)
         try:
-            self.namespace = namespaces(self.pid)
-            require(self.namespace == namespaces(), "config_unsafe")
-            root, own_root = os.stat(f"/proc/{self.pid}/root"), os.stat("/")
+            self.namespace = config_namespaces(self.pid)
+            require(self.namespace == config_namespaces(), "config_unsafe")
+            root = config_io("config_manager_root_io", os.stat, f"/proc/{self.pid}/root")
+            own_root = config_io("config_caller_root_io", os.stat, "/")
             self.root_identity = (root.st_dev, root.st_ino)
             require((root.st_dev, root.st_ino) == (own_root.st_dev, own_root.st_ino), "config_unsafe")
             self.version = self.prop(BUS_OBJECT, BUS_MANAGER, "Version", "s")
@@ -904,7 +973,9 @@ class ConfigGate:
             raise
 
     def call(self, destination, path, interface, method, signature, args, result_type):
-        return config_call(
+        return config_io(
+            "config_bus_io",
+            config_call,
             self.tool,
             self.env,
             destination,
@@ -957,9 +1028,9 @@ class ConfigGate:
 
     def unchanged_manager(self):
         live(self.pidfd, self.pid, self.started)
-        root = os.stat(f"/proc/{self.pid}/root")
+        root = config_io("config_manager_root_io", os.stat, f"/proc/{self.pid}/root")
         require(
-            namespaces(self.pid) == self.namespace == namespaces()
+            config_namespaces(self.pid) == self.namespace == config_namespaces()
             and (root.st_dev, root.st_ino) == self.root_identity,
             "config_changed",
         )
@@ -1181,7 +1252,9 @@ def probe(context):
         environment_names, environment_digest = manager_environment(tool, env, deadline)
         receipt["probe_stage"] = "configuration"
         try:
-            gate = ConfigGate(verified_tool(BUSCTL), env, unit, uid, manager["MainPID"])
+            gate = ConfigGate(
+                config_io("config_tool_io", verified_tool, BUSCTL), env, unit, uid, manager["MainPID"]
+            )
             gate.prelaunch()
             receipt["configuration_gate"] = gate.summary()
         except (OSError, ValueError) as exc:

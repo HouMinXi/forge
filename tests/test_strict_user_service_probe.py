@@ -1069,8 +1069,10 @@ def test_config_unreadable_path_is_not_absence(config_fixture, monkeypatch):
         return original(path, *args, **kwargs)
 
     monkeypatch.setattr(p.os, "open", denied)
-    with pytest.raises(PermissionError):
+    with pytest.raises(p.ProbeError, match="config_dir_walk_io") as raised:
         config_fixture["create"]()
+    assert p.error_record(raised.value)["errno"] == 13
+    assert isinstance(raised.value.__cause__, PermissionError)
 
 
 def test_config_symlink_ancestor_is_not_followed(config_fixture):
@@ -1080,8 +1082,10 @@ def test_config_symlink_ancestor_is_not_followed(config_fixture):
     linked = state["root"] / "linked"
     linked.symlink_to(other, target_is_directory=True)
     state["paths"] = [str(linked)]
-    with pytest.raises(OSError):
+    with pytest.raises(p.ProbeError, match="config_dir_walk_io") as raised:
         state["create"]()
+    assert p.error_record(raised.value)["errno"] == 20
+    assert isinstance(raised.value.__cause__, NotADirectoryError)
 
 
 def test_missing_generated_fragment_never_passes(config_fixture):
@@ -1168,3 +1172,161 @@ def test_generated_fragment_source_derived_reset_and_assign_positive():
         ["LD_PRELOAD", "PATH"],
         "forge-topology-" + "e" * 64,
     )
+
+
+@pytest.mark.parametrize("reason", sorted(p.CONFIG_IO_REASONS))
+def test_config_io_preserves_errno_cause_cleanup_without_error_text(reason):
+    original = PermissionError(13, "private-value /private/config/path")
+    original.child_cleanup = {"reason": "cleanup_unverified", "errno": 5}
+
+    def denied():
+        raise original
+
+    with pytest.raises(p.ProbeError) as raised:
+        p.config_io(reason, denied)
+    assert raised.value.__cause__ is original
+    record = p.error_record(raised.value)
+    assert record["reason"] == reason and record["errno"] == 13
+    assert record["child_cleanup"] == original.child_cleanup
+    p.validate_error(record)
+    assert b"private" not in p.encode(record)
+
+
+def test_config_io_unknown_reason_never_invokes_action():
+    def forbidden():
+        pytest.fail("unknown diagnostic label must not invoke action")
+
+    with pytest.raises(p.ProbeError, match="config_invalid"):
+        p.config_io("config_private_value_io", forbidden)
+    record = p.error_record(PermissionError(13, "private"))
+    record["reason"] = "config_private_value_io"
+    with pytest.raises(p.ProbeError):
+        p.validate_error(record)
+
+
+def test_config_io_does_not_replace_existing_probe_failure():
+    original = p.ProbeError("config_changed")
+
+    def changed():
+        raise original
+
+    with pytest.raises(p.ProbeError) as raised:
+        p.config_io("config_dir_walk_io", changed)
+    assert raised.value is original
+
+
+@pytest.mark.parametrize(
+    ("reason", "action_name"),
+    [
+        ("config_bus_io", "call"),
+        ("config_manager_proc_io", "stat"),
+        ("config_manager_starttime_io", "starttime"),
+        ("config_manager_pidfd_io", "pidfd_open"),
+        ("config_manager_mnt_io", "stat"),
+        ("config_manager_cgroup_io", "stat"),
+        ("config_caller_mnt_io", "stat"),
+        ("config_caller_cgroup_io", "stat"),
+        ("config_manager_root_io", "stat"),
+        ("config_caller_root_io", "stat"),
+        ("config_dir_walk_io", "config_open_dir"),
+        ("config_entry_open_io", "open"),
+        ("config_entry_metadata_io", "fstat"),
+        ("config_entry_list_io", "config_entries"),
+        ("config_file_read_io", "config_read_file"),
+    ],
+)
+def test_config_gate_each_io_boundary_eacces(config_fixture, monkeypatch, reason, action_name):
+    state = config_fixture
+    dropin = state["root"] / "service.d"
+    dropin.mkdir()
+    (dropin / "00-comment.conf").write_text("# supported empty policy\n")
+    original_io = p.config_io
+    denied = PermissionError(13, "private-value /private/config/path")
+    calls = []
+
+    def inject(label, action, *args, **kwargs):
+        if label == reason:
+            calls.append(label)
+            assert action.__name__ == action_name
+
+            def fail():
+                raise denied
+
+            return original_io(label, fail)
+        return original_io(label, action, *args, **kwargs)
+
+    monkeypatch.setattr(p, "config_io", inject)
+    with pytest.raises(p.ProbeError) as raised:
+        state["create"]()
+    assert calls == [reason]
+    assert raised.value.__cause__ is denied
+    record = p.error_record(raised.value)
+    assert record["reason"] == reason and record["errno"] == 13
+    assert b"private" not in p.encode(record)
+
+
+def test_config_entry_stat_eacces_retains_absence_semantics(config_fixture, monkeypatch):
+    state = config_fixture
+    original_stat = p.os.stat
+    denied = PermissionError(13, "private-value /private/config/path")
+
+    def fail_entry(path, *args, **kwargs):
+        if path == "service.d" and "dir_fd" in kwargs:
+            raise denied
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(p.os, "stat", fail_entry)
+    with pytest.raises(p.ProbeError) as raised:
+        state["create"]()
+    assert raised.value.__cause__ is denied
+    record = p.error_record(raised.value)
+    assert record["reason"] == "config_entry_stat_io" and record["errno"] == 13
+    assert b"private" not in p.encode(record)
+
+
+def test_config_tool_eacces_never_launches(fixture_probe, monkeypatch):
+    original_tool = p.verified_tool
+
+    def denied_busctl(path):
+        if path == p.BUSCTL:
+            raise PermissionError(13, "private-value /private/config/path")
+        return original_tool(path)
+
+    monkeypatch.setattr(p, "verified_tool", denied_busctl)
+    result = p.probe(context())
+    assert result["status"] == "STOP"
+    assert result["configuration_gate"]["reason"] == "config_tool_io"
+    assert result["configuration_gate"]["errno"] == 13
+    assert result["observation_status"] == result["cleanup"]["status"] == "NOT_RUN"
+    assert not fixture_probe["stopped"]
+    assert b"private-value" not in p.encode(result)
+    p.parse_receipt(p.encode(result))
+
+
+def test_config_bus_retains_already_classified_command_error(monkeypatch):
+    cause = PermissionError(13, "private command value")
+    original = p.ProbeError("io_error")
+    original.original_errno = 13
+    original.child_cleanup = {"reason": "cleanup_unverified", "errno": 5}
+
+    def command_error(*args, **kwargs):
+        raise original from cause
+
+    monkeypatch.setattr(p, "command", command_error)
+    gate = object.__new__(p.ConfigGate)
+    gate.tool, gate.env, gate.deadline = p.BUSCTL, {}, time.monotonic() + 5
+    with pytest.raises(p.ProbeError) as raised:
+        gate.call(
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "GetNameOwner",
+            "s",
+            ["org.freedesktop.systemd1"],
+            "s",
+        )
+    assert raised.value is original and raised.value.__cause__ is cause
+    record = p.error_record(raised.value)
+    assert record["reason"] == "io_error" and record["errno"] == 13
+    assert record["child_cleanup"] == original.child_cleanup
+    assert b"private" not in p.encode(record)
