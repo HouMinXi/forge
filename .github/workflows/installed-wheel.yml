@@ -1,0 +1,45 @@
+name: Installed wheel controls
+
+'on':
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installed-wheel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Provision declared dependency wheels (setup only)
+        run: |
+          python -m pip wheel --index-url https://pypi.org/simple \
+            --wheel-dir "$RUNNER_TEMP/forge-wheelhouse" \
+            'setuptools>=77' wheel 'pytest==9.1.1' 'pyyaml>=6.0' 'unidiff>=0.7.5,<0.8.0'
+      - name: Build and qualify installed wheel offline
+        run: |
+          python scripts/qualify_installed_wheel.py \
+            --wheelhouse "$RUNNER_TEMP/forge-wheelhouse" \
+            --output "$RUNNER_TEMP/forge-installed-wheel"
+      - name: Preserve packaging qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installed-wheel-evidence
+          path: |
+            ${{ runner.temp }}/forge-installed-wheel/commands.log
+            ${{ runner.temp }}/forge-installed-wheel/build-proof.json
+            ${{ runner.temp }}/forge-installed-wheel/runtime-proof.json
+            ${{ runner.temp }}/forge-installed-wheel/pytest.xml
+            ${{ runner.temp }}/forge-installed-wheel/dist/*.whl
+          if-no-files-found: error
