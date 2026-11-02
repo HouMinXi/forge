@@ -12,7 +12,6 @@ from unittest.mock import patch
 
 from code_forge.disposition import Disposition
 from code_forge.falsify_real import RealFalsifier
-from code_forge.falsify_receipt import check_receipt
 from code_forge.state import StateFinding, _finding_from_dict, _finding_to_dict
 
 
@@ -68,8 +67,12 @@ def test_a_downgrade_keeps_the_receipt_reason_not_the_models():
         got = RealFalsifier().falsify(finding)
 
     assert got is Disposition.UNCERTAIN
-    expected = check_receipt(finding.description, _Result.content)
-    assert finding.falsify_reasoning == expected.reason
+    assert finding.falsify_reasoning == (
+        "library-behaviour claim without host-verified evidence -- unverified; "
+        "model-authored receipts and citations do not establish provenance"
+    )
+    restored = _finding_from_dict(json.loads(json.dumps(_finding_to_dict(finding))))
+    assert restored.falsify_reasoning == finding.falsify_reasoning
     assert finding.falsify_reasoning != _Result.content["reasoning"]
 
 

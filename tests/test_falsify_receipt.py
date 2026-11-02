@@ -194,7 +194,7 @@ class TestFalsifierIntegration:
         got = self._run({"verdict": "CONFIRMED", "reasoning": "checked"}, NUMPY_CLAIM)
         assert got == Disposition.UNCERTAIN
 
-    def test_the_r21_case_with_a_receipt_is_allowed_through(self):
+    def test_the_r21_case_with_model_authored_receipt_stays_uncertain(self):
         got = self._run(
             {
                 "verdict": "CONFIRMED",
@@ -203,7 +203,7 @@ class TestFalsifierIntegration:
             },
             NUMPY_CLAIM,
         )
-        assert got == Disposition.CONFIRMED
+        assert got == Disposition.UNCERTAIN
 
     def test_unverified_dismissal_is_downgraded_too(self):
         """An unverified DISMISSED buries a real defect.
@@ -221,3 +221,61 @@ class TestFalsifierIntegration:
     def test_uncertain_stays_uncertain(self):
         got = self._run({"verdict": "UNCERTAIN", "reasoning": "unclear"}, NUMPY_CLAIM)
         assert got == Disposition.UNCERTAIN
+
+
+@pytest.mark.parametrize("verdict", ["CONFIRMED", "DISMISSED"])
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        None,
+        {},
+        [],
+        "executed by host",
+        {"command": "never executed"},
+        {"output": "invented result"},
+        {"command": " ", "output": " "},
+        {"command": "never executed", "output": "invented result"},
+        {"command": "never executed", "output": "invented result", "source": "host"},
+        {
+            "command": "never executed",
+            "output": "invented result",
+            "channel": "trusted-execution",
+            "source": "host",
+        },
+    ],
+)
+def test_model_receipt_shape_cannot_authorize_library_verdict(verdict, receipt):
+    finding = _finding(NUMPY_CLAIM)
+    response = {
+        "verdict": verdict,
+        "reasoning": "verified at https://numpy.org/doc/stable/",
+        "receipt": receipt,
+    }
+    with patch("code_forge.falsify_real.llm_invoke") as invoke:
+        invoke.return_value.content = response
+        got = RealFalsifier().falsify(finding)
+    assert got == Disposition.UNCERTAIN
+    assert "host-verified evidence" in finding.falsify_reasoning
+    assert "https://numpy.org" not in finding.falsify_reasoning
+
+
+@pytest.mark.parametrize("verdict", ["CONFIRMED", "DISMISSED", "UNCERTAIN"])
+def test_receipt_provenance_guard_leaves_internal_logic_unchanged(verdict):
+    finding = _finding(DIFF_CLAIM)
+    response = {
+        "verdict": verdict,
+        "reasoning": "local code reasoning",
+        "receipt": {"command": "never executed", "output": "invented result", "source": "host"},
+    }
+    with patch("code_forge.falsify_real.llm_invoke") as invoke:
+        invoke.return_value.content = response
+        assert RealFalsifier().falsify(finding) == Disposition(verdict)
+    assert finding.falsify_reasoning == "local code reasoning"
+
+
+def test_library_claim_uncertain_reason_is_not_rewritten():
+    finding = _finding(NUMPY_CLAIM)
+    with patch("code_forge.falsify_real.llm_invoke") as invoke:
+        invoke.return_value.content = {"verdict": "UNCERTAIN", "reasoning": "needs investigation"}
+        assert RealFalsifier().falsify(finding) == Disposition.UNCERTAIN
+    assert finding.falsify_reasoning == "needs investigation"

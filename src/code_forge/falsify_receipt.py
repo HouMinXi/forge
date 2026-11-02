@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Require an execution receipt for findings that assert library behaviour.
+"""Legacy structural receipt checks for findings that assert library behaviour.
+
+These helpers recognise claims and receipt-shaped fields; they do not attest
+that execution occurred. RealFalsifier makes the provenance decision at the
+LLM boundary and does not accept model-authored receipts as host evidence.
 
 The falsifier is a single LLM call. Steps 6 and 9 of its protocol --
 "verify against ground truth" and "does this symbol actually exist" --
@@ -17,9 +21,9 @@ CONFIRMED after 4287 seconds. One line refutes it, on two numpy versions:
 
 This module does not try to make the model more accurate. It makes the
 ABSENCE of evidence visible: a finding whose truth turns on how a library
-actually behaves is downgraded to UNCERTAIN unless the falsifier supplies
-a receipt -- what it ran, and what came back. UNCERTAIN routes to human
-adjudication, which is the honest destination for a claim nobody checked.
+actually behaves needs independent evidence. A command/output pair supplied
+by the model only satisfies the legacy shape check below, not provenance.
+Without host-verified evidence, RealFalsifier routes it to UNCERTAIN.
 
 Deliberately narrow. Only claims about external library or API behaviour
 need receipts; claims about the diff's own logic are what the reviewer is
