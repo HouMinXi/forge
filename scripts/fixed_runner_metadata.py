@@ -47,6 +47,17 @@ REASONS = {
     "unexpected",
 }
 
+ORDINARY_OPERATIONS = frozenset(
+    {
+        "source_head",
+        "source_tree",
+        "timeout_version",
+        "systemctl_manager",
+        "GetNameOwner",
+        "GetConnectionUnixProcessID",
+    }
+)
+
 
 class Stop(ValueError):
     def __init__(self, reason):
@@ -204,10 +215,38 @@ def capture(argv, env, deadline, limit=4096, privileged=False, cwd="/"):
     return result
 
 
-def ordinary(argv, env=ENV, cwd="/", deadline=None):
+def ordinary(argv, env=ENV, cwd="/", deadline=None, *, operation):
+    need(operation in ORDINARY_OPERATIONS, "format")
     end = time.monotonic() + 2
-    result = capture(argv, env, min(end, deadline) if deadline is not None else end, cwd=cwd)
-    need(result["reason"] is None and result["exit_code"] == 0 and not result["stderr_bytes"], "command")
+    try:
+        result = capture(argv, env, min(end, deadline) if deadline is not None else end, cwd=cwd)
+    except (OSError, Stop) as exc:
+        exc.command_failure = {
+            "operation": operation,
+            "exit_code": None,
+            "signal": None,
+            "failure_reason": exc.reason if isinstance(exc, Stop) else "io",
+            "errno": exc.errno if isinstance(exc, OSError) else None,
+            "stdout_captured_bytes": 0,
+            "stderr_bytes": 0,
+            "direct_child_reaped": False,
+        }
+        raise
+    if result["reason"] is not None or result["exit_code"] != 0 or result["stderr_bytes"]:
+        error = Stop("command")
+        code = result["exit_code"]
+        error.command_failure = {
+            "operation": operation,
+            "exit_code": code if code is not None and code >= 0 else None,
+            "signal": -code if code is not None and code < 0 else None,
+            "failure_reason": result["reason"]
+            or ("stderr" if result["stderr_bytes"] else "exit_status"),
+            "errno": result["errno"],
+            "stdout_captured_bytes": len(result["stdout"]),
+            "stderr_bytes": result["stderr_bytes"],
+            "direct_child_reaped": result["direct_sudo_reaped"],
+        }
+        raise error
     return result["stdout"]
 
 
@@ -224,12 +263,18 @@ def source_snapshot(expected, deadline=None):
     env = {**ENV, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
     git = ["/usr/bin/git", "--no-pager", "--no-optional-locks", "-c", "core.fsmonitor=false"]
     need(
-        ordinary([*git, "rev-parse", "HEAD"], env, ROOT, deadline=deadline).decode("ascii").strip()
+        ordinary([*git, "rev-parse", "HEAD"], env, ROOT, deadline=deadline, operation="source_head")
+        .decode("ascii")
+        .strip()
         == expected,
         "source",
     )
     records = ordinary(
-        [*git, "ls-tree", "-z", "HEAD", "--", SOURCE, WORKFLOW], env, ROOT, deadline=deadline
+        [*git, "ls-tree", "-z", "HEAD", "--", SOURCE, WORKFLOW],
+        env,
+        ROOT,
+        deadline=deadline,
+        operation="source_tree",
     ).split(b"\0")
     need(records[-1] == b"" and len(records) == 3, "source")
     seen = set()
@@ -275,6 +320,7 @@ def bus(method, argument, kind, env, deadline=None):
         ],
         env,
         deadline=deadline,
+        operation=method,
     )
     value = json.loads(data, object_pairs_hook=unique_pairs)
     need(
@@ -316,7 +362,8 @@ def manager(uid):
             "--property=Id,ActiveState,MainPID",
             "--",
             f"user@{uid}.service",
-        ]
+        ],
+        operation="systemctl_manager",
     )
     pairs = [line.split("=", 1) for line in raw.decode("ascii").splitlines()]
     need(len(pairs) == 3 and all(len(pair) == 2 for pair in pairs), "manager")
@@ -437,7 +484,8 @@ def privileged(kind, identity, uid, deadline, receipt):
 def observe():
     started = time.monotonic()
     result = {
-        "schema": "forge-fixed-metadata-v1",
+        "schema": "forge-fixed-metadata-v2",
+        "ordinary_failure": None,
         "duration_ms": 0,
         "status": "STOP",
         "phase": "preflight",
@@ -468,7 +516,7 @@ def observe():
         result["tool_sha256"] = {k: v["sha256"] for k, v in tools.items()}
         result["source_sha256"] = source_snapshot(ctx["SOURCE_SHA"])
         need(
-            ordinary(["/usr/bin/timeout", "--version"]).splitlines()[0]
+            ordinary(["/usr/bin/timeout", "--version"], operation="timeout_version").splitlines()[0]
             == b"timeout (GNU coreutils) 9.4",
             "version",
         )
@@ -523,6 +571,7 @@ def observe():
             exc.reason if isinstance(exc, Stop) else "io" if isinstance(exc, OSError) else "format"
         )
         result["errno"] = exc.errno if isinstance(exc, OSError) else None
+        result["ordinary_failure"] = getattr(exc, "command_failure", None)
     except Exception:  # noqa: BLE001 -- retain finite STOP evidence without private exception text.
         result["reason"] = "unexpected"
     finally:

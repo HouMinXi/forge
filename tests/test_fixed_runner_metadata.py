@@ -19,6 +19,7 @@ PATH = Path(__file__).parents[1] / "scripts/fixed_runner_metadata.py"
 p = types.ModuleType("fixed_metadata_test_source")
 p.__file__ = str(PATH)
 exec(compile(PATH.read_bytes(), str(PATH), "exec"), p.__dict__)  # noqa: S102 -- source-only local test loader.
+REAL_ORDINARY = p.ordinary
 
 
 @pytest.fixture(autouse=True)
@@ -323,7 +324,7 @@ def test_source_tree_binds_only_fixed_regular_files(monkeypatch):
     calls = []
     monkeypatch.setattr(p, "file_bytes", lambda *args: (payload, (1, 2, stat.S_IFREG | 0o644)))
 
-    def ordinary(argv, env, cwd, deadline=None):
+    def ordinary(argv, env, cwd, deadline=None, *, operation):
         calls.append(argv)
         assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_CONFIG_GLOBAL"] == "/dev/null"
         assert "core.fsmonitor=false" in argv
@@ -612,3 +613,105 @@ def test_source_tree_rejects_mismatched_or_ambiguous_blobs(monkeypatch, fault):
     monkeypatch.setattr(p, "ordinary", ordinary)
     with pytest.raises(p.Stop, match="source"):
         p.source_snapshot("a" * 40)
+
+
+@pytest.mark.parametrize(
+    "operation", ["systemctl_manager", "GetNameOwner", "GetConnectionUnixProcessID"]
+)
+def test_actual_manager_command_sites_preserve_finite_failure(monkeypatch, operation):
+    uid, pid = os.getuid(), os.getpid()
+    original_lstat = Path.lstat
+    calls = []
+
+    def lstat(path, *args, **kwargs):
+        if str(path) == f"/run/user/{uid}":
+            return types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=uid)
+        if str(path) == f"/run/user/{uid}/bus":
+            return types.SimpleNamespace(st_mode=stat.S_IFSOCK | 0o600, st_uid=uid)
+        return original_lstat(path, *args, **kwargs)
+
+    def capture(argv, *args, **kwargs):
+        assert "/usr/bin/sudo" not in argv
+        label = "systemctl_manager" if argv[0] == "/usr/bin/systemctl" else argv[-3]
+        calls.append(label)
+        if label == operation:
+            return capture_result(stdout=b"private-value", exit_code=1, stderr_bytes=9)
+        if label == "systemctl_manager":
+            return capture_result(f"Id=user@{uid}.service\nActiveState=active\nMainPID={pid}\n".encode())
+        return capture_result(b'{"type":"s","data":[":1.7"]}')
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    monkeypatch.setattr(p, "capture", capture)
+    with pytest.raises(p.Stop, match="command") as raised:
+        p.manager(uid)
+    expected = ["systemctl_manager", "GetNameOwner", "GetConnectionUnixProcessID"]
+    assert calls == expected[: expected.index(operation) + 1]
+    record = raised.value.command_failure
+    assert record == {
+        "operation": operation,
+        "exit_code": 1,
+        "signal": None,
+        "failure_reason": "stderr",
+        "errno": None,
+        "stdout_captured_bytes": 13,
+        "stderr_bytes": 9,
+        "direct_child_reaped": True,
+    }
+    assert "private-value" not in json.dumps(record)
+
+
+@pytest.mark.parametrize("operation", ["source_head", "source_tree"])
+def test_actual_source_command_sites_preserve_failure(monkeypatch, operation):
+    monkeypatch.setattr(p, "file_bytes", lambda *args: (b"fixture", (1, 2, stat.S_IFREG | 0o644)))
+
+    def capture(argv, *args, **kwargs):
+        label = "source_head" if "rev-parse" in argv else "source_tree"
+        return (
+            capture_result(stdout=b"a" * 40 + b"\n")
+            if label != operation
+            else capture_result(exit_code=-9)
+        )
+
+    monkeypatch.setattr(p, "capture", capture)
+    with pytest.raises(p.Stop, match="command") as raised:
+        p.source_snapshot("a" * 40)
+    assert raised.value.command_failure["operation"] == operation
+    assert raised.value.command_failure["exit_code"] is None
+    assert raised.value.command_failure["signal"] == 9
+
+
+def test_actual_timeout_version_site_preserves_failure(fixture_observer, monkeypatch):
+    monkeypatch.setattr(p, "ordinary", REAL_ORDINARY)
+    monkeypatch.setattr(
+        p,
+        "capture",
+        lambda *args, **kwargs: capture_result(
+            reason="io", errno=13, exit_code=None, direct_sudo_reaped=False
+        ),
+    )
+    result = p.observe()
+    assert result["ordinary_failure"]["operation"] == "timeout_version"
+    assert result["ordinary_failure"]["failure_reason"] == "io"
+    assert result["ordinary_failure"]["errno"] == 13
+    assert result["commands"] == [] and result["status"] == "STOP"
+
+
+@pytest.mark.parametrize("failure", [p.Stop("timeout"), PermissionError(13, "private-value")])
+def test_ordinary_capture_exception_keeps_site_without_raw_text(monkeypatch, failure):
+    def capture(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(p, "capture", capture)
+    with pytest.raises((p.Stop, OSError)) as raised:
+        p.ordinary(["/usr/bin/timeout", "--version"], operation="timeout_version")
+    assert raised.value is failure
+    assert raised.value.command_failure["operation"] == "timeout_version"
+    assert "private-value" not in json.dumps(raised.value.command_failure)
+
+
+def test_unknown_ordinary_label_never_invokes_command(monkeypatch):
+    monkeypatch.setattr(
+        p, "capture", lambda *args, **kwargs: pytest.fail("unknown label invoked command")
+    )
+    with pytest.raises(p.Stop, match="format"):
+        p.ordinary(["/usr/bin/timeout", "--version"], operation="private-value")

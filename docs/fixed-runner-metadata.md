@@ -99,3 +99,25 @@ local sudo subprocess even if the failure is caught. Real local controls use ord
 pidfds, temporary files and harmless child processes. They do not establish
 native success. The diagnostic remains separate from any future reviewed runner
 baseline and from the unresolved #376 dependency boundary.
+
+## Ordinary-command failure diagnostics
+
+Receipt schema `forge-fixed-metadata-v2` adds `ordinary_failure`, null unless an
+ordinary command fails. Its operation is one of `source_head`, `source_tree`,
+`timeout_version`, `systemctl_manager`, `GetNameOwner`, or
+`GetConnectionUnixProcessID`. It retains only exit code or signal, a finite
+capture/failure reason, errno, captured stdout length, saturated stderr count,
+and direct-child reaping state. Captured stdout length is not total output size
+when the cap is exceeded. Exceptions before a capture result have zero available
+counts and no asserted reaping; raw output and exception text are never stored.
+The same failure stops subsequent operations; success predicates, root command
+arguments and deadlines are unchanged.
+
+The first dispatched v1 receipt stopped during ordinary manager identification,
+before any sudo attempt. Its generic `command` reason cannot identify which of
+the three manager commands failed. New labels cannot retrospectively attribute
+that old observation, and no host-policy cause has been established.
+
+Operation and exit status identify the failed call, not necessarily its cause.
+A nonzero command exit with counted stderr can still leave the host mechanism
+unknown; this diagnostic does not parse stderr into authoritative D-Bus errors.
