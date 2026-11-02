@@ -217,8 +217,11 @@ class InvocationOwner:
             ack = AuditAcknowledgement(
                 False, AuditFault("persistence_error", phase, attempt_id), publication_uncertain=True
             )
-        except BaseException:  # noqa: BLE001 - interruption must retain a required receipt failure
-            self._fault("persistence_error", phase, attempt_id)
+        except BaseException:  # noqa: BLE001 - a sink interruption must remain the primary failure
+            try:
+                self._fault("persistence_error", phase, attempt_id)
+            except BaseException:  # noqa: BLE001, S110 - diagnostics must not replace the interruption
+                pass
             raise
         if not ack.admitted:
             fault = ack.fault or AuditFault("persistence_error", phase, attempt_id)
