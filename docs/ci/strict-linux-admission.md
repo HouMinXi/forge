@@ -49,6 +49,35 @@ use a fixed message without raw paths or traceback. The workflow preserves STOP
 receipts with `always()`; failure before receipt creation is still a failed job,
 not a successful observation.
 
+## Version 2 finite read diagnostics
+
+The v2 receipt adds diagnostics for only the existing two bwrap candidates
+(`usr_bin` and `bin`) and the existing AppArmor profiles read. Each record contains
+a fixed reason label and a bounded numeric `errno` or null; no exception text,
+new paths, environment values or file contents are included. The observation
+predicates, limits, metadata command and STOP decision are unchanged.
+
+`missing` records ENOENT/ENOTDIR from that operation, not a conclusion that a
+package or policy should be installed. `unreadable` records EACCES/EPERM, not a
+conclusion about the underlying security policy. Other OS errors use `io_error`.
+Non-OS rejection labels distinguish an out-of-allowlist resolved candidate,
+unsafe metadata, oversized data, a size mismatch against the earlier stat, and
+invalid UTF-8 for the text profiles file. The latter size check does not detect
+all file changes or certify TOCTOU safety. When metadata violates multiple
+predicates, size above the unchanged cap takes diagnostic priority; it is not
+claimed to be the only failure.
+
+The first successful candidate still stops the search; the other candidate is
+`not_attempted`, not silently called missing. A successful empty profiles result
+means no names from the existing finite matcher were observed, not that the host
+has no bwrap policy. Diagnostic/fact consistency is checked by the parser;
+diagnostics never grant admission or turn STOP into OBSERVED.
+
+Version 2 intentionally rejects v1 receipts. Historical v1 artifacts must remain
+unchanged and be parsed using their original source version. These new labels
+explain only the run that produces them; they do not reconstruct why a previous
+run recorded null.
+
 ## What remains before strict qualification
 
 A separately reviewed live verifier must authenticate source/dependencies/run

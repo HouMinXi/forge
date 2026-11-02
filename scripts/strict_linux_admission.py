@@ -10,6 +10,7 @@ enforcement require a separately reviewed live boundary run.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -22,7 +23,7 @@ import subprocess
 import sys
 import time
 
-SCHEMA = "forge-linux-admission-observation-v1"
+SCHEMA = "forge-linux-admission-observation-v2"
 MAX_RECEIPT = 16384
 MAX_READ = 65536
 COMMAND_BYTES = 4096
@@ -31,6 +32,19 @@ SYSTEMCTL = "/usr/bin/systemctl"
 COMMAND_ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"}
 CGROUP_MOUNT = "/sys/fs/cgroup"
 BWRAP_PATHS = ("/usr/bin/bwrap", "/bin/bwrap")
+BWRAP_LABELS = ("usr_bin", "bin")
+BWRAP_BYTES = 16 * 1024 * 1024
+PROFILES_PATH = "/sys/kernel/security/apparmor/profiles"
+OS_REASONS = {"missing", "unreadable", "io_error"}
+BWRAP_REASONS = OS_REASONS | {
+    "read_success",
+    "not_attempted",
+    "path_outside_allowlist",
+    "unsafe_metadata",
+    "oversize",
+    "size_mismatch",
+}
+PROFILE_REASONS = OS_REASONS | {"read_success", "oversize", "invalid_utf8"}
 PROFILE_NAMES = ("bwrap", "/usr/bin/bwrap", "usr.bin.bwrap")
 IDENTITY_KEYS = {
     "repository",
@@ -125,7 +139,16 @@ def validate(receipt: object) -> dict:
     """Validate shape, finite types, derived status and the non-qualification claim."""
     receipt = _keys(
         receipt,
-        {"schema", "identity", "facts", "status", "problems", "boundary", "qualification"},
+        {
+            "schema",
+            "identity",
+            "facts",
+            "diagnostics",
+            "status",
+            "problems",
+            "boundary",
+            "qualification",
+        },
         "receipt keys",
     )
     _require(receipt["schema"] == SCHEMA, "schema")
@@ -224,10 +247,61 @@ def validate(receipt: object) -> dict:
         and all(v in PROFILE_NAMES for v in profiles),
         "bwrap profiles",
     )
+    validate_diagnostics(receipt["diagnostics"], facts)
     problems = derive_problems(identity, facts)
     _require(receipt["problems"] == problems, "problems")
     _require(receipt["status"] == ("STOP" if problems else "OBSERVED"), "status")
     return receipt
+
+
+def _diagnostic(reason: str, code: int | None = None) -> dict:
+    return {"reason": reason, "errno": code}
+
+
+def _os_diagnostic(exc: OSError) -> dict:
+    code = exc.errno
+    if type(code) is not int or not 1 <= code <= 4095:
+        code = None
+    if code in (errno.ENOENT, errno.ENOTDIR):
+        return _diagnostic("missing", code)
+    if code in (errno.EACCES, errno.EPERM):
+        return _diagnostic("unreadable", code)
+    return _diagnostic("io_error", code)
+
+
+def _validate_diagnostic(value: object, reasons: set[str]) -> dict:
+    value = _keys(value, {"reason", "errno"}, "diagnostic keys")
+    reason, code = value["reason"], value["errno"]
+    _require(type(reason) is str and reason in reasons, "diagnostic reason")
+    _require(code is None or type(code) is int and 1 <= code <= 4095, "diagnostic errno")
+    if reason == "missing":
+        _require(code in (errno.ENOENT, errno.ENOTDIR), "missing errno")
+    elif reason == "unreadable":
+        _require(code in (errno.EACCES, errno.EPERM), "unreadable errno")
+    elif reason == "io_error":
+        _require(code not in (errno.ENOENT, errno.ENOTDIR, errno.EACCES, errno.EPERM), "io errno")
+    else:
+        _require(code is None, "non-OS diagnostic errno")
+    return value
+
+
+def validate_diagnostics(value: object, facts: dict) -> None:
+    value = _keys(value, {"bwrap", "apparmor_profiles"}, "diagnostic sections")
+    candidates = _keys(value["bwrap"], set(BWRAP_LABELS), "bwrap diagnostic candidates")
+    selected = None if facts["bwrap"] is None else BWRAP_PATHS.index(facts["bwrap"]["path"])
+    for index, label in enumerate(BWRAP_LABELS):
+        reason = _validate_diagnostic(candidates[label], BWRAP_REASONS)["reason"]
+        if index == selected:
+            _require(reason == "read_success", "selected bwrap diagnostic")
+        elif selected is not None and index > selected:
+            _require(reason == "not_attempted", "bwrap short circuit")
+        else:
+            _require(reason not in ("read_success", "not_attempted"), "bwrap failure diagnostic")
+    profiles = _validate_diagnostic(value["apparmor_profiles"], PROFILE_REASONS)
+    _require(
+        (profiles["reason"] == "read_success") == (facts["apparmor"]["bwrap_profiles"] is not None),
+        "profiles diagnostic consistency",
+    )
 
 
 def canonical(receipt: dict) -> bytes:
@@ -492,12 +566,14 @@ def writable(path: str, directory: bool = False) -> bool | None:
         return None
 
 
-def bwrap_identity() -> dict | None:
-    for path in BWRAP_PATHS:
-        real = os.path.realpath(path)
-        if real not in BWRAP_PATHS:
-            continue
+def bwrap_identity() -> tuple[dict | None, dict]:
+    diagnostics = {label: _diagnostic("not_attempted") for label in BWRAP_LABELS}
+    for label, path in zip(BWRAP_LABELS, BWRAP_PATHS, strict=True):
         try:
+            real = os.path.realpath(path)
+            if real not in BWRAP_PATHS:
+                diagnostics[label] = _diagnostic("path_outside_allowlist")
+                continue
             with open(real, "rb") as handle:
                 info = os.fstat(handle.fileno())
                 if (
@@ -507,10 +583,20 @@ def bwrap_identity() -> dict | None:
                     or not info.st_mode & 0o111
                     or not 0 < info.st_size <= 16 * 1024 * 1024
                 ):
+                    # Both are existing rejection predicates. If several are
+                    # false, size above the unchanged cap has diagnostic priority;
+                    # this does not claim it was the only rejected property.
+                    diagnostics[label] = _diagnostic(
+                        "oversize" if info.st_size > BWRAP_BYTES else "unsafe_metadata"
+                    )
                     continue
-                content = handle.read(16 * 1024 * 1024 + 1)
+                content = handle.read(BWRAP_BYTES + 1)
             if len(content) != info.st_size:
+                diagnostics[label] = _diagnostic(
+                    "oversize" if len(content) > BWRAP_BYTES else "size_mismatch"
+                )
                 continue
+            diagnostics[label] = _diagnostic("read_success")
             return {
                 "path": path,
                 "realpath": real,
@@ -520,10 +606,24 @@ def bwrap_identity() -> dict | None:
                 "size": info.st_size,
                 "sha256": hashlib.sha256(content).hexdigest(),
                 "version": None,
-            }
-        except OSError:
-            continue
-    return None
+            }, diagnostics
+        except OSError as exc:
+            diagnostics[label] = _os_diagnostic(exc)
+    return None, diagnostics
+
+
+def apparmor_profiles_observation() -> tuple[str | None, dict]:
+    """The existing bounded profiles read, with finite failure-only metadata."""
+    try:
+        with open(PROFILES_PATH, "rb") as handle:
+            data = handle.read(MAX_READ + 1)
+        if len(data) > MAX_READ:
+            return None, _diagnostic("oversize")
+        return data.decode("utf-8").strip(), _diagnostic("read_success")
+    except OSError as exc:
+        return None, _os_diagnostic(exc)
+    except UnicodeError:
+        return None, _diagnostic("invalid_utf8")
 
 
 def collect(identity: dict) -> dict:
@@ -543,7 +643,8 @@ def collect(identity: dict) -> dict:
     enabled = read_text("/sys/module/apparmor/parameters/enabled", 16)
     restricted = read_text("/proc/sys/kernel/apparmor_restrict_unprivileged_userns", 16)
     profile = read_text("/proc/self/attr/current", 1024)
-    profiles = read_text("/sys/kernel/security/apparmor/profiles")
+    profiles, profiles_diagnostic = apparmor_profiles_observation()
+    bwrap, bwrap_diagnostics = bwrap_identity()
     facts = {
         "uid": uid,
         "gid": os.getegid(),
@@ -567,7 +668,7 @@ def collect(identity: dict) -> dict:
             if common is not None
             else None,
         },
-        "bwrap": bwrap_identity(),
+        "bwrap": bwrap,
         "apparmor": {
             "enabled": {"Y": True, "N": False}.get(enabled),
             "restrict_userns": {"0": 0, "1": 1}.get(restricted),
@@ -593,6 +694,7 @@ def collect(identity: dict) -> dict:
         "schema": SCHEMA,
         "identity": identity,
         "facts": facts,
+        "diagnostics": {"bwrap": bwrap_diagnostics, "apparmor_profiles": profiles_diagnostic},
         "status": "STOP" if problems else "OBSERVED",
         "problems": problems,
         "boundary": "NOT_RUN",

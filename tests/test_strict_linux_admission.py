@@ -1,6 +1,8 @@
 """Closed read-only observation receipts cannot claim native qualification."""
 
 import copy
+import errno
+import io
 import json
 import os
 import subprocess
@@ -67,6 +69,13 @@ def observed():
         "schema": admission.SCHEMA,
         "identity": identity,
         "facts": facts,
+        "diagnostics": {
+            "bwrap": {
+                "usr_bin": {"reason": "read_success", "errno": None},
+                "bin": {"reason": "not_attempted", "errno": None},
+            },
+            "apparmor_profiles": {"reason": "read_success", "errno": None},
+        },
         "status": "OBSERVED",
         "problems": [],
         "boundary": "NOT_RUN",
@@ -79,6 +88,14 @@ def encode(receipt):
 
 
 def recalculate(receipt):
+    # Existing fact-mutation fixtures keep the newly required diagnostics
+    # consistent. Dedicated diagnostic negative tests do not use this helper.
+    if receipt["facts"]["bwrap"] is None:
+        receipt["diagnostics"]["bwrap"] = {
+            label: {"reason": "missing", "errno": errno.ENOENT} for label in admission.BWRAP_LABELS
+        }
+    if receipt["facts"]["apparmor"]["bwrap_profiles"] is None:
+        receipt["diagnostics"]["apparmor_profiles"] = {"reason": "unreadable", "errno": errno.EACCES}
     receipt["problems"] = admission.derive_problems(receipt["identity"], receipt["facts"])
     receipt["status"] = "STOP" if receipt["problems"] else "OBSERVED"
     return receipt
@@ -303,7 +320,19 @@ def test_collect_does_not_launch_a_payload_or_dump_environment(monkeypatch):
     monkeypatch.setattr(os, "system", forbidden)
     monkeypatch.setattr(admission, "_verified_systemctl", lambda: False)
     monkeypatch.setattr(admission, "read_text", lambda *args: None)
-    monkeypatch.setattr(admission, "bwrap_identity", lambda: None)
+    monkeypatch.setattr(
+        admission,
+        "bwrap_identity",
+        lambda: (
+            None,
+            {label: {"reason": "missing", "errno": errno.ENOENT} for label in admission.BWRAP_LABELS},
+        ),
+    )
+    monkeypatch.setattr(
+        admission,
+        "apparmor_profiles_observation",
+        lambda: (None, {"reason": "unreadable", "errno": errno.EACCES}),
+    )
     monkeypatch.setattr(admission, "writable", lambda *args: None)
     monkeypatch.setenv("TOKEN_DO_NOT_CAPTURE", "super-secret")
     identity = {
@@ -519,7 +548,7 @@ def test_query_cleanup_stops_actual_group_descendant(monkeypatch, tmp_path, scen
         f"    open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
         "    time.sleep(60)\n"
         "else:\n"
-        f"    while not os.path.exists({str(pidfile)!r}): time.sleep(.001)\n"
+        f"    while not os.path.exists({str(pidfile)!r}) or os.path.getsize({str(pidfile)!r}) == 0: time.sleep(.001)\n"
         + (
             "    os.write(1,b'x'*33)\n    time.sleep(60)\n"
             if scenario == "overflow"
@@ -588,5 +617,257 @@ def test_query_refuses_oversized_output_even_when_process_exits(monkeypatch):
 
 def test_unexecuted_version_cannot_be_invented(observed):
     observed["facts"]["bwrap"]["version"] = "bubblewrap 0.9.0"
+    with pytest.raises(admission.ObservationError):
+        admission.parse(encode(observed))
+
+
+def _fake_bwrap_files(monkeypatch, attempts, resolved=None):
+    """Only the admission module sees these two finite candidate files."""
+    opened = []
+    reads = []
+    resolved = resolved or {}
+
+    class Handle(io.BytesIO):
+        def __init__(self, index, data):
+            super().__init__(data)
+            self.index = index
+
+        def fileno(self):
+            return self.index
+
+        def read(self, limit):
+            reads.append(limit)
+            return super().read(limit)
+
+    def fake_open(path, mode):
+        assert mode == "rb"
+        opened.append(path)
+        index = admission.BWRAP_PATHS.index(path)
+        value = attempts[index]
+        if isinstance(value, OSError):
+            raise value
+        return Handle(index, value[0])
+
+    def fstat(index):
+        data, overrides = attempts[index]
+        fields = {"st_mode": 0o100755, "st_uid": 0, "st_gid": 0, "st_size": len(data)}
+        fields.update(overrides)
+        return SimpleNamespace(**fields)
+
+    monkeypatch.setattr(admission, "open", fake_open, raising=False)
+    monkeypatch.setattr(
+        admission,
+        "os",
+        SimpleNamespace(
+            path=SimpleNamespace(
+                realpath=lambda path: resolved.get(path, path), commonpath=os.path.commonpath
+            ),
+            fstat=fstat,
+        ),
+    )
+    return opened, reads
+
+
+@pytest.mark.parametrize(
+    "code,reason",
+    [
+        (errno.ENOENT, "missing"),
+        (errno.ENOTDIR, "missing"),
+        (errno.EACCES, "unreadable"),
+        (errno.EPERM, "unreadable"),
+        (errno.EIO, "io_error"),
+    ],
+)
+def test_bwrap_failure_reason_keeps_only_bounded_errno(monkeypatch, code, reason):
+    error = OSError(code, "secret exception content")
+    _fake_bwrap_files(monkeypatch, [error, error])
+    fact, diagnostics = admission.bwrap_identity()
+    assert fact is None
+    assert diagnostics == {label: {"reason": reason, "errno": code} for label in admission.BWRAP_LABELS}
+    assert "secret" not in json.dumps(diagnostics)
+
+
+@pytest.mark.parametrize("code", [None, True, False, -1, 0, 4096, 10**100])
+def test_errno_is_finite_and_not_a_boolean(code):
+    assert admission._os_diagnostic(OSError(code, "secret")) == {"reason": "io_error", "errno": None}
+
+
+@pytest.mark.parametrize(
+    "overrides,reason",
+    [
+        ({"st_uid": 1001}, "unsafe_metadata"),
+        ({"st_mode": 0o100777}, "unsafe_metadata"),
+        ({"st_mode": 0o100644}, "unsafe_metadata"),
+        ({"st_size": 0}, "unsafe_metadata"),
+        ({"st_size": 16 * 1024 * 1024 + 1}, "oversize"),
+        ({"st_uid": 1001, "st_size": 16 * 1024 * 1024 + 1}, "oversize"),
+    ],
+)
+def test_bwrap_metadata_failures_do_not_read_or_relax_predicates(monkeypatch, overrides, reason):
+    _, reads = _fake_bwrap_files(monkeypatch, [(b"abc", overrides)] * 2)
+    fact, diagnostics = admission.bwrap_identity()
+    assert fact is None and reads == []
+    assert diagnostics == {label: {"reason": reason, "errno": None} for label in admission.BWRAP_LABELS}
+
+
+def test_bwrap_size_mismatch_is_not_a_permission_or_package_claim(monkeypatch):
+    _, reads = _fake_bwrap_files(monkeypatch, [(b"abc", {"st_size": 4})] * 2)
+    fact, diagnostics = admission.bwrap_identity()
+    assert fact is None
+    assert all(value == {"reason": "size_mismatch", "errno": None} for value in diagnostics.values())
+    assert reads == [16 * 1024 * 1024 + 1] * 2
+
+
+def test_bwrap_growth_past_read_cap_is_bounded(monkeypatch):
+    content = b"x" * (16 * 1024 * 1024 + 1)
+    _, reads = _fake_bwrap_files(monkeypatch, [(content, {"st_size": 1})] * 2)
+    fact, diagnostics = admission.bwrap_identity()
+    assert fact is None
+    assert reads == [16 * 1024 * 1024 + 1] * 2
+    assert all(value == {"reason": "oversize", "errno": None} for value in diagnostics.values())
+
+
+def test_first_bwrap_success_preserves_short_circuit(monkeypatch, observed):
+    opened, reads = _fake_bwrap_files(monkeypatch, [(b"abc", {}), OSError(errno.EIO, "must not read")])
+    fact, diagnostics = admission.bwrap_identity()
+    assert opened == ["/usr/bin/bwrap"]
+    assert reads == [16 * 1024 * 1024 + 1]
+    assert diagnostics == {
+        "usr_bin": {"reason": "read_success", "errno": None},
+        "bin": {"reason": "not_attempted", "errno": None},
+    }
+    observed["facts"]["bwrap"] = fact
+    observed["diagnostics"]["bwrap"] = diagnostics
+    assert admission.parse(encode(observed))["status"] == "OBSERVED"
+
+
+def test_second_bwrap_success_retains_first_failure(monkeypatch, observed):
+    _fake_bwrap_files(monkeypatch, [PermissionError(errno.EACCES, "secret"), (b"abc", {})])
+    fact, diagnostics = admission.bwrap_identity()
+    assert fact["path"] == "/bin/bwrap"
+    assert diagnostics == {
+        "usr_bin": {"reason": "unreadable", "errno": errno.EACCES},
+        "bin": {"reason": "read_success", "errno": None},
+    }
+    observed["facts"]["bwrap"] = fact
+    observed["diagnostics"]["bwrap"] = diagnostics
+    assert admission.parse(encode(observed))["status"] == "OBSERVED"
+
+
+def test_outside_allowlist_has_no_raw_resolved_path(monkeypatch):
+    opened, _ = _fake_bwrap_files(
+        monkeypatch,
+        [OSError(), FileNotFoundError(errno.ENOENT, "secret")],
+        {"/usr/bin/bwrap": "/private/secret/tool"},
+    )
+    fact, diagnostics = admission.bwrap_identity()
+    assert fact is None
+    assert opened == ["/bin/bwrap"]
+    assert diagnostics["usr_bin"] == {"reason": "path_outside_allowlist", "errno": None}
+    assert "private" not in json.dumps(diagnostics) and "secret" not in json.dumps(diagnostics)
+
+
+@pytest.mark.parametrize(
+    "value,reason,code",
+    [
+        (FileNotFoundError(errno.ENOENT, "secret"), "missing", errno.ENOENT),
+        (PermissionError(errno.EACCES, "secret"), "unreadable", errno.EACCES),
+        (OSError(errno.EIO, "secret"), "io_error", errno.EIO),
+        (b"x" * (65536 + 1), "oversize", None),
+        (b"\xff", "invalid_utf8", None),
+    ],
+)
+def test_profiles_failure_reasons_do_not_capture_contents(monkeypatch, value, reason, code):
+    reads = []
+
+    class Handle(io.BytesIO):
+        def read(self, limit):
+            reads.append(limit)
+            return super().read(limit)
+
+    def fake_open(path, mode):
+        assert path == "/sys/kernel/security/apparmor/profiles" and mode == "rb"
+        if isinstance(value, OSError):
+            raise value
+        return Handle(value)
+
+    monkeypatch.setattr(admission, "open", fake_open, raising=False)
+    data, diagnostic = admission.apparmor_profiles_observation()
+    assert data is None
+    assert diagnostic == {"reason": reason, "errno": code}
+    assert reads == ([] if isinstance(value, OSError) else [65536 + 1])
+    assert "secret" not in json.dumps(diagnostic)
+
+
+def test_empty_profiles_is_a_successful_read_not_missing_policy(monkeypatch, observed):
+    monkeypatch.setattr(admission, "open", lambda *args: io.BytesIO(b""), raising=False)
+    data, diagnostic = admission.apparmor_profiles_observation()
+    assert data == "" and diagnostic == {"reason": "read_success", "errno": None}
+    observed["facts"]["apparmor"]["bwrap_profiles"] = []
+    observed["diagnostics"]["apparmor_profiles"] = diagnostic
+    assert admission.parse(encode(observed))["status"] == "OBSERVED"
+
+
+@pytest.mark.parametrize(
+    "reason,code",
+    [
+        ("unrecognized", None),
+        ("missing", errno.EACCES),
+        ("unreadable", errno.ENOENT),
+        ("io_error", errno.ENOENT),
+        ("io_error", errno.EACCES),
+        ("read_success", errno.EIO),
+        ("io_error", True),
+        ("io_error", 4096),
+    ],
+)
+def test_parser_rejects_unknown_or_contradictory_diagnostics(observed, reason, code):
+    observed["diagnostics"]["bwrap"]["usr_bin"] = {"reason": reason, "errno": code}
+    with pytest.raises(admission.ObservationError):
+        admission.parse(encode(observed))
+
+
+@pytest.mark.parametrize("section", ["root", "bwrap", "candidate", "profiles"])
+def test_diagnostic_shape_is_closed(observed, section):
+    target = {
+        "root": observed["diagnostics"],
+        "bwrap": observed["diagnostics"]["bwrap"],
+        "candidate": observed["diagnostics"]["bwrap"]["usr_bin"],
+        "profiles": observed["diagnostics"]["apparmor_profiles"],
+    }[section]
+    target["raw_path"] = "/private/secret"
+    with pytest.raises(admission.ObservationError):
+        admission.parse(encode(observed))
+
+
+def test_no_success_cannot_hide_unattempted_candidate(observed):
+    observed["facts"]["bwrap"] = None
+    recalculate(observed)
+    observed["diagnostics"]["bwrap"]["bin"] = {"reason": "not_attempted", "errno": None}
+    with pytest.raises(admission.ObservationError):
+        admission.parse(encode(observed))
+
+
+def test_success_candidate_must_match_fact_and_short_circuit(observed):
+    observed["diagnostics"]["bwrap"]["usr_bin"] = {"reason": "missing", "errno": errno.ENOENT}
+    observed["diagnostics"]["bwrap"]["bin"] = {"reason": "read_success", "errno": None}
+    with pytest.raises(admission.ObservationError):
+        admission.parse(encode(observed))
+
+
+def test_profiles_null_cannot_be_successful_read(observed):
+    observed["facts"]["apparmor"]["bwrap_profiles"] = None
+    recalculate(observed)
+    observed["diagnostics"]["apparmor_profiles"] = {"reason": "read_success", "errno": None}
+    with pytest.raises(admission.ObservationError):
+        admission.parse(encode(observed))
+
+
+def test_v1_receipts_are_not_reinterpreted(observed):
+    assert admission.SCHEMA == "forge-linux-admission-observation-v2"
+    observed["schema"] = "forge-linux-admission-observation-v1"
+    with pytest.raises(admission.ObservationError):
+        admission.parse(encode(observed))
+    observed.pop("diagnostics")
     with pytest.raises(admission.ObservationError):
         admission.parse(encode(observed))
