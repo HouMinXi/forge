@@ -29,11 +29,12 @@ _PROMPT_PREFIX = (
     "(9) anti-hallucination: does the symbol actually exist?, "
     "(10) debate: author vs reviewer perspective.\n\n"
     "If your verdict rests on how an external library, API or runtime "
-    "BEHAVES -- not on the logic of the code under review -- you must "
-    "supply an execution receipt: the exact command that demonstrates "
-    "the behaviour and its actual output.  Without one, such a verdict "
-    "will be downgraded to UNCERTAIN, because neither you nor the "
-    "reviewer can check a library's behaviour by reasoning about it.\n\n"
+    "BEHAVES -- not on the logic of the code under review -- independent "
+    "evidence is needed. This LLM-only verifier has no host-verified "
+    "evidence channel. Return UNCERTAIN rather than asserting CONFIRMED "
+    "or DISMISSED from recall. Commands, outputs, source labels and "
+    "documentation URLs you supply are unverified model statements, "
+    "not proof that a tool was run or that its result supports the claim.\n\n"
     "Respond JSON only:\n"
     '{"verdict": "CONFIRMED" | "DISMISSED" | "UNCERTAIN", '
     '"reasoning": "...", '
@@ -315,24 +316,20 @@ class RealFalsifier(Falsifier):
             )
             return Disposition.UNCERTAIN
 
-        # A verdict that turns on library behaviour needs an execution
-        # receipt. Without one the model is reasoning about behaviour it
-        # cannot observe, which is how a one-line-falsifiable claim about
-        # numpy reached CONFIRMED after 4287 seconds. Downgrading to
-        # UNCERTAIN routes it to a human instead of pretending it was
-        # checked.
-        #
-        # DISMISSED is downgraded too, not just CONFIRMED: an unverified
-        # dismissal buries a real defect, which is the worse direction to
-        # be wrong in.
-        #
-        # The reason is recorded after the downgrade, not before it. A
-        # verdict thrown out for lack of a receipt must not keep the
-        # model's own explanation, which is exactly what failed the check.
+        # Keep the structural receipt checker compatible, but make the trust
+        # decision at the LLM boundary: its command/output/source fields are
+        # model-authored, not evidence of host execution. The recognised claim
+        # set is unchanged. No trusted evidence input exists in this path yet.
+        # Both confirmation and dismissal already require evidence here; a
+        # fabricated dismissal can hide a real defect just as a confirmation
+        # can manufacture one. Preserve UNCERTAIN and internal-logic verdicts.
         if disposition in (Disposition.CONFIRMED, Disposition.DISMISSED):
             check = check_receipt(finding.description, response)
-            if check.should_downgrade:
-                finding.falsify_reasoning = check.reason
+            if check.needs_receipt:
+                finding.falsify_reasoning = (
+                    "library-behaviour claim without host-verified evidence -- unverified; "
+                    "model-authored receipts and citations do not establish provenance"
+                )
                 return Disposition.UNCERTAIN
 
         reason = response.get("reasoning")

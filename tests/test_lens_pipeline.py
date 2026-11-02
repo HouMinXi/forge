@@ -4,9 +4,9 @@
 Recorded reviewer and falsifier responses are inline; no backend is called.
 Three claims:
 
-* T18: a lens finding that rests on library behaviour needs an execution
-  receipt exactly like any other finding, and nothing in the lens text makes
-  the receipt gate fire on the lens block itself.
+* T18: a lens finding that rests on library behaviour needs host-verified
+  evidence; a model-authored receipt does not supply it. Nothing in the lens
+  text makes the receipt gate fire on the lens block itself.
 * T17: a contract sentence about intent is not a "Do NOT Flag" exemption, so
   it neither drops a recorded P1 lens finding nor lowers its severity.
 * T12: earned clean credit comes from Forge cycles only. A hand-written
@@ -133,10 +133,14 @@ def test_library_claim_without_a_receipt_is_uncertain(description, verdict):
 
 
 @pytest.mark.parametrize("description", LIBRARY_CLAIMS)
-def test_library_claim_with_a_receipt_keeps_its_verdict(description):
+@pytest.mark.parametrize("verdict", ["CONFIRMED", "DISMISSED"])
+def test_library_claim_with_model_receipt_stays_uncertain(description, verdict):
+    # Lens tagging does not turn model-authored command/output into host evidence.
     receipt = {"receipt": {"command": "python -c 'print(1)'", "output": "1"}}
-    disposition, _ = _falsify(description, "CONFIRMED", receipt)
-    assert disposition == Disposition.CONFIRMED
+    disposition, finding = _falsify(description, verdict, receipt)
+    assert disposition == Disposition.UNCERTAIN
+    assert "host-verified evidence" in finding.falsify_reasoning
+    assert finding.falsify_reasoning != "model says so"
 
 
 @pytest.mark.parametrize("description", REPO_CLAIMS)
