@@ -311,7 +311,32 @@ class TestRunTools:
         registry = {"shellcheck": _make_tool()}
         _, _, skipped, infra = run_tools(registry, ["test.sh"])
         assert "shellcheck" in skipped
-        assert any("shellcheck" in e for e in infra)
+        # None alone is an optional skip, not evidence of execution failure.
+        assert infra == []
+
+    @pytest.mark.parametrize("failure", [None, "timeout", "oserror"])
+    def test_actual_execution_failure_is_distinct_from_optional_absence(self, failure):
+        errors = {
+            "timeout": subprocess.TimeoutExpired(cmd=["shellcheck"], timeout=30),
+            "oserror": OSError("fixture executable disappeared"),
+        }
+        with (
+            patch("code_forge.runner.capture_tool_version", return_value="fixture"),
+            patch(
+                "code_forge.runner._resolve_command",
+                return_value=None if failure is None else "/mock/shellcheck",
+            ),
+            patch("code_forge.runner.subprocess.run", side_effect=errors.get(failure)) as launch,
+        ):
+            results, _, skipped, infra = run_tools({"shellcheck": _make_tool()}, ["test.sh"])
+        assert results == {}
+        assert skipped == ["shellcheck"]
+        assert len(infra) == (failure is not None)
+        if failure is None:
+            launch.assert_not_called()
+        else:
+            launch.assert_called_once()
+            assert "shellcheck" in infra[0]
 
     @patch("code_forge.runner.capture_tool_version")
     @patch("code_forge.runner.run_tool")

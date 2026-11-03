@@ -202,6 +202,7 @@ def run_tool(
     files: list[str],
     *,
     cwd: Path | None = None,
+    infra_errors: list[str] | None = None,
 ) -> tuple[str, int, str] | None:
     """Execute a single tool via subprocess.
 
@@ -212,6 +213,10 @@ def run_tool(
     The stderr field is captured and propagated so that downstream
     code can populate ToolError.stderr with the tool's actual error
     output (Round 5 Kimi R5-M3).
+
+    When supplied, infra_errors collects execution failures that otherwise
+    share the None return with an absent optional tool. Optional absence
+    remains a skip, not an execution failure.
 
     Args:
         tool_config: tool configuration from registry
@@ -270,6 +275,8 @@ def run_tool(
             return (result.stderr, result.returncode, result.stdout)
         return (result.stdout, result.returncode, result.stderr)
     except subprocess.TimeoutExpired:
+        if infra_errors is not None:
+            infra_errors.append("tool %s: timed out" % tool_config.name)
         logger.warning(
             "Tool '%s' timed out after %ds",
             tool_config.name,
@@ -277,6 +284,8 @@ def run_tool(
         )
         return None
     except OSError as exc:
+        if infra_errors is not None:
+            infra_errors.append("tool %s: OS error: %s" % (tool_config.name, exc))
         logger.warning(
             "Tool '%s' failed with OS error: %s",
             tool_config.name,
@@ -330,10 +339,9 @@ def run_tools(
             tools_skipped.append(tool_name)
             continue
 
-        result = run_tool(tool_config, matching_files, cwd=cwd)
+        result = run_tool(tool_config, matching_files, cwd=cwd, infra_errors=infra_errors)
         if result is None:
             tools_skipped.append(tool_name)
-            infra_errors.append("tool %s: timed out or OS error (see log)" % tool_name)
         else:
             tool_results[tool_name] = result
 

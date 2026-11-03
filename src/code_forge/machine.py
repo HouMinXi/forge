@@ -881,6 +881,9 @@ class StateMachine:
         source review/subject/guard, the written and clean receipt cycle windows, and
         `_state_of_last_run`). `_state` is not reset here; `_maybe_load_prior_state` decides it.
         """
+        # Current-run execution failure, not inferred from persisted diagnostics.
+        # LOCAL credit/receipt policy does not consume this CI-only latch.
+        self._l0_failed = False
         # Pre-existing L0 findings waiting for the advisory flush. Every L0
         # phase rebinds it; a run that raised before the flush leaves nothing
         # for the next run.
@@ -1235,7 +1238,9 @@ class StateMachine:
                     # A bound running marker is not a completed measurement.
                     # Persist the non-PASS state even when the PID is live.
                     self._state.verdict = (
-                        Verdict.PENDING if pending and not self._mutation_bound_failure else Verdict.FAIL
+                        Verdict.PENDING
+                        if pending and not self._mutation_bound_failure and not self._l0_failed
+                        else Verdict.FAIL
                     )
                     self._state.converged = False
                     self._state.infra_errors.append(
@@ -1404,7 +1409,7 @@ class StateMachine:
                                 )
                                 self._unlink_mutation_result(result_path)
                             else:
-                                if self._mutation_bound_failure:
+                                if self._mutation_bound_failure or self._l0_failed:
                                     self._state.verdict = Verdict.FAIL
                                     self._state.converged = False
                                     self._persist_state()
@@ -1419,7 +1424,7 @@ class StateMachine:
                                 self._state.infra_errors.append(
                                     "CI: mutation PID %d still running, skipping new launch" % pid
                                 )
-                                if self._mutation_bound_failure:
+                                if self._mutation_bound_failure or self._l0_failed:
                                     self._state.verdict = Verdict.FAIL
                                     self._state.converged = False
                                     self._persist_state()
@@ -1486,7 +1491,8 @@ class StateMachine:
         # them, unlike a CONFIRMED count). A detached run cannot change the
         # verdict, so do not spend a full baseline + mutation run on it.
         ci_already_failed = (
-            self._mutation_bound_failure
+            self._l0_failed
+            or self._mutation_bound_failure
             or bool(self._acquisition_markers)
             or self._state.rounds_with_falsify_infra > 0
             or self._state.rounds_with_evidence_incomplete > 0
@@ -1686,6 +1692,7 @@ class StateMachine:
         verdict = (
             Verdict.FAIL
             if confirmed > 0
+            or self._l0_failed
             or coverage_gaps > 0
             or self._acquisition_markers
             or self._state.rounds_with_falsify_infra > 0
@@ -2656,8 +2663,11 @@ class StateMachine:
                 )
             else:
                 l0_findings, l0_infra = self.l0_runner(self.registry, source_files)
+            if l0_infra:
+                self._l0_failed = True
             self._state.infra_errors.extend(l0_infra)
         except Exception as exc:  # noqa: BLE001
+            self._l0_failed = True
             self._state.infra_errors.append(f"L0 runner failed: {exc}")
             l0_findings = []
 
