@@ -29,7 +29,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Optional
 
 from . import progress
@@ -2743,6 +2743,14 @@ def _continue_truncated(
     help, while a continuation is a different, smaller request.
     """
     last_failure = ""
+    observed = _observed_usage(truncated.usage_data, backend.format)
+
+    def exhausted():
+        error = _exhaustion_error(budget, last_failure)
+        error.observed_usage = observed
+        error.usage = observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
+        return error
+
     try:
         # The entry event is recorded before the zero-output guard so
         # every truncation counts toward the run breaker, recovered or
@@ -2800,6 +2808,7 @@ def _continue_truncated(
                 # otherwise fold it into a budgeted failure.
                 raise
             except _TruncatedResponse as exc:
+                observed = _sum_usage(observed, _observed_usage(exc.usage_data, backend.format))
                 # A truncated continuation is a failed attempt, and the
                 # event still counts. A trip raised here leaves the
                 # inner try and reaches the outer clauses below.
@@ -2808,6 +2817,12 @@ def _continue_truncated(
                     breaker.record_truncation()
                 continue
             except LLMInvokeError as exc:
+                observed = _sum_usage(
+                    observed,
+                    exc.observed_usage
+                    if exc.observed_usage is not None
+                    else Usage(known_fields=frozenset()),
+                )
                 # A non-truncation invoke error (HTTP status, timeout)
                 # is a failed attempt against this budget; it must not
                 # escape to the caller's max_attempts retry loop, which
@@ -2821,6 +2836,7 @@ def _continue_truncated(
                 )
                 last_failure = " ".join(str(exc).split())[:400]
                 continue
+            observed = _sum_usage(observed, _observed_usage(usage_c, backend.format))
             if not isinstance(cont, str):
                 cont = ""
             parsed = _continued_reply(
@@ -2829,11 +2845,11 @@ def _continue_truncated(
             if isinstance(parsed, str):
                 last_failure = parsed
                 continue
-            return parsed, _sum_usage(
-                _observed_usage(truncated.usage_data, backend.format),
-                _observed_usage(usage_c, backend.format),
-            )
-    except TruncationBreakerError:
+            return parsed, observed
+    except TruncationBreakerError as exc:
+        # Retain this invocation's observations, not the run-wide event count.
+        exc.observed_usage = observed
+        exc.usage = observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
         raise
     except LLMInvokeError as exc:
         # Defensive: per-attempt handling above covers every invoke
@@ -2841,8 +2857,8 @@ def _continue_truncated(
         # escapes is folded into the exhausted outcome, with the
         # original chained as the cause so the real failure stays
         # traceable.
-        raise _exhaustion_error(budget, last_failure) from exc
-    raise _exhaustion_error(budget, last_failure)
+        raise exhausted() from exc
+    raise exhausted()
 
 
 # A continuation that adds nothing to a whole partial: whitespace, fence
@@ -2909,6 +2925,8 @@ def _retry_with_more_headroom(
     expected_keys: frozenset[str] | None,
     reply_keys: ReplyKeys | None = None,
     strict_response: bool = False,
+    *,
+    on_failure_usage: Callable[[Usage], None] | None = None,
 ):
     """Re-ask for the whole answer with a wider output cap.
 
@@ -2923,7 +2941,9 @@ def _retry_with_more_headroom(
 
     Returns (parsed, usage) on success, or None when the wider attempt is
     truncated again or comes back unusable -- the caller then raises the
-    exhaustion error it already holds.
+    exhaustion error it already holds. When supplied, on_failure_usage
+    receives the observed usage of a dispatched, unsuccessful attempt once.
+    Skipped attempts and breaker interruptions do not report usage.
     """
     current = backend.max_completion_tokens or backend.max_tokens
     if backend.output_ceiling > 0:
@@ -2960,6 +2980,13 @@ def _retry_with_more_headroom(
     except TruncationBreakerError:
         raise
     except LLMInvokeError as exc:
+        if on_failure_usage is not None:
+            observed = (
+                _observed_usage(exc.usage_data, backend.format)
+                if isinstance(exc, _TruncatedResponse)
+                else exc.observed_usage
+            )
+            on_failure_usage(observed if observed is not None else Usage(known_fields=frozenset()))
         logging.getLogger("code_forge").warning(
             "wider retry failed: %s: %s",
             type(exc).__name__,
@@ -2967,7 +2994,10 @@ def _retry_with_more_headroom(
         )
         return None
 
+    observed = _observed_usage(usage_data, backend.format)
     if not isinstance(content, str):
+        if on_failure_usage is not None:
+            on_failure_usage(observed)
         return None
     cleaned = content if strict_response else _strip_fences(content)
     try:
@@ -2977,9 +3007,11 @@ def _retry_with_more_headroom(
             None if strict_response else _fallback_reply(cleaned, parse_error, expected_keys, reply_keys)
         )
     if not _is_forge_envelope(parsed, expected_keys, strict_response=strict_response):
+        if on_failure_usage is not None:
+            on_failure_usage(observed)
         return None
 
-    return parsed, _observed_usage(usage_data, backend.format)
+    return parsed, observed
 
 
 def _invoke_api(
@@ -3248,6 +3280,7 @@ def _invoke_api(
                         duration_s=time.monotonic() - start,
                         is_truncated=True,
                     )
+
                 # Stitching never produced a usable envelope. Ask once
                 # more for the whole answer with more output room before
                 # dropping the pass: the reply was complete in intent,
@@ -3257,6 +3290,20 @@ def _invoke_api(
                 # that came back empty, or as prose with no object at
                 # all, did not run out of room -- it answered the wrong
                 # way, and a larger cap buys another wrong answer.
+                def retain_wider_failure_usage(
+                    observed: Usage, error: LLMInvokeError | None = spent_error
+                ) -> None:
+                    if error is not None:
+                        prior = error.observed_usage
+                        total = _sum_usage(
+                            prior if prior is not None else Usage(known_fields=frozenset()),
+                            observed,
+                        )
+                        error.observed_usage = total
+                        error.usage = (
+                            total if {"input_tokens", "output_tokens"} <= total.known_fields else None
+                        )
+
                 wider = None
                 if partial.strip() and "{" in partial:
                     wider = _retry_with_more_headroom(
@@ -3267,9 +3314,13 @@ def _invoke_api(
                         expected_keys,
                         reply_keys=reply_keys,
                         strict_response=strict_response,
+                        on_failure_usage=retain_wider_failure_usage,
                     )
                 if wider is not None:
                     parsed, usage = wider
+                    if spent_error is not None and spent_error.observed_usage is not None:
+                        # The spent budget already includes the initial cut reply.
+                        usage = _sum_usage(spent_error.observed_usage, usage)
                     return LLMResult(
                         content=parsed,
                         usage=usage,

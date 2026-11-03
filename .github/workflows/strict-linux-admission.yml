@@ -7,13 +7,22 @@ name: Strict Linux static observations (not qualification)
     - .github/workflows/strict-linux-admission.yml
     - scripts/strict_linux_admission.py
     - tests/test_strict_linux_admission.py
-  workflow_dispatch: null
+  workflow_dispatch:
+    inputs:
+      fixed_metadata_read:
+        description: Explicit one-run fixed privileged metadata diagnostic (not qualification)
+        type: boolean
+        default: false
+      expected_source_sha:
+        description: Reviewed exact source SHA; required when fixed_metadata_read is true
+        type: string
+        default: ''
 permissions:
   contents: read
 jobs:
   observe:
     # This schema declares one repository; fork-head execution is not supported.
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) && !(github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
@@ -53,5 +62,60 @@ jobs:
       with:
         name: strict-linux-static-observation-${{ github.run_id }}-${{ github.run_attempt }}
         path: ${{ env.ADMISSION_EVIDENCE }}/observation.json
+        if-no-files-found: error
+        retention-days: 14
+
+  fixed-metadata:
+    # Invalid attempts/ref/SHA produce a finite failure receipt before any sudo.
+    # No PR or push event enters this job. Explicit new dispatch is not a retry grant.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    concurrency:
+      group: fixed-metadata-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+    - name: Prepare private metadata evidence directory
+      shell: bash
+      run: |
+        set -euo pipefail
+        evidence=$(mktemp -d "$RUNNER_TEMP/forge-fixed-metadata.XXXXXXXX")
+        printf 'METADATA_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+    - name: Check out dispatched exact source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Read only fixed manager identity and known profile metadata
+      env:
+        CONTEXT_REPOSITORY: ${{ github.repository }}
+        CONTEXT_RUN_ID: ${{ github.run_id }}
+        CONTEXT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        CONTEXT_JOB: ${{ github.job }}
+        CONTEXT_REF: ${{ github.ref }}
+        CONTEXT_WORKFLOW_REF: ${{ github.workflow_ref }}
+        CONTEXT_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        CONTEXT_SOURCE_SHA: ${{ github.sha }}
+        CONTEXT_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
+        CONTEXT_EVENT: ${{ github.event_name }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \
+          CONTEXT_REPOSITORY="$CONTEXT_REPOSITORY" \
+          CONTEXT_RUN_ID="$CONTEXT_RUN_ID" CONTEXT_RUN_ATTEMPT="$CONTEXT_RUN_ATTEMPT" \
+          CONTEXT_JOB="$CONTEXT_JOB" CONTEXT_REF="$CONTEXT_REF" \
+          CONTEXT_WORKFLOW_REF="$CONTEXT_WORKFLOW_REF" \
+          CONTEXT_WORKFLOW_SHA="$CONTEXT_WORKFLOW_SHA" \
+          CONTEXT_SOURCE_SHA="$CONTEXT_SOURCE_SHA" CONTEXT_EXPECTED_SHA="$CONTEXT_EXPECTED_SHA" \
+          CONTEXT_EVENT="$CONTEXT_EVENT" \
+          /usr/bin/python3 -I -S -B scripts/fixed_runner_metadata.py \
+          --allow-fixed-privileged-metadata --output-dir "$METADATA_EVIDENCE"
+    - name: Preserve finite metadata including STOP
+      if: ${{ always() && env.METADATA_EVIDENCE != '' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: fixed-runner-metadata-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ env.METADATA_EVIDENCE }}/metadata-observation.json
         if-no-files-found: error
         retention-days: 14
