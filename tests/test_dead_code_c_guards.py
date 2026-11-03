@@ -35,6 +35,8 @@ def _assert_callers(
             "qualified_name TEXT, file_path TEXT, line_start INTEGER, line_end INTEGER)"
         )
         conn.execute("CREATE TABLE edges (kind TEXT, source_qualified TEXT, target_qualified TEXT)")
+        conn.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO metadata VALUES ('repo_root', ?)", (str(tmp_path.resolve()),))
         conn.executemany(
             "INSERT INTO nodes VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
@@ -59,7 +61,9 @@ def _assert_callers(
             for name, line, keep in callers
             if keep
         }
-        actual = find_cross_repo_callers(str(db_path), [{"name": "target_fn", "module": "target_mod"}])
+        actual = find_cross_repo_callers(
+            str(db_path), [{"name": "target_fn", "module": "target_mod"}], repo_root=tmp_path
+        )
         assert {caller["caller_qualified"]: caller for caller in actual} == expected
         assert len(actual) == len(expected)
         assert set(_live_callers(conn.cursor(), "target_fn", "target_mod")) == {

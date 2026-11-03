@@ -288,6 +288,8 @@ def _live_callers(
     cursor: sqlite3.Cursor,
     target_name: str,
     module_name: str,
+    *,
+    resolve_file: Callable[[str | None], str] | None = None,
 ) -> list[LiveCaller]:
     """Query callers via CALLS+IMPORTS_FROM, resolve file:line, filter dead.
 
@@ -299,6 +301,8 @@ def _live_callers(
         cursor: open sqlite3 cursor on a graph.db.
         target_name: the function/class name being called.
         module_name: the module stem for IMPORTS_FROM disambiguation.
+        resolve_file: optional source-path binding, applied before liveness reads.
+            The returned caller identity retains the graph's original spelling.
 
     Returns:
         List of LiveCaller objects for callers NOT inside dead code.
@@ -316,7 +320,8 @@ def _live_callers(
         caller_file = row[0] if row else None
         caller_line = row[1] if row else None
 
-        if _is_dead_call_site(caller_file, caller_line):
+        source_file = resolve_file(caller_file) if resolve_file is not None else caller_file
+        if _is_dead_call_site(source_file, caller_line):
             continue
 
         result.append(

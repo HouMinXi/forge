@@ -19,6 +19,10 @@ def parse_clippy(
     relevant.  Non-diagnostic lines (build-script-executed, etc.)
     are silently skipped.
 
+    Emit each primary location once per diagnostic, regardless of span order.
+    Legacy output with no is_primary fields retains its first-span fallback.
+    Partially marked, non-boolean, or all-secondary spans yield ToolError.
+
     Returns:
         [] on empty string (clean run).
         [Finding, ...] on valid output with diagnostics.
@@ -54,26 +58,50 @@ def parse_clippy(
         if not spans:
             continue  # empty spans -- no file location
 
-        span = spans[0]
+        if any("is_primary" in span for span in spans):
+            if any(type(span.get("is_primary")) is not bool for span in spans):
+                findings.append(
+                    ToolError(tool_name, exit_code, "", "Invalid %s primary span markers" % tool_name)
+                )
+                continue
+            selected_spans = [span for span in spans if span["is_primary"]]
+            if not selected_spans:
+                findings.append(
+                    ToolError(tool_name, exit_code, "", "Missing %s primary span" % tool_name)
+                )
+                continue
+        else:
+            selected_spans = spans[:1]
         code_obj = msg.get("code")
         if code_obj is not None:
             rule_id = code_obj.get("code", "unknown")
         else:
             rule_id = "unknown"
 
-        line_start = span.get("line_start", 0)
-        findings.append(
-            Finding(
-                file=span.get("file_name", ""),
-                line=line_start,
-                end_line=(span.get("line_end") or line_start),
-                column=(span.get("column_start") or 0),
-                rule_id=rule_id,
-                level=level,
-                message=msg.get("message", ""),
-                tool_name=tool_name,
+        seen_locations = set()
+        for span in selected_spans:
+            line_start = span.get("line_start", 0)
+            location = (
+                span.get("file_name", ""),
+                line_start,
+                span.get("line_end") or line_start,
+                span.get("column_start") or 0,
             )
-        )
+            if location in seen_locations:
+                continue
+            seen_locations.add(location)
+            findings.append(
+                Finding(
+                    file=location[0],
+                    line=location[1],
+                    end_line=location[2],
+                    column=location[3],
+                    rule_id=rule_id,
+                    level=level,
+                    message=msg.get("message", ""),
+                    tool_name=tool_name,
+                )
+            )
 
     # If all lines failed JSON parse, output is corrupt
     if total_lines > 0 and parse_failures == total_lines:
