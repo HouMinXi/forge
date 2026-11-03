@@ -397,14 +397,31 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
                 "tests/test_strict_linux_admission.py",
             ],
         },
-        "workflow_dispatch": None,
+        "workflow_dispatch": {
+            "inputs": {
+                "fixed_metadata_read": {
+                    "description": "Explicit one-run fixed privileged metadata diagnostic (not qualification)",
+                    "type": "boolean",
+                    "default": False,
+                },
+                "expected_source_sha": {
+                    "description": "Reviewed exact source SHA; required when fixed_metadata_read is true",
+                    "type": "string",
+                    "default": "",
+                },
+            }
+        },
     }
     assert workflow["permissions"] == {"contents": "read"}
-    assert set(workflow["jobs"]) == {"observe"}
+    assert set(workflow["jobs"]) == {"observe", "fixed-metadata"}
+    assert workflow["jobs"]["fixed-metadata"]["if"] == (
+        "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read }}"
+    )
     job = workflow["jobs"]["observe"]
     assert job["if"] == (
-        "${{ github.event_name == 'workflow_dispatch' || "
-        "github.event.pull_request.head.repo.full_name == github.repository }}"
+        "${{ (github.event_name == 'workflow_dispatch' || "
+        "github.event.pull_request.head.repo.full_name == github.repository) && "
+        "!(github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read) }}"
     )
     steps = job["steps"]
     assert len(steps) == 3
