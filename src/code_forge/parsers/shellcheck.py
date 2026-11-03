@@ -18,9 +18,19 @@ def parse_shellcheck(
         [] on empty string (clean run).
         [Finding, ...] on valid output with findings.
         [ToolError] on malformed/unparseable output.
+
+    ShellCheck exits 0 for no problems and 1 for diagnostics. Other exits
+    indicate an incomplete run, even when its JSON footer contains [] or
+    diagnostics from successfully read files. Preserve those diagnostics
+    and report the failure independently of their location.
     """
+    errors = (
+        [ToolError(tool_name, exit_code, "", f"{tool_name} exited abnormally ({exit_code})")]
+        if exit_code not in (0, 1)
+        else []
+    )
     if not output.strip():
-        return []
+        return errors
     try:
         raw = json.loads(output)
     except (json.JSONDecodeError, ValueError):
@@ -61,4 +71,4 @@ def parse_shellcheck(
                 message=f"Failed to parse {tool_name} output: missing fields",
             )
         ]
-    return findings
+    return findings + errors
