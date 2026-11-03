@@ -309,9 +309,45 @@ class TestRunTools:
     def test_run_tool_none_adds_to_skipped(self, mock_match, mock_run_tool, mock_ver):
         mock_match.return_value = {"shellcheck": ["test.sh"]}
         registry = {"shellcheck": _make_tool()}
-        _, _, skipped, infra = run_tools(registry, ["test.sh"])
+        execution_errors = []
+        _, _, skipped, infra = run_tools(registry, ["test.sh"], execution_errors=execution_errors)
         assert "shellcheck" in skipped
-        assert any("shellcheck" in e for e in infra)
+        # Optional absence remains visible without becoming an execution failure.
+        assert infra == ["tool shellcheck: optional executable unavailable, skipped"]
+        assert execution_errors == []
+
+    @pytest.mark.parametrize("failure", [None, "timeout", "oserror"])
+    def test_actual_execution_failure_is_distinct_from_optional_absence(self, failure):
+        execution_errors = []
+        errors = {
+            "timeout": subprocess.TimeoutExpired(cmd=["shellcheck"], timeout=30),
+            "oserror": OSError("fixture executable disappeared"),
+        }
+        with (
+            patch("code_forge.runner.capture_tool_version", return_value="fixture"),
+            patch(
+                "code_forge.runner._resolve_command",
+                return_value=None if failure is None else "/mock/shellcheck",
+            ),
+            patch("code_forge.runner.subprocess.run", side_effect=errors.get(failure)) as launch,
+        ):
+            results, _, skipped, infra = run_tools(
+                {"shellcheck": _make_tool()}, ["test.sh"], execution_errors=execution_errors
+            )
+        assert results == {}
+        assert skipped == ["shellcheck"]
+        assert len(infra) == 1
+        if failure is None:
+            launch.assert_not_called()
+            assert infra == ["tool shellcheck: optional executable unavailable, skipped"]
+            assert execution_errors == []
+        else:
+            launch.assert_called_once()
+            assert execution_errors == infra
+            if failure == "timeout":
+                assert infra == ["tool shellcheck: timed out"]
+            else:
+                assert infra == ["tool shellcheck: OS error: fixture executable disappeared"]
 
     @patch("code_forge.runner.capture_tool_version")
     @patch("code_forge.runner.run_tool")

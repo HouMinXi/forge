@@ -306,10 +306,22 @@ def test_real_exit_zero_preserves_findings_and_stderr(tmp_path, installed_ruff):
     assert isinstance(result[2], str), "native stderr remains part of the runner result"
 
 
-def test_missing_binary_is_refusal():
+def test_missing_optional_binary_keeps_diagnostic_without_execution_failure():
     tool = _tool("forge-ruff-known-missing check")
-    findings, infra = _default_l0_runner({tool.name: tool}, [Path("sample.py")])
+    failures = []
+    findings, infra = _default_l0_runner(
+        {tool.name: tool}, [Path("sample.py")], execution_errors=failures
+    )
     assert not findings and infra
+    assert "optional executable unavailable" in infra[0]
+    assert not failures
+
+
+def test_missing_required_binary_is_refusal():
+    tool = _tool("forge-ruff-known-missing check")
+    tool.required = True
+    with pytest.raises(RuntimeError, match="Required tool not found"):
+        _default_l0_runner({tool.name: tool}, [Path("sample.py")])
 
 
 def test_module_version_records_ruff_not_the_interpreter(installed_ruff):
