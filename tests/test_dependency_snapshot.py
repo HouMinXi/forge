@@ -381,8 +381,9 @@ class SnapshotTests(unittest.TestCase):
         left, right = socket.socketpair()
         bus = p.Bus(library, left, time.monotonic() + 1)
         try:
-            with self.assertRaisesRegex(p.Stop, "limit"):
+            with self.assertRaisesRegex(p.Stop, "limit") as caught:
                 bus.read(C.c_void_p(10), "as")
+            self.assertEqual(caught.exception.limit_category, "array_items")
         finally:
             bus.close()
             right.close()
@@ -475,8 +476,86 @@ class SnapshotTests(unittest.TestCase):
         left, right = socket.socketpair()
         bus = p.Bus(library, left, time.monotonic() + 1)
         try:
-            with self.assertRaisesRegex(p.Stop, "limit"):
+            with self.assertRaisesRegex(p.Stop, "limit") as caught:
                 bus.read(C.c_void_p(10), "s")
+            self.assertEqual(caught.exception.limit_category, "string_bytes")
+        finally:
+            bus.close()
+            right.close()
+
+    def test_null_string_has_distinct_category(self):
+        library = Decoder("s", "x")
+        library.sd_bus_message_read_basic.impl = lambda *args: 1
+        left, right = socket.socketpair()
+        bus = p.Bus(library, left, time.monotonic() + 1)
+        try:
+            with self.assertRaises(p.Stop) as caught:
+                bus.read(C.c_void_p(10), "s")
+            self.assertEqual(caught.exception.limit_category, "null_string")
+        finally:
+            bus.close()
+            right.close()
+
+    def test_collect_defensive_array_limits_name_request(self):
+        for method in ("ListUnits", "ListJobs"):
+            bus = FakeBus()
+            original = bus.request
+
+            def request(path, interface, actual, args, signature, method=method, original=original):
+                return (
+                    [None] * 65
+                    if actual == method
+                    else original(path, interface, actual, args, signature)
+                )
+
+            bus.request = request
+            with self.assertRaises(p.Stop) as caught:
+                p.collect(bus, lambda: None)
+            self.assertEqual(caught.exception.limit_category, "array_items")
+            self.assertEqual(caught.exception.limit_context, method)
+
+    def test_limit_context_is_finite_and_no_raw_values_escape(self):
+        for context, field, expected in (
+            ("manager_property", "UnitPath", "UnitPath"),
+            ("unit_property", "Wants", "Wants"),
+            ("ListUnits", "Wants", None),
+            ("secret-context", "secret-field", None),
+        ):
+            error = p.Stop("limit")
+            error.limit_category = "array_items"
+            error.limit_context = context
+            error.limit_field = field
+            with patch.object(p, "ordinary_identity"), patch.object(p, "metadata", side_effect=error):
+                result = p.observe()
+            self.assertEqual(result["status"], "STOP")
+            self.assertFalse(result["complete"])
+            self.assertEqual(result["limit_category"], "array_items")
+            self.assertEqual(result["limit_field"], expected)
+            self.assertNotIn("secret", json.dumps(result))
+
+    def test_request_attaches_allowlisted_context_to_decoder_limit(self):
+        library = Decoder("as", ["x"] * 65)
+        library.events.insert(0, ("enter", (b"v", b"as")))
+        library.sd_bus_message_get_signature.impl = lambda *args: b"v"
+
+        def message(bus, output, *args):
+            C.cast(output, C.POINTER(C.c_void_p))[0] = 9
+            return 0
+
+        def call(bus, request, timeout, error, output):
+            C.cast(output, C.POINTER(C.c_void_p))[0] = 10
+            return 1
+
+        library.sd_bus_message_new_method_call.impl = message
+        library.sd_bus_call.impl = call
+        left, right = socket.socketpair()
+        bus = p.Bus(library, left, time.monotonic() + 1)
+        try:
+            with self.assertRaises(p.Stop) as caught:
+                bus.request(p.OBJECT, p.PROPERTIES, "Get", (p.MANAGER, "UnitPath"), "as")
+            self.assertEqual(caught.exception.limit_context, "manager_property")
+            self.assertEqual(caught.exception.limit_field, "UnitPath")
+            self.assertEqual(caught.exception.limit_category, "array_items")
         finally:
             bus.close()
             right.close()

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ".github/workflows/strict-linux-admission.yml"
 BRANCH = "diag/ordinary-dependency-snapshot-20261103"
 PROBE = "scripts/dependency_snapshot.py"
-PROBE_SHA256 = "07e6cb30ebb946d7e2da865e6a8747f6ed587dcb3cb10f80b07a70552bd4deaa"
+PROBE_SHA256 = "65905292adff42a96c8bcfb27dc3b7af81d8c1e6c924d00b73cfa9efcc1997df"
 FILES = (PROBE, "scripts/fixed_runner_metadata.py", "scripts/dependency_snapshot_runner.py", WORKFLOW)
 KEYS = "REPOSITORY RUN_ID RUN_ATTEMPT JOB REF WORKFLOW_SHA WORKFLOW_REF SOURCE_SHA EXPECTED_SHA EVENT ORDINARY FIXED".split()
 

@@ -39,6 +39,12 @@ def need(value, reason):
         raise Stop(reason)
 
 
+def limit(category):
+    error = Stop("limit")
+    error.limit_category = category
+    raise error
+
+
 def remaining(deadline):
     value = deadline - time.monotonic()
     need(value > 0, "timeout")
@@ -202,7 +208,8 @@ class Bus:
             result = []
             with self.container(msg, "a", signature[1:]):
                 while not self.check(self.lib.sd_bus_message_at_end(msg, 0)):
-                    need(len(result) < MAX_ITEMS, "limit")
+                    if len(result) >= MAX_ITEMS:
+                        limit("array_items")
                     result.append(self.read(msg, signature[1:]))
             return result
         if signature.startswith("("):
@@ -218,7 +225,10 @@ class Bus:
         )
         if signature in ("s", "o"):
             raw = value.value
-            need(raw is not None and len(raw) <= MAX_STRING, "limit")
+            if raw is None:
+                limit("null_string")
+            if len(raw) > MAX_STRING:
+                limit("string_bytes")
             return raw.decode("utf-8", "strict")
         if signature == "b":
             need(value.value in (0, 1), "type")
@@ -276,6 +286,18 @@ class Bus:
                 value = self.read(reply, signature)
             need(self.check(self.lib.sd_bus_message_at_end(reply, 1)) > 0, "type")
             return value
+        except Stop as exc:
+            if exc.reason == "limit":
+                exc.limit_context = (
+                    "manager_property"
+                    if method == "Get" and args[0] == MANAGER
+                    else "unit_property"
+                    if method == "Get"
+                    else method
+                )
+                if method == "Get":
+                    exc.limit_field = args[1]
+            raise
         finally:
             if reply:
                 self.lib.sd_bus_message_unref(reply)
@@ -308,7 +330,10 @@ def collect(bus, recheck):
 
     def roster():
         rows = bus.request(OBJECT, MANAGER, "ListUnits", (), "a(ssssssouso)")
-        need(len(rows) <= MAX_ITEMS, "limit")
+        if len(rows) > MAX_ITEMS:
+            error = Stop("limit")
+            error.limit_category, error.limit_context = "array_items", "ListUnits"
+            raise error
         # Do not retain Description or job details from ListUnits.
         result = sorted((row[0], row[6], row[2], row[3], row[4]) for row in rows)
         need(len({row[1] for row in result}) == len(result), "snapshot")
@@ -316,7 +341,10 @@ def collect(bus, recheck):
 
     def jobs():
         result = bus.request(OBJECT, MANAGER, "ListJobs", (), "a(usssoo)")
-        need(len(result) <= MAX_ITEMS, "limit")
+        if len(result) > MAX_ITEMS:
+            error = Stop("limit")
+            error.limit_category, error.limit_context = "array_items", "ListJobs"
+            raise error
         return sorted(result)
 
     recheck()
@@ -381,6 +409,26 @@ def observe():
     except (Stop, OSError, ValueError, AttributeError) as exc:
         # Fixed reasons only; never persist bus error strings or exception text.
         result.pop("snapshot", None)
+        if reason_of(exc) == "limit":
+            category = getattr(exc, "limit_category", None)
+            context = getattr(exc, "limit_context", None)
+            field = getattr(exc, "limit_field", None)
+            result["limit_category"] = (
+                category if category in {"array_items", "string_bytes", "null_string"} else None
+            )
+            result["limit_context"] = (
+                context
+                if context in {"ListUnits", "ListJobs", "manager_property", "unit_property"}
+                else None
+            )
+            allowed_fields = (
+                MANAGER_FIELDS
+                if context == "manager_property"
+                else UNIT_FIELDS
+                if context == "unit_property"
+                else {}
+            )
+            result["limit_field"] = field if field in allowed_fields else None
         result.update(
             status="STOP",
             complete=False,

@@ -35,6 +35,10 @@ def environment():
 
 
 class Contracts(unittest.TestCase):
+    def test_probe_pin_matches_reviewed_source(self):
+        source = PATH.parents[1] / p.PROBE
+        self.assertEqual(p.hashlib.sha256(source.read_bytes()).hexdigest(), p.PROBE_SHA256)
+
     def test_context(self):
         with patch.dict(os.environ, environment(), clear=True):
             self.assertEqual(p.context()["SOURCE_SHA"], "a" * 40)
