@@ -15,6 +15,7 @@ from contextlib import contextmanager
 
 ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"}
 MAX_ITEMS = 64
+MAX_COUNT_ITEMS = 512
 MAX_STRING = 4096
 MAX_RECEIPT = 262144
 MANAGER = "org.freedesktop.systemd1.Manager"
@@ -304,6 +305,54 @@ class Bus:
             if request:
                 self.lib.sd_bus_message_unref(request)
 
+    def count_units(self):
+        """Count a later reply, without retaining values; libsystemd allocates the whole reply."""
+        skip = self.lib.sd_bus_message_skip
+        skip.argtypes, skip.restype = [C.c_void_p, C.c_char_p], C.c_int
+        request, reply = C.c_void_p(), C.c_void_p()
+        try:
+            self.check(
+                self.lib.sd_bus_message_new_method_call(
+                    self.bus, C.byref(request), None, OBJECT.encode(), MANAGER.encode(), b"ListUnits"
+                )
+            )
+            self.check(self.lib.sd_bus_message_set_auto_start(request, 0))
+            self.check(self.lib.sd_bus_message_set_allow_interactive_authorization(request, 0))
+            self.check(
+                self.lib.sd_bus_call(
+                    self.bus,
+                    request,
+                    max(1, int(remaining(self.deadline) * 1000000)),
+                    None,
+                    C.byref(reply),
+                )
+            )
+            need(self.lib.sd_bus_message_get_signature(reply, 1) == b"a(ssssssouso)", "type")
+            need(
+                self.check(self.lib.sd_bus_message_enter_container(reply, b"a", b"(ssssssouso)")) > 0,
+                "type",
+            )
+            count = 0
+            while count < MAX_COUNT_ITEMS and not self.check(self.lib.sd_bus_message_at_end(reply, 0)):
+                need(self.check(skip(reply, b"(ssssssouso)")) > 0, "type")
+                count += 1
+            more = not bool(self.check(self.lib.sd_bus_message_at_end(reply, 0)))
+            if not more:
+                self.check(self.lib.sd_bus_message_exit_container(reply))
+                need(self.check(self.lib.sd_bus_message_at_end(reply, 1)) > 0, "type")
+            return {
+                "exact_count": None if more else count,
+                "validated_prefix_count": count,
+                "has_more": more,
+                "sample": "LATER_NONATOMIC",
+                "receive_allocation": "NOT_BOUNDED",
+            }
+        finally:
+            if reply:
+                self.lib.sd_bus_message_unref(reply)
+            if request:
+                self.lib.sd_bus_message_unref(request)
+
     def properties(self, path, interface, fields):
         result = {}
         for field, signature in fields.items():
@@ -365,6 +414,19 @@ def collect(bus, recheck):
     return {"manager": before[0], "roster": before[1], "jobs": before[2], "units": units}
 
 
+def diagnostic_count(bus, recheck, verify_library, deadline):
+    """Discard a count unless both identity checks and library verification succeed."""
+    try:
+        recheck()
+        count = bus.count_units()
+        recheck()
+        verify_library()
+        remaining(deadline)
+        return count
+    except (Stop, OSError, ValueError, AttributeError):
+        return None
+
+
 def ordinary_identity():
     need(os.getuid() == os.geteuid() != 0 and os.getgid() == os.getegid() != 0, "identity")
 
@@ -399,7 +461,22 @@ def observe():
             result["process"] = process
             bus = Bus(library, channel, deadline)
             try:
-                snapshot = collect(bus, recheck)
+                try:
+                    snapshot = collect(bus, recheck)
+                except Stop as exc:
+                    if (
+                        exc.reason == "limit"
+                        and getattr(exc, "limit_context", None) == "ListUnits"
+                        and getattr(exc, "limit_category", None) == "array_items"
+                    ):
+
+                        def verify_library():
+                            need(base.file_bytes(path, 0, 16777216)[1] == identity, "changed")
+
+                        count = diagnostic_count(bus, recheck, verify_library, deadline)
+                        if count is not None:
+                            result["list_units_count"] = count
+                    raise
             finally:
                 bus.close()
             need(base.file_bytes(path, 0, 16777216)[1] == identity, "changed")

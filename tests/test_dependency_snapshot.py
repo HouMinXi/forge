@@ -1,5 +1,6 @@
 """Offline controls only: no manager, service, network listener, or native bus."""
 
+from contextlib import nullcontext
 import ctypes as C
 import importlib.util
 import io
@@ -104,6 +105,7 @@ class Library:
             "message_exit_container",
             "message_at_end",
             "message_read_basic",
+            "message_skip",
             "message_unref",
         ]
         for name in names:
@@ -130,6 +132,41 @@ class Library:
             os.close(self.fd)
             self.fd = None
         self.closed += 1
+
+
+class CountLibrary(Library):
+    def __init__(self, count, fail_skip=None, bad_signature=False):
+        super().__init__()
+        self.count = count
+        self.skipped = 0
+        self.unrefs = []
+
+        def message(bus, output, *args):
+            C.cast(output, C.POINTER(C.c_void_p))[0] = 9
+            return 0
+
+        def call(bus, request, timeout, error, output):
+            C.cast(output, C.POINTER(C.c_void_p))[0] = 10
+            return 1
+
+        def skip(msg, signature):
+            assert signature == b"(ssssssouso)"
+            if fail_skip is not None and self.skipped == fail_skip:
+                return -5
+            self.skipped += 1
+            return 1
+
+        self.sd_bus_message_new_method_call.impl = message
+        self.sd_bus_call.impl = call
+        self.sd_bus_message_get_signature.impl = lambda *args: (
+            b"bad" if bad_signature else b"a(ssssssouso)"
+        )
+        self.sd_bus_message_enter_container.impl = lambda *args: 1
+        self.sd_bus_message_at_end.impl = lambda msg, complete: int(
+            complete or self.skipped >= self.count
+        )
+        self.sd_bus_message_skip.impl = skip
+        self.sd_bus_message_unref.impl = lambda msg: self.unrefs.append(msg.value)
 
 
 class Decoder(Library):
@@ -482,6 +519,118 @@ class SnapshotTests(unittest.TestCase):
         finally:
             bus.close()
             right.close()
+
+    def test_count_only_bounded_without_reading_values(self):
+        for size in (0, 64, 65, 511, 512, 513, 1000):
+            with self.subTest(size=size):
+                library = CountLibrary(size)
+                left, right = socket.socketpair()
+                bus = p.Bus(library, left, time.monotonic() + 2)
+                try:
+                    result = bus.count_units()
+                    self.assertEqual(result["exact_count"], size if size <= 512 else None)
+                    self.assertEqual(result["validated_prefix_count"], min(size, 512))
+                    self.assertEqual(result["has_more"], size > 512)
+                    self.assertEqual(result["sample"], "LATER_NONATOMIC")
+                    self.assertEqual(result["receive_allocation"], "NOT_BOUNDED")
+                    self.assertEqual(library.skipped, min(size, 512))
+                    self.assertFalse(library.sd_bus_message_read_basic.calls)
+                    self.assertEqual(library.unrefs, [10, 9])
+                finally:
+                    bus.close()
+                    right.close()
+
+    def test_observe_count_preserves_stop_and_does_not_emit_unit_values(self):
+        error = p.Stop("limit")
+        error.limit_category, error.limit_context = "array_items", "ListUnits"
+
+        class Counter:
+            def count_units(self):
+                return {
+                    "exact_count": 65,
+                    "validated_prefix_count": 65,
+                    "has_more": False,
+                    "sample": "LATER_NONATOMIC",
+                    "receive_allocation": "NOT_BOUNDED",
+                }
+
+            def close(self):
+                pass
+
+        base = types.SimpleNamespace(file_bytes=lambda *args: (b"\x7fELF", "stable"))
+        for failure in (False, True):
+
+            def recheck(failure=failure):
+                if failure:
+                    raise p.Stop("changed")
+
+            with (
+                patch.object(p, "ordinary_identity"),
+                patch.object(p, "metadata", return_value=base),
+                patch.object(p.C, "CDLL"),
+                patch.object(p, "Bus", return_value=Counter()),
+                patch.object(p, "verified_channel", return_value=nullcontext((None, recheck, {}))),
+                patch.object(p, "collect", side_effect=error),
+            ):
+                result = p.observe()
+            self.assertEqual(result["reason"], "limit")
+            self.assertEqual(result["status"], "STOP")
+            self.assertFalse(result["complete"])
+            self.assertEqual("list_units_count" in result, not failure)
+            self.assertNotIn("unit-name-secret", json.dumps(result))
+
+    def test_count_diagnostic_discards_on_identity_or_timeout(self):
+        class Counter:
+            def count_units(self):
+                return {"exact_count": 65}
+
+        for failing in ("before", "after", "library", "timeout"):
+            calls = []
+
+            def recheck(calls=calls, failing=failing):
+                calls.append(1)
+                if (failing == "before" and len(calls) == 1) or (failing == "after" and len(calls) == 2):
+                    raise p.Stop("changed")
+
+            def verify(failing=failing):
+                if failing == "library":
+                    raise p.Stop("changed")
+
+            deadline = time.monotonic() + (-1 if failing == "timeout" else 1)
+            self.assertIsNone(p.diagnostic_count(Counter(), recheck, verify, deadline))
+        self.assertEqual(
+            p.diagnostic_count(Counter(), lambda: None, lambda: None, time.monotonic() + 1),
+            {"exact_count": 65},
+        )
+
+    def test_count_does_not_inspect_malformed_entry_after_ceiling(self):
+        library = CountLibrary(513, fail_skip=512)
+        left, right = socket.socketpair()
+        bus = p.Bus(library, left, time.monotonic() + 1)
+        try:
+            self.assertTrue(bus.count_units()["has_more"])
+            self.assertEqual(library.skipped, 512)
+        finally:
+            bus.close()
+            right.close()
+
+    def test_count_failure_and_timeout_release_messages(self):
+        for kind in ("skip", "signature", "timeout"):
+            with self.subTest(kind=kind):
+                library = CountLibrary(
+                    10, fail_skip=2 if kind == "skip" else None, bad_signature=kind == "signature"
+                )
+                left, right = socket.socketpair()
+                bus = p.Bus(library, left, time.monotonic() + 1)
+                if kind == "timeout":
+                    bus.deadline = time.monotonic() - 1
+                try:
+                    with self.assertRaises(p.Stop):
+                        bus.count_units()
+                    self.assertEqual(library.unrefs, [10, 9] if kind != "timeout" else [9])
+                finally:
+                    bus.close()
+                    right.close()
 
     def test_null_string_has_distinct_category(self):
         library = Decoder("s", "x")

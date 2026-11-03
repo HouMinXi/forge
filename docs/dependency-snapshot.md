@@ -51,13 +51,19 @@ and must have major version 255; it is not proof of the library package version.
 The trust model excludes hostile root or replacement of the trusted runtime.
 No installation, sudo, profile change or permission workaround is performed.
 
-Limits: 64 listed units, 64 jobs, 64 elements per array, 4096 bytes per string,
-256 KiB serialized receipt, one 25-second worker deadline and a 30-second parent
-watchdog. The watchdog reaps its direct worker with the reviewed bounded capture
+Snapshot decoding limits: 64 listed units, 64 jobs, 64 elements per array, and
+4096 bytes per string. The receipt is limited to 256 KiB, with one 25-second
+worker deadline and a 30-second parent watchdog. The watchdog reaps its direct worker with the reviewed bounded capture
 helper; it does not prove descendant cleanup. These output/iteration limits are
-**not a cap on libsystemd's internal receive allocation**. Library calls use the
-remaining common timeout. The parent watchdog covers child library loading,
-filesystem reads, authentication and queries, subject to ordinary OS scheduling
+**not a cap on libsystemd's internal receive allocation**. If ListUnits exceeds
+its snapshot array limit, an optional later, non-atomic count-only query skips at
+most 512 typed entries without retaining their values. It reports an exact count
+only when the reply ends within that bound; otherwise it reports a validated
+512-entry prefix and that more entries exist. The original limit STOP remains
+unchanged, and a failed count is omitted. This count is not a qualification or
+proof of the triggering roster size; it also does not bound receive allocation.
+Library calls use the remaining common timeout. The parent watchdog covers child
+library loading, filesystem reads, authentication and queries, subject to ordinary OS scheduling
 and process termination limits. Python startup, importing the exact trusted
 metadata source, and resolving the script path in the parent precede this
 watchdog; no wall-time bound is claimed for that bootstrap. A killed worker
