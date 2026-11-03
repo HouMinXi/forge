@@ -357,7 +357,10 @@ def test_workflow_requires_explicit_dispatch_and_has_failure_artifact():
     assert inputs["fixed_metadata_read"]["default"] is False
     assert inputs["expected_source_sha"]["default"] == ""
     job = workflow["jobs"]["fixed-metadata"]
-    assert job["if"] == "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read }}"
+    assert (
+        job["if"]
+        == "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot }}"
+    )
     assert "inputs.fixed_metadata_read" in workflow["jobs"]["observe"]["if"]
     assert workflow["permissions"] == {"contents": "read"}
     assert job["concurrency"]["cancel-in-progress"] is False

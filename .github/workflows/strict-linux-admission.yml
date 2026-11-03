@@ -13,8 +13,12 @@ name: Strict Linux static observations (not qualification)
         description: Explicit one-run fixed privileged metadata diagnostic (not qualification)
         type: boolean
         default: false
+      ordinary_dependency_snapshot:
+        description: Explicit ordinary-user dependency observation (not qualification)
+        type: boolean
+        default: false
       expected_source_sha:
-        description: Reviewed exact source SHA; required when fixed_metadata_read is true
+        description: Reviewed exact source SHA; required for either explicit diagnostic
         type: string
         default: ''
 permissions:
@@ -22,7 +26,7 @@ permissions:
 jobs:
   observe:
     # This schema declares one repository; fork-head execution is not supported.
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) && !(github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read) }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) && !(github.event_name == 'workflow_dispatch' && (inputs.fixed_metadata_read || inputs.ordinary_dependency_snapshot)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
@@ -68,7 +72,7 @@ jobs:
   fixed-metadata:
     # Invalid attempts/ref/SHA produce a finite failure receipt before any sudo.
     # No PR or push event enters this job. Explicit new dispatch is not a retry grant.
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     concurrency:
@@ -117,5 +121,73 @@ jobs:
       with:
         name: fixed-runner-metadata-${{ github.run_id }}-${{ github.run_attempt }}
         path: ${{ env.METADATA_EVIDENCE }}/metadata-observation.json
+        if-no-files-found: error
+        retention-days: 14
+
+  conflicting-modes:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && inputs.ordinary_dependency_snapshot }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+    - name: Reject conflicting diagnostic modes without checkout or native execution
+      shell: bash
+      run: |
+        set -euo pipefail
+        evidence=$(mktemp -d "$RUNNER_TEMP/forge-conflicting-modes.XXXXXXXX")
+        printf 'CONFLICT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+        printf '%s\n' '{"schema":"forge-dependency-dispatch-v1","status":"STOP","reason":"conflicting_modes","native":"NOT_RUN","qualification":"NOT_RUN"}' > "$evidence/conflict.json"
+        exit 2
+    - name: Preserve conflicting-mode STOP
+      if: ${{ always() && env.CONFLICT_EVIDENCE != '' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: conflicting-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ env.CONFLICT_EVIDENCE }}/conflict.json
+        if-no-files-found: error
+        retention-days: 14
+
+  ordinary-dependency:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.ordinary_dependency_snapshot && !inputs.fixed_metadata_read }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    concurrency:
+      group: ordinary-dependency-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+    - name: Prepare private ordinary evidence directory
+      shell: bash
+      run: |
+        set -euo pipefail
+        evidence=$(mktemp -d "$RUNNER_TEMP/forge-dependency.XXXXXXXX")
+        printf 'DEPENDENCY_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+    - name: Check out dispatched exact source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Read ordinary manager dependency metadata
+      env:
+        CONTEXT_REPOSITORY: ${{ github.repository }}
+        CONTEXT_RUN_ID: ${{ github.run_id }}
+        CONTEXT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        CONTEXT_JOB: ${{ github.job }}
+        CONTEXT_REF: ${{ github.ref }}
+        CONTEXT_WORKFLOW_REF: ${{ github.workflow_ref }}
+        CONTEXT_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        CONTEXT_SOURCE_SHA: ${{ github.sha }}
+        CONTEXT_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
+        CONTEXT_EVENT: ${{ github.event_name }}
+        CONTEXT_ORDINARY: ${{ inputs.ordinary_dependency_snapshot }}
+        CONTEXT_FIXED: ${{ inputs.fixed_metadata_read }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        /usr/bin/python3 -I -S -B scripts/dependency_snapshot_runner.py > "$DEPENDENCY_EVIDENCE/dependency-observation.json"
+    - name: Preserve finite dependency observation including STOP
+      if: ${{ always() && env.DEPENDENCY_EVIDENCE != '' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: ordinary-dependency-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ env.DEPENDENCY_EVIDENCE }}/dependency-observation.json
         if-no-files-found: error
         retention-days: 14

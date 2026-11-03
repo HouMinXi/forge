@@ -404,8 +404,13 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
                     "type": "boolean",
                     "default": False,
                 },
+                "ordinary_dependency_snapshot": {
+                    "description": "Explicit ordinary-user dependency observation (not qualification)",
+                    "type": "boolean",
+                    "default": False,
+                },
                 "expected_source_sha": {
-                    "description": "Reviewed exact source SHA; required when fixed_metadata_read is true",
+                    "description": "Reviewed exact source SHA; required for either explicit diagnostic",
                     "type": "string",
                     "default": "",
                 },
@@ -413,15 +418,20 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
         },
     }
     assert workflow["permissions"] == {"contents": "read"}
-    assert set(workflow["jobs"]) == {"observe", "fixed-metadata"}
+    assert set(workflow["jobs"]) == {
+        "observe",
+        "fixed-metadata",
+        "ordinary-dependency",
+        "conflicting-modes",
+    }
     assert workflow["jobs"]["fixed-metadata"]["if"] == (
-        "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read }}"
+        "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot }}"
     )
     job = workflow["jobs"]["observe"]
     assert job["if"] == (
         "${{ (github.event_name == 'workflow_dispatch' || "
         "github.event.pull_request.head.repo.full_name == github.repository) && "
-        "!(github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read) }}"
+        "!(github.event_name == 'workflow_dispatch' && (inputs.fixed_metadata_read || inputs.ordinary_dependency_snapshot)) }}"
     )
     steps = job["steps"]
     assert len(steps) == 3
@@ -888,3 +898,56 @@ def test_v1_receipts_are_not_reinterpreted(observed):
     observed.pop("diagnostics")
     with pytest.raises(admission.ObservationError):
         admission.parse(encode(observed))
+
+
+@pytest.mark.parametrize("event", ["workflow_dispatch", "pull_request"])
+@pytest.mark.parametrize("fixed", [False, True])
+@pytest.mark.parametrize("ordinary", [False, True])
+@pytest.mark.parametrize("same_repository", [False, True])
+def test_diagnostic_job_selection_matrix(event, fixed, ordinary, same_repository):
+    import ast
+
+    workflow = yaml.safe_load(
+        (Path(__file__).parents[1] / ".github/workflows/strict-linux-admission.yml").read_text()
+    )
+
+    def evaluate(node):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.BoolOp):
+            values = [evaluate(item) for item in node.values]
+            return all(values) if isinstance(node.op, ast.And) else any(values)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return not evaluate(node.operand)
+        if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
+            return evaluate(node.left) == evaluate(node.comparators[0])
+        raise AssertionError("Unsupported workflow condition")
+
+    selected = set()
+    substitutions = {
+        "github.event.pull_request.head.repo.full_name": repr(
+            "HouMinXi/forge" if same_repository else "fork/forge"
+        ),
+        "github.repository": repr("HouMinXi/forge"),
+        "github.event_name": repr(event),
+        "inputs.fixed_metadata_read": str(fixed),
+        "inputs.ordinary_dependency_snapshot": str(ordinary),
+    }
+    for name, job in workflow["jobs"].items():
+        expression = job["if"][3:-2]
+        for token, value in substitutions.items():
+            expression = expression.replace(token, value)
+        expression = expression.replace("&&", " and ").replace("||", " or ").replace("!", " not ")
+        if evaluate(ast.parse(expression.strip(), mode="eval").body):
+            selected.add(name)
+    expected = (
+        ({"observe"} if same_repository else set())
+        if event == "pull_request"
+        else {
+            (False, False): {"observe"},
+            (True, False): {"fixed-metadata"},
+            (False, True): {"ordinary-dependency"},
+            (True, True): {"conflicting-modes"},
+        }[fixed, ordinary]
+    )
+    assert selected == expected

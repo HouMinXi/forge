@@ -1,22 +1,22 @@
-# Ordinary-user dependency snapshot (local candidate)
+# Ordinary-user dependency snapshot
 
 This adds evidence for Forge #31, not an admission gate. Native execution is
-**NOT_RUN**. No workflow, deployment, security setting, baseline matcher, or
-service-launch logic is added. Do not publish or dispatch this candidate until
-its independent reviews and applicable checks are complete.
+**NOT_RUN** for the local runner integration. No deployment, security setting,
+baseline matcher, or service-launch logic is added. Publication and native
+dispatch remain separate steps after independent reviews and applicable checks.
 
 ## Explicit stack and provenance
 
-The three new files are `scripts/dependency_snapshot.py`,
-`tests/test_dependency_snapshot.py`, and this document. The local workspace also
-contains an **unchanged baseline dependency**: #378's
+The original probe files are `scripts/dependency_snapshot.py`,
+`tests/test_dependency_snapshot.py`, and this document. They use an
+**unchanged baseline dependency**: #378's
 `scripts/fixed_runner_metadata.py`, recovered from head `e8bd3e18b68414d6021bca43e6dd4ac1724cae98`, SHA-256
 `988503e24b9fd3c42d4ccd2f2a3616e6cbccfa33311a1789c14a56f178c1cfc3`.
 The adapter verifies that digest before importing source directly, without
 reading bytecode. The source read requires a regular file, rejects final symlinks,
 uses nonblocking open and a 64-KiB size/read limit. Its module-level code only declares constants/functions;
-`main()` is guarded. This stack does not imply #378 is merged or available on
-main. Main inspected: `5744def5955b1ef2ad83f8f189492a283164c359`.
+`main()` is guarded. The source snapshot was prepared before #378 merged; #378 is now merged.
+The original main inspected was `5744def5955b1ef2ad83f8f189492a283164c359`.
 #376 inspected: `76817fcd87ed61c3339f9b0abedcf900858773ba`.
 
 ## Query and effect boundary
@@ -90,9 +90,77 @@ and compilation passed. Targeted Ruff 0.17.3 check and format --check passed
 for both new Python files using the current repository configuration and an
 isolated uvx cache under /tmp, without a global installation. Formatting
 preserved both Python ASTs; the baseline dependency remained byte-identical.
-Full-tree CI and native execution remain NOT_RUN.
+The original #382 head `486ddcbf566971dbb42ce59dac2e14a5c8799e33` subsequently
+passed ordinary hosted CI, including these 30 tests. That is not native evidence
+and does not establish CI for the runner integration below.
 
 Source contracts: [v255 Unit fields](https://github.com/systemd/systemd/blob/v255/src/core/dbus-unit.c#L785-L866),
 [Manager fields](https://github.com/systemd/systemd/blob/v255/src/core/dbus-manager.c#L2719-L2743),
 [ABI declarations](https://github.com/systemd/systemd/blob/v255/src/systemd/sd-bus.h#L273-L310),
 [FD ownership](https://github.com/systemd/systemd/blob/v255/man/sd_bus_set_fd.xml#L41-L52).
+
+
+## Explicit runner integration (local, native NOT_RUN)
+
+The already registered `.github/workflows/strict-linux-admission.yml` gains one
+manual opt-in, `ordinary_dependency_snapshot`, default false. Its default static
+observation is unchanged. The ordinary and existing fixed privileged metadata
+modes are mutually exclusive at job selection. Selecting both runs only a small
+failure job with a STOP artifact, no checkout, and no diagnostic. PR events
+cannot enter either manual job. The privileged script and its command set are
+unchanged. The ordinary job never invokes that script's privileged entry point.
+
+This uses the registered workflow path on the dedicated branch
+`diag/ordinary-dependency-snapshot-20261103`, rather than adding an unregistered
+workflow that cannot be manually dispatched before a default-branch merge.
+Before an authorized dispatch, publish the reviewed branch and obtain its full
+commit SHA; supply that SHA as `expected_source_sha`. Set only
+`ordinary_dependency_snapshot=true`; leave `fixed_metadata_read=false`.
+An Actions rerun is rejected (`run_attempt` must be 1). This document grants no
+permission to dispatch, push workflow changes, merge, or retry a native run.
+
+The fixed-purpose `scripts/dependency_snapshot_runner.py` requires the exact
+repository, branch, job, workflow path, event and both mode values. Expected,
+source and workflow SHAs must agree with the checked-out HEAD. Before any native
+call, it checks the probe's fixed SHA-256 and the probe checks its existing
+metadata dependency hash. It compares all four local sources (wrapper, probe,
+metadata helper and workflow) against their regular non-executable HEAD Git blobs using bounded
+read-only Git calls. System/global Git configuration and replace objects are
+disabled for these reads. It repeats the four-file binding after the probe returns.
+The receipt records the exact declared execution context and four SHA-256s.
+Context is declared workflow evidence, not independent cryptographic attestation.
+The wrapper is itself executed from the reviewed dispatch commit; the expected
+SHA is a reviewer/operator binding, not protection against a malicious workflow.
+
+There is no command, module, library or script-path input. The unchanged probe
+runs only under the ordinary UID/GID, with isolated stdlib Python and a minimal
+child environment. It uses only the preinstalled library already described
+above. No sudo, package installation, user-manager creation, service start/stop,
+AppArmor/sysctl/delegation change or permission workaround is added.
+
+The wrapper starts with `native=NOT_RUN`, marks an invocation `ATTEMPTED`, and
+marks a validated return `RETURNED`. Failure to validate context/source never
+enters the probe. STOP remains an unsuccessful diagnostic, not an admission
+result. `qualification=NOT_RUN` is preserved for every result. The probe retains
+`BOUNDED_NONATOMIC` and `dependency_closure=NOT_ESTABLISHED`. Missing or denied
+runner prerequisites remain findings to evaluate, not permission to alter them.
+
+The outer probe capture is limited to 40 seconds and 256 KiB; each fixed Git
+capture is limited to 2 seconds and 64 KiB. Source reads are limited to 64 KiB
+per file and reject final symlinks/nonregular files. The serialized wrapper
+receipt is capped at 300,000 ASCII bytes, and the job at three minutes. These
+limits do not turn process termination or initial Python/bootstrap filesystem
+work into a strict wall-clock guarantee. The outer watchdog reaps its direct
+probe process; no independently verified descendant-cleanup claim is made.
+Only the single receipt is uploaded, retained 14 days. Checkout or runner failure
+can prevent a valid receipt, and must not be treated as a successful observation.
+
+Offline integration validation: all 340 tests across the snapshot, wrapper,
+existing fixed metadata and static admission suites passed locally (including
+16 event/mode/repository selection cases). Compilation and full-tree Ruff check
+and format check also passed. The isolated pytest environment emitted two
+non-failing plugin/configuration warnings; this is not a full project test run. Native behavior remains
+NOT_RUN. The tests use mocks and temporary files only, not a real manager or
+native bus. They cover exact context, mode guards, SHA mismatch, four-source
+binding, source size/symlink rejection, root rejection, STOP/OBSERVED agreement,
+invalid output, timeout/error capture and post-run source drift.
