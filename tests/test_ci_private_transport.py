@@ -1023,7 +1023,7 @@ def test_successful_exit_without_new_raw_evidence_cannot_reuse_an_old_receipt(
             (
                 "collect_plan",
                 (private / "plan.json").exists(),
-                bool(list(private.glob("collection-*.json"))),
+                any(path.read_bytes() for path in private.glob("collection-*.json")),
             )
         )
 
@@ -1031,8 +1031,8 @@ def test_successful_exit_without_new_raw_evidence_cannot_reuse_an_old_receipt(
         calls.append(
             (
                 "run",
-                (private / "receipt-shard-0.json").exists(),
-                (private / "shard-0.xml").exists(),
+                bool((private / "receipt-shard-0.json").read_bytes()),
+                bool((private / "shard-0.xml").read_bytes()),
             )
         )
         return SimpleNamespace(returncode=0)
@@ -1192,3 +1192,195 @@ def test_synthetic_34000_node_transport_has_real_success_and_measured_overhead(
     assert len(plan["full_nodes"]) == 34000
     # Record actual overhead without inventing a native CI SLA for this host.
     assert size > 1_000_000
+
+
+@pytest.mark.parametrize("mask", [0o022, 0o027, 0o077], ids=["022", "027", "077"])
+@pytest.mark.parametrize("command", ["plan", "run"])
+@pytest.mark.parametrize("outcome", ["success", "nonzero", "exception", "interrupted", "signalled"])
+def test_private_raw_targets_do_not_change_original_pytest_umask(
+    monkeypatch, tmp_path, capsys, example, mask, command, outcome
+):
+    args, policy_path = cli_args(tmp_path, example, command, "shard-0" if command == "run" else None)
+    monkeypatch.setattr(ci, "POLICY", policy_path)
+    private, public = tmp_path / "private", tmp_path / "public"
+    calls = []
+
+    def runner(argv, **kwargs):
+        observed = os.umask(mask)
+        assert observed == mask
+        phase = argv[argv.index("--ci-phase") + 1]
+        calls.append(phase)
+        report = Path(argv[argv.index("--ci-report") + 1])
+        assert private.stat().st_mode & 0o777 == 0o700
+        assert report.is_file() and report.read_bytes() == b""
+        assert report.stat().st_mode & 0o777 == 0o600
+        assert all(path.stat().st_mode & 0o777 == 0o600 for path in private.iterdir())
+        fixture = tmp_path / ("pytest-fixture-" + phase)
+        fixture.mkdir(mode=0o750)
+        assert fixture.stat().st_mode & 0o777 == 0o750 & ~mask
+        value = example.collections[phase] if command == "plan" else execution(example.plan, phase)
+        # The real recorder and JUnit writer truncate existing targets too.
+        report.write_text(json.dumps(value))
+        for argument in argv:
+            if argument.startswith("--junitxml="):
+                junit = Path(argument.split("=", 1)[1])
+                assert junit.read_bytes() == b"" and junit.stat().st_mode & 0o777 == 0o600
+                junit.write_text(CANARY)
+        kwargs["stdout"].write(CANARY + "\n")
+        print(CANARY)
+        assert report.stat().st_mode & 0o777 == 0o600
+        if outcome == "exception":
+            raise OSError(CANARY)
+        if outcome == "interrupted":
+            raise KeyboardInterrupt
+        code = {"success": 0, "nonzero": 1, "signalled": -9}[outcome]
+        if code and kwargs["check"]:
+            raise transport.subprocess.CalledProcessError(code, argv)
+        return SimpleNamespace(returncode=code)
+
+    monkeypatch.setattr(transport.subprocess, "run", runner)
+    original = os.umask(mask)
+    try:
+        result = transport.main(args)
+        assert os.umask(mask) == mask
+    finally:
+        os.umask(original)
+    assert calls
+    assert (
+        result
+        == {"success": 0, "nonzero": 1, "exception": 1, "interrupted": 130, "signalled": -9}[outcome]
+    )
+    assert private.stat().st_mode & 0o777 == 0o700
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in private.iterdir())
+    published = public / ("plan.json" if command == "plan" else "receipt-shard-0.json")
+    assert published.exists() == (outcome == "success")
+    captured = capsys.readouterr()
+    assert_private(captured.out + captured.err + public_text(public))
+
+
+@pytest.mark.parametrize("kind", ["regular", "symlink", "fifo", "directory"])
+def test_private_output_reservation_refuses_existing_or_nonregular_targets(tmp_path, kind):
+    private = tmp_path / "private"
+    private.mkdir()
+    target = private / "receipt-shard-0.json"
+    external = tmp_path / "untouched"
+    external.write_text(CANARY)
+    if kind == "regular":
+        target.write_text(CANARY)
+    elif kind == "symlink":
+        target.symlink_to(external)
+    elif kind == "fifo":
+        os.mkfifo(target)
+    else:
+        target.mkdir()
+    before = target.lstat()
+    with pytest.raises(OSError):
+        transport._prepare_private_outputs(private, [target.name])
+    after = target.lstat()
+    assert (before.st_dev, before.st_ino, before.st_mode) == (
+        after.st_dev,
+        after.st_ino,
+        after.st_mode,
+    )
+    assert external.read_text() == CANARY
+    if kind == "regular":
+        assert target.read_text() == CANARY
+    assert private.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize("mask", [0o022, 0o027, 0o077], ids=["022", "027", "077"])
+@pytest.mark.parametrize("outcome", ["success", "exception", "kill"])
+def test_actual_child_keeps_umask_and_precreated_raw_permissions(tmp_path, capsys, mask, outcome):
+    import sys
+
+    private = tmp_path / "private"
+    names = ["receipt-shard-0.json", "shard-0.xml"]
+    fixture = tmp_path / "pytest-created-directory"
+    script = """
+import os, pathlib, signal, sys
+root, fixture = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+mask, outcome = int(sys.argv[3]), sys.argv[4]
+observed = os.umask(mask)
+assert observed == mask
+fixture.mkdir(mode=0o750)
+assert fixture.stat().st_mode & 0o777 == 0o750 & ~mask
+assert root.stat().st_mode & 0o777 == 0o700
+for name in ('receipt-shard-0.json', 'shard-0.xml'):
+    path = root / name
+    assert path.read_bytes() == b'' and path.stat().st_mode & 0o777 == 0o600
+    path.write_text(sys.argv[5])
+    assert path.stat().st_mode & 0o777 == 0o600
+print(sys.argv[5], flush=True)
+if outcome == 'exception':
+    raise RuntimeError(sys.argv[5])
+if outcome == 'kill':
+    os.kill(os.getpid(), signal.SIGKILL)
+"""
+    original = os.umask(mask)
+    try:
+        transport._prepare_private_outputs(private, names)
+        with transport._log(private, "shard-0.log") as stream:
+            result = transport.subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    "-c",
+                    script,
+                    str(private),
+                    str(fixture),
+                    str(mask),
+                    outcome,
+                    CANARY,
+                ],
+                stdout=stream,
+                stderr=transport.subprocess.STDOUT,
+                timeout=5,
+                check=False,
+            )
+        assert os.umask(mask) == mask
+    finally:
+        os.umask(original)
+    assert result.returncode == {"success": 0, "exception": 1, "kill": -9}[outcome]
+    assert private.stat().st_mode & 0o777 == 0o700
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in private.iterdir())
+    assert all((private / name).read_text() == CANARY for name in names)
+    assert CANARY in (private / "shard-0.log").read_text()
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+
+
+@pytest.mark.parametrize("target", ["directory", "file"])
+def test_raw_output_permission_failure_stops_before_pytest(
+    monkeypatch, tmp_path, capsys, example, target
+):
+    import stat
+
+    args, policy_path = cli_args(tmp_path, example, "run", "shard-0")
+    monkeypatch.setattr(ci, "POLICY", policy_path)
+    chmod = os.fchmod
+    calls = []
+
+    def fault(fd, mode):
+        is_directory = stat.S_ISDIR(os.fstat(fd).st_mode)
+        if is_directory == (target == "directory"):
+            raise OSError(CANARY)
+        return chmod(fd, mode)
+
+    def forbidden(*_args, **_kwargs):
+        calls.append(True)
+        pytest.fail("Permission setup must succeed before pytest can start")
+
+    monkeypatch.setattr(os, "fchmod", fault)
+    monkeypatch.setattr(transport.subprocess, "run", forbidden)
+    assert transport.main(args) == 1
+    assert not calls
+    public = tmp_path / "public"
+    assert not (public / "receipt-shard-0.json").exists()
+    private = tmp_path / "private"
+    assert private.stat().st_mode & 0o777 == 0o700
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in private.iterdir())
+    assert all(path.read_bytes() == b"" for path in private.iterdir())
+    captured = capsys.readouterr()
+    assert_private(captured.out + captured.err + public_text(public))

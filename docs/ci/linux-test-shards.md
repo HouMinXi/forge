@@ -104,6 +104,17 @@ records and cannot authorize uploading failed or stale data. Explicit old privat
 and public output names are cleared before reuse, and public writes are atomic.
 An interrupted process cannot establish freshness by leaving an old receipt.
 
+Private output permissions are scoped to their writers, not inherited by the
+suite: the shell saves and restores its incoming umask around private setup,
+and private log sinks use their own restrictive creation mask. The transport
+creates private directories with mode 0700 and reserves fresh raw receipt/JUnit
+targets with mode 0600 before launching pytest. The reviewed recorder and JUnit
+writer truncate those files without replacing their modes. Empty reservations
+are not valid evidence. Pytest and its fixture subprocesses retain the original
+runner umask; changing a fixture's permissions is not a privacy mechanism.
+These controls do not claim to defeat same-UID code deliberately replacing raw
+files or changing their permissions.
+
 This protects the workflow-controlled diagnostic payloads, not arbitrary hostile
 code running as the runner user. GitHub and pinned checkout/setup/upload actions
 still expose their normal platform and action metadata. Temporary private data

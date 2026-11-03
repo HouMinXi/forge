@@ -76,16 +76,29 @@ def run_step(job_name, step_name):
 def private_prefix(run):
     """Reject unknown preamble commands before executing anything from YAML."""
     lines = run.splitlines(keepends=True)
-    assert re.fullmatch(r'exec >"\$EVIDENCE/step-[0-9]{2}\.log" 2>&1\n', lines[7])
+    step_log = re.search(r'^exec >"\$EVIDENCE/(step-[0-9]{2}\.log)" 2>&1$', run, re.M).group(1)
+    tee_logs = re.findall(r'\| \(umask 077; exec tee "\$EVIDENCE/([a-z0-9.-]+)"\)', run)
+    logs = [step_log, *tee_logs]
+    assert len(logs) == len(set(logs))
     expected = [
         "exec >/dev/null 2>&1\n",
         "set +x\n",
         "set -euo pipefail\n",
+        "original_umask=$(umask)\n",
         "umask 077\n",
         'export TMPDIR="$RUNNER_TEMP/forge-tests"\n',
         'export EVIDENCE="$RUNNER_TEMP/forge-evidence"\n',
         'mkdir -p "$TMPDIR" "$EVIDENCE"\n',
-        lines[7],
+        '[[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]\n',
+        'chmod 700 "$TMPDIR" "$EVIDENCE"\n',
+        "for private_log in " + " ".join(logs) + "; do\n",
+        '  [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]\n',
+        '  (set -o noclobber; : >"$EVIDENCE/$private_log")\n',
+        "done\n",
+        "unset private_log\n",
+        f'exec >"$EVIDENCE/{step_log}" 2>&1\n',
+        'umask "$original_umask"\n',
+        "unset original_umask\n",
         'if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then\n',
         '  export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"\n',
         "fi\n",
@@ -152,6 +165,9 @@ def test_original_commands_change_only_private_transport_and_environment(job_nam
             '  --status "$CI_JOB_STATUS" --public-directory forge-linux-public'
         )
         return
+    # The consumer alone gets a private umask; the producer and its argv stay intact.
+    body = re.sub(r'\| \(umask 077; exec tee ("\$EVIDENCE/[a-z0-9.-]+")\)', r"| tee \1", body)
+    assert "umask" not in body
     # These exact reversals are the approved privacy wiring changes. They do
     # not discard shell operators, command options or arbitrary exports.
     transport_count = int(step_name in PRODUCER_IDS or step_name.startswith("Require all jobs"))
@@ -368,6 +384,10 @@ def shell_case(tmp_path, run, *, trace=False, setup_failure=None):
 
 
 NOISY_FIXTURE = (
+    # Model the private writer's explicit 0600 allocation, not a suite-wide mask.
+    # The real transport's raw receipt/JUnit allocation is covered in its tests.
+    '(umask 077; : > "$EVIDENCE/raw-plan.json"; '
+    ': > "$EVIDENCE/raw-receipt.json"; : > "$EVIDENCE/raw-junit.xml")\n'
     "set -x\n"
     'printf \'%s\\n\' "$CANARY" "$TMPDIR" "$EVIDENCE" "$FORGE_QUALIFICATION_PYTHON"\n'
     "printf '%s\\n' \"$CANARY\" >&2\n"
@@ -523,3 +543,117 @@ def test_explicit_upload_selection_excludes_synthetic_private_siblings(tmp_path,
         assert path not in selected
     assert len(selected) == 10  # One plan, four collections, four receipts and one summary.
     assert all(CANARY not in path.read_text() for path in selected)
+
+
+@pytest.mark.parametrize("job_name,step_name", RUNS)
+@pytest.mark.parametrize("mask", [0o002, 0o022, 0o077])
+def test_private_initialization_preserves_original_workload_umask(tmp_path, job_name, step_name, mask):
+    run = run_step(job_name, step_name)["run"]
+    prefix, argv, env, evidence, log, sinks, _ = shell_case(tmp_path, run)
+    script = prefix + (
+        'umask > "$TMPDIR/workload-mask"\n'
+        'sh -c \'umask > "$TMPDIR/child-mask"; mkdir "$TMPDIR/workload-dir"\'\n'
+    )
+    proc = subprocess.run(
+        [*argv, "-c", script], cwd=tmp_path, env=env, capture_output=True, timeout=3, umask=mask
+    )
+    assert proc.returncode == 0 and proc.stdout == proc.stderr == b""
+    scratch = evidence.parent / "forge-tests"
+    for name in ("workload-mask", "child-mask"):
+        assert int((scratch / name).read_text().strip(), 8) == mask
+        assert (scratch / name).stat().st_mode & 0o777 == 0o666 & ~mask
+    assert (scratch / "workload-dir").stat().st_mode & 0o777 == 0o777 & ~mask
+    assert evidence.stat().st_mode & 0o777 == 0o700
+    assert log.stat().st_mode & 0o777 == 0o600
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in evidence.iterdir())
+    assert all(path.read_bytes() == b"" for path in sinks.values())
+
+
+@pytest.mark.parametrize("target", ["step", "tee"])
+@pytest.mark.parametrize("kind", ["regular", "symlink", "dangling", "fifo", "directory"])
+def test_preexisting_private_log_is_rejected_before_any_workload(tmp_path, target, kind):
+    run = run_step(*RUNS[0])["run"]
+    prefix, argv, env, evidence, log, sinks, _ = shell_case(tmp_path, run)
+    evidence.mkdir()
+    victim = log if target == "step" else evidence / "preflight.log"
+    sentinel = tmp_path / "unchanged-sentinel"
+    sentinel.write_text(CANARY)
+    sentinel.chmod(0o644)
+    if kind == "regular":
+        victim.write_text(CANARY)
+        victim.chmod(0o644)
+    elif kind in {"symlink", "dangling"}:
+        victim.symlink_to(sentinel if kind == "symlink" else tmp_path / "absent-target")
+    elif kind == "fifo":
+        os.mkfifo(victim)
+    else:
+        victim.mkdir()
+    proc = subprocess.run(
+        [*argv, "-c", prefix + 'touch "$TMPDIR/should-not-run"\n'],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        timeout=3,
+        umask=0o002,
+    )
+    assert proc.returncode != 0 and proc.stdout == proc.stderr == b""
+    assert not (evidence.parent / "forge-tests/should-not-run").exists()
+    assert sentinel.read_text() == CANARY and sentinel.stat().st_mode & 0o777 == 0o644
+    if kind == "regular":
+        assert victim.read_text() == CANARY and victim.stat().st_mode & 0o777 == 0o644
+    assert all(path.read_bytes() == b"" for path in sinks.values())
+
+
+@pytest.mark.parametrize("mask", [0o002, 0o022, 0o077])
+@pytest.mark.parametrize(
+    "termination,expected", [("exit 0", 0), ("exit 17", 17), ('kill -KILL "$BASHPID"', 137)]
+)
+def test_private_tee_preserves_producer_mask_failure_and_private_live_log(
+    tmp_path, mask, termination, expected
+):
+    run = run_step(*RUNS[0])["run"]
+    prefix, argv, env, evidence, log, sinks, _ = shell_case(tmp_path, run)
+    consumer = re.search(r'\(umask 077; exec tee "\$EVIDENCE/preflight\.log"\)', run).group()
+    # Only a harmless producer and the exact allowlisted tee expression execute.
+    producer = (
+        '(umask > "$TMPDIR/producer-mask"; '
+        'test "$(stat -c %a "$EVIDENCE/preflight.log")" = 600; '
+        'printf "%s" "$CANARY"; ' + termination + ")"
+    )
+    proc = subprocess.run(
+        [*argv, "-c", prefix + producer + " | " + consumer + "\n"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        timeout=3,
+        umask=mask,
+    )
+    assert proc.returncode == expected and proc.stdout == proc.stderr == b""
+    assert int((evidence.parent / "forge-tests/producer-mask").read_text().strip(), 8) == mask
+    assert (evidence / "preflight.log").read_text() == CANARY
+    assert (evidence / "preflight.log").stat().st_mode & 0o777 == 0o600
+    assert log.stat().st_mode & 0o777 == 0o600
+    assert all(path.read_bytes() == b"" for path in sinks.values())
+
+
+@pytest.mark.parametrize("producer_code", [0, 19])
+def test_private_tee_failure_keeps_original_pipefail_semantics(tmp_path, producer_code):
+    run = run_step(*RUNS[0])["run"]
+    prefix, argv, env, evidence, log, sinks, _ = shell_case(tmp_path, run)
+    consumer = re.search(r'\(umask 077; exec tee "\$EVIDENCE/preflight\.log"\)', run).group()
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    fake_tee = commands / "tee"
+    fake_tee.write_text("#!/bin/sh\ncat >/dev/null\nexit 23\n")
+    fake_tee.chmod(0o700)
+    env["PATH"] = str(commands) + os.pathsep + env["PATH"]
+    script = prefix + f'(printf "%s" "$CANARY"; exit {producer_code}) | {consumer}\n'
+    proc = subprocess.run(
+        [*argv, "-c", script], cwd=tmp_path, env=env, capture_output=True, timeout=3, umask=0o002
+    )
+    # bash pipefail returns the rightmost failure, including when both fail.
+    assert proc.returncode == 23 and proc.stdout == proc.stderr == b""
+    assert (evidence / "preflight.log").read_bytes() == b""
+    assert (evidence / "preflight.log").stat().st_mode & 0o777 == 0o600
+    assert log.stat().st_mode & 0o777 == 0o600
+    assert all(path.read_bytes() == b"" for path in sinks.values())

@@ -283,6 +283,27 @@ def _clear_public(directory, names):
             os.unlink(name, dir_fd=parent)
 
 
+def _prepare_private_outputs(directory, names):
+    """Reserve raw writer targets without changing the test process's umask.
+
+    The reviewed recorder and JUnit writer truncate these existing regular
+    files, preserving their modes. The enclosing directory is private before
+    any target is created. Empty reservations never count as valid receipts.
+    """
+    with _directory(directory, create=True, private=True) as parent:
+        for name in names:
+            fd = os.open(
+                name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+                dir_fd=parent,
+            )
+            try:
+                os.fchmod(fd, 0o600)
+            finally:
+                os.close(fd)
+
+
 @contextmanager
 def _log(directory, name):
     with _directory(directory, create=True, private=True) as parent:
@@ -301,12 +322,8 @@ def _log(directory, name):
             os.close(fd)
             raise
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
-        old_umask = os.umask(0o077)
-        try:
-            with redirect_stdout(stream), redirect_stderr(stream):
-                yield stream
-        finally:
-            os.umask(old_umask)
+        with redirect_stdout(stream), redirect_stderr(stream):
+            yield stream
 
 
 def validate_manifest(data):
@@ -491,6 +508,7 @@ def collect_plan(directory, public_directory, sha, policy, manifest):
     projected_policy = project_policy(policy, manifest)
     _existing_outputs(public_directory, None, projected_policy, manifest)
     _clear_public(directory, names)
+    _prepare_private_outputs(directory, [f"collection-{phase}.json" for phase in COLLECTION_PHASES])
     with _log(directory, "collection.log") as log:
 
         def runner(*args, **kwargs):
@@ -539,7 +557,9 @@ def run_phase(phase, plan, directory, public_directory, policy, manifest):
     projected_policy = project_policy(policy, manifest)
     _validate_public_plan(plan, plan["sha"], projected_policy, manifest)
     _existing_outputs(public_directory, plan, projected_policy, manifest)
-    _clear_public(directory, [f"receipt-{phase}.json", phase + ".xml"])
+    raw_names = [f"receipt-{phase}.json", phase + ".xml"]
+    _clear_public(directory, raw_names)
+    _prepare_private_outputs(directory, raw_names)
     args = ci.selection(phase)
     if phase.startswith("shard-"):
         args = [*plan["phases"][phase]["modules"], *args]
