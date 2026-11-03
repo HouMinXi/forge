@@ -2846,7 +2846,10 @@ def _continue_truncated(
                 last_failure = parsed
                 continue
             return parsed, observed
-    except TruncationBreakerError:
+    except TruncationBreakerError as exc:
+        # Retain this invocation's observations, not the run-wide event count.
+        exc.observed_usage = observed
+        exc.usage = observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
         raise
     except LLMInvokeError as exc:
         # Defensive: per-attempt handling above covers every invoke
