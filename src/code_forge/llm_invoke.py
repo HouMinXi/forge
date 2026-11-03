@@ -2743,6 +2743,14 @@ def _continue_truncated(
     help, while a continuation is a different, smaller request.
     """
     last_failure = ""
+    observed = _observed_usage(truncated.usage_data, backend.format)
+
+    def exhausted():
+        error = _exhaustion_error(budget, last_failure)
+        error.observed_usage = observed
+        error.usage = observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
+        return error
+
     try:
         # The entry event is recorded before the zero-output guard so
         # every truncation counts toward the run breaker, recovered or
@@ -2800,6 +2808,7 @@ def _continue_truncated(
                 # otherwise fold it into a budgeted failure.
                 raise
             except _TruncatedResponse as exc:
+                observed = _sum_usage(observed, _observed_usage(exc.usage_data, backend.format))
                 # A truncated continuation is a failed attempt, and the
                 # event still counts. A trip raised here leaves the
                 # inner try and reaches the outer clauses below.
@@ -2808,6 +2817,12 @@ def _continue_truncated(
                     breaker.record_truncation()
                 continue
             except LLMInvokeError as exc:
+                observed = _sum_usage(
+                    observed,
+                    exc.observed_usage
+                    if exc.observed_usage is not None
+                    else Usage(known_fields=frozenset()),
+                )
                 # A non-truncation invoke error (HTTP status, timeout)
                 # is a failed attempt against this budget; it must not
                 # escape to the caller's max_attempts retry loop, which
@@ -2821,6 +2836,7 @@ def _continue_truncated(
                 )
                 last_failure = " ".join(str(exc).split())[:400]
                 continue
+            observed = _sum_usage(observed, _observed_usage(usage_c, backend.format))
             if not isinstance(cont, str):
                 cont = ""
             parsed = _continued_reply(
@@ -2829,10 +2845,7 @@ def _continue_truncated(
             if isinstance(parsed, str):
                 last_failure = parsed
                 continue
-            return parsed, _sum_usage(
-                _observed_usage(truncated.usage_data, backend.format),
-                _observed_usage(usage_c, backend.format),
-            )
+            return parsed, observed
     except TruncationBreakerError:
         raise
     except LLMInvokeError as exc:
@@ -2841,8 +2854,8 @@ def _continue_truncated(
         # escapes is folded into the exhausted outcome, with the
         # original chained as the cause so the real failure stays
         # traceable.
-        raise _exhaustion_error(budget, last_failure) from exc
-    raise _exhaustion_error(budget, last_failure)
+        raise exhausted() from exc
+    raise exhausted()
 
 
 # A continuation that adds nothing to a whole partial: whitespace, fence
