@@ -51,20 +51,22 @@ and must have major version 255; it is not proof of the library package version.
 The trust model excludes hostile root or replacement of the trusted runtime.
 No installation, sudo, profile change or permission workaround is performed.
 
-Snapshot decoding limits: 64 listed units, 64 jobs, 64 elements per array, and
-4096 bytes per string. The receipt is limited to 256 KiB, with one 25-second
-worker deadline and a 30-second parent watchdog. The watchdog reaps its direct worker with the reviewed bounded capture
+Snapshot decoding limits: 256 listed units, 64 jobs, 64 elements per property
+array, and 4096 bytes per string. The 256-unit limit is an operational bound
+informed by one later observation of 185 units, not a baseline or guarantee.
+The receipt is limited to 256 KiB, with one 25-second worker deadline and a
+30-second parent watchdog. The watchdog reaps its direct worker with the reviewed bounded capture
 helper; it does not prove descendant cleanup. These output/iteration limits are
 **not a cap on libsystemd's internal receive allocation**. If ListUnits exceeds
 its snapshot array limit, an optional later, non-atomic count-only query skips at
 most 512 typed entries without retaining their values. It reports an exact count
 only when the reply ends within that bound; otherwise it reports a validated
-512-entry prefix and that more entries exist. The original limit STOP remains
-unchanged, and a failed count is omitted. This count is not a qualification or
+512-entry prefix and that more entries exist. Exceeding the unit limit still
+produces STOP, and a failed count is omitted. This count is not a qualification or
 proof of the triggering roster size; it also does not bound receive allocation.
 Library calls use the remaining common timeout. The parent watchdog covers child
-library loading, filesystem reads, authentication and queries, subject to ordinary OS scheduling
-and process termination limits. Python startup, importing the exact trusted
+library loading, filesystem reads, authentication and queries, subject to
+ordinary OS scheduling and process termination limits. Python startup, importing the exact trusted
 metadata source, and resolving the script path in the parent precede this
 watchdog; no wall-time bound is claimed for that bootstrap. A killed worker
 yields STOP, never successful partial data. The sole command-line entry accepts
@@ -75,8 +77,9 @@ checks precede source loading and CDLL. STOP exits 2; OBSERVED exits 0.
 Manager fields, roster and jobs are compared before and after the property reads;
 process and endpoint identity are rechecked. This is not an atomic snapshot and
 does not detect a change that is reverted between checks. Unit paths are queried
-only from the returned roster. Description and ListUnits job detail fields are
-not retained. RequiresMountsFor values are filesystem paths, not unit names.
+only from the returned roster. The higher unit cap can retain more unit names
+and paths in the artifact. Environment, Exec and configuration contents are not
+collected. Description and ListUnits job detail fields are not retained. RequiresMountsFor values are filesystem paths, not unit names.
 Environment and Exec fields are outside the dependency whitelist.
 
 Missing fields, permission errors, incompatible signatures, identity drift,

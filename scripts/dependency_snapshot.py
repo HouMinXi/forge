@@ -15,6 +15,7 @@ from contextlib import contextmanager
 
 ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"}
 MAX_ITEMS = 64
+MAX_UNITS = 256
 MAX_COUNT_ITEMS = 512
 MAX_STRING = 4096
 MAX_RECEIPT = 262144
@@ -204,12 +205,12 @@ class Bus:
         need(self.check(self.lib.sd_bus_message_at_end(msg, 0)) > 0, "type")
         self.check(self.lib.sd_bus_message_exit_container(msg))
 
-    def read(self, msg, signature):
+    def read(self, msg, signature, array_limit=MAX_ITEMS):
         if signature.startswith("a"):
             result = []
             with self.container(msg, "a", signature[1:]):
                 while not self.check(self.lib.sd_bus_message_at_end(msg, 0)):
-                    if len(result) >= MAX_ITEMS:
+                    if len(result) >= array_limit:
                         limit("array_items")
                     result.append(self.read(msg, signature[1:]))
             return result
@@ -284,7 +285,7 @@ class Bus:
                 with self.container(reply, "v", signature):
                     value = self.read(reply, signature)
             else:
-                value = self.read(reply, signature)
+                value = self.read(reply, signature, MAX_UNITS if method == "ListUnits" else MAX_ITEMS)
             need(self.check(self.lib.sd_bus_message_at_end(reply, 1)) > 0, "type")
             return value
         except Stop as exc:
@@ -379,7 +380,7 @@ def collect(bus, recheck):
 
     def roster():
         rows = bus.request(OBJECT, MANAGER, "ListUnits", (), "a(ssssssouso)")
-        if len(rows) > MAX_ITEMS:
+        if len(rows) > MAX_UNITS:
             error = Stop("limit")
             error.limit_category, error.limit_context = "array_items", "ListUnits"
             raise error

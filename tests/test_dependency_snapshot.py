@@ -425,6 +425,52 @@ class SnapshotTests(unittest.TestCase):
             bus.close()
             right.close()
 
+    def test_list_units_limit_is_top_level_only(self):
+        row = ["name", "description", "loaded", "active", "running", "", "/unit/x", 0, "", "/"]
+        for size in (64, 65, 185, 256, 257):
+            with self.subTest(size=size):
+                library = Decoder("a(ssssssouso)", [row] * size)
+                library.events.append(("end", 1))
+                library.sd_bus_message_get_signature.impl = lambda *args: b"a(ssssssouso)"
+
+                def message(bus, output, *args):
+                    C.cast(output, C.POINTER(C.c_void_p))[0] = 9
+                    return 0
+
+                def call(bus, request, timeout, error, output):
+                    C.cast(output, C.POINTER(C.c_void_p))[0] = 10
+                    return 1
+
+                library.sd_bus_message_new_method_call.impl = message
+                library.sd_bus_call.impl = call
+                left, right = socket.socketpair()
+                bus = p.Bus(library, left, time.monotonic() + 5)
+                try:
+                    if size <= 256:
+                        self.assertEqual(
+                            len(bus.request(p.OBJECT, p.MANAGER, "ListUnits", (), "a(ssssssouso)")), size
+                        )
+                    else:
+                        with self.assertRaises(p.Stop) as caught:
+                            bus.request(p.OBJECT, p.MANAGER, "ListUnits", (), "a(ssssssouso)")
+                        self.assertEqual(caught.exception.limit_context, "ListUnits")
+                        self.assertEqual(caught.exception.limit_category, "array_items")
+                finally:
+                    bus.close()
+                    right.close()
+
+    def test_jobs_65_still_stops(self):
+        row = [1, "name", "start", "waiting", "/job/1", "/unit/x"]
+        library = Decoder("a(usssoo)", [row] * 65)
+        left, right = socket.socketpair()
+        bus = p.Bus(library, left, time.monotonic() + 2)
+        try:
+            with self.assertRaisesRegex(p.Stop, "limit"):
+                bus.read(C.c_void_p(10), "a(usssoo)")
+        finally:
+            bus.close()
+            right.close()
+
     def test_invalid_boolean_and_container(self):
         for kind in ("boolean", "container"):
             library = Decoder("b", 2) if kind == "boolean" else Decoder("as", [])
@@ -652,7 +698,7 @@ class SnapshotTests(unittest.TestCase):
 
             def request(path, interface, actual, args, signature, method=method, original=original):
                 return (
-                    [None] * 65
+                    [None] * (p.MAX_UNITS + 1 if method == "ListUnits" else p.MAX_ITEMS + 1)
                     if actual == method
                     else original(path, interface, actual, args, signature)
                 )
