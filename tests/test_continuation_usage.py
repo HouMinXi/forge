@@ -155,9 +155,9 @@ def test_wider_seam_preserves_prior_usage_without_changing_policy(run, wider_suc
         assert result.content["reasoning"] == "wide"
         assert counts(result.usage) == (41, 18, 8)
     else:
-        # The continuation error retains its own budget, not wider-attempt counts.
+        # The same continuation error now also retains the failed wider attempt.
         assert result.kind == "truncated" and not result.retryable
-        assert counts(result.observed_usage) == (28, 12, 5)
+        assert counts(result.observed_usage) == (41, 18, 8)
 
 
 @pytest.mark.parametrize(
@@ -202,3 +202,115 @@ def test_json_correction_truncation_does_not_enter_wider_or_double_count(run):
     assert not result.retryable
     assert counts(result.observed_usage) == (17, 8, 3)
     assert all(call.args[1].max_tokens == 100 for call in calls.call_args_list)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["invalid", "nonstring", "envelope", "error", "truncated", "partial", "unknown", "cached_unknown"],
+)
+def test_wider_failure_retains_usage_and_original_exhaustion(run, monkeypatch, failure):
+    original = invoke._exhaustion_error
+    exhausted = []
+
+    def capture(*args):
+        error = original(*args)
+        exhausted.append(error)
+        return error
+
+    monkeypatch.setattr(invoke, "_exhaustion_error", capture)
+    responses = {
+        "invalid": ("invalid", metadata(13, 6, 3)),
+        "nonstring": (None, metadata(13, 6, 3)),
+        "envelope": ('{"unrelated": true}', metadata(13, 6, 3)),
+        "error": invoke.LLMInvokeError("synthetic", observed_usage=invoke.Usage(13, 6, 3)),
+        "truncated": cut(13, 6, 3),
+        "partial": ("invalid", metadata(13, None, 3)),
+        "unknown": invoke.LLMInvokeError("synthetic unknown"),
+        "cached_unknown": ("invalid", metadata(13, 6, None)),
+    }
+    result, calls, slept = run(
+        [cut(), ("invalid", metadata(7, 3, 1)), ("invalid", metadata(11, 4, 2)), responses[failure]],
+        wider=True,
+    )
+    assert result is exhausted[0]
+    assert result.kind == "truncated" and not result.retryable
+    assert "continuation exhausted after 2 attempts" in str(result)
+    assert result.__cause__ is None
+    assert calls.call_count == 4
+    assert calls.call_args_list[-1].args[0] == "original prompt"
+    assert [c.args[1].max_tokens for c in calls.call_args_list] == [100, 100, 100, 200]
+    slept.assert_called_once_with(invoke._CONTINUE_DELAY_S)
+    expected = (
+        (28, 12, 5)
+        if failure == "unknown"
+        else (
+            (41, 12, 8)
+            if failure == "partial"
+            else ((41, 18, 5) if failure == "cached_unknown" else (41, 18, 8))
+        )
+    )
+    known = (
+        set()
+        if failure == "unknown"
+        else (
+            {"input_tokens", "cached_input_tokens"}
+            if failure == "partial"
+            else (
+                {"input_tokens", "output_tokens"}
+                if failure == "cached_unknown"
+                else set(invoke._USAGE_FIELDS)
+            )
+        )
+    )
+    assert counts(result.observed_usage) == expected
+    assert result.observed_usage.known_fields == frozenset(known)
+    if failure in {"partial", "unknown"}:
+        assert result.usage is None
+    else:
+        assert result.usage is result.observed_usage
+
+
+def test_wider_failed_zero_is_known(run):
+    result, calls, _ = run([cut(0, 0, 0)] + [("invalid", metadata(0, 0, 0))] * 3, wider=True)
+    assert calls.call_count == 4
+    assert counts(result.usage) == (0, 0, 0)
+    assert result.usage.known_fields == frozenset(invoke._USAGE_FIELDS)
+
+
+@pytest.mark.parametrize("mode", ["guard", "success", "breaker"])
+def test_wider_callback_excludes_skip_success_and_breaker(monkeypatch, run, mode):
+    # The run fixture installs network/process tripwires; helper dispatch is mocked too.
+    backend = BackendConfig(
+        name="synthetic",
+        type="api",
+        model="synthetic",
+        format="openai",
+        max_tokens=100,
+        output_token_limit=0 if mode == "guard" else 200,
+    )
+    observe = Mock()
+    breaker = invoke.TruncationBreakerError(1, 1)
+    dispatch = (
+        Mock(side_effect=breaker)
+        if mode == "breaker"
+        else Mock(return_value=('{"verdict":"DISMISSED","reasoning":"ok"}', metadata(13, 6, 3)))
+    )
+    monkeypatch.setattr(invoke, "_invoke_openai", dispatch)
+    if mode == "breaker":
+        with pytest.raises(invoke.TruncationBreakerError) as caught:
+            invoke._retry_with_more_headroom(
+                "p",
+                backend,
+                "synthetic",
+                10,
+                frozenset({"verdict", "reasoning"}),
+                on_failure_usage=observe,
+            )
+        assert caught.value is breaker
+    else:
+        result = invoke._retry_with_more_headroom(
+            "p", backend, "synthetic", 10, frozenset({"verdict", "reasoning"}), on_failure_usage=observe
+        )
+        assert (result is None) == (mode == "guard")
+    assert dispatch.call_count == (0 if mode == "guard" else 1)
+    observe.assert_not_called()
