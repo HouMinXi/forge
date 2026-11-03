@@ -3283,6 +3283,9 @@ def _invoke_api(
                     )
                 if wider is not None:
                     parsed, usage = wider
+                    if spent_error is not None and spent_error.observed_usage is not None:
+                        # The spent budget already includes the initial cut reply.
+                        usage = _sum_usage(spent_error.observed_usage, usage)
                     return LLMResult(
                         content=parsed,
                         usage=usage,

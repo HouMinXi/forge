@@ -44,7 +44,7 @@ def run(monkeypatch):
     slept = Mock()
     monkeypatch.setattr(invoke.time, "sleep", slept)
 
-    def execute(responses, *, wider=False):
+    def execute(responses, *, wider=False, attempts=1):
         backend = BackendConfig(
             name="synthetic",
             type="api",
@@ -62,7 +62,7 @@ def run(monkeypatch):
                 backend,
                 10,
                 expected_keys=frozenset({"verdict", "reasoning"}),
-                max_attempts=1,
+                max_attempts=attempts,
             )
         except invoke.LLMInvokeError as error:
             result = error
@@ -134,7 +134,7 @@ def test_known_zero_continuations_stay_known(run):
 
 
 @pytest.mark.parametrize("wider_success", [False, True])
-def test_wider_seam_keeps_existing_policy_and_exposes_separate_debt(run, wider_success):
+def test_wider_seam_preserves_prior_usage_without_changing_policy(run, wider_success):
     result, calls, _ = run(
         [
             cut(),
@@ -152,11 +152,53 @@ def test_wider_seam_keeps_existing_policy_and_exposes_separate_debt(run, wider_s
     assert calls.call_args_list[-1].args[1].max_tokens == 200
     assert all(call.args[1].max_tokens == 100 for call in calls.call_args_list[:-1])
     if wider_success:
-        # Existing independent debt: wider success returns only its own usage.
-        # This slice must not double-count or silently change that seam.
         assert result.content["reasoning"] == "wide"
-        assert counts(result.usage) == (13, 6, 3)
+        assert counts(result.usage) == (41, 18, 8)
     else:
         # The continuation error retains its own budget, not wider-attempt counts.
         assert result.kind == "truncated" and not result.retryable
         assert counts(result.observed_usage) == (28, 12, 5)
+
+
+@pytest.mark.parametrize(
+    ("prior", "wide", "expected", "known"),
+    [
+        (metadata(0, 0, 0), metadata(0, 0, 0), (0, 0, 0), invoke._USAGE_FIELDS),
+        (metadata(10, None, 2), metadata(13, 6, 3), (43, 6, 9), {"input_tokens", "cached_input_tokens"}),
+        ({}, metadata(13, 6, 3), (13, 6, 3), set()),
+        (metadata(10, 5, 2), {}, (30, 15, 6), set()),
+        (metadata(10, 5, None), metadata(13, 6, 3), (43, 21, 3), {"input_tokens", "output_tokens"}),
+        (metadata(10, 5, 2), metadata(13, 6, None), (43, 21, 6), {"input_tokens", "output_tokens"}),
+    ],
+)
+def test_wider_success_keeps_unknown_and_zero_contract(run, prior, wide, expected, known):
+    initial = cut()
+    initial.usage_data = prior
+    result, calls, slept = run(
+        [
+            initial,
+            ("invalid", prior),
+            ("invalid", prior),
+            ('{"verdict":"DISMISSED","reasoning":"wide"}', wide),
+        ],
+        wider=True,
+    )
+    assert calls.call_count == 4
+    slept.assert_called_once_with(invoke._CONTINUE_DELAY_S)
+    assert counts(result.usage) == expected
+    assert result.usage.known_fields == frozenset(known)
+    assert result.content == {"verdict": "DISMISSED", "reasoning": "wide"}
+    assert result.is_truncated
+    assert calls.call_args_list[-1].args[0] == "original prompt"
+    assert [call.args[1].max_tokens for call in calls.call_args_list] == [100, 100, 100, 200]
+
+
+def test_json_correction_truncation_does_not_enter_wider_or_double_count(run):
+    broken = '{"verdict":"DISMISSED",,"reasoning":"broken"}'
+    result, calls, slept = run([(broken, metadata(7, 3, 1)), cut()], wider=True, attempts=2)
+    assert calls.call_count == 2
+    slept.assert_not_called()
+    assert isinstance(result, invoke._TruncatedResponse)
+    assert not result.retryable
+    assert counts(result.observed_usage) == (17, 8, 3)
+    assert all(call.args[1].max_tokens == 100 for call in calls.call_args_list)
