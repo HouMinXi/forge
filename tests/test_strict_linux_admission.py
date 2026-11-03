@@ -394,7 +394,11 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
             "paths": [
                 ".github/workflows/strict-linux-admission.yml",
                 "scripts/strict_linux_admission.py",
+                "scripts/static_public_summary.py",
+                "scripts/fixed_metadata_public_summary.py",
                 "tests/test_strict_linux_admission.py",
+                "tests/test_static_publication.py",
+                "tests/test_fixed_metadata_publication.py",
             ],
         },
         "workflow_dispatch": {
@@ -431,7 +435,8 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
     assert steps[1]["env"]["CONTEXT_SOURCE_SHA"] == head_expression
     assert steps[1]["env"]["CONTEXT_WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
     assert steps[1]["env"]["CONTEXT_WORKFLOW_REF"] == "${{ github.workflow_ref }}"
-    assert steps[2]["if"] == "${{ always() }}"
+    assert steps[2]["if"] == "${{ always() && env.ADMISSION_PUBLIC_READY == 'true' }}"
+    assert steps[2]["with"]["path"] == "forge-static-public/summary.json"
     assert "sudo " not in text and "sysctl " not in text
     assert "pip install" not in text and "systemd-run" not in text
     assert "strict_linux_admission.py" in steps[1]["run"]

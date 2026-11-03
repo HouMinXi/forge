@@ -6,7 +6,18 @@ own identity/topology satisfies necessary cgroup prerequisites. It never imports
 Forge tests/capability modules, launches bwrap or a product payload, creates a
 product cgroup, enables controllers, requests delegation, changes host ownership,
 loads profiles, installs packages, sets sysctls, enables linger or starts a missing
-manager. No workflow or dispatch is included.
+manager. The dedicated workflow below is manual-only.
+
+## Unresolved dependency boundary
+
+This probe still lacks a proven prelaunch dependency/effect closure for an
+arbitrary existing manager. Its direct service configuration checks do not prove
+that allowed base targets/slices, reverse relationships, handlers or cleanup-time
+transactions have no other effects. An active base, zero jobs or a bounded
+snapshot does not establish that proof. The execution/publication changes below
+address accidental invocation and diagnostic disclosure, not this defect or #31
+qualification. Keep this work draft and do not treat explicit launch consent as
+technical admission.
 
 ## Execution boundary and authorization
 
@@ -172,46 +183,96 @@ Serializer references: [v255 execution serialization](https://github.com/systemd
 
 ## Dedicated workflow entry point
 
-`strict-linux-user-service.yml` runs only for same-repository PR changes to the
-workflow, collector/wrapper or their focused tests, plus explicit manual dispatch.
-It uses Ubuntu 24.04, a read-only contents token, no workflow-injected secrets, pinned checkout with
-credentials not persisted, and a three-minute job watchdog. Concurrency does not
-automatically cancel an older run in cleanup. Publishing a triggering PR is an
-external execution action and requires the applicable authorization.
+`strict-linux-user-service.yml` has only `workflow_dispatch`; pull requests never
+schedule this native workflow. Offline collector/wrapper/publication tests stay
+in the ordinary test suite. This does not make all PR CI side-effect-free:
+`linux-tests.yml` retains `systemd-run --user --scope` and its existing
+privileged setup/security changes despite its separate diagnostic-publication
+repair. Those are separate from this
+transient-service workflow and have not been executed by this local repair.
+A manual run defaults to no service authorization:
+`allow_transient_service=false` produces STOP without loading the collector or
+running any tool. Native observation requires separate one-run authorization,
+explicit opt-in, and the exact reviewed `expected_source_sha` matching the
+actual dispatched checkout on its first run attempt. Workflow reruns cannot reuse
+the earlier opt-in; another native observation needs a fresh explicitly authorized
+dispatch. Wrong events, missing opt-in, unsupported values or
+missing/mismatching source stay nonzero; these declarations are not authenticated
+proof of who authorized a run. The unresolved dependency boundary still needs
+its own accepted contract before an actual launch can be called safe.
 
-The stdlib wrapper first binds the declared head and the exact collector,
-wrapper and workflow bytes to three regular Git tree blobs. It uses only fixed
-Git `rev-parse`/`ls-tree`, not status/diff, external filters or textconv. System /
-global Git configuration is disabled for its child commands, fsmonitor is
-disabled, and the collector is not loaded before this check. The wrapper compiles exactly
-hash-verified captured source bytes into a non-main module; it never loads an
-unverified `.pyc` cache (Python `-B` alone would not prevent cache reads). Unrelated working
-tree files are not claimed clean. Both Git object IDs and SHA256 content hashes
-are checked; SHA1 is used only to reproduce this repository's Git blob IDs.
+The wrapper CLI also requires `--allow-transient-service` and
+`--expected-source-sha`. Calling it with only `--output-dir` no longer starts a
+service. Programmatic calls default to no authorization. The collector's
+existing explicit flag remains required. These guards prevent accidental
+execution; they are not an access-control barrier against malicious source or
+an actor who can directly invoke arbitrary processes as the same user.
+
+The workflow uses Ubuntu 24.04, a read-only contents token, no workflow-injected
+secrets, pinned checkout with credentials not persisted, and a three-minute job
+watchdog. Concurrency does not automatically cancel an older run in cleanup.
+Publication of a PR no longer schedules this service job. Manual dispatch or
+service execution is not performed by the offline tests.
+
+The stdlib wrapper binds the declared head and four execution/publication sources
+(collector, wrapper, workflow, public-summary helper) to regular Git tree blobs
+before loading the collector. It uses only fixed Git `rev-parse`/`ls-tree`, not
+status/diff, external filters or textconv. System/global Git configuration and
+fsmonitor are disabled for its child commands. The wrapper compiles exactly
+hash-verified captured collector bytes into a non-main module; it does not load
+an unverified `.pyc` cache. Both Git blob IDs and SHA256 content hashes are
+checked. SHA1 is used only to reproduce this repository's Git object IDs.
+Unrelated working-tree files are not claimed clean.
 
 Collector stdout is capped at 16 KiB; stderr is discarded with a saturated byte
 count. Overflow does not immediately kill the collector while it may be cleaning
-up. A 90-second last-resort wrapper deadline then signals only its direct child
-through a pidfd, with two-second TERM/KILL reap windows. Timeout, missing/invalid
-receipt, wrong UID/context, source changes or reap uncertainty remain STOP with
-cleanup UNKNOWN unless a valid matching terminal receipt establishes its claimed
-cleanup observation. The service's timer alone never proves cleanup. Normal
-collector STOP exits remain nonzero; the wrapper does not turn them green.
+up. A 90-second last-resort wrapper deadline signals only its direct child
+through a pidfd, with two-second TERM/KILL reap windows. Timeout, invalid receipt,
+wrong UID/context, source changes or reap uncertainty remain STOP with cleanup
+UNKNOWN unless a valid matching terminal receipt supports its cleanup claim.
+The service timer alone never proves cleanup.
 
-An always-run artifact step, gated on the private evidence path having been
-created, uploads only the three fixed structured JSON files:
-declared context, validated observation when available, and wrapper status. No
-raw environment/configuration/stderr, nonce or journal is uploaded. Runner loss
-or hard cancellation may prevent upload entirely; absence is not success.
+### Public evidence boundary
 
-The envelope includes SHA256 for all three execution files, but explicitly says
-these are the checked-out sources—not authentication of the executed workflow.
-GitHub repository/run/attempt/job/artifact identity and digest, exact source blobs,
-and the actual workflow-definition version must still be reconciled externally.
-PR head and merge-ref identities are distinct. Neither model-authored summaries
-nor self-declared receipts override the execution-provenance restriction added
-by #374. Native service route, serializer compatibility, timing and cleanup must
-be observed on an authorized run; offline wrapper fixtures do not establish them.
+Only `forge-user-service-public/summary.json` is eligible for upload. It contains
+fixed schema/mode labels, OBSERVED/STOP/UNKNOWN, a finite reason, boundary and
+qualification NOT_RUN, and raw_evidence NOT_PUBLISHED. No original key/value is
+copied into public output: no unit name, path, PID, context, source hash,
+dependency edge, raw diagnostic, arbitrary error text, environment or journal.
+No count field is published by this service-specific projection.
+
+The projection reads only the wrapper status, with a 16-KiB input cap, no-follow
+regular-file checks, duplicate-key/invalid-number rejection and before/after
+metadata checks. It does not import a collector, inspect host state or run
+commands. OBSERVED additionally requires wrapper success, a valid terminal
+receipt, observed cleanup and the source recheck. A flushed OBSERVED status
+followed by a nonzero exit or kill is publicly STOP. Missing, malformed or
+unsupported status is UNKNOWN and fails the step, even if the wrapper exited 0.
+These labels summarize declared evidence, not authenticated qualification.
+
+A fresh private directory is created within the observation shell and is never
+exported to subsequent steps. Wrapper stdout/stderr, helper stderr and the
+shell's own signal/redirection diagnostics remain there. Tracing is disabled;
+initial setup errors are suppressed before a private stderr file is available.
+Only a literal publication-ready flag crosses steps. The exact relative upload
+path has no raw fallback or wildcard. Empty, missing, linked, nonregular or
+oversized summary output cannot set that flag, including interpreter failures
+that happen to return the same exit code as a normal UNKNOWN summary.
+
+The original wrapper failure code wins over projection/publication failures.
+If the wrapper succeeds but safe summary production fails, the step fails.
+STOP is never converted to a green run. Cancellation, runner loss or hard timeout
+may prevent any summary; absence is not success or proof of cleanup. The public
+summary omits forensic detail deliberately. Temporary raw files are not a
+supported private archive, and this change does not retract prior artifacts.
+
+This boundary assumes the reviewed workflow/helper and trusted runner code are
+what execute. It is not confidentiality against malicious workflow code, a
+compromised runner or a same-user actor. Provider run/job/source and actual
+workflow-definition identity still require external reconciliation; checked-out
+source hashes do not authenticate the executed workflow. Native service route,
+serializer compatibility, timing, dependency effects and cleanup remain
+unqualified by offline fixtures or ordinary CI.
 
 
 ### Configuration I/O diagnostics

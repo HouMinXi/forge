@@ -12,6 +12,7 @@ import yaml
 
 from scripts import run_user_service_observation as wrapper
 from scripts import strict_user_service_probe as probe
+from scripts import user_service_public_summary as public
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,10 +23,10 @@ def declared_context():
         "run_id": "123",
         "run_attempt": 1,
         "job_name": "observe",
-        "workflow_ref": "HouMinXi/forge/" + wrapper.WORKFLOW + "@refs/pull/1/merge",
+        "workflow_ref": "HouMinXi/forge/" + wrapper.WORKFLOW + "@refs/heads/reviewed",
         "workflow_sha": "b" * 40,
         "source_sha": "a" * 40,
-        "event_name": "pull_request",
+        "event_name": "workflow_dispatch",
     }
 
 
@@ -170,7 +171,16 @@ def workflow_case(monkeypatch, tmp_path):
 
 def test_wrapper_offline_observed_preserves_nonqualification(workflow_case):
     state = workflow_case
-    assert wrapper.run(ROOT, state["directory"], state["context"]) == 0
+    assert (
+        wrapper.run(
+            ROOT,
+            state["directory"],
+            state["context"],
+            allow_transient_service=True,
+            expected_source_sha=state["context"]["source_sha"],
+        )
+        == 0
+    )
     status = json.loads((state["directory"] / "collector-status.json").read_text())
     envelope = json.loads((state["directory"] / "declared-context.json").read_text())
     assert status["status"] == "OBSERVED" and status["cleanup"] == "OBSERVED"
@@ -194,9 +204,42 @@ def test_wrapper_stop_is_nonzero_not_green(workflow_case):
         "child_cleanup": None,
     }
     state["collector"] = capture_result(probe.encode(probe.validate_receipt(receipt)), 2)
-    assert wrapper.run(ROOT, state["directory"], state["context"]) == 2
+    assert (
+        wrapper.run(
+            ROOT,
+            state["directory"],
+            state["context"],
+            allow_transient_service=True,
+            expected_source_sha=state["context"]["source_sha"],
+        )
+        == 2
+    )
     status = json.loads((state["directory"] / "collector-status.json").read_text())
     assert status["reason"] == "collector_stop" and status["cleanup"] == "OBSERVED"
+
+
+def test_real_wrapper_cleanup_stop_remains_public_stop(workflow_case):
+    state = workflow_case
+    receipt = probe.parse_receipt(state["collector"]["stdout"])
+    receipt["status"] = "STOP"
+    receipt["cleanup_evidence"] = None
+    receipt["cleanup"] = {
+        "status": "STOP",
+        **probe.error_record(probe.ProbeError("cleanup_unverified")),
+    }
+    state["collector"] = capture_result(probe.encode(probe.validate_receipt(receipt)), 2)
+    code = wrapper.run(
+        ROOT,
+        state["directory"],
+        state["context"],
+        allow_transient_service=True,
+        expected_source_sha=state["context"]["source_sha"],
+    )
+    status = json.loads((state["directory"] / "collector-status.json").read_text())
+    assert code == 2 and status["status"] == status["cleanup"] == "STOP"
+    result = public.summary(status, code)
+    assert result["status"] == "STOP" and result["reason"] == "collector_stop"
+    assert result["boundary"] == result["qualification"] == "NOT_RUN"
 
 
 @pytest.mark.parametrize(
@@ -232,7 +275,16 @@ def test_wrapper_uncertainty_stays_stop(workflow_case, fault):
         value["context"]["run_id"] = "999"
         value["observation"]["context"]["run_id"] = "999"
         state["collector"]["stdout"] = probe.encode(value)
-    assert wrapper.run(ROOT, state["directory"], state["context"]) == 2
+    assert (
+        wrapper.run(
+            ROOT,
+            state["directory"],
+            state["context"],
+            allow_transient_service=True,
+            expected_source_sha=state["context"]["source_sha"],
+        )
+        == 2
+    )
     status = json.loads((state["directory"] / "collector-status.json").read_text())
     assert status["status"] == "STOP"
     if fault != "wrong_exit":
@@ -246,7 +298,16 @@ def test_wrong_head_never_imports_or_starts_collector(workflow_case, monkeypatch
     monkeypatch.setattr(
         wrapper, "load_collector", lambda root: pytest.fail("collector import before source binding")
     )
-    assert wrapper.run(ROOT, state["directory"], state["context"]) == 2
+    assert (
+        wrapper.run(
+            ROOT,
+            state["directory"],
+            state["context"],
+            allow_transient_service=True,
+            expected_source_sha=state["context"]["source_sha"],
+        )
+        == 2
+    )
     assert len(state["calls"]) == 2
     status = json.loads((state["directory"] / "collector-status.json").read_text())
     assert status["cleanup"] == "NOT_RUN" and status["reason"] == "checkout_mismatch"
@@ -265,7 +326,16 @@ def test_source_change_after_collector_does_not_emit_observation(workflow_case, 
 
     monkeypatch.setattr(wrapper, "source_hashes", hashes)
     state = workflow_case
-    assert wrapper.run(ROOT, state["directory"], state["context"]) == 2
+    assert (
+        wrapper.run(
+            ROOT,
+            state["directory"],
+            state["context"],
+            allow_transient_service=True,
+            expected_source_sha=state["context"]["source_sha"],
+        )
+        == 2
+    )
     assert not (state["directory"] / "observation.json").exists()
 
 
@@ -355,33 +425,26 @@ def test_context_is_declaration_and_does_not_read_other_environment(monkeypatch)
     assert wrapper.ENV["GIT_CONFIG_GLOBAL"] == "/dev/null"
 
 
-def test_workflow_narrow_effects_and_always_artifacts():
+def test_workflow_requires_explicit_manual_authorization_and_summary_only():
     raw = (ROOT / wrapper.WORKFLOW).read_text()
     workflow = yaml.safe_load(raw)
-    assert set(workflow["on"]) == {"pull_request", "workflow_dispatch"}
-    assert set(workflow["on"]["pull_request"]["paths"]) == {
-        wrapper.WORKFLOW,
-        wrapper.COLLECTOR,
-        wrapper.WRAPPER,
-        "tests/test_strict_user_service_probe.py",
-        "tests/test_run_user_service_observation.py",
-    }
+    assert set(workflow["on"]) == {"workflow_dispatch"}
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert inputs["allow_transient_service"]["type"] == "boolean"
+    assert inputs["allow_transient_service"]["default"] is False
+    assert inputs["expected_source_sha"]["default"] == ""
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["concurrency"]["cancel-in-progress"] is False
     job = workflow["jobs"]["observe"]
     assert job["timeout-minutes"] == 3 and job["runs-on"] == "ubuntu-24.04"
-    assert "head.repo.full_name == github.repository" in job["if"]
-    checkout = job["steps"][1]
+    assert job["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
+    checkout = job["steps"][0]
     assert checkout["with"]["persist-credentials"] is False
-    assert "head.sha || github.sha" in checkout["with"]["ref"]
+    assert checkout["with"]["ref"] == "${{ github.sha }}"
     upload = job["steps"][-1]
-    assert upload["if"] == "${{ always() && env.SERVICE_EVIDENCE != '' }}"
+    assert upload["if"] == "${{ always() && env.SERVICE_PUBLIC_READY == 'true' }}"
     assert upload["with"]["if-no-files-found"] == "error"
-    assert set(Path(line).name for line in upload["with"]["path"].splitlines()) == {
-        "declared-context.json",
-        "observation.json",
-        "collector-status.json",
-    }
+    assert upload["with"]["path"] == "forge-user-service-public/summary.json"
     assert "${{ secrets." not in raw and "pull_request_target" not in raw
 
 
@@ -393,7 +456,16 @@ def test_wrapper_rejects_receipt_for_different_ordinary_uid(workflow_case, monke
         patch.setattr(os, "getuid", lambda: actual_uid + 1)
         value = fixture_receipt(collector_context)
     state["collector"]["stdout"] = probe.encode(value)
-    assert wrapper.run(ROOT, state["directory"], state["context"]) == 2
+    assert (
+        wrapper.run(
+            ROOT,
+            state["directory"],
+            state["context"],
+            allow_transient_service=True,
+            expected_source_sha=state["context"]["source_sha"],
+        )
+        == 2
+    )
     result = json.loads((state["directory"] / "collector-status.json").read_text())
     assert result["reason"] == "receipt_identity_mismatch"
     assert result["cleanup"] == "UNKNOWN"
@@ -462,7 +534,16 @@ def test_unexpected_loader_error_is_finite_not_raw(workflow_case, monkeypatch):
 
     monkeypatch.setattr(wrapper, "load_collector", fail)
     state = workflow_case
-    assert wrapper.run(ROOT, state["directory"], state["context"]) == 2
+    assert (
+        wrapper.run(
+            ROOT,
+            state["directory"],
+            state["context"],
+            allow_transient_service=True,
+            expected_source_sha=state["context"]["source_sha"],
+        )
+        == 2
+    )
     raw = (state["directory"] / "collector-status.json").read_text()
     assert "private-secret" not in raw
     assert json.loads(raw)["reason"] == "wrapper_internal_error"
@@ -471,3 +552,104 @@ def test_unexpected_loader_error_is_finite_not_raw(workflow_case, monkeypatch):
 def test_wrapper_error_labels_never_serialize_unrecognized_values():
     assert str(wrapper.WrapperError("private-secret")) == "wrapper_internal_error"
     assert str(wrapper.WrapperError({"private": "secret"})) == "wrapper_internal_error"
+
+
+@pytest.mark.parametrize("event", ["workflow_dispatch", "pull_request", "pull_request_target", "push"])
+@pytest.mark.parametrize("opt_in", [False, True, "true", 1])
+def test_event_and_explicit_opt_in_are_both_required_before_any_tool(workflow_case, event, opt_in):
+    state = workflow_case
+    state["context"]["event_name"] = event
+    code = wrapper.run(
+        ROOT,
+        state["directory"],
+        state["context"],
+        allow_transient_service=opt_in,
+        expected_source_sha=state["context"]["source_sha"],
+    )
+    status = json.loads((state["directory"] / "collector-status.json").read_text())
+    if event == "workflow_dispatch" and opt_in is True:
+        assert code == 0 and len(state["calls"]) == 3
+        assert status["status"] == "OBSERVED"
+    else:
+        assert code == 2 and state["calls"] == []
+        assert status["reason"] == "authorization_required"
+        assert status["cleanup"] == "NOT_RUN"
+        assert list(state["directory"].iterdir()) == [state["directory"] / "collector-status.json"]
+
+
+@pytest.mark.parametrize("source", [None, "", "a" * 39, "A" * 40, "b" * 40, True, ["a" * 40]])
+def test_missing_or_conflicting_reviewed_source_never_loads_collector(
+    workflow_case, monkeypatch, source
+):
+    state = workflow_case
+    monkeypatch.setattr(
+        wrapper, "load_collector", lambda *args: pytest.fail("load before matching reviewed source")
+    )
+    assert (
+        wrapper.run(
+            ROOT,
+            state["directory"],
+            state["context"],
+            allow_transient_service=True,
+            expected_source_sha=source,
+        )
+        == 2
+    )
+    assert state["calls"] == []
+    status = json.loads((state["directory"] / "collector-status.json").read_text())
+    assert status["reason"] == "source_mismatch" and status["cleanup"] == "NOT_RUN"
+
+
+def test_wrapper_default_invocation_is_not_service_authorization(workflow_case):
+    state = workflow_case
+    assert wrapper.run(ROOT, state["directory"], state["context"]) == 2
+    assert state["calls"] == []
+    status = json.loads((state["directory"] / "collector-status.json").read_text())
+    assert status["reason"] == "authorization_required" and status["cleanup"] == "NOT_RUN"
+
+
+@pytest.mark.parametrize("attempt", [0, 2, 999999, True, "1", None])
+def test_reruns_or_invalid_attempts_cannot_reuse_a_previous_opt_in(workflow_case, attempt):
+    state = workflow_case
+    state["context"]["run_attempt"] = attempt
+    assert (
+        wrapper.run(
+            ROOT,
+            state["directory"],
+            state["context"],
+            allow_transient_service=True,
+            expected_source_sha=state["context"]["source_sha"],
+        )
+        == 2
+    )
+    assert state["calls"] == []
+    status = json.loads((state["directory"] / "collector-status.json").read_text())
+    assert status["reason"] == "authorization_required" and status["cleanup"] == "NOT_RUN"
+
+
+def test_cli_requires_opt_in_even_for_manual_event_and_matching_source(workflow_case, monkeypatch):
+    state = workflow_case
+    for name, env_name in wrapper.CONTEXT_FIELDS.items():
+        monkeypatch.setenv(env_name, str(state["context"][name]))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            wrapper.WRAPPER,
+            "--output-dir",
+            str(state["directory"]),
+            "--expected-source-sha",
+            state["context"]["source_sha"],
+        ],
+    )
+    assert wrapper.main() == 2 and state["calls"] == []
+
+
+@pytest.mark.parametrize("event", ["pull_request", "pull_request_target", "push"])
+def test_cli_context_cannot_promote_other_events_to_manual_authorization(monkeypatch, event):
+    context = declared_context()
+    context["event_name"] = event
+    for name, env_name in wrapper.CONTEXT_FIELDS.items():
+        monkeypatch.setenv(env_name, str(context[name]))
+    with pytest.raises(wrapper.WrapperError, match="authorization_required"):
+        wrapper.context_from_environment()

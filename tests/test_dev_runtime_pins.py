@@ -144,7 +144,13 @@ def test_every_linux_job_keeps_current_and_previous_runtimes_separate():
         assert f'assert pytest.__version__ == "{_pinned_version()}"' in setup
         assert 'python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"' in setup
         assert "\"$RUNNER_TEMP/forge-pytest-9.1.1/bin/python\" -m pip install 'pytest==9.1.1'" in setup
-        assert "FORGE_QUALIFICATION_PYTHON=$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" in setup
+        private_export = 'export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"'
+        assert private_export in setup
+        assert "GITHUB_ENV" not in setup
+        for step in jobs[name]["steps"]:
+            if "scripts/ci_private_transport.py run" in step.get("run", ""):
+                assert private_export in step["run"]
+                assert "GITHUB_ENV" not in step["run"]
 
 
 def test_wheel_qualification_uses_the_current_dev_pin():

@@ -26,7 +26,8 @@ COLLECTOR_SECONDS = 90
 WORKFLOW = ".github/workflows/strict-linux-user-service.yml"
 COLLECTOR = "scripts/strict_user_service_probe.py"
 WRAPPER = "scripts/run_user_service_observation.py"
-EXECUTION_FILES = (WORKFLOW, COLLECTOR, WRAPPER)
+SUMMARY = "scripts/user_service_public_summary.py"
+EXECUTION_FILES = (WORKFLOW, COLLECTOR, WRAPPER, SUMMARY)
 ENV = {
     "PATH": "/usr/bin:/bin",
     "LANG": "C",
@@ -47,6 +48,8 @@ CONTEXT_FIELDS = {
 
 
 ERROR_REASONS = {
+    "authorization_required",
+    "source_mismatch",
     "context_invalid",
     "source_metadata",
     "unsafe_tool",
@@ -85,7 +88,7 @@ def context_from_environment():
     # Read only these declared fields, never enumerate/copy the job environment.
     value = {key: os.environ.get(name, "") for key, name in CONTEXT_FIELDS.items()}
     require(value["repository"] == "HouMinXi/forge", "context_invalid")
-    require(value["event_name"] in {"pull_request", "workflow_dispatch"}, "context_invalid")
+    require(value["event_name"] == "workflow_dispatch", "authorization_required")
     for name in ("source_sha", "workflow_sha"):
         require(re.fullmatch(r"[0-9a-f]{40}", value[name]), "context_invalid")
     require(re.fullmatch(r"[1-9][0-9]{0,19}", value["run_id"]), "context_invalid")
@@ -309,7 +312,7 @@ def load_collector(root, expected_hash):
     return module
 
 
-def run(root, directory, context):
+def run(root, directory, context, *, allow_transient_service=False, expected_source_sha=None):
     status = {
         "schema": "forge-user-service-wrapper-status-v1",
         "status": "STOP",
@@ -327,6 +330,21 @@ def run(root, directory, context):
     }
     hashes = None
     try:
+        # A PR event or an implicit wrapper invocation never authorizes a service.
+        # These explicit declarations are guards, not authenticated provenance.
+        require(
+            allow_transient_service is True
+            and context["event_name"] == "workflow_dispatch"
+            and type(context["run_attempt"]) is int
+            and context["run_attempt"] == 1,
+            "authorization_required",
+        )
+        require(
+            type(expected_source_sha) is str
+            and re.fullmatch(r"[0-9a-f]{40}", expected_source_sha)
+            and expected_source_sha == context["source_sha"],
+            "source_mismatch",
+        )
         require(os.getuid() == os.geteuid() != 0 and os.getgid() == os.getegid() != 0, "ordinary_user")
         # Fail before collector start if the wrapper cannot bind its own child.
         fd = os.pidfd_open(os.getpid())
@@ -430,9 +448,17 @@ def run(root, directory, context):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--allow-transient-service", action="store_true")
+    parser.add_argument("--expected-source-sha", default="")
     args = parser.parse_args()
     context = context_from_environment()
-    return run(Path(__file__).resolve().parents[1], Path(args.output_dir), context)
+    return run(
+        Path(__file__).resolve().parents[1],
+        Path(args.output_dir),
+        context,
+        allow_transient_service=args.allow_transient_service,
+        expected_source_sha=args.expected_source_sha,
+    )
 
 
 if __name__ == "__main__":
