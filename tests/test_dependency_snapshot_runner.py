@@ -205,11 +205,21 @@ class Contracts(unittest.TestCase):
 
     def test_workflow_guards(self):
         text = (PATH.parents[1] / p.WORKFLOW).read_text()
-        self.assertIn("&& (inputs.fixed_metadata_read || inputs.ordinary_dependency_snapshot)) }}", text)
-        self.assertIn("&& inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot }}", text)
-        self.assertIn("&& inputs.ordinary_dependency_snapshot && !inputs.fixed_metadata_read }}", text)
-        ordinary = text.split("  ordinary-dependency:\n")[1]
+        self.assertIn(
+            "&& (inputs.fixed_metadata_read || inputs.ordinary_dependency_snapshot || inputs.dependency_view_read)) }}",
+            text,
+        )
+        self.assertIn(
+            "&& inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot && !inputs.dependency_view_read }}",
+            text,
+        )
+        self.assertIn(
+            "&& inputs.ordinary_dependency_snapshot && !inputs.fixed_metadata_read && !inputs.dependency_view_read }}",
+            text,
+        )
+        ordinary = text.split("  ordinary-dependency:\n")[1].split("  dependency-view:\n")[0]
         self.assertNotIn("sudo", ordinary)
+        self.assertNotIn("dependency_view_runner", ordinary)
         self.assertNotIn("pip install", ordinary)
         conflict = text.split("  conflicting-modes:\n")[1].split("  ordinary-dependency:\n")[0]
         self.assertNotIn("actions/checkout", conflict)

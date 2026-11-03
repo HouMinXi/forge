@@ -409,6 +409,11 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
                     "type": "boolean",
                     "default": False,
                 },
+                "dependency_view_read": {
+                    "description": "Explicit one-run two-stat and ordinary fragment diagnostic (not qualification)",
+                    "type": "boolean",
+                    "default": False,
+                },
                 "expected_source_sha": {
                     "description": "Reviewed exact source SHA; required for either explicit diagnostic",
                     "type": "string",
@@ -422,16 +427,17 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
         "observe",
         "fixed-metadata",
         "ordinary-dependency",
+        "dependency-view",
         "conflicting-modes",
     }
     assert workflow["jobs"]["fixed-metadata"]["if"] == (
-        "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot }}"
+        "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot && !inputs.dependency_view_read }}"
     )
     job = workflow["jobs"]["observe"]
     assert job["if"] == (
         "${{ (github.event_name == 'workflow_dispatch' || "
         "github.event.pull_request.head.repo.full_name == github.repository) && "
-        "!(github.event_name == 'workflow_dispatch' && (inputs.fixed_metadata_read || inputs.ordinary_dependency_snapshot)) }}"
+        "!(github.event_name == 'workflow_dispatch' && (inputs.fixed_metadata_read || inputs.ordinary_dependency_snapshot || inputs.dependency_view_read)) }}"
     )
     steps = job["steps"]
     assert len(steps) == 3
@@ -904,7 +910,8 @@ def test_v1_receipts_are_not_reinterpreted(observed):
 @pytest.mark.parametrize("fixed", [False, True])
 @pytest.mark.parametrize("ordinary", [False, True])
 @pytest.mark.parametrize("same_repository", [False, True])
-def test_diagnostic_job_selection_matrix(event, fixed, ordinary, same_repository):
+@pytest.mark.parametrize("view", [False, True])
+def test_diagnostic_job_selection_matrix(event, fixed, ordinary, same_repository, view):
     import ast
 
     workflow = yaml.safe_load(
@@ -932,6 +939,7 @@ def test_diagnostic_job_selection_matrix(event, fixed, ordinary, same_repository
         "github.event_name": repr(event),
         "inputs.fixed_metadata_read": str(fixed),
         "inputs.ordinary_dependency_snapshot": str(ordinary),
+        "inputs.dependency_view_read": str(view),
     }
     for name, job in workflow["jobs"].items():
         expression = job["if"][3:-2]
@@ -944,10 +952,14 @@ def test_diagnostic_job_selection_matrix(event, fixed, ordinary, same_repository
         ({"observe"} if same_repository else set())
         if event == "pull_request"
         else {
-            (False, False): {"observe"},
-            (True, False): {"fixed-metadata"},
-            (False, True): {"ordinary-dependency"},
-            (True, True): {"conflicting-modes"},
-        }[fixed, ordinary]
+            (False, False, False): {"observe"},
+            (True, False, False): {"fixed-metadata"},
+            (False, True, False): {"ordinary-dependency"},
+            (False, False, True): {"dependency-view"},
+            (True, True, False): {"conflicting-modes"},
+            (True, False, True): {"conflicting-modes"},
+            (False, True, True): {"conflicting-modes"},
+            (True, True, True): {"conflicting-modes"},
+        }[fixed, ordinary, view]
     )
     assert selected == expected

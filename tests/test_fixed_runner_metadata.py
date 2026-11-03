@@ -359,7 +359,7 @@ def test_workflow_requires_explicit_dispatch_and_has_failure_artifact():
     job = workflow["jobs"]["fixed-metadata"]
     assert (
         job["if"]
-        == "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot }}"
+        == "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot && !inputs.dependency_view_read }}"
     )
     assert "inputs.fixed_metadata_read" in workflow["jobs"]["observe"]["if"]
     assert workflow["permissions"] == {"contents": "read"}
