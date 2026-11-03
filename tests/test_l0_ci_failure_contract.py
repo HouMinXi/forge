@@ -2,7 +2,7 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """L0 failures must survive real L1 receipts, CI persistence and CLI reporting.
 
-Only analyzer availability/process output and the model transport are synthetic.
+Analyzer availability/process output, model transport and mutation launch are synthetic.
 Detection, registry, parsing, orchestration, L1 provider, receipt writer/verifier
 and canonical CLI reporting run normally. No native analyzer or live model runs.
 """
@@ -273,13 +273,44 @@ def test_unexpected_parser_exception_fails_ci(review):
 def test_missing_tool_keeps_required_optional_distinction(review, required):
     review.registry["shellcheck"].required = required
     review.available = False
+    message = (
+        "Required tool not found: shellcheck"
+        if required
+        else "tool shellcheck: optional executable unavailable, skipped"
+    )
     disk = review.run(
         Verdict.FAIL if required else Verdict.PASS,
-        infra="Required tool not found: shellcheck" if required else None,
+        infra=message,
     )
     assert review.machine._l0_failed is required
-    assert bool(disk["infra_errors"]) is required
+    assert len(disk["infra_errors"]) == 1
+    assert message in disk["infra_errors"][0]
     assert review.calls == []
+
+
+def test_optional_absence_diagnostic_does_not_block_mutation_launch(tmp_path, monkeypatch):
+    review = _Review(tmp_path, monkeypatch, python_file=True)
+    review.available = False
+    gate = review.machine.test_config_root / ".code-forge/gate.yaml"
+    gate.write_text("test:\n  command: [python, -m, pytest]\n")
+    monkeypatch.setattr("shutil.which", lambda name: "/mock/mutmut" if name == "mutmut" else None)
+    launched = []
+
+    def record_launch(*args, **kwargs):
+        launched.append((args, kwargs))
+        return True
+
+    monkeypatch.setattr("code_forge.machine.launch_detached_mutation", record_launch)
+    message = "tool shellcheck: optional executable unavailable, skipped"
+    disk = review.run(Verdict.PASS, infra=message)
+    assert disk["infra_errors"] == [message]
+    assert not review.machine._l0_failed
+    assert review.calls == []
+    assert len(launched) == 1
+    args, _ = launched[0]
+    assert "sample.py" in args[0]
+    assert args[1] == ["python", "-m", "pytest"]
+    assert args[2] == review.root
 
 
 def test_no_matching_tool_remains_a_skip_with_real_l1_coverage(review):

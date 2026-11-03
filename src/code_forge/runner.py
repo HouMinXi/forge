@@ -299,6 +299,7 @@ def run_tools(
     files: list[str],
     *,
     cwd: Path | None = None,
+    execution_errors: list[str] | None = None,
 ) -> tuple[dict[str, tuple[str, int, str]], dict[str, str], list[str], list[str]]:
     """Execute all matching tools from the registry.
 
@@ -306,7 +307,11 @@ def run_tools(
         tool_results: {tool_name: (stdout, returncode, stderr)}
         tool_versions: {tool_name: version_string}
         tools_skipped: [tool_name, ...]
-        infra_errors: [str, ...] -- timeout/OS errors surfaced for diagnostics
+        infra_errors: [str, ...] -- execution failures and optional-tool skips
+
+    The optional execution_errors sink contains only timeout/OS failures,
+    separating them from nonfatal optional absence without removing its
+    diagnostic or changing the existing return contract.
 
     Iterates sorted(registry.keys()) for GATE-02 determinism
     (Round 3 item 11).  Calls match_tools once before the per-tool
@@ -339,9 +344,15 @@ def run_tools(
             tools_skipped.append(tool_name)
             continue
 
-        result = run_tool(tool_config, matching_files, cwd=cwd, infra_errors=infra_errors)
+        tool_errors: list[str] = []
+        result = run_tool(tool_config, matching_files, cwd=cwd, infra_errors=tool_errors)
+        infra_errors.extend(tool_errors)
+        if execution_errors is not None:
+            execution_errors.extend(tool_errors)
         if result is None:
             tools_skipped.append(tool_name)
+            if not tool_errors:
+                infra_errors.append("tool %s: optional executable unavailable, skipped" % tool_name)
         else:
             tool_results[tool_name] = result
 

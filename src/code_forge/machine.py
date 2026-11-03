@@ -175,6 +175,7 @@ def _default_l0_runner(
     files: list[Path],
     *,
     cwd: Path | None = None,
+    execution_errors: list[str] | None = None,
 ) -> tuple[list[StateFinding], list[str]]:
     """Phase 1 Finding -> 02-01 StateFinding adapter.
 
@@ -182,12 +183,20 @@ def _default_l0_runner(
     R1 B4 fix: interim fingerprint = sha256(tool:file:line:rule_id)[:16].
     R1 H2 fix: ToolError -> infra_errors, NOT promoted to StateFinding.
     R3 LOW1+LOW2+LOW6 fixes: StateFinding.line_range is list[int].
+
+    execution_errors optionally collects fatal execution/parser failures.
+    Returned infra_errors also retains nonfatal optional-tool diagnostics.
     """
     from .parsers import parse_output
     from .runner import run_tools, sarif_producer_profile
 
     file_strs = [str(f) for f in files]
-    tool_results, _versions, _skipped, l0_infra = run_tools(registry, file_strs, cwd=cwd)
+    if execution_errors is None:
+        tool_results, _versions, _skipped, l0_infra = run_tools(registry, file_strs, cwd=cwd)
+    else:
+        tool_results, _versions, _skipped, l0_infra = run_tools(
+            registry, file_strs, cwd=cwd, execution_errors=execution_errors
+        )
     state_findings: list[StateFinding] = []
     infra_errors: list[str] = list(l0_infra)
 
@@ -223,6 +232,8 @@ def _default_l0_runner(
                 if tool_stderr:
                     err_msg += f" stderr={tool_stderr.strip()}"
                 infra_errors.append(err_msg)
+                if execution_errors is not None:
+                    execution_errors.append(err_msg)
                 continue
             f: Finding = item
             fp_raw = f"{tool}:{f.file}:{f.line}:{f.rule_id}"
@@ -2655,15 +2666,19 @@ class StateMachine:
         """
         try:
             source_files = self._executable_source_files()
+            execution_errors: list[str] = []
             if self.l0_runner is _default_l0_runner:
                 l0_findings, l0_infra = self.l0_runner(
                     self.registry,
                     source_files,
                     cwd=self._source_root(),
+                    execution_errors=execution_errors,
                 )
             else:
                 l0_findings, l0_infra = self.l0_runner(self.registry, source_files)
-            if l0_infra:
+                # Injected runners keep their existing two-value error contract.
+                execution_errors.extend(l0_infra)
+            if execution_errors:
                 self._l0_failed = True
             self._state.infra_errors.extend(l0_infra)
         except Exception as exc:  # noqa: BLE001
