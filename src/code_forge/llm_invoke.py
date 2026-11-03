@@ -29,7 +29,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Optional
 
 from . import progress
@@ -2922,6 +2922,8 @@ def _retry_with_more_headroom(
     expected_keys: frozenset[str] | None,
     reply_keys: ReplyKeys | None = None,
     strict_response: bool = False,
+    *,
+    on_failure_usage: Callable[[Usage], None] | None = None,
 ):
     """Re-ask for the whole answer with a wider output cap.
 
@@ -2936,7 +2938,9 @@ def _retry_with_more_headroom(
 
     Returns (parsed, usage) on success, or None when the wider attempt is
     truncated again or comes back unusable -- the caller then raises the
-    exhaustion error it already holds.
+    exhaustion error it already holds. When supplied, on_failure_usage
+    receives the observed usage of a dispatched, unsuccessful attempt once.
+    Skipped attempts and breaker interruptions do not report usage.
     """
     current = backend.max_completion_tokens or backend.max_tokens
     if backend.output_ceiling > 0:
@@ -2973,6 +2977,13 @@ def _retry_with_more_headroom(
     except TruncationBreakerError:
         raise
     except LLMInvokeError as exc:
+        if on_failure_usage is not None:
+            observed = (
+                _observed_usage(exc.usage_data, backend.format)
+                if isinstance(exc, _TruncatedResponse)
+                else exc.observed_usage
+            )
+            on_failure_usage(observed if observed is not None else Usage(known_fields=frozenset()))
         logging.getLogger("code_forge").warning(
             "wider retry failed: %s: %s",
             type(exc).__name__,
@@ -2980,7 +2991,10 @@ def _retry_with_more_headroom(
         )
         return None
 
+    observed = _observed_usage(usage_data, backend.format)
     if not isinstance(content, str):
+        if on_failure_usage is not None:
+            on_failure_usage(observed)
         return None
     cleaned = content if strict_response else _strip_fences(content)
     try:
@@ -2990,9 +3004,11 @@ def _retry_with_more_headroom(
             None if strict_response else _fallback_reply(cleaned, parse_error, expected_keys, reply_keys)
         )
     if not _is_forge_envelope(parsed, expected_keys, strict_response=strict_response):
+        if on_failure_usage is not None:
+            on_failure_usage(observed)
         return None
 
-    return parsed, _observed_usage(usage_data, backend.format)
+    return parsed, observed
 
 
 def _invoke_api(
@@ -3261,6 +3277,7 @@ def _invoke_api(
                         duration_s=time.monotonic() - start,
                         is_truncated=True,
                     )
+
                 # Stitching never produced a usable envelope. Ask once
                 # more for the whole answer with more output room before
                 # dropping the pass: the reply was complete in intent,
@@ -3270,6 +3287,20 @@ def _invoke_api(
                 # that came back empty, or as prose with no object at
                 # all, did not run out of room -- it answered the wrong
                 # way, and a larger cap buys another wrong answer.
+                def retain_wider_failure_usage(
+                    observed: Usage, error: LLMInvokeError | None = spent_error
+                ) -> None:
+                    if error is not None:
+                        prior = error.observed_usage
+                        total = _sum_usage(
+                            prior if prior is not None else Usage(known_fields=frozenset()),
+                            observed,
+                        )
+                        error.observed_usage = total
+                        error.usage = (
+                            total if {"input_tokens", "output_tokens"} <= total.known_fields else None
+                        )
+
                 wider = None
                 if partial.strip() and "{" in partial:
                     wider = _retry_with_more_headroom(
@@ -3280,6 +3311,7 @@ def _invoke_api(
                         expected_keys,
                         reply_keys=reply_keys,
                         strict_response=strict_response,
+                        on_failure_usage=retain_wider_failure_usage,
                     )
                 if wider is not None:
                     parsed, usage = wider
