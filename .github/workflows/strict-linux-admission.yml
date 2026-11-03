@@ -50,11 +50,16 @@ jobs:
         CONTEXT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       shell: bash
       run: |
+        exec 2>/dev/null
+        set +x
         set -euo pipefail
+        umask 077
         evidence=$(mktemp -d "$RUNNER_TEMP/forge-admission.XXXXXXXX")
         printf 'ADMISSION_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
         # Stdlib only. No package install, security change, service start,
         # namespace/payload launch or import of capability-probing test modules.
+        exec 2> "$evidence/private-shell-stderr.txt"
+        set +e # preserve diagnostic exit status
         /usr/bin/python3 -I -B scripts/strict_linux_admission.py \
           --repository "$CONTEXT_REPOSITORY" \
           --run-id "$CONTEXT_RUN_ID" \
@@ -63,13 +68,19 @@ jobs:
           --workflow-ref "$CONTEXT_WORKFLOW_REF" \
           --workflow-sha "$CONTEXT_WORKFLOW_SHA" \
           --expected-source-sha "$CONTEXT_SOURCE_SHA" \
-          --output "$evidence/observation.json"
-    - name: Preserve observations including STOP
+          --output "$evidence/observation.json" > "$evidence/private-stdout.txt" 2> "$evidence/private-stderr.txt"
+        diagnostic_code=$?
+        set -e
+        summary_code=0
+        /usr/bin/python3 -I -S -B scripts/public_diagnostic_summary.py static "$evidence/observation.json" > "$evidence/public-summary.json" 2>/dev/null || summary_code=$?
+        if [ "$diagnostic_code" -ne 0 ]; then exit "$diagnostic_code"; fi
+        exit "$summary_code"
+    - name: Publish aggregate summary only including STOP
       if: ${{ always() }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: strict-linux-static-observation-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ env.ADMISSION_EVIDENCE }}/observation.json
+        path: ${{ env.ADMISSION_EVIDENCE }}/public-summary.json
         if-no-files-found: error
         retention-days: 14
 
@@ -86,7 +97,10 @@ jobs:
     - name: Prepare private metadata evidence directory
       shell: bash
       run: |
+        exec 2>/dev/null
+        set +x
         set -euo pipefail
+        umask 077
         evidence=$(mktemp -d "$RUNNER_TEMP/forge-fixed-metadata.XXXXXXXX")
         printf 'METADATA_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
     - name: Check out dispatched exact source
@@ -108,7 +122,12 @@ jobs:
         CONTEXT_EVENT: ${{ github.event_name }}
       shell: bash
       run: |
+        exec 2>/dev/null
+        set +x
         set -euo pipefail
+        umask 077
+        exec 2> "$METADATA_EVIDENCE/private-shell-stderr.txt"
+        set +e # preserve diagnostic exit status
         /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \
           CONTEXT_REPOSITORY="$CONTEXT_REPOSITORY" \
           CONTEXT_RUN_ID="$CONTEXT_RUN_ID" CONTEXT_RUN_ATTEMPT="$CONTEXT_RUN_ATTEMPT" \
@@ -118,13 +137,19 @@ jobs:
           CONTEXT_SOURCE_SHA="$CONTEXT_SOURCE_SHA" CONTEXT_EXPECTED_SHA="$CONTEXT_EXPECTED_SHA" \
           CONTEXT_EVENT="$CONTEXT_EVENT" \
           /usr/bin/python3 -I -S -B scripts/fixed_runner_metadata.py \
-          --allow-fixed-privileged-metadata --output-dir "$METADATA_EVIDENCE"
-    - name: Preserve finite metadata including STOP
+          --allow-fixed-privileged-metadata --output-dir "$METADATA_EVIDENCE" > "$METADATA_EVIDENCE/private-stdout.txt" 2> "$METADATA_EVIDENCE/private-stderr.txt"
+        diagnostic_code=$?
+        set -e
+        summary_code=0
+        /usr/bin/python3 -I -S -B scripts/public_diagnostic_summary.py fixed "$METADATA_EVIDENCE/metadata-observation.json" > "$METADATA_EVIDENCE/public-summary.json" 2>/dev/null || summary_code=$?
+        if [ "$diagnostic_code" -ne 0 ]; then exit "$diagnostic_code"; fi
+        exit "$summary_code"
+    - name: Publish aggregate metadata summary only
       if: ${{ always() && env.METADATA_EVIDENCE != '' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: fixed-runner-metadata-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ env.METADATA_EVIDENCE }}/metadata-observation.json
+        path: ${{ env.METADATA_EVIDENCE }}/public-summary.json
         if-no-files-found: error
         retention-days: 14
 
@@ -136,7 +161,10 @@ jobs:
     - name: Reject conflicting diagnostic modes without checkout or native execution
       shell: bash
       run: |
+        exec 2>/dev/null
+        set +x
         set -euo pipefail
+        umask 077
         evidence=$(mktemp -d "$RUNNER_TEMP/forge-conflicting-modes.XXXXXXXX")
         printf 'CONFLICT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
         printf '%s\n' '{"schema":"forge-dependency-dispatch-v1","status":"STOP","reason":"conflicting_modes","native":"NOT_RUN","qualification":"NOT_RUN"}' > "$evidence/conflict.json"
@@ -161,7 +189,10 @@ jobs:
     - name: Prepare private ordinary evidence directory
       shell: bash
       run: |
+        exec 2>/dev/null
+        set +x
         set -euo pipefail
+        umask 077
         evidence=$(mktemp -d "$RUNNER_TEMP/forge-dependency.XXXXXXXX")
         printf 'DEPENDENCY_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
     - name: Check out dispatched exact source
@@ -185,14 +216,25 @@ jobs:
         CONTEXT_FIXED: ${{ inputs.fixed_metadata_read }}
       shell: bash
       run: |
+        exec 2>/dev/null
+        set +x
         set -euo pipefail
-        /usr/bin/python3 -I -S -B scripts/dependency_snapshot_runner.py > "$DEPENDENCY_EVIDENCE/dependency-observation.json"
-    - name: Preserve finite dependency observation including STOP
+        umask 077
+        exec 2> "$DEPENDENCY_EVIDENCE/private-shell-stderr.txt"
+        set +e # preserve diagnostic exit status
+        /usr/bin/python3 -I -S -B scripts/dependency_snapshot_runner.py > "$DEPENDENCY_EVIDENCE/dependency-observation.json" 2> "$DEPENDENCY_EVIDENCE/private-stderr.txt"
+        diagnostic_code=$?
+        set -e
+        summary_code=0
+        /usr/bin/python3 -I -S -B scripts/public_diagnostic_summary.py ordinary "$DEPENDENCY_EVIDENCE/dependency-observation.json" > "$DEPENDENCY_EVIDENCE/public-summary.json" 2>/dev/null || summary_code=$?
+        if [ "$diagnostic_code" -ne 0 ]; then exit "$diagnostic_code"; fi
+        exit "$summary_code"
+    - name: Publish aggregate dependency summary only
       if: ${{ always() && env.DEPENDENCY_EVIDENCE != '' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: ordinary-dependency-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ env.DEPENDENCY_EVIDENCE }}/dependency-observation.json
+        path: ${{ env.DEPENDENCY_EVIDENCE }}/public-summary.json
         if-no-files-found: error
         retention-days: 14
 
@@ -207,7 +249,10 @@ jobs:
     - name: Prepare private ordinary evidence directory
       shell: bash
       run: |
+        exec 2>/dev/null
+        set +x
         set -euo pipefail
+        umask 077
         evidence=$(mktemp -d "$RUNNER_TEMP/forge-dependency-view.XXXXXXXX")
         printf 'VIEW_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
     - name: Check out dispatched exact source
@@ -232,13 +277,24 @@ jobs:
         CONTEXT_VIEW: ${{ inputs.dependency_view_read }}
       shell: bash
       run: |
+        exec 2>/dev/null
+        set +x
         set -euo pipefail
-        /usr/bin/python3 -I -S -B scripts/dependency_view_runner.py > "$VIEW_EVIDENCE/view-observation.json"
-    - name: Preserve finite view observation including STOP
+        umask 077
+        exec 2> "$VIEW_EVIDENCE/private-shell-stderr.txt"
+        set +e # preserve diagnostic exit status
+        /usr/bin/python3 -I -S -B scripts/dependency_view_runner.py > "$VIEW_EVIDENCE/view-observation.json" 2> "$VIEW_EVIDENCE/private-stderr.txt"
+        diagnostic_code=$?
+        set -e
+        summary_code=0
+        /usr/bin/python3 -I -S -B scripts/public_diagnostic_summary.py view "$VIEW_EVIDENCE/view-observation.json" > "$VIEW_EVIDENCE/public-summary.json" 2>/dev/null || summary_code=$?
+        if [ "$diagnostic_code" -ne 0 ]; then exit "$diagnostic_code"; fi
+        exit "$summary_code"
+    - name: Publish aggregate view summary only
       if: ${{ always() && env.VIEW_EVIDENCE != '' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: dependency-view-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ env.VIEW_EVIDENCE }}/view-observation.json
+        path: ${{ env.VIEW_EVIDENCE }}/public-summary.json
         if-no-files-found: error
         retention-days: 14

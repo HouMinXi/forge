@@ -1,5 +1,7 @@
 # Ordinary-user dependency snapshot
 
+Publication update: this workflow now uploads only [bounded public aggregate summaries](public-diagnostic-evidence.md), never the raw receipts described below. Raw details remain ephemeral on the runner; they are not a private artifact archive.
+
 This adds evidence for Forge #31, not an admission gate. Native execution is
 **NOT_RUN** for the local runner integration. No deployment, security setting,
 baseline matcher, or service-launch logic is added. Publication and native

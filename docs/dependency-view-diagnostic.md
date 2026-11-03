@@ -1,5 +1,7 @@
 # Same-run dependency and file-view diagnostic
 
+Publication update: this workflow now uploads only [bounded public aggregate summaries](public-diagnostic-evidence.md), never the raw receipts described below. Raw details remain ephemeral on the runner; they are not a private artifact archive.
+
 This is a manually dispatched, separately opted-in diagnostic. It is not an
 admission decision, a service launcher, or a replacement for #376. A fresh
 explicit approval for the exact reviewed source SHA and the two root stat reads
