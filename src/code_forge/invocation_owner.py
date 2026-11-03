@@ -190,6 +190,9 @@ class InvocationOwner:
         self._start = _number(monotonic())
         self._end = None
         self._session_id = str(uuid.uuid4())
+        # Refusal is a decision, not evidence that fault metadata was stored.
+        # Keep its preallocated state separate from fallible diagnostics.
+        self._refused = False
         self._faults = []
         self._operations = {}
         self._leases = {}
@@ -203,6 +206,7 @@ class InvocationOwner:
         return self
 
     def _fault(self, code, phase, attempt_id=None):
+        self._refused = True
         fault = AuditFault(code, phase, attempt_id)
         if fault not in self._faults:
             self._faults.append(fault)
@@ -213,17 +217,20 @@ class InvocationOwner:
         try:
             ack = function(**kwargs)
         except Exception:  # noqa: BLE001 - sink diagnostics are not safe invocation metadata
+            self._refused = True
             # An escaped exception cannot show that the recorder wrote nothing.
             ack = AuditAcknowledgement(
                 False, AuditFault("persistence_error", phase, attempt_id), publication_uncertain=True
             )
         except BaseException:  # noqa: BLE001 - a sink interruption must remain the primary failure
+            self._refused = True
             try:
                 self._fault("persistence_error", phase, attempt_id)
             except BaseException:  # noqa: BLE001, S110 - diagnostics must not replace the interruption
                 pass
             raise
         if not ack.admitted:
+            self._refused = True
             fault = ack.fault or AuditFault("persistence_error", phase, attempt_id)
             self._fault(fault.code, fault.phase, fault.attempt_id)
         return ack
@@ -253,6 +260,7 @@ class InvocationOwner:
             try:
                 primary.invocation_observation = self._observation(record)
             except BaseException:  # noqa: BLE001 - metadata failure must retain the entering failure
+                self._refused = True
                 try:
                     self._fault(
                         "persistence_error", "finish", record.value.attempt_id if record else None
@@ -290,7 +298,7 @@ class InvocationOwner:
     def _live(self):
         if self._final_outcome is not None:
             self._fault("finalized", "start")
-        if self._faults:
+        if self._refused:
             self._raise()
 
     def _operation(self, operation):
@@ -430,7 +438,7 @@ class InvocationOwner:
                 type(dispatch) is not str
                 or dispatch not in ("entered_api_send", "entered_cli_launch", "possibly_sent", "unknown")
                 or record.settlement_started
-                or (self._faults and record.dispatch == "not_dispatched")
+                or (self._refused and record.dispatch == "not_dispatched")
                 or (
                     record.dispatch in ("entered_api_send", "entered_cli_launch")
                     and dispatch != record.dispatch
@@ -527,13 +535,14 @@ class InvocationOwner:
                 if (
                     primary is not None
                     or not ack.admitted
-                    or (self._faults and outcome == "completed" and not was_settled)
+                    or (self._refused and outcome == "completed" and not was_settled)
                 ):
                     self._raise(record, primary)
                 return ack
         except BaseException as error:
             if error is primary:
                 raise
+            self._refused = True
             # An interrupted mutex wait must not enter a second recovery wait.
             try:
                 self._fault("persistence_error", "finish", record.value.attempt_id if record else None)
@@ -550,7 +559,7 @@ class InvocationOwner:
             return denied
         with self._mutex:
             if (
-                self._faults
+                self._refused
                 or self._final_outcome is not None
                 or any(not record.settled for record in self._leases.values())
                 or type(context) is not InvocationContext
@@ -610,7 +619,7 @@ class InvocationOwner:
             for epoch in self._epochs:
                 if epoch.terminal is None:
                     epoch.terminal = (
-                        "incomplete" if self._faults else self._epoch_outcome(epoch, outcome)
+                        "incomplete" if self._refused else self._epoch_outcome(epoch, outcome)
                     )
                 self._call(epoch.recorder.finalize, "finalize", outcome=epoch.terminal)
             if self._end is None:
@@ -655,7 +664,7 @@ class InvocationOwner:
             work_s=known_work if measured and not unknown_work else None,
             wall_s=self._end - self._start if self._end is not None else None,
         )
-        complete = not self._faults
+        complete = not self._refused
         state = (
             _outcome(self._final_outcome, (row["state"] for row in rows))
             if self._final_outcome is not None
