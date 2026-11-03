@@ -7,6 +7,7 @@ so the sqlite3 query path is actually exercised. Fixture schema matches the
 live code-review-graph schema:
   nodes(id, kind, name, qualified_name, file_path, line_start, line_end)
   edges(kind, source_qualified, target_qualified)
+  metadata(key, value), including the owning repo_root
 
 Seam: CRG_REGISTRY_PATH env var points at a fixture registry.json under
 tmp_path, so tests never touch ~/.code-review-graph/.
@@ -53,6 +54,11 @@ def _make_db(path: Path, nodes: list[tuple], edges: list[tuple]) -> Path:
     conn = sqlite3.connect(str(path))
     conn.execute(_NODES_DDL)
     conn.execute(_EDGES_DDL)
+    conn.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute(
+        "INSERT INTO metadata VALUES (?, ?)",
+        ("repo_root", str(path.parent.parent.resolve())),
+    )
     conn.executemany(
         "INSERT INTO nodes VALUES (?, ?, ?, ?, ?, ?, ?)",
         nodes,
@@ -209,7 +215,7 @@ class TestResolveChangedSymbols:
             primary_repo / ".code-review-graph" / "graph.db",
         )
         diff = _sample_diff("src/lib/handler.py")
-        symbols = resolve_changed_symbols(diff, primary_db)
+        symbols = resolve_changed_symbols(diff, primary_db, repo_root=primary_repo)
         names = [s["name"] for s in symbols]
         assert "process_request" in names
         assert "helper_fn" in names
@@ -224,7 +230,7 @@ class TestResolveChangedSymbols:
             primary_repo / ".code-review-graph" / "graph.db",
         )
         diff = _sample_diff("src/lib/handler.py")
-        symbols = resolve_changed_symbols(diff, primary_db)
+        symbols = resolve_changed_symbols(diff, primary_db, repo_root=primary_repo)
         names = [s["name"] for s in symbols]
         assert "module-level" not in names
         assert "lines 5-9" not in names
@@ -252,7 +258,7 @@ class TestFindCrossRepoCallers:
                 "module": "handler",
             },
         ]
-        callers = find_cross_repo_callers(sib_db, changed)
+        callers = find_cross_repo_callers(sib_db, changed, repo_root=sibling_repo)
         assert len(callers) >= 1
         c = callers[0]
         assert c["symbol"] == "process_request"
@@ -276,7 +282,7 @@ class TestFindCrossRepoCallers:
                 "module": "other",
             },
         ]
-        callers = find_cross_repo_callers(sib_db, changed)
+        callers = find_cross_repo_callers(sib_db, changed, repo_root=sibling_repo)
         assert callers == []
 
 

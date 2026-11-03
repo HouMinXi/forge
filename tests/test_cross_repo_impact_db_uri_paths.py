@@ -30,6 +30,7 @@ _DDL = (
     "CREATE TABLE nodes(id INTEGER PRIMARY KEY, kind TEXT, name TEXT, "
     "qualified_name TEXT, file_path TEXT, line_start INTEGER, line_end INTEGER);"
     "CREATE TABLE edges(kind TEXT, source_qualified TEXT, target_qualified TEXT);"
+    "CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT);"
 )
 
 
@@ -38,6 +39,7 @@ def _make_db(path, reader, identity="intended", *, rows=True):
     expected = []
     with closing(_CONNECT(path)) as conn:
         conn.executescript(_DDL)
+        conn.execute("INSERT INTO metadata VALUES (?, ?)", ("repo_root", str(path.parent.resolve())))
         if rows and reader == "primary":
             conn.execute(
                 "INSERT INTO nodes VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -77,10 +79,12 @@ def _make_db(path, reader, identity="intended", *, rows=True):
     return expected
 
 
-def _invoke(reader, path):
+def _invoke(reader, path, *, repo_root=None):
+    if repo_root is None:
+        repo_root = path.parent.resolve()
     if reader == "primary":
-        return impact.resolve_changed_symbols(_DIFF, str(path))
-    return impact.find_cross_repo_callers(str(path), _CHANGED)
+        return impact.resolve_changed_symbols(_DIFF, str(path), repo_root=repo_root)
+    return impact.find_cross_repo_callers(str(path), _CHANGED, repo_root=repo_root)
 
 
 def _files(root):
@@ -274,7 +278,7 @@ def test_symlink_preserves_full_lexical_uri(
 
     monkeypatch.setattr(impact.sqlite3, "connect", check_lexical_uri)
 
-    assert _invoke(reader, supplied) == expected
+    assert _invoke(reader, supplied, repo_root=target.parent) == expected
 
     assert link.is_symlink()
     assert alias.samefile(target)
@@ -322,6 +326,8 @@ def test_query_error_closes_acquired_connection(reader, tmp_path, observe_connec
     with closing(_CONNECT(db)) as conn:
         # A valid database without the required tables, not a connect-time error.
         conn.execute("CREATE TABLE unrelated(value INTEGER)")
+        conn.execute("CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO metadata VALUES (?, ?)", ("repo_root", str(tmp_path.resolve())))
         conn.commit()
     before = _files(tmp_path)
 
@@ -353,7 +359,7 @@ def test_sibling_empty_changed_still_opens_and_closes(tmp_path, observe_connect)
     assert _files(tmp_path) == before
 
 
-def test_primary_keeps_suffix_matching_and_unnamed_filter(tmp_path, observe_connect):
+def test_primary_matches_bound_absolute_path_and_keeps_unnamed_filter(tmp_path, observe_connect):
     db = tmp_path / "graph%23.db"
     _make_db(db, "primary", rows=False)
     stored = (tmp_path / _FILE).as_posix()
@@ -365,12 +371,23 @@ def test_primary_keeps_suffix_matching_and_unnamed_filter(tmp_path, observe_conn
                 (2, "module", "module-level", "api::module-level", stored, 1, 4),
                 (3, "block", "lines 2-3", "api::lines", stored, 2, 3),
                 (4, "function", "unrelated", "other::unrelated", "src/other.c", 1, 3),
+                # Sharing a suffix is not evidence of repository identity.
+                (5, "function", "suffix_decoy", "api::suffix_decoy", "vendor/" + _FILE, 1, 3),
+                (
+                    6,
+                    "function",
+                    "foreign_decoy",
+                    "api::foreign_decoy",
+                    (tmp_path.parent / "foreign" / _FILE).as_posix(),
+                    1,
+                    3,
+                ),
             ],
         )
         conn.commit()
     before = _files(tmp_path)
 
-    assert impact.resolve_changed_symbols(_DIFF, str(db)) == [
+    assert impact.resolve_changed_symbols(_DIFF, str(db), repo_root=tmp_path) == [
         {"name": "named", "qualified_name": "api::named", "file_path": stored, "module": "api"}
     ]
 
@@ -425,7 +442,7 @@ def test_sibling_keeps_disambiguation_deduplication_and_real_c_liveness(tmp_path
         conn.commit()
     before = _files(tmp_path)
 
-    result = impact.find_cross_repo_callers(str(db), _CHANGED)
+    result = impact.find_cross_repo_callers(str(db), _CHANGED, repo_root=tmp_path)
 
     assert sorted(result, key=lambda row: row["caller_qualified"]) == expected
     _assert_connection(observe_connect, db)
