@@ -135,7 +135,7 @@ C_CPP_TOOL_REGISTRY: dict[str, dict] = {
         "tools_yaml_entry": {
             "command": "cppcheck -q --output-format=sarif",
             "output_format": "sarif",
-            "file_patterns": ["*.c", "*.cpp", "*.hpp", "*.cxx"],
+            "file_patterns": ["*.c", "*.cpp", "*.hpp", "*.cxx", "*.cc"],
             "output_stream": "stderr",
         },
     },
@@ -221,7 +221,7 @@ REGISTRY_EXTENSIONS: dict[str, list[str]] = {
     "js": [".js", ".ts", ".jsx", ".tsx"],
     "cs": [".cs"],
     "java": [".java"],
-    "c_cpp": [".c", ".cpp", ".hpp", ".cxx"],
+    "c_cpp": [".c", ".cpp", ".hpp", ".cxx", ".cc"],
     "ruby": [".rb"],
     "swift": [".swift"],
     "php": [".php"],

@@ -331,14 +331,16 @@ def test_received_failure_breaker_and_recovery_keep_existing_policy(
 
 
 @pytest.mark.parametrize(
-    "content, requests",
+    "content, requests, per_invocation_requests, expected_usage",
     [
-        ("The model answered without a JSON verdict.", 2),
-        ('{"verdict":"DISMISSED" "reasoning":"missing comma"}', 4),
-        ("connection refused; no_json is still a received answer", 2),
+        ("The model answered without a JSON verdict.", 2, 1, Usage(17, 9, 3)),
+        ('{"verdict":"DISMISSED" "reasoning":"missing comma"}', 4, 2, Usage(34, 18, 6)),
+        ("connection refused; no_json is still a received answer", 2, 1, Usage(17, 9, 3)),
     ],
 )
-def test_received_invalid_json_uses_protocol_path(tmp_path, local_falsifier_api, content, requests):
+def test_received_invalid_json_uses_protocol_path(
+    tmp_path, local_falsifier_api, content, requests, per_invocation_requests, expected_usage
+):
     backend, replies = local_falsifier_api
     replies["content"] = content
     with pytest.raises(InvalidJSONResponseError) as caught:
@@ -349,8 +351,22 @@ def test_received_invalid_json_uses_protocol_path(tmp_path, local_falsifier_api,
     assert error.exit_code == 0
     assert error.stderr
     assert error.duration_s > 0
-    assert error.usage == Usage(input_tokens=17, output_tokens=9, cached_input_tokens=3)
+    # The missing-comma reply requests one JSON correction per invocation;
+    # the two explicit falsifier invocations below are not an outer retry.
+    assert len(replies["requests"]) == per_invocation_requests
+    assert error.usage == error.observed_usage == expected_usage
     assert not error.retryable
+    # Exercise the metadata consumer directly. The protocol-violation machine
+    # branch does not attach provider_failure; that existing policy is unchanged.
+    from code_forge.state import record_provider_failure
+
+    snapshot = _finding()
+    record_provider_failure(snapshot, error)
+    assert snapshot.provider_failure["usage"] == {
+        "input_tokens": expected_usage.input_tokens,
+        "output_tokens": expected_usage.output_tokens,
+        "cached_input_tokens": expected_usage.cached_input_tokens,
+    }
     sm = _real_machine(tmp_path, backend)
     findings, _ = sm._run_l1_phase()
     assert findings[0].disposition == Disposition.UNCERTAIN
@@ -358,6 +374,7 @@ def test_received_invalid_json_uses_protocol_path(tmp_path, local_falsifier_api,
     assert sm._state.rounds_with_falsify_infra == 1
     assert any("protocol violation" in e for e in sm._state.infra_errors)
     assert not any("backend unavailable" in e for e in sm._state.infra_errors)
+    assert findings[0].provider_failure is None
     assert len(replies["requests"]) == requests
 
 

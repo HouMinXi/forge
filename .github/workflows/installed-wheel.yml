@@ -22,24 +22,153 @@ jobs:
         with:
           python-version: '3.12'
       - name: Provision declared dependency wheels (setup only)
+        id: provision
+        shell: bash
         run: |
+          exec >/dev/null 2>&1
+          set +x
+          set -euo pipefail
+          umask 077
+          private=$(mktemp -d "$RUNNER_TEMP/forge-wheel-setup.XXXXXXXX")
+          exec >"$private/commands.log" 2>&1
           python -m pip wheel --index-url https://pypi.org/simple \
             --wheel-dir "$RUNNER_TEMP/forge-wheelhouse" \
             'setuptools>=77' wheel 'pytest==9.2.0' 'pyyaml>=6.0' 'unidiff>=0.7.5,<0.8.0'
       - name: Build and qualify installed wheel offline
+        id: qualify
+        shell: bash
         run: |
+          exec >/dev/null 2>&1
+          set +x
+          set -euo pipefail
+          umask 077
+          private=$(mktemp -d "$RUNNER_TEMP/forge-wheel-qualification.XXXXXXXX")
+          exec >"$private/commands.log" 2>&1
+          date -u +%s >"$private/started"
+          qualification_code=0
           python scripts/qualify_installed_wheel.py \
             --wheelhouse "$RUNNER_TEMP/forge-wheelhouse" \
-            --output "$RUNNER_TEMP/forge-installed-wheel"
-      - name: Preserve packaging qualification evidence
-        if: always()
+            --output "$private/qualification" || qualification_code=$?
+          if [[ "$qualification_code" != 0 ]]; then
+            exit "$qualification_code"
+          fi
+          date -u +%s >"$private/finished"
+      - name: Verify original qualified wheel is safe to publish
+        id: wheel_release
+        env:
+          SETUP_OUTCOME: ${{ steps.provision.outcome }}
+          QUALIFICATION_OUTCOME: ${{ steps.qualify.outcome }}
+          JOB_STATUS: ${{ job.status }}
+        shell: bash
+        run: |
+          exec >/dev/null 2>&1
+          set +x
+          set -euo pipefail
+          umask 077
+          private=$(mktemp -d "$RUNNER_TEMP/forge-wheel-release.XXXXXXXX")
+          exec >"$private/commands.log" 2>&1
+          /usr/bin/python3 -I -S -B scripts/installed_wheel_publication.py \
+            "$RUNNER_TEMP" forge-installed-wheel-artifact
+      - name: Prepare only the fixed packaging summary
+        id: public_summary
+        if: ${{ always() }}
+        timeout-minutes: 1
+        env:
+          SETUP_OUTCOME: ${{ steps.provision.outcome }}
+          QUALIFICATION_OUTCOME: ${{ steps.qualify.outcome }}
+          JOB_STATUS: ${{ job.status }}
+        shell: bash
+        run: |
+          exec >/dev/null 2>&1
+          set +x
+          set -euo pipefail
+          umask 077
+          private=$(mktemp -d "$RUNNER_TEMP/forge-wheel-publication.XXXXXXXX")
+          exec >"$private/commands.log" 2>&1
+          mkdir -m 700 forge-installed-wheel-public
+          helper_code=0
+          /usr/bin/python3 -I -S -B scripts/installed_wheel_public_summary.py \
+            "$SETUP_OUTCOME" "$QUALIFICATION_OUTCOME" "$JOB_STATUS" \
+            >"$private/candidate.json" 2>"$private/helper-stderr.txt" || helper_code=$?
+          # Independently validate the complete envelope, the helper's exit,
+          # and the runner's actual outcomes. No helper bytes go to the log.
+          /usr/bin/python3 -I -S -B - "$private/candidate.json" "$helper_code" <<'PY'
+          import json
+          import os
+          import stat
+          import sys
+
+          def unique_keys(pairs):
+              value = {}
+              for key, item in pairs:
+                  if key in value:
+                      raise ValueError("duplicate")
+                  value[key] = item
+              return value
+
+          def reject_number(value):
+              raise ValueError("number")
+
+          setup = os.environ["SETUP_OUTCOME"]
+          qualification = os.environ["QUALIFICATION_OUTCOME"]
+          job = os.environ["JOB_STATUS"]
+          outcomes = {"success", "failure", "cancelled", "skipped"}
+          expected = {
+              "schema": "forge-public-installed-wheel-summary-v1",
+              "mode": "installed-wheel",
+              "scope": "PARTIAL_RUNTIME_ONLY",
+              "status": "UNKNOWN",
+              "reason": "unavailable",
+              "raw_evidence": "NOT_PUBLISHED",
+          }
+          if setup in outcomes and qualification in outcomes and job in outcomes - {"skipped"}:
+              if {setup, qualification, job} & {"failure", "cancelled"}:
+                  expected.update(status="STOP", reason="execution_failed")
+              elif setup == qualification == job == "success":
+                  expected.update(status="PASS", reason="controls_complete")
+              else:
+                  expected.update(reason="not_completed")
+          expected_code = "0" if expected["status"] == "PASS" else "2"
+          if sys.argv[2] != expected_code:
+              raise ValueError("helper failed")
+          fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+          try:
+              before = os.fstat(fd)
+              if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= 1024:
+                  raise ValueError("candidate")
+              with os.fdopen(fd, "rb", closefd=False) as handle:
+                  raw = handle.read(1025)
+              after = os.fstat(fd)
+              if len(raw) != before.st_size or (
+                  before.st_size, before.st_mtime_ns, before.st_ctime_ns
+              ) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                  raise ValueError("changed")
+          finally:
+              os.close(fd)
+          value = json.loads(raw, object_pairs_hook=unique_keys,
+                             parse_constant=reject_number, parse_float=reject_number,
+                             parse_int=reject_number)
+          if type(value) is not dict or value != expected:
+              raise ValueError("envelope")
+          # Serialize only constructed constants, never the candidate bytes.
+          fd = os.open("forge-installed-wheel-public/summary.json",
+                       os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+          with os.fdopen(fd, "w") as handle:
+              handle.write(json.dumps(expected, sort_keys=True, separators=(",", ":")) + "\n")
+          PY
+      - name: Publish only the fixed packaging summary
+        if: ${{ always() && steps.public_summary.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installed-wheel-summary
+          path: forge-installed-wheel-public/summary.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve the original verified wheel download
+        if: ${{ success() && steps.wheel_release.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: installed-wheel-evidence
-          path: |
-            ${{ runner.temp }}/forge-installed-wheel/commands.log
-            ${{ runner.temp }}/forge-installed-wheel/build-proof.json
-            ${{ runner.temp }}/forge-installed-wheel/runtime-proof.json
-            ${{ runner.temp }}/forge-installed-wheel/pytest.xml
-            ${{ runner.temp }}/forge-installed-wheel/dist/*.whl
+          path: forge-installed-wheel-artifact/code_review_forge-2.9.0-py3-none-any.whl
           if-no-files-found: error
+          retention-days: 14

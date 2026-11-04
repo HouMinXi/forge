@@ -6,7 +6,9 @@ This is a manually dispatched, separately opted-in diagnostic. It is not an
 admission decision, a service launcher, or a replacement for #376. A fresh
 explicit approval for the exact reviewed source SHA and the two root stat reads
 is required before a dispatch. Ordinary and fixed-metadata modes do not enable
-this mode; selecting any two or more modes fails closed.
+this mode; selecting any two or more modes fails closed. The wrapper remains
+pinned to `diag/ordinary-dependency-snapshot-20261103`; merging its code does not
+authorize main as an execution source. A main-ref dispatch yields STOP.
 
 The dispatch wrapper verifies the event, job, repository, branch, first attempt,
 and exact expected source SHA. It compares the working-tree bytes to the seven

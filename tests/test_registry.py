@@ -2,9 +2,13 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for forge.registry -- YAML tool config loader and file matcher."""
 
+import subprocess
+from unittest.mock import patch
+
 import pytest
 
 from code_forge.registry import ToolConfig, load_registry, match_tools
+from code_forge.runner import run_tools
 
 
 class TestToolConfigDefaults:
@@ -197,6 +201,79 @@ class TestLoadRegistry:
         from code_forge.parsers import PARSER_DISPATCH
 
         assert set(_KNOWN_FORMATS) == set(PARSER_DISPATCH)
+
+
+class TestOptionalListConsumerContract:
+    """Validate the complete registry before any tool, including version probes."""
+
+    @staticmethod
+    def write_registry(tmp_path, settings):
+        path = tmp_path / "tools.yaml"
+        path.write_text(
+            "tools:\n"
+            "  a_good:\n"
+            "    command: shellcheck\n"
+            "    output_format: shellcheck_json\n"
+            "    file_patterns: ['*.sh']\n"
+            "  z_configured:\n"
+            "    command: shellcheck\n"
+            "    output_format: shellcheck_json\n"
+            "    file_patterns: ['*.sh']\n" + settings,
+            encoding="utf-8",
+        )
+        return path
+
+    @pytest.mark.parametrize("field", ["args", "exclude_patterns"])
+    @pytest.mark.parametrize("value", ["", "null", "false", "0", "{}", "'*.sh'"])
+    def test_invalid_list_refuses_all_tools_before_launch(self, tmp_path, field, value):
+        path = self.write_registry(tmp_path, f"    {field}: {value}\n")
+        with (
+            patch("code_forge.runner._resolve_command") as resolve,
+            patch("code_forge.runner.subprocess.run") as launch,
+        ):
+            with pytest.raises(ValueError, match=f"Tool 'z_configured': '{field}' must be a list"):
+                run_tools(load_registry(str(path)), ["keep.sh", "skip.sh"])
+            resolve.assert_not_called()
+            launch.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("settings", "expected_args", "expected_files"),
+        [
+            ("", [], ["keep.sh", "skip.sh"]),
+            ("    args: []\n    exclude_patterns: []\n", [], ["keep.sh", "skip.sh"]),
+            (
+                "    args: ['--format=json']\n    exclude_patterns: ['skip.sh']\n",
+                ["--format=json"],
+                ["keep.sh"],
+            ),
+        ],
+    )
+    def test_valid_lists_preserve_both_tool_results(
+        self, tmp_path, settings, expected_args, expected_files
+    ):
+        path = self.write_registry(tmp_path, settings)
+
+        def completed(argv, **kwargs):
+            output = "mock version\n" if "--version" in argv else "[]"
+            return subprocess.CompletedProcess(argv, 0, stdout=output, stderr="")
+
+        with (
+            patch("code_forge.runner._resolve_command", return_value="/mock/shellcheck"),
+            patch("code_forge.runner.subprocess.run", side_effect=completed) as launch,
+        ):
+            registry = load_registry(str(path))
+            results, versions, skipped, errors = run_tools(registry, ["keep.sh", "skip.sh"])
+
+        assert registry["z_configured"].args == expected_args
+        assert results == {"a_good": ("[]", 0, ""), "z_configured": ("[]", 0, "")}
+        assert versions == {"a_good": "mock version", "z_configured": "mock version"}
+        assert skipped == errors == []
+        assert [call.args[0] for call in launch.call_args_list] == [
+            ["/mock/shellcheck", "--version"],
+            ["/mock/shellcheck", "keep.sh", "skip.sh"],
+            ["/mock/shellcheck", "--version"],
+            ["/mock/shellcheck", *expected_args, *expected_files],
+        ]
 
 
 class TestMatchTools:

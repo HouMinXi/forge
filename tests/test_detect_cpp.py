@@ -3,11 +3,19 @@
 """Tests for C++ language detection (cppcheck)."""
 
 from pathlib import Path
+import json
+import subprocess
+from unittest.mock import patch
+
+import pytest
 
 from code_forge.detect import (
+    detect_and_init,
     detect_toolchain,
     generate_tools_yaml,
 )
+from code_forge.coverage import compute_uncovered_files
+from code_forge.machine import _default_l0_runner
 from code_forge.parsers._sarif import _parse_sarif
 from code_forge.parsers.base import Finding
 from code_forge.registry import load_registry
@@ -74,6 +82,87 @@ class TestCppDetection:
         tc = registry["cppcheck"]
         assert tc.output_format == "sarif"
         assert isinstance(tc.command, str)
+
+
+class TestCcDetectionConsumer:
+    """A .cc-only project must reach the actual L0 consumer after generation."""
+
+    @pytest.mark.parametrize("filename", ["main.cc", "src/main.cc"])
+    @pytest.mark.parametrize("with_cmake", [False, True])
+    def test_detect_generate_load_and_review_cc(self, tmp_path, filename, with_cmake):
+        source = tmp_path / filename
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(
+            "int main() {\n    int *p = nullptr;\n    int value = 0;\n"
+            "    value = *p;\n    return *p;\n}\n",
+            encoding="utf-8",
+        )
+        if with_cmake:
+            (tmp_path / "CMakeLists.txt").write_text("project(demo)\n", encoding="utf-8")
+
+        result = detect_toolchain(tmp_path, which_fn=_make_which_fn("cppcheck"))
+        assert result.detected == ["cppcheck"]
+        assert result.missing == []
+        assert result.language == "c_cpp"
+        config_path = tmp_path / ".code-forge" / "tools.yaml"
+        generate_tools_yaml(result, config_path)
+        registry = load_registry(str(config_path))
+
+        # Reuse a real producer fixture, changing only its file identity for this
+        # synthetic source. No native cppcheck analysis is claimed or launched.
+        sarif = json.loads((_FIXTURES_DIR / "cpp_real.sarif").read_text())
+        for item in sarif["runs"][0]["results"]:
+            for location in item["locations"]:
+                location["physicalLocation"]["artifactLocation"]["uri"] = filename
+
+        def completed(argv, **kwargs):
+            if "--version" in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout="Cppcheck mock\n", stderr="")
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr=json.dumps(sarif))
+
+        with (
+            patch("code_forge.runner._resolve_command", return_value="/mock/cppcheck"),
+            patch("code_forge.runner.subprocess.run", side_effect=completed) as launch,
+        ):
+            findings, errors = _default_l0_runner(registry, [Path(filename)], cwd=tmp_path)
+
+        assert errors == []
+        assert len(findings) == 2
+        assert {finding.file for finding in findings} == {filename}
+        assert all("Null pointer dereference" in finding.description for finding in findings)
+        assert [call.args[0] for call in launch.call_args_list] == [
+            ["/mock/cppcheck", "--version"],
+            ["/mock/cppcheck", "-q", "--output-format=sarif", filename],
+        ]
+        assert launch.call_args.kwargs["cwd"] == tmp_path
+        files = [filename, "README.md", "header.h"]
+        assert compute_uncovered_files(files, registry, False) == ["README.md", "header.h"]
+        assert compute_uncovered_files(files, registry, True) == []
+
+    def test_cc_missing_cppcheck_is_reported(self, tmp_path):
+        (tmp_path / "main.cc").write_text("int main() {}\n", encoding="utf-8")
+        result = detect_toolchain(tmp_path, which_fn=_make_which_fn())
+        assert result.detected == []
+        assert result.missing == ["cppcheck"]
+        assert result.language == "c_cpp"
+
+    def test_existing_user_patterns_remain_unchanged(self, tmp_path):
+        (tmp_path / "main.cc").write_text("int main() {}\n", encoding="utf-8")
+        config = tmp_path / ".code-forge" / "tools.yaml"
+        config.parent.mkdir()
+        original = (
+            "# User-selected scope must not be silently widened.\n"
+            "tools:\n  cppcheck:\n    command: cppcheck -q --output-format=sarif\n"
+            "    output_format: sarif\n    file_patterns: ['*.cpp']\n"
+            "    exclude_patterns: ['vendor/*']\n    output_stream: stderr\n"
+        )
+        config.write_text(original, encoding="utf-8")
+        with patch("code_forge.detect.detect_toolchain", side_effect=AssertionError("no redetect")):
+            result = detect_and_init(tmp_path, quiet=True)
+        assert result.detected == ["cppcheck"]
+        assert config.read_text(encoding="utf-8") == original
+        registry = load_registry(str(config))
+        assert compute_uncovered_files(["main.cc"], registry, False) == ["main.cc"]
 
 
 class TestCppSarifFixture:

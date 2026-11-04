@@ -6,7 +6,11 @@ name: Strict Linux static observations (not qualification)
     paths:
     - .github/workflows/strict-linux-admission.yml
     - scripts/strict_linux_admission.py
+    - scripts/static_public_summary.py
+    - scripts/fixed_metadata_public_summary.py
     - tests/test_strict_linux_admission.py
+    - tests/test_static_publication.py
+    - tests/test_fixed_metadata_publication.py
   workflow_dispatch:
     inputs:
       fixed_metadata_read:
@@ -29,7 +33,6 @@ permissions:
   contents: read
 jobs:
   observe:
-    # This schema declares one repository; fork-head execution is not supported.
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) && !(github.event_name == 'workflow_dispatch' && (inputs.fixed_metadata_read || inputs.ordinary_dependency_snapshot || inputs.dependency_view_read)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 3
@@ -55,12 +58,12 @@ jobs:
         set -euo pipefail
         umask 077
         evidence=$(mktemp -d "$RUNNER_TEMP/forge-admission.XXXXXXXX")
-        printf 'ADMISSION_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+        exec 2>"$evidence/private-shell-stderr.txt"
+        mkdir -m 700 forge-static-public
         # Stdlib only. No package install, security change, service start,
         # namespace/payload launch or import of capability-probing test modules.
-        exec 2> "$evidence/private-shell-stderr.txt"
-        set +e # preserve diagnostic exit status
-        /usr/bin/python3 -I -B scripts/strict_linux_admission.py \
+        set +e
+        { /usr/bin/python3 -I -S -B scripts/strict_linux_admission.py \
           --repository "$CONTEXT_REPOSITORY" \
           --run-id "$CONTEXT_RUN_ID" \
           --run-attempt "$CONTEXT_RUN_ATTEMPT" \
@@ -68,25 +71,42 @@ jobs:
           --workflow-ref "$CONTEXT_WORKFLOW_REF" \
           --workflow-sha "$CONTEXT_WORKFLOW_SHA" \
           --expected-source-sha "$CONTEXT_SOURCE_SHA" \
-          --output "$evidence/observation.json" > "$evidence/private-stdout.txt" 2> "$evidence/private-stderr.txt"
+          --output "$evidence/observation.json"; } \
+          >"$evidence/private-stdout.txt" 2>"$evidence/private-stderr.txt"
         diagnostic_code=$?
-        set -e
-        summary_code=0
-        /usr/bin/python3 -I -S -B scripts/public_diagnostic_summary.py static "$evidence/observation.json" > "$evidence/public-summary.json" 2>/dev/null || summary_code=$?
-        if [ "$diagnostic_code" -ne 0 ]; then exit "$diagnostic_code"; fi
+        { /usr/bin/python3 -I -S -B scripts/static_public_summary.py \
+            "$evidence/observation.json" "$diagnostic_code"; } \
+          >forge-static-public/summary.json 2>"$evidence/private-summary-stderr.txt"
+        summary_code=$?
+        publication_code=$summary_code
+        if [[ ( "$summary_code" == 0 || "$summary_code" == 2 ) && \
+              -f forge-static-public/summary.json && \
+              ! -L forge-static-public/summary.json && \
+              -s forge-static-public/summary.json ]] && \
+            summary_size=$(wc -c < forge-static-public/summary.json) && \
+            [[ "$summary_size" =~ ^[0-9]{1,4}$ ]] && \
+            (( 10#$summary_size <= 1024 )); then
+          printf 'ADMISSION_PUBLIC_READY=true\n' >> "$GITHUB_ENV"
+          publication_code=$?
+        elif [[ "$summary_code" == 0 || "$summary_code" == 2 ]]; then
+          publication_code=2
+        fi
+        if [[ "$diagnostic_code" != 0 ]]; then
+          exit "$diagnostic_code"
+        fi
+        if [[ "$publication_code" != 0 ]]; then
+          exit "$publication_code"
+        fi
         exit "$summary_code"
-    - name: Publish aggregate summary only including STOP
-      if: ${{ always() }}
+    - name: Publish only the fixed static summary including STOP or UNKNOWN
+      if: ${{ always() && env.ADMISSION_PUBLIC_READY == 'true' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: strict-linux-static-observation-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ env.ADMISSION_EVIDENCE }}/public-summary.json
+        path: forge-static-public/summary.json
         if-no-files-found: error
         retention-days: 14
-
   fixed-metadata:
-    # Invalid attempts/ref/SHA produce a finite failure receipt before any sudo.
-    # No PR or push event enters this job. Explicit new dispatch is not a retry grant.
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot && !inputs.dependency_view_read }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -94,15 +114,6 @@ jobs:
       group: fixed-metadata-${{ github.ref }}
       cancel-in-progress: false
     steps:
-    - name: Prepare private metadata evidence directory
-      shell: bash
-      run: |
-        exec 2>/dev/null
-        set +x
-        set -euo pipefail
-        umask 077
-        evidence=$(mktemp -d "$RUNNER_TEMP/forge-fixed-metadata.XXXXXXXX")
-        printf 'METADATA_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
     - name: Check out dispatched exact source
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -126,9 +137,11 @@ jobs:
         set +x
         set -euo pipefail
         umask 077
-        exec 2> "$METADATA_EVIDENCE/private-shell-stderr.txt"
-        set +e # preserve diagnostic exit status
-        /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \
+        evidence=$(mktemp -d "$RUNNER_TEMP/forge-fixed-metadata.XXXXXXXX")
+        exec 2>"$evidence/private-shell-stderr.txt"
+        mkdir -m 700 forge-fixed-metadata-public
+        set +e
+        { /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \
           CONTEXT_REPOSITORY="$CONTEXT_REPOSITORY" \
           CONTEXT_RUN_ID="$CONTEXT_RUN_ID" CONTEXT_RUN_ATTEMPT="$CONTEXT_RUN_ATTEMPT" \
           CONTEXT_JOB="$CONTEXT_JOB" CONTEXT_REF="$CONTEXT_REF" \
@@ -137,19 +150,39 @@ jobs:
           CONTEXT_SOURCE_SHA="$CONTEXT_SOURCE_SHA" CONTEXT_EXPECTED_SHA="$CONTEXT_EXPECTED_SHA" \
           CONTEXT_EVENT="$CONTEXT_EVENT" \
           /usr/bin/python3 -I -S -B scripts/fixed_runner_metadata.py \
-          --allow-fixed-privileged-metadata --output-dir "$METADATA_EVIDENCE" > "$METADATA_EVIDENCE/private-stdout.txt" 2> "$METADATA_EVIDENCE/private-stderr.txt"
+          --allow-fixed-privileged-metadata --output-dir "$evidence"; } \
+          >"$evidence/private-stdout.txt" 2>"$evidence/private-stderr.txt"
         diagnostic_code=$?
-        set -e
-        summary_code=0
-        /usr/bin/python3 -I -S -B scripts/public_diagnostic_summary.py fixed "$METADATA_EVIDENCE/metadata-observation.json" > "$METADATA_EVIDENCE/public-summary.json" 2>/dev/null || summary_code=$?
-        if [ "$diagnostic_code" -ne 0 ]; then exit "$diagnostic_code"; fi
+        { /usr/bin/python3 -I -S -B scripts/fixed_metadata_public_summary.py \
+            "$evidence/metadata-observation.json" "$diagnostic_code"; } \
+          >forge-fixed-metadata-public/summary.json 2>"$evidence/private-summary-stderr.txt"
+        summary_code=$?
+        publication_code=$summary_code
+        if [[ ( "$summary_code" == 0 || "$summary_code" == 2 ) && \
+              -f forge-fixed-metadata-public/summary.json && \
+              ! -L forge-fixed-metadata-public/summary.json && \
+              -s forge-fixed-metadata-public/summary.json ]] && \
+            summary_size=$(wc -c < forge-fixed-metadata-public/summary.json) && \
+            [[ "$summary_size" =~ ^[0-9]{1,4}$ ]] && \
+            (( 10#$summary_size <= 1024 )); then
+          printf 'METADATA_PUBLIC_READY=true\n' >> "$GITHUB_ENV"
+          publication_code=$?
+        elif [[ "$summary_code" == 0 || "$summary_code" == 2 ]]; then
+          publication_code=2
+        fi
+        if [[ "$diagnostic_code" != 0 ]]; then
+          exit "$diagnostic_code"
+        fi
+        if [[ "$publication_code" != 0 ]]; then
+          exit "$publication_code"
+        fi
         exit "$summary_code"
-    - name: Publish aggregate metadata summary only
-      if: ${{ always() && env.METADATA_EVIDENCE != '' }}
+    - name: Publish only the fixed metadata summary including STOP or UNKNOWN
+      if: ${{ always() && env.METADATA_PUBLIC_READY == 'true' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: fixed-runner-metadata-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ env.METADATA_EVIDENCE }}/public-summary.json
+        path: forge-fixed-metadata-public/summary.json
         if-no-files-found: error
         retention-days: 14
 

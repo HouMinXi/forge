@@ -175,6 +175,7 @@ def _default_l0_runner(
     files: list[Path],
     *,
     cwd: Path | None = None,
+    execution_errors: list[str] | None = None,
 ) -> tuple[list[StateFinding], list[str]]:
     """Phase 1 Finding -> 02-01 StateFinding adapter.
 
@@ -182,12 +183,20 @@ def _default_l0_runner(
     R1 B4 fix: interim fingerprint = sha256(tool:file:line:rule_id)[:16].
     R1 H2 fix: ToolError -> infra_errors, NOT promoted to StateFinding.
     R3 LOW1+LOW2+LOW6 fixes: StateFinding.line_range is list[int].
+
+    execution_errors optionally collects fatal execution/parser failures.
+    Returned infra_errors also retains nonfatal optional-tool diagnostics.
     """
     from .parsers import parse_output
     from .runner import run_tools, sarif_producer_profile
 
     file_strs = [str(f) for f in files]
-    tool_results, _versions, _skipped, l0_infra = run_tools(registry, file_strs, cwd=cwd)
+    if execution_errors is None:
+        tool_results, _versions, _skipped, l0_infra = run_tools(registry, file_strs, cwd=cwd)
+    else:
+        tool_results, _versions, _skipped, l0_infra = run_tools(
+            registry, file_strs, cwd=cwd, execution_errors=execution_errors
+        )
     state_findings: list[StateFinding] = []
     infra_errors: list[str] = list(l0_infra)
 
@@ -223,6 +232,8 @@ def _default_l0_runner(
                 if tool_stderr:
                     err_msg += f" stderr={tool_stderr.strip()}"
                 infra_errors.append(err_msg)
+                if execution_errors is not None:
+                    execution_errors.append(err_msg)
                 continue
             f: Finding = item
             fp_raw = f"{tool}:{f.file}:{f.line}:{f.rule_id}"
@@ -881,6 +892,9 @@ class StateMachine:
         source review/subject/guard, the written and clean receipt cycle windows, and
         `_state_of_last_run`). `_state` is not reset here; `_maybe_load_prior_state` decides it.
         """
+        # Current-run execution failure, not inferred from persisted diagnostics.
+        # LOCAL credit/receipt policy does not consume this CI-only latch.
+        self._l0_failed = False
         # Pre-existing L0 findings waiting for the advisory flush. Every L0
         # phase rebinds it; a run that raised before the flush leaves nothing
         # for the next run.
@@ -1235,7 +1249,9 @@ class StateMachine:
                     # A bound running marker is not a completed measurement.
                     # Persist the non-PASS state even when the PID is live.
                     self._state.verdict = (
-                        Verdict.PENDING if pending and not self._mutation_bound_failure else Verdict.FAIL
+                        Verdict.PENDING
+                        if pending and not self._mutation_bound_failure and not self._l0_failed
+                        else Verdict.FAIL
                     )
                     self._state.converged = False
                     self._state.infra_errors.append(
@@ -1404,7 +1420,7 @@ class StateMachine:
                                 )
                                 self._unlink_mutation_result(result_path)
                             else:
-                                if self._mutation_bound_failure:
+                                if self._mutation_bound_failure or self._l0_failed:
                                     self._state.verdict = Verdict.FAIL
                                     self._state.converged = False
                                     self._persist_state()
@@ -1419,7 +1435,7 @@ class StateMachine:
                                 self._state.infra_errors.append(
                                     "CI: mutation PID %d still running, skipping new launch" % pid
                                 )
-                                if self._mutation_bound_failure:
+                                if self._mutation_bound_failure or self._l0_failed:
                                     self._state.verdict = Verdict.FAIL
                                     self._state.converged = False
                                     self._persist_state()
@@ -1486,7 +1502,8 @@ class StateMachine:
         # them, unlike a CONFIRMED count). A detached run cannot change the
         # verdict, so do not spend a full baseline + mutation run on it.
         ci_already_failed = (
-            self._mutation_bound_failure
+            self._l0_failed
+            or self._mutation_bound_failure
             or bool(self._acquisition_markers)
             or self._state.rounds_with_falsify_infra > 0
             or self._state.rounds_with_evidence_incomplete > 0
@@ -1686,6 +1703,7 @@ class StateMachine:
         verdict = (
             Verdict.FAIL
             if confirmed > 0
+            or self._l0_failed
             or coverage_gaps > 0
             or self._acquisition_markers
             or self._state.rounds_with_falsify_infra > 0
@@ -2648,16 +2666,23 @@ class StateMachine:
         """
         try:
             source_files = self._executable_source_files()
+            execution_errors: list[str] = []
             if self.l0_runner is _default_l0_runner:
                 l0_findings, l0_infra = self.l0_runner(
                     self.registry,
                     source_files,
                     cwd=self._source_root(),
+                    execution_errors=execution_errors,
                 )
             else:
                 l0_findings, l0_infra = self.l0_runner(self.registry, source_files)
+                # Injected runners keep their existing two-value error contract.
+                execution_errors.extend(l0_infra)
+            if execution_errors:
+                self._l0_failed = True
             self._state.infra_errors.extend(l0_infra)
         except Exception as exc:  # noqa: BLE001
+            self._l0_failed = True
             self._state.infra_errors.append(f"L0 runner failed: {exc}")
             l0_findings = []
 

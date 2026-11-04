@@ -1,14 +1,17 @@
 # Public diagnostic evidence boundary
 
-All collection modes in `strict-linux-admission.yml` publish only
-`public-summary.json`. This applies equally to public and private repositories;
-there is no visibility-based path that can accidentally publish a raw receipt.
-The conflict-only job still publishes its fixed, data-free STOP receipt.
+All collection modes in `strict-linux-admission.yml` publish only a bounded
+summary. The static and fixed-metadata jobs use the exact workspace files
+`forge-static-public/summary.json` and `forge-fixed-metadata-public/summary.json`.
+Ordinary dependency and file-view jobs retain their exact `public-summary.json`
+files. This applies equally to public and private repositories; there is no
+visibility-based raw-receipt upload. The conflict-only job publishes its fixed,
+data-free STOP receipt.
 
-The publication helper projects recognized receipts onto a fixed schema. It
-keeps only the selected mode, finite observation status and failure category,
-`qualification=NOT_RUN`, and bounded aggregate counts when available. It never
-copies arbitrary keys, strings, context, unit identifiers, paths, dependency
+The publication helpers project recognized receipts onto fixed schemas. They
+keep only the selected mode, finite observation status and failure category,
+`qualification=NOT_RUN`, and bounded aggregate counts when available. They never
+copy arbitrary keys, strings, context, unit identifiers, paths, dependency
 edges, PIDs, file hashes, raw stdout, raw stderr, or exception messages.
 Unrecognized, missing, malformed, oversized, duplicate-key or unavailable input
 produces a fixed UNKNOWN summary, never a fallback upload of the original file.
@@ -21,7 +24,13 @@ child-process redirections and expose a PID, command or path in public logs. Art
 one exact summary-file path, not the directory or a wildcard. The diagnostic's
 nonzero exit status remains a job failure even if summarization succeeds. A
 summary failure also fails the step; interruption before summary creation can
-leave no artifact. No raw log fallback is permitted.
+leave no artifact. The static/fixed projections also bind the collector exit
+code, so a success receipt followed by a failed or killed process is published
+as STOP. Their uploads require an explicit readiness flag, a nonempty regular
+non-symlink summary, and a successful byte-count check at most 1024 bytes. The
+ordinary/view projections retain their separate observation-only contract:
+their artifact status reflects the receipt, while the job preserves any later
+collector failure. No raw log fallback is permitted.
 
 This deliberately removes public access to detailed topology, process and file
 provenance. The aggregate artifact is not sufficient to reconstruct or fully

@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -32,6 +33,7 @@ def raw(mode, status="OBSERVED"):
         "schema": public.SCHEMAS[mode],
         "status": status,
         "qualification": "NOT_RUN",
+        "boundary": "NOT_RUN",
         "reason": CANARY,
         "context": {"REF": CANARY},
         "manager": {"pid": 7654321},
@@ -124,6 +126,20 @@ def workflow():
     return yaml.safe_load((ROOT / ".github/workflows/strict-linux-admission.yml").read_text())
 
 
+def summary_script(job):
+    return {
+        "observe": "static_public_summary.py",
+        "fixed-metadata": "fixed_metadata_public_summary.py",
+    }.get(job, "public_diagnostic_summary.py")
+
+
+def public_output(job):
+    return {
+        "observe": "forge-static-public/summary.json",
+        "fixed-metadata": "forge-fixed-metadata-public/summary.json",
+    }.get(job)
+
+
 def test_every_upload_has_a_safe_exact_destination_and_mode_guards_stay_closed():
     jobs = workflow()["jobs"]
     for name, job in jobs.items():
@@ -131,9 +147,14 @@ def test_every_upload_has_a_safe_exact_destination_and_mode_guards_stay_closed()
         assert len(uploads) == 1
         path = uploads[0]["with"]["path"]
         assert "*" not in path and "\n" not in path
-        assert path.endswith("/conflict.json" if name == "conflicting-modes" else "/public-summary.json")
+        if public_output(name):
+            assert path == public_output(name)
+        else:
+            assert path.endswith(
+                "/conflict.json" if name == "conflicting-modes" else "/public-summary.json"
+            )
         if name != "conflicting-modes":
-            runs = [s["run"] for s in job["steps"] if "public_diagnostic_summary.py" in s.get("run", "")]
+            runs = [s["run"] for s in job["steps"] if summary_script(name) in s.get("run", "")]
             assert len(runs) == 1 and "private-stderr.txt" in runs[0]
             assert "set +x" in runs[0] and "diagnostic_code=$?" in runs[0]
             assert runs[0].startswith("exec 2>/dev/null\n")
@@ -160,9 +181,7 @@ def test_workflow_shell_keeps_raw_stdout_stderr_private_and_preserves_exit(
 ):
     # Execute the actual workflow shell with ONLY its collector replaced by a
     # deterministic local fixture. Never execute a diagnostic or privileged code.
-    step = next(
-        s for s in workflow()["jobs"][job]["steps"] if "public_diagnostic_summary.py" in s.get("run", "")
-    )
+    step = next(s for s in workflow()["jobs"][job]["steps"] if summary_script(job) in s.get("run", ""))
     value = raw(mode, "OBSERVED" if code == 0 else "STOP")
     fixture = tmp_path / "fixture.py"
     fixture.write_text(
@@ -182,6 +201,10 @@ def test_workflow_shell_keeps_raw_stdout_stderr_private_and_preserves_exit(
     )
     run = step["run"].replace("scripts/" + script, str(fixture))
     assert str(fixture) in run and "scripts/" + script not in run
+    # The stronger static/fixed publications write only fixed workspace paths.
+    # Run every mode in its own workspace with just the public projection helper.
+    (tmp_path / "scripts").mkdir()
+    shutil.copyfile(ROOT / "scripts" / summary_script(job), tmp_path / "scripts" / summary_script(job))
     private = tmp_path / "private"
     private.mkdir(parents=True)
     env = {
@@ -191,17 +214,24 @@ def test_workflow_shell_keeps_raw_stdout_stderr_private_and_preserves_exit(
         "GITHUB_ENV": str(tmp_path / "env"),
     }
     env.update({key: "public-context" for key in step.get("env", {})})
-    proc = subprocess.run(["/bin/bash", "-c", run], cwd=ROOT, env=env, capture_output=True, timeout=5)
+    proc = subprocess.run(
+        ["/bin/bash", "-c", run], cwd=tmp_path, env=env, capture_output=True, timeout=5
+    )
     assert proc.returncode == code
     assert CANARY.encode() not in proc.stdout + proc.stderr
     assert proc.stdout == proc.stderr == b""
-    outputs = list(tmp_path.rglob("public-summary.json"))
+    outputs = (
+        [tmp_path / public_output(job)]
+        if public_output(job)
+        else list(tmp_path.rglob("public-summary.json"))
+    )
     assert len(outputs) == 1
     result = json.loads(outputs[0].read_text())
     expected = value["status"]
     assert result["status"] == expected and CANARY not in repr(result)
     if code == 137:
-        assert any(b"Killed" in path.read_bytes() for path in tmp_path.rglob("private-shell-stderr.txt"))
+        private_stderr = "private-stderr.txt" if public_output(job) else "private-shell-stderr.txt"
+        assert any(b"Killed" in path.read_bytes() for path in tmp_path.rglob(private_stderr))
     assert outputs[0].stat().st_mode & 0o077 == 0
 
 
@@ -214,12 +244,13 @@ def test_workflow_shell_keeps_raw_stdout_stderr_private_and_preserves_exit(
     ],
 )
 def test_private_shell_redirection_failure_never_exposes_path_or_runs_collector(tmp_path, job, env_name):
-    step = next(
-        s for s in workflow()["jobs"][job]["steps"] if "public_diagnostic_summary.py" in s.get("run", "")
-    )
+    step = next(s for s in workflow()["jobs"][job]["steps"] if summary_script(job) in s.get("run", ""))
     # Absent parent makes Bash itself reject its private stderr redirection.
     # This occurs before the collector; no native command can run.
     env = {**os.environ, env_name: str(tmp_path / CANARY / "missing")}
+    if job == "fixed-metadata":
+        # This lane no longer imports a private evidence path from GITHUB_ENV.
+        env["RUNNER_TEMP"] = str(tmp_path / CANARY / "missing")
     env.update({key: "public-context" for key in step.get("env", {})})
     fixture = tmp_path / "never_collect.py"
     fixture.write_text("raise SystemExit(75)\n")
@@ -272,9 +303,7 @@ def test_static_directory_creation_failure_is_private(tmp_path):
     ],
 )
 def test_collector_output_redirection_failure_is_private(tmp_path, job, env_name, raw_name, script):
-    step = next(
-        s for s in workflow()["jobs"][job]["steps"] if "public_diagnostic_summary.py" in s.get("run", "")
-    )
+    step = next(s for s in workflow()["jobs"][job]["steps"] if summary_script(job) in s.get("run", ""))
     private = tmp_path / CANARY
     private.mkdir(parents=True)
     (private / raw_name).mkdir()  # Bash cannot redirect stdout to a directory.
@@ -301,9 +330,7 @@ def test_collector_output_redirection_failure_is_private(tmp_path, job, env_name
 def test_kill_before_receipt_produces_unknown_without_public_shell_diagnostics(
     tmp_path, job, env_name, script
 ):
-    step = next(
-        s for s in workflow()["jobs"][job]["steps"] if "public_diagnostic_summary.py" in s.get("run", "")
-    )
+    step = next(s for s in workflow()["jobs"][job]["steps"] if summary_script(job) in s.get("run", ""))
     fixture = tmp_path / "fixture.py"
     fixture.write_text("import os,signal\nos.kill(os.getpid(), signal.SIGKILL)\n")
     run = step["run"].replace("scripts/" + script, str(fixture))

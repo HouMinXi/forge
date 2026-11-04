@@ -129,6 +129,10 @@ commit SHA; supply that SHA as `expected_source_sha`. Set only
 `ordinary_dependency_snapshot=true`; leave `fixed_metadata_read=false`.
 An Actions rerun is rejected (`run_attempt` must be 1). This document grants no
 permission to dispatch, push workflow changes, merge, or retry a native run.
+The later file-view mode is also default false and mutually exclusive; leave
+`dependency_view_read=false` for ordinary observation. This wrapper's dedicated
+branch check remains in force after integration into main: dispatching the main
+ref yields STOP, not an automatically expanded execution allowance.
 
 The fixed-purpose `scripts/dependency_snapshot_runner.py` requires the exact
 repository, branch, job, workflow path, event and both mode values. Expected,

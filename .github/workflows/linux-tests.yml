@@ -37,12 +37,32 @@ jobs:
       id: preflight
       timeout-minutes: 2
       run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-02.log preflight.log disk.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-02.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         # The stdout-pressure regression needs disk-backed temporary storage.
         export TMPDIR="$RUNNER_TEMP/forge-tests"
         export EVIDENCE="$RUNNER_TEMP/forge-evidence"
-        printf 'TMPDIR=%s\nEVIDENCE=%s\n' "$TMPDIR" "$EVIDENCE" >> "$GITHUB_ENV"
         mkdir -p "$TMPDIR" "$EVIDENCE"
-        python - <<'PY' 2>&1 | tee "$EVIDENCE/preflight.log"
+        python - <<'PY' 2>&1 | (umask 077; exec tee "$EVIDENCE/preflight.log")
         import os
         from pathlib import Path
         import resource
@@ -73,11 +93,32 @@ jobs:
             child.terminate()
             child.wait(timeout=5)
         PY
-        df -h "$TMPDIR" | tee "$EVIDENCE/disk.log"
+        df -h "$TMPDIR" | (umask 077; exec tee "$EVIDENCE/disk.log")
     - name: Remove the image's system git-lfs filters
       id: gitconfig
       timeout-minutes: 2
       run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-03.log git-config.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-03.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         # The runner image ships /etc/gitconfig with git-lfs clean/process
         # filters. The conventions resolver refuses to cache whenever any
         # filter is configured, so its caching tests fail on the image's
@@ -89,11 +130,32 @@ jobs:
         rc=0
         git config --system --null --get-regexp '^filter\..*\.(clean|process)$' || rc=$?
         test "$rc" -eq 1
-        git config --list --show-origin | tee "$EVIDENCE/git-config.log"
+        git config --list --show-origin | (umask 077; exec tee "$EVIDENCE/git-config.log")
     - name: Install and verify bubblewrap
       id: bwrap
       timeout-minutes: 5
       run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-04.log bwrap.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-04.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         # The patch-corpus tests run real mutation sandboxes with bwrap.
         # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor.
         # This only changes the ephemeral runner.
@@ -102,43 +164,120 @@ jobs:
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
         bwrap --version
         bwrap --unshare-all --ro-bind / / --dev /dev --proc /proc true \
-          2>&1 | tee "$EVIDENCE/bwrap.log"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/bwrap.log")
     - name: Install declared extras and qualified pytest
       id: install
       timeout-minutes: 10
       run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-05.log install.log system-pytest-install.log system-code-forge-install.log interpreters.log previous-pytest-install.log pip-check.log requirements.freeze.txt; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-05.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.2.0' \
-          2>&1 | tee "$EVIDENCE/install.log"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/install.log")
         # Some FIXVAL fixtures use /usr/bin/python3 and reset PYTHONPATH.
         # Its normal user site works without modifying the system interpreter.
         python -m pip install --target "$(/usr/bin/python3 -m site --user-site)" 'pytest==9.2.0' \
-          2>&1 | tee "$EVIDENCE/system-pytest-install.log"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/system-pytest-install.log")
         # Invocation-audit tests start /usr/bin/python3 children that import
         # code_forge. Put a copy of the package in its normal user site.
         python -m pip install --no-deps --target "$(/usr/bin/python3 -m site --user-site)" . \
-          2>&1 | tee "$EVIDENCE/system-code-forge-install.log"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/system-code-forge-install.log")
         for interpreter in python /usr/bin/python3; do
           "$interpreter" -c 'import sys, pytest; assert sys.implementation.name == "cpython"; assert sys.version_info[:2] == (3, 12), sys.version; assert pytest.__version__ == "9.2.0"; print(sys.executable, sys.version, "pytest", pytest.__version__)'
-        done | tee "$EVIDENCE/interpreters.log"
+        done | (umask 077; exec tee "$EVIDENCE/interpreters.log")
         # Keep the previously qualified runtime executable in an isolated venv.
         # Its qualification cases must not turn into skips when the dev pin moves.
         python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"
         "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" -m pip install 'pytest==9.1.1' \
-          2>&1 | tee "$EVIDENCE/previous-pytest-install.log"
-        echo "FORGE_QUALIFICATION_PYTHON=$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" >> "$GITHUB_ENV"
-        python -m pip check 2>&1 | tee "$EVIDENCE/pip-check.log"
-        python -m pip freeze | tee "$EVIDENCE/requirements.freeze.txt"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/previous-pytest-install.log")
+        export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        python -m pip check 2>&1 | (umask 077; exec tee "$EVIDENCE/pip-check.log")
+        python -m pip freeze | (umask 077; exec tee "$EVIDENCE/requirements.freeze.txt")
     - name: Collect original selections and partition every module
       timeout-minutes: 8
       run: |-
-        python scripts/ci_test_shards.py plan --sha "$GITHUB_SHA" \
-          --directory "$RUNNER_TEMP/forge-plan" 2>&1 | tee "$EVIDENCE/collection.log"
-    - name: 'Archive attempt: linux-collection-plan'
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-06.log collection.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-06.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py plan --sha "$GITHUB_SHA" \
+          --directory "$RUNNER_TEMP/forge-plan" --public-directory forge-linux-public 2>&1 | (umask 077; exec tee "$EVIDENCE/collection.log")
+      id: public_plan
+    - name: Prepare fixed public CI summary
+      id: public_summary
       if: ${{ always() }}
+      env:
+        CI_JOB_STATUS: ${{ job.status }}
+      run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-07.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-07.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py summary --job plan \
+          --status "$CI_JOB_STATUS" --public-directory forge-linux-public
+    - name: 'Archive attempt: linux-collection-plan'
+      if: ${{ always() && steps.public_summary.outcome == 'success' && steps.public_plan.outcome == 'success' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: archive-linux-collection-plan-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/forge-plan/
+        path: |-
+          forge-linux-public/plan.json
+          forge-linux-public/collection-full.json
+          forge-linux-public/collection-ownership.json
+          forge-linux-public/collection-cgroup.json
+          forge-linux-public/collection-local.json
         if-no-files-found: error
         retention-days: 14
       id: archive_8
@@ -147,16 +286,21 @@ jobs:
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: linux-collection-plan
-        path: ${{ runner.temp }}/forge-plan/
+        path: |-
+          forge-linux-public/plan.json
+          forge-linux-public/collection-full.json
+          forge-linux-public/collection-ownership.json
+          forge-linux-public/collection-cgroup.json
+          forge-linux-public/collection-local.json
         if-no-files-found: error
         retention-days: 14
         overwrite: true
     - name: 'Archive attempt: linux-plan-evidence'
-      if: ${{ always() }}
+      if: ${{ always() && steps.public_summary.outcome == 'success' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: archive-linux-plan-evidence-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/forge-evidence/
+        path: forge-linux-public/summary.json
         if-no-files-found: error
         retention-days: 14
       id: archive_10
@@ -165,7 +309,7 @@ jobs:
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: linux-plan-evidence
-        path: ${{ runner.temp }}/forge-evidence/
+        path: forge-linux-public/summary.json
         if-no-files-found: error
         retention-days: 14
         overwrite: true
@@ -186,12 +330,32 @@ jobs:
       id: preflight
       timeout-minutes: 2
       run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-02.log preflight.log disk.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-02.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         # The stdout-pressure regression needs disk-backed temporary storage.
         export TMPDIR="$RUNNER_TEMP/forge-tests"
         export EVIDENCE="$RUNNER_TEMP/forge-evidence"
-        printf 'TMPDIR=%s\nEVIDENCE=%s\n' "$TMPDIR" "$EVIDENCE" >> "$GITHUB_ENV"
         mkdir -p "$TMPDIR" "$EVIDENCE"
-        python - <<'PY' 2>&1 | tee "$EVIDENCE/preflight.log"
+        python - <<'PY' 2>&1 | (umask 077; exec tee "$EVIDENCE/preflight.log")
         import os
         from pathlib import Path
         import resource
@@ -222,11 +386,32 @@ jobs:
             child.terminate()
             child.wait(timeout=5)
         PY
-        df -h "$TMPDIR" | tee "$EVIDENCE/disk.log"
+        df -h "$TMPDIR" | (umask 077; exec tee "$EVIDENCE/disk.log")
     - name: Remove the image's system git-lfs filters
       id: gitconfig
       timeout-minutes: 2
       run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-03.log git-config.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-03.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         # The runner image ships /etc/gitconfig with git-lfs clean/process
         # filters. The conventions resolver refuses to cache whenever any
         # filter is configured, so its caching tests fail on the image's
@@ -238,11 +423,32 @@ jobs:
         rc=0
         git config --system --null --get-regexp '^filter\..*\.(clean|process)$' || rc=$?
         test "$rc" -eq 1
-        git config --list --show-origin | tee "$EVIDENCE/git-config.log"
+        git config --list --show-origin | (umask 077; exec tee "$EVIDENCE/git-config.log")
     - name: Install and verify bubblewrap
       id: bwrap
       timeout-minutes: 5
       run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-04.log bwrap.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-04.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         # The patch-corpus tests run real mutation sandboxes with bwrap.
         # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor.
         # This only changes the ephemeral runner.
@@ -251,67 +457,187 @@ jobs:
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
         bwrap --version
         bwrap --unshare-all --ro-bind / / --dev /dev --proc /proc true \
-          2>&1 | tee "$EVIDENCE/bwrap.log"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/bwrap.log")
     - name: Install declared extras and qualified pytest
       id: install
       timeout-minutes: 10
       run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-05.log install.log system-pytest-install.log system-code-forge-install.log interpreters.log previous-pytest-install.log pip-check.log requirements.freeze.txt; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-05.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.2.0' \
-          2>&1 | tee "$EVIDENCE/install.log"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/install.log")
         # Some FIXVAL fixtures use /usr/bin/python3 and reset PYTHONPATH.
         # Its normal user site works without modifying the system interpreter.
         python -m pip install --target "$(/usr/bin/python3 -m site --user-site)" 'pytest==9.2.0' \
-          2>&1 | tee "$EVIDENCE/system-pytest-install.log"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/system-pytest-install.log")
         # Invocation-audit tests start /usr/bin/python3 children that import
         # code_forge. Put a copy of the package in its normal user site.
         python -m pip install --no-deps --target "$(/usr/bin/python3 -m site --user-site)" . \
-          2>&1 | tee "$EVIDENCE/system-code-forge-install.log"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/system-code-forge-install.log")
         for interpreter in python /usr/bin/python3; do
           "$interpreter" -c 'import sys, pytest; assert sys.implementation.name == "cpython"; assert sys.version_info[:2] == (3, 12), sys.version; assert pytest.__version__ == "9.2.0"; print(sys.executable, sys.version, "pytest", pytest.__version__)'
-        done | tee "$EVIDENCE/interpreters.log"
+        done | (umask 077; exec tee "$EVIDENCE/interpreters.log")
         # Keep the previously qualified runtime executable in an isolated venv.
         # Its qualification cases must not turn into skips when the dev pin moves.
         python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"
         "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" -m pip install 'pytest==9.1.1' \
-          2>&1 | tee "$EVIDENCE/previous-pytest-install.log"
-        echo "FORGE_QUALIFICATION_PYTHON=$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" >> "$GITHUB_ENV"
-        python -m pip check 2>&1 | tee "$EVIDENCE/pip-check.log"
-        python -m pip freeze | tee "$EVIDENCE/requirements.freeze.txt"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/previous-pytest-install.log")
+        export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        python -m pip check 2>&1 | (umask 077; exec tee "$EVIDENCE/pip-check.log")
+        python -m pip freeze | (umask 077; exec tee "$EVIDENCE/requirements.freeze.txt")
     - name: Download exact-run collection plan
       uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
       with:
         name: linux-collection-plan
-        path: ${{ runner.temp }}/forge-plan
+        path: forge-linux-input/plan
     - name: Run ownership
       if: ${{ !cancelled() && steps.preflight.outcome == 'success' && steps.install.outcome == 'success' }}
       timeout-minutes: 20
       run: |-
-        python scripts/ci_test_shards.py run --sha "$GITHUB_SHA" \
-          --plan "$RUNNER_TEMP/forge-plan/plan.json" --phase ownership \
-          --directory "$EVIDENCE" 2>&1 | tee "$EVIDENCE/ownership.log"
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-07.log driver-ownership.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-07.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py run --sha "$GITHUB_SHA" \
+          --plan forge-linux-input/plan/plan.json --phase ownership \
+          --directory "$EVIDENCE" --public-directory forge-linux-public 2>&1 | (umask 077; exec tee "$EVIDENCE/driver-ownership.log")
+      id: ownership_receipt
     - name: Run cgroup
       if: ${{ !cancelled() && steps.preflight.outcome == 'success' && steps.install.outcome == 'success' }}
       timeout-minutes: 15
       run: |-
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-08.log driver-cgroup.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-08.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         runtime_dir="/run/user/$(id -u)"
         export XDG_RUNTIME_DIR="$runtime_dir"
         systemd-run --user --scope --quiet -- \
-          python scripts/ci_test_shards.py run --sha "$GITHUB_SHA" \
-          --plan "$RUNNER_TEMP/forge-plan/plan.json" --phase cgroup \
-          --directory "$EVIDENCE" 2>&1 | tee "$EVIDENCE/cgroup.log"
+          python scripts/ci_private_transport.py run --sha "$GITHUB_SHA" \
+          --plan forge-linux-input/plan/plan.json --phase cgroup \
+          --directory "$EVIDENCE" --public-directory forge-linux-public 2>&1 | (umask 077; exec tee "$EVIDENCE/driver-cgroup.log")
+      id: cgroup_receipt
     - name: Run local
       if: ${{ !cancelled() && steps.preflight.outcome == 'success' && steps.install.outcome == 'success' }}
       timeout-minutes: 5
       run: |-
-        python scripts/ci_test_shards.py run --sha "$GITHUB_SHA" \
-          --plan "$RUNNER_TEMP/forge-plan/plan.json" --phase local \
-          --directory "$EVIDENCE" 2>&1 | tee "$EVIDENCE/local.log"
-    - name: 'Archive attempt: linux-process-evidence'
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-09.log driver-local.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-09.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py run --sha "$GITHUB_SHA" \
+          --plan forge-linux-input/plan/plan.json --phase local \
+          --directory "$EVIDENCE" --public-directory forge-linux-public 2>&1 | (umask 077; exec tee "$EVIDENCE/driver-local.log")
+      id: local_receipt
+    - name: Prepare fixed public CI summary
+      id: public_summary
       if: ${{ always() }}
+      env:
+        CI_JOB_STATUS: ${{ job.status }}
+      run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-10.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-10.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py summary --job process-contracts \
+          --status "$CI_JOB_STATUS" --public-directory forge-linux-public
+    - name: 'Archive attempt: linux-process-evidence'
+      if: ${{ always() && steps.public_summary.outcome == 'success' && steps.ownership_receipt.outcome == 'success' && steps.cgroup_receipt.outcome == 'success' && steps.local_receipt.outcome == 'success' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: archive-linux-process-evidence-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/forge-evidence/
+        path: |-
+          forge-linux-public/receipt-ownership.json
+          forge-linux-public/receipt-cgroup.json
+          forge-linux-public/receipt-local.json
+          forge-linux-public/summary.json
         if-no-files-found: error
         retention-days: 14
       id: archive_11
@@ -320,7 +646,29 @@ jobs:
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: linux-process-evidence
-        path: ${{ runner.temp }}/forge-evidence/
+        path: |-
+          forge-linux-public/receipt-ownership.json
+          forge-linux-public/receipt-cgroup.json
+          forge-linux-public/receipt-local.json
+          forge-linux-public/summary.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Archive fixed public summary
+      id: archive_public_summary
+      if: ${{ always() && steps.public_summary.outcome == 'success' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: archive-linux-process-summary-${{ github.run_attempt }}
+        path: forge-linux-public/summary.json
+        if-no-files-found: error
+        retention-days: 14
+    - name: Preserve fixed public summary
+      if: ${{ always() && steps.archive_public_summary.outcome == 'success' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: linux-process-summary
+        path: forge-linux-public/summary.json
         if-no-files-found: error
         retention-days: 14
         overwrite: true
@@ -349,12 +697,32 @@ jobs:
       id: preflight
       timeout-minutes: 2
       run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-02.log preflight.log disk.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-02.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         # The stdout-pressure regression needs disk-backed temporary storage.
         export TMPDIR="$RUNNER_TEMP/forge-tests"
         export EVIDENCE="$RUNNER_TEMP/forge-evidence"
-        printf 'TMPDIR=%s\nEVIDENCE=%s\n' "$TMPDIR" "$EVIDENCE" >> "$GITHUB_ENV"
         mkdir -p "$TMPDIR" "$EVIDENCE"
-        python - <<'PY' 2>&1 | tee "$EVIDENCE/preflight.log"
+        python - <<'PY' 2>&1 | (umask 077; exec tee "$EVIDENCE/preflight.log")
         import os
         from pathlib import Path
         import resource
@@ -385,11 +753,32 @@ jobs:
             child.terminate()
             child.wait(timeout=5)
         PY
-        df -h "$TMPDIR" | tee "$EVIDENCE/disk.log"
+        df -h "$TMPDIR" | (umask 077; exec tee "$EVIDENCE/disk.log")
     - name: Remove the image's system git-lfs filters
       id: gitconfig
       timeout-minutes: 2
       run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-03.log git-config.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-03.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         # The runner image ships /etc/gitconfig with git-lfs clean/process
         # filters. The conventions resolver refuses to cache whenever any
         # filter is configured, so its caching tests fail on the image's
@@ -401,11 +790,32 @@ jobs:
         rc=0
         git config --system --null --get-regexp '^filter\..*\.(clean|process)$' || rc=$?
         test "$rc" -eq 1
-        git config --list --show-origin | tee "$EVIDENCE/git-config.log"
+        git config --list --show-origin | (umask 077; exec tee "$EVIDENCE/git-config.log")
     - name: Install and verify bubblewrap
       id: bwrap
       timeout-minutes: 5
       run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-04.log bwrap.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-04.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         # The patch-corpus tests run real mutation sandboxes with bwrap.
         # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor.
         # This only changes the ephemeral runner.
@@ -414,49 +824,123 @@ jobs:
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
         bwrap --version
         bwrap --unshare-all --ro-bind / / --dev /dev --proc /proc true \
-          2>&1 | tee "$EVIDENCE/bwrap.log"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/bwrap.log")
     - name: Install declared extras and qualified pytest
       id: install
       timeout-minutes: 10
       run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-05.log install.log system-pytest-install.log system-code-forge-install.log interpreters.log previous-pytest-install.log pip-check.log requirements.freeze.txt; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-05.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
         python -m pip install -e '.[dev,mcp,semgrep,vertex]' 'pytest==9.2.0' \
-          2>&1 | tee "$EVIDENCE/install.log"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/install.log")
         # Some FIXVAL fixtures use /usr/bin/python3 and reset PYTHONPATH.
         # Its normal user site works without modifying the system interpreter.
         python -m pip install --target "$(/usr/bin/python3 -m site --user-site)" 'pytest==9.2.0' \
-          2>&1 | tee "$EVIDENCE/system-pytest-install.log"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/system-pytest-install.log")
         # Invocation-audit tests start /usr/bin/python3 children that import
         # code_forge. Put a copy of the package in its normal user site.
         python -m pip install --no-deps --target "$(/usr/bin/python3 -m site --user-site)" . \
-          2>&1 | tee "$EVIDENCE/system-code-forge-install.log"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/system-code-forge-install.log")
         for interpreter in python /usr/bin/python3; do
           "$interpreter" -c 'import sys, pytest; assert sys.implementation.name == "cpython"; assert sys.version_info[:2] == (3, 12), sys.version; assert pytest.__version__ == "9.2.0"; print(sys.executable, sys.version, "pytest", pytest.__version__)'
-        done | tee "$EVIDENCE/interpreters.log"
+        done | (umask 077; exec tee "$EVIDENCE/interpreters.log")
         # Keep the previously qualified runtime executable in an isolated venv.
         # Its qualification cases must not turn into skips when the dev pin moves.
         python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"
         "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" -m pip install 'pytest==9.1.1' \
-          2>&1 | tee "$EVIDENCE/previous-pytest-install.log"
-        echo "FORGE_QUALIFICATION_PYTHON=$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" >> "$GITHUB_ENV"
-        python -m pip check 2>&1 | tee "$EVIDENCE/pip-check.log"
-        python -m pip freeze | tee "$EVIDENCE/requirements.freeze.txt"
+          2>&1 | (umask 077; exec tee "$EVIDENCE/previous-pytest-install.log")
+        export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        python -m pip check 2>&1 | (umask 077; exec tee "$EVIDENCE/pip-check.log")
+        python -m pip freeze | (umask 077; exec tee "$EVIDENCE/requirements.freeze.txt")
     - name: Download exact-run collection plan
       uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
       with:
         name: linux-collection-plan
-        path: ${{ runner.temp }}/forge-plan
+        path: forge-linux-input/plan
     - name: Run serial service-free shard
       timeout-minutes: 90
       run: |-
-        python scripts/ci_test_shards.py run --sha "$GITHUB_SHA" \
-          --plan "$RUNNER_TEMP/forge-plan/plan.json" --phase "shard-${{ matrix.shard }}" \
-          --directory "$EVIDENCE" 2>&1 | tee "$EVIDENCE/shard.log"
-    - name: 'Archive attempt: linux-shard-${{ matrix.shard }}-evidence'
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-07.log shard.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-07.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py run --sha "$GITHUB_SHA" \
+          --plan forge-linux-input/plan/plan.json --phase "shard-${{ matrix.shard }}" \
+          --directory "$EVIDENCE" --public-directory forge-linux-public 2>&1 | (umask 077; exec tee "$EVIDENCE/shard.log")
+      id: shard_receipt
+    - name: Prepare fixed public CI summary
+      id: public_summary
       if: ${{ always() }}
+      env:
+        CI_JOB_STATUS: ${{ job.status }}
+      run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-08.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-08.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py summary --job service-free \
+          --status "$CI_JOB_STATUS" --public-directory forge-linux-public
+    - name: 'Archive attempt: linux-shard-${{ matrix.shard }}-evidence'
+      if: ${{ always() && steps.public_summary.outcome == 'success' && steps.shard_receipt.outcome == 'success' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: archive-linux-shard-${{ matrix.shard }}-evidence-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/forge-evidence/
+        path: |-
+          forge-linux-public/receipt-shard-${{ matrix.shard }}.json
+          forge-linux-public/summary.json
         if-no-files-found: error
         retention-days: 14
       id: archive_9
@@ -465,7 +949,27 @@ jobs:
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: linux-shard-${{ matrix.shard }}-evidence
-        path: ${{ runner.temp }}/forge-evidence/
+        path: |-
+          forge-linux-public/receipt-shard-${{ matrix.shard }}.json
+          forge-linux-public/summary.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Archive fixed public summary
+      id: archive_public_summary
+      if: ${{ always() && steps.public_summary.outcome == 'success' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: archive-linux-shard-${{ matrix.shard }}-summary-${{ github.run_attempt }}
+        path: forge-linux-public/summary.json
+        if-no-files-found: error
+        retention-days: 14
+    - name: Preserve fixed public summary
+      if: ${{ always() && steps.archive_public_summary.outcome == 'success' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: linux-shard-${{ matrix.shard }}-summary
+        path: forge-linux-public/summary.json
         if-no-files-found: error
         retention-days: 14
         overwrite: true
@@ -487,12 +991,70 @@ jobs:
       uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
       with:
         pattern: linux-*
-        path: ${{ runner.temp }}/forge-all-evidence
+        path: forge-linux-input/all
         merge-multiple: false
     - name: Require all jobs and exact complete node coverage
       env:
         CI_NEEDS_JSON: ${{ toJSON(needs) }}
       run: |-
-        python scripts/ci_test_shards.py verify --sha "$GITHUB_SHA" \
-          --plan "$RUNNER_TEMP/forge-all-evidence/linux-collection-plan/plan.json" \
-          --directory "$RUNNER_TEMP/forge-all-evidence"
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-02.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-02.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py verify --sha "$GITHUB_SHA" \
+          --plan forge-linux-input/all/linux-collection-plan/plan.json \
+          --directory forge-linux-input/all
+    - name: Prepare fixed public CI summary
+      id: public_summary
+      if: ${{ always() }}
+      env:
+        CI_JOB_STATUS: ${{ job.status }}
+      run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-03.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-03.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py summary --job linux-tests \
+          --status "$CI_JOB_STATUS" --public-directory forge-linux-public
+    - name: Preserve fixed aggregate summary
+      if: ${{ always() && steps.public_summary.outcome == 'success' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: linux-aggregate-summary
+        path: forge-linux-public/summary.json
+        if-no-files-found: error
+        retention-days: 14
