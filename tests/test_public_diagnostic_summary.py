@@ -185,6 +185,10 @@ def test_workflow_shell_keeps_raw_stdout_stderr_private_and_preserves_exit(
     value = raw(mode, "OBSERVED" if code == 0 else "STOP")
     if mode == "static":
         value["problems"] = [] if code == 0 else ["bwrap_identity"]
+        value["facts"] = {"bwrap": None}
+        value["diagnostics"] = {
+            "bwrap": {name: {"reason": "missing", "errno": 2} for name in ("usr_bin", "bin")}
+        }
     fixture = tmp_path / "fixture.py"
     fixture.write_text(
         "import json,sys,pathlib,os,signal\n"
@@ -232,8 +236,9 @@ def test_workflow_shell_keeps_raw_stdout_stderr_private_and_preserves_exit(
     expected = value["status"]
     assert result["status"] == expected and CANARY not in repr(result)
     if mode == "static":
-        assert result["schema"] == "forge-public-static-summary-v2"
+        assert result["schema"] == "forge-public-static-summary-v3"
         assert result["problems"] == value["problems"]
+        assert result["details"] == ({} if code == 0 else {"bwrap_identity": ["missing"]})
     if code == 137:
         private_stderr = "private-stderr.txt" if public_output(job) else "private-shell-stderr.txt"
         assert any(b"Killed" in path.read_bytes() for path in tmp_path.rglob(private_stderr))

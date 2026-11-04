@@ -11,10 +11,15 @@ data-free STOP receipt.
 The publication helpers project recognized receipts onto fixed schemas. They
 keep only the selected mode, finite observation status and failure category,
 `qualification=NOT_RUN`, and bounded aggregate counts when available. Static
-schema v2 also includes sorted, unique problem codes from 14 reviewed literals;
+schema v2 includes sorted, unique problem codes from 14 reviewed literals;
 these are necessary-observation categories, not raw diagnostics or root causes.
 Unknown or malformed problem codes fail closed without publishing a partial
-list. Historical static v1 artifacts have no problem-code field. The helpers never
+list. Static v3 additionally projects bounded failure-only `details` from existing
+bwrap/profile reason enums and access `False`/unknown observations. Candidate
+labels and numeric errno are not published; categories and reason lists are
+fixed and canonical. Malformed selected details discard the entire projection.
+Historical static v1 artifacts have no problem-code field, and v2 has no details.
+The helpers never
 copy arbitrary keys, strings, context, unit identifiers, paths, dependency
 edges, PIDs, file hashes, raw stdout, raw stderr, or exception messages.
 Unrecognized, missing, malformed, oversized, duplicate-key or unavailable input
