@@ -21,8 +21,33 @@ COLLECTOR = "scripts/strict_linux_admission.py"
 PUBLIC_PATH = Path("forge-static-public/summary.json")
 CANARY = "PRIVATE-static-/home/private-user/unit.service-PID-7654321"
 SOURCE_CANARY = "cafebabefeedface0123456789abcdef01234567"
-PUBLIC_KEYS = {"schema", "mode", "status", "boundary", "qualification", "raw_evidence", "reason"}
+PUBLIC_KEYS = {
+    "schema",
+    "mode",
+    "status",
+    "boundary",
+    "qualification",
+    "raw_evidence",
+    "reason",
+    "problems",
+}
 PUBLIC_REASONS = {"observation_complete", "collector_stop", "execution_failed", "unavailable"}
+PUBLIC_PROBLEMS = {
+    "apparmor_observed",
+    "apparmor_profiles_observed",
+    "apparmor_restriction_observed",
+    "bwrap_identity",
+    "cgroup2_mount",
+    "controllers",
+    "current_common_ancestor_access",
+    "delegated_directory_access",
+    "destination_procs_access",
+    "existing_manager",
+    "kernel_identity",
+    "ordinary_user",
+    "source_membership",
+    "subtree_control",
+}
 
 
 @pytest.fixture(scope="module")
@@ -49,7 +74,7 @@ def raw(status="OBSERVED"):
         },
         "facts": {"uid": 7654321, "boot_id": CANARY, "source_cgroup": CANARY},
         "diagnostics": {"private": CANARY},
-        "problems": [CANARY],
+        "problems": ["bwrap_identity"] if status == "STOP" else [],
         "stderr": CANARY,
         CANARY: CANARY,
     }
@@ -57,12 +82,17 @@ def raw(status="OBSERVED"):
 
 def assert_public(value, expected=None, reason=None):
     assert set(value) == PUBLIC_KEYS
-    assert value["schema"] == "forge-public-static-summary-v1"
+    assert value["schema"] == "forge-public-static-summary-v2"
     assert value["mode"] == "static"
     assert value["status"] in {"OBSERVED", "STOP", "UNKNOWN"}
     assert value["boundary"] == value["qualification"] == "NOT_RUN"
     assert value["raw_evidence"] == "NOT_PUBLISHED"
     assert type(value["reason"]) is str and value["reason"] in PUBLIC_REASONS
+    assert type(value["problems"]) is list
+    assert all(type(code) is str and code in PUBLIC_PROBLEMS for code in value["problems"])
+    assert value["problems"] == sorted(set(value["problems"]))
+    assert len(value["problems"]) <= len(PUBLIC_PROBLEMS) == 14
+    assert bool(value["problems"]) == (value["reason"] == "collector_stop")
     serialized = json.dumps(value)
     assert all(secret not in serialized for secret in (CANARY, SOURCE_CANARY, "7654321"))
     if expected is not None:
@@ -130,6 +160,90 @@ def test_projection_does_not_import_or_run_collector_and_size_matches_source(pub
     assert match and public.MAX_INPUT == int(match[1]) == 16384
 
 
+def test_problem_allowlist_matches_reviewed_collector_literals_without_import(public):
+    tree = ast.parse((ROOT / COLLECTOR).read_text())
+    derive = next(node for node in tree.body if getattr(node, "name", None) == "derive_problems")
+    checks = next(
+        node.value
+        for node in derive.body
+        if isinstance(node, ast.Assign) and any(target.id == "checks" for target in node.targets)
+    )
+    assert {ast.literal_eval(key) for key in checks.keys} == PUBLIC_PROBLEMS
+    assert public.PUBLIC_PROBLEM_CODES == PUBLIC_PROBLEMS
+
+
+def test_all_problem_codes_are_fixed_sorted_unique_and_bounded(public):
+    for codes in [[code] for code in sorted(PUBLIC_PROBLEMS)] + [
+        sorted(PUBLIC_PROBLEMS, reverse=True),
+        ["bwrap_identity"] * len(PUBLIC_PROBLEMS),
+    ]:
+        result = public.summary({**raw("STOP"), "problems": codes}, 2)
+        assert_public(result, "STOP", "collector_stop")
+        assert result["problems"] == sorted(set(codes))
+        assert len(json.dumps(result).encode()) < 1024
+
+
+def test_problem_permutation_and_duplicate_multiplicity_do_not_encode_values(public):
+    codes = ["bwrap_identity", "apparmor_profiles_observed", "current_common_ancestor_access"]
+    expected = public.summary({**raw("STOP"), "problems": codes}, 2)
+    for permutation in (list(reversed(codes)), codes[1:] + codes[:1], codes * 4):
+        assert public.summary({**raw("STOP"), "problems": permutation}, 2) == expected
+
+
+def malformed_problems():
+    return [
+        None,
+        True,
+        1,
+        "bwrap_identity",
+        {"bwrap_identity": True},
+        ("bwrap_identity",),
+        [None],
+        [True],
+        [1],
+        [[]],
+        [{}],
+        [CANARY],
+        ["unknown_future_code"],
+        ["bwrap_identity", CANARY],
+        ["bwrap_identity\n"],
+        ["bwrap_identity\x00"],
+        ["BWRAP_IDENTITY"],
+        ["bwrap_\u0131dentity"],
+        ["bwrap_identity"] * (len(PUBLIC_PROBLEMS) + 1),
+    ]
+
+
+def test_malformed_problem_codes_fail_closed_without_partial_disclosure(public):
+    for codes in malformed_problems():
+        for status in ("OBSERVED", "STOP"):
+            for exit_code in (0, 2, 137):
+                result = public.summary({**raw(status), "problems": codes}, exit_code)
+                assert_public(result, "UNKNOWN", "unavailable")
+                assert result["problems"] == []
+
+
+def test_missing_and_status_inconsistent_problems_fail_closed(public):
+    for status, codes in (("STOP", []), ("OBSERVED", ["bwrap_identity"])):
+        value = {**raw(status), "problems": codes}
+        assert_public(public.summary(value, 0), "UNKNOWN", "unavailable")
+        del value["problems"]
+        assert_public(public.summary(value, 0), "UNKNOWN", "unavailable")
+
+
+def test_forged_known_problems_never_claim_native_execution_or_qualification(public):
+    # Recognized codes are claims by the reviewed producer, not authenticated
+    # facts. Even a forged allowed category must remain observation-only.
+    value = {
+        **raw("STOP"),
+        "problems": ["current_common_ancestor_access"],
+        "facts": {"common_ancestor": CANARY, "errno": 7654321},
+    }
+    assert_public(public.summary(value, 0), "STOP", "collector_stop")
+    for field in ("boundary", "qualification"):
+        assert_public(public.summary({**value, field: "PASS"}, 0), "UNKNOWN", "unavailable")
+
+
 def invoke_summary(path, code="0"):
     return subprocess.run(
         [sys.executable, "-I", "-S", "-B", str(SCRIPT), str(path), code],
@@ -150,6 +264,29 @@ def test_cli_emits_one_bounded_summary_and_only_observed_is_success(tmp_path, st
     assert len(proc.stdout) < 1024
     assert_public(json.loads(proc.stdout), expected)
     assert str(path).encode() not in proc.stdout
+
+
+def test_cli_maximum_problem_set_remains_below_existing_publication_cap(tmp_path):
+    path = tmp_path / "private.json"
+    path.write_text(json.dumps({**raw("STOP"), "problems": sorted(PUBLIC_PROBLEMS, reverse=True)}))
+    proc = invoke_summary(path, "2")
+    assert proc.returncode == 2 and proc.stderr == b""
+    assert proc.stdout.count(b"\n") == 1 and len(proc.stdout) < 1024
+    result = json.loads(proc.stdout)
+    assert_public(result, "STOP", "collector_stop")
+    assert result["problems"] == sorted(PUBLIC_PROBLEMS)
+
+
+def test_cli_malformed_problem_values_are_private_unknown(tmp_path):
+    path = tmp_path / "private.json"
+    for codes in malformed_problems():
+        if type(codes) is tuple:
+            continue  # JSON arrays are lists; direct-call shape is tested above.
+        path.write_text(json.dumps({**raw("STOP"), "problems": codes}))
+        proc = invoke_summary(path, "2")
+        assert proc.returncode == 2 and proc.stderr == b""
+        assert len(proc.stdout) < 1024
+        assert_public(json.loads(proc.stdout), "UNKNOWN", "unavailable")
 
 
 @pytest.mark.parametrize(
@@ -460,6 +597,27 @@ def test_actual_shell_contains_private_streams_and_preserves_collector_exit(tmp_
         assert any(b"Killed" in path.read_bytes() for path in tmp_path.rglob("private*stderr.txt"))
 
 
+def test_actual_shell_rejects_unknown_problem_codes_even_after_kill(tmp_path):
+    value = {**raw("STOP"), "problems": ["bwrap_identity", CANARY]}
+    case = shell_case(
+        tmp_path,
+        f"output.write_text(json.dumps({value!r}))\nos.kill(os.getpid(),signal.SIGKILL)\n",
+    )
+    assert execute_shell(case).returncode == 137
+    assert_ready(case)
+    assert_public(json.loads((case[0] / PUBLIC_PATH).read_text()), "UNKNOWN", "unavailable")
+
+
+def test_actual_shell_publishes_complete_fixed_problem_set_on_failure(tmp_path):
+    value = {**raw("STOP"), "problems": sorted(PUBLIC_PROBLEMS, reverse=True)}
+    case = shell_case(tmp_path, f"output.write_text(json.dumps({value!r}))\nsys.exit(17)\n")
+    assert execute_shell(case).returncode == 17
+    assert_ready(case)
+    result = json.loads((case[0] / PUBLIC_PATH).read_text())
+    assert_public(result, "STOP", "collector_stop")
+    assert result["problems"] == sorted(PUBLIC_PROBLEMS)
+
+
 @pytest.mark.parametrize(
     "body,code",
     [
@@ -733,6 +891,7 @@ def test_real_validated_collector_receipt_flows_through_projection(
     assert admission.parse(path.read_bytes()) == receipt
     result = public.summary(public.read_receipt(path), diagnostic_code)
     assert_public(result, status, "observation_complete" if status == "OBSERVED" else "collector_stop")
+    assert result["problems"] == ([] if status == "OBSERVED" else ["cgroup2_mount"])
     assert "private-project" not in json.dumps(result)
     assert "private-worker" not in json.dumps(result)
     proc = invoke_summary(path, str(diagnostic_code))

@@ -59,15 +59,29 @@ directory is not exported to other steps. It publishes only the exact nonhidden
 or fallback log. Only a literal publication-ready flag is exported.
 
 The static-only stdlib projection collects nothing and imports no collector. Its
-output contains only fixed schema/mode/status/reason labels and the constant
-`boundary=NOT_RUN`, `qualification=NOT_RUN`, `raw_evidence=NOT_PUBLISHED` claims.
+output contains only fixed schema/mode/status/reason labels, allowlisted problem
+codes, and constant `boundary=NOT_RUN`, `qualification=NOT_RUN`,
+`raw_evidence=NOT_PUBLISHED` claims.
 It never copies host paths, PIDs, unit names, hashes, boot identity, context,
-problem details, raw errors or arbitrary keys/strings. Its input is bounded to the
+free-form problem details, raw errors or arbitrary keys/strings. Its input is bounded to the
 collector's 16 KiB limit, must be a regular non-symlink file, and rejects duplicate
 keys, non-finite JSON constants and detectable changes during the read.
 
-An ordinary collector `STOP` remains public `STOP/collector_stop`. `OBSERVED`
-requires the expected receipt envelope and exit status zero. A previously
+The public schema is `forge-public-static-summary-v2`; v1 artifacts remain v1
+and have no problem-code field. Consumers must recognize the schema version,
+not assume a v1 exact-key shape. V2 adds `problems`, a sorted, unique list drawn
+only from 14 code-owned literals matching the collector's current checks. The
+input list is capped at 14 entries before deduplication. Unknown codes, non-string
+entries, missing or malformed lists, and status/list contradictions produce
+`UNKNOWN/unavailable` with an empty list, never a partial set of accepted codes.
+New collector codes require an explicit public-disclosure review.
+
+An ordinary collector `STOP` with recognized codes remains public
+`STOP/collector_stop`. For example, `bwrap_identity`,
+`apparmor_profiles_observed`, and `current_common_ancestor_access` identify
+missing necessary observations. They do not establish an errno, a root cause,
+or sufficient admission prerequisites. `OBSERVED` requires the expected receipt
+envelope, an empty problem list and exit status zero. A previously
 flushed OBSERVED receipt followed by failure or a kill is instead public
 `STOP/execution_failed`. Missing or malformed evidence is `UNKNOWN/unavailable`,
 not success. The original nonzero collector exit takes precedence over later

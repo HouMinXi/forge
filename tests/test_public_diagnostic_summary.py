@@ -183,6 +183,8 @@ def test_workflow_shell_keeps_raw_stdout_stderr_private_and_preserves_exit(
     # deterministic local fixture. Never execute a diagnostic or privileged code.
     step = next(s for s in workflow()["jobs"][job]["steps"] if summary_script(job) in s.get("run", ""))
     value = raw(mode, "OBSERVED" if code == 0 else "STOP")
+    if mode == "static":
+        value["problems"] = [] if code == 0 else ["bwrap_identity"]
     fixture = tmp_path / "fixture.py"
     fixture.write_text(
         "import json,sys,pathlib,os,signal\n"
@@ -229,6 +231,9 @@ def test_workflow_shell_keeps_raw_stdout_stderr_private_and_preserves_exit(
     result = json.loads(outputs[0].read_text())
     expected = value["status"]
     assert result["status"] == expected and CANARY not in repr(result)
+    if mode == "static":
+        assert result["schema"] == "forge-public-static-summary-v2"
+        assert result["problems"] == value["problems"]
     if code == 137:
         private_stderr = "private-stderr.txt" if public_output(job) else "private-shell-stderr.txt"
         assert any(b"Killed" in path.read_bytes() for path in tmp_path.rglob(private_stderr))
