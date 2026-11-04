@@ -103,6 +103,7 @@ def _case(point, primary, diagnostic_kind, append_point, *, suppressed=True):
     owner._pid = os.getpid()
     owner._mutex = Mutex()
     owner._faults = Faults([preexisting])
+    owner._refused = True
     owner._lease = lambda value: record
     with pytest.raises(BaseException) as caught:
         owner._finish(lease, "failed", None, None, primary)

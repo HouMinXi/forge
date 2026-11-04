@@ -14,6 +14,7 @@ import pytest
 import code_forge.invocation_owner as owner_module
 from code_forge.invocation_audit import AuditAcknowledgement, StartAcknowledgement, InvocationContext
 from code_forge.invocation_owner import InvocationOwner
+from code_forge.llm_invoke import LLMInvokeError
 
 
 ENTRIES = (
@@ -126,6 +127,7 @@ def test_actual_call_entries_preserve_fatal_exception(monkeypatch, entry, diagno
             operation, backend=None, request_digest="digest", request_bytes=1, timeout_s=2
         )
 
+    next_operation = owner.operation(context, cause="initial")
     lease = begin()
     lease.entered("entered_api_send")
     record = owner._leases[id(lease)]
@@ -196,3 +198,20 @@ def test_actual_call_entries_preserve_fatal_exception(monkeypatch, entry, diagno
     if fault_owner._faults:
         assert len(fault_owner._faults) == 1
         assert fault_owner._faults[0].code == "persistence_error"
+
+    # Diagnostic storage may be empty, but a real later admission must still
+    # refuse before entering the recorder. Restore diagnostics first so this
+    # assertion measures the owner's sticky decision, not another injected loss.
+    monkeypatch.setattr(InvocationOwner, "_fault", original_fault)
+    target = None
+    before = list(calls)
+    if prefix != "create":
+        with pytest.raises(LLMInvokeError) as denied:
+            fault_owner.begin_attempt(
+                next_operation, backend=None, request_digest="digest", request_bytes=1, timeout_s=2
+            )
+        assert denied.value.kind == "audit_persistence_error"
+        assert not denied.value.retryable
+    with pytest.raises(LLMInvokeError):
+        fault_owner.operation(fault_owner._current.context, cause="initial")
+    assert calls == before
