@@ -101,15 +101,22 @@ _INFRA_LINES_MAX = 5
 _INFRA_LINE_CHARS = 300
 
 
-def _format_infra_lines(final_state: Any) -> str:
+def _infra_state_identity(state_path: Path) -> tuple[int, int, int, int, int]:
+    """Snapshot ordinary file identity/content changes, excluding read atime."""
+    stat = state_path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def _format_infra_lines(final_state: Any, state_path: Path | None = None) -> str:
     """Stderr lines naming why a non-PASS run failed, from ``infra_errors``.
 
     ``state.infra_errors`` holds the reason for failures that produce no
     finding (no trusted gate, mutation not measured, a crashed runner). It
     was only readable in state.json, so the SARIF and the one-line summary
     showed a bare FAIL with zero findings. PASS stays quiet: its notes are
-    advisory. Messages are single-line and bounded; the overflow line
-    points at state.json.
+    advisory. Messages are single-line and bounded. Any truncation adds a
+    bounded locator for the loaded state's ``infra_errors`` field, when its
+    existing path can be displayed safely and in full.
     """
     if final_state.verdict == Verdict.PASS or not final_state.infra_errors:
         return ""
@@ -120,9 +127,26 @@ def _format_infra_lines(final_state: Any) -> str:
         + (e if len(e) <= _INFRA_LINE_CHARS else e[: _INFRA_LINE_CHARS - 3] + "...")
         for e in errors[:_INFRA_LINES_MAX]
     ]
-    extra = len(errors) - _INFRA_LINES_MAX
-    if extra > 0:
-        lines.append("code-forge: infra: (%d more in .code-forge/state.json)" % extra)
+    extra = max(0, len(errors) - _INFRA_LINES_MAX)
+    if extra or any(len(e) > _INFRA_LINE_CHARS for e in errors[:_INFRA_LINES_MAX]):
+        reason = f"{extra} more" if extra else "truncated"
+        locator = "state_path unavailable; field=infra_errors"
+        if state_path is not None:
+            try:
+                resolved = state_path.resolve(strict=True)
+                if resolved.is_file():
+                    # JSON quoting is reversible and keeps controls, bidi and
+                    # other non-ASCII path characters out of terminal output.
+                    quoted = json.dumps(str(resolved), ensure_ascii=True)
+                    locator = f"state_path={quoted}; field=infra_errors"
+            except (OSError, ValueError, RuntimeError):
+                # A path can disappear after the emitter reloaded the state.
+                # Never invent a default path or print a partial locator.
+                pass
+        detail = f"({reason}; {locator})"
+        if len(detail) > _INFRA_LINE_CHARS:
+            detail = f"({reason}; state_path too long to display; field=infra_errors)"
+        lines.append("code-forge: infra: " + detail)
     return "\n".join(lines) + "\n" if lines else ""
 
 
@@ -158,6 +182,17 @@ def _emit_ci_output(
     from .report_presentation import prepare_legacy_report, prepare_report_views
     from .report_projection import classify_report_records
 
+    # Capture the source without changing load_state's caller-path semantics.
+    # If resolution fails or the source later changes, do not claim a verified
+    # locator. These checks detect ordinary changes, not arbitrary race/ABA.
+    loaded_path = None
+    loaded_identity = None
+    try:
+        resolved = state_path.resolve(strict=True)
+        loaded_identity = _infra_state_identity(resolved)
+        loaded_path = resolved
+    except (OSError, ValueError, RuntimeError):
+        pass
     final_state = _load_state(state_path)
     if final_state is None:
         return
@@ -200,7 +235,16 @@ def _emit_ci_output(
         format_classification_line(prepared.report_classification),
         file=sys.stderr,
     )
-    infra_lines = _format_infra_lines(final_state)
+    if loaded_path is not None:
+        try:
+            if (
+                state_path.resolve(strict=True) != loaded_path
+                or _infra_state_identity(loaded_path) != loaded_identity
+            ):
+                loaded_path = None
+        except (OSError, ValueError, RuntimeError):
+            loaded_path = None
+    infra_lines = _format_infra_lines(final_state, state_path=loaded_path)
     if infra_lines:
         sys.stderr.write(infra_lines)
     if post_emit_hook is not None:

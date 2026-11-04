@@ -145,3 +145,20 @@ and pass final source/policy and exact-owned-cleanup checks in the same qualifyi
 job. Successful measured headroom and actual CI speed improvements are separate
 from an observed setup, a failed duration, or a prediction. This preliminary job
 alone does not close #31.
+
+## Scope of the CI/privacy split
+
+The unfinished user-service launch capability is not included in this tree. Its
+workflow, collector, launch wrapper, public projection and dedicated tests/docs
+were separated from the CI/privacy work. This is a scope split, not a repair or
+waiver of the nine unresolved dependency/lifecycle rejection cases. No service
+launch is enabled by this change. The prior implementation remains recoverable
+from [the preserved source commit](https://github.com/HouMinXi/forge/commit/f0ce5bad0020d6149420a85e5ad05c4ab0c8e9d7)
+for a separately reviewed continuation. It must not be reintroduced as qualified
+without resolving those cases and establishing meaningful positive controls.
+
+Existing ordinary Linux CI setup and its security effects are unchanged. The
+privacy transport does not grant permission for its AppArmor sysctl change or
+user-manager scope, and does not convert an unsupported static observation into
+strict qualification. Existing fixed metadata and dependency diagnostics retain
+their separate source, mode and execution restrictions where present.
