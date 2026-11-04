@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""Integration tests for CrossRepoImpactRunner wired into the advisory pipeline.
+"""Runner integration tests and source-level advisory wiring checks.
 
-Proves end-to-end:
-  SC-1: a cross-repo finding surfaces through the wired advisory_runners path
-  SC-2: missing registry -> SKIP, review completes without crash
-  SC-3: advisory findings never block verdict, never reset cycle counter
+Checks:
+  SC-1: the registered runner produces exactly one direct-caller finding
+  SC-2: missing registry -> SKIP with the registry-specific diagnostic
+  SC-3: nonempty results retain the nonblocking AdvisoryFinding type
+
+These tests invoke the runner directly, not the review state machine.
 
 Fixture topology: two in-process sqlite graph.db repos (A and B) plus a
 fixture registry.json under tmp_path. Repo A exports a symbol "shared_api";
@@ -15,6 +17,7 @@ disambiguation). CRG_REGISTRY_PATH env var points at the fixture registry.
 Schema matches the live code-review-graph schema:
   nodes(id, kind, name, qualified_name, file_path, line_start, line_end)
   edges(kind, source_qualified, target_qualified)
+  metadata(key, value), including the owning repo_root
 """
 
 from __future__ import annotations
@@ -22,7 +25,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -50,11 +52,13 @@ _NODES_DDL = (
 _EDGES_DDL = "CREATE TABLE edges (  kind TEXT,  source_qualified TEXT,  target_qualified TEXT)"
 
 
-def _make_db(path: Path, nodes: list[tuple], edges: list[tuple]) -> Path:
-    """Build a real sqlite graph.db at *path* with the given rows."""
+def _make_db(path: Path, nodes: list[tuple], edges: list[tuple], *, repo_root: Path) -> Path:
+    """Build a graph bound to the root spelling used by its stored paths."""
     conn = sqlite3.connect(str(path))
     conn.execute(_NODES_DDL)
     conn.execute(_EDGES_DDL)
+    conn.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO metadata VALUES (?, ?)", ("repo_root", str(repo_root.absolute())))
     conn.executemany(
         "INSERT INTO nodes VALUES (?, ?, ?, ?, ?, ?, ?)",
         nodes,
@@ -90,6 +94,13 @@ def _sample_diff(file_path: str = "a_pkg/api.py") -> str:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def isolated_graph_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the real provider's default registry and locator inside the fixture."""
+    monkeypatch.setenv("CRG_HOME", str(tmp_path / "graph-home"))
+    monkeypatch.delenv("CRG_DATA_DIR", raising=False)
+
+
 @pytest.fixture()
 def two_repo_fixture(
     tmp_path: Path,
@@ -107,6 +118,7 @@ def two_repo_fixture(
     crg_a.mkdir()
     _make_db(
         crg_a / "graph.db",
+        repo_root=repo_a,
         nodes=[
             (1, "function", "shared_api", "api::shared_api", "a_pkg/api.py", 10, 20),
             (2, "function", "internal_fn", "api::internal_fn", "a_pkg/api.py", 25, 35),
@@ -121,14 +133,19 @@ def two_repo_fixture(
     crg_b.mkdir()
     _make_db(
         crg_b / "graph.db",
+        repo_root=repo_b,
         nodes=[
             (1, "function", "use_shared", "consumer::use_shared", "b_pkg/consumer.py", 5, 15),
+            (2, "function", "indirect", "outer::indirect", "b_pkg/outer.py", 2, 4),
         ],
         edges=[
             # B calls shared_api from A
             ("CALLS", "consumer::use_shared", "shared_api"),
             # IMPORTS_FROM for disambiguation
             ("IMPORTS_FROM", "consumer::use_shared", "api"),
+            # A caller of the direct caller must stay outside the one-hop result.
+            ("CALLS", "outer::indirect", "use_shared"),
+            ("IMPORTS_FROM", "outer::indirect", "consumer"),
         ],
     )
 
@@ -162,9 +179,7 @@ class TestSC1Wiring:
         self,
         two_repo_fixture: dict,
     ) -> None:
-        """Run the runner via the wired path and assert a CROSS-REPO-IMPACT
-        finding appears with alias:file format and names the changed symbol.
-        """
+        """Check source wiring and the runner's exact direct-caller finding."""
         from code_forge.cross_repo_impact import CrossRepoImpactRunner
 
         # Verify the runner IS in the primary advisory_runners list
@@ -182,18 +197,17 @@ class TestSC1Wiring:
         repo_a = two_repo_fixture["repo_a"]
         findings = runner.run(diff, repo_a)
 
-        assert len(findings) >= 1, "Expected at least one cross-repo finding; got none"
-
-        f = findings[0]
-        assert isinstance(f, AdvisoryFinding)
-        assert f.axis == "CROSS-REPO-IMPACT"
-        # file must be alias:relpath format
-        assert "repob:" in f.file
-        parts = f.file.split(":", 1)
-        assert parts[0] == "repob"
-        assert parts[1] == "b_pkg/consumer.py"
-        # description must name the changed symbol
-        assert "shared_api" in f.description
+        assert runner.infra_errors == []
+        assert findings == [
+            AdvisoryFinding(
+                id="cross-repo-impact-1",
+                axis="CROSS-REPO-IMPACT",
+                file="repob:b_pkg/consumer.py",
+                line_range=(5, 5),
+                description="shared_api used by repob at b_pkg/consumer.py:5",
+                attribution="cross-repo graph.db",
+            )
+        ]
 
     def test_runner_in_primary_advisory_list(self) -> None:
         """Verify CrossRepoImpactRunner is in the primary advisory_runners
@@ -211,18 +225,18 @@ class TestSC1Wiring:
 
 
 # ---------------------------------------------------------------------------
-# SC-3: Advisory contract -- never blocks, never resets cycle
+# SC-3: Advisory finding type contract
 # ---------------------------------------------------------------------------
 
 
 class TestSC3AdvisoryContract:
-    """Advisory finding never blocks verdict, never suppresses other findings."""
+    """Nonempty runner results retain the nonblocking advisory finding type."""
 
     def test_advisory_finding_never_blocks(
         self,
         two_repo_fixture: dict,
     ) -> None:
-        """An advisory cross-repo finding must not block the verdict."""
+        """Cross-repo results use the nonblocking advisory type."""
         from code_forge.cross_repo_impact import CrossRepoImpactRunner
 
         runner = CrossRepoImpactRunner()
@@ -232,6 +246,8 @@ class TestSC3AdvisoryContract:
         repo_a = two_repo_fixture["repo_a"]
         findings = runner.run(diff, repo_a)
 
+        assert runner.infra_errors == []
+        assert len(findings) == 1
         # All findings must be AdvisoryFinding (structurally cannot block)
         for f in findings:
             assert isinstance(f, AdvisoryFinding), "Finding %s is not AdvisoryFinding" % f.id
@@ -249,6 +265,8 @@ class TestSC3AdvisoryContract:
         repo_a = two_repo_fixture["repo_a"]
         findings = runner.run(diff, repo_a)
 
+        assert runner.infra_errors == []
+        assert len(findings) == 1
         for f in findings:
             assert isinstance(f, AdvisoryFinding)
             assert not isinstance(f, StateFinding), (
@@ -257,14 +275,12 @@ class TestSC3AdvisoryContract:
 
 
 # ---------------------------------------------------------------------------
-# SC-2: Missing registry -> SKIP, review completes
+# SC-2: Missing registry -> registry-specific SKIP
 # ---------------------------------------------------------------------------
 
 
 class TestSC2RegistryAbsent:
-    """With no registry / CRG_REGISTRY_PATH pointing nowhere, runner emits
-    SKIP (infra_errors non-empty) and the review still completes.
-    """
+    """Missing registry yields no findings and the registry-specific diagnostic."""
 
     def test_missing_registry_skip(
         self,
@@ -287,6 +303,7 @@ class TestSC2RegistryAbsent:
         crg.mkdir()
         _make_db(
             crg / "graph.db",
+            repo_root=repo,
             nodes=[
                 (1, "function", "some_fn", "mod::some_fn", "src/mod.py", 1, 10),
             ],
@@ -296,45 +313,64 @@ class TestSC2RegistryAbsent:
         runner = CrossRepoImpactRunner()
         result = runner.run(_sample_diff("src/mod.py"), repo)
 
-        # SKIP: empty findings, infra_errors populated
+        # The primary graph must be readable before registry absence is observed.
         assert result == []
-        assert len(runner.infra_errors) > 0
+        assert runner.infra_errors == [
+            "cross-repo-impact: no sibling repos registered; use code-review-graph register"
+        ]
 
     def test_unset_registry_skip(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CRG_REGISTRY_PATH unset -> falls back to default path, which
-        almost certainly does not exist in test env -> SKIP.
-        """
+        """CRG_REGISTRY_PATH unset -> an isolated missing default registry -> SKIP."""
         from code_forge.cross_repo_impact import CrossRepoImpactRunner
 
         monkeypatch.delenv("CRG_REGISTRY_PATH", raising=False)
 
-        # Mock the default registry path to return no repos
-        # (avoids touching ~/.code-review-graph in tests)
-        with patch(
-            "code_forge.cross_repo_impact._registry_path",
-            return_value=str(tmp_path / "no_such_registry.json"),
-        ):
-            repo = tmp_path / "repo"
-            repo.mkdir()
-            crg = repo / ".code-review-graph"
-            crg.mkdir()
-            _make_db(
-                crg / "graph.db",
-                nodes=[
-                    (1, "function", "fn", "m::fn", "src/m.py", 1, 5),
-                ],
-                edges=[],
-            )
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        crg = repo / ".code-review-graph"
+        crg.mkdir()
+        _make_db(
+            crg / "graph.db",
+            repo_root=repo,
+            nodes=[
+                (1, "function", "fn", "m::fn", "src/m.py", 1, 5),
+            ],
+            edges=[],
+        )
 
-            runner = CrossRepoImpactRunner()
-            result = runner.run(_sample_diff("src/m.py"), repo)
+        runner = CrossRepoImpactRunner()
+        result = runner.run(_sample_diff("src/m.py"), repo)
 
-            assert result == []
-            assert len(runner.infra_errors) > 0
+        assert result == []
+        assert runner.infra_errors == [
+            "cross-repo-impact: no sibling repos registered; use code-review-graph register"
+        ]
+
+
+@pytest.mark.parametrize("side", ["repo_a", "repo_b"])
+def test_missing_graph_metadata_is_not_registry_absence(two_repo_fixture: dict, side: str) -> None:
+    """Legacy graphs report their identity failure, not a missing registry."""
+    db = two_repo_fixture[side] / ".code-review-graph" / "graph.db"
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("DROP TABLE metadata")
+        conn.commit()
+    finally:
+        conn.close()
+
+    runner = CrossRepoImpactRunner()
+    result = runner.run(_sample_diff(), two_repo_fixture["repo_a"])
+
+    graph = "primary" if side == "repo_a" else "sibling 'repob'"
+    assert result == []
+    assert runner.infra_errors == [
+        f"cross-repo-impact: {graph} graph.db unreadable: "
+        "graph root metadata unavailable; rebuild the graph"
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +444,7 @@ class TestAbsolutePathStrip:
         abs_a = str(repo_a.resolve() / "a_pkg" / "api.py")
         _make_db(
             crg_a / "graph.db",
+            repo_root=repo_a,
             nodes=[
                 (1, "function", "shared_api", abs_a + "::shared_api", abs_a, 10, 20),
             ],
@@ -422,6 +459,7 @@ class TestAbsolutePathStrip:
         abs_b = str(repo_b.resolve() / "client_b" / "consumer.py")
         _make_db(
             crg_b / "graph.db",
+            repo_root=repo_b,
             nodes=[
                 (1, "function", "use_shared", abs_b + "::use_shared", abs_b, 5, 15),
             ],
@@ -445,7 +483,7 @@ class TestAbsolutePathStrip:
         diff = _sample_diff("a_pkg/api.py")
         findings = runner.run(diff, repo_a)
 
-        assert len(findings) >= 1, "Expected cross-repo finding from absolute-path fixture"
+        assert len(findings) == 1, "Expected exactly one direct caller from absolute-path fixture"
         f = findings[0]
 
         # The file field must be repo-relative, not absolute
@@ -457,7 +495,7 @@ class TestAbsolutePathStrip:
 
         # Proximity should use relative paths (no inflated Jaccard
         # from shared /tmp/pytest-xxx/ parent segments)
-        assert "shared_api" in f.description
+        assert f.description == "shared_api used by repob at client_b/consumer.py:5"
         assert len(runner.infra_errors) == 0
 
     def test_symlink_registered_realpath_in_db(
@@ -465,13 +503,11 @@ class TestAbsolutePathStrip:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """DB stores symlink-based path, prefix is resolved -> fallback strips.
+        """Hand-seeded lexical root metadata binds symlink-spelled node paths.
 
-        Scenario: code-review-graph build ran inside a symlink directory,
-        so nodes.file_path is symlink-based (os.path.abspath does not
-        resolve symlinks). The runner prefix uses Path.resolve() which
-        DOES resolve symlinks, creating a mismatch. The resolve fallback
-        must catch this: resolve the db path, then re-try startswith.
+        The registry uses canonical roots, so the runner must accept the
+        matching recorded aliases and strip each caller to a relative path.
+        This covers alternate graph root spellings, not current builder output.
         """
         # Real directories (graph.db lives here)
         real_a = tmp_path / "real_a"
@@ -490,10 +526,11 @@ class TestAbsolutePathStrip:
         link_b = tmp_path / "link_b"
         link_b.symlink_to(real_b)
 
-        # DB stores SYMLINK-based path (mimics build from symlink dir)
+        # Deliberately record the same symlink spelling in metadata and nodes.
         symlink_a_file = str(link_a / "pkg" / "api.py")
         _make_db(
             crg_a / "graph.db",
+            repo_root=link_a,
             nodes=[
                 (1, "function", "target_fn", symlink_a_file + "::target_fn", symlink_a_file, 10, 20),
             ],
@@ -503,6 +540,7 @@ class TestAbsolutePathStrip:
         symlink_b_file = str(link_b / "client" / "use.py")
         _make_db(
             crg_b / "graph.db",
+            repo_root=link_b,
             nodes=[
                 (1, "function", "call_target", symlink_b_file + "::call_target", symlink_b_file, 7, 12),
             ],
@@ -531,12 +569,12 @@ class TestAbsolutePathStrip:
         diff = _sample_diff("pkg/api.py")
         findings = runner.run(diff, real_a)
 
-        assert len(findings) >= 1, "Symlink-registered repo must still produce findings"
+        assert len(findings) == 1, "Symlink-root metadata must bind exactly one direct caller"
         f = findings[0]
 
         # Must be repo-relative despite symlink mismatch
         assert f.file == "repob:client/use.py", "Expected repo-relative path, got: %s" % f.file
         assert "/tmp" not in f.file, "Absolute path leaked through symlink: %s" % f.file
         assert f.line_range == (7, 7)
-        assert "target_fn" in f.description
+        assert f.description == "target_fn used by repob at client/use.py:7"
         assert len(runner.infra_errors) == 0
