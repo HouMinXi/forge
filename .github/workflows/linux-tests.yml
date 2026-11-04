@@ -235,8 +235,11 @@ jobs:
         if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
           export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
         fi
+        diagnostic_invocation=$(python -c 'import secrets; print(secrets.token_hex(16))')
+        [[ "$diagnostic_invocation" =~ ^[0-9a-f]{32}$ ]]
+        printf 'diagnostic_invocation=%s\n' "$diagnostic_invocation" >> "$GITHUB_OUTPUT"
         python scripts/ci_private_transport.py plan --sha "$GITHUB_SHA" \
-          --directory "$RUNNER_TEMP/forge-plan" --public-directory forge-linux-public 2>&1 | (umask 077; exec tee "$EVIDENCE/collection.log")
+          --directory "$RUNNER_TEMP/forge-plan" --public-directory forge-linux-public --diagnostic-directory "$EVIDENCE/diagnostics" --diagnostic-invocation "$diagnostic_invocation" 2>&1 | (umask 077; exec tee "$EVIDENCE/collection.log")
       id: public_plan
     - name: Prepare fixed public CI summary
       id: public_summary
@@ -267,6 +270,46 @@ jobs:
         fi
         python scripts/ci_private_transport.py summary --job plan \
           --status "$CI_JOB_STATUS" --public-directory forge-linux-public
+    - name: Prepare fixed public CI diagnostics
+      id: public_diagnostics
+      if: ${{ always() }}
+      env:
+        CI_JOB_STATUS: ${{ job.status }}
+        CI_PLAN_INVOCATION: ${{ steps.public_plan.outputs.diagnostic_invocation }}
+      run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-90.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-90.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py diagnostics --job plan \
+          --status "$CI_JOB_STATUS" --directory "$EVIDENCE/diagnostics" \
+          --public-directory forge-linux-diagnostics \
+          --invocation "plan=$CI_PLAN_INVOCATION"
+    - name: Preserve fixed public diagnostics
+      if: ${{ always() && steps.public_diagnostics.outcome == 'success' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: diagnostics-linux-plan-${{ github.run_attempt }}
+        path: forge-linux-diagnostics/diagnostics.json
+        if-no-files-found: error
+        retention-days: 14
     - name: 'Archive attempt: linux-collection-plan'
       if: ${{ always() && steps.public_summary.outcome == 'success' && steps.public_plan.outcome == 'success' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -534,9 +577,12 @@ jobs:
         if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
           export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
         fi
+        diagnostic_invocation=$(python -c 'import secrets; print(secrets.token_hex(16))')
+        [[ "$diagnostic_invocation" =~ ^[0-9a-f]{32}$ ]]
+        printf 'diagnostic_invocation=%s\n' "$diagnostic_invocation" >> "$GITHUB_OUTPUT"
         python scripts/ci_private_transport.py run --sha "$GITHUB_SHA" \
           --plan forge-linux-input/plan/plan.json --phase ownership \
-          --directory "$EVIDENCE" --public-directory forge-linux-public 2>&1 | (umask 077; exec tee "$EVIDENCE/driver-ownership.log")
+          --directory "$EVIDENCE" --public-directory forge-linux-public --diagnostic-directory "$EVIDENCE/diagnostics" --diagnostic-invocation "$diagnostic_invocation" 2>&1 | (umask 077; exec tee "$EVIDENCE/driver-ownership.log")
       id: ownership_receipt
     - name: Run cgroup
       if: ${{ !cancelled() && steps.preflight.outcome == 'success' && steps.install.outcome == 'success' }}
@@ -563,12 +609,15 @@ jobs:
         if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
           export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
         fi
+        diagnostic_invocation=$(python -c 'import secrets; print(secrets.token_hex(16))')
+        [[ "$diagnostic_invocation" =~ ^[0-9a-f]{32}$ ]]
+        printf 'diagnostic_invocation=%s\n' "$diagnostic_invocation" >> "$GITHUB_OUTPUT"
         runtime_dir="/run/user/$(id -u)"
         export XDG_RUNTIME_DIR="$runtime_dir"
         systemd-run --user --scope --quiet -- \
           python scripts/ci_private_transport.py run --sha "$GITHUB_SHA" \
           --plan forge-linux-input/plan/plan.json --phase cgroup \
-          --directory "$EVIDENCE" --public-directory forge-linux-public 2>&1 | (umask 077; exec tee "$EVIDENCE/driver-cgroup.log")
+          --directory "$EVIDENCE" --public-directory forge-linux-public --diagnostic-directory "$EVIDENCE/diagnostics" --diagnostic-invocation "$diagnostic_invocation" 2>&1 | (umask 077; exec tee "$EVIDENCE/driver-cgroup.log")
       id: cgroup_receipt
     - name: Run local
       if: ${{ !cancelled() && steps.preflight.outcome == 'success' && steps.install.outcome == 'success' }}
@@ -595,9 +644,12 @@ jobs:
         if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
           export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
         fi
+        diagnostic_invocation=$(python -c 'import secrets; print(secrets.token_hex(16))')
+        [[ "$diagnostic_invocation" =~ ^[0-9a-f]{32}$ ]]
+        printf 'diagnostic_invocation=%s\n' "$diagnostic_invocation" >> "$GITHUB_OUTPUT"
         python scripts/ci_private_transport.py run --sha "$GITHUB_SHA" \
           --plan forge-linux-input/plan/plan.json --phase local \
-          --directory "$EVIDENCE" --public-directory forge-linux-public 2>&1 | (umask 077; exec tee "$EVIDENCE/driver-local.log")
+          --directory "$EVIDENCE" --public-directory forge-linux-public --diagnostic-directory "$EVIDENCE/diagnostics" --diagnostic-invocation "$diagnostic_invocation" 2>&1 | (umask 077; exec tee "$EVIDENCE/driver-local.log")
       id: local_receipt
     - name: Prepare fixed public CI summary
       id: public_summary
@@ -628,6 +680,50 @@ jobs:
         fi
         python scripts/ci_private_transport.py summary --job process-contracts \
           --status "$CI_JOB_STATUS" --public-directory forge-linux-public
+    - name: Prepare fixed public CI diagnostics
+      id: public_diagnostics
+      if: ${{ always() }}
+      env:
+        CI_JOB_STATUS: ${{ job.status }}
+        CI_OWNERSHIP_INVOCATION: ${{ steps.ownership_receipt.outputs.diagnostic_invocation }}
+        CI_CGROUP_INVOCATION: ${{ steps.cgroup_receipt.outputs.diagnostic_invocation }}
+        CI_LOCAL_INVOCATION: ${{ steps.local_receipt.outputs.diagnostic_invocation }}
+      run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-90.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-90.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py diagnostics --job process-contracts \
+          --status "$CI_JOB_STATUS" --directory "$EVIDENCE/diagnostics" \
+          --public-directory forge-linux-diagnostics \
+          --invocation "ownership=$CI_OWNERSHIP_INVOCATION" \
+          --invocation "cgroup=$CI_CGROUP_INVOCATION" \
+          --invocation "local=$CI_LOCAL_INVOCATION"
+    - name: Preserve fixed public diagnostics
+      if: ${{ always() && steps.public_diagnostics.outcome == 'success' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: diagnostics-linux-process-contracts-${{ github.run_attempt }}
+        path: forge-linux-diagnostics/diagnostics.json
+        if-no-files-found: error
+        retention-days: 14
     - name: 'Archive attempt: linux-process-evidence'
       if: ${{ always() && steps.public_summary.outcome == 'success' && steps.ownership_receipt.outcome == 'success' && steps.cgroup_receipt.outcome == 'success' && steps.local_receipt.outcome == 'success' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -900,9 +996,12 @@ jobs:
         if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
           export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
         fi
+        diagnostic_invocation=$(python -c 'import secrets; print(secrets.token_hex(16))')
+        [[ "$diagnostic_invocation" =~ ^[0-9a-f]{32}$ ]]
+        printf 'diagnostic_invocation=%s\n' "$diagnostic_invocation" >> "$GITHUB_OUTPUT"
         python scripts/ci_private_transport.py run --sha "$GITHUB_SHA" \
           --plan forge-linux-input/plan/plan.json --phase "shard-${{ matrix.shard }}" \
-          --directory "$EVIDENCE" --public-directory forge-linux-public 2>&1 | (umask 077; exec tee "$EVIDENCE/shard.log")
+          --directory "$EVIDENCE" --public-directory forge-linux-public --diagnostic-directory "$EVIDENCE/diagnostics" --diagnostic-invocation "$diagnostic_invocation" 2>&1 | (umask 077; exec tee "$EVIDENCE/shard.log")
       id: shard_receipt
     - name: Prepare fixed public CI summary
       id: public_summary
@@ -933,6 +1032,46 @@ jobs:
         fi
         python scripts/ci_private_transport.py summary --job service-free \
           --status "$CI_JOB_STATUS" --public-directory forge-linux-public
+    - name: Prepare fixed public CI diagnostics
+      id: public_diagnostics
+      if: ${{ always() }}
+      env:
+        CI_JOB_STATUS: ${{ job.status }}
+        CI_SHARD_INVOCATION: ${{ steps.shard_receipt.outputs.diagnostic_invocation }}
+      run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-90.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-90.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py diagnostics --job service-free \
+          --status "$CI_JOB_STATUS" --directory "$EVIDENCE/diagnostics" \
+          --public-directory forge-linux-diagnostics --phase "shard-${{ matrix.shard }}" \
+          --invocation "shard-${{ matrix.shard }}=$CI_SHARD_INVOCATION"
+    - name: Preserve fixed public diagnostics
+      if: ${{ always() && steps.public_diagnostics.outcome == 'success' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: diagnostics-linux-service-free-${{ matrix.shard }}-${{ github.run_attempt }}
+        path: forge-linux-diagnostics/diagnostics.json
+        if-no-files-found: error
+        retention-days: 14
     - name: 'Archive attempt: linux-shard-${{ matrix.shard }}-evidence'
       if: ${{ always() && steps.public_summary.outcome == 'success' && steps.shard_receipt.outcome == 'success' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -994,6 +1133,7 @@ jobs:
         path: forge-linux-input/all
         merge-multiple: false
     - name: Require all jobs and exact complete node coverage
+      id: coverage_verification
       env:
         CI_NEEDS_JSON: ${{ toJSON(needs) }}
       run: |-
@@ -1018,9 +1158,12 @@ jobs:
         if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
           export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
         fi
+        diagnostic_invocation=$(python -c 'import secrets; print(secrets.token_hex(16))')
+        [[ "$diagnostic_invocation" =~ ^[0-9a-f]{32}$ ]]
+        printf 'diagnostic_invocation=%s\n' "$diagnostic_invocation" >> "$GITHUB_OUTPUT"
         python scripts/ci_private_transport.py verify --sha "$GITHUB_SHA" \
           --plan forge-linux-input/all/linux-collection-plan/plan.json \
-          --directory forge-linux-input/all
+          --directory forge-linux-input/all --diagnostic-directory "$EVIDENCE/diagnostics" --diagnostic-invocation "$diagnostic_invocation"
     - name: Prepare fixed public CI summary
       id: public_summary
       if: ${{ always() }}
@@ -1050,6 +1193,46 @@ jobs:
         fi
         python scripts/ci_private_transport.py summary --job linux-tests \
           --status "$CI_JOB_STATUS" --public-directory forge-linux-public
+    - name: Prepare fixed public CI diagnostics
+      id: public_diagnostics
+      if: ${{ always() }}
+      env:
+        CI_JOB_STATUS: ${{ job.status }}
+        CI_VERIFY_INVOCATION: ${{ steps.coverage_verification.outputs.diagnostic_invocation }}
+      run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-90.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-90.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_private_transport.py diagnostics --job linux-tests \
+          --status "$CI_JOB_STATUS" --directory "$EVIDENCE/diagnostics" \
+          --public-directory forge-linux-diagnostics \
+          --invocation "verify=$CI_VERIFY_INVOCATION"
+    - name: Preserve fixed public diagnostics
+      if: ${{ always() && steps.public_diagnostics.outcome == 'success' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: diagnostics-linux-linux-tests-${{ github.run_attempt }}
+        path: forge-linux-diagnostics/diagnostics.json
+        if-no-files-found: error
+        retention-days: 14
     - name: Preserve fixed aggregate summary
       if: ${{ always() && steps.public_summary.outcome == 'success' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

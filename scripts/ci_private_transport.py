@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 from types import SimpleNamespace
+import traceback
 
 if __package__:
     from . import ci_test_shards as ci
@@ -57,6 +58,21 @@ RECEIPT_KEYS = {
 REPORT_KEYS = {"nodeid", "when", "outcome", "skip_reason", "wasxfail"}
 POLICY_KEYS = {"module_seconds", "runtime_skips", "collection_skips", "collection_skip_reasons"}
 ERROR = "STOP: Private CI validation failed."
+DIAGNOSTIC_SCHEMA = "forge-public-linux-ci-diagnostics-v1"
+DIAGNOSTIC_STAGES = (
+    "initialization",
+    "input_validation",
+    "collection",
+    "execution",
+    "receipt_validation",
+    "coverage_validation",
+    "publication",
+    "aggregate",
+)
+DIAGNOSTIC_OPERATIONS = ("plan", *ci.PHASES, "verify")
+DIAGNOSTIC_FAILURES = ("NONZERO_EXIT", "INTERRUPTED", "REJECTED", "INTERNAL_ERROR")
+DIAGNOSTIC_KEYS = {"operation", "stage", "state", "code"}
+INVOCATION_RE = re.compile(r"[0-9a-f]{32}\Z")
 
 
 class TransportError(ValueError):
@@ -212,7 +228,7 @@ def _directory(path, *, create=False, private=False):
         os.close(fd)
 
 
-def read_json(path):
+def read_json(path, *, max_bytes=MAX_BYTES):
     """Read a bounded, regular file without following any path-component symlinks."""
     path = Path(path)
     with _directory(path.parent) as parent:
@@ -221,9 +237,9 @@ def read_json(path):
         )
     try:
         before = os.fstat(fd)
-        _require(stat.S_ISREG(before.st_mode) and before.st_size <= MAX_BYTES)
+        _require(stat.S_ISREG(before.st_mode) and before.st_size <= max_bytes)
         chunks = []
-        remaining = MAX_BYTES + 1
+        remaining = max_bytes + 1
         while remaining:
             block = os.read(fd, min(1024 * 1024, remaining))
             if not block:
@@ -235,7 +251,9 @@ def read_json(path):
             (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
             == (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
         )
-        return _decode_json(b"".join(chunks))
+        raw = b"".join(chunks)
+        _require(len(raw) <= max_bytes)
+        return _decode_json(raw)
     finally:
         os.close(fd)
 
@@ -498,7 +516,7 @@ def _separate_directories(directory, public_directory):
     _require(private != public and private not in public.parents and public not in private.parents)
 
 
-def collect_plan(directory, public_directory, sha, policy, manifest):
+def collect_plan(directory, public_directory, sha, policy, manifest, *, diagnostic=None):
     """Collect/validate privately before publishing the four reviewed projections."""
     directory, public_directory = Path(directory), Path(public_directory)
     _separate_directories(directory, public_directory)
@@ -510,12 +528,14 @@ def collect_plan(directory, public_directory, sha, policy, manifest):
     _clear_public(directory, names)
     _prepare_private_outputs(directory, [f"collection-{phase}.json" for phase in COLLECTION_PHASES])
     with _log(directory, "collection.log") as log:
+        _stage(diagnostic, "collection")
 
         def runner(*args, **kwargs):
             return subprocess.run(*args, stdout=log, stderr=subprocess.STDOUT, **kwargs)
 
         with _ci_io(read_json, _write_json, runner):
             ci.collect_plan(directory, sha, policy)
+        _stage(diagnostic, "receipt_validation")
         raw_plan = read_json(directory / "plan.json")
         ci.validate_plan(raw_plan, sha, policy)
         collections = {
@@ -527,8 +547,10 @@ def collect_plan(directory, public_directory, sha, policy, manifest):
         projected = {
             phase: project_receipt(receipt, manifest, policy) for phase, receipt in collections.items()
         }
+        _stage(diagnostic, "coverage_validation")
         plan = ci.build_plan(projected, sha, projected_policy)
         _validate_public_plan(plan, sha, projected_policy, manifest)
+    _stage(diagnostic, "publication")
     # No output is published until all collections and the entire plan validate.
     for phase, receipt in projected.items():
         _write_json(public_directory / f"collection-{phase}.json", receipt)
@@ -548,7 +570,7 @@ def collect_plan(directory, public_directory, sha, policy, manifest):
     return plan
 
 
-def run_phase(phase, plan, directory, public_directory, policy, manifest):
+def run_phase(phase, plan, directory, public_directory, policy, manifest, *, diagnostic=None):
     """Run the original pytest argv, then independently enforce public-plan coverage."""
     _require(phase in ci.PHASES)
     directory, public_directory = Path(directory), Path(public_directory)
@@ -571,9 +593,11 @@ def run_phase(phase, plan, directory, public_directory, policy, manifest):
         [*args, "--durations=20", f"--junitxml={directory / (phase + '.xml')}"],
     )
     with _log(directory, phase + ".log") as log:
+        _stage(diagnostic, "execution")
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=False)
         if result.returncode:
             raise SystemExit(result.returncode)
+        _stage(diagnostic, "receipt_validation")
         raw = read_json(report_path)
         identities = _identities(manifest)
         _validate_receipt(raw, set(identities), set(manifest["modules"]), policy)
@@ -585,7 +609,9 @@ def run_phase(phase, plan, directory, public_directory, policy, manifest):
         }
         ci.validate_execution(raw, phase, raw_expected, policy)
         projected = project_receipt(raw, manifest, policy)
+        _stage(diagnostic, "coverage_validation")
         ci.validate_execution(projected, phase, plan, projected_policy)
+    _stage(diagnostic, "publication")
     _write_json(public_directory / f"receipt-{phase}.json", projected)
     _existing_outputs(public_directory, plan, projected_policy, manifest)
     _require(read_json(public_directory / f"receipt-{phase}.json") == projected)
@@ -646,7 +672,7 @@ def _existing_outputs(directory, plan, projected_policy, manifest):
         ci.validate_execution(receipt, phase, plan, projected_policy)
 
 
-def verify(plan, directory, sha, policy, manifest, needs):
+def verify(plan, directory, sha, policy, manifest, needs, *, diagnostic=None):
     """Retain original manifest reconstruction, seven receipts, and job-state checks."""
     _sha(sha)
     projected_policy = project_policy(policy, manifest)
@@ -672,6 +698,7 @@ def verify(plan, directory, sha, policy, manifest, needs):
             validated[key] = receipt
         return validated[key]
 
+    _stage(diagnostic, "receipt_validation")
     # Reject additional raw files and unknown schemas, including symlinked
     # directories. Summaries are validated as data but cannot authorize a pass.
     plan_count = 0
@@ -692,8 +719,249 @@ def verify(plan, directory, sha, policy, manifest, needs):
     _require(plan_count == 1)
     # The original aggregate performs the file count, manifest rebuild, node
     # coverage, outcome, skip, xfail, subtest and upstream-status checks.
+    _stage(diagnostic, "aggregate")
     with _ci_io(reader):
         ci.aggregate(plan, Path(directory), sha, projected_policy, needs)
+
+
+def _diagnostic_record(operation, stage, state, code):
+    record = {"operation": operation, "stage": stage, "state": state, "code": code}
+    _validate_diagnostic_record(record, operation)
+    return record
+
+
+def _validate_diagnostic_record(record, operation):
+    _object(record, DIAGNOSTIC_KEYS)
+    _require(operation in DIAGNOSTIC_OPERATIONS and record["operation"] == operation)
+    state, stage, code = record["state"], record["stage"], record["code"]
+    if state == "UNAVAILABLE":
+        _require(stage == "unknown" and code == "NOT_RECORDED")
+    else:
+        _require(stage in DIAGNOSTIC_STAGES)
+        allowed_stages = {"initialization", "input_validation"}
+        if operation == "plan":
+            allowed_stages |= {"collection", "receipt_validation", "coverage_validation", "publication"}
+        elif operation == "verify":
+            allowed_stages |= {"receipt_validation", "aggregate"}
+        else:
+            allowed_stages |= {"execution", "receipt_validation", "coverage_validation", "publication"}
+        _require(stage in allowed_stages)
+        if state == "INCOMPLETE":
+            _require(code == "NO_TERMINAL_RECORD")
+        elif state == "FAILED":
+            _require(code in DIAGNOSTIC_FAILURES)
+        else:
+            _require(state == "COMPLETED" and code == "COMPLETED")
+            _require(stage == ("aggregate" if operation == "verify" else "publication"))
+    return record
+
+
+class _Diagnostic:
+    """Code-owned progress, never a receipt, root-cause claim or qualification gate."""
+
+    def __init__(self, directory, operation, invocation):
+        _require(operation in DIAGNOSTIC_OPERATIONS)
+        _require(type(invocation) is str and INVOCATION_RE.fullmatch(invocation) is not None)
+        self.invocation = invocation
+        self.path = Path(directory) / (operation + ".json")
+        self.operation = operation
+        self.stage = "initialization"
+        self.enter(self.stage)
+
+    def enter(self, stage):
+        self.stage = stage
+        self.write("INCOMPLETE", "NO_TERMINAL_RECORD")
+
+    def write(self, state, code):
+        _write_json(
+            self.path,
+            {
+                "invocation": self.invocation,
+                "record": _diagnostic_record(self.operation, self.stage, state, code),
+            },
+        )
+
+    def failed(self, error):
+        if isinstance(error, SystemExit) and error.code in (None, 0):
+            self.write("INCOMPLETE", "NO_TERMINAL_RECORD")
+            return
+        if isinstance(error, (SystemExit, subprocess.CalledProcessError)):
+            code = "NONZERO_EXIT"
+        elif isinstance(error, KeyboardInterrupt):
+            code = "INTERRUPTED"
+        elif isinstance(error, ValueError):
+            code = "REJECTED"
+        else:
+            code = "INTERNAL_ERROR"
+        self.write("FAILED", code)
+
+
+def _stage(diagnostic, stage):
+    if diagnostic is not None:
+        diagnostic.enter(stage)
+
+
+def _diagnostic_operations(job, phase):
+    _require(job in JOBS)
+    if job == "service-free":
+        _require(phase in ("shard-0", "shard-1", "shard-2", "shard-3"))
+        return (phase,)
+    _require(phase is None)
+    return {
+        "plan": ("plan",),
+        "process-contracts": ("ownership", "cgroup", "local"),
+        "linux-tests": ("verify",),
+    }[job]
+
+
+def project_diagnostics(directory, public_directory, job, status, phase=None, *, invocations=None):
+    """Reconstruct only fixed codes; missing state is unknown, never NOT_RUN.
+
+    A surviving INCOMPLETE record locates the last entered boundary, not the
+    reason for interruption. Cancellation/VM retirement may prevent this step
+    entirely. Neither these records nor job-local tracebacks survive by promise.
+    """
+    _separate_directories(directory, public_directory)
+    _clear_public(public_directory, ["diagnostics.json"])
+    operations = _diagnostic_operations(job, phase)
+    _object(invocations, set(operations))
+    for invocation in invocations.values():
+        _require(type(invocation) is str)
+        _require(invocation == "" or INVOCATION_RE.fullmatch(invocation) is not None)
+    _require(status in STATUSES)
+    expected = {op + suffix for op in operations for suffix in (".json", ".log")}
+    try:
+        files = _output_files(directory)
+    except FileNotFoundError:
+        files = []
+    _require(all(path.name in expected for path in files))
+    for path in files:
+        with _directory(path.parent) as parent:
+            info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+            _require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+    present = {path.name for path in files}
+    records = []
+    for operation in operations:
+        record = _diagnostic_record(operation, "unknown", "UNAVAILABLE", "NOT_RECORDED")
+        if operation + ".json" in present:
+            checkpoint = read_json(Path(directory) / (operation + ".json"), max_bytes=1024)
+            _object(checkpoint, {"invocation", "record"})
+            invocation = checkpoint["invocation"]
+            _require(type(invocation) is str and INVOCATION_RE.fullmatch(invocation) is not None)
+            candidate = _validate_diagnostic_record(checkpoint["record"], operation)
+            # The expected generation comes from the fixed producer's workflow
+            # output, never from this potentially stale checkpoint itself.
+            if invocations[operation] and invocation == invocations[operation]:
+                record = candidate
+        # Never copy arbitrary input keys, strings, exception text or log bytes.
+        records.append(_diagnostic_record(operation, record["stage"], record["state"], record["code"]))
+    value = {
+        "schema": DIAGNOSTIC_SCHEMA,
+        "job": job,
+        "job_result": status,
+        "operations": records,
+        "raw_evidence": "NOT_PUBLISHED",
+    }
+    _require(len(json.dumps(value, allow_nan=False)) <= 1024)
+    _write_json(Path(public_directory) / "diagnostics.json", value)
+    _require({p.name for p in _output_files(public_directory)} == {"diagnostics.json"})
+    _require(read_json(Path(public_directory) / "diagnostics.json") == value)
+    return value
+
+
+def _clear_operation_outputs(args):
+    if args.command in ("plan", "run"):
+        _separate_directories(args.directory, args.public_directory)
+        names = (
+            ["plan.json", *[f"collection-{phase}.json" for phase in COLLECTION_PHASES]]
+            if args.command == "plan"
+            else [f"receipt-{args.phase}.json"]
+        )
+        # Remove this producer's outputs before reading any untrusted input.
+        _clear_public(args.public_directory, names)
+
+
+def _execute(args, diagnostic=None):
+    _clear_operation_outputs(args)
+    _stage(diagnostic, "input_validation")
+    _sha(args.sha)
+    manifest = validate_manifest(read_json(args.manifest))
+    policy = _validate_policy(read_json(ci.POLICY), manifest)
+    options = {} if diagnostic is None else {"diagnostic": diagnostic}
+    if args.command == "plan":
+        collect_plan(args.directory, args.public_directory, args.sha, policy, manifest, **options)
+    else:
+        plan = read_json(args.plan)
+        projected_policy = project_policy(policy, manifest)
+        _validate_public_plan(plan, args.sha, projected_policy, manifest)
+        if args.command == "run":
+            run_phase(
+                args.phase, plan, args.directory, args.public_directory, policy, manifest, **options
+            )
+        else:
+            needs = _decode_json(os.environ["CI_NEEDS_JSON"].encode("utf-8"))
+            verify(plan, args.directory, args.sha, policy, manifest, needs, **options)
+
+
+def _execute_diagnosed(args):
+    directory = args.diagnostic_directory
+    operation = args.phase if args.command == "run" else args.command
+    # Validate all overlap constraints before any creation or chmod. A run's
+    # diagnostics may be inside its private evidence directory, never public.
+    if args.command == "verify":
+        _separate_directories(directory, args.directory)
+    else:
+        _separate_directories(directory, args.public_directory)
+    if args.command in ("run", "verify"):
+        _separate_directories(directory, args.plan.parent)
+    _separate_directories(directory, args.manifest.parent)
+    _separate_directories(directory, ci.POLICY.parent)
+    private, diagnostic_path = Path(args.directory).absolute(), Path(directory).absolute()
+    _require(private != diagnostic_path and diagnostic_path not in private.parents)
+    _require(type(args.diagnostic_invocation) is str)
+    _require(INVOCATION_RE.fullmatch(args.diagnostic_invocation) is not None)
+    try:
+        _clear_public(directory, [operation + ".json"])
+    except BaseException:
+        try:
+            _clear_operation_outputs(args)
+        except Exception:  # noqa: BLE001, S110 - keep the original setup failure.
+            pass
+        raise
+    _clear_operation_outputs(args)
+    original_error = None
+    original_traceback = None
+    diagnostic = None
+    try:
+        with _log(directory, operation + ".log"):
+            diagnostic = _Diagnostic(directory, operation, args.diagnostic_invocation)
+            try:
+                _execute(args, diagnostic)
+                diagnostic.write("COMPLETED", "COMPLETED")
+            except BaseException as error:
+                original_error, original_traceback = error, error.__traceback__
+                # No raw fallback, including logging/close failures. The outer
+                # handler prints only ERROR. Preserve the original child's rc.
+                try:
+                    traceback.print_exc()
+                except Exception:  # noqa: BLE001, S110 - no public log fallback.
+                    pass
+                try:
+                    diagnostic.failed(error)
+                except Exception:  # noqa: BLE001, S110 - preserve original failure.
+                    pass
+                raise
+    except BaseException as error:
+        if original_error is not None:
+            raise original_error.with_traceback(original_traceback) from None
+        # A failure closing the private log is also a failed operation, even
+        # after the workload returned. Never leave a fresh success if writable.
+        if diagnostic is not None:
+            try:
+                diagnostic.failed(error)
+            except Exception:  # noqa: BLE001, S110 - no raw fallback on I/O failure.
+                pass
+        raise
 
 
 class _Parser(argparse.ArgumentParser):
@@ -709,6 +977,8 @@ def _parser():
         sub.add_argument("--sha", required=True)
         sub.add_argument("--directory", type=Path, required=True)
         sub.add_argument("--manifest", type=Path, default=MANIFEST)
+        sub.add_argument("--diagnostic-directory", type=Path)
+        sub.add_argument("--diagnostic-invocation")
         if command in ("plan", "run"):
             sub.add_argument("--public-directory", type=Path, required=True)
         if command in ("run", "verify"):
@@ -719,6 +989,13 @@ def _parser():
     summary.add_argument("--job", choices=JOBS, required=True)
     summary.add_argument("--status", choices=STATUSES, required=True)
     summary.add_argument("--public-directory", type=Path, required=True)
+    diagnostics = commands.add_parser("diagnostics")
+    diagnostics.add_argument("--job", choices=JOBS, required=True)
+    diagnostics.add_argument("--status", choices=STATUSES, required=True)
+    diagnostics.add_argument("--phase", choices=ci.PHASES)
+    diagnostics.add_argument("--invocation", action="append", default=[])
+    diagnostics.add_argument("--directory", type=Path, required=True)
+    diagnostics.add_argument("--public-directory", type=Path, required=True)
     return parser
 
 
@@ -738,30 +1015,24 @@ def main(argv=None):
                 },
             )
             return 0
-        if args.command in ("plan", "run"):
-            _separate_directories(args.directory, args.public_directory)
-            names = (
-                ["plan.json", *[f"collection-{phase}.json" for phase in COLLECTION_PHASES]]
-                if args.command == "plan"
-                else [f"receipt-{args.phase}.json"]
+        if args.command == "diagnostics":
+            invocations = {}
+            for entry in args.invocation:
+                operation, separator, invocation = entry.partition("=")
+                _require(separator == "=" and operation not in invocations)
+                invocations[operation] = invocation
+            project_diagnostics(
+                args.directory,
+                args.public_directory,
+                args.job,
+                args.status,
+                args.phase,
+                invocations=invocations,
             )
-            # Remove only this producer's named regular outputs before reading
-            # any untrusted input, including a missing or invalid manifest.
-            _clear_public(args.public_directory, names)
-        _sha(args.sha)
-        manifest = validate_manifest(read_json(args.manifest))
-        policy = _validate_policy(read_json(ci.POLICY), manifest)
-        if args.command == "plan":
-            collect_plan(args.directory, args.public_directory, args.sha, policy, manifest)
+        elif args.diagnostic_directory is not None:
+            _execute_diagnosed(args)
         else:
-            plan = read_json(args.plan)
-            projected_policy = project_policy(policy, manifest)
-            _validate_public_plan(plan, args.sha, projected_policy, manifest)
-            if args.command == "run":
-                run_phase(args.phase, plan, args.directory, args.public_directory, policy, manifest)
-            else:
-                needs = _decode_json(os.environ["CI_NEEDS_JSON"].encode("utf-8"))
-                verify(plan, args.directory, args.sha, policy, manifest, needs)
+            _execute(args)
         return 0
     except subprocess.CalledProcessError as error:
         print(ERROR, file=sys.stderr)
