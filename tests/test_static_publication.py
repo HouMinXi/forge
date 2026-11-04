@@ -332,11 +332,17 @@ def test_workflow_retains_read_only_source_route_and_exact_public_artifact():
     value = workflow()
     assert set(value["on"]) == {"pull_request", "workflow_dispatch"}
     assert value["permissions"] == {"contents": "read"}
-    assert set(value["jobs"]) == {"observe", "fixed-metadata"}
+    assert set(value["jobs"]) == {
+        "observe",
+        "fixed-metadata",
+        "conflicting-modes",
+        "ordinary-dependency",
+        "dependency-view",
+    }
     assert value["on"]["workflow_dispatch"]["inputs"]["fixed_metadata_read"]["default"] is False
     assert value["on"]["workflow_dispatch"]["inputs"]["expected_source_sha"]["default"] == ""
     assert value["jobs"]["fixed-metadata"]["if"] == (
-        "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read }}"
+        "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot && !inputs.dependency_view_read }}"
     )
     job = value["jobs"]["observe"]
     assert "github.event_name == 'workflow_dispatch'" in job["if"]

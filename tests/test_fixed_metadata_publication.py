@@ -361,7 +361,10 @@ def test_workflow_retains_explicit_dispatch_and_exact_public_artifact():
     assert inputs["fixed_metadata_read"]["default"] is False
     assert inputs["expected_source_sha"]["default"] == ""
     job = value["jobs"]["fixed-metadata"]
-    assert job["if"] == "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read }}"
+    assert (
+        job["if"]
+        == "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot && !inputs.dependency_view_read }}"
+    )
     assert "inputs.fixed_metadata_read" in value["jobs"]["observe"]["if"]
     assert job["runs-on"] == "ubuntu-24.04" and job["timeout-minutes"] == 2
     assert job["concurrency"] == {

@@ -95,10 +95,19 @@ manual opt-in (default false), expected-source input and collector-side branch,
 first-attempt, event and source checks. It is never selected by a PR event. Its
 receipt and logs now also remain private, with a separate fixed-label summary
 bound to the original exit status. Its privileged collector is unchanged; this
-publication repair neither authorizes nor performs that diagnostic. Other
-diagnostic modes from separate branches are not imported. Future workflow merges
-must reconcile authorization and publication paths explicitly rather than
-restoring a full-receipt uploader.
+publication repair neither authorizes nor performs that diagnostic.
+
+The dispatcher also retains the separate ordinary-dependency and dependency-view
+modes, each default false and manual only. Any pair or all three diagnostic
+opt-ins select only a fixed STOP job, before checkout or native execution. The
+static job remains the default when no mode is selected. Existing collector-side
+branch, first-attempt, event and source gates remain unchanged: merging the
+workflow does not admit main as a diagnostic execution source. In particular,
+the ordinary/view wrappers remain pinned to their dedicated diagnostic branch;
+a main dispatch stops rather than broadening that contract. See
+[the publication boundary](../public-diagnostic-evidence.md) for each mode's
+summary contract. None of these observations resolves the separate user-service
+dependency-activation boundary or establishes strict qualification.
 
 ## Version 2 finite read diagnostics
 
