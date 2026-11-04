@@ -394,7 +394,11 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
             "paths": [
                 ".github/workflows/strict-linux-admission.yml",
                 "scripts/strict_linux_admission.py",
+                "scripts/static_public_summary.py",
+                "scripts/fixed_metadata_public_summary.py",
                 "tests/test_strict_linux_admission.py",
+                "tests/test_static_publication.py",
+                "tests/test_fixed_metadata_publication.py",
             ],
         },
         "workflow_dispatch": {
@@ -431,7 +435,8 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
     assert steps[1]["env"]["CONTEXT_SOURCE_SHA"] == head_expression
     assert steps[1]["env"]["CONTEXT_WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
     assert steps[1]["env"]["CONTEXT_WORKFLOW_REF"] == "${{ github.workflow_ref }}"
-    assert steps[2]["if"] == "${{ always() }}"
+    assert steps[2]["if"] == "${{ always() && env.ADMISSION_PUBLIC_READY == 'true' }}"
+    assert steps[2]["with"]["path"] == "forge-static-public/summary.json"
     assert "sudo " not in text and "sysctl " not in text
     assert "pip install" not in text and "systemd-run" not in text
     assert "strict_linux_admission.py" in steps[1]["run"]
@@ -541,6 +546,10 @@ def _live_process(pid):
         raw = Path(f"/proc/{pid}/stat").read_text()
     except FileNotFoundError:
         return False
+    except ProcessLookupError as exc:
+        if exc.errno == errno.ESRCH:
+            return False
+        raise
     return raw.rsplit(")", 1)[1].split()[0] != "Z"
 
 
@@ -888,3 +897,33 @@ def test_v1_receipts_are_not_reinterpreted(observed):
     observed.pop("diagnostics")
     with pytest.raises(admission.ObservationError):
         admission.parse(encode(observed))
+
+
+@pytest.mark.parametrize(
+    "failure, disappeared",
+    [
+        (FileNotFoundError(errno.ENOENT, "fixture"), True),
+        (ProcessLookupError(errno.ESRCH, "fixture"), True),
+        (PermissionError(errno.EACCES, "fixture"), False),
+        (OSError(errno.EIO, "fixture"), False),
+        (OSError(errno.EINVAL, "fixture"), False),
+        (ProcessLookupError(errno.EACCES, "wrong errno fixture"), False),
+    ],
+)
+def test_live_process_read_failure_contract(monkeypatch, failure, disappeared):
+    def read_failure(self, *args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(Path, "read_text", read_failure)
+    if disappeared:
+        assert _live_process(123) is False
+    else:
+        with pytest.raises(type(failure)) as caught:
+            _live_process(123)
+        assert caught.value is failure
+
+
+@pytest.mark.parametrize("state, expected", [("R", True), ("S", True), ("Z", False)])
+def test_live_process_state_contract_unchanged(monkeypatch, state, expected):
+    monkeypatch.setattr(Path, "read_text", lambda self: f"123 (fixture) {state} 1 2 3")
+    assert _live_process(123) is expected

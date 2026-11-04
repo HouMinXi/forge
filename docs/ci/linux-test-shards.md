@@ -74,6 +74,54 @@ elapsed and aggregate runner time must be compared on the published PR.
 
 ## Evidence and retries
 
+The publication path now requires a separately reviewed public identity manifest,
+`scripts/ci_public_test_identities.json`. It lists complete public pytest nodeids,
+including their parameter IDs, and known public repository test modules. This is
+not generated from a live collection. Every runtime identity must match it
+exactly before any receipt can be published. Unknown identities or reasons fail
+with a fixed STOP message; no rejected value or hash of it is made public.
+
+The private transport wrapper leaves `ci_test_shards.py` and its validators
+unchanged. It first validates the raw collections or execution outcomes against
+the original policy. Approved nodeids become module-prefixed manifest indices;
+approved skip reasons become indices of already-public policy constants. The
+public manifest and policy digests bind these mappings. These are digests of
+reviewed public inputs, not deterministic hashes of private runtime values.
+
+For a run phase, raw outcome checks alone are not a coverage proof. The projected
+receipt is then checked against the independently downloaded public plan. The
+final gate still reconstructs that plan from all four collection manifests and
+checks all seven execution receipts with the original exact-node, lifecycle,
+skip, xfail, subtest and upstream-job predicates. No test is silently dropped to
+fit the manifest, and no job-status-only substitute is accepted.
+
+Raw logs, JUnit and original receipts remain private to each runner. Every shell
+step redirects diagnostics before setup and derives its private paths locally;
+private paths are not exported through `GITHUB_ENV`. Transport output uses exact
+relative filenames, with no directory or wildcard upload. Data publication also
+requires its producing step to succeed. Failure summaries are separate fixed
+records and cannot authorize uploading failed or stale data. Explicit old private
+and public output names are cleared before reuse, and public writes are atomic.
+An interrupted process cannot establish freshness by leaving an old receipt.
+
+Private output permissions are scoped to their writers, not inherited by the
+suite: the shell saves and restores its incoming umask around private setup,
+and private log sinks use their own restrictive creation mask. The transport
+creates private directories with mode 0700 and reserves fresh raw receipt/JUnit
+targets with mode 0600 before launching pytest. The reviewed recorder and JUnit
+writer truncate those files without replacing their modes. Empty reservations
+are not valid evidence. Pytest and its fixture subprocesses retain the original
+runner umask; changing a fixture's permissions is not a privacy mechanism.
+These controls do not claim to defeat same-UID code deliberately replacing raw
+files or changing their permissions.
+
+This protects the workflow-controlled diagnostic payloads, not arbitrary hostile
+code running as the runner user. GitHub and pinned checkout/setup/upload actions
+still expose their normal platform and action metadata. Temporary private data
+is not a durable private archive; removing public raw logs reduces forensic
+detail and does not erase historical artifacts. Missing evidence or runner loss
+never proves test success or cleanup.
+
 Each job first uploads an immutable `archive-...-<run_attempt>` copy, then refreshes
 its stable `linux-...` artifact. The gate downloads only stable names from the same
 workflow run. This lets a failed-job-only rerun reuse successful jobs' artifacts
@@ -84,6 +132,31 @@ run. Archives and current artifacts retain the original 14-day lifetime.
 Local pure controls: `python -m pytest tests/test_ci_test_shards.py`.
 The full runtime qualification remains the actual GitHub Linux workflow; a local
 collection proof or synthetic receipt control is not a substitute for it.
+
+### Maintaining the public identity manifest
+
+New modules or changed parameter IDs require explicit review of the complete
+public identifiers before updating the manifest. Source literals, deterministic
+public data and bounded public fallback labels can establish what may be
+published. A source-derived possible label does not prove that pytest will
+actually collect it. Dynamic host-derived values are not approved simply because
+they appeared in a private candidate collection. The runtime never promotes
+unknown data into the manifest, truncates it or hashes it as a privacy shortcut.
+
+Review evidence records the source/configuration/dependency versions used to
+establish public provenance. That evidence is a review and release check, not a
+runtime claim that every implementation byte remains identical. An unchanged
+approved public identifier can remain valid across implementation-only changes;
+the CI source SHA and the original coverage validators retain their separate
+roles. Manifest changes invalidate its public mapping digest and need the normal
+source review and complete collection/coverage validation again.
+
+The real complete manifest and qualified-runtime validation are release gates.
+A missing manifest deliberately prevents collection/publication; that safe STOP
+is not a completed CI migration. Synthetic manifest controls demonstrate the
+mechanism, not that the current full repository suite has been admitted. Added
+projection, parsing and validation costs must be measured separately from actual
+CI wall time, runner setup and queueing; parallelism alone does not prove a speedup.
 
 ## Pytest 9.2 qualification
 
