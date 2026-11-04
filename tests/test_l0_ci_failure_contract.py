@@ -12,6 +12,7 @@ from io import StringIO
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import time
 from types import SimpleNamespace
@@ -60,15 +61,43 @@ def _output(line=None):
 
 
 class _Review:
-    def __init__(self, tmp_path, monkeypatch, *, mode=Mode.CI, python_file=False, cargo_tool=None):
+    def __init__(
+        self,
+        tmp_path,
+        monkeypatch,
+        *,
+        mode=Mode.CI,
+        python_file=False,
+        cargo_tool=None,
+        pylint_tool=None,
+    ):
         self.root = tmp_path / "checkout"
         self.root.mkdir()
-        self.analyzer = "cargo" if cargo_tool else "shellcheck"
+        self.analyzer = "pylint" if pylint_tool else "cargo" if cargo_tool else "shellcheck"
         config = tmp_path / "config"
         (config / ".code-forge").mkdir(parents=True)
         (config / ".code-forge/gate.yaml").write_text("{}\n")
         registry_path = self.root / ".code-forge/tools.yaml"
-        if cargo_tool:
+        if pylint_tool:
+            (self.root / "sample.py").write_text("# context\n# context\nvalue = 2\n")
+            (self.root / "pyproject.toml").write_text("[tool.pylint]\n")
+            detected = detect_toolchain(
+                self.root,
+                which_fn=lambda name: "/mock/pylint" if name == "pylint" else None,
+            )
+            assert detected.detected == ["pylint"]
+            generate_tools_yaml(detected, registry_path)
+            registry_path.write_text(registry_path.read_text().replace("pylint:", f"{pylint_tool}:", 1))
+            # This contract exercises L0/L1, not native mutation availability.
+            # Keep the real unconfigured L2 advisory without starting workloads.
+            real_which = shutil.which
+            monkeypatch.setattr(
+                "shutil.which",
+                lambda name, *args, **kwargs: (
+                    None if name == "mutmut" else real_which(name, *args, **kwargs)
+                ),
+            )
+        elif cargo_tool:
             (self.root / "src").mkdir()
             (self.root / "src/lib.rs").write_text("// context\n// context\nfn changed() {}\n")
             (self.root / "Cargo.toml").write_text('[package]\nname = "fixture"\nversion = "0.0.0"\n')
@@ -87,8 +116,8 @@ class _Review:
             assert detected.detected == ["shellcheck"]
             generate_tools_yaml(detected, registry_path)
         self.registry = load_registry(str(registry_path))
-        assert self.registry[cargo_tool or "shellcheck"].output_format == (
-            "clippy_json" if cargo_tool else "shellcheck_json"
+        assert self.registry[pylint_tool or cargo_tool or "shellcheck"].output_format == (
+            "pylint_json" if pylint_tool else "clippy_json" if cargo_tool else "shellcheck_json"
         )
         self.exit_code = 0
         self.payload = "[]"
@@ -104,6 +133,16 @@ class _Review:
         self.excerpts = [
             {"file": "script.sh", "start_line": 3, "end_line": 3, "content": "echo $value\n"}
         ]
+        if pylint_tool:
+            self.tool_files = ["sample.py"]
+            files = [Path("sample.py")]
+            diff = (
+                "diff --git a/sample.py b/sample.py\n--- a/sample.py\n+++ b/sample.py\n"
+                "@@ -3 +3 @@\n-value = 1\n+value = 2\n"
+            )
+            self.excerpts = [
+                {"file": "sample.py", "start_line": 3, "end_line": 3, "content": "value = 2\n"}
+            ]
         if cargo_tool:
             self.payload = ""
             files = [Path("src/lib.rs")]
@@ -168,7 +207,9 @@ class _Review:
         if argv[0] == "/mock/sibling":
             return subprocess.CompletedProcess(argv, 1, "script.sh:3:1: F401 sibling diagnostic", "")
         assert argv == (
-            ["/mock/cargo", "clippy", "--message-format=json"]
+            ["/mock/pylint", "--output-format=json", *self.tool_files]
+            if self.analyzer == "pylint"
+            else ["/mock/cargo", "clippy", "--message-format=json"]
             if self.analyzer == "cargo"
             else ["/mock/shellcheck", "-f", "json", *self.tool_files]
         )
@@ -231,6 +272,128 @@ class _Review:
 @pytest.fixture
 def review(tmp_path, monkeypatch):
     return _Review(tmp_path, monkeypatch)
+
+
+def _pylint_diagnostic(
+    line,
+    *,
+    message_id="F0002",
+    symbol="astroid-error",
+    message="Astroid crashed while inferring fixture",
+):
+    return {
+        "path": "sample.py",
+        "line": line,
+        "endLine": line,
+        "column": 0,
+        "type": {"F": "fatal", "E": "error", "W": "warning"}[message_id[0]],
+        "message-id": message_id,
+        "symbol": symbol,
+        "message": message,
+    }
+
+
+def _pylint_infra_errors(disk):
+    # Python's real L2 phase still reports its unconfigured baseline. That
+    # advisory alone must not be confused with an independent L0 failure.
+    prefix = "L2: gate.yaml missing or test.command not configured:"
+    assert len([error for error in disk["infra_errors"] if error.startswith(prefix)]) == 1
+    return [error for error in disk["infra_errors"] if not error.startswith(prefix)]
+
+
+@pytest.mark.parametrize(
+    ("line", "exit_code", "stderr", "message"),
+    [
+        (1, 1, "", "Astroid crashed while inferring fixture"),
+        (3, 1, "fixture traceback", "Astroid crashed while inferring fixture"),
+        (1, 0, "fixture traceback", ""),
+        (3, 0, "", "Astroid crashed while inferring fixture"),
+    ],
+    ids=["off-diff-empty-stderr", "in-diff", "off-diff-empty-reason-zero", "in-diff-zero"],
+)
+def test_pylint_internal_failure_fails_ci_independently_of_delta_and_exit(
+    tmp_path, monkeypatch, line, exit_code, stderr, message
+):
+    review = _Review(tmp_path, monkeypatch, pylint_tool="pylint")
+    review.exit_code = exit_code
+    review.payload = json.dumps([_pylint_diagnostic(line, message=message)])
+    review.stderr = stderr
+    disk = review.run(Verdict.FAIL, infra="F0002")
+    assert review.machine._l0_failed
+    errors = _pylint_infra_errors(disk)
+    assert len(errors) == 1
+    assert "tool=pylint" in errors[0]
+    if message:
+        assert message in errors[0]
+        assert message in review.ci_stderr
+    if stderr:
+        assert stderr in errors[0]
+        assert stderr in review.ci_stderr
+    findings = [finding for finding in disk["findings"] if finding["source"] == "L0"]
+    assert [finding["description"] for finding in findings] == ([message] if line == 3 else [])
+    assert [finding["line_range"] for finding in findings] == ([[3, 3]] if line == 3 else [])
+    advisories = [item for item in review.machine._advisories if item.axis == "pre-existing-l0"]
+    assert [item.description for item in advisories] == ([message] if line == 1 else [])
+    if line == 3:
+        assert message in json.dumps(review.ci_sarif)
+
+
+def test_pylint_alias_internal_failure_preserves_partial_warning(tmp_path, monkeypatch):
+    review = _Review(tmp_path, monkeypatch, pylint_tool="python-quality")
+    review.exit_code = 5
+    review.stderr = "fixture traceback after partial analysis"
+    review.payload = json.dumps(
+        [
+            _pylint_diagnostic(1),
+            _pylint_diagnostic(
+                3, message_id="W0611", symbol="unused-import", message="Unused import fixture"
+            ),
+        ]
+    )
+    disk = review.run(Verdict.FAIL, infra="F0002")
+    assert review.machine._l0_failed
+    errors = _pylint_infra_errors(disk)
+    assert len(errors) == 1
+    assert "tool=python-quality" in errors[0]
+    assert review.stderr in errors[0]
+    assert review.stderr in review.ci_stderr
+    findings = [finding for finding in disk["findings"] if finding["source"] == "L0"]
+    assert [finding["description"] for finding in findings] == ["Unused import fixture"]
+    assert "Unused import fixture" in json.dumps(review.ci_sarif)
+    advisories = [item for item in review.machine._advisories if item.axis == "pre-existing-l0"]
+    assert [item.description for item in advisories] == ["Astroid crashed while inferring fixture"]
+
+
+@pytest.mark.parametrize(
+    ("message_id", "symbol", "line", "exit_code", "expected"),
+    [
+        (None, None, None, 0, Verdict.PASS),
+        ("E0001", "syntax-error", 1, 2, Verdict.PASS),
+        ("E0001", "syntax-error", 3, 2, Verdict.FAIL),
+        ("F0001", "fatal", 1, 1, Verdict.PASS),
+        ("F0001", "fatal", 3, 1, Verdict.FAIL),
+    ],
+    ids=["clean", "off-diff-syntax", "in-diff-syntax", "off-diff-other-fatal", "in-diff-other-fatal"],
+)
+def test_pylint_ordinary_diagnostics_keep_existing_delta_behavior(
+    tmp_path, monkeypatch, message_id, symbol, line, exit_code, expected
+):
+    review = _Review(tmp_path, monkeypatch, pylint_tool="pylint")
+    review.exit_code = exit_code
+    review.payload = json.dumps(
+        []
+        if message_id is None
+        else [_pylint_diagnostic(line, message_id=message_id, symbol=symbol, message="ordinary failure")]
+    )
+    disk = review.run(expected)
+    assert not review.machine._l0_failed
+    assert _pylint_infra_errors(disk) == []
+    findings = [finding for finding in disk["findings"] if finding["source"] == "L0"]
+    assert [finding["description"] for finding in findings] == (
+        ["ordinary failure"] if line == 3 else []
+    )
+    advisories = [item for item in review.machine._advisories if item.axis == "pre-existing-l0"]
+    assert [item.description for item in advisories] == (["ordinary failure"] if line == 1 else [])
 
 
 def _cargo_output(line=None, *, level="warning", statuses=(False,)):
