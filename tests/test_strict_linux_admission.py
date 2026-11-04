@@ -394,7 +394,11 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
             "paths": [
                 ".github/workflows/strict-linux-admission.yml",
                 "scripts/strict_linux_admission.py",
+                "scripts/static_public_summary.py",
+                "scripts/fixed_metadata_public_summary.py",
                 "tests/test_strict_linux_admission.py",
+                "tests/test_static_publication.py",
+                "tests/test_fixed_metadata_publication.py",
             ],
         },
         "workflow_dispatch": {
@@ -404,8 +408,18 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
                     "type": "boolean",
                     "default": False,
                 },
+                "ordinary_dependency_snapshot": {
+                    "description": "Explicit ordinary-user dependency observation (not qualification)",
+                    "type": "boolean",
+                    "default": False,
+                },
+                "dependency_view_read": {
+                    "description": "Explicit one-run two-stat and ordinary fragment diagnostic (not qualification)",
+                    "type": "boolean",
+                    "default": False,
+                },
                 "expected_source_sha": {
-                    "description": "Reviewed exact source SHA; required when fixed_metadata_read is true",
+                    "description": "Reviewed exact source SHA; required for either explicit diagnostic",
                     "type": "string",
                     "default": "",
                 },
@@ -413,15 +427,21 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
         },
     }
     assert workflow["permissions"] == {"contents": "read"}
-    assert set(workflow["jobs"]) == {"observe", "fixed-metadata"}
+    assert set(workflow["jobs"]) == {
+        "observe",
+        "fixed-metadata",
+        "ordinary-dependency",
+        "dependency-view",
+        "conflicting-modes",
+    }
     assert workflow["jobs"]["fixed-metadata"]["if"] == (
-        "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read }}"
+        "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot && !inputs.dependency_view_read }}"
     )
     job = workflow["jobs"]["observe"]
     assert job["if"] == (
         "${{ (github.event_name == 'workflow_dispatch' || "
         "github.event.pull_request.head.repo.full_name == github.repository) && "
-        "!(github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read) }}"
+        "!(github.event_name == 'workflow_dispatch' && (inputs.fixed_metadata_read || inputs.ordinary_dependency_snapshot || inputs.dependency_view_read)) }}"
     )
     steps = job["steps"]
     assert len(steps) == 3
@@ -431,7 +451,8 @@ def test_workflow_limits_pr_scope_and_binds_actual_head():
     assert steps[1]["env"]["CONTEXT_SOURCE_SHA"] == head_expression
     assert steps[1]["env"]["CONTEXT_WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
     assert steps[1]["env"]["CONTEXT_WORKFLOW_REF"] == "${{ github.workflow_ref }}"
-    assert steps[2]["if"] == "${{ always() }}"
+    assert steps[2]["if"] == "${{ always() && env.ADMISSION_PUBLIC_READY == 'true' }}"
+    assert steps[2]["with"]["path"] == "forge-static-public/summary.json"
     assert "sudo " not in text and "sysctl " not in text
     assert "pip install" not in text and "systemd-run" not in text
     assert "strict_linux_admission.py" in steps[1]["run"]
@@ -987,3 +1008,62 @@ def test_live_process_read_failure_contract(monkeypatch, failure, disappeared):
 def test_live_process_state_contract_unchanged(monkeypatch, state, expected):
     monkeypatch.setattr(Path, "read_text", lambda self: f"123 (fixture) {state} 1 2 3")
     assert _live_process(123) is expected
+
+
+@pytest.mark.parametrize("event", ["workflow_dispatch", "pull_request"])
+@pytest.mark.parametrize("fixed", [False, True])
+@pytest.mark.parametrize("ordinary", [False, True])
+@pytest.mark.parametrize("same_repository", [False, True])
+@pytest.mark.parametrize("view", [False, True])
+def test_diagnostic_job_selection_matrix(event, fixed, ordinary, same_repository, view):
+    import ast
+
+    workflow = yaml.safe_load(
+        (Path(__file__).parents[1] / ".github/workflows/strict-linux-admission.yml").read_text()
+    )
+
+    def evaluate(node):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.BoolOp):
+            values = [evaluate(item) for item in node.values]
+            return all(values) if isinstance(node.op, ast.And) else any(values)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return not evaluate(node.operand)
+        if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
+            return evaluate(node.left) == evaluate(node.comparators[0])
+        raise AssertionError("Unsupported workflow condition")
+
+    selected = set()
+    substitutions = {
+        "github.event.pull_request.head.repo.full_name": repr(
+            "HouMinXi/forge" if same_repository else "fork/forge"
+        ),
+        "github.repository": repr("HouMinXi/forge"),
+        "github.event_name": repr(event),
+        "inputs.fixed_metadata_read": str(fixed),
+        "inputs.ordinary_dependency_snapshot": str(ordinary),
+        "inputs.dependency_view_read": str(view),
+    }
+    for name, job in workflow["jobs"].items():
+        expression = job["if"][3:-2]
+        for token, value in substitutions.items():
+            expression = expression.replace(token, value)
+        expression = expression.replace("&&", " and ").replace("||", " or ").replace("!", " not ")
+        if evaluate(ast.parse(expression.strip(), mode="eval").body):
+            selected.add(name)
+    expected = (
+        ({"observe"} if same_repository else set())
+        if event == "pull_request"
+        else {
+            (False, False, False): {"observe"},
+            (True, False, False): {"fixed-metadata"},
+            (False, True, False): {"ordinary-dependency"},
+            (False, False, True): {"dependency-view"},
+            (True, True, False): {"conflicting-modes"},
+            (True, False, True): {"conflicting-modes"},
+            (False, True, True): {"conflicting-modes"},
+            (True, True, True): {"conflicting-modes"},
+        }[fixed, ordinary, view]
+    )
+    assert selected == expected

@@ -14,19 +14,26 @@ def parse_clippy(
 ) -> list[Finding | ToolError]:
     """Parse cargo clippy --message-format=json output.
 
-    Cargo emits one JSON object per line.  Only lines with
-    reason="compiler-message" and level in (warning, error) are
-    relevant.  Non-diagnostic lines (build-script-executed, etc.)
-    are silently skipped.
+    Cargo emits one JSON object per line. Diagnostics use
+    reason="compiler-message" and level in (warning, error).
+    Build completion records are also checked; other records such as
+    build-script-executed are silently skipped.
 
     Emit each primary location once per diagnostic, regardless of span order.
     Legacy output with no is_primary fields retains its first-span fallback.
     Partially marked, non-boolean, or all-secondary spans yield ToolError.
 
+    An explicit unsuccessful Cargo build is an execution failure even when
+    located diagnostics are present: the global completion record cannot
+    establish whether those diagnostics explain failures in other targets.
+    Keep the findings and report the failed completion independently.
+
     Returns:
         [] on empty string (clean run).
         [Finding, ...] on valid output with diagnostics.
         [ToolError] if ALL lines fail JSON parse and input is non-empty.
+        Findings plus ToolError for an explicit build-finished success=false.
+        Exit status alone and legacy output without that marker are unchanged.
     """
     if not output.strip():
         return []
@@ -34,6 +41,7 @@ def parse_clippy(
     findings = []
     parse_failures = 0
     total_lines = 0
+    build_failed = False
 
     for raw_line in output.splitlines():
         stripped = raw_line.strip()
@@ -46,6 +54,10 @@ def parse_clippy(
             parse_failures += 1
             continue
 
+        if obj.get("reason") == "build-finished":
+            if obj.get("success") is False:
+                build_failed = True
+            continue
         if obj.get("reason") != "compiler-message":
             continue
 
@@ -114,4 +126,14 @@ def parse_clippy(
             )
         ]
 
+    if build_failed:
+        findings.append(
+            ToolError(
+                tool_name,
+                exit_code,
+                "",
+                f"Cargo reported an unsuccessful build (exit {exit_code}); "
+                "cause unknown from completion status",
+            )
+        )
     return findings

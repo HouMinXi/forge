@@ -44,6 +44,7 @@ def parse_pylint(
         [] on empty string or empty array "[]" (clean run).
         [Finding, ...] on valid JSON array with diagnostics.
         [ToolError] on malformed/unparseable output (mirrors _sarif.py).
+        Findings plus ToolError for an explicit F0002 internal failure.
     """
     if not output.strip():
         return []
@@ -87,7 +88,8 @@ def parse_pylint(
         # Prefer message-id (e.g. "C0114") as rule_id: stable across
         # pylint versions, human-greppable. Fall back to symbol then
         # "unknown".
-        rule_id = obj.get("message-id") or obj.get("symbol") or "unknown"
+        message_id = obj.get("message-id")
+        rule_id = message_id or obj.get("symbol") or "unknown"
 
         level = _PYLINT_LEVEL_MAP.get(
             obj.get("type", ""),
@@ -106,5 +108,18 @@ def parse_pylint(
                 tool_name=tool_name,
             )
         )
+
+        # F0002 is an internal Pylint failure, independent of its location.
+        # Keep the diagnostic, but do not let diff filtering hide the failure.
+        if message_id == "F0002" or (message_id in (None, "") and obj.get("symbol") == "astroid-error"):
+            findings.append(
+                ToolError(
+                    tool_name=tool_name,
+                    exit_code=exit_code,
+                    stderr="",
+                    message=f"{tool_name} reported an internal failure ({rule_id}): "
+                    f"{obj.get('message', '')}",
+                )
+            )
 
     return findings

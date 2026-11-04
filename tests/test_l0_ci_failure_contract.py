@@ -12,6 +12,7 @@ from io import StringIO
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import time
 from types import SimpleNamespace
@@ -60,22 +61,64 @@ def _output(line=None):
 
 
 class _Review:
-    def __init__(self, tmp_path, monkeypatch, *, mode=Mode.CI, python_file=False):
+    def __init__(
+        self,
+        tmp_path,
+        monkeypatch,
+        *,
+        mode=Mode.CI,
+        python_file=False,
+        cargo_tool=None,
+        pylint_tool=None,
+    ):
         self.root = tmp_path / "checkout"
         self.root.mkdir()
-        (self.root / "script.sh").write_text("#!/bin/sh\necho old\necho $value\n")
+        self.analyzer = "pylint" if pylint_tool else "cargo" if cargo_tool else "shellcheck"
         config = tmp_path / "config"
         (config / ".code-forge").mkdir(parents=True)
         (config / ".code-forge/gate.yaml").write_text("{}\n")
-        detected = detect_toolchain(
-            self.root,
-            which_fn=lambda name: "/mock/shellcheck" if name == "shellcheck" else None,
-        )
-        assert detected.detected == ["shellcheck"]
         registry_path = self.root / ".code-forge/tools.yaml"
-        generate_tools_yaml(detected, registry_path)
+        if pylint_tool:
+            (self.root / "sample.py").write_text("# context\n# context\nvalue = 2\n")
+            (self.root / "pyproject.toml").write_text("[tool.pylint]\n")
+            detected = detect_toolchain(
+                self.root,
+                which_fn=lambda name: "/mock/pylint" if name == "pylint" else None,
+            )
+            assert detected.detected == ["pylint"]
+            generate_tools_yaml(detected, registry_path)
+            registry_path.write_text(registry_path.read_text().replace("pylint:", f"{pylint_tool}:", 1))
+            # This contract exercises L0/L1, not native mutation availability.
+            # Keep the real unconfigured L2 advisory without starting workloads.
+            real_which = shutil.which
+            monkeypatch.setattr(
+                "shutil.which",
+                lambda name, *args, **kwargs: (
+                    None if name == "mutmut" else real_which(name, *args, **kwargs)
+                ),
+            )
+        elif cargo_tool:
+            (self.root / "src").mkdir()
+            (self.root / "src/lib.rs").write_text("// context\n// context\nfn changed() {}\n")
+            (self.root / "Cargo.toml").write_text('[package]\nname = "fixture"\nversion = "0.0.0"\n')
+            registry_path.parent.mkdir()
+            registry_path.write_text(
+                f"tools:\n  {cargo_tool}:\n    command: cargo clippy\n"
+                "    args: [--message-format=json]\n    output_format: clippy_json\n"
+                "    file_patterns: ['*.rs']\n    working_dir: cargo_root\n"
+            )
+        else:
+            (self.root / "script.sh").write_text("#!/bin/sh\necho old\necho $value\n")
+            detected = detect_toolchain(
+                self.root,
+                which_fn=lambda name: "/mock/shellcheck" if name == "shellcheck" else None,
+            )
+            assert detected.detected == ["shellcheck"]
+            generate_tools_yaml(detected, registry_path)
         self.registry = load_registry(str(registry_path))
-        assert self.registry["shellcheck"].output_format == "shellcheck_json"
+        assert self.registry[pylint_tool or cargo_tool or "shellcheck"].output_format == (
+            "pylint_json" if pylint_tool else "clippy_json" if cargo_tool else "shellcheck_json"
+        )
         self.exit_code = 0
         self.payload = "[]"
         self.stderr = ""
@@ -90,6 +133,26 @@ class _Review:
         self.excerpts = [
             {"file": "script.sh", "start_line": 3, "end_line": 3, "content": "echo $value\n"}
         ]
+        if pylint_tool:
+            self.tool_files = ["sample.py"]
+            files = [Path("sample.py")]
+            diff = (
+                "diff --git a/sample.py b/sample.py\n--- a/sample.py\n+++ b/sample.py\n"
+                "@@ -3 +3 @@\n-value = 1\n+value = 2\n"
+            )
+            self.excerpts = [
+                {"file": "sample.py", "start_line": 3, "end_line": 3, "content": "value = 2\n"}
+            ]
+        if cargo_tool:
+            self.payload = ""
+            files = [Path("src/lib.rs")]
+            diff = (
+                "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n"
+                "@@ -3 +3 @@\n-fn old() {}\n+fn changed() {}\n"
+            )
+            self.excerpts = [
+                {"file": "src/lib.rs", "start_line": 3, "end_line": 3, "content": "fn changed() {}\n"}
+            ]
         if python_file:
             (self.root / "sample.py").write_text("value = 2\n")
             files.append(Path("sample.py"))
@@ -130,20 +193,26 @@ class _Review:
 
     def resolve(self, command, **kwargs):
         command = command.split()[0]
-        if command == "shellcheck" and not self.available:
+        if command == self.analyzer and not self.available:
             return None
-        assert command in ("shellcheck", "sibling")
+        assert command in (self.analyzer, "sibling")
         return "/mock/" + command
 
     def completed(self, argv, **kwargs):
         self.calls.append(argv)
-        assert argv[0] in ("/mock/shellcheck", "/mock/sibling")
+        assert argv[0] in ("/mock/" + self.analyzer, "/mock/sibling")
         if "--version" in argv:
             return subprocess.CompletedProcess(argv, 0, "fixture version", "")
         assert kwargs["cwd"] == self.root
         if argv[0] == "/mock/sibling":
             return subprocess.CompletedProcess(argv, 1, "script.sh:3:1: F401 sibling diagnostic", "")
-        assert argv == ["/mock/shellcheck", "-f", "json", *self.tool_files]
+        assert argv == (
+            ["/mock/pylint", "--output-format=json", *self.tool_files]
+            if self.analyzer == "pylint"
+            else ["/mock/cargo", "clippy", "--message-format=json"]
+            if self.analyzer == "cargo"
+            else ["/mock/shellcheck", "-f", "json", *self.tool_files]
+        )
         if self.error is not None:
             raise self.error
         return subprocess.CompletedProcess(argv, self.exit_code, self.payload, self.stderr)
@@ -168,13 +237,15 @@ class _Review:
         stdout, stderr = StringIO(), StringIO()
         with redirect_stdout(stdout), redirect_stderr(stderr):
             _emit_ci_output(state_path, self.registry)
+        self.ci_stderr = stderr.getvalue()
+        self.ci_sarif = json.loads(stdout.getvalue())
         assert verdict == expected
         assert self.machine._state.verdict == expected
         assert disk["verdict"] == expected.value
         assert disk["converged"] is (expected == Verdict.PASS)
         assert verdict_to_exit(verdict) == (0 if expected == Verdict.PASS else 1)
         assert expected.value in stderr.getvalue()
-        assert json.loads(stdout.getvalue())["version"] == "2.1.0"
+        assert self.ci_sarif["version"] == "2.1.0"
         current_verifications = self.verifications[before_verify:]
         if self.machine.l1_provider.is_stub_l1:
             assert len(self.llm_calls) == before_llm
@@ -201,6 +272,270 @@ class _Review:
 @pytest.fixture
 def review(tmp_path, monkeypatch):
     return _Review(tmp_path, monkeypatch)
+
+
+def _pylint_diagnostic(
+    line,
+    *,
+    message_id="F0002",
+    symbol="astroid-error",
+    message="Astroid crashed while inferring fixture",
+):
+    return {
+        "path": "sample.py",
+        "line": line,
+        "endLine": line,
+        "column": 0,
+        "type": {"F": "fatal", "E": "error", "W": "warning"}[message_id[0]],
+        "message-id": message_id,
+        "symbol": symbol,
+        "message": message,
+    }
+
+
+def _pylint_infra_errors(disk):
+    # Python's real L2 phase still reports its unconfigured baseline. That
+    # advisory alone must not be confused with an independent L0 failure.
+    prefix = "L2: gate.yaml missing or test.command not configured:"
+    assert len([error for error in disk["infra_errors"] if error.startswith(prefix)]) == 1
+    return [error for error in disk["infra_errors"] if not error.startswith(prefix)]
+
+
+@pytest.mark.parametrize(
+    ("line", "exit_code", "stderr", "message"),
+    [
+        (1, 1, "", "Astroid crashed while inferring fixture"),
+        (3, 1, "fixture traceback", "Astroid crashed while inferring fixture"),
+        (1, 0, "fixture traceback", ""),
+        (3, 0, "", "Astroid crashed while inferring fixture"),
+    ],
+    ids=["off-diff-empty-stderr", "in-diff", "off-diff-empty-reason-zero", "in-diff-zero"],
+)
+def test_pylint_internal_failure_fails_ci_independently_of_delta_and_exit(
+    tmp_path, monkeypatch, line, exit_code, stderr, message
+):
+    review = _Review(tmp_path, monkeypatch, pylint_tool="pylint")
+    review.exit_code = exit_code
+    review.payload = json.dumps([_pylint_diagnostic(line, message=message)])
+    review.stderr = stderr
+    disk = review.run(Verdict.FAIL, infra="F0002")
+    assert review.machine._l0_failed
+    errors = _pylint_infra_errors(disk)
+    assert len(errors) == 1
+    assert "tool=pylint" in errors[0]
+    if message:
+        assert message in errors[0]
+        assert message in review.ci_stderr
+    if stderr:
+        assert stderr in errors[0]
+        assert stderr in review.ci_stderr
+    findings = [finding for finding in disk["findings"] if finding["source"] == "L0"]
+    assert [finding["description"] for finding in findings] == ([message] if line == 3 else [])
+    assert [finding["line_range"] for finding in findings] == ([[3, 3]] if line == 3 else [])
+    advisories = [item for item in review.machine._advisories if item.axis == "pre-existing-l0"]
+    assert [item.description for item in advisories] == ([message] if line == 1 else [])
+    if line == 3:
+        assert message in json.dumps(review.ci_sarif)
+
+
+def test_pylint_alias_internal_failure_preserves_partial_warning(tmp_path, monkeypatch):
+    review = _Review(tmp_path, monkeypatch, pylint_tool="python-quality")
+    review.exit_code = 5
+    review.stderr = "fixture traceback after partial analysis"
+    review.payload = json.dumps(
+        [
+            _pylint_diagnostic(1),
+            _pylint_diagnostic(
+                3, message_id="W0611", symbol="unused-import", message="Unused import fixture"
+            ),
+        ]
+    )
+    disk = review.run(Verdict.FAIL, infra="F0002")
+    assert review.machine._l0_failed
+    errors = _pylint_infra_errors(disk)
+    assert len(errors) == 1
+    assert "tool=python-quality" in errors[0]
+    assert review.stderr in errors[0]
+    assert review.stderr in review.ci_stderr
+    findings = [finding for finding in disk["findings"] if finding["source"] == "L0"]
+    assert [finding["description"] for finding in findings] == ["Unused import fixture"]
+    assert "Unused import fixture" in json.dumps(review.ci_sarif)
+    advisories = [item for item in review.machine._advisories if item.axis == "pre-existing-l0"]
+    assert [item.description for item in advisories] == ["Astroid crashed while inferring fixture"]
+
+
+@pytest.mark.parametrize(
+    ("message_id", "symbol", "line", "exit_code", "expected"),
+    [
+        (None, None, None, 0, Verdict.PASS),
+        ("E0001", "syntax-error", 1, 2, Verdict.PASS),
+        ("E0001", "syntax-error", 3, 2, Verdict.FAIL),
+        ("F0001", "fatal", 1, 1, Verdict.PASS),
+        ("F0001", "fatal", 3, 1, Verdict.FAIL),
+    ],
+    ids=["clean", "off-diff-syntax", "in-diff-syntax", "off-diff-other-fatal", "in-diff-other-fatal"],
+)
+def test_pylint_ordinary_diagnostics_keep_existing_delta_behavior(
+    tmp_path, monkeypatch, message_id, symbol, line, exit_code, expected
+):
+    review = _Review(tmp_path, monkeypatch, pylint_tool="pylint")
+    review.exit_code = exit_code
+    review.payload = json.dumps(
+        []
+        if message_id is None
+        else [_pylint_diagnostic(line, message_id=message_id, symbol=symbol, message="ordinary failure")]
+    )
+    disk = review.run(expected)
+    assert not review.machine._l0_failed
+    assert _pylint_infra_errors(disk) == []
+    findings = [finding for finding in disk["findings"] if finding["source"] == "L0"]
+    assert [finding["description"] for finding in findings] == (
+        ["ordinary failure"] if line == 3 else []
+    )
+    advisories = [item for item in review.machine._advisories if item.axis == "pre-existing-l0"]
+    assert [item.description for item in advisories] == (["ordinary failure"] if line == 1 else [])
+
+
+def _cargo_output(line=None, *, level="warning", statuses=(False,)):
+    records = []
+    if line is not None:
+        records.append(
+            {
+                "reason": "compiler-message",
+                "target": {"name": "fixture-library"},
+                "message": {
+                    "level": level,
+                    "message": f"fixture {level} diagnostic",
+                    "code": {"code": "clippy::fixture" if level == "warning" else "E0308"},
+                    "spans": [
+                        {
+                            "file_name": "src/lib.rs",
+                            "line_start": line,
+                            "line_end": line,
+                            "column_start": 1,
+                            "is_primary": True,
+                        }
+                    ],
+                },
+            }
+        )
+    records.extend({"reason": "build-finished", "success": status} for status in statuses)
+    return "\n".join(json.dumps(record) for record in records)
+
+
+def _cargo_infra_errors(disk):
+    # Rust is mapped to mutation testing. Keep its real, unconfigured L2
+    # advisory visible rather than stubbing that phase or launching Cargo.
+    prefix = "L2: gate.yaml missing or test.command not configured:"
+    assert len([error for error in disk["infra_errors"] if error.startswith(prefix)]) == 1
+    return [error for error in disk["infra_errors"] if not error.startswith(prefix)]
+
+
+@pytest.mark.parametrize("line", [None, 1, 3], ids=["empty", "preexisting", "new"])
+@pytest.mark.parametrize("level", ["warning", "error"])
+@pytest.mark.parametrize("stderr", ["", "build.rs: failed to find fixture dependency"])
+@pytest.mark.parametrize("exit_code", [0, 101])
+def test_cargo_failed_build_fails_ci_with_valid_receipts_and_preserves_diagnostics(
+    tmp_path, monkeypatch, line, level, stderr, exit_code
+):
+    review = _Review(tmp_path, monkeypatch, cargo_tool="clippy")
+    review.exit_code, review.payload = exit_code, _cargo_output(line, level=level)
+    review.stderr = stderr
+    disk = review.run(Verdict.FAIL, infra="unsuccessful build")
+    assert review.machine._l0_failed
+    errors = _cargo_infra_errors(disk)
+    assert len(errors) == 1
+    assert "cause unknown" in errors[0]
+    assert "cause unknown" in review.ci_stderr
+    if stderr:
+        assert stderr in errors[0]
+        assert stderr in review.ci_stderr
+    findings = [finding for finding in disk["findings"] if finding["source"] == "L0"]
+    assert [finding["description"] for finding in findings] == (
+        [f"fixture {level} diagnostic"] if line == 3 else []
+    )
+    if line == 3:
+        assert f"fixture {level} diagnostic" in json.dumps(review.ci_sarif)
+    assert len([item for item in review.machine._advisories if item.axis == "pre-existing-l0"]) == (
+        line == 1
+    )
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "line", "statuses", "expected"),
+    [
+        (0, None, (True,), Verdict.PASS),
+        (0, 1, (True,), Verdict.PASS),
+        (0, 3, (True,), Verdict.FAIL),
+        (0, None, (), Verdict.PASS),
+        (101, 1, (), Verdict.PASS),
+        (101, 3, (), Verdict.FAIL),
+    ],
+    ids=["clean", "old-warning", "new-warning", "legacy-zero", "legacy-old-101", "legacy-new-101"],
+)
+def test_cargo_healthy_and_legacy_runs_retain_delta_behavior(
+    tmp_path, monkeypatch, exit_code, line, statuses, expected
+):
+    review = _Review(tmp_path, monkeypatch, cargo_tool="clippy")
+    review.exit_code, review.payload = exit_code, _cargo_output(line, statuses=statuses)
+    disk = review.run(expected)
+    assert not review.machine._l0_failed
+    assert _cargo_infra_errors(disk) == []
+    assert len([finding for finding in disk["findings"] if finding["source"] == "L0"]) == (line == 3)
+    assert len([item for item in review.machine._advisories if item.axis == "pre-existing-l0"]) == (
+        line == 1
+    )
+
+
+@pytest.mark.parametrize("statuses", [(False, True), (False, True, False)])
+def test_cargo_multitarget_failure_survives_located_error_alias_and_later_success(
+    tmp_path, monkeypatch, statuses
+):
+    review = _Review(tmp_path, monkeypatch, cargo_tool="rust-quality")
+    review.exit_code = 101
+    review.stderr = "fixture-binary build script failed while other jobs were finishing"
+    review.payload = (
+        _cargo_output(1, level="error", statuses=())
+        + "\n"
+        + _cargo_output(3, statuses=statuses).replace("fixture-library", "fixture-binary")
+    )
+    disk = review.run(Verdict.FAIL, infra="unsuccessful build")
+    assert review.machine._l0_failed
+    errors = _cargo_infra_errors(disk)
+    assert len(errors) == 1
+    assert "tool=rust-quality" in errors[0]
+    assert review.stderr in errors[0]
+    assert review.stderr in review.ci_stderr
+    findings = [finding for finding in disk["findings"] if finding["source"] == "L0"]
+    assert [finding["description"] for finding in findings] == ["fixture warning diagnostic"]
+    assert len([item for item in review.machine._advisories if item.axis == "pre-existing-l0"]) == 1
+
+
+def test_cargo_legacy_empty_failure_keeps_existing_runner_guard(tmp_path, monkeypatch):
+    review = _Review(tmp_path, monkeypatch, cargo_tool="clippy")
+    review.exit_code = 101
+    disk = review.run(Verdict.FAIL, infra="Tool exited 101 with no output")
+    assert review.machine._l0_failed
+    errors = _cargo_infra_errors(disk)
+    assert len(errors) == 1
+    assert "unsuccessful build" not in errors[0]
+
+
+@pytest.mark.parametrize("located_error", [False, True], ids=["nondiagnostic", "preexisting-error"])
+def test_cargo_legacy_no_footer_does_not_infer_a_build_failure(tmp_path, monkeypatch, located_error):
+    review = _Review(tmp_path, monkeypatch, cargo_tool="clippy")
+    review.exit_code = 101
+    review.payload = (
+        _cargo_output(1, level="error", statuses=())
+        if located_error
+        else json.dumps({"reason": "build-script-executed", "package_id": "fixture"})
+    )
+    disk = review.run(Verdict.PASS)
+    assert not review.machine._l0_failed
+    assert _cargo_infra_errors(disk) == []
+    assert len([item for item in review.machine._advisories if item.axis == "pre-existing-l0"]) == (
+        located_error
+    )
 
 
 @pytest.mark.parametrize(

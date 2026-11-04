@@ -357,12 +357,16 @@ def test_workflow_requires_explicit_dispatch_and_has_failure_artifact():
     assert inputs["fixed_metadata_read"]["default"] is False
     assert inputs["expected_source_sha"]["default"] == ""
     job = workflow["jobs"]["fixed-metadata"]
-    assert job["if"] == "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read }}"
+    assert (
+        job["if"]
+        == "${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot && !inputs.dependency_view_read }}"
+    )
     assert "inputs.fixed_metadata_read" in workflow["jobs"]["observe"]["if"]
     assert workflow["permissions"] == {"contents": "read"}
     assert job["concurrency"]["cancel-in-progress"] is False
-    assert job["steps"][-1]["if"] == "${{ always() && env.METADATA_EVIDENCE != '' }}"
-    run = job["steps"][2]["run"]
+    assert job["steps"][-1]["if"] == "${{ always() && env.METADATA_PUBLIC_READY == 'true' }}"
+    assert job["steps"][-1]["with"]["path"] == "forge-fixed-metadata-public/summary.json"
+    run = job["steps"][1]["run"]
     assert "/usr/bin/env -i" in run and "--allow-fixed-privileged-metadata" in run
     assert "sudo" not in run and "strict_user_service_probe" not in run
 

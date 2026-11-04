@@ -6,23 +6,34 @@ name: Strict Linux static observations (not qualification)
     paths:
     - .github/workflows/strict-linux-admission.yml
     - scripts/strict_linux_admission.py
+    - scripts/static_public_summary.py
+    - scripts/fixed_metadata_public_summary.py
     - tests/test_strict_linux_admission.py
+    - tests/test_static_publication.py
+    - tests/test_fixed_metadata_publication.py
   workflow_dispatch:
     inputs:
       fixed_metadata_read:
         description: Explicit one-run fixed privileged metadata diagnostic (not qualification)
         type: boolean
         default: false
+      ordinary_dependency_snapshot:
+        description: Explicit ordinary-user dependency observation (not qualification)
+        type: boolean
+        default: false
+      dependency_view_read:
+        description: Explicit one-run two-stat and ordinary fragment diagnostic (not qualification)
+        type: boolean
+        default: false
       expected_source_sha:
-        description: Reviewed exact source SHA; required when fixed_metadata_read is true
+        description: Reviewed exact source SHA; required for either explicit diagnostic
         type: string
         default: ''
 permissions:
   contents: read
 jobs:
   observe:
-    # This schema declares one repository; fork-head execution is not supported.
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) && !(github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read) }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) && !(github.event_name == 'workflow_dispatch' && (inputs.fixed_metadata_read || inputs.ordinary_dependency_snapshot || inputs.dependency_view_read)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
@@ -42,12 +53,17 @@ jobs:
         CONTEXT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       shell: bash
       run: |
+        exec 2>/dev/null
+        set +x
         set -euo pipefail
+        umask 077
         evidence=$(mktemp -d "$RUNNER_TEMP/forge-admission.XXXXXXXX")
-        printf 'ADMISSION_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+        exec 2>"$evidence/private-shell-stderr.txt"
+        mkdir -m 700 forge-static-public
         # Stdlib only. No package install, security change, service start,
         # namespace/payload launch or import of capability-probing test modules.
-        /usr/bin/python3 -I -B scripts/strict_linux_admission.py \
+        set +e
+        { /usr/bin/python3 -I -S -B scripts/strict_linux_admission.py \
           --repository "$CONTEXT_REPOSITORY" \
           --run-id "$CONTEXT_RUN_ID" \
           --run-attempt "$CONTEXT_RUN_ATTEMPT" \
@@ -55,32 +71,49 @@ jobs:
           --workflow-ref "$CONTEXT_WORKFLOW_REF" \
           --workflow-sha "$CONTEXT_WORKFLOW_SHA" \
           --expected-source-sha "$CONTEXT_SOURCE_SHA" \
-          --output "$evidence/observation.json"
-    - name: Preserve observations including STOP
-      if: ${{ always() }}
+          --output "$evidence/observation.json"; } \
+          >"$evidence/private-stdout.txt" 2>"$evidence/private-stderr.txt"
+        diagnostic_code=$?
+        { /usr/bin/python3 -I -S -B scripts/static_public_summary.py \
+            "$evidence/observation.json" "$diagnostic_code"; } \
+          >forge-static-public/summary.json 2>"$evidence/private-summary-stderr.txt"
+        summary_code=$?
+        publication_code=$summary_code
+        if [[ ( "$summary_code" == 0 || "$summary_code" == 2 ) && \
+              -f forge-static-public/summary.json && \
+              ! -L forge-static-public/summary.json && \
+              -s forge-static-public/summary.json ]] && \
+            summary_size=$(wc -c < forge-static-public/summary.json) && \
+            [[ "$summary_size" =~ ^[0-9]{1,4}$ ]] && \
+            (( 10#$summary_size <= 1024 )); then
+          printf 'ADMISSION_PUBLIC_READY=true\n' >> "$GITHUB_ENV"
+          publication_code=$?
+        elif [[ "$summary_code" == 0 || "$summary_code" == 2 ]]; then
+          publication_code=2
+        fi
+        if [[ "$diagnostic_code" != 0 ]]; then
+          exit "$diagnostic_code"
+        fi
+        if [[ "$publication_code" != 0 ]]; then
+          exit "$publication_code"
+        fi
+        exit "$summary_code"
+    - name: Publish only the fixed static summary including STOP or UNKNOWN
+      if: ${{ always() && env.ADMISSION_PUBLIC_READY == 'true' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: strict-linux-static-observation-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ env.ADMISSION_EVIDENCE }}/observation.json
+        path: forge-static-public/summary.json
         if-no-files-found: error
         retention-days: 14
-
   fixed-metadata:
-    # Invalid attempts/ref/SHA produce a finite failure receipt before any sudo.
-    # No PR or push event enters this job. Explicit new dispatch is not a retry grant.
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot && !inputs.dependency_view_read }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     concurrency:
       group: fixed-metadata-${{ github.ref }}
       cancel-in-progress: false
     steps:
-    - name: Prepare private metadata evidence directory
-      shell: bash
-      run: |
-        set -euo pipefail
-        evidence=$(mktemp -d "$RUNNER_TEMP/forge-fixed-metadata.XXXXXXXX")
-        printf 'METADATA_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
     - name: Check out dispatched exact source
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -100,8 +133,15 @@ jobs:
         CONTEXT_EVENT: ${{ github.event_name }}
       shell: bash
       run: |
+        exec 2>/dev/null
+        set +x
         set -euo pipefail
-        /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \
+        umask 077
+        evidence=$(mktemp -d "$RUNNER_TEMP/forge-fixed-metadata.XXXXXXXX")
+        exec 2>"$evidence/private-shell-stderr.txt"
+        mkdir -m 700 forge-fixed-metadata-public
+        set +e
+        { /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \
           CONTEXT_REPOSITORY="$CONTEXT_REPOSITORY" \
           CONTEXT_RUN_ID="$CONTEXT_RUN_ID" CONTEXT_RUN_ATTEMPT="$CONTEXT_RUN_ATTEMPT" \
           CONTEXT_JOB="$CONTEXT_JOB" CONTEXT_REF="$CONTEXT_REF" \
@@ -110,12 +150,184 @@ jobs:
           CONTEXT_SOURCE_SHA="$CONTEXT_SOURCE_SHA" CONTEXT_EXPECTED_SHA="$CONTEXT_EXPECTED_SHA" \
           CONTEXT_EVENT="$CONTEXT_EVENT" \
           /usr/bin/python3 -I -S -B scripts/fixed_runner_metadata.py \
-          --allow-fixed-privileged-metadata --output-dir "$METADATA_EVIDENCE"
-    - name: Preserve finite metadata including STOP
-      if: ${{ always() && env.METADATA_EVIDENCE != '' }}
+          --allow-fixed-privileged-metadata --output-dir "$evidence"; } \
+          >"$evidence/private-stdout.txt" 2>"$evidence/private-stderr.txt"
+        diagnostic_code=$?
+        { /usr/bin/python3 -I -S -B scripts/fixed_metadata_public_summary.py \
+            "$evidence/metadata-observation.json" "$diagnostic_code"; } \
+          >forge-fixed-metadata-public/summary.json 2>"$evidence/private-summary-stderr.txt"
+        summary_code=$?
+        publication_code=$summary_code
+        if [[ ( "$summary_code" == 0 || "$summary_code" == 2 ) && \
+              -f forge-fixed-metadata-public/summary.json && \
+              ! -L forge-fixed-metadata-public/summary.json && \
+              -s forge-fixed-metadata-public/summary.json ]] && \
+            summary_size=$(wc -c < forge-fixed-metadata-public/summary.json) && \
+            [[ "$summary_size" =~ ^[0-9]{1,4}$ ]] && \
+            (( 10#$summary_size <= 1024 )); then
+          printf 'METADATA_PUBLIC_READY=true\n' >> "$GITHUB_ENV"
+          publication_code=$?
+        elif [[ "$summary_code" == 0 || "$summary_code" == 2 ]]; then
+          publication_code=2
+        fi
+        if [[ "$diagnostic_code" != 0 ]]; then
+          exit "$diagnostic_code"
+        fi
+        if [[ "$publication_code" != 0 ]]; then
+          exit "$publication_code"
+        fi
+        exit "$summary_code"
+    - name: Publish only the fixed metadata summary including STOP or UNKNOWN
+      if: ${{ always() && env.METADATA_PUBLIC_READY == 'true' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: fixed-runner-metadata-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ env.METADATA_EVIDENCE }}/metadata-observation.json
+        path: forge-fixed-metadata-public/summary.json
+        if-no-files-found: error
+        retention-days: 14
+
+  conflicting-modes:
+    if: ${{ github.event_name == 'workflow_dispatch' && ((inputs.fixed_metadata_read && inputs.ordinary_dependency_snapshot) || (inputs.fixed_metadata_read && inputs.dependency_view_read) || (inputs.ordinary_dependency_snapshot && inputs.dependency_view_read)) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+    - name: Reject conflicting diagnostic modes without checkout or native execution
+      shell: bash
+      run: |
+        exec 2>/dev/null
+        set +x
+        set -euo pipefail
+        umask 077
+        evidence=$(mktemp -d "$RUNNER_TEMP/forge-conflicting-modes.XXXXXXXX")
+        printf 'CONFLICT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+        printf '%s\n' '{"schema":"forge-dependency-dispatch-v1","status":"STOP","reason":"conflicting_modes","native":"NOT_RUN","qualification":"NOT_RUN"}' > "$evidence/conflict.json"
+        exit 2
+    - name: Preserve conflicting-mode STOP
+      if: ${{ always() && env.CONFLICT_EVIDENCE != '' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: conflicting-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ env.CONFLICT_EVIDENCE }}/conflict.json
+        if-no-files-found: error
+        retention-days: 14
+
+  ordinary-dependency:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.ordinary_dependency_snapshot && !inputs.fixed_metadata_read && !inputs.dependency_view_read }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    concurrency:
+      group: ordinary-dependency-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+    - name: Prepare private ordinary evidence directory
+      shell: bash
+      run: |
+        exec 2>/dev/null
+        set +x
+        set -euo pipefail
+        umask 077
+        evidence=$(mktemp -d "$RUNNER_TEMP/forge-dependency.XXXXXXXX")
+        printf 'DEPENDENCY_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+    - name: Check out dispatched exact source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Read ordinary manager dependency metadata
+      env:
+        CONTEXT_REPOSITORY: ${{ github.repository }}
+        CONTEXT_RUN_ID: ${{ github.run_id }}
+        CONTEXT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        CONTEXT_JOB: ${{ github.job }}
+        CONTEXT_REF: ${{ github.ref }}
+        CONTEXT_WORKFLOW_REF: ${{ github.workflow_ref }}
+        CONTEXT_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        CONTEXT_SOURCE_SHA: ${{ github.sha }}
+        CONTEXT_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
+        CONTEXT_EVENT: ${{ github.event_name }}
+        CONTEXT_ORDINARY: ${{ inputs.ordinary_dependency_snapshot }}
+        CONTEXT_FIXED: ${{ inputs.fixed_metadata_read }}
+      shell: bash
+      run: |
+        exec 2>/dev/null
+        set +x
+        set -euo pipefail
+        umask 077
+        exec 2> "$DEPENDENCY_EVIDENCE/private-shell-stderr.txt"
+        set +e # preserve diagnostic exit status
+        /usr/bin/python3 -I -S -B scripts/dependency_snapshot_runner.py > "$DEPENDENCY_EVIDENCE/dependency-observation.json" 2> "$DEPENDENCY_EVIDENCE/private-stderr.txt"
+        diagnostic_code=$?
+        set -e
+        summary_code=0
+        /usr/bin/python3 -I -S -B scripts/public_diagnostic_summary.py ordinary "$DEPENDENCY_EVIDENCE/dependency-observation.json" > "$DEPENDENCY_EVIDENCE/public-summary.json" 2>/dev/null || summary_code=$?
+        if [ "$diagnostic_code" -ne 0 ]; then exit "$diagnostic_code"; fi
+        exit "$summary_code"
+    - name: Publish aggregate dependency summary only
+      if: ${{ always() && env.DEPENDENCY_EVIDENCE != '' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: ordinary-dependency-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ env.DEPENDENCY_EVIDENCE }}/public-summary.json
+        if-no-files-found: error
+        retention-days: 14
+
+  dependency-view:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.dependency_view_read && !inputs.fixed_metadata_read && !inputs.ordinary_dependency_snapshot }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    concurrency:
+      group: dependency-view-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+    - name: Prepare private ordinary evidence directory
+      shell: bash
+      run: |
+        exec 2>/dev/null
+        set +x
+        set -euo pipefail
+        umask 077
+        evidence=$(mktemp -d "$RUNNER_TEMP/forge-dependency-view.XXXXXXXX")
+        printf 'VIEW_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+    - name: Check out dispatched exact source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Read bounded same-run manager and file view
+      env:
+        CONTEXT_REPOSITORY: ${{ github.repository }}
+        CONTEXT_RUN_ID: ${{ github.run_id }}
+        CONTEXT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        CONTEXT_JOB: ${{ github.job }}
+        CONTEXT_REF: ${{ github.ref }}
+        CONTEXT_WORKFLOW_REF: ${{ github.workflow_ref }}
+        CONTEXT_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        CONTEXT_SOURCE_SHA: ${{ github.sha }}
+        CONTEXT_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
+        CONTEXT_EVENT: ${{ github.event_name }}
+        CONTEXT_ORDINARY: ${{ inputs.ordinary_dependency_snapshot }}
+        CONTEXT_FIXED: ${{ inputs.fixed_metadata_read }}
+        CONTEXT_VIEW: ${{ inputs.dependency_view_read }}
+      shell: bash
+      run: |
+        exec 2>/dev/null
+        set +x
+        set -euo pipefail
+        umask 077
+        exec 2> "$VIEW_EVIDENCE/private-shell-stderr.txt"
+        set +e # preserve diagnostic exit status
+        /usr/bin/python3 -I -S -B scripts/dependency_view_runner.py > "$VIEW_EVIDENCE/view-observation.json" 2> "$VIEW_EVIDENCE/private-stderr.txt"
+        diagnostic_code=$?
+        set -e
+        summary_code=0
+        /usr/bin/python3 -I -S -B scripts/public_diagnostic_summary.py view "$VIEW_EVIDENCE/view-observation.json" > "$VIEW_EVIDENCE/public-summary.json" 2>/dev/null || summary_code=$?
+        if [ "$diagnostic_code" -ne 0 ]; then exit "$diagnostic_code"; fi
+        exit "$summary_code"
+    - name: Publish aggregate view summary only
+      if: ${{ always() && env.VIEW_EVIDENCE != '' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: dependency-view-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ env.VIEW_EVIDENCE }}/public-summary.json
         if-no-files-found: error
         retention-days: 14

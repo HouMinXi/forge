@@ -1,9 +1,10 @@
 # Strict Linux observations: preliminary admission evidence
 
 `strict-linux-admission.yml` is a separate **static observation** job for issue
-#31. It runs for same-repository pull requests targeting `main` only when the A
-workflow, collector script or its test file changes. Fork pull requests are
-skipped; documentation-only changes do not trigger it. Manual dispatch remains a
+#31. It runs for same-repository pull requests targeting `main` only when the
+workflow, collector, either public-summary helper or a related test file changes.
+Fork pull requests are skipped; documentation-only changes do not trigger it.
+Manual dispatch remains a
 fallback once the workflow is present on the default branch. This job does not
 change the existing Linux test lane,
 start a service, run a namespace probe, or execute the product/test suite. It does
@@ -45,9 +46,68 @@ keys, invalid finite types, inconsistent derived status, and qualification claim
 are rejected. Only finite metadata labels are retained; neither arbitrary
 subprocess stderr nor the environment is dumped. Output creation is exclusive,
 so a later failure cannot overwrite an earlier observation. Expected CLI errors
-use a fixed message without raw paths or traceback. The workflow preserves STOP
-receipts with `always()`; failure before receipt creation is still a failed job,
-not a successful observation.
+use a fixed message without raw paths or traceback. These complete receipts stay
+private to the runner; they are not the public artifact. Failure before receipt
+creation is still a failed job, not a successful observation.
+
+## Public evidence boundary
+
+The workflow writes the receipt, stdout, stderr and shell diagnostics into one
+fresh private temporary directory with restrictive creation permissions. That
+directory is not exported to other steps. It publishes only the exact nonhidden
+`forge-static-public/summary.json` file, never a directory, wildcard, full receipt
+or fallback log. Only a literal publication-ready flag is exported.
+
+The static-only stdlib projection collects nothing and imports no collector. Its
+output contains only fixed schema/mode/status/reason labels and the constant
+`boundary=NOT_RUN`, `qualification=NOT_RUN`, `raw_evidence=NOT_PUBLISHED` claims.
+It never copies host paths, PIDs, unit names, hashes, boot identity, context,
+problem details, raw errors or arbitrary keys/strings. Its input is bounded to the
+collector's 16 KiB limit, must be a regular non-symlink file, and rejects duplicate
+keys, non-finite JSON constants and detectable changes during the read.
+
+An ordinary collector `STOP` remains public `STOP/collector_stop`. `OBSERVED`
+requires the expected receipt envelope and exit status zero. A previously
+flushed OBSERVED receipt followed by failure or a kill is instead public
+`STOP/execution_failed`. Missing or malformed evidence is `UNKNOWN/unavailable`,
+not success. The original nonzero collector exit takes precedence over later
+summary/publication failure; a zero collector exit cannot hide failed summary
+production or publication. `always()` uploads STOP/UNKNOWN only after a nonempty,
+bounded, regular nonlink summary was produced with an expected helper exit code.
+
+This is a publication projection, not a second validator or signed attestation.
+It relies on the reviewed collector/helper and workflow executing on a trusted
+runner. It does not protect against malicious replacement code or another
+untrusted process running as the same user. Early setup failure, cancellation,
+shell termination or runner loss may leave no public summary; absence proves
+neither success nor cleanup. The workflow has no raw-evidence fallback.
+
+Public topology and forensic detail are intentionally unavailable. Temporary
+private files are not a durable private archive, and this change neither removes
+nor makes claims about historical artifacts. This boundary covers this static
+job only. The separate Linux test lane retains privileged setup, its AppArmor
+sysctl change and a user-manager scope. Its own reviewed identity manifest and
+private transport govern diagnostic publication separately; this static
+projection does not authorize that execution or establish its qualification.
+
+Integration retains main's separate fixed-metadata job with its original explicit
+manual opt-in (default false), expected-source input and collector-side branch,
+first-attempt, event and source checks. It is never selected by a PR event. Its
+receipt and logs now also remain private, with a separate fixed-label summary
+bound to the original exit status. Its privileged collector is unchanged; this
+publication repair neither authorizes nor performs that diagnostic.
+
+The dispatcher also retains the separate ordinary-dependency and dependency-view
+modes, each default false and manual only. Any pair or all three diagnostic
+opt-ins select only a fixed STOP job, before checkout or native execution. The
+static job remains the default when no mode is selected. Existing collector-side
+branch, first-attempt, event and source gates remain unchanged: merging the
+workflow does not admit main as a diagnostic execution source. In particular,
+the ordinary/view wrappers remain pinned to their dedicated diagnostic branch;
+a main dispatch stops rather than broadening that contract. See
+[the publication boundary](../public-diagnostic-evidence.md) for each mode's
+summary contract. None of these observations resolves the separate user-service
+dependency-activation boundary or establishes strict qualification.
 
 ## Version 2 finite read diagnostics
 
@@ -94,3 +154,20 @@ and pass final source/policy and exact-owned-cleanup checks in the same qualifyi
 job. Successful measured headroom and actual CI speed improvements are separate
 from an observed setup, a failed duration, or a prediction. This preliminary job
 alone does not close #31.
+
+## Scope of the CI/privacy split
+
+The unfinished user-service launch capability is not included in this tree. Its
+workflow, collector, launch wrapper, public projection and dedicated tests/docs
+were separated from the CI/privacy work. This is a scope split, not a repair or
+waiver of the nine unresolved dependency/lifecycle rejection cases. No service
+launch is enabled by this change. The prior implementation remains recoverable
+from [the preserved source commit](https://github.com/HouMinXi/forge/commit/f0ce5bad0020d6149420a85e5ad05c4ab0c8e9d7)
+for a separately reviewed continuation. It must not be reintroduced as qualified
+without resolving those cases and establishing meaningful positive controls.
+
+Existing ordinary Linux CI setup and its security effects are unchanged. The
+privacy transport does not grant permission for its AppArmor sysctl change or
+user-manager scope, and does not convert an unsupported static observation into
+strict qualification. Existing fixed metadata and dependency diagnostics retain
+their separate source, mode and execution restrictions where present.
