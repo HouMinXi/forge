@@ -4,6 +4,7 @@ Synthetic receipts are written at the mocked subprocess boundary. No pytest
 child, native workload, service, host probe or network operation is launched.
 """
 
+import errno
 from pathlib import Path
 import sys
 
@@ -32,7 +33,7 @@ def combined(tmp_path, monkeypatch):
     return case
 
 
-def _close_fault(monkeypatch, *paths):
+def _close_fault(monkeypatch, *paths, fail=True):
     """Fail real owned-stream close, rather than replacing the workload/logger."""
     real_fdopen = transport.os.fdopen
     opened = []
@@ -40,6 +41,7 @@ def _close_fault(monkeypatch, *paths):
     class CloseFault:
         def __init__(self, stream):
             self.stream = stream
+            self.fd = stream.fileno()
             self.close_calls = 0
             self.error = OSError(CANARY)
 
@@ -55,7 +57,8 @@ def _close_fault(monkeypatch, *paths):
         def close(self):
             self.close_calls += 1
             self.stream.close()
-            raise self.error
+            if fail:
+                raise self.error
 
     def fdopen(fd, *args, **kwargs):
         stream = real_fdopen(fd, *args, **kwargs)
@@ -102,6 +105,9 @@ def _diagnostic_faults(case, monkeypatch, fault):
 def _assert_closed(streams):
     for stream in streams:
         assert stream.stream.closed and stream.close_calls == 1
+        with pytest.raises(OSError) as caught:
+            transport.os.fstat(stream.fd)
+        assert caught.value.errno == errno.EBADF
 
 
 def test_combined_success_keeps_strict_receipt_and_completed_checkpoint(
@@ -327,6 +333,7 @@ def test_combined_direct_wrapper_preserves_exception_identity_and_cause(
     assert caught.value.__cause__ is cause
     assert caught.value.__context__ is context
     assert caught.value.__suppress_context__ is True
+    assert not getattr(original, "_ci_diagnostic_errors", ())
     assert getattr(original, "_ci_log_close_errors", ()) == tuple(
         stream.error for stream in reversed(streams)
     )
@@ -389,6 +396,198 @@ def test_combined_fatal_diagnostic_callback_preserves_original_chain(
         "state": "INCOMPLETE",
         "code": "NO_TERMINAL_RECORD",
     }
+    assert not (combined.public / combined.receipt_path.name).exists()
+    failure._assert_public(combined, failure._export(combined), status="unavailable")
+    checkpoints.publish(tmp_path, combined.checkpoints)
+    assert checkpoints.no_public_canary(tmp_path, capsys) == ("", "")
+
+
+@pytest.mark.parametrize("callback", ("traceback", "checkpoint"))
+@pytest.mark.parametrize("secondary_kind", ("interrupt", "exit"))
+@pytest.mark.parametrize("chain", ("explicit", "implicit"))
+@pytest.mark.parametrize("close_fault", (False, True), ids=("no-fault", "close-fault"))
+def test_combined_fatal_callback_retains_private_secondary_cleanup(
+    combined, monkeypatch, tmp_path, capsys, callback, secondary_kind, chain, close_fault
+):
+    original = SystemExit(17)
+    cause, context = RuntimeError(CANARY), ValueError(CANARY)
+    secondary = KeyboardInterrupt(CANARY) if secondary_kind == "interrupt" else SystemExit(99)
+    previous = RuntimeError(CANARY)
+    previous_close = OSError(CANARY)
+    original._ci_diagnostic_errors = (previous,)
+    original._ci_log_close_errors = (previous_close,)
+    original.add_note("Existing producer note.")
+    metadata = original.__dict__
+    notes, close_errors = original.__notes__, original._ci_log_close_errors
+    commands, callbacks = [], []
+
+    def fail(command, **kwargs):
+        commands.append(command)
+        kwargs["stdout"].write(CANARY)
+        try:
+            raise context
+        except ValueError:
+            if chain == "explicit":
+                raise original from cause
+            raise original  # noqa: B904 - Exercise preservation of an implicit exception context.
+
+    def diagnostic_failure(*_args, **_kwargs):
+        callbacks.append(callback)
+        raise secondary
+
+    monkeypatch.setattr(transport.subprocess, "run", fail)
+    target = transport.traceback if callback == "traceback" else transport._Diagnostic
+    monkeypatch.setattr(target, "print_exc" if callback == "traceback" else "failed", diagnostic_failure)
+    streams = _close_fault(
+        monkeypatch, combined.checkpoints / (failure.PHASE + ".log"), fail=close_fault
+    )
+    args = transport._parser().parse_args(combined.args)
+    stdout, stderr = sys.stdout, sys.stderr
+
+    with pytest.raises(SystemExit) as caught:
+        transport._execute_diagnosed(args)
+
+    assert caught.value is original and original.code == 17
+    assert original.__cause__ is (cause if chain == "explicit" else None)
+    assert original.__context__ is context
+    assert original.__suppress_context__ is (chain == "explicit")
+    assert sys.stdout is stdout and sys.stderr is stderr
+    assert len(commands) == 1 and callbacks == [callback]
+    assert len(streams) == 1
+    _assert_closed(streams)
+    assert original.__dict__ is metadata
+    assert original._ci_log_close_errors is close_errors
+    assert original._ci_diagnostic_errors[0] is previous
+    assert len(original._ci_diagnostic_errors) == 2
+    assert original._ci_diagnostic_errors[1] is secondary
+    retained = original._ci_diagnostic_errors[1]
+    if close_fault:
+        assert retained._ci_log_close_errors[0] is streams[0].error
+        assert len(retained._ci_log_close_errors) == 1
+        assert len(retained.__notes__) == 1
+        assert CANARY not in retained.__notes__[0]
+    else:
+        assert "_ci_log_close_errors" not in retained.__dict__
+        assert "__notes__" not in retained.__dict__
+    assert original.__notes__ is notes
+    assert notes[0] == "Existing producer note."
+    assert len(notes) == 2 and "_ci_diagnostic_errors" in notes[1]
+    assert CANARY not in " ".join(notes)
+    assert ci.read(combined.state_path) == {**combined.state, "returncode": None}
+    assert checkpoints.record(combined.checkpoints) == {
+        "operation": failure.PHASE,
+        "stage": "execution",
+        "state": "INCOMPLETE",
+        "code": "NO_TERMINAL_RECORD",
+    }
+    assert not (combined.public / combined.receipt_path.name).exists()
+    failure._assert_public(combined, failure._export(combined), status="unavailable")
+    checkpoints.publish(tmp_path, combined.checkpoints)
+    assert checkpoints.no_public_canary(tmp_path, capsys) == ("", "")
+
+
+@pytest.mark.parametrize("callback", ("traceback", "checkpoint"))
+@pytest.mark.parametrize(
+    "metadata_kind", ("opaque", "tuple-subclass", "notes-subclass", "hostile-exception")
+)
+def test_combined_secondary_evidence_bypasses_hostile_metadata_hooks(
+    combined, monkeypatch, tmp_path, capsys, callback, metadata_kind
+):
+    hooks = []
+
+    def reject(*_args, **_kwargs):
+        hooks.append("unexpected metadata hook")
+        raise AssertionError("Private evidence must not invoke metadata hooks")
+
+    class HostileTuple(tuple):
+        __iter__ = __add__ = __len__ = __str__ = __repr__ = reject
+
+    class HostileNotes(list):
+        append = __iter__ = __str__ = __repr__ = reject
+
+    class HostileExit(SystemExit):
+        def __getattribute__(self, name):
+            if name in {"__dict__", "__notes__", "_ci_diagnostic_errors", "add_note", "with_traceback"}:
+                reject()
+            return super().__getattribute__(name)
+
+        def __setattr__(self, name, value):
+            if name in {
+                "__dict__",
+                "__notes__",
+                "_ci_diagnostic_errors",
+                "__cause__",
+                "__context__",
+                "__suppress_context__",
+            }:
+                reject()
+            super().__setattr__(name, value)
+
+        __str__ = __repr__ = reject
+
+    original = HostileExit(17) if metadata_kind == "hostile-exception" else SystemExit(17)
+    cause, context = RuntimeError(CANARY), ValueError(CANARY)
+    secondary = KeyboardInterrupt(CANARY)
+    prior = RuntimeError(CANARY)
+    previous = (
+        HostileTuple((prior,))
+        if metadata_kind == "tuple-subclass"
+        else object()
+        if metadata_kind == "opaque"
+        else (prior,)
+    )
+    notes = HostileNotes(["Existing producer note."]) if metadata_kind == "notes-subclass" else []
+    state = BaseException.__dict__["__dict__"].__get__(original)
+    state["_ci_diagnostic_errors"] = previous
+    state["__notes__"] = notes
+    commands, callbacks = [], []
+
+    def fail(command, **kwargs):
+        commands.append(command)
+        kwargs["stdout"].write(CANARY)
+        try:
+            raise context
+        except ValueError:
+            raise original from cause
+
+    def diagnostic_failure(*_args, **_kwargs):
+        callbacks.append(callback)
+        raise secondary
+
+    monkeypatch.setattr(transport.subprocess, "run", fail)
+    # Isolate bookkeeping from the traceback module's intentional formatting.
+    monkeypatch.setattr(transport.traceback, "print_exc", lambda: None)
+    target = transport.traceback if callback == "traceback" else transport._Diagnostic
+    monkeypatch.setattr(target, "print_exc" if callback == "traceback" else "failed", diagnostic_failure)
+    streams = _close_fault(monkeypatch, combined.checkpoints / (failure.PHASE + ".log"))
+    args = transport._parser().parse_args(combined.args)
+
+    with pytest.raises(SystemExit) as caught:
+        transport._execute_diagnosed(args)
+
+    assert caught.value is original
+    assert SystemExit.code.__get__(original) == 17
+    assert BaseException.__cause__.__get__(original) is cause
+    assert BaseException.__context__.__get__(original) is context
+    assert BaseException.__suppress_context__.__get__(original) is True
+    assert len(commands) == 1 and callbacks == [callback]
+    assert len(streams) == 1
+    _assert_closed(streams)
+    assert BaseException.__dict__["__dict__"].__get__(original) is state
+    retained = state["_ci_diagnostic_errors"]
+    assert type(retained) is tuple and len(retained) == 2
+    assert retained[0] is (prior if type(previous) is tuple else previous)
+    assert retained[1] is secondary
+    assert secondary._ci_log_close_errors[0] is streams[0].error
+    assert len(secondary._ci_log_close_errors) == 1
+    assert state["__notes__"] is notes
+    if metadata_kind == "notes-subclass":
+        assert list.__len__(notes) == 1
+        assert list.__getitem__(notes, 0) == "Existing producer note."
+    else:
+        assert len(notes) == 1 and "_ci_diagnostic_errors" in notes[0]
+        assert CANARY not in notes[0]
+    assert not hooks
     assert not (combined.public / combined.receipt_path.name).exists()
     failure._assert_public(combined, failure._export(combined), status="unavailable")
     checkpoints.publish(tmp_path, combined.checkpoints)

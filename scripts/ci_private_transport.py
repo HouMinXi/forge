@@ -1049,6 +1049,22 @@ def _execute_diagnosed(args):
         if original_error is not None:
             if error is original_error:
                 raise
+            # Keep the displaced diagnostic error reachable, including any
+            # private close evidence attached while its log was unwinding.
+            # Never format it or replace the producer's existing chain.
+            try:
+                state = BaseException.__dict__["__dict__"].__get__(original_error)
+                previous = dict.get(state, "_ci_diagnostic_errors", ())
+                if type(previous) is not tuple:
+                    previous = (previous,)
+                dict.__setitem__(state, "_ci_diagnostic_errors", previous + (error,))
+                note = "Private CI diagnostics also failed; see _ci_diagnostic_errors."
+                if not dict.__contains__(state, "__notes__"):
+                    dict.__setitem__(state, "__notes__", [note])
+                elif type(notes := dict.__getitem__(state, "__notes__")) is list:
+                    notes.append(note)
+            except BaseException:  # noqa: BLE001, S110 - metadata cannot replace the primary.
+                pass
             try:
                 raise BaseException.with_traceback(original_error, original_traceback)
             finally:
