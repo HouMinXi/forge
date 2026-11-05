@@ -7,6 +7,7 @@ approve a public identity manifest.
 """
 
 import copy
+import fnmatch
 import hashlib
 import json
 import os
@@ -29,6 +30,16 @@ DIAGNOSTICS_GATE = "${{ always() && steps.public_diagnostics.outcome == 'success
 JOBS = ("plan", "process-contracts", "service-free", "linux-tests")
 PUBLIC = "forge-linux-public/"
 SUMMARY_GATE = "${{ always() && steps.public_summary.outcome == 'success' }}"
+FAILURE_NAME = "Prepare fixed public failure diagnostic"
+FAILURE_PUBLIC = "forge-linux-failure-public/"
+FAILURE_ARTIFACT = "forge-ci-failure-shard-${{ matrix.shard }}"
+FAILURE_ARCHIVE = "archive-" + FAILURE_ARTIFACT + "-${{ github.run_attempt }}"
+FAILURE_GATE = "${{ always() && steps.shard_receipt.outcome == 'failure' }}"
+FAILURE_COMMAND = (
+    'python scripts/ci_failure_diagnostic.py --sha "$GITHUB_SHA" --phase "shard-${{ matrix.shard }}" \\\n'
+    '  --plan forge-linux-input/plan/plan.json --directory "$EVIDENCE" \\\n'
+    "  --public-directory forge-linux-failure-public"
+)
 PRODUCER_IDS = {
     "Collect original selections and partition every module": "public_plan",
     "Run ownership": "ownership_receipt",
@@ -171,6 +182,42 @@ def fixed_summary_pair(artifact_name):
     return [archive, stable]
 
 
+def fixed_failure_pair():
+    archive = {
+        "name": "Archive fixed public failure diagnostic",
+        "id": "archive_failure_diagnostic",
+        "if": "${{ always() && steps.failure_diagnostic.outcome == 'success' }}",
+        "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+        "with": {
+            "name": FAILURE_ARCHIVE,
+            "path": FAILURE_PUBLIC + "failure.json",
+            "if-no-files-found": "error",
+            "retention-days": 14,
+        },
+    }
+    stable = copy.deepcopy(archive)
+    del stable["id"]
+    stable["name"] = "Preserve fixed public failure diagnostic"
+    stable["if"] = "${{ always() && steps.archive_failure_diagnostic.outcome == 'success' }}"
+    stable["with"].update(name=FAILURE_ARTIFACT, overwrite=True)
+    return [archive, stable]
+
+
+def assert_failure_diagnostic_steps(steps):
+    """Approve exact additive wiring before removing it from the base snapshot."""
+    exporter = steps[-3]
+    assert {key: val for key, val in exporter.items() if key != "run"} == {
+        "name": FAILURE_NAME,
+        "id": "failure_diagnostic",
+        "if": FAILURE_GATE,
+    }
+    prefix, body = private_prefix(exporter["run"])
+    assert 'exec >"$EVIDENCE/step-09.log" 2>&1\n' in prefix
+    assert body == FAILURE_COMMAND + "\n"
+    assert steps[-2:] == fixed_failure_pair()
+    assert steps[-5:-3] == fixed_summary_pair("linux-shard-${{ matrix.shard }}-summary")
+
+
 @pytest.mark.parametrize("job_name,step_name", RUNS)
 def test_every_shell_step_suppresses_output_before_expanding_private_paths(job_name, step_name):
     step = run_step(job_name, step_name)
@@ -198,6 +245,10 @@ def test_original_commands_change_only_private_transport_and_environment(job_nam
             '  --status "$CI_JOB_STATUS" --public-directory forge-linux-public'
         )
         return
+    if step_name == FAILURE_NAME:
+        assert job_name == "service-free"
+        assert body == FAILURE_COMMAND + "\n"
+        return
     # The consumer alone gets a private umask; the producer and its argv stay intact.
     body = re.sub(r'\| \(umask 077; exec tee ("\$EVIDENCE/[a-z0-9.-]+")\)', r"| tee \1", body)
     assert "umask" not in body
@@ -216,6 +267,12 @@ def test_original_commands_change_only_private_transport_and_environment(job_nam
         assert body.count(diagnostic_flag) == transport_count
         body = body.replace(diagnostic_flag, "")
     assert body.count(" --public-directory forge-linux-public") == int(step_name in PRODUCER_IDS)
+    assert body.count("--failure-diagnostic") == int(step_name == "Run serial service-free shard")
+    if step_name == "Run serial service-free shard":
+        assert job_name == "service-free"
+        diagnostic_option = '--directory "$EVIDENCE" --failure-diagnostic --public-directory'
+        assert body.count(diagnostic_option) == 1
+        body = body.replace(diagnostic_option, '--directory "$EVIDENCE" --public-directory')
     assert "scripts/ci_test_shards.py" not in body
     body = body.replace("scripts/ci_private_transport.py", "scripts/ci_test_shards.py")
     body = body.replace(" --public-directory forge-linux-public", "")
@@ -252,6 +309,9 @@ def test_full_workflow_preserves_original_authority_failures_budgets_and_paralle
         assert [s["name"] for s in diagnostics] == [DIAGNOSTICS_NAME, DIAGNOSTICS_UPLOAD_NAME]
         for step in diagnostics:
             job["steps"].remove(step)
+        if job_name == "service-free":
+            assert_failure_diagnostic_steps(job["steps"])
+            del job["steps"][-3:]
         summaries = [s for s in job["steps"] if s["name"] == SUMMARY_NAME]
         assert len(summaries) == 1
         summary = summaries[0]
@@ -296,6 +356,8 @@ def test_full_workflow_preserves_original_authority_failures_budgets_and_paralle
 
 
 def expected_paths(artifact_name):
+    if artifact_name in {FAILURE_ARTIFACT, FAILURE_ARCHIVE}:
+        return [FAILURE_PUBLIC + "failure.json"]
     artifact_name = stable_name(artifact_name)
     if artifact_name == "linux-collection-plan":
         names = [
@@ -318,7 +380,7 @@ def expected_paths(artifact_name):
 
 
 def test_uploads_are_exact_public_files_and_require_successful_summary_and_archive():
-    for job in workflow()["jobs"].values():
+    for job_name, job in workflow()["jobs"].items():
         steps = job["steps"]
         summary_index = next(i for i, s in enumerate(steps) if s.get("id") == "public_summary")
         for index, step in enumerate(steps):
@@ -331,6 +393,10 @@ def test_uploads_are_exact_public_files_and_require_successful_summary_and_archi
             assert options["path"].splitlines() == expected_paths(options["name"])
             assert options["if-no-files-found"] == "error"
             assert options["retention-days"] == 14
+            if options["name"] in {FAILURE_ARTIFACT, FAILURE_ARCHIVE}:
+                assert job_name == "service-free"
+                assert_failure_diagnostic_steps(steps)
+                continue
             if options.get("overwrite"):
                 archive = steps[index - 1]
                 assert (
@@ -353,10 +419,10 @@ def condition_allows(condition, outcomes):
     clauses = condition.removeprefix("${{ always() && ").removesuffix(" }}").split(" && ")
     required = []
     for clause in clauses:
-        match = re.fullmatch(r"steps\.([a-z_0-9]+)\.outcome == 'success'", clause)
+        match = re.fullmatch(r"steps\.([a-z_0-9]+)\.outcome == '(success|failure)'", clause)
         assert match, clause
-        required.append(match[1])
-    return all(outcomes.get(step) == "success" for step in required)
+        required.append((match[1], match[2]))
+    return all(outcomes.get(step) == expected for step, expected in required)
 
 
 @pytest.mark.parametrize("job_name", JOBS)
@@ -535,6 +601,80 @@ def test_successful_summary_cannot_publish_stale_files_from_failed_producer(tmp_
     assert condition_allows(data_archive["if"], dict.fromkeys(("public_summary", *producers), "success"))
 
 
+@pytest.mark.parametrize("shard_status", ["success", "failure", "cancelled", "skipped"])
+@pytest.mark.parametrize("summary_status", ["success", "failure", "cancelled", "skipped"])
+def test_failure_exporter_runs_only_after_shard_failure_independent_of_summary(
+    shard_status, summary_status
+):
+    steps = workflow()["jobs"]["service-free"]["steps"]
+    assert_failure_diagnostic_steps(steps)
+    exporter = steps[-3]
+    outcomes = {"shard_receipt": shard_status, "public_summary": summary_status}
+    assert condition_allows(exporter["if"], outcomes) == (shard_status == "failure")
+    success_archive = next(s for s in steps if s.get("id") == "archive_9")
+    assert condition_allows(success_archive["if"], outcomes) == (
+        shard_status == summary_status == "success"
+    )
+
+
+@pytest.mark.parametrize("exporter_status", ["success", "failure", "cancelled", "skipped"])
+@pytest.mark.parametrize("archive_status", ["success", "failure", "cancelled", "skipped"])
+def test_stale_failure_file_cannot_upload_without_successful_exporter(
+    tmp_path, exporter_status, archive_status
+):
+    steps = workflow()["jobs"]["service-free"]["steps"]
+    assert_failure_diagnostic_steps(steps)
+    archive, stable = steps[-2:]
+    path = tmp_path / FAILURE_PUBLIC / "failure.json"
+    path.parent.mkdir()
+    path.write_text(CANARY)
+    outcomes = {
+        "failure_diagnostic": exporter_status,
+        "public_summary": "failure",
+        "archive_public_summary": "failure",
+        "shard_receipt": "failure",
+    }
+    assert condition_allows(archive["if"], outcomes) == (exporter_status == "success")
+    # A skipped archive cannot report success. Model the actual dependency
+    # before deciding whether the stable upload is eligible to run.
+    outcomes["archive_failure_diagnostic"] = (
+        archive_status if condition_allows(archive["if"], outcomes) else "skipped"
+    )
+    assert condition_allows(stable["if"], outcomes) == (exporter_status == archive_status == "success")
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["success-exporter", "summary-dependency", "unchecked-upload", "broad-path", "aggregate-name"],
+)
+def test_failure_snapshot_rejects_expanded_or_weakened_wiring(change):
+    steps = copy.deepcopy(workflow()["jobs"]["service-free"]["steps"])
+    if change == "success-exporter":
+        steps[-3]["if"] = FAILURE_GATE.replace("'failure'", "'success'")
+    elif change == "summary-dependency":
+        steps[-3]["if"] = FAILURE_GATE.replace(" }}", " && steps.public_summary.outcome == 'success' }}")
+    elif change == "unchecked-upload":
+        steps[-1]["if"] = "${{ always() && steps.failure_diagnostic.outcome == 'success' }}"
+    elif change == "broad-path":
+        steps[-2]["with"]["path"] = FAILURE_PUBLIC + "*"
+    else:
+        steps[-1]["with"]["name"] = "linux-failure-${{ matrix.shard }}"
+    with pytest.raises(AssertionError):
+        assert_failure_diagnostic_steps(steps)
+
+
+def test_failure_diagnostic_artifacts_are_never_aggregate_inputs():
+    value = workflow()
+    assert_failure_diagnostic_steps(value["jobs"]["service-free"]["steps"])
+    aggregate_download = next(
+        s
+        for s in value["jobs"]["linux-tests"]["steps"]
+        if s.get("uses", "").startswith("actions/download-artifact@")
+    )
+    for step in value["jobs"]["service-free"]["steps"][-2:]:
+        assert not fnmatch.fnmatchcase(step["with"]["name"], aggregate_download["with"]["pattern"])
+
+
 def test_download_destinations_are_fixed_repository_relative_and_run_local():
     downloads = [
         (job_name, step["with"])
@@ -686,6 +826,7 @@ def test_real_shell_prefix_contains_output_and_preserves_failure(
     script = prefix + NOISY_FIXTURE + TERMINATIONS[termination] + 'touch "$EVIDENCE/reached"\n'
     # The original command body never enters the executed script.
     assert "ci_private_transport.py" not in script
+    assert "ci_failure_diagnostic.py" not in script
     assert "sudo " not in script and "systemd-run" not in script and "bwrap " not in script
     if termination == "timeout":
         expire_ready_fixture(argv, script, tmp_path, env, evidence)
@@ -708,6 +849,7 @@ def test_real_shell_prefix_contains_output_and_preserves_failure(
     assert evidence.stat().st_mode & 0o777 == 0o700
     assert log.stat().st_mode & 0o777 == 0o600
     assert not (tmp_path / "forge-linux-public").exists()
+    assert not (tmp_path / "forge-linux-failure-public").exists()
 
 
 def test_timeout_window_starts_after_delayed_fixture_is_ready(tmp_path):
@@ -773,19 +915,21 @@ def test_explicit_upload_selection_excludes_synthetic_private_siblings(tmp_path,
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('{"synthetic_public_fixture":true}\n')
             selected.add(path)
-    for name in (
-        "raw-plan.json",
-        "raw-receipt.json",
-        "nodeids.txt",
-        "private.log",
-        "junit.xml",
-        "nested/raw.json",
-    ):
-        path = tmp_path / PUBLIC / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(CANARY)
-        assert path not in selected
-    assert len(selected) == 10  # One plan, four collections, four receipts and one summary.
+    for directory in (PUBLIC, FAILURE_PUBLIC):
+        for name in (
+            "raw-plan.json",
+            "raw-receipt.json",
+            "nodeids.txt",
+            "private.log",
+            "junit.xml",
+            "nested/raw.json",
+        ):
+            path = tmp_path / directory / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(CANARY)
+            assert path not in selected
+    # One plan, four collections, four receipts, one summary and one diagnostic.
+    assert len(selected) == 11
     assert all(CANARY not in path.read_text() for path in selected)
 
 

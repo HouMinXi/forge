@@ -66,6 +66,59 @@ def utc():
     return "2026-10-06T12:00:00Z"
 
 
+@pytest.mark.parametrize("version,days", [(1, 7), (2, 3)])
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_versioned_retention_maintenance_preserves_legacy_policy(disk_root, version, days, offset):
+    from datetime import datetime, timedelta, timezone
+
+    clock = Clock()
+    owner = audit.AttemptRecorder(
+        disk_root,
+        context=context(),
+        monotonic=clock,
+        utc_now=utc,
+        audit_schema_version=version,
+    )
+    opened = owner.open()
+    assert opened.admitted, f"real recorder admission required: {opened.fault}"
+    attempt = start(owner)
+    captured = acquire(owner, attempt, usage(11, 3, 0, 0), data=b"retention response")
+    assert captured.admitted
+    assert finish(owner, attempt).admitted
+    assert owner.finalize("completed").admitted
+    run = disk_root / RUN
+    raw = run / ("raw-" + captured.ref.artifact_id)
+    journal_before = (run / "journal").read_bytes()
+    now = datetime(2026, 10, 6, 12, tzinfo=timezone.utc) + timedelta(days=days, seconds=offset)
+    maintained = audit.maintain_audit_root(
+        disk_root,
+        monotonic=clock,
+        utc_now=lambda: now.isoformat().replace("+00:00", "Z"),
+        action_deadline=100,
+    )
+    assert maintained.admitted
+    assert (run / "journal").read_bytes() == journal_before
+    if offset <= 0:
+        assert raw.read_bytes() == b"retention response"
+        assert not (run / "tombstone").exists()
+        assert audit.AttemptRecorder.reopen(disk_root, RUN).audit_complete
+    else:
+        assert not raw.exists()
+        marker = json.loads((run / "tombstone").read_bytes())
+        assert marker["schema_version"] == version
+        assert (run / "admission").exists() and (run / "final").exists()
+        # Repeated maintenance preserves the committed tombstone, not a new deletion.
+        before = {p.name: p.read_bytes() for p in run.iterdir()}
+        again = audit.maintain_audit_root(
+            disk_root,
+            monotonic=clock,
+            utc_now=lambda: now.isoformat().replace("+00:00", "Z"),
+            action_deadline=100,
+        )
+        assert again.admitted
+        assert {p.name: p.read_bytes() for p in run.iterdir()} == before
+
+
 def context(**changes):
     return dataclasses.replace(
         audit.InvocationContext(RUN, None, None, 0, "qodo-review", GROUP, "c" * 64, "review", None),

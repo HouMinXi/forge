@@ -1,0 +1,903 @@
+"""Actual host/owner/stage/supervisor consumers with a MOCK storage boundary.
+
+These tests do not admit a native filesystem or prove durable storage behavior.
+No provider, HTTP, filesystem qualification override or CLI entry point is used.
+"""
+
+from dataclasses import asdict, replace
+import hashlib
+import io
+from pathlib import Path
+from types import SimpleNamespace
+import threading
+import time
+import uuid
+
+import pytest
+
+from code_forge import invocation_audit as audit
+from code_forge import invocation_host as module
+from code_forge import invocation_io, invocation_owner
+from code_forge.invocation_host import HostAuditSession, HostAuditLimits
+from code_forge.invocation_io import IoLimits, process_audit_io
+from code_forge.invocation_send_audit import SendLifecycleClosed, SendRequest
+from code_forge.llm_invoke import AuditPersistenceError, Usage
+
+
+class MockRecorder:
+    """Controlled ACK issuer; only the storage boundary is replaced."""
+
+    instances = []
+    records = {}
+    block = None
+    fail = None
+    error = None
+    entered = None
+    release = None
+    calls = []
+
+    def __init__(self, root, *, context, monotonic, utc_now, audit_schema_version):
+        audit._context(context)
+        self.root, self.context, self.version = root, context, audit_schema_version
+        self.manifest = None
+        self.stages = {}
+        self.started = []
+        self.finished = []
+        self.instances.append(self)
+        self.records[context.run_id] = self
+
+    def touch(self, name):
+        self.calls.append((name, threading.current_thread().name))
+        if name == self.block:
+            self.entered.set()
+            assert self.release.wait(3)
+        if name == self.fail:
+            raise self.error or OSError("PRIVATE recorder diagnostic")
+
+    def open(self):
+        self.touch("open")
+        return audit.AuditAcknowledgement(True, None)
+
+    def publish_input_manifest(self, *, manifest):
+        self.touch("input")
+        audit._manifest(manifest, asdict(self.context))
+        self.manifest = manifest
+        return audit.AuditAcknowledgement(True, None)
+
+    def scoped_snapshot(self):
+        self.touch("snapshot")
+        return SimpleNamespace(input_manifest=self.manifest)
+
+    def start(self, **kwargs):
+        self.touch("start")
+        self.started.append(kwargs)
+        return audit.StartAcknowledgement(True, str(uuid.uuid4()), None)
+
+    def begin_stage(self, attempt_id, *, layer, action_deadline):
+        self.touch("begin")
+        identity = audit.StageIdentity(
+            self.context.run_id, attempt_id, str(uuid.uuid4()), str(uuid.uuid4()), layer
+        )
+        handle = audit.StageHandle(identity)
+        self.stages[handle] = bytearray()
+        checkpoint = audit.StageCheckpoint(identity, 0, hashlib.sha256(b"").hexdigest())
+        return audit.StageAcknowledgement(True, handle, checkpoint, 0, False, None)
+
+    def append_stage(self, handle, *, offset, data, action_deadline):
+        self.touch("append")
+        body = self.stages[handle]
+        assert len(body) == offset
+        body.extend(data)
+        checkpoint = audit.StageCheckpoint(handle.identity, len(body), hashlib.sha256(body).hexdigest())
+        return audit.StageAcknowledgement(True, handle, checkpoint, len(data), False, None)
+
+    def seal_stage(self, handle, *, checkpoint, action_deadline):
+        self.touch("seal")
+        return audit.StageAcknowledgement(True, handle, checkpoint, 0, False, None)
+
+    def adopt_stage(
+        self, handle, *, checkpoint, complete, original_bytes, usage, dispatch_state, action_deadline
+    ):
+        self.touch("adopt")
+        assert usage is None, "Aggregate LLM usage must not manufacture native credit"
+        return audit.AcquiredAcknowledgement(
+            complete,
+            handle.identity.observation_id,
+            audit.RawRef(
+                handle.identity.artifact_id,
+                handle.identity.layer,
+                checkpoint.sha256,
+                checkpoint.retained_bytes,
+                original_bytes,
+                not complete,
+            ),
+            None
+            if complete
+            else audit.AuditFault("persistence_error", "acquired", handle.identity.attempt_id),
+        )
+
+    def cancel_stage(self, handle):
+        # Explicit nonblocking signal, not recorder I/O.
+        handle._cancel.set()
+        return audit.AuditAcknowledgement(True, None)
+
+    def observe_response(self, **kwargs):
+        self.touch("observe")
+        return audit.AuditAcknowledgement(True, None)
+
+    def finish(self, **kwargs):
+        self.touch("finish")
+        self.finished.append(kwargs)
+        return audit.AuditAcknowledgement(True, None)
+
+    def finalize(self, **kwargs):
+        self.touch("finalize")
+        self.audit_incomplete = getattr(self, "audit_incomplete", False) or kwargs.get(
+            "audit_incomplete", False
+        )
+        return audit.AuditAcknowledgement(True, None)
+
+    @classmethod
+    def reopen_scoped(cls, root, run_id):
+        recorder = cls.records[run_id]
+        recorder.touch("reopen")
+        unknown = len(recorder.started)
+        usage = {
+            key: dict(
+                known_subtotal=0, unknown_attempt_count=unknown, invalid_attempt_count=0, total=None
+            )
+            for key in ("input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens")
+        }
+        summary = dict(
+            observed_api_send_count=unknown,
+            observed_cli_launch_count=0,
+            unknown_dispatch_count=0,
+            usage=usage,
+            timing=dict(known_work_s=0, unknown_duration_count=unknown),
+            state="completed",
+        )
+        return SimpleNamespace(
+            faults=(), audit_complete=not getattr(recorder, "audit_incomplete", False), summary=summary
+        )
+
+
+@pytest.fixture
+def setup(monkeypatch):
+    monkeypatch.setattr(invocation_owner, "AttemptRecorder", MockRecorder)
+    monkeypatch.setattr(invocation_io, "_PROCESS", None)
+    for key, value in dict(
+        instances=[],
+        records={},
+        block=None,
+        fail=None,
+        error=None,
+        calls=[],
+        entered=threading.Event(),
+        release=threading.Event(),
+    ).items():
+        monkeypatch.setattr(MockRecorder, key, value)
+    supervisor = process_audit_io(limits=IoLimits(32, 8192, 512, 8), warn=lambda _: None)
+    hosts = []
+
+    def make(*, strict=False, known=True, warn=None, **changes):
+        context = audit.InvocationContext(
+            str(uuid.uuid4()),
+            "a" * 64 if known else None,
+            str(uuid.uuid4()) if known else None,
+            None,
+            None,
+            None,
+            None,
+            "review",
+            None,
+        )
+        manifest = (
+            dict(
+                schema_version=1,
+                run_id=context.run_id,
+                snapshot_id=context.snapshot_id,
+                mode="diff",
+                legacy_source_hash=context.source_hash,
+                exact_diff_sha256="b" * 64,
+                diff_bytes=7,
+                files=[],
+                repositories=[],
+            )
+            if known
+            else None
+        )
+        settings = dict(
+            control_timeout_s=0.08,
+            flush_timeout_s=0.08,
+            batch_bytes=512,
+            capture_buffer_bytes=4096,
+            max_delay_s=0,
+        )
+        settings.update(changes)
+        notices = []
+        host = HostAuditSession(
+            artifact_root=Path("/mock-not-native"),
+            context=context,
+            manifest=manifest,
+            strict=strict,
+            limits=HostAuditLimits(**settings),
+            supervisor=supervisor,
+            warn=warn or notices.append,
+        )
+        hosts.append(host)
+        return host, notices
+
+    yield make, supervisor
+    MockRecorder.release.set()
+    for host in hosts:
+        host.close(primary=RuntimeError("fixture cleanup"))
+    supervisor.close()
+    if supervisor._worker:
+        supervisor._worker.join(3)
+        assert not supervisor._worker.is_alive()
+
+
+def request(*, parent=None, cause="initial", deadline=None):
+    return SendRequest(
+        cause, parent, "c" * 64, 10, "POST", "fixture", "model", deadline or time.monotonic() + 2
+    )
+
+
+def admit(scope, request):
+    attempt = scope.start_send(request)
+    if attempt is not None:
+        assert attempt.enter_send()
+    return attempt
+
+
+def complete(attempt, body=b"private reasoning_content"):
+    captured = attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    assert b"".join(captured.chunks(io.BytesIO(body))) == body
+    captured.seal()
+    return attempt.finish(outcome="completed", error_class=None, duration_s=0.01, usage=Usage(13, 17))
+
+
+def test_lazy_actual_owner_stage_consumer_all_io_on_single_worker(setup):
+    make, supervisor = setup
+    host, notices = make()
+    assert not MockRecorder.instances and supervisor._worker is None
+    scope = host.scope(pass_name="breaker")
+    attempt = admit(scope, request())
+    assert attempt is not None and complete(attempt)
+    assert type(host._owner) is invocation_owner.InvocationOwner
+    recorder = MockRecorder.instances[0]
+    assert recorder.version == 2 and recorder.manifest is not None
+    assert list(recorder.stages.values()) == [bytearray(b"private reasoning_content")]
+    record = host._owner._leases[id(attempt._lease)]
+    assert len(record.refs) == 1 and not record.usage_known
+    summary = host.finalize()
+    assert summary.audit_complete and summary.adopted_responses == summary.settled_sends == 1
+    assert not summary.usage_known and not notices
+    assert {name for _, name in MockRecorder.calls} == {"forge-audit-io"}
+    assert not host._commands and host._control_bytes == supervisor.retained_bytes == 0
+    assert "private" not in repr(summary) and "model" not in repr(summary)
+
+
+def test_unknown_source_never_publishes_known_empty_manifest(setup):
+    make, _ = setup
+    host, _ = make(known=False)
+    attempt = admit(host.scope(), request())
+    assert complete(attempt)
+    assert not host.safe_summary().source_known and MockRecorder.instances[0].manifest is None
+    assert "input" not in [name for name, _ in MockRecorder.calls]
+    host.finalize()
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("phase", ["open", "input", "start"])
+def test_control_failure_latches_once_default_continues_strict_typed(setup, strict, phase):
+    make, _ = setup
+    host, notices = make(strict=strict)
+    MockRecorder.fail = phase
+    scope = host.scope()
+    if strict:
+        with pytest.raises(AuditPersistenceError) as caught:
+            admit(scope, request())
+        assert not caught.value.retryable
+    else:
+        assert admit(scope, request()) is None
+    assert host.safe_summary().state == "incomplete" and notices == [module._WARNING]
+    calls = list(MockRecorder.calls)
+    if strict:
+        with pytest.raises(AuditPersistenceError):
+            admit(scope, request())
+    else:
+        assert admit(scope, request()) is None
+    assert MockRecorder.calls == calls and notices == [module._WARNING]
+
+
+def test_hung_open_remains_single_worker_and_control_owned_after_timeout(setup):
+    make, supervisor = setup
+    MockRecorder.block = "open"
+    host, _ = make()
+    assert admit(host.scope(), request()) is None
+    assert MockRecorder.entered.is_set()
+    worker = supervisor._worker
+    assert len(host._commands) == 1 and host._control_bytes == 4096
+    for _ in range(20):
+        other, _ = make()
+        assert admit(other.scope(), request()) is None
+    assert supervisor._worker is worker and supervisor.unavailable
+    assert host.safe_summary().publication_uncertain
+    MockRecorder.release.set()
+    with supervisor._condition:
+        assert supervisor._condition.wait_for(lambda: supervisor._running is None, timeout=1)
+    assert not host._commands and host._control_bytes == 0
+    assert host.safe_summary().state == "incomplete" and not host.safe_summary().audit_complete
+
+
+def test_redirect_parent_identity_and_no_new_owner(setup):
+    make, _ = setup
+    host, _ = make()
+    scope = host.scope()
+    first = admit(scope, request())
+    assert complete(first, b"redirect body")
+    second = admit(scope, request(parent=first, cause="redirect"))
+    assert complete(second, b"final")
+    assert len(MockRecorder.instances) == 1 and first._operation is second._operation
+    starts = MockRecorder.instances[0].started
+    assert starts[1]["parent_id"] == first._lease.attempt_id and starts[1]["cause"] == "redirect"
+    with pytest.raises(ValueError, match="foreign"):
+        admit(host.scope(), request(parent=second, cause="retry"))
+
+
+def test_late_adopt_never_creates_refs_usage_or_safe_summary_credit(setup):
+    make, supervisor = setup
+    host, _ = make()
+    attempt = admit(host.scope(), request())
+    captured = attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    list(captured.chunks(io.BytesIO(b"private")))
+    captured.seal()
+    MockRecorder.block = "adopt"
+    assert (
+        attempt.finish(outcome="completed", error_class=None, duration_s=0.01, usage=Usage(1, 2))
+        is False
+    )
+    assert MockRecorder.entered.is_set()
+    record = host._owner._leases[id(attempt._lease)]
+    assert not record.refs and not record.usage_known
+    before = host.safe_summary()
+    assert before.adopted_responses == before.accepted_bytes == 0
+    MockRecorder.release.set()
+    with supervisor._condition:
+        assert supervisor._condition.wait_for(lambda: supervisor._running is None, timeout=1)
+    assert not record.refs and host.safe_summary() == before
+
+
+def test_primary_identity_and_chain_survive_secondary_finalize_and_warning(setup):
+    make, _ = setup
+
+    def broken_warning(_):
+        raise MemoryError("PRIVATE warning")
+
+    host, _ = make(strict=True, warn=broken_warning)
+    attempt = admit(host.scope(), request())
+    assert complete(attempt)
+    primary = ValueError("PRIMARY")
+    primary.__cause__ = LookupError("cause")
+    cause, context = primary.__cause__, primary.__context__
+    MockRecorder.fail = "finalize"
+    host.finalize(primary=primary)
+    assert primary.__cause__ is cause and primary.__context__ is context
+    assert host.safe_summary().state == "incomplete"
+
+
+def test_failed_warning_observes_latch_before_callback(setup):
+    make, _ = setup
+    seen = []
+
+    def warning(code):
+        seen.append((code, host.safe_summary().state))
+        raise OSError("PRIVATE")
+
+    host, _ = make(warn=warning)
+    MockRecorder.fail = "open"
+    assert admit(host.scope(), request()) is None
+    assert seen == [(module._WARNING, "incomplete")]
+
+
+def test_metadata_bounds_and_unknown_source_do_not_manufacture_identity(setup):
+    make, supervisor = setup
+    host, _ = make()
+    with pytest.raises(ValueError):
+        host.scope(pass_name="x" * 5000)
+    with pytest.raises(ValueError):
+        admit(host.scope(), replace(request(), model="x" * 10000))
+    context = replace(host._context, source_hash=None, snapshot_id=None)
+    with pytest.raises(ValueError, match="unknown source"):
+        HostAuditSession(artifact_root=Path("unused"), context=context, manifest={})
+    assert supervisor._worker is None
+
+
+def test_fork_refuses_before_touching_inherited_locks(setup, monkeypatch):
+    make, _ = setup
+    host, _ = make()
+    scope = host.scope()
+    with monkeypatch.context() as patch:
+        patch.setattr(module.os, "getpid", lambda: host._pid + 1)
+        for action in (host.safe_summary, host.close, lambda: admit(scope, request())):
+            with pytest.raises(RuntimeError, match="inherited"):
+                action()
+
+
+@pytest.mark.parametrize(
+    "phase", ["open", "input", "start", "begin", "append", "seal", "adopt", "finish", "finalize"]
+)
+def test_fatal_storage_error_preserves_original_identity_in_all_phases(setup, phase):
+    make, _ = setup
+    host, _ = make()
+    original = MemoryError("PRIVATE fatal")
+    original.__cause__ = ValueError("PRIVATE cause")
+    cause = original.__cause__
+    if phase in ("open", "input", "start"):
+        MockRecorder.fail, MockRecorder.error = phase, original
+        with pytest.raises(MemoryError) as caught:
+            admit(host.scope(), request())
+    else:
+        attempt = admit(host.scope(), request())
+        if phase == "begin":
+            MockRecorder.fail, MockRecorder.error = phase, original
+            with pytest.raises(MemoryError) as caught:
+                attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+        else:
+            captured = attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+            if phase == "append":
+                MockRecorder.fail, MockRecorder.error = phase, original
+                list(captured.chunks(io.BytesIO(b"body")))
+                with pytest.raises(MemoryError) as caught:
+                    captured.seal()
+            else:
+                list(captured.chunks(io.BytesIO(b"body")))
+                captured.seal()
+                if phase == "finalize":
+                    assert attempt.finish(
+                        outcome="completed", error_class=None, duration_s=0.1, usage=None
+                    )
+                    MockRecorder.fail, MockRecorder.error = phase, original
+                    with pytest.raises(MemoryError) as caught:
+                        host.finalize()
+                else:
+                    MockRecorder.fail, MockRecorder.error = phase, original
+                    with pytest.raises(MemoryError) as caught:
+                        attempt.finish(outcome="completed", error_class=None, duration_s=0.1, usage=None)
+    assert caught.value is original and original.__cause__ is cause
+    assert not host.safe_summary().audit_complete
+
+
+def test_trusted_observe_consumes_stage_source_and_same_worker_not_aggregate_usage(setup):
+    make, _ = setup
+    host, _ = make()
+    attempt = admit(host.scope(), request())
+    captured = attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    list(captured.chunks(io.BytesIO(b"body")))
+    captured.seal()
+    with pytest.raises(TypeError, match="trusted"):
+        attempt.observe_response(frame_offset=0, frame_length=4, usage=Usage(1, 2))
+    usage = audit.UsageObservation(
+        1, 2, None, None, "partial", "unknown", "unknown", "final", "native", "attempt", {}
+    )
+    assert attempt.observe_response(frame_offset=0, frame_length=4, usage=usage)
+    record = host._owner._leases[id(attempt._lease)]
+    assert record.usage_known and len(record.refs) == 1
+    assert ("observe", "forge-audit-io") in MockRecorder.calls
+    assert attempt.finish(outcome="completed", error_class=None, duration_s=0.1, usage=None)
+    assert host.safe_summary().adopted_responses == 1
+
+
+def test_maintenance_fixed_roots_same_worker_once_and_primary_precedence(setup, monkeypatch):
+    make, _ = setup
+    host, _ = make()
+    attempt = admit(host.scope(), request())
+    assert complete(attempt)
+    calls = []
+
+    def maintenance(root, *, monotonic, utc_now, action_deadline):
+        calls.append((root, threading.current_thread().name, action_deadline))
+        return audit.AuditAcknowledgement(
+            False, audit.AuditFault("persistence_error", "maintenance", None)
+        )
+
+    monkeypatch.setattr(module, "maintain_audit_root", maintenance)
+    primary = ValueError("unchanged")
+    summary = host.finalize(primary=primary, maintain=True)
+    assert len(calls) == 1 and calls[0][:2] == (Path("/mock-not-native"), "forge-audit-io")
+    assert summary.state == "incomplete" and not summary.audit_complete
+    assert host.finalize(primary=primary, maintain=True) == summary and len(calls) == 1
+
+
+def test_control_slot_bound_and_hung_input_preserve_manifest_charge(setup):
+    make, supervisor = setup
+    host, _ = make(control_slots=1)
+    MockRecorder.block = "input"
+    assert admit(host.scope(), request()) is None
+    assert MockRecorder.entered.is_set() and len(host._commands) == 1
+    command = next(iter(host._commands))
+    assert command.command == "input" and command.arguments == host._manifest
+    assert host._control_bytes == command.charge and command.charge >= 2 * len(command.arguments)
+    with pytest.raises(module._Unavailable):
+        host._request(invocation_io.AuditPhase.MAINTAIN, "maintain", None, time.monotonic() + 1)
+    assert len(host._commands) == 1
+    MockRecorder.release.set()
+    with supervisor._condition:
+        assert supervisor._condition.wait_for(lambda: supervisor._running is None, timeout=1)
+    assert not host._commands and host._control_bytes == 0 and command.arguments is None
+
+
+def test_scope_and_total_send_budgets_are_admitted_before_start(setup):
+    make, _ = setup
+    host, notices = make(max_sends=2)
+    scope = host.scope(max_provider_sends=1, max_redirect_hops=0)
+    attempt = admit(scope, request())
+    assert complete(attempt)
+    assert admit(scope, request(parent=attempt, cause="retry")) is None
+    assert len(MockRecorder.instances[0].started) == 1
+    assert notices == [module._WARNING]
+
+
+def test_lazy_default_singleton_does_not_retain_first_host_warning_callback(monkeypatch):
+    import gc
+    import weakref
+
+    monkeypatch.setattr(invocation_io, "_PROCESS", None)
+    ctx = audit.InvocationContext(str(uuid.uuid4()), None, None, None, None, None, None, "review", None)
+    host = HostAuditSession(artifact_root=Path("unused"), context=ctx)
+    reference = weakref.ref(host)
+    host._ensure_io()
+    process = host._io
+    assert process._warn is module._process_warning and process._worker is None
+    host.close()
+    del host
+    gc.collect()
+    assert reference() is None
+    process.close()
+
+
+def test_completed_fatal_control_metadata_charged_until_actual_handoff(setup, monkeypatch):
+    make, supervisor = setup
+    host, _ = make()
+    MockRecorder.fail, MockRecorder.error = "input", MemoryError("private")
+    entered, release = threading.Event(), threading.Event()
+    original_wait = supervisor.wait
+    results = []
+
+    def wait(ticket):
+        if ticket._phase is invocation_io.AuditPhase.INPUT:
+            with supervisor._condition:
+                assert supervisor._condition.wait_for(lambda: ticket._outcome is not None, timeout=1)
+            entered.set()
+            assert release.wait(2)
+        return original_wait(ticket)
+
+    monkeypatch.setattr(supervisor, "wait", wait)
+
+    def call():
+        try:
+            admit(host.scope(), request())
+        except BaseException as error:  # noqa: BLE001 - assert same fatal across thread handoff
+            results.append(error)
+
+    thread = threading.Thread(target=call)
+    thread.start()
+    try:
+        assert entered.wait(1)
+        command = next(iter(host._commands))
+        assert command.done and not command.released and command.command == "input"
+        assert command.arguments == host._manifest
+        assert host._control_bytes == command.charge and supervisor._errors
+    finally:
+        release.set()
+        thread.join(2)
+    assert results == [MockRecorder.error]
+    assert not host._commands and host._control_bytes == 0 and not supervisor._errors
+
+
+def test_finalization_does_not_extend_unfinished_capture_drain_budget(setup, monkeypatch):
+    make, _ = setup
+    host, _ = make()
+    attempt = admit(host.scope(), request())
+    captured = attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    list(captured.chunks(io.BytesIO(b"private")))
+
+    # Outer cleanup must abandon, not call a new controller drain/adopt sequence.
+    drain_calls = []
+
+    def forbidden():
+        drain_calls.append(True)
+        raise AssertionError("outer cleanup started a fresh drain budget")
+
+    monkeypatch.setattr(attempt._stage, "seal", forbidden)
+    summary = host.finalize()
+    assert not summary.audit_complete and attempt._stage._cancelled
+    assert not drain_calls
+    assert not host._owner._leases[id(attempt._lease)].refs
+
+
+def test_no_recursive_controller_wait_on_single_worker(setup):
+    make, supervisor = setup
+    host, _ = make()
+
+    class Target:
+        def audit_io(self, phase, payload):
+            return host._request(invocation_io.AuditPhase.OPEN, "open", None, time.monotonic() + 1)
+
+    ticket = supervisor.submit(Target(), invocation_io.AuditPhase.OPEN, deadline=time.monotonic() + 1)
+    assert supervisor.wait(ticket).state == "failed"
+    assert not supervisor.unavailable and not MockRecorder.instances and not host._commands
+
+
+@pytest.mark.parametrize("scenario_name", ["initial", "retry", "correction", "continuation", "headroom"])
+def test_real_send_protocol_to_real_host_owner_stage_with_mock_transport_storage(
+    setup, monkeypatch, scenario_name
+):
+    from code_forge import llm_invoke as invoke
+    from code_forge.backend import BackendConfig
+    from tests.test_invocation_send_audit import scenario, scripted
+
+    monkeypatch.setenv("HOST_TEST_KEY", "mock-secret-not-a-provider")
+    monkeypatch.setattr(invoke, "_CONTINUE_DELAY_S", 0)
+    backend = BackendConfig(
+        name="fixture",
+        type="api",
+        format="openai",
+        model="unit",
+        base_url="https://provider.invalid/v1",
+        api_key_env="HOST_TEST_KEY",
+        max_tokens=8,
+        output_token_limit=64,
+    )
+    responses, causes = scenario(scenario_name)
+    transport = scripted(monkeypatch, responses)
+    make, _ = setup
+    host, _ = make()
+    result = invoke._invoke_api("private prompt", backend, 3, initial_delay_s=0, host_audit=host.scope())
+    assert result.content["findings"] == []
+    recorder = MockRecorder.instances[0]
+    assert [row["cause"] for row in recorder.started] == causes
+    assert len(transport.requests) == len(recorder.stages) == len(recorder.finished) == len(causes)
+    summary = host.finalize()
+    assert summary.adopted_responses == len(causes) and not summary.usage_known
+    assert summary.audit_complete and "private" not in repr(summary)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_real_stream_with_real_adapter_keeps_private_reasoning_and_fails_by_policy(
+    setup, monkeypatch, strict
+):
+    from code_forge import llm_invoke as invoke
+    from code_forge.backend import BackendConfig
+    from tests.test_invocation_send_audit import reply, scripted
+
+    monkeypatch.setenv("HOST_TEST_KEY", "mock-secret")
+    backend = BackendConfig(
+        name="fixture",
+        type="api",
+        format="openai",
+        model="unit",
+        base_url="https://provider.invalid/v1",
+        api_key_env="HOST_TEST_KEY",
+        stream=True,
+        max_tokens=64,
+        output_token_limit=128,
+    )
+    response = reply(stream=True)
+    transport = scripted(monkeypatch, [response])
+    make, _ = setup
+    host, notices = make(strict=strict)
+    MockRecorder.fail = "finish"
+    if strict:
+        with pytest.raises(AuditPersistenceError):
+            invoke._invoke_api("private prompt", backend, 3, host_audit=host.scope())
+        assert host.strict_failed
+    else:
+        assert (
+            invoke._invoke_api("private prompt", backend, 3, host_audit=host.scope()).content["findings"]
+            == []
+        )
+    assert len(transport.requests) == 1
+    assert b"private-thinking" in bytes(next(iter(MockRecorder.instances[0].stages.values())))
+    assert notices == [module._WARNING]
+    assert "private" not in repr(host.safe_summary())
+
+
+def test_real_http_primary_with_strict_secondary_does_not_mutate_retryable_or_send_again(
+    setup, monkeypatch
+):
+    from code_forge import llm_invoke as invoke
+    from code_forge.backend import BackendConfig
+    from tests.test_invocation_send_audit import http_error, reply, scripted
+
+    monkeypatch.setenv("HOST_TEST_KEY", "mock-secret")
+    backend = BackendConfig(
+        name="fixture",
+        type="api",
+        format="openai",
+        model="unit",
+        base_url="https://provider.invalid/v1",
+        api_key_env="HOST_TEST_KEY",
+    )
+    transport = scripted(monkeypatch, [http_error(), reply()])
+    make, _ = setup
+    host, _ = make(strict=True)
+    MockRecorder.fail = "finish"
+    with pytest.raises(invoke.LLMInvokeError) as caught:
+        invoke._invoke_api("prompt", backend, 3, initial_delay_s=0, host_audit=host.scope())
+    assert not isinstance(caught.value, AuditPersistenceError)
+    assert caught.value.retryable is True and len(transport.requests) == 1 and host.strict_failed
+
+
+def test_completed_send_without_response_capture_cannot_manufacture_complete_audit(setup):
+    make, _ = setup
+    host, _ = make()
+    attempt = admit(host.scope(), request())
+    assert not attempt.finish(outcome="completed", error_class=None, duration_s=0.01, usage=None)
+    assert host.failed and host.safe_summary().adopted_responses == 0
+    assert not host.safe_summary().audit_complete
+
+
+def test_admission_is_not_entered_and_expired_no_network_settlement_keeps_not_dispatched(
+    setup, monkeypatch
+):
+    make, _ = setup
+    host, _ = make()
+    deadline = time.monotonic() + 1
+    attempt = host.scope().start_send(request(deadline=deadline))
+    record = host._owner._leases[id(attempt._lease)]
+    assert record.dispatch == "not_dispatched"
+    with monkeypatch.context() as patch:
+        patch.setattr(module.time, "monotonic", lambda: deadline + 1)
+        assert attempt.finish(
+            outcome="failed", error_class="SendDeadlineBeforeNetwork", duration_s=1.0, usage=None
+        )
+    assert record.dispatch == "not_dispatched" and record.settled
+    assert MockRecorder.instances[0].finished[0]["error_class"] == "SendDeadlineBeforeNetwork"
+    assert not record.refs and not MockRecorder.instances[0].stages
+
+
+def test_entered_is_monotonic_local_boundary_not_physical_send_claim(setup):
+    make, _ = setup
+    host, _ = make()
+    attempt = host.scope().start_send(request())
+    assert attempt.enter_send() and attempt.enter_send()
+    assert attempt.finish(
+        outcome="failed", error_class="SendDeadlineBeforeNetwork", duration_s=0.01, usage=None
+    )
+    record = host._owner._leases[id(attempt._lease)]
+    assert record.dispatch == "entered_api_send" and not record.refs
+    assert MockRecorder.instances[0].finished[0]["error_class"] == "SendDeadlineBeforeNetwork"
+
+
+def test_lazy_source_binding_before_branch_send_is_explicit_and_immutable(setup):
+    make, supervisor = setup
+    host, _ = make(known=False)
+    context = replace(host._context, source_hash="a" * 64, snapshot_id=str(uuid.uuid4()))
+    manifest = dict(
+        schema_version=1,
+        run_id=context.run_id,
+        snapshot_id=context.snapshot_id,
+        mode="diff",
+        legacy_source_hash=context.source_hash,
+        exact_diff_sha256=hashlib.sha256(b"").hexdigest(),
+        diff_bytes=0,
+        files=[],
+        repositories=[],
+    )
+    host.bind_source(context, manifest=manifest)
+    assert supervisor._worker is None and not MockRecorder.instances and host.safe_summary().source_known
+    attempt = admit(host.scope(), request())
+    assert MockRecorder.instances[0].manifest["diff_bytes"] == 0
+    with pytest.raises(ValueError, match="immutable"):
+        host.bind_source(replace(context, source_hash=None, snapshot_id=None))
+    assert complete(attempt)
+
+
+@pytest.mark.parametrize("with_primary", [False, True])
+def test_close_retains_first_fatal_but_cleans_two_real_stage_capture_slots(
+    setup, monkeypatch, with_primary
+):
+    make, supervisor = setup
+    host, _ = make()
+    for _ in range(2):
+        attempt = admit(host.scope(), request())
+        attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    order = tuple(host._attempts)
+    recorder = MockRecorder.instances[0]
+    first, second = MemoryError("first cancel fatal"), KeyboardInterrupt("second cancel fatal")
+    first.__cause__ = ValueError("cause")
+    first.__context__ = LookupError("context")
+    first.__suppress_context__ = True
+    chain = first.__cause__, first.__context__, first.__suppress_context__
+    calls = []
+
+    def cancel(handle):
+        calls.append(handle)
+        raise first if handle is order[0]._stage._handle else second
+
+    monkeypatch.setattr(recorder, "cancel_stage", cancel)
+    primary = RuntimeError("primary") if with_primary else None
+    primary_before = (
+        (vars(primary).copy(), primary.args, primary.__cause__, primary.__context__) if primary else None
+    )
+    if primary is None:
+        with pytest.raises(MemoryError) as caught:
+            host.close()
+        assert caught.value is first
+    else:
+        host.close(primary=primary)
+        assert (vars(primary), primary.args, primary.__cause__, primary.__context__) == primary_before
+    assert (first.__cause__, first.__context__, first.__suppress_context__) == chain
+    assert len(calls) == 2
+    assert not supervisor._captures and not host._captures._captures
+    assert host._closed and host.failed
+    host.close(primary=primary)
+    assert len(calls) == 2 and not supervisor._captures
+
+
+def test_start_ack_after_close_cannot_register_return_attempt_or_change_summary(setup):
+    make, _ = setup
+    host, _ = make()
+    MockRecorder.block = "start"
+    returned = []
+
+    def start_until_revoked():
+        try:
+            returned.append(host.scope().start_send(request()))
+        except SendLifecycleClosed as error:
+            returned.append(error)
+
+    thread = threading.Thread(target=start_until_revoked)
+    thread.start()
+    try:
+        assert MockRecorder.entered.wait(1)
+        host.close()
+        before = host.safe_summary()
+        MockRecorder.release.set()
+        thread.join(1)
+        assert not thread.is_alive()
+        assert len(returned) == 1 and isinstance(returned[0], SendLifecycleClosed)
+        assert not host._attempts
+        assert host.safe_summary() == before
+    finally:
+        MockRecorder.release.set()
+        thread.join(2)
+
+
+def test_fatal_close_does_not_wait_for_hung_other_writer_or_release_its_payload_early(
+    setup, monkeypatch
+):
+    make, supervisor = setup
+    host, _ = make()
+    for _ in range(2):
+        attempt = admit(host.scope(), request())
+        attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    first_attempt, running = tuple(host._attempts)
+    MockRecorder.block = "append"
+    running._stage.capture.append(b"x" * 512)
+    assert MockRecorder.entered.wait(1)
+    original_cancel = MockRecorder.instances[0].cancel_stage
+    fatal = MemoryError("cancel fatal")
+    calls = []
+
+    def cancel(handle):
+        calls.append(handle)
+        if handle is first_attempt._stage._handle:
+            raise fatal
+        return original_cancel(handle)
+
+    monkeypatch.setattr(MockRecorder.instances[0], "cancel_stage", cancel)
+    started = time.monotonic()
+    try:
+        with pytest.raises(MemoryError) as caught:
+            host.close()
+        assert caught.value is fatal and time.monotonic() - started < 0.2
+        assert len(calls) == 2 and supervisor.retained_bytes == 512
+        assert len(supervisor._captures) == 1
+    finally:
+        MockRecorder.release.set()
+    with supervisor._condition:
+        assert supervisor._condition.wait_for(lambda: supervisor._running is None, timeout=1)
+    assert supervisor.retained_bytes == 0 and not supervisor._captures

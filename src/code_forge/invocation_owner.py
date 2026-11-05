@@ -64,6 +64,33 @@ class AttemptLease:
     action_deadline: float
     _owner: InvocationOwner = field(repr=False, compare=False)
 
+    def begin_capture_stage(
+        self,
+        *,
+        supervisor,
+        session,
+        layer="wire",
+        warn,
+        limit_bytes,
+        strict=False,
+        chunk_bytes=65536,
+        control_timeout_s=2.0,
+    ):
+        """Open an opaque v2 capture stage; no recorder capability escapes."""
+        from .invocation_owner_stage import OwnerCaptureStage
+
+        return OwnerCaptureStage.begin(
+            self,
+            supervisor=supervisor,
+            session=session,
+            layer=layer,
+            warn=warn,
+            limit_bytes=limit_bytes,
+            strict=strict,
+            chunk_bytes=chunk_bytes,
+            control_timeout_s=control_timeout_s,
+        )
+
     def entered(self, dispatch_state: str) -> None:
         self._owner._entered(self, dispatch_state)
 
@@ -111,6 +138,7 @@ class _Lease:
     settlement_started: bool = False
     settled: bool = False
     captures: dict = field(default_factory=dict)
+    stages: dict = field(default_factory=dict)
     refs: list = field(default_factory=list)
     observations: set = field(default_factory=set)
     usage_known: bool = False
@@ -177,7 +205,10 @@ class InvocationOwner:
         monotonic: Callable[[], float],
         utc_now: Callable[[], str],
         job_deadline: float | None = None,
+        audit_schema_version: int = 1,
     ) -> InvocationOwner:
+        if type(audit_schema_version) is not int or audit_schema_version not in (1, 2):
+            raise ValueError("invalid audit schema version")
         if job_deadline is not None:
             _number(job_deadline)
         self = cls()
@@ -187,6 +218,7 @@ class InvocationOwner:
         self._monotonic = monotonic
         self._utc_now = utc_now
         self._deadline = job_deadline
+        self._audit_schema_version = audit_schema_version
         self._start = _number(monotonic())
         self._end = None
         self._session_id = str(uuid.uuid4())
@@ -197,7 +229,13 @@ class InvocationOwner:
         self._operations = {}
         self._leases = {}
         self._final_outcome = None
-        recorder = AttemptRecorder(artifact_root, context=context, monotonic=monotonic, utc_now=utc_now)
+        recorder = AttemptRecorder(
+            artifact_root,
+            context=context,
+            monotonic=monotonic,
+            utc_now=utc_now,
+            audit_schema_version=audit_schema_version,
+        )
         self._epochs = [_Epoch(recorder, context)]
         self._current = self._epochs[0]
         ack = self._call(recorder.open, "open")
@@ -216,8 +254,10 @@ class InvocationOwner:
         attempt_id = kwargs.get("attempt_id")
         try:
             ack = function(**kwargs)
-        except Exception:  # noqa: BLE001 - sink diagnostics are not safe invocation metadata
+        except Exception as error:  # noqa: BLE001 - diagnostics are not safe invocation metadata
             self._refused = True
+            if self._audit_schema_version == 2 and isinstance(error, MemoryError):
+                raise
             # An escaped exception cannot show that the recorder wrote nothing.
             ack = AuditAcknowledgement(
                 False, AuditFault("persistence_error", phase, attempt_id), publication_uncertain=True
@@ -393,6 +433,8 @@ class InvocationOwner:
         request_digest: str,
         request_bytes: int,
         timeout_s: int,
+        cause: str | None = None,
+        action_deadline: float | None = None,
     ) -> AttemptLease:
         self._check_process("start")
         with self._mutex:
@@ -405,8 +447,18 @@ class InvocationOwner:
             ):
                 self._fault("quota_refused", "start")
                 self._raise()
+            actual_cause = ("retry" if state.leases else operation.cause) if cause is None else cause
+            if cause is not None and (
+                self._audit_schema_version != 2
+                or (state.leases and cause not in ("retry", "redirect"))
+                or (not state.leases and cause != operation.cause)
+            ):
+                self._fault("identity_conflict", "start")
+                self._raise()
             deadline = _number(self._monotonic()) + timeout_s
             _number(deadline)
+            if action_deadline is not None:
+                deadline = min(deadline, _number(action_deadline))
             if self._deadline is not None:
                 deadline = min(deadline, self._deadline)
             prior = state.leases[-1].value.attempt_id if state.leases else operation.parent_id
@@ -416,7 +468,7 @@ class InvocationOwner:
                 context=operation.context,
                 logical_id=operation.logical_id,
                 parent_id=prior,
-                cause="retry" if state.leases else operation.cause,
+                cause=actual_cause,
                 backend=backend,
                 request_digest=request_digest,
                 request_bytes=request_bytes,
@@ -457,6 +509,7 @@ class InvocationOwner:
                 or record.dispatch == "not_dispatched"
                 or type(layer) is not str
                 or layer in record.captures
+                or layer in record.stages
                 or type(data) is not bytes
                 or type(complete) is not bool
             ):
@@ -572,7 +625,11 @@ class InvocationOwner:
             ):
                 return self._fault("identity_conflict", "start")
             recorder = AttemptRecorder(
-                self._root, context=context, monotonic=self._monotonic, utc_now=self._utc_now
+                self._root,
+                context=context,
+                monotonic=self._monotonic,
+                utc_now=self._utc_now,
+                audit_schema_version=self._audit_schema_version,
             )
             candidate = _Epoch(recorder, context)
             self._epochs.append(candidate)
@@ -603,9 +660,15 @@ class InvocationOwner:
         ]
         return _outcome(requested, latest)
 
-    def finalize(self, outcome: str) -> InvocationSessionSummary:
+    def finalize(self, outcome: str, *, audit_incomplete: bool = False) -> InvocationSessionSummary:
         self._check_process("finalize")
+        if type(audit_incomplete) is not bool:
+            raise TypeError("audit_incomplete must be bool")
+        if audit_incomplete and self._audit_schema_version != 2:
+            raise ValueError("audit_incomplete requires schema v2")
         with self._mutex:
+            if audit_incomplete and self._final_outcome is not None and not self._refused:
+                raise ValueError("cannot invalidate a finalized invocation")
             if type(outcome) is not str:
                 self._fault("invalid_input", "finalize")
                 return self._summary()
@@ -616,12 +679,16 @@ class InvocationOwner:
                 self._fault("identity_conflict", "finalize")
                 return self._summary()
             self._final_outcome = outcome
+            if audit_incomplete:
+                self._fault("persistence_error", "finalize")
             for epoch in self._epochs:
+                incomplete = audit_incomplete and epoch.terminal is None
                 if epoch.terminal is None:
                     epoch.terminal = (
                         "incomplete" if self._refused else self._epoch_outcome(epoch, outcome)
                     )
-                self._call(epoch.recorder.finalize, "finalize", outcome=epoch.terminal)
+                options = {"audit_incomplete": True} if incomplete else {}
+                self._call(epoch.recorder.finalize, "finalize", outcome=epoch.terminal, **options)
             if self._end is None:
                 self._end = _number(self._monotonic())
             return self._summary()

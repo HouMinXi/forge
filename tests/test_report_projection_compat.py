@@ -405,7 +405,7 @@ def _run_side(
         else:
             m.setattr(sys, "argv", ["code-forge", "review"])
 
-            def fake_run(args, env, cwd):
+            def fake_run(args, env, cwd, **kwargs):
                 if scenario == "ci_uncertain_candidate":
                     machine = _machine(w, m, rounds=1)
                     _attach_falsifier_candidate(machine)
