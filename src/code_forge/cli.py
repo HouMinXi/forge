@@ -572,6 +572,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="enable canary laziness check for inline outlet (opt-in)",
     )
     review_parser.add_argument(
+        "--audit-strict",
+        action="store_true",
+        help="require complete private raw audit for inline canary OpenAI API review "
+        "(other outlets/backends are not yet supported)",
+    )
+    review_parser.add_argument(
         "--exec-falsify",
         action="store_true",
         help="run the declared test command during review "
@@ -2856,6 +2862,8 @@ def main() -> int:
 
     # Route to subcommand handler
     if args.subcommand == "review":
+        from .llm_invoke import AuditPersistenceError
+
         try:
             verdict = _run(args, env=os.environ, cwd=Path.cwd())
         except CliError as exc:
@@ -2863,6 +2871,10 @@ def main() -> int:
             if exc.remediation:
                 print("Hint: %s" % exc.remediation, file=sys.stderr)
             return _review_terminal_exit(EXIT_CLI_ERROR)
+        except AuditPersistenceError:
+            # Its cause is private diagnostic data, not CLI output.
+            print("code-forge: invocation audit incomplete; strict review blocked", file=sys.stderr)
+            return _review_terminal_exit(EXIT_FAIL)
         except ForgeLockBusy as exc:
             print("code-forge: %s" % exc, file=sys.stderr)
             return _review_terminal_exit(EXIT_BUSY)
@@ -3539,6 +3551,107 @@ def _dispatch_cross_repo(
     return _cv
 
 
+class _InlineAuditUnsupported(CliError):
+    """Explicit strict selection is outside this consumer's supported scope."""
+
+
+class _InlineCanaryAudit:
+    """Lazy audit lifecycle for the supported inline OpenAI canary sends only."""
+
+    def __init__(self, backend, *, source, strict, environ):
+        self._source = source
+        self._strict, self._environ = strict, environ
+        self._host = None
+        self._warned = False
+        self._supported = (
+            getattr(backend, "type", None) == "api" and getattr(backend, "format", None) == "openai"
+        )
+        if strict and not self._supported:
+            raise _InlineAuditUnsupported(
+                "--audit-strict currently requires an inline canary OpenAI API backend"
+            )
+
+    @staticmethod
+    def _identity(source):
+        import hashlib
+        from uuid import uuid4
+
+        from .invocation_audit import InvocationContext
+
+        context = InvocationContext(
+            str(uuid4()),
+            compute_source_hash(git_diff=source) if source is not None else None,
+            str(uuid4()) if source is not None else None,
+            None,
+            None,
+            None,
+            None,
+            "review",
+            None,
+        )
+        if source is None:
+            return context, None
+        encoded = source.encode("utf-8")
+        manifest = dict(
+            schema_version=1,
+            run_id=context.run_id,
+            snapshot_id=context.snapshot_id,
+            mode="diff",
+            legacy_source_hash=context.source_hash,
+            exact_diff_sha256=hashlib.sha256(encoded).hexdigest(),
+            diff_bytes=len(encoded),
+            files=[],
+            repositories=[],
+        )
+        return context, manifest
+
+    def scope(self, purpose):
+        if not self._supported:
+            if not self._warned:
+                self._warned = True
+                print(
+                    "code-forge: invocation audit unavailable for this backend; recording is incomplete",
+                    file=sys.stderr,
+                )
+            return {}
+        if self._host is None:
+            from .invocation_host import HostAuditSession
+
+            context, manifest = self._identity(self._source)
+            self._host = HostAuditSession.from_user_state(
+                context=context,
+                manifest=manifest,
+                strict=self._strict,
+                environ=self._environ,
+            )
+        return {"host_audit": self._host.scope(purpose=purpose)}
+
+    def bind_review_source(self, source):
+        if source == self._source:
+            return
+        self._source = source
+        if self._host is None or self._host.failed:
+            return
+        context, manifest = self._identity(source)
+        if self._host.safe_summary().admitted_sends:
+            self._host.advance_source(
+                context,
+                manifest=manifest,
+                deadline=time.monotonic() + self._host.limits.control_timeout_s,
+            )
+        else:
+            # Templates and failures before the send boundary need no old epoch.
+            self._host.bind_source(context, manifest=manifest)
+
+    def finalize(self, primary, *, outcome="completed"):
+        if self._host is not None:
+            self._host.finalize(
+                outcome=outcome if primary is None else "failed",
+                primary=primary,
+                maintain=False,
+            )
+
+
 def _dispatch_inline_canary(
     outlet,
     args,
@@ -3553,6 +3666,9 @@ def _dispatch_inline_canary(
     Raises CliError for sampling outlet.
     Returns None for other outlets (caller continues to subprocess path).
     """
+    strict_audit = getattr(args, "audit_strict", False)
+    if strict_audit and outlet != "inline":
+        raise CliError("--audit-strict currently supports only the inline canary outlet")
     if outlet == "sampling":
         raise CliError(
             "sampling outlet was removed: the Model Context Protocol "
@@ -3562,7 +3678,12 @@ def _dispatch_inline_canary(
     if outlet != "inline":
         return None
     canary_config = _load_canary_config(args, gate_data)
+    if strict_audit and canary_config is None:
+        raise CliError("--audit-strict currently requires inline canary review")
     if canary_config is not None:
+        from .llm_invoke import AuditPersistenceError
+
+        audit, primary, outcome = None, None, "completed"
         try:
             from .canary_gen import run_inline_canary
             from .backend import resolve_backend
@@ -3592,6 +3713,12 @@ def _dispatch_inline_canary(
             except Exception:  # noqa: BLE001 - degradation path, backend optional
                 backend = None
 
+            audit = _InlineCanaryAudit(
+                backend,
+                source=diff_text if _diff_result.returncode == 0 else None,
+                strict=strict_audit,
+                environ=env,
+            )
             n_canaries = canary_config.get("n", 5)
 
             def _canary_provider(diff_text_arg: str) -> list:
@@ -3614,7 +3741,7 @@ def _dispatch_inline_canary(
                     "Diff:\n" + diff_text_arg
                 ) % n_canaries
                 try:
-                    result = _llm_invoke(prompt, backend=backend)
+                    result = _llm_invoke(prompt, backend=backend, **audit.scope("canary_generation"))
                     content = result.content
                     if isinstance(content, dict):
                         return content.get("mutations", [])
@@ -3622,10 +3749,10 @@ def _dispatch_inline_canary(
                     return parsed.get("mutations", [])
                 except MemoryError:
                     raise
-                except Exception as exc:  # noqa: BLE001 - falls back to templates
-                    sys.stderr.write(
-                        "code-forge: canary generation failed: %s, falling back to templates\n" % exc
-                    )
+                except AuditPersistenceError:
+                    raise
+                except Exception:  # noqa: BLE001 - safe inline diagnostic; falls back to templates
+                    sys.stderr.write("code-forge: canary generation failed; falling back to templates\n")
                     return []
 
             def _review_provider(prompt: str) -> str:
@@ -3635,12 +3762,20 @@ def _dispatch_inline_canary(
 
                 from .canary_gen import CANARY_REVIEW_REPLY_KEYS
 
-                result = _llm_invoke(prompt, backend=backend, reply_keys=CANARY_REVIEW_REPLY_KEYS)
+                result = _llm_invoke(
+                    prompt,
+                    backend=backend,
+                    reply_keys=CANARY_REVIEW_REPLY_KEYS,
+                    **audit.scope("canary_review"),
+                )
                 return (
                     _json.dumps(result.content)
                     if isinstance(result.content, dict)
                     else str(result.content)
                 )
+
+            def _report_review_error():
+                sys.stderr.write("code-forge: canary review failed; falling back to DELEGATED\n")
 
             def _source_lookup(filepath: str):
                 import os
@@ -3661,6 +3796,9 @@ def _dispatch_inline_canary(
                 canary_provider=_canary_provider,
                 review_provider=_review_provider,
                 source_lookup=_source_lookup,
+                source_callback=audit.bind_review_source,
+                dispatch_error_reporter=_report_review_error,
+                safe_diagnostics=True,
             )
             if real_findings:
                 sys.stderr.write("code-forge: canary-verified findings:\n")
@@ -3675,10 +3813,20 @@ def _dispatch_inline_canary(
                         )
                     )
             return verdict
-        except MemoryError:
+        except (MemoryError, AuditPersistenceError, _InlineAuditUnsupported) as exc:
+            primary = exc
             raise
-        except Exception as exc:  # noqa: BLE001 - degradation path, falls back
-            sys.stderr.write("code-forge: canary check failed (%s), falling back to DELEGATED\n" % exc)
+        except Exception:  # noqa: BLE001 - safe inline diagnostic; degradation path
+            # A swallowed fallback error is not an active exception. In strict
+            # mode it must not suppress a subsequent finalization refusal.
+            outcome = "failed"
+            sys.stderr.write("code-forge: canary check failed; falling back to DELEGATED\n")
+        except BaseException as exc:
+            primary = exc
+            raise
+        finally:
+            if audit is not None:
+                audit.finalize(primary, outcome=outcome)
     # Honesty floor: inline does not run the StateMachine gate.
     # Declare DELEGATED so callers can distinguish from a real PASS.
     sys.stderr.write("code-forge: DELEGATED -- review delegated to session + external R1; exit 5\n")

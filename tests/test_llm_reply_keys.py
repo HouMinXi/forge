@@ -1582,7 +1582,8 @@ def test_canary_review_passes_review_keys(tmp_path):
         patch("code_forge.canary_gen.run_inline_canary", side_effect=fake_canary),
         patch("code_forge.llm_invoke.llm_invoke", mock),
     ):
-        _dispatch_inline_canary("inline", MagicMock(), {}, None, {}, tmp_path)
+        # argparse defaults to False; a bare MagicMock invents a truthy strict flag.
+        _dispatch_inline_canary("inline", MagicMock(audit_strict=False), {}, None, {}, tmp_path)
     assert _keys_of_every_call(mock) == {id(CANARY_REVIEW_REPLY_KEYS)}
 
 

@@ -104,6 +104,28 @@ class LLMInvokeError(Exception):
         self.kind = kind
 
 
+class AuditPersistenceError(LLMInvokeError):
+    """Trusted host strict-audit refusal, never a provider-selected error kind."""
+
+    def __init__(self):
+        super().__init__(
+            "invocation raw capture is incomplete", kind="audit_persistence_error", retryable=False
+        )
+
+
+class SendDeadlineError(LLMInvokeError):
+    """Typed terminal stop for a host-consumed, pre-network send budget."""
+
+    def __init__(self, *, duration_s: float = 0.0):
+        super().__init__(
+            "invocation send deadline expired before network entry",
+            duration_s=duration_s,
+            is_timeout=True,
+            retryable=False,
+            kind="send_deadline",
+        )
+
+
 class InvalidJSONResponseError(LLMInvokeError):
     """A final parse rejection that retains the acquired response text."""
 
@@ -508,7 +530,7 @@ def _read_with_deadline(response, deadline, backend_name, *, read=None):
                 is_timeout=True,
                 retryable=False,
             )
-        except Exception as exc:  # noqa: BLE001 - cross-thread transport,
+        except BaseException as exc:  # noqa: BLE001 - cross-thread transport,
             # re-raised by the main thread below; nothing is swallowed.
             error[0] = exc
 
@@ -592,19 +614,90 @@ def _sse_data_payload(line: str) -> str | None:
     return line[5:].removeprefix(" ")
 
 
-def _read_sse(response, deadline=None, backend_name="") -> dict:
+def _read_captured_body(response, deadline, backend_name, wire_capture, *, preserve_primary=False):
+    """Read a nonstream body through the same optional raw acquisition adapter."""
+    from .invocation_stream import CaptureUnavailable
+
+    interrupted = True
+    primary = None
+    try:
+        raw = _read_with_deadline(
+            response,
+            deadline,
+            backend_name,
+            read=lambda: b"".join(wire_capture.chunks(response, preserve_primary=preserve_primary)),
+        )
+        interrupted = False
+        return raw
+    except CaptureUnavailable as error:
+        primary = error
+        raise AuditPersistenceError() from error
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        try:
+            wire_capture.seal(interrupted=interrupted)
+        except CaptureUnavailable as error:
+            if primary is None:
+                raise AuditPersistenceError() from error
+        except BaseException:
+            if primary is None:
+                raise
+
+
+def _read_sse(response, deadline=None, backend_name="", *, wire_capture=None) -> dict:
     """Assemble a stream under the same read bounds as a non-stream body."""
-    if deadline is None:
-        return _assemble_sse(response, deadline, backend_name)
-    return _read_with_deadline(
-        response,
-        deadline,
-        backend_name,
-        read=lambda: _assemble_sse(response, deadline, backend_name),
-    )
+    from .invocation_stream import CaptureUnavailable
+
+    result = None
+    primary = None
+    interrupted = True
+    try:
+        if wire_capture is not None:
+            from .invocation_tail_drain import is_provider_error_envelope, read_captured_sse
+
+            result = read_captured_sse(
+                response,
+                wire_capture,
+                _assemble_sse,
+                deadline,
+                backend_name,
+                LLMInvokeError,
+                _IDLE_READ_TIMEOUT_S,
+            )
+        else:
+            result = (
+                _assemble_sse(response, deadline, backend_name)
+                if deadline is None
+                else _read_with_deadline(
+                    response,
+                    deadline,
+                    backend_name,
+                    read=lambda: _assemble_sse(response, deadline, backend_name),
+                )
+            )
+        interrupted = False
+        return result
+    except CaptureUnavailable as error:
+        primary = error
+        raise AuditPersistenceError() from error
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        if wire_capture is not None:
+            try:
+                wire_capture.seal(interrupted=interrupted)
+            except CaptureUnavailable as error:
+                if primary is None and not is_provider_error_envelope(result):
+                    raise AuditPersistenceError() from error
+            except BaseException:
+                if primary is None:
+                    raise
 
 
-def _assemble_sse(response, deadline=None, backend_name="") -> dict:
+def _assemble_sse(response, deadline=None, backend_name="", *, _on_done=None) -> dict:
     """Read OpenAI SSE stream, assemble into a single response dict.
 
     Drops reasoning_content (thinking output) -- forge review needs the
@@ -642,6 +735,8 @@ def _assemble_sse(response, deadline=None, backend_name="") -> dict:
         if payload is None:
             continue
         if payload == "[DONE]":
+            if _on_done is not None:
+                _on_done()
             break
         if not payload:
             continue
@@ -2085,7 +2180,28 @@ def _install_signal_handlers() -> None:
 _install_signal_handlers()
 
 
-def _retry_cause(exc: BaseException) -> str:
+def _retry_cause(exc: BaseException, *, audited: bool = False) -> str:
+    if audited:
+        # Public diagnostics at the host audit boundary are host-owned labels,
+        # never exception text (which may include response bodies or headers).
+        if isinstance(exc, LLMInvokeError):
+            if exc.is_timeout:
+                return "provider request timed out"
+            labels = {
+                "conn": "provider connection failed",
+                "credentials": "provider credentials unavailable",
+                "truncated": "provider response truncated",
+                "empty": "provider response empty",
+                "no_json": "provider response invalid JSON",
+                "bad_body": "provider response invalid body",
+                "sse_body": "provider response unexpected stream",
+                "protocol": "provider response invalid protocol",
+            }
+            if type(exc.kind) is str and exc.kind in labels:
+                return labels[exc.kind]
+            if type(exc.exit_code) is int and 400 <= exc.exit_code <= 599:
+                return "provider HTTP %d" % exc.exit_code
+        return "provider request failed"
     return " ".join(str(exc).split())[:400]
 
 
@@ -2134,6 +2250,7 @@ def llm_invoke(
     l1_evidence_required: bool = False,
     reply_keys: ReplyKeys | None = None,
     strict_response: bool = False,
+    host_audit=None,
 ) -> LLMResult:
     """Invoke LLM via backend (cli subprocess or api HTTP).
 
@@ -2172,6 +2289,9 @@ def llm_invoke(
             the repair is discarded and the parse fails (#264); api
             backends then spend their JSON-correction retry. None keeps
             the repair unchecked beyond the #216 quoted-key guard.
+        host_audit: Optional trusted host send interface. Currently OpenAI API
+            only. Every physical HTTP hop obtains a fresh attempt/capture;
+            no audit default or recorder is constructed implicitly.
 
     Returns:
         LLMResult with content, usage (tokens), and duration_s
@@ -2196,6 +2316,7 @@ def llm_invoke(
             retryable=False,
         )
     timeout_s = effective_invoke_timeout_s(backend, timeout_s)
+    audit_scope = _send_audit_scope(host_audit, backend)
 
     if backend.type == "cli":
         if type(backend.output_token_limit) is not int or backend.output_token_limit != 0:
@@ -2242,6 +2363,7 @@ def llm_invoke(
             retry_timeout=retry_timeout,
             reply_keys=reply_keys,
             strict_response=strict_response,
+            **({"_audit_scope": audit_scope} if audit_scope is not None else {}),
         )
     else:
         raise LLMInvokeError("unsupported backend type: %r" % backend.type)
@@ -2256,6 +2378,7 @@ def llm_invoke(
             timeout_s,
             l1_evidence_required=l1_evidence_required,
             reply_keys=reply_keys,
+            **({"_audit_scope": audit_scope} if audit_scope is not None else {}),
         )
         result = LLMResult(
             content=repaired,
@@ -2614,6 +2737,7 @@ def _repair_missing_excerpts(
     *,
     l1_evidence_required: bool = False,
     reply_keys: ReplyKeys | None = None,
+    _audit_scope=None,
 ) -> tuple[dict, Usage, float]:
     """Ask once for excerpts. Never invent them. Keep the original findings.
 
@@ -2638,8 +2762,17 @@ def _repair_missing_excerpts(
                 expected_keys=None,
                 max_attempts=1,
                 reply_keys=reply_keys,
+                **(
+                    {"_audit_scope": _audit_scope, "_audit_cause": "excerpt_repair"}
+                    if _audit_scope is not None
+                    else {}
+                ),
             )
+    except (AuditPersistenceError, SendDeadlineError):
+        raise
     except LLMInvokeError as exc:
+        if _strict_send_audit_failed(_audit_scope):
+            raise
         duration = max(exc.duration_s, time.monotonic() - repair_start)
         return (
             parsed,
@@ -2728,6 +2861,8 @@ def _continue_truncated(
     breaker: "TruncationBreaker | None" = None,
     reply_keys: ReplyKeys | None = None,
     strict_response: bool = False,
+    *,
+    _audit_scope=None,
 ):
     """Recover a truncated reply with a bounded continuation.
 
@@ -2788,6 +2923,11 @@ def _continue_truncated(
                         backend,
                         api_key,
                         timeout_s,
+                        **(
+                            {"_audit_scope": _audit_scope, "_audit_cause": "continuation"}
+                            if _audit_scope is not None
+                            else {}
+                        ),
                     )
                 elif backend.format == "anthropic":
                     cont, usage_c = _invoke_anthropic(
@@ -2808,6 +2948,8 @@ def _continue_truncated(
                 # otherwise fold it into a budgeted failure.
                 raise
             except _TruncatedResponse as exc:
+                if _strict_send_audit_failed(_audit_scope):
+                    raise
                 observed = _sum_usage(observed, _observed_usage(exc.usage_data, backend.format))
                 # A truncated continuation is a failed attempt, and the
                 # event still counts. A trip raised here leaves the
@@ -2816,7 +2958,11 @@ def _continue_truncated(
                 if breaker is not None:
                     breaker.record_truncation()
                 continue
+            except (AuditPersistenceError, SendDeadlineError):
+                raise
             except LLMInvokeError as exc:
+                if _strict_send_audit_failed(_audit_scope):
+                    raise
                 observed = _sum_usage(
                     observed,
                     exc.observed_usage
@@ -2831,8 +2977,8 @@ def _continue_truncated(
                 # and the fold never sees this error at all.
                 logging.getLogger("code_forge").warning(
                     "continuation request failed: %s: %s",
-                    type(exc).__name__,
-                    str(exc),
+                    "LLMInvokeError" if _audit_scope is not None else type(exc).__name__,
+                    _retry_cause(exc, audited=True) if _audit_scope is not None else str(exc),
                 )
                 last_failure = " ".join(str(exc).split())[:400]
                 continue
@@ -2847,11 +2993,17 @@ def _continue_truncated(
                 continue
             return parsed, observed
     except TruncationBreakerError as exc:
+        if _strict_send_audit_failed(_audit_scope):
+            raise
         # Retain this invocation's observations, not the run-wide event count.
         exc.observed_usage = observed
         exc.usage = observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
         raise
+    except (AuditPersistenceError, SendDeadlineError):
+        raise
     except LLMInvokeError as exc:
+        if _strict_send_audit_failed(_audit_scope):
+            raise
         # Defensive: per-attempt handling above covers every invoke
         # error a continuation request can raise. Anything that still
         # escapes is folded into the exhausted outcome, with the
@@ -2927,6 +3079,7 @@ def _retry_with_more_headroom(
     strict_response: bool = False,
     *,
     on_failure_usage: Callable[[Usage], None] | None = None,
+    _audit_scope=None,
 ):
     """Re-ask for the whole answer with a wider output cap.
 
@@ -2967,6 +3120,11 @@ def _retry_with_more_headroom(
                 widened,
                 api_key,
                 timeout_s,
+                **(
+                    {"_audit_scope": _audit_scope, "_audit_cause": "headroom"}
+                    if _audit_scope is not None
+                    else {}
+                ),
             )
         elif backend.format == "anthropic":
             content, usage_data = _invoke_anthropic(
@@ -2980,6 +3138,10 @@ def _retry_with_more_headroom(
     except TruncationBreakerError:
         raise
     except LLMInvokeError as exc:
+        if isinstance(exc, (AuditPersistenceError, SendDeadlineError)) or _strict_send_audit_failed(
+            _audit_scope
+        ):
+            raise
         if on_failure_usage is not None:
             observed = (
                 _observed_usage(exc.usage_data, backend.format)
@@ -2989,8 +3151,8 @@ def _retry_with_more_headroom(
             on_failure_usage(observed if observed is not None else Usage(known_fields=frozenset()))
         logging.getLogger("code_forge").warning(
             "wider retry failed: %s: %s",
-            type(exc).__name__,
-            str(exc),
+            "LLMInvokeError" if _audit_scope is not None else type(exc).__name__,
+            _retry_cause(exc, audited=True) if _audit_scope is not None else str(exc),
         )
         return None
 
@@ -3025,8 +3187,16 @@ def _invoke_api(
     retry_timeout: bool = False,
     reply_keys: ReplyKeys | None = None,
     strict_response: bool = False,
+    *,
+    host_audit=None,
+    _audit_scope=None,
+    _audit_cause="initial",
 ) -> LLMResult:
     """Invoke LLM via HTTP API (openai or anthropic format). Returns LLMResult."""
+    if host_audit is not None:
+        if _audit_scope is not None:
+            raise ValueError("host audit scope supplied twice")
+        _audit_scope = _send_audit_scope(host_audit, backend)
     # Look up API key (not needed for vertex which uses OAuth2)
     if backend.format != "vertex":
         if backend.api_key_file:
@@ -3093,6 +3263,18 @@ def _invoke_api(
                         backend,
                         api_key,
                         timeout_s,
+                        **(
+                            {
+                                "_audit_scope": _audit_scope,
+                                "_audit_cause": (
+                                    "correction"
+                                    if correction_active
+                                    else (_audit_cause if attempt == 0 else "retry")
+                                ),
+                            }
+                            if _audit_scope is not None
+                            else {}
+                        ),
                     )
                 elif backend.format == "anthropic":
                     content, usage_data = _invoke_anthropic(
@@ -3224,6 +3406,8 @@ def _invoke_api(
                     retryable=retry_timeout,
                 ) from exc
         except LLMInvokeError as exc:
+            if isinstance(exc, SendDeadlineError) or _strict_send_audit_failed(_audit_scope):
+                raise
             if correction_active:
                 # The first rejected response was still an observed attempt.
                 # Preserve its counts on failure too, without treating an
@@ -3243,6 +3427,8 @@ def _invoke_api(
                         observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
                     )
                 exc.retryable = False
+                raise
+            if isinstance(exc, AuditPersistenceError):
                 raise
             if isinstance(exc, _TruncatedResponse):
                 # The partial belongs to the original truncation; the
@@ -3266,10 +3452,15 @@ def _invoke_api(
                         breaker=breaker,
                         reply_keys=reply_keys,
                         strict_response=strict_response,
+                        **({"_audit_scope": _audit_scope} if _audit_scope is not None else {}),
                     )
                 except TruncationBreakerError:
                     raise
+                except (AuditPersistenceError, SendDeadlineError):
+                    raise
                 except LLMInvokeError as spent:
+                    if _strict_send_audit_failed(_audit_scope):
+                        raise
                     recovered = None
                     spent_error = spent
                 if recovered is not None:
@@ -3315,6 +3506,7 @@ def _invoke_api(
                         reply_keys=reply_keys,
                         strict_response=strict_response,
                         on_failure_usage=retain_wider_failure_usage,
+                        **({"_audit_scope": _audit_scope} if _audit_scope is not None else {}),
                     )
                 if wider is not None:
                     parsed, usage = wider
@@ -3332,7 +3524,7 @@ def _invoke_api(
                     # reply: the exhaustion message names every attempt
                     # and the reason each failed.
                     raise spent_error from None
-            cause = _retry_cause(exc)
+            cause = _retry_cause(exc, audited=_audit_scope is not None)
             if not exc.retryable or attempt == max_attempts - 1:
                 if attempt > 0 or (exc.retryable and max_attempts == 1):
                     _emit_retry_failed(backend.name, max_attempts, cause)
@@ -3394,11 +3586,92 @@ def _parse_response_body(raw: bytes, backend_name: str) -> dict:
         ) from exc
 
 
+def _send_audit_scope(host, backend):
+    if host is None:
+        return None
+    if backend.type != "api" or backend.format != "openai":
+        raise ValueError("host send audit currently supports OpenAI API only")
+    from .invocation_send_audit import SendAuditScope
+
+    return SendAuditScope(host)
+
+
+def _strict_send_audit_failed(scope):
+    return scope is not None and scope.strict and scope.disabled
+
+
 def _invoke_openai(
     prompt: str,
     backend: BackendConfig,
     api_key: str,
     timeout_s: int,
+    *,
+    wire_capture=None,
+    _audit_scope=None,
+    _audit_cause="initial",
+) -> tuple[str, dict]:
+    if _audit_scope is None:
+        return _invoke_openai_impl(
+            prompt,
+            backend,
+            api_key,
+            timeout_s,
+            **({"wire_capture": wire_capture} if wire_capture is not None else {}),
+        )
+    if wire_capture is not None:
+        raise ValueError("host audit owns per-send captures")
+    from .invocation_send_audit import OpenAiSendTransport, SendDeadlineBeforeNetwork
+    from .invocation_stream import CaptureUnavailable
+
+    started = time.monotonic()
+    transport = OpenAiSendTransport(
+        _audit_scope,
+        cause=_audit_cause,
+        backend_name=backend.name,
+        model=backend.model,
+        read_with_deadline=_read_with_deadline,
+    )
+    primary = result = None
+    try:
+        result = _invoke_openai_impl(prompt, backend, api_key, timeout_s, _audit_transport=transport)
+        return result
+    except SendDeadlineBeforeNetwork as error:
+        # Keep the original object for host settlement and as the public cause.
+        # Normalize here so continuation/headroom/repair use the same boundary.
+        primary = error
+        raise SendDeadlineError(duration_s=max(0.0, time.monotonic() - started)) from error
+    except CaptureUnavailable as error:
+        primary = AuditPersistenceError()
+        raise primary from error
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        usage = (
+            _observed_usage(result[1], "openai")
+            if result is not None
+            else _observed_usage(primary.usage_data, "openai")
+            if isinstance(primary, _TruncatedResponse)
+            else getattr(primary, "observed_usage", None)
+        )
+        try:
+            transport.finish(primary=primary, usage=usage)
+        except CaptureUnavailable as error:
+            if primary is None:
+                raise AuditPersistenceError() from error
+        except BaseException:
+            if primary is None:
+                raise
+
+
+def _invoke_openai_impl(
+    prompt: str,
+    backend: BackendConfig,
+    api_key: str,
+    timeout_s: int,
+    *,
+    wire_capture=None,
+    _audit_transport=None,
 ) -> tuple[str, dict]:
     """OpenAI-format API call. Returns (content_str, usage_dict)."""
     url = backend.base_url + "/chat/completions"
@@ -3429,18 +3702,51 @@ def _invoke_openai(
             url, data=json.dumps(body).encode("utf-8"), headers=headers
         )
         deadline = time.monotonic() + timeout_s
-        with urllib.request.urlopen(req, timeout=timeout_s) as response:  # noqa: S310 - scheme allowlist enforced above
+        opened = (
+            urllib.request.urlopen(req, timeout=timeout_s)  # noqa: S310 - scheme allowlist above
+            if _audit_transport is None
+            else _audit_transport.open(req, deadline=deadline)
+        )
+        with opened as response:
+            if _audit_transport is not None:
+                wire_capture = _audit_transport.response_capture(response)
             if backend.stream:
                 resp_data = _read_sse(
                     response,
                     deadline=deadline,
                     backend_name=backend.name,
+                    **({"wire_capture": wire_capture} if wire_capture is not None else {}),
                 )
             else:
-                raw = _read_with_deadline(response, deadline, backend.name)
+                raw = (
+                    _read_with_deadline(response, deadline, backend.name)
+                    if wire_capture is None
+                    else _read_captured_body(response, deadline, backend.name, wire_capture)
+                )
                 resp_data = _parse_response_body(raw, backend.name)
     except urllib.error.HTTPError as exc:
-        body_bytes = exc.read()  # read once (second read returns b"")
+        if _audit_transport is not None:
+            try:
+                wire_capture = _audit_transport.response_capture(exc)
+            except BaseException:  # noqa: BLE001 - HTTP failure remains primary
+                wire_capture = None
+        if wire_capture is None:
+            if _audit_transport is None:
+                body_bytes = exc.read()  # read once (second read returns b"")
+            else:
+                try:
+                    body_bytes = _read_with_deadline(exc, deadline, backend.name)
+                except BaseException:  # noqa: BLE001 - HTTP failure remains primary
+                    body_bytes = b"[response body unavailable]"
+        else:
+            try:
+                body_bytes = _read_captured_body(
+                    exc, deadline, backend.name, wire_capture, preserve_primary=True
+                )
+            except BaseException:  # noqa: BLE001 - an observed HTTP error is primary
+                # Status and Retry-After were already observed. A secondary
+                # error-body read must not erase that primary HTTP failure.
+                body_bytes = b"[response body unavailable]"
         body_excerpt = body_bytes.decode("utf-8", errors="replace")[:200]
         retry_after = _parse_retry_after(exc.headers)
         retryable = exc.code in RETRYABLE_HTTP_STATUSES

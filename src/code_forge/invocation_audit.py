@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import copy
-from dataclasses import dataclass, fields, replace as _replace
+from dataclasses import dataclass, field, fields, replace as _replace
 import datetime
 import errno
 import hashlib
@@ -172,10 +172,14 @@ class ScopedInvocationSnapshot:
 
 ROOT_BYTES = 512 * 1024 * 1024
 RUN_BYTES = 16 * 1024 * 1024
+V2_RUN_BYTES = 64 * 1024 * 1024
+V2_WIRE_BYTES = 8 * 1024 * 1024
 MARKER_BYTES = 16 * 1024
 BODY_BYTES = 256 * 1024
 EVENT_BYTES = 2 * 1024
 RETAIN_SECONDS = 7 * 86400
+# Persisted format v1 retains its original policy; v2 opts into three days.
+_RETAIN_BY_VERSION = {1: RETAIN_SECONDS, 2: 3 * 86400}
 _FIELDS = ("input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens")
 _NATIVE = frozenset(
     (
@@ -473,11 +477,27 @@ def _manifest_event(events):
     return next((event for event in events if event["event"] == "input_manifest"), None)
 
 
-def _manifest_contents(fd, events):
+def _recovery_content(fd, name, bound, contents, checkpoint):
+    if checkpoint is not None:
+        checkpoint()
+    if contents is not None:
+        _require(
+            name in contents and type(contents[name]) is bytes and len(contents[name]) <= bound,
+            "integrity_error",
+        )
+        return contents[name]
+    return _read_file(fd, name, bound, _checkpoint=checkpoint)
+
+
+def _manifest_contents(fd, events, *, _contents=None, _checkpoint=None):
     event = _manifest_event(events)
     if event is None:
         return None
-    data = _read_file(fd, "input-manifest.json", BODY_BYTES)
+    data = (
+        _read_file(fd, "input-manifest.json", BODY_BYTES)
+        if _contents is None and _checkpoint is None
+        else _recovery_content(fd, "input-manifest.json", BODY_BYTES, _contents, _checkpoint)
+    )
     value = _decode_json(data)
     encoded = _manifest(value, events[0]["context"])
     _require(
@@ -534,6 +554,13 @@ def _response_frame(data, offset, length):
 
 def _dispatch_observation(attempt, dispatch):
     _vocabulary(dispatch, _DISPATCH - {"not_dispatched"})
+    if attempt["start"]["schema_version"] == 2:
+        backend_format = attempt["start"]["backend"]["format"]
+        _require(
+            not (backend_format == "openai" and dispatch == "entered_cli_launch")
+            and not (backend_format == "cli" and dispatch == "entered_api_send"),
+            "integrity_error",
+        )
     old = attempt["dispatch_observed"]
     known = ("entered_api_send", "entered_cli_launch")
     _require(old not in known or dispatch not in known or old == dispatch, "integrity_error")
@@ -562,18 +589,71 @@ def _capability_projection(value):
     return value
 
 
+def _retention_seconds(version):
+    _require(type(version) is int and version in _RETAIN_BY_VERSION, "integrity_error")
+    return _RETAIN_BY_VERSION[version]
+
+
+def _run_limit(version):
+    _retention_seconds(version)
+    return V2_RUN_BYTES if version == 2 else RUN_BYTES
+
+
+def _reservation_policy(version):
+    policy = dict(
+        run_bytes=_run_limit(version),
+        marker_bytes=MARKER_BYTES,
+        root_bytes=ROOT_BYTES,
+        body_bytes=BODY_BYTES,
+    )
+    if version == 2:
+        policy.update(
+            wire_bytes=V2_WIRE_BYTES,
+            cli_bytes=BODY_BYTES,
+            decoded_bytes=BODY_BYTES,
+            manifest_bytes=BODY_BYTES,
+        )
+    return policy
+
+
+def _events_run_limit(events):
+    _require(bool(events) and events[0]["event"] == "run_open", "integrity_error")
+    return _run_limit(events[0]["schema_version"])
+
+
+def _require_root_version(runs, version):
+    """Never introduce a new format into a legacy client's writable root."""
+    _retention_seconds(version)
+    for row in runs.values():
+        _require(type(row) is dict and type(row.get("metadata")) is dict, "integrity_error")
+        _require(not row.get("schema_invalid", False), "integrity_error")
+        metadata = row["metadata"]
+        admission = metadata.get("admission")
+        events = row.get("events", [])
+        _require(type(events) is list, "integrity_error")
+        if admission is not None:
+            _require(type(admission) is dict, "integrity_error")
+            existing = admission.get("schema_version")
+        elif events:
+            opened = events[0]
+            _require(type(opened) is dict and opened.get("event") == "run_open", "integrity_error")
+            existing = opened.get("schema_version")
+        else:
+            # No validated version evidence: legacy crash-prefix handling keeps
+            # this run fully charged, without repairing/admitting its contents.
+            _require(not metadata, "integrity_error")
+            continue
+        _retention_seconds(existing)
+        _require(existing == version, "identity_conflict")
+
+
 def _open_projection(event):
     ctx = _closed(event["context"], (f.name for f in fields(InvocationContext)))
     _context(InvocationContext(**ctx))
     _require(ctx["run_id"] == event["run_id"], "integrity_error")
     _capability_projection(event["capability"])
     _owner_identity(event["owner"])
-    policy = {
-        "run_bytes": RUN_BYTES,
-        "marker_bytes": MARKER_BYTES,
-        "root_bytes": ROOT_BYTES,
-        "body_bytes": BODY_BYTES,
-    }
+    policy = _reservation_policy(event["schema_version"])
     reservation = _closed(event["reservation"], policy)
     _require(
         all(type(reservation[n]) is int and reservation[n] == v for n, v in policy.items()),
@@ -598,8 +678,23 @@ _MARKER_FIELDS = frozenset(
 
 
 def _marker_projection(value):
-    value = _closed(value, _MARKER_FIELDS)
-    _require(type(value["schema_version"]) is int and value["schema_version"] == 1, "integrity_error")
+    _require(type(value) is dict, "integrity_error")
+    version = value.get("schema_version")
+    _retention_seconds(version)
+    value = _closed(value, _MARKER_FIELDS | ({"limits"} if version == 2 else set()))
+    if version == 2:
+        limits = _closed(value["limits"], _reservation_policy(2))
+        _require(
+            all(
+                type(limits[key]) is int and limits[key] == expected
+                for key, expected in _reservation_policy(2).items()
+            ),
+            "integrity_error",
+        )
+    _require(
+        type(value["schema_version"]) is int and value["schema_version"] in _RETAIN_BY_VERSION,
+        "integrity_error",
+    )
     _uuid(value["run_id"])
     _owner_identity(value["owner"])
     _uuid(value["event_id"])
@@ -608,7 +703,7 @@ def _marker_projection(value):
         _vocabulary(value["terminal"], _TERMINAL)
     _require(type(value["frozen"]) is bool and type(value["tombstone"]) is bool, "integrity_error")
     _number(value["ordinary_bytes"], integer=True)
-    _require(value["ordinary_bytes"] <= RUN_BYTES - MARKER_BYTES, "integrity_error")
+    _require(value["ordinary_bytes"] <= _run_limit(version) - MARKER_BYTES, "integrity_error")
     _require(
         type(value["marker_partition_bytes"]) is int and value["marker_partition_bytes"] == MARKER_BYTES,
         "integrity_error",
@@ -633,7 +728,10 @@ def _marker_projections(metadata, events):
     for name, raw in metadata.items():
         value = _marker_projection(raw)
         _require(
-            value["run_id"] == opened["run_id"] and value["owner"] == opened["owner"], "integrity_error"
+            value["run_id"] == opened["run_id"]
+            and value["owner"] == opened["owner"]
+            and value["schema_version"] == opened["schema_version"],
+            "integrity_error",
         )
         frozen = name == "freeze" or (name == "final" and freeze_index < final_index)
         _require(
@@ -643,7 +741,8 @@ def _marker_projections(metadata, events):
             _require(final is not None and freeze is None, "integrity_error")
             _require(
                 value["terminal"] == final["outcome"]
-                and _utc(value["utc"]) - _utc(final["utc"]) > RETAIN_SECONDS,
+                and _utc(value["utc"]) - _utc(final["utc"])
+                > _retention_seconds(opened["schema_version"]),
                 "integrity_error",
             )
             _require(value["event_id"] not in {e["event_id"] for e in events}, "integrity_error")
@@ -748,7 +847,7 @@ def _profile(fd):
     return matches[0], mount_id
 
 
-def _prepare_audit_root(root: Path, *, create: bool) -> _RootHandle | AuditFault:
+def _prepare_audit_root(root: Path, *, create: bool, _checkpoint=None) -> _RootHandle | AuditFault:
     fd = -1
     result = None
     try:
@@ -757,6 +856,8 @@ def _prepare_audit_root(root: Path, *, create: bool) -> _RootHandle | AuditFault
         _require(type(create) is bool and root.is_absolute() and ".." not in root.parts)
         fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         for component in root.parts[1:]:
+            if _checkpoint is not None:
+                _checkpoint()
             try:
                 next_fd = os.open(
                     component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd
@@ -772,7 +873,11 @@ def _prepare_audit_root(root: Path, *, create: bool) -> _RootHandle | AuditFault
             os.close(old_fd)
         identity = _qualified_dir(fd)
         filesystem, mount_id = _profile(fd)
+        if _checkpoint is not None:
+            _checkpoint()
         os.fsync(fd)
+        if _checkpoint is not None:
+            _checkpoint()
         capability = AuditCapability(
             "linux-local-audit-v1",
             filesystem,
@@ -882,7 +987,20 @@ def _run_dir(handle, run_id):
         os.close(fd)
 
 
-def _read_file(fd, name, bound=RUN_BYTES):
+def _file_identity(value):
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_uid,
+        value.st_nlink,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _read_file(fd, name, bound=RUN_BYTES, *, _stable=False, _checkpoint=None):
     opened = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=fd)
     try:
         identity = _regular(opened)
@@ -890,6 +1008,8 @@ def _read_file(fd, name, bound=RUN_BYTES):
         parts = []
         remaining = bound + 1
         while remaining:
+            if _checkpoint is not None:
+                _checkpoint()
             piece = os.read(opened, min(remaining, 65536))
             if not piece:
                 break
@@ -897,23 +1017,48 @@ def _read_file(fd, name, bound=RUN_BYTES):
             remaining -= len(piece)
         data = b"".join(parts)
         _require(len(data) <= bound, "integrity_error")
+        if _stable:
+            current = _regular(opened)
+            path = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            _require(
+                len(data) == identity.st_size
+                and _file_identity(identity) == _file_identity(current) == _file_identity(path),
+                "integrity_error",
+            )
+            return data, _file_identity(identity)
         return data
     finally:
         os.close(opened)
 
 
-def _write_all(fd, data):
+def _write_all(fd, data, *, _checkpoint=None):
     view = memoryview(data)
     while view:
+        if _checkpoint is not None:
+            _checkpoint()
         count = os.write(fd, view)
         if count <= 0:
             raise OSError(errno.EIO, "short write")
         view = view[count:]
 
 
-def _append(fd, event):
+def _append(fd, event, *, _checkpoint=None):
+    if event["schema_version"] == 2:
+        tick = _checkpoint or (lambda: None)
+        names = _bounded_stage_entries(fd, tick)
+        prior = []
+        if "journal" in names:
+            prior, _, _, torn, invalid = _read_events(
+                _read_file(fd, "journal", V2_RUN_BYTES, _checkpoint=_checkpoint),
+                event["run_id"],
+                _checkpoint=_checkpoint,
+            )
+            _require(not torn and not invalid, "integrity_error")
+        _file_slots(fd, prior + [event], _checkpoint=_checkpoint)
     data = _frame(event)
     existed = "journal" in _entries(fd)
+    if _checkpoint is not None:
+        _checkpoint()
     opened = os.open(
         "journal",
         os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
@@ -922,15 +1067,23 @@ def _append(fd, event):
     )
     try:
         _regular(opened)
-        _write_all(opened, data)
+        if _checkpoint is None:
+            _write_all(opened, data)
+        else:
+            _write_all(opened, data, _checkpoint=_checkpoint)
+            _checkpoint()
         os.fsync(opened)
+        if _checkpoint is not None:
+            _checkpoint()
     finally:
         os.close(opened)
     if not existed:
         os.fsync(fd)
 
 
-def _publish(fd, name, data, *, replace=False):
+def _publish(fd, name, data, *, replace=False, _slot_events=None):
+    if _slot_events is not None:
+        _file_slots(fd, _slot_events, extra_names=(name,))
     temp = "temp-" + name + "-" + str(uuid.uuid4())
     opened = os.open(
         temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=fd
@@ -952,7 +1105,10 @@ def _decode_json(data):
         raise _Rejected("integrity_error") from None
 
 
-def _read_events(data, run_id):
+def _read_events(data, run_id, *, _stage_records=False, _checkpoint=None):
+    # Shared v2 vocabulary is admitted only with the coordinated stage fold,
+    # content checks, full-reservation inventory and prune eligibility rules.
+    vocabulary = _EXTRA | _STAGE_EXTRA
     events = []
     position = 0
     seen = {}
@@ -960,6 +1116,8 @@ def _read_events(data, run_id):
     torn = False
     invalid = False
     while position < len(data):
+        if _checkpoint is not None:
+            _checkpoint()
         framed = False
         try:
             _require(len(data) - position >= 10, "integrity_error")
@@ -973,13 +1131,15 @@ def _read_events(data, run_id):
             framed = True
             event = _decode_json(data[position + 9 : end - 1])
             _require(
-                type(event) is dict and type(event.get("event")) is str and event["event"] in _EXTRA,
+                type(event) is dict and type(event.get("event")) is str and event["event"] in vocabulary,
                 "integrity_error",
             )
-            _require(set(event) == _COMMON | _EXTRA[event["event"]], "integrity_error")
+            _require(set(event) == _COMMON | vocabulary[event["event"]], "integrity_error")
             _require(
-                event["schema_version"] == 1
-                and type(event["schema_version"]) is int
+                type(event["schema_version"]) is int
+                and event["schema_version"] in _RETAIN_BY_VERSION
+                and (event["event"] not in _STAGE_EXTRA or event["schema_version"] == 2)
+                and (not events or event["schema_version"] == events[0]["schema_version"])
                 and event["run_id"] == run_id,
                 "integrity_error",
             )
@@ -1007,9 +1167,19 @@ def _read_events(data, run_id):
     return events, len(data) - marker, marker, torn, invalid
 
 
-def _disk_run(fd, run_id):
+def _disk_run(fd, run_id, *, _checkpoint=None):
     # Candidate facts: terminal capacity/replay requires the lock-held _qualified_run barrier.
+    if _checkpoint is not None:
+        _checkpoint()
     names = _entries(fd)
+
+    def read(name, bound=V2_RUN_BYTES):
+        if _checkpoint is None:
+            return _read_file(fd, name, bound)
+        return _read_file(fd, name, bound, _checkpoint=_checkpoint)
+
+    raw_sizes = {}
+    stages = {}
     ordinary = 0
     marker = 0
     events = []
@@ -1017,16 +1187,27 @@ def _disk_run(fd, run_id):
     metadata = {}
     orphan_raw = False
     schema_invalid = False
-    for name in names:
+    raw_limits = None
+    for name in sorted(names, key=lambda name: name != "journal"):
+        if _checkpoint is not None:
+            _checkpoint()
         if name == "journal":
-            data = _read_file(fd, name)
-            events, normal, fixed, cut, invalid = _read_events(data, run_id)
+            data = read(name)
+            events, normal, fixed, cut, invalid = _read_events(data, run_id, _checkpoint=_checkpoint)
             schema_invalid |= invalid
             ordinary += normal
             marker += fixed
             torn |= cut
+            if events and events[0]["schema_version"] == 2:
+                try:
+                    raw_limits = _artifact_limits(events, _checkpoint=_checkpoint)
+                except (_Rejected, KeyError, TypeError, ValueError) as error:
+                    if isinstance(error, _Rejected) and error.code == "lock_timeout":
+                        raise
+                    raw_limits = {}
+                    schema_invalid = True
         elif name == "admission":
-            data = _read_file(fd, name, EVENT_BYTES)
+            data = read(name, EVENT_BYTES)
             ordinary += len(data)
             try:
                 metadata[name] = _decode_json(data)
@@ -1034,10 +1215,10 @@ def _disk_run(fd, run_id):
                 torn = True
                 schema_invalid = True
         elif name == "input-manifest.json":
-            data = _read_file(fd, name, BODY_BYTES)
+            data = read(name, BODY_BYTES)
             ordinary += len(data)
         elif name in _MARKERS:
-            data = _read_file(fd, name, 1024)
+            data = read(name, 1024)
             marker += len(data)
             try:
                 metadata[name] = _decode_json(data)
@@ -1046,11 +1227,14 @@ def _disk_run(fd, run_id):
                 schema_invalid = True
         elif name.startswith("raw-"):
             _uuid(name[4:])
-            ordinary += len(_read_file(fd, name))
+            raw_sizes[name[4:]] = len(
+                read(name, raw_limits.get(name[4:], BODY_BYTES) if raw_limits is not None else RUN_BYTES)
+            )
+            ordinary += raw_sizes[name[4:]]
         elif name.startswith("temp-"):
             # Interrupted owned temps remain charged; they are never deleted for admission.
             _uuid(name[-36:])
-            size = len(_read_file(fd, name))
+            size = len(read(name))
             if any(name.startswith("temp-" + m + "-") for m in _MARKERS):
                 marker += size
                 if name.startswith("temp-fault-"):
@@ -1062,15 +1246,33 @@ def _disk_run(fd, run_id):
                 orphan_raw = True
         else:
             raise _Rejected("integrity_error")
-    _require(ordinary <= RUN_BYTES - MARKER_BYTES and marker <= MARKER_BYTES, "integrity_error")
+    _require(
+        ordinary <= (_events_run_limit(events) if events else RUN_BYTES) - MARKER_BYTES
+        and marker <= MARKER_BYTES,
+        "integrity_error",
+    )
     try:
-        attempts, _, _, _, _, _ = _fold(events)
+        if any(event["event"] in _STAGE_EXTRA for event in events):
+            folded, stages, *_ = _stage_journal_state(events, _checkpoint=_checkpoint)
+        else:
+            folded = _fold(events)
+        attempts = folded[0]
         _marker_projections(metadata, events)
-        _manifest_contents(fd, events)
-    except (_Rejected, TypeError, ValueError, KeyError):
+        if _checkpoint is None:
+            _manifest_contents(fd, events)
+        else:
+            _manifest_contents(fd, events, _checkpoint=_checkpoint)
+    except (_Rejected, TypeError, ValueError, KeyError) as error:
+        if isinstance(error, _Rejected) and error.code == "lock_timeout":
+            raise
         # Preserve the measured prefix; malformed nested records never fund admission.
-        events = _valid_prefix(events)
+        events = _valid_prefix(events, _checkpoint=_checkpoint)
         attempts, _, _, _, _, _ = _fold(events)
+        stages = (
+            _stage_journal_state(events, _checkpoint=_checkpoint)[1]
+            if any(event["event"] in _STAGE_EXTRA for event in events)
+            else {}
+        )
         schema_invalid = True
     structural_torn = torn or schema_invalid
     torn |= schema_invalid or any(a["usage_invalid"] for a in attempts.values())
@@ -1119,23 +1321,33 @@ def _disk_run(fd, run_id):
     if tombstone is not None:
         committed_ordinary = tombstone.get("ordinary_bytes")
     _number(committed_ordinary, integer=True)
-    _require(committed_ordinary <= RUN_BYTES - MARKER_BYTES, "integrity_error")
+    _require(
+        committed_ordinary <= (_events_run_limit(events) if events else RUN_BYTES) - MARKER_BYTES,
+        "integrity_error",
+    )
     referenced = {
         "raw-" + e["ref"]["artifact_id"]
         for e in events
         if e["event"] in ("acquired", "settled_acquired")
     }
+    referenced.update("raw-" + artifact for artifact in stages)
+    stage_incomplete = any(not stage["adopted"] for stage in stages.values())
+    stage_unknown_tail = any(
+        raw_sizes.get(artifact, 0) > stage["length"] for artifact, stage in stages.items()
+    )
     orphan_raw |= "input-manifest.json" in names and _manifest_event(events) is None
     orphan_raw |= any(n.startswith("raw-") and n not in referenced for n in names)
     settleable = qualified and not torn
     torn |= orphan_raw
     charge = (
         max(ordinary, committed_ordinary) + MARKER_BYTES
-        if terminal and not frozen and not torn
-        else RUN_BYTES
+        if terminal and not frozen and not torn and not stage_incomplete
+        else (_events_run_limit(events) if events else RUN_BYTES)
     )
     return {
         "events": events,
+        "stage_incomplete": stage_incomplete,
+        "stage_unknown_tail": stage_unknown_tail,
         "schema_invalid": schema_invalid,
         "ordinary": ordinary,
         "marker": marker,
@@ -1151,48 +1363,131 @@ def _disk_run(fd, run_id):
     }
 
 
-def _raw_contents(fd, disk):
-    _manifest_contents(fd, disk["events"])
-    names = set(_entries(fd))
+def _artifact_limits(events, *, _checkpoint=None):
+    """Bounds from validated attempt identity, never inferred from dispatch absence."""
+    if any(event["event"] in _STAGE_EXTRA for event in events):
+        attempts = _stage_journal_state(events, _checkpoint=_checkpoint)[0][0]
+    else:
+        observer = (lambda *args: _checkpoint()) if _checkpoint is not None else None
+        attempts = _fold(events, _observer=observer)[0]
+    limits = {}
+    for event in events:
+        if _checkpoint is not None:
+            _checkpoint()
+        if event["event"] not in ("stage_begin", "acquired", "settled_acquired"):
+            continue
+        artifact = (
+            event["artifact_id"] if event["event"] == "stage_begin" else event["ref"]["artifact_id"]
+        )
+        backend_format = attempts[event["attempt_id"]]["start"]["backend"]["format"]
+        bound = _layer_policy(event["schema_version"], event["layer"], backend_format)[1]
+        limits[artifact] = min(limits.get(artifact, bound), bound)
+    return limits
+
+
+def _raw_contents(
+    fd, disk, *, _checkpoint=None, _contents=None, _stage_checked=False, _verified_refs=None
+):
+    if _contents is None and _checkpoint is None:
+        _manifest_contents(fd, disk["events"])
+    else:
+        _manifest_contents(fd, disk["events"], _contents=_contents, _checkpoint=_checkpoint)
+    names = set(_entries(fd)) if _contents is None else set(_contents)
+    verified = {"raw-" + key: value for key, value in (_verified_refs or {}).items()}
+    limits = (
+        _artifact_limits(disk["events"], _checkpoint=_checkpoint)
+        if disk["events"][0]["schema_version"] == 2
+        else None
+    )
+
+    def content(name):
+        bound = limits.get(name[4:], BODY_BYTES) if limits is not None else RUN_BYTES
+        if _contents is None and _checkpoint is None:
+            return _read_file(fd, name, bound)
+        return _recovery_content(
+            fd, name, bound if limits is not None else BODY_BYTES, _contents, _checkpoint
+        )
+
+    if not _stage_checked and any(event["event"] in _STAGE_EXTRA for event in disk["events"]):
+        if disk["tombstone"]:
+            _marker_projections({"tombstone": disk["tombstone"]}, disk["events"])
+        artifacts = {name[4:]: content(name) for name in names if name.startswith("raw-")}
+        pruned = {
+            event["ref"]["artifact_id"]
+            for event in disk["events"]
+            if disk["tombstone"]
+            and event["event"] in ("acquired", "settled_acquired")
+            and "raw-" + event["ref"]["artifact_id"] not in names
+        }
+        checked_refs = {}
+        _replay_stage_candidate(
+            disk["events"],
+            artifacts,
+            _checkpoint=_checkpoint,
+            _pruned=pruned,
+            _verified_refs=checked_refs,
+        )
+        verified.update({"raw-" + key: value for key, value in checked_refs.items()})
+        # This is only the current validation pass's byte snapshot, not a live
+        # stat cache. The next full validation reads all files again.
+        _contents = {"raw-" + key: value for key, value in artifacts.items()}
+
     for event in disk["events"]:
+        if _checkpoint is not None:
+            _checkpoint()
         if event["event"] in ("acquired", "settled_acquired"):
             ref = event["ref"]  # The shared fold has already validated the closed projection.
             name = "raw-" + ref["artifact_id"]
             if disk["tombstone"] and name not in names:
                 continue
-            data = _read_file(fd, name)
-            _require(
-                len(data) == ref["retained_bytes"] and hashlib.sha256(data).hexdigest() == ref["sha256"],
-                "integrity_error",
-            )
+            if _contents is None or name not in verified:
+                data = content(name)
+                verified[name] = (len(data), hashlib.sha256(data).hexdigest())
+            _require(verified[name] == (ref["retained_bytes"], ref["sha256"]), "integrity_error")
     observations = {
         event["observation_id"]: event
         for event in disk["events"]
         if event["event"] in ("acquired", "settled_acquired")
     }
     for event in disk["events"]:
+        if _checkpoint is not None:
+            _checkpoint()
         if event["event"] == "response_observed":
             source = observations[event["source_observation_id"]]
             name = "raw-" + source["ref"]["artifact_id"]
             if disk["tombstone"] and name not in names:
                 continue
-            _response_frame(_read_file(fd, name), event["frame_offset"], event["frame_length"])
+            _response_frame(content(name), event["frame_offset"], event["frame_length"])
 
 
-def _sync_file(fd, name):
+def _sync_file(fd, name, *, _checkpoint=None):
     opened = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=fd)
     try:
         held = _regular(opened)
+        if _checkpoint is not None:
+            _checkpoint()
         os.fsync(opened)
+        if _checkpoint is not None:
+            _checkpoint()
         current = os.stat(name, dir_fd=fd, follow_symlinks=False)
         _require((held.st_dev, held.st_ino) == (current.st_dev, current.st_ino), "integrity_error")
     finally:
         os.close(opened)
 
 
-def _qualified_run(handle, fd, run_id, disk=None, *, settlement=False):
+def _qualified_run(handle, fd, run_id, disk=None, *, settlement=False, _checkpoint=None):
     # Callers hold root.lock. Visibility alone never authorizes durable terminal facts.
-    disk = _disk_run(fd, run_id) if disk is None else disk
+    if _checkpoint is not None:
+        _checkpoint()
+    disk = (
+        (
+            _disk_run(fd, run_id)
+            if _checkpoint is None
+            else _disk_run(fd, run_id, _checkpoint=_checkpoint)
+        )
+        if disk is None
+        else disk
+    )
     if disk["torn"] and not (settlement and disk["storage_settleable"]):
         return disk
     _revalidate(handle)
@@ -1208,17 +1503,45 @@ def _qualified_run(handle, fd, run_id, disk=None, *, settlement=False):
     held = _qualified_dir(fd)
     current = os.stat(run_id, dir_fd=handle.fd, follow_symlinks=False)
     _require((held.st_dev, held.st_ino) == (current.st_dev, current.st_ino), "integrity_error")
-    _raw_contents(fd, disk)
+    if disk["stage_incomplete"]:
+        _read_stage_recovery(handle, fd, run_id, _checkpoint or (lambda: None))
+        reread = (
+            _disk_run(fd, run_id)
+            if _checkpoint is None
+            else _disk_run(fd, run_id, _checkpoint=_checkpoint)
+        )
+        _require(reread == disk, "integrity_error")
+        return reread  # Full reservation; never sync an incomplete/unknown stage.
+    if _checkpoint is None:
+        _raw_contents(fd, disk)
+    else:
+        _raw_contents(fd, disk, _checkpoint=_checkpoint)
     for name in _entries(fd):
-        _sync_file(fd, name)
+        if _checkpoint is not None:
+            _checkpoint()
+        if _checkpoint is None:
+            _sync_file(fd, name)
+        else:
+            _sync_file(fd, name, _checkpoint=_checkpoint)
+    if _checkpoint is not None:
+        _checkpoint()
     os.fsync(fd)
+    if _checkpoint is not None:
+        _checkpoint()
     os.fsync(handle.fd)
+    if _checkpoint is not None:
+        _checkpoint()
     _revalidate(handle)
     current = os.stat(run_id, dir_fd=handle.fd, follow_symlinks=False)
     _require((held.st_dev, held.st_ino) == (current.st_dev, current.st_ino), "integrity_error")
-    reread = _disk_run(fd, run_id)
+    reread = (
+        _disk_run(fd, run_id) if _checkpoint is None else _disk_run(fd, run_id, _checkpoint=_checkpoint)
+    )
     _require(reread == disk, "integrity_error")
-    _raw_contents(fd, reread)
+    if _checkpoint is None:
+        _raw_contents(fd, reread)
+    else:
+        _raw_contents(fd, reread, _checkpoint=_checkpoint)
     return reread
 
 
@@ -1233,9 +1556,13 @@ def _entries(fd):
         os.close(fresh)
 
 
-def _inventory(handle):
+def _inventory(handle, *, _checkpoint=None, _version=None):
+    if _checkpoint is not None:
+        _checkpoint()
     runs = {}
     for name in _entries(handle.fd):
+        if _checkpoint is not None:
+            _checkpoint()
         if name == "root.lock":
             fd = os.open(
                 name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=handle.fd
@@ -1247,23 +1574,39 @@ def _inventory(handle):
             continue
         _uuid(name)
         with _run_dir(handle, name) as fd:
-            runs[name] = _qualified_run(handle, fd, name)
+            runs[name] = (
+                _qualified_run(handle, fd, name)
+                if _checkpoint is None
+                else _qualified_run(handle, fd, name, _checkpoint=_checkpoint)
+            )
             _require(not runs[name]["schema_invalid"], "integrity_error")
+    known = {row["events"][0]["schema_version"] for row in runs.values() if row["events"]}
+    if _version is not None:
+        _retention_seconds(_version)
+        known.add(_version)
+    _require(len(known) <= 1, "identity_conflict")
+    root_version = next(iter(known), 1)
+    for row in runs.values():
+        if not row["events"]:
+            row["charge"] = _run_limit(root_version)
     return runs, sum(row["charge"] for row in runs.values())
 
 
-def _space(fd, run_id, ordinary_delta=0, marker_delta=0):
-    current = _disk_run(fd, run_id)
+def _space(fd, run_id, ordinary_delta=0, marker_delta=0, *, _checkpoint=None):
+    current = (
+        _disk_run(fd, run_id) if _checkpoint is None else _disk_run(fd, run_id, _checkpoint=_checkpoint)
+    )
     _require(
-        current["ordinary"] + ordinary_delta <= RUN_BYTES - MARKER_BYTES
+        current["ordinary"] + ordinary_delta <= _events_run_limit(current["events"]) - MARKER_BYTES
         and current["marker"] + marker_delta <= MARKER_BYTES,
         "quota_refused",
     )
 
 
 def _marker(event, owner, *, terminal=None, frozen=False, tombstone=False, ordinary=0):
+    _retention_seconds(event["schema_version"])
     data = {
-        "schema_version": 1,
+        "schema_version": event["schema_version"],
         "run_id": event["run_id"],
         "owner": owner,
         "event_id": event["event_id"],
@@ -1274,6 +1617,8 @@ def _marker(event, owner, *, terminal=None, frozen=False, tombstone=False, ordin
         "ordinary_bytes": ordinary,
         "marker_partition_bytes": MARKER_BYTES,
     }
+    if event["schema_version"] == 2:
+        data["limits"] = _reservation_policy(2)
     encoded = _json(data)
     _require(len(encoded) <= 1024, "quota_refused")
     return encoded
@@ -1345,7 +1690,11 @@ def _streams(observations):
     return result, invalid
 
 
-def _admit_start(ctx, logical_id, parent_id, cause, attempts, logical, fixed, *, code):
+def _causes(version):
+    return _CAUSES | {"redirect"} if version == 2 else _CAUSES
+
+
+def _admit_start(ctx, logical_id, parent_id, cause, attempts, logical, fixed, *, code, version=1):
     _require(all(ctx[n] == fixed[n] for n in ("run_id", "source_hash", "snapshot_id")), code)
     parent = attempts.get(parent_id)
     _require(parent_id is None or parent is not None, code)
@@ -1356,10 +1705,18 @@ def _admit_start(ctx, logical_id, parent_id, cause, attempts, logical, fixed, *,
             and parent["start"]["logical_id"] == logical_id,
             code,
         )
-        _require(cause == "retry", code)
+        _require(cause == "retry" or (version == 2 and cause == "redirect"), code)
+        if cause == "redirect":
+            _require(parent["finish"] is not None, code)
+            latest = next(
+                value
+                for value in reversed(attempts.values())
+                if value["start"]["logical_id"] == logical_id
+            )
+            _require(parent is latest, code)
     else:
         _require(ctx["parent_logical_id"] == (parent["start"]["logical_id"] if parent else None), code)
-        _require(cause != "retry", code)
+        _require(cause not in ("retry", "redirect"), code)
 
 
 def _admit_acquired(attempt_id, attempts, *, code):
@@ -1380,17 +1737,30 @@ def _work_s(attempts):
     return work
 
 
-def _body_bytes(observations, attempt_id, layer):
+def _layer_policy(version, layer, backend_format=None):
+    _retention_seconds(version)
+    _vocabulary(layer, _LAYERS)
+    if version == 2:
+        _vocabulary(backend_format, ("openai", "anthropic", "vertex", "cli", "tool"))
+        if layer == "wire" and backend_format == "openai":
+            return "wire", V2_WIRE_BYTES
+    return ("decoded" if layer == "decoded" else "transport"), BODY_BYTES
+
+
+def _body_bytes(observations, attempt_id, layer, version=1, backend_format=None):
     return sum(
         event["ref"]["retained_bytes"]
         for event in observations.values()
         if event["event"] in ("acquired", "settled_acquired")
         and event["attempt_id"] == attempt_id
-        and ((event["layer"] == "decoded") == (layer == "decoded"))
+        and _layer_policy(version, event["layer"], backend_format)[0]
+        == _layer_policy(version, layer, backend_format)[0]
     )
 
 
-def _fold(events):
+def _fold(events, *, _observer=None):
+    if _observer is None and any(event.get("event") in _STAGE_EXTRA for event in events):
+        return _stage_journal_state(events)[0]
     attempts = {}
     logical = {}
     observations = {}
@@ -1400,6 +1770,12 @@ def _fold(events):
     opened = None
     manifest = None
     for index, event in enumerate(events):
+        if _observer is not None:
+            _observer("before", event, attempts, observations, terminal, frozen)
+        _retention_seconds(event["schema_version"])
+        _require(
+            opened is None or event["schema_version"] == opened["schema_version"], "integrity_error"
+        )
         kind = event["event"]
         _require(kind == "run_open" or opened is not None, "integrity_error")
         if kind == "run_open":
@@ -1411,7 +1787,7 @@ def _fold(events):
             _uuid(event["attempt_id"])
             _uuid(event["logical_id"])
             _uuid(event["parent_id"], True)
-            _vocabulary(event["cause"], _CAUSES)
+            _vocabulary(event["cause"], _causes(event["schema_version"]))
             _backend(BackendObservation(**event["backend"]))
             _hash(event["request_digest"])
             _number(event["request_bytes"], integer=True)
@@ -1425,6 +1801,7 @@ def _fold(events):
                 logical,
                 events[0]["context"],
                 code="integrity_error",
+                version=event["schema_version"],
             )
             logical.setdefault(event["logical_id"], ctx)
             attempts[event["attempt_id"]] = {
@@ -1438,6 +1815,8 @@ def _fold(events):
         elif kind in ("acquired", "settled_acquired"):
             _uuid(event["observation_id"])
             _vocabulary(event["layer"], _LAYERS)
+            attempt = _admit_acquired(event["attempt_id"], attempts, code="integrity_error")
+            backend_format = attempt["start"]["backend"]["format"]
             ref = event["ref"]
             keys = {field.name for field in fields(RawRef)}
             _require(
@@ -1451,7 +1830,10 @@ def _fold(events):
             _number(ref["retained_bytes"], integer=True)
             _number(ref["original_bytes"], True, True)
             _require(
-                type(ref["partial"]) is bool and ref["retained_bytes"] <= BODY_BYTES, "integrity_error"
+                type(ref["partial"]) is bool
+                and ref["retained_bytes"]
+                <= _layer_policy(event["schema_version"], event["layer"], backend_format)[1],
+                "integrity_error",
             )
             _require(
                 ref["original_bytes"] is None or ref["retained_bytes"] <= ref["original_bytes"],
@@ -1487,9 +1869,15 @@ def _fold(events):
                 _require(observations[identity] == event, "integrity_error")
             else:
                 _require(
-                    _body_bytes(observations, event["attempt_id"], event["layer"])
+                    _body_bytes(
+                        observations,
+                        event["attempt_id"],
+                        event["layer"],
+                        event["schema_version"],
+                        backend_format,
+                    )
                     + ref["retained_bytes"]
-                    <= BODY_BYTES,
+                    <= _layer_policy(event["schema_version"], event["layer"], backend_format)[1],
                     "integrity_error",
                 )
                 observations[identity] = event
@@ -1521,6 +1909,13 @@ def _fold(events):
             _require(attempt is not None and terminal is None, "integrity_error")
             _vocabulary(event["outcome"], _OUTCOMES)
             _vocabulary(event["dispatch_state"], _DISPATCH)
+            if event["schema_version"] == 2:
+                backend_format = attempt["start"]["backend"]["format"]
+                _require(
+                    not (backend_format == "openai" and event["dispatch_state"] == "entered_cli_launch")
+                    and not (backend_format == "cli" and event["dispatch_state"] == "entered_api_send"),
+                    "integrity_error",
+                )
             _text(event["error_class"], True)
             _number(event["duration_s"], True)
             _require(attempt["finish"] is None, "integrity_error")
@@ -1552,6 +1947,10 @@ def _fold(events):
                 faults.append(fault)
             if fault.attempt_id in attempts and fault.phase == "acquired":
                 attempts[fault.attempt_id]["invalid"] = True
+        if _observer is not None:
+            _observer("after", event, attempts, observations, terminal, frozen)
+    if _observer is not None:
+        _observer("before", None, attempts, observations, terminal, frozen)
     for attempt in attempts.values():
         attempt["usage_invalid"] = _streams(attempt["observations"])[1]
         attempt["invalid"] |= attempt["usage_invalid"]
@@ -1569,9 +1968,411 @@ def _fold(events):
     return attempts, logical, observations, terminal, frozen, faults
 
 
-def _valid_prefix(events):
+@dataclass(frozen=True)
+class StageIdentity:
+    """Candidate v2 handle, reserved before any response bytes are written."""
+
+    run_id: str
+    attempt_id: str
+    observation_id: str
+    artifact_id: str
+    layer: str
+
+
+@dataclass(frozen=True, eq=False)
+class StageHandle:
+    identity: StageIdentity
+    _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
+
+
+@dataclass(frozen=True)
+class StageCheckpoint:
+    identity: StageIdentity
+    retained_bytes: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class StageAcknowledgement:
+    admitted: bool
+    handle: StageHandle | None
+    checkpoint: StageCheckpoint | None
+    accepted_bytes: int
+    partial: bool
+    fault: AuditFault | None
+    publication_uncertain: bool = False
+
+
+@dataclass(frozen=True)
+class StageProjection:
+    """Diagnostic evidence only, never a successful response or durability ACK."""
+
+    identity: StageIdentity
+    context: InvocationContext
+    checkpoint_bytes: int
+    checkpoint_sha256: str
+    unverified_tail_bytes: int
+    sealed: bool
+    adopted: bool
+
+
+# V2-only extensions share one observer and content validator across writers,
+# ordinary replay, inventory and explicit diagnostic recovery.
+_STAGE_EXTRA = {
+    "stage_begin": {"attempt_id", "observation_id", "artifact_id", "layer"},
+    "stage_checkpoint": {"artifact_id", "retained_bytes", "sha256"},
+    "stage_seal": {"artifact_id"},
+}
+
+
+def _charge_stage_bytes(charges, attempt_id, layer, delta, backend_format=None):
+    """Ephemeral replay accounting; never a second persisted ledger."""
+    _require(type(delta) is int and delta >= 0, "integrity_error")
+    key, limit = _layer_policy(2, layer, backend_format)
+    bucket = (attempt_id, key)
+    used = charges.get(bucket, 0) + delta
+    _require(used <= limit, "integrity_error")
+    charges[bucket] = used
+
+
+def _stage_journal_state(events, *, _checkpoint=None):
+    """One authoritative ordinary fold plus the shared v2 stage observer."""
+    ordinary = []
+    ordered = []
+    stages = {}
+    stages_by_observation = {}
+    stages_by_layer = {}
+    ordinary_artifacts = set()
+    ordinary_layers = set()
+    charges = {}
+    seen = {}
+    sequence = 0
+    elapsed = 0.0
+    journal_bytes = 0
+    marker_bytes = 0
+    run_id = None
+    version = None
+    for event in events:
+        if _checkpoint is not None:
+            _checkpoint()
+        _require(type(event) is dict, "integrity_error")
+        kind = event.get("event")
+        _require(type(kind) is str and kind in (_EXTRA | _STAGE_EXTRA), "integrity_error")
+        _closed(event, _COMMON | (_STAGE_EXTRA if kind in _STAGE_EXTRA else _EXTRA)[kind])
+        _retention_seconds(event["schema_version"])
+        _uuid(event["run_id"])
+        _uuid(event["event_id"])
+        _utc(event["utc"])
+        _number(event["elapsed_s"])
+        _number(event["sequence"], integer=True)
+        encoded = _frame(event)
+        if kind in ("run_final", "freeze", "audit_fault"):
+            marker_bytes += len(encoded)
+        else:
+            journal_bytes += len(encoded)
+        _require(
+            journal_bytes <= _run_limit(event["schema_version"]) - MARKER_BYTES
+            and marker_bytes <= MARKER_BYTES,
+            "integrity_error",
+        )
+        if event["event_id"] in seen:
+            _require(seen[event["event_id"]] == encoded, "integrity_error")
+            continue
+        _require(event["sequence"] == sequence and event["elapsed_s"] >= elapsed, "integrity_error")
+        if run_id is None:
+            run_id, version = event["run_id"], event["schema_version"]
+        _require(event["run_id"] == run_id and event["schema_version"] == version, "integrity_error")
+        seen[event["event_id"]] = encoded
+        sequence += 1
+        elapsed = event["elapsed_s"]
+        ordered.append(event)
+        if kind not in _STAGE_EXTRA:
+            ordinary.append(event)
+
+    def stage_event(event, attempts, observations, terminal, frozen):
+        if _checkpoint is not None:
+            _checkpoint()
+        kind = event["event"]
+        _require(version == 2 and ordinary and terminal is None and not frozen, "integrity_error")
+        artifact = _uuid(event["artifact_id"])
+        if kind == "stage_begin":
+            attempt_id = _uuid(event["attempt_id"])
+            observation_id = _uuid(event["observation_id"])
+            layer = _vocabulary(event["layer"], _LAYERS)
+            _admit_acquired(attempt_id, attempts, code="integrity_error")
+            _require(artifact not in stages and artifact not in ordinary_artifacts, "integrity_error")
+            _require(
+                observation_id not in observations and observation_id not in stages_by_observation,
+                "integrity_error",
+            )
+            layer_key = (attempt_id, layer)
+            _require(
+                layer_key not in stages_by_layer and layer_key not in ordinary_layers, "integrity_error"
+            )
+            stages_by_observation[observation_id] = artifact
+            stages_by_layer[layer_key] = artifact
+            stages[artifact] = {
+                "identity": StageIdentity(run_id, attempt_id, observation_id, artifact, layer),
+                "backend_format": attempts[attempt_id]["start"]["backend"]["format"],
+                "length": 0,
+                "hash": hashlib.sha256(b"").hexdigest(),
+                "checkpoints": [],
+                "sealed": False,
+                "adopted": False,
+            }
+        else:
+            _require(artifact in stages, "integrity_error")
+            stage = stages[artifact]
+            _admit_acquired(stage["identity"].attempt_id, attempts, code="integrity_error")
+            _require(not stage["sealed"] and not stage["adopted"], "integrity_error")
+            if kind == "stage_checkpoint":
+                length = _number(event["retained_bytes"], integer=True)
+                digest = _hash(event["sha256"])
+                _require(
+                    stage["length"]
+                    <= length
+                    <= _layer_policy(2, stage["identity"].layer, stage["backend_format"])[1],
+                    "integrity_error",
+                )
+                _require(length > stage["length"] or digest == stage["hash"], "integrity_error")
+                identity = stage["identity"]
+                _charge_stage_bytes(
+                    charges,
+                    identity.attempt_id,
+                    identity.layer,
+                    length - stage["length"],
+                    stage["backend_format"],
+                )
+                stage.update(length=length, hash=digest)
+                stage["checkpoints"].append((length, digest))
+            else:
+                _require(bool(stage["checkpoints"]), "integrity_error")
+                stage["sealed"] = True
+
+    cursor = 0
+    adopting = []
+
+    def observe(phase, event, attempts, observations, terminal, frozen):
+        nonlocal cursor
+        if _checkpoint is not None:
+            _checkpoint()
+        if phase == "after":
+            # Only an ordinary transition accepted by _fold can adopt a stage.
+            for stage in adopting:
+                stage["adopted"] = True
+            if event["event"] in ("acquired", "settled_acquired") and not adopting:
+                _charge_stage_bytes(
+                    charges,
+                    event["attempt_id"],
+                    event["layer"],
+                    event["ref"]["retained_bytes"],
+                    attempts[event["attempt_id"]]["start"]["backend"]["format"],
+                )
+            if event["event"] in ("acquired", "settled_acquired"):
+                ordinary_artifacts.add(event["ref"]["artifact_id"])
+                ordinary_layers.add((event["attempt_id"], event["layer"]))
+            adopting.clear()
+            return
+        while cursor < len(ordered) and ordered[cursor]["event"] in _STAGE_EXTRA:
+            stage_event(ordered[cursor], attempts, observations, terminal, frozen)
+            cursor += 1
+        if event is None:
+            _require(cursor == len(ordered), "integrity_error")
+            return
+        _require(cursor < len(ordered) and ordered[cursor] is event, "integrity_error")
+        cursor += 1
+        kind = event["event"]
+        if kind in ("acquired", "settled_acquired"):
+            ref = event["ref"]
+            if type(ref) is not dict or not {"artifact_id", "retained_bytes", "sha256"} <= ref.keys():
+                # Let the authoritative ordinary transition reject malformed
+                # payloads; never inspect them or queue an adoption here.
+                return
+        if kind in ("acquired", "settled_acquired", "response_observed"):
+            observation_id = _uuid(event["observation_id"])
+            by_observation = stages_by_observation.get(observation_id)
+            artifact = None
+            by_layer = None
+            if kind in ("acquired", "settled_acquired"):
+                artifact = _uuid(event["ref"]["artifact_id"])
+                layer_key = (_uuid(event["attempt_id"]), _vocabulary(event["layer"], _LAYERS))
+                by_layer = stages_by_layer.get(layer_key)
+            matches = {
+                key
+                for key in (by_observation, by_layer, artifact if artifact in stages else None)
+                if key is not None
+            }
+            for matched in matches:  # At most three indexed identities, never all stages.
+                stage = stages[matched]
+                _require(
+                    kind in ("acquired", "settled_acquired")
+                    and by_observation == by_layer == artifact == matched
+                    and stage["sealed"]
+                    and not frozen
+                    and not stage["adopted"],
+                    "integrity_error",
+                )
+                _require(
+                    event["ref"]["retained_bytes"] == stage["length"]
+                    and event["ref"]["sha256"] == stage["hash"],
+                    "integrity_error",
+                )
+                adopting.append(stage)
+        if kind == "run_final":
+            _require(
+                not event["audit_complete"] or all(s["adopted"] for s in stages.values()),
+                "integrity_error",
+            )
+
+    folded = _fold(ordinary, _observer=observe)
+    _require(bool(ordinary), "integrity_error")
+    return folded, stages, ordinary, journal_bytes, marker_bytes, charges
+
+
+def _replay_stage_candidate(
+    events: list[dict],
+    artifacts: Mapping[str, bytes],
+    *,
+    _checkpoint=None,
+    _pruned=frozenset(),
+    _verified_refs=None,
+) -> tuple[StageProjection, ...]:
+    """Pure candidate protocol validation; does not admit storage or mutate it.
+
+    The proposed writer boundary is begin_stage -> append_stage -> seal_stage ->
+    adopt_stage. Begin commits identity before file creation. Append journals a
+    checkpoint only after syncing file/directory. Only the checkpoint may
+    acknowledge acceptance. The live owner must prove no pending/uncertain write
+    before sealing; acquired adopts the exact sealed artifact/observation once.
+    Recovery is read-only: a projection NEVER authorizes adoption or resumption.
+    Bytes beyond a checkpoint are unknown, not accepted response evidence.
+
+    This validator cannot prove fsync, inode continuity, ownership or absence of
+    an in-flight worker. Disk readers and the live writer establish those under
+    the existing qualified storage and locking rules. Recovery grants no resume
+    or adoption authority.
+
+    Ordinary semantics use one authoritative _fold with a private observer.
+    Prefix hashes and charges are incremental within this validation pass;
+    adopted references bind to the same verified final prefix. This is NOT an
+    overall linear-work claim: existing _fold/_body_bytes and repeated complete
+    checkpoint validation remain unchanged. _verified_refs is a private output
+    cache valid only for these actual input bytes in this validation pass.
+    """
+    folded, stages, ordinary, journal_bytes, marker_bytes, charges = _stage_journal_state(
+        events, _checkpoint=_checkpoint
+    )
+    attempts, _, observations, _, _, _ = folded
+    refs = {}
+    for event in ordinary:
+        if _checkpoint is not None:
+            _checkpoint()
+        if event["event"] not in ("acquired", "settled_acquired"):
+            continue
+        ref = event["ref"]
+        artifact = ref["artifact_id"]
+        if artifact in refs:
+            # Ordinary legacy records may alias an artifact. Preserve consistent
+            # aliases, but never let a later ref hide an earlier byte constraint.
+            prior = refs[artifact]
+            _require(
+                (ref["retained_bytes"], ref["sha256"]) == (prior["retained_bytes"], prior["sha256"]),
+                "integrity_error",
+            )
+        else:
+            refs[artifact] = ref
+    _require(all(key in refs and key not in artifacts for key in _pruned), "integrity_error")
+    _require(all(key in stages or key in refs for key in artifacts), "integrity_error")
+    _require(all(type(data) is bytes for data in artifacts.values()), "integrity_error")
+    _require(
+        journal_bytes + sum(map(len, artifacts.values())) <= _events_run_limit(events) - MARKER_BYTES
+        and marker_bytes <= MARKER_BYTES,
+        "integrity_error",
+    )
+    for artifact, ref in refs.items():
+        if _checkpoint is not None:
+            _checkpoint()
+        if artifact in _pruned:
+            continue
+        _require(artifact in artifacts, "integrity_error")
+        data = artifacts[artifact]
+        _require(len(data) == ref["retained_bytes"], "integrity_error")
+        if artifact not in stages:
+            digest = hashlib.sha256(data).hexdigest()
+            _require(digest == ref["sha256"], "integrity_error")
+            if _verified_refs is not None:
+                _verified_refs[artifact] = (len(data), digest)
+        # A staged ref is bound to its final checkpoint by the shared observer;
+        # the actual prefix pass below verifies those same bytes once.
+
+    result = []
+    for artifact, stage in stages.items():
+        if _checkpoint is not None:
+            _checkpoint()
+        if artifact in _pruned:
+            _require(stage["adopted"], "integrity_error")
+            continue  # No byte-verified diagnostic projection for deleted content.
+        _require(not stage["checkpoints"] or artifact in artifacts, "integrity_error")
+        data = artifacts.get(artifact, b"")
+        _require(
+            stage["length"]
+            <= len(data)
+            <= _layer_policy(2, stage["identity"].layer, stage["backend_format"])[1],
+            "integrity_error",
+        )
+        _require(not stage["sealed"] or len(data) == stage["length"], "integrity_error")
+        identity = stage["identity"]
+        if not stage["adopted"]:
+            _charge_stage_bytes(
+                charges,
+                identity.attempt_id,
+                identity.layer,
+                len(data) - stage["length"],
+                stage["backend_format"],
+            )
+        prefix_hasher = hashlib.sha256()
+        prefix_length = 0
+        prefix_digest = prefix_hasher.hexdigest()
+        view = memoryview(data)
+        for length, digest in stage["checkpoints"]:
+            if _checkpoint is not None:
+                _checkpoint()
+            # Monotonic lengths were validated above. Hash only new bytes and
+            # reuse the digest for an identical checkpoint, including zero.
+            if length > prefix_length:
+                prefix_hasher.update(view[prefix_length:length])
+                prefix_length = length
+                prefix_digest = prefix_hasher.hexdigest()
+            _require(prefix_digest == digest, "integrity_error")
+        if stage["adopted"] and _verified_refs is not None:
+            _verified_refs[artifact] = (len(data), prefix_digest)
+        result.append(
+            StageProjection(
+                stage["identity"],
+                InvocationContext(**attempts[identity.attempt_id]["start"]["context"]),
+                stage["length"],
+                stage["hash"],
+                len(data) - stage["length"],
+                stage["sealed"],
+                stage["adopted"],
+            )
+        )
+    return tuple(result)
+
+
+def _has_unadopted_stages(events):
+    return (
+        any(not state["adopted"] for state in _stage_journal_state(events)[1].values())
+        if any(event["event"] in _STAGE_EXTRA for event in events)
+        else False
+    )
+
+
+def _valid_prefix(events, *, _checkpoint=None):
     prefix = []
     for event in events:
+        if _checkpoint is not None:
+            _checkpoint()
         try:
             _fold(prefix + [event])
         except (_Rejected, TypeError, ValueError, KeyError):
@@ -1771,6 +2572,238 @@ def _scoped_projection(context, events, faults, state, complete, manifest, scope
     )
 
 
+@dataclass(frozen=True)
+class StageRecoverySnapshot:
+    """Read-only prefix diagnostics, never permission to resume or adopt."""
+
+    run_id: str
+    prefixes_verified: bool
+    stages: tuple[StageProjection, ...]
+    faults: tuple[AuditFault, ...]
+    capability: AuditCapability | None
+    charge_bytes: int = V2_RUN_BYTES
+    audit_complete: bool = False
+    maintenance_eligible: bool = False
+    pruned_artifact_ids: tuple[str, ...] = ()
+
+
+def _bounded_stage_entries(fd, checkpoint):
+    # Fresh descriptor avoids a stale directory offset; never materialize an
+    # unbounded os.listdir result before checking the recovery file budget.
+    checkpoint()
+    fresh = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+    try:
+        held, current = _directory(fd), _directory(fresh)
+        _require((held.st_dev, held.st_ino) == (current.st_dev, current.st_ino), "integrity_error")
+        names = set()
+        with os.scandir(fresh) as entries:
+            for index, entry in enumerate(entries, 1):
+                checkpoint()
+                _require(index <= 4096, "quota_refused")
+                names.add(entry.name)
+        return names
+    finally:
+        os.close(fresh)
+
+
+def _file_slots(fd, events, *, extra_names=(), _checkpoint=None):
+    """V2 recovery inventory budget, recomputed under the caller's root lock.
+
+    Reserve all fixed destinations plus one *new* atomic temp. Leftover temps
+    remain physical entries; cancellation never releases a registered raw slot.
+    This is an admission bound, not permission to repair or accept unknown files.
+    """
+    tick = _checkpoint or (lambda: None)
+    names = _bounded_stage_entries(fd, tick)
+    fixed = {"journal", "admission", "input-manifest.json", "final", "fault", "freeze", "tombstone"}
+    staged, adopted = set(), set()
+    for event in events:
+        tick()
+        if event["event"] == "stage_begin":
+            staged.add("raw-" + event["artifact_id"])
+        elif event["event"] in ("acquired", "settled_acquired"):
+            adopted.add("raw-" + event["ref"]["artifact_id"])
+    if "tombstone" in names and (staged & adopted) - names:
+        marker = _decode_json(_read_file(fd, "tombstone", EVENT_BYTES, _checkpoint=_checkpoint))
+        _marker_projections({"tombstone": marker}, events)
+        # Only a legitimately pruned adopted stage relinquishes its raw slot.
+        staged -= adopted - names
+    reserved = names | fixed | staged | set(extra_names)
+    _require(len(reserved) + 1 <= 4096, "quota_refused")
+    return len(reserved) + 1
+
+
+def _stage_file_snapshot(fd, checkpoint, run_id):
+    """Read a closed file inventory with stable per-file inode/content metadata."""
+    checkpoint()
+    names = _bounded_stage_entries(fd, checkpoint)
+    _require({"journal", "admission"} <= names, "integrity_error")
+    contents = {}
+    identities = {}
+    total = 0
+    limits = {}
+    for name in sorted(names, key=lambda name: (name != "journal", name)):
+        checkpoint()
+        if name == "journal":
+            bound = V2_RUN_BYTES
+        elif name == "admission":
+            bound = EVENT_BYTES
+        elif name in _MARKERS:
+            bound = 1024
+        elif name == "input-manifest.json":
+            bound = BODY_BYTES
+        elif name.startswith("raw-"):
+            _uuid(name[4:])
+            bound = limits.get(name[4:], BODY_BYTES)
+        else:
+            # Temps and unknown files are damaged/incomplete state, not stages.
+            raise _Rejected("integrity_error")
+        data, identity = _read_file(
+            fd, name, min(bound, V2_RUN_BYTES - total), _stable=True, _checkpoint=checkpoint
+        )
+        if name == "journal":
+            events, _, _, torn, invalid = _read_events(data, run_id, _checkpoint=checkpoint)
+            _require(
+                not torn and not invalid and events and events[0]["schema_version"] == 2,
+                "integrity_error",
+            )
+            limits = _artifact_limits(events, _checkpoint=checkpoint)
+        total += len(data)
+        contents[name] = data
+        identities[name] = identity
+    _require(_bounded_stage_entries(fd, checkpoint) == names, "integrity_error")
+    return contents, identities
+
+
+def _read_stage_recovery(handle, fd, run_id, checkpoint):
+    """Caller holds root.lock; no stage fsync, repair, migration or mutation."""
+    checkpoint()
+    _revalidate(handle)
+    directory = _qualified_dir(fd)
+    path = os.stat(run_id, dir_fd=handle.fd, follow_symlinks=False)
+    _require((directory.st_dev, directory.st_ino) == (path.st_dev, path.st_ino), "integrity_error")
+    contents, identities = _stage_file_snapshot(fd, checkpoint, run_id)
+    events, ordinary, marker, torn, invalid = _read_events(
+        contents["journal"], run_id, _stage_records=True, _checkpoint=checkpoint
+    )
+    _require(not torn and not invalid and bool(events), "integrity_error")
+    _require(events[0]["event"] == "run_open" and events[0]["schema_version"] == 2, "integrity_error")
+    _require(any(event["event"] == "stage_begin" for event in events), "integrity_error")
+    metadata = {
+        name: _decode_json(data)
+        for name, data in contents.items()
+        if name == "admission" or name in _MARKERS
+    }
+    _marker_projections(metadata, events)
+    for kind, name in (("run_final", "final"), ("freeze", "freeze"), ("audit_fault", "fault")):
+        _require(
+            any(event["event"] == kind for event in events) == (name in metadata), "integrity_error"
+        )
+    recorded = events[0]["capability"]
+    actual = _record(handle.capability, AuditCapability)
+    _require(
+        all(
+            recorded[name] == actual[name]
+            for name in ("profile_id", "filesystem_type", "root_device", "root_inode", "root_mount_id")
+        ),
+        "integrity_error",
+    )
+    _require(
+        ("input-manifest.json" in contents) == (_manifest_event(events) is not None), "integrity_error"
+    )
+    for name, data in contents.items():
+        if name == "journal":
+            continue
+        if name in _MARKERS:
+            marker += len(data)
+        else:
+            ordinary += len(data)
+    _require(ordinary <= V2_RUN_BYTES - MARKER_BYTES and marker <= MARKER_BYTES, "integrity_error")
+    artifacts = {name[4:]: data for name, data in contents.items() if name.startswith("raw-")}
+    tombstone = metadata.get("tombstone")
+    pruned = frozenset()
+    if tombstone is not None:
+        _require(not _has_unadopted_stages(events), "integrity_error")
+        pruned = frozenset(
+            event["ref"]["artifact_id"]
+            for event in events
+            if event["event"] in ("acquired", "settled_acquired")
+            and event["ref"]["artifact_id"] not in artifacts
+        )
+    checked_refs = {}
+    stages = _replay_stage_candidate(
+        events, artifacts, _checkpoint=checkpoint, _pruned=pruned, _verified_refs=checked_refs
+    )
+    # Reuse manifest/source-frame validation too, not just staged prefix hashes.
+    _raw_contents(
+        fd,
+        {"events": events, "tombstone": tombstone},
+        _checkpoint=checkpoint,
+        _contents=contents,
+        _stage_checked=True,
+        _verified_refs=checked_refs,
+    )
+    again, current_identities = _stage_file_snapshot(fd, checkpoint, run_id)
+    _require(again == contents and current_identities == identities, "integrity_error")
+    current = os.stat(run_id, dir_fd=handle.fd, follow_symlinks=False)
+    held = _qualified_dir(fd)
+    _require(
+        (directory.st_dev, directory.st_ino)
+        == (held.st_dev, held.st_ino)
+        == (current.st_dev, current.st_ino),
+        "integrity_error",
+    )
+    checkpoint()
+    _revalidate(handle)
+    checkpoint()
+    return stages, tuple(sorted(pruned))
+
+
+def _reopen_stages(root, run_id, monotonic, action_deadline):
+    safe_run_id = run_id if type(run_id) is str and re.fullmatch("[0-9a-f-]{36}", run_id) else ""
+    handle = None
+    capability = None
+    stages = ()
+    pruned = ()
+    faults = []
+    try:
+        _uuid(run_id)
+        _require(callable(monotonic))
+        deadline = _number(monotonic()) + 1.0 if action_deadline is None else _number(action_deadline)
+
+        def checkpoint():
+            _require(_number(monotonic()) < deadline, "lock_timeout")
+
+        checkpoint()
+        prepared = _prepare_audit_root(root, create=False, _checkpoint=checkpoint)
+        if isinstance(prepared, AuditFault):
+            raise _Rejected(prepared.code)
+        handle = prepared
+        capability = handle.capability
+        with _root_lock(handle, deadline=deadline, monotonic=monotonic):
+            with _run_dir(handle, run_id) as fd:
+                stages, pruned = _read_stage_recovery(handle, fd, run_id, checkpoint)
+        checkpoint()
+    except _Rejected as error:
+        faults.append(AuditFault(error.code, "replay", None))
+    except (OSError, TypeError, ValueError, KeyError):
+        faults.append(AuditFault("integrity_error", "replay", None))
+    finally:
+        if handle is not None:
+            try:
+                handle.close()
+            except OSError:
+                faults.append(AuditFault("persistence_error", "replay", None))
+    return StageRecoverySnapshot(
+        safe_run_id,
+        not faults and not pruned,
+        stages if not faults else (),
+        tuple(faults),
+        capability,
+        pruned_artifact_ids=pruned if not faults else (),
+    )
+
+
 def _replay(root, run_id):
     safe_run_id = run_id if type(run_id) is str and re.fullmatch("[0-9a-f-]{36}", run_id) else ""
     handle = None
@@ -1802,7 +2835,7 @@ def _replay(root, run_id):
                         not disk["torn"] and (terminal is None or disk["terminal"]),
                         "integrity_error",
                     )
-                    complete = not faults
+                    complete = not faults and not disk["stage_incomplete"]
                     state = terminal["outcome"] if terminal else "active"
                     if terminal and not terminal["audit_complete"]:
                         complete = False
@@ -1835,6 +2868,7 @@ class AttemptRecorder:
         monotonic: Callable[[], float],
         utc_now: Callable[[], str],
         preview_enabled: bool = False,
+        audit_schema_version: int = 1,
     ):
         self.root = root
         self._monotonic = monotonic
@@ -1856,11 +2890,14 @@ class AttemptRecorder:
         self._origin = None
         self._preview = False
         self._input_manifest = None
+        self._audit_schema_version = audit_schema_version
         # State files (run directory, input manifest, freeze marker, raw body) made
         # visible ahead of the journal event that commits them.
         self._staged = 0
+        self._stage_handles = {}
         try:
             self._context = _context(context)
+            _retention_seconds(audit_schema_version)
             _require(isinstance(root, Path) and root.is_absolute())
             _require(callable(monotonic) and callable(utc_now) and type(preview_enabled) is bool)
             self._origin = _number(monotonic())
@@ -1879,7 +2916,7 @@ class AttemptRecorder:
         utc = self._utc_now()
         _utc(utc)
         event = {
-            "schema_version": 1,
+            "schema_version": self._audit_schema_version,
             "run_id": self._context["run_id"],
             "event_id": str(uuid.uuid4()),
             "sequence": len(self._events),
@@ -1888,7 +2925,7 @@ class AttemptRecorder:
             "elapsed_s": elapsed,
             **extra,
         }
-        _require(set(event) == _COMMON | _EXTRA[kind])
+        _require(set(event) == _COMMON | (_EXTRA | _STAGE_EXTRA)[kind])
         _frame(event)
         return event
 
@@ -1900,7 +2937,7 @@ class AttemptRecorder:
         current = os.stat(run_id, dir_fd=handle.fd, follow_symlinks=False)
         _require((held.st_dev, held.st_ino) == (current.st_dev, current.st_ino), "integrity_error")
         journal = os.stat("journal", dir_fd=fd, follow_symlinks=False)
-        data = _read_file(fd, "journal")
+        data = _read_file(fd, "journal", _run_limit(self._audit_schema_version))
         expected = next((history for encoded, history in alternatives if data == encoded), None)
         _require(expected is not None, "integrity_error")
         observed, _, _, torn, invalid = _read_events(data, run_id)
@@ -1913,7 +2950,9 @@ class AttemptRecorder:
         _revalidate(handle)
         current = os.stat(run_id, dir_fd=handle.fd, follow_symlinks=False)
         _require((held.st_dev, held.st_ino) == (current.st_dev, current.st_ino), "integrity_error")
-        _require(_read_file(fd, "journal") == data, "integrity_error")
+        _require(
+            _read_file(fd, "journal", _run_limit(self._audit_schema_version)) == data, "integrity_error"
+        )
         current = os.stat("journal", dir_fd=fd, follow_symlinks=False)
         _require((journal.st_dev, journal.st_ino) == (current.st_dev, current.st_ino), "integrity_error")
         _raw_contents(fd, {"events": observed, "tombstone": None})
@@ -1967,12 +3006,30 @@ class AttemptRecorder:
                             marker_delta=len(_frame(event)) + 2 * len(marker),
                         )
                         self._append_event(handle, fd, event)
-                        _publish(fd, "fault", marker)
+                        _publish(
+                            fd,
+                            "fault",
+                            marker,
+                            **(
+                                {"_slot_events": self._events} if self._audit_schema_version == 2 else {}
+                            ),
+                        )
             except Exception:  # noqa: BLE001 - a secondary sink failure cannot replace the caller error
                 self._complete = False
         return AuditAcknowledgement(False, fault)
 
-    def _guard(self, phase, action, *, attempt_id=None, deadline=None, create=False):
+    def _guard(
+        self,
+        phase,
+        action,
+        *,
+        attempt_id=None,
+        deadline=None,
+        create=False,
+        _mutex_held=False,
+        _persist_fault=True,
+        _checkpoint=None,
+    ):
         try:
             safe_attempt = _uuid(attempt_id, True)
         except _Rejected:
@@ -1980,10 +3037,14 @@ class AttemptRecorder:
         if os.getpid() != self._pid:
             # A forked mutex may be locked by a thread that no longer exists.
             return AuditAcknowledgement(False, AuditFault("identity_conflict", phase, safe_attempt))
-        with self._mutex:
+        with nullcontext() if _mutex_held else self._mutex:
             if self._construction_fault:
                 return self._denied(self._construction_fault, phase, safe_attempt)
-            handle = _prepare_audit_root(self.root, create=create)
+            handle = (
+                _prepare_audit_root(self.root, create=create)
+                if _checkpoint is None
+                else _prepare_audit_root(self.root, create=create, _checkpoint=_checkpoint)
+            )
             if isinstance(handle, AuditFault):
                 return self._denied(handle.code, phase, safe_attempt)
             committed = self._journal_mark()
@@ -1999,7 +3060,9 @@ class AttemptRecorder:
                     mutated = self._journal_mark() != committed
 
             def deny(code, held=None, *, preserve=False):
-                ack = self._denied(code, phase, safe_attempt, held, preserve=preserve)
+                ack = self._denied(
+                    code, phase, safe_attempt, held if _persist_fault else None, preserve=preserve
+                )
                 return _replace(ack, publication_uncertain=mutated)
 
             try:
@@ -2041,7 +3104,12 @@ class AttemptRecorder:
         ``_checked`` refuses the call before any stage while one exists.
         """
         try:
-            _publish(fd, name, data)
+            _publish(
+                fd,
+                name,
+                data,
+                **({"_slot_events": self._events} if self._audit_schema_version == 2 else {}),
+            )
         except (OSError, _Rejected):
             try:
                 prefix = "temp-" + name + "-"
@@ -2058,7 +3126,9 @@ class AttemptRecorder:
         _require(not self._closed, "finalized")
         _require(self._complete or allow_fault, "persistence_error")
 
-    def _checked(self, handle, fd, *, allow_orphans=False, allow_response_faults=False):
+    def _checked(
+        self, handle, fd, *, allow_orphans=False, allow_response_faults=False, _checkpoint=None
+    ):
         _require(not self._append_uncertain, "integrity_error")
         _revalidate(handle)
         disk = _qualified_run(
@@ -2066,8 +3136,10 @@ class AttemptRecorder:
             fd,
             self._context["run_id"],
             settlement=(allow_orphans or allow_response_faults) and not self._complete,
+            **({"_checkpoint": _checkpoint} if _checkpoint is not None else {}),
         )
         _require(not self._closed or disk["terminal"], "integrity_error")
+        _require(not disk["stage_unknown_tail"], "integrity_error")
         _require(
             disk["events"] == self._events
             and (
@@ -2087,8 +3159,11 @@ class AttemptRecorder:
     def open(self) -> AuditAcknowledgement:
         def action(handle):
             _require(not self._opened and not self._closed, "identity_conflict")
-            _, charge = _inventory(handle)
-            _require(charge + RUN_BYTES <= ROOT_BYTES, "quota_refused")
+            runs, charge = _inventory(
+                handle, **({"_version": 2} if self._audit_schema_version == 2 else {})
+            )
+            _require_root_version(runs, self._audit_schema_version)
+            _require(charge + _run_limit(self._audit_schema_version) <= ROOT_BYTES, "quota_refused")
             run_id = self._context["run_id"]
             _require(run_id not in _entries(handle.fd), "identity_conflict")
             self._owner = _owner()
@@ -2097,20 +3172,24 @@ class AttemptRecorder:
                 context=self._context.copy(),
                 capability=_record(handle.capability, AuditCapability),
                 owner=self._owner.copy(),
-                reservation={
-                    "run_bytes": RUN_BYTES,
-                    "marker_bytes": MARKER_BYTES,
-                    "root_bytes": ROOT_BYTES,
-                    "body_bytes": BODY_BYTES,
-                },
+                reservation=_reservation_policy(self._audit_schema_version),
             )
             marker = _marker(event, self._owner)
-            _require(len(_frame(event)) + 2 * len(marker) <= RUN_BYTES - MARKER_BYTES, "quota_refused")
+            _require(
+                len(_frame(event)) + 2 * len(marker)
+                <= _run_limit(self._audit_schema_version) - MARKER_BYTES,
+                "quota_refused",
+            )
             os.mkdir(run_id, 0o700, dir_fd=handle.fd)
             self._staged += 1
             with _run_dir(handle, run_id) as fd:
                 self._append_event(handle, fd, event)
-                _publish(fd, "admission", marker)
+                _publish(
+                    fd,
+                    "admission",
+                    marker,
+                    **({"_slot_events": self._events} if self._audit_schema_version == 2 else {}),
+                )
                 os.fsync(fd)
             os.fsync(handle.fd)
             _revalidate(handle)
@@ -2138,7 +3217,7 @@ class AttemptRecorder:
             ctx = _context(context)
             _uuid(logical_id)
             _uuid(parent_id, True)
-            _vocabulary(cause, _CAUSES)
+            _vocabulary(cause, _causes(self._audit_schema_version))
             projected = _backend(backend)
             _hash(request_digest)
             _number(request_bytes, integer=True)
@@ -2152,6 +3231,7 @@ class AttemptRecorder:
                 logical,
                 self._context,
                 code="identity_conflict",
+                version=self._audit_schema_version,
             )
             attempt_id = str(uuid.uuid4())
             event = self._event(
@@ -2279,7 +3359,13 @@ class AttemptRecorder:
                 _require(same, "integrity_error")
                 with _run_dir(handle, self._context["run_id"]) as fd:
                     self._checked(handle, fd, allow_orphans=settling, allow_response_faults=settling)
-                    raw = _read_file(fd, "raw-" + ref["artifact_id"])
+                    raw = _read_file(
+                        fd,
+                        "raw-" + ref["artifact_id"],
+                        _layer_policy(
+                            self._audit_schema_version, layer, attempt["start"]["backend"]["format"]
+                        )[1],
+                    )
                     _require(hashlib.sha256(raw).hexdigest() == ref["sha256"], "integrity_error")
                 return AcquiredAcknowledgement(
                     not ref["partial"],
@@ -2294,8 +3380,17 @@ class AttemptRecorder:
             )
             observation_id_ = str(uuid.uuid4())
             artifact_id = str(uuid.uuid4())
-            used = _body_bytes(observations, attempt_id, layer)
-            retain = min(len(data), max(0, BODY_BYTES - used))
+            used = _body_bytes(
+                observations,
+                attempt_id,
+                layer,
+                self._audit_schema_version,
+                attempt["start"]["backend"]["format"],
+            )
+            limit = _layer_policy(
+                self._audit_schema_version, layer, attempt["start"]["backend"]["format"]
+            )[1]
+            retain = min(len(data), max(0, limit - used))
             partial = retain < len(data) or not complete
             ref = RawRef(
                 artifact_id, layer, hashlib.sha256(data[:retain]).hexdigest(), retain, len(data), partial
@@ -2338,6 +3433,403 @@ class AttemptRecorder:
                 False, None, None, ack.fault, publication_uncertain=ack.publication_uncertain
             )
         )
+
+    def _owned_stage(self, handle):
+        _require(
+            type(handle) is StageHandle and type(handle.identity) is StageIdentity, "identity_conflict"
+        )
+        _uuid(handle.identity.artifact_id)
+        state = self._stage_handles.get(handle.identity.artifact_id)
+        _require(state is not None and state["handle"] is handle, "identity_conflict")
+        return state
+
+    def cancel_stage(self, handle):
+        """Signal only: never wait for IO, close a writer fd, seal or adopt."""
+        if os.getpid() != self._pid:
+            return False
+        try:
+            self._owned_stage(handle)
+        except _Rejected:
+            return False
+        handle._cancel.set()
+        return True
+
+    def _stage_guard(
+        self, attempt_id, handle, deadline, operation, *, allow_partial=False, settlement=None
+    ):
+        state = None
+        acquired = False
+        try:
+            safe_attempt = _uuid(attempt_id, True)
+        except _Rejected:
+            safe_attempt = None
+        before = self._journal_mark()
+        try:
+            _require(os.getpid() == self._pid, "identity_conflict")
+            _number(deadline)
+            remaining = min(1.0, deadline - _number(self._monotonic()))
+            _require(remaining > 0 and self._mutex.acquire(timeout=remaining), "lock_timeout")
+            acquired = True
+            before = self._journal_mark()
+            state = self._owned_stage(handle) if handle is not None else None
+            _require(state is None or not state["pending"] and not state["uncertain"], "integrity_error")
+            if settlement is not None:
+                _vocabulary(settlement, _DISPATCH - {"not_dispatched"})
+                _require(state is not None and state["sealed"], "identity_conflict")
+                _require(
+                    not any(f.code in ("identity_conflict", "integrity_error") for f in self._faults),
+                    "integrity_error",
+                )
+
+            def checkpoint():
+                _require(_number(self._monotonic()) < deadline, "lock_timeout")
+                _require(handle is None or not handle._cancel.is_set(), "persistence_error")
+
+            def action(held):
+                checkpoint()
+                _require(self._audit_schema_version == 2, "invalid_input")
+                self._writable(
+                    allow_fault=settlement is not None
+                    or bool(allow_partial and state and state["capped"])
+                )
+                with _run_dir(held, self._context["run_id"]) as fd:
+                    self._checked(
+                        held,
+                        fd,
+                        _checkpoint=checkpoint,
+                        **({"allow_response_faults": True} if settlement is not None else {}),
+                    )
+                    checkpoint()
+                    _inventory(held, _checkpoint=checkpoint)
+                    checkpoint()
+                    if state is not None and state["checkpoint"] is not None:
+                        value = os.stat(
+                            "raw-" + handle.identity.artifact_id, dir_fd=fd, follow_symlinks=False
+                        )
+                        _require(_file_identity(value) == state["file_identity"], "integrity_error")
+                    result = operation(held, fd, state, checkpoint)
+                    checkpoint()
+                    return result
+
+            checkpoint()
+            result = self._guard(
+                "acquired",
+                action,
+                attempt_id=attempt_id,
+                deadline=deadline,
+                _mutex_held=True,
+                _persist_fault=False,
+                _checkpoint=checkpoint,
+            )
+            checkpoint()
+            if isinstance(result, (StageAcknowledgement, AcquiredAcknowledgement)):
+                return result
+            if state is not None and result.publication_uncertain:
+                state["uncertain"] = True
+            return StageAcknowledgement(
+                False, handle, None, 0, True, result.fault, result.publication_uncertain
+            )
+        except _Rejected as error:
+            changed = acquired and self._journal_mark() != before
+            if state is not None and changed:
+                state["uncertain"] = True
+            # No persistent denial/reconciliation after a stage deadline or failure.
+            fault = AuditFault(error.code, "acquired", safe_attempt)
+            if acquired:
+                self._denied(error.code, "acquired", safe_attempt)
+            return StageAcknowledgement(False, handle, None, 0, True, fault, changed)
+        except BaseException:
+            if state is not None and (state["pending"] or self._journal_mark() != before):
+                state["uncertain"] = True
+            raise
+        finally:
+            if state is not None and state["pending"]:
+                state["uncertain"] = True
+            if acquired:
+                self._mutex.release()
+
+    def _append_stage_event(self, fd, event, checkpoint):
+        checkpoint()
+        self._staged += 1  # Before physical journal publication, not after its ACK.
+        try:
+            _append(fd, event, _checkpoint=checkpoint)
+            self._events.append(event)
+            checkpoint()
+        except BaseException:
+            self._append_uncertain = True
+            raise
+
+    def begin_stage(self, attempt_id, *, layer, action_deadline):
+        def operation(held, fd, state, checkpoint):
+            _uuid(attempt_id)
+            _vocabulary(layer, _LAYERS)
+            identity = StageIdentity(
+                self._context["run_id"], attempt_id, str(uuid.uuid4()), str(uuid.uuid4()), layer
+            )
+            event = self._event(
+                "stage_begin",
+                attempt_id=attempt_id,
+                layer=layer,
+                observation_id=identity.observation_id,
+                artifact_id=identity.artifact_id,
+            )
+            _fold(self._events + [event])
+            _space(fd, identity.run_id, ordinary_delta=len(_frame(event)), _checkpoint=checkpoint)
+            self._append_stage_event(fd, event, checkpoint)
+            handle = StageHandle(identity)
+            self._stage_handles[identity.artifact_id] = {
+                "handle": handle,
+                "checkpoint": None,
+                "inode": None,
+                "file_identity": None,
+                "hasher": hashlib.sha256(),
+                "pending": False,
+                "uncertain": False,
+                "sealed": False,
+                "capped": False,
+                "last_write": None,
+                "adopted": None,
+            }
+            return StageAcknowledgement(True, handle, None, 0, False, None)
+
+        return self._stage_guard(attempt_id, None, action_deadline, operation)
+
+    def _write_stage_chunk(self, fd, state, checkpoint, offset, data):
+        handle = state["handle"]
+        identity = handle.identity
+        folded, _, _, _, _, charges = _stage_journal_state(self._events, _checkpoint=checkpoint)
+        key, limit = _layer_policy(
+            2, identity.layer, folded[0][identity.attempt_id]["start"]["backend"]["format"]
+        )
+        _require(type(data) is bytes and len(data) <= limit, "invalid_input")
+        _number(offset, integer=True)
+        signature = (offset, len(data), hashlib.sha256(data).hexdigest())
+        _require(not state["sealed"] and state["adopted"] is None, "identity_conflict")
+        if state["last_write"] is not None and state["last_write"][0] == signature:
+            return state["last_write"][1]
+        _require(
+            not state["sealed"] and state["adopted"] is None and not state["capped"], "identity_conflict"
+        )
+        previous = state["checkpoint"]
+        _require(offset == (previous.retained_bytes if previous else 0), "identity_conflict")
+        name = "raw-" + identity.artifact_id
+        if previous:
+            checkpoint()
+            stat_ = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            _require(
+                _file_identity(stat_) == state["file_identity"]
+                and stat_.st_size == offset
+                and state["hasher"].hexdigest() == previous.sha256,
+                "integrity_error",
+            )
+        retained = min(len(data), max(0, limit - charges.get((identity.attempt_id, key), 0)))
+        partial = retained != len(data)
+        if not data and previous is not None:
+            return StageAcknowledgement(True, handle, previous, 0, False, None)
+        if retained or previous is None:
+            next_hasher = state["hasher"].copy()
+            next_hasher.update(memoryview(data)[:retained])
+            next_checkpoint = StageCheckpoint(identity, offset + retained, next_hasher.hexdigest())
+            event = self._event(
+                "stage_checkpoint",
+                artifact_id=identity.artifact_id,
+                retained_bytes=next_checkpoint.retained_bytes,
+                sha256=next_checkpoint.sha256,
+            )
+            _fold(self._events + [event])
+            _space(
+                fd, identity.run_id, ordinary_delta=retained + len(_frame(event)), _checkpoint=checkpoint
+            )
+            checkpoint()
+            _file_slots(fd, self._events, extra_names=(name,), _checkpoint=checkpoint)
+            state["pending"] = True
+            self._staged += 1  # Creation/partial write can precede any journal change.
+            flags = os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+            if previous is None:
+                flags |= os.O_CREAT | os.O_EXCL
+            opened = os.open(name, flags, 0o600, dir_fd=fd)
+            try:
+                held = _regular(opened, empty=previous is None)
+                _require(
+                    held.st_size == offset
+                    and (previous is None or (held.st_dev, held.st_ino) == state["inode"]),
+                    "integrity_error",
+                )
+                _write_all(opened, data[:retained], _checkpoint=checkpoint)
+                checkpoint()
+                os.fsync(opened)
+                checkpoint()
+                if previous is None:
+                    os.fsync(fd)
+                    checkpoint()
+                after = _regular(opened)
+                path = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                _require(
+                    after.st_size == next_checkpoint.retained_bytes
+                    and (after.st_dev, after.st_ino) == (held.st_dev, held.st_ino)
+                    and _file_identity(after) == _file_identity(path),
+                    "integrity_error",
+                )
+            finally:
+                os.close(opened)
+            observed, observed_identity = _read_file(
+                fd, name, limit, _stable=True, _checkpoint=checkpoint
+            )
+            _require(
+                observed_identity == _file_identity(after)
+                and len(observed) == next_checkpoint.retained_bytes
+                and hashlib.sha256(observed).hexdigest() == next_checkpoint.sha256,
+                "integrity_error",
+            )
+            self._append_stage_event(fd, event, checkpoint)
+            checkpoint()
+            current = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            _require(_file_identity(current) == _file_identity(after), "integrity_error")
+            state["checkpoint"] = next_checkpoint
+            state["hasher"] = next_hasher
+            state["inode"] = (after.st_dev, after.st_ino)
+            state["file_identity"] = _file_identity(after)
+            state["pending"] = False
+        if partial:
+            state["capped"] = True
+            fault = self._denied("quota_refused", "acquired", identity.attempt_id).fault
+        else:
+            fault = None
+        ack = StageAcknowledgement(not partial, handle, state["checkpoint"], retained, partial, fault)
+        state["last_write"] = (signature, ack)
+        return ack
+
+    def append_stage(self, handle, *, offset, data, action_deadline):
+        attempt = (
+            handle.identity.attempt_id
+            if type(handle) is StageHandle and type(handle.identity) is StageIdentity
+            else None
+        )
+
+        def operation(held, fd, state, checkpoint):
+            return self._write_stage_chunk(fd, state, checkpoint, offset, data)
+
+        return self._stage_guard(attempt, handle, action_deadline, operation, allow_partial=True)
+
+    def seal_stage(self, handle, *, checkpoint, action_deadline):
+        attempt = (
+            handle.identity.attempt_id
+            if type(handle) is StageHandle and type(handle.identity) is StageIdentity
+            else None
+        )
+
+        def operation(held, fd, state, tick):
+            expected = checkpoint
+            if state["checkpoint"] is None:
+                _require(expected is None, "identity_conflict")
+                expected = self._write_stage_chunk(fd, state, tick, 0, b"").checkpoint
+            _require(
+                type(expected) is StageCheckpoint and expected == state["checkpoint"],
+                "identity_conflict",
+            )
+            _require(state["adopted"] is None, "identity_conflict")
+            if not state["sealed"]:
+                event = self._event("stage_seal", artifact_id=handle.identity.artifact_id)
+                _fold(self._events + [event])
+                _space(fd, handle.identity.run_id, ordinary_delta=len(_frame(event)), _checkpoint=tick)
+                state["pending"] = True
+                self._append_stage_event(fd, event, tick)
+                state["sealed"] = True
+                state["pending"] = False
+            return StageAcknowledgement(True, handle, expected, 0, state["capped"], None)
+
+        return self._stage_guard(attempt, handle, action_deadline, operation, allow_partial=True)
+
+    def adopt_stage(
+        self,
+        handle,
+        *,
+        checkpoint,
+        complete,
+        original_bytes,
+        usage=None,
+        dispatch_state=None,
+        action_deadline,
+    ):
+        attempt = (
+            handle.identity.attempt_id
+            if type(handle) is StageHandle and type(handle.identity) is StageIdentity
+            else None
+        )
+
+        def operation(held, fd, state, tick):
+            _require(
+                state["sealed"]
+                and type(checkpoint) is StageCheckpoint
+                and checkpoint == state["checkpoint"],
+                "identity_conflict",
+            )
+            _require(
+                type(complete) is bool
+                and (not complete or original_bytes == checkpoint.retained_bytes)
+                and (not state["capped"] or not complete),
+                "invalid_input",
+            )
+            _number(original_bytes, True, True)
+            observed_usage = _usage(usage)
+            identity = handle.identity
+            partial = not complete or (
+                original_bytes is not None and original_bytes > checkpoint.retained_bytes
+            )
+            ref = RawRef(
+                identity.artifact_id,
+                identity.layer,
+                checkpoint.sha256,
+                checkpoint.retained_bytes,
+                original_bytes,
+                partial,
+            )
+            fields_ = dict(
+                attempt_id=identity.attempt_id,
+                observation_id=identity.observation_id,
+                layer=identity.layer,
+                ref=_record(ref, RawRef),
+                complete=complete,
+                usage=observed_usage,
+            )
+            kind = "acquired"
+            if dispatch_state is not None:
+                _vocabulary(dispatch_state, _DISPATCH - {"not_dispatched"})
+                fields_["dispatch_state"] = dispatch_state
+                kind = "settled_acquired"
+            signature = (kind, fields_)
+            if state["adopted"] is not None:
+                _require(state["adopted"][0] == signature, "identity_conflict")
+                return state["adopted"][1]
+            attempts = _fold(self._events)[0]
+            attempt_state = _admit_acquired(attempt, attempts, code="identity_conflict")
+            _, invalid = _streams(attempt_state["observations"] + [observed_usage])
+            _require(
+                not invalid
+                or (
+                    dispatch_state is not None
+                    and observed_usage is None
+                    and attempt_state["usage_invalid"]
+                ),
+                "invalid_input",
+            )
+            event = self._event(kind, **fields_)
+            _fold(self._events + [event])
+            _space(fd, identity.run_id, ordinary_delta=len(_frame(event)), _checkpoint=tick)
+            state["pending"] = True
+            self._append_stage_event(fd, event, tick)
+            state["pending"] = False
+            fault = self._denied("quota_refused", "acquired", attempt).fault if partial else None
+            ack = AcquiredAcknowledgement(not partial, identity.observation_id, ref, fault)
+            state["adopted"] = (signature, ack)
+            return ack
+
+        result = self._stage_guard(
+            attempt, handle, action_deadline, operation, allow_partial=True, settlement=dispatch_state
+        )
+        if isinstance(result, AcquiredAcknowledgement):
+            return result
+        return AcquiredAcknowledgement(False, None, None, result.fault, result.publication_uncertain)
 
     def publish_input_manifest(self, manifest: dict) -> AuditAcknowledgement:
         def action(handle):
@@ -2420,7 +3912,11 @@ class AttemptRecorder:
             _, raw = _response_projection(event, attempts, observations)
             with _run_dir(handle, self._context["run_id"]) as fd:
                 self._checked(handle, fd, allow_orphans=True, allow_response_faults=True)
-                content = _read_file(fd, "raw-" + raw["ref"]["artifact_id"])
+                content = _read_file(
+                    fd,
+                    "raw-" + raw["ref"]["artifact_id"],
+                    _artifact_limits(self._events)[raw["ref"]["artifact_id"]],
+                )
                 _response_frame(content, frame_offset, frame_length)
                 if previous is not None:
                     invalid = _native_usage_fault(self._events[: self._events.index(previous) + 1])
@@ -2446,7 +3942,7 @@ class AttemptRecorder:
                 self._events,
                 self._faults,
                 self._state,
-                self._complete,
+                self._complete and not _has_unadopted_stages(self._events),
                 self._input_manifest if _manifest_event(self._events) is not None else None,
                 scope,
             )
@@ -2517,9 +4013,8 @@ class AttemptRecorder:
     def snapshot(self) -> RecorderSnapshot:
         with self._mutex:
             run_id = self._context["run_id"] if self._context else ""
-            summary = _summary(
-                run_id, self._context, self._events, self._faults, self._state, self._complete
-            )
+            complete = self._complete and not _has_unadopted_stages(self._events)
+            summary = _summary(run_id, self._context, self._events, self._faults, self._state, complete)
             attempts, _, _, _, _, _ = _fold(self._events)
             contexts = MappingProxyType(
                 {
@@ -2531,18 +4026,29 @@ class AttemptRecorder:
                 1,
                 run_id,
                 self._state,
-                self._complete,
+                complete,
                 tuple(self._faults),
                 self._capability,
                 copy.deepcopy(summary),
                 contexts,
             )
 
-    def finalize(self, outcome: str) -> AuditAcknowledgement:
+    def finalize(self, outcome: str, *, audit_incomplete: bool = False) -> AuditAcknowledgement:
+        # Explicit v2 host lifecycle evidence, independent of outcome. Persist
+        # it in the existing terminal event, not a second best-effort fault write.
+        if type(audit_incomplete) is not bool:
+            raise TypeError("audit_incomplete must be bool")
+        if audit_incomplete and self._audit_schema_version != 2:
+            raise ValueError("audit_incomplete requires schema v2")
+
         def action(handle):
             _vocabulary(outcome, _TERMINAL)
             attempts, _, _, previous, _, _ = _fold(self._events)
             if previous:
+                if audit_incomplete and previous["audit_complete"]:
+                    # A previously committed terminal cannot be retracted by
+                    # changing only memory. Refuse without altering that run.
+                    return self._denied("identity_conflict", "finalize", preserve=True)
                 _require(previous["outcome"] == outcome, "identity_conflict")
                 _require(self._closed, "integrity_error")
                 with _run_dir(handle, self._context["run_id"]) as fd:
@@ -2554,9 +4060,12 @@ class AttemptRecorder:
                     )
                 return AuditAcknowledgement(True, None)
             self._writable(allow_fault=True)
+            if audit_incomplete:
+                self._complete = False
             _require(all(a["finish"] is not None for a in attempts.values()), "identity_conflict")
-            _require(outcome != "completed" or self._complete, "persistence_error")
-            event = self._event("run_final", outcome=outcome, audit_complete=self._complete)
+            complete = self._complete and not _has_unadopted_stages(self._events)
+            _require(outcome != "completed" or complete, "persistence_error")
+            event = self._event("run_final", outcome=outcome, audit_complete=complete)
             with _run_dir(handle, self._context["run_id"]) as fd:
                 disk = self._checked(
                     handle,
@@ -2574,7 +4083,12 @@ class AttemptRecorder:
                 )
                 _space(fd, self._context["run_id"], marker_delta=len(_frame(event)) + 2 * len(marker))
                 self._append_event(handle, fd, event)
-                _publish(fd, "final", marker)
+                _publish(
+                    fd,
+                    "final",
+                    marker,
+                    **({"_slot_events": self._events} if self._audit_schema_version == 2 else {}),
+                )
                 os.fsync(fd)
                 os.fsync(handle.fd)
                 _revalidate(handle)
@@ -2599,7 +4113,7 @@ class AttemptRecorder:
                 _require(disk["final"] is None or self._closed, "finalized")
                 _require(disk["tombstone"] is None, "finalized")
                 _, charge = _inventory(handle)
-                delta = RUN_BYTES - disk["charge"] if self._closed else 0
+                delta = _run_limit(self._audit_schema_version) - disk["charge"] if self._closed else 0
                 _require(delta >= 0, "integrity_error")
                 if charge + delta > ROOT_BYTES:
                     raise _Rejected("quota_refused", preserve=self._closed)
@@ -2625,6 +4139,24 @@ class AttemptRecorder:
         return self._guard("freeze", action)
 
     @staticmethod
+    def reopen_stages(
+        root: Path,
+        run_id: str,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+        action_deadline: float | None = None,
+    ) -> StageRecoverySnapshot:
+        """Inspect qualified v2 stage files without enabling admission or repair.
+
+        Unadopted stages retain full reservation and block maintenance. Success
+        verifies diagnostic prefixes only; it
+        grants no write handle, adoption, resumption or response/usage credit.
+        At most 4096 files and V2_RUN_BYTES content are inspected. Deadline checks
+        are cooperative (default one second), not a hard bound on OS calls.
+        """
+        return _reopen_stages(root, run_id, monotonic, action_deadline)
+
+    @staticmethod
     def reopen(root: Path, run_id: str) -> RecorderSnapshot:
         identity, context, events, faults, capability, state, complete, _ = _replay(root, run_id)
         summary = _summary(identity, context, events, faults, state, complete)
@@ -2647,6 +4179,7 @@ def _qualified_prune(handle, fd, run_id):
         and not disk["frozen"]
         and not disk["torn"]
         and not disk["schema_invalid"]
+        and not disk["stage_incomplete"]
         and disk["tombstone"] is not None,
         "integrity_error",
     )
@@ -2678,7 +4211,7 @@ def maintain_audit_root(
         with _root_lock(handle, deadline=action_deadline, monotonic=monotonic):
             runs, _ = _inventory(handle)
             for run_id, disk in runs.items():
-                if not disk["terminal"] or disk["frozen"] or disk["torn"]:
+                if not disk["terminal"] or disk["frozen"] or disk["torn"] or disk["stage_incomplete"]:
                     continue
                 _require(now >= _utc(disk["final"]["utc"]), "integrity_error")
                 with _run_dir(handle, run_id) as fd:
@@ -2693,7 +4226,7 @@ def maintain_audit_root(
                             continue
                         tomb_event = dict(final, event_id=tombstone["event_id"], utc=tombstone["utc"])
                     else:
-                        if now - _utc(final["utc"]) <= RETAIN_SECONDS:
+                        if now - _utc(final["utc"]) <= _retention_seconds(final["schema_version"]):
                             continue
                         tomb_event = dict(final, event_id=str(uuid.uuid4()), utc=transaction_utc)
                         marker = _marker(
@@ -2708,7 +4241,16 @@ def maintain_audit_root(
                         )
                         _space(fd, run_id, marker_delta=2 * len(marker))
                         mutated = True
-                        _publish(fd, "tombstone", marker)
+                        _publish(
+                            fd,
+                            "tombstone",
+                            marker,
+                            **(
+                                {"_slot_events": disk["events"]}
+                                if disk["events"][0]["schema_version"] == 2
+                                else {}
+                            ),
+                        )
                         os.fsync(fd)
                     _qualified_prune(handle, fd, run_id)
                     for name in _entries(fd):
@@ -2729,7 +4271,17 @@ def maintain_audit_root(
                     )
                     _space(fd, run_id, marker_delta=len(retained_marker))
                     mutated = True
-                    _publish(fd, "tombstone", retained_marker, replace=True)
+                    _publish(
+                        fd,
+                        "tombstone",
+                        retained_marker,
+                        replace=True,
+                        **(
+                            {"_slot_events": disk["events"]}
+                            if disk["events"][0]["schema_version"] == 2
+                            else {}
+                        ),
+                    )
                     _qualified_prune(handle, fd, run_id)
             _revalidate(handle)
         result = AuditAcknowledgement(True, None)
