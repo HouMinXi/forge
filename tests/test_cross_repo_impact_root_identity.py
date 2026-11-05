@@ -389,6 +389,105 @@ def test_same_named_symbols_and_underscore_import_do_not_multiply_hits(world):
     assert errors == []
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_same_named_changed_files_keep_only_the_matching_module(world, reverse):
+    paths = ["src/alpha.c", "src/beta.c"]
+    for path in paths:
+        node(world[2], path, "process", f"{Path(path).stem}::process")
+    caller(world[3], source(world[1]), module="alpha")
+    if reverse:
+        paths.reverse()
+    findings, errors = run(world, diff(*paths))
+    assert_hit(findings)
+    assert errors == []
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_same_named_changed_files_keep_caller_ranking_bound_to_target(world, reverse):
+    paths = ["near/alpha.c", "far/beta.c"]
+    for path in paths:
+        node(world[2], path, "process", f"{Path(path).stem}::process")
+    caller(world[3], source(world[1], "far/alpha_user.c"), "alpha", "alpha_user::caller")
+    caller(world[3], source(world[1], "far/beta_user.c"), "beta", "beta_user::caller")
+    if reverse:
+        paths.reverse()
+    findings, errors = run(world, diff(*paths))
+    assert [f.file for f in findings] == [
+        "consumer:far/beta_user.c",
+        "consumer:far/alpha_user.c",
+    ]
+    assert [f.id for f in findings] == ["cross-repo-impact-1", "cross-repo-impact-2"]
+    assert errors == []
+
+
+def test_same_named_changed_files_do_not_crowd_out_top_n_callers(world):
+    # Only alpha has callers. beta has the same name and directory, but no
+    # import edge. The six close callers must not be counted twice ahead of
+    # the four farther callers in the existing ten-finding budget.
+    paths = ["near/alpha.c", "near/beta.c"]
+    for path in paths:
+        node(world[2], path, "process", f"{Path(path).stem}::process")
+    expected = []
+    for index in range(12):
+        relative = f"{'near' if index < 6 else 'far'}/use{index}.c"
+        caller(world[3], source(world[1], relative), "alpha", f"use{index}::caller")
+        expected.append(f"consumer:{relative}")
+    findings, errors = run(world, diff(*paths))
+    assert len(findings) == impact._TOP_N == 10
+    assert len({f.file for f in findings}) == 10
+    files = [f.file for f in findings]
+    assert set(files[:6]) == set(expected[:6])
+    assert set(files[6:]).issubset(expected[6:])
+    assert errors == []
+
+
+def test_same_named_changed_files_keep_legacy_caller_rows(world):
+    paths = ["src/alpha.c", "src/beta.c"]
+    for path in paths:
+        node(world[2], path, "process", f"{Path(path).stem}::process")
+    caller(world[3], source(world[1]), module="alpha")
+    changed = impact.resolve_changed_symbols(diff(*paths), str(world[2]), world[0])
+    assert impact.find_cross_repo_callers(str(world[3]), changed, world[1]) == [
+        {
+            "symbol": "process",
+            "caller_qualified": "use::caller",
+            "caller_file": str(world[1] / "src/use.c"),
+            "caller_line": 2,
+        }
+    ]
+
+
+@pytest.mark.parametrize("api", ["runner", "helper"])
+def test_later_changed_symbol_failure_rejects_the_whole_sibling(world, api):
+    paths = ["src/alpha.c", "src/beta.c"]
+    for path in paths:
+        node(world[2], path, "process", f"{Path(path).stem}::process")
+    caller(world[3], source(world[1]), module="alpha")
+    caller(world[3], "missing.c", "beta", "missing::caller", with_node=False)
+    if api == "runner":
+        findings, errors = run(world, diff(*paths))
+        assert findings == []
+        assert len(errors) == 1 and "caller graph path unavailable" in errors[0]
+    else:
+        changed = impact.resolve_changed_symbols(diff(*paths), str(world[2]), world[0])
+        with pytest.raises(impact.GraphIdentityError, match="caller graph path unavailable"):
+            impact.find_cross_repo_callers(str(world[3]), changed, world[1])
+
+
+def test_same_caller_matched_to_distinct_targets_is_not_deduplicated(world):
+    paths = ["src/alpha.c", "src/beta.c"]
+    for path in paths:
+        node(world[2], path, "process", f"{Path(path).stem}::process")
+    caller(world[3], source(world[1]), module="alpha")
+    with closing(sqlite3.connect(world[3])) as conn:
+        conn.execute("INSERT INTO edges VALUES ('IMPORTS_FROM', 'use::caller', 'beta')")
+        conn.commit()
+    findings, errors = run(world, diff(*paths))
+    assert len(findings) == 2
+    assert findings[0].file == findings[1].file == "consumer:src/use.c"
+    assert errors == []
+
+
 @pytest.mark.parametrize("text", ["", " \n", "no diff paths", "--- a/src/api.c\n+++ /dev/null\n"])
 def test_empty_work_retains_no_result_behavior(world, text):
     findings, errors = run(world, text)

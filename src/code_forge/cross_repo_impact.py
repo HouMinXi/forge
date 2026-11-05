@@ -233,7 +233,25 @@ def find_cross_repo_callers(
         sqlite3.Error: if the database is corrupt or unreadable.
         OSError: if the file cannot be opened.
     """
-    results: list[dict] = []
+    return [
+        caller
+        for _, callers in _find_cross_repo_caller_groups(sibling_db, changed, repo_root)
+        for caller in callers
+    ]
+
+
+def _find_cross_repo_caller_groups(
+    sibling_db: str,
+    changed: list[dict],
+    repo_root: Path | None = None,
+) -> list[tuple[dict, list[dict]]]:
+    """Keep each query's changed symbol paired with its matching callers.
+
+    A name alone cannot identify a changed symbol across files. Materialize
+    every group on one connection before returning, so a later query failure
+    still rejects the whole sibling rather than publishing partial findings.
+    """
+    groups: list[tuple[dict, list[dict]]] = []
     conn = sqlite3.connect(readonly_uri(Path(sibling_db).absolute()), uri=True)
     try:
         cursor = conn.cursor()
@@ -248,21 +266,20 @@ def find_cross_repo_callers(
                 module_name,
                 resolve_file=lambda path: _caller_source_path(path, roots, conn.cursor()),
             )
-            results.extend(
-                (
-                    {
-                        "symbol": name,
-                        "caller_qualified": lc.qualified,
-                        "caller_file": lc.file,
-                        "caller_line": lc.line,
-                    }
-                )
+            callers = [
+                {
+                    "symbol": name,
+                    "caller_qualified": lc.qualified,
+                    "caller_file": lc.file,
+                    "caller_line": lc.line,
+                }
                 for lc in live
-            )
+            ]
+            groups.append((sym, callers))
     finally:
         conn.close()
 
-    return results
+    return groups
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +406,7 @@ class CrossRepoImpactRunner:
                 continue
 
             try:
-                callers = find_cross_repo_callers(str(sib_db), changed, Path(sib["path"]))
+                caller_groups = _find_cross_repo_caller_groups(str(sib_db), changed, Path(sib["path"]))
             except (sqlite3.Error, OSError, GraphIdentityError) as exc:
                 self.infra_errors.append(
                     "cross-repo-impact: sibling '%s' graph.db unreadable: %s" % (alias, exc)
@@ -397,7 +414,7 @@ class CrossRepoImpactRunner:
                 continue
 
             sib_prefix = str(Path(sib["path"]).resolve()) + os.sep
-            for sym in changed:
+            for sym, sym_callers in caller_groups:
                 cfp = sym["file_path"]
                 if cfp.startswith(primary_prefix):
                     cfp = cfp[len(primary_prefix) :]
@@ -405,7 +422,6 @@ class CrossRepoImpactRunner:
                     resolved = str(Path(cfp).resolve())
                     if resolved.startswith(primary_prefix):
                         cfp = resolved[len(primary_prefix) :]
-                sym_callers = [c for c in callers if c["symbol"] == sym["name"]]
                 for c in sym_callers:
                     cf = c["caller_file"]
                     if cf.startswith(sib_prefix):
