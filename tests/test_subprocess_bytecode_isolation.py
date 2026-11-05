@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from xml.etree import ElementTree
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -96,6 +97,7 @@ def test_sanitized_launchers_leave_no_cache_in_checkout_copy(tmp_path):
     """
     copy = _copy_checkout(tmp_path / "checkout")
     real_before = _caches(SRC)
+    report = tmp_path / "sanitized-launchers.xml"
     result = subprocess.run(
         [
             sys.executable,
@@ -108,6 +110,7 @@ def test_sanitized_launchers_leave_no_cache_in_checkout_copy(tmp_path):
             "-o",
             "addopts=",
             "-v",
+            f"--junitxml={report}",
             # Absolute paths under the copy: the run cannot fall back to the real checkout.
             *[str(copy / rel) for rel in SANITIZED_LAUNCHERS],
         ],
@@ -117,10 +120,35 @@ def test_sanitized_launchers_leave_no_cache_in_checkout_copy(tmp_path):
         text=True,
         timeout=900,
     )
-    # 0 = all passed, 1 = some tests failed (host-dependent ones may). 2-5 mean
-    # the inner run never exercised the launchers.
-    assert result.returncode in (0, 1), result.stdout[-2000:] + result.stderr[-2000:]
+    # A failed inner run cannot establish the launchers' isolation, even when
+    # unrelated tests pass. Exit zero alone also permits skipped witnesses.
+    assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
     assert " passed" in result.stdout, result.stdout[-2000:]
+    # These successful calls cover every distinct sanitized Python launch,
+    # including the CLI fixture's trust call. Collection or fixture-only
+    # passes do not prove that a child imported the copied source.
+    required = {
+        ("tests.test_cli_empty_diff.TestEmptyDiffGate", "test_empty_diff_prints_no_changes"),
+        ("tests.test_trust_empty_backends.TestTrustEmptyBackends", "test_empty_backends_rejected"),
+        (
+            "tests.test_trust_empty_backends.TestTrustEmptyBackends",
+            "test_commented_out_backends_rejected",
+        ),
+        ("tests.test_trust_empty_backends.TestTrustEmptyBackends", "test_real_backend_accepted"),
+        ("tests.test_pytest_report_plugin", "test_passing_suite_records_final_event"),
+        ("tests.test_pytest_report_plugin", "test_disarmed_without_environment"),
+    }
+    # The XML is produced by our own pytest child in this private test directory.
+    cases = list(ElementTree.parse(report).iter("testcase"))  # noqa: S314
+    for classname, name in required:
+        matches = [
+            case for case in cases if (case.get("classname"), case.get("name")) == (classname, name)
+        ]
+        assert len(matches) == 1, (classname, name)
+        assert not any(child.tag in {"failure", "error", "skipped"} for child in matches[0]), (
+            classname,
+            name,
+        )
     assert _caches(copy / "src") == []
     for rel in SANITIZED_LAUNCHERS:
         assert Path(rel).name in result.stdout, rel
