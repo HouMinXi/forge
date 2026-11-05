@@ -902,7 +902,7 @@ jobs:
         fi
         python scripts/ci_private_transport.py run --sha "$GITHUB_SHA" \
           --plan forge-linux-input/plan/plan.json --phase "shard-${{ matrix.shard }}" \
-          --directory "$EVIDENCE" --public-directory forge-linux-public 2>&1 | (umask 077; exec tee "$EVIDENCE/shard.log")
+          --directory "$EVIDENCE" --failure-diagnostic --public-directory forge-linux-public 2>&1 | (umask 077; exec tee "$EVIDENCE/shard.log")
       id: shard_receipt
     - name: Prepare fixed public CI summary
       id: public_summary
@@ -970,6 +970,52 @@ jobs:
       with:
         name: linux-shard-${{ matrix.shard }}-summary
         path: forge-linux-public/summary.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Prepare fixed public failure diagnostic
+      id: failure_diagnostic
+      if: ${{ always() && steps.shard_receipt.outcome == 'failure' }}
+      run: |
+        exec >/dev/null 2>&1
+        set +x
+        set -euo pipefail
+        original_umask=$(umask)
+        umask 077
+        export TMPDIR="$RUNNER_TEMP/forge-tests"
+        export EVIDENCE="$RUNNER_TEMP/forge-evidence"
+        mkdir -p "$TMPDIR" "$EVIDENCE"
+        [[ -d "$TMPDIR" && ! -L "$TMPDIR" && -d "$EVIDENCE" && ! -L "$EVIDENCE" ]]
+        chmod 700 "$TMPDIR" "$EVIDENCE"
+        for private_log in step-09.log; do
+          [[ ! -e "$EVIDENCE/$private_log" && ! -L "$EVIDENCE/$private_log" ]]
+          (set -o noclobber; : >"$EVIDENCE/$private_log")
+        done
+        unset private_log
+        exec >"$EVIDENCE/step-09.log" 2>&1
+        umask "$original_umask"
+        unset original_umask
+        if [[ -x "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" ]]; then
+          export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"
+        fi
+        python scripts/ci_failure_diagnostic.py --sha "$GITHUB_SHA" --phase "shard-${{ matrix.shard }}" \
+          --plan forge-linux-input/plan/plan.json --directory "$EVIDENCE" \
+          --public-directory forge-linux-failure-public
+    - name: Archive fixed public failure diagnostic
+      id: archive_failure_diagnostic
+      if: ${{ always() && steps.failure_diagnostic.outcome == 'success' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: archive-forge-ci-failure-shard-${{ matrix.shard }}-${{ github.run_attempt }}
+        path: forge-linux-failure-public/failure.json
+        if-no-files-found: error
+        retention-days: 14
+    - name: Preserve fixed public failure diagnostic
+      if: ${{ always() && steps.archive_failure_diagnostic.outcome == 'success' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: forge-ci-failure-shard-${{ matrix.shard }}
+        path: forge-linux-failure-public/failure.json
         if-no-files-found: error
         retention-days: 14
         overwrite: true

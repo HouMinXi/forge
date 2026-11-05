@@ -57,6 +57,30 @@ RECEIPT_KEYS = {
 REPORT_KEYS = {"nodeid", "when", "outcome", "skip_reason", "wasxfail"}
 POLICY_KEYS = {"module_seconds", "runtime_skips", "collection_skips", "collection_skip_reasons"}
 ERROR = "STOP: Private CI validation failed."
+FAILURE_STATE = "failure-state.json"
+FAILURE_STAGES = (
+    "prepare",
+    "pytest",
+    "receipt_read",
+    "receipt_validation",
+    "outcome_validation",
+    "projection",
+    "coverage_validation",
+    "log_close",
+    "publication",
+    "output_validation",
+)
+
+
+def failure_context(sha, phase):
+    """Bind private diagnostics to one GitHub job invocation, never public output."""
+    _sha(sha)
+    _require(phase in ci.PHASES)
+    run = os.environ.get("GITHUB_RUN_ID", "")
+    attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
+    _require(re.fullmatch(r"[1-9][0-9]{0,19}", run) is not None)
+    _require(re.fullmatch(r"[1-9][0-9]{0,9}", attempt) is not None)
+    return {"sha": sha, "phase": phase, "run": run, "attempt": attempt}
 
 
 class TransportError(ValueError):
@@ -548,7 +572,24 @@ def collect_plan(directory, public_directory, sha, policy, manifest):
     return plan
 
 
-def run_phase(phase, plan, directory, public_directory, policy, manifest):
+def run_phase(phase, plan, directory, public_directory, policy, manifest, *, failure_diagnostic=False):
+    """Preserve producer failures; optional private diagnostics cannot replace them."""
+    state = {"stage": "prepare", "returncode": None}
+    if failure_diagnostic:
+        _clear_public(directory, [FAILURE_STATE])
+    try:
+        return _run_phase(phase, plan, directory, public_directory, policy, manifest, state)
+    except BaseException:
+        if failure_diagnostic:
+            try:
+                context = failure_context(plan["sha"], phase)
+                _write_json(Path(directory) / FAILURE_STATE, {**context, **state})
+            except BaseException:  # noqa: BLE001, S110 - Diagnostics must preserve the original failure.
+                pass
+        raise
+
+
+def _run_phase(phase, plan, directory, public_directory, policy, manifest, state):
     """Run the original pytest argv, then independently enforce public-plan coverage."""
     _require(phase in ci.PHASES)
     directory, public_directory = Path(directory), Path(public_directory)
@@ -571,11 +612,15 @@ def run_phase(phase, plan, directory, public_directory, policy, manifest):
         [*args, "--durations=20", f"--junitxml={directory / (phase + '.xml')}"],
     )
     with _log(directory, phase + ".log") as log:
+        state["stage"] = "pytest"
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=False)
+        state["returncode"] = result.returncode
         if result.returncode:
             raise SystemExit(result.returncode)
+        state["stage"] = "receipt_read"
         raw = read_json(report_path)
         identities = _identities(manifest)
+        state["stage"] = "receipt_validation"
         _validate_receipt(raw, set(identities), set(manifest["modules"]), policy)
         # This first check proves outcomes only, NOT coverage. The second check
         # compares against the separately downloaded collection plan.
@@ -583,10 +628,16 @@ def run_phase(phase, plan, directory, public_directory, policy, manifest):
             "sha": plan["sha"],
             "phases": {phase: {"nodes": raw["collected"], "collection_skips": raw["collection_skips"]}},
         }
+        state["stage"] = "outcome_validation"
         ci.validate_execution(raw, phase, raw_expected, policy)
+        state["stage"] = "projection"
         projected = project_receipt(raw, manifest, policy)
+        state["stage"] = "coverage_validation"
         ci.validate_execution(projected, phase, plan, projected_policy)
+        state["stage"] = "log_close"
+    state["stage"] = "publication"
     _write_json(public_directory / f"receipt-{phase}.json", projected)
+    state["stage"] = "output_validation"
     _existing_outputs(public_directory, plan, projected_policy, manifest)
     _require(read_json(public_directory / f"receipt-{phase}.json") == projected)
     return projected
@@ -715,6 +766,7 @@ def _parser():
             sub.add_argument("--plan", type=Path, required=True)
         if command == "run":
             sub.add_argument("--phase", choices=ci.PHASES, required=True)
+            sub.add_argument("--failure-diagnostic", action="store_true")
     summary = commands.add_parser("summary")
     summary.add_argument("--job", choices=JOBS, required=True)
     summary.add_argument("--status", choices=STATUSES, required=True)
@@ -738,6 +790,9 @@ def main(argv=None):
                 },
             )
             return 0
+        if args.command == "run" and args.failure_diagnostic:
+            # Clear stale diagnostics before reading any untrusted plan/manifest.
+            _clear_public(args.directory, [FAILURE_STATE])
         if args.command in ("plan", "run"):
             _separate_directories(args.directory, args.public_directory)
             names = (
@@ -758,7 +813,15 @@ def main(argv=None):
             projected_policy = project_policy(policy, manifest)
             _validate_public_plan(plan, args.sha, projected_policy, manifest)
             if args.command == "run":
-                run_phase(args.phase, plan, args.directory, args.public_directory, policy, manifest)
+                run_phase(
+                    args.phase,
+                    plan,
+                    args.directory,
+                    args.public_directory,
+                    policy,
+                    manifest,
+                    failure_diagnostic=args.failure_diagnostic,
+                )
             else:
                 needs = _decode_json(os.environ["CI_NEEDS_JSON"].encode("utf-8"))
                 verify(plan, args.directory, args.sha, policy, manifest, needs)
