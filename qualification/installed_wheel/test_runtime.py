@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Partial #335 packaging controls, NOT native mutation-engine qualification."""
 
+from dataclasses import replace
+import hashlib
 from importlib import resources
 import json
 import os
@@ -245,6 +247,138 @@ def test_ci_synthetic_confirmed_finding_reaches_ledger(project, monkeypatch):
     assert len(rows) == 1
     assert rows[0].fingerprint == finding.fingerprint
     assert rows[0].terminal_state is TerminalState.UNADJUDICATED
+    assert control._mutation_measurement_eligible is False
+
+
+def assert_saved_ci_findings(saved, finding):
+    # The real empty-diff CI path persists this diagnostic alongside acquisition.
+    assert saved.findings == [
+        finding,
+        StateFinding(
+            id="MUTATION_SKIPPED",
+            fingerprint="mutation-no-adapter",
+            source="MUTANT",
+            disposition=Disposition.DISMISSED,
+            file="",
+            line_range=[],
+            description="no registered mutation adapter for this diff",
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    "terminal,reversal",
+    [
+        pytest.param(terminal, reversal, id=f"{terminal.value}-{reversal.value}")
+        for terminal in (TerminalState.FIXED, TerminalState.DISPROVED, TerminalState.DUPLICATE)
+        for reversal in (TerminalState.UNADJUDICATED, TerminalState.ESCAPED)
+    ],
+)
+def test_ci_terminal_ledger_revocation_reopens_finding(project, monkeypatch, terminal, reversal):
+    """Fresh CI invocations reread ordinary adjudication, not prior session State."""
+    monkeypatch.chdir(project)
+    original = StateFinding(
+        id="wheel-revocation",
+        fingerprint="wheel-revocation",
+        source="L0",
+        disposition=Disposition.CONFIRMED,
+        file="example.txt",
+        line_range=[1, 1],
+        description="Synthetic installed-package ordinary ledger revocation control",
+    )
+    state_path = project / ".code-forge/state.json"
+    ledger_path = project / ".code-forge/ledger.jsonl"
+    note = f"ledger: suppressed {original.fingerprint} (known terminal fingerprint)"
+
+    # Each invocation gets a fresh finding because suppression mutates it.
+    assert machine(project, [replace(original)]).run() is Verdict.FAIL
+    initial = load_state(state_path)
+    assert initial.verdict is Verdict.FAIL and not initial.converged
+    assert_saved_ci_findings(initial, original)
+    assert note not in initial.infra_errors
+    rows = list(iter_rows(project, strict=True))
+    assert len(rows) == 1
+    pending = rows[0]
+    assert pending.fingerprint == original.fingerprint
+    assert pending.terminal_state is TerminalState.UNADJUDICATED
+    assert pending.base_sha == pending.head_sha == os.environ["WHEEL_FIXTURE_REV"]
+    initial_bytes = ledger_path.read_bytes()
+
+    # Reuse the real CI row's identity, including its suppression key.
+    ruling = replace(pending, terminal_state=terminal)
+    append_row(project, ruling)
+    adjudicated_bytes = ledger_path.read_bytes()
+    assert adjudicated_bytes.startswith(initial_bytes)
+    assert list(iter_rows(project, strict=True)) == [pending, ruling]
+    assert machine(project, [replace(original)]).run() is Verdict.PASS
+    suppressed = load_state(state_path)
+    assert suppressed.verdict is Verdict.PASS and suppressed.converged
+    assert_saved_ci_findings(suppressed, replace(original, disposition=Disposition.DISMISSED))
+    assert suppressed.infra_errors.count(note) == 1
+    rows = list(iter_rows(project, strict=True))
+    assert len(rows) == 3 and rows[:2] == [pending, ruling]
+    clean = rows[2]
+    assert (
+        clean.fingerprint
+        == hashlib.sha256(f"clean:{pending.base_sha}:{pending.head_sha}".encode()).hexdigest()[:16]
+    )
+    assert clean.base_sha == pending.base_sha and clean.head_sha == pending.head_sha
+    assert clean.terminal_state is TerminalState.UNADJUDICATED
+    assert (clean.axis_claim, clean.evidence_class, clean.file, clean.line) == (
+        "clean",
+        "clean_pass",
+        "",
+        0,
+    )
+    suppressed_bytes = ledger_path.read_bytes()
+    assert suppressed_bytes.startswith(adjudicated_bytes)
+
+    # Equal timestamps deliberately pin last-append precedence. Leave prior
+    # PASS state.json in place: CI must read the ledger, not restore that State.
+    revoked = replace(pending, terminal_state=reversal)
+    append_row(project, revoked)
+    revoked_bytes = ledger_path.read_bytes()
+    assert revoked_bytes.startswith(suppressed_bytes)
+    assert machine(project, [replace(original)]).run() is Verdict.FAIL
+    reopened = load_state(state_path)
+    assert reopened.verdict is Verdict.FAIL and not reopened.converged
+    assert_saved_ci_findings(reopened, original)
+    assert note not in reopened.infra_errors
+    assert ledger_path.read_bytes() == revoked_bytes
+    assert list(iter_rows(project, strict=True)) == [pending, ruling, clean, revoked]
+
+
+def test_ci_terminal_ledger_cannot_suppress_synthetic_mutation_survivor(project, monkeypatch):
+    """Ordinary fingerprint rulings cannot dismiss a synthetic current survivor."""
+    monkeypatch.chdir(project)
+    survivor = StateFinding(
+        id="mutant-wheel-control",
+        fingerprint="wheel-mutation-survivor",
+        source="MUTANT",
+        disposition=Disposition.CONFIRMED,
+        file="example.txt",
+        line_range=[1, 1],
+        description="Synthetic survivor exclusion control, not a native engine result",
+    )
+    assert machine(project, [replace(survivor)]).run() is Verdict.FAIL
+    rows = list(iter_rows(project, strict=True))
+    assert len(rows) == 1
+    pending = rows[0]
+    assert pending.fingerprint == survivor.fingerprint
+    assert pending.terminal_state is TerminalState.UNADJUDICATED
+    ruling = replace(pending, terminal_state=TerminalState.FIXED)
+    append_row(project, ruling)
+    ledger_path = project / ".code-forge/ledger.jsonl"
+    before = ledger_path.read_bytes()
+
+    control = machine(project, [replace(survivor)])
+    assert control.run() is Verdict.FAIL
+    saved = load_state(project / ".code-forge/state.json")
+    assert saved.verdict is Verdict.FAIL and not saved.converged
+    assert_saved_ci_findings(saved, survivor)
+    assert not any("ledger: suppressed" in note for note in saved.infra_errors)
+    assert ledger_path.read_bytes() == before
+    assert list(iter_rows(project, strict=True)) == [pending, ruling]
     assert control._mutation_measurement_eligible is False
 
 

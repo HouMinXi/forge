@@ -1,6 +1,6 @@
 # Partial installed-wheel runtime controls (#335)
 
-These fifteen controls execute outside the checkout, in a fresh venv installed from
+These twenty-two controls execute outside the checkout, in a fresh venv installed from
 an actual wheel. The standalone config deliberately does not inherit the source
 suite's `pythonpath = ["src"]` or `tests/conftest.py`. Ordinary source pytest does
 not collect this directory. The harness freezes the case roster and requires no
@@ -32,12 +32,22 @@ against adversarial native code.
 
 The real CI StateMachine rejects malformed persisted mutation results and writes
 synthetic L0 confirmed findings to the real ledger. Acquisition is synthetic;
-consumer, persistence and source/environment guards are not replaced. Console
-checks use only read-only `--help` and `ledger list --json`. There is no CLI review
+consumer, persistence and source/environment guards are not replaced. Six controls
+cover ordinary finding adjudication and revocation: fresh CI invocations first
+persist an UNADJUDICATED finding, then suppress it after a FIXED, DISPROVED or
+DUPLICATE ledger row, then re-expose it as CONFIRMED with FAIL after an appended
+UNADJUDICATED or ESCAPED reversal. They inspect persisted verdicts, dispositions,
+convergence and exact ledger history, including the suppressed PASS clean row.
+The previous state.json remains present, but CI intentionally ignores it; these
+are fresh-invocation ledger reads, not running-session State recovery. A synthetic
+MUTANT survivor negative control verifies that an ordinary terminal fingerprint
+cannot suppress it. No native mutation result is acquired by these controls.
+
+Console checks use only read-only `--help` and `ledger list --json`. There is no CLI review
 or full toolchain run, no gate opt-out, and no native-engine claim.
 
 This is **partial packaging/runtime coverage**, not #335 closure or completion of
-its installed-wheel checkbox. Exact mutation ruling, revocation, changed native
-source, current native survivor, ABA, phase/reload, branch coverage and native
+its installed-wheel checkbox. Exact mutation ruling, native revocation, changed native
+source, current native survivor, ABA, phase/running-session reload, branch coverage and native
 filesystem qualification remain open. Unsupported native filesystems are not
 converted into skips or synthetic green results by these controls.
