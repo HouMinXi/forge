@@ -22,6 +22,11 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/linux-tests.yml"
 CANARY = "PRIVATE-LINUX-/home/fixture-user/unit.service-PID-731995"
 SUMMARY_NAME = "Prepare fixed public CI summary"
+DIAGNOSTICS_NAME = "Prepare fixed public CI diagnostics"
+DIAGNOSTICS_UPLOAD_NAME = "Preserve fixed public diagnostics"
+DIAGNOSTICS_PUBLIC = "forge-linux-diagnostics/diagnostics.json"
+DIAGNOSTICS_GATE = "${{ always() && steps.public_diagnostics.outcome == 'success' }}"
+JOBS = ("plan", "process-contracts", "service-free", "linux-tests")
 PUBLIC = "forge-linux-public/"
 SUMMARY_GATE = "${{ always() && steps.public_summary.outcome == 'success' }}"
 PRODUCER_IDS = {
@@ -30,6 +35,27 @@ PRODUCER_IDS = {
     "Run cgroup": "cgroup_receipt",
     "Run local": "local_receipt",
     "Run serial service-free shard": "shard_receipt",
+}
+DIAGNOSTIC_PRODUCER_IDS = {
+    **PRODUCER_IDS,
+    "Require all jobs and exact complete node coverage": "coverage_verification",
+}
+# A fresh non-secret correlation value, unrelated to paths, PIDs, commands or
+# credentials. It is never an authentication key or a source of pass authority.
+INVOCATION_EXPORT = (
+    "diagnostic_invocation=$(python -c 'import secrets; print(secrets.token_hex(16))')\n"
+    '[[ "$diagnostic_invocation" =~ ^[0-9a-f]{32}$ ]]\n'
+    'printf \'diagnostic_invocation=%s\\n\' "$diagnostic_invocation" >> "$GITHUB_OUTPUT"\n'
+)
+DIAGNOSTIC_OPERATIONS = {
+    "plan": (("plan", "CI_PLAN_INVOCATION", "public_plan"),),
+    "process-contracts": (
+        ("ownership", "CI_OWNERSHIP_INVOCATION", "ownership_receipt"),
+        ("cgroup", "CI_CGROUP_INVOCATION", "cgroup_receipt"),
+        ("local", "CI_LOCAL_INVOCATION", "local_receipt"),
+    ),
+    "service-free": (("shard-${{ matrix.shard }}", "CI_SHARD_INVOCATION", "shard_receipt"),),
+    "linux-tests": (("verify", "CI_VERIFY_INVOCATION", "coverage_verification"),),
 }
 DATA_PRODUCERS = {
     "linux-collection-plan": ("public_plan",),
@@ -67,6 +93,8 @@ RUNS = [
     for step in job["steps"]
     if "run" in step
 ]
+ORIGINAL_RUNS = [(job, name) for job, name in RUNS if name != DIAGNOSTICS_NAME]
+INVOCATION_RUNS = [(job, name) for job, name in RUNS if name in DIAGNOSTIC_PRODUCER_IDS]
 
 
 def run_step(job_name, step_name):
@@ -151,12 +179,17 @@ def test_every_shell_step_suppresses_output_before_expanding_private_paths(job_n
     assert "continue-on-error" not in step
     assert prefix.index("exec >/dev/null") < prefix.index("$RUNNER_TEMP")
     assert "GITHUB_ENV" not in step["run"]
-    assert "GITHUB_OUTPUT" not in step["run"]
+    if step_name in DIAGNOSTIC_PRODUCER_IDS:
+        assert body.startswith(INVOCATION_EXPORT)
+        assert body.count(INVOCATION_EXPORT) == 1
+        assert "GITHUB_OUTPUT" not in prefix + body.removeprefix(INVOCATION_EXPORT)
+    else:
+        assert "GITHUB_OUTPUT" not in step["run"]
     assert "GITHUB_STEP_SUMMARY" not in step["run"]
     assert "${{ runner.temp }}" not in WORKFLOW.read_text()
 
 
-@pytest.mark.parametrize("job_name,step_name", RUNS)
+@pytest.mark.parametrize("job_name,step_name", ORIGINAL_RUNS)
 def test_original_commands_change_only_private_transport_and_environment(job_name, step_name):
     _, body = private_prefix(run_step(job_name, step_name)["run"])
     if step_name == SUMMARY_NAME:
@@ -170,8 +203,18 @@ def test_original_commands_change_only_private_transport_and_environment(job_nam
     assert "umask" not in body
     # These exact reversals are the approved privacy wiring changes. They do
     # not discard shell operators, command options or arbitrary exports.
-    transport_count = int(step_name in PRODUCER_IDS or step_name.startswith("Require all jobs"))
+    transport_count = int(step_name in DIAGNOSTIC_PRODUCER_IDS)
     assert body.count("scripts/ci_private_transport.py") == transport_count
+    assert body.count(INVOCATION_EXPORT) == transport_count
+    if transport_count:
+        assert body.startswith(INVOCATION_EXPORT)
+        body = body.removeprefix(INVOCATION_EXPORT)
+    for diagnostic_flag in (
+        ' --diagnostic-directory "$EVIDENCE/diagnostics"',
+        ' --diagnostic-invocation "$diagnostic_invocation"',
+    ):
+        assert body.count(diagnostic_flag) == transport_count
+        body = body.replace(diagnostic_flag, "")
     assert body.count(" --public-directory forge-linux-public") == int(step_name in PRODUCER_IDS)
     assert "scripts/ci_test_shards.py" not in body
     body = body.replace("scripts/ci_private_transport.py", "scripts/ci_test_shards.py")
@@ -201,6 +244,14 @@ def test_original_commands_change_only_private_transport_and_environment(job_nam
 def test_full_workflow_preserves_original_authority_failures_budgets_and_parallelism():
     value = copy.deepcopy(workflow())
     for job_name, job in value["jobs"].items():
+        # The independent sidecar is asserted exactly below. Do not weaken the
+        # original structural snapshot or omit any original step or field.
+        diagnostics = [
+            s for s in job["steps"] if s["name"] in {DIAGNOSTICS_NAME, DIAGNOSTICS_UPLOAD_NAME}
+        ]
+        assert [s["name"] for s in diagnostics] == [DIAGNOSTICS_NAME, DIAGNOSTICS_UPLOAD_NAME]
+        for step in diagnostics:
+            job["steps"].remove(step)
         summaries = [s for s in job["steps"] if s["name"] == SUMMARY_NAME]
         assert len(summaries) == 1
         summary = summaries[0]
@@ -234,8 +285,8 @@ def test_full_workflow_preserves_original_authority_failures_budgets_and_paralle
             }
         for step in job["steps"]:
             step.pop("run", None)
-            if step["name"] in PRODUCER_IDS:
-                assert step.pop("id") == PRODUCER_IDS[step["name"]]
+            if step["name"] in DIAGNOSTIC_PRODUCER_IDS:
+                assert step.pop("id") == DIAGNOSTIC_PRODUCER_IDS[step["name"]]
             if step.get("uses", "").startswith("actions/upload-artifact@"):
                 if not step["with"].get("overwrite"):
                     assert step["if"] == archive_gate(step["with"]["name"])
@@ -273,6 +324,8 @@ def test_uploads_are_exact_public_files_and_require_successful_summary_and_archi
         for index, step in enumerate(steps):
             if not step.get("uses", "").startswith("actions/upload-artifact@"):
                 continue
+            if step["name"] == DIAGNOSTICS_UPLOAD_NAME:
+                continue  # Exact schema, path and independent gate are asserted separately.
             assert index > summary_index
             options = step["with"]
             assert options["path"].splitlines() == expected_paths(options["name"])
@@ -304,6 +357,153 @@ def condition_allows(condition, outcomes):
         assert match, clause
         required.append(match[1])
     return all(outcomes.get(step) == "success" for step in required)
+
+
+@pytest.mark.parametrize("job_name", JOBS)
+def test_diagnostics_step_is_exact_independent_private_and_fail_closed(job_name):
+    steps = workflow()["jobs"][job_name]["steps"]
+    summary_index = next(i for i, s in enumerate(steps) if s.get("id") == "public_summary")
+    step = steps[summary_index + 1]
+    assert {key: value for key, value in step.items() if key != "run"} == {
+        "name": DIAGNOSTICS_NAME,
+        "id": "public_diagnostics",
+        "if": "${{ always() }}",
+        "env": {
+            "CI_JOB_STATUS": "${{ job.status }}",
+            **{
+                variable: "${{ steps." + producer + ".outputs.diagnostic_invocation }}"
+                for _, variable, producer in DIAGNOSTIC_OPERATIONS[job_name]
+            },
+        },
+    }
+    prefix, body = private_prefix(step["run"])
+    assert 'exec >"$EVIDENCE/step-90.log" 2>&1\n' in prefix
+    expected = (
+        f"python scripts/ci_private_transport.py diagnostics --job {job_name} \\\n"
+        '  --status "$CI_JOB_STATUS" --directory "$EVIDENCE/diagnostics" \\\n'
+        "  --public-directory forge-linux-diagnostics"
+    )
+    if job_name == "service-free":
+        expected += ' --phase "shard-${{ matrix.shard }}"'
+    for operation, variable, _ in DIAGNOSTIC_OPERATIONS[job_name]:
+        expected += f' \\\n  --invocation "{operation}=${variable}"'
+    assert body.strip() == expected
+    logs = [
+        re.search(r'^exec >"\$EVIDENCE/(step-[0-9]{2}\.log)" 2>&1$', s["run"], re.M)[1]
+        for s in steps
+        if "run" in s
+    ]
+    assert len(logs) == len(set(logs))
+    assert steps[summary_index]["if"] == "${{ always() }}"
+    # Neither the original summary nor any coverage command can consume the
+    # diagnostic projection or use its outcome to turn a failure into success.
+    for original in steps:
+        if original["name"] in {DIAGNOSTICS_NAME, DIAGNOSTICS_UPLOAD_NAME}:
+            continue
+        assert "public_diagnostics" not in json.dumps(original)
+        assert "forge-linux-diagnostics" not in json.dumps(original)
+
+
+@pytest.mark.parametrize("job_name", JOBS)
+def test_diagnostic_invocations_bind_only_same_job_operation_outputs(job_name):
+    job = workflow()["jobs"][job_name]
+    steps = job["steps"]
+    diagnostic_index = next(i for i, s in enumerate(steps) if s.get("id") == "public_diagnostics")
+    diagnostic = steps[diagnostic_index]
+    producers = []
+    for operation, variable, producer in DIAGNOSTIC_OPERATIONS[job_name]:
+        index = next(i for i, s in enumerate(steps) if s.get("id") == producer)
+        assert index < diagnostic_index
+        assert DIAGNOSTIC_PRODUCER_IDS[steps[index]["name"]] == producer
+        _, body = private_prefix(steps[index]["run"])
+        assert body.startswith(INVOCATION_EXPORT)
+        assert diagnostic["env"][variable] == (
+            "${{ steps." + producer + ".outputs.diagnostic_invocation }}"
+        )
+        assert diagnostic["run"].count(f'--invocation "{operation}=${variable}"') == 1
+        if job_name == "service-free":
+            assert job["strategy"]["matrix"]["shard"] == [0, 1, 2, 3]
+            assert '--phase "shard-${{ matrix.shard }}"' in body
+            assert operation == "shard-${{ matrix.shard }}"
+        else:
+            assert "matrix." not in operation
+        producers.append(producer)
+    assert len(producers) == len(set(producers))
+    # These values are scoped to diagnostics, not propagated as job outputs,
+    # credentials, original summary input or aggregate coverage authority.
+    assert "outputs" not in job
+    summary = run_step(job_name, SUMMARY_NAME)
+    assert "invocation" not in json.dumps(summary)
+
+
+@pytest.mark.parametrize("job_name", JOBS)
+def test_diagnostic_upload_has_one_fixed_file_and_separate_attempt_identity(tmp_path, job_name):
+    steps = workflow()["jobs"][job_name]["steps"]
+    index = next(i for i, s in enumerate(steps) if s.get("id") == "public_diagnostics")
+    shard = "-${{ matrix.shard }}" if job_name == "service-free" else ""
+    expected = {
+        "name": DIAGNOSTICS_UPLOAD_NAME,
+        "if": DIAGNOSTICS_GATE,
+        "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+        "with": {
+            "name": f"diagnostics-linux-{job_name}{shard}-" + "${{ github.run_attempt }}",
+            "path": DIAGNOSTICS_PUBLIC,
+            "if-no-files-found": "error",
+            "retention-days": 14,
+        },
+    }
+    assert steps[index + 1] == expected
+    assert sum(s["name"] == DIAGNOSTICS_UPLOAD_NAME for s in steps) == 1
+    # Upload selection is exact, even when raw siblings exist beside it.
+    public_file = tmp_path / expected["with"]["path"]
+    public_file.parent.mkdir()
+    public_file.write_text('{"synthetic_public_fixture":true}\n')
+    for name in ("private.log", "raw-plan.json", "checkpoint.json", "nested/raw.json"):
+        sibling = public_file.parent / name
+        sibling.parent.mkdir(exist_ok=True)
+        sibling.write_text(CANARY)
+        assert sibling != public_file
+    assert not any(char in expected["with"]["path"] for char in "*?[]!$")
+    assert CANARY not in public_file.read_text()
+
+
+def test_diagnostic_artifacts_are_distinct_for_every_job_shard_and_attempt():
+    names = []
+    for job in workflow()["jobs"].values():
+        upload = next(s for s in job["steps"] if s["name"] == DIAGNOSTICS_UPLOAD_NAME)
+        for attempt in (1, 2):
+            for shard in job.get("strategy", {}).get("matrix", {}).get("shard", [None]):
+                name = upload["with"]["name"].replace("${{ github.run_attempt }}", str(attempt))
+                if shard is not None:
+                    name = name.replace("${{ matrix.shard }}", str(shard))
+                assert name.startswith("diagnostics-") and not name.startswith("linux-")
+                assert "${{" not in name
+                names.append(name)
+    assert len(names) == len(set(names)) == 14
+
+
+@pytest.mark.parametrize("job_name", JOBS)
+@pytest.mark.parametrize("diagnostic_status", ["success", "failure", "cancelled", "skipped"])
+def test_diagnostic_outcome_cannot_change_original_publication_authority(job_name, diagnostic_status):
+    steps = workflow()["jobs"][job_name]["steps"]
+    all_success = {s["id"]: "success" for s in steps if "id" in s}
+    all_success["public_diagnostics"] = diagnostic_status
+    for step in steps:
+        if not step.get("uses", "").startswith("actions/upload-artifact@"):
+            continue
+        if step["name"] == DIAGNOSTICS_UPLOAD_NAME:
+            assert condition_allows(step["if"], all_success) == (diagnostic_status == "success")
+            # A failed original summary cannot suppress independently valid diagnostics.
+            assert condition_allows(step["if"], {**all_success, "public_summary": "failure"}) == (
+                diagnostic_status == "success"
+            )
+            continue
+        assert condition_allows(step["if"], all_success)
+        for required in re.findall(r"steps\.([a-z_0-9]+)\.outcome", step["if"]):
+            assert required != "public_diagnostics"
+            # Even successful diagnostics cannot authorize a failed original gate.
+            outcomes = {**all_success, "public_diagnostics": "success", required: "failure"}
+            assert not condition_allows(step["if"], outcomes)
 
 
 @pytest.mark.parametrize("status", ["failure", "cancelled", "skipped"])
@@ -381,6 +581,49 @@ def shell_case(tmp_path, run, *, trace=False, setup_failure=None):
     if trace:
         argv.append("-x")
     return prefix, argv, env, evidence, evidence / log_name, sinks, interpreter
+
+
+@pytest.mark.parametrize("job_name,step_name", INVOCATION_RUNS)
+@pytest.mark.parametrize(
+    "value,generator_status,valid",
+    [
+        pytest.param("0123456789abcdef" * 2, 0, True, id="fresh-correlation"),
+        pytest.param("", 0, False, id="empty"),
+        pytest.param("A" * 32, 0, False, id="uppercase"),
+        pytest.param("a" * 31, 0, False, id="short"),
+        pytest.param("a" * 33, 0, False, id="long"),
+        pytest.param("a" * 32 + "\ninjected=value", 0, False, id="newline-injection"),
+        pytest.param(CANARY, 0, False, id="private-canary"),
+        pytest.param("a" * 32, 17, False, id="generator-failure"),
+    ],
+)
+def test_only_valid_nonsecret_correlation_reaches_step_output(
+    tmp_path, job_name, step_name, value, generator_status, valid
+):
+    run = run_step(job_name, step_name)["run"]
+    prefix, argv, env, evidence, _, sinks, _ = shell_case(tmp_path, run, trace=True)
+    _, body = private_prefix(run)
+    assert body.startswith(INVOCATION_EXPORT)
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    fake_python = commands / "python"
+    fake_python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$SYNTHETIC_INVOCATION\"\n" + f"exit {generator_status}\n"
+    )
+    fake_python.chmod(0o700)
+    env["PATH"] = str(commands) + os.pathsep + env["PATH"]
+    env["SYNTHETIC_INVOCATION"] = value
+    # No workload or Python generator executes. Only the exact checked shell
+    # preamble/export and the harmless fixture command above can execute.
+    script = prefix + INVOCATION_EXPORT + 'touch "$EVIDENCE/reached"\n'
+    proc = subprocess.run([*argv, "-c", script], cwd=tmp_path, env=env, capture_output=True, timeout=3)
+    assert proc.stdout == b"" and proc.stderr == b"+ exec\n"
+    assert (proc.returncode == 0) == valid
+    assert (evidence / "reached").exists() == valid
+    expected_output = f"diagnostic_invocation={value}\n" if valid else ""
+    assert sinks["GITHUB_OUTPUT"].read_text() == expected_output
+    assert sinks["GITHUB_ENV"].read_bytes() == sinks["GITHUB_STEP_SUMMARY"].read_bytes() == b""
+    assert CANARY not in sinks["GITHUB_OUTPUT"].read_text()
 
 
 NOISY_FIXTURE = (
@@ -517,6 +760,7 @@ def test_explicit_upload_selection_excludes_synthetic_private_siblings(tmp_path,
         for job in workflow()["jobs"].values()
         for s in job["steps"]
         if s.get("uses", "").startswith("actions/upload-artifact@")
+        and s["name"] != DIAGNOSTICS_UPLOAD_NAME
     ]
     selected = set()
     for step in uploads:

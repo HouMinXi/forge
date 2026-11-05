@@ -182,3 +182,52 @@ than claiming pytest 9.2 naturally has a same-second hash collision. Neither
 failure evidence nor cleanup is inferred solely from an allowlist addition.
 
 Upstream reference: [pytest 9.2 changelog](https://docs.pytest.org/en/stable/changelog.html#pytest-9-2-0-2026-10-27).
+
+
+## Bounded failure diagnostics
+
+The transport can also record the last entered code-owned boundary for each
+plan, execution phase and aggregate operation. The separate
+`diagnostics-linux-*-<attempt>` artifacts contain only a fixed versioned schema,
+known operation/stage/state/error-code enums, the job status observed at
+projection time (a later upload can still fail), and
+`raw_evidence: NOT_PUBLISHED`. They do not match the aggregate's `linux-*`
+download pattern, are not coverage receipts, and cannot authorize a pass.
+The existing pytest argv, four-way partition, original validators, exact public
+identity allowlist, skip/xfail/subtest rules and execution budgets are unchanged.
+
+Boundaries distinguish input validation, collection, child execution, receipt
+validation, coverage validation, publication and aggregate validation. They mark
+the current outer operation, not an inferred cause inside a dependency.
+`NONZERO_EXIT`, `INTERRUPTED`, `REJECTED` and `INTERNAL_ERROR` are fixed failure
+classes; no exit number, exception message, PID, host path, unit name, environment
+value, failed test parameter, runtime skip reason or runtime-value hash is public.
+A child nonzero return is retained even if recording its failure also fails.
+
+`COMPLETED` means the operation returned after all its existing checks; it is
+not job success or native Linux qualification. `INCOMPLETE` means no terminal
+record survived after the last boundary; it does not identify OOM, timeout or
+cancellation. Missing records are `UNAVAILABLE/NOT_RECORDED`, never `NOT_RUN`.
+Malformed records, mismatched operation/file names, unknown fields or values,
+links, extra files and interrupted atomic-write remnants reject the diagnostic
+publication rather than exposing partial input. Each invocation removes its old
+checkpoint before starting. The fixed workflow generates a fresh 128-bit random
+invocation label before the producer, publishes only that non-sensitive label
+under a fixed job-output key, and passes the same label to the transport. The
+publisher obtains the expected label from that specific producer's job output;
+missing or mismatched labels yield UNAVAILABLE for every old record state.
+The checkpoint's self-reported label is never its own authority. Labels can be
+visible in GitHub's platform metadata, contain no runtime-derived private data,
+are not secret keys or authentication, and are omitted from the fixed sidecar. The independent diagnostic step is fail-closed: a
+diagnostic failure can make the job fail, but cannot change the original summary
+outcome, bypass an original publication gate, or turn a failed workload green.
+
+Raw subprocess logs and Python traceback frames (without captured locals) stay
+in job-local 0700 directories and 0600 files. Diagnostic setup never changes the
+workload umask. The diagnostic uploader names one exact reconstructed file; it
+never uploads the private directory. Private tracebacks may be lost when the VM
+is retired, and abrupt cancellation may prevent even the fixed sidecar upload.
+This does not promise later access to full traceback or a complete crash report.
+The fixed-code publisher trusts the reviewed helper and the job; it is not an
+attestation against a malicious same-UID writer or replaced helper. Do not enable
+GitHub runner/step global debug or publish raw logs as a substitute for this path.

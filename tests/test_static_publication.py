@@ -1,7 +1,10 @@
 """Offline static-publication contracts; never execute the native collector."""
 
 import ast
+import copy
+import errno
 import importlib.util
+import itertools
 import json
 import os
 from pathlib import Path
@@ -21,8 +24,49 @@ COLLECTOR = "scripts/strict_linux_admission.py"
 PUBLIC_PATH = Path("forge-static-public/summary.json")
 CANARY = "PRIVATE-static-/home/private-user/unit.service-PID-7654321"
 SOURCE_CANARY = "cafebabefeedface0123456789abcdef01234567"
-PUBLIC_KEYS = {"schema", "mode", "status", "boundary", "qualification", "raw_evidence", "reason"}
+PUBLIC_KEYS = {
+    "schema",
+    "mode",
+    "status",
+    "boundary",
+    "qualification",
+    "raw_evidence",
+    "reason",
+    "problems",
+    "details",
+}
 PUBLIC_REASONS = {"observation_complete", "collector_stop", "execution_failed", "unavailable"}
+PUBLIC_PROBLEMS = {
+    "apparmor_observed",
+    "apparmor_profiles_observed",
+    "apparmor_restriction_observed",
+    "bwrap_identity",
+    "cgroup2_mount",
+    "controllers",
+    "current_common_ancestor_access",
+    "delegated_directory_access",
+    "destination_procs_access",
+    "existing_manager",
+    "kernel_identity",
+    "ordinary_user",
+    "source_membership",
+    "subtree_control",
+}
+PUBLIC_DETAIL_REASONS = {
+    "bwrap_identity": {
+        "missing",
+        "unreadable",
+        "io_error",
+        "path_outside_allowlist",
+        "unsafe_metadata",
+        "oversize",
+        "size_mismatch",
+    },
+    "apparmor_profiles_observed": {"missing", "unreadable", "io_error", "oversize", "invalid_utf8"},
+    "delegated_directory_access": {"not_writable", "unknown"},
+    "destination_procs_access": {"not_writable", "unknown"},
+    "current_common_ancestor_access": {"not_writable", "unknown"},
+}
 
 
 @pytest.fixture(scope="module")
@@ -47,9 +91,24 @@ def raw(status="OBSERVED"):
             "expected_source_sha": SOURCE_CANARY,
             "collector_sha256": SOURCE_CANARY,
         },
-        "facts": {"uid": 7654321, "boot_id": CANARY, "source_cgroup": CANARY},
-        "diagnostics": {"private": CANARY},
-        "problems": [CANARY],
+        "facts": {
+            "uid": 7654321,
+            "boot_id": CANARY,
+            "source_cgroup": CANARY,
+            "bwrap": None,
+            "apparmor": {"enabled": True, "bwrap_profiles": None},
+            "access": {
+                "delegated_directory": False,
+                "destination_procs": False,
+                "common_ancestor_procs": False,
+            },
+        },
+        "diagnostics": {
+            "private": CANARY,
+            "bwrap": {name: {"reason": "missing", "errno": errno.ENOENT} for name in ("usr_bin", "bin")},
+            "apparmor_profiles": {"reason": "unreadable", "errno": errno.EACCES},
+        },
+        "problems": ["bwrap_identity"] if status == "STOP" else [],
         "stderr": CANARY,
         CANARY: CANARY,
     }
@@ -57,12 +116,25 @@ def raw(status="OBSERVED"):
 
 def assert_public(value, expected=None, reason=None):
     assert set(value) == PUBLIC_KEYS
-    assert value["schema"] == "forge-public-static-summary-v1"
+    assert value["schema"] == "forge-public-static-summary-v3"
     assert value["mode"] == "static"
     assert value["status"] in {"OBSERVED", "STOP", "UNKNOWN"}
     assert value["boundary"] == value["qualification"] == "NOT_RUN"
     assert value["raw_evidence"] == "NOT_PUBLISHED"
     assert type(value["reason"]) is str and value["reason"] in PUBLIC_REASONS
+    assert type(value["problems"]) is list
+    assert all(type(code) is str and code in PUBLIC_PROBLEMS for code in value["problems"])
+    assert value["problems"] == sorted(set(value["problems"]))
+    assert len(value["problems"]) <= len(PUBLIC_PROBLEMS) == 14
+    assert bool(value["problems"]) == (value["reason"] == "collector_stop")
+    assert type(value["details"]) is dict
+    assert set(value["details"]) == set(value["problems"]) & set(PUBLIC_DETAIL_REASONS)
+    for problem, details in value["details"].items():
+        assert type(details) is list and details == sorted(set(details))
+        assert 1 <= len(details) <= (2 if problem == "bwrap_identity" else 1)
+        assert all(
+            type(reason) is str and reason in PUBLIC_DETAIL_REASONS[problem] for reason in details
+        )
     serialized = json.dumps(value)
     assert all(secret not in serialized for secret in (CANARY, SOURCE_CANARY, "7654321"))
     if expected is not None:
@@ -124,10 +196,252 @@ def test_projection_does_not_import_or_run_collector_and_size_matches_source(pub
             imports.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
             imports.append(node.module)
-    assert set(imports) <= {"json", "os", "stat", "sys"}
+    assert set(imports) <= {"errno", "json", "os", "stat", "sys"}
     collector_source = (ROOT / COLLECTOR).read_text()
     match = re.search(r"(?m)^MAX_RECEIPT\s*=\s*(\d+)\s*$", collector_source)
     assert match and public.MAX_INPUT == int(match[1]) == 16384
+
+
+def test_problem_allowlist_matches_reviewed_collector_literals_without_import(public):
+    tree = ast.parse((ROOT / COLLECTOR).read_text())
+    derive = next(node for node in tree.body if getattr(node, "name", None) == "derive_problems")
+    checks = next(
+        node.value
+        for node in derive.body
+        if isinstance(node, ast.Assign) and any(target.id == "checks" for target in node.targets)
+    )
+    assert {ast.literal_eval(key) for key in checks.keys} == PUBLIC_PROBLEMS
+    assert public.PUBLIC_PROBLEM_CODES == PUBLIC_PROBLEMS
+
+
+def test_all_problem_codes_are_fixed_sorted_unique_and_bounded(public):
+    for codes in [[code] for code in sorted(PUBLIC_PROBLEMS)] + [
+        sorted(PUBLIC_PROBLEMS, reverse=True),
+        ["bwrap_identity"] * len(PUBLIC_PROBLEMS),
+    ]:
+        result = public.summary({**raw("STOP"), "problems": codes}, 2)
+        assert_public(result, "STOP", "collector_stop")
+        assert result["problems"] == sorted(set(codes))
+        assert len(json.dumps(result).encode()) < 1024
+
+
+def test_problem_permutation_and_duplicate_multiplicity_do_not_encode_values(public):
+    codes = ["bwrap_identity", "apparmor_profiles_observed", "current_common_ancestor_access"]
+    expected = public.summary({**raw("STOP"), "problems": codes}, 2)
+    for permutation in (list(reversed(codes)), codes[1:] + codes[:1], codes * 4):
+        assert public.summary({**raw("STOP"), "problems": permutation}, 2) == expected
+
+
+def malformed_problems():
+    return [
+        None,
+        True,
+        1,
+        "bwrap_identity",
+        {"bwrap_identity": True},
+        ("bwrap_identity",),
+        [None],
+        [True],
+        [1],
+        [[]],
+        [{}],
+        [CANARY],
+        ["unknown_future_code"],
+        ["bwrap_identity", CANARY],
+        ["bwrap_identity\n"],
+        ["bwrap_identity\x00"],
+        ["BWRAP_IDENTITY"],
+        ["bwrap_\u0131dentity"],
+        ["bwrap_identity"] * (len(PUBLIC_PROBLEMS) + 1),
+    ]
+
+
+def test_malformed_problem_codes_fail_closed_without_partial_disclosure(public):
+    for codes in malformed_problems():
+        for status in ("OBSERVED", "STOP"):
+            for exit_code in (0, 2, 137):
+                result = public.summary({**raw(status), "problems": codes}, exit_code)
+                assert_public(result, "UNKNOWN", "unavailable")
+                assert result["problems"] == []
+
+
+def test_missing_and_status_inconsistent_problems_fail_closed(public):
+    for status, codes in (("STOP", []), ("OBSERVED", ["bwrap_identity"])):
+        value = {**raw(status), "problems": codes}
+        assert_public(public.summary(value, 0), "UNKNOWN", "unavailable")
+        del value["problems"]
+        assert_public(public.summary(value, 0), "UNKNOWN", "unavailable")
+
+
+def test_forged_known_problems_never_claim_native_execution_or_qualification(public):
+    # Recognized codes are claims by the reviewed producer, not authenticated
+    # facts. Even a forged allowed category must remain observation-only.
+    value = {
+        **raw("STOP"),
+        "problems": ["current_common_ancestor_access"],
+        "facts": {**raw("STOP")["facts"], "common_ancestor": CANARY, "errno": 7654321},
+    }
+    assert_public(public.summary(value, 0), "STOP", "collector_stop")
+    for field in ("boundary", "qualification"):
+        assert_public(public.summary({**value, field: "PASS"}, 0), "UNKNOWN", "unavailable")
+
+
+def failure_diagnostic(reason):
+    return {
+        "reason": reason,
+        "errno": {"missing": errno.ENOENT, "unreadable": errno.EACCES, "io_error": errno.EIO}.get(
+            reason
+        ),
+    }
+
+
+def test_detail_reason_allowlists_match_existing_collector_literals(public):
+    enums = {}
+    for node in ast.parse((ROOT / COLLECTOR).read_text()).body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        name = getattr(node.targets[0], "id", None)
+        if name not in {"OS_REASONS", "BWRAP_REASONS", "PROFILE_REASONS"}:
+            continue
+        enums[name] = (
+            enums[node.value.left.id] | ast.literal_eval(node.value.right)
+            if isinstance(node.value, ast.BinOp)
+            else ast.literal_eval(node.value)
+        )
+    assert public.PUBLIC_BWRAP_REASONS == enums["BWRAP_REASONS"] - {"read_success", "not_attempted"}
+    assert public.PUBLIC_PROFILE_REASONS == enums["PROFILE_REASONS"] - {"read_success"}
+    assert public.PUBLIC_ACCESS_FIELDS == {
+        "delegated_directory_access": "delegated_directory",
+        "destination_procs_access": "destination_procs",
+        "current_common_ancestor_access": "common_ancestor_procs",
+    }
+
+
+def test_all_existing_failure_reason_combinations_remain_bounded_and_private(public):
+    maximum = 0
+    for first, second, profile, access in itertools.product(
+        sorted(PUBLIC_DETAIL_REASONS["bwrap_identity"]),
+        sorted(PUBLIC_DETAIL_REASONS["bwrap_identity"]),
+        sorted(PUBLIC_DETAIL_REASONS["apparmor_profiles_observed"]),
+        itertools.product((False, None), repeat=3),
+    ):
+        value = {**raw("STOP"), "problems": sorted(PUBLIC_PROBLEMS)}
+        value["diagnostics"]["bwrap"] = {
+            "usr_bin": failure_diagnostic(first),
+            "bin": failure_diagnostic(second),
+        }
+        value["diagnostics"]["apparmor_profiles"] = failure_diagnostic(profile)
+        value["facts"]["access"] = dict(zip(public.PUBLIC_ACCESS_FIELDS.values(), access, strict=True))
+        for code in (0, 2, 17, 137):
+            result = public.summary(value, code)
+            assert_public(result, "STOP", "collector_stop")
+            assert result["details"]["bwrap_identity"] == sorted({first, second})
+            assert result["details"]["apparmor_profiles_observed"] == [profile]
+            for (problem, _), observed in zip(public.PUBLIC_ACCESS_FIELDS.items(), access, strict=True):
+                assert result["details"][problem] == ["not_writable" if observed is False else "unknown"]
+            encoded = json.dumps(result, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+            maximum = max(maximum, len(encoded))
+            assert all(
+                token not in encoded for token in (b'"errno"', b'"usr_bin"', b'"bin"', b"/usr/", b"PID-")
+            )
+    assert maximum < 1024
+
+
+def test_malformed_selected_diagnostics_discard_all_details(public):
+    malformed = [
+        None,
+        [],
+        CANARY,
+        {},
+        {"reason": "missing"},
+        {"reason": "missing", "errno": errno.ENOENT, "extra": CANARY},
+        {"reason": CANARY, "errno": None},
+        {"reason": ["missing"], "errno": errno.ENOENT},
+        {"reason": "missing", "errno": None},
+        {"reason": "missing", "errno": errno.EACCES},
+        {"reason": "unreadable", "errno": errno.ENOENT},
+        {"reason": "io_error", "errno": errno.EPERM},
+        {"reason": "oversize", "errno": errno.EIO},
+        {"reason": "read_success", "errno": None},
+        {"reason": "not_attempted", "errno": None},
+        *[
+            {"reason": "io_error", "errno": number}
+            for number in (False, True, 0, -1, 4096, 1.0, CANARY, [])
+        ],
+    ]
+    for diagnostic in malformed:
+        for category in ("bwrap", "apparmor_profiles"):
+            value = {**raw("STOP"), "problems": sorted(PUBLIC_DETAIL_REASONS)}
+            if category == "bwrap":
+                value["diagnostics"]["bwrap"]["usr_bin"] = diagnostic
+            else:
+                value["diagnostics"]["apparmor_profiles"] = diagnostic
+            result = public.summary(value, 2)
+            assert_public(result, "UNKNOWN", "unavailable")
+            assert result["details"] == {} and result["problems"] == []
+
+
+def test_selected_detail_shapes_and_contradictory_facts_fail_closed(public):
+    mutations = [
+        ((), "facts", None),
+        ((), "diagnostics", None),
+        (("diagnostics",), "bwrap", None),
+        (("diagnostics",), "bwrap", {"usr_bin": failure_diagnostic("missing")}),
+        (("diagnostics",), "bwrap", {**raw("STOP")["diagnostics"]["bwrap"], CANARY: CANARY}),
+        (("facts",), "bwrap", {"path": CANARY}),
+        (("facts",), "apparmor", None),
+        (("facts", "apparmor"), "enabled", False),
+        (("facts", "apparmor"), "enabled", 1),
+        (("facts", "apparmor"), "bwrap_profiles", []),
+        (("facts",), "access", None),
+        *[
+            (("facts", "access"), "common_ancestor_procs", item)
+            for item in (True, 0, "false", [], CANARY)
+        ],
+    ]
+    for parents, key, item in mutations:
+        value = {**raw("STOP"), "problems": sorted(PUBLIC_DETAIL_REASONS)}
+        target = value
+        for parent in parents:
+            target = target[parent]
+        target[key] = item
+        assert_public(public.summary(value, 2), "UNKNOWN", "unavailable")
+        del target[key]
+        assert_public(public.summary(value, 2), "UNKNOWN", "unavailable")
+
+
+def test_bwrap_details_discard_candidate_order_and_errno_choices(public):
+    value = raw("STOP")
+    value["diagnostics"]["bwrap"] = {
+        "usr_bin": failure_diagnostic("missing"),
+        "bin": failure_diagnostic("unreadable"),
+    }
+    expected = public.summary(value, 2)
+    swapped = copy.deepcopy(value)
+    swapped["diagnostics"]["bwrap"] = {
+        "bin": {"reason": "missing", "errno": errno.ENOTDIR},
+        "usr_bin": {"reason": "unreadable", "errno": errno.EPERM},
+    }
+    assert public.summary(swapped, 2) == expected
+    assert expected["details"] == {"bwrap_identity": ["missing", "unreadable"]}
+
+
+def test_success_and_unrelated_stops_do_not_publish_failure_details(public):
+    for status, problems in (("OBSERVED", []), ("STOP", ["ordinary_user"])):
+        value = {**raw(status), "problems": problems}
+        value["facts"]["apparmor"]["enabled"] = False
+        result = public.summary(value, 0)
+        assert_public(result, status)
+        assert result["details"] == {}
+
+
+def test_access_details_distinguish_false_from_unknown_without_claiming_errno(public):
+    value = {**raw("STOP"), "problems": ["current_common_ancestor_access"]}
+    for observed, expected in ((False, "not_writable"), (None, "unknown")):
+        value["facts"]["access"]["common_ancestor_procs"] = observed
+        result = public.summary(value, 2)
+        assert_public(result, "STOP", "collector_stop")
+        assert result["details"] == {"current_common_ancestor_access": [expected]}
 
 
 def invoke_summary(path, code="0"):
@@ -150,6 +464,29 @@ def test_cli_emits_one_bounded_summary_and_only_observed_is_success(tmp_path, st
     assert len(proc.stdout) < 1024
     assert_public(json.loads(proc.stdout), expected)
     assert str(path).encode() not in proc.stdout
+
+
+def test_cli_maximum_problem_set_remains_below_existing_publication_cap(tmp_path):
+    path = tmp_path / "private.json"
+    path.write_text(json.dumps({**raw("STOP"), "problems": sorted(PUBLIC_PROBLEMS, reverse=True)}))
+    proc = invoke_summary(path, "2")
+    assert proc.returncode == 2 and proc.stderr == b""
+    assert proc.stdout.count(b"\n") == 1 and len(proc.stdout) < 1024
+    result = json.loads(proc.stdout)
+    assert_public(result, "STOP", "collector_stop")
+    assert result["problems"] == sorted(PUBLIC_PROBLEMS)
+
+
+def test_cli_malformed_problem_values_are_private_unknown(tmp_path):
+    path = tmp_path / "private.json"
+    for codes in malformed_problems():
+        if type(codes) is tuple:
+            continue  # JSON arrays are lists; direct-call shape is tested above.
+        path.write_text(json.dumps({**raw("STOP"), "problems": codes}))
+        proc = invoke_summary(path, "2")
+        assert proc.returncode == 2 and proc.stderr == b""
+        assert len(proc.stdout) < 1024
+        assert_public(json.loads(proc.stdout), "UNKNOWN", "unavailable")
 
 
 @pytest.mark.parametrize(
@@ -460,6 +797,42 @@ def test_actual_shell_contains_private_streams_and_preserves_collector_exit(tmp_
         assert any(b"Killed" in path.read_bytes() for path in tmp_path.rglob("private*stderr.txt"))
 
 
+def test_actual_shell_rejects_unknown_problem_codes_even_after_kill(tmp_path):
+    value = {**raw("STOP"), "problems": ["bwrap_identity", CANARY]}
+    case = shell_case(
+        tmp_path,
+        f"output.write_text(json.dumps({value!r}))\nos.kill(os.getpid(),signal.SIGKILL)\n",
+    )
+    assert execute_shell(case).returncode == 137
+    assert_ready(case)
+    assert_public(json.loads((case[0] / PUBLIC_PATH).read_text()), "UNKNOWN", "unavailable")
+
+
+def test_actual_shell_publishes_complete_fixed_problem_set_on_failure(tmp_path):
+    value = {**raw("STOP"), "problems": sorted(PUBLIC_PROBLEMS, reverse=True)}
+    case = shell_case(tmp_path, f"output.write_text(json.dumps({value!r}))\nsys.exit(17)\n")
+    assert execute_shell(case).returncode == 17
+    assert_ready(case)
+    result = json.loads((case[0] / PUBLIC_PATH).read_text())
+    assert_public(result, "STOP", "collector_stop")
+    assert result["problems"] == sorted(PUBLIC_PROBLEMS)
+
+
+def test_actual_shell_malformed_fine_reason_never_leaks_or_masks_failure(tmp_path):
+    value = raw("STOP")
+    value["diagnostics"]["bwrap"]["usr_bin"]["reason"] = CANARY
+    for code in (0, 17, 137):
+        body = (
+            f"output.write_text(json.dumps({value!r}))\n"
+            f"os.kill(os.getpid(),signal.SIGKILL) if {code} == 137 else None\n"
+            f"sys.exit({code})\n"
+        )
+        case = shell_case(tmp_path / str(code), body)
+        assert execute_shell(case).returncode == (code or 2)
+        assert_ready(case)
+        assert_public(json.loads((case[0] / PUBLIC_PATH).read_text()), "UNKNOWN", "unavailable")
+
+
 @pytest.mark.parametrize(
     "body,code",
     [
@@ -688,16 +1061,24 @@ def test_real_validated_collector_receipt_flows_through_projection(
             "bwrap_profiles": ["bwrap"],
         },
     }
+    if status == "STOP":
+        facts["bwrap"] = None
+        facts["apparmor"]["bwrap_profiles"] = None
+        facts["access"]["common_ancestor_procs"] = False
     receipt = {
         "schema": "forge-linux-admission-observation-v2",
         "identity": identity,
         "facts": facts,
         "diagnostics": {
-            "bwrap": {
+            "bwrap": {name: failure_diagnostic("missing") for name in ("usr_bin", "bin")}
+            if status == "STOP"
+            else {
                 "usr_bin": {"reason": "read_success", "errno": None},
                 "bin": {"reason": "not_attempted", "errno": None},
             },
-            "apparmor_profiles": {"reason": "read_success", "errno": None},
+            "apparmor_profiles": failure_diagnostic("unreadable")
+            if status == "STOP"
+            else {"reason": "read_success", "errno": None},
         },
         "status": status,
         "problems": admission.derive_problems(identity, facts),
@@ -733,6 +1114,25 @@ def test_real_validated_collector_receipt_flows_through_projection(
     assert admission.parse(path.read_bytes()) == receipt
     result = public.summary(public.read_receipt(path), diagnostic_code)
     assert_public(result, status, "observation_complete" if status == "OBSERVED" else "collector_stop")
+    assert result["problems"] == (
+        []
+        if status == "OBSERVED"
+        else [
+            "apparmor_profiles_observed",
+            "bwrap_identity",
+            "cgroup2_mount",
+            "current_common_ancestor_access",
+        ]
+    )
+    assert result["details"] == (
+        {}
+        if status == "OBSERVED"
+        else {
+            "bwrap_identity": ["missing"],
+            "apparmor_profiles_observed": ["unreadable"],
+            "current_common_ancestor_access": ["not_writable"],
+        }
+    )
     assert "private-project" not in json.dumps(result)
     assert "private-worker" not in json.dumps(result)
     proc = invoke_summary(path, str(diagnostic_code))
