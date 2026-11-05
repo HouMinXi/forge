@@ -73,6 +73,30 @@ DIAGNOSTIC_OPERATIONS = ("plan", *ci.PHASES, "verify")
 DIAGNOSTIC_FAILURES = ("NONZERO_EXIT", "INTERRUPTED", "REJECTED", "INTERNAL_ERROR")
 DIAGNOSTIC_KEYS = {"operation", "stage", "state", "code"}
 INVOCATION_RE = re.compile(r"[0-9a-f]{32}\Z")
+FAILURE_STATE = "failure-state.json"
+FAILURE_STAGES = (
+    "prepare",
+    "pytest",
+    "receipt_read",
+    "receipt_validation",
+    "outcome_validation",
+    "projection",
+    "coverage_validation",
+    "log_close",
+    "publication",
+    "output_validation",
+)
+
+
+def failure_context(sha, phase):
+    """Bind private diagnostics to one GitHub job invocation, never public output."""
+    _sha(sha)
+    _require(phase in ci.PHASES)
+    run = os.environ.get("GITHUB_RUN_ID", "")
+    attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
+    _require(re.fullmatch(r"[1-9][0-9]{0,19}", run) is not None)
+    _require(re.fullmatch(r"[1-9][0-9]{0,9}", attempt) is not None)
+    return {"sha": sha, "phase": phase, "run": run, "attempt": attempt}
 
 
 class TransportError(ValueError):
@@ -339,9 +363,32 @@ def _log(directory, name):
         except BaseException:
             os.close(fd)
             raise
-    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+    stream = os.fdopen(fd, "w", encoding="utf-8")
+    try:
         with redirect_stdout(stream), redirect_stderr(stream):
             yield stream
+    except BaseException as primary:
+        try:
+            stream.close()
+        except BaseException as close_error:  # noqa: BLE001 - cleanup cannot replace an active primary.
+            # Keep cleanup evidence private without replacing the producer's
+            # exception, exit code or chain. Never format either error here.
+            try:
+                state = BaseException.__dict__["__dict__"].__get__(primary)
+                previous = dict.get(state, "_ci_log_close_errors", ())
+                if type(previous) is not tuple:
+                    previous = (previous,)
+                dict.__setitem__(state, "_ci_log_close_errors", previous + (close_error,))
+                note = "Private CI log close also failed; see _ci_log_close_errors."
+                if not dict.__contains__(state, "__notes__"):
+                    dict.__setitem__(state, "__notes__", [note])
+                elif type(notes := dict.__getitem__(state, "__notes__")) is list:
+                    notes.append(note)
+            except BaseException:  # noqa: BLE001, S110 - metadata failure cannot replace the primary.
+                pass
+        raise
+    else:
+        stream.close()
 
 
 def validate_manifest(data):
@@ -570,7 +617,35 @@ def collect_plan(directory, public_directory, sha, policy, manifest, *, diagnost
     return plan
 
 
-def run_phase(phase, plan, directory, public_directory, policy, manifest, *, diagnostic=None):
+def run_phase(
+    phase,
+    plan,
+    directory,
+    public_directory,
+    policy,
+    manifest,
+    *,
+    diagnostic=None,
+    failure_diagnostic=False,
+):
+    """Preserve producer failures; optional private diagnostics cannot replace them."""
+    state = {"stage": "prepare", "returncode": None}
+    if failure_diagnostic:
+        _clear_public(directory, [FAILURE_STATE])
+    try:
+        options = {} if diagnostic is None else {"diagnostic": diagnostic}
+        return _run_phase(phase, plan, directory, public_directory, policy, manifest, state, **options)
+    except BaseException:
+        if failure_diagnostic:
+            try:
+                context = failure_context(plan["sha"], phase)
+                _write_json(Path(directory) / FAILURE_STATE, {**context, **state})
+            except BaseException:  # noqa: BLE001, S110 - Diagnostics must preserve the original failure.
+                pass
+        raise
+
+
+def _run_phase(phase, plan, directory, public_directory, policy, manifest, state, *, diagnostic=None):
     """Run the original pytest argv, then independently enforce public-plan coverage."""
     _require(phase in ci.PHASES)
     directory, public_directory = Path(directory), Path(public_directory)
@@ -594,12 +669,16 @@ def run_phase(phase, plan, directory, public_directory, policy, manifest, *, dia
     )
     with _log(directory, phase + ".log") as log:
         _stage(diagnostic, "execution")
+        state["stage"] = "pytest"
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=False)
+        state["returncode"] = result.returncode
         if result.returncode:
             raise SystemExit(result.returncode)
         _stage(diagnostic, "receipt_validation")
+        state["stage"] = "receipt_read"
         raw = read_json(report_path)
         identities = _identities(manifest)
+        state["stage"] = "receipt_validation"
         _validate_receipt(raw, set(identities), set(manifest["modules"]), policy)
         # This first check proves outcomes only, NOT coverage. The second check
         # compares against the separately downloaded collection plan.
@@ -607,12 +686,18 @@ def run_phase(phase, plan, directory, public_directory, policy, manifest, *, dia
             "sha": plan["sha"],
             "phases": {phase: {"nodes": raw["collected"], "collection_skips": raw["collection_skips"]}},
         }
+        state["stage"] = "outcome_validation"
         ci.validate_execution(raw, phase, raw_expected, policy)
+        state["stage"] = "projection"
         projected = project_receipt(raw, manifest, policy)
         _stage(diagnostic, "coverage_validation")
+        state["stage"] = "coverage_validation"
         ci.validate_execution(projected, phase, plan, projected_policy)
+        state["stage"] = "log_close"
     _stage(diagnostic, "publication")
+    state["stage"] = "publication"
     _write_json(public_directory / f"receipt-{phase}.json", projected)
+    state["stage"] = "output_validation"
     _existing_outputs(public_directory, plan, projected_policy, manifest)
     _require(read_json(public_directory / f"receipt-{phase}.json") == projected)
     return projected
@@ -895,6 +980,8 @@ def _execute(args, diagnostic=None):
         projected_policy = project_policy(policy, manifest)
         _validate_public_plan(plan, args.sha, projected_policy, manifest)
         if args.command == "run":
+            if args.failure_diagnostic:
+                options["failure_diagnostic"] = True
             run_phase(
                 args.phase, plan, args.directory, args.public_directory, policy, manifest, **options
             )
@@ -931,6 +1018,9 @@ def _execute_diagnosed(args):
     _clear_operation_outputs(args)
     original_error = None
     original_traceback = None
+    original_cause = None
+    original_context = None
+    original_suppression = False
     diagnostic = None
     try:
         with _log(directory, operation + ".log"):
@@ -939,7 +1029,11 @@ def _execute_diagnosed(args):
                 _execute(args, diagnostic)
                 diagnostic.write("COMPLETED", "COMPLETED")
             except BaseException as error:
-                original_error, original_traceback = error, error.__traceback__
+                original_error = error
+                original_traceback = BaseException.__traceback__.__get__(error)
+                original_cause = BaseException.__cause__.__get__(error)
+                original_context = BaseException.__context__.__get__(error)
+                original_suppression = BaseException.__suppress_context__.__get__(error)
                 # No raw fallback, including logging/close failures. The outer
                 # handler prints only ERROR. Preserve the original child's rc.
                 try:
@@ -953,7 +1047,16 @@ def _execute_diagnosed(args):
                 raise
     except BaseException as error:
         if original_error is not None:
-            raise original_error.with_traceback(original_traceback) from None
+            if error is original_error:
+                raise
+            try:
+                raise BaseException.with_traceback(original_error, original_traceback)
+            finally:
+                # Diagnostic cleanup may fail while the producer is unwinding.
+                # Preserve its existing chain without invoking subclass hooks.
+                BaseException.__cause__.__set__(original_error, original_cause)
+                BaseException.__context__.__set__(original_error, original_context)
+                BaseException.__suppress_context__.__set__(original_error, original_suppression)
         # A failure closing the private log is also a failed operation, even
         # after the workload returned. Never leave a fresh success if writable.
         if diagnostic is not None:
@@ -985,6 +1088,7 @@ def _parser():
             sub.add_argument("--plan", type=Path, required=True)
         if command == "run":
             sub.add_argument("--phase", choices=ci.PHASES, required=True)
+            sub.add_argument("--failure-diagnostic", action="store_true")
     summary = commands.add_parser("summary")
     summary.add_argument("--job", choices=JOBS, required=True)
     summary.add_argument("--status", choices=STATUSES, required=True)
@@ -1015,6 +1119,9 @@ def main(argv=None):
                 },
             )
             return 0
+        if args.command == "run" and args.failure_diagnostic:
+            # Clear stale diagnostics before reading any untrusted plan/manifest.
+            _clear_public(args.directory, [FAILURE_STATE])
         if args.command == "diagnostics":
             invocations = {}
             for entry in args.invocation:

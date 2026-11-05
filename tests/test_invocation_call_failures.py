@@ -91,6 +91,8 @@ def test_call_preserves_fatal_sink_exception(kind, chain, point, secondary_kind,
 @pytest.mark.parametrize("kind", [RuntimeError, MemoryError, ExceptionGroup])
 def test_ordinary_sink_exception_still_returns_uncertain_ack(kind):
     owner = InvocationOwner.__new__(InvocationOwner)
+    # This legacy control intentionally exercises the schema-v1 exception policy.
+    owner._audit_schema_version = 1
     owner._faults = []
     error = kind("sink", [ValueError()]) if kind is ExceptionGroup else kind("sink")
 

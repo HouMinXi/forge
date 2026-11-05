@@ -101,26 +101,28 @@ def is_non_equivalent(original: str, mutated: str) -> bool:
 _REQUIRED_FINDING_KEYS = frozenset({"file", "line", "severity", "description"})
 
 
-def validate_canary_findings(findings: list[dict]) -> list[dict]:
+def validate_canary_findings(findings: list[dict], *, safe_diagnostics: bool = False) -> list[dict]:
     """Validate canary reviewer findings: check 4 required keys per finding.
 
     Unlike validate_reviewer_json, this does NOT require an envelope structure
     (no top-level "findings"/"code_excerpts" keys) and accepts ANY non-empty
     severity string (no P0-P3 enum constraint). Returns a NEW list containing
     only valid findings. The input list is NEVER mutated (immutability).
+    Drop diagnostics never include rejected provider values. The optional
+    safe_diagnostics argument remains accepted for caller compatibility.
     """
     valid: list[dict] = []
     for finding in findings:
         missing = _REQUIRED_FINDING_KEYS - set(finding.keys())
         if missing:
             print(
-                "code-forge: canary: dropping finding missing keys %s: %r" % (sorted(missing), finding),
+                "code-forge: canary: dropping finding missing keys %s" % sorted(missing),
                 file=sys.stderr,
             )
             continue
         if not finding.get("severity"):
             print(
-                "code-forge: canary: dropping finding with empty severity: %r" % finding,
+                "code-forge: canary: dropping finding with empty severity",
                 file=sys.stderr,
             )
             continue
@@ -331,6 +333,7 @@ def dispatch_canary_review(
     modified_diff: str,
     *,
     provider: ReviewProvider,
+    safe_diagnostics: bool = False,
 ) -> list[dict]:
     """Dispatch a fresh-context review of the modified diff.
 
@@ -359,7 +362,7 @@ def dispatch_canary_review(
         return []
 
     findings = data.get("findings", []) if isinstance(data, dict) else []
-    return validate_canary_findings(findings)
+    return validate_canary_findings(findings, **({"safe_diagnostics": True} if safe_diagnostics else {}))
 
 
 # ---------------------------------------------------------------------------
@@ -375,13 +378,20 @@ def run_inline_canary(
     canary_provider: CanaryProvider | None = None,
     review_provider: ReviewProvider,
     source_lookup: Callable[[str], Sequence[str] | None],
+    source_callback: Callable[[str], None] | None = None,
+    dispatch_error_reporter: Callable[[], None] | None = None,
+    safe_diagnostics: bool = False,
 ) -> tuple[Verdict, list[dict]]:
     """Orchestrate the full canary pipeline: generate -> inject -> dispatch ->
     validate -> partition -> cite-verify -> evaluate.
 
-    Returns (verdict, real_findings). On any dispatch error, degrades
-    gracefully to (DELEGATED, []).
+    Returns (verdict, real_findings). Ordinary dispatch errors degrade to
+    (DELEGATED, []). Strict audit refusals and fatal errors propagate.
+    safe_diagnostics keeps provider payloads out of consumer diagnostics;
+    it does not filter returned, verified findings or change gate decisions.
     """
+    from .llm_invoke import AuditPersistenceError
+
     result = generate_canaries(diff_text, n, provider=canary_provider)
     if isinstance(result, CanarySkip):
         print("code-forge: canary: skipped -- %s" % result.reason, file=sys.stderr)
@@ -389,8 +399,16 @@ def run_inline_canary(
 
     modified_diff, manifest = inject_canaries_into_diff(diff_text, result)
 
+    # The trusted host binds the actual reviewed source, never a parsed prompt.
+    if source_callback is not None:
+        source_callback(modified_diff)
+
     try:
-        raw_findings = dispatch_canary_review(modified_diff, provider=review_provider)
+        raw_findings = dispatch_canary_review(
+            modified_diff,
+            provider=review_provider,
+            **({"safe_diagnostics": True} if safe_diagnostics else {}),
+        )
 
         threshold = max(1, ceil(threshold_ratio * len(manifest)))
         gate_result = evaluate_canary_coverage(raw_findings, manifest, threshold=threshold)
@@ -407,9 +425,16 @@ def run_inline_canary(
         cite_result = reverify_finding_cites(list(partition.real), source_lookup)
         return Verdict.DELEGATED, list(cite_result.verified)
 
+    except (MemoryError, AuditPersistenceError):
+        raise
     except Exception as exc:  # noqa: BLE001 - any dispatch failure falls back to DELEGATED
-        print(
-            "code-forge: canary: dispatch failed: %s, falling back to DELEGATED" % exc,
-            file=sys.stderr,
-        )
+        if dispatch_error_reporter is not None:
+            dispatch_error_reporter()
+        else:
+            print(
+                "code-forge: canary: dispatch failed; falling back to DELEGATED"
+                if safe_diagnostics
+                else "code-forge: canary: dispatch failed: %s, falling back to DELEGATED" % exc,
+                file=sys.stderr,
+            )
         return Verdict.DELEGATED, []

@@ -508,10 +508,11 @@ def test_canary_generation_refuses_a_duplicate(tmp_path, capsys):
     # sec N2 / F1: the canary provider re-parses a string reply. json.loads
     # would keep the second "mutations" and return a mutation the model
     # never gave first; the provider falls back to templates instead.
-    from code_forge.cli import _dispatch_inline_canary
+    from code_forge.cli import _build_parser, _dispatch_inline_canary
     from code_forge.state import Verdict
 
-    mutation = {"file": "a.py", "line": 1, "original": "a", "code": "b", "description": "d"}
+    private = "PRIVATE-canary-duplicate-/home/fixture-user"
+    mutation = {"file": "a.py", "line": 1, "original": "a", "code": "b", "description": private}
     reply = '{"mutations": [], "mutations": [%s]}' % json.dumps(mutation)
     got = []
 
@@ -519,13 +520,23 @@ def test_canary_generation_refuses_a_duplicate(tmp_path, capsys):
         got.append(canary_provider("diff"))
         return Verdict.DELEGATED, []
 
+    args = _build_parser().parse_args(["review"])
+    assert args.audit_strict is False
     mock = Mock(return_value=SimpleNamespace(content=reply))
     with (
         patch("code_forge.cli._load_canary_config", return_value={"n": 5}),
         patch("code_forge.backend.resolve_backend", return_value=MagicMock()),
         patch("code_forge.canary_gen.run_inline_canary", side_effect=fake_canary),
         patch("code_forge.llm_invoke.llm_invoke", mock),
+        patch("code_forge.llm_invoke.loads_reply_json", wraps=loads_reply_json) as parse,
     ):
-        _dispatch_inline_canary("inline", MagicMock(), {}, None, {}, tmp_path)
+        _dispatch_inline_canary("inline", args, {}, None, {}, tmp_path)
+    mock.assert_called_once()
+    parse.assert_called_once_with(reply)
     assert got == [[]]
-    assert 'Duplicate key "mutations"' in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    err = captured.err
+    assert "code-forge: canary generation failed; falling back to templates\n" in err
+    assert "Duplicate key" not in err
+    assert private not in err and reply not in err

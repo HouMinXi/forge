@@ -75,7 +75,17 @@ class TestInlineCanaryEnvPassthrough:
     actually called with the env argument.
     """
 
-    def test_env_reaches_resolve_backend(self, tmp_path):
+    @pytest.fixture
+    def review_args(self):
+        from code_forge.cli import _build_parser
+
+        # A bare MagicMock invents a truthy audit_strict flag. Exercise the
+        # actual CLI defaults so these non-strict tests reach their own branch.
+        args = _build_parser().parse_args(["review"])
+        assert args.audit_strict is False
+        return args
+
+    def test_env_reaches_resolve_backend(self, tmp_path, review_args):
         """Real canary path: env reaches resolve_backend AND canary produces
         mutations.  No mock on run_inline_canary -- the real logic runs.
 
@@ -88,7 +98,7 @@ class TestInlineCanaryEnvPassthrough:
         from unittest.mock import patch, MagicMock
         from code_forge.cli import _dispatch_inline_canary
 
-        args = MagicMock()
+        args = review_args
         args.backend = None
         args.contract = None
 
@@ -153,37 +163,28 @@ class TestInlineCanaryEnvPassthrough:
                 "subprocess path" % type(result).__name__
             )
 
-    def test_sampling_raises_clierror(self, tmp_path):
-        """outlet='sampling' must raise CliError."""
-        from unittest.mock import MagicMock
+    def test_sampling_raises_clierror(self, tmp_path, review_args):
+        """outlet='sampling' must raise its own removal error, not the strict guard."""
         from code_forge.cli import _dispatch_inline_canary, CliError
 
-        args = MagicMock()
-        try:
-            _dispatch_inline_canary("sampling", args, {}, {}, {}, tmp_path)
-            raise AssertionError("should have raised CliError")
-        except CliError:
-            pass
+        with pytest.raises(CliError, match="sampling outlet was removed"):
+            _dispatch_inline_canary("sampling", review_args, {}, {}, {}, tmp_path)
 
-    def test_non_inline_returns_none(self, tmp_path):
+    def test_non_inline_returns_none(self, tmp_path, review_args):
         """outlet='subprocess' must return None (fall through)."""
-        from unittest.mock import MagicMock
         from code_forge.cli import _dispatch_inline_canary
 
-        args = MagicMock()
-        result = _dispatch_inline_canary("subprocess", args, {}, {}, {}, tmp_path)
+        result = _dispatch_inline_canary("subprocess", review_args, {}, {}, {}, tmp_path)
         assert result is None
 
-    def test_canary_config_none_returns_delegated(self, tmp_path):
+    def test_canary_config_none_returns_delegated(self, tmp_path, review_args):
         """inline with no canary config returns DELEGATED."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
         from code_forge.cli import _dispatch_inline_canary
         from code_forge.state import Verdict
 
-        args = MagicMock()
-        args.backend = None
         with patch("code_forge.cli._load_canary_config", return_value=None):
-            result = _dispatch_inline_canary("inline", args, {}, {}, {}, tmp_path)
+            result = _dispatch_inline_canary("inline", review_args, {}, {}, {}, tmp_path)
         assert result == Verdict.DELEGATED
 
 

@@ -2,6 +2,7 @@
 
 import contextlib
 import http.server
+import io
 import threading
 import time
 import urllib.request
@@ -9,6 +10,29 @@ import urllib.request
 import pytest
 
 import code_forge.llm_invoke as invoke
+from code_forge.invocation_stream import WireCapture
+
+
+@pytest.mark.parametrize("complete", [False, True])
+def test_real_stream_capture_retains_received_bytes_and_timeout_state(complete):
+    retained, warnings = io.BytesIO(), []
+    capture = WireCapture(write=retained.write, warn=warnings.append, limit_bytes=4096, chunk_bytes=17)
+    with _stream_server(drip=not complete, complete=complete) as url:
+        with urllib.request.urlopen(url, timeout=1) as response:  # noqa: S310 - controlled loopback
+            if complete:
+                result = invoke._read_sse(
+                    response, time.monotonic() + 1, "loopback", wire_capture=capture
+                )
+                assert result["choices"][0]["message"]["content"] == "prefix"
+            else:
+                with pytest.raises(invoke.LLMInvokeError) as caught:
+                    invoke._read_sse(response, time.monotonic() + 0.2, "loopback", wire_capture=capture)
+                assert caught.value.is_timeout and not caught.value.retryable
+    snapshot = capture.seal()
+    assert snapshot.interrupted is (not complete)
+    assert retained.getvalue().startswith(b'data: {"choices":')
+    assert snapshot.accepted_bytes == len(retained.getvalue())
+    assert not snapshot.failed and not snapshot.truncated and not warnings
 
 
 @contextlib.contextmanager
