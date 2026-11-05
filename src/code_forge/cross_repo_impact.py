@@ -14,6 +14,7 @@ CALLS+IMPORTS_FROM disambiguation, and infra_errors SKIP signaling.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -50,6 +51,61 @@ def _registry_path() -> str | None:
     Forge-side test seam, mirrors graph_triage CRG_DB_PATH.
     """
     return os.environ.get("CRG_REGISTRY_PATH") or None
+
+
+class GraphDiscoveryError(ValueError):
+    """The registry cannot supply a supported read-only discovery snapshot."""
+
+
+def _read_registry(path: Path) -> list[dict]:
+    """Read the provider's repos JSON without its directory-creating constructor.
+
+    Open directly: if the file disappears, there is nothing to recreate. A
+    malformed or unreadable registry is unavailable, not permission to ignore
+    its configured graph location and select another database.
+    """
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            data = json.load(stream)
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, RecursionError) as exc:
+        raise GraphDiscoveryError("registry unreadable") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("repos"), list):
+        raise GraphDiscoveryError("unsupported registry structure")
+    repos = data["repos"]
+    for entry in repos:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("path"), str)
+            or not entry["path"]
+            or "\0" in entry["path"]
+            or any(
+                key in entry and (not isinstance(entry[key], str) or "\0" in entry[key])
+                for key in ("alias", "data_dir")
+            )
+        ):
+            raise GraphDiscoveryError("unsupported registry entry")
+    return repos
+
+
+def _readonly_db_path(repo_root: Path, default_repos: list[dict]) -> Path:
+    """Select a path using the provider's 2.3.8/2.3.9 precedence, without writes.
+
+    Only the provider's default registry controls graph placement. Forge's
+    CRG_REGISTRY_PATH override controls sibling enumeration separately. The
+    first matching entry wins, even if it has no data_dir. Registered paths
+    resolve literally; only the environment override expands a leading tilde.
+    """
+    resolved = str(repo_root.resolve())
+    for entry in default_repos:
+        if entry["path"] == resolved:
+            if entry.get("data_dir"):
+                return Path(entry["data_dir"]).resolve() / "graph.db"
+            break
+    override = os.environ.get("CRG_DATA_DIR", "").strip()
+    data_dir = Path(override).expanduser().resolve() if override else repo_root / ".code-review-graph"
+    return data_dir / "graph.db"
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +354,7 @@ class CrossRepoImpactRunner:
     """Advisory axis: cross-repo direct-caller impact (R0).
 
     Satisfies the AdvisoryAxisRunner Protocol (is_advisory=True).
-    Discovers sibling repos via code-review-graph Registry,
+    Discovers sibling repos from code-review-graph registry snapshots,
     queries each sibling's graph.db for direct callers of
     changed symbols, and surfaces findings.
     """
@@ -335,10 +391,24 @@ class CrossRepoImpactRunner:
         if not diff_text or not diff_text.strip():
             return []
 
-        # Locate primary graph.db via canonical get_db_path.
-        from code_review_graph.incremental import get_db_path
-
-        primary_db = get_db_path(repo_root)
+        # Provider path/Registry constructors can mkdir even in read-only mode.
+        # Use only its pure default-path helper and our read-only JSON snapshot.
+        try:
+            from code_review_graph.registry import default_registry_path
+        except ImportError:
+            self.infra_errors.append(
+                "cross-repo-impact: registry location unavailable; code-review-graph >=2.3.8 required"
+            )
+            return []
+        try:
+            default_path = default_registry_path()
+            if not isinstance(default_path, Path):
+                raise GraphDiscoveryError("unsupported registry location")
+            default_repos = _read_registry(default_path)
+            primary_db = _readonly_db_path(repo_root, default_repos)
+        except (OSError, RuntimeError, ValueError) as exc:
+            self.infra_errors.append("cross-repo-impact: graph discovery unavailable: %s" % exc)
+            return []
         if not primary_db.is_file():
             self.infra_errors.append(
                 "cross-repo-impact: primary graph.db not found; build code-review-graph"
@@ -354,16 +424,21 @@ class CrossRepoImpactRunner:
         if not changed:
             return []
 
-        # Enumerate sibling repos via Registry.
-        from code_review_graph.registry import Registry
-
+        # Reuse the default snapshot unless enumeration has an explicit override.
         reg_path_str = _registry_path()
-        reg_path_arg = Path(reg_path_str) if reg_path_str else None
-        registry = Registry(path=reg_path_arg)
-        repos = registry.list_repos()
+        reg_path_arg = Path(reg_path_str) if reg_path_str else default_path
+        try:
+            repos = default_repos if reg_path_arg == default_path else _read_registry(reg_path_arg)
+        except GraphDiscoveryError as exc:
+            self.infra_errors.append("cross-repo-impact: registry unavailable: %s" % exc)
+            return []
 
-        resolved_root = repo_root.resolve()
-        siblings = [r for r in repos if Path(r["path"]).resolve() != resolved_root]
+        try:
+            resolved_root = repo_root.resolve()
+            siblings = [r for r in repos if Path(r["path"]).resolve() != resolved_root]
+        except (OSError, RuntimeError, ValueError) as exc:
+            self.infra_errors.append("cross-repo-impact: registry path unavailable: %s" % exc)
+            return []
 
         if not siblings:
             self.infra_errors.append(
@@ -382,7 +457,13 @@ class CrossRepoImpactRunner:
         hits: list[dict] = []
         for sib in siblings:
             alias = sib.get("alias") or Path(sib["path"]).name
-            sib_db = get_db_path(Path(sib["path"]))
+            try:
+                sib_db = _readonly_db_path(Path(sib["path"]), default_repos)
+            except (OSError, RuntimeError, ValueError) as exc:
+                self.infra_errors.append(
+                    "cross-repo-impact: sibling '%s' graph discovery unavailable: %s" % (alias, exc)
+                )
+                continue
 
             if not sib_db.is_file():
                 self.infra_errors.append("cross-repo-impact: sibling '%s' graph.db missing" % alias)

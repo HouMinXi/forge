@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Root-bound identity regressions using real SQLite, liveness and runner output.
 
-Only the optional graph provider's database locator and registry are faked.
+Only discovery's database locator and registry snapshot are faked.
 No network, Git, subprocesses, SQL stubs or optional dependency skips are used.
 """
 
 from contextlib import closing
+import json
 from pathlib import Path
 import socket
 import sqlite3
@@ -110,19 +111,12 @@ def world(tmp_path, monkeypatch):
     repos = [{"path": str(primary), "alias": "main"}, {"path": str(sibling), "alias": "consumer"}]
     package = types.ModuleType("code_review_graph")
     package.__path__ = []
-    incremental = types.ModuleType("code_review_graph.incremental")
-    incremental.get_db_path = lambda root: mapping[str(root)]
     registry = types.ModuleType("code_review_graph.registry")
-
-    class Registry:
-        def __init__(self, path=None):
-            pass
-
-        def list_repos(self):
-            return repos
-
-    registry.Registry = Registry
-    for module in (package, incremental, registry):
+    registry.default_registry_path = lambda: tmp_path / "registry.json"
+    monkeypatch.delenv("CRG_REGISTRY_PATH", raising=False)
+    monkeypatch.setattr(impact, "_read_registry", lambda path: repos)
+    monkeypatch.setattr(impact, "_readonly_db_path", lambda root, entries: mapping[str(root)])
+    for module in (package, registry):
         monkeypatch.setitem(sys.modules, module.__name__, module)
     return primary, sibling, p_db, s_db, mapping, repos
 
@@ -525,3 +519,154 @@ def test_nocase_distinct_cannot_hide_case_distinct_bound_root_aliases(world, tmp
     findings, errors = run(world)
     assert findings == []
     assert len(errors) == 1 and "ambiguous" in errors[0]
+
+
+def test_discovery_missing_provider_helper_never_invokes_mutating_api(tmp_path, monkeypatch):
+    package = types.ModuleType("code_review_graph")
+    package.__path__ = []
+    registry = types.ModuleType("code_review_graph.registry")
+    incremental = types.ModuleType("code_review_graph.incremental")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("provider mutating APIs must never be invoked")
+
+    registry.Registry = forbidden
+    incremental.get_db_path = forbidden
+    incremental.get_data_dir = forbidden
+    for module in (package, registry, incremental):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    runner = impact.CrossRepoImpactRunner()
+    assert runner.run(diff("api.py"), tmp_path) == []
+    assert runner.infra_errors == [
+        "cross-repo-impact: registry location unavailable; code-review-graph >=2.3.8 required"
+    ]
+
+
+def test_discovery_pure_provider_helper_is_sufficient(tmp_path, monkeypatch):
+    root = tmp_path / "primary"
+    db = database(root / ".code-review-graph" / "graph.db", root)
+    node(db, "api.py")
+    package = types.ModuleType("code_review_graph")
+    package.__path__ = []
+    registry = types.ModuleType("code_review_graph.registry")
+    registry.default_registry_path = lambda: tmp_path / "absent" / "registry.json"
+    for module in (package, registry):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.delenv("CRG_DATA_DIR", raising=False)
+    monkeypatch.delenv("CRG_REGISTRY_PATH", raising=False)
+    runner = impact.CrossRepoImpactRunner()
+    assert runner.run(diff("api.py"), root) == []
+    assert runner.infra_errors == [
+        "cross-repo-impact: no sibling repos registered; use code-review-graph register"
+    ]
+    assert not (tmp_path / "absent").exists()
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        None,
+        [],
+        {},
+        {"repos": None},
+        {"repos": {}},
+        {"repos": [None]},
+        {"repos": [{}]},
+        {"repos": [{"path": ""}]},
+        {"repos": [{"path": 1}]},
+        {"repos": [{"path": "bad\0path"}]},
+        {"repos": [{"path": "/repo", "data_dir": None}]},
+        {"repos": [{"path": "/repo", "data_dir": "bad\0path"}]},
+        {"repos": [{"path": "/repo", "alias": []}]},
+    ],
+    ids=[
+        "null",
+        "array",
+        "no-repos",
+        "null-repos",
+        "object-repos",
+        "null-entry",
+        "no-path",
+        "empty-path",
+        "numeric-path",
+        "nul-path",
+        "null-data-dir",
+        "nul-data-dir",
+        "array-alias",
+    ],
+)
+def test_discovery_rejects_unsupported_registry_shapes(tmp_path, data):
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(impact.GraphDiscoveryError, match="unsupported registry"):
+        impact._read_registry(path)
+
+
+@pytest.mark.parametrize("payload", [b"{", b"\xff"], ids=["invalid-json", "invalid-utf8"])
+def test_discovery_rejects_unreadable_registry_bytes(tmp_path, payload):
+    path = tmp_path / "registry.json"
+    path.write_bytes(payload)
+    with pytest.raises(impact.GraphDiscoveryError, match="registry unreadable"):
+        impact._read_registry(path)
+
+
+def test_discovery_missing_registry_is_empty_without_creation(tmp_path):
+    path = tmp_path / "absent" / "registry.json"
+    assert impact._read_registry(path) == []
+    assert not path.parent.exists()
+
+
+def test_discovery_permission_error_is_not_an_empty_registry(tmp_path, monkeypatch):
+    path = tmp_path / "registry.json"
+
+    def denied(*args, **kwargs):
+        raise PermissionError("fixture")
+
+    monkeypatch.setattr(Path, "open", denied)
+    with pytest.raises(impact.GraphDiscoveryError, match="registry unreadable"):
+        impact._read_registry(path)
+
+
+@pytest.mark.parametrize("first_data", [None, ""], ids=["absent-dir", "empty-dir"])
+def test_discovery_first_matching_registry_entry_wins(tmp_path, monkeypatch, first_data):
+    root = tmp_path / "repo"
+    root.mkdir()
+    first = {"path": str(root)}
+    if first_data is not None:
+        first["data_dir"] = first_data
+    repos = [first, {"path": str(root), "data_dir": str(tmp_path / "later")}]
+    monkeypatch.setenv("CRG_DATA_DIR", str(tmp_path / "env"))
+    assert impact._readonly_db_path(root, repos) == tmp_path / "env" / "graph.db"
+    assert not (tmp_path / "env").exists()
+
+
+def test_discovery_registry_dir_precedes_environment_without_tilde_expansion(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CRG_DATA_DIR", str(tmp_path / "env"))
+    repos = [{"path": str(root), "data_dir": "~/literal"}]
+    assert impact._readonly_db_path(root, repos) == tmp_path / "~" / "literal" / "graph.db"
+    assert not (tmp_path / "~").exists()
+
+
+def test_discovery_environment_expands_tilde_and_trims_whitespace(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("CRG_DATA_DIR", "  ~/external  ")
+    assert impact._readonly_db_path(root, []) == tmp_path / "home" / "external" / "graph.db"
+    assert not (tmp_path / "home").exists()
+
+
+def test_discovery_repo_lookup_canonicalizes_query_not_stored_entry(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    alias = tmp_path / "link"
+    alias.symlink_to(root, target_is_directory=True)
+    monkeypatch.delenv("CRG_DATA_DIR", raising=False)
+    registered = [{"path": str(root), "data_dir": str(tmp_path / "external")}]
+    assert impact._readonly_db_path(alias, registered) == tmp_path / "external" / "graph.db"
+    stored_alias = [{"path": str(alias), "data_dir": str(tmp_path / "ignored")}]
+    assert impact._readonly_db_path(root, stored_alias) == root / ".code-review-graph" / "graph.db"
