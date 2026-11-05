@@ -3926,6 +3926,8 @@
     "tests/test_cross_repo_impact_integration.py::TestSC3AdvisoryContract::test_advisory_findings_are_advisory_type",
     "tests/test_cross_repo_impact_integration.py::TestWiringAssertion::test_absent_from_sibling_source",
     "tests/test_cross_repo_impact_integration.py::TestWiringAssertion::test_present_in_primary_source",
+    "tests/test_cross_repo_impact_integration.py::test_missing_graph_metadata_is_not_registry_absence[repo_a]",
+    "tests/test_cross_repo_impact_integration.py::test_missing_graph_metadata_is_not_registry_absence[repo_b]",
     "tests/test_cross_repo_impact_root_identity.py::test_bad_sibling_does_not_erase_healthy_sibling",
     "tests/test_cross_repo_impact_root_identity.py::test_bad_sibling_path_is_rejected_before_liveness_reads[external]",
     "tests/test_cross_repo_impact_root_identity.py::test_bad_sibling_path_is_rejected_before_liveness_reads[missing-node]",
