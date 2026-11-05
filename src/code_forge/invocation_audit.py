@@ -976,15 +976,40 @@ def _root_lock(handle, *, deadline=None, monotonic=time.monotonic, create=False)
                 os.close(fd)
 
 
+def _close_preserving_primary(fd, primary):
+    try:
+        os.close(fd)
+    except OSError as close_error:
+        if primary is None:
+            raise
+        # Keep the exact secondary error without replacing the primary's chain or
+        # formatting possibly private error text. Bypass exception subclass hooks:
+        # even BaseException.add_note can invoke overridden attribute accessors.
+        state = BaseException.__dict__["__dict__"].__get__(primary)
+        previous = dict.get(state, "_invocation_audit_close_errors", ())
+        if type(previous) is not tuple:
+            previous = (previous,)
+        dict.__setitem__(state, "_invocation_audit_close_errors", previous + (close_error,))
+        note = "Invocation audit FD close also failed; see _invocation_audit_close_errors."
+        if not dict.__contains__(state, "__notes__"):
+            dict.__setitem__(state, "__notes__", [note])
+        elif type(notes := dict.__getitem__(state, "__notes__")) is list:
+            notes.append(note)
+
+
 @contextmanager
 def _run_dir(handle, run_id):
     _uuid(run_id)
     fd = os.open(run_id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=handle.fd)
+    primary = None
     try:
         _qualified_dir(fd)
         yield fd
+    except BaseException as error:
+        primary = error
+        raise
     finally:
-        os.close(fd)
+        _close_preserving_primary(fd, primary)
 
 
 def _file_identity(value):
@@ -1002,6 +1027,7 @@ def _file_identity(value):
 
 def _read_file(fd, name, bound=RUN_BYTES, *, _stable=False, _checkpoint=None):
     opened = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=fd)
+    primary = None
     try:
         identity = _regular(opened)
         _require(identity.st_size <= bound, "integrity_error")
@@ -1027,8 +1053,11 @@ def _read_file(fd, name, bound=RUN_BYTES, *, _stable=False, _checkpoint=None):
             )
             return data, _file_identity(identity)
         return data
+    except BaseException as error:
+        primary = error
+        raise
     finally:
-        os.close(opened)
+        _close_preserving_primary(opened, primary)
 
 
 def _write_all(fd, data, *, _checkpoint=None):
@@ -1088,11 +1117,15 @@ def _publish(fd, name, data, *, replace=False, _slot_events=None):
     opened = os.open(
         temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=fd
     )
+    primary = None
     try:
         _write_all(opened, data)
         os.fsync(opened)
+    except BaseException as error:
+        primary = error
+        raise
     finally:
-        os.close(opened)
+        _close_preserving_primary(opened, primary)
     _require(replace or name not in _entries(fd), "identity_conflict")
     os.rename(temp, name, src_dir_fd=fd, dst_dir_fd=fd)
     os.fsync(fd)
