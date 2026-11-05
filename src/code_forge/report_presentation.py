@@ -978,7 +978,8 @@ def validate_block_dict(block: Any) -> str | None:
         indexes.extend((f["record_index"]) for f in quarantine)
         _require(len(indexes) == len(set(indexes)))
         if indexes:
-            _require(set(indexes) == set(range(max(indexes) + 1)) and min(indexes) == 0)
+            # Bound work by record count, never an untrusted numeric index.
+            _require(set(indexes) == set(range(len(indexes))))
 
         def _increasing(seq: list[int]) -> bool:
             return all(seq[i] < seq[i + 1] for i in range(len(seq) - 1))

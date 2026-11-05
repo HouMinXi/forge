@@ -305,7 +305,7 @@ def test_acquisition_derivation_fault_null_outcomes():
     assert validate_block_dict(block) is None
 
 
-def test_index_union_must_be_dense():
+def test_index_union_must_be_dense(monkeypatch):
     p0 = {
         "record": {"record_index": 0, "fields": _empty_fields()},
         "associated_diagnostics": [],
@@ -323,6 +323,61 @@ def test_index_union_must_be_dense():
         product_path_record_count=2,
     )
     assert validate_block_dict(block) == "invalid-block"
+
+    # A tiny invalid block must not allocate a range sized by its numeric
+    # index. Keep the regression safe even if the bounded check is removed.
+    def bounded_range(stop):
+        assert stop <= 1, "index validation expanded an untrusted numeric range"
+        return range(stop)
+
+    monkeypatch.setattr("code_forge.report_presentation.range", bounded_range, raising=False)
+    assert validate_block_dict(_available_empty()) is None
+    for channel in ("product", "unresolved_product_candidates", "execution", "gate", "quarantine"):
+        fields = _empty_fields(
+            disposition="UNCERTAIN" if channel == "unresolved_product_candidates" else "CONFIRMED"
+        )
+        row = {"record": {"record_index": 0, "fields": fields}}
+        block = _available_empty()
+        if channel in ("product", "unresolved_product_candidates"):
+            row["associated_diagnostics"] = []
+            block["product_list_count" if channel == "product" else "unresolved_candidate_count"] = 1
+            block["product_path_record_count"] = 1
+        elif channel in ("execution", "gate"):
+            row["diagnostic"] = {
+                "kind": "provider-capacity" if channel == "execution" else "receipt-audit",
+                "basis": "inherited-predicate",
+                "observation_scope": "persisted-record-unbound",
+                "text": None,
+            }
+        else:
+            row = {
+                "record_index": 0,
+                "safe_fields": {"id": "x"},
+                "unavailable_fields": [k for k in FIELD_INVENTORY if k != "id"],
+                "reason": "record-computation-fault",
+            }
+            block["classification_complete"] = False
+            block["classification_errors"] = [
+                {"record_index": 0, "stage": "record", "code": "record-computation-fault"}
+            ]
+        block[channel] = [row]
+        run = {
+            "results": [{}] if channel in ("product", "unresolved_product_candidates") else [],
+            "properties": {"report_classification": block},
+        }
+        assert validate_block_dict(block) is None, channel
+        assert (
+            parse_report_classification(run, legacy_report_state="accepted").availability == "available"
+        )
+        index_owner = row if channel == "quarantine" else row["record"]
+        for index in (1, 10**9, 10**100):
+            index_owner["record_index"] = index
+            if channel == "quarantine":
+                block["classification_errors"][0]["record_index"] = index
+            assert validate_block_dict(block) == "invalid-block", (channel, index)
+            parsed = parse_report_classification(run, legacy_report_state="accepted")
+            assert parsed.availability == "unavailable", (channel, index)
+            assert parsed.unavailable_reason == "invalid-block", (channel, index)
 
 
 def _product_entry(index: int = 0, **field_overrides) -> dict:
