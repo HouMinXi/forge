@@ -122,7 +122,8 @@ def test_corrupt_open_preserves_prefix_measurements_and_full_charge(
     assert result["schema_invalid"] and result["torn"]
     assert not result["terminal"] and not result["settleable"] and not result["storage_settleable"]
     assert (path / "journal").read_bytes() == before
-    assert set(os.listdir(fd)) == {"journal"}
+    # List through a fresh directory description; fd predates journal creation.
+    assert set(os.listdir(path)) == {"journal"}
     assert bool(ticks) is checkpoint
     with pytest.raises(audit._Rejected) as failure:
         audit._require_root_version({RUN: result}, version)
