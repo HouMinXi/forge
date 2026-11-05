@@ -33,6 +33,13 @@ ROSTER = {
     "test_ci_nonobject_carrier_cannot_emit_clean_ledger",
     "test_ci_missing_status_cannot_emit_clean_ledger",
     "test_ci_invalid_status_cannot_emit_clean_ledger",
+    "test_ci_terminal_ledger_revocation_reopens_finding[FIXED-UNADJUDICATED]",
+    "test_ci_terminal_ledger_revocation_reopens_finding[FIXED-ESCAPED]",
+    "test_ci_terminal_ledger_revocation_reopens_finding[DISPROVED-UNADJUDICATED]",
+    "test_ci_terminal_ledger_revocation_reopens_finding[DISPROVED-ESCAPED]",
+    "test_ci_terminal_ledger_revocation_reopens_finding[DUPLICATE-UNADJUDICATED]",
+    "test_ci_terminal_ledger_revocation_reopens_finding[DUPLICATE-ESCAPED]",
+    "test_ci_terminal_ledger_cannot_suppress_synthetic_mutation_survivor",
 }
 
 
