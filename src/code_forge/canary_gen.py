@@ -108,25 +108,21 @@ def validate_canary_findings(findings: list[dict], *, safe_diagnostics: bool = F
     (no top-level "findings"/"code_excerpts" keys) and accepts ANY non-empty
     severity string (no P0-P3 enum constraint). Returns a NEW list containing
     only valid findings. The input list is NEVER mutated (immutability).
-    Audited consumers explicitly suppress provider values in drop diagnostics.
+    Drop diagnostics never include rejected provider values. The optional
+    safe_diagnostics argument remains accepted for caller compatibility.
     """
     valid: list[dict] = []
     for finding in findings:
         missing = _REQUIRED_FINDING_KEYS - set(finding.keys())
         if missing:
             print(
-                ("code-forge: canary: dropping finding missing keys %s" % sorted(missing))
-                if safe_diagnostics
-                else "code-forge: canary: dropping finding missing keys %s: %r"
-                % (sorted(missing), finding),
+                "code-forge: canary: dropping finding missing keys %s" % sorted(missing),
                 file=sys.stderr,
             )
             continue
         if not finding.get("severity"):
             print(
-                "code-forge: canary: dropping finding with empty severity"
-                if safe_diagnostics
-                else "code-forge: canary: dropping finding with empty severity: %r" % finding,
+                "code-forge: canary: dropping finding with empty severity",
                 file=sys.stderr,
             )
             continue

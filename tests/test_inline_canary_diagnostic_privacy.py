@@ -56,9 +56,14 @@ def test_inline_discarded_findings_stay_private(real_inline, monkeypatch, capsys
 def test_unaudited_helper_retains_diagnostics(capsys):
     missing = {"description": SECRET}
     empty = dict(file=SECRET, line=1, severity="", description=SECRET)
-    assert canary_gen.validate_canary_findings([missing, empty]) == []
-    output = capsys.readouterr().err
-    assert repr(missing) in output and repr(empty) in output
+    valid = dict(file="sample.py", line=1, severity="high", description="valid")
+    # Retain actionable reasons, never the rejected payload, even without audit.
+    for policy in ({}, {"safe_diagnostics": False}, {"safe_diagnostics": True}):
+        assert canary_gen.validate_canary_findings([missing, empty, valid], **policy) == [valid]
+        output = capsys.readouterr().err
+        assert SECRET not in output
+        assert "missing keys ['file', 'line', 'severity']" in output
+        assert "empty severity" in output
 
 
 @pytest.mark.parametrize("strict", [False, True])
