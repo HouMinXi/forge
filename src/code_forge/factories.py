@@ -647,7 +647,7 @@ def build_l1_provider(
                     if pass_scopes is not None:
                         from .invocation_review import strict_failure
 
-                        if strict_failure(pass_scopes[i], exc):
+                        if isinstance(exc, MemoryError) or strict_failure(pass_scopes[i], exc):
                             raise
                     pass_results.append(exc)
         else:
@@ -667,7 +667,7 @@ def build_l1_provider(
                         if pass_scopes is not None:
                             from .invocation_review import strict_failure
 
-                            if strict_failure(pass_scopes[i], exc):
+                            if isinstance(exc, MemoryError) or strict_failure(pass_scopes[i], exc):
                                 raise
                         pass_results.append(exc)
             _parallel_wall = time.monotonic() - _t0

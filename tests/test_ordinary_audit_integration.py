@@ -364,6 +364,66 @@ def test_real_default_storage_failures_keep_results_and_fixed_warning(
     assert PRIVATE not in output
 
 
+@pytest.mark.parametrize("stage", ["open", "finish"])
+@pytest.mark.parametrize("consumer", ["factory", "machine"])
+def test_real_default_storage_memoryerror_preserves_primary_without_infra(
+    ordinary_host, api_backend, monkeypatch, tmp_path, capsys, stage, consumer
+):
+    primary = MemoryError(PRIVATE)
+    cause = LookupError(PRIVATE)
+    primary.__cause__ = cause
+    monkeypatch.setattr(MockRecorder, "fail", stage)
+    monkeypatch.setattr(MockRecorder, "error", primary)
+    RoutedTransport(monkeypatch)
+    review = ordinary_host.review()
+    call = provider(api_backend)
+    sm = machine(tmp_path, api_backend, review, l1=call)
+    with pytest.raises(MemoryError) as caught:
+        if consumer == "factory":
+            call.call_with_audit(review.round(1))
+        else:
+            sm._run_l1_phase()
+    assert caught.value is primary and primary.__cause__ is cause
+    assert review.diagnostics.contains(primary)
+    assert call.acquisition_failures == []
+    assert sm._state.infra_errors == []
+    monkeypatch.setattr(MockRecorder, "fail", "finalize")
+    monkeypatch.setattr(MockRecorder, "error", RuntimeError(PRIVATE))
+    review.finalize(primary=primary)
+    assert review._closed and primary.__cause__ is cause
+    assert PRIVATE not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("backend_type", ["api", "cli"], ids=["parallel", "serial"])
+@pytest.mark.parametrize("audited", [False, True], ids=["legacy", "selected"])
+def test_isolated_fatal_fold_keeps_legacy_behavior_in_both_schedulers(
+    ordinary_host, api_backend, monkeypatch, backend_type, audited
+):
+    # Isolate the consumer fold, including the internal serial adapter route.
+    # This does not claim ordinary CLI-backend recording is publicly selected.
+    primary = MemoryError(PRIVATE)
+    cause = LookupError(PRIVATE)
+    primary.__cause__ = cause
+
+    def fail(*_args, **_kwargs):
+        raise primary
+
+    monkeypatch.setattr(llm_invoke, "llm_invoke", fail)
+    call = provider(replace(api_backend, type=backend_type))
+    review = ordinary_host.review()
+    if audited:
+        with pytest.raises(MemoryError) as caught:
+            call.call_with_audit(review.round(1))
+        assert caught.value is primary and primary.__cause__ is cause
+        assert review.diagnostics.contains(primary)
+        assert call.acquisition_failures == []
+    else:
+        findings = call()[0]
+        assert len(findings) == 3
+        assert all(f.source == "INFRA" for f in findings)
+        assert not review.diagnostics.contains(primary)
+
+
 def test_real_internal_strict_start_failure_propagates_without_infra_or_transport(
     ordinary_host, api_backend, monkeypatch
 ):
