@@ -1279,11 +1279,10 @@ def _disk_run(fd, run_id, *, _checkpoint=None):
                 orphan_raw = True
         else:
             raise _Rejected("integrity_error")
-    _require(
-        ordinary <= (_events_run_limit(events) if events else RUN_BYTES) - MARKER_BYTES
-        and marker <= MARKER_BYTES,
-        "integrity_error",
-    )
+    # Framing establishes a supported, uniform version, not a valid opening.
+    # Keep that byte policy even if semantic recovery discards the entire prefix.
+    run_limit = _run_limit(events[0]["schema_version"]) if events else RUN_BYTES
+    _require(ordinary <= run_limit - MARKER_BYTES and marker <= MARKER_BYTES, "integrity_error")
     try:
         if any(event["event"] in _STAGE_EXTRA for event in events):
             folded, stages, *_ = _stage_journal_state(events, _checkpoint=_checkpoint)
@@ -1354,10 +1353,7 @@ def _disk_run(fd, run_id, *, _checkpoint=None):
     if tombstone is not None:
         committed_ordinary = tombstone.get("ordinary_bytes")
     _number(committed_ordinary, integer=True)
-    _require(
-        committed_ordinary <= (_events_run_limit(events) if events else RUN_BYTES) - MARKER_BYTES,
-        "integrity_error",
-    )
+    _require(committed_ordinary <= run_limit - MARKER_BYTES, "integrity_error")
     referenced = {
         "raw-" + e["ref"]["artifact_id"]
         for e in events
@@ -1375,7 +1371,7 @@ def _disk_run(fd, run_id, *, _checkpoint=None):
     charge = (
         max(ordinary, committed_ordinary) + MARKER_BYTES
         if terminal and not frozen and not torn and not stage_incomplete
-        else (_events_run_limit(events) if events else RUN_BYTES)
+        else run_limit
     )
     return {
         "events": events,
