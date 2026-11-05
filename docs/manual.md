@@ -225,6 +225,33 @@ prints a verdict.
 forge 跑三轮静态 review(qodo / expert / adversarial 三道 pass),再跑动态门
 (R1 测试、R2 变异、R3 e2e,适用时),然后打印 verdict。
 
+### Partial private invocation recording / 部分调用的私有记录
+
+For a normal, ungrouped diff review using the subprocess outlet and an OpenAI
+API backend, raw response recording is on by default for L1 passes and their
+RealFalsifier calls. Streaming responses retain their received reasoning fields
+as well as answer text. Recording uses the existing bounded private local
+store. Recording failures warn and continue; truncation or incomplete storage
+is not reported as complete. Repeated rounds and HOLD resumes share the same
+captured diff and recording lifecycle.
+
+This is **not whole-review coverage**. Contract summaries, runtime/daemon
+advisories, assertion review, grouped/files-only/cross-repository/subagent paths,
+CLI backends and other API formats remain outside this ordinary integration.
+Their review behavior is unchanged. Ordinary `--audit-strict` is still rejected;
+that option currently supports only the inline canary OpenAI path. Existing
+rejected-response receipt artifacts are not moved into this new store.
+
+普通 subprocess 入口使用 OpenAI API、审查未分组的 diff 时，L1 三道 pass 及其
+RealFalsifier 调用默认记录收到的原始响应，流式响应中的 reasoning 字段也会保留。
+记录使用有界的本地私有存储，失败会警告并继续审查；截断或不完整记录不会被标为完整。
+多轮及 HOLD 恢复共用同一份已取得的 diff 和记录生命周期。
+
+这**不是整个 review 的完整记录**。合同摘要、runtime/daemon 建议、断言审查、
+分组、仅文件、跨仓库、subagent、CLI backend 和其他 API 格式尚未接入这条普通路径，
+原有审查功能保持不变。普通入口仍拒绝 `--audit-strict`；目前该选项只支持 inline
+canary 的 OpenAI 路径。已有的拒绝响应 receipt 产物不会迁移到新存储。
+
 ---
 
 ## 8. Read the result / 读懂结果

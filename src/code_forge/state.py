@@ -197,19 +197,39 @@ def provider_failure_snapshot(metadata: dict | None) -> dict | None:
     }
 
 
-def record_provider_failure(finding: StateFinding, error: Exception) -> None:
+def record_provider_failure(
+    finding: StateFinding, error: Exception, *, include_private_details: bool = True
+) -> None:
     """Retain actual invocation metadata; only typed truncation is capacity."""
     from .llm_invoke import LLMInvokeError, Usage
 
     if not isinstance(error, LLMInvokeError):
         return
     finding.is_timeout = error.is_timeout
+    kind = error.kind
+    if not include_private_details and (
+        type(kind) is not str
+        or kind
+        not in {
+            "audit_persistence_error",
+            "bad_body",
+            "conn",
+            "credentials",
+            "empty",
+            "no_json",
+            "protocol",
+            "send_deadline",
+            "sse_body",
+            "truncated",
+        }
+    ):
+        kind = None
     finding.provider_failure = provider_failure_snapshot(
         {
-            "kind": error.kind,
+            "kind": kind,
             "duration_s": error.duration_s,
             "exit_code": error.exit_code,
-            "stderr": error.stderr,
+            "stderr": error.stderr if include_private_details else None,
             "usage": None
             if type(error.usage) is not Usage
             else {
@@ -219,7 +239,7 @@ def record_provider_failure(finding: StateFinding, error: Exception) -> None:
             },
         }
     )
-    if error.kind == "truncated":
+    if kind == "truncated":
         finding.diagnostic_kind = FindingDiagnosticKind.PROVIDER_CAPACITY
 
 

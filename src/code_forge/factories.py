@@ -344,8 +344,9 @@ class _L1Call:
     attributes. Retaining a response does not by itself reject a round.
     """
 
-    def __init__(self, body):
+    def __init__(self, body, *, audited_body=None):
         self._body = body
+        self._audited_body = audited_body
         self.attempted_excerpts: list[dict] = []
         self.raw_observations: list[dict] = []
         self.pending_raw_responses: list[dict] = []
@@ -413,7 +414,24 @@ class _L1Call:
         """
         return self._excerpt_rejections
 
+    @property
+    def supports_invocation_audit(self) -> bool:
+        # Grouped/stub producers share this class but not this consumer route.
+        return self._audited_body is not None
+
     def __call__(self) -> tuple:
+        return self._invoke()
+
+    def call_with_audit(self, round_view) -> tuple:
+        if self._audited_body is None:
+            raise ValueError("producer has no ordinary audit route")
+        try:
+            return self._invoke(round_view)
+        except BaseException as primary:  # noqa: BLE001 - mark, never replace the primary
+            round_view.note_escape(primary)
+            raise
+
+    def _invoke(self, round_view=None) -> tuple:
         self._excerpt_invocation = object()
         self._excerpt_rejections = ()
         self.attempted_excerpts = []
@@ -424,7 +442,7 @@ class _L1Call:
         self.unavailable_rejected_passes = set()
         self.unavailable_rejected_causes = {}
         self.reviewer_responses = None
-        result = self._body(self)
+        result = self._body(self) if round_view is None else self._audited_body(self, round_view)
         # Snapshot before attaching observations: grouped calls may already
         # carry child audit data, which must never reference itself.
         observations: dict[str, list[dict]] = {}
@@ -509,7 +527,7 @@ def build_l1_provider(
         validate_reviewer_json,
     )
 
-    def _provider(call) -> tuple:
+    def _provider(call, audit_round=None) -> tuple:
         call.pass_usage = []
         diff_text = resolved.git_diff or ""
         # Attempted evidence for THIS invocation: raw reviewer responses
@@ -582,6 +600,9 @@ def build_l1_provider(
                 p + selection_line(pn) for p, (pn, _role) in zip(prompts, pass_configs, strict=True)
             ]
 
+        # Resolve immutable pass views before staggering or concurrent work.
+        pass_scopes = audit_round.l1_scopes(max_attempts) if audit_round is not None else None
+
         # -- Execute passes ---------------------------------------------
         # CLI backends use a module-global _active_proc that is not
         # thread-safe; keep serial for those.
@@ -607,6 +628,7 @@ def build_l1_provider(
                     diff_text, reviewed_repositories=reviewed_repositories
                 ),
                 reply_keys=REVIEW_REPLY_KEYS,
+                **({"host_audit": pass_scopes[idx]} if pass_scopes is not None else {}),
             )
             if r.usage.input_tokens > 0 or r.usage.output_tokens > 0 or r.usage.cached_input_tokens > 0:
                 bname = backend.name if backend else "unknown"
@@ -622,6 +644,11 @@ def build_l1_provider(
                 except Exception as exc:  # noqa: BLE001  any failure of one
                     # pass becomes an INFRA finding below; it must not take
                     # the other passes down with it
+                    if pass_scopes is not None:
+                        from .invocation_review import strict_failure
+
+                        if strict_failure(pass_scopes[i], exc):
+                            raise
                     pass_results.append(exc)
         else:
             from concurrent.futures import ThreadPoolExecutor
@@ -631,12 +658,17 @@ def build_l1_provider(
                 max_workers=len(pass_configs),
             ) as pool:
                 futures = [pool.submit(_run_pass, i) for i in range(len(pass_configs))]
-                for f in futures:
+                for i, f in enumerate(futures):
                     try:
                         pass_results.append(f.result())
                     except Exception as exc:  # noqa: BLE001  any failure of
                         # one pass becomes an INFRA finding below; it must
                         # not take the other passes down with it
+                        if pass_scopes is not None:
+                            from .invocation_review import strict_failure
+
+                            if strict_failure(pass_scopes[i], exc):
+                                raise
                         pass_results.append(exc)
             _parallel_wall = time.monotonic() - _t0
 
@@ -651,6 +683,23 @@ def build_l1_provider(
 
         for i, (pass_name, _role) in enumerate(pass_configs):
             pr = pass_results[i]
+            if pass_scopes is not None and pass_scopes[i].strict_failed:
+                from .llm_invoke import AuditPersistenceError
+
+                if isinstance(pr, BaseException):
+                    raise pr
+                # Prefer an actual failed sibling's primary over a synthesized
+                # group stop, after all submitted work has settled.
+                for result in pass_results:
+                    if isinstance(result, BaseException):
+                        raise result
+                raise AuditPersistenceError() from None
+            if audit_round is not None and isinstance(pr, Exception):
+                from .invocation_review import failure_label
+
+                diagnostic = failure_label(pr)
+            else:
+                diagnostic = pr
             if not isinstance(pr, Exception) or isinstance(pr, InvalidJSONResponseError):
                 call.record_reviewer_response(pass_name)
             observed_usage = (
@@ -695,7 +744,7 @@ def build_l1_provider(
                         {"raw_response": pr.raw_response, "pass_name": pass_name}
                     )
                 print(
-                    "code-forge: L1 pass '%s' failed: %s" % (pass_name, pr),
+                    "code-forge: L1 pass '%s' failed: %s" % (pass_name, diagnostic),
                     file=sys.stderr,
                 )
                 from .disposition import Disposition
@@ -710,11 +759,15 @@ def build_l1_provider(
                         file="<llm-invoke>",
                         line_range=[0, 0],
                         description="L1 invoke failed: %s: %s"
-                        % (backend.name if backend else "unknown", pr),
+                        % (backend.name if backend else "unknown", diagnostic),
                         is_timeout=pr.is_timeout,
                     )
                 )
-                record_provider_failure(all_candidates[-1], pr)
+                record_provider_failure(
+                    all_candidates[-1],
+                    pr,
+                    **({"include_private_details": False} if audit_round is not None else {}),
+                )
                 call.acquisition_failures.append(all_candidates[-1])
                 if breaker is not None:
                     if pr.is_timeout:
@@ -726,7 +779,12 @@ def build_l1_provider(
 
             if isinstance(pr, Exception):
                 print(
-                    "code-forge: L1 pass '%s' UNEXPECTED: %s: %s" % (pass_name, type(pr).__name__, pr),
+                    "code-forge: L1 pass '%s' UNEXPECTED: %s: %s"
+                    % (
+                        pass_name,
+                        "provider failure" if audit_round is not None else type(pr).__name__,
+                        diagnostic,
+                    ),
                     file=sys.stderr,
                 )
                 from .disposition import Disposition
@@ -741,7 +799,11 @@ def build_l1_provider(
                         file="<llm-invoke>",
                         line_range=[0, 0],
                         description="L1 invoke failed: %s: %s: %s"
-                        % (backend.name if backend else "unknown", type(pr).__name__, pr),
+                        % (
+                            backend.name if backend else "unknown",
+                            "provider failure" if audit_round is not None else type(pr).__name__,
+                            diagnostic,
+                        ),
                     )
                 )
                 call.acquisition_failures.append(all_candidates[-1])
@@ -787,7 +849,11 @@ def build_l1_provider(
                             file="<schema-validation>",
                             receipt_subtype="RECEIPT_SCHEMA",
                             line_range=[0, 0],
-                            description=f"schema validation failed: {exc}",
+                            description=(
+                                "schema validation failed: invalid reviewer response"
+                                if audit_round is not None
+                                else f"schema validation failed: {exc}"
+                            ),
                         )
                     )
                 # Preserve the exact attempted payload as audit data with
@@ -936,7 +1002,7 @@ def build_l1_provider(
             total_duration,
         )
 
-    return _L1Call(_provider)
+    return _L1Call(_provider, audited_body=_provider)
 
 
 def build_grouped_l1_provider(

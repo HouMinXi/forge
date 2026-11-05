@@ -2862,11 +2862,16 @@ def main() -> int:
 
     # Route to subcommand handler
     if args.subcommand == "review":
-        from .llm_invoke import AuditPersistenceError
+        from .llm_invoke import AuditPersistenceError, LLMInvokeError
+        from .invocation_review import ReviewAuditDiagnostics
 
+        audit_diagnostics = ReviewAuditDiagnostics()
         try:
-            verdict = _run(args, env=os.environ, cwd=Path.cwd())
+            verdict = _run(args, env=os.environ, cwd=Path.cwd(), audit_diagnostics=audit_diagnostics)
         except CliError as exc:
+            if audit_diagnostics.contains(exc):
+                print("code-forge: audited review invocation failed", file=sys.stderr)
+                return _review_terminal_exit(EXIT_CLI_ERROR)
             print("code-forge: error: %s" % exc, file=sys.stderr)
             if exc.remediation:
                 print("Hint: %s" % exc.remediation, file=sys.stderr)
@@ -2876,18 +2881,32 @@ def main() -> int:
             print("code-forge: invocation audit incomplete; strict review blocked", file=sys.stderr)
             return _review_terminal_exit(EXIT_FAIL)
         except ForgeLockBusy as exc:
+            if audit_diagnostics.contains(exc):
+                print("code-forge: audited review invocation failed", file=sys.stderr)
+                return _review_terminal_exit(EXIT_BUSY)
             print("code-forge: %s" % exc, file=sys.stderr)
             return _review_terminal_exit(EXIT_BUSY)
         except TimeoutBreaker as exc:
+            if audit_diagnostics.contains(exc):
+                print("code-forge: audited review invocation failed", file=sys.stderr)
+                return _review_terminal_exit(EXIT_TIMEOUT)
             print("code-forge: %s" % exc, file=sys.stderr)
             return _review_terminal_exit(EXIT_TIMEOUT)
         except Exception as exc:  # noqa: BLE001
+            if audit_diagnostics.contains(exc):
+                print("code-forge: audited review invocation failed", file=sys.stderr)
+                return _review_terminal_exit(
+                    EXIT_CLI_ERROR if isinstance(exc, LLMInvokeError) else EXIT_FAIL
+                )
             import traceback
 
             print("code-forge: unexpected error: %s" % exc, file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             return _review_terminal_exit(EXIT_FAIL)
         except SystemExit as exc:
+            if audit_diagnostics.contains(exc):
+                print("code-forge: internal error in audited review invocation", file=sys.stderr)
+                return _review_terminal_exit(EXIT_CLI_ERROR)
             # A SystemExit escaping the pipeline is a forge internal bug,
             # not a legitimate review outcome: it exits silently with
             # its own code (1 reads like FAIL) and leaves no receipts.
@@ -2908,6 +2927,11 @@ def main() -> int:
             # interpreter traceback; a bare re-raise would print one.
             _review_terminal_exit(130)
             raise SystemExit(130) from None
+        except BaseException as exc:  # noqa: BLE001 - only private terminal rendering changes
+            if audit_diagnostics.contains(exc):
+                print("code-forge: audited review invocation interrupted", file=sys.stderr)
+                return _review_terminal_exit(EXIT_FAIL)
+            raise
 
         # B2: PENDING guard before verdict_to_exit.
         if verdict == Verdict.PENDING:
@@ -4116,8 +4140,13 @@ def _test_config_root(args, env, cwd: Path) -> Path | None:
     return root
 
 
-def _run(args, env, cwd: Path) -> Verdict:
+def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
     """Main pipeline body. Returns Verdict."""
+    from .invocation_review import ReviewAuditDiagnostics
+
+    if audit_diagnostics is None:
+        audit_diagnostics = ReviewAuditDiagnostics()
+    audit_diagnostics.clear()
     _wall_t0 = time.monotonic()
     warn = (
         (lambda msg: None)
@@ -4824,6 +4853,32 @@ def _run(args, env, cwd: Path) -> Verdict:
                 review_lenses=review_lenses,
             )
 
+    from .factories import _L1Call
+    from .invocation_review import OrdinaryReviewAudit
+
+    ordinary_audit = None
+    if (
+        outlet == "subprocess"
+        and backend is not None
+        and backend.type == "api"
+        and backend.format == "openai"
+        and type(l1_provider) is _L1Call
+        and l1_provider.supports_invocation_audit
+        and type(resolved.git_diff) is str
+        and resolved.git_diff
+    ):
+        ordinary_audit = OrdinaryReviewAudit(
+            source=resolved.git_diff,
+            environ=env,
+            diagnostics=audit_diagnostics,
+        )
+        ordinary_audit.report_partial_coverage()
+    else:
+        print(
+            "code-forge: invocation audit unavailable for this review path; recording is incomplete",
+            file=sys.stderr,
+        )
+
     # Coverage gate inputs: L1 examines every changed file only when it
     # actually runs over a diff (engine != stub AND a non-empty git diff).
     # A non-git review or the stub engine leaves L1 inactive, so only L0
@@ -4919,7 +4974,8 @@ def _run(args, env, cwd: Path) -> Verdict:
         file=sys.stderr,
     )
 
-    # Step 7: lock + run
+    # Step 7: lock + run. One audit lifecycle spans all rounds/HOLD cycles.
+    primary = None
     try:
         with ForgeLock(lock_path):
             if mode == Mode.LOCAL:
@@ -4953,6 +5009,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 ctx_contract=bool(_contract_spec_a),
                 ctx_whole_file=bool(_whole_file),
                 ctx_canary=_load_canary_config(args, gate_data) is not None,
+                **({"invocation_audit": ordinary_audit} if ordinary_audit is not None else {}),
             )
             # Keep advice and the final state reload in the same review lock.
             assertion_outcome = (
@@ -4977,9 +5034,15 @@ def _run(args, env, cwd: Path) -> Verdict:
                 )
             elif mode == Mode.LOCAL:
                 emit_local_assertion_report(state_path, assertion_outcome)
-    except LLMInvokeError as exc:
-        # re-wrap LLMInvokeError as CliError
-        raise CliError("backend %s: %s" % (backend.name, exc)) from exc
+    except BaseException as exc:  # noqa: BLE001 - retain original primary during cleanup
+        primary = exc
+        if isinstance(exc, LLMInvokeError) and not audit_diagnostics.contains(exc):
+            # Preserve the legacy no-audit public wrapper.
+            raise CliError("backend %s: %s" % (backend.name, exc)) from exc
+        raise
+    finally:
+        if ordinary_audit is not None:
+            ordinary_audit.finalize(primary)
 
     return verdict
 
@@ -5016,6 +5079,7 @@ def _run_hold_loop(
     ctx_contract=False,
     ctx_whole_file=False,
     ctx_canary=False,
+    invocation_audit=None,
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
     for _cycle in range(MAX_HOLD_CYCLES):
@@ -5084,6 +5148,7 @@ def _run_hold_loop(
             ctx_contract=ctx_contract,
             ctx_whole_file=ctx_whole_file,
             ctx_canary=ctx_canary,
+            **({"invocation_audit": invocation_audit} if invocation_audit is not None else {}),
         )
         verdict = sm.run()
         # CLI-08 B6: load final state from disk for cost fields.

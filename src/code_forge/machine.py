@@ -821,6 +821,7 @@ class StateMachine:
     coverage_l1_active: bool = True
     coverage_exempt_patterns: list = field(default_factory=list)
     post_round_hook: Callable[[int], None] | None = None
+    invocation_audit: object | None = field(default=None, kw_only=True)
     max_total_rounds: int = 20
     max_fix_attempts: int = MAX_FIX_ATTEMPTS_PER_FINGERPRINT
     clean_round_threshold: int = field(default=DEFAULT_CLEAN_ROUND_THRESHOLD)
@@ -2733,6 +2734,23 @@ class StateMachine:
         return l0_findings
 
     def _run_l1_phase(self) -> tuple[list[StateFinding], list[dict]]:
+        from .factories import _L1Call
+
+        audit_round = None
+        if (
+            self.invocation_audit is not None
+            and type(self.l1_provider) is _L1Call
+            and self.l1_provider.supports_invocation_audit
+        ):
+            audit_round = self.invocation_audit.round(self._state.round)
+        try:
+            return self._run_l1_phase_body(audit_round)
+        except BaseException as primary:  # noqa: BLE001 - main-thread escaping identity
+            if audit_round is not None:
+                audit_round.note_escape(primary)
+            raise
+
+    def _run_l1_phase_body(self, audit_round=None) -> tuple[list[StateFinding], list[dict]]:
         """STATE-08 L1 detect phase. Runs AFTER L0 autofix in LOCAL mode.
 
         Both modes invoke L1 per LAYER0-07 (SARIF includes L1 candidates).
@@ -2744,7 +2762,13 @@ class StateMachine:
         """
         self._falsify_protocol_findings = []
         self._falsify_failed_findings = []
-        l1_candidates, l1_excerpts, usage, duration = self._observe_phase("l1", self.l1_provider)
+        operation = self.l1_provider
+        if audit_round is not None:
+
+            def operation():
+                return self.l1_provider.call_with_audit(audit_round)
+
+        l1_candidates, l1_excerpts, usage, duration = self._observe_phase("l1", operation)
         pass_usage = getattr(self.l1_provider, "pass_usage", None)
         self._round_pass_usage = None if pass_usage is None else [dict(row) for row in pass_usage]
         # Accumulate round-level token usage (H3: applied after round ends)
@@ -2771,7 +2795,7 @@ class StateMachine:
         _lock = threading.Lock()
 
         def _one(item):
-            i, f = item
+            i, f, audit_scope = item
             if f.source in ("INFRA", "UNTRUSTED"):
                 # INFRA: an infra failure, not a code defect to falsify.
                 # UNTRUSTED candidates still need disposition, but their
@@ -2781,7 +2805,9 @@ class StateMachine:
             progress.emit("falsify %d/%d: %s:%s (%s)" % (i, total, f.file, f.line_range, f.fingerprint))
             t_falsify = time.monotonic()
             try:
-                returned = self.falsifier.falsify(f)
+                returned = self.falsifier.falsify(
+                    f, **({"host_audit": audit_scope} if audit_scope is not None else {})
+                )
                 from .verify import bound_excerpt_disposition, finding_excerpt_binding
 
                 f.disposition = bound_excerpt_disposition(
@@ -2828,25 +2854,41 @@ class StateMachine:
                     % (i, total, f.disposition, time.monotonic() - t_falsify)
                 )
             except (FalsifyProtocolError, InvalidJSONResponseError) as exc:
+                if audit_scope is not None:
+                    from .invocation_review import failure_label, strict_failure
+
+                    if strict_failure(audit_scope, exc):
+                        raise
+                    diagnostic = failure_label(exc)
+                else:
+                    diagnostic = exc
                 # The backend answered, but not in the contract (non-dict,
                 # invalid JSON, no verdict key, unknown verdict). Same infra routing as
                 # an outage so the convergence guard sees it, but named
                 # separately: a dead backend and a model that stopped
                 # following the schema are different problems to fix.
                 f.disposition = Disposition.UNCERTAIN
-                f.error = f"falsify() protocol violation: {exc}"
+                f.error = f"falsify() protocol violation: {diagnostic}"
                 with _lock:
                     falsify_infra_failures.append(f.fingerprint)
                     self._falsify_protocol_findings.append(f)
                     self._falsify_failed_findings.append(f)
                     self._state.infra_errors.append(
-                        f"falsify protocol violation on {f.fingerprint}: {exc}"
+                        f"falsify protocol violation on {f.fingerprint}: {diagnostic}"
                     )
                 progress.emit(
                     "falsify %d/%d: protocol violation (%.1fs)"
                     % (i, total, time.monotonic() - t_falsify)
                 )
             except LLMInvokeError as exc:
+                if audit_scope is not None:
+                    from .invocation_review import failure_label, strict_failure
+
+                    if strict_failure(audit_scope, exc):
+                        raise
+                    diagnostic = failure_label(exc)
+                else:
+                    diagnostic = exc
                 # No usable verdict was acquired. Describe the observed
                 # cause without changing failure routing or clean credit.
                 if exc.is_timeout:
@@ -2862,21 +2904,33 @@ class StateMachine:
                 else:
                     failure = "invocation failed"
                 f.disposition = Disposition.UNCERTAIN
-                f.error = f"falsify() {failure}: {exc}"
+                f.error = f"falsify() {failure}: {diagnostic}"
                 with _lock:
                     falsify_infra_failures.append(f.fingerprint)
                     self._falsify_failed_findings.append(f)
-                    self._state.infra_errors.append(f"falsify {failure} on {f.fingerprint}: {exc}")
+                    self._state.infra_errors.append(
+                        f"falsify {failure} on {f.fingerprint}: {diagnostic}"
+                    )
                 progress.emit(
                     "falsify %d/%d: %s (%.1fs)" % (i, total, failure, time.monotonic() - t_falsify)
                 )
             except RuntimeError as exc:
+                if audit_scope is not None:
+                    from .invocation_review import failure_label, strict_failure
+
+                    if strict_failure(audit_scope, exc):
+                        raise
+                    diagnostic = failure_label(exc)
+                else:
+                    diagnostic = exc
                 f.disposition = Disposition.UNCERTAIN
-                f.error = f"falsify() raised: {exc}"
+                f.error = f"falsify() raised: {diagnostic}"
                 with _lock:
                     falsify_infra_failures.append(f.fingerprint)
                     self._falsify_failed_findings.append(f)
-                    self._state.infra_errors.append(f"falsify exception on {f.fingerprint}: {exc}")
+                    self._state.infra_errors.append(
+                        f"falsify exception on {f.fingerprint}: {diagnostic}"
+                    )
                 progress.emit("falsify %d/%d: failed (%.1fs)" % (i, total, time.monotonic() - t_falsify))
             except Exception:
                 # Close the event pair before re-raising: whatever
@@ -2887,7 +2941,25 @@ class StateMachine:
             return f
 
         workers = _falsify_workers(total, self.falsifier)
-        items = list(enumerate(l1_candidates, 1))
+        audited_falsifier = False
+        if audit_round is not None:
+            from .falsify_real import RealFalsifier
+
+            audited_falsifier = type(self.falsifier) is RealFalsifier
+
+        # Freeze every eligible finding's view before workers can start.
+        items = [
+            (
+                i,
+                finding,
+                audit_round.falsifier_scope()
+                if audit_round is not None
+                and audited_falsifier
+                and finding.source not in ("INFRA", "UNTRUSTED")
+                else None,
+            )
+            for i, finding in enumerate(l1_candidates, 1)
+        ]
         if workers <= 1 or total <= 1:
             l1_findings.extend(_one(item) for item in items)
         else:
@@ -2897,6 +2969,10 @@ class StateMachine:
                 # map() re-raises the first exception in input order,
                 # which preserves the re-raise arm's semantics.
                 l1_findings.extend(pool.map(_one, items))
+        if any(scope is not None and scope.strict_failed for _, _, scope in items):
+            from .llm_invoke import AuditPersistenceError
+
+            raise AuditPersistenceError() from None
         self._check_falsify_can_still_converge(falsify_infra_failures)
         self._check_evidence_can_still_converge(evidence_incomplete)
         return (l1_findings, l1_excerpts)

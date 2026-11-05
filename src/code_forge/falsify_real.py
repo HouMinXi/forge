@@ -231,7 +231,7 @@ class RealFalsifier(Falsifier):
         # prompt byte-for-byte so that number can be re-run.
         self._diff_text = diff_text
 
-    def falsify(self, finding: StateFinding) -> Disposition:
+    def falsify(self, finding: StateFinding, *, host_audit=None) -> Disposition:
         prompt = (
             _PROMPT_PREFIX
             + "File: "
@@ -273,6 +273,7 @@ class RealFalsifier(Falsifier):
             backend=self._backend,
             expected_keys=frozenset({"verdict", "reasoning"}),
             reply_keys=_FALSIFY_REPLY_KEYS,
+            **({"host_audit": host_audit} if host_audit is not None else {}),
         )
         response = result.content
 
