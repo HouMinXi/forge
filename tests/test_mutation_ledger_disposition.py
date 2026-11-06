@@ -17,7 +17,7 @@ from code_forge.ledger import (
     resolve_ledger_root,
 )
 from code_forge.mutation_findings import apply_mutation_ledger_dispositions
-from code_forge.state import StateFinding
+from code_forge.state import FindingDiagnosticKind, StateFinding
 
 BASE = "a" * 40
 HEAD = "b" * 40
@@ -84,6 +84,22 @@ def test_exact_terminal_states_require_every_binding(tmp_path, state):
     assert finding.disposition is Disposition.DISMISSED
     assert notes and finding.fingerprint in notes[0]
     assert finding.id == "mutant-example" and finding.description == "actual native claim"
+
+    # An exact ruling cannot turn a diagnostic-bearing record into a dismissal.
+    # Empty metadata still counts: the guard is non-None, not truthiness.
+    diagnostics = [{"diagnostic_kind": kind} for kind in FindingDiagnosticKind]
+    diagnostics.extend([{"provider_failure": {}}, {"provider_failure": {"kind": "truncated"}}])
+    for changes in diagnostics:
+        diagnostic = make_survivor(**changes)
+        before = asdict(diagnostic)
+        assert not apply(tmp_path, [diagnostic])
+        assert diagnostic.disposition is Disposition.CONFIRMED
+        assert asdict(diagnostic) == before
+
+    # Refusing a diagnostic must not poison a later ordinary measured survivor.
+    restored = make_survivor()
+    assert apply(tmp_path, [restored])
+    assert restored.disposition is Disposition.DISMISSED
 
 
 @pytest.mark.parametrize(

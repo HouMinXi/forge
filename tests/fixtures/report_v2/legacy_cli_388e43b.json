@@ -1,0 +1,860 @@
+{
+  "source_commit": "388e43bb8420123c9394cad144c43564dfe01961",
+  "forge_version": "2.9.0",
+  "source_sha256": {
+    "src/code_forge/cli.py": "13cef7590e8d9f36916d782b918d7d87de4874211593dd3a3b91c6030a814fa4",
+    "src/code_forge/sarif.py": "16452a78407a500a1d0349666f8466aec449af401689dfbcd523d01acb15ec0b",
+    "src/code_forge/report_presentation.py": "681e33770d60a02082bfde04417f91b280295bec355ebc6c8c4ee8b874544606",
+    "src/code_forge/report_projection.py": "8667ac05ceb63264c0d5ac043227b30d4259f7e1d89bcd039de99d4a1c824e10",
+    "src/code_forge/state.py": "d51562a9b24c6bddd400ee61cfc152c0b8b98bc64bffbc9696d1f770bc8adca2",
+    "src/code_forge/mcp_server.py": "60cbb3912811f13a1b7c6ad1be3d72c31234896da4a9d7fdf066e0e52c14e523"
+  },
+  "context": {
+    "tool_versions": {},
+    "advisories": [],
+    "resolved_locator": null
+  },
+  "cases": [
+    {
+      "name": "empty",
+      "state_json": "{\n  \"schema_version\": 1,\n  \"disposition_protocol_version\": 1,\n  \"round\": 0,\n  \"mode\": \"CI\",\n  \"source_hash\": null,\n  \"findings\": [],\n  \"dispositions\": {},\n  \"fix_attempts\": {},\n  \"verdict\": \"PASS\",\n  \"converged\": false,\n  \"baseline_spec_repr\": null,\n  \"round_history\": [],\n  \"infra_errors\": [],\n  \"hold_reason\": null,\n  \"promoted_fingerprints\": [],\n  \"consecutive_survivor_rounds\": 0,\n  \"mutation_survivor_counter_version\": 1,\n  \"survivor_counter_migration\": null,\n  \"consecutive_clean_rounds\": 0,\n  \"rounds_with_failed_pass\": 0,\n  \"rounds_with_falsify_infra\": 0,\n  \"rounds_with_mutation_infra\": 0,\n  \"rounds_with_evidence_incomplete\": 0,\n  \"cost\": {\n    \"total_input_tokens\": 0,\n    \"total_output_tokens\": 0,\n    \"total_cached_tokens\": 0,\n    \"total_duration_s\": 0.0,\n    \"passes\": 0,\n    \"per_pass\": []\n  },\n  \"env_manifest\": null,\n  \"exec_evidence\": null\n}",
+      "force_classification_refusal": false,
+      "stdout": "{\"$schema\":\"https://json.schemastore.org/sarif-2.1.0.json\",\"version\":\"2.1.0\",\"runs\":[{\"tool\":{\"driver\":{\"name\":\"code-forge\",\"semanticVersion\":\"code-forge 2.9.0 []\",\"informationUri\":\"https://github.com/HouMinXi/code-forge\"}},\"results\":[],\"properties\":{\"report_classification\":{\"schema\":\"forge-report-classification/v1\",\"availability\":\"available\",\"unavailable_reason\":null,\"delivery_mode\":\"projection\",\"projection_schema\":\"forge-report-projection-proposal-v1\",\"product\":[],\"execution\":[],\"gate\":[],\"quarantine\":[],\"unresolved_product_candidates\":[],\"classification_errors\":[],\"classification_complete\":true,\"product_list_count\":0,\"unresolved_candidate_count\":0,\"product_path_record_count\":0,\"acquisition_complete\":null,\"acquisition_reason\":\"completion-not-provable-from-state\",\"persisted_pass_outcomes\":[[\"qodo\",\"completed\"],[\"expert\",\"completed\"],[\"adversarial\",\"completed\"]]}}}]}\n",
+      "stderr": "code-forge: PASS findings=0 confirmed=0 uncertain=0 dismissed=0 fixed=0\ncode-forge: classification product=0 [not adjudicated: confirmed=0 dismissed=0 fixed=0 style=0; with-observations=0] unresolved=0 [uncertain; with-observations=0] quarantine=0 [unverified]\n",
+      "legacy_projection": [
+        0,
+        [],
+        null,
+        null
+      ],
+      "legacy_classification": {
+        "schema": "forge-report-classification/v1",
+        "availability": "available",
+        "unavailable_reason": null,
+        "delivery_mode": "projection",
+        "projection_schema": "forge-report-projection-proposal-v1",
+        "product": [],
+        "execution": [],
+        "gate": [],
+        "quarantine": [],
+        "unresolved_product_candidates": [],
+        "classification_errors": [],
+        "classification_complete": true,
+        "product_list_count": 0,
+        "unresolved_candidate_count": 0,
+        "product_path_record_count": 0,
+        "acquisition_complete": null,
+        "acquisition_reason": "completion-not-provable-from-state",
+        "persisted_pass_outcomes": [
+          [
+            "qodo",
+            "completed"
+          ],
+          [
+            "expert",
+            "completed"
+          ],
+          [
+            "adversarial",
+            "completed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "mutation",
+      "state_json": "{\n  \"schema_version\": 1,\n  \"disposition_protocol_version\": 1,\n  \"round\": 0,\n  \"mode\": \"CI\",\n  \"source_hash\": null,\n  \"findings\": [\n    {\n      \"id\": \"MUTATION_ERROR\",\n      \"fingerprint\": \"mutation-evidence-error\",\n      \"source\": \"INFRA\",\n      \"disposition\": \"CONFIRMED\",\n      \"file\": \"a.py\",\n      \"line_range\": [\n        1,\n        1\n      ],\n      \"description\": \"finding\",\n      \"error\": null,\n      \"anchor\": null,\n      \"evidence_files\": null,\n      \"is_timeout\": false,\n      \"backend\": null,\n      \"severity\": null,\n      \"excerpt\": null,\n      \"falsify_reasoning\": null,\n      \"evidence_downgrade\": null,\n      \"diagnostic_kind\": \"mutation-infra\",\n      \"provider_failure\": null,\n      \"receipt_subtype\": null\n    }\n  ],\n  \"dispositions\": {\n    \"MUTATION_ERROR\": \"CONFIRMED\"\n  },\n  \"fix_attempts\": {},\n  \"verdict\": \"PASS\",\n  \"converged\": false,\n  \"baseline_spec_repr\": null,\n  \"round_history\": [],\n  \"infra_errors\": [],\n  \"hold_reason\": null,\n  \"promoted_fingerprints\": [],\n  \"consecutive_survivor_rounds\": 0,\n  \"mutation_survivor_counter_version\": 1,\n  \"survivor_counter_migration\": null,\n  \"consecutive_clean_rounds\": 0,\n  \"rounds_with_failed_pass\": 0,\n  \"rounds_with_falsify_infra\": 0,\n  \"rounds_with_mutation_infra\": 0,\n  \"rounds_with_evidence_incomplete\": 0,\n  \"cost\": {\n    \"total_input_tokens\": 0,\n    \"total_output_tokens\": 0,\n    \"total_cached_tokens\": 0,\n    \"total_duration_s\": 0.0,\n    \"passes\": 0,\n    \"per_pass\": []\n  },\n  \"env_manifest\": null,\n  \"exec_evidence\": null\n}",
+      "force_classification_refusal": false,
+      "stdout": "{\"$schema\":\"https://json.schemastore.org/sarif-2.1.0.json\",\"version\":\"2.1.0\",\"runs\":[{\"tool\":{\"driver\":{\"name\":\"code-forge\",\"semanticVersion\":\"code-forge 2.9.0 []\",\"informationUri\":\"https://github.com/HouMinXi/code-forge\"}},\"results\":[],\"properties\":{\"report_classification\":{\"schema\":\"forge-report-classification/v1\",\"availability\":\"available\",\"unavailable_reason\":null,\"delivery_mode\":\"projection\",\"projection_schema\":\"forge-report-projection-proposal-v1\",\"product\":[],\"execution\":[],\"gate\":[],\"quarantine\":[{\"record_index\":0,\"safe_fields\":{\"id\":\"MUTATION_ERROR\",\"fingerprint\":\"mutation-evidence-error\",\"file\":\"a.py\",\"line_range\":[1,1],\"description\":\"finding\",\"disposition\":\"CONFIRMED\"},\"unavailable_fields\":[\"source\",\"error\",\"anchor\",\"evidence_files\",\"is_timeout\",\"backend\",\"severity\",\"excerpt\",\"falsify_reasoning\",\"evidence_downgrade\",\"diagnostic_kind\",\"provider_failure\"],\"reason\":\"record-computation-fault\"}],\"unresolved_product_candidates\":[],\"classification_errors\":[{\"record_index\":0,\"stage\":\"record\",\"code\":\"record-computation-fault\"}],\"classification_complete\":false,\"product_list_count\":0,\"unresolved_candidate_count\":0,\"product_path_record_count\":0,\"acquisition_complete\":null,\"acquisition_reason\":\"completion-not-provable-from-state\",\"persisted_pass_outcomes\":[[\"qodo\",\"completed\"],[\"expert\",\"completed\"],[\"adversarial\",\"completed\"]]}}}]}\n",
+      "stderr": "code-forge: PASS findings=0 confirmed=1 uncertain=0 dismissed=0 fixed=0 infra=1\ncode-forge: classification product=0 [not adjudicated: confirmed=0 dismissed=0 fixed=0 style=0; with-observations=0] unresolved=0 [uncertain; with-observations=0] quarantine=1 [unverified]\n",
+      "legacy_projection": [
+        0,
+        [],
+        null,
+        null
+      ],
+      "legacy_classification": {
+        "schema": "forge-report-classification/v1",
+        "availability": "available",
+        "unavailable_reason": null,
+        "delivery_mode": "projection",
+        "projection_schema": "forge-report-projection-proposal-v1",
+        "product": [],
+        "execution": [],
+        "gate": [],
+        "quarantine": [
+          {
+            "record_index": 0,
+            "safe_fields": {
+              "id": "MUTATION_ERROR",
+              "fingerprint": "mutation-evidence-error",
+              "file": "a.py",
+              "line_range": [
+                1,
+                1
+              ],
+              "description": "finding",
+              "disposition": "CONFIRMED"
+            },
+            "unavailable_fields": [
+              "source",
+              "error",
+              "anchor",
+              "evidence_files",
+              "is_timeout",
+              "backend",
+              "severity",
+              "excerpt",
+              "falsify_reasoning",
+              "evidence_downgrade",
+              "diagnostic_kind",
+              "provider_failure"
+            ],
+            "reason": "record-computation-fault"
+          }
+        ],
+        "unresolved_product_candidates": [],
+        "classification_errors": [
+          {
+            "record_index": 0,
+            "stage": "record",
+            "code": "record-computation-fault"
+          }
+        ],
+        "classification_complete": false,
+        "product_list_count": 0,
+        "unresolved_candidate_count": 0,
+        "product_path_record_count": 0,
+        "acquisition_complete": null,
+        "acquisition_reason": "completion-not-provable-from-state",
+        "persisted_pass_outcomes": [
+          [
+            "qodo",
+            "completed"
+          ],
+          [
+            "expert",
+            "completed"
+          ],
+          [
+            "adversarial",
+            "completed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "mixed",
+      "state_json": "{\n  \"schema_version\": 1,\n  \"disposition_protocol_version\": 1,\n  \"round\": 0,\n  \"mode\": \"CI\",\n  \"source_hash\": null,\n  \"findings\": [\n    {\n      \"id\": \"p\",\n      \"fingerprint\": \"p\",\n      \"source\": \"L1\",\n      \"disposition\": \"CONFIRMED\",\n      \"file\": \"a.py\",\n      \"line_range\": [\n        1,\n        1\n      ],\n      \"description\": \"finding\",\n      \"error\": null,\n      \"anchor\": null,\n      \"evidence_files\": null,\n      \"is_timeout\": false,\n      \"backend\": null,\n      \"severity\": null,\n      \"excerpt\": null,\n      \"falsify_reasoning\": null,\n      \"evidence_downgrade\": null,\n      \"diagnostic_kind\": null,\n      \"provider_failure\": null,\n      \"receipt_subtype\": null\n    },\n    {\n      \"id\": \"u\",\n      \"fingerprint\": \"p\",\n      \"source\": \"L1\",\n      \"disposition\": \"UNCERTAIN\",\n      \"file\": \"a.py\",\n      \"line_range\": [\n        1,\n        1\n      ],\n      \"description\": \"finding\",\n      \"error\": null,\n      \"anchor\": null,\n      \"evidence_files\": null,\n      \"is_timeout\": false,\n      \"backend\": null,\n      \"severity\": null,\n      \"excerpt\": null,\n      \"falsify_reasoning\": null,\n      \"evidence_downgrade\": null,\n      \"diagnostic_kind\": null,\n      \"provider_failure\": null,\n      \"receipt_subtype\": null\n    },\n    {\n      \"id\": \"MUTATION_ERROR\",\n      \"fingerprint\": \"mutation-evidence-error\",\n      \"source\": \"INFRA\",\n      \"disposition\": \"CONFIRMED\",\n      \"file\": \"a.py\",\n      \"line_range\": [\n        1,\n        1\n      ],\n      \"description\": \"finding\",\n      \"error\": null,\n      \"anchor\": null,\n      \"evidence_files\": null,\n      \"is_timeout\": false,\n      \"backend\": null,\n      \"severity\": null,\n      \"excerpt\": null,\n      \"falsify_reasoning\": null,\n      \"evidence_downgrade\": null,\n      \"diagnostic_kind\": \"mutation-infra\",\n      \"provider_failure\": null,\n      \"receipt_subtype\": null\n    }\n  ],\n  \"dispositions\": {\n    \"p\": \"CONFIRMED\",\n    \"u\": \"UNCERTAIN\",\n    \"MUTATION_ERROR\": \"CONFIRMED\"\n  },\n  \"fix_attempts\": {},\n  \"verdict\": \"PASS\",\n  \"converged\": false,\n  \"baseline_spec_repr\": null,\n  \"round_history\": [],\n  \"infra_errors\": [],\n  \"hold_reason\": null,\n  \"promoted_fingerprints\": [],\n  \"consecutive_survivor_rounds\": 0,\n  \"mutation_survivor_counter_version\": 1,\n  \"survivor_counter_migration\": null,\n  \"consecutive_clean_rounds\": 0,\n  \"rounds_with_failed_pass\": 0,\n  \"rounds_with_falsify_infra\": 0,\n  \"rounds_with_mutation_infra\": 0,\n  \"rounds_with_evidence_incomplete\": 0,\n  \"cost\": {\n    \"total_input_tokens\": 0,\n    \"total_output_tokens\": 0,\n    \"total_cached_tokens\": 0,\n    \"total_duration_s\": 0.0,\n    \"passes\": 0,\n    \"per_pass\": []\n  },\n  \"env_manifest\": null,\n  \"exec_evidence\": null\n}",
+      "force_classification_refusal": false,
+      "stdout": "{\"$schema\":\"https://json.schemastore.org/sarif-2.1.0.json\",\"version\":\"2.1.0\",\"runs\":[{\"tool\":{\"driver\":{\"name\":\"code-forge\",\"semanticVersion\":\"code-forge 2.9.0 []\",\"informationUri\":\"https://github.com/HouMinXi/code-forge\"}},\"results\":[{\"ruleId\":\"p\",\"level\":\"error\",\"message\":{\"text\":\"finding\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"a.py\"},\"region\":{\"startLine\":1,\"endLine\":1}}}],\"properties\":{\"source\":\"L1\",\"basis\":{\"authority\":\"llm-docs-pinned\",\"falsification_survived\":true,\"convergence_rounds\":1}}},{\"ruleId\":\"p\",\"level\":\"warning\",\"message\":{\"text\":\"finding\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"a.py\"},\"region\":{\"startLine\":1,\"endLine\":1}}}],\"properties\":{\"source\":\"L1\",\"basis\":{\"authority\":\"llm-docs-pinned\",\"falsification_survived\":true,\"convergence_rounds\":1}}}],\"properties\":{\"report_classification\":{\"schema\":\"forge-report-classification/v1\",\"availability\":\"available\",\"unavailable_reason\":null,\"delivery_mode\":\"projection\",\"projection_schema\":\"forge-report-projection-proposal-v1\",\"product\":[{\"record\":{\"record_index\":0,\"fields\":{\"id\":\"p\",\"fingerprint\":\"p\",\"source\":\"L1\",\"disposition\":\"CONFIRMED\",\"file\":\"a.py\",\"line_range\":[1,1],\"description\":\"finding\",\"error\":null,\"anchor\":null,\"evidence_files\":null,\"is_timeout\":null,\"backend\":null,\"severity\":null,\"excerpt\":null,\"falsify_reasoning\":null,\"evidence_downgrade\":null,\"diagnostic_kind\":null,\"provider_failure\":null}},\"associated_diagnostics\":[],\"host_failure_kind\":null}],\"execution\":[],\"gate\":[],\"quarantine\":[{\"record_index\":2,\"safe_fields\":{\"id\":\"MUTATION_ERROR\",\"fingerprint\":\"mutation-evidence-error\",\"file\":\"a.py\",\"line_range\":[1,1],\"description\":\"finding\",\"disposition\":\"CONFIRMED\"},\"unavailable_fields\":[\"source\",\"error\",\"anchor\",\"evidence_files\",\"is_timeout\",\"backend\",\"severity\",\"excerpt\",\"falsify_reasoning\",\"evidence_downgrade\",\"diagnostic_kind\",\"provider_failure\"],\"reason\":\"record-computation-fault\"}],\"unresolved_product_candidates\":[{\"record\":{\"record_index\":1,\"fields\":{\"id\":\"u\",\"fingerprint\":\"p\",\"source\":\"L1\",\"disposition\":\"UNCERTAIN\",\"file\":\"a.py\",\"line_range\":[1,1],\"description\":\"finding\",\"error\":null,\"anchor\":null,\"evidence_files\":null,\"is_timeout\":null,\"backend\":null,\"severity\":null,\"excerpt\":null,\"falsify_reasoning\":null,\"evidence_downgrade\":null,\"diagnostic_kind\":null,\"provider_failure\":null}},\"associated_diagnostics\":[],\"host_failure_kind\":null}],\"classification_errors\":[{\"record_index\":2,\"stage\":\"record\",\"code\":\"record-computation-fault\"}],\"classification_complete\":false,\"product_list_count\":1,\"unresolved_candidate_count\":1,\"product_path_record_count\":2,\"acquisition_complete\":null,\"acquisition_reason\":\"completion-not-provable-from-state\",\"persisted_pass_outcomes\":[[\"qodo\",\"completed\"],[\"expert\",\"completed\"],[\"adversarial\",\"completed\"]]}}}]}\n",
+      "stderr": "code-forge: PASS findings=2 confirmed=2 uncertain=1 dismissed=0 fixed=0 infra=1\ncode-forge: classification product=1 [not adjudicated: confirmed=1 dismissed=0 fixed=0 style=0; with-observations=0] unresolved=1 [uncertain; with-observations=0] quarantine=1 [unverified]\n",
+      "legacy_projection": [
+        2,
+        [
+          {
+            "ruleId": "p",
+            "level": "error",
+            "message": {
+              "text": "finding"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "a.py"
+                  },
+                  "region": {
+                    "startLine": 1,
+                    "endLine": 1
+                  }
+                }
+              }
+            ],
+            "properties": {
+              "source": "L1",
+              "basis": {
+                "authority": "llm-docs-pinned",
+                "falsification_survived": true,
+                "convergence_rounds": 1
+              }
+            }
+          },
+          {
+            "ruleId": "p",
+            "level": "warning",
+            "message": {
+              "text": "finding"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "a.py"
+                  },
+                  "region": {
+                    "startLine": 1,
+                    "endLine": 1
+                  }
+                }
+              }
+            ],
+            "properties": {
+              "source": "L1",
+              "basis": {
+                "authority": "llm-docs-pinned",
+                "falsification_survived": true,
+                "convergence_rounds": 1
+              }
+            }
+          }
+        ],
+        null,
+        null
+      ],
+      "legacy_classification": {
+        "schema": "forge-report-classification/v1",
+        "availability": "available",
+        "unavailable_reason": null,
+        "delivery_mode": "projection",
+        "projection_schema": "forge-report-projection-proposal-v1",
+        "product": [
+          {
+            "record": {
+              "record_index": 0,
+              "fields": {
+                "id": "p",
+                "fingerprint": "p",
+                "source": "L1",
+                "disposition": "CONFIRMED",
+                "file": "a.py",
+                "line_range": [
+                  1,
+                  1
+                ],
+                "description": "finding",
+                "error": null,
+                "anchor": null,
+                "evidence_files": null,
+                "is_timeout": null,
+                "backend": null,
+                "severity": null,
+                "excerpt": null,
+                "falsify_reasoning": null,
+                "evidence_downgrade": null,
+                "diagnostic_kind": null,
+                "provider_failure": null
+              }
+            },
+            "associated_diagnostics": [],
+            "host_failure_kind": null
+          }
+        ],
+        "execution": [],
+        "gate": [],
+        "quarantine": [
+          {
+            "record_index": 2,
+            "safe_fields": {
+              "id": "MUTATION_ERROR",
+              "fingerprint": "mutation-evidence-error",
+              "file": "a.py",
+              "line_range": [
+                1,
+                1
+              ],
+              "description": "finding",
+              "disposition": "CONFIRMED"
+            },
+            "unavailable_fields": [
+              "source",
+              "error",
+              "anchor",
+              "evidence_files",
+              "is_timeout",
+              "backend",
+              "severity",
+              "excerpt",
+              "falsify_reasoning",
+              "evidence_downgrade",
+              "diagnostic_kind",
+              "provider_failure"
+            ],
+            "reason": "record-computation-fault"
+          }
+        ],
+        "unresolved_product_candidates": [
+          {
+            "record": {
+              "record_index": 1,
+              "fields": {
+                "id": "u",
+                "fingerprint": "p",
+                "source": "L1",
+                "disposition": "UNCERTAIN",
+                "file": "a.py",
+                "line_range": [
+                  1,
+                  1
+                ],
+                "description": "finding",
+                "error": null,
+                "anchor": null,
+                "evidence_files": null,
+                "is_timeout": null,
+                "backend": null,
+                "severity": null,
+                "excerpt": null,
+                "falsify_reasoning": null,
+                "evidence_downgrade": null,
+                "diagnostic_kind": null,
+                "provider_failure": null
+              }
+            },
+            "associated_diagnostics": [],
+            "host_failure_kind": null
+          }
+        ],
+        "classification_errors": [
+          {
+            "record_index": 2,
+            "stage": "record",
+            "code": "record-computation-fault"
+          }
+        ],
+        "classification_complete": false,
+        "product_list_count": 1,
+        "unresolved_candidate_count": 1,
+        "product_path_record_count": 2,
+        "acquisition_complete": null,
+        "acquisition_reason": "completion-not-provable-from-state",
+        "persisted_pass_outcomes": [
+          [
+            "qodo",
+            "completed"
+          ],
+          [
+            "expert",
+            "completed"
+          ],
+          [
+            "adversarial",
+            "completed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "capacity",
+      "state_json": "{\n  \"schema_version\": 1,\n  \"disposition_protocol_version\": 1,\n  \"round\": 0,\n  \"mode\": \"CI\",\n  \"source_hash\": null,\n  \"findings\": [\n    {\n      \"id\": \"l1-adversarial-invoke-fail\",\n      \"fingerprint\": \"invoke-fail-adversarial\",\n      \"source\": \"INFRA\",\n      \"disposition\": \"CONFIRMED\",\n      \"file\": \"<llm-invoke>\",\n      \"line_range\": [\n        0,\n        0\n      ],\n      \"description\": \"finding\",\n      \"error\": null,\n      \"anchor\": null,\n      \"evidence_files\": null,\n      \"is_timeout\": false,\n      \"backend\": null,\n      \"severity\": null,\n      \"excerpt\": null,\n      \"falsify_reasoning\": null,\n      \"evidence_downgrade\": null,\n      \"diagnostic_kind\": \"provider-capacity\",\n      \"provider_failure\": {\n        \"kind\": \"truncated\"\n      },\n      \"receipt_subtype\": null\n    }\n  ],\n  \"dispositions\": {\n    \"l1-adversarial-invoke-fail\": \"CONFIRMED\"\n  },\n  \"fix_attempts\": {},\n  \"verdict\": \"PASS\",\n  \"converged\": false,\n  \"baseline_spec_repr\": null,\n  \"round_history\": [],\n  \"infra_errors\": [],\n  \"hold_reason\": null,\n  \"promoted_fingerprints\": [],\n  \"consecutive_survivor_rounds\": 0,\n  \"mutation_survivor_counter_version\": 1,\n  \"survivor_counter_migration\": null,\n  \"consecutive_clean_rounds\": 0,\n  \"rounds_with_failed_pass\": 0,\n  \"rounds_with_falsify_infra\": 0,\n  \"rounds_with_mutation_infra\": 0,\n  \"rounds_with_evidence_incomplete\": 0,\n  \"cost\": {\n    \"total_input_tokens\": 0,\n    \"total_output_tokens\": 0,\n    \"total_cached_tokens\": 0,\n    \"total_duration_s\": 0.0,\n    \"passes\": 0,\n    \"per_pass\": []\n  },\n  \"env_manifest\": null,\n  \"exec_evidence\": null\n}",
+      "force_classification_refusal": false,
+      "stdout": "{\"$schema\":\"https://json.schemastore.org/sarif-2.1.0.json\",\"version\":\"2.1.0\",\"runs\":[{\"tool\":{\"driver\":{\"name\":\"code-forge\",\"semanticVersion\":\"code-forge 2.9.0 []\",\"informationUri\":\"https://github.com/HouMinXi/code-forge\"}},\"results\":[],\"properties\":{\"providerDiagnostics\":[{\"id\":\"l1-adversarial-invoke-fail\",\"fingerprint\":\"invoke-fail-adversarial\",\"source\":\"INFRA\",\"disposition\":\"CONFIRMED\",\"file\":\"<llm-invoke>\",\"line_range\":[0,0],\"description\":\"finding\",\"error\":null,\"anchor\":null,\"evidence_files\":null,\"is_timeout\":false,\"backend\":null,\"severity\":null,\"excerpt\":null,\"falsify_reasoning\":null,\"evidence_downgrade\":null,\"diagnostic_kind\":\"provider-capacity\",\"provider_failure\":{\"kind\":\"truncated\"},\"receipt_subtype\":null}],\"report_classification\":{\"schema\":\"forge-report-classification/v1\",\"availability\":\"available\",\"unavailable_reason\":null,\"delivery_mode\":\"projection\",\"projection_schema\":\"forge-report-projection-proposal-v1\",\"product\":[],\"execution\":[{\"record\":{\"record_index\":0,\"fields\":{\"id\":\"l1-adversarial-invoke-fail\",\"fingerprint\":\"invoke-fail-adversarial\",\"source\":\"INFRA\",\"disposition\":\"CONFIRMED\",\"file\":\"<llm-invoke>\",\"line_range\":[0,0],\"description\":\"finding\",\"error\":null,\"anchor\":null,\"evidence_files\":null,\"is_timeout\":null,\"backend\":null,\"severity\":null,\"excerpt\":null,\"falsify_reasoning\":null,\"evidence_downgrade\":null,\"diagnostic_kind\":null,\"provider_failure\":null}},\"diagnostic\":{\"kind\":\"provider-capacity\",\"basis\":\"inherited-predicate\",\"observation_scope\":\"persisted-record-unbound\",\"text\":null},\"host_failure_kind\":\"PROVIDER_CAPACITY\"}],\"gate\":[],\"quarantine\":[],\"unresolved_product_candidates\":[],\"classification_errors\":[],\"classification_complete\":true,\"product_list_count\":0,\"unresolved_candidate_count\":0,\"product_path_record_count\":0,\"acquisition_complete\":false,\"acquisition_reason\":\"pass-outcome-not-completed\",\"persisted_pass_outcomes\":[[\"qodo\",\"completed\"],[\"expert\",\"completed\"],[\"adversarial\",\"error\"]]}}}]}\n",
+      "stderr": "code-forge: PASS findings=0 confirmed=0 uncertain=0 dismissed=0 fixed=0 provider_capacity=1 passes=2/3\ncode-forge: classification product=0 [not adjudicated: confirmed=0 dismissed=0 fixed=0 style=0; with-observations=0] unresolved=0 [uncertain; with-observations=0] quarantine=0 [unverified]\n",
+      "legacy_projection": [
+        0,
+        [],
+        null,
+        null
+      ],
+      "legacy_classification": {
+        "schema": "forge-report-classification/v1",
+        "availability": "available",
+        "unavailable_reason": null,
+        "delivery_mode": "projection",
+        "projection_schema": "forge-report-projection-proposal-v1",
+        "product": [],
+        "execution": [
+          {
+            "record": {
+              "record_index": 0,
+              "fields": {
+                "id": "l1-adversarial-invoke-fail",
+                "fingerprint": "invoke-fail-adversarial",
+                "source": "INFRA",
+                "disposition": "CONFIRMED",
+                "file": "<llm-invoke>",
+                "line_range": [
+                  0,
+                  0
+                ],
+                "description": "finding",
+                "error": null,
+                "anchor": null,
+                "evidence_files": null,
+                "is_timeout": null,
+                "backend": null,
+                "severity": null,
+                "excerpt": null,
+                "falsify_reasoning": null,
+                "evidence_downgrade": null,
+                "diagnostic_kind": null,
+                "provider_failure": null
+              }
+            },
+            "diagnostic": {
+              "kind": "provider-capacity",
+              "basis": "inherited-predicate",
+              "observation_scope": "persisted-record-unbound",
+              "text": null
+            },
+            "host_failure_kind": "PROVIDER_CAPACITY"
+          }
+        ],
+        "gate": [],
+        "quarantine": [],
+        "unresolved_product_candidates": [],
+        "classification_errors": [],
+        "classification_complete": true,
+        "product_list_count": 0,
+        "unresolved_candidate_count": 0,
+        "product_path_record_count": 0,
+        "acquisition_complete": false,
+        "acquisition_reason": "pass-outcome-not-completed",
+        "persisted_pass_outcomes": [
+          [
+            "qodo",
+            "completed"
+          ],
+          [
+            "expert",
+            "completed"
+          ],
+          [
+            "adversarial",
+            "error"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "gates",
+      "state_json": "{\n  \"schema_version\": 1,\n  \"disposition_protocol_version\": 1,\n  \"round\": 0,\n  \"mode\": \"CI\",\n  \"source_hash\": null,\n  \"findings\": [\n    {\n      \"id\": \"RECEIPT_INVALID\",\n      \"fingerprint\": \"receipt-abcdef012345\",\n      \"source\": \"INFRA\",\n      \"disposition\": \"CONFIRMED\",\n      \"file\": \"<receipt-evidence>\",\n      \"line_range\": [\n        0,\n        0\n      ],\n      \"description\": \"finding\",\n      \"error\": null,\n      \"anchor\": null,\n      \"evidence_files\": null,\n      \"is_timeout\": false,\n      \"backend\": null,\n      \"severity\": null,\n      \"excerpt\": null,\n      \"falsify_reasoning\": null,\n      \"evidence_downgrade\": null,\n      \"diagnostic_kind\": \"capacity-incomplete\",\n      \"provider_failure\": null,\n      \"receipt_subtype\": \"RECEIPT_COVERAGE\"\n    },\n    {\n      \"id\": \"RECEIPT_UNTRUSTED\",\n      \"fingerprint\": \"audit\",\n      \"source\": \"UNTRUSTED\",\n      \"disposition\": \"UNCERTAIN\",\n      \"file\": \"a.py\",\n      \"line_range\": [\n        1,\n        1\n      ],\n      \"description\": \"finding\",\n      \"error\": null,\n      \"anchor\": null,\n      \"evidence_files\": null,\n      \"is_timeout\": false,\n      \"backend\": null,\n      \"severity\": null,\n      \"excerpt\": null,\n      \"falsify_reasoning\": null,\n      \"evidence_downgrade\": null,\n      \"diagnostic_kind\": null,\n      \"provider_failure\": null,\n      \"receipt_subtype\": null\n    }\n  ],\n  \"dispositions\": {\n    \"RECEIPT_INVALID\": \"CONFIRMED\",\n    \"RECEIPT_UNTRUSTED\": \"UNCERTAIN\"\n  },\n  \"fix_attempts\": {},\n  \"verdict\": \"PASS\",\n  \"converged\": false,\n  \"baseline_spec_repr\": null,\n  \"round_history\": [],\n  \"infra_errors\": [],\n  \"hold_reason\": null,\n  \"promoted_fingerprints\": [],\n  \"consecutive_survivor_rounds\": 0,\n  \"mutation_survivor_counter_version\": 1,\n  \"survivor_counter_migration\": null,\n  \"consecutive_clean_rounds\": 0,\n  \"rounds_with_failed_pass\": 0,\n  \"rounds_with_falsify_infra\": 0,\n  \"rounds_with_mutation_infra\": 0,\n  \"rounds_with_evidence_incomplete\": 0,\n  \"cost\": {\n    \"total_input_tokens\": 0,\n    \"total_output_tokens\": 0,\n    \"total_cached_tokens\": 0,\n    \"total_duration_s\": 0.0,\n    \"passes\": 0,\n    \"per_pass\": []\n  },\n  \"env_manifest\": null,\n  \"exec_evidence\": null\n}",
+      "force_classification_refusal": false,
+      "stdout": "{\"$schema\":\"https://json.schemastore.org/sarif-2.1.0.json\",\"version\":\"2.1.0\",\"runs\":[{\"tool\":{\"driver\":{\"name\":\"code-forge\",\"semanticVersion\":\"code-forge 2.9.0 []\",\"informationUri\":\"https://github.com/HouMinXi/code-forge\"}},\"results\":[],\"properties\":{\"receiptAudit\":[{\"id\":\"RECEIPT_UNTRUSTED\",\"fingerprint\":\"audit\",\"source\":\"UNTRUSTED\",\"disposition\":\"UNCERTAIN\",\"file\":\"a.py\",\"line_range\":[1,1],\"description\":\"finding\",\"error\":null,\"anchor\":null,\"evidence_files\":null,\"is_timeout\":false,\"backend\":null,\"severity\":null,\"excerpt\":null,\"falsify_reasoning\":null,\"evidence_downgrade\":null,\"diagnostic_kind\":null,\"provider_failure\":null,\"receipt_subtype\":null}],\"providerDiagnostics\":[{\"id\":\"RECEIPT_INVALID\",\"fingerprint\":\"receipt-abcdef012345\",\"source\":\"INFRA\",\"disposition\":\"CONFIRMED\",\"file\":\"<receipt-evidence>\",\"line_range\":[0,0],\"description\":\"finding\",\"error\":null,\"anchor\":null,\"evidence_files\":null,\"is_timeout\":false,\"backend\":null,\"severity\":null,\"excerpt\":null,\"falsify_reasoning\":null,\"evidence_downgrade\":null,\"diagnostic_kind\":\"capacity-incomplete\",\"provider_failure\":null,\"receipt_subtype\":\"RECEIPT_COVERAGE\"}],\"report_classification\":{\"schema\":\"forge-report-classification/v1\",\"availability\":\"available\",\"unavailable_reason\":null,\"delivery_mode\":\"projection\",\"projection_schema\":\"forge-report-projection-proposal-v1\",\"product\":[],\"execution\":[],\"gate\":[{\"record\":{\"record_index\":0,\"fields\":{\"id\":\"RECEIPT_INVALID\",\"fingerprint\":\"receipt-abcdef012345\",\"source\":\"INFRA\",\"disposition\":\"CONFIRMED\",\"file\":\"<receipt-evidence>\",\"line_range\":[0,0],\"description\":\"finding\",\"error\":null,\"anchor\":null,\"evidence_files\":null,\"is_timeout\":null,\"backend\":null,\"severity\":null,\"excerpt\":null,\"falsify_reasoning\":null,\"evidence_downgrade\":null,\"diagnostic_kind\":null,\"provider_failure\":null}},\"diagnostic\":{\"kind\":\"capacity-incomplete\",\"basis\":\"inherited-predicate\",\"observation_scope\":\"persisted-record-unbound\",\"text\":null},\"host_failure_kind\":\"RECEIPT_COVERAGE\"},{\"record\":{\"record_index\":1,\"fields\":{\"id\":\"RECEIPT_UNTRUSTED\",\"fingerprint\":\"audit\",\"source\":\"UNTRUSTED\",\"disposition\":\"UNCERTAIN\",\"file\":\"a.py\",\"line_range\":[1,1],\"description\":\"finding\",\"error\":null,\"anchor\":null,\"evidence_files\":null,\"is_timeout\":null,\"backend\":null,\"severity\":null,\"excerpt\":null,\"falsify_reasoning\":null,\"evidence_downgrade\":null,\"diagnostic_kind\":null,\"provider_failure\":null}},\"diagnostic\":{\"kind\":\"receipt-audit\",\"basis\":\"inherited-predicate\",\"observation_scope\":\"persisted-record-unbound\",\"text\":null},\"host_failure_kind\":null}],\"quarantine\":[],\"unresolved_product_candidates\":[],\"classification_errors\":[],\"classification_complete\":true,\"product_list_count\":0,\"unresolved_candidate_count\":0,\"product_path_record_count\":0,\"acquisition_complete\":false,\"acquisition_reason\":\"capacity-incomplete-record\",\"persisted_pass_outcomes\":[[\"qodo\",\"completed\"],[\"expert\",\"completed\"],[\"adversarial\",\"completed\"]]}}}]}\n",
+      "stderr": "code-forge: PASS findings=0 confirmed=0 uncertain=0 dismissed=0 fixed=0 receipt_audit=1 capacity_incomplete=1\ncode-forge: classification product=0 [not adjudicated: confirmed=0 dismissed=0 fixed=0 style=0; with-observations=0] unresolved=0 [uncertain; with-observations=0] quarantine=0 [unverified]\n",
+      "legacy_projection": [
+        null,
+        [],
+        [
+          {
+            "id": "RECEIPT_UNTRUSTED",
+            "fingerprint": "audit",
+            "source": "UNTRUSTED",
+            "disposition": "UNCERTAIN",
+            "file": "a.py",
+            "line_range": [
+              1,
+              1
+            ],
+            "description": "finding",
+            "error": null,
+            "anchor": null,
+            "evidence_files": null,
+            "is_timeout": false,
+            "backend": null,
+            "severity": null,
+            "excerpt": null,
+            "falsify_reasoning": null,
+            "evidence_downgrade": null,
+            "diagnostic_kind": null,
+            "provider_failure": null,
+            "receipt_subtype": null
+          }
+        ],
+        "unknown: capacity-incomplete review -- provider capacity cut acquisition short, so the published results are not a complete count"
+      ],
+      "legacy_classification": {
+        "schema": "forge-report-classification/v1",
+        "availability": "available",
+        "unavailable_reason": null,
+        "delivery_mode": "projection",
+        "projection_schema": "forge-report-projection-proposal-v1",
+        "product": [],
+        "execution": [],
+        "gate": [
+          {
+            "record": {
+              "record_index": 0,
+              "fields": {
+                "id": "RECEIPT_INVALID",
+                "fingerprint": "receipt-abcdef012345",
+                "source": "INFRA",
+                "disposition": "CONFIRMED",
+                "file": "<receipt-evidence>",
+                "line_range": [
+                  0,
+                  0
+                ],
+                "description": "finding",
+                "error": null,
+                "anchor": null,
+                "evidence_files": null,
+                "is_timeout": null,
+                "backend": null,
+                "severity": null,
+                "excerpt": null,
+                "falsify_reasoning": null,
+                "evidence_downgrade": null,
+                "diagnostic_kind": null,
+                "provider_failure": null
+              }
+            },
+            "diagnostic": {
+              "kind": "capacity-incomplete",
+              "basis": "inherited-predicate",
+              "observation_scope": "persisted-record-unbound",
+              "text": null
+            },
+            "host_failure_kind": "RECEIPT_COVERAGE"
+          },
+          {
+            "record": {
+              "record_index": 1,
+              "fields": {
+                "id": "RECEIPT_UNTRUSTED",
+                "fingerprint": "audit",
+                "source": "UNTRUSTED",
+                "disposition": "UNCERTAIN",
+                "file": "a.py",
+                "line_range": [
+                  1,
+                  1
+                ],
+                "description": "finding",
+                "error": null,
+                "anchor": null,
+                "evidence_files": null,
+                "is_timeout": null,
+                "backend": null,
+                "severity": null,
+                "excerpt": null,
+                "falsify_reasoning": null,
+                "evidence_downgrade": null,
+                "diagnostic_kind": null,
+                "provider_failure": null
+              }
+            },
+            "diagnostic": {
+              "kind": "receipt-audit",
+              "basis": "inherited-predicate",
+              "observation_scope": "persisted-record-unbound",
+              "text": null
+            },
+            "host_failure_kind": null
+          }
+        ],
+        "quarantine": [],
+        "unresolved_product_candidates": [],
+        "classification_errors": [],
+        "classification_complete": true,
+        "product_list_count": 0,
+        "unresolved_candidate_count": 0,
+        "product_path_record_count": 0,
+        "acquisition_complete": false,
+        "acquisition_reason": "capacity-incomplete-record",
+        "persisted_pass_outcomes": [
+          [
+            "qodo",
+            "completed"
+          ],
+          [
+            "expert",
+            "completed"
+          ],
+          [
+            "adversarial",
+            "completed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "associated",
+      "state_json": "{\n  \"schema_version\": 1,\n  \"disposition_protocol_version\": 1,\n  \"round\": 0,\n  \"mode\": \"CI\",\n  \"source_hash\": null,\n  \"findings\": [\n    {\n      \"id\": \"p\",\n      \"fingerprint\": \"p\",\n      \"source\": \"L1\",\n      \"disposition\": \"UNCERTAIN\",\n      \"file\": \"a.py\",\n      \"line_range\": [\n        1,\n        1\n      ],\n      \"description\": \"finding\",\n      \"error\": \"falsify() raised: synthetic\",\n      \"anchor\": null,\n      \"evidence_files\": null,\n      \"is_timeout\": false,\n      \"backend\": null,\n      \"severity\": null,\n      \"excerpt\": null,\n      \"falsify_reasoning\": null,\n      \"evidence_downgrade\": \"synthetic downgrade\",\n      \"diagnostic_kind\": null,\n      \"provider_failure\": null,\n      \"receipt_subtype\": null\n    }\n  ],\n  \"dispositions\": {\n    \"p\": \"UNCERTAIN\"\n  },\n  \"fix_attempts\": {},\n  \"verdict\": \"PASS\",\n  \"converged\": false,\n  \"baseline_spec_repr\": null,\n  \"round_history\": [],\n  \"infra_errors\": [],\n  \"hold_reason\": null,\n  \"promoted_fingerprints\": [],\n  \"consecutive_survivor_rounds\": 0,\n  \"mutation_survivor_counter_version\": 1,\n  \"survivor_counter_migration\": null,\n  \"consecutive_clean_rounds\": 0,\n  \"rounds_with_failed_pass\": 0,\n  \"rounds_with_falsify_infra\": 0,\n  \"rounds_with_mutation_infra\": 0,\n  \"rounds_with_evidence_incomplete\": 0,\n  \"cost\": {\n    \"total_input_tokens\": 0,\n    \"total_output_tokens\": 0,\n    \"total_cached_tokens\": 0,\n    \"total_duration_s\": 0.0,\n    \"passes\": 0,\n    \"per_pass\": []\n  },\n  \"env_manifest\": null,\n  \"exec_evidence\": null\n}",
+      "force_classification_refusal": false,
+      "stdout": "{\"$schema\":\"https://json.schemastore.org/sarif-2.1.0.json\",\"version\":\"2.1.0\",\"runs\":[{\"tool\":{\"driver\":{\"name\":\"code-forge\",\"semanticVersion\":\"code-forge 2.9.0 []\",\"informationUri\":\"https://github.com/HouMinXi/code-forge\"}},\"results\":[{\"ruleId\":\"p\",\"level\":\"warning\",\"message\":{\"text\":\"finding\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"a.py\"},\"region\":{\"startLine\":1,\"endLine\":1}}}],\"properties\":{\"error\":\"falsify() raised: synthetic\",\"source\":\"L1\",\"basis\":{\"authority\":\"llm-docs-pinned\",\"falsification_survived\":true,\"convergence_rounds\":1}}}],\"properties\":{\"report_classification\":{\"schema\":\"forge-report-classification/v1\",\"availability\":\"available\",\"unavailable_reason\":null,\"delivery_mode\":\"projection\",\"projection_schema\":\"forge-report-projection-proposal-v1\",\"product\":[],\"execution\":[],\"gate\":[],\"quarantine\":[],\"unresolved_product_candidates\":[{\"record\":{\"record_index\":0,\"fields\":{\"id\":\"p\",\"fingerprint\":\"p\",\"source\":\"L1\",\"disposition\":\"UNCERTAIN\",\"file\":\"a.py\",\"line_range\":[1,1],\"description\":\"finding\",\"error\":\"falsify() raised: synthetic\",\"anchor\":null,\"evidence_files\":null,\"is_timeout\":null,\"backend\":null,\"severity\":null,\"excerpt\":null,\"falsify_reasoning\":null,\"evidence_downgrade\":\"synthetic downgrade\",\"diagnostic_kind\":null,\"provider_failure\":null}},\"associated_diagnostics\":[{\"kind\":\"persisted-falsify-error\",\"basis\":\"persisted-field\",\"observation_scope\":\"persisted-record-unbound\",\"text\":\"falsify() raised: synthetic\"},{\"kind\":\"persisted-evidence-downgrade\",\"basis\":\"persisted-field\",\"observation_scope\":\"persisted-record-unbound\",\"text\":\"synthetic downgrade\"}],\"host_failure_kind\":null}],\"classification_errors\":[],\"classification_complete\":true,\"product_list_count\":0,\"unresolved_candidate_count\":1,\"product_path_record_count\":1,\"acquisition_complete\":null,\"acquisition_reason\":\"completion-not-provable-from-state\",\"persisted_pass_outcomes\":[[\"qodo\",\"completed\"],[\"expert\",\"completed\"],[\"adversarial\",\"completed\"]]}}}]}\n",
+      "stderr": "code-forge: PASS findings=1 confirmed=0 uncertain=1 dismissed=0 fixed=0\ncode-forge: classification product=0 [not adjudicated: confirmed=0 dismissed=0 fixed=0 style=0; with-observations=0] unresolved=1 [uncertain; with-observations=1] quarantine=0 [unverified]\n",
+      "legacy_projection": [
+        1,
+        [
+          {
+            "ruleId": "p",
+            "level": "warning",
+            "message": {
+              "text": "finding"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "a.py"
+                  },
+                  "region": {
+                    "startLine": 1,
+                    "endLine": 1
+                  }
+                }
+              }
+            ],
+            "properties": {
+              "error": "falsify() raised: synthetic",
+              "source": "L1",
+              "basis": {
+                "authority": "llm-docs-pinned",
+                "falsification_survived": true,
+                "convergence_rounds": 1
+              }
+            }
+          }
+        ],
+        null,
+        null
+      ],
+      "legacy_classification": {
+        "schema": "forge-report-classification/v1",
+        "availability": "available",
+        "unavailable_reason": null,
+        "delivery_mode": "projection",
+        "projection_schema": "forge-report-projection-proposal-v1",
+        "product": [],
+        "execution": [],
+        "gate": [],
+        "quarantine": [],
+        "unresolved_product_candidates": [
+          {
+            "record": {
+              "record_index": 0,
+              "fields": {
+                "id": "p",
+                "fingerprint": "p",
+                "source": "L1",
+                "disposition": "UNCERTAIN",
+                "file": "a.py",
+                "line_range": [
+                  1,
+                  1
+                ],
+                "description": "finding",
+                "error": "falsify() raised: synthetic",
+                "anchor": null,
+                "evidence_files": null,
+                "is_timeout": null,
+                "backend": null,
+                "severity": null,
+                "excerpt": null,
+                "falsify_reasoning": null,
+                "evidence_downgrade": "synthetic downgrade",
+                "diagnostic_kind": null,
+                "provider_failure": null
+              }
+            },
+            "associated_diagnostics": [
+              {
+                "kind": "persisted-falsify-error",
+                "basis": "persisted-field",
+                "observation_scope": "persisted-record-unbound",
+                "text": "falsify() raised: synthetic"
+              },
+              {
+                "kind": "persisted-evidence-downgrade",
+                "basis": "persisted-field",
+                "observation_scope": "persisted-record-unbound",
+                "text": "synthetic downgrade"
+              }
+            ],
+            "host_failure_kind": null
+          }
+        ],
+        "classification_errors": [],
+        "classification_complete": true,
+        "product_list_count": 0,
+        "unresolved_candidate_count": 1,
+        "product_path_record_count": 1,
+        "acquisition_complete": null,
+        "acquisition_reason": "completion-not-provable-from-state",
+        "persisted_pass_outcomes": [
+          [
+            "qodo",
+            "completed"
+          ],
+          [
+            "expert",
+            "completed"
+          ],
+          [
+            "adversarial",
+            "completed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "unicode",
+      "state_json": "{\n  \"schema_version\": 1,\n  \"disposition_protocol_version\": 1,\n  \"round\": 0,\n  \"mode\": \"CI\",\n  \"source_hash\": null,\n  \"findings\": [\n    {\n      \"id\": \"p\",\n      \"fingerprint\": \"p\",\n      \"source\": \"L1\",\n      \"disposition\": \"CONFIRMED\",\n      \"file\": \"a.py\",\n      \"line_range\": [\n        1,\n        1\n      ],\n      \"description\": \"\\u4e2d\\u6587\\nline\\t\\ud83d\\ude42\",\n      \"error\": null,\n      \"anchor\": null,\n      \"evidence_files\": null,\n      \"is_timeout\": false,\n      \"backend\": null,\n      \"severity\": null,\n      \"excerpt\": null,\n      \"falsify_reasoning\": null,\n      \"evidence_downgrade\": null,\n      \"diagnostic_kind\": null,\n      \"provider_failure\": null,\n      \"receipt_subtype\": null\n    }\n  ],\n  \"dispositions\": {\n    \"p\": \"CONFIRMED\"\n  },\n  \"fix_attempts\": {},\n  \"verdict\": \"PASS\",\n  \"converged\": false,\n  \"baseline_spec_repr\": null,\n  \"round_history\": [],\n  \"infra_errors\": [\n    \"infra\\ncontrol\"\n  ],\n  \"hold_reason\": null,\n  \"promoted_fingerprints\": [],\n  \"consecutive_survivor_rounds\": 0,\n  \"mutation_survivor_counter_version\": 1,\n  \"survivor_counter_migration\": null,\n  \"consecutive_clean_rounds\": 0,\n  \"rounds_with_failed_pass\": 0,\n  \"rounds_with_falsify_infra\": 0,\n  \"rounds_with_mutation_infra\": 0,\n  \"rounds_with_evidence_incomplete\": 0,\n  \"cost\": {\n    \"total_input_tokens\": 0,\n    \"total_output_tokens\": 0,\n    \"total_cached_tokens\": 0,\n    \"total_duration_s\": 0.0,\n    \"passes\": 0,\n    \"per_pass\": []\n  },\n  \"env_manifest\": null,\n  \"exec_evidence\": null\n}",
+      "force_classification_refusal": false,
+      "stdout": "{\"$schema\":\"https://json.schemastore.org/sarif-2.1.0.json\",\"version\":\"2.1.0\",\"runs\":[{\"tool\":{\"driver\":{\"name\":\"code-forge\",\"semanticVersion\":\"code-forge 2.9.0 []\",\"informationUri\":\"https://github.com/HouMinXi/code-forge\"}},\"results\":[{\"ruleId\":\"p\",\"level\":\"error\",\"message\":{\"text\":\"中文\\nline\\t🙂\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"a.py\"},\"region\":{\"startLine\":1,\"endLine\":1}}}],\"properties\":{\"source\":\"L1\",\"basis\":{\"authority\":\"llm-docs-pinned\",\"falsification_survived\":true,\"convergence_rounds\":1}}}],\"properties\":{\"report_classification\":{\"schema\":\"forge-report-classification/v1\",\"availability\":\"available\",\"unavailable_reason\":null,\"delivery_mode\":\"projection\",\"projection_schema\":\"forge-report-projection-proposal-v1\",\"product\":[{\"record\":{\"record_index\":0,\"fields\":{\"id\":\"p\",\"fingerprint\":\"p\",\"source\":\"L1\",\"disposition\":\"CONFIRMED\",\"file\":\"a.py\",\"line_range\":[1,1],\"description\":\"中文\\nline\\t🙂\",\"error\":null,\"anchor\":null,\"evidence_files\":null,\"is_timeout\":null,\"backend\":null,\"severity\":null,\"excerpt\":null,\"falsify_reasoning\":null,\"evidence_downgrade\":null,\"diagnostic_kind\":null,\"provider_failure\":null}},\"associated_diagnostics\":[],\"host_failure_kind\":null}],\"execution\":[],\"gate\":[],\"quarantine\":[],\"unresolved_product_candidates\":[],\"classification_errors\":[],\"classification_complete\":true,\"product_list_count\":1,\"unresolved_candidate_count\":0,\"product_path_record_count\":1,\"acquisition_complete\":null,\"acquisition_reason\":\"completion-not-provable-from-state\",\"persisted_pass_outcomes\":[[\"qodo\",\"completed\"],[\"expert\",\"completed\"],[\"adversarial\",\"completed\"]]}}}]}\n",
+      "stderr": "code-forge: PASS findings=1 confirmed=1 uncertain=0 dismissed=0 fixed=0\ncode-forge: classification product=1 [not adjudicated: confirmed=1 dismissed=0 fixed=0 style=0; with-observations=0] unresolved=0 [uncertain; with-observations=0] quarantine=0 [unverified]\n",
+      "legacy_projection": [
+        1,
+        [
+          {
+            "ruleId": "p",
+            "level": "error",
+            "message": {
+              "text": "中文\nline\t🙂"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "a.py"
+                  },
+                  "region": {
+                    "startLine": 1,
+                    "endLine": 1
+                  }
+                }
+              }
+            ],
+            "properties": {
+              "source": "L1",
+              "basis": {
+                "authority": "llm-docs-pinned",
+                "falsification_survived": true,
+                "convergence_rounds": 1
+              }
+            }
+          }
+        ],
+        null,
+        null
+      ],
+      "legacy_classification": {
+        "schema": "forge-report-classification/v1",
+        "availability": "available",
+        "unavailable_reason": null,
+        "delivery_mode": "projection",
+        "projection_schema": "forge-report-projection-proposal-v1",
+        "product": [
+          {
+            "record": {
+              "record_index": 0,
+              "fields": {
+                "id": "p",
+                "fingerprint": "p",
+                "source": "L1",
+                "disposition": "CONFIRMED",
+                "file": "a.py",
+                "line_range": [
+                  1,
+                  1
+                ],
+                "description": "中文\nline\t🙂",
+                "error": null,
+                "anchor": null,
+                "evidence_files": null,
+                "is_timeout": null,
+                "backend": null,
+                "severity": null,
+                "excerpt": null,
+                "falsify_reasoning": null,
+                "evidence_downgrade": null,
+                "diagnostic_kind": null,
+                "provider_failure": null
+              }
+            },
+            "associated_diagnostics": [],
+            "host_failure_kind": null
+          }
+        ],
+        "execution": [],
+        "gate": [],
+        "quarantine": [],
+        "unresolved_product_candidates": [],
+        "classification_errors": [],
+        "classification_complete": true,
+        "product_list_count": 1,
+        "unresolved_candidate_count": 0,
+        "product_path_record_count": 1,
+        "acquisition_complete": null,
+        "acquisition_reason": "completion-not-provable-from-state",
+        "persisted_pass_outcomes": [
+          [
+            "qodo",
+            "completed"
+          ],
+          [
+            "expert",
+            "completed"
+          ],
+          [
+            "adversarial",
+            "completed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "classification-refused",
+      "state_json": "{\n  \"schema_version\": 1,\n  \"disposition_protocol_version\": 1,\n  \"round\": 0,\n  \"mode\": \"CI\",\n  \"source_hash\": null,\n  \"findings\": [\n    {\n      \"id\": \"p\",\n      \"fingerprint\": \"p\",\n      \"source\": \"L1\",\n      \"disposition\": \"CONFIRMED\",\n      \"file\": \"a.py\",\n      \"line_range\": [\n        1,\n        1\n      ],\n      \"description\": \"finding\",\n      \"error\": null,\n      \"anchor\": null,\n      \"evidence_files\": null,\n      \"is_timeout\": false,\n      \"backend\": null,\n      \"severity\": null,\n      \"excerpt\": null,\n      \"falsify_reasoning\": null,\n      \"evidence_downgrade\": null,\n      \"diagnostic_kind\": null,\n      \"provider_failure\": null,\n      \"receipt_subtype\": null\n    }\n  ],\n  \"dispositions\": {\n    \"p\": \"CONFIRMED\"\n  },\n  \"fix_attempts\": {},\n  \"verdict\": \"PASS\",\n  \"converged\": false,\n  \"baseline_spec_repr\": null,\n  \"round_history\": [],\n  \"infra_errors\": [],\n  \"hold_reason\": null,\n  \"promoted_fingerprints\": [],\n  \"consecutive_survivor_rounds\": 0,\n  \"mutation_survivor_counter_version\": 1,\n  \"survivor_counter_migration\": null,\n  \"consecutive_clean_rounds\": 0,\n  \"rounds_with_failed_pass\": 0,\n  \"rounds_with_falsify_infra\": 0,\n  \"rounds_with_mutation_infra\": 0,\n  \"rounds_with_evidence_incomplete\": 0,\n  \"cost\": {\n    \"total_input_tokens\": 0,\n    \"total_output_tokens\": 0,\n    \"total_cached_tokens\": 0,\n    \"total_duration_s\": 0.0,\n    \"passes\": 0,\n    \"per_pass\": []\n  },\n  \"env_manifest\": null,\n  \"exec_evidence\": null\n}",
+      "force_classification_refusal": true,
+      "stdout": "{\"$schema\": \"https://json.schemastore.org/sarif-2.1.0.json\", \"version\": \"2.1.0\", \"runs\": [{\"tool\": {\"driver\": {\"name\": \"code-forge\", \"semanticVersion\": \"code-forge 2.9.0 []\", \"informationUri\": \"https://github.com/HouMinXi/code-forge\"}}, \"results\": [{\"ruleId\": \"p\", \"level\": \"error\", \"message\": {\"text\": \"finding\"}, \"locations\": [{\"physicalLocation\": {\"artifactLocation\": {\"uri\": \"a.py\"}, \"region\": {\"startLine\": 1, \"endLine\": 1}}}], \"properties\": {\"source\": \"L1\", \"basis\": {\"authority\": \"llm-docs-pinned\", \"falsification_survived\": true, \"convergence_rounds\": 1}}}]}]}\n",
+      "stderr": "code-forge: PASS findings=1 confirmed=1 uncertain=0 dismissed=0 fixed=0\nReport classification unavailable: additive report budget exceeded; legacy report preserved.\ncode-forge: classification unavailable (legacy-report)\n",
+      "legacy_projection": [
+        1,
+        [
+          {
+            "ruleId": "p",
+            "level": "error",
+            "message": {
+              "text": "finding"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "a.py"
+                  },
+                  "region": {
+                    "startLine": 1,
+                    "endLine": 1
+                  }
+                }
+              }
+            ],
+            "properties": {
+              "source": "L1",
+              "basis": {
+                "authority": "llm-docs-pinned",
+                "falsification_survived": true,
+                "convergence_rounds": 1
+              }
+            }
+          }
+        ],
+        null,
+        null
+      ],
+      "legacy_classification": {
+        "schema": "forge-report-classification/v1",
+        "availability": "unavailable",
+        "unavailable_reason": "legacy-report",
+        "delivery_mode": null,
+        "projection_schema": null,
+        "product": null,
+        "execution": null,
+        "gate": null,
+        "quarantine": null,
+        "unresolved_product_candidates": null,
+        "classification_errors": null,
+        "classification_complete": null,
+        "product_list_count": null,
+        "unresolved_candidate_count": null,
+        "product_path_record_count": null,
+        "acquisition_complete": null,
+        "acquisition_reason": null,
+        "persisted_pass_outcomes": null
+      }
+    }
+  ]
+}
