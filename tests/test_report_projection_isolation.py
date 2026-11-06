@@ -65,6 +65,11 @@ _STDLIB = {"dataclasses", "typing", "copy"}
 # Phase 4 f0951ad permits classification only in terminal CLI output. #291
 # fe4c107 permits presentation DTO types, not the classifier, in the serializer.
 _PRESENTATION_IMPORTS = {
+    ("report_baseline_v2.py", ()): (
+        "code_forge.report_projection",
+        0,
+        ("classify_report_records",),
+    ),
     ("cli.py", (("FunctionDef", "_emit_ci_output"),)): (
         "report_projection",
         1,
