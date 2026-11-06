@@ -407,20 +407,37 @@ def test_ci_dedup_same_diff_re_run(tmp_path):
 
 
 def test_ci_failure_isolation_oserror(tmp_path, monkeypatch):
-    """Test (d): OSError during ledger write does not change verdict and logs to infra_errors (D-19)."""
-    _prep_local_state(tmp_path)
-    finding = _make_finding("fp-ci-fail", disp=Disposition.CONFIRMED)
-    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
-
+    """Test (d): Ledger write failure preserves both FAIL and clean PASS (D-19)."""
     from code_forge import machine as machine_mod
 
-    def broken_append(cwd, row):
-        raise OSError("disk full (simulated)")
+    for name, expected in (("finding", Verdict.FAIL), ("clean", Verdict.PASS)):
+        root = tmp_path / name
+        _prep_local_state(root)
+        findings = (
+            [_make_finding("fp-ci-fail", disp=Disposition.CONFIRMED)] if expected is Verdict.FAIL else []
+        )
+        machine = _build_ci_machine(root, _resolved_with_shas(), l0_findings=findings)
+        attempts = []
 
-    monkeypatch.setattr(machine_mod, "ledger_append", broken_append)
-    verdict = machine.run()
-    assert verdict == Verdict.FAIL
-    assert any("ledger write failure" in err for err in machine._state.infra_errors)
+        def broken_append(cwd, row, *, attempts=attempts):
+            attempts.append((cwd, row))
+            raise OSError("disk full (simulated)")
+
+        monkeypatch.setattr(machine_mod, "ledger_append", broken_append)
+        assert machine.run() is expected
+        assert machine._state.verdict is expected
+        assert len(attempts) == 1
+        assert attempts[0][0] == root
+        assert attempts[0][1].terminal_state is TerminalState.UNADJUDICATED
+        if expected is Verdict.PASS:
+            assert attempts[0][1].evidence_class == "clean_pass"
+        else:
+            assert attempts[0][1].fingerprint == "fp-ci-fail"
+        assert any(
+            "ledger write failure" in err and "disk full (simulated)" in err
+            for err in machine._state.infra_errors
+        )
+        assert list(iter_rows(root)) == []
 
 
 def test_ci_env_kill_switch(tmp_path, monkeypatch):
