@@ -1,9 +1,11 @@
 """Coverage and failure controls for runner-isolated CI partitioning."""
 
 import copy
+import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -484,3 +486,105 @@ def test_long_parameter_identity_is_preserved_by_repository_policy(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert ci.read(report)["collected"] == [f"test_ids.py::test_long[{value}]"]
+
+
+def test_failure_kind_labels_real_reports(tmp_path):
+    """Drive the classifier from reports pytest actually produced.
+
+    A hand-built report would test the mock. The shapes that matter only exist
+    after assertion rewriting has run, and a bare pytest.fail() is the one that
+    used to crash the recorder.
+    """
+    sample = tmp_path / "test_sample.py"
+    sample.write_text(
+        "import pytest\n"
+        "\n"
+        "def test_bare_assert():\n"
+        "    assert 1 == 2\n"
+        "\n"
+        "def test_assert_with_message():\n"
+        "    assert 1 == 2, 'explicit'\n"
+        "\n"
+        "def test_bare_fail():\n"
+        "    pytest.fail()\n"
+        "\n"
+        "def test_raises():\n"
+        "    raise ValueError('boom')\n"
+        "\n"
+        "def test_stop_iteration():\n"
+        "    raise StopIteration('done')\n"
+        "\n"
+        "def test_custom_unsuffixed():\n"
+        "    class Denied(Exception):\n"
+        "        pass\n"
+        "    raise Denied('nope')\n"
+        "\n"
+        "def test_timeout():\n"
+        "    raise TimeoutError('slow')\n"
+        "\n"
+        "def test_timeout_in_assertion_text():\n"
+        "    class Cfg:\n"
+        "        Timeout = 30\n"
+        "    assert Cfg.Timeout == 31\n"
+    )
+    collected = []
+
+    class Recorder:
+        def pytest_runtest_logreport(self, report):
+            if report.failed:
+                collected.append(report)
+
+    pytest.main([str(sample), "-q", "-p", "no:cacheprovider", "--assert=rewrite"], plugins=[Recorder()])
+    kinds = {report.nodeid.rpartition("::")[2]: ci.failure_kind(report) for report in collected}
+    assert kinds == {
+        "test_bare_assert": "assertion",
+        "test_assert_with_message": "assertion",
+        "test_bare_fail": "assertion",
+        "test_raises": "error",
+        "test_stop_iteration": "error",
+        "test_custom_unsuffixed": "error",
+        "test_timeout": "timeout",
+        "test_timeout_in_assertion_text": "assertion",
+    }
+
+
+def test_the_receipt_carries_the_kind_the_classifier_produced(tmp_path):
+    """The call site, not just the helper.
+
+    The other classifier test calls failure_kind directly, so deleting
+    `"failure_kind": failure_kind(report)` from the recorder leaves it green.
+    This one reads the receipt the production recorder writes, in a child
+    process so the nested session cannot leak into this one.
+    """
+    sample = tmp_path / "test_sample.py"
+    sample.write_text("def test_bare():\n    assert 1 == 2\n")
+    receipt = tmp_path / "receipt.json"
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            str(sample),
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "scripts.ci_test_shards",
+            "--assert=rewrite",
+            f"--ci-report={receipt}",
+            "--ci-phase=service-free",
+            "--ci-sha=" + "a" * 40,
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    rows = json.loads(receipt.read_text())["reports"]
+    kinds = {
+        row["nodeid"].rpartition("::")[2]: row["failure_kind"]
+        for row in rows
+        if row["outcome"] == "failed"
+    }
+    assert kinds == {"test_bare": "assertion"}

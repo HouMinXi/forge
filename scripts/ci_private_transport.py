@@ -56,6 +56,9 @@ RECEIPT_KEYS = {
     "subtests",
 }
 REPORT_KEYS = {"nodeid", "when", "outcome", "skip_reason", "wasxfail"}
+# Optional so a receipt written before failure classification existed still
+# validates. The value, when present, is a fixed label and never runtime text.
+REPORT_OPTIONAL_KEYS = {"failure_kind"}
 POLICY_KEYS = {"module_seconds", "runtime_skips", "collection_skips", "collection_skip_reasons"}
 ERROR = "STOP: Private CI validation failed."
 DIAGNOSTIC_SCHEMA = "forge-public-linux-ci-diagnostics-v1"
@@ -480,7 +483,7 @@ def _validate_receipt(receipt, allowed_nodes, modules, policy):
     _require(type(receipt["collection_errors"]) is list and not receipt["collection_errors"])
     for items in (receipt["reports"], receipt["subtests"]):
         for item in _list(items, MAX_REPORTS):
-            _object(item, REPORT_KEYS)
+            _object(item, REPORT_KEYS, REPORT_OPTIONAL_KEYS)
             _require(type(item["nodeid"]) is str and item["nodeid"] in allowed_nodes)
             _require(item["when"] in ("setup", "call", "teardown"))
             _require(item["outcome"] in ("passed", "skipped"))
