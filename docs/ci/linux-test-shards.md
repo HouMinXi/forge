@@ -81,10 +81,38 @@ not generated from a live collection. Every runtime identity must match it
 exactly before any receipt can be published. Unknown identities or reasons fail
 with a fixed STOP message; no rejected value or hash of it is made public.
 
-The private transport wrapper leaves `ci_test_shards.py` and its validators
-unchanged. It first validates the raw collections or execution outcomes against
-the original policy. Approved nodeids become module-prefixed manifest indices;
-approved skip reasons become indices of already-public policy constants. The
+### The identity manifest is an ordered contract
+
+`nodes` and `modules` must be sorted and duplicate-free; `validate_manifest`
+rejects anything else, and a rejected manifest stops the `plan` job before
+collection runs. The published ordinal `public-N` is the **position** of a node
+in that sorted list, so inserting one entry renumbers every later ordinal. An
+ordinal is only meaningful together with the manifest revision that produced it.
+
+A published failure record carries one extra field per failed test, `kind`, which
+is one of `assertion`, `timeout` or `error`. It is derived from the exception the
+report names, never from the message body; a value outside that set suppresses
+the whole published list rather than publishing part of it.
+
+### Resolving a published ordinal locally
+
+`scripts/reproduce_ci_failure.py` turns an ordinal back into the exact test and
+runs it with a full traceback:
+
+```
+python3 scripts/reproduce_ci_failure.py --run <run-id> --id public-N
+```
+
+It reads the manifest at the run's revision from git rather than from the working
+tree, refuses when the checkout is a different revision unless
+`--skip-revision-check` is passed, and uploads nothing.
+
+The private transport wrapper validates the raw collections or execution
+outcomes against the original policy. Approved nodeids become module-prefixed
+manifest indices; approved skip reasons become indices of already-public policy
+constants. An execution receipt also records one fixed `failure_kind` label per
+failed test, which the transport treats as optional so a receipt written before
+the label existed still validates. The
 public manifest and policy digests bind these mappings. These are digests of
 reviewed public inputs, not deterministic hashes of private runtime values.
 

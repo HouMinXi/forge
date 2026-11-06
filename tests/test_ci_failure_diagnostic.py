@@ -132,11 +132,16 @@ def _assert_public(case, value, *, status=None, stage=None):
     if value["status"] != "recorded":
         assert value["tests"] == []
     for item in value["tests"]:
-        assert set(item) == {"id", "stage", "status"}
-        assert re.fullmatch(r"public-(?:0|[1-9][0-9]*)", item["id"])
+        assert set(item) == {"id", "stage", "status", "kind"}
+        assert re.fullmatch(r"public-(?:0|[1-9][0-9]*)$", item["id"])
         assert int(item["id"].split("-")[1]) < len(case.example.manifest["nodes"])
         assert item["stage"] in {"setup", "call", "teardown"}
         assert item["status"] in {"failed", "unexpected_skip", "unexpected_xfail"}
+        # Only a failure carries a category, and only from the fixed set.
+        if item["status"] == "failed":
+            assert item["kind"] in {None, "assertion", "timeout", "error"}
+        else:
+            assert item["kind"] is None
     text = (case.public / "failure.json").read_text()
     assert json.loads(text) == value
     for forbidden in (
@@ -194,10 +199,32 @@ def test_failed_report_exports_only_reviewed_bare_ordinal(case, capsys):
             "id": f"public-{case.example.manifest['nodes'].index(report['nodeid'])}",
             "stage": "call",
             "status": "failed",
+            "kind": None,
         }
     ]
     assert list(case.public.iterdir()) == [case.public / "failure.json"]
     assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("label", [None, "assertion", "timeout", "error"])
+def test_reviewed_failure_kind_is_published_as_given(case, label):
+    """The runner's fixed category travels unchanged; absence stays absent."""
+    report = _failure_report(case.receipt)
+    if label is not None:
+        report["failure_kind"] = label
+    _save(case)
+    result = _assert_public(case, _export(case), status="recorded", stage="pytest")
+    assert [item["kind"] for item in result["tests"]] == [label]
+
+
+def test_unreviewed_failure_kind_suppresses_the_whole_list(case):
+    """A value outside the fixed set is runtime text in disguise; drop everything."""
+    report = _failure_report(case.receipt)
+    report["failure_kind"] = f"AssertionError: {CANARY}"
+    _save(case)
+    result = _export(case)
+    assert result["status"] == "suppressed"
+    assert result["tests"] == []
 
 
 @pytest.mark.parametrize("kind", ["reports", "subtests"])
@@ -220,6 +247,7 @@ def test_failed_reports_and_subtests_keep_only_fixed_stage_labels(case, kind, wh
             "id": f"public-{case.example.manifest['nodes'].index(report['nodeid'])}",
             "stage": when,
             "status": "failed",
+            "kind": None,
         }
     ]
 
@@ -897,6 +925,7 @@ def test_reviewed_skip_reason_does_not_allow_skipped_subtest_or_teardown(case, k
                 "id": f"public-{case.example.manifest['nodes'].index(node)}",
                 "stage": when,
                 "status": "unexpected_skip",
+                "kind": None,
             }
         ]
         if rejected
@@ -937,6 +966,7 @@ def test_reviewed_canary_identity_and_reason_are_still_only_bare_ordinal(case):
             "id": f"public-{example.manifest['nodes'].index(replacement)}",
             "stage": "call",
             "status": "failed",
+            "kind": None,
         }
     ]
 

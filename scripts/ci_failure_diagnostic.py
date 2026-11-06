@@ -19,6 +19,9 @@ SCHEMA = "forge-public-ci-failure-v1"
 MAX_TESTS = 256
 TEST_STAGES = ("setup", "call", "teardown")
 TEST_STATUSES = ("failed", "unexpected_skip", "unexpected_xfail")
+# Fixed labels the runner may publish for a failure. They name an exception
+# category, never its text: an assertion's operands stay on the machine.
+FAILURE_KINDS = ("assertion", "timeout", "error")
 SHARDS = tuple(f"shard-{index}" for index in range(4))
 STATE_KEYS = {"sha", "phase", "run", "attempt", "stage", "returncode"}
 
@@ -58,11 +61,13 @@ def _tests(receipt, state, plan, manifest, policy):
     transport._require(type(receipt["collection_errors"]) is list and not receipt["collection_errors"])
     # Build from the reviewed source itself. Never strip or forward a runtime ID.
     ordinals = {node: f"public-{index}" for index, node in enumerate(manifest["nodes"])}
-    results = set()
-    for kind in ("reports", "subtests"):
+    results = {}
+    # Subtests first: an aggregate parent report carries no reprcrash, so
+    # consuming it first would freeze a placeholder label for every subtest.
+    for kind in ("subtests", "reports"):
         seen = set()
         for report in transport._list(receipt[kind], transport.MAX_REPORTS):
-            transport._object(report, transport.REPORT_KEYS)
+            transport._object(report, transport.REPORT_KEYS, transport.REPORT_OPTIONAL_KEYS)
             node, when, outcome = report["nodeid"], report["when"], report["outcome"]
             transport._require(type(node) is str and node in nodes)
             transport._require(when in TEST_STAGES and outcome in ("passed", "failed", "skipped"))
@@ -76,18 +81,25 @@ def _tests(receipt, state, plan, manifest, policy):
             else:
                 transport._require(report["skip_reason"] is None)
             if outcome == "failed":
-                results.add((ordinals[node], when, "failed"))
+                # failure_kind is a fixed label chosen on the runner; a receipt
+                # written before classification existed simply has none. Two
+                # failing subtests of one node can differ, so the first one wins
+                # rather than a later sibling silently relabelling the entry.
+                recorded = report.get("failure_kind")
+                transport._require(recorded is None or recorded in FAILURE_KINDS)
+                results.setdefault((ordinals[node], when, "failed"), recorded)
             if report["wasxfail"]:
-                results.add((ordinals[node], when, "unexpected_xfail"))
+                results[(ordinals[node], when, "unexpected_xfail")] = None
             if outcome == "skipped" and (
                 kind == "subtests"
                 or when == "teardown"
                 or policy["runtime_skips"].get(node) != report["skip_reason"]
             ):
-                results.add((ordinals[node], when, "unexpected_skip"))
+                results[(ordinals[node], when, "unexpected_skip")] = None
             transport._require(len(results) <= MAX_TESTS)
     return [
-        {"id": identity, "stage": when, "status": status} for identity, when, status in sorted(results)
+        {"id": identity, "stage": when, "status": status, "kind": kind}
+        for (identity, when, status), kind in sorted(results.items())
     ]
 
 
@@ -102,9 +114,12 @@ def _validate_output(value, phase, manifest=None):
         transport._require(not tests)
     allowed = {f"public-{index}" for index in range(len(manifest["nodes"]))} if manifest else set()
     for item in tests:
-        transport._object(item, {"id", "stage", "status"})
+        transport._object(item, {"id", "stage", "status"}, {"kind"})
         transport._require(item["id"] in allowed)
         transport._require(item["stage"] in TEST_STAGES and item["status"] in TEST_STATUSES)
+        # Only a failure can carry a category; a skip or an xfail has none.
+        transport._require(item.get("kind") is None or item["status"] == "failed")
+        transport._require(item.get("kind") is None or item["kind"] in FAILURE_KINDS)
 
 
 def export_failure(sha, phase, plan_path, directory, public_directory, manifest_path=transport.MANIFEST):
