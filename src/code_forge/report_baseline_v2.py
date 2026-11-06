@@ -7,6 +7,7 @@ responsibilities. No filesystem reads, tool recapture or callback execution.
 
 import copy
 import json
+import math
 from dataclasses import dataclass, fields
 from typing import Any
 
@@ -70,18 +71,113 @@ _SAFE_ENUM_TYPES = (
     AssertionKind,
 )
 
+# Admission is by type identity, never by equality. A metaclass can redefine
+# __eq__ and __hash__, so a member test such as `type(value) in (...)` asks the
+# object whether it belongs -- exactly the question an attacker wants to answer.
+_SAFE_ATOMS = (bool, int, float, *_SAFE_ENUM_TYPES)
+_SAFE_RECORDS = (State, StateFinding, RenderingInputs, AdvisoryFinding, EnvManifest, AssertionOutcome)
+_SEQUENCE_TYPES = (list, tuple, set, frozenset)
+# copy.deepcopy recurses; a chain deeper than this must be refused here rather
+# than surface as a RecursionError from inside the copy it was meant to guard.
+_MAX_DEPTH = 200
+
+# Per-record field constraints. The generic walk admits a value because its type
+# is on the allowlist; it does not know that `verdict` must be a Verdict and not
+# some other admitted enum. Without this, `state.verdict = ManifestTier.ABSENT`
+# passes preflight and the report prints `code-forge: absent` for a FAIL state.
+_FIELD_CHECKS = {
+    State: {
+        "mode": lambda value: _admitted(value, (Mode,)),
+        "verdict": lambda value: _admitted(value, (Verdict,)),
+    },
+    StateFinding: {
+        "disposition": lambda value: _admitted(value, (Disposition,)),
+        "diagnostic_kind": lambda value: value is None or _admitted(value, (FindingDiagnosticKind,)),
+    },
+    RenderingInputs: {
+        "forge_version": lambda value: type(value) is str,
+        "backend_name": lambda value: value is None or type(value) is str,
+        "backend_model": lambda value: value is None or type(value) is str,
+        "resolved_locator": lambda value: value is None or type(value) is str,
+        "tool_versions": lambda value: (
+            type(value) is dict
+            and all(type(key) is str and type(item) is str for key, item in value.items())
+        ),
+    },
+    EnvManifest: {
+        "tier": lambda value: _admitted(value, (ManifestTier,)),
+    },
+    AssertionOutcome: {
+        "status": lambda value: _admitted(value, (AssertionStatus,)),
+        "stage": lambda value: value is None or _admitted(value, (AssertionStage,)),
+        "kind": lambda value: value is None or _admitted(value, (AssertionKind,)),
+    },
+}
+
+
+def _checked_field(record, name, value):
+    """Apply the position-specific constraint for one field, if one is declared."""
+    checks = _FIELD_CHECKS.get(type(record))
+    if checks is None:
+        return
+    check = checks.get(name)
+    if check is not None and not check(value):
+        raise TypeError(f"unexpected snapshot field: {name}")
+
+
+def _admitted(value, allowed):
+    """True when `type(value)` IS one of `allowed`, compared by identity.
+
+    `value_type in allowed` and `isinstance(value, allowed)` both ask the object
+    or its class a question a metaclass can answer for itself.
+    """
+    value_type = type(value)
+    return any(value_type is candidate for candidate in allowed)
+
+
+def _checked_attributes(item):
+    """Return the declared field list after validating the instance attribute map.
+
+    Order matters. The record type is already established by identity; then the
+    attribute map must be an exact dict; then its size must match the declared
+    fields; then every key must be an exact str. Only after that may the keys be
+    compared as a set -- a str subclass with a redefined __eq__/__hash__ would
+    otherwise run its own code during the comparison.
+
+    ``fields`` is called on the type, not the instance. ``__dataclass_fields__``
+    is a plain class attribute, so an instance-dict entry of that name wins a
+    getattr on the instance and ``fields()`` would call ``.values()`` on whatever
+    it found -- a protocol hook running on an object we go on to refuse.
+    """
+    attributes = fields(type(item))
+    instance_values = getattr(item, "__dict__", None)
+    if type(instance_values) is not dict:
+        raise TypeError("unexpected snapshot attributes")
+    if len(instance_values) != len(attributes):
+        raise TypeError("unexpected snapshot attributes")
+    for key in instance_values:
+        if type(key) is not str:
+            raise TypeError("unexpected snapshot attributes")
+    declared = set()
+    for field in attributes:
+        if type(field.name) is not str:
+            raise TypeError("unexpected snapshot attributes")
+        declared.add(field.name)
+    if set(instance_values) != declared:
+        raise TypeError("unexpected snapshot attributes")
+    return attributes
+
 
 def _preflight(value, limits):
     # Count expanded occurrences, not unique identities: JSON rendering expands
     # alias DAGs even though deepcopy preserves their shared graph. Active-path
     # tracking rejects cycles without rejecting a repeated finding occurrence.
-    pending = [(value, False)]
+    pending = [(value, False, 0)]
     active = set()
     nodes = 1
     characters = 0
-    safe_records = (State, StateFinding, RenderingInputs, AdvisoryFinding, EnvManifest, AssertionOutcome)
     while pending:
-        item, leaving = pending.pop()
+        item, leaving, depth = pending.pop()
         if leaving:
             active.remove(id(item))
             continue
@@ -89,7 +185,9 @@ def _preflight(value, limits):
             characters += len(item)
             if characters > limits.source_characters:
                 raise ValueError("snapshot character limit")
-        elif item is None or type(item) in (bool, int, float, *_SAFE_ENUM_TYPES):
+        elif item is None or _admitted(item, _SAFE_ATOMS):
+            if type(item) is float and not math.isfinite(item):
+                raise ValueError("non-finite snapshot number")
             continue
         else:
             if id(item) in active:
@@ -97,34 +195,30 @@ def _preflight(value, limits):
             if type(item) is dict:
                 count = 2 * len(item)
                 children = None
-            elif type(item) in (list, tuple, set, frozenset):
+            elif _admitted(item, _SEQUENCE_TYPES):
                 count = len(item)
                 children = item
-            elif type(item) in safe_records:
-                attributes = fields(item)
-                declared = {field.name for field in attributes}
-                instance_values = getattr(item, "__dict__", None)
-                if instance_values is not None and (
-                    type(instance_values) is not dict
-                    or len(instance_values) != len(declared)
-                    or set(instance_values) != declared
-                ):
-                    raise TypeError("unexpected snapshot attributes")
+            elif _admitted(item, _SAFE_RECORDS):
+                attributes = _checked_attributes(item)
                 count = len(attributes)
                 children = None
             else:
                 raise TypeError("unsupported snapshot object")
+            # The budget is charged before any field value is queued.
             if count > limits.source_nodes - nodes:
                 raise ValueError("snapshot node limit")
             nodes += count
             active.add(id(item))
-            pending.append((item, True))
+            if depth >= _MAX_DEPTH:
+                raise ValueError("snapshot nesting depth limit")
+            pending.append((item, True, depth))
             if type(item) is dict:
-                pending.extend((child, False) for child in item.keys())
-                pending.extend((child, False) for child in item.values())
-            elif type(item) in safe_records:
+                pending.extend((child, False, depth + 1) for child in item.keys())
+                pending.extend((child, False, depth + 1) for child in item.values())
+            elif _admitted(item, _SAFE_RECORDS):
                 for field in attributes:
                     value = getattr(item, field.name)
+                    _checked_field(item, field.name, value)
                     if (
                         type(item) is State
                         and field.name == "_legacy_survivor_state"
@@ -135,9 +229,9 @@ def _preflight(value, limits):
                         # and report builders never serialize/archive this slot.
                         # It counts as a node, not expanded report characters.
                         continue
-                    pending.append((value, False))
+                    pending.append((value, False, depth + 1))
             else:
-                pending.extend((child, False) for child in children)
+                pending.extend((child, False, depth + 1) for child in children)
 
 
 def _frozen_infra_text(state, locator):
@@ -224,8 +318,9 @@ def _capture_owned_rendering(state: State, context: RenderingInputs, *, limits: 
         or type(limits) is not SnapshotLimits
     ):
         raise TypeError("expected State, RenderingInputs and SnapshotLimits")
-    if type(context.resolved_locator) not in (str, type(None)):
-        raise TypeError("locator must be captured string or None")
+    locator = context.resolved_locator
+    if locator is not None and type(locator) is not str:
+        raise TypeError("locator must be captured exact str or None")
     if type(state.findings) is not list:
         raise TypeError("findings must be an exact list")
     if len(state.findings) > limits.finding_occurrences:

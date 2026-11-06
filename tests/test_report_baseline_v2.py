@@ -466,3 +466,229 @@ def test_opaque_legacy_bytes_exception_does_not_admit_other_bytes_or_subclasses(
     source._legacy_survivor_state = None
     with pytest.raises(TypeError, match="unsupported snapshot object"):
         build_owned_report_pair(source, context(manifest=b"not a manifest"), limits=LIMITS)
+
+
+def test_metaclass_equality_forgery_is_not_admitted():
+    """Admission asks type identity, so a class claiming equality gains nothing."""
+
+    class Forgiving(type):
+        def __eq__(cls, other):
+            return True
+
+        def __hash__(cls):
+            return 0
+
+    class Forged(metaclass=Forgiving):
+        def __deepcopy__(self, memo):
+            pytest.fail("unreviewed copy hook executed")
+
+    with pytest.raises(TypeError, match="unsupported snapshot object"):
+        build_owned_report_pair(fixture_state("empty"), context(manifest=Forged()), limits=LIMITS)
+
+
+def test_str_subclass_attribute_key_runs_no_hash_or_eq():
+    """The key type is checked before any set operation can call its protocol."""
+    seen = []
+
+    class Hostile(str):
+        def __hash__(self):
+            seen.append("hash")
+            return str.__hash__(self)
+
+        def __eq__(self, other):
+            seen.append("eq")
+            return str.__eq__(self, other)
+
+    snapshot = fixture_state("empty")
+    # Swap one existing key for a hostile one so the count still matches; a
+    # ninth key would be stopped by the length check before the key type runs.
+    original = next(iter(snapshot.__dict__))
+    value = snapshot.__dict__.pop(original)
+    snapshot.__dict__[Hostile(original)] = value
+    # The dict insert above hashed the key; that is the test's own doing.
+    seen.clear()
+    with pytest.raises(TypeError, match="unexpected snapshot attributes"):
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
+    assert seen == []
+
+
+def test_non_string_attribute_key_is_rejected():
+    snapshot = fixture_state("empty")
+    snapshot.__dict__[7] = object()
+    with pytest.raises(TypeError, match="unexpected snapshot attributes"):
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
+
+
+def test_locator_class_claiming_equality_is_not_an_exact_str():
+    """`type(x) not in (str, NoneType)` asks the class; a forged __eq__ answers yes."""
+
+    class Forgiving(type):
+        def __eq__(cls, other):
+            return True
+
+        def __hash__(cls):
+            return 0
+
+    class LyingStr(str, metaclass=Forgiving):
+        pass
+
+    with pytest.raises(TypeError, match="exact str"):
+        build_owned_report_pair(
+            fixture_state("empty"), context(resolved_locator=LyingStr("/x")), limits=LIMITS
+        )
+
+
+def test_rejection_runs_no_copy_hook(monkeypatch):
+    """A refused object must not reach deepcopy at all."""
+    calls = []
+
+    class Forged:
+        def __deepcopy__(self, memo):
+            calls.append("deepcopy")
+            return self
+
+        def __iter__(self):
+            calls.append("iter")
+            return iter(())
+
+        def __len__(self):
+            calls.append("len")
+            return 0
+
+    monkeypatch.setattr(factory.copy, "deepcopy", lambda *a, **k: pytest.fail("copy reached"))
+    with pytest.raises(TypeError, match="unsupported snapshot object"):
+        build_owned_report_pair(fixture_state("empty"), context(manifest=Forged()), limits=LIMITS)
+    assert calls == []
+
+
+def test_rejection_stops_before_baseline_and_classifier(monkeypatch):
+    monkeypatch.setattr(factory, "_build_baseline_parts", lambda *a: pytest.fail("baseline started"))
+    monkeypatch.setattr(
+        factory, "classify_report_records_v2", lambda *a: pytest.fail("classifier started")
+    )
+    monkeypatch.setattr(
+        factory, "classify_report_records", lambda *a: pytest.fail("v1 classifier started")
+    )
+    with pytest.raises(TypeError, match="unsupported snapshot object"):
+        build_owned_report_pair(fixture_state("empty"), context(manifest=object()), limits=LIMITS)
+
+
+def test_hostile_object_in_rendering_inputs_is_rejected(monkeypatch):
+    monkeypatch.setattr(factory.copy, "deepcopy", lambda *a, **k: pytest.fail("copy reached"))
+    hostile = {"a": {"b": object()}}
+    # The position constraint rejects the map before the generic walk reaches
+    # the hostile value, so either message is a correct refusal here.
+    with pytest.raises(
+        TypeError, match="unexpected snapshot field: tool_versions|unsupported snapshot object"
+    ):
+        build_owned_report_pair(fixture_state("empty"), context(tool_versions=hostile), limits=LIMITS)
+
+
+def test_hostile_object_in_state_findings_is_rejected(monkeypatch):
+    monkeypatch.setattr(factory.copy, "deepcopy", lambda *a, **k: pytest.fail("copy reached"))
+    snapshot = fixture_state("product")
+    snapshot.findings[0].provider_failure = {"kind": object()}
+    with pytest.raises(TypeError, match="unsupported snapshot object"):
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
+
+
+def test_dataclass_fields_hook_is_not_run_on_a_refused_object():
+    """fields(instance) would call .values() on an attacker-supplied object.
+
+    __dataclass_fields__ is a plain class attribute, so an instance-dict entry of
+    that name wins the getattr and dataclasses.fields() then calls values() on it.
+    The refusal must not run that hook.
+    """
+    calls = []
+
+    class Hostile:
+        def values(self):
+            calls.append("values")
+            return []
+
+    snapshot = fixture_state("empty")
+    snapshot.__dict__["__dataclass_fields__"] = Hostile()
+    with pytest.raises(TypeError, match="unexpected snapshot attributes"):
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
+    assert calls == []
+
+
+def test_state_subclass_is_refused():
+    """isinstance would admit a subclass whose copy hook then runs."""
+
+    class Sneaky(State):
+        def __deepcopy__(self, memo):
+            pytest.fail("subclass copy hook executed")
+
+    sneaky = Sneaky(mode=Mode.CI, verdict=Verdict.PASS, findings=[])
+    with pytest.raises(TypeError, match="expected State"):
+        build_owned_report_pair(sneaky, context(), limits=LIMITS)
+
+
+def test_finding_subclass_is_refused():
+    class SneakyFinding(StateFinding):
+        def __deepcopy__(self, memo):
+            pytest.fail("subclass copy hook executed")
+
+    snapshot = fixture_state("empty")
+    snapshot.findings.append(SneakyFinding("p", "p", "L1", Disposition.CONFIRMED, "a.py", [1, 1], "f"))
+    with pytest.raises(TypeError, match="unsupported snapshot object"):
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
+
+
+def test_rendering_inputs_subclass_is_refused():
+    class SneakyInputs(RenderingInputs):
+        def __deepcopy__(self, memo):
+            pytest.fail("subclass copy hook executed")
+
+    sneaky = SneakyInputs(forge_version=__version__, tool_versions={})
+    with pytest.raises(TypeError, match="expected State"):
+        build_owned_report_pair(fixture_state("empty"), sneaky, limits=LIMITS)
+
+
+def test_deep_nesting_is_refused_before_deepcopy_recurses():
+    """The budget bounds breadth; depth needs its own bound.
+
+    Without it preflight admits a deep chain and copy.deepcopy raises
+    RecursionError from inside the copy it was supposed to guard.
+    """
+    snapshot = fixture_state("product")
+    deep = {}
+    cursor = deep
+    for _ in range(400):
+        nxt = {}
+        cursor["k"] = nxt
+        cursor = nxt
+    snapshot.findings[0].provider_failure = deep
+    with pytest.raises(ValueError, match="nesting depth"):
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
+
+
+def test_foreign_enum_in_the_verdict_position_is_refused():
+    """An admitted enum is not automatically the right enum for the slot."""
+    snapshot = fixture_state("empty")
+    snapshot.verdict = ManifestTier.ABSENT
+    with pytest.raises(TypeError, match="unexpected snapshot field: verdict"):
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
+
+
+def test_foreign_enum_in_the_disposition_position_is_refused():
+    snapshot = fixture_state("product")
+    snapshot.findings[0].disposition = ManifestTier.ABSENT
+    with pytest.raises(TypeError, match="unexpected snapshot field: disposition"):
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
+
+
+def test_non_string_tool_version_is_refused():
+    with pytest.raises(TypeError, match="unexpected snapshot field: tool_versions"):
+        build_owned_report_pair(
+            fixture_state("empty"), context(tool_versions={"tool": 1}), limits=LIMITS
+        )
+
+
+def test_non_finite_float_is_refused():
+    """json.dumps(allow_nan=False) would raise far from this boundary."""
+    snapshot = fixture_state("product")
+    snapshot.findings[0].provider_failure = {"score": float("nan")}
+    with pytest.raises(ValueError, match="non-finite"):
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
