@@ -10,6 +10,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -99,6 +100,7 @@ class Recorder:
             "outcome": report.outcome,
             "skip_reason": skip_reason(report) if report.skipped else None,
             "wasxfail": hasattr(report, "wasxfail"),
+            "failure_kind": failure_kind(report),
         }
         self.data["subtests" if isinstance(report, SubtestReport) else "reports"].append(item)
 
@@ -126,6 +128,42 @@ def pytest_configure(config):
 def skip_reason(report):
     value = report.longrepr
     return str(value[2] if isinstance(value, tuple) else value).removeprefix("Skipped: ")
+
+
+_EXCEPTION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Exit|Interrupt|Warning)")
+
+
+def failure_kind(report):
+    """Classify a failed report without forwarding any runtime text.
+
+    The label is one of three fixed words -- assertion, timeout, error -- chosen
+    from the exception the report names. pytest's assertion rewriting omits the
+    ``AssertionError:`` prefix when an assert carries no message, so a bare
+    ``assert x == y`` arrives as the bare expression; that shape is recognised by
+    the expression itself, and it is the most common failure there is.
+
+    Anything unrecognised is an error, not an assertion: an assertion label
+    sends a reader looking for a behaviour change, so it needs positive evidence.
+    """
+    if not report.failed:
+        return None
+    crash = getattr(getattr(report, "longrepr", None), "reprcrash", None)
+    message = getattr(crash, "message", None)
+    if not isinstance(message, str):
+        return "error"
+    head, _, rest = message.partition(":")
+    head = head.strip()
+    if head in ("AssertionError", "Failed"):
+        # pytest-timeout reports through Failed, so its type is only in the body.
+        if head == "Failed" and rest.strip().startswith("Timeout"):
+            return "timeout"
+        return "assertion"
+    if head.startswith("assert "):
+        return "assertion"
+    match = _EXCEPTION_NAME.match(head)
+    if match is not None and "Timeout" in match.group(0):
+        return "timeout"
+    return "error"
 
 
 def command_for_pytest(phase, sha, report, args):

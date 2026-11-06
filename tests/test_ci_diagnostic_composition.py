@@ -166,6 +166,7 @@ def test_combined_failed_child_keeps_code_checkpoint_and_safe_ordinal(
                 "id": f"public-{combined.example.manifest['nodes'].index(report['nodeid'])}",
                 "stage": "call",
                 "status": "failed",
+                "kind": None,
             }
         ]
     checkpoints.publish(tmp_path, combined.checkpoints)

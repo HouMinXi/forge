@@ -1384,3 +1384,28 @@ def test_raw_output_permission_failure_stops_before_pytest(
     assert all(path.read_bytes() == b"" for path in private.iterdir())
     captured = capsys.readouterr()
     assert_private(captured.out + captured.err + public_text(public))
+
+
+def test_a_report_carrying_the_recorder_failure_kind_key_validates(monkeypatch, tmp_path, example):
+    """The recorder always writes failure_kind, even when the label is None.
+
+    Without REPORT_OPTIONAL_KEYS in the receipt validator, every real run would
+    fail to publish -- and no other test feeds a recorder-shaped row in here.
+    """
+    receipt = execution(example.plan, "shard-0")
+    for row in receipt["reports"]:
+        row["failure_kind"] = None
+    fake_execution(monkeypatch, receipt)
+    public = tmp_path / "public"
+    transport.run_phase(
+        "shard-0",
+        approved_plan(example),
+        tmp_path / "private",
+        public,
+        example.policy,
+        example.manifest,
+    )
+    result = ci.read(public / "receipt-shard-0.json")
+    assert result["reports"]
+    # The public projection is a fixed key list; the label must not ride along.
+    assert all("failure_kind" not in row for row in result["reports"])
