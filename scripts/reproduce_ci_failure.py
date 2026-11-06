@@ -89,7 +89,7 @@ def _manifest_nodes(sha: str | None = None) -> list[str]:
     every later one. Reading the working tree instead of the run's revision is
     how `public-N` ends up naming a different test than the one CI published.
     """
-    if sha:
+    if sha is not None:
         try:
             result = subprocess.run(
                 ["git", "show", f"{sha}:{MANIFEST.relative_to(ROOT)}"],
@@ -99,9 +99,10 @@ def _manifest_nodes(sha: str | None = None) -> list[str]:
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
-            result = None
-        if result is not None and result.returncode == 0:
-            return _nodes_from(result.stdout, f"{sha}:{MANIFEST.name}")
+            _die("cannot read the run revision's manifest; restore access to that commit first")
+        if result.returncode != 0:
+            _die("cannot read the run revision's manifest; fetch that commit first")
+        return _nodes_from(result.stdout, f"{sha}:{MANIFEST.name}")
     return _nodes_from(MANIFEST.read_text(), str(MANIFEST))
 
 

@@ -218,18 +218,30 @@ def test_reads_the_manifest_at_the_run_revision(monkeypatch):
     assert any("a" * 40 in str(part) for part in seen["command"])
 
 
-def test_falls_back_to_the_working_tree_when_git_cannot_answer(monkeypatch):
-    """A shallow clone or a missing commit must not stop the tool."""
+def test_refuses_missing_run_manifest_even_with_revision_override(monkeypatch, tmp_path, capsys):
+    """An override permits new code, never a different ordinal-to-test mapping."""
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"sha": "b" * 40}))
+    monkeypatch.setattr(repro, "_fetch_plan", lambda *_: plan)
+    launched = []
+    monkeypatch.setattr(repro, "_run_node", lambda node: launched.append(node) or 0)
+    # A usable current manifest is deliberately present. It must not rescue a
+    # failed historical lookup and send the developer to an unrelated test.
+    assert repro._manifest_nodes()
+    for failure in ("missing", "timeout", "unavailable"):
 
-    def fake_run(command, **kwargs):
-        class Done:
-            returncode = 128
-            stdout = ""
-            stderr = "fatal: bad object"
+        def fake_run(command, *, failure=failure, **kwargs):
+            assert command[:2] == ["git", "show"]
+            if failure == "timeout":
+                raise repro.subprocess.TimeoutExpired(command, 300)
+            if failure == "unavailable":
+                raise OSError("synthetic unavailable git")
+            return repro.subprocess.CompletedProcess(command, 128, "", "fatal: bad object")
 
-        return Done()
-
-    monkeypatch.setattr(repro.subprocess, "run", fake_run)
-    assert repro._manifest_nodes("b" * 40) == repro._nodes_from(
-        repro.MANIFEST.read_text(), str(repro.MANIFEST)
-    )
+        monkeypatch.setattr(repro.subprocess, "run", fake_run)
+        for extra in ([], ["--dry-run"]):
+            with pytest.raises(SystemExit) as stopped:
+                repro.main(["--run", "1", "--id", "public-0", "--skip-revision-check", *extra])
+            assert stopped.value.code == 2
+            assert "run revision's manifest" in capsys.readouterr().err
+        assert launched == []
