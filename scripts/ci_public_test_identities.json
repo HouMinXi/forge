@@ -19048,6 +19048,8 @@
     "tests/test_mutation_ledger_ci_controls.py::test_ci_allowlisted_path_passes[files6]",
     "tests/test_mutation_ledger_ci_controls.py::test_ci_baseline_timeout_fails_with_accurate_reason",
     "tests/test_mutation_ledger_ci_controls.py::test_ci_bound_carrier_consumed_once_counts_original_and_persists",
+    "tests/test_mutation_ledger_ci_controls.py::test_ci_bound_ruling_preserves_same_fingerprint_current_survivor[carrier-only]",
+    "tests/test_mutation_ledger_ci_controls.py::test_ci_bound_ruling_preserves_same_fingerprint_current_survivor[current-confirmed]",
     "tests/test_mutation_ledger_ci_controls.py::test_ci_completed_bound_result_does_not_erase_current_failure[failed-failed-native]",
     "tests/test_mutation_ledger_ci_controls.py::test_ci_completed_bound_result_does_not_erase_current_failure[failed-ordinary-current]",
     "tests/test_mutation_ledger_ci_controls.py::test_ci_completed_bound_result_does_not_erase_current_failure[successful-failed-native]",

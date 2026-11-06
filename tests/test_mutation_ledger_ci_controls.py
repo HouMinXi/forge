@@ -1813,6 +1813,57 @@ def test_ci_completed_bound_result_does_not_erase_current_failure(ci_project, ca
     assert not any(row.evidence_class == "clean_pass" for row in iter_rows(p.root, strict=True))
 
 
+@pytest.mark.parametrize("current_survivor", [False, True], ids=["carrier-only", "current-confirmed"])
+def test_ci_bound_ruling_preserves_same_fingerprint_current_survivor(
+    ci_project, monkeypatch, capsys, current_survivor
+):
+    """A ruled carrier cannot grant ruling authority to an unproved current L2."""
+    p = ci_project
+    payload, originals = _payload(p)
+    assert len(originals) == 1 and is_mutation_survivor(originals[0])
+    original = deepcopy(originals[0])
+    frozen_payload = deepcopy(payload)
+    _rule(p, originals)
+    result = _put_result(p, payload)
+    _outside_ci_config(p, monkeypatch)
+    calls = []
+
+    def runner(files, baseline_cmd, **kwargs):
+        calls.append((files, baseline_cmd))
+        assert "_evidence" not in kwargs
+        return ([deepcopy(original)] if current_survivor else []), []
+
+    machine = _machine(p, runner=runner)
+    command_count = len(p.commands)
+    expected = Verdict.FAIL if current_survivor else Verdict.PASS
+    capsys.readouterr()
+    verdict = machine.run()
+    text = capsys.readouterr().err
+    saved = _saved(p, expected)
+    assert verdict is expected
+    assert calls == [(["calc.py"], BASELINE)]
+    assert machine._mutation_measurement_eligible is False
+    assert machine._mutation_bound_failure is False
+    assert machine._l0_failed is False
+    assert machine._l2_infra_error is None
+    assert machine._trusted_config_refusal is None
+    assert saved.infra_errors == []
+    assert len(p.commands) == command_count
+    assert p.launches == []
+    assert not result.exists()
+    assert payload == frozen_payload
+    assert "mutation: 0 unresolved of 1 original survivors" in text
+    wanted = original if current_survivor else replace(original, disposition=Disposition.DISMISSED)
+    for findings in (machine._state.findings, saved.findings):
+        matching = [finding for finding in findings if finding.fingerprint == original.fingerprint]
+        assert matching == [wanted]
+        assert [finding for finding in findings if is_mutation_survivor(finding)] == (
+            [original] if current_survivor else []
+        )
+    rows = list(iter_rows(p.root, strict=True))
+    assert any(row.evidence_class == "clean_pass" for row in rows) is (not current_survivor)
+
+
 @pytest.mark.parametrize("carrier", ["malformed", "unruled"])
 @pytest.mark.parametrize("direct", ["default-no-op", "unproved"])
 def test_ci_refused_bound_result_returns_before_redundant_launch(ci_project, capsys, carrier, direct):
