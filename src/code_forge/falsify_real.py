@@ -325,8 +325,14 @@ class RealFalsifier(Falsifier):
         # fabricated dismissal can hide a real defect just as a confirmation
         # can manufacture one. Preserve UNCERTAIN and internal-logic verdicts.
         if disposition in (Disposition.CONFIRMED, Disposition.DISMISSED):
-            check = check_receipt(finding.description, response)
-            if check.needs_receipt:
+            # The verifier can introduce the unsupported premise in its own
+            # reasoning. Inspect both model-authored fields with the same
+            # existing classifier; receipt shape supplies no host provenance.
+            if any(
+                check_receipt(text, response).needs_receipt
+                for text in (finding.description, response.get("reasoning"))
+                if isinstance(text, str)
+            ):
                 finding.falsify_reasoning = (
                     "library-behaviour claim without host-verified evidence -- unverified; "
                     "model-authored receipts and citations do not establish provenance"
