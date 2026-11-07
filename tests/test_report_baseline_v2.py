@@ -280,8 +280,11 @@ def test_unknown_copy_hook_is_not_admitted_by_preflight():
         def __deepcopy__(self, memo):
             pytest.fail("unreviewed copy hook executed")
 
+    snapshot = fixture_state("product")
+    snapshot.findings[0].provider_failure = {"kind": Unexpected()}
+    # provider_failure has no position entry, so the generic walk refuses this.
     with pytest.raises(TypeError, match="unsupported snapshot object"):
-        build_owned_report_pair(fixture_state("empty"), context(manifest=Unexpected()), limits=LIMITS)
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
 
 
 def test_alias_dag_expansion_is_bounded_before_copy(monkeypatch):
@@ -330,10 +333,10 @@ def test_unknown_enum_copy_callback_is_not_admitted():
         def __deepcopy__(self, memo):
             pytest.fail("unreviewed enum copy hook executed")
 
+    snapshot = fixture_state("product")
+    snapshot.findings[0].provider_failure = {"kind": Unexpected.VALUE}
     with pytest.raises(TypeError, match="unsupported snapshot object"):
-        build_owned_report_pair(
-            fixture_state("empty"), context(manifest=Unexpected.VALUE), limits=LIMITS
-        )
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
 
 
 def test_repeated_finding_object_is_allowed_with_occurrence_budget():
@@ -372,7 +375,7 @@ def test_exact_state_extra_callback_rejected_before_deepcopy():
 
     snapshot = fixture_state("empty")
     snapshot.unreviewed_extra = Callback()
-    with pytest.raises(TypeError, match="unexpected snapshot attributes"):
+    with pytest.raises(TypeError, match="attribute count does not match"):
         build_owned_report_pair(snapshot, context(), limits=LIMITS)
 
 
@@ -383,7 +386,7 @@ def test_exact_state_extra_oversize_data_rejected_without_copy():
     snapshot.unreviewed_extra = "x" * 8_000_000
     tracemalloc.start()
     try:
-        with pytest.raises(TypeError, match="unexpected snapshot attributes"):
+        with pytest.raises(TypeError, match="attribute count does not match"):
             build_owned_report_pair(snapshot, context(), limits=LIMITS)
         _, peak = tracemalloc.get_traced_memory()
     finally:
@@ -394,7 +397,7 @@ def test_exact_state_extra_oversize_data_rejected_without_copy():
 def test_exact_finding_extra_attribute_rejected():
     snapshot = fixture_state("product")
     snapshot.findings[0].unreviewed_extra = object()
-    with pytest.raises(TypeError, match="unexpected snapshot attributes"):
+    with pytest.raises(TypeError, match="attribute count does not match"):
         build_owned_report_pair(snapshot, context(), limits=LIMITS)
 
 
@@ -464,7 +467,7 @@ def test_opaque_legacy_bytes_exception_does_not_admit_other_bytes_or_subclasses(
     with pytest.raises(TypeError, match="unsupported snapshot object"):
         build_owned_report_pair(source, context(), limits=LIMITS)
     source._legacy_survivor_state = None
-    with pytest.raises(TypeError, match="unsupported snapshot object"):
+    with pytest.raises(TypeError, match="snapshot rejected: field 'manifest'"):
         build_owned_report_pair(source, context(manifest=b"not a manifest"), limits=LIMITS)
 
 
@@ -482,7 +485,7 @@ def test_metaclass_equality_forgery_is_not_admitted():
         def __deepcopy__(self, memo):
             pytest.fail("unreviewed copy hook executed")
 
-    with pytest.raises(TypeError, match="unsupported snapshot object"):
+    with pytest.raises(TypeError, match="snapshot rejected: field 'manifest'"):
         build_owned_report_pair(fixture_state("empty"), context(manifest=Forged()), limits=LIMITS)
 
 
@@ -507,15 +510,17 @@ def test_str_subclass_attribute_key_runs_no_hash_or_eq():
     snapshot.__dict__[Hostile(original)] = value
     # The dict insert above hashed the key; that is the test's own doing.
     seen.clear()
-    with pytest.raises(TypeError, match="unexpected snapshot attributes"):
+    with pytest.raises(TypeError, match="attribute keys must be plain strings"):
         build_owned_report_pair(snapshot, context(), limits=LIMITS)
     assert seen == []
 
 
 def test_non_string_attribute_key_is_rejected():
+    """Replace a key rather than adding one: adding trips the count check first."""
     snapshot = fixture_state("empty")
-    snapshot.__dict__[7] = object()
-    with pytest.raises(TypeError, match="unexpected snapshot attributes"):
+    value = snapshot.__dict__.pop("mode")
+    snapshot.__dict__[7] = value
+    with pytest.raises(TypeError, match="attribute keys must be plain strings"):
         build_owned_report_pair(snapshot, context(), limits=LIMITS)
 
 
@@ -556,7 +561,7 @@ def test_rejection_runs_no_copy_hook(monkeypatch):
             return 0
 
     monkeypatch.setattr(factory.copy, "deepcopy", lambda *a, **k: pytest.fail("copy reached"))
-    with pytest.raises(TypeError, match="unsupported snapshot object"):
+    with pytest.raises(TypeError, match="snapshot rejected: field 'manifest'"):
         build_owned_report_pair(fixture_state("empty"), context(manifest=Forged()), limits=LIMITS)
     assert calls == []
 
@@ -569,7 +574,7 @@ def test_rejection_stops_before_baseline_and_classifier(monkeypatch):
     monkeypatch.setattr(
         factory, "classify_report_records", lambda *a: pytest.fail("v1 classifier started")
     )
-    with pytest.raises(TypeError, match="unsupported snapshot object"):
+    with pytest.raises(TypeError, match="snapshot rejected: field 'manifest'"):
         build_owned_report_pair(fixture_state("empty"), context(manifest=object()), limits=LIMITS)
 
 
@@ -579,7 +584,7 @@ def test_hostile_object_in_rendering_inputs_is_rejected(monkeypatch):
     # The position constraint rejects the map before the generic walk reaches
     # the hostile value, so either message is a correct refusal here.
     with pytest.raises(
-        TypeError, match="unexpected snapshot field: tool_versions|unsupported snapshot object"
+        TypeError, match="snapshot rejected: field 'tool_versions'|unsupported snapshot object"
     ):
         build_owned_report_pair(fixture_state("empty"), context(tool_versions=hostile), limits=LIMITS)
 
@@ -608,7 +613,7 @@ def test_dataclass_fields_hook_is_not_run_on_a_refused_object():
 
     snapshot = fixture_state("empty")
     snapshot.__dict__["__dataclass_fields__"] = Hostile()
-    with pytest.raises(TypeError, match="unexpected snapshot attributes"):
+    with pytest.raises(TypeError, match="attribute count does not match"):
         build_owned_report_pair(snapshot, context(), limits=LIMITS)
     assert calls == []
 
@@ -668,19 +673,19 @@ def test_foreign_enum_in_the_verdict_position_is_refused():
     """An admitted enum is not automatically the right enum for the slot."""
     snapshot = fixture_state("empty")
     snapshot.verdict = ManifestTier.ABSENT
-    with pytest.raises(TypeError, match="unexpected snapshot field: verdict"):
+    with pytest.raises(TypeError, match="snapshot rejected: field 'verdict'"):
         build_owned_report_pair(snapshot, context(), limits=LIMITS)
 
 
 def test_foreign_enum_in_the_disposition_position_is_refused():
     snapshot = fixture_state("product")
     snapshot.findings[0].disposition = ManifestTier.ABSENT
-    with pytest.raises(TypeError, match="unexpected snapshot field: disposition"):
+    with pytest.raises(TypeError, match="snapshot rejected: field 'disposition'"):
         build_owned_report_pair(snapshot, context(), limits=LIMITS)
 
 
 def test_non_string_tool_version_is_refused():
-    with pytest.raises(TypeError, match="unexpected snapshot field: tool_versions"):
+    with pytest.raises(TypeError, match="snapshot rejected: field 'tool_versions'"):
         build_owned_report_pair(
             fixture_state("empty"), context(tool_versions={"tool": 1}), limits=LIMITS
         )
@@ -692,3 +697,224 @@ def test_non_finite_float_is_refused():
     snapshot.findings[0].provider_failure = {"score": float("nan")}
     with pytest.raises(ValueError, match="non-finite"):
         build_owned_report_pair(snapshot, context(), limits=LIMITS)
+
+
+# --- Targeted negative controls -------------------------------------------
+#
+# Each case names the check it must reach. A test that only asserts "refused"
+# cannot tell one refusal from another, so a guard deleted from site A stays
+# green as long as site B still refuses the same fixture.
+
+
+@pytest.mark.parametrize(
+    "bad_key",
+    [b"mode", ("mode",), 3.5, frozenset({"mode"})],
+    ids=["bytes", "tuple", "float", "frozenset"],
+)
+def test_every_attribute_key_type_but_str_is_refused(bad_key):
+    """The count is held constant so the key-type check is the one that fires."""
+    snapshot = fixture_state("empty")
+    value = snapshot.__dict__.pop("mode")
+    snapshot.__dict__[bad_key] = value
+    with pytest.raises(TypeError, match="attribute keys must be plain strings"):
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
+
+
+def test_admission_never_consults_instancecheck_eq_or_hash():
+    """Identity comparison must not ask the class anything.
+
+    A metaclass can define __eq__, __hash__ and __instancecheck__; every one of
+    them is a hook that would run while refusing this object.
+    """
+    calls = []
+
+    class Forging(type):
+        def __eq__(cls, other):
+            calls.append("eq")
+            return True
+
+        def __hash__(cls):
+            calls.append("hash")
+            return 0
+
+        def __instancecheck__(cls, instance):
+            calls.append("instancecheck")
+            return True
+
+    class Forged(metaclass=Forging):
+        pass
+
+    with pytest.raises(TypeError, match="expected State"):
+        build_owned_report_pair(Forged(), context(), limits=LIMITS)
+    assert calls == [], f"admission consulted the metaclass: {calls}"
+
+
+@pytest.mark.parametrize(
+    "mutate, expected",
+    [
+        (lambda s: setattr(s, "round", True), "round"),
+        (lambda s: setattr(s, "converged", 1), "converged"),
+        (lambda s: setattr(s, "schema_version", "1"), "schema_version"),
+        (lambda s: setattr(s, "source_hash", b"x"), "source_hash"),
+        (lambda s: setattr(s, "hold_reason", 5), "hold_reason"),
+        (lambda s: setattr(s, "infra_errors", [b"x"]), "infra_errors"),
+        (lambda s: setattr(s.findings[0], "file", b"a.py"), "file"),
+        (lambda s: setattr(s.findings[0], "id", 7), "id"),
+        (lambda s: setattr(s.findings[0], "fingerprint", None), "fingerprint"),
+        (lambda s: setattr(s.findings[0], "description", b"d"), "description"),
+        (lambda s: setattr(s.findings[0], "error", 3), "error"),
+    ],
+    # Without ids the repr of each lambda becomes the test id, and those compiled
+    # names leak into the published identity manifest.
+    ids=[
+        "round-is-bool",
+        "converged-is-int",
+        "schema-version-is-str",
+        "source-hash-is-bytes",
+        "hold-reason-is-int",
+        "infra-errors-hold-bytes",
+        "file-is-bytes",
+        "id-is-int",
+        "fingerprint-is-none",
+        "description-is-bytes",
+        "error-is-int",
+    ],
+)
+def test_public_entry_refuses_a_wrong_type_in_each_field(mutate, expected):
+    snapshot = fixture_state("product")
+    mutate(snapshot)
+    with pytest.raises(TypeError, match=f"snapshot rejected: field {expected!r} "):
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
+
+
+def test_advisories_must_hold_advisory_findings():
+    with pytest.raises(TypeError, match="snapshot rejected: field 'advisories'"):
+        build_owned_report_pair(fixture_state("empty"), context(advisories=(object(),)), limits=LIMITS)
+
+
+def test_advisory_finding_fields_are_checked():
+    bad = AdvisoryFinding("a", "trust", b"f.py", (1, 2), "d", "attr")
+    with pytest.raises(TypeError, match="snapshot rejected: field 'file'"):
+        build_owned_report_pair(fixture_state("empty"), context(advisories=(bad,)), limits=LIMITS)
+
+
+def test_a_valid_advisory_is_admitted():
+    good = AdvisoryFinding("a", "trust", "f.py", (1, 2), "d", "attr")
+    pair = build_owned_report_pair(fixture_state("empty"), context(advisories=(good,)), limits=LIMITS)
+    assert pair.baseline is not None
+
+
+def test_a_null_description_is_admitted_and_the_split_is_recorded():
+    """Status quo: the two halves disagree about a null description.
+
+    sarif.py writes {"text": null} with no guard, and the v2 projection
+    quarantines the record. The boundary does not settle this -- it did not look
+    at the field before -- so both halves are pinned here rather than described
+    in a comment that claimed the emitters agree.
+    """
+    snapshot = fixture_state("product")
+    snapshot.findings[0].description = None
+    pair = build_owned_report_pair(snapshot, context(), limits=LIMITS)
+    assert pair.baseline is not None
+    assert '"text": null' in pair.baseline.stdout or '"text":null' in pair.baseline.stdout
+    assert pair.projection is not None
+    assert pair.projection.product == ()
+    assert pair.projection.classification_complete is False
+    assert len(pair.projection.quarantine) == 1
+
+
+def test_advisory_description_stays_strict():
+    """AdvisoryFinding has no such guard, so None is still refused there."""
+    bad = AdvisoryFinding("a", "trust", "f.py", (1, 2), None, "attr")
+    with pytest.raises(TypeError, match="snapshot rejected: field 'description'"):
+        build_owned_report_pair(fixture_state("empty"), context(advisories=(bad,)), limits=LIMITS)
+
+
+# --- Position checks the generic walk cannot catch on its own --------------
+#
+# Every value below is a type the walk admits: a safe enum, a plain int, a record
+# from _SAFE_RECORDS. Only the per-position constraint refuses it, so deleting
+# that constraint turns the case red. A fixture the walk refuses by itself proves
+# nothing about the table -- that is how six entries once carried no test.
+
+
+@pytest.mark.parametrize(
+    "mutate, field",
+    [
+        (lambda s: setattr(s, "mode", Verdict.PASS), "mode"),
+        (
+            lambda s: setattr(s.findings[0], "diagnostic_kind", Disposition.CONFIRMED),
+            "diagnostic_kind",
+        ),
+        (lambda s: setattr(s.findings[0], "line_range", [True, True]), "line_range"),
+    ],
+    ids=["mode-is-the-wrong-enum", "diagnostic-kind-is-the-wrong-enum", "line-range-holds-bools"],
+)
+def test_state_positions_refuse_a_value_the_walk_would_admit(mutate, field):
+    snapshot = fixture_state("product")
+    mutate(snapshot)
+    with pytest.raises(TypeError, match=f"snapshot rejected: field '{field}'"):
+        build_owned_report_pair(snapshot, context(), limits=LIMITS)
+
+
+@pytest.mark.parametrize(
+    "changes, field",
+    [
+        ({"forge_version": 42}, "forge_version"),
+        ({"backend_name": 7}, "backend_name"),
+        ({"backend_model": 7}, "backend_model"),
+        ({"assertion_outcome": EnvManifest(ManifestTier.ABSENT)}, "assertion_outcome"),
+        (
+            {"manifest": AssertionOutcome(AssertionStatus.COMPLETED_EMPTY, 0)},
+            "manifest",
+        ),
+        ({"advisories": (EnvManifest(ManifestTier.ABSENT),)}, "advisories"),
+    ],
+    ids=[
+        "forge-version-is-an-int",
+        "backend-name-is-an-int",
+        "backend-model-is-an-int",
+        "manifest-slot-holds-an-assertion-outcome",
+        "assertion-slot-holds-a-manifest",
+        "advisory-slot-holds-a-manifest",
+    ],
+)
+def test_rendering_inputs_positions_refuse_a_value_the_walk_would_admit(changes, field):
+    with pytest.raises(TypeError, match=f"snapshot rejected: field '{field}'"):
+        build_owned_report_pair(fixture_state("empty"), context(**changes), limits=LIMITS)
+
+
+def test_manifest_tier_must_be_a_manifest_tier():
+    manifest = EnvManifest(ManifestTier.ABSENT)
+    manifest.tier = Verdict.PASS
+    with pytest.raises(TypeError, match="snapshot rejected: field 'tier'"):
+        build_owned_report_pair(fixture_state("empty"), context(manifest=manifest), limits=LIMITS)
+
+
+@pytest.mark.parametrize("field", ["status", "stage", "kind"])
+def test_assertion_outcome_slots_take_their_own_enums(field):
+    outcome = AssertionOutcome(AssertionStatus.COMPLETED_EMPTY, 0)
+    object.__setattr__(outcome, field, Verdict.PASS)  # frozen; bypass for the fixture
+    with pytest.raises(TypeError, match=f"snapshot rejected: field '{field}'"):
+        build_owned_report_pair(
+            fixture_state("empty"), context(assertion_outcome=outcome), limits=LIMITS
+        )
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [("id", 7), ("axis", 7), ("line_range", ("a", "b")), ("attribution", 7)],
+    ids=["id-int", "axis-int", "line-range-holds-strs", "attribution-int"],
+)
+def test_advisory_finding_slots_are_checked(field, value):
+    advisory = AdvisoryFinding("a", "trust", "f.py", (1, 2), "d", "attr")
+    object.__setattr__(advisory, field, value)  # frozen; bypass for the fixture
+    with pytest.raises(TypeError, match=f"snapshot rejected: field '{field}'"):
+        build_owned_report_pair(fixture_state("empty"), context(advisories=(advisory,)), limits=LIMITS)
+
+
+def test_advisories_may_arrive_as_a_list():
+    """RenderingInputs declares a tuple, but production hands it a list."""
+    good = AdvisoryFinding("a", "trust", "f.py", (1, 2), "d", "attr")
+    pair = build_owned_report_pair(fixture_state("empty"), context(advisories=[good]), limits=LIMITS)
+    assert pair.baseline is not None
