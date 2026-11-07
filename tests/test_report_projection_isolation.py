@@ -15,29 +15,29 @@ REPO_SRC = Path(__file__).resolve().parents[1] / "src"
 # Reviewed pin evolution: 7d9a476 (#114) excludes MUTATION_INFRA;
 # f1b4a78/e436c7a (#338) preserve Phase 6 unavailable product rows.
 PINNED_HELPER = {
-    "reporting_product_findings": "a6114ae324ae700f9a8b962dd9801ca6bcdc1347dd42fa11067429643e56f818",
-    "is_provider_diagnostic": "d7b3aa5422d93e79e00a2828410c5ed91e305a5380a793a5a2708725b8b71a2e",
-    "is_provider_capacity": "a24332bfca61068b21687d2d5862812175e4c52e689cfdcbed674ec20d97e255",
-    "is_receipt_audit": "1b55ad47cddf6a133e038cdaa5bd50a7f548520c6be06e24361d162c5e607dbb",
-    "product_round_history": "bd87f551c66aa0af2c1ec39bcb703ef0f3a3a304e3555946017ae9ecb33a2462",
-    "active_findings": "3e6ff12b0adcc91c05b93b9b6d7b0a043886d8c665f9f195581f0bfa45788ad6",
-    "_count": "5ecc43da194848975ce4ff13ceee265d8e8d9839a359eb0716347a4b3de9e954",
-    "_confirmed_hold_fingerprints": "ea36344534479cc1bc8c4fb9af9a2f9807fd8de306fac693c1eeeb8a20263e8b",
-    "_product_history": "bab32ce551bafd840ddc6e2254f541eccc9474a2ff33153faad1e13a5d9fa86f",
+    "reporting_product_findings": "fdc29b4ca8b221ba620267149bf4a193579a0c2332d630ae5b1c390d210e1816",
+    "is_provider_diagnostic": "e4b2a3ee37116704aa70bbfd112f3e5fd45ded8cb239b4104403687ccdf31f18",
+    "is_provider_capacity": "5856e24d38543786fcde07e259c607503b3d0b1c3f3ca256622240aa12b09b52",
+    "is_receipt_audit": "1842ab453651201431f675f2e2df0bc28e6fb4598fcb00e4cda73932ffa12d16",
+    "product_round_history": "11e483aa626bed3fb651073110642377d86cb12a256bbc7fbc09111ca2a82cbc",
+    "active_findings": "0f766a061520b338bd035d48c5032e701e9423804e3068fc068e733fb7330183",
+    "_count": "2448527daca069c0d30704420e1f53257bc64d9180aa6bc65435c44a8d3ff7db",
+    "_confirmed_hold_fingerprints": "6c5ad525554274f2677ae3998e46250acbb858e91243b9ca74c4a25889e1778a",
+    "_product_history": "53d5ce4e7fbfbb64936caf4eb1d32fd5078866ffe92885d456752f0d9d1eccc4",
 }
 PINNED_DEPS = {
-    "is_mutation_infra_diagnostic": "0420d92fbebc8f2e94a8d162539141147279631869f0a6c1f4e939f91174fe7b",
-    "_project_product_row": "496e01e6153199ba47f5366ea1e63b5552c8e0d8af23ad9a0a05248a810596af",
-    "derive_pass_outcomes": "0480d56ccb1b3c8b8697179c5c6c247cec0e3d6086714069ff8611afd35868fc",
-    "_host_diagnostic_shape": "53a53358a0ce9ba5133ac6c837af6cc833d3a3cc0b303a0bc803063d4317a563",
-    "PassOutcome": "2c66457d86070becff16b6a627310b3d28a54e2551dff2e17965bdf91d8fbae7",
-    "FindingDiagnosticKind": "88faed9e2da9c99dabb6b1e2bfba71ccc9d7489df427d96f0f75940572b3da73",
+    "is_mutation_infra_diagnostic": "9c8209554cdeb290c180caecb8e9c4e0e4b642175af0517a30b9067af7b5e143",
+    "_project_product_row": "a49fa58238079766148ce92c52a29aa1292e0e59c27c02499a6b246a04a43c0f",
+    "derive_pass_outcomes": "1b5a8bd634e9801c5120a7c116d1229837d86994648e87d71e957165d54fc9cd",
+    "_host_diagnostic_shape": "67c3aafc3fecac3ca4e52b1cd68f1107f8cec0f47cf8c4d80b4ae4591fef3d1e",
+    "PassOutcome": "95fe52e974f04a5ea2eb1987f31b3a454bf961aa6314e8513d5d4500317bca7e",
+    "FindingDiagnosticKind": "10e8b82c4f1a0465351c7e3e1f633341654dc8d89b4f1213e651b22599919c25",
     # W2-6 adds only receipt_subtype: str | None = None; the old class AST
     # remains pinned separately below, including all control fields/methods.
-    "StateFinding": "56a7c43a3f36bbd4af762ea6aa586e9a77a08c1e9c8ed9139a35dba861a0b6f5",
+    "StateFinding": "114f01f4689f5123d7a79748d5ceb60549e5329f9c6e0277f24d5a4e20939e5f",
     "_PASS_NAMES": "81b557eb202cc74ccbcb5a1e71ec638a823daa3c8e27e575e4c76e725b8cfdd3",
     "_SEVERITY": "0c46db3bb670deb1d5dfde3e0cd1e629a6133aba6d55fca18670708106078cad",
-    "Disposition": "8a86a07368699136b4085f5396bf01b57d542c3e67de214790f6b3e8df08a251",
+    "Disposition": "4f1334a5130f9032310f3bb3dc64f67927aa523c04a239cfc0e7476925df9176",
 }
 PINNED_RUNTIME = {
     "_PASS_NAMES repr": "8ecec8b65d424f029b1ae7099427ed177fd6285e552d4abcfb78ccbfc63e81d9",
@@ -231,11 +231,30 @@ def _digest(node: ast.AST) -> str:
     pin below differs while the code is byte-identical. That turns a check on
     "this helper was not edited" into a check on "Python was not upgraded".
 
-    `ast.unparse` regenerates source from the tree and whitespace is collapsed,
-    so formatting is still ignored while the version is not part of the input.
-    Verified identical on 3.12 and 3.14 for all nineteen pinned definitions.
+    `ast.unparse` normalizes source formatting while preserving indentation and
+    literal contents. Do not collapse its whitespace: that would hide control
+    flow changes and changes to spaces inside string literals. Cross-version
+    stability must still be checked when the supported interpreters change.
     """
-    return hashlib.sha256(" ".join(ast.unparse(node).split()).encode()).hexdigest()
+    return hashlib.sha256(ast.unparse(node).encode()).hexdigest()
+
+
+def test_digest_preserves_control_flow_indentation():
+    nested = ast.parse("def f(flag):\n    if flag:\n        return 1\n        return 2\n").body[0]
+    outside = ast.parse("def f(flag):\n    if flag:\n        return 1\n    return 2\n").body[0]
+    assert _digest(nested) != _digest(outside)
+
+
+def test_digest_preserves_string_literal_spaces():
+    one_space = ast.parse("def f(): return 'a b'").body[0]
+    two_spaces = ast.parse("def f(): return 'a  b'").body[0]
+    assert _digest(one_space) != _digest(two_spaces)
+
+
+def test_digest_ignores_source_formatting():
+    compact = ast.parse("def f(x): return x+1").body[0]
+    formatted = ast.parse("def f( x ):\n    # incidental formatting\n    return (x + 1)\n").body[0]
+    assert _digest(compact) == _digest(formatted)
 
 
 def _ast_hash_defs(path: Path, names: set[str]) -> dict[str, str]:
@@ -331,7 +350,7 @@ def test_frozen_dependencies_unchanged():
     assert H(repr([(m.name, m.value) for m in Disposition])) == PINNED_RUNTIME["Disposition members"]
 
 
-_LEGACY_STATE_FINDING_HASH = "613859cd52559962a29a7152813ed5c64c5703320d9a659dd0ba9ead16dee9b6"
+_LEGACY_STATE_FINDING_HASH = "86a280bd5ecd91f7db8ad8909d86fd854d368b43f50b2301b11dae9fc5120a97"
 
 
 def _assert_state_finding_metadata_extension(tree):
