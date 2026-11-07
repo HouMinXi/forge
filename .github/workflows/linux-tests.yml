@@ -240,8 +240,11 @@ jobs:
         printf 'diagnostic_invocation=%s\n' "$diagnostic_invocation" >> "$GITHUB_OUTPUT"
         python scripts/ci_private_transport.py plan --sha "$GITHUB_SHA" \
           --directory "$RUNNER_TEMP/forge-plan" --public-directory forge-linux-public --diagnostic-directory "$EVIDENCE/diagnostics" --diagnostic-invocation "$diagnostic_invocation" 2>&1 | (umask 077; exec tee "$EVIDENCE/collection.log") || {
-          echo "--- collection.log (temporary unmask) ---"
-          cat "$EVIDENCE/collection.log"
+          {
+            echo '```'
+            cat "$EVIDENCE/collection.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           exit 1
         }
       id: public_plan
