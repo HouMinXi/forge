@@ -160,9 +160,14 @@ def _pairs(pairs):
         result[key] = value
     return result
 
+def _fail():
+    import traceback
+    frame = traceback.extract_stack()[-2]
+    raise TransportError(f"{ERROR} [{frame.filename}:{frame.lineno} {frame.line.strip()}]")
+
 
 def _invalid_constant(_value):
-    raise TransportError(ERROR)
+    _fail()
 
 
 def _check_encoded_string(text, start, end):
@@ -806,7 +811,7 @@ def verify(plan, directory, sha, policy, manifest, needs, *, diagnostic=None):
         elif path.name in collection_names | receipt_names:
             reader(path)
         else:
-            raise TransportError(ERROR)
+            _fail()
     _require(plan_count == 1)
     # The original aggregate performs the file count, manifest rebuild, node
     # coverage, outcome, skip, xfail, subtest and upstream-status checks.
@@ -1091,7 +1096,7 @@ def _execute_diagnosed(args):
 
 class _Parser(argparse.ArgumentParser):
     def error(self, _message):
-        raise TransportError(ERROR)
+        _fail()
 
 
 def _parser():
