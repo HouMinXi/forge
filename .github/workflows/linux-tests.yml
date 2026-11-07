@@ -1003,6 +1003,26 @@ jobs:
           --plan forge-linux-input/plan/plan.json --phase "shard-${{ matrix.shard }}" \
           --directory "$EVIDENCE" --failure-diagnostic --public-directory forge-linux-public --diagnostic-directory "$EVIDENCE/diagnostics" --diagnostic-invocation "$diagnostic_invocation" 2>&1 | (umask 077; exec tee "$EVIDENCE/shard.log")
       id: shard_receipt
+    - name: Capture failing shard traceback
+      if: ${{ failure() }}
+      run: |
+        python - <<'PY'
+        import json, subprocess, sys
+        plan = json.load(open("forge-linux-input/plan/plan.json"))
+        manifest = json.load(open("scripts/ci_public_test_identities.json"))
+        phase = "shard-${{ matrix.shard }}"
+        nodes = [
+            manifest["nodes"][int(item.split("::public-")[1])]
+            for item in plan["phases"][phase]["nodes"]
+        ]
+        print(f"replaying {len(nodes)} nodes from {phase}", flush=True)
+        sys.exit(
+            subprocess.run(
+                [sys.executable, "-m", "pytest", *nodes, "-x", "--tb=long",
+                 "-q", "-p", "no:cacheprovider"]
+            ).returncode
+        )
+        PY
     - name: Prepare fixed public CI summary
       id: public_summary
       if: ${{ always() }}
