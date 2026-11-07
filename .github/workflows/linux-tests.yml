@@ -248,6 +248,14 @@ jobs:
           exit 1
         }
       id: public_plan
+    - name: Publish the collection log when the plan fails
+      if: ${{ failure() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: debug-collection-log-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/forge-evidence/collection.log
+        if-no-files-found: error
+        retention-days: 1
     - name: Prepare fixed public CI summary
       id: public_summary
       if: ${{ always() }}
