@@ -15,29 +15,29 @@ REPO_SRC = Path(__file__).resolve().parents[1] / "src"
 # Reviewed pin evolution: 7d9a476 (#114) excludes MUTATION_INFRA;
 # f1b4a78/e436c7a (#338) preserve Phase 6 unavailable product rows.
 PINNED_HELPER = {
-    "reporting_product_findings": "b69f8493dc02e5f2206a16d2934767104c9fb07328d6a821e050769cf8e47d6e",
-    "is_provider_diagnostic": "205a477f709e149cf636897f6350c28d6ae2050d61a21b0668880396d9b5ae91",
-    "is_provider_capacity": "f664f56646baed3b39c93d8ae533b9721d766bc47b76b0feb09d8fc6cd3a816c",
-    "is_receipt_audit": "ccd447f4f80c6284239d9c254319abf4a00d56e5ad44f93fdfc38f0276d48e3b",
-    "product_round_history": "b472ec5e54553f2d57e3494eb0275dc9c71e473efc46bd0a5b0b9e72c088299c",
-    "active_findings": "bf3c4b60b8afac6cf869ba45a29fa52cf82c9b365510ebd492912f5ab1382116",
-    "_count": "519752fc8df2dddb973bde31cc57eefd8809d1eabb38a2f2c20840c73b3cdc0b",
-    "_confirmed_hold_fingerprints": "184e0b3fcd0bc4d06457fe721f81d1a3ba81b95d3a88d38109129ec7582d3e19",
-    "_product_history": "d94e9caaf836cd307e8f7bd29749cfe65aef1aa10b5a87b095232510f8db41e6",
+    "reporting_product_findings": "fdc29b4ca8b221ba620267149bf4a193579a0c2332d630ae5b1c390d210e1816",
+    "is_provider_diagnostic": "e4b2a3ee37116704aa70bbfd112f3e5fd45ded8cb239b4104403687ccdf31f18",
+    "is_provider_capacity": "5856e24d38543786fcde07e259c607503b3d0b1c3f3ca256622240aa12b09b52",
+    "is_receipt_audit": "1842ab453651201431f675f2e2df0bc28e6fb4598fcb00e4cda73932ffa12d16",
+    "product_round_history": "11e483aa626bed3fb651073110642377d86cb12a256bbc7fbc09111ca2a82cbc",
+    "active_findings": "0f766a061520b338bd035d48c5032e701e9423804e3068fc068e733fb7330183",
+    "_count": "2448527daca069c0d30704420e1f53257bc64d9180aa6bc65435c44a8d3ff7db",
+    "_confirmed_hold_fingerprints": "6c5ad525554274f2677ae3998e46250acbb858e91243b9ca74c4a25889e1778a",
+    "_product_history": "53d5ce4e7fbfbb64936caf4eb1d32fd5078866ffe92885d456752f0d9d1eccc4",
 }
 PINNED_DEPS = {
-    "is_mutation_infra_diagnostic": "736dcfb05cc60950072cb244c9133fbdd02bcac0aa1cac521767710b2d287ed9",
-    "_project_product_row": "a4651f9c099b286a2bd9f603c4a0af2f566a7ef92f8ad48c44bb858058066173",
-    "derive_pass_outcomes": "db726ccdf6123503e268921e4ee6c504b59bb077d8d325371e85fecf6ed55e51",
-    "_host_diagnostic_shape": "1c1bf71383382ca44638b4ae0046d854f7324a5ecf030608ab7ce03ca69557e1",
-    "PassOutcome": "f388e795081e7b34ac65ef463ffc711fe59ee64b0aebf82b784b65aceab74b09",
-    "FindingDiagnosticKind": "a91891577bbd53345190161d05114fadd7c8afc2577e3d48ab0298f6485a787a",
+    "is_mutation_infra_diagnostic": "9c8209554cdeb290c180caecb8e9c4e0e4b642175af0517a30b9067af7b5e143",
+    "_project_product_row": "a49fa58238079766148ce92c52a29aa1292e0e59c27c02499a6b246a04a43c0f",
+    "derive_pass_outcomes": "1b5a8bd634e9801c5120a7c116d1229837d86994648e87d71e957165d54fc9cd",
+    "_host_diagnostic_shape": "67c3aafc3fecac3ca4e52b1cd68f1107f8cec0f47cf8c4d80b4ae4591fef3d1e",
+    "PassOutcome": "95fe52e974f04a5ea2eb1987f31b3a454bf961aa6314e8513d5d4500317bca7e",
+    "FindingDiagnosticKind": "10e8b82c4f1a0465351c7e3e1f633341654dc8d89b4f1213e651b22599919c25",
     # W2-6 adds only receipt_subtype: str | None = None; the old class AST
     # remains pinned separately below, including all control fields/methods.
-    "StateFinding": "fb61977e413c981ff27d39f78160e908eaa2e4809d386a701c1ce6bd674341de",
-    "_PASS_NAMES": "9928d9693da1c9706ff45658c83bb70221d29b4f7e8115f204ef11769964ec3c",
-    "_SEVERITY": "b08e25560456dc875217b6bc22d6b650a87194c2d2cef60a871fa9bbffba8305",
-    "Disposition": "c88655eef53e38c6fe142356996a73599766bb48667077e79fe64a2d420a5eb6",
+    "StateFinding": "114f01f4689f5123d7a79748d5ceb60549e5329f9c6e0277f24d5a4e20939e5f",
+    "_PASS_NAMES": "81b557eb202cc74ccbcb5a1e71ec638a823daa3c8e27e575e4c76e725b8cfdd3",
+    "_SEVERITY": "0c46db3bb670deb1d5dfde3e0cd1e629a6133aba6d55fca18670708106078cad",
+    "Disposition": "4f1334a5130f9032310f3bb3dc64f67927aa523c04a239cfc0e7476925df9176",
 }
 PINNED_RUNTIME = {
     "_PASS_NAMES repr": "8ecec8b65d424f029b1ae7099427ed177fd6285e552d4abcfb78ccbfc63e81d9",
@@ -223,6 +223,40 @@ def test_report_projection_imports_only_whitelist():
     assert "startswith" in src
 
 
+def _digest(node: ast.AST) -> str:
+    """Digest a definition in a form that survives a Python upgrade.
+
+    `ast.dump` prints the tree's field layout, so a field the interpreter adds
+    later changes every digest without the source changing at all: on 3.14 every
+    pin below differs while the code is byte-identical. That turns a check on
+    "this helper was not edited" into a check on "Python was not upgraded".
+
+    `ast.unparse` normalizes source formatting while preserving indentation and
+    literal contents. Do not collapse its whitespace: that would hide control
+    flow changes and changes to spaces inside string literals. Cross-version
+    stability must still be checked when the supported interpreters change.
+    """
+    return hashlib.sha256(ast.unparse(node).encode()).hexdigest()
+
+
+def test_digest_preserves_control_flow_indentation():
+    nested = ast.parse("def f(flag):\n    if flag:\n        return 1\n        return 2\n").body[0]
+    outside = ast.parse("def f(flag):\n    if flag:\n        return 1\n    return 2\n").body[0]
+    assert _digest(nested) != _digest(outside)
+
+
+def test_digest_preserves_string_literal_spaces():
+    one_space = ast.parse("def f(): return 'a b'").body[0]
+    two_spaces = ast.parse("def f(): return 'a  b'").body[0]
+    assert _digest(one_space) != _digest(two_spaces)
+
+
+def test_digest_ignores_source_formatting():
+    compact = ast.parse("def f(x): return x+1").body[0]
+    formatted = ast.parse("def f( x ):\n    # incidental formatting\n    return (x + 1)\n").body[0]
+    assert _digest(compact) == _digest(formatted)
+
+
 def _ast_hash_defs(path: Path, names: set[str]) -> dict[str, str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     out = {}
@@ -232,21 +266,14 @@ def _ast_hash_defs(path: Path, names: set[str]) -> dict[str, str]:
             and node.name in names
         ):
             # Prefer the first (outermost walk order); methods are found via walk.
-            out.setdefault(
-                node.name,
-                hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest(),
-            )
+            out.setdefault(node.name, _digest(node))
     for node in tree.body:
         if isinstance(node, ast.Assign):
             for t in node.targets:
                 if getattr(t, "id", None) in names:
-                    out[t.id] = hashlib.sha256(
-                        ast.dump(node, include_attributes=False).encode()
-                    ).hexdigest()
+                    out[t.id] = _digest(node)
         if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) in names:
-            out[node.target.id] = hashlib.sha256(
-                ast.dump(node, include_attributes=False).encode()
-            ).hexdigest()
+            out[node.target.id] = _digest(node)
     return out
 
 
@@ -323,7 +350,7 @@ def test_frozen_dependencies_unchanged():
     assert H(repr([(m.name, m.value) for m in Disposition])) == PINNED_RUNTIME["Disposition members"]
 
 
-_LEGACY_STATE_FINDING_HASH = "33f58d435d10f884ac3b661c3b382d6ba8ac3da4c9e40e8c0d60a719a8fd934f"
+_LEGACY_STATE_FINDING_HASH = "86a280bd5ecd91f7db8ad8909d86fd854d368b43f50b2301b11dae9fc5120a97"
 
 
 def _assert_state_finding_metadata_extension(tree):
@@ -338,10 +365,7 @@ def _assert_state_finding_metadata_extension(tree):
     expected = ast.parse("receipt_subtype: str | None = None").body[0]
     assert ast.dump(fields[0], include_attributes=False) == ast.dump(expected, include_attributes=False)
     node.body.remove(fields[0])
-    assert (
-        hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
-        == _LEGACY_STATE_FINDING_HASH
-    )
+    assert _digest(node) == _LEGACY_STATE_FINDING_HASH
 
 
 def test_state_finding_adds_only_optional_receipt_metadata():
