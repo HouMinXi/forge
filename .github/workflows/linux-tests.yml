@@ -239,7 +239,11 @@ jobs:
         [[ "$diagnostic_invocation" =~ ^[0-9a-f]{32}$ ]]
         printf 'diagnostic_invocation=%s\n' "$diagnostic_invocation" >> "$GITHUB_OUTPUT"
         python scripts/ci_private_transport.py plan --sha "$GITHUB_SHA" \
-          --directory "$RUNNER_TEMP/forge-plan" --public-directory forge-linux-public --diagnostic-directory "$EVIDENCE/diagnostics" --diagnostic-invocation "$diagnostic_invocation" 2>&1 | (umask 077; exec tee "$EVIDENCE/collection.log")
+          --directory "$RUNNER_TEMP/forge-plan" --public-directory forge-linux-public --diagnostic-directory "$EVIDENCE/diagnostics" --diagnostic-invocation "$diagnostic_invocation" 2>&1 | (umask 077; exec tee "$EVIDENCE/collection.log") || {
+          echo "--- collection.log (temporary unmask) ---"
+          cat "$EVIDENCE/collection.log"
+          exit 1
+        }
       id: public_plan
     - name: Prepare fixed public CI summary
       id: public_summary
