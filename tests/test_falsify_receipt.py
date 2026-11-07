@@ -245,37 +245,48 @@ class TestFalsifierIntegration:
     ],
 )
 def test_model_receipt_shape_cannot_authorize_library_verdict(verdict, receipt):
-    finding = _finding(NUMPY_CLAIM)
-    response = {
-        "verdict": verdict,
-        "reasoning": "verified at https://numpy.org/doc/stable/",
-        "receipt": receipt,
-    }
-    with patch("code_forge.falsify_real.llm_invoke") as invoke:
-        invoke.return_value.content = response
-        got = RealFalsifier().falsify(finding)
-    assert got == Disposition.UNCERTAIN
-    assert "host-verified evidence" in finding.falsify_reasoning
-    assert "https://numpy.org" not in finding.falsify_reasoning
+    # A verifier can introduce the unverified premise itself, even when the
+    # original finding only described a local symptom. Both locations cross
+    # the same model/host trust boundary, with or without a receipt-shaped field.
+    for description, reasoning in (
+        (NUMPY_CLAIM, "verified at https://numpy.org/doc/stable/"),
+        ("The new conversion produces an incorrect result.", NUMPY_CLAIM),
+        (NUMPY_CLAIM, NUMPY_CLAIM),
+    ):
+        finding = _finding(description)
+        response = {"verdict": verdict, "reasoning": reasoning, "receipt": receipt}
+        with patch("code_forge.falsify_real.llm_invoke") as invoke:
+            invoke.return_value.content = response
+            got = RealFalsifier().falsify(finding)
+        assert got == Disposition.UNCERTAIN
+        assert "host-verified evidence" in finding.falsify_reasoning
+        assert "https://numpy.org" not in finding.falsify_reasoning
+        assert finding.description == description
+        assert response["reasoning"] == reasoning
 
 
 @pytest.mark.parametrize("verdict", ["CONFIRMED", "DISMISSED", "UNCERTAIN"])
 def test_receipt_provenance_guard_leaves_internal_logic_unchanged(verdict):
-    finding = _finding(DIFF_CLAIM)
-    response = {
-        "verdict": verdict,
-        "reasoning": "local code reasoning",
-        "receipt": {"command": "never executed", "output": "invented result", "source": "host"},
-    }
-    with patch("code_forge.falsify_real.llm_invoke") as invoke:
-        invoke.return_value.content = response
-        assert RealFalsifier().falsify(finding) == Disposition(verdict)
-    assert finding.falsify_reasoning == "local code reasoning"
+    for reasoning in ("local code reasoning", "we call numpy.asarray here", "", None, {}, 0):
+        finding = _finding(DIFF_CLAIM)
+        response = {
+            "verdict": verdict,
+            "reasoning": reasoning,
+            "receipt": {"command": "never executed", "output": "invented result", "source": "host"},
+        }
+        with patch("code_forge.falsify_real.llm_invoke") as invoke:
+            invoke.return_value.content = response
+            assert RealFalsifier().falsify(finding) == Disposition(verdict)
+        assert finding.falsify_reasoning == (reasoning if isinstance(reasoning, str) else None)
 
 
 def test_library_claim_uncertain_reason_is_not_rewritten():
-    finding = _finding(NUMPY_CLAIM)
-    with patch("code_forge.falsify_real.llm_invoke") as invoke:
-        invoke.return_value.content = {"verdict": "UNCERTAIN", "reasoning": "needs investigation"}
-        assert RealFalsifier().falsify(finding) == Disposition.UNCERTAIN
-    assert finding.falsify_reasoning == "needs investigation"
+    for description, reasoning in (
+        (NUMPY_CLAIM, "needs investigation"),
+        ("The new conversion produces an incorrect result.", NUMPY_CLAIM),
+    ):
+        finding = _finding(description)
+        with patch("code_forge.falsify_real.llm_invoke") as invoke:
+            invoke.return_value.content = {"verdict": "UNCERTAIN", "reasoning": reasoning}
+            assert RealFalsifier().falsify(finding) == Disposition.UNCERTAIN
+        assert finding.falsify_reasoning == reasoning
