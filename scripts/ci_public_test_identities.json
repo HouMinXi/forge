@@ -555,6 +555,7 @@
     "tests/test_vertex_response_contract.py",
     "tests/test_vertex_url_contract.py",
     "tests/test_writer_schema_raw_retention.py",
+    "tests/unit.py",
     "tests/unit/test_json_cut.py"
   ],
   "nodes": [
