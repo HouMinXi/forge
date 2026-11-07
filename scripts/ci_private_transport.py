@@ -483,7 +483,10 @@ def _validate_receipt(receipt, allowed_nodes, modules, policy):
     _sha(receipt["sha"])
     _require(receipt["phase"] in (*COLLECTION_PHASES, *ci.PHASES))
     _require(type(receipt["exitstatus"]) is int and receipt["exitstatus"] == 0)
-    _require(set(_strings(receipt["collected"], string_limit=MAX_NODE)) <= allowed_nodes)
+    _collected = set(_strings(receipt["collected"], string_limit=MAX_NODE))
+    if not _collected <= allowed_nodes:
+        raise TransportError(f"{ERROR} :: phase={receipt.get('phase')} extra={sorted(_collected - allowed_nodes)[:6]}")
+
     skips = _strings(receipt["collection_skips"])
     _require(set(skips) <= modules and set(skips) <= set(policy["collection_skips"]))
     reasons = _object(receipt["collection_skip_reasons"])
