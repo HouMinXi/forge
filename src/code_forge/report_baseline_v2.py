@@ -77,9 +77,28 @@ _SAFE_ENUM_TYPES = (
 _SAFE_ATOMS = (bool, int, float, *_SAFE_ENUM_TYPES)
 _SAFE_RECORDS = (State, StateFinding, RenderingInputs, AdvisoryFinding, EnvManifest, AssertionOutcome)
 _SEQUENCE_TYPES = (list, tuple, set, frozenset)
-# copy.deepcopy recurses; a chain deeper than this must be refused here rather
-# than surface as a RecursionError from inside the copy it was meant to guard.
+# copy.deepcopy recurses, and the cost per level depends on the container:
+# measured on CPython 3.12 at the default 1000-frame limit, a dict chain survives
+# 497 levels while a frozenset chain survives only 197. Charging a set three
+# units keeps a set-heavy graph from walking past the frame budget that a
+# dict-only measurement would suggest it has.
 _MAX_DEPTH = 200
+_SET_DEPTH_WEIGHT = 3
+
+
+def _exact(value, expected):
+    """True when the type IS `expected`."""
+    return type(value) is expected
+
+
+def _optional(value, expected):
+    """True when the value is None or its type IS `expected`."""
+    return value is None or type(value) is expected
+
+
+def _pair_of_ints(value, container):
+    return type(value) is container and len(value) == 2 and all(type(item) is int for item in value)
+
 
 # Per-record field constraints. The generic walk admits a value because its type
 # is on the allowlist; it does not know that `verdict` must be a Verdict and not
@@ -89,16 +108,44 @@ _FIELD_CHECKS = {
     State: {
         "mode": lambda value: _admitted(value, (Mode,)),
         "verdict": lambda value: _admitted(value, (Verdict,)),
+        # bool is a subclass of int, and `type(x) is int` is the only form that
+        # rejects True where a count belongs.
+        "round": lambda value: _exact(value, int),
+        "converged": lambda value: _exact(value, bool),
+        "schema_version": lambda value: _exact(value, int),
+        "source_hash": lambda value: _optional(value, str),
+        "hold_reason": lambda value: _optional(value, str),
+        "infra_errors": lambda value: type(value) is list and all(type(item) is str for item in value),
     },
     StateFinding: {
         "disposition": lambda value: _admitted(value, (Disposition,)),
         "diagnostic_kind": lambda value: value is None or _admitted(value, (FindingDiagnosticKind,)),
+        "id": lambda value: _exact(value, str),
+        "fingerprint": lambda value: _exact(value, str),
+        "file": lambda value: _exact(value, str),
+        "line_range": lambda value: _pair_of_ints(value, list),
+        # Declared str, and production never passes None (48 constructions, none
+        # null). It is still admitted because the boundary did not inspect this
+        # field before this table existed, and what the pipeline does with a null
+        # is a pre-existing split this change does not settle: sarif.py:246 emits
+        # {"text": null} unguarded, report_projection_v2.py:408 quarantines the
+        # record. Refusing it here would change who sees that failure, not
+        # whether it happens.
+        "description": lambda value: _optional(value, str),
+        "error": lambda value: _optional(value, str),
     },
     RenderingInputs: {
-        "forge_version": lambda value: type(value) is str,
-        "backend_name": lambda value: value is None or type(value) is str,
-        "backend_model": lambda value: value is None or type(value) is str,
-        "resolved_locator": lambda value: value is None or type(value) is str,
+        "forge_version": lambda value: _exact(value, str),
+        "backend_name": lambda value: _optional(value, str),
+        "backend_model": lambda value: _optional(value, str),
+        # Declared tuple, but machine._advisories is a list and build_sarif_log
+        # declares Optional[list]; only the test fixture used a tuple.
+        "advisories": lambda value: (
+            _admitted(value, (tuple, list))
+            and all(_admitted(item, (AdvisoryFinding,)) for item in value)
+        ),
+        "manifest": lambda value: value is None or _admitted(value, (EnvManifest,)),
+        "assertion_outcome": lambda value: value is None or _admitted(value, (AssertionOutcome,)),
         "tool_versions": lambda value: (
             type(value) is dict
             and all(type(key) is str and type(item) is str for key, item in value.items())
@@ -112,6 +159,14 @@ _FIELD_CHECKS = {
         "stage": lambda value: value is None or _admitted(value, (AssertionStage,)),
         "kind": lambda value: value is None or _admitted(value, (AssertionKind,)),
     },
+    AdvisoryFinding: {
+        "id": lambda value: _exact(value, str),
+        "axis": lambda value: _exact(value, str),
+        "file": lambda value: _exact(value, str),
+        "line_range": lambda value: _pair_of_ints(value, tuple),
+        "description": lambda value: _exact(value, str),
+        "attribution": lambda value: _exact(value, str),
+    },
 }
 
 
@@ -122,7 +177,7 @@ def _checked_field(record, name, value):
         return
     check = checks.get(name)
     if check is not None and not check(value):
-        raise TypeError(f"unexpected snapshot field: {name}")
+        raise TypeError(f"snapshot rejected: field {name!r} has the wrong type")
 
 
 def _admitted(value, allowed):
@@ -151,20 +206,23 @@ def _checked_attributes(item):
     """
     attributes = fields(type(item))
     instance_values = getattr(item, "__dict__", None)
+    # Each refusal names its own check. Five sites sharing one message cannot be
+    # told apart by a test, so a negative control would pass while the check it
+    # was written for never ran.
     if type(instance_values) is not dict:
-        raise TypeError("unexpected snapshot attributes")
+        raise TypeError("snapshot rejected: the attribute map must be a plain dict")
     if len(instance_values) != len(attributes):
-        raise TypeError("unexpected snapshot attributes")
+        raise TypeError("snapshot rejected: attribute count does not match the declared fields")
     for key in instance_values:
         if type(key) is not str:
-            raise TypeError("unexpected snapshot attributes")
+            raise TypeError("snapshot rejected: attribute keys must be plain strings")
     declared = set()
     for field in attributes:
         if type(field.name) is not str:
-            raise TypeError("unexpected snapshot attributes")
+            raise TypeError("snapshot rejected: declared field names must be plain strings")
         declared.add(field.name)
     if set(instance_values) != declared:
-        raise TypeError("unexpected snapshot attributes")
+        raise TypeError("snapshot rejected: attribute names do not match the declared fields")
     return attributes
 
 
@@ -211,10 +269,11 @@ def _preflight(value, limits):
             active.add(id(item))
             if depth >= _MAX_DEPTH:
                 raise ValueError("snapshot nesting depth limit")
+            step = _SET_DEPTH_WEIGHT if _admitted(item, (set, frozenset)) else 1
             pending.append((item, True, depth))
             if type(item) is dict:
-                pending.extend((child, False, depth + 1) for child in item.keys())
-                pending.extend((child, False, depth + 1) for child in item.values())
+                pending.extend((child, False, depth + step) for child in item.keys())
+                pending.extend((child, False, depth + step) for child in item.values())
             elif _admitted(item, _SAFE_RECORDS):
                 for field in attributes:
                     value = getattr(item, field.name)
@@ -229,9 +288,9 @@ def _preflight(value, limits):
                         # and report builders never serialize/archive this slot.
                         # It counts as a node, not expanded report characters.
                         continue
-                    pending.append((value, False, depth + 1))
+                    pending.append((value, False, depth + step))
             else:
-                pending.extend((child, False, depth + 1) for child in children)
+                pending.extend((child, False, depth + step) for child in children)
 
 
 def _frozen_infra_text(state, locator):
