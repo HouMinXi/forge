@@ -37,7 +37,7 @@ This module deliberately has no API that converts a result to `Disposition`. One
 2. Run the checker in shadow mode with no review-credit effects. Measure correct target binding, unsupported cases and failures against real findings; establish parser isolation if the host input threat model requires it.
 3. Design narrowly typed, host-origin findings and rule-complete consumers. Only a registered rule with all host-checked premises can derive its fixed conclusion. Keep arbitrary or mixed prose unresolved, and invalidate persisted results on source/checker changes.
 
-Those stages are not delivered here. Existing location-citation checks and display provenance do not supply their authority. #415 remains a separate draft; this work neither merges it nor claims its false positives are resolved.
+Those stages are not delivered here. Existing location-citation checks and display provenance do not supply their authority. #415's prose-classification limitations remain separate; this work does not resolve them.
 
 ## References and validation boundary
 
