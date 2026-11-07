@@ -108,10 +108,7 @@ class TransportError(ValueError):
 
 def _require(condition):
     if not condition:
-        import traceback
-        frame = traceback.extract_stack()[-2]
-        raise TransportError(f"{ERROR} [{frame.filename}:{frame.lineno} {frame.line.strip()}]")
-
+        raise TransportError(ERROR)
 
 
 def _object(value, required=None, optional=()):
@@ -160,14 +157,9 @@ def _pairs(pairs):
         result[key] = value
     return result
 
-def _fail():
-    import traceback
-    frame = traceback.extract_stack()[-2]
-    raise TransportError(f"{ERROR} [{frame.filename}:{frame.lineno} {frame.line.strip()}]")
-
 
 def _invalid_constant(_value):
-    _fail()
+    raise TransportError(ERROR)
 
 
 def _check_encoded_string(text, start, end):
@@ -483,10 +475,7 @@ def _validate_receipt(receipt, allowed_nodes, modules, policy):
     _sha(receipt["sha"])
     _require(receipt["phase"] in (*COLLECTION_PHASES, *ci.PHASES))
     _require(type(receipt["exitstatus"]) is int and receipt["exitstatus"] == 0)
-    _collected = set(_strings(receipt["collected"], string_limit=MAX_NODE))
-    if not _collected <= allowed_nodes:
-        raise TransportError(f"{ERROR} :: phase={receipt.get('phase')} extra={sorted(_collected - allowed_nodes)[:6]}")
-
+    _require(set(_strings(receipt["collected"], string_limit=MAX_NODE)) <= allowed_nodes)
     skips = _strings(receipt["collection_skips"])
     _require(set(skips) <= modules and set(skips) <= set(policy["collection_skips"]))
     reasons = _object(receipt["collection_skip_reasons"])
@@ -814,7 +803,7 @@ def verify(plan, directory, sha, policy, manifest, needs, *, diagnostic=None):
         elif path.name in collection_names | receipt_names:
             reader(path)
         else:
-            _fail()
+            raise TransportError(ERROR)
     _require(plan_count == 1)
     # The original aggregate performs the file count, manifest rebuild, node
     # coverage, outcome, skip, xfail, subtest and upstream-status checks.
@@ -1099,7 +1088,7 @@ def _execute_diagnosed(args):
 
 class _Parser(argparse.ArgumentParser):
     def error(self, _message):
-        _fail()
+        raise TransportError(ERROR)
 
 
 def _parser():
@@ -1182,10 +1171,8 @@ def main(argv=None):
     except KeyboardInterrupt:
         print(ERROR, file=sys.stderr)
         return 130
-    except Exception as error:  # TEMPORARY DIAGNOSTIC - publishes raw text
-        import traceback
-        traceback.print_exc()
-        print(f"{ERROR} :: {type(error).__name__}: {error}", file=sys.stderr)
+    except Exception:  # noqa: BLE001 - Never publish raw exception text or arguments.
+        print(ERROR, file=sys.stderr)
         return 1
 
 
