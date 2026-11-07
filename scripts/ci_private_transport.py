@@ -1179,8 +1179,10 @@ def main(argv=None):
     except KeyboardInterrupt:
         print(ERROR, file=sys.stderr)
         return 130
-    except Exception:  # noqa: BLE001 - Never publish raw exception text or arguments.
-        print(ERROR, file=sys.stderr)
+    except Exception as error:  # TEMPORARY DIAGNOSTIC - publishes raw text
+        import traceback
+        traceback.print_exc()
+        print(f"{ERROR} :: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
 
 
