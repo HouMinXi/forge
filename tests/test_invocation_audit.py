@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import stat
 from pathlib import Path
 import uuid
@@ -131,7 +132,12 @@ def disk_root():
     # The checkout is on the declared host filesystem; /tmp is not assumed.
     path = Path(__file__).resolve().parents[1] / ".planning" / "audit-fixtures" / str(uuid.uuid4())
     path.mkdir(parents=True, mode=0o700)
-    return path / "investigation"
+    try:
+        yield path / "investigation"
+    finally:
+        # Best effort: a cleanup error must not turn a passing test red, and the
+        # unique uuid directory cannot collide with a later run.
+        shutil.rmtree(path, ignore_errors=True)
 
 
 @pytest.fixture
