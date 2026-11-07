@@ -108,7 +108,10 @@ class TransportError(ValueError):
 
 def _require(condition):
     if not condition:
-        raise TransportError(ERROR)
+        import traceback
+        frame = traceback.extract_stack()[-2]
+        raise TransportError(f"{ERROR} [{frame.filename}:{frame.lineno} {frame.line.strip()}]")
+
 
 
 def _object(value, required=None, optional=()):
