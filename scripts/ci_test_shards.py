@@ -70,6 +70,7 @@ def selection(phase):
 class Recorder:
     def __init__(self, config):
         self.path = config.getoption("ci_report")
+        self.root = config.rootpath
         self.data = {
             "sha": config.getoption("ci_sha"),
             "phase": config.getoption("ci_phase"),
@@ -102,6 +103,13 @@ class Recorder:
             "wasxfail": hasattr(report, "wasxfail"),
             "failure_kind": failure_kind(report),
         }
+        if report.failed:
+            if __package__:
+                from .ci_failure_source import candidate
+            else:
+                from ci_failure_source import candidate
+
+            item["failure_source"] = candidate(report, self.root)
         self.data["subtests" if isinstance(report, SubtestReport) else "reports"].append(item)
 
     def pytest_sessionfinish(self, session, exitstatus):
