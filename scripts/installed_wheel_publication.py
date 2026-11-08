@@ -39,8 +39,17 @@ REQUIREMENTS = {
     "google-auth>=2.35.0": "google-auth>=2.35.0",
     "requests>=2.20.0": "requests>=2.20.0",
     "mcp>=1.27,<2": "mcp<2,>=1.27",
-    "semgrep>=1.176,<1.183": "semgrep<1.183,>=1.176",
     "datasets>=5.0,<6": "datasets<6,>=5.0",
+}
+# Exact platform-qualified metadata from the reviewed backend. Keep these
+# separate from unmarked requirements so arbitrary marker text is never modeled.
+PLATFORM_EXTRA_REQUIREMENTS = {
+    ("semgrep", "semgrep>=1.176,<1.183; platform_system == 'Darwin' and platform_machine == 'x86_64'"): (
+        'semgrep<1.183,>=1.176; (platform_system == "Darwin" and platform_machine == "x86_64") and extra == "semgrep"'
+    ),
+    ("semgrep", "semgrep>=1.176,<1.184; platform_system != 'Darwin' or platform_machine != 'x86_64'"): (
+        'semgrep<1.184,>=1.176; (platform_system != "Darwin" or platform_machine != "x86_64") and extra == "semgrep"'
+    ),
 }
 
 
@@ -176,7 +185,12 @@ def metadata_bytes(files):
     for extra, dependencies in project["optional-dependencies"].items():
         headers.append("Provides-Extra: " + single_line(extra))
         headers.extend(
-            "Requires-Dist: " + REQUIREMENTS[item] + '; extra == "' + extra + '"'
+            "Requires-Dist: "
+            + (
+                PLATFORM_EXTRA_REQUIREMENTS[(extra, item)]
+                if (extra, item) in PLATFORM_EXTRA_REQUIREMENTS
+                else REQUIREMENTS[item] + '; extra == "' + extra + '"'
+            )
             for item in dependencies
         )
     headers.append("Dynamic: license-file")
