@@ -125,8 +125,23 @@ checks all seven execution receipts with the original exact-node, lifecycle,
 skip, xfail, subtest and upstream-job predicates. No test is silently dropped to
 fit the manifest, and no job-status-only substitute is accepted.
 
-Raw logs, JUnit and original receipts remain private to each runner. Every shell
-step redirects diagnostics before setup and derives its private paths locally;
+Failed ownership/cgroup/local/shard pytest transcripts are replayed into the
+GitHub Actions log by failure-only sidecars. This deliberately preserves traceback,
+assertion operands, errno, PIDs, timing and paths needed to diagnose races. Successful
+phases do not replay logs. GitHub log retention/access rules apply; no raw-log artifact
+is uploaded. Setup logs (including git config), JUnit and original receipts remain
+private. A missing transcript or replay error is diagnostic only, never proof of success.
+
+The workflow uses ordinary `pull_request`, not `pull_request_target`, read-only
+contents permission, no repository secrets, and `persist-credentials: false`.
+Pytest subprocess environments omit credential-named variables (including Actions
+runtime/OIDC and GitHub tokens). Replay additionally redacts known credential values,
+GitHub token formats, authorization headers and URL userinfo; GitHub's own masking
+also applies. Workflow commands are disabled around the transcript. These controls
+are not a sandbox for hostile same-user code or a guarantee to recognize arbitrary
+secrets. Do not add secrets to these test jobs or dump the runner environment.
+
+Other shell steps redirect diagnostics before setup and derives its private paths locally;
 private paths are not exported through `GITHUB_ENV`. Transport output uses exact
 relative filenames, with no directory or wildcard upload. Data publication also
 requires its producing step to succeed. Failure summaries are separate fixed
@@ -148,8 +163,7 @@ files or changing their permissions.
 This protects the workflow-controlled diagnostic payloads, not arbitrary hostile
 code running as the runner user. GitHub and pinned checkout/setup/upload actions
 still expose their normal platform and action metadata. Temporary private data
-is not a durable private archive; removing public raw logs reduces forensic
-detail and does not erase historical artifacts. Missing evidence or runner loss
+is not a durable private archive; the failure transcript exception improves forensic detail without erasing historical artifacts. Missing evidence or runner loss
 never proves test success or cleanup.
 
 Each job first uploads an immutable `archive-...-<run_attempt>` copy, then refreshes
@@ -250,7 +264,8 @@ plan, execution phase and aggregate operation. The separate
 `diagnostics-linux-*-<attempt>` artifacts contain only a fixed versioned schema,
 known operation/stage/state/error-code enums, the job status observed at
 projection time (a later upload can still fail), and
-`raw_evidence: NOT_PUBLISHED`. They do not match the aggregate's `linux-*`
+`raw_evidence: NOT_PUBLISHED`. That field describes these fixed artifacts, not
+the separate failure transcript in the Actions log. They do not match the aggregate's `linux-*`
 download pattern, are not coverage receipts, and cannot authorize a pass.
 The existing pytest argv, four-way partition, original validators, exact public
 identity allowlist, skip/xfail/subtest rules and execution budgets are unchanged.
@@ -260,7 +275,9 @@ validation, coverage validation, publication and aggregate validation. They mark
 the current outer operation, not an inferred cause inside a dependency.
 `NONZERO_EXIT`, `INTERRUPTED`, `REJECTED` and `INTERNAL_ERROR` are fixed failure
 classes; no exit number, exception message, PID, host path, unit name, environment
-value, failed test parameter, runtime skip reason or runtime-value hash is public.
+value, failed test parameter, runtime skip reason or runtime-value hash is included
+in these fixed diagnostic artifacts. Failed pytest transcript replay is the explicit
+exception described above.
 A child nonzero return is retained even if recording its failure also fails.
 
 `COMPLETED` means the operation returned after all its existing checks; it is
@@ -281,15 +298,17 @@ are not secret keys or authentication, and are omitted from the fixed sidecar. T
 diagnostic failure can make the job fail, but cannot change the original summary
 outcome, bypass an original publication gate, or turn a failed workload green.
 
-Raw subprocess logs and Python traceback frames (without captured locals) stay
-in job-local 0700 directories and 0600 files. Diagnostic setup never changes the
+Raw subprocess logs and Python traceback frames are initially retained
+in job-local 0700 directories and 0600 files. Failed pytest transcripts may then
+be replayed after credential filtering; other logs stay private. Diagnostic setup never changes the
 workload umask. The diagnostic uploader names one exact reconstructed file; it
 never uploads the private directory. Private tracebacks may be lost when the VM
 is retired, and abrupt cancellation may prevent even the fixed sidecar upload.
 This does not promise later access to full traceback or a complete crash report.
 The fixed-code publisher trusts the reviewed helper and the job; it is not an
 attestation against a malicious same-UID writer or replaced helper. Do not enable
-GitHub runner/step global debug or publish raw logs as a substitute for this path.
+GitHub runner/step global debug or publish setup/environment logs as a substitute
+for the scoped failed-pytest transcript sidecar.
 
 ### Failure locations without runtime values
 
@@ -316,3 +335,18 @@ that the report is authentic or that a test passed. Source bytes are read
 nonblocking and checked through the opened descriptor, so a replaced FIFO does
 not stall failure collection. Optional metadata failures do not replace the
 original test outcome; process interruptions still propagate.
+
+### Failure transcript code map and upstream contract
+
+`linux-tests.yml` failed producer outcome → `ci_publish_failure_log.publish` →
+fixed phase log safe read → credential redaction → command-disabled Actions log.
+`ci_private_transport._run_phase` → filtered pytest environment → unchanged pytest
+exit/receipt/coverage validation. No edge from replay output back into qualification.
+`test_ci_publish_failure_log` checks replay and workflow boundaries;
+`test_ci_private_transport` exercises a real failing producer and checks that no
+success receipt appears. Collection/setup failures and runner-loss cancellation
+are not covered by pytest replay and still use fixed diagnostics.
+
+Upstream: [GitHub workflow command suspension](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#stopping-and-starting-workflow-commands)
+requires a fresh unique stop token. The publisher generates it after reading the
+transcript and rejects collisions rather than allowing log text to resume commands.

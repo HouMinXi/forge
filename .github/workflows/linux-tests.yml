@@ -768,6 +768,21 @@ jobs:
         if-no-files-found: error
         retention-days: 14
         overwrite: true
+    - name: Publish failed pytest transcript (ownership)
+      if: ${{ always() && steps.ownership_receipt.outcome == 'failure' }}
+      run: |
+        set +x
+        python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "ownership"
+    - name: Publish failed pytest transcript (cgroup)
+      if: ${{ always() && steps.cgroup_receipt.outcome == 'failure' }}
+      run: |
+        set +x
+        python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "cgroup"
+    - name: Publish failed pytest transcript (local)
+      if: ${{ always() && steps.local_receipt.outcome == 'failure' }}
+      run: |
+        set +x
+        python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "local"
   service-free:
     needs: plan
     runs-on: ubuntu-24.04
@@ -1158,6 +1173,11 @@ jobs:
         if-no-files-found: error
         retention-days: 14
         overwrite: true
+    - name: Publish failed pytest transcript (shard-${{ matrix.shard }})
+      if: ${{ always() && steps.shard_receipt.outcome == 'failure' }}
+      run: |
+        set +x
+        python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "shard-${{ matrix.shard }}"
   linux-tests:
     name: linux-tests
     needs:
