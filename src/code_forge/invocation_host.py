@@ -411,15 +411,13 @@ class HostAuditSession:
         if threading.current_thread() is self._io._worker:
             raise _Unavailable()
         start = time.monotonic()
+        caller_deadline = deadline
         deadline = self._deadline(deadline)
         window = max(0.0, deadline - start)
         outcome = None
-        # A ticket the worker never reached is provably unexecuted, so replaying
-        # it cannot apply anything twice. The replay is granted at most one more
-        # window, sized by the window this request was given, because callers
-        # hand down a deadline they already capped: a replay that stayed inside
-        # it would resubmit an expired request and change nothing. Anything that
-        # may have run is never replayed.
+        # Replaying a provably unexecuted ticket cannot apply work twice. A
+        # replay may renew the per-control window only within the original
+        # caller budget; an action or sequence deadline is never extended.
         for attempt in (0, 1):
             if attempt:
                 with self._lock:
@@ -432,7 +430,9 @@ class HostAuditSession:
                 grace = min(window, self.limits.control_timeout_s)
                 if grace <= 0.0:
                     raise _Unavailable()
-                deadline = self._deadline(deadline + grace)
+                deadline = self._deadline(min(caller_deadline, deadline + grace))
+                if time.monotonic() >= deadline:
+                    raise _Unavailable()
             with self._lock:
                 if (
                     len(self._commands) >= self.limits.control_slots

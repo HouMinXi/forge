@@ -962,7 +962,7 @@ def test_a_replayed_control_reaches_the_worker_with_the_re_armed_deadline(setup,
     monkeypatch.setattr(supervisor, "submit", submit)
     monkeypatch.setattr(supervisor, "wait", wait)
 
-    host._request(invocation_io.AuditPhase.MAINTAIN, "prepare_managed", None, time.monotonic() + 0.05)
+    host._request(invocation_io.AuditPhase.MAINTAIN, "prepare_managed", None, time.monotonic() + 0.5)
 
     assert len(seen) == 2
     assert seen[1][0] > seen[0][0], "the replayed control must carry a re-armed deadline"
@@ -1020,82 +1020,72 @@ def test_the_final_record_may_be_replayed_while_finalising(setup, monkeypatch):
 
 
 def test_a_replay_spends_at_most_one_more_window(setup, monkeypatch):
-    """A replay is granted one more window, never an unbounded one.
-
-    The host limit is raised here so the control-timeout clamp cannot absorb the
-    difference: with the default limit both one window and two land on the same
-    clamped value, which would make this bound unfalsifiable.
-    """
+    """Advance past window one so the per-control clamp cannot hide extra grace."""
     make, supervisor = setup
-    host, notices = make(control_timeout_s=2.0)
-    expired = invocation_io.IoOutcome("expired", not_executed=True)
+    host, _ = make(control_timeout_s=2.0)
+    clock = [100.0]
     deadlines = []
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
 
-    class Stub:
-        _outcome = expired
-
-    def submit(target, phase, *, deadline, payload=b"", ready_at=0.0):
+    def submit(target, phase, *, deadline, **kwargs):
         deadlines.append(deadline)
-        return Stub()
+        return object()
+
+    def wait(ticket):
+        clock[0] = 103.0
+        return invocation_io.IoOutcome("expired", not_executed=True)
 
     monkeypatch.setattr(supervisor, "submit", submit)
-    monkeypatch.setattr(supervisor, "wait", lambda ticket: ticket._outcome)
-
-    start = time.monotonic()
+    monkeypatch.setattr(supervisor, "wait", wait)
     with pytest.raises(module._Unavailable):
-        host._request(invocation_io.AuditPhase.OPEN, "open", None, start + 0.05)
-
-    assert len(deadlines) == 2
-    window = deadlines[0] - start
-    assert deadlines[1] > deadlines[0]  # the replay really re-arms
-    assert deadlines[1] - deadlines[0] <= window + 0.001  # by one window, no more
+        host._request(invocation_io.AuditPhase.OPEN, "open", None, 110.0)
+    assert deadlines == [102.0, 104.0]
 
 
 def test_a_replayed_control_runs_on_the_worker_with_a_live_deadline(setup, monkeypatch):
-    """The worker must execute the replay against the deadline it carries.
-
-    This drives the real supervisor and worker instead of the submit boundary:
-    one control holds the worker while a second is still queued, so the second
-    really does expire unexecuted, and the replay must reach ``_execute`` with a
-    deadline that has not already gone by.
-    """
+    """Release the real worker only after observing a provably unexecuted expiry."""
     make, supervisor = setup
-    host, notices = make(control_timeout_s=0.2)
+    host, _ = make(control_timeout_s=0.5)
     executed = []
     release = threading.Event()
     held = threading.Event()
 
-    def slow_execute(command, args, deadline):
-        if not executed:
+    class Blocker:
+        def audit_io(self, phase, payload):
             held.set()
-            release.wait(2.0)  # the worker is busy while the next ticket waits
+            assert release.wait(5.0)
+            return True
+
+    def execute(command, args, deadline):
         executed.append((deadline, time.monotonic()))
         return True
 
-    monkeypatch.setattr(host, "_execute", slow_execute)
-
-    blocker = threading.Thread(
-        target=lambda: host._request(
-            invocation_io.AuditPhase.MAINTAIN, "prepare_managed", None, time.monotonic() + 5.0
-        )
+    monkeypatch.setattr(host, "_execute", execute)
+    blocker = supervisor.submit(
+        Blocker(), invocation_io.AuditPhase.MAINTAIN, deadline=time.monotonic() + 5.0
     )
-    blocker.start()
-    assert held.wait(2.0), "the first control must reach the worker"
+    assert held.wait(2.0)
+    original_wait = supervisor.wait
+    outcomes = []
 
-    timer = threading.Timer(0.08, release.set)
-    timer.start()
+    def wait(ticket):
+        outcome = original_wait(ticket)
+        outcomes.append(outcome)
+        if len(outcomes) == 1:
+            assert outcome.not_executed and outcome.state == "expired"
+            release.set()
+        return outcome
+
+    monkeypatch.setattr(supervisor, "wait", wait)
     try:
-        host._request(
-            invocation_io.AuditPhase.MAINTAIN, "prepare_managed", None, time.monotonic() + 0.05
-        )
+        host._request(invocation_io.AuditPhase.MAINTAIN, "prepare_managed", None, time.monotonic() + 3.0)
     finally:
-        timer.cancel()
         release.set()
-        blocker.join(5.0)
-
-    assert len(executed) == 2, "the queued ticket must be replayed exactly once"
-    deadline, ran_at = executed[1]
-    assert deadline > ran_at, "the replay must run while its deadline is still live"
+        original_wait(blocker)
+    assert len(outcomes) == 2 and outcomes[1].state == "ack"
+    assert len(executed) == 1
+    deadline, ran_at = executed[0]
+    assert deadline > ran_at
 
 
 def test_ensure_open_stays_inside_the_callers_deadline(setup, monkeypatch):
@@ -1115,3 +1105,59 @@ def test_ensure_open_stays_inside_the_callers_deadline(setup, monkeypatch):
 
     assert submitted, "the open sequence must issue its controls"
     assert max(deadline for _, deadline in submitted) <= caller_deadline + 0.001
+
+
+@pytest.mark.parametrize("phase", [invocation_io.AuditPhase.OPEN, invocation_io.AuditPhase.FINALIZE])
+@pytest.mark.parametrize("late_ack", [False, True])
+def test_replay_cannot_extend_explicit_caller_deadline(setup, monkeypatch, phase, late_ack):
+    make, supervisor = setup
+    host, _ = make(control_timeout_s=1.0)
+    clock = [100.0]
+    submitted = []
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+
+    def submit(target, phase, *, deadline, **kwargs):
+        submitted.append(deadline)
+        return object()
+
+    def wait(ticket):
+        if len(submitted) == 1:
+            clock[0] = 100.05 if late_ack else 100.1
+            return invocation_io.IoOutcome("expired", not_executed=True)
+        clock[0] = 100.11
+        return invocation_io.IoOutcome("ack", value=True)
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", wait)
+    with pytest.raises(module._Unavailable):
+        host._request(phase, "open", None, 100.1)
+    assert all(deadline <= 100.1 for deadline in submitted)
+    assert len(submitted) == (2 if late_ack else 1)
+    assert not host._commands and host._control_bytes == 0
+
+
+def test_open_replay_cannot_admit_after_caller_deadline(setup, monkeypatch):
+    make, supervisor = setup
+    host, _ = make(known=False, control_timeout_s=1.0)
+    clock = [100.0]
+    submitted = []
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+
+    def submit(target, phase, *, deadline, **kwargs):
+        submitted.append(deadline)
+        return object()
+
+    def wait(ticket):
+        clock[0] = 100.1 if len(submitted) == 1 else 100.11
+        return (
+            invocation_io.IoOutcome("expired", not_executed=True)
+            if len(submitted) == 1
+            else invocation_io.IoOutcome("ack", value=True)
+        )
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", wait)
+    with pytest.raises(module._Unavailable):
+        host._ensure_open(100.1)
+    assert not host._opened
+    assert submitted == [100.1]
