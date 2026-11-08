@@ -575,6 +575,7 @@ class HostAuditSession:
         self._managed_checkpoint(deadline)
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
         fd = os.open("/", flags)
+        primary = None
         try:
             for component in root.parts[1:]:
                 self._managed_checkpoint(deadline)
@@ -586,8 +587,32 @@ class HostAuditSession:
                 os.close(old_fd)
             self._managed_checkpoint(deadline)
             return True
+        except BaseException as error:
+            primary = error
+            raise
         finally:
-            os.close(fd)
+            try:
+                os.close(fd)
+            except BaseException as close_error:  # noqa: BLE001 - keep the probe interruption
+                if primary is None:
+                    raise
+                # The descriptor may already be closed: never retry. Preserve
+                # private evidence without formatting errors or invoking hooks.
+                try:
+                    state = BaseException.__dict__["__dict__"].__get__(primary)
+                    previous = dict.get(state, "_invocation_audit_close_errors", ())
+                    if type(previous) is not tuple:
+                        previous = (previous,)
+                    dict.__setitem__(state, "_invocation_audit_close_errors", previous + (close_error,))
+                    note = (
+                        "Invocation audit probe close also failed; see _invocation_audit_close_errors."
+                    )
+                    if not dict.__contains__(state, "__notes__"):
+                        dict.__setitem__(state, "__notes__", [note])
+                    elif type(notes := dict.__getitem__(state, "__notes__")) is list:
+                        list.append(notes, note)
+                except BaseException:  # noqa: BLE001, S110 - metadata cannot mask the primary
+                    pass
 
     def _ensure_open(self, deadline):
         if self._opened:
