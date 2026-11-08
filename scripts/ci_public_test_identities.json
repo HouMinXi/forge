@@ -11761,6 +11761,7 @@
     "tests/test_invocation_finish_failures.py::test_no_primary_retains_original_suppression_flag[False]",
     "tests/test_invocation_finish_failures.py::test_no_primary_retains_original_suppression_flag[True]",
     "tests/test_invocation_finish_failures.py::test_primary_metadata_failure_still_preserves_primary_when_both_diagnostics_fail",
+    "tests/test_invocation_host.py::test_a_failing_abandon_still_releases_a_provably_unexecuted_command",
     "tests/test_invocation_host.py::test_admission_is_not_entered_and_expired_no_network_settlement_keeps_not_dispatched",
     "tests/test_invocation_host.py::test_close_retains_first_fatal_but_cleans_two_real_stage_capture_slots[False]",
     "tests/test_invocation_host.py::test_close_retains_first_fatal_but_cleans_two_real_stage_capture_slots[True]",
