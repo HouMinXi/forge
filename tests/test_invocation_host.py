@@ -936,3 +936,110 @@ def test_a_failing_abandon_still_releases_a_provably_unexecuted_command(setup, m
 
     assert not host._commands
     assert host._control_bytes == 0
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("outcome", ["completed", "failed"])
+def test_finish_control_budget_starts_after_stage_adoption(setup, monkeypatch, strict, outcome):
+    """A host-only clock models elapsed adoption without slowing the real worker."""
+    make, supervisor = setup
+    host, notices = make(strict=strict, control_timeout_s=1)
+    attempt = admit(host.scope(), request(deadline=time.monotonic() + 10))
+    captured = attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    assert b"".join(captured.chunks(io.BytesIO(b"body"))) == b"body"
+    clock = [time.monotonic()]
+    original_adopt, original_submit = attempt._adopt, supervisor.submit
+    submitted = []
+
+    def adopt():
+        ack = original_adopt()
+        clock[0] += 2  # Earlier stage operations consumed the old FINISH budget.
+        return ack
+
+    def submit(target, phase, **kwargs):
+        if phase is invocation_io.AuditPhase.FINISH:
+            submitted.append(kwargs["deadline"])
+        return original_submit(target, phase, **kwargs)
+
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(attempt, "_adopt", adopt)
+    monkeypatch.setattr(supervisor, "submit", submit)
+    original_action = attempt._deadline
+    assert attempt.finish(outcome=outcome, error_class=None, duration_s=0.01, usage=None)
+    assert submitted == [clock[0] + host.limits.control_timeout_s]
+    assert len(MockRecorder.instances[0].finished) == 1
+    assert host.safe_summary().settled_sends == host.safe_summary().adopted_responses == 1
+    assert attempt._deadline == original_action
+    assert not host.failed and not notices
+    assert not host._commands and host._control_bytes == 0
+    assert attempt.finish(outcome=outcome, error_class=None, duration_s=0.01, usage=None)
+    assert len(submitted) == 1
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_finish_fresh_control_window_still_obeys_job_deadline(setup, monkeypatch, expired):
+    make, supervisor = setup
+    host, _ = make(control_timeout_s=1)
+    attempt = admit(host.scope(), request(deadline=time.monotonic() + 10))
+    captured = attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    assert b"".join(captured.chunks(io.BytesIO(b"body"))) == b"body"
+    original_adopt, original_submit = attempt._adopt, supervisor.submit
+    submitted = []
+
+    def adopt():
+        ack = original_adopt()
+        host._job_deadline = time.monotonic() + (-1 if expired else 0.5)
+        return ack
+
+    def submit(target, phase, **kwargs):
+        if phase is invocation_io.AuditPhase.FINISH:
+            submitted.append(kwargs["deadline"])
+        return original_submit(target, phase, **kwargs)
+
+    monkeypatch.setattr(attempt, "_adopt", adopt)
+    monkeypatch.setattr(supervisor, "submit", submit)
+    assert attempt.finish(outcome="completed", error_class=None, duration_s=0, usage=None) is not expired
+    assert submitted == [host._job_deadline]
+    assert host.failed is expired
+    assert host.safe_summary().settled_sends == int(not expired)
+    assert len(MockRecorder.instances[0].finished) == int(not expired)
+    assert not host._commands and host._control_bytes == 0
+
+
+def test_finish_fresh_control_window_does_not_retry_unknown_work(setup, monkeypatch):
+    make, supervisor = setup
+    host, _ = make(control_timeout_s=0.5)
+    attempt = admit(host.scope(), request())
+    monkeypatch.setattr(MockRecorder, "block", "finish")
+    assert not attempt.finish(outcome="failed", error_class="OSError", duration_s=0, usage=None)
+    assert MockRecorder.entered.is_set()
+    assert host.failed and host.safe_summary().publication_uncertain
+    assert not attempt.finish(outcome="failed", error_class="OSError", duration_s=0, usage=None)
+    assert [name for name, _ in MockRecorder.calls].count("finish") == 1
+    assert host._control_bytes > 0  # Unknown running work remains charged.
+    MockRecorder.release.set()
+    with supervisor._condition:
+        assert supervisor._condition.wait_for(lambda: supervisor._running is None, timeout=1)
+    assert not host._commands and host._control_bytes == 0
+    assert host.safe_summary().settled_sends == 0
+
+
+@pytest.mark.parametrize("fatal", [False, True])
+def test_adoption_failure_never_starts_finish_control(setup, monkeypatch, fatal):
+    make, supervisor = setup
+    host, _ = make()
+    attempt = admit(host.scope(), request())
+    captured = attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    assert b"".join(captured.chunks(io.BytesIO(b"body"))) == b"body"
+    error = KeyboardInterrupt("adoption interrupted") if fatal else OSError("adoption failed")
+    monkeypatch.setattr(MockRecorder, "fail", "adopt")
+    monkeypatch.setattr(MockRecorder, "error", error)
+    if fatal:
+        with pytest.raises(KeyboardInterrupt) as caught:
+            attempt.finish(outcome="completed", error_class=None, duration_s=0, usage=None)
+        assert caught.value is error
+    else:
+        assert not attempt.finish(outcome="completed", error_class=None, duration_s=0, usage=None)
+    assert "finish" not in [name for name, _ in MockRecorder.calls]
+    assert host.failed and host.safe_summary().settled_sends == 0
+    assert not host._commands and host._control_bytes == 0
