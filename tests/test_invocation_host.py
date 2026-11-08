@@ -4,6 +4,7 @@ These tests do not admit a native filesystem or prove durable storage behavior.
 No provider, HTTP, filesystem qualification override or CLI entry point is used.
 """
 
+from asyncio import CancelledError
 from dataclasses import asdict, replace
 import hashlib
 import io
@@ -901,6 +902,163 @@ def test_fatal_close_does_not_wait_for_hung_other_writer_or_release_its_payload_
     with supervisor._condition:
         assert supervisor._condition.wait_for(lambda: supervisor._running is None, timeout=1)
     assert supervisor.retained_bytes == 0 and not supervisor._captures
+
+
+@pytest.mark.parametrize(
+    "primary_type", [RuntimeError, KeyboardInterrupt, SystemExit, MemoryError, CancelledError]
+)
+@pytest.mark.parametrize("cleanup_type", [OSError, KeyboardInterrupt])
+def test_wait_primary_survives_abandon_failure(setup, monkeypatch, primary_type, cleanup_type):
+    make, supervisor = setup
+    host, _ = make()
+    primary = primary_type("private wait failure")
+    secondary = cleanup_type("private abandon failure")
+    primary.__cause__ = LookupError("original cause")
+    primary.__context__ = ValueError("original context")
+    before = (primary.__cause__, primary.__context__, primary.__suppress_context__)
+    ticket = SimpleNamespace(_outcome=invocation_io.IoOutcome("expired", not_executed=True))
+    monkeypatch.setattr(supervisor, "submit", lambda *_args, **_kwargs: ticket)
+
+    def wait(_ticket):
+        raise primary
+
+    def abandon(_ticket):
+        raise secondary
+
+    monkeypatch.setattr(supervisor, "wait", wait)
+    monkeypatch.setattr(supervisor, "abandon", abandon)
+    with pytest.raises(BaseException) as caught:
+        host._request(invocation_io.AuditPhase.OPEN, "open", {}, time.monotonic() + 1)
+    assert caught.value is primary
+    assert (primary.__cause__, primary.__context__, primary.__suppress_context__) == before
+    assert primary._invocation_audit_cleanup_errors == (secondary,)
+    assert not host._commands and host._control_bytes == 0
+
+
+@pytest.mark.parametrize("state", ["unknown", "done", "not-executed"])
+def test_wait_cleanup_failure_retains_unknown_work_until_real_exit(setup, monkeypatch, state):
+    make, supervisor = setup
+    host, _ = make()
+    primary, secondary = CancelledError("wait"), OSError("cleanup")
+    targets = []
+    ticket = SimpleNamespace(
+        _outcome=invocation_io.IoOutcome("expired", not_executed=True)
+        if state == "not-executed"
+        else None
+    )
+
+    def submit(target, *_args, **_kwargs):
+        targets.append(target)
+        target.done = state == "done"
+        return ticket
+
+    def wait(_ticket):
+        raise primary
+
+    def abandon(_ticket):
+        raise secondary
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", wait)
+    monkeypatch.setattr(supervisor, "abandon", abandon)
+    with pytest.raises(CancelledError) as caught:
+        host._request(invocation_io.AuditPhase.OPEN, "open", {}, time.monotonic() + 1)
+    assert caught.value is primary
+    assert targets[0].abandoned
+    if state == "unknown":
+        assert host._commands == {targets[0]} and host._control_bytes == 4096
+        monkeypatch.setattr(host, "_execute", lambda *_: None)
+        targets[0].audit_io(invocation_io.AuditPhase.OPEN, b"")
+    assert not host._commands and host._control_bytes == 0
+
+
+def test_wait_single_failure_and_success_controls(setup, monkeypatch):
+    make, supervisor = setup
+    host, _ = make()
+    primary = RuntimeError("wait")
+    ticket = SimpleNamespace(_outcome=invocation_io.IoOutcome("expired", not_executed=True))
+    monkeypatch.setattr(supervisor, "submit", lambda *_args, **_kwargs: ticket)
+    monkeypatch.setattr(supervisor, "abandon", lambda *_: None)
+
+    def wait(_ticket):
+        raise primary
+
+    monkeypatch.setattr(supervisor, "wait", wait)
+    with pytest.raises(RuntimeError) as caught:
+        host._request(invocation_io.AuditPhase.OPEN, "open", {}, time.monotonic() + 1)
+    assert caught.value is primary and not hasattr(primary, "_invocation_audit_cleanup_errors")
+    monkeypatch.setattr(supervisor, "wait", lambda *_: invocation_io.IoOutcome("ack", value=7))
+    assert host._request(invocation_io.AuditPhase.OPEN, "open", {}, time.monotonic() + 1) == 7
+    assert not host._commands and host._control_bytes == 0
+
+
+def test_public_start_preserves_wait_cancellation_and_blocks_later_send(setup, monkeypatch):
+    make, supervisor = setup
+    host, _ = make()
+    primary, secondary = CancelledError("wait"), OSError("cleanup")
+    ticket = SimpleNamespace(_outcome=invocation_io.IoOutcome("expired", not_executed=True))
+    calls = []
+
+    def submit(*_args, **_kwargs):
+        calls.append(1)
+        return ticket
+
+    def wait(_ticket):
+        raise primary
+
+    def abandon(_ticket):
+        raise secondary
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", wait)
+    monkeypatch.setattr(supervisor, "abandon", abandon)
+    scope = host.scope()
+    with pytest.raises(CancelledError) as caught:
+        scope.start_send(request())
+    assert caught.value is primary
+    assert host.failed and scope.start_send(request()) is None and len(calls) == 1
+    assert not host._commands and host._control_bytes == 0
+
+
+def test_wait_cleanup_evidence_bypasses_exception_hooks_and_keeps_previous(setup, monkeypatch):
+    class Hostile(CancelledError):
+        def __getattribute__(self, name):
+            if name in ("__dict__", "__notes__", "_invocation_audit_cleanup_errors"):
+                raise AssertionError("exception read hook invoked")
+            return super().__getattribute__(name)
+
+        def __setattr__(self, name, value):
+            raise AssertionError("exception write hook invoked")
+
+        def __str__(self):
+            raise AssertionError("exception formatted")
+
+        def add_note(self, _note):
+            raise AssertionError("exception note hook invoked")
+
+    make, supervisor = setup
+    host, _ = make()
+    primary, secondary, previous = Hostile(), OSError("private"), OSError("earlier")
+    state = BaseException.__dict__["__dict__"].__get__(primary)
+    state["_invocation_audit_cleanup_errors"] = (previous,)
+    state["__notes__"] = ["old note"]
+    ticket = SimpleNamespace(_outcome=invocation_io.IoOutcome("expired", not_executed=True))
+    monkeypatch.setattr(supervisor, "submit", lambda *_args, **_kwargs: ticket)
+
+    def wait(_ticket):
+        raise primary
+
+    def abandon(_ticket):
+        raise secondary
+
+    monkeypatch.setattr(supervisor, "wait", wait)
+    monkeypatch.setattr(supervisor, "abandon", abandon)
+    with pytest.raises(Hostile) as caught:
+        host._request(invocation_io.AuditPhase.OPEN, "open", {}, time.monotonic() + 1)
+    assert caught.value is primary
+    assert state["_invocation_audit_cleanup_errors"] == (previous, secondary)
+    assert state["__notes__"][0] == "old note" and len(state["__notes__"]) == 2
+    assert "private" not in state["__notes__"][1]
 
 
 def test_a_failing_abandon_still_releases_a_provably_unexecuted_command(setup, monkeypatch):

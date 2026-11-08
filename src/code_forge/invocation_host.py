@@ -416,8 +416,27 @@ class HostAuditSession:
             raise
         try:
             outcome = self._io.wait(ticket)
-        except BaseException:
-            self._abandon_control(ticket, target)
+        except BaseException as primary:
+            try:
+                self._abandon_control(ticket, target)
+            except BaseException as cleanup_error:  # noqa: BLE001 - preserve the wait interruption
+                # Retain private cleanup evidence without replacing the wait
+                # exception or its chain. Avoid subclass hooks and error text.
+                try:
+                    state = BaseException.__dict__["__dict__"].__get__(primary)
+                    previous = dict.get(state, "_invocation_audit_cleanup_errors", ())
+                    if type(previous) is not tuple:
+                        previous = (previous,)
+                    dict.__setitem__(
+                        state, "_invocation_audit_cleanup_errors", previous + (cleanup_error,)
+                    )
+                    note = "Invocation audit control cleanup also failed; see _invocation_audit_cleanup_errors."
+                    if not dict.__contains__(state, "__notes__"):
+                        dict.__setitem__(state, "__notes__", [note])
+                    elif type(notes := dict.__getitem__(state, "__notes__")) is list:
+                        list.append(notes, note)
+                except BaseException:  # noqa: BLE001, S110 - metadata cannot mask the primary
+                    pass
             raise
         if outcome.state == "unknown":
             target.abandon()
