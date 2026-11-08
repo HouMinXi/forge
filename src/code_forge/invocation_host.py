@@ -422,18 +422,20 @@ class HostAuditSession:
         # may have run is never replayed.
         for attempt in (0, 1):
             if attempt:
-                with self._lock:
-                    if self._closed or self._disabled:
-                        raise _Unavailable()
-                    # Finalising has started is exactly when the final record is
-                    # issued, so that request is the one exception.
-                    if self._finalize_started and phase is not AuditPhase.FINALIZE:
-                        raise _Unavailable()
                 grace = min(window, self.limits.control_timeout_s)
                 if grace <= 0.0:
                     raise _Unavailable()
                 deadline = self._deadline(deadline + grace)
             with self._lock:
+                # Replay admission and accounting share one lifecycle boundary.
+                # A close/disable/finalize during re-arming must not slip between
+                # the check and registration. Already registered work remains
+                # visible to close() and keeps its existing accounting semantics.
+                if attempt:
+                    if self._closed or self._disabled:
+                        raise _Unavailable()
+                    if self._finalize_started and phase is not AuditPhase.FINALIZE:
+                        raise _Unavailable()
                 if (
                     len(self._commands) >= self.limits.control_slots
                     or charge > self.limits.control_bytes - self._control_bytes
