@@ -430,7 +430,15 @@ def test_fork_refuses_before_touching_inherited_locks(setup, monkeypatch):
 )
 def test_fatal_storage_error_preserves_original_identity_in_all_phases(setup, phase):
     make, _ = setup
-    host, _ = make()
+    # This test isolates fatal-error identity, not deadline expiry. The fixture's
+    # 80 ms fault-test budget can expire during ordinary worker scheduling before
+    # the target fault is armed. Use the production control/flush budgets here;
+    # deadline behavior remains covered by the dedicated timeout tests.
+    defaults = HostAuditLimits()
+    host, _ = make(
+        control_timeout_s=defaults.control_timeout_s,
+        flush_timeout_s=defaults.flush_timeout_s,
+    )
     original = MemoryError("PRIVATE fatal")
     original.__cause__ = ValueError("PRIVATE cause")
     cause = original.__cause__
