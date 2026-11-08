@@ -1,7 +1,8 @@
 """Offline adversarial tests for the non-qualifying public failure diagnostic.
 
-Only synthetic reviewed identities are used. No test process, service, installer,
-or live collection is launched; the subprocess boundary is always replaced.
+Synthetic reviewed identities isolate the publication contract. One v2 test
+runs a real failing pytest child in a temporary Git repository; no service or
+installer is launched. Legacy test names retain their public node identities.
 """
 
 from contextlib import contextmanager
@@ -34,7 +35,7 @@ from tests.test_ci_private_transport import (
 PHASE = "shard-0"
 RUN = "123456789"
 ATTEMPT = "3"
-PUBLIC_KEYS = {"schema", "phase", "stage", "status", "tests", "raw_evidence"}
+PUBLIC_KEYS = {"sha", "schema", "phase", "stage", "status", "tests", "raw_evidence"}
 STAGES = {
     "prepare",
     "pytest",
@@ -120,7 +121,7 @@ def _export(case, **overrides):
 
 def _assert_public(case, value, *, status=None, stage=None):
     assert set(value) == PUBLIC_KEYS
-    assert value["schema"] == "forge-public-ci-failure-v1"
+    assert value["schema"] == "forge-public-ci-failure-v2"
     assert value["phase"] in {f"shard-{number}" for number in range(4)}
     assert value["stage"] in STAGES
     assert value["status"] in {"recorded", "suppressed", "unavailable"}
@@ -132,7 +133,7 @@ def _assert_public(case, value, *, status=None, stage=None):
     if value["status"] != "recorded":
         assert value["tests"] == []
     for item in value["tests"]:
-        assert set(item) == {"id", "stage", "status", "kind"}
+        assert set(item) == {"id", "stage", "status", "kind", "test", "source"}
         assert re.fullmatch(r"public-(?:0|[1-9][0-9]*)$", item["id"])
         assert int(item["id"].split("-")[1]) < len(case.example.manifest["nodes"])
         assert item["stage"] in {"setup", "call", "teardown"}
@@ -147,15 +148,18 @@ def _assert_public(case, value, *, status=None, stage=None):
     for forbidden in (
         CANARY,
         "7654321",
-        SHA,
         RUN,
         str(case.private),
         str(case.plan_path),
         hashlib.sha256(CANARY.encode()).hexdigest(),
-        *case.example.manifest["nodes"],
     ):
         assert forbidden not in text
-    assert "tests/" not in text and "/home/" not in text and "::" not in text
+    assert "/home/" not in text
+    assert re.fullmatch(r"[0-9a-f]{40}", value["sha"])
+    for item in value["tests"]:
+        node = case.example.manifest["nodes"][int(item["id"].split("-")[1])]
+        assert item["test"] == node.split("[", 1)[0]
+        assert item["source"] is None
     assert not (os.stat(case.public / "failure.json").st_mode & 0o077)
     return value
 
@@ -192,11 +196,14 @@ def _args(case):
 
 
 def test_failed_report_exports_only_reviewed_bare_ordinal(case, capsys):
+    """Legacy node name: v2 adds a reviewed unparameterized name and source slot."""
     report = _failure_report(case.receipt)
     result = _assert_public(case, _export(case), status="recorded", stage="pytest")
     assert result["tests"] == [
         {
             "id": f"public-{case.example.manifest['nodes'].index(report['nodeid'])}",
+            "test": report["nodeid"].split("[", 1)[0],
+            "source": None,
             "stage": "call",
             "status": "failed",
             "kind": None,
@@ -245,6 +252,8 @@ def test_failed_reports_and_subtests_keep_only_fixed_stage_labels(case, kind, wh
     assert result["tests"] == [
         {
             "id": f"public-{case.example.manifest['nodes'].index(report['nodeid'])}",
+            "test": report["nodeid"].split("[", 1)[0],
+            "source": None,
             "stage": when,
             "status": "failed",
             "kind": None,
@@ -923,6 +932,8 @@ def test_reviewed_skip_reason_does_not_allow_skipped_subtest_or_teardown(case, k
         [
             {
                 "id": f"public-{case.example.manifest['nodes'].index(node)}",
+                "test": node.split("[", 1)[0],
+                "source": None,
                 "stage": when,
                 "status": "unexpected_skip",
                 "kind": None,
@@ -939,6 +950,7 @@ def test_reviewed_skip_reason_does_not_allow_skipped_subtest_or_teardown(case, k
 
 
 def test_reviewed_canary_identity_and_reason_are_still_only_bare_ordinal(case):
+    """Legacy node name: parameter canaries stay private alongside the v2 name."""
     old = case.receipt["collected"][0]
     replacement = old + "[" + CANARY + "]"
     example = case.example
@@ -964,6 +976,8 @@ def test_reviewed_canary_identity_and_reason_are_still_only_bare_ordinal(case):
     assert result["tests"] == [
         {
             "id": f"public-{example.manifest['nodes'].index(replacement)}",
+            "test": replacement.split("[", 1)[0],
+            "source": None,
             "stage": "call",
             "status": "failed",
             "kind": None,
@@ -1048,3 +1062,214 @@ def test_publication_disk_failure_removes_stale_output_and_has_fixed_cli_error(
     assert diagnostic.main(_args(case)) == 1
     assert not (case.public / "failure.json").exists()
     assert capsys.readouterr() == ("", "STOP: Failure diagnostic unavailable.\n")
+
+
+def test_v2_real_pytest_receipt_publishes_verified_failure_coordinate(case, monkeypatch, tmp_path):
+    import subprocess
+    import sys
+
+    from scripts import ci_failure_source as source
+
+    root = tmp_path / "source"
+    root.mkdir()
+    node = case.receipt["collected"][0]
+    module, name = node.split("::")
+    function, parameter = name.split("[", 1)
+    file = root / module
+    file.parent.mkdir(parents=True)
+    file.write_text(
+        "import pytest\n"
+        f"@pytest.mark.parametrize('value', [0], ids=[{parameter[:-1]!r}])\n"
+        f"def {function}(value):\n"
+        "    assert value == 1, 'PRIVATE_RUNTIME_SECRET'\n"
+    )
+    (root / "pytest.ini").write_text("[pytest]\n")
+
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(root), *args], stderr=subprocess.DEVNULL)
+
+    git("init", "-q")
+    git("add", ".")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture")
+    sha = git("rev-parse", "HEAD").decode().strip()
+    for receipt in case.example.collections.values():
+        receipt["sha"] = sha
+    case.example.plan = ci.build_plan(case.example.collections, sha, case.example.policy)
+    from tests.test_ci_private_transport import expected_policy
+
+    case.plan = ci.build_plan(
+        {
+            phase: expected_collection(value, case.example.manifest)
+            for phase, value in case.example.collections.items()
+        },
+        sha,
+        expected_policy(case.example),
+    )
+    case.state["sha"] = sha
+    receipt_path = tmp_path / "real-receipt.json"
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "scripts.ci_test_shards",
+            "--ci-report",
+            str(receipt_path),
+            "--ci-sha",
+            sha,
+            "--ci-phase",
+            PHASE,
+            node,
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        timeout=30,
+    )
+    assert run.returncode == 1, run.stdout.decode(errors="replace")
+    case.receipt = ci.read(receipt_path)
+    _save(case)
+    monkeypatch.setattr(diagnostic, "Verifier", lambda value: source.Verifier(value, root))
+    result = _export(case, sha=sha)
+    assert result["status"] == "recorded"
+    assert result["sha"] == sha
+    assert result["tests"][0]["test"] == node.split("[", 1)[0]
+    assert result["tests"][0]["source"] == {"path": module, "line": 4}
+    assert "PRIVATE_RUNTIME_SECRET" not in json.dumps(result)
+    assert parameter[:-1] not in json.dumps(result)
+    # Changed worktree metadata cannot borrow the committed coordinate.
+    report = _failure_report(case.receipt)
+    report["failure_source"]["sha256"] = "0" * 64
+    _save(case)
+    assert _export(case, sha=sha)["tests"][0]["source"] is None
+
+
+def test_v2_coordinate_rejects_malformed_or_unbound_candidates():
+    from scripts import ci_failure_source as source
+
+    verifier = source.Verifier(SHA)
+    verifier._blob = lambda path: ("a" * 64, 10)
+    good = {"path": "tests/test_x.py", "line": 3, "sha256": "a" * 64}
+    assert verifier.verify(good) == {"path": good["path"], "line": 3}
+    for field, values in {
+        "path": ["../test.py", "/home/secret.py", "tests//x.py", "tests/./x.py", "tests/x\n.py"],
+        "line": [True, 0, -1, 11, "3"],
+        "sha256": ["b" * 64, "secret", None],
+    }.items():
+        for value in values:
+            assert verifier.verify({**good, field: value}) is None
+    for value in (None, [], {**good, "raw": "secret"}):
+        assert verifier.verify(value) is None
+    verifier.sha = "bad-sha"
+    assert verifier.verify(good) is None
+
+
+def test_v2_source_lookup_failure_preserves_test_identity(case, monkeypatch):
+    from scripts import ci_failure_source as source
+
+    def fail(*args):
+        raise OSError("private path")
+
+    monkeypatch.setattr(source.Verifier, "_blob", fail)
+    _failure_report(case.receipt)["failure_source"] = {
+        "path": "tests/test_x.py",
+        "line": 1,
+        "sha256": "a" * 64,
+    }
+    _save(case)
+    result = _export(case)
+    assert result["status"] == "recorded"
+    assert result["tests"][0]["source"] is None
+    assert result["tests"][0]["test"] == case.receipt["collected"][0].split("[", 1)[0]
+
+
+def test_v2_recorder_does_not_block_on_fifo_or_follow_external_source(tmp_path):
+    from scripts import ci_failure_source as source
+
+    def report(path):
+        return SimpleNamespace(
+            failed=True, longrepr=SimpleNamespace(reprcrash=SimpleNamespace(path=str(path), lineno=1))
+        )
+
+    fifo = tmp_path / "pipe.py"
+    os.mkfifo(fifo)
+    assert source.candidate(report(fifo), tmp_path) is None
+    link = tmp_path / "loop.py"
+    link.symlink_to(link)
+    assert source.candidate(report(link), tmp_path) is None
+    outside = tmp_path.parent / "outside.py"
+    outside.write_text("assert False\n")
+    assert source.candidate(report(outside), tmp_path) is None
+
+
+def test_v2_recorder_close_double_fault_preserves_interruption(tmp_path, monkeypatch):
+    import errno
+
+    from scripts import ci_failure_source as source
+
+    path = tmp_path / "test.py"
+    path.write_text("assert False\n")
+    report = SimpleNamespace(
+        failed=True, longrepr=SimpleNamespace(reprcrash=SimpleNamespace(path=str(path), lineno=1))
+    )
+    original_close = os.close
+    for primary in (KeyboardInterrupt(), SystemExit(7)):
+
+        def read(fd, count, fault=primary):
+            raise fault
+
+        def close(fd):
+            original_close(fd)
+            raise OSError(errno.EIO, "close")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(source.os, "read", read)
+            patch.setattr(source.os, "close", close)
+            with pytest.raises(type(primary)) as caught:
+                source.candidate(report, tmp_path)
+            assert caught.value is primary
+            assert primary.__notes__ == ["diagnostic source FD close failed: errno=5"]
+
+
+def test_v2_source_verifier_budget_and_cache(monkeypatch):
+    from scripts import ci_failure_source as source
+
+    verifier = source.Verifier(SHA)
+    verifier.deadline = 0
+    calls = []
+    monkeypatch.setattr(source.subprocess, "run", lambda *a, **kw: calls.append(a))
+    assert verifier.verify({"path": "tests/test.py", "line": 1, "sha256": "a" * 64}) is None
+    assert not calls
+    verifier.cache = {f"tests/{index}.py": None for index in range(16)}
+    assert verifier._blob("tests/new.py") is None
+    assert not calls
+
+
+def test_v2_physical_lines_ignore_non_newline_separators():
+    from scripts.ci_failure_source import line_count
+
+    for data, count in ((b"", 0), (b"a", 1), (b"a\n", 1), (b"a\r\nb\rc\n", 3), (b"a\vb\fc\x85d", 1)):
+        assert line_count(data) == count
+
+
+def test_v2_opened_fd_type_is_checked_after_path_swap(tmp_path, monkeypatch):
+    from scripts import ci_failure_source as source
+
+    path = tmp_path / "test.py"
+    path.write_text("assert False\n")
+    report = SimpleNamespace(
+        failed=True, longrepr=SimpleNamespace(reprcrash=SimpleNamespace(path=str(path), lineno=1))
+    )
+    original = os.open
+
+    def swapped_open(target, flags):
+        path.unlink()
+        os.mkfifo(path)
+        assert flags & os.O_NONBLOCK
+        return original(target, flags)
+
+    monkeypatch.setattr(source.os, "open", swapped_open)
+    assert source.candidate(report, tmp_path) is None

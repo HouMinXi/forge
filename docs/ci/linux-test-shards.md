@@ -89,10 +89,12 @@ collection runs. The published ordinal `public-N` is the **position** of a node
 in that sorted list, so inserting one entry renumbers every later ordinal. An
 ordinal is only meaningful together with the manifest revision that produced it.
 
-A published failure record carries one extra field per failed test, `kind`, which
+A published failure record carries a `kind` field per failed test, which
 is one of `assertion`, `timeout` or `error`. It is derived from the exception the
 report names, never from the message body; a value outside that set suppresses
-the whole published list rather than publishing part of it.
+the whole published list rather than publishing part of it. The v2 failure-only
+format also exposes a reviewed function name and verified source coordinates
+as described under "Failure locations without runtime values" below.
 
 ### Resolving a published ordinal locally
 
@@ -288,3 +290,29 @@ This does not promise later access to full traceback or a complete crash report.
 The fixed-code publisher trusts the reviewed helper and the job; it is not an
 attestation against a malicious same-UID writer or replaced helper. Do not enable
 GitHub runner/step global debug or publish raw logs as a substitute for this path.
+
+### Failure locations without runtime values
+
+The failure-only `forge-public-ci-failure-v2` artifact includes the requested
+commit `sha`, each reviewed test name without its parameter suffix, and the
+existing `public-N` ordinal to distinguish parameter cases. Unlike v1, readers
+can identify a failing function without first resolving the ordinal locally.
+This is diagnostic metadata, never an additional success receipt or gate input.
+
+Failed pytest reports may also include `source: {path, line}`. The recorder
+captures a bounded regular source file and its digest at the reported crash
+location (a 1-based physical line, possibly in a helper or fixture). Publication
+requires that digest and line to match an ordinary Git blob at the exact
+requested commit. Changed source, paths outside the checkout, invalid metadata,
+missing Git objects or exhausted lookup budgets yield `source: null`; the test
+identity remains available. At most 16 distinct paths and 10 seconds of Git
+lookup time are allowed per artifact. Git subprocesses each have a two-second
+limit. These bounds are best-effort operational limits, not a process sandbox.
+
+The output does not include exception messages, assertion operands, arbitrary
+runtime objects, parameter values or absolute host paths. A matching source
+coordinate proves only where the supplied report points in that version, not
+that the report is authentic or that a test passed. Source bytes are read
+nonblocking and checked through the opened descriptor, so a replaced FIFO does
+not stall failure collection. Optional metadata failures do not replace the
+original test outcome; process interruptions still propagate.
