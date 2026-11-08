@@ -71,6 +71,11 @@ class Recorder:
     def __init__(self, config):
         self.path = config.getoption("ci_report")
         self.root = config.rootpath
+        from scripts import ci_native_failure_detail as native_detail
+
+        self.native_detail = native_detail
+        self.credential_values = native_detail.credential_values()
+        self.native_failures = {}
         self.data = {
             "sha": config.getoption("ci_sha"),
             "phase": config.getoption("ci_phase"),
@@ -92,6 +97,17 @@ class Recorder:
         elif report.failed:
             self.data["collection_errors"].append(report.nodeid)
 
+    def pytest_runtest_makereport(self, item, call):
+        report = yield
+        if report.failed and self.native_detail.eligible(report.nodeid):
+            key = (report.nodeid, report.when)
+            if key not in self.native_failures:
+                try:
+                    self.native_failures[key] = self.native_detail.capture(call, self.credential_values)
+                except BaseException:  # noqa: BLE001 - Diagnostics cannot replace the original failure.
+                    self.native_failures[key] = None
+        return report
+
     def pytest_runtest_logreport(self, report):
         from _pytest.subtests import SubtestReport
 
@@ -110,6 +126,9 @@ class Recorder:
                 from ci_failure_source import candidate
 
             item["failure_source"] = candidate(report, self.root)
+            detail = self.native_failures.get((report.nodeid, report.when))
+            if detail is not None:
+                item["native_failure_detail"] = detail
         self.data["subtests" if isinstance(report, SubtestReport) else "reports"].append(item)
 
     def pytest_sessionfinish(self, session, exitstatus):
@@ -130,6 +149,7 @@ def pytest_configure(config):
         import pytest
 
         pytest.hookimpl(wrapper=True, tryfirst=True)(Recorder.pytest_sessionfinish)
+        pytest.hookimpl(wrapper=True)(Recorder.pytest_runtest_makereport)
         config.pluginmanager.register(Recorder(config), "forge-ci-recorder")
 
 

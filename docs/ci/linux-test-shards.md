@@ -350,3 +350,35 @@ are not covered by pytest replay and still use fixed diagnostics.
 Upstream: [GitHub workflow command suspension](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#stopping-and-starting-workflow-commands)
 requires a fresh unique stop token. The publisher generates it after reading the
 transcript and rejects collisions rather than allowing log text to resume commands.
+
+### Temporary native first-failure detail
+
+The service-free failure exporter currently opts in with `--native-details`.
+Remove that one flag from `.github/workflows/linux-tests.yml` (and update the
+exact command expectation in its publication test) to stop publishing runtime
+exception detail. There is no automatic expiry or change to failure judgment.
+
+The existing `forge-ci-failure-shard-*` and attempt archive artifacts contain
+`failure.json`. Only failures from `tests/test_ordinary_audit_native.py` may add
+`native_detail`: the first natural setup/call/teardown exception representation,
+including its cause/context chain, source lines and expanded assertion operands.
+Each detail carries the exact node ID, commit SHA, GitHub run ID, run attempt,
+shard and test stage. No rerun is used. The 65,536-character bound is explicit
+via `truncated`; a diagnostic failure never turns a failed test into a pass.
+Existing 14-day artifact retention is unchanged.
+
+The native module uses reviewed synthetic source, responses and credentials and
+intercepts HTTP. The Linux workflow has read-only contents permission, no
+explicit secret/token injection, no privileged pull-request trigger, and
+checkout credential persistence disabled. Re-review these assumptions before
+expanding the module or changing its fixtures/workflow. Public artifacts do NOT
+inherit GitHub log masking. Known credential environment values and recognizable
+token/credential-URL forms are redacted as additional protection, not a claim
+that arbitrary secret formats can be recognized.
+
+No captured stdout/stderr/log sections, local variables, function-argument
+lists, environment dumps, Git configuration, raw audit store or whole shard log
+are exported. Source lines and exception/expanded assertion text are deliberately
+included, not classified as captured output. `raw_evidence: NOT_PUBLISHED` still
+refers to the original raw logs/receipts/audit files, not to the opt-in structured
+exception detail. This is diagnostic evidence only, never a success receipt.

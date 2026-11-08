@@ -61,7 +61,7 @@ RECEIPT_KEYS = {
 REPORT_KEYS = {"nodeid", "when", "outcome", "skip_reason", "wasxfail"}
 # Optional for older receipts. Failure metadata is ignored by success
 # qualification; the separate diagnostic exporter validates it before use.
-REPORT_OPTIONAL_KEYS = {"failure_kind", "failure_source"}
+REPORT_OPTIONAL_KEYS = {"failure_kind", "failure_source", "native_failure_detail"}
 POLICY_KEYS = {"module_seconds", "runtime_skips", "collection_skips", "collection_skip_reasons"}
 ERROR = "STOP: Private CI validation failed."
 DIAGNOSTIC_SCHEMA = "forge-public-linux-ci-diagnostics-v1"

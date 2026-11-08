@@ -1154,7 +1154,7 @@ jobs:
         fi
         python scripts/ci_failure_diagnostic.py --sha "$GITHUB_SHA" --phase "shard-${{ matrix.shard }}" \
           --plan forge-linux-input/plan/plan.json --directory "$EVIDENCE" \
-          --public-directory forge-linux-failure-public
+          --public-directory forge-linux-failure-public --native-details
     - name: Archive fixed public failure diagnostic
       id: archive_failure_diagnostic
       if: ${{ always() && steps.failure_diagnostic.outcome == 'success' }}

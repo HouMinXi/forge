@@ -38,7 +38,7 @@ FAILURE_GATE = "${{ always() && steps.shard_receipt.outcome == 'failure' }}"
 FAILURE_COMMAND = (
     'python scripts/ci_failure_diagnostic.py --sha "$GITHUB_SHA" --phase "shard-${{ matrix.shard }}" \\\n'
     '  --plan forge-linux-input/plan/plan.json --directory "$EVIDENCE" \\\n'
-    "  --public-directory forge-linux-failure-public"
+    "  --public-directory forge-linux-failure-public --native-details"
 )
 PRODUCER_IDS = {
     "Collect original selections and partition every module": "public_plan",
@@ -1054,3 +1054,27 @@ def test_private_tee_failure_keeps_original_pipefail_semantics(tmp_path, produce
     assert (evidence / "preflight.log").stat().st_mode & 0o777 == 0o600
     assert log.stat().st_mode & 0o777 == 0o600
     assert all(path.read_bytes() == b"" for path in sinks.values())
+
+
+def test_native_detail_publication_has_no_explicit_credentials_or_broader_trigger():
+    """Keep the temporary exception publication tied to a credential-free job."""
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    assert workflow["permissions"] == {"contents": "read"}
+    assert set(workflow["on"]) == {"pull_request", "push", "workflow_dispatch"}
+    text = WORKFLOW.read_text()
+    for forbidden in (
+        "github.token",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "ACTIONS_RUNTIME_TOKEN",
+    ):
+        assert forbidden not in text
+    assert not re.search(r"\$\{\{[^}]*\bsecrets(?:\.|\[)", text)
+    for job in workflow["jobs"].values():
+        assert "permissions" not in job
+        for step in job["steps"]:
+            if step.get("uses", "").startswith("actions/checkout@"):
+                assert step["with"]["persist-credentials"] is False
+                assert "token" not in step["with"]
+    assert text.count("--native-details") == 1
+    assert "--native-details" in run_step("service-free", FAILURE_NAME)["run"]
