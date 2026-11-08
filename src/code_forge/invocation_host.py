@@ -378,6 +378,22 @@ class HostAuditSession:
                 flush_timeout_s=self.limits.flush_timeout_s,
             )
 
+    def _abandon_control(self, ticket, target):
+        """Release a control even when the supervisor raises while abandoning.
+
+        ``abandon()`` only releases when the command finished or provably never
+        ran. Without the ``finally`` a raising abandon leaves the target never
+        told it was abandoned, so its charge stays for the life of the session
+        and later control calls fail against a budget nothing is using.
+        """
+        io = self._io
+        if io is None:
+            raise _Unavailable()
+        try:
+            io.abandon(ticket)
+        finally:
+            target.abandon(not_executed=ticket._outcome is not None and ticket._outcome.not_executed)
+
     def _request(self, phase, command, arguments, deadline, *, charge=4096):
         self._check_process()
         self._ensure_io()
@@ -401,8 +417,7 @@ class HostAuditSession:
         try:
             outcome = self._io.wait(ticket)
         except BaseException:
-            self._io.abandon(ticket)
-            target.abandon(not_executed=ticket._outcome is not None and ticket._outcome.not_executed)
+            self._abandon_control(ticket, target)
             raise
         if outcome.state == "unknown":
             target.abandon()

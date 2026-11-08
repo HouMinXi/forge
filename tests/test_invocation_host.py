@@ -901,3 +901,38 @@ def test_fatal_close_does_not_wait_for_hung_other_writer_or_release_its_payload_
     with supervisor._condition:
         assert supervisor._condition.wait_for(lambda: supervisor._running is None, timeout=1)
     assert supervisor.retained_bytes == 0 and not supervisor._captures
+
+
+def test_a_failing_abandon_still_releases_a_provably_unexecuted_command(setup, monkeypatch):
+    """A raised abandon must not strand the charge of a ticket that never ran.
+
+    abandon() only releases when the command finished or provably never ran. If
+    the abandon call itself raises, the target is never told it was abandoned, so
+    the charge would stay for the life of the session and later control calls
+    would fail against a budget nothing is using.
+    """
+    make, supervisor = setup
+    host, notices = make()
+    expired = invocation_io.IoOutcome("expired", not_executed=True)
+
+    class Stub:
+        _outcome = expired
+
+    def submit(target, phase, *, deadline, payload=b"", ready_at=0.0):
+        return Stub()
+
+    def wait(ticket):
+        raise RuntimeError("wait failed")
+
+    def abandon(ticket):
+        raise RuntimeError("abandon failed")
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", wait)
+    monkeypatch.setattr(supervisor, "abandon", abandon)
+
+    with pytest.raises(RuntimeError):
+        host._request(invocation_io.AuditPhase.OPEN, "open", {}, time.monotonic() + 0.2)
+
+    assert not host._commands
+    assert host._control_bytes == 0
