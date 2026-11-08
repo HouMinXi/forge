@@ -428,6 +428,10 @@ pip install -e '.[dev,mcp,semgrep]'
 code-forge doctor
 ```
 
+Semgrep 1.183 可用于上游仍提供二进制的平台。Intel macOS（包括 Rosetta 下的
+x86_64 Python）继续使用低于 1.183 的版本，因为上游已停止提供 Intel Mac 二进制。
+Apple Silicon 请使用原生 arm64 Python。安装 extra 时会自动选择对应平台的版本范围。
+
 `doctor` 会为每个声明的依赖打印一行 `python-deps`，装漏或版本不对当场就能看见。
 没有这一步，症状要等到很晚才冒出来而且指错方向：`>=3.4` 的要求下装了 mutmut 2.x，
 每次变异测试都以一个模块路径错误中止，看起来像评审自己有 bug。

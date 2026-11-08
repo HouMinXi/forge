@@ -548,7 +548,7 @@ jobs:
         python -m pip check 2>&1 | (umask 077; exec tee "$EVIDENCE/pip-check.log")
         python -m pip freeze | (umask 077; exec tee "$EVIDENCE/requirements.freeze.txt")
     - name: Download exact-run collection plan
-      uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: linux-collection-plan
         path: forge-linux-input/plan
@@ -968,7 +968,7 @@ jobs:
         python -m pip check 2>&1 | (umask 077; exec tee "$EVIDENCE/pip-check.log")
         python -m pip freeze | (umask 077; exec tee "$EVIDENCE/requirements.freeze.txt")
     - name: Download exact-run collection plan
-      uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: linux-collection-plan
         path: forge-linux-input/plan
@@ -1139,7 +1139,7 @@ jobs:
         fi
         python scripts/ci_failure_diagnostic.py --sha "$GITHUB_SHA" --phase "shard-${{ matrix.shard }}" \
           --plan forge-linux-input/plan/plan.json --directory "$EVIDENCE" \
-          --public-directory forge-linux-failure-public
+          --public-directory forge-linux-failure-public --native-details
     - name: Archive fixed public failure diagnostic
       id: archive_failure_diagnostic
       if: ${{ always() && steps.failure_diagnostic.outcome == 'success' }}
@@ -1173,7 +1173,7 @@ jobs:
       with:
         persist-credentials: false
     - name: Download all exact-run coverage receipts
-      uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         pattern: linux-*
         path: forge-linux-input/all

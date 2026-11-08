@@ -38,7 +38,7 @@ FAILURE_GATE = "${{ always() && steps.shard_receipt.outcome == 'failure' }}"
 FAILURE_COMMAND = (
     'python scripts/ci_failure_diagnostic.py --sha "$GITHUB_SHA" --phase "shard-${{ matrix.shard }}" \\\n'
     '  --plan forge-linux-input/plan/plan.json --directory "$EVIDENCE" \\\n'
-    "  --public-directory forge-linux-failure-public"
+    "  --public-directory forge-linux-failure-public --native-details"
 )
 PRODUCER_IDS = {
     "Collect original selections and partition every module": "public_plan",
@@ -79,7 +79,9 @@ DATA_PRODUCERS = {
 # which are checked separately. CI does not need this commit in its shallow
 # checkout. All old timeouts, conditions, permissions, pins, matrix settings,
 # step ordering and archive/overwrite semantics remain in this snapshot.
-BASE_STRUCTURE = "1ac6b534df523f5911f9b91a43b86a82a28e07c31cbd1b3c2969982f501e80f1"
+# Refreshed for #421: only the three download-artifact pins change from
+# 634f93cb (v5.0.0) to 9000827c (v8.0.2); every other structural field is retained.
+BASE_STRUCTURE = "9680042bdcb148c11a2ec4aaea91c387d86c4c0f5af700f7670d9ba723509912"
 BASE_COMMANDS = {
     "Verify Linux process ownership prerequisites": "ac8ac8c871df8b2affd0b4233b87164eb04603406a99932d0e9be68d5cf46e97",
     "Remove the image's system git-lfs filters": "53a1561d0f600241f36f74fd2f51a38c341ed8f67577c296202cd26c491f69aa",
@@ -1045,3 +1047,27 @@ def test_private_tee_failure_keeps_original_pipefail_semantics(tmp_path, produce
     assert (evidence / "preflight.log").stat().st_mode & 0o777 == 0o600
     assert log.stat().st_mode & 0o777 == 0o600
     assert all(path.read_bytes() == b"" for path in sinks.values())
+
+
+def test_native_detail_publication_has_no_explicit_credentials_or_broader_trigger():
+    """Keep the temporary exception publication tied to a credential-free job."""
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    assert workflow["permissions"] == {"contents": "read"}
+    assert set(workflow["on"]) == {"pull_request", "push", "workflow_dispatch"}
+    text = WORKFLOW.read_text()
+    for forbidden in (
+        "github.token",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "ACTIONS_RUNTIME_TOKEN",
+    ):
+        assert forbidden not in text
+    assert not re.search(r"\$\{\{[^}]*\bsecrets(?:\.|\[)", text)
+    for job in workflow["jobs"].values():
+        assert "permissions" not in job
+        for step in job["steps"]:
+            if step.get("uses", "").startswith("actions/checkout@"):
+                assert step["with"]["persist-credentials"] is False
+                assert "token" not in step["with"]
+    assert text.count("--native-details") == 1
+    assert "--native-details" in run_step("service-free", FAILURE_NAME)["run"]

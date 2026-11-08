@@ -167,6 +167,8 @@ def test_combined_failed_child_keeps_code_checkpoint_and_safe_ordinal(
                 "stage": "call",
                 "status": "failed",
                 "kind": None,
+                "test": report["nodeid"].split("[", 1)[0],
+                "source": None,
             }
         ]
     checkpoints.publish(tmp_path, combined.checkpoints)
