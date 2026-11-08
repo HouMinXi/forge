@@ -1199,7 +1199,7 @@ class _HostAttempt:
         finally:
             self._finished = True
 
-    def _finish(self, *, outcome, error_class, duration_s, deadline):
+    def _finish(self, *, outcome, error_class, duration_s):
         if self._finished:
             return self._settled
         try:
@@ -1207,6 +1207,11 @@ class _HostAttempt:
                 raise _Unavailable()
             if self._stage is not None:
                 self._adopt()
+            # Seal/adopt have their own bounded waits. Start the settlement
+            # control window only now, not before those waits consume it.
+            # _request still caps it by the job deadline; outer lifecycle
+            # cleanup retains its separate shared deadline in _abandon_finish.
+            deadline = time.monotonic() + self._host.limits.control_timeout_s
             self._host._request(
                 AuditPhase.FINISH, "finish", (self._lease, outcome, error_class, duration_s), deadline
             )
@@ -1247,7 +1252,6 @@ class _HostAttempt:
                 outcome=outcome,
                 error_class=safe_error,
                 duration_s=duration_s,
-                deadline=time.monotonic() + self._host.limits.control_timeout_s,
             )
         except MemoryError as error:
             self._host._failure(primary=error)
