@@ -1,6 +1,9 @@
 """Host epoch/factory controls; recorder is MOCK storage, never durability proof."""
 
+from asyncio import CancelledError
 from dataclasses import replace
+import errno
+import os
 import json
 from pathlib import Path
 import threading
@@ -658,3 +661,202 @@ def test_unsupported_os_uses_real_admission_denial_no_probe(managed, monkeypatch
     else:
         assert host.scope().start_send(request()) is None
     assert host.failed and not MockRecorder.instances
+
+
+@pytest.mark.parametrize(
+    "kind", [RuntimeError, KeyboardInterrupt, SystemExit, MemoryError, CancelledError]
+)
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_managed_probe_preserves_primary_and_close_evidence(monkeypatch, kind, close_fails):
+    """Private real FDs, not a recorder/filesystem admission override."""
+    from code_forge import invocation_host as module
+
+    host = HostAuditSession.__new__(HostAuditSession)
+    primary, secondary = kind("private primary"), OSError(errno.EIO, "private close")
+    primary.__cause__ = LookupError("existing cause")
+    primary.__context__ = ValueError("existing context")
+    chain = (primary.__cause__, primary.__context__, primary.__suppress_context__)
+    calls = 0
+    real_close = os.close
+    closed = []
+
+    def checkpoint(_deadline):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise primary
+
+    def close(fd):
+        real_close(fd)
+        closed.append(fd)
+        if close_fails:
+            raise secondary
+
+    host._managed_checkpoint = checkpoint
+    before = set(os.listdir("/proc/self/fd"))
+    with monkeypatch.context() as patch:
+        patch.setattr(module.os, "close", close)
+        with pytest.raises(BaseException) as caught:
+            host._managed_root_exists(Path("/tmp/probe"), time.monotonic() + 1)
+    assert caught.value is primary
+    assert (primary.__cause__, primary.__context__, primary.__suppress_context__) == chain
+    assert len(closed) == 1
+    assert set(os.listdir("/proc/self/fd")) == before
+    if close_fails:
+        assert primary._invocation_audit_close_errors == (secondary,)
+        assert "private" not in " ".join(primary.__notes__)
+    else:
+        assert not hasattr(primary, "_invocation_audit_close_errors")
+
+
+@pytest.mark.parametrize("two_failures", [False, True])
+def test_managed_probe_close_failure_during_fd_transfer(monkeypatch, two_failures):
+    from code_forge import invocation_host as module
+
+    host = HostAuditSession.__new__(HostAuditSession)
+    host._managed_checkpoint = lambda _deadline: None
+    first, second = OSError(errno.EIO, "first"), OSError(errno.EIO, "second")
+    real_close = os.close
+    closed = []
+
+    def close(fd):
+        real_close(fd)
+        closed.append(fd)
+        if len(closed) == 1:
+            raise first
+        if two_failures:
+            raise second
+
+    before = set(os.listdir("/proc/self/fd"))
+    with monkeypatch.context() as patch:
+        patch.setattr(module.os, "close", close)
+        with pytest.raises(OSError) as caught:
+            host._managed_root_exists(Path("/tmp"), time.monotonic() + 1)
+    assert caught.value is first
+    assert len(closed) == 2
+    assert set(os.listdir("/proc/self/fd")) == before
+    if two_failures:
+        assert first._invocation_audit_close_errors == (second,)
+    else:
+        assert not hasattr(first, "_invocation_audit_close_errors")
+
+
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_managed_probe_success_or_single_close_failure(monkeypatch, close_fails):
+    from code_forge import invocation_host as module
+
+    host = HostAuditSession.__new__(HostAuditSession)
+    host._managed_checkpoint = lambda _deadline: None
+    secondary = OSError(errno.EIO, "single close")
+    real_close = os.close
+
+    def close(fd):
+        real_close(fd)
+        if close_fails:
+            raise secondary
+
+    before = set(os.listdir("/proc/self/fd"))
+    with monkeypatch.context() as patch:
+        patch.setattr(module.os, "close", close)
+        if close_fails:
+            with pytest.raises(OSError) as caught:
+                host._managed_root_exists(Path("/"), time.monotonic() + 1)
+            assert caught.value is secondary
+        else:
+            assert host._managed_root_exists(Path("/"), time.monotonic() + 1)
+    assert set(os.listdir("/proc/self/fd")) == before
+
+
+@pytest.mark.parametrize("kind", [KeyboardInterrupt, SystemExit, MemoryError, CancelledError])
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_managed_probe_public_start_keeps_fatal_and_blocks_later_send(
+    setup, monkeypatch, kind, close_fails
+):
+    from code_forge import invocation_host as module
+
+    host, _ = setup[0]()
+    host._managed_roots = True
+    host._maintenance_roots = (Path("/tmp/probe"),)
+    primary, secondary = kind("private primary"), OSError(errno.EIO, "private close")
+    calls = 0
+    owned = []
+    real_open, real_close = os.open, os.close
+
+    def checkpoint(_deadline):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise primary
+
+    def opening(path, *args, **kwargs):
+        fd = real_open(path, *args, **kwargs)
+        if path == "/":
+            owned.append(fd)
+        return fd
+
+    def closing(fd):
+        real_close(fd)
+        if close_fails and fd in owned:
+            raise secondary
+
+    host._managed_checkpoint = checkpoint
+    before = set(os.listdir("/proc/self/fd"))
+    with monkeypatch.context() as patch:
+        patch.setattr(module.os, "open", opening)
+        patch.setattr(module.os, "close", closing)
+        with pytest.raises(BaseException) as caught:
+            host.scope().start_send(request())
+    assert caught.value is primary
+    if close_fails:
+        assert primary._invocation_audit_close_errors == (secondary,)
+    assert host.failed
+    assert not host._commands and host._control_bytes == 0
+    assert host.scope().start_send(request()) is None
+    assert not MockRecorder.instances
+    assert set(os.listdir("/proc/self/fd")) == before
+
+
+def test_managed_probe_preserves_existing_evidence_without_exception_hooks(monkeypatch):
+    from code_forge import invocation_host as module
+
+    class Hostile(RuntimeError):
+        def __getattribute__(self, name):
+            if name in ("__dict__", "__notes__", "_invocation_audit_close_errors"):
+                raise AssertionError("subclass getter")
+            return super().__getattribute__(name)
+
+        def __setattr__(self, name, value):
+            raise AssertionError("subclass setter")
+
+    class HostileNotes(list):
+        def append(self, value):
+            raise AssertionError("subclass append")
+
+    host = HostAuditSession.__new__(HostAuditSession)
+    primary = Hostile("primary")
+    first, second = OSError("existing"), OSError(errno.EIO, "new")
+    state = BaseException.__dict__["__dict__"].__get__(primary)
+    state["_invocation_audit_close_errors"] = (first,)
+    notes = HostileNotes(["original note"])
+    state["__notes__"] = notes
+    calls = 0
+    real_close = os.close
+
+    def checkpoint(_deadline):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise primary
+
+    def close(fd):
+        real_close(fd)
+        raise second
+
+    host._managed_checkpoint = checkpoint
+    with monkeypatch.context() as patch:
+        patch.setattr(module.os, "close", close)
+        with pytest.raises(Hostile) as caught:
+            host._managed_root_exists(Path("/"), time.monotonic() + 1)
+    assert caught.value is primary
+    assert state["_invocation_audit_close_errors"] == (first, second)
+    assert state["__notes__"] is notes and notes == ["original note"]

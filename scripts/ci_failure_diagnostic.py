@@ -1,7 +1,7 @@
 """Failure-only, non-qualifying CI diagnostics with no runtime text publication.
 
-Only fixed labels and ordinals from the independently reviewed public manifest
-may leave the runner. Success receipts and aggregate validation do not use this
+Reviewed test names, source-verified coordinates, fixed labels and ordinals
+may leave the runner. Runtime assertion operands and exception text stay private. Success receipts and aggregate validation do not use this
 format. Unknown or inconsistent evidence suppresses the entire per-test list.
 A stage is the last checkpoint reached, not proof of an exclusive root cause;
 for example, log cleanup may also fail while an earlier exception propagates.
@@ -12,10 +12,12 @@ import sys
 
 if __package__:
     from . import ci_private_transport as transport
+    from .ci_failure_source import Verifier, valid_path
 else:
     import ci_private_transport as transport
+    from ci_failure_source import Verifier, valid_path
 
-SCHEMA = "forge-public-ci-failure-v1"
+SCHEMA = "forge-public-ci-failure-v2"
 MAX_TESTS = 256
 TEST_STAGES = ("setup", "call", "teardown")
 TEST_STATUSES = ("failed", "unexpected_skip", "unexpected_xfail")
@@ -62,6 +64,8 @@ def _tests(receipt, state, plan, manifest, policy):
     # Build from the reviewed source itself. Never strip or forward a runtime ID.
     ordinals = {node: f"public-{index}" for index, node in enumerate(manifest["nodes"])}
     results = {}
+    sources = {}
+    verifier = Verifier(state["sha"])
     # Subtests first: an aggregate parent report carries no reprcrash, so
     # consuming it first would freeze a placeholder label for every subtest.
     for kind in ("subtests", "reports"):
@@ -87,7 +91,10 @@ def _tests(receipt, state, plan, manifest, policy):
                 # rather than a later sibling silently relabelling the entry.
                 recorded = report.get("failure_kind")
                 transport._require(recorded is None or recorded in FAILURE_KINDS)
-                results.setdefault((ordinals[node], when, "failed"), recorded)
+                key = (ordinals[node], when, "failed")
+                if key not in results:
+                    results[key] = recorded
+                    sources[key] = verifier.verify(report.get("failure_source"))
             if report["wasxfail"]:
                 results[(ordinals[node], when, "unexpected_xfail")] = None
             if outcome == "skipped" and (
@@ -98,13 +105,21 @@ def _tests(receipt, state, plan, manifest, policy):
                 results[(ordinals[node], when, "unexpected_skip")] = None
             transport._require(len(results) <= MAX_TESTS)
     return [
-        {"id": identity, "stage": when, "status": status, "kind": kind}
+        {
+            "id": identity,
+            "stage": when,
+            "status": status,
+            "kind": kind,
+            "test": manifest["nodes"][int(identity.split("-")[1])].split("[", 1)[0],
+            "source": sources.get((identity, when, status)),
+        }
         for (identity, when, status), kind in sorted(results.items())
     ]
 
 
 def _validate_output(value, phase, manifest=None):
-    transport._object(value, {"schema", "phase", "stage", "status", "tests", "raw_evidence"})
+    transport._object(value, {"schema", "sha", "phase", "stage", "status", "tests", "raw_evidence"})
+    transport._sha(value["sha"])
     transport._require(value["schema"] == SCHEMA and value["phase"] == phase and phase in SHARDS)
     transport._require(value["stage"] in (*transport.FAILURE_STAGES, "unavailable"))
     transport._require(value["status"] in ("recorded", "suppressed", "unavailable"))
@@ -114,8 +129,15 @@ def _validate_output(value, phase, manifest=None):
         transport._require(not tests)
     allowed = {f"public-{index}" for index in range(len(manifest["nodes"]))} if manifest else set()
     for item in tests:
-        transport._object(item, {"id", "stage", "status"}, {"kind"})
+        transport._object(item, {"id", "stage", "status", "test", "source"}, {"kind"})
         transport._require(item["id"] in allowed)
+        node = manifest["nodes"][int(item["id"].split("-")[1])]
+        transport._require(item["test"] == node.split("[", 1)[0])
+        source = item["source"]
+        if source is not None:
+            transport._object(source, {"path", "line"})
+            transport._require(item["status"] == "failed" and valid_path(source["path"]))
+            transport._require(type(source["line"]) is int and source["line"] > 0)
         transport._require(item["stage"] in TEST_STAGES and item["status"] in TEST_STATUSES)
         # Only a failure can carry a category; a skip or an xfail has none.
         transport._require(item.get("kind") is None or item["status"] == "failed")
@@ -125,12 +147,14 @@ def _validate_output(value, phase, manifest=None):
 def export_failure(sha, phase, plan_path, directory, public_directory, manifest_path=transport.MANIFEST):
     """Publish only a fully constructed safe object; failure evidence never qualifies CI."""
     transport._require(phase in SHARDS)
+    transport._sha(sha)
     directory, public_directory = Path(directory), Path(public_directory)
     transport._separate_directories(directory, public_directory)
     transport._clear_public(public_directory, ["failure.json"])
     transport._require(not transport._output_files(public_directory))
     result = {
         "schema": SCHEMA,
+        "sha": sha,
         "phase": phase,
         "stage": "unavailable",
         "status": "unavailable",

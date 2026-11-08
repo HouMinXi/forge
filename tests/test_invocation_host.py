@@ -901,3 +901,217 @@ def test_fatal_close_does_not_wait_for_hung_other_writer_or_release_its_payload_
     with supervisor._condition:
         assert supervisor._condition.wait_for(lambda: supervisor._running is None, timeout=1)
     assert supervisor.retained_bytes == 0 and not supervisor._captures
+
+
+def test_a_failing_abandon_still_releases_a_provably_unexecuted_command(setup, monkeypatch):
+    """A raised abandon must not strand the charge of a ticket that never ran.
+
+    abandon() only releases when the command finished or provably never ran. If
+    the abandon call itself raises, the target is never told it was abandoned, so
+    the charge would stay for the life of the session and later control calls
+    would fail against a budget nothing is using.
+    """
+    make, supervisor = setup
+    host, notices = make()
+    expired = invocation_io.IoOutcome("expired", not_executed=True)
+
+    class Stub:
+        _outcome = expired
+
+    def submit(target, phase, *, deadline, payload=b"", ready_at=0.0):
+        return Stub()
+
+    def wait(ticket):
+        raise RuntimeError("wait failed")
+
+    def abandon(ticket):
+        raise RuntimeError("abandon failed")
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", wait)
+    monkeypatch.setattr(supervisor, "abandon", abandon)
+
+    with pytest.raises(RuntimeError):
+        host._request(invocation_io.AuditPhase.OPEN, "open", {}, time.monotonic() + 0.2)
+
+    assert not host._commands
+    assert host._control_bytes == 0
+
+
+def test_a_replayed_control_reaches_the_worker_with_the_re_armed_deadline(setup, monkeypatch):
+    """The deadline must have one source: the dispatched control.
+
+    A control used to carry a second copy of its deadline inside the command
+    arguments, so a replay could re-arm the ticket while the worker still saw the
+    expired copy and refused. The replayed control must carry the re-armed value.
+    """
+    make, supervisor = setup
+    host, notices = make()
+    host._managed_roots = True
+    expired = invocation_io.IoOutcome("expired", not_executed=True)
+    acked = invocation_io.IoOutcome("ack", value=True)
+    seen = []
+
+    def submit(target, phase, *, deadline, payload=b"", ready_at=0.0):
+        seen.append((target.deadline, deadline))
+        return object()
+
+    def wait(ticket):
+        return expired if len(seen) == 1 else acked
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", wait)
+
+    host._request(invocation_io.AuditPhase.MAINTAIN, "prepare_managed", None, time.monotonic() + 0.05)
+
+    assert len(seen) == 2
+    assert seen[1][0] > seen[0][0], "the replayed control must carry a re-armed deadline"
+    assert seen[1][0] == seen[1][1], "the worker must see the ticket's own deadline"
+
+
+def test_a_replay_is_refused_once_the_session_has_closed(setup, monkeypatch):
+    """A control that expired must not be replayed past the lifecycle boundary."""
+    make, supervisor = setup
+    host, notices = make()
+    expired = invocation_io.IoOutcome("expired", not_executed=True)
+    submitted = []
+
+    class Stub:
+        _outcome = expired
+
+    def submit(target, phase, *, deadline, payload=b"", ready_at=0.0):
+        submitted.append(phase)
+        host.close()
+        return Stub()
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", lambda ticket: ticket._outcome)
+
+    with pytest.raises(module._Unavailable):
+        host._request(invocation_io.AuditPhase.OPEN, "open", None, time.monotonic() + 0.2)
+
+    assert submitted == [invocation_io.AuditPhase.OPEN]
+
+
+def test_the_final_record_may_be_replayed_while_finalising(setup, monkeypatch):
+    """The finalise request is the one control finalising must not block."""
+    make, supervisor = setup
+    host, notices = make()
+    expired = invocation_io.IoOutcome("expired", not_executed=True)
+    phases = []
+
+    class Stub:
+        _outcome = expired
+
+    def submit(target, phase, *, deadline, payload=b"", ready_at=0.0):
+        phases.append(phase)
+        return Stub()
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", lambda ticket: ticket._outcome)
+
+    host._finalize_started = True
+    with pytest.raises(module._Unavailable):
+        host._request(
+            invocation_io.AuditPhase.FINALIZE, "finalize", (None, True), time.monotonic() + 0.2
+        )
+
+    assert phases == [invocation_io.AuditPhase.FINALIZE, invocation_io.AuditPhase.FINALIZE]
+
+
+def test_a_replay_spends_at_most_one_more_window(setup, monkeypatch):
+    """A replay is granted one more window, never an unbounded one.
+
+    The host limit is raised here so the control-timeout clamp cannot absorb the
+    difference: with the default limit both one window and two land on the same
+    clamped value, which would make this bound unfalsifiable.
+    """
+    make, supervisor = setup
+    host, notices = make(control_timeout_s=2.0)
+    expired = invocation_io.IoOutcome("expired", not_executed=True)
+    deadlines = []
+
+    class Stub:
+        _outcome = expired
+
+    def submit(target, phase, *, deadline, payload=b"", ready_at=0.0):
+        deadlines.append(deadline)
+        return Stub()
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", lambda ticket: ticket._outcome)
+
+    start = time.monotonic()
+    with pytest.raises(module._Unavailable):
+        host._request(invocation_io.AuditPhase.OPEN, "open", None, start + 0.05)
+
+    assert len(deadlines) == 2
+    window = deadlines[0] - start
+    assert deadlines[1] > deadlines[0]  # the replay really re-arms
+    assert deadlines[1] - deadlines[0] <= window + 0.001  # by one window, no more
+
+
+def test_a_replayed_control_runs_on_the_worker_with_a_live_deadline(setup, monkeypatch):
+    """The worker must execute the replay against the deadline it carries.
+
+    This drives the real supervisor and worker instead of the submit boundary:
+    one control holds the worker while a second is still queued, so the second
+    really does expire unexecuted, and the replay must reach ``_execute`` with a
+    deadline that has not already gone by.
+    """
+    make, supervisor = setup
+    host, notices = make(control_timeout_s=0.2)
+    executed = []
+    release = threading.Event()
+    held = threading.Event()
+
+    def slow_execute(command, args, deadline):
+        if not executed:
+            held.set()
+            release.wait(2.0)  # the worker is busy while the next ticket waits
+        executed.append((deadline, time.monotonic()))
+        return True
+
+    monkeypatch.setattr(host, "_execute", slow_execute)
+
+    blocker = threading.Thread(
+        target=lambda: host._request(
+            invocation_io.AuditPhase.MAINTAIN, "prepare_managed", None, time.monotonic() + 5.0
+        )
+    )
+    blocker.start()
+    assert held.wait(2.0), "the first control must reach the worker"
+
+    timer = threading.Timer(0.08, release.set)
+    timer.start()
+    try:
+        host._request(
+            invocation_io.AuditPhase.MAINTAIN, "prepare_managed", None, time.monotonic() + 0.05
+        )
+    finally:
+        timer.cancel()
+        release.set()
+        blocker.join(5.0)
+
+    assert len(executed) == 2, "the queued ticket must be replayed exactly once"
+    deadline, ran_at = executed[1]
+    assert deadline > ran_at, "the replay must run while its deadline is still live"
+
+
+def test_ensure_open_stays_inside_the_callers_deadline(setup, monkeypatch):
+    """One window per control must never become budget the caller never granted."""
+    make, supervisor = setup
+    host, notices = make(control_timeout_s=0.08)
+    submitted = []
+
+    def request(phase, command, arguments, deadline, *, charge=4096):
+        submitted.append((command, deadline))
+        return True
+
+    monkeypatch.setattr(host, "_request", request)
+
+    caller_deadline = time.monotonic() + 0.05
+    host._ensure_open(caller_deadline)
+
+    assert submitted, "the open sequence must issue its controls"
+    assert max(deadline for _, deadline in submitted) <= caller_deadline + 0.001

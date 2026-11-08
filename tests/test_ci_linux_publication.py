@@ -79,7 +79,9 @@ DATA_PRODUCERS = {
 # which are checked separately. CI does not need this commit in its shallow
 # checkout. All old timeouts, conditions, permissions, pins, matrix settings,
 # step ordering and archive/overwrite semantics remain in this snapshot.
-BASE_STRUCTURE = "1ac6b534df523f5911f9b91a43b86a82a28e07c31cbd1b3c2969982f501e80f1"
+# Refreshed for #421: only the three download-artifact pins change from
+# 634f93cb (v5.0.0) to 9000827c (v8.0.2); every other structural field is retained.
+BASE_STRUCTURE = "9680042bdcb148c11a2ec4aaea91c387d86c4c0f5af700f7670d9ba723509912"
 BASE_COMMANDS = {
     "Verify Linux process ownership prerequisites": "ac8ac8c871df8b2affd0b4233b87164eb04603406a99932d0e9be68d5cf46e97",
     "Remove the image's system git-lfs filters": "53a1561d0f600241f36f74fd2f51a38c341ed8f67577c296202cd26c491f69aa",
