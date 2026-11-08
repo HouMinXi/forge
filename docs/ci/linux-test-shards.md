@@ -179,6 +179,35 @@ the CI source SHA and the original coverage validators retain their separate
 roles. Manifest changes invalidate its public mapping digest and need the normal
 source review and complete collection/coverage validation again.
 
+#### Workflow edits are identity edits
+
+Several assertions in `tests/test_ci_linux_publication.py` are parametrized over
+the jobs and steps of `.github/workflows/linux-tests.yml`. A new step is a new
+test identity; renaming or removing one retires an identity the manifest still
+carries. Neither change touches a `tests/` file, so nothing in the diff hints
+that the manifest has to move with it.
+
+The `plan` job refuses the run instead. Its public diagnostic stops at
+`REJECTED / plan / receipt_validation` and publishes nothing further, and the
+private collection log says only `STOP: Private CI validation failed.` The two
+checks behind that sentence are:
+
+- a collected identity the manifest does not list fails the subset check inside
+  `_validate_receipt`;
+- a `module_seconds` weight naming a module the manifest no longer lists fails
+  `_validate_policy`.
+
+After a workflow change, before pushing:
+
+1. Collect the contract module on that branch:
+   `python -m pytest tests/test_ci_linux_publication.py --collect-only -q`.
+2. Add each identity that `nodes` is missing, then sort and de-duplicate.
+3. Extend `modules` as a **union** with the existing list. Recomputing it from
+   `nodes` silently drops modules that collect nothing, and the policy still
+   carries a weight for them, which fails `_validate_policy`.
+4. Validate the result; both public digests change, so the manifest edit needs
+   the same review as any other identity change.
+
 The real complete manifest and qualified-runtime validation are release gates.
 A missing manifest deliberately prevents collection/publication; that safe STOP
 is not a completed CI migration. Synthetic manifest controls demonstrate the
