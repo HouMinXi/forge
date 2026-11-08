@@ -171,9 +171,9 @@ class _Unavailable(Exception):
 class _Control:
     """Fixed dispatch, not a user-selected callback or uncharged closure."""
 
-    def __init__(self, host, phase, command, arguments, charge):
+    def __init__(self, host, phase, command, arguments, charge, deadline):
         self.host, self.phase, self.command = host, phase, command
-        self.arguments, self.charge = arguments, charge
+        self.arguments, self.charge, self.deadline = arguments, charge, deadline
         self.released = self.done = self.abandoned = False
 
     def release(self):
@@ -195,7 +195,7 @@ class _Control:
         if phase is not self.phase or payload:
             raise ValueError("invalid host audit command")
         try:
-            return self.host._execute(self.command, self.arguments)
+            return self.host._execute(self.command, self.arguments, self.deadline)
         finally:
             with self.host._lock:
                 self.done = True
@@ -304,6 +304,7 @@ class HostAuditSession:
         self._commands, self._attempts = set(), set()
         self._control_bytes = 0
         self._opened = self._disabled = self._closed = self._warned = False
+        self._control_deadline = float("-inf")
         self._uncertain = self._complete = self._finalized = False
         self._reserved = self._started = self._settled = self._adopted = self._accepted = 0
         self._finalize_started = False
@@ -333,6 +334,16 @@ class HostAuditSession:
     def _check_process(self):
         if os.getpid() != self._pid:
             raise RuntimeError("inherited host audit session is unavailable")
+
+    def _sequence_deadline(self, steps):
+        """Budget for a run of controls: one window each, bounded by the job.
+
+        A caller that hands one window to a sequence spends it on the first
+        control; when that control stalls the rest inherit an expired deadline.
+        The sequence is therefore budgeted for the controls it will issue.
+        """
+        result = time.monotonic() + steps * self.limits.control_timeout_s
+        return min(result, self._job_deadline) if self._job_deadline is not None else result
 
     def _deadline(self, deadline):
         result = min(deadline, time.monotonic() + self.limits.control_timeout_s)
@@ -399,30 +410,61 @@ class HostAuditSession:
         self._ensure_io()
         if threading.current_thread() is self._io._worker:
             raise _Unavailable()
+        start = time.monotonic()
         deadline = self._deadline(deadline)
-        with self._lock:
-            if (
-                len(self._commands) >= self.limits.control_slots
-                or charge > self.limits.control_bytes - self._control_bytes
+        window = max(0.0, deadline - start)
+        outcome = None
+        # A ticket the worker never reached is provably unexecuted, so replaying
+        # it cannot apply anything twice. The replay is granted at most one more
+        # window, sized by the window this request was given, because callers
+        # hand down a deadline they already capped: a replay that stayed inside
+        # it would resubmit an expired request and change nothing. Anything that
+        # may have run is never replayed.
+        for attempt in (0, 1):
+            if attempt:
+                with self._lock:
+                    if self._closed or self._disabled:
+                        raise _Unavailable()
+                    # Finalising has started is exactly when the final record is
+                    # issued, so that request is the one exception.
+                    if self._finalize_started and phase is not AuditPhase.FINALIZE:
+                        raise _Unavailable()
+                grace = min(window, self.limits.control_timeout_s)
+                if grace <= 0.0:
+                    raise _Unavailable()
+                deadline = self._deadline(deadline + grace)
+            with self._lock:
+                if (
+                    len(self._commands) >= self.limits.control_slots
+                    or charge > self.limits.control_bytes - self._control_bytes
+                ):
+                    raise _Unavailable()
+                target = _Control(self, phase, command, arguments, charge, deadline)
+                self._commands.add(target)
+                self._control_bytes += charge
+            try:
+                ticket = self._io.submit(target, phase, deadline=deadline)
+            except BaseException:
+                target.release()
+                raise
+            try:
+                outcome = self._io.wait(ticket)
+            except BaseException:
+                self._abandon_control(ticket, target)
+                raise
+            if outcome.state == "unknown":
+                target.abandon()
+            else:
+                target.release()
+            if not (
+                outcome.error is None
+                and outcome.state != "ack"
+                and outcome.not_executed
+                and attempt == 0
             ):
-                raise _Unavailable()
-            target = _Control(self, phase, command, arguments, charge)
-            self._commands.add(target)
-            self._control_bytes += charge
-        try:
-            ticket = self._io.submit(target, phase, deadline=deadline)
-        except BaseException:
-            target.release()
-            raise
-        try:
-            outcome = self._io.wait(ticket)
-        except BaseException:
-            self._abandon_control(ticket, target)
-            raise
-        if outcome.state == "unknown":
-            target.abandon()
-        else:
-            target.release()
+                break
+        if outcome is None:
+            raise _Unavailable()
         if outcome.error is not None:
             raise outcome.error
         if outcome.state != "ack":
@@ -438,9 +480,11 @@ class HostAuditSession:
             with self._lock:
                 self._uncertain |= value.publication_uncertain
             raise _Unavailable()
+        with self._lock:
+            self._control_deadline = deadline
         return value
 
-    def _execute(self, command, args):
+    def _execute(self, command, args, deadline):
         # This entire switch executes exclusively on the one audit worker.
         if command == "open":
             self._owner = InvocationOwner.create(
@@ -492,20 +536,20 @@ class HostAuditSession:
                 # Preserve the recorder's explicit unsupported-profile denial;
                 # do not attempt Linux descriptor flags or pick another root.
                 return maintain_audit_root(
-                    self._root, monotonic=self._managed_clock, utc_now=_utc, action_deadline=args
+                    self._root, monotonic=self._managed_clock, utc_now=_utc, action_deadline=deadline
                 )
             for root in self._maintenance_roots:
-                if self._managed_root_exists(root, args):
-                    self._managed_checkpoint(args)
+                if self._managed_root_exists(root, deadline):
+                    self._managed_checkpoint(deadline)
                     ack = maintain_audit_root(
-                        root, monotonic=self._managed_clock, utc_now=_utc, action_deadline=args
+                        root, monotonic=self._managed_clock, utc_now=_utc, action_deadline=deadline
                     )
                     if not ack.admitted or ack.publication_uncertain:
                         return ack
-            self._managed_checkpoint(args)
+            self._managed_checkpoint(deadline)
             return True
         if command == "maintain":
-            root, deadline = args
+            root = args
             return maintain_audit_root(
                 root, monotonic=time.monotonic, utc_now=_utc, action_deadline=deadline
             )
@@ -548,9 +592,11 @@ class HostAuditSession:
     def _ensure_open(self, deadline):
         if self._opened:
             return
+        steps = 3 if self._manifest is not None else 2
         if self._managed_roots:
-            deadline = self._deadline(deadline)
-        remaining = max(0.0, self._deadline(deadline) - time.monotonic())
+            steps += 1
+        deadline = min(self._sequence_deadline(steps), deadline)
+        remaining = max(0.0, deadline - time.monotonic())
         if not self._open_gate.acquire(timeout=remaining):
             raise _Unavailable()
         try:
@@ -559,8 +605,7 @@ class HostAuditSession:
             if self._disabled or self._closed or self._root is None:
                 raise _Unavailable()
             if self._managed_roots and not self._maintenance_done:
-                # Both fixed roots and OPEN share this one absolute budget.
-                self._request(AuditPhase.MAINTAIN, "prepare_managed", deadline, deadline)
+                self._request(AuditPhase.MAINTAIN, "prepare_managed", None, deadline)
                 with self._lock:
                     if self._closed or self._finalize_started or self._disabled:
                         raise _Unavailable()
@@ -649,7 +694,7 @@ class HostAuditSession:
                     self._disabled
                     or self._closed
                     or self._finalize_started
-                    or time.monotonic() >= deadline
+                    or time.monotonic() >= self._control_deadline
                 ):
                     raise _Unavailable()
                 self._context, self._manifest = context, encoded
@@ -747,7 +792,7 @@ class HostAuditSession:
                 self._disabled = True
         if already_started:
             return self.safe_summary()
-        deadline = self._deadline(float("inf"))
+        deadline = self._sequence_deadline(1 + len(attempts) + len(self._maintenance_roots))
         cleanup_primary = primary
         try:
             if active:
@@ -784,7 +829,7 @@ class HostAuditSession:
             self._maintenance_done = True
             for root in self._maintenance_roots:
                 try:
-                    self._request(AuditPhase.MAINTAIN, "maintain", (root, deadline), deadline)
+                    self._request(AuditPhase.MAINTAIN, "maintain", root, deadline)
                 except BaseException as error:  # noqa: BLE001 - maintenance is secondary
                     self._failure(primary=primary if primary is not None else error)
                     if primary is None and (
