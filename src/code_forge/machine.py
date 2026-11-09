@@ -5790,6 +5790,7 @@ class StateMachine:
                     if isinstance(candidate, _RuntimeRunner):
                         runner._runtime_runner = candidate
                         break
+        from .cross_repo_impact import CrossRepoImpactRunner
         from .graph_triage import GraphTriageRunner
         from .rulepack import RulepackRunner
 
@@ -5814,6 +5815,9 @@ class StateMachine:
                     )
                 elif isinstance(runner, RulepackRunner) and type(runner).run is RulepackRunner.run:
                     findings = self._run_trusted_advisory_rulepack(runner, diff_text, trusted_gate)
+                elif isinstance(runner, CrossRepoImpactRunner):
+                    # Graph identity belongs to the source repository, not private state storage.
+                    findings = runner.run(diff_text, self._source_root())
                 else:
                     findings = runner.run(diff_text, self.cwd)
                 self._advisories.extend(findings)
