@@ -1,7 +1,8 @@
-"""Failure-only, non-qualifying CI diagnostics with no runtime text publication.
+"""Failure-only, non-qualifying CI diagnostics with opt-in native failure detail.
 
 Reviewed test names, source-verified coordinates, fixed labels and ordinals
-may leave the runner. Runtime assertion operands and exception text stay private. Success receipts and aggregate validation do not use this
+may leave the runner. Runtime text stays private except explicitly enabled
+native-test exception representations in the failure artifact. Success receipts and aggregate validation do not use this
 format. Unknown or inconsistent evidence suppresses the entire per-test list.
 A stage is the last checkpoint reached, not proof of an exclusive root cause;
 for example, log cleanup may also fail while an earlier exception propagates.
@@ -11,9 +12,11 @@ from pathlib import Path
 import sys
 
 if __package__:
+    from . import ci_native_failure_detail as native
     from . import ci_private_transport as transport
     from .ci_failure_source import Verifier, valid_path
 else:
+    import ci_native_failure_detail as native
     import ci_private_transport as transport
     from ci_failure_source import Verifier, valid_path
 
@@ -42,7 +45,7 @@ def _state(value, sha, phase):
     return value
 
 
-def _tests(receipt, state, plan, manifest, policy):
+def _tests(receipt, state, plan, manifest, policy, native_details=False):
     """Validate all private input before returning any ordinal, never a partial list."""
     transport._object(receipt, transport.RECEIPT_KEYS)
     transport._require(receipt["sha"] == state["sha"] and receipt["phase"] == state["phase"])
@@ -65,6 +68,7 @@ def _tests(receipt, state, plan, manifest, policy):
     ordinals = {node: f"public-{index}" for index, node in enumerate(manifest["nodes"])}
     results = {}
     sources = {}
+    details = {}
     verifier = Verifier(state["sha"])
     # Subtests first: an aggregate parent report carries no reprcrash, so
     # consuming it first would freeze a placeholder label for every subtest.
@@ -95,6 +99,17 @@ def _tests(receipt, state, plan, manifest, policy):
                 if key not in results:
                     results[key] = recorded
                     sources[key] = verifier.verify(report.get("failure_source"))
+                    detail = report.get("native_failure_detail")
+                    if native_details and native.eligible(node) and detail is not None:
+                        transport._require(native.validate(detail))
+                        details[key] = {
+                            "schema": native.SCHEMA,
+                            "nodeid": node,
+                            **{key: state[key] for key in ("sha", "run", "attempt", "phase")},
+                            "stage": when,
+                            "traceback": native.scrub(detail["traceback"], native.credential_values()),
+                            "truncated": detail["truncated"],
+                        }
             if report["wasxfail"]:
                 results[(ordinals[node], when, "unexpected_xfail")] = None
             if outcome == "skipped" and (
@@ -112,6 +127,11 @@ def _tests(receipt, state, plan, manifest, policy):
             "kind": kind,
             "test": manifest["nodes"][int(identity.split("-")[1])].split("[", 1)[0],
             "source": sources.get((identity, when, status)),
+            **(
+                {"native_detail": details[(identity, when, status)]}
+                if (identity, when, status) in details
+                else {}
+            ),
         }
         for (identity, when, status), kind in sorted(results.items())
     ]
@@ -129,10 +149,35 @@ def _validate_output(value, phase, manifest=None):
         transport._require(not tests)
     allowed = {f"public-{index}" for index in range(len(manifest["nodes"]))} if manifest else set()
     for item in tests:
-        transport._object(item, {"id", "stage", "status", "test", "source"}, {"kind"})
+        transport._object(item, {"id", "stage", "status", "test", "source"}, {"kind", "native_detail"})
         transport._require(item["id"] in allowed)
         node = manifest["nodes"][int(item["id"].split("-")[1])]
         transport._require(item["test"] == node.split("[", 1)[0])
+        if "native_detail" in item:
+            detail = item["native_detail"]
+            transport._object(
+                detail,
+                {
+                    "schema",
+                    "nodeid",
+                    "sha",
+                    "run",
+                    "attempt",
+                    "phase",
+                    "stage",
+                    "traceback",
+                    "truncated",
+                },
+            )
+            transport._require(detail["schema"] == native.SCHEMA and native.eligible(node))
+            transport._require(detail["nodeid"] == node and detail["sha"] == value["sha"])
+            transport._require(detail["phase"] == phase and detail["stage"] == item["stage"])
+            transport._require(item["status"] == "failed")
+            context = transport.failure_context(value["sha"], phase)
+            transport._require(
+                detail["run"] == context["run"] and detail["attempt"] == context["attempt"]
+            )
+            transport._require(native.validate({key: detail[key] for key in ("traceback", "truncated")}))
         source = item["source"]
         if source is not None:
             transport._object(source, {"path", "line"})
@@ -144,7 +189,16 @@ def _validate_output(value, phase, manifest=None):
         transport._require(item.get("kind") is None or item["kind"] in FAILURE_KINDS)
 
 
-def export_failure(sha, phase, plan_path, directory, public_directory, manifest_path=transport.MANIFEST):
+def export_failure(
+    sha,
+    phase,
+    plan_path,
+    directory,
+    public_directory,
+    manifest_path=transport.MANIFEST,
+    *,
+    native_details=False,
+):
     """Publish only a fully constructed safe object; failure evidence never qualifies CI."""
     transport._require(phase in SHARDS)
     transport._sha(sha)
@@ -175,7 +229,7 @@ def export_failure(sha, phase, plan_path, directory, public_directory, manifest_
                 plan, sha, transport.project_policy(policy, manifest), manifest
             )
             receipt = transport.read_json(directory / f"receipt-{phase}.json")
-            tests = _tests(receipt, state, plan, manifest, policy)
+            tests = _tests(receipt, state, plan, manifest, policy, native_details)
             result.update(status="recorded", tests=tests)
     except FileNotFoundError:
         result.update(status="unavailable", tests=[])
@@ -197,9 +251,16 @@ def main(argv=None):
         parser.add_argument("--directory", type=Path, required=True)
         parser.add_argument("--public-directory", type=Path, required=True)
         parser.add_argument("--manifest", type=Path, default=transport.MANIFEST)
+        parser.add_argument("--native-details", action="store_true")
         args = parser.parse_args(argv)
         export_failure(
-            args.sha, args.phase, args.plan, args.directory, args.public_directory, args.manifest
+            args.sha,
+            args.phase,
+            args.plan,
+            args.directory,
+            args.public_directory,
+            args.manifest,
+            native_details=args.native_details,
         )
         return 0
     except BaseException:  # noqa: BLE001 - No exception, path, or argparse input is publishable.

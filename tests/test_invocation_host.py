@@ -431,7 +431,15 @@ def test_fork_refuses_before_touching_inherited_locks(setup, monkeypatch):
 )
 def test_fatal_storage_error_preserves_original_identity_in_all_phases(setup, phase):
     make, _ = setup
-    host, _ = make()
+    # This test isolates fatal-error identity, not deadline expiry. The fixture's
+    # 80 ms fault-test budget can expire during ordinary worker scheduling before
+    # the target fault is armed. Use the production control/flush budgets here;
+    # deadline behavior remains covered by the dedicated timeout tests.
+    defaults = HostAuditLimits()
+    host, _ = make(
+        control_timeout_s=defaults.control_timeout_s,
+        flush_timeout_s=defaults.flush_timeout_s,
+    )
     original = MemoryError("PRIVATE fatal")
     original.__cause__ = ValueError("PRIVATE cause")
     cause = original.__cause__
@@ -1094,3 +1102,355 @@ def test_a_failing_abandon_still_releases_a_provably_unexecuted_command(setup, m
 
     assert not host._commands
     assert host._control_bytes == 0
+
+
+def test_a_replayed_control_reaches_the_worker_with_the_re_armed_deadline(setup, monkeypatch):
+    """The deadline must have one source: the dispatched control.
+
+    A control used to carry a second copy of its deadline inside the command
+    arguments, so a replay could re-arm the ticket while the worker still saw the
+    expired copy and refused. The replayed control must carry the re-armed value.
+    """
+    make, supervisor = setup
+    host, notices = make()
+    host._managed_roots = True
+    expired = invocation_io.IoOutcome("expired", not_executed=True)
+    acked = invocation_io.IoOutcome("ack", value=True)
+    seen = []
+
+    def submit(target, phase, *, deadline, payload=b"", ready_at=0.0):
+        seen.append((target.deadline, deadline))
+        return object()
+
+    def wait(ticket):
+        return expired if len(seen) == 1 else acked
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", wait)
+
+    host._request(invocation_io.AuditPhase.MAINTAIN, "prepare_managed", None, time.monotonic() + 0.05)
+
+    assert len(seen) == 2
+    assert seen[1][0] > seen[0][0], "the replayed control must carry a re-armed deadline"
+    assert seen[1][0] == seen[1][1], "the worker must see the ticket's own deadline"
+
+
+def test_a_replay_is_refused_once_the_session_has_closed(setup, monkeypatch):
+    """A control that expired must not be replayed past the lifecycle boundary."""
+    make, supervisor = setup
+    host, notices = make()
+    expired = invocation_io.IoOutcome("expired", not_executed=True)
+    submitted = []
+
+    class Stub:
+        _outcome = expired
+
+    def submit(target, phase, *, deadline, payload=b"", ready_at=0.0):
+        submitted.append(phase)
+        host.close()
+        return Stub()
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", lambda ticket: ticket._outcome)
+
+    with pytest.raises(module._Unavailable):
+        host._request(invocation_io.AuditPhase.OPEN, "open", None, time.monotonic() + 0.2)
+
+    assert submitted == [invocation_io.AuditPhase.OPEN]
+
+
+def test_the_final_record_may_be_replayed_while_finalising(setup, monkeypatch):
+    """The finalise request is the one control finalising must not block."""
+    make, supervisor = setup
+    host, notices = make()
+    expired = invocation_io.IoOutcome("expired", not_executed=True)
+    phases = []
+
+    class Stub:
+        _outcome = expired
+
+    def submit(target, phase, *, deadline, payload=b"", ready_at=0.0):
+        phases.append(phase)
+        return Stub()
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", lambda ticket: ticket._outcome)
+
+    host._finalize_started = True
+    with pytest.raises(module._Unavailable):
+        host._request(
+            invocation_io.AuditPhase.FINALIZE, "finalize", (None, True), time.monotonic() + 0.2
+        )
+
+    assert phases == [invocation_io.AuditPhase.FINALIZE, invocation_io.AuditPhase.FINALIZE]
+
+
+def test_a_replay_spends_at_most_one_more_window(setup, monkeypatch):
+    """A replay is granted one more window, never an unbounded one.
+
+    The host limit is raised here so the control-timeout clamp cannot absorb the
+    difference: with the default limit both one window and two land on the same
+    clamped value, which would make this bound unfalsifiable.
+    """
+    make, supervisor = setup
+    host, notices = make(control_timeout_s=2.0)
+    expired = invocation_io.IoOutcome("expired", not_executed=True)
+    deadlines = []
+
+    class Stub:
+        _outcome = expired
+
+    def submit(target, phase, *, deadline, payload=b"", ready_at=0.0):
+        deadlines.append(deadline)
+        return Stub()
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", lambda ticket: ticket._outcome)
+
+    start = time.monotonic()
+    with pytest.raises(module._Unavailable):
+        host._request(invocation_io.AuditPhase.OPEN, "open", None, start + 0.05)
+
+    assert len(deadlines) == 2
+    window = deadlines[0] - start
+    assert deadlines[1] > deadlines[0]  # the replay really re-arms
+    assert deadlines[1] - deadlines[0] <= window + 0.001  # by one window, no more
+
+
+def test_a_replayed_control_runs_on_the_worker_with_a_live_deadline(setup, monkeypatch):
+    """The worker must execute the replay against the deadline it carries.
+
+    This drives the real supervisor and worker instead of the submit boundary:
+    one control holds the worker while a second is still queued, so the second
+    really does expire unexecuted, and the replay must reach ``_execute`` with a
+    deadline that has not already gone by.
+    """
+    make, supervisor = setup
+    host, notices = make(control_timeout_s=0.2)
+    executed = []
+    release = threading.Event()
+    held = threading.Event()
+
+    def slow_execute(command, args, deadline):
+        if not executed:
+            held.set()
+            release.wait(2.0)  # the worker is busy while the next ticket waits
+        executed.append((deadline, time.monotonic()))
+        return True
+
+    monkeypatch.setattr(host, "_execute", slow_execute)
+
+    blocker = threading.Thread(
+        target=lambda: host._request(
+            invocation_io.AuditPhase.MAINTAIN, "prepare_managed", None, time.monotonic() + 5.0
+        )
+    )
+    blocker.start()
+    assert held.wait(2.0), "the first control must reach the worker"
+
+    timer = threading.Timer(0.08, release.set)
+    timer.start()
+    try:
+        host._request(
+            invocation_io.AuditPhase.MAINTAIN, "prepare_managed", None, time.monotonic() + 0.05
+        )
+    finally:
+        timer.cancel()
+        release.set()
+        blocker.join(5.0)
+
+    assert len(executed) == 2, "the queued ticket must be replayed exactly once"
+    deadline, ran_at = executed[1]
+    assert deadline > ran_at, "the replay must run while its deadline is still live"
+
+
+def test_ensure_open_stays_inside_the_callers_deadline(setup, monkeypatch):
+    """One window per control must never become budget the caller never granted."""
+    make, supervisor = setup
+    host, notices = make(control_timeout_s=0.08)
+    submitted = []
+
+    def request(phase, command, arguments, deadline, *, charge=4096):
+        submitted.append((command, deadline))
+        return True
+
+    monkeypatch.setattr(host, "_request", request)
+
+    caller_deadline = time.monotonic() + 0.05
+    host._ensure_open(caller_deadline)
+
+    assert submitted, "the open sequence must issue its controls"
+    assert max(deadline for _, deadline in submitted) <= caller_deadline + 0.001
+
+
+@pytest.mark.parametrize("boundary", ["close", "disable", "finalize"])
+@pytest.mark.parametrize("phase", [invocation_io.AuditPhase.OPEN, invocation_io.AuditPhase.FINALIZE])
+def test_retry_registration_observes_lifecycle_after_rearming(setup, monkeypatch, boundary, phase):
+    """Cross the boundary after replay preparation, before its registration."""
+    make, supervisor = setup
+    host, _ = make()
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: 100.0))
+    expired = invocation_io.IoOutcome("expired", not_executed=True)
+    ack = invocation_io.IoOutcome("ack", value=True)
+    submitted = []
+    rearming = threading.Event()
+    transitioned = threading.Event()
+    real_deadline = host._deadline
+    calls = 0
+    transition_errors = []
+
+    def deadline(value):
+        nonlocal calls
+        result = real_deadline(value)
+        calls += 1
+        if calls == 2:
+            rearming.set()
+            assert transitioned.wait(3)
+        return result
+
+    def transition():
+        try:
+            assert rearming.wait(3)
+            if boundary == "close":
+                host.close()
+            elif boundary == "disable":
+                host.warn("unavailable")
+            else:
+                with host._lock:
+                    host._finalize_started = True
+        except BaseException as error:  # noqa: BLE001 - assert thread failures in the caller
+            transition_errors.append(error)
+        finally:
+            transitioned.set()
+
+    def submit(target, phase, *, deadline):
+        submitted.append((target, phase))
+        return SimpleNamespace(_outcome=expired if len(submitted) == 1 else ack)
+
+    monkeypatch.setattr(host, "_deadline", deadline)
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", lambda ticket: ticket._outcome)
+    thread = threading.Thread(target=transition)
+    thread.start()
+    try:
+        if boundary == "finalize" and phase is invocation_io.AuditPhase.FINALIZE:
+            assert host._request(phase, "finalize", (None, True), 101.0) is True
+            assert len(submitted) == 2
+        else:
+            with pytest.raises(module._Unavailable):
+                host._request(phase, "open", None, 101.0)
+            assert len(submitted) == 1
+        assert host._commands == set()
+        assert host._control_bytes == 0
+    finally:
+        rearming.set()
+        thread.join(3)
+        assert not thread.is_alive()
+        assert transition_errors == []
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("outcome", ["completed", "failed"])
+def test_finish_control_budget_starts_after_stage_adoption(setup, monkeypatch, strict, outcome):
+    """A host-only clock models elapsed adoption without slowing the real worker."""
+    make, supervisor = setup
+    host, notices = make(strict=strict, control_timeout_s=1)
+    attempt = admit(host.scope(), request(deadline=time.monotonic() + 10))
+    captured = attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    assert b"".join(captured.chunks(io.BytesIO(b"body"))) == b"body"
+    clock = [time.monotonic()]
+    original_adopt, original_submit = attempt._adopt, supervisor.submit
+    submitted = []
+
+    def adopt():
+        ack = original_adopt()
+        clock[0] += 2  # Earlier stage operations consumed the old FINISH budget.
+        return ack
+
+    def submit(target, phase, **kwargs):
+        if phase is invocation_io.AuditPhase.FINISH:
+            submitted.append(kwargs["deadline"])
+        return original_submit(target, phase, **kwargs)
+
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(attempt, "_adopt", adopt)
+    monkeypatch.setattr(supervisor, "submit", submit)
+    original_action = attempt._deadline
+    assert attempt.finish(outcome=outcome, error_class=None, duration_s=0.01, usage=None)
+    assert submitted == [clock[0] + host.limits.control_timeout_s]
+    assert len(MockRecorder.instances[0].finished) == 1
+    assert host.safe_summary().settled_sends == host.safe_summary().adopted_responses == 1
+    assert attempt._deadline == original_action
+    assert not host.failed and not notices
+    assert not host._commands and host._control_bytes == 0
+    assert attempt.finish(outcome=outcome, error_class=None, duration_s=0.01, usage=None)
+    assert len(submitted) == 1
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_finish_fresh_control_window_still_obeys_job_deadline(setup, monkeypatch, expired):
+    make, supervisor = setup
+    host, _ = make(control_timeout_s=1)
+    attempt = admit(host.scope(), request(deadline=time.monotonic() + 10))
+    captured = attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    assert b"".join(captured.chunks(io.BytesIO(b"body"))) == b"body"
+    original_adopt, original_submit = attempt._adopt, supervisor.submit
+    submitted = []
+
+    def adopt():
+        ack = original_adopt()
+        host._job_deadline = time.monotonic() + (-1 if expired else 0.5)
+        return ack
+
+    def submit(target, phase, **kwargs):
+        if phase is invocation_io.AuditPhase.FINISH:
+            submitted.append(kwargs["deadline"])
+        return original_submit(target, phase, **kwargs)
+
+    monkeypatch.setattr(attempt, "_adopt", adopt)
+    monkeypatch.setattr(supervisor, "submit", submit)
+    assert attempt.finish(outcome="completed", error_class=None, duration_s=0, usage=None) is not expired
+    assert submitted == [host._job_deadline]
+    assert host.failed is expired
+    assert host.safe_summary().settled_sends == int(not expired)
+    assert len(MockRecorder.instances[0].finished) == int(not expired)
+    assert not host._commands and host._control_bytes == 0
+
+
+def test_finish_fresh_control_window_does_not_retry_unknown_work(setup, monkeypatch):
+    make, supervisor = setup
+    host, _ = make(control_timeout_s=0.5)
+    attempt = admit(host.scope(), request())
+    monkeypatch.setattr(MockRecorder, "block", "finish")
+    assert not attempt.finish(outcome="failed", error_class="OSError", duration_s=0, usage=None)
+    assert MockRecorder.entered.is_set()
+    assert host.failed and host.safe_summary().publication_uncertain
+    assert not attempt.finish(outcome="failed", error_class="OSError", duration_s=0, usage=None)
+    assert [name for name, _ in MockRecorder.calls].count("finish") == 1
+    assert host._control_bytes > 0  # Unknown running work remains charged.
+    MockRecorder.release.set()
+    with supervisor._condition:
+        assert supervisor._condition.wait_for(lambda: supervisor._running is None, timeout=1)
+    assert not host._commands and host._control_bytes == 0
+    assert host.safe_summary().settled_sends == 0
+
+
+@pytest.mark.parametrize("fatal", [False, True])
+def test_adoption_failure_never_starts_finish_control(setup, monkeypatch, fatal):
+    make, supervisor = setup
+    host, _ = make()
+    attempt = admit(host.scope(), request())
+    captured = attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    assert b"".join(captured.chunks(io.BytesIO(b"body"))) == b"body"
+    error = KeyboardInterrupt("adoption interrupted") if fatal else OSError("adoption failed")
+    monkeypatch.setattr(MockRecorder, "fail", "adopt")
+    monkeypatch.setattr(MockRecorder, "error", error)
+    if fatal:
+        with pytest.raises(KeyboardInterrupt) as caught:
+            attempt.finish(outcome="completed", error_class=None, duration_s=0, usage=None)
+        assert caught.value is error
+    else:
+        assert not attempt.finish(outcome="completed", error_class=None, duration_s=0, usage=None)
+    assert "finish" not in [name for name, _ in MockRecorder.calls]
+    assert host.failed and host.safe_summary().settled_sends == 0
+    assert not host._commands and host._control_bytes == 0
