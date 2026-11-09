@@ -38,9 +38,10 @@ class WorkerTests(unittest.TestCase):
     def test_main_exception_preserved_and_scope_closed(self):
         error = RuntimeError("original")
         scope = WorkerScope()
-        try:
-            with scope.activate(self.inputs): raise error
-        except RuntimeError as actual: self.assertIs(actual, error)
+        with self.assertRaises(RuntimeError) as caught:
+            with scope.activate(self.inputs):
+                raise error
+        self.assertIs(caught.exception, error)
         with self.assertRaises(ScopeUnavailable): scope.current_inputs()
     def test_foreign_thread_rejected(self):
         scope = WorkerScope()
@@ -80,9 +81,19 @@ class WorkerTests(unittest.TestCase):
     def test_keyboard_interrupt_propagates_and_closes_scope(self):
         scope = WorkerScope()
         error = KeyboardInterrupt("cancel")
-        try:
-            with scope.activate(self.inputs): raise error
-        except KeyboardInterrupt as actual: self.assertIs(actual, error)
+        with self.assertRaises(KeyboardInterrupt) as caught:
+            with scope.activate(self.inputs):
+                raise error
+        self.assertIs(caught.exception, error)
+        with self.assertRaises(ScopeUnavailable): scope.current_inputs()
+
+    def test_system_exit_propagates_and_closes_scope(self):
+        scope = WorkerScope()
+        error = SystemExit(7)
+        with self.assertRaises(SystemExit) as caught:
+            with scope.activate(self.inputs):
+                raise error
+        self.assertIs(caught.exception, error)
         with self.assertRaises(ScopeUnavailable): scope.current_inputs()
 
 if __name__ == "__main__": unittest.main(verbosity=2)
