@@ -59,9 +59,12 @@ not a fresh runtime certification.
 - [README limitations](../../../README.md#honest-limitations) and
   [#33](https://github.com/HouMinXi/forge/issues/33) explicitly leave feedback
   learning, longitudinal maintainability scoring and performance benchmarking
-  undelivered. Cross-repository impact is advisory and one-hop, with an empty
-  result for unregistered repositories. R3 artifact presence does not prove
-  exercised coverage. None is closed by this proposal.
+  undelivered. Cross-repository impact is advisory and one-hop. Empty findings
+  do not establish global absence of impact: only registered sibling graphs
+  are queried, unregistered repositories remain unknown, and unavailable
+  analysis has separate infrastructure diagnostics. Static graph results do
+  not prove execution impact. R3 artifact presence does not prove exercised
+  coverage. None is closed by this proposal.
 - #33's [digest-control report](https://github.com/HouMinXi/forge/issues/33#issuecomment-6147063663)
   and [checkpoint report](https://github.com/HouMinXi/forge/issues/33#issuecomment-6148056764)
   record narrow control and transport results, with explicit limits. They do not

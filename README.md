@@ -434,10 +434,15 @@ differs. The full tables, the corpus construction, and the caveats are in
   repository is registered with code-review-graph and has its own
   graph, code-forge reports that sibling's direct callers of a changed
   symbol. The finding is advisory and never blocks. It follows the call
-  one hop and stops, so a caller of that caller is invisible. A repository
-  that was never registered yields an empty result, not an error. Cross-repo
-  commit dependencies such as Chromium's `Cq-Depend` are outside what it
-  models.
+  one hop and stops, so a caller of that caller is invisible. An empty
+  findings list means no direct callers were found in the registered sibling
+  graphs actually queried; it does not establish global absence of impact.
+  Unregistered repositories are not queried, so their impact is unknown.
+  Missing or unreadable registered graphs and an empty sibling registry are
+  reported separately in infrastructure diagnostics; an empty findings list
+  alone does not establish that analysis ran successfully. These static graph
+  results do not prove execution impact. Cross-repo commit dependencies such
+  as Chromium's `Cq-Depend` are outside what it models.
 - **No feedback learning.** code-forge does not adapt to dismissed
   findings or developer preferences. Each review is independent.
   `code-forge trust` only records a hash of `gate.yaml`; it says
