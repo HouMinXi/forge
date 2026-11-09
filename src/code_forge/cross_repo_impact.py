@@ -26,7 +26,7 @@ from .advisory import AdvisoryFinding
 # Reuse helpers from graph_triage -- never duplicate logic.
 from .graph_triage import _is_unnamed, _parse_diff_files
 
-from .dead_code import _live_callers
+from .dead_code import _live_callers, _source_opener
 
 logger = logging.getLogger(__name__)
 
@@ -60,12 +60,13 @@ class GraphDiscoveryError(ValueError):
 def _read_registry(path: Path) -> list[dict]:
     """Read the provider's repos JSON without its directory-creating constructor.
 
+    Reject nonregular opened files without waiting for a FIFO writer.
     Open directly: if the file disappears, there is nothing to recreate. A
     malformed or unreadable registry is unavailable, not permission to ignore
     its configured graph location and select another database.
     """
     try:
-        with path.open("r", encoding="utf-8") as stream:
+        with open(path, "r", encoding="utf-8", opener=_source_opener) as stream:
             data = json.load(stream)
     except FileNotFoundError:
         return []

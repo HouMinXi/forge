@@ -721,7 +721,7 @@ def test_discovery_permission_error_is_not_an_empty_registry(tmp_path, monkeypat
     def denied(*args, **kwargs):
         raise PermissionError("fixture")
 
-    monkeypatch.setattr(Path, "open", denied)
+    monkeypatch.setattr(impact, "_source_opener", denied)
     with pytest.raises(impact.GraphDiscoveryError, match="registry unreadable"):
         impact._read_registry(path)
 
