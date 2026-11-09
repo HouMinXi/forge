@@ -47,10 +47,12 @@ mcp = [
 ]
 semgrep = [
     # Range of semgrep releases the semgrep-driven tests have been run
-    # against (1.176 through 1.182). The upper bound is a deliberate cap:
+    # against (1.176 through 1.183). The upper bound is a deliberate cap:
     # raise it only after those tests pass on the new release. The PATH tool
     # must fall inside this range; `forge doctor` audits the extra.
-    "semgrep>=1.176,<1.183",
+    # 1.183 drops Intel macOS binaries, including x86_64 Python under Rosetta.
+    "semgrep>=1.176,<1.183; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+    "semgrep>=1.176,<1.184; platform_system != 'Darwin' or platform_machine != 'x86_64'",
 ]
 # Only the corpus GENERATOR needs this -- building tests/eval/swebench from
 # SWE-bench_Verified. The generated corpus is committed, so running an

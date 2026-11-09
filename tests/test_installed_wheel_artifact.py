@@ -302,11 +302,18 @@ def test_unreviewed_source_layout_is_rejected(gate, source, path):
 
 
 def test_unreviewed_backend_or_dependency_metadata_fails_closed(gate, source):
-    source["files"]["pyproject.toml"] = source["files"]["pyproject.toml"].replace(
-        b"pyyaml>=6.0", b"unreviewed>=1"
-    )
-    with pytest.raises(KeyError):
-        gate.expected_members(source)
+    original = source["files"]["pyproject.toml"]
+    for old, new in (
+        (b"pyyaml>=6.0", b"unreviewed>=1"),
+        (b"semgrep>=1.176,<1.183", b"semgrep>=1.176,<1.184"),
+        (b"semgrep>=1.176,<1.184", b"semgrep>=1.176,<1.185"),
+        (b"platform_system != 'Darwin' or", b"platform_system != 'Darwin' and"),
+        (b"platform_machine == 'x86_64'", b"platform_machine == 'arm64'"),
+    ):
+        assert old in original
+        source["files"]["pyproject.toml"] = original.replace(old, new)
+        with pytest.raises(KeyError):
+            gate.expected_members(source)
 
 
 def test_public_copy_is_exact_original_qualified_bytes_and_no_proof_escapes(tmp_path, gate, source):
