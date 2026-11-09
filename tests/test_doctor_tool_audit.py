@@ -7,11 +7,13 @@ from __future__ import annotations
 import inspect
 import stat
 import textwrap
+import tomllib
 from importlib.metadata import PackageNotFoundError as _RealPackageNotFound
 from pathlib import Path
 from subprocess import TimeoutExpired
 from unittest.mock import MagicMock, patch
 
+from packaging.markers import default_environment
 from packaging.requirements import Requirement
 from packaging.version import Version
 
@@ -297,29 +299,43 @@ class TestAuditPythonDeps:
     def test_semgrep_pin_covers_path_install(self):
         """Declared pin must admit the PATH tool and stay capped below untested releases."""
         pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-        text = pyproject.read_text(encoding="utf-8")
-        extras = text.split("[project.optional-dependencies]", 1)[1]
-        dev_block = extras.split("dev = [", 1)[1].split("]", 1)[0]
-        assert "semgrep" not in dev_block
-        assert "semgrep = [" in extras
-        req = None
-        in_semgrep = False
-        for line in extras.splitlines():
-            if line.strip().startswith("semgrep = ["):
-                in_semgrep = True
-                continue
-            if in_semgrep and line.strip().startswith("]"):
-                break
-            raw = line.strip().strip(",").strip('"')
-            if in_semgrep and raw.startswith("semgrep"):
-                req = Requirement(raw)
-                break
-        assert req is not None, extras
-        assert Version("1.176.0") in req.specifier
-        assert Version("1.176.1") in req.specifier
-        assert Version("1.182.1") in req.specifier
-        assert Version("1.175.0") not in req.specifier
-        assert Version("1.183.0") not in req.specifier
+        extras = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["optional-dependencies"]
+        assert all(Requirement(item).name != "semgrep" for item in extras["dev"])
+        requirements = [Requirement(item) for item in extras["semgrep"]]
+        assert len(requirements) == 2
+        for system, machine in (
+            ("Darwin", "x86_64"),
+            ("Darwin", "arm64"),
+            ("Linux", "x86_64"),
+            ("Linux", "aarch64"),
+            ("Windows", "AMD64"),
+        ):
+            environment = {"platform_system": system, "platform_machine": machine}
+            active = [req for req in requirements if req.marker.evaluate(environment)]
+            assert len(active) == 1, environment
+            req = active[0]
+            assert req.name == "semgrep"
+            for version in ("1.176.0", "1.176.1", "1.182.1"):
+                assert Version(version) in req.specifier, environment
+            assert Version("1.175.0") not in req.specifier
+            assert Version("1.184.0") not in req.specifier
+            intel_mac = system == "Darwin" and machine == "x86_64"
+            assert (Version("1.183.0") in req.specifier) is not intel_mac
+            # Audit installed metadata under the same platform, not the host's.
+            metadata = [
+                f'{item.name}{item.specifier}; ({item.marker}) and extra == "semgrep"'
+                for item in requirements
+            ]
+            defaults = default_environment() | environment
+            for version, accepted in (("1.182.1", True), ("1.183.0", not intel_mac)):
+                with (
+                    self._md(metadata, {"semgrep": version}),
+                    patch("packaging.markers.default_environment", return_value=defaults),
+                ):
+                    results = _audit_python_deps(extras=("semgrep",))
+                    assert len(results) == 1, (environment, results)
+                    assert results[0][0] is accepted, (environment, results)
+                    assert _audit_python_deps(extras=("dev",)) == [(None, "no extra requirements")]
 
     def test_extras_outside_the_requested_set_are_skipped(self):
         with self._md(['google-auth>=2.35.0; extra == "vertex"'], {}):

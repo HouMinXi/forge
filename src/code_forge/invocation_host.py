@@ -420,13 +420,6 @@ class HostAuditSession:
         # caller budget; an action or sequence deadline is never extended.
         for attempt in (0, 1):
             if attempt:
-                with self._lock:
-                    if self._closed or self._disabled:
-                        raise _Unavailable()
-                    # Finalising has started is exactly when the final record is
-                    # issued, so that request is the one exception.
-                    if self._finalize_started and phase is not AuditPhase.FINALIZE:
-                        raise _Unavailable()
                 grace = min(window, self.limits.control_timeout_s)
                 if grace <= 0.0:
                     raise _Unavailable()
@@ -434,6 +427,15 @@ class HostAuditSession:
                 if time.monotonic() >= deadline:
                     raise _Unavailable()
             with self._lock:
+                # Replay admission and accounting share one lifecycle boundary.
+                # A close/disable/finalize during re-arming must not slip between
+                # the check and registration. Already registered work remains
+                # visible to close() and keeps its existing accounting semantics.
+                if attempt:
+                    if self._closed or self._disabled:
+                        raise _Unavailable()
+                    if self._finalize_started and phase is not AuditPhase.FINALIZE:
+                        raise _Unavailable()
                 if (
                     len(self._commands) >= self.limits.control_slots
                     or charge > self.limits.control_bytes - self._control_bytes
@@ -1197,7 +1199,7 @@ class _HostAttempt:
         finally:
             self._finished = True
 
-    def _finish(self, *, outcome, error_class, duration_s, deadline):
+    def _finish(self, *, outcome, error_class, duration_s):
         if self._finished:
             return self._settled
         try:
@@ -1205,6 +1207,11 @@ class _HostAttempt:
                 raise _Unavailable()
             if self._stage is not None:
                 self._adopt()
+            # Seal/adopt have their own bounded waits. Start the settlement
+            # control window only now, not before those waits consume it.
+            # _request still caps it by the job deadline; outer lifecycle
+            # cleanup retains its separate shared deadline in _abandon_finish.
+            deadline = time.monotonic() + self._host.limits.control_timeout_s
             self._host._request(
                 AuditPhase.FINISH, "finish", (self._lease, outcome, error_class, duration_s), deadline
             )
@@ -1245,7 +1252,6 @@ class _HostAttempt:
                 outcome=outcome,
                 error_class=safe_error,
                 duration_s=duration_s,
-                deadline=time.monotonic() + self._host.limits.control_timeout_s,
             )
         except MemoryError as error:
             self._host._failure(primary=error)

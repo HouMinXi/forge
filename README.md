@@ -476,6 +476,11 @@ pip install -e '.[dev,mcp,semgrep]'
 code-forge doctor
 ```
 
+Semgrep 1.183 is supported on platforms with upstream binaries. Intel macOS
+(including x86_64 Python under Rosetta) stays below 1.183 because upstream
+stopped shipping Intel Mac binaries. On Apple Silicon, use native arm64 Python.
+The platform-specific extra selects the appropriate range automatically.
+
 `doctor` prints a `python-deps` line for each declared dependency, so a
 missing or wrong-version package shows up at install time. Without it the
 symptom surfaces much later and points the wrong way: mutmut 2.x under a
