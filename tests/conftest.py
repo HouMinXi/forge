@@ -104,6 +104,16 @@ def _skip_worktree_check(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def default_l1_dispatch(monkeypatch):
+    """Tests see the shipped L1 dispatch unless they ask for another one.
+
+    FORGE_L1_SERIAL is read at call time, so a developer who exported it for one
+    suite would otherwise serialise every other suite that measures parallelism.
+    """
+    monkeypatch.delenv("FORGE_L1_SERIAL", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _disable_mutation_idle_gate(monkeypatch):
     """#282: the mutation idle gate must not delay the suite's own runs."""
     import dataclasses

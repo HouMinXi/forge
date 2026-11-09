@@ -107,6 +107,29 @@ config-file default or session default -- it does not cause an error.
 
 ---
 
+### FORGE_L1_SERIAL
+
+Runs the L1 review passes one at a time instead of in parallel. Only `1`,
+`true`, `yes` or `on` switch it on, so an unset or unrecognised value changes
+nothing; CLI backends are always serial with or without it.
+
+The passes share the invocation audit owner, whose lock wait is bounded, and losing
+that lock refuses the whole session's audit rather than the one pass that lost it.
+This switch removes that contention and nothing else: the falsify loop is a second
+fan-out over the same recorder, and an attempt whose deadline has already passed
+still refuses. Serial runs report the sum of the pass durations rather than the
+parallel wall clock, and `retry.l1_pass_stagger_s` has no effect on them.
+
+The variable is read from the process environment, so a review launched by a
+long-lived parent inherits it: exporting it in a shell that starts the MCP server
+serialises every review child that server launches.
+
+```bash
+export FORGE_L1_SERIAL=1
+```
+
+---
+
 ### FORGE_OUTLET
 
 Forces the review outlet. Three outlets are available:

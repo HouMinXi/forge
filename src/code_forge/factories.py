@@ -462,6 +462,20 @@ class _L1Call:
         return result
 
 
+def _serial_passes_requested() -> bool:
+    """True when FORGE_L1_SERIAL asks for one L1 pass at a time.
+
+    Explicit opt-in only: an unset or unrecognised value keeps the default
+    parallel dispatch, so no existing caller changes behaviour.
+    """
+    return os.environ.get("FORGE_L1_SERIAL", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def build_l1_provider(
     engine: str,
     resolved: "ResolvedReview",
@@ -607,11 +621,17 @@ def build_l1_provider(
         # CLI backends use a module-global _active_proc that is not
         # thread-safe; keep serial for those.
         is_cli = backend is None or backend.type == "cli"
+        # One pass at a time is also reachable on request: the passes share the
+        # invocation audit owner, whose lock wait is bounded, and losing that lock
+        # refuses the whole session, not just the pass that lost it. CLI stays
+        # serial for its own reason.
+        serial = is_cli or _serial_passes_requested()
 
         def _run_pass(idx):
-            # CLI stays serial; extra sleep after a finished pass is dead
-            # time. API passes share one backend, so stagger their starts.
-            if not is_cli:
+            # Serial passes have nothing to stagger. Parallel API passes share
+            # one backend, so their starts are staggered -- when
+            # retry.l1_pass_stagger_s is above its 0.0 default.
+            if not serial:
                 delay = idx * float(pass_stagger_s or 0.0)
                 if delay > 0:
                     time.sleep(delay)
@@ -637,7 +657,7 @@ def build_l1_provider(
 
         pass_results = []
         _parallel_wall = 0.0
-        if is_cli:
+        if serial:
             for i in range(len(pass_configs)):
                 try:
                     pass_results.append(_run_pass(i))
@@ -993,7 +1013,7 @@ def build_l1_provider(
                     seen,
                 )
             )
-        if not is_cli:
+        if not serial:
             total_duration = _parallel_wall
         return (
             all_candidates,
