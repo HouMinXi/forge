@@ -225,8 +225,13 @@ def _is_dead_c(file_path: str, line: int) -> bool:
     except OSError:
         return False
 
+    # A stale graph may point past a truncated source. There is no call-site
+    # line to classify in that case, so retain the caller conservatively.
+    if not 1 <= line <= len(lines):
+        return False
+
     depth = 0
-    for i in range(min(line - 1, len(lines)) - 1, -1, -1):
+    for i in range(line - 2, -1, -1):
         text = lines[i]
         if _ENDIF_RE.match(text):
             depth += 1
