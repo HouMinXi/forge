@@ -430,7 +430,15 @@ def test_fork_refuses_before_touching_inherited_locks(setup, monkeypatch):
 )
 def test_fatal_storage_error_preserves_original_identity_in_all_phases(setup, phase):
     make, _ = setup
-    host, _ = make()
+    # This test isolates fatal-error identity, not deadline expiry. The fixture's
+    # 80 ms fault-test budget can expire during ordinary worker scheduling before
+    # the target fault is armed. Use the production control/flush budgets here;
+    # deadline behavior remains covered by the dedicated timeout tests.
+    defaults = HostAuditLimits()
+    host, _ = make(
+        control_timeout_s=defaults.control_timeout_s,
+        flush_timeout_s=defaults.flush_timeout_s,
+    )
     original = MemoryError("PRIVATE fatal")
     original.__cause__ = ValueError("PRIVATE cause")
     cause = original.__cause__
@@ -1115,6 +1123,72 @@ def test_ensure_open_stays_inside_the_callers_deadline(setup, monkeypatch):
 
     assert submitted, "the open sequence must issue its controls"
     assert max(deadline for _, deadline in submitted) <= caller_deadline + 0.001
+
+
+@pytest.mark.parametrize("boundary", ["close", "disable", "finalize"])
+@pytest.mark.parametrize("phase", [invocation_io.AuditPhase.OPEN, invocation_io.AuditPhase.FINALIZE])
+def test_retry_registration_observes_lifecycle_after_rearming(setup, monkeypatch, boundary, phase):
+    """Cross the boundary after replay preparation, before its registration."""
+    make, supervisor = setup
+    host, _ = make()
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: 100.0))
+    expired = invocation_io.IoOutcome("expired", not_executed=True)
+    ack = invocation_io.IoOutcome("ack", value=True)
+    submitted = []
+    rearming = threading.Event()
+    transitioned = threading.Event()
+    real_deadline = host._deadline
+    calls = 0
+    transition_errors = []
+
+    def deadline(value):
+        nonlocal calls
+        result = real_deadline(value)
+        calls += 1
+        if calls == 2:
+            rearming.set()
+            assert transitioned.wait(3)
+        return result
+
+    def transition():
+        try:
+            assert rearming.wait(3)
+            if boundary == "close":
+                host.close()
+            elif boundary == "disable":
+                host.warn("unavailable")
+            else:
+                with host._lock:
+                    host._finalize_started = True
+        except BaseException as error:  # noqa: BLE001 - assert thread failures in the caller
+            transition_errors.append(error)
+        finally:
+            transitioned.set()
+
+    def submit(target, phase, *, deadline):
+        submitted.append((target, phase))
+        return SimpleNamespace(_outcome=expired if len(submitted) == 1 else ack)
+
+    monkeypatch.setattr(host, "_deadline", deadline)
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", lambda ticket: ticket._outcome)
+    thread = threading.Thread(target=transition)
+    thread.start()
+    try:
+        if boundary == "finalize" and phase is invocation_io.AuditPhase.FINALIZE:
+            assert host._request(phase, "finalize", (None, True), 101.0) is True
+            assert len(submitted) == 2
+        else:
+            with pytest.raises(module._Unavailable):
+                host._request(phase, "open", None, 101.0)
+            assert len(submitted) == 1
+        assert host._commands == set()
+        assert host._control_bytes == 0
+    finally:
+        rearming.set()
+        thread.join(3)
+        assert not thread.is_alive()
+        assert transition_errors == []
 
 
 @pytest.mark.parametrize("strict", [False, True])
