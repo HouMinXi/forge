@@ -97,9 +97,9 @@ def _verinfo_is_dead(cond_text: bytes) -> bool:
     Compound guards (``and`` / ``or``) are fail-safe live -- a
     blanket flag would wrongly drop live callers.
     """
-    if b" and " in cond_text or b" or " in cond_text:
-        return False
-    m = _VERINFO_RE.search(cond_text)
+    # A matching substring may be negated, chained, or part of a compound
+    # condition. Only the complete simple comparison can justify dropping a caller.
+    m = _VERINFO_RE.fullmatch(cond_text.strip())
     if not m:
         return False
     try:
