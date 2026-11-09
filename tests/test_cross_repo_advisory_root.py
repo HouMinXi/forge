@@ -5,11 +5,11 @@
 import json
 import sqlite3
 import subprocess
+import sys
+import types
 from contextlib import closing
 
 import pytest
-
-pytest.importorskip("code_review_graph")
 
 from code_forge.baseline import ResolvedReview
 from code_forge.cross_repo import run_cross_repo
@@ -86,6 +86,15 @@ def graph_repos(tmp_path, monkeypatch):
         _git(repo, "commit", "-qam", "change")
     home = tmp_path / "provider"
     home.mkdir()
+    # Only the optional provider's location helper is isolated. Forge still
+    # reads the real registry and applies discovery precedence/root checks.
+    package = types.ModuleType("code_review_graph")
+    package.__path__ = []
+    registry = types.ModuleType("code_review_graph.registry")
+    registry.default_registry_path = lambda: home / "registry.json"
+    package.registry = registry
+    monkeypatch.setitem(sys.modules, package.__name__, package)
+    monkeypatch.setitem(sys.modules, registry.__name__, registry)
     monkeypatch.setenv("CRG_HOME", str(home))
     monkeypatch.delenv("CRG_DATA_DIR", raising=False)
     monkeypatch.delenv("CRG_REGISTRY_PATH", raising=False)
