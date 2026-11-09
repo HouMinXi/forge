@@ -36,10 +36,13 @@ from __future__ import annotations
 
 import ast
 import operator
+import os
 import re
 import sqlite3
+import stat
 import sys
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -140,6 +143,23 @@ def _in_consequence(if_node, target_line: int) -> bool:
     return False
 
 
+def _source_opener(path: str, flags: int) -> int:
+    """Open only regular source files without waiting for a FIFO writer.
+
+    Inspect the opened descriptor, not a prior path stat. Symlinks to regular
+    files retain their existing behavior. Nonregular input stays live.
+    """
+    fd = os.open(path, flags | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("source is not a regular file")
+    except BaseException:  # noqa: BLE001 - close owned fd, then preserve the error
+        with suppress(OSError):
+            os.close(fd)
+        raise
+    return fd
+
+
 def _is_dead_python(file_path: str, line: int) -> bool:
     """Return True if *line* is inside a dead-code guard in a Python file.
 
@@ -149,7 +169,8 @@ def _is_dead_python(file_path: str, line: int) -> bool:
     if _PYTHON_PARSER is None:
         return False
     try:
-        source = Path(file_path).read_bytes()
+        with open(file_path, "rb", opener=_source_opener) as stream:
+            source = stream.read()
     except OSError:
         return False
 
@@ -199,7 +220,7 @@ def _is_dead_c(file_path: str, line: int) -> bool:
     direction (miss-not-noise).
     """
     try:
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+        with open(file_path, "r", encoding="utf-8", errors="replace", opener=_source_opener) as f:
             lines = f.readlines()
     except OSError:
         return False
