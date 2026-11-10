@@ -23,6 +23,18 @@ from .git import git_diff, resolve_git_ref
 from .verify import _load_receipts
 
 
+class _PerRepoCwdCleanup(contextlib.ExitStack):
+    """Keep a pending host error when owned cwd callbacks raise."""
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        except BaseException:  # noqa: BLE001 -- Cleanup failures must not replace an existing body error.
+            if exc_type is None:
+                raise
+            return False
+
+
 @contextlib.contextmanager
 def _defer_worker_signals():
     """Replay cancellation after every owned worker has finished source cleanup."""
@@ -384,7 +396,7 @@ def run_cross_repo(
             e["label"]: build_falsifier(engine_choice, diff_text=e["diff"], backend=backend)
             for e in repo_entries
         }
-        with contextlib.ExitStack() as stack:
+        with _PerRepoCwdCleanup() as stack:
             thread_args = []
             for entry in repo_entries:
                 label = entry["label"]
