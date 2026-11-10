@@ -1,12 +1,15 @@
 """#441 review-support candidate, NOT a production schema or publisher."""
+
 from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from uuid import UUID, uuid4
 
+
 class ContextMismatch(ValueError):
     pass
+
 
 @dataclass(frozen=True, slots=True)
 class ExecutionContext:
@@ -22,6 +25,7 @@ class ExecutionContext:
     @classmethod
     def new_host_execution(cls, source_hash):
         return cls(str(uuid4()), source_hash)
+
 
 @dataclass(frozen=True, slots=True)
 class DiscoveryContext:
@@ -41,6 +45,7 @@ class DiscoveryContext:
         if names != sorted(set(names)):
             raise ValueError("discovery names must be unique and sorted")
 
+
 @dataclass(frozen=True, slots=True)
 class InputBinding:
     context: ExecutionContext
@@ -48,6 +53,7 @@ class InputBinding:
     canonical_root: str
     diff_sha256: str
     discovery: DiscoveryContext
+
 
 class CacheAdmission:
     def __init__(self):
@@ -59,12 +65,18 @@ class CacheAdmission:
         if type(diff_text) is not str:
             raise TypeError("diff_text must be a plain string")
         path = Path(root)
-        binding = InputBinding(context, str(path.absolute()), str(path.resolve()),
-                               sha256(diff_text.encode("utf-8")).hexdigest(), discovery)
+        binding = InputBinding(
+            context,
+            str(path.absolute()),
+            str(path.resolve()),
+            sha256(diff_text.encode("utf-8")).hexdigest(),
+            discovery,
+        )
         if self._binding is not None and self._binding != binding:
             raise ContextMismatch("execution/input/discovery changed")
         self._binding = binding
         return binding
+
 
 class HostBoundRunner:
     """Candidate internal adapter; caller supplies CURRENT context on each run.
@@ -74,6 +86,7 @@ class HostBoundRunner:
     The discovery snapshot must describe the actual delegate configuration; this
     adapter cannot prove an ambient environment stayed unchanged during analysis.
     """
+
     def __init__(self, fresh_runner):
         self._runner = fresh_runner
         self._admission = CacheAdmission()

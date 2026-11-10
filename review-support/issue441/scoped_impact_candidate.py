@@ -1,7 +1,9 @@
 """W2 review-support candidate. Not production wiring or schema approval."""
+
 from copy import deepcopy
 from dataclasses import dataclass
 from execution_binding import CacheAdmission, DiscoveryContext, ExecutionContext
+
 
 @dataclass(frozen=True, slots=True)
 class HostInputs:
@@ -12,6 +14,7 @@ class HostInputs:
         if type(self.context) is not ExecutionContext or type(self.discovery) is not DiscoveryContext:
             raise TypeError("exact immutable host context and discovery required")
 
+
 def make_scoped_impact_type(impact_type):
     """Trusted composition; subclass preserves source-root isinstance routing.
 
@@ -20,6 +23,7 @@ def make_scoped_impact_type(impact_type):
     This factory neither issues authoritative IDs nor freezes ambient config.
     Thread-confined; no observation/publication or cache-origin claims.
     """
+
     class ScopedImpact(impact_type):
         def __init__(self, *, current_inputs):
             super().__init__()

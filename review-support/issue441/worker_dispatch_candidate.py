@@ -1,11 +1,14 @@
 """One-shot worker lifetime candidate, not wired into production Forge."""
+
 from contextlib import contextmanager
 import os
 import threading
 from scoped_impact_candidate import HostInputs, make_scoped_impact_type
 
+
 class ScopeUnavailable(RuntimeError):
     pass
+
 
 class WorkerScope:
     """Create inside the worker, never on the coordinator for later sharing.
@@ -14,6 +17,7 @@ class WorkerScope:
     The same worker thread must activate, consume and close this scope. A host
     callback must not retain it for another execution. No async/concurrent use.
     """
+
     def __init__(self):
         self._owner = (os.getpid(), threading.get_ident())
         self._inputs = None
@@ -42,6 +46,7 @@ class WorkerScope:
             yield self
         finally:
             self._inputs = None
+
 
 def run_primary_machine(*, impact_type, inputs, build_machine):
     """Candidate seam: build_machine receives the one scoped impact runner.
