@@ -1,4 +1,4 @@
-"""Failure-only pytest transcript replay, not qualification evidence.
+"""Failure-only allowlisted CI transcript replay, not qualification evidence.
 
 The workflow supplies no secrets and checkout does not persist credentials.
 Credential filtering/redaction is defense in depth, not a hostile-code sandbox.
@@ -11,7 +11,9 @@ import re
 import secrets
 import stat
 
-PHASES = ("ownership", "cgroup", "local", *(f"shard-{n}" for n in range(4)))
+PHASES = ("ownership", "cgroup", "local", *(f"shard-{n}" for n in range(4)), "setup-bwrap")
+LOG_NAMES = {phase: phase + ".log" for phase in PHASES}
+LOG_NAMES["setup-bwrap"] = "step-04.log"
 MAX_BYTES = 32 * 1024 * 1024
 CREDENTIAL_NAME = re.compile(
     r"(?:^|_)(?:TOKEN|SECRET|PASSWORD|CREDENTIALS?|API_KEY|PRIVATE_KEY)(?:_|$)", re.I
@@ -20,7 +22,10 @@ TOKEN = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,
 AUTHORIZATION = re.compile(
     r"(?i)(\b(?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?(?:bearer|basic)\s+)[^\s\"',}]+"
 )
-URL_AUTH = re.compile(r"(https?://)[^\s/@]+:[^\s/@]+@", re.I)
+URL_AUTH = re.compile(r"(https?://)[^\s/@]+@", re.I)
+URL_QUERY = re.compile(r"(https?://[^\s<>\"'?#]+)[?#][^\s<>\"']*", re.I)
+# Apt/proxy diagnostics may include authentication schemes other than Basic/Bearer.
+AUTH_HEADER = re.compile(r"(?im)(^[ \t]*(?:proxy-)?authorization[\"']?\s*[:=]\s*)[^\r\n]+")
 
 
 def test_environment(environment):
@@ -34,7 +39,15 @@ def redact(text, environment):
             text = text.replace(value, "[REDACTED]")
     text = TOKEN.sub("[REDACTED]", text)
     text = AUTHORIZATION.sub(r"\1[REDACTED]", text)
-    return URL_AUTH.sub(r"\1[REDACTED]@", text)
+    text = URL_AUTH.sub(r"\1[REDACTED]@", text)
+    text = URL_QUERY.sub(r"\1?[REDACTED]", text)
+    text = AUTH_HEADER.sub(r"\1[REDACTED]", text)
+    # Render terminal controls visibly; retain ordinary multiline diagnostics.
+    return re.sub(
+        r"[\x00-\x08\x0b-\x1f\x7f-\x9f]",
+        lambda match: f"[control-{ord(match.group()):02x}]",
+        text,
+    )
 
 
 def read_log(directory, phase):
@@ -46,7 +59,7 @@ def read_log(directory, phase):
     else:
         from ci_private_transport import _directory
     with _directory(Path(directory)) as parent:
-        fd = os.open(phase + ".log", os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
+        fd = os.open(LOG_NAMES[phase], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
     try:
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > MAX_BYTES:
