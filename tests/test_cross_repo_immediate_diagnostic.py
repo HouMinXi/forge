@@ -343,3 +343,256 @@ async def test_existing_mcp_outputs_preserve_primary_cli_diagnostic(
     assert result["findings"] is None
     assert result["findings_count"] is None
     assert set(result) == set(immediate.structuredContent)
+
+
+@pytest.fixture
+def worker_completion(monkeypatch):
+    """Observe real worker exits, joins and cleanup without replacing them."""
+    import threading
+    from collections import defaultdict
+
+    from code_forge import cross_repo
+    from code_forge.machine import StateMachine
+
+    observation = types.SimpleNamespace(
+        roots=[],
+        completed=[],
+        machines=[],
+        escaped=[],
+        started=[],
+        joined=[],
+        exited=[],
+        exit_events=defaultdict(threading.Event),
+    )
+    worker_labels = {}
+    original_make_cwd = cross_repo.make_per_repo_cwd
+    original_run = StateMachine.run
+    original_start = threading.Thread.start
+    original_thread_run = threading.Thread.run
+    original_join = threading.Thread.join
+
+    def make_cwd(*args, **kwargs):
+        path = original_make_cwd(*args, **kwargs)
+        observation.roots.append(path)
+        return path
+
+    def run(machine):
+        observation.machines.append(machine)
+        try:
+            return original_run(machine)
+        finally:
+            observation.completed.append(machine.baseline_spec_repr)
+
+    def start(thread, *args, **kwargs):
+        if getattr(getattr(thread, "_target", None), "__name__", None) == "_thread_fn":
+            worker_labels[thread] = thread._args[0]
+        result = original_start(thread, *args, **kwargs)
+        if thread in worker_labels:
+            observation.started.append(thread)
+        return result
+
+    def thread_run(thread):
+        try:
+            return original_thread_run(thread)
+        finally:
+            if thread in worker_labels:
+                label = worker_labels[thread]
+                observation.exited.append(label)
+                # The actual worker target has returned, so errors[label] and
+                # its completion event have already been stored by production.
+                observation.exit_events[label].set()
+
+    def join(thread, *args, **kwargs):
+        result = original_join(thread, *args, **kwargs)
+        if thread in worker_labels:
+            observation.joined.append(thread)
+        return result
+
+    monkeypatch.setattr(cross_repo, "make_per_repo_cwd", make_cwd)
+    monkeypatch.setattr(StateMachine, "run", run)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(threading.Thread, "run", thread_run)
+    monkeypatch.setattr(threading.Thread, "join", join)
+    monkeypatch.setattr(threading, "excepthook", observation.escaped.append)
+    return observation
+
+
+def assert_workers_cleaned(observation, expected_completed, *, worker_count=2):
+    assert len(observation.roots) == worker_count
+    assert all(not path.exists() for path in observation.roots)
+    assert set(observation.completed) == expected_completed
+    assert observation.escaped == []
+    assert len(observation.started) == len(observation.joined) == worker_count
+    assert set(observation.started) == set(observation.joined)
+    assert all(not thread.is_alive() for thread in observation.started)
+    for machine in observation.machines:
+        assert not (machine._source_root() / ".code-forge/code-forge.lock").exists()
+
+
+@pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit])
+def test_primary_output_control_reaches_cli_after_all_workers_finish(
+    primary_cli_output, worker_completion, monkeypatch, error_type
+):
+    import threading
+
+    from code_forge import cross_repo
+    from code_forge.machine import StateMachine
+
+    fault = error_type("owned primary output interruption")
+    cause = ValueError("pre-existing cause")
+    fault.__cause__ = cause
+    fault.__suppress_context__ = True
+    native_host = cross_repo.run_cross_repo
+    original_gate = StateMachine._run_ci
+    primary_interrupted = threading.Event()
+    sibling_finished_gate = threading.Event()
+
+    def output(message):
+        if MESSAGE in message:
+            primary_interrupted.set()
+            raise fault
+
+    def gate(machine):
+        if machine.baseline_spec_repr == "consumer":
+            assert primary_interrupted.wait(5), "primary did not reach its actual diagnostic"
+        result = original_gate(machine)
+        if machine.baseline_spec_repr == "consumer":
+            sibling_finished_gate.set()
+        return result
+
+    def host(**kwargs):
+        return native_host(**kwargs, output_fn=output)
+
+    monkeypatch.setattr(cross_repo, "run_cross_repo", host)
+    monkeypatch.setattr(StateMachine, "_run_ci", gate)
+    with pytest.raises(error_type) as caught:
+        primary_cli_output()
+    assert caught.value is fault
+    assert caught.value.__cause__ is cause
+    assert caught.value.__suppress_context__ is True
+    assert sibling_finished_gate.is_set()
+    assert_workers_cleaned(worker_completion, {"primary", "consumer"})
+
+
+@pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit])
+def test_primary_setup_control_reaches_cli_and_cleans_worker_directories(
+    primary_cli_output, worker_completion, graphs, monkeypatch, error_type
+):
+    from code_forge import cross_repo
+
+    fault = error_type("owned primary setup interruption")
+    original_derive = cross_repo.derive_source_files
+
+    def derive(repo_path, diff_text):
+        if repo_path == graphs[0]:
+            raise fault
+        return original_derive(repo_path, diff_text)
+
+    monkeypatch.setattr(cross_repo, "derive_source_files", derive)
+    with pytest.raises(error_type) as caught:
+        primary_cli_output()
+    assert caught.value is fault
+    assert_workers_cleaned(worker_completion, {"consumer"})
+    assert not (graphs[0] / ".code-forge/code-forge.lock").exists()
+
+
+@pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit])
+def test_sibling_control_is_not_downgraded_to_an_advisory(
+    primary_cli_output, worker_completion, monkeypatch, capsys, error_type
+):
+    from code_forge.machine import StateMachine
+
+    fault = error_type("owned sibling interruption")
+    original_gate = StateMachine._run_ci
+
+    def gate(machine):
+        result = original_gate(machine)
+        if machine.baseline_spec_repr == "consumer":
+            raise fault
+        return result
+
+    monkeypatch.setattr(StateMachine, "_run_ci", gate)
+    with pytest.raises(error_type) as caught:
+        primary_cli_output()
+    assert caught.value is fault
+    assert_workers_cleaned(worker_completion, {"primary", "consumer"})
+    stdout = capsys.readouterr().out
+    assert stdout.splitlines().count("[cross-repo] primary: ADVISORY: " + MESSAGE) == 1
+    assert "WARNING: sibling" not in stdout
+
+
+@pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit])
+def test_primary_error_keeps_precedence_over_sibling_control(
+    primary_cli_output, worker_completion, monkeypatch, error_type
+):
+    from code_forge.machine import StateMachine
+
+    primary = RuntimeError("owned primary failure")
+    sibling = error_type("owned sibling interruption")
+
+    def gate(machine):
+        if machine.baseline_spec_repr == "primary":
+            raise primary
+        raise sibling
+
+    monkeypatch.setattr(StateMachine, "_run_ci", gate)
+    with pytest.raises(BaseException) as caught:
+        primary_cli_output()
+    assert caught.value is primary
+    assert_workers_cleaned(worker_completion, {"primary", "consumer"})
+
+
+@pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit])
+def test_sibling_controls_follow_repository_order_not_completion_order(
+    primary_cli_output, worker_completion, graphs, tmp_path, monkeypatch, error_type
+):
+    from code_forge.machine import StateMachine
+
+    other_repo = tmp_path / "other"
+    other_repo.mkdir()
+    (other_repo / "api.py").write_text("def api():\n    return 1\n", encoding="utf-8")
+    gate_path = graphs[0] / ".code-forge/gate.yaml"
+    config = json.loads(gate_path.read_text(encoding="utf-8"))
+    config["siblings"].append({"repo": str(other_repo), "ref": "main..feature", "label": "other"})
+    gate_path.write_text(json.dumps(config), encoding="utf-8")
+    first = error_type("first configured sibling")
+    later = error_type("later configured sibling")
+    later_completed = worker_completion.exit_events["other"]
+    original_gate = StateMachine._run_ci
+
+    def gate(machine):
+        if machine.baseline_spec_repr == "consumer":
+            assert later_completed.wait(5), "later worker did not finish first"
+            raise first
+        if machine.baseline_spec_repr == "other":
+            raise later
+        return original_gate(machine)
+
+    monkeypatch.setattr(StateMachine, "_run_ci", gate)
+    with pytest.raises(error_type) as caught:
+        primary_cli_output()
+    assert caught.value is first
+    assert_workers_cleaned(worker_completion, {"primary", "consumer", "other"}, worker_count=3)
+    assert worker_completion.exited.index("other") < worker_completion.exited.index("consumer")
+
+
+def test_ordinary_sibling_exception_remains_nonblocking(
+    primary_cli_output, worker_completion, monkeypatch, capsys
+):
+    from code_forge.machine import StateMachine
+    from code_forge.state import Verdict
+
+    original_gate = StateMachine._run_ci
+
+    def gate(machine):
+        result = original_gate(machine)
+        if machine.baseline_spec_repr == "consumer":
+            raise RuntimeError("ordinary sibling failure")
+        return result
+
+    monkeypatch.setattr(StateMachine, "_run_ci", gate)
+    assert primary_cli_output() is Verdict.PASS
+    assert_workers_cleaned(worker_completion, {"primary", "consumer"})
+    stdout = capsys.readouterr().out
+    assert "WARNING: sibling 'consumer' crashed: ordinary sibling failure" in stdout
+    assert stdout.splitlines().count("[cross-repo] primary: ADVISORY: " + MESSAGE) == 1

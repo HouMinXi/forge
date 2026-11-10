@@ -373,7 +373,7 @@ def run_cross_repo(
         # -- Step 5: launch threads --
         # -- Step 6-9: collect, merge, return --
         results: dict[str, Verdict] = {}
-        errors: dict[str, Exception] = {}
+        errors: dict[str, BaseException] = {}
         per_repo_findings: dict[str, list[dict]] = {}
 
         # Reuse one falsifier per repository across the joint and local paths.
@@ -516,7 +516,7 @@ def run_cross_repo(
                     )
                     verdict = sm.run()
                     results[label] = verdict
-                except Exception as exc:  # noqa: BLE001 -- Fan-out worker reports arbitrary backend errors to its caller.
+                except (Exception, KeyboardInterrupt, SystemExit) as exc:  # noqa: BLE001 -- Transport worker failures to the joining caller, including process control.
                     errors[label] = exc
                 finally:
                     completed[label].set()
@@ -543,6 +543,12 @@ def run_cross_repo(
             # -- Step 6: fail-closed on PRIMARY error; sibling errors are advisory --
             if primary_label in errors:
                 raise errors[primary_label]
+            # Process control from a sibling is not an advisory failure. All
+            # workers have finished cleanup before the caller receives it.
+            for entry in repo_entries:
+                exc = errors.get(entry["label"])
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise exc
             for label, exc in errors.items():
                 # Sibling crash -> treat as FAIL verdict with warning, not
                 # a hard abort.  Sibling failures are advisory (primary
