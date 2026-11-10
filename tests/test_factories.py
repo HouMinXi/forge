@@ -1168,6 +1168,25 @@ class TestParallelL1:
         assert len(l1) == 2
 
 
+def _serial_pass_result():
+    """One valid L1 pass response, for tests that count passes rather than read them.
+
+    The per-pass duration and usage come from `_stub_llm_response`; the summed-duration
+    assertion in the serial test rests on that shared default, so it is not restated here.
+    """
+    return _stub_llm_response(
+        [],
+        [
+            {
+                "file": "src/a.py",
+                "start_line": 1,
+                "end_line": 4,
+                "content": "line1\nadded\nline2\nline4",
+            },
+        ],
+    )
+
+
 class TestDurationWallClock:
     """38.1-6: parallel paths report wall-clock, not sum of durations."""
 
@@ -1248,6 +1267,77 @@ class TestDurationWallClock:
 
         # 3 passes * 0.1s = ~0.3s sum
         assert duration > 0.28, f"serial duration should be sum; got {duration:.3f}"
+
+    def test_serial_switch_parse_is_opt_in(self, monkeypatch):
+        """Only explicit truthy spellings switch the passes to serial."""
+        from code_forge.factories import _serial_passes_requested
+
+        for value in ("1", "true", "TRUE", " yes ", "On\n"):
+            monkeypatch.setenv("FORGE_L1_SERIAL", value)
+            assert _serial_passes_requested() is True, value
+        for value in ("", "0", "2", "no", "garbage", "  "):
+            monkeypatch.setenv("FORGE_L1_SERIAL", value)
+            assert _serial_passes_requested() is False, value
+        monkeypatch.delenv("FORGE_L1_SERIAL")
+        assert _serial_passes_requested() is False
+
+    def test_api_backend_asked_for_serial_passes_keeps_its_duration(self, monkeypatch):
+        """An API backend told to run one pass at a time keeps every pass on the
+        calling thread, and reports their sum rather than the parallel wall."""
+        import threading
+
+        from code_forge.factories import build_l1_provider
+
+        monkeypatch.setenv("FORGE_L1_SERIAL", "1")
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        backend = SimpleNamespace(type="api", name="api")
+        # Which thread runs the pass is the dispatch decision itself: a pool
+        # hands them to workers, a serial loop keeps them here. That holds for
+        # any pass duration, any stagger and any load, so nothing here has to
+        # guess from elapsed time.
+        caller = threading.get_ident()
+        threads = []
+        guard = threading.Lock()
+
+        def _invoke(*a, **kw):
+            with guard:
+                threads.append(threading.get_ident())
+            return _serial_pass_result()
+
+        with patch("code_forge.llm_invoke.llm_invoke", side_effect=_invoke):
+            provider = build_l1_provider("real", resolved, backend=backend)
+            _, _, _, duration = provider()
+
+        assert set(threads) == {caller}, f"passes left the calling thread: {sorted(set(threads))}"
+        assert duration > 0.28, f"serial duration should be the sum; got {duration:.3f}"
+
+    def test_serial_passes_never_pay_the_stagger(self, monkeypatch):
+        """Serial dispatch has nothing to stagger, so it must not sleep at all."""
+        import time as _time
+
+        from code_forge.factories import build_l1_provider
+
+        monkeypatch.setenv("FORGE_L1_SERIAL", "1")
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        backend = SimpleNamespace(type="api", name="api")
+        slept = []
+
+        calls = []
+
+        def _invoke(*a, **kw):
+            calls.append(1)
+            return _serial_pass_result()
+
+        # Replace the module's clock rather than the global one, so only the
+        # dispatch's own sleeps are recorded.
+        fake_time = SimpleNamespace(sleep=slept.append, monotonic=_time.monotonic)
+        with patch("code_forge.factories.time", fake_time):
+            with patch("code_forge.llm_invoke.llm_invoke", side_effect=_invoke):
+                provider = build_l1_provider("real", resolved, backend=backend, pass_stagger_s=10.0)
+                provider()
+
+        assert len(calls) == 3, f"expected three passes, ran {len(calls)}"
+        assert slept == [], f"serial passes slept before starting: {slept}"
 
     def test_failed_pass_duration_counted(self):
         """LLMInvokeError duration_s is accumulated (serial path)."""

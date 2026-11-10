@@ -8,6 +8,7 @@ import copy
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 import time
 from types import SimpleNamespace
@@ -212,6 +213,7 @@ def fake_execution(monkeypatch, receipt, returncode=0):
     def run(command, **kwargs):
         commands.append(command)
         assert kwargs["check"] is False
+        assert "ACTIONS_RUNTIME_TOKEN" not in kwargs["env"]
         assert kwargs.get("stdout") is not None and kwargs.get("stderr") is not None
         kwargs["stdout"].write(CANARY + "\n")
         print(CANARY)
@@ -362,6 +364,7 @@ def test_run_preserves_original_selection_durations_junit_and_private_raw_files(
     monkeypatch, tmp_path, capsys, example, phase
 ):
     receipt = execution(example.plan, phase)
+    monkeypatch.setenv("ACTIONS_RUNTIME_TOKEN", "runtime-secret-canary")
     commands = fake_execution(monkeypatch, receipt)
     private, public = tmp_path / "private", tmp_path / "public"
     plan = approved_plan(example)
@@ -1409,3 +1412,31 @@ def test_a_report_carrying_the_recorder_failure_kind_key_validates(monkeypatch, 
     assert result["reports"]
     # The public projection is a fixed key list; the label must not ride along.
     assert all("failure_kind" not in row for row in result["reports"])
+
+
+def test_failed_real_producer_replays_without_credentials_or_success_receipt(
+    monkeypatch, tmp_path, example, capsys
+):
+    from scripts import ci_publish_failure_log as replay
+
+    test = tmp_path / "test_race.py"
+    test.write_text(
+        'import os\ndef test_race():\n    assert "ACTIONS_RUNTIME_TOKEN" not in os.environ\n    raise OSError(5, "race pid=731995 fd=14")\n'
+    )
+    monkeypatch.setenv("ACTIONS_RUNTIME_TOKEN", "live-secret-canary")
+    monkeypatch.setattr(
+        ci, "command_for_pytest", lambda *_: [sys.executable, "-m", "pytest", "-q", str(test)]
+    )
+    private, public = tmp_path / "private", tmp_path / "public"
+    with pytest.raises(SystemExit) as error:
+        transport.run_phase(
+            "local", approved_plan(example), private, public, example.policy, example.manifest
+        )
+    assert error.value.code == 1
+    assert not (public / "receipt-local.json").exists()
+    assert "race pid=731995 fd=14" not in capsys.readouterr().out
+    replay.publish(private, "local")
+    output = capsys.readouterr().out
+    assert "OSError: [Errno 5] race pid=731995 fd=14" in output
+    assert "live-secret-canary" not in output
+    assert not (public / "receipt-local.json").exists()

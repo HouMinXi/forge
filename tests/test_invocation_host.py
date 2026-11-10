@@ -1033,7 +1033,7 @@ def test_a_replay_spends_at_most_one_more_window(setup, monkeypatch):
     host, _ = make(control_timeout_s=2.0)
     clock = [100.0]
     deadlines = []
-    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
 
     def submit(target, phase, *, deadline, **kwargs):
         deadlines.append(deadline)
@@ -1122,7 +1122,7 @@ def test_replay_cannot_extend_explicit_caller_deadline(setup, monkeypatch, phase
     host, _ = make(control_timeout_s=1.0)
     clock = [100.0]
     submitted = []
-    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
 
     def submit(target, phase, *, deadline, **kwargs):
         submitted.append(deadline)
@@ -1149,7 +1149,7 @@ def test_open_replay_cannot_admit_after_caller_deadline(setup, monkeypatch):
     host, _ = make(known=False, control_timeout_s=1.0)
     clock = [100.0]
     submitted = []
-    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
 
     def submit(target, phase, *, deadline, **kwargs):
         submitted.append(deadline)

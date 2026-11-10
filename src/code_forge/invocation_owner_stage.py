@@ -245,9 +245,14 @@ class OwnerCaptureStage:
                 self._fail("stage unavailable")
             self._busy = True
         ticket = None
+        handoff = phase in (AuditPhase.ADOPT, AuditPhase.OBSERVE)
+        retained = False
         try:
             ticket = self._io.submit(
-                target, phase, deadline=min(self._deadline, time.monotonic() + self._control_timeout)
+                target,
+                phase,
+                deadline=min(self._deadline, time.monotonic() + self._control_timeout),
+                **({"handoff": True} if handoff else {}),
             )
             with self._lock:
                 self._tickets.append(ticket)
@@ -261,15 +266,65 @@ class OwnerCaptureStage:
             with self._lock:
                 if self._cancelled or outcome.state != "ack":
                     self._fail("stage publication unavailable")
-            return _Published(ticket, outcome)
-        except BaseException:
+            published = _Published(ticket, outcome)
+            retained = handoff
+            return published
+        except BaseException as error:
             self._owner._refused = True
+            if ticket is not None:
+                self._cleanup_request(ticket, error, abandon=True)
             raise
         finally:
-            with self._lock:
-                self._busy = False
-                if ticket in self._tickets:
-                    self._tickets.remove(ticket)
+            if not retained:
+                with self._lock:
+                    self._busy = False
+                    if ticket in self._tickets:
+                        self._tickets.remove(ticket)
+
+    def _cleanup_request(self, ticket, primary=None, *, abandon=False):
+        # Cleanup cannot replace the controller's primary failure. The owner
+        # helper retains the cleanup exception privately without changing its chain.
+        chain = (
+            None
+            if primary is None
+            else (
+                BaseException.__cause__.__get__(primary),
+                BaseException.__context__.__get__(primary),
+                BaseException.__suppress_context__.__get__(primary),
+                BaseException.__traceback__.__get__(primary),
+            )
+        )
+        try:
+            if abandon:
+                self._io.abandon(ticket)
+            else:
+                self._io.release_handoff(ticket)
+        except BaseException as error:
+            self._owner._refused = True
+            if primary is not None and error is not primary:
+                from .invocation_owner import _raise_handoff_primary
+
+                _raise_handoff_primary(primary, chain, error)
+            raise
+
+    @contextmanager
+    def _handoff_request(self, phase, **kwargs):
+        published = self._request(phase, **kwargs)
+        primary = None
+        try:
+            yield published
+        except BaseException as error:
+            self._owner._refused = True
+            primary = error
+            raise
+        finally:
+            try:
+                self._cleanup_request(published.ticket, primary)
+            finally:
+                with self._lock:
+                    self._busy = False
+                    if published.ticket in self._tickets:
+                        self._tickets.remove(published.ticket)
 
     def seal(self):
         self._require_controller()
@@ -301,98 +356,98 @@ class OwnerCaptureStage:
                     self._fail("conflicting adoption")
                 return self._adopted[1]
             snapshot = self._snapshot
-        published = self._request(AuditPhase.ADOPT, snapshot=snapshot, usage=usage)
-        ack = published.outcome.value
-        # Publication held no owner lock. Cancel and this credit commit serialize
-        # under the stage lock; the bounded owner lock never spans recorder I/O.
-        with self._owner_lock(), self._lock:
-            record = self._owner._lease(self._lease)
-            identity = self._checkpoint.identity
-            if (
-                self._cancelled
-                or published.ticket._io is not self._io
-                or published.ticket._outcome is not published.outcome
-                or published.outcome.state != "ack"
-                or time.monotonic() >= published.ticket._deadline
-                or record.settlement_started
-                or record.stages.get(self._layer) is not self
-                or not isinstance(ack, AcquiredAcknowledgement)
-                or ack.publication_uncertain
-                or ack.ref is None
-                or ack.observation_id != identity.observation_id
-                or ack.ref.artifact_id != identity.artifact_id
-                or ack.ref.layer != self._layer
-                or ack.ref.retained_bytes != self._checkpoint.retained_bytes
-                or ack.ref.sha256 != self._checkpoint.sha256
-                or type(ack.admitted) is not bool
-                or ack.admitted != snapshot.complete
-                or ack.ref.partial != (not snapshot.complete)
-                or ack.ref.original_bytes != (snapshot.observed_bytes if snapshot.eof_seen else None)
-                or (ack.admitted and ack.fault is not None)
-            ):
-                self._fail("stage adoption unavailable")
-            if self._adopted is not None:
-                if self._adopted[0] != usage:
-                    self._fail("conflicting adoption")
-                return self._adopted[1]
-            try:
-                captures = dict(record.captures)
-                captures[self._layer] = (snapshot.accepted_bytes, snapshot.complete)
-                refs = record.refs + [ack.ref]
-                observations = record.observations | {ack.observation_id}
-                usage_known = record.usage_known or (
-                    usage is not None and usage.availability in ("known", "partial")
-                )
-                adopted = (usage, ack)
-                if not ack.admitted:
-                    self._owner._refused = True
-                    fault = ack.fault or AuditFault(
-                        "persistence_error", "acquired", self._lease.attempt_id
+        with self._handoff_request(AuditPhase.ADOPT, snapshot=snapshot, usage=usage) as published:
+            ack = published.outcome.value
+            # Publication held no owner lock. Cancel and this credit commit serialize
+            # under the stage lock; the bounded owner lock never spans recorder I/O.
+            with self._owner_lock(), self._lock:
+                record = self._owner._lease(self._lease)
+                identity = self._checkpoint.identity
+                if (
+                    self._cancelled
+                    or published.ticket._io is not self._io
+                    or published.ticket._outcome is not published.outcome
+                    or published.outcome.state != "ack"
+                    or time.monotonic() >= published.ticket._deadline
+                    or record.settlement_started
+                    or record.stages.get(self._layer) is not self
+                    or not isinstance(ack, AcquiredAcknowledgement)
+                    or ack.publication_uncertain
+                    or ack.ref is None
+                    or ack.observation_id != identity.observation_id
+                    or ack.ref.artifact_id != identity.artifact_id
+                    or ack.ref.layer != self._layer
+                    or ack.ref.retained_bytes != self._checkpoint.retained_bytes
+                    or ack.ref.sha256 != self._checkpoint.sha256
+                    or type(ack.admitted) is not bool
+                    or ack.admitted != snapshot.complete
+                    or ack.ref.partial != (not snapshot.complete)
+                    or ack.ref.original_bytes != (snapshot.observed_bytes if snapshot.eof_seen else None)
+                    or (ack.admitted and ack.fault is not None)
+                ):
+                    self._fail("stage adoption unavailable")
+                if self._adopted is not None:
+                    if self._adopted[0] != usage:
+                        self._fail("conflicting adoption")
+                    return self._adopted[1]
+                try:
+                    captures = dict(record.captures)
+                    captures[self._layer] = (snapshot.accepted_bytes, snapshot.complete)
+                    refs = record.refs + [ack.ref]
+                    observations = record.observations | {ack.observation_id}
+                    usage_known = record.usage_known or (
+                        usage is not None and usage.availability in ("known", "partial")
                     )
-                    if fault not in self._owner._faults:
-                        self._owner._faults.append(fault)
-                # All fallible preparation precedes the owner-visible commit.
-                record.captures, record.refs, record.observations = captures, refs, observations
-                record.usage_known, self._adopted = usage_known, adopted
-            except BaseException:  # noqa: BLE001 - preserve fatal identity and sticky refusal.
-                self._owner._refused = True
-                raise
-        return ack
+                    adopted = (usage, ack)
+                    if not ack.admitted:
+                        self._owner._refused = True
+                        fault = ack.fault or AuditFault(
+                            "persistence_error", "acquired", self._lease.attempt_id
+                        )
+                        if fault not in self._owner._faults:
+                            self._owner._faults.append(fault)
+                    # All fallible preparation precedes the owner-visible commit.
+                    record.captures, record.refs, record.observations = captures, refs, observations
+                    record.usage_known, self._adopted = usage_known, adopted
+                except BaseException:  # noqa: BLE001 - preserve fatal identity and sticky refusal.
+                    self._owner._refused = True
+                    raise
+            return ack
 
     def observe(self, *, frame_offset, frame_length, usage=None, observed_backend=None):
         self._require_controller()
         with self._lock:
             if self._cancelled or self._adopted is None:
                 self._fail("unadopted observation source")
-        published = self._request(
+        with self._handoff_request(
             AuditPhase.OBSERVE,
             usage=usage,
             observation=dict(
                 frame_offset=frame_offset, frame_length=frame_length, observed_backend=observed_backend
             ),
-        )
-        ack = published.outcome.value
-        with self._owner_lock(), self._lock:
-            record = self._owner._lease(self._lease)
-            if (
-                self._cancelled
-                or time.monotonic() >= published.ticket._deadline
-                or record.settlement_started
-                or published.ticket._io is not self._io
-                or published.ticket._outcome is not published.outcome
-                or self._adopted[1].observation_id not in record.observations
-                or not isinstance(ack, AuditAcknowledgement)
-                or not ack.admitted
-                or ack.publication_uncertain
-            ):
-                self._fail("stage observation unavailable")
-            record.usage_known |= usage is not None and usage.availability in ("known", "partial")
-        return ack
+        ) as published:
+            ack = published.outcome.value
+            with self._owner_lock(), self._lock:
+                record = self._owner._lease(self._lease)
+                if (
+                    self._cancelled
+                    or time.monotonic() >= published.ticket._deadline
+                    or record.settlement_started
+                    or published.ticket._io is not self._io
+                    or published.ticket._outcome is not published.outcome
+                    or self._adopted[1].observation_id not in record.observations
+                    or not isinstance(ack, AuditAcknowledgement)
+                    or not ack.admitted
+                    or ack.publication_uncertain
+                ):
+                    self._fail("stage observation unavailable")
+                record.usage_known |= usage is not None and usage.availability in ("known", "partial")
+            return ack
 
     def cancel(self):
         self._io._check_process()
         with self._lock:
-            if self._cancelled or self._adopted is not None:
+            if self._cancelled or (self._adopted is not None and not self._busy):
                 return
             self._cancelled = True
             tickets, sink = tuple(self._tickets), self._sink

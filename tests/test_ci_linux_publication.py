@@ -97,7 +97,17 @@ BASE_COMMANDS = {
 
 
 def workflow():
-    return yaml.safe_load(WORKFLOW.read_text())
+    value = yaml.safe_load(WORKFLOW.read_text())
+    # Authorized failure transcript sidecars are asserted independently by
+    # test_ci_publish_failure_log; the original authority snapshot stays intact.
+    for job in value["jobs"].values():
+        job["steps"] = [
+            s
+            for s in job["steps"]
+            if not s["name"].startswith("Publish failed pytest transcript (")
+            and s["name"] != "Publish failed bubblewrap setup transcript"
+        ]
+    return value
 
 
 RUNS = [
@@ -251,6 +261,10 @@ def test_original_commands_change_only_private_transport_and_environment(job_nam
         assert job_name == "service-free"
         assert body == FAILURE_COMMAND + "\n"
         return
+    if step_name == "Install and verify bubblewrap":
+        from tests.test_ci_setup_diagnostics import without_setup_markers
+
+        body = without_setup_markers(body)
     # The consumer alone gets a private umask; the producer and its argv stay intact.
     body = re.sub(r'\| \(umask 077; exec tee ("\$EVIDENCE/[a-z0-9.-]+")\)', r"| tee \1", body)
     assert "umask" not in body

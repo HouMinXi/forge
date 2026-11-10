@@ -45,3 +45,22 @@ def test_parser_loader_bug_is_not_swallowed(monkeypatch) -> None:
             str(dead_code.__file__),
             run_name="dead_code_reload_bug",
         )
+
+
+@pytest.mark.parametrize(
+    ("condition", "dead"),
+    [
+        pytest.param(b"sys.version_info < (3, 0)", True, id="simple-dead"),
+        pytest.param(b"sys.version_info >= (3, 0)", False, id="simple-live"),
+        pytest.param(b"not sys.version_info < (3, 0)", False, id="negated"),
+        pytest.param(b"other_sys.version_info < (3, 0)", False, id="foreign-object"),
+        pytest.param(b"sys.version_info < (3, 0) == False", False, id="chained-comparison"),
+        pytest.param(b"sys.version_info < (3, 0) or\tTrue", False, id="tab-or"),
+        pytest.param(b"sys.version_info < (3, 0)\nor True", False, id="newline-or"),
+        pytest.param(b"sys.version_info < (3, 0)or(True)", False, id="adjacent-or"),
+        pytest.param(b"sys.version_info < (3, 0) and\tFalse", False, id="unsupported-and"),
+        pytest.param(b"sys.version_info < (1 + 2,)", False, id="nonliteral-tuple"),
+    ],
+)
+def test_version_guard_requires_a_complete_simple_comparison(condition, dead):
+    assert dead_code._verinfo_is_dead(condition) is dead

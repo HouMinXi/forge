@@ -191,3 +191,19 @@ def test_python_false_guard_retains_existing_parser_behavior(tmp_path: Path) -> 
         "if False:\n    def caller(): target_fn()\n",
         [("caller", 2, dead_code._PYTHON_PARSER is None)],
     )
+
+
+@pytest.mark.parametrize("suffix", [".c", ".h"], ids=["c", "h"])
+@pytest.mark.parametrize("ending", ["", "\n", "\r\n"], ids=["no-newline", "lf", "crlf"])
+@pytest.mark.parametrize("distance", [1, 10], ids=["next-line", "far-line"])
+def test_stale_line_after_truncation_retains_caller(tmp_path, suffix, ending, distance):
+    # An index can outlive an edit that truncates a source inside a guard.
+    # No physical line at this location means no proof of dead code.
+    _assert_callers(tmp_path, suffix, "#if 0" + ending, [("stale", 1 + distance, True)])
+
+
+@pytest.mark.parametrize("suffix", [".c", ".h"], ids=["c", "h"])
+@pytest.mark.parametrize("ending", ["", "\n", "\r\n"], ids=["no-newline", "lf", "crlf"])
+def test_last_physical_line_still_filters_dead_caller(tmp_path, suffix, ending):
+    source = "#if 0\nvoid caller(void) { target_fn(); }" + ending
+    _assert_callers(tmp_path, suffix, source, [("caller", 2, False)])

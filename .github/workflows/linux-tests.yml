@@ -159,12 +159,38 @@ jobs:
         # The patch-corpus tests run real mutation sandboxes with bwrap.
         # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor.
         # This only changes the ephemeral runner.
+        # Fixed stage labels only; never dump environment or package configuration.
+        setup_start() {
+          setup_phase=$1
+          setup_started=$SECONDS
+          printf 'setup:%s:start\n' "$setup_phase"
+        }
+        setup_end() {
+          printf 'setup:%s:end rc=%s elapsed_s=%s\n' "$setup_phase" "$1" "$((SECONDS - setup_started))"
+          setup_phase=
+        }
+        trap 'setup_rc=$?; set +e; if [[ -n ${setup_phase:-} ]]; then setup_end "$setup_rc"; fi; exit "$setup_rc"' EXIT
+        setup_start apt-update
         sudo apt-get update -q
+        setup_end 0
+        setup_start apt-install
         sudo apt-get install -y -q bubblewrap
+        setup_end 0
+        setup_start sysctl
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        setup_end 0
+        setup_start version
         bwrap --version
+        setup_end 0
+        setup_start smoke
         bwrap --unshare-all --ro-bind / / --dev /dev --proc /proc true \
           2>&1 | (umask 077; exec tee "$EVIDENCE/bwrap.log")
+        setup_end 0
+    - name: Publish failed bubblewrap setup transcript
+      if: ${{ always() && steps.bwrap.outcome == 'failure' }}
+      run: |
+        set +x
+        python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "setup-bwrap"
     - name: Install declared extras and qualified pytest
       id: install
       timeout-minutes: 10
@@ -495,12 +521,38 @@ jobs:
         # The patch-corpus tests run real mutation sandboxes with bwrap.
         # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor.
         # This only changes the ephemeral runner.
+        # Fixed stage labels only; never dump environment or package configuration.
+        setup_start() {
+          setup_phase=$1
+          setup_started=$SECONDS
+          printf 'setup:%s:start\n' "$setup_phase"
+        }
+        setup_end() {
+          printf 'setup:%s:end rc=%s elapsed_s=%s\n' "$setup_phase" "$1" "$((SECONDS - setup_started))"
+          setup_phase=
+        }
+        trap 'setup_rc=$?; set +e; if [[ -n ${setup_phase:-} ]]; then setup_end "$setup_rc"; fi; exit "$setup_rc"' EXIT
+        setup_start apt-update
         sudo apt-get update -q
+        setup_end 0
+        setup_start apt-install
         sudo apt-get install -y -q bubblewrap
+        setup_end 0
+        setup_start sysctl
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        setup_end 0
+        setup_start version
         bwrap --version
+        setup_end 0
+        setup_start smoke
         bwrap --unshare-all --ro-bind / / --dev /dev --proc /proc true \
           2>&1 | (umask 077; exec tee "$EVIDENCE/bwrap.log")
+        setup_end 0
+    - name: Publish failed bubblewrap setup transcript
+      if: ${{ always() && steps.bwrap.outcome == 'failure' }}
+      run: |
+        set +x
+        python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "setup-bwrap"
     - name: Install declared extras and qualified pytest
       id: install
       timeout-minutes: 10
@@ -768,6 +820,21 @@ jobs:
         if-no-files-found: error
         retention-days: 14
         overwrite: true
+    - name: Publish failed pytest transcript (ownership)
+      if: ${{ always() && steps.ownership_receipt.outcome == 'failure' }}
+      run: |
+        set +x
+        python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "ownership"
+    - name: Publish failed pytest transcript (cgroup)
+      if: ${{ always() && steps.cgroup_receipt.outcome == 'failure' }}
+      run: |
+        set +x
+        python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "cgroup"
+    - name: Publish failed pytest transcript (local)
+      if: ${{ always() && steps.local_receipt.outcome == 'failure' }}
+      run: |
+        set +x
+        python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "local"
   service-free:
     needs: plan
     runs-on: ubuntu-24.04
@@ -915,12 +982,38 @@ jobs:
         # The patch-corpus tests run real mutation sandboxes with bwrap.
         # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor.
         # This only changes the ephemeral runner.
+        # Fixed stage labels only; never dump environment or package configuration.
+        setup_start() {
+          setup_phase=$1
+          setup_started=$SECONDS
+          printf 'setup:%s:start\n' "$setup_phase"
+        }
+        setup_end() {
+          printf 'setup:%s:end rc=%s elapsed_s=%s\n' "$setup_phase" "$1" "$((SECONDS - setup_started))"
+          setup_phase=
+        }
+        trap 'setup_rc=$?; set +e; if [[ -n ${setup_phase:-} ]]; then setup_end "$setup_rc"; fi; exit "$setup_rc"' EXIT
+        setup_start apt-update
         sudo apt-get update -q
+        setup_end 0
+        setup_start apt-install
         sudo apt-get install -y -q bubblewrap
+        setup_end 0
+        setup_start sysctl
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        setup_end 0
+        setup_start version
         bwrap --version
+        setup_end 0
+        setup_start smoke
         bwrap --unshare-all --ro-bind / / --dev /dev --proc /proc true \
           2>&1 | (umask 077; exec tee "$EVIDENCE/bwrap.log")
+        setup_end 0
+    - name: Publish failed bubblewrap setup transcript
+      if: ${{ always() && steps.bwrap.outcome == 'failure' }}
+      run: |
+        set +x
+        python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "setup-bwrap"
     - name: Install declared extras and qualified pytest
       id: install
       timeout-minutes: 10
@@ -1158,6 +1251,11 @@ jobs:
         if-no-files-found: error
         retention-days: 14
         overwrite: true
+    - name: Publish failed pytest transcript (shard-${{ matrix.shard }})
+      if: ${{ always() && steps.shard_receipt.outcome == 'failure' }}
+      run: |
+        set +x
+        python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "shard-${{ matrix.shard }}"
   linux-tests:
     name: linux-tests
     needs:

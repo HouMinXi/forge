@@ -74,6 +74,7 @@ class IoTicket:
         self._size = self._charge = 0
         self._running = False
         self._outcome = None
+        self._handoff_requested = False
 
 
 _KEY = object()
@@ -124,7 +125,7 @@ class ProcessAuditIo:
         self._errors = set()
         self._captures = {}
         self._operations = self._retained = 0
-        self._running = self._worker = None
+        self._running = self._worker = self._handoff = None
         self._closed = self._blocked = self._start_failed = False
         self._warning_pending = False
 
@@ -229,6 +230,8 @@ class ProcessAuditIo:
 
     def _expire_locked(self):
         now = time.monotonic()
+        if self._handoff is not None and now >= self._handoff._deadline:
+            self._release_handoff_locked(self._handoff)
         if self._running is not None and now >= self._running._deadline:
             self._unknown_locked(self._running)
         for key in list(self._lanes):
@@ -248,10 +251,23 @@ class ProcessAuditIo:
                 self._lanes.pop(key, None)
 
     def _submit_locked(
-        self, target, phase, *, deadline, payload=b"", ready_at=0.0, capture=None, batch_bytes=None
+        self,
+        target,
+        phase,
+        *,
+        deadline,
+        payload=b"",
+        ready_at=0.0,
+        capture=None,
+        batch_bytes=None,
+        handoff=False,
     ):
         if type(phase) is not AuditPhase or type(payload) is not bytes:
             raise TypeError("invalid audit I/O command")
+        if type(handoff) is not bool or (
+            handoff and phase not in (AuditPhase.ADOPT, AuditPhase.OBSERVE)
+        ):
+            raise ValueError("invalid audit I/O handoff")
         _deadline(deadline)
         _deadline(ready_at)
         if phase is not AuditPhase.APPEND and payload:
@@ -297,7 +313,8 @@ class ProcessAuditIo:
             self._condition.notify_all()
             return last
         ticket = IoTicket(self, target, phase, deadline, ready_at, capture, batch_bytes, _key=_KEY)
-        used = self._operations + len(self._errors)
+        ticket._handoff_requested = handoff
+        used = self._operations + len(self._errors) + (self._handoff is not None)
         full = used >= self.limits.operations
         # Keep one bounded control slot out of reach of append flooding.
         full |= phase is AuditPhase.APPEND and used >= self.limits.operations - 1
@@ -323,13 +340,13 @@ class ProcessAuditIo:
         self._condition.notify_all()
         return ticket
 
-    def submit(self, target, phase, *, deadline, payload=b"", ready_at=0.0):
+    def submit(self, target, phase, *, deadline, payload=b"", ready_at=0.0, handoff=False):
         self._check_process()
         if not callable(getattr(target, "audit_io", None)):
             raise TypeError("invalid audit I/O target")
         with self._condition:
             result = self._submit_locked(
-                target, phase, deadline=deadline, payload=payload, ready_at=ready_at
+                target, phase, deadline=deadline, payload=payload, ready_at=ready_at, handoff=handoff
             )
         self.emit_warning()
         return result
@@ -342,6 +359,7 @@ class ProcessAuditIo:
         ):
             raise ValueError("foreign audit I/O ticket")
         if ticket._outcome is not None:
+            self._release_handoff_locked(ticket)
             return
         if ticket._running:
             self._unknown_locked(ticket)
@@ -358,6 +376,29 @@ class ProcessAuditIo:
         with self._condition:
             self._cancel_locked(ticket)
         self.emit_warning()
+
+    def _release_handoff_locked(self, ticket):
+        if self._handoff is ticket:
+            self._handoff = None
+            self._condition.notify_all()
+
+    def release_handoff(self, ticket):
+        """Release scheduling ownership after local ACK bookkeeping.
+
+        This does not change the storage outcome or extend its original deadline.
+        An ACK gate is one bounded operation slot, never retained payload credit.
+        """
+        self._check_process()
+        with self._condition:
+            if (
+                type(ticket) is not IoTicket
+                or ticket._io is not self
+                or ticket._identity is not self._identity
+            ):
+                raise ValueError("foreign audit I/O ticket")
+            if ticket._outcome is None:
+                raise ValueError("audit I/O handoff has not completed")
+            self._release_handoff_locked(ticket)
 
     def _result_locked(self, ticket, *, handoff=True):
         if (
@@ -419,6 +460,8 @@ class ProcessAuditIo:
         self._check_process()
         with self._condition:
             self._closed = True
+            if self._handoff is not None:
+                self._release_handoff_locked(self._handoff)
             if self._running is not None:
                 self._unknown_locked(self._running)
             self._drop_queued_locked(IoOutcome("closed", not_executed=True))
@@ -432,6 +475,8 @@ class ProcessAuditIo:
     def _next_locked(self):
         self._expire_locked()
         now, delay = time.monotonic(), None
+        if self._handoff is not None:
+            return None, max(0.0, self._handoff._deadline - now)
         for key in list(self._lanes):
             ticket = self._lanes[key][0]
             remaining = min(ticket._ready_at, ticket._deadline) - now
@@ -483,6 +528,8 @@ class ProcessAuditIo:
                         outcome = IoOutcome(
                             "failed", publication_uncertain=True, error=error if fatal else None
                         )
+                    if ticket._handoff_requested and outcome.state == "ack":
+                        self._handoff = ticket
                     self._complete_locked(ticket, outcome, retain_error=fatal)
                 else:
                     # A timed-out write may have executed. Its late result is never credit.

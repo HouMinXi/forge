@@ -219,9 +219,7 @@ class TestSC1Wiring:
         source = inspect.getsource(cross_repo_mod)
         # The runner must appear in the advisory_runners list construction
         # inside the is_primary branch
-        assert "CrossRepoImpactRunner()" in source, (
-            "CrossRepoImpactRunner() not in advisory_runners list"
-        )
+        assert "CrossRepoImpactRunner(" in source, "CrossRepoImpactRunner not in advisory_runners list"
 
 
 # ---------------------------------------------------------------------------
@@ -395,8 +393,8 @@ class TestWiringAssertion:
         assert sibling_idx != -1
 
         primary_block = source[primary_idx:sibling_idx]
-        assert "CrossRepoImpactRunner()" in primary_block, (
-            "CrossRepoImpactRunner() must be in the is_primary branch"
+        assert "CrossRepoImpactRunner(" in primary_block, (
+            "CrossRepoImpactRunner must be in the is_primary branch"
         )
 
     def test_absent_from_sibling_source(self) -> None:

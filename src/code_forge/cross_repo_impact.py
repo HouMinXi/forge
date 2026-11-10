@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from ._sqlite_uri import readonly_uri
@@ -26,7 +27,7 @@ from .advisory import AdvisoryFinding
 # Reuse helpers from graph_triage -- never duplicate logic.
 from .graph_triage import _is_unnamed, _parse_diff_files
 
-from .dead_code import _live_callers
+from .dead_code import _live_callers, _source_opener
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _AXIS = "CROSS-REPO-IMPACT"
+
+_NO_NAMED_TARGETS = (
+    "cross-repo-impact: no named changed symbols resolved; direct-caller impact not evaluated"
+)
 
 _TOP_N: int = 10
 """Max findings emitted (depth-1, capped)."""
@@ -60,12 +65,13 @@ class GraphDiscoveryError(ValueError):
 def _read_registry(path: Path) -> list[dict]:
     """Read the provider's repos JSON without its directory-creating constructor.
 
+    Reject nonregular opened files without waiting for a FIFO writer.
     Open directly: if the file disappears, there is nothing to recreate. A
     malformed or unreadable registry is unavailable, not permission to ignore
     its configured graph location and select another database.
     """
     try:
-        with path.open("r", encoding="utf-8") as stream:
+        with open(path, "r", encoding="utf-8", opener=_source_opener) as stream:
             data = json.load(stream)
     except FileNotFoundError:
         return []
@@ -376,16 +382,126 @@ class CrossRepoImpactRunner:
     changed symbols, and surfaces findings.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, output_fn: Callable[[str], None] | None = None, _diagnostics=None) -> None:
         self.infra_errors: list[str] = []
         self._cached: list[AdvisoryFinding] | None = None
+        # Optional immediate output, not a finding or a persistent diagnostic.
+        self._output_fn = output_fn
+        self._diagnostics = _diagnostics
+        self._installed_diagnostics = _diagnostics
+        self._analysis_state = None
+        self._bound_record = None
+        self._bound_errors = None
+        self._provider_locator = None
 
     @property
     def is_advisory(self) -> bool:
         """Advisory axis: findings never block, never reset cycle."""
         return True
 
-    def run(
+    def _emit(self, message):
+        if self._output_fn is not None:
+            try:
+                self._output_fn(message)
+            except Exception:  # noqa: BLE001 -- Best-effort output is non-gating; process control propagates.
+                return False
+        return True
+
+    def _stage(self, key, operation, **kwargs):
+        if self._diagnostics is None:
+            return operation()
+        return self._diagnostics.stage(key, operation, **kwargs)
+
+    def _observe(self, state):
+        self._analysis_state = state
+
+    def _deliver_bound(self, record, state, *, origin="actual"):
+        self._diagnostics.delivery_status = "not_delivered"
+        self._diagnostics.last_delivery_origin = origin
+        try:
+            messages = self._diagnostics.present(record, origin=origin)
+            maximum = 2 if state == "no_named_targets" else 1
+            minimum = int(state == "no_named_targets")
+            if (
+                type(messages) is not tuple
+                or not minimum <= len(messages) <= maximum
+                or any(
+                    type(message) is not str
+                    or len(message) > 256
+                    or len(message.encode("utf-8", errors="strict")) > 256
+                    for message in messages
+                )
+            ):
+                raise ValueError("invalid diagnostic presentation")
+        except Exception:  # noqa: BLE001 -- A broken consumer cannot contaminate advisory State errors.
+            messages = (
+                (_NO_NAMED_TARGETS,) if state == "no_named_targets" else ()
+            ) + self._diagnostics.warning()
+        output_succeeded = True
+        for message in messages:
+            if not self._emit(message):
+                output_succeeded = False
+                for warning in self._diagnostics.warning():
+                    self._emit(warning)
+        if self._diagnostics.delivery_status == "read":
+            self._diagnostics.delivery_status = "delivered" if output_succeeded else "unconfirmed"
+
+    def _finish_bound(self, findings):
+        state = self._analysis_state
+        if state is None:
+            return None
+        try:
+            record = self._diagnostics.finish(state, findings, self.infra_errors)
+        except Exception:  # noqa: BLE001 -- A broken recorder cannot change native analysis.
+            record = None
+        self._deliver_bound(record, state)
+        return record
+
+    def run(self, diff_text: str, repo_root: Path) -> list[AdvisoryFinding]:
+        if self._diagnostics is not self._installed_diagnostics:
+            installed = self._installed_diagnostics
+            if installed is not None:
+                installed.refusal = "context_replaced"
+                installed.delivery_status = "not_delivered"
+                installed.last_delivery_origin = None
+                for message in installed.warning():
+                    self._emit(message)
+            return []
+        if self._diagnostics is None:
+            return self._run_analysis(diff_text, repo_root)
+        if not self._diagnostics.admit(diff_text, repo_root):
+            for message in self._diagnostics.warning():
+                self._emit(message)
+            return []
+        if self._cached is not None:
+            if self._bound_errors is not None:
+                self.infra_errors[:] = self._bound_errors
+            self._deliver_bound(self._bound_record, self._analysis_state, origin="cache")
+            return list(self._cached)
+        self._analysis_state = None
+        self._bound_errors = None
+        try:
+            findings = self._run_analysis(diff_text, repo_root)
+        except BaseException:  # noqa: BLE001 -- Preserve the native primary even when diagnostic finalization also fails.
+            try:
+                self._finish_bound(())
+            except BaseException:  # noqa: BLE001, S110 -- The already-active native exception wins.
+                pass
+            raise
+        self._bound_record = self._finish_bound(findings)
+        # At most one active native cache error snapshot, separate from bounded
+        # observation history. Unsupported large views are not claimed immutable.
+        try:
+            if len(self.infra_errors) <= 258 and all(
+                type(e) is str and len(e) <= 4096 for e in self.infra_errors
+            ):
+                if sum(len(e.encode("utf-8", errors="strict")) for e in self.infra_errors) <= 65536:
+                    self._bound_errors = tuple(self.infra_errors)
+        except Exception:  # noqa: BLE001 -- Native errors may contain strings not representable in the diagnostic protocol.
+            self._diagnostics._disable("history_unavailable")
+        return list(findings)
+
+    def _run_analysis(
         self,
         diff_text: str,
         repo_root: Path,
@@ -406,30 +522,48 @@ class CrossRepoImpactRunner:
         self.infra_errors.clear()
 
         if not diff_text or not diff_text.strip():
+            self._observe("not_requested")
             return []
 
         # Provider path/Registry constructors can mkdir even in read-only mode.
         # Use only its pure default-path helper and our read-only JSON snapshot.
-        try:
+        def import_locator():
             from code_review_graph.registry import default_registry_path
+
+            self._provider_locator = default_registry_path
+
+        try:
+            self._stage("provider_import", import_locator)
         except ImportError:
             self.infra_errors.append(
                 "cross-repo-impact: registry location unavailable; code-review-graph >=2.3.8 required"
             )
+            self._observe("unavailable")
             return []
         try:
-            default_path = default_registry_path()
+            default_path = self._stage("default_path", self._provider_locator)
             if not isinstance(default_path, Path):
                 raise GraphDiscoveryError("unsupported registry location")
-            default_repos = _read_registry(default_path)
-            primary_db = _readonly_db_path(repo_root, default_repos)
+            default_repos = self._stage(
+                "default_registry",
+                lambda: _read_registry(default_path),
+                kind="registry",
+                error_type=GraphDiscoveryError,
+            )
+            primary_db = self._stage(
+                "primary_database", lambda: _readonly_db_path(repo_root, default_repos)
+            )
+            if self._diagnostics is not None:
+                self._diagnostics.require_absolute(repo_root, primary_db)
         except (OSError, RuntimeError, ValueError) as exc:
             self.infra_errors.append("cross-repo-impact: graph discovery unavailable: %s" % exc)
+            self._observe("unavailable")
             return []
         if not primary_db.is_file():
             self.infra_errors.append(
                 "cross-repo-impact: primary graph.db not found; build code-review-graph"
             )
+            self._observe("unavailable")
             return []
 
         # Resolve changed symbols from the primary db.
@@ -437,22 +571,44 @@ class CrossRepoImpactRunner:
             changed = resolve_changed_symbols(diff_text, str(primary_db), repo_root)
         except (sqlite3.Error, OSError, GraphIdentityError) as exc:
             self.infra_errors.append("cross-repo-impact: primary graph.db unreadable: %s" % exc)
+            self._observe("unavailable")
             return []
         if not changed:
+            self._observe("no_named_targets")
+            if self._diagnostics is None:
+                self._emit(_NO_NAMED_TARGETS)
             return []
+        self._observe("targets_resolved")
 
         # Reuse the default snapshot unless enumeration has an explicit override.
-        reg_path_str = _registry_path()
+        reg_path_str = self._stage("enumeration_selector", _registry_path)
         reg_path_arg = Path(reg_path_str) if reg_path_str else default_path
         try:
-            repos = default_repos if reg_path_arg == default_path else _read_registry(reg_path_arg)
+            repos = (
+                default_repos
+                if reg_path_arg == default_path
+                else self._stage(
+                    "enumeration_registry",
+                    lambda: _read_registry(reg_path_arg),
+                    kind="registry",
+                    error_type=GraphDiscoveryError,
+                )
+            )
         except GraphDiscoveryError as exc:
             self.infra_errors.append("cross-repo-impact: registry unavailable: %s" % exc)
             return []
 
         try:
-            resolved_root = repo_root.resolve()
-            siblings = [r for r in repos if Path(r["path"]).resolve() != resolved_root]
+            resolved_root = self._stage("primary_root", repo_root.resolve)
+            siblings = []
+            for index, entry in enumerate(repos):
+                entry_root = Path(entry["path"])
+                if self._diagnostics is not None:
+                    # Even a relative entry filtered as the primary was consumed.
+                    self._diagnostics.require_absolute(entry_root)
+                resolved_sibling = self._stage("sibling_root.%d" % index, entry_root.resolve)
+                if resolved_sibling != resolved_root:
+                    siblings.append((index, entry))
         except (OSError, RuntimeError, ValueError) as exc:
             self.infra_errors.append("cross-repo-impact: registry path unavailable: %s" % exc)
             return []
@@ -472,10 +628,15 @@ class CrossRepoImpactRunner:
         # the fallback resolves the file path and retries.
         primary_prefix = str(resolved_root) + os.sep
         hits: list[dict] = []
-        for sib in siblings:
+        for occurrence, sib in siblings:
             alias = sib.get("alias") or Path(sib["path"]).name
             try:
-                sib_db = _readonly_db_path(Path(sib["path"]), default_repos)
+                sib_db = self._stage(
+                    "sibling_database.%d" % occurrence,
+                    lambda sib=sib: _readonly_db_path(Path(sib["path"]), default_repos),
+                )
+                if self._diagnostics is not None:
+                    self._diagnostics.require_absolute(Path(sib["path"]), sib_db)
             except (OSError, RuntimeError, ValueError) as exc:
                 self.infra_errors.append(
                     "cross-repo-impact: sibling '%s' graph discovery unavailable: %s" % (alias, exc)

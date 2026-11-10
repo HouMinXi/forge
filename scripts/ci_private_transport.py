@@ -1,7 +1,8 @@
 """Publish only reviewed public identities while retaining the Linux CI validators.
 
 The manifest is an independently reviewed, public input, never a collection output.
-Unknown identities fail closed. Raw receipts, pytest output and JUnit stay local.
+Unknown identities fail closed. Raw receipts and JUnit stay local. Failure-only
+pytest replay is a separate diagnostic sidecar, never qualification evidence.
 This module does not modify the original ci_test_shards command or validators.
 """
 
@@ -21,8 +22,10 @@ import traceback
 
 if __package__:
     from . import ci_test_shards as ci
+    from .ci_publish_failure_log import test_environment
 else:
     import ci_test_shards as ci
+    from ci_publish_failure_log import test_environment
 
 MANIFEST = Path(__file__).with_name("ci_public_test_identities.json")
 MANIFEST_SCHEMA = "forge-public-test-identities-v1"
@@ -673,7 +676,9 @@ def _run_phase(phase, plan, directory, public_directory, policy, manifest, state
     with _log(directory, phase + ".log") as log:
         _stage(diagnostic, "execution")
         state["stage"] = "pytest"
-        result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=False)
+        result = subprocess.run(
+            command, stdout=log, stderr=subprocess.STDOUT, check=False, env=test_environment(os.environ)
+        )
         state["returncode"] = result.returncode
         if result.returncode:
             raise SystemExit(result.returncode)
