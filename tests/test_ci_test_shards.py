@@ -359,6 +359,35 @@ def test_boolean_exit_status_is_not_zero(example):
         ci.build_plan(collections, SHA, policy)
 
 
+def _without_setup_diagnostic_sidecar(steps):
+    sidecar = {
+        "name": "Publish failed bubblewrap setup transcript",
+        "if": "${{ always() && steps.bwrap.outcome == 'failure' }}",
+        "run": 'set +x\npython scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "setup-bwrap"\n',
+    }
+    return [step for step in steps if step != sidecar]
+
+
+@pytest.mark.parametrize("change", ["other-name", "run", "if", "extra-field"])
+def test_setup_filter_retains_unapproved_steps_without_timeout(change):
+    step = {
+        "name": "Publish failed bubblewrap setup transcript",
+        "if": "${{ always() && steps.bwrap.outcome == 'failure' }}",
+        "run": 'set +x\npython scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "setup-bwrap"\n',
+    }
+    if change == "other-name":
+        step["name"] = "Unapproved diagnostics"
+    elif change == "extra-field":
+        step["env"] = {"UNAPPROVED": "value"}
+    else:
+        step[change] = "unapproved"
+    retained = _without_setup_diagnostic_sidecar([step])
+    assert retained == [step]
+    # The original budget comprehension must still reject this step.
+    with pytest.raises(KeyError, match="timeout-minutes"):
+        {item["name"]: item["timeout-minutes"] for item in retained if "run" in item}
+
+
 def test_setup_steps_match_original_budget_and_do_not_execute_tests():
     import yaml
 
@@ -372,7 +401,7 @@ def test_setup_steps_match_original_budget_and_do_not_execute_tests():
     }
     for name in ("plan", "process-contracts", "service-free"):
         steps = jobs[name]["steps"]
-        setup = steps[1:6]
+        setup = _without_setup_diagnostic_sidecar(steps)[1:6]
         assert {s["name"]: s["timeout-minutes"] for s in setup if "run" in s} == expected
         assert not any("python -m pytest" in s.get("run", "") for s in setup)
 
