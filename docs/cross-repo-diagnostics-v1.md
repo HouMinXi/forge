@@ -1,191 +1,117 @@
-# Cross-repository diagnostic protocol v1: proposed implementation contract
+# Cross-repository diagnostic v1: bounded implementation contract
 
-Status: unapproved candidate revision of the #441 v4 implementation choices. It does not replace operative issue requirements before explicit acceptance. This document records concrete choices for review; it is not a claim of production wiring, G0 approval, G1 admission or T01–T20 completion. Source baseline: `e5ecb784fa5672aa787735d18b8fbf3ed780e2be`.
+This slice implements stage-effective diagnostic capture for the existing primary cross-repository runner. It does not implement a global configuration snapshot, graph freshness, deeper impact analysis, or the other capabilities tracked in [#33](https://github.com/HouMinXi/forge/issues/33). Implementation and test evidence do not by themselves close [#441](https://github.com/HouMinXi/forge/issues/441), grant G0/G1, or supersede the two review-support drafts.
 
-References: [#441](https://github.com/HouMinXi/forge/issues/441), [v4](https://github.com/HouMinXi/forge/issues/33#issuecomment-6742713536), [independent review](https://github.com/HouMinXi/forge/issues/33#issuecomment-6742850246), [current schema proposal](https://github.com/HouMinXi/forge/pull/443), [work-package update](https://github.com/HouMinXi/forge/issues/441#issuecomment-6757925547).
+The stage-effective contract was selected for implementation after independent design review. Earlier alternative proposals are retained in Git history. This document replaces their conflicting eager-capture algorithms and numerical proposals for this slice. Source baseline: e5ecb784. Sources: [v4](https://github.com/HouMinXi/forge/issues/33#issuecomment-6742713536), [independent review](https://github.com/HouMinXi/forge/issues/33#issuecomment-6742850246), [work packages](https://github.com/HouMinXi/forge/issues/441#issuecomment-6757925547).
 
-## 1. Supported product path and retained boundaries
+## Real production path and unchanged behavior
 
-V1 supports the existing cross-repository primary axis, reached through CLI and its immediate/background MCP subprocess. It also supports direct calls to the existing `run_cross_repo` host. Single-repository HOLD does not construct this axis; no new single-repository or cross-repository recovery interface is introduced. Every new host call has a new execution identity. Moving the same MCP subprocess into a background job retains its identity.
+CLI `_cross_repo_verdict_or_none` → `run_cross_repo` → primary worker → `StateMachine.run` → native `CrossRepoImpactRunner.run` → host recorder/publisher → strict reader → existing attributed `output_fn`. Immediate and background MCP retain that same CLI subprocess and its stdout. No public session API, new CLI callback parameter, or structured public return was added. `run_cross_repo` still returns Verdict; the runner still accepts only `(diff_text, repo_root)`.
 
-The proposed path is CLI `_cross_repo_verdict_or_none` → existing `run_cross_repo` → primary `_thread_fn` → `StateMachine.run` → `_run_advisory_axes` → native `CrossRepoImpactRunner.run` → host recorder/publisher → host-internal strict reader → existing attributed `output_fn`. CLI already uses the host's default print output, and MCP already retains that subprocess stdout. No new CLI callback parameter or public session API is needed. The recorder/publisher/strict-reader portion does not exist yet. Direct host callers would use the same internal consumer through their existing output_fn.
+Only primary cross-repository execution is supported. Single-repository HOLD does not construct this axis, and no cross-repository recovery/HOLD interface was added. PENDING still becomes FAIL. The other six advisory axes, source-root routing, source locks, worker joins/completion and deferred signals, receipts, State schema, diagnose, gate and credit rules remain unchanged. #68 and #400 are not reused or modified.
 
-The public return remains Verdict. `run(diff_text, repo_root)` stays narrow. The six other advisory axes, source-root routing, source locks, worker completion and deferred signals, receipts, State schema, diagnose and credit rules stay unchanged. Cross-repository PENDING still becomes FAIL. #33, #441 and the two review-support drafts remain open while acceptance is incomplete. #68 and #400 protocols are not reused or changed.
+The existing no-named-target warning is retained. A successful strict read supplies its text. Ordinary recorder/publisher/reader/consumer failures fall back to that genuine warning and attempt one separate fixed persistence warning per execution. Other states never acquire a fabricated no-target warning. Empty successful diagnostics remain silent. Failure of every output channel means delivery is unconfirmed, not successful. Persistent artifacts are not findings or State.infra_errors.
 
-The host-internal consumer receives a host-held expected context and a publication result independently of file contents. This closes the public text presentation path, not a new caller-owned structured PublicationResult API; run_cross_repo still returns only Verdict. The strict reader's result supplies the diagnostic text used by the existing output branch. A successful empty diagnostic stays silent. For no_named_targets only, ordinary publication/read/consumer failures retain the fixed immediate warning exactly once and add a separate bounded persistence warning. Other states may receive that persistence warning but must never acquire a fabricated no-target warning. They never change the gate. This provides same-execution consumption and durable files; it does not introduce a later-invocation browsing/retrieval interface.
+## Identity and admission
 
-## 2. Discovery capture decision and proven priority constraints
+Every new host call issues a new UUID4; the primary capture receives a distinct repository UUID4. Moving the same MCP subprocess into the background does not issue another identity. Each record also binds axis, sequence, original source_hash and SHA256 of the exact UTF-8 diff. The existing source hash is not replaced by the exact-diff digest.
 
-The effective-input approach below requires an explicit revision of the candidate requirement that the arbitrary provider locator consume one caller-supplied read-only environment mapping. The published v4 and independent review require binding actual consumed configuration, but do not establish a same-instant global atomic snapshot. Current #441/#443 text explicitly says atomic/ABA safety is unproved. Do not attribute an approved atomic guarantee to those sources. The installed provider's `default_registry_path()` takes no mapping. It reads `CRG_HOME` live and otherwise uses an import-bound default. Calling it while separately copying Forge settings is not atomic, even if both results enter one frozen dataclass.
+The primary worker constructs and closes a private capture actually used by its runner. Before cache return or error clearing, admission verifies the originally installed capture, its unchanged identity fields and stage store, active process/thread, lexical and canonical root, and exact diff. A replaced/closed/wrong-context capture refuses analysis/cache reuse, retains an internal refusal, and attempts the bounded persistence warning without adding a diagnostic-only State error. It does not fabricate a successful empty observation.
 
-Two alternatives remain open:
+Repository IDs correlate host-held roots; they are not authentication. Raw paths, environment values and infrastructure-error text are not serialized. Reader expected context comes from the owning host, never the payload or a latest-file scan. A foreign record cannot provide its own expected context.
 
-- **Retain the candidate single captured-settings handoff.** A compatible provider interface that accepts captured configuration is needed, or a separately reviewed isolated evaluation mechanism. This still would not by itself prove atomic acquisition. No such mechanism exists in this slice. Copying provider rules or temporarily rewriting process-global environment/cwd is excluded. Do not expand #68 lifecycle work to obtain isolation.
-- **Accept stage-effective capture instead.** Capture actual results at their original first-use seams, then use only the corresponding immutable outcomes on reuse. Section 10 refines this alternative; it does not capture all inputs at execution start. This deliberately permits acquisition across different instants. It makes no atomic-acquisition, ABA, registry/database-content, authentication or graph-freshness claim. The parent/maintainer has not accepted this different capture/consumption contract; review of preparation work is not that acceptance.
+## Stage-effective discovery, not an atomic snapshot
 
-The second alternative must obey these branch rules, demonstrated by current native code and the proposed characterization tests:
+The actual provider helper accepts no captured-environment argument. It reads live CRG_HOME and otherwise uses an import-bound fallback. This implementation therefore retains actual results at their original first-use points:
 
-| Original consumption point | Captured input/outcome permitted to become an error |
-| --- | --- |
-| Blank diff | None. No provider import, locator call, registry or graph access |
-| Provider import/default locator | Only the actual provider import/locator outcome |
-| Default registry read | Only the selected default registry read outcome; this precedes graph selection |
-| Primary graph selection | A matching registration's nonempty data_dir wins. An unused CRG_DATA_DIR failure stays dormant |
-| Primary graph open/target resolution | Missing/corrupt/identity failures precede enumeration errors |
-| Nonblank zero named targets | Fixed no-target output; enumeration is neither selected nor read |
-| Named targets resolved | Select the captured enumeration override or reuse default registry snapshot, then enumerate siblings |
-| Each sibling graph selection | Registration precedence applies independently; a captured fallback error becomes relevant only if fallback is selected |
+1. Provider import outcome and real default-registry-path return.
+2. Default registry's immutable parsed configuration snapshot and primary database selection.
+3. Only after named targets resolve: enumeration selector and, when necessary, enumeration registry snapshot.
+4. Primary and each enumeration occurrence's resolved root at the native filtering point, then each remaining occurrence's selected database path.
 
-Do not eagerly normalize all paths and raise the first error. For the captured-settings alternative, raw Forge-owned values must be retained without interpreting irrelevant branches; any eager normalization outcome/error would need deferred delivery at its original consumption point. The recommended stage-effective alternative in section 10 avoids that eager normalization entirely. Enumeration remains literal (no tilde expansion), registered data paths retain their native literal-tilde behavior, and CRG_DATA_DIR retains native strip/empty/tilde behavior at the actual call.
+Preserve registration precedence, entry order and duplicates. Compare the original Path spellings when deciding whether enumeration reuses the default snapshot. Two lexical names for one physical registry may legitimately produce two distinct stage snapshots. Stage keys use original enumeration occurrence indices, not filtered positions or deduplicated repository names.
 
-**Captured-settings alternative remains unresolved:** freezing tilde dependencies at execution start can add unused HOME/account-database reads. A deferred exception alone does not remove that side effect. The stage-effective recommendation instead lets the existing native helper perform expansion only when selected, retaining its actual selected output afterward. This explicitly permits later first consumption and is not an execution-start settings snapshot.
+No provider call, HOME/account lookup, path normalization, registry read or sibling access moves before its native branch. Blank diff does not import the provider. Invalid unused CRG_DATA_DIR remains irrelevant when registration wins. Primary missing/corrupt/identity failures and zero named targets precede sibling enumeration. A capture budget failure returns the already obtained native value; it never repeats the operation to fall back.
 
-The internal discovery state must explicitly distinguish not_needed (blank diff), captured (immutable inputs plus deferred field outcomes), and capture_failed (provider-level failure). Proposed failure policy is one retained provider-capture outcome per execution; uncached graph analysis may repeat, but capture is not silently retried against new ambient settings. This differs from current fresh early-return discovery and needs acceptance. A new execution retries capture.
+Retained outcomes are immutable and consumed on later uncached calls. Ordinary stage failures are retained as bounded failure kind/message data, never exception objects, tracebacks, contexts, causes or frames. The original first exception reaches its existing native catch; a later replay reconstructs only the compatible failure for that same catch. A new host retries discovery. This deliberately differs from legacy repeated ambient discovery. Unbound runner callers retain their legacy behavior.
 
-A changed host-held captured object before cache use is an admission mismatch and must reject before returning cached data. Ambient changes after accepted capture are intentionally ignored; they are not proof of mismatch. Missing capture on a nonblank call is unavailable, never an empty success. Direct unbound runner calls retain legacy configuration behavior; proposed production host calls use the bound path. No production capture code has been added.
+Registry fields actually used by native analysis (path, alias, data_dir) are copied field-by-field; unknown unused fields are not retained. Consumers receive fresh dictionaries. Earlier observations retain their own immutable stage history when later stages are filled. Graph is_file/SQL/metadata/source reads remain live: no filesystem-content, graph-freshness, ABA or same-instant acquisition guarantee is made.
 
-## 3. Execution, roots and immutable observations
+### Supported input boundary
 
-One UUID4 is issued by `run_cross_repo` per new call. The primary source receives a distinct UUID4 repository token. Repository paths and raw environment values are not serialized. The host binds that token to both the lexical absolute and canonical reviewed root; alternate spellings are not automatically admitted during runner reuse.
+Actually consumed graph roots and selected database paths must be absolute for persistence. Relative data_dir inputs are acceptable when the native selector already returns an absolute resolved result. Relative registry filenames are acceptable because their parsed result is retained and their pathname is not replayed. A consumed relative repository root is unsupported even if native filtering discards it as the primary, or later database selection fails. An unconsumed relative enumeration setting does not block no_named_targets.
 
-Inside the worker, a thread-confined active scope holds execution/repository identity, source hash, exact diff digest and a host-owned discovery-capture identity. Under the stage-effective alternative, new first-use stage snapshots are retained without mutating prior snapshots; a completed observation refers to its immutable set of actually reached stages, not a supposedly complete startup object. Every bound runner call validates the current active scope, both root spellings and exact diff before reading `_cached` or clearing errors. Closing the actual worker scope invalidates subsequent use. A new host always constructs a fresh runner and scope.
+Unsupported capture leaves existing analysis and immediate output intact but grants no successful persistent delivery. It does not relabel targets_resolved as unavailable. Target resolution is latched when proved; publication is finalized only after the actually reached stages establish capture support. An exception may leave only a partial set of stages; empty diagnostics never imply every sibling succeeded.
 
-`source_hash` retains the existing project value. `diff_sha256` hashes the exact UTF-8 diff without text or newline normalization. Neither hash replaces execution identity or proves authenticity.
+## Observation, delivery and bounded retention
 
-Host-assigned observation sequence starts at 1 and advances only for actual observations. Actual early returns remain uncached and receive new sequence numbers. Final query cache hits reuse the original observation and publication result, with separate delivery metadata `origin=cache`. New actual observations use `origin=actual`. No cache hit creates query credit, a new observation or a new file.
+Five analysis states:
 
-Original observation, diagnostic tuple, finding snapshot and original infrastructure-error tuple are immutable. Bound outward finding lists are defensive copies. Direct unbound runner cache identity remains compatible. Existing infrastructure errors still use their original channel; they are not serialized as arbitrary diagnostic text.
-
-## 4. Closed v1 payload and resource choices
-
-These are proposed explicit v1 values for approval, rather than claims that the old draft already froze them.
-
-| Field | Exact contract |
-| --- | --- |
-| schema_version | JSON integer 1; bool, float and string rejected |
-| execution_id | canonical lowercase UUID4 string, equal to host expectation |
-| repository_binding | exactly `{kind: "invocation-repository", id: <canonical UUID4>}` |
-| axis | exactly `CROSS-REPO-IMPACT` |
-| observation_sequence | exact integer 1 through 1024 |
-| source_hash | nonempty string, at most 256 UTF-8 bytes; no new fixed digest-length rule |
-| diff_sha256 | exactly 64 lowercase hexadecimal characters |
-| analysis_state | one of the five states below |
-| diagnostics | prescribed empty list or one closed code/message object |
-
-Every field is required. Null, missing and empty are different. Extra fields are rejected at every object level. The repository binding is correlation, not authentication. Context/configuration ownership is established by the host, not a persisted public path hash. The reader does not independently prove graph configuration or freshness from this payload.
-
-Fixed diagnostic:
-- code: `no-named-changed-symbols`
-- message: `cross-repo-impact: no named changed symbols resolved; direct-caller impact not evaluated`
-
-| State | Evidence | Diagnostics |
+| State | Actual evidence | Diagnostics |
 | --- | --- | --- |
-| not_requested | actual blank-diff branch | empty |
-| not_run | host positively establishes successful completion without an axis call | empty |
-| no_named_targets | actual nonblank zero-target branch after existing prerequisites | exactly the fixed diagnostic |
-| targets_resolved | at least one named target, even if later sibling work fails | empty |
-| unavailable | existing target-stage discovery/graph failure | empty |
+| not_requested | Blank-diff branch | Empty |
+| not_run | Host call returned normally without an admitted axis call | Empty |
+| no_named_targets | Nonblank target resolution yielded zero named targets after existing prerequisites | Exactly the fixed diagnostic |
+| targets_resolved | At least one named target, even if later work fails | Empty |
+| unavailable | Existing target-stage discovery/graph failure | Empty |
 
-An exception before an observation is not synthesized into not_run or unavailable. Findings emptiness is never used to derive state.
+An exception before an observable state leaves the explicit host delivery status not_attempted and no observation. Admission refusal, missing file, unsupported capture or publication failure is not invented as not_run or successful empty diagnostics. Publication, strict reading and caller delivery remain separate facts (not_delivered/read/delivered/unconfirmed), including output failure after a committed record. The fixed diagnostic is code `no-named-changed-symbols`, message `cross-repo-impact: no named changed symbols resolved; direct-caller impact not evaluated`.
 
-Limits: 16,384 raw file bytes, maximum JSON container nesting depth 3 (top-level object is depth 1; arrays also count), maximum decoded string size 256 UTF-8 bytes, at most 1024 actual observations per execution's single supported primary axis. The current source hash is 64 ASCII bytes and all other variable fields are fixed-size identifiers. Depth 3 follows the deepest legal shape (root object → diagnostics array → diagnostic object). The byte and string caps are candidate budgets, not previously approved requirements. A compact ensure_ascii=False JSON fixture at all candidate maxima is 2,050 bytes (256 decoded NUL bytes in source_hash become 1,536 escaped bytes); 16,384 permits at most 14,334 additional whitespace bytes for that shape. Other serializer spellings remain subject to the same raw cap, not a requirement to use canonical bytes. The 1024-observation choice is unqualified: native StateMachine.run currently dispatches these axes once after convergence, and this document has no workload evidence requiring 1024. A retained-record and publication-attempt ceiling must be selected together; unlimited unpublished objects must not be accumulated. Repeated cache deliveries do not consume observation slots. Proposed overflow behavior: retain one host-level limit_exhausted delivery failure, publish no invented observation, and emit at most one persistence warning per host. Continue underlying analysis and any genuine no-target warning. Do not silently wrap or reuse a sequence. This policy and its ceiling need approval.
+Actual early returns remain uncached and receive new observation sequences. Final query cache hits reuse the original immutable observation, publication result, finding/error snapshot and identity; they do no new graph SQL or publication. Delivery uses separate actual/cache metadata without rewriting original observation state. Bound outward finding lists are fresh; unbound cache list identity is unchanged. A failed snapshot is explicitly unavailable, not an empty historical error tuple. An earlier uncached error snapshot must never overwrite a later cached result.
 
-The reader performs an upper-bound-plus-one read, strict UTF-8 decoding and a quote/escape-aware depth scan before JSON decoding. Duplicate keys, nonfinite constants, malformed JSON, trailing nonwhitespace, unknown versions/enums, invalid combinations, oversized decoded strings and escaped lone surrogates are rejected. String sizes count strict UTF-8 bytes after JSON decoding, not escape spelling. The entire parse is bounded by the byte cap. Expected context types and identity are validated independently; missing/corrupt/wrong-context files never mean empty success.
+Budgets, reserved before retention/publication:
 
-## 5. Persistent namespace and exclusive publication
+- At most 64 actual observation/publication attempts per execution, including failed or uncertain attempts. Normal native host dispatch is once; bounded headroom permits verified repeated-call behavior without unbounded histories.
+- At most 4096 raw bytes per artifact: 256 KiB maximum logical final payload across 64 attempts, not a bound on disk blocks, directories or retained staging names. The maximum compact legal payload under the string limits is approximately 2 KiB.
+- Closed JSON container depth 3, including arrays; decoded strings at most 256 strict UTF-8 bytes.
+- At most 256 registry entries and 512 retained stage slots; aggregate captured configuration string/failure bytes at most 64 KiB. Each retained path/alias/failure string is at most 4096 bytes.
+- Aggregate retained finding/error history text at most 64 KiB, at most 10 findings and 258 errors per observation. One active cache error view may retain another 64 KiB. Immutable object/reference overhead is bounded by the record/stage/entry counts, not included in these text-byte ceilings.
+- At most 256 excluded temporary roots. Storage source paths have at most 64 components, at most 4095 UTF-8 bytes overall and 255 bytes per component. This bounds descriptor traversal and temporary-root checking; there is no universal filesystem wall-clock bound.
 
-Default durable root: the canonical primary repository's `.code-forge/advisory-diagnostics`. The host validates this root against every temporary per_cwd and its resolved aliases. The namespace is execution UUID / repository UUID / fixed axis / sequence JSON filename. IDs are validated before path construction; no path comes from decoded file contents.
+Overflow disables new capture/delivery without suppressing legacy analysis. It does not retry a native stage, wrap a sequence, retain unbounded unpublished histories, or fabricate a record. The fixed persistence warning is attempted once. Previous immutable observations remain valid. A storage/publication failure latches unavailable storage for the remaining execution; cache never republishes. No automatic global retention/deletion policy was added across separate executions.
 
-Proposed first support domain: qualified Linux local filesystems with directory-descriptor-relative operations and exclusive hard-link publication. POSIX alone is not a qualification. Current cloud filesystem probes are still pending; macOS, Windows, network filesystems and exotic FUSE filesystems are unqualified. Unsupported operations produce explicit not-published results while preserving existing review/output behavior. No supported-platform claim is made yet.
+## Closed v1 wire contract
 
-Candidate ownership rule: open the canonical source root through a no-follow directory chain, verify its retained device/inode identity against the host, then anchor all writes to held descriptors. From the source root through every diagnostic component, require effective-UID ownership and no group/world write bits; a pre-existing .code-forge is checked, never chmodded. Create directories mode 0700 and files mode 0600 (allowing only further restriction by umask). Reject nonregular files, symlink components and detected extended access/default ACLs. ACL inspection that cannot establish the rule is unsupported, not assumed safe. These Linux-specific rules need filesystem qualification and compatibility review for shared/group-writable checkouts; they are not a universal filesystem policy. Ancestors above the source root need not be owned or private, but are opened no-follow and never used again through an unchecked pathname. Preliminary checks followed by unconstrained ordinary pathname writes are insufficient.
+Schema version 1 means stage-effective capture for every record; no other consistency mode is admitted. There are exactly nine required fields:
 
-Write a complete bounded temporary file exclusively within the destination directory. Publish with an exclusive hard link to the final name; never replace an existing name. Verify the final file's identity and expected bytes before granting a locator. A host-held locator retains validated relative components, directory/file device+inode identities, byte count and digest, not an open descriptor or a path obtained from the payload. After worker descriptors close, the reader must reopen the canonical root and each component no-follow, check the retained identities and file bytes, then decode against the independent expected context. A moved/replaced tree is unavailable, not accepted through a new alias. Same-key publication, whether contents match or differ, is refused; legitimate cache delivery reuses the prior publication result without retrying. No global latest file is authoritative.
-
-This provides complete-file visibility and no-overwrite behavior, not exactly-once execution, a journal, power-loss durability, or a universal filesystem time bound. No automatic retention/deletion policy is added.
-
-## 6. Publication, reading and failure facts
-
-`PublicationResult` is host-held and separate from the payload:
-- published: commit and expected file identity/content verified; carries a successful locator and digest.
-- not_published: this attempt is known not to have committed; no successful locator.
-- unknown: commit cannot be established; no successful locator, retry or fallback to an older record.
-
-An exception from the commit operation is not enough to infer nonpublication. The implementation may verify its own exact retained temporary/final identity to settle a known commit; otherwise it preserves unknown. Existing foreign names never become successful publication merely because their bytes match.
-
-Cleanup result is independent. A known commit can remain published when removal of an owned temporary name fails. Cleanup never removes a foreign name or a committed record. A pre-existing primary exception wins over cleanup/diagnostic failures; absent a primary, process-control exceptions propagate. Ordinary recorder/publisher/reader/consumer failures, including malformed callback returns, are contained before `machine._run_advisory_axes` can turn them into State.infra_errors.
-
-Actual observations publish before the fixed immediate output, so output cancellation cannot erase the observation. They go directly to the durable root rather than being copied only beside normal receipt collection. Before-axis failure retains a separate host-level delivery status not_attempted and no locator/observation, not successful not_run. Its original exception remains primary. A limit failure likewise carries no fabricated observation. Closing the host scope does not depend on publication success.
-
-## 7. Implementation map and decisive acceptance controls
-
-| Area | Intended responsibility |
+| Field | Exact type/constraint |
 | --- | --- |
-| new advisory_diagnostics module | closed types/decoder, strict reader, exclusive publisher, result/cleanup facts, host-owned scope/delivery |
-| cross_repo_impact constructor/run | bound configuration consumption, pre-cache admission, actual branch observations, immutable cache snapshot and delivery distinction |
-| cross_repo primary worker | issue/bind/close scope, durable-root exclusion, production recorder and caller delivery; no source-lock/signal rewrite |
-| existing host output_fn / CLI / MCP stdout | deliver host-internal strict-reader presentation through the existing path; no new public callback parameter |
-| machine advisory dispatch | retain native source-root routing and original gate behavior; avoid a broad State save |
-| tests/manifest/docs | real path, semantic omission controls, exact collected identities and explicit support boundaries |
+| schema_version | Exact JSON integer 1 |
+| execution_id | Canonical lowercase UUID4, host-matched |
+| repository_binding | Exactly `{kind: "invocation-repository", id: <canonical UUID4>}` |
+| axis | Exactly `CROSS-REPO-IMPACT` |
+| observation_sequence | Exact integer 1–64 |
+| source_hash | Nonempty string ≤256 UTF-8 bytes; no invented fixed digest length |
+| diff_sha256 | Exactly 64 lowercase hexadecimal characters |
+| analysis_state | One of the five states above |
+| diagnostics | Exactly the prescribed empty list or single code/message object |
 
-Required controls include real SQLite target/error/zero-caller cases; real CLI → host → machine → runner → publisher → caller → reader; post-per_cwd-deletion reading; same-hash/new-execution rejection; cache SQL counts and early-return re-execution; root/config changes before cache; returned-list/error snapshot isolation; missing/corrupt/deep/duplicate/unknown-version/wrong-context files; exclusive same-key conflict; commit-then-error unknown; each write/open/link/read/cleanup boundary; primary errors and output KeyboardInterrupt/SystemExit; non-gating consumer failure and normal PASS/FAIL/PENDING behavior; immediate and background MCP inheritance through the actual CLI process.
+Null, missing, empty, bool, float and string forms are not interchangeable. Unknown/extra fields are rejected at every object level. Decoder reads at most limit+1, uses strict UTF-8, scans quote/escape-aware nesting before JSON parsing, rejects duplicate keys, nonfinite numbers, oversized integer strings, trailing data, escaped lone surrogates, unknown versions/enums and invalid state combinations. Host expected context and publication/locator return shapes are independently validated. Failure is never downgraded to empty success.
 
-Negative controls remove one corresponding production behavior at a time. Reader omission must affect a dedicated actual-consumer assertion, not merely a spy call count. Tests may use a controlled presentation marker after actual strict reading to prove the returned presentation reaches output; malformed production payloads remain rejected. Test fixture/setup/import failures do not count as semantic RED. T01–T20 and T18a–f remain planned until real node IDs, executed results and omission locations are recorded.
+## Storage, support and publication facts
 
-## 8. Old-clause disposition and current blocking decisions
+Durable root: canonical primary repository `.code-forge/advisory-diagnostics`; namespace execution/repository/axis/sequence.json. The complete root is checked against every temporary per_cwd and its resolved aliases. Writes do not depend on normal receipt collection, so files survive temporary-worker deletion and subsequent output cancellation.
 
-| Old or ambiguous clause | Proposed disposition | Current status |
-| --- | --- | --- |
-| Put the new warning into State.infra_errors / use State save as durable acceptance | Reject; separate non-gating artifact and independently contained failure result | Consistent with current #441, not implemented |
-| Source hash or a context label is execution/config identity | Reject; host-issued identity plus actual consumed immutable inputs | Production wiring absent |
-| Candidate locator consumes one copied selected-settings object | Explicitly choose compatible input handoff or section 10 stage-effective result capture; neither grants atomicity | Maintainer decision required |
-| Cache hit creates a new actual observation or new query credit | Reject; reuse original observation/publication with separate cache delivery | Immutable cache and delivery not implemented |
-| Copy artifact only in normal receipt-collection step | Reject; direct durable publication before immediate output | Writer absent |
-| Commit exception means no artifact / identical foreign bytes mean success | Reject; three publication states and own-identity proof | Publisher absent |
-| Cleanup failure erases commit or replaces primary exception | Reject; retain independent cleanup result and primary failure | Exception-boundary implementation absent |
-| All CLI/MCP/recovery entry points are supported | Restrict to existing cross-repo CLI and the same MCP subprocess, plus existing direct host calls; defer nonexistent cross-repo HOLD/recovery | Needs accepted support matrix and actual path tests |
-| Prototype tests, CI or an issue checkbox establish acceptance | Reject; exact final-source tests, semantic controls and independent review are separate | G0 REQUEST_CHANGES; G1 not granted |
+The implementation is Linux-only and admits local overlay, tmpfs and ext4 candidates using the held descriptor's mount identity. fdinfo reads are capped at 4096 bytes; mountinfo at 1 MiB. Every accepted storage descriptor is checked, including descendants, to reject nested unsupported mounts. Actual cloud overlay and tmpfs configurations have been exercised; ext4 is eligible but not locally runtime-qualified. An allowlist is not a universal filesystem qualification. macOS, Windows, network/FUSE filesystems, unreadable/unsupported metadata, deep/long paths and unsafe ownership fail persistent delivery without changing the review.
 
-The independent review of the first draft found a real eager-normalization priority defect in the design; section 2 withdraws that algorithm. No production code had been changed. The current deliverable is a proposal plus minimal regression/characterization evidence. Outstanding decisions are the capture contract and failure retry semantics, supported filesystem/ownership compatibility, exact resource budgets, schema/delivery choices, and ownership approval for eventual production functions. Existing #443/#444 are retained. No persistence feature, formal consumer, G0/G1 passage or T01–T20 success is claimed.
+Directory traversal is descriptor-relative and no-follow. The source root and diagnostic descendants must belong to the effective UID and have no group/world write bits. Existing permissions are never changed. New directories/files request 0700/0600. Fixed fd-based access/default POSIX ACL queries reject detected ACLs; ENODATA means absent, while ENOTSUP/EOPNOTSUPP on an admitted local filesystem means that ACL functionality is unsupported, not that an ACL was successfully read. Other errors fail closed. Ancestors above the source root need not be private but are traversed no-follow.
 
-## 9. Executed preparation evidence (not protocol acceptance)
+The integrity promise excludes malicious or uncooperative same-effective-UID namespace tampering. Those processes can already modify owned payloads. Temporary cleanup checks the owned inode before relative unlink, but POSIX conditional inode-matching unlink is not atomic. No authentication, hostile same-UID protection, exactly-once execution, journal, universal time bound or power-loss/host-reboot durability is claimed; tmpfs is volatile across reboot.
 
-Baseline: main e5ecb784. The only executable repository changes in this deliverable add seven native-runner/real-file regression cases (the optional provider locator is stubbed in these existing fixtures) to tests/test_cross_repo_immediate_diagnostic.py and register their exact collected identities. There are no src changes.
+A complete bounded file is written exclusively inside the destination directory, then hard-linked exclusively to its final name. Existing names are never replaced or adopted, even with matching bytes. The publisher verifies its own inode/content before granting a locator. The locator retains source/directory/file identities, byte count and digest; the reader reopens no-follow/nonblocking, refuses nonregular files, checks identities and content, and decodes against independent expected context after publisher descriptors are closed.
 
-| Exact test function (parameter identities are in the public manifest) | Executed evidence |
-| --- | --- |
-| test_blank_diff_never_imports_optional_provider | Two blank inputs; no provider import, warning or infrastructure error |
-| test_registered_primary_data_dir_does_not_interpret_unused_override | Real registered graph wins over a verified unknown-user tilde error; removing registration activates that same real error |
-| test_unusable_enumeration_preserves_primary_branch_priority | Unnamed, missing and corrupt primary paths preserve their outcomes with a real unreadable enumeration symlink; named targets activate enumeration failure |
+Publication facts remain separate:
 
-Focused module: 44 passed on Python 3.12.14 / pytest 9.2.0. The affected cross-repo/advisory/public-test transport regression selection with actual provider 2.3.9 installed passed 594 tests with no skips. The earlier provider-free run passed 536 and skipped two optional-provider modules; those counts are not added together. Full-tree pinned Ruff check and format passed (941 Python files), and git diff --check passed. Independent isolated semantic controls: premature provider import fails two cases; premature fallback expansion fails one; moving actual enumeration reads before primary checks fails three while the named positive control passes. Restored module: 44 passed. No fixture/import/collection failure is counted as a negative-control result.
+- published: commit verified, locator granted.
+- not_published: known no commit, no locator.
+- unknown: commit not established, no locator, retry or older-file fallback.
 
-Independent review found the first test draft assumed non-strict Path.resolve raises on a symlink loop; direct Python 3.13.5 disproved that assumption. The corrected tests use actual unknown-user expansion and actual loop reading instead, both directly checked on 3.13.5. Full 3.13 pytest and 3.14 runtime qualification were not performed.
+A commit-call exception is not proof of nonpublication. Exact owned-inode/content verification may establish a commit; otherwise it stays unknown. An unexpected publisher exception or malformed return is conservatively unknown. Cleanup is independently not_needed/complete/failed; failed temporary cleanup does not erase a verified commit. Only owned temporary names are removed within the stated domain.
 
-Separate actual-provider characterization on code-review-graph 2.3.9 reran three controls: import-bound fallback versus live CRG_HOME; candidate configuration labels failing to freeze native data-directory use; relative registered directories depending on cwd. These are existing preparation controls, not seven additional new tests, not a production fix, and not T01–T20 credit. The label-only candidate is not imported by the production package.
+Ordinary diagnostic failures never enter State.infra_errors or replace native results. Process-control exceptions propagate. An existing native primary exception wins over secondary recording/cleanup failures. Worker scope invalidation and completion signaling remain in finally. #445 immediate diagnostics and #447 original worker-exception transport are preserved.
 
-## 10. Follow-up: stage-effective capture feasibility and remaining edges
+## Verification boundaries and follow-up
 
-The recommended next design candidate records what native discovery actually consumed, rather than pretending an ambient-reading provider accepted an earlier mapping. This is a contract proposal requiring independent G0 review and maintainer acceptance, not a way to bypass those gates.
+Tests exercise native SQLite branches; same-hash new executions; early-return and final-empty cache behavior; mutable-return isolation; stage limits and native single evaluation; malformed/context/deep/duplicate/resource decoding; namespace/identity/no-overwrite faults; uncertain commit and cleanup; post-temporary-cleanup strict reading; real CLI host presentation controlled by reader return; original process-control identity; and public immediate/background MCP handlers with an actual CLI child. The MCP test is not SDK-stdio protocol coverage.
 
-At the actual branch's first use, retain immutable success/failure results for:
-
-1. Provider import/default locator return, followed separately by the default registry's parsed configuration snapshot.
-2. Primary graph selection, preserving registration precedence over CRG_DATA_DIR and retaining the actual selected I/O binding.
-3. After named targets only: enumeration selection and parsed snapshot. Preserve original Path **lexical equality** when deciding whether to reuse the default snapshot; canonical aliases are not an equivalent cache key.
-4. Each enumeration entry's root/path selection in order. Key stage slots by immutable enumeration occurrence, not just canonical repository: duplicate entries/aliases are currently legal and each can consume a distinct later fallback value.
-
-No new query, provider call, home/account lookup or path normalization may be moved before its original branch. A successful stage result is copied into immutable observation history; later filling another stage slot cannot mutate an older observation. Proposed ordinary stage failures are retained for that execution, while KeyboardInterrupt/SystemExit still propagate. Caching stage failures and suppressing repeated configuration reads change repeated-uncached-call behavior and must be explicitly accepted. Actual graph is_file/SQL/source reads are not promised as frozen content.
-
-A bare selected Path is not always an effective I/O binding. _readonly_db_path can return a relative fallback for a relative registry root, and the later caller query still receives raw relative roots. Reusing those strings would continue to consume ambient cwd. Two possible dispositions remain:
-
-- Qualify anchoring of lexical root, canonical root and effective database path at the actual consumption boundary, with no extra early failure or alias collapse; preserve the old error channel and graph/source identity checks.
-- For a bounded first persistence slice, leave legacy analysis and #445 output unchanged but report capture/delivery unavailable when an actually consumed root/database binding cannot be established without later cwd reads. Typical host primary and provider-produced absolute registrations remain the candidate positive domain. An unconsumed relative enumeration setting must not block a no_named_targets observation.
-
-The second option is a proposed limitation of the new persistence feature, not permission to reject previously supported analysis. Unsupported capture is a delivery failure; it must not relabel an already-known targets_resolved analysis state as unavailable. Latch that analysis state when targets resolve but finalize publication only after all actually reached sibling stages have established their capture status. Do not grant successful delivery early and later discover an unsupported relative occurrence. An exception may leave only a partial set of reached stages; the original exception and that incompleteness remain distinct from the known target state. A relative default registry can be read once by the existing code and its immutable parsed result retained; replaying the relative path later is unnecessary. This does not establish which same-instant environment or filesystem snapshot produced that result.
-
-If stage-effective observations are accepted, the versioned payload contract must unambiguously identify that consistency model. Minimal choice: the one approved schema version defines stage-effective semantics for every observation, with no other mode admitted. An explicit closed input_consistency tag is an optional alternative if multiple modes or direct self-description are required; it is not technically necessary and would need a separately justified change to the current nine-field proposal. Raw environment values and private paths are not proposed as payload fields. Neither a version nor a tag proves actual consumers used frozen results; omission tests at the real seams remain necessary.
-
-New actual-provider/native-SQLite preparation tests (outside this production patch) passed four cases: late sibling fallback consumption; distinct literal names for one registry reading different stage contents; duplicate sibling occurrences consuming distinct fallback values; and a memoized relative Path selecting a different target after cwd changes. They establish why simplistic capture is unsafe, not that a replacement has been implemented.
-
-The next production-closure step, after acceptance of this exact contract, is a private host-owned recorder with existing input/lifetime checks, an immutable observation and exclusive publisher, then host-internal strict read before the existing output_fn. Reproduce the path through real CLI and immediate/background MCP, preserve #445 output and #447 exception delivery, and require dedicated semantic omission controls for capture, reader-return delivery and publication failure. No stage result, protocol field or filesystem support is approved merely by this recommendation.
+Independent reviews found and corrected actual context-replacement, relative-root, stale-error, surrogate-error and malformed-consumer defects. Their semantic RED/restored GREEN evidence is separate from generic regression totals. No skipped dependency, setup/import error or source-presence assertion counts as a meaningful omission control. Final source checks and public node identities must be recorded before a PR is described as ready; the implementation alone does not imply complete T01–T20 acceptance or issue closure.
