@@ -17,6 +17,17 @@ import time
 import types
 
 
+def _write_completion(control, machine):
+    """Retain lifecycle coordinates and the oracle, never error contents."""
+    data = {
+        "pid": os.getpid(),
+        "cwd": str(machine.cwd),
+        "source_root": str(machine._source_root()),
+        "infra_errors_empty": machine._state.infra_errors == [],
+    }
+    (control / (machine.baseline_spec_repr + ".json")).write_text(json.dumps(data), encoding="utf-8")
+
+
 def main():
     # Like the in-process fixture, provider-free CI substitutes only the pure
     # default-path helper. Runs with the optional provider use its real helper.
@@ -57,13 +68,7 @@ def main():
 
     def observed_run(machine):
         verdict = original_run(machine)
-        data = {
-            "pid": os.getpid(),
-            "cwd": str(machine.cwd),
-            "source_root": str(machine._source_root()),
-            "errors": machine._state.infra_errors,
-        }
-        (control / (machine.baseline_spec_repr + ".json")).write_text(json.dumps(data), encoding="utf-8")
+        _write_completion(control, machine)
         if machine.baseline_spec_repr == "primary":
             deadline = time.monotonic() + 20
             while not (control / "release").exists():

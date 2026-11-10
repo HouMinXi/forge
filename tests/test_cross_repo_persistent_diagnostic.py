@@ -566,6 +566,10 @@ def native_cli_subprocess(graphs, tmp_path, monkeypatch):
     )
 
 
+def _assert_child_has_no_errors(report):
+    assert report["infra_errors_empty"] is True
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("background", [False, True], ids=["immediate", "background"])
 @pytest.mark.parametrize("verdict", ["PASS", "FAIL"])
@@ -650,7 +654,7 @@ async def test_actual_mcp_cli_child_preserves_published_diagnostic(
             report = json.loads((fixture.control / (label + ".json")).read_text())
             assert report["pid"] == processes[0].pid
             assert report["source_root"] == str(root)
-            assert report["errors"] == []
+            _assert_child_has_no_errors(report)
             assert not await asyncio.to_thread(Path(report["cwd"]).exists)
             assert not (root / ".code-forge/code-forge.lock").exists()
         assert not _records(fixture.sibling)
@@ -897,3 +901,38 @@ def test_malformed_publication_result_is_not_retained_or_gating(persistent_cli, 
     assert len(retained.failure.encode("utf-8", errors="strict")) <= 256
     assert retained.cleanup == "not_needed"
     assert _records(persistent_cli.primary) == []
+
+
+@pytest.mark.parametrize("case", ["empty", "secret", "multiline-private"])
+def test_cli_completion_receipt_omits_error_contents_without_hiding_failures(tmp_path, case):
+    from code_forge.state import State
+    from tests.cross_repo_persistence_cli_fixture import _write_completion
+
+    errors = {
+        "empty": [],
+        "secret": ["synthetic-secret-marker-9fd8"],
+        "multiline-private": ["synthetic-private-marker-4ea1\nUnexpected exception details"],
+    }[case]
+    expected_errors = tuple(errors)
+    state = State(infra_errors=errors)
+    machine = types.SimpleNamespace(
+        _state=state,
+        cwd=tmp_path / "temporary-worker",
+        _source_root=lambda: tmp_path / "source-repository",
+        baseline_spec_repr="primary",
+    )
+    _write_completion(tmp_path, machine)
+    raw = (tmp_path / "primary.json").read_bytes()
+    report = json.loads(raw)
+    for error in expected_errors:
+        assert error.splitlines()[0].encode("utf-8") not in raw
+    assert set(report) == {"pid", "cwd", "source_root", "infra_errors_empty"}
+    assert state.infra_errors is errors
+    assert tuple(state.infra_errors) == expected_errors  # Never clear the genuine state.
+    assert report["infra_errors_empty"] is (not expected_errors)
+    if expected_errors:
+        # This is the identical semantic oracle used by the actual CLI/MCP test.
+        with pytest.raises(AssertionError):
+            _assert_child_has_no_errors(report)
+    else:
+        _assert_child_has_no_errors(report)

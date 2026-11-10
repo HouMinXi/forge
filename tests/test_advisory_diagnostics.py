@@ -397,16 +397,39 @@ def test_every_directory_and_leaf_mount_is_requalified(storage, observation, mon
 @pytest.mark.parametrize("kind", ["unknown", "missing", "duplicate", "device", "fdinfo", "unreadable"])
 def test_filesystem_qualification_fails_closed(storage, observation, monkeypatch, kind):
     original = records._bounded_proc
+    selected_mount = None
+    mutated_mount = False
 
     def inspect(path, cap):
+        nonlocal selected_mount, mutated_mount
         raw = original(path, cap)
         if kind == "unreadable":
             raise OSError(errno.EACCES, "denied")
+        if "/fdinfo/" in path:
+            mount_ids = [line.split()[1] for line in raw.splitlines() if line.startswith(b"mnt_id:")]
+            assert len(mount_ids) == 1
+            selected_mount = mount_ids[0]
         if kind == "fdinfo" and "fdinfo" in path:
             return b"mnt_id: invalid\n"
         if path.endswith("mountinfo"):
             if kind == "unknown":
-                return raw.replace(b" - tmpfs ", b" - nfs ").replace(b" - overlay ", b" - nfs ")
+                # Mutate the held fd's actual mount, independently of the
+                # runner filesystem and without copying the production list.
+                assert selected_mount is not None
+                lines = raw.splitlines()
+                matches = [
+                    index for index, line in enumerate(lines) if line.split()[0] == selected_mount
+                ]
+                assert len(matches) == 1
+                index = matches[0]
+                before, separator, after = lines[index].partition(b" - ")
+                filesystem, space, rest = after.partition(b" ")
+                assert separator and space and filesystem != b"unsupported-test-filesystem"
+                lines[index] = before + separator + b"unsupported-test-filesystem" + space + rest
+                mutated = b"\n".join(lines) + b"\n"
+                assert mutated != raw
+                mutated_mount = True
+                return mutated
             if kind == "missing":
                 return b""
             if kind == "duplicate":
@@ -420,6 +443,8 @@ def test_filesystem_qualification_fails_closed(storage, observation, monkeypatch
 
     monkeypatch.setattr(records, "_bounded_proc", inspect)
     assert records.publish_observation(storage, observation).status == "not_published"
+    if kind == "unknown":
+        assert mutated_mount
 
 
 def test_proc_upper_bound_plus_one_read(tmp_path):
@@ -438,11 +463,18 @@ def test_reader_rejects_leaf_identity_content_and_nonregular_files(
     raw = path.read_bytes()
     if kind == "modify":
         path.write_bytes(raw.replace(b"source", b"SOURCE"))
+    elif kind == "replace":
+        original = path.stat()
+        # Keep the old inode allocated. Unlink/recreate may recycle its number,
+        # which is a distinct post-close ABA limitation, not this precondition.
+        path.rename(path.with_name("retained-original"))
+        path.write_bytes(raw)
+        replacement = path.stat()
+        assert (replacement.st_dev, replacement.st_ino) != (original.st_dev, original.st_ino)
+        assert path.read_bytes() == raw
     else:
         path.unlink()
-        if kind == "replace":
-            path.write_bytes(raw)
-        elif kind == "symlink":
+        if kind == "symlink":
             other = tmp_path / "foreign"
             other.write_bytes(raw)
             path.symlink_to(other)
@@ -1070,3 +1102,57 @@ def test_exact_full_path_byte_limit_is_supported_without_io():
     components[-1] += "a"
     with pytest.raises(records.DiagnosticError):
         records._validate_root(Path("/" + "/".join(components)))
+
+
+@pytest.mark.parametrize("case", ["identical-bytes", "changed-bytes", "stale-execution"])
+def test_simulated_reused_leaf_identity_preserves_content_and_execution_checks(
+    storage, observation, context, monkeypatch, case
+):
+    publication = records.publish_observation(storage, observation)
+    path = final_path(publication)
+    original_bytes = path.read_bytes()
+    original_stat = path.stat()
+    replacement_bytes = original_bytes
+    if case == "changed-bytes":
+        changed = records.make_observation(context, "unavailable")
+        replacement_bytes = records._payload(changed)
+        replacement_bytes += b" " * (len(original_bytes) - len(replacement_bytes))
+        assert records.decode_observation(replacement_bytes, context) == changed
+    elif case == "stale-execution":
+        stale_context = replace(context, execution_id=str(uuid4()))
+        stale = records.make_observation(stale_context, "no_named_targets")
+        replacement_bytes = records._payload(stale)
+        # Explicitly supply the stale bytes' digest to reach the independent
+        # context check. This is a controlled reader input, not a claim that
+        # the real publisher committed this altered payload for the host.
+        publication = replace(
+            publication,
+            locator=replace(publication.locator, digest=hashlib.sha256(replacement_bytes).hexdigest()),
+        )
+        assert records.decode_observation(replacement_bytes, stale_context) == stale
+    assert len(replacement_bytes) == len(original_bytes)
+    if case != "identical-bytes":
+        assert replacement_bytes != original_bytes
+
+    # Deliberately keep the original allocated, so this fixture never relies on
+    # a particular kernel allocator. Only numeric identity is simulated below.
+    path.rename(path.with_name("retained-original"))
+    path.write_bytes(replacement_bytes)
+    replacement_stat = path.stat()
+    replacement_identity = (replacement_stat.st_dev, replacement_stat.st_ino)
+    assert replacement_identity != (original_stat.st_dev, original_stat.st_ino)
+    identity = records._identity
+
+    def reused_number(info):
+        if (info.st_dev, info.st_ino) == replacement_identity:
+            return publication.locator.identity
+        return identity(info)
+
+    monkeypatch.setattr(records, "_identity", reused_number)
+    if case == "identical-bytes":
+        # Post-close dev/ino identity is not an unbroken file-generation proof.
+        assert records.read_observation(publication, context) == observation
+    else:
+        reason = "content_mismatch" if case == "changed-bytes" else "context_mismatch"
+        with pytest.raises(records.DiagnosticError, match=reason):
+            records.read_observation(publication, context)
