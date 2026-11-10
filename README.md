@@ -434,9 +434,12 @@ differs. The full tables, the corpus construction, and the caveats are in
   repository is registered with code-review-graph and has its own
   graph, code-forge reports that sibling's direct callers of a changed
   symbol. The finding is advisory and never blocks. It follows the call
-  one hop and stops, so a caller of that caller is invisible. An empty
-  findings list means no direct callers were found in the registered sibling
-  graphs actually queried; it does not establish global absence of impact.
+  one hop and stops, so a caller of that caller is invisible. When the primary
+  cross-repo runner resolves no named changed symbols, it emits an immediate
+  stdout advisory attributed to the primary repository: direct-caller impact
+  was not evaluated. This message is not a finding or a persistent diagnostic;
+  it does not change the gate. CLI and MCP expose it through their existing
+  output. An empty findings list does not establish global absence of impact.
   Unregistered repositories are not queried, so their impact is unknown.
   Missing or unreadable registered graphs and an empty sibling registry are
   reported separately in infrastructure diagnostics; an empty findings list

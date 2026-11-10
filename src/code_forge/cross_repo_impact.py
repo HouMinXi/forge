@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from ._sqlite_uri import readonly_uri
@@ -35,6 +36,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _AXIS = "CROSS-REPO-IMPACT"
+
+_NO_NAMED_TARGETS = (
+    "cross-repo-impact: no named changed symbols resolved; direct-caller impact not evaluated"
+)
 
 _TOP_N: int = 10
 """Max findings emitted (depth-1, capped)."""
@@ -377,9 +382,11 @@ class CrossRepoImpactRunner:
     changed symbols, and surfaces findings.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, output_fn: Callable[[str], None] | None = None) -> None:
         self.infra_errors: list[str] = []
         self._cached: list[AdvisoryFinding] | None = None
+        # Optional immediate output, not a finding or a persistent diagnostic.
+        self._output_fn = output_fn
 
     @property
     def is_advisory(self) -> bool:
@@ -440,6 +447,11 @@ class CrossRepoImpactRunner:
             self.infra_errors.append("cross-repo-impact: primary graph.db unreadable: %s" % exc)
             return []
         if not changed:
+            if self._output_fn is not None:
+                try:
+                    self._output_fn(_NO_NAMED_TARGETS)
+                except Exception:  # noqa: BLE001, S110 -- Best-effort output must not change findings, infra_errors or the gate. Cancellation still propagates.
+                    pass
             return []
 
         # Reuse the default snapshot unless enumeration has an explicit override.
