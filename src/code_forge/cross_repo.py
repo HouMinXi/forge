@@ -274,6 +274,7 @@ def run_cross_repo(
     Canonical source locks cover diff capture, live-source LOCAL transactions,
     thread completion and receipt collection. Per-repo temporary cwds isolate
     review state while source transactions remain serialized.
+    output_fn also receives immediate advisories from the primary worker thread.
 
     Returns the joint Verdict (primary-authoritative).
     """
@@ -451,7 +452,11 @@ def run_cross_repo(
                             DaemonStateRunner(backend=backend),
                             LegacyRunner(),
                             RulepackRunner(),
-                            CrossRepoImpactRunner(),
+                            CrossRepoImpactRunner(
+                                output_fn=lambda message: output_fn(
+                                    "[cross-repo] %s: ADVISORY: %s" % (label, message)
+                                ),
+                            ),
                         ]
                     else:
                         # Siblings: no L1 cost, no advisory runners
