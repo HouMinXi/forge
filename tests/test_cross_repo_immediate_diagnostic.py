@@ -596,3 +596,98 @@ def test_ordinary_sibling_exception_remains_nonblocking(
     stdout = capsys.readouterr().out
     assert "WARNING: sibling 'consumer' crashed: ordinary sibling failure" in stdout
     assert stdout.splitlines().count("[cross-repo] primary: ADVISORY: " + MESSAGE) == 1
+
+
+@pytest.mark.parametrize("diff", ["", " \t\n"])
+def test_blank_diff_never_imports_optional_provider(graphs, monkeypatch, diff):
+    """A frozen-discovery design must keep the existing lazy empty branch."""
+    import builtins
+
+    original_import = builtins.__import__
+    imports = []
+
+    def record_import(name, *args, **kwargs):
+        if name == "code_review_graph" or name.startswith("code_review_graph."):
+            imports.append(name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", record_import)
+    messages = []
+    runner = impact.CrossRepoImpactRunner(output_fn=messages.append)
+    assert runner.run(diff, graphs[0]) == []
+    assert imports == []
+    assert runner.infra_errors == []
+    assert messages == []
+
+
+def test_registered_primary_data_dir_does_not_interpret_unused_override(graphs, monkeypatch):
+    """The provider's registration wins even when CRG_DATA_DIR cannot resolve."""
+    primary, _, _, default_registry = graphs
+    from pathlib import Path
+    from uuid import uuid4
+
+    # Verify an actual unknown-user expansion failure. Unlike non-strict
+    # symlink-loop resolve(), expanduser keeps this failure on Python 3.13+.
+    unusable = "~forge441-nonexistent-" + uuid4().hex + "/graph"
+    with pytest.raises(RuntimeError):
+        Path(unusable).expanduser()
+    monkeypatch.setenv("CRG_DATA_DIR", unusable)
+    default_registry.parent.mkdir(parents=True)
+    default_registry.write_text(
+        json.dumps({"repos": [{"path": str(primary), "data_dir": str(primary / ".code-review-graph")}]}),
+        encoding="utf-8",
+    )
+    messages = []
+    runner = impact.CrossRepoImpactRunner(output_fn=messages.append)
+    assert runner.run(DIFF, primary) == []
+    assert runner.infra_errors == []
+    assert messages == [MESSAGE]
+    # Positive control: the unused override really fails when registration no
+    # longer selects the graph. This is not a harmless path or an I/O mock.
+    default_registry.write_text('{"repos": []}', encoding="utf-8")
+    fallback = impact.CrossRepoImpactRunner(output_fn=messages.append)
+    assert fallback.run(DIFF, primary) == []
+    assert len(fallback.infra_errors) == 1
+    assert fallback.infra_errors[0].startswith(
+        "cross-repo-impact: graph discovery unavailable: Could not determine home directory."
+    )
+    assert messages == [MESSAGE]
+
+
+@pytest.mark.parametrize("primary_state", ["unnamed", "missing", "corrupt", "named"])
+def test_unusable_enumeration_preserves_primary_branch_priority(graphs, monkeypatch, primary_state):
+    """Do not eagerly resolve an override that the actual branch never uses."""
+    primary, _, _, _ = graphs
+    unusable = primary / "enumeration-loop"
+    unusable.symlink_to(unusable.name)
+    # A real open fails on every supported Python, regardless of the
+    # version-specific non-strict Path.resolve() treatment of symlink loops.
+    with pytest.raises(OSError):
+        unusable.read_bytes()
+    monkeypatch.setenv("CRG_REGISTRY_PATH", str(unusable))
+    db = primary / ".code-review-graph/graph.db"
+    if primary_state == "missing":
+        db.unlink()
+    elif primary_state == "corrupt":
+        db.write_bytes(b"not a SQLite graph")
+    elif primary_state == "named":
+        edit_graph(primary, "UPDATE nodes SET kind='function', name='api', qualified_name='api::api'")
+    messages = []
+    runner = impact.CrossRepoImpactRunner(output_fn=messages.append)
+    assert runner.run(DIFF, primary) == []
+    if primary_state == "unnamed":
+        assert runner.infra_errors == []
+        assert messages == [MESSAGE]
+    else:
+        assert messages == []
+        assert len(runner.infra_errors) == 1
+        error = runner.infra_errors[0]
+        if primary_state == "missing":
+            assert error == "cross-repo-impact: primary graph.db not found; build code-review-graph"
+        elif primary_state == "corrupt":
+            assert error.startswith("cross-repo-impact: primary graph.db unreadable:")
+        else:
+            # Positive control: the same override is unavailable once named
+            # targets make sibling enumeration applicable.
+            assert error == "cross-repo-impact: registry unavailable: registry unreadable"
+    assert runner._cached is None
