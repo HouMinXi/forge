@@ -4,7 +4,7 @@ This record separates implemented behavior, directly tested behavior and remaini
 
 ## Fixed source and discussion
 
-Original product baseline: merged main `1bb73ef172dae05d335c507657f8fba78320aa78`, tree `0203323c37cfb15a816775e9ebebe9150d5b4fff`, matching PR #448 head `2161dc1fe064b7aa80fca300b1bcf476896dcea2`. The evidence-only revision in PR #451, merged as `5e2d924e896e5e658f6f88f6b37e80192398e3fa`, did not change that production behavior. The bounded cwd-cleanup repair described below changes only the exception priority at the owned per_cwd scope.
+Original product baseline: merged main `1bb73ef172dae05d335c507657f8fba78320aa78`, tree `0203323c37cfb15a816775e9ebebe9150d5b4fff`, matching PR #448 head `2161dc1fe064b7aa80fca300b1bcf476896dcea2`. The evidence-only revision in PR #451, merged as `5e2d924e896e5e658f6f88f6b37e80192398e3fa`, did not change that production behavior. PR #452, merged as `382a2ea4ecddfb55ff414ef16c73f5e15d2df08b`, changes only the exception priority at the owned per_cwd scope as described below. The subsequent A02 delivery-status supplement changes tests and evidence, not production behavior.
 
 Read together:
 
@@ -88,9 +88,32 @@ The following names refer to actual collected pytest nodes, not proposed test co
 | T17 concurrency/duplicate | A `test_same_key_always_refused_without_replacing_original`; P `test_new_host_execution_never_reuses_same_source_hash_identity` | Public cases are sequential. Supplemental real hard-link barrier controls exercised distinct keys and conflicting same keys; they are not yet public registered tests or concurrent complete hosts. |
 | T18 cleanup | P `test_host_publication_strictly_reads_after_temporary_cwds_are_removed`; A `test_durable_root_cannot_overlap_temporary_cwd`; W `test_pending_body_failure_survives_cleanup`, `test_partial_setup_cleans_only_registered_cwd`, `test_multiple_cleanup_failures_keep_priority`, `test_ignored_permission_error_keeps_residue_and_result` | Public native controls now distinguish joined workers, registered cwd removal, exception identity and actual residue from diagnostic staging cleanup. The bounded repair and remaining outer boundaries are described below; this is not an unconditional T18 pass. |
 | T19 interruption | A `test_process_control_propagates_and_preserves_committed_record`; `test_cleanup_signal_does_not_replace_primary_signal`; P `test_output_process_control_preserves_committed_file_and_exception_identity` | Diagnostic controls preserve exact exceptions/records. No forced process-death, SIGKILL, power-loss or global-cleanup equivalence is claimed. |
-| T20 output/not_run | P `test_normal_machine_return_without_axis_call_records_not_run`; `test_actual_strict_reader_return_controls_cli_text`; `test_persistence_failure_never_fabricates_no_target_state`; real-child MCP cases in the same module | No-target output is the existing #445 warning; other empty states stay silent. Controlled-verdict MCP fixtures establish transport, not native gate reachability or SDK-stdio coverage. |
+| T20 output/not_run | P `test_normal_machine_return_without_axis_call_records_not_run`; `test_host_not_run_empty_success_and_unavailable_statuses`; `test_actual_strict_reader_return_controls_cli_text`; `test_persistence_failure_never_fabricates_no_target_state`; G `test_docs_only_native_ci_tracks_nonempty_delivery`; real-child MCP cases in P | The A02 supplement below distinguishes empty consumption, unavailable persistence and nonempty sink failure. Controlled not_run/MCP fixtures do not establish natural not_run reachability or SDK-stdio coverage. |
 
 This map identifies bounded evidence and gaps. It does not convert partially covered T rows into acceptance passes. Supplemental controls must be integrated and assigned public identities before being described as repository regressions.
+
+## A02 delivery-status evidence
+
+The added controls address a public assertion gap in the existing implementation. No naturally reachable false-delivered defect has been demonstrated, and no production delivery code changes in this supplement.
+
+P `test_host_not_run_empty_success_and_unavailable_statuses` covers five persistence conditions with both working and failing diagnostic-notice sinks. Its existing `persistent_cli` fixture supplies the CI verdict and omits advisory dispatch. The actual host, capture, publisher and strict reader still execute. These are consumer-boundary controls; they do not prove natural not_run reachability or invent a nonempty not_run observation.
+
+G `test_docs_only_native_ci_tracks_nonempty_delivery` reaches the real docs-only PASS and FAIL gates with a working sink, a failing diagnostic sink, or failing diagnostic and persistence-notice sinks. It uses real Git/SQLite, the existing deterministic local backend, CLI dispatch helper, host, StateMachine CI round and advisory dispatch. Only the output callback is under the sink fault. Existing State, credit and receipt oracles remain active. This does not exercise outer CLI argument parsing, a code-mutation workload, model quality or SDK-stdio.
+
+| Actual boundary | Publication result | Delivery result and output meaning |
+| --- | --- | --- |
+| Successful strict consumption of empty not_run | published | delivered; no message or sink call is required, so sink health is not established |
+| Storage binding failure | not_published | not_delivered, including when the separate warning sink also fails |
+| Started publisher raises an ordinary exception | unknown | not_delivered, with no successful locator; the raised call alone does not prove nonpublication |
+| Published record cannot be read, including a removed file | published | not_delivered; prior publication is distinct from current readability or caller delivery |
+| Nonempty no_named_targets is strictly read and its sink succeeds | published | delivered, with the existing attributed diagnostic |
+| Nonempty diagnostic sink fails | published | unconfirmed; the committed record remains readable, whether or not the subsequent persistence warning is delivered |
+
+The observers retain expected execution/repository/source/diff identity at capture construction, before publication, and compare the real strict-reader result and owned record against it. Assertions inspect publication status/locator, delivery origin, actual output attempts and persisted bytes after worker cleanup. They do not derive expected identity from file contents or replace the consumer's return.
+
+Dedicated controls use isolated copies of the production source and these same 16 public cases. Bypassing only the host's `delivery_status == "read"` guard produces eight intended not_delivered-versus-delivered assertion failures. Forcing only the runner's delivered/unconfirmed selection to delivered produces four intended unconfirmed-versus-delivered assertion failures. Each byte-exact restoration passes all 16 cases. These deliberate omissions establish oracle discrimination; they are not failures of the unchanged baseline, and the two runs are not additive coverage.
+
+These controls remain within the existing Linux and optional-provider fixture domains. The separate scratch PermissionError/admit-latch probe is not promoted by this supplement. G04/G09 still require a decision on the worker-owned Record/PublicationResult-to-reader consumer; the outer return remains Verdict. Complete A02, T20, G0/G1 and the original-port disposition remain separate acceptance decisions.
 
 ## Bounded T18f cwd-cleanup repair
 

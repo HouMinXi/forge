@@ -11,6 +11,7 @@ MCP transport, or HOLD/recovery coverage.
 from contextlib import closing, redirect_stderr, redirect_stdout
 from copy import deepcopy
 from dataclasses import replace
+import hashlib
 import io
 import json
 import os
@@ -18,12 +19,13 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import uuid
 from unittest.mock import patch
 
 import pytest
 
 from code_forge import _advisory_diagnostics as storage
-from code_forge import cli
+from code_forge import cli, cross_repo
 from code_forge.backend import BackendConfig
 from code_forge.baseline import GitRefBaseline
 from code_forge.cross_repo import get_sibling_diff
@@ -32,6 +34,7 @@ from code_forge.machine import StateMachine
 from code_forge.receipt_scope import repository_scope
 from code_forge.state import Mode, Verdict
 from tests.test_cross_repo import _make_repo
+from tests.test_cross_repo_persistent_diagnostic import delivery_trace as delivery_trace
 
 pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="persistent diagnostics qualify Linux local filesystems"
@@ -170,11 +173,45 @@ def test_native_ci_fixture_closes_graph_connections(request, monkeypatch):
 @pytest.mark.parametrize("verdict", [Verdict.PASS, Verdict.FAIL], ids=["PASS", "FAIL"])
 @pytest.mark.parametrize("publication_fault", [False, True], ids=["published", "publication-fault"])
 def test_docs_only_native_ci_keeps_gate_state_with_diagnostic(
-    native_ci_input, monkeypatch, verdict, publication_fault
+    native_ci_input, delivery_trace, monkeypatch, verdict, publication_fault
+):
+    _assert_native_gate_delivery(
+        native_ci_input, delivery_trace, monkeypatch, verdict, publication_fault, "ok"
+    )
+
+
+@pytest.mark.parametrize("verdict", [Verdict.PASS, Verdict.FAIL], ids=["PASS", "FAIL"])
+@pytest.mark.parametrize("sink", ["ok", "diagnostic-fails", "all-fail"])
+def test_docs_only_native_ci_tracks_nonempty_delivery(
+    native_ci_input, delivery_trace, monkeypatch, verdict, sink
+):
+    _assert_native_gate_delivery(native_ci_input, delivery_trace, monkeypatch, verdict, False, sink)
+
+
+def _assert_native_gate_delivery(
+    native_ci_input, delivery_trace, monkeypatch, verdict, publication_fault, sink
 ):
     primary, sibling, gate, backend, env = native_ci_input
     env["FORGE_FIXTURE_GATE"] = verdict.value
     before, after, ci_returns, captures, reads, cwds = {}, {}, {}, [], [], []
+    issued, presented, strict_reads, read_attempts = delivery_trace
+    diagnostic = "[cross-repo] primary: ADVISORY: " + storage.MESSAGE
+    warning = "[cross-repo] primary: ADVISORY: cross-repo-impact: persistent diagnostic unavailable"
+    attempts = []
+
+    def output_sink(message):
+        attempts.append(message)
+        # Only the diagnostic/notice channel is under fault injection.
+        if (sink == "all-fail" and ": ADVISORY: " in message) or (
+            sink == "diagnostic-fails" and message == diagnostic
+        ):
+            raise BrokenPipeError("owned diagnostic sink failure")
+        print(message)
+
+    native_host = cross_repo.run_cross_repo
+    monkeypatch.setattr(
+        cross_repo, "run_cross_repo", lambda **kw: native_host(**kw, output_fn=output_sink)
+    )
     receipts_before, receipts_after, receipt_decisions = {}, {}, []
 
     def profile(frame, event, value):
@@ -275,18 +312,41 @@ def test_docs_only_native_ci_keeps_gate_state_with_diagnostic(
     assert not owner._active
     assert record.analysis_state == "no_named_targets"
     assert record.publication.status == ("unknown" if publication_fault else "published")
-    assert owner.delivery_status == ("not_delivered" if publication_fault else "delivered")
+    assert len(issued) == len(presented) == 1
+    assert issued[0][0] is owner and issued[0][2] == primary
+    independent = issued[0][1]
+    assert (
+        independent.diff_sha256
+        == hashlib.sha256(get_sibling_diff(primary, "main..feature").encode("utf-8")).hexdigest()
+    )
+    assert record.observation.context == independent
+    assert owner.last_delivery_origin == "actual"
+    assert presented[0][1] is record
+    assert read_attempts == [(record.publication, independent, not publication_fault)]
+    expected_status = (
+        "not_delivered" if publication_fault else ("delivered" if sink == "ok" else "unconfirmed")
+    )
+    assert owner.delivery_status == expected_status
     assert len(reads) == int(not publication_fault)
     if not publication_fault:
         assert reads[0] == record.observation
-        assert storage.read_observation(record.publication, record.observation.context) == reads[0]
+        assert record.publication.locator is not None
+        assert presented[0][2:] == ((storage.MESSAGE,), "read")
+        assert strict_reads == [(record.publication, independent, record.observation)]
+        assert storage.read_observation(record.publication, independent) == reads[0]
+        with pytest.raises(storage.DiagnosticError):
+            storage.read_observation.__wrapped__(
+                record.publication, replace(independent, execution_id=str(uuid.uuid4()))
+            )
     else:
         assert record.publication.locator is None
-    assert (
-        output.getvalue().splitlines().count("[cross-repo] primary: ADVISORY: " + storage.MESSAGE) == 1
+    assert output.getvalue().splitlines().count(diagnostic) == int(sink == "ok")
+    assert output.getvalue().splitlines().count(warning) == int(
+        (publication_fault or sink != "ok") and sink != "all-fail"
     )
-    warning = "[cross-repo] primary: ADVISORY: cross-repo-impact: persistent diagnostic unavailable"
-    assert output.getvalue().splitlines().count(warning) == int(publication_fault)
+    assert [message for message in attempts if ": ADVISORY: " in message] == (
+        [diagnostic, warning] if publication_fault or sink != "ok" else [diagnostic]
+    )
     assert len(list((primary / ".code-forge/advisory-diagnostics").glob("*/*/*/*.json"))) == int(
         not publication_fault
     )

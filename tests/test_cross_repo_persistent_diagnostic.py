@@ -936,3 +936,136 @@ def test_cli_completion_receipt_omits_error_contents_without_hiding_failures(tmp
             _assert_child_has_no_errors(report)
     else:
         _assert_child_has_no_errors(report)
+
+
+@pytest.fixture
+def delivery_trace(monkeypatch):
+    """Observe real owner issuance/presentation without changing their results."""
+    from code_forge import _advisory_diagnostics as storage
+    from code_forge import _cross_repo_diagnostics as capture_module
+
+    captures, presented, reads, attempts = [], [], [], []
+    native_init = capture_module.DiagnosticCapture.__init__
+    native_present = capture_module.DiagnosticCapture.present
+    native_read = storage.read_observation
+
+    def initialize(owner, **kwargs):
+        native_init(owner, **kwargs)
+        # Independent expected inputs are held before any payload is written/read.
+        expected = storage.ExpectedContext(
+            kwargs["execution_id"],
+            owner.repository_id,
+            kwargs["source_hash"],
+            hashlib.sha256(kwargs["diff_text"].encode("utf-8")).hexdigest(),
+            1,
+        )
+        captures.append((owner, expected, kwargs["repo_root"]))
+
+    def present(owner, record, **kwargs):
+        result = native_present(owner, record, **kwargs)
+        presented.append((owner, record, result, owner.delivery_status))
+        return result
+
+    def read(publication, expected):
+        # Record inputs and success without assertions inside a best-effort catch.
+        # All expectations are checked outside the production consumer.
+        succeeded = False
+        try:
+            result = native_read(publication, expected)
+            reads.append((publication, expected, result))
+            succeeded = True
+            return result
+        finally:
+            attempts.append((publication, expected, succeeded))
+
+    read.__wrapped__ = native_read
+    monkeypatch.setattr(capture_module.DiagnosticCapture, "__init__", initialize)
+    monkeypatch.setattr(capture_module.DiagnosticCapture, "present", present)
+    monkeypatch.setattr(storage, "read_observation", read)
+    return captures, presented, reads, attempts
+
+
+@pytest.mark.parametrize("sink_fails", [False, True], ids=["sink-ok", "sink-fails"])
+@pytest.mark.parametrize("fault", ["none", "bind", "publish", "read", "missing"])
+def test_host_not_run_empty_success_and_unavailable_statuses(
+    persistent_cli, delivery_trace, monkeypatch, fault, sink_fails
+):
+    from code_forge import _advisory_diagnostics as storage
+    from code_forge import _cross_repo_diagnostics as capture_module
+    from code_forge.machine import StateMachine
+    from code_forge.source import compute_source_hash
+
+    # Consumer-boundary control: _run_ci is supplied and dispatch is omitted.
+    # This does not establish natural not_run reachability.
+    # Existing repository coverage seam. We do not substitute finish/present or
+    # synthesize a nonempty not_run observation to suggest a reachable bug.
+    monkeypatch.setattr(StateMachine, "_run_advisory_axes", lambda machine: None)
+    captures, presented, reads, read_attempts = delivery_trace
+    native_read = storage.read_observation
+    calls = []
+
+    def fail(*args, **kwargs):
+        raise OSError("owned diagnostic persistence failure")
+
+    if fault == "bind":
+        monkeypatch.setattr(storage, "bind_storage", fail)
+    elif fault == "publish":
+        monkeypatch.setattr(storage, "publish_observation", fail)
+    elif fault == "read":
+        monkeypatch.setattr(storage, "read_observation", fail)
+    elif fault == "missing":
+
+        def remove_then_read(publication, expected):
+            paths = _records(persistent_cli.primary)
+            assert len(paths) == 1
+            paths[0].unlink()
+            return native_read(publication, expected)
+
+        monkeypatch.setattr(storage, "read_observation", remove_then_read)
+
+    def output(message):
+        if ": ADVISORY: " in message:
+            calls.append(message)
+            if sink_fails:
+                raise BrokenPipeError("owned diagnostic unavailable sink")
+
+    assert persistent_cli.run(output=output) is Verdict.PASS
+    _assert_isolated(persistent_cli)
+    assert len(captures) == len(presented) == 1
+    owner, independent, root = captures[0]
+    record = owner.records[0]
+    assert root == persistent_cli.primary
+    assert independent.source_hash == compute_source_hash(git_diff=DIFF)
+    assert owner._active is False
+    assert record.analysis_state == record.observation.analysis_state == "not_run"
+    assert record.observation.diagnostics == ()
+    assert record.observation.context == independent
+    assert owner.last_delivery_origin == "actual"
+    assert presented[0][1] is record
+    assert read_attempts == (
+        [] if fault == "read" else [(record.publication, independent, fault == "none")]
+    )
+    expected_publication = {"bind": "not_published", "publish": "unknown"}.get(fault, "published")
+    assert record.publication.status == expected_publication
+    assert (record.publication.locator is not None) is (expected_publication == "published")
+    if fault == "none":
+        assert presented[0][2:] == ((), "read")
+        assert owner.delivery_status == "delivered"
+        assert calls == []  # No output exists to lose, even with a failing sink.
+        assert len(reads) == 1
+        assert reads[0] == (record.publication, independent, record.observation)
+        assert len(_records(root)) == 1
+        _payload(_records(root)[0], root, state="not_run")
+        assert storage.read_observation(record.publication, independent) == record.observation
+    else:
+        assert presented[0][2:] == ((capture_module.PERSISTENCE_WARNING,), "not_delivered")
+        assert owner.delivery_status == "not_delivered"
+        assert calls == [PERSISTENCE_WARNING]
+        assert reads == []
+        assert not any(MESSAGE in message for message in calls)
+        if fault in {"bind", "publish", "missing"}:
+            assert _records(root) == []
+        else:
+            assert len(_records(root)) == 1
+            _payload(_records(root)[0], root, state="not_run")
+            assert native_read.__wrapped__(record.publication, independent) == record.observation
