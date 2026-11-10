@@ -135,6 +135,47 @@ def test_foreign_record_cannot_supply_expected_context_or_no_target_presentation
     assert reads == []
 
 
+@pytest.mark.parametrize("change", ["exact-diff", "lexical-root", "canonical-root"])
+def test_changed_input_refuses_before_cache_sql_error_clear_or_publication(
+    native_graphs, counted_queries, change
+):
+    primary, sibling, _, _ = native_graphs
+    add_named_target_and_caller(primary, sibling)
+    alias = primary.parent / "primary-alias"
+    alias.symlink_to(primary, target_is_directory=True)
+    original_root = alias if change == "canonical-root" else primary
+    owner = capture(original_root)
+    messages = []
+    runner = impact.CrossRepoImpactRunner(_diagnostics=owner, output_fn=messages.append)
+    findings = runner.run(DIFF, original_root)
+    assert len(findings) == 1 and counted_queries
+    assert owner.records[0].publication.status == "published"
+    query_count = len(counted_queries)
+    original_record = owner.records[0]
+    original_errors = ["untouched native error view"]
+    runner.infra_errors[:] = original_errors
+    diff, root = DIFF, original_root
+    if change == "exact-diff":
+        diff += "\n"
+    elif change == "lexical-root":
+        root = alias
+        assert root != original_root and root.resolve() == original_root.resolve()
+    else:
+        alias.unlink()
+        alias.symlink_to(sibling, target_is_directory=True)
+        assert root == original_root and root.resolve() != owner._canonical
+
+    assert runner.run(diff, root) == []
+    assert runner.infra_errors == original_errors
+    assert len(counted_queries) == query_count
+    assert owner.records == [original_record] and owner._attempts == 1
+    assert owner.records[0] is original_record
+    assert owner.refusal == "context_unavailable"
+    assert owner.delivery_status == "not_delivered"
+    assert owner.last_delivery_origin is None
+    assert messages == [capture_module.PERSISTENCE_WARNING]
+
+
 @pytest.mark.parametrize("case", ["filtered-primary", "failed-fallback"])
 def test_consumed_relative_root_limits_delivery_before_filter_or_selection_failure(
     native_graphs, monkeypatch, case
@@ -282,7 +323,9 @@ def test_failure_capture_limit_preserves_original_error_without_retry(native_gra
     assert owner._stages == {}
 
 
-def test_duplicate_occurrences_retain_distinct_first_use_native_fallbacks(native_graphs, monkeypatch):
+def test_duplicate_occurrences_retain_distinct_first_use_native_fallbacks(
+    native_graphs, counted_queries, monkeypatch
+):
     primary, sibling, enumeration, default = native_graphs
     add_named_target_and_caller(primary, sibling)
     default.parent.mkdir(parents=True, exist_ok=True)
@@ -317,6 +360,8 @@ def test_duplicate_occurrences_retain_distinct_first_use_native_fallbacks(native
     owner = capture(primary)
     runner = impact.CrossRepoImpactRunner(_diagnostics=owner)
     findings = runner.run(DIFF, primary)
+    assert owner.last_delivery_origin == "actual"
+    assert owner.delivery_status == "delivered"
     assert len(findings) == 1 and findings[0].file == "second:api.py"
     assert runner.infra_errors == ["cross-repo-impact: sibling 'first' graph.db missing"]
     assert selections == [
@@ -325,6 +370,10 @@ def test_duplicate_occurrences_retain_distinct_first_use_native_fallbacks(native
         (sibling, sibling / ".code-review-graph/graph.db"),
     ]
     frozen_stages = owner.records[0].stages
+    original_record = owner.records[0]
+    original_observation = original_record.observation
+    query_count = len(counted_queries)
+    assert query_count
     assert dict(frozen_stages)["sibling_database.0"] == earlier_missing / "graph.db"
     assert dict(frozen_stages)["sibling_database.1"] == sibling / ".code-review-graph/graph.db"
     findings.clear()
@@ -335,6 +384,11 @@ def test_duplicate_occurrences_retain_distinct_first_use_native_fallbacks(native
     assert runner.infra_errors == ["cross-repo-impact: sibling 'first' graph.db missing"]
     assert len(selections) == 3
     assert len(owner.records) == 1 and owner.records[0].stages == frozen_stages
+    assert owner.records[0] is original_record
+    assert owner.records[0].observation is original_observation
+    assert owner.last_delivery_origin == "cache"
+    assert owner.delivery_status == "delivered"
+    assert len(counted_queries) == query_count and owner._attempts == 1
 
 
 def test_literal_registry_alias_keeps_distinct_snapshots_and_uncached_graph_retry(

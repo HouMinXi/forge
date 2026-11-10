@@ -209,6 +209,24 @@ def test_malformed_and_nonfinite_json_rejected(context, raw):
         records.decode_observation(raw, context)
 
 
+@pytest.mark.parametrize("where", ["root", "repository", "diagnostic"])
+def test_duplicate_keys_in_otherwise_valid_document_rejected(observation, context, where):
+    raw = records._payload(observation)
+    repeated = {
+        "root": b'"schema_version":1',
+        "repository": b'"kind":"invocation-repository"',
+        "diagnostic": b'"code":"no-named-changed-symbols"',
+    }[where]
+    assert raw.count(repeated) == 1
+    duplicate = raw.replace(repeated, repeated + b"," + repeated, 1)
+    # Normal dict decoding would erase the duplicate and leave a legal record.
+    # Rejection must therefore come from duplicate handling, not another field.
+    assert json.loads(duplicate) == json.loads(raw)
+    assert records.decode_observation(raw, context) == observation
+    with pytest.raises(records.DiagnosticError, match="invalid_schema"):
+        records.decode_observation(duplicate, context)
+
+
 @pytest.mark.parametrize("kind", ["bytes", "depth"])
 def test_large_or_deep_document_rejected_before_json_load(context, monkeypatch, kind):
     def forbidden(*args, **kwargs):
