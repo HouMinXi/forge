@@ -23,6 +23,18 @@ from .git import git_diff, resolve_git_ref
 from .verify import _load_receipts
 
 
+class _PerRepoCwdCleanup(contextlib.ExitStack):
+    """Keep a pending host error when owned cwd callbacks raise."""
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        except BaseException:  # noqa: BLE001 -- Cleanup failures must not replace an existing body error.
+            if exc_type is None:
+                raise
+            return False
+
+
 @contextlib.contextmanager
 def _defer_worker_signals():
     """Replay cancellation after every owned worker has finished source cleanup."""
@@ -274,6 +286,7 @@ def run_cross_repo(
     Canonical source locks cover diff capture, live-source LOCAL transactions,
     thread completion and receipt collection. Per-repo temporary cwds isolate
     review state while source transactions remain serialized.
+    output_fn also receives immediate advisories from the primary worker thread.
 
     Returns the joint Verdict (primary-authoritative).
     """
@@ -283,6 +296,9 @@ def run_cross_repo(
     from .llm_invoke import Usage
     from .source import compute_source_hash
     from .state import Verdict
+    from uuid import uuid4
+
+    execution_id = str(uuid4())
 
     # -- Step 1: validate siblings (before any git access) --
     from .detect import detect_toolchain
@@ -372,7 +388,7 @@ def run_cross_repo(
         # -- Step 5: launch threads --
         # -- Step 6-9: collect, merge, return --
         results: dict[str, Verdict] = {}
-        errors: dict[str, Exception] = {}
+        errors: dict[str, BaseException] = {}
         per_repo_findings: dict[str, list[dict]] = {}
 
         # Reuse one falsifier per repository across the joint and local paths.
@@ -380,7 +396,7 @@ def run_cross_repo(
             e["label"]: build_falsifier(engine_choice, diff_text=e["diff"], backend=backend)
             for e in repo_entries
         }
-        with contextlib.ExitStack() as stack:
+        with _PerRepoCwdCleanup() as stack:
             thread_args = []
             for entry in repo_entries:
                 label = entry["label"]
@@ -403,6 +419,17 @@ def run_cross_repo(
             completed = {entry["label"]: threading.Event() for entry in repo_entries}
 
             def _thread_fn(label, repo_path, diff_text, per_cwd, is_primary):
+                diagnostic_capture = None
+
+                def diagnostic_output(message):
+                    output_fn("[cross-repo] %s: ADVISORY: %s" % (label, message))
+
+                def diagnostic_notice(message):
+                    try:
+                        diagnostic_output(message)
+                    except Exception:  # noqa: BLE001, S110 -- Diagnostic setup/host notices are non-gating.
+                        pass
+
                 try:
                     source_files = derive_source_files(repo_path, diff_text)
 
@@ -437,12 +464,24 @@ def run_cross_repo(
                             focus_spec=focus_spec,
                         )
                         from .cross_repo_impact import CrossRepoImpactRunner
+                        from ._cross_repo_diagnostics import DiagnosticCapture, PERSISTENCE_WARNING
                         from .daemon_state import DaemonStateRunner
                         from .graph_triage import GraphTriageRunner
                         from .legacy import LegacyRunner
                         from .runtime import RuntimeRunner
                         from .rulepack import RulepackRunner
                         from .taint import TaintRunner
+
+                        try:
+                            diagnostic_capture = DiagnosticCapture(
+                                execution_id=execution_id,
+                                source_hash=source_hash,
+                                diff_text=diff_text,
+                                repo_root=repo_path,
+                                excluded_roots=(args[3] for args in thread_args),
+                            )
+                        except Exception:  # noqa: BLE001 -- Keep native review/output if diagnostic setup is unavailable.
+                            diagnostic_notice(PERSISTENCE_WARNING)
 
                         advisory_runners = [
                             TaintRunner(),
@@ -451,7 +490,10 @@ def run_cross_repo(
                             DaemonStateRunner(backend=backend),
                             LegacyRunner(),
                             RulepackRunner(),
-                            CrossRepoImpactRunner(),
+                            CrossRepoImpactRunner(
+                                output_fn=diagnostic_output,
+                                _diagnostics=diagnostic_capture,
+                            ),
                         ]
                     else:
                         # Siblings: no L1 cost, no advisory runners
@@ -510,11 +552,32 @@ def run_cross_repo(
                         reviewed_repositories=(reviewed_repositories if is_primary else None),
                     )
                     verdict = sm.run()
+                    if diagnostic_capture is not None:
+                        try:
+                            not_run = diagnostic_capture.complete_not_run()
+                            if not_run is not None:
+                                for message in diagnostic_capture.present(not_run):
+                                    diagnostic_notice(message)
+                                if diagnostic_capture.delivery_status == "read":
+                                    diagnostic_capture.delivery_status = "delivered"
+                        except Exception:  # noqa: BLE001 -- No new diagnostic failure may become a worker/gate failure.
+                            for message in diagnostic_capture.warning():
+                                diagnostic_notice(message)
                     results[label] = verdict
-                except Exception as exc:  # noqa: BLE001 -- Fan-out worker reports arbitrary backend errors to its caller.
+                except (Exception, KeyboardInterrupt, SystemExit) as exc:  # noqa: BLE001 -- Transport worker failures to the joining caller, including process control.
                     errors[label] = exc
                 finally:
-                    completed[label].set()
+                    try:
+                        if diagnostic_capture is not None:
+                            diagnostic_capture.close()
+                    except Exception:  # noqa: BLE001, S110 -- Context cleanup is diagnostic-only.
+                        pass
+                    except (KeyboardInterrupt, SystemExit) as cleanup:
+                        errors.setdefault(label, cleanup)
+                    finally:
+                        if diagnostic_capture is not None:
+                            diagnostic_capture._active = False
+                        completed[label].set()
 
             threads = [
                 threading.Thread(
@@ -538,6 +601,12 @@ def run_cross_repo(
             # -- Step 6: fail-closed on PRIMARY error; sibling errors are advisory --
             if primary_label in errors:
                 raise errors[primary_label]
+            # Process control from a sibling is not an advisory failure. All
+            # workers have finished cleanup before the caller receives it.
+            for entry in repo_entries:
+                exc = errors.get(entry["label"])
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise exc
             for label, exc in errors.items():
                 # Sibling crash -> treat as FAIL verdict with warning, not
                 # a hard abort.  Sibling failures are advisory (primary

@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 import threading
 
+import pytest
+
 from code_forge import invocation_audit, invocation_send_audit, llm_invoke
 from code_forge.autofix import StubAutoFixer
 from code_forge.backend import BackendConfig
@@ -58,6 +60,20 @@ def _provider(monkeypatch):
     call = build_l1_provider("real", _resolved(), backend=backend, max_attempts=1, initial_delay_s=0)
     assert type(call) is _L1Call and call.supports_invocation_audit
     return backend, call
+
+
+@pytest.fixture(autouse=True)
+def one_pass_at_a_time(monkeypatch, default_l1_dispatch):
+    """Run the L1 passes one at a time.
+
+    They share the invocation audit owner, whose lock wait is bounded, so
+    overlapping them lets a scheduling race decide whether the run under test
+    settles -- a property these tests are not about. It asks for
+    `default_l1_dispatch` by name so this switch lands after the suite-wide
+    deletion of it. The falsify loop needs no switch here: with one candidate it runs
+    inline.
+    """
+    monkeypatch.setenv("FORGE_L1_SERIAL", "1")
 
 
 def _lane(request):

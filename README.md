@@ -434,10 +434,25 @@ differs. The full tables, the corpus construction, and the caveats are in
   repository is registered with code-review-graph and has its own
   graph, code-forge reports that sibling's direct callers of a changed
   symbol. The finding is advisory and never blocks. It follows the call
-  one hop and stops, so a caller of that caller is invisible. A repository
-  that was never registered yields an empty result, not an error. Cross-repo
-  commit dependencies such as Chromium's `Cq-Depend` are outside what it
-  models.
+  one hop and stops, so a caller of that caller is invisible. When the primary
+  cross-repo runner resolves no named changed symbols, it emits an immediate
+  stdout advisory attributed to the primary repository: direct-caller impact
+  was not evaluated. This message is not a finding and does not change the
+  gate. The cross-repo host can also retain an execution-bound diagnostic
+  under the primary repository's `.code-forge/advisory-diagnostics`, with a
+  strict reader supplying the existing CLI/MCP presentation. This bounded
+  Linux-only storage path captures inputs at their actual consumption stages,
+  not as an atomic configuration or graph snapshot. Unsupported storage or
+  consumed relative graph-root bindings leave analysis and the immediate
+  warning intact, with a separate persistence-unavailable warning. See the
+  [v1 contract and support limits](docs/cross-repo-diagnostics-v1.md). An empty
+  findings list does not establish global absence of impact.
+  Unregistered repositories are not queried, so their impact is unknown.
+  Missing or unreadable registered graphs and an empty sibling registry are
+  reported separately in infrastructure diagnostics; an empty findings list
+  alone does not establish that analysis ran successfully. These static graph
+  results do not prove execution impact. Cross-repo commit dependencies such
+  as Chromium's `Cq-Depend` are outside what it models.
 - **No feedback learning.** code-forge does not adapt to dismissed
   findings or developer preferences. Each review is independent.
   `code-forge trust` only records a hash of `gate.yaml`; it says

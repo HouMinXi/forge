@@ -26,6 +26,7 @@ import pytest
 
 pytest.importorskip("code_review_graph")
 
+from code_forge import cross_repo_impact as impact
 from code_forge.advisory import AdvisoryFinding
 from code_forge.cross_repo_impact import CrossRepoImpactRunner
 
@@ -841,6 +842,13 @@ def discovery_forbid_mutators(patch):
         return original_open(path, mode, *args, **kwargs)
 
     patch.setattr(Path, "open", readonly_open)
+    original_registry_open = getattr(impact, "open", open)
+
+    def readonly_registry_open(path, mode="r", *args, **kwargs):
+        assert not any(flag in mode for flag in "wax+"), "discovery opened a writable file"
+        return original_registry_open(path, mode, *args, **kwargs)
+
+    patch.setattr(impact, "open", readonly_registry_open, raising=False)
     patch.setattr(provider_registry, "Registry", forbidden)
     for name in ("get_db_path", "get_data_dir"):
         patch.setattr(incremental, name, forbidden)
@@ -891,7 +899,7 @@ def test_discovery_guarded_external_graphs_keep_real_findings(discovery_state, m
         )
     else:
         monkeypatch.delenv("CRG_REGISTRY_PATH")
-    original_read = Path.open
+    original_read = getattr(impact, "open", open)
     reads = []
 
     def count_read(path, *args, **kwargs):
@@ -901,7 +909,7 @@ def test_discovery_guarded_external_graphs_keep_real_findings(discovery_state, m
 
     before = discovery_inventory(discovery_state)
     with monkeypatch.context() as guarded:
-        guarded.setattr(Path, "open", count_read)
+        guarded.setattr(impact, "open", count_read, raising=False)
         discovery_forbid_mutators(guarded)
         findings, errors = discovery_run(primary)
     assert errors == []
@@ -921,7 +929,7 @@ def test_discovery_registry_deleted_during_read_stays_absent(discovery_state, mo
     discovery_registry(reg, [{"path": str(sibling), "alias": "consumer"}])
     if not explicit:
         monkeypatch.delenv("CRG_REGISTRY_PATH")
-    original_read, original_unlink, original_rmdir = Path.open, Path.unlink, Path.rmdir
+    original_read, original_unlink, original_rmdir = open, Path.unlink, Path.rmdir
     deleted = []
 
     def delete_before_read(path, *args, **kwargs):
@@ -934,7 +942,7 @@ def test_discovery_registry_deleted_during_read_stays_absent(discovery_state, mo
         return original_read(path, *args, **kwargs)
 
     with monkeypatch.context() as guarded:
-        guarded.setattr(Path, "open", delete_before_read)
+        guarded.setattr(impact, "open", delete_before_read, raising=False)
         discovery_forbid_mutators(guarded)
         assert discovery_run(primary) == ([], [discovery_no_siblings])
     assert deleted == [reg]
@@ -974,7 +982,7 @@ def test_discovery_unreadable_registry_never_repairs(discovery_state, monkeypatc
 
     reg = discovery_state / "registry.json"
     discovery_registry(reg, [])
-    original_read = Path.open
+    original_read = getattr(impact, "open", open)
 
     def deny_read(path, *args, **kwargs):
         if path == reg:
@@ -983,7 +991,7 @@ def test_discovery_unreadable_registry_never_repairs(discovery_state, monkeypatc
 
     before = discovery_inventory(discovery_state)
     with monkeypatch.context() as guarded:
-        guarded.setattr(Path, "open", deny_read)
+        guarded.setattr(impact, "open", deny_read, raising=False)
         discovery_forbid_mutators(guarded)
         with pytest.raises(GraphDiscoveryError):
             _read_registry(reg)

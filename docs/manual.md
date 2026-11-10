@@ -358,6 +358,7 @@ Quick reference; full descriptions in [configuration.md](configuration.md).
 | `FORGE_LLM_MODEL` | `claude-sonnet-4-6` | model for `cli` backends only |
 | `FORGE_AUTH_TIMEOUT` | `20` (max 120) | reachability-probe timeout, seconds |
 | `FORGE_LLM_TIMEOUT_S` | `120` | per-call LLM-invocation timeout, seconds |
+| `FORGE_L1_SERIAL` | unset (parallel) | run the L1 passes one at a time |
 
 **`FORGE_LLM_TIMEOUT_S`** is the one to raise for slow, cross-region backends
 (CN models, reasoning models). The default 120s aborts a healthy-but-slow call

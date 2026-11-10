@@ -195,6 +195,26 @@ def _outcome(requested, outcomes):
     return next(value for value in order if value in observed)
 
 
+def _raise_handoff_primary(primary, chain, secondary):
+    """Keep mutex cleanup evidence private without replacing the body error."""
+    try:
+        state = BaseException.__dict__["__dict__"].__get__(primary)
+        previous = dict.get(state, "_invocation_audit_cleanup_errors", ())
+        if type(previous) is not tuple:
+            previous = (previous,)
+        dict.__setitem__(state, "_invocation_audit_cleanup_errors", previous + (secondary,))
+    except BaseException:  # noqa: BLE001, S110 - Evidence attachment cannot replace the primary.
+        pass
+    cause, context, suppressed, traceback = chain
+    BaseException.__traceback__.__set__(primary, traceback)
+    try:
+        raise primary
+    finally:
+        BaseException.__cause__.__set__(primary, cause)
+        BaseException.__context__.__set__(primary, context)
+        BaseException.__suppress_context__.__set__(primary, suppressed)
+
+
 class InvocationOwner:
     @classmethod
     def create(
@@ -249,6 +269,16 @@ class InvocationOwner:
         if fault not in self._faults:
             self._faults.append(fault)
         return AuditAcknowledgement(False, fault)
+
+    def _handoff_failed(self, phase):
+        # Called under the owner mutex for bookkeeping errors, before another
+        # caller can use a success whose ownership receipt was never returned.
+        # The outer boundary also catches failures from mutex exit itself.
+        self._refused = True
+        try:
+            self._fault("persistence_error", phase)
+        except BaseException:  # noqa: BLE001, S110 - Preserve the entering handoff failure.
+            pass
 
     def _call(self, function, phase, **kwargs):
         attempt_id = kwargs.get("attempt_id")
@@ -359,13 +389,39 @@ class InvocationOwner:
         return record
 
     def publish_input(self, manifest: dict) -> AuditAcknowledgement:
-        if (denied := self._check_process("start", acknowledge=True)) is not None:
-            return denied
-        with self._mutex:
-            ack = self._call(self._current.recorder.publish_input_manifest, "start", manifest=manifest)
-            if ack.admitted:
-                self._current.manifest = self._current.recorder.scoped_snapshot().input_manifest
-            return ack
+        handoff_started = False
+        primary = chain = None
+        try:
+            if (denied := self._check_process("start", acknowledge=True)) is not None:
+                return denied
+            with self._mutex:
+                try:
+                    ack = self._call(
+                        self._current.recorder.publish_input_manifest, "start", manifest=manifest
+                    )
+                    if ack.admitted:
+                        handoff_started = True
+                        self._current.manifest = self._current.recorder.scoped_snapshot().input_manifest
+                    return ack
+                except BaseException as error:
+                    if handoff_started:
+                        self._refused = True
+                        primary = error
+                        chain = (
+                            BaseException.__cause__.__get__(error),
+                            BaseException.__context__.__get__(error),
+                            BaseException.__suppress_context__.__get__(error),
+                            BaseException.__traceback__.__get__(error),
+                        )
+                        handoff_started = False
+                        self._handoff_failed("start")
+                    raise
+        except BaseException as error:
+            if primary is not None and error is not primary:
+                _raise_handoff_primary(primary, chain, error)
+            if handoff_started:
+                self._handoff_failed("start")
+            raise
 
     def context(
         self,
@@ -436,51 +492,77 @@ class InvocationOwner:
         cause: str | None = None,
         action_deadline: float | None = None,
     ) -> AttemptLease:
-        self._check_process("start")
-        with self._mutex:
-            self._live()
-            state = self._operation(operation)
-            if _number(timeout_s, integer=True) == 0:
-                raise ValueError("timeout_s must be positive")
-            if len(state.leases) >= operation.max_attempts or (
-                state.leases and not state.leases[-1].settled
-            ):
-                self._fault("quota_refused", "start")
-                self._raise()
-            actual_cause = ("retry" if state.leases else operation.cause) if cause is None else cause
-            if cause is not None and (
-                self._audit_schema_version != 2
-                or (state.leases and cause not in ("retry", "redirect"))
-                or (not state.leases and cause != operation.cause)
-            ):
-                self._fault("identity_conflict", "start")
-                self._raise()
-            deadline = _number(self._monotonic()) + timeout_s
-            _number(deadline)
-            if action_deadline is not None:
-                deadline = min(deadline, _number(action_deadline))
-            if self._deadline is not None:
-                deadline = min(deadline, self._deadline)
-            prior = state.leases[-1].value.attempt_id if state.leases else operation.parent_id
-            ack = self._call(
-                self._current.recorder.start,
-                "start",
-                context=operation.context,
-                logical_id=operation.logical_id,
-                parent_id=prior,
-                cause=actual_cause,
-                backend=backend,
-                request_digest=request_digest,
-                request_bytes=request_bytes,
-                action_deadline=deadline,
-            )
-            if not ack.admitted:
-                self._raise()
-            lease = AttemptLease(ack.attempt_id, operation, deadline, self)
-            record = _Lease(lease, self._current.recorder)
-            state.leases.append(record)
-            self._leases[id(lease)] = record
-            return lease
+        handoff_started = False
+        primary = chain = None
+        try:
+            self._check_process("start")
+            with self._mutex:
+                try:
+                    self._live()
+                    state = self._operation(operation)
+                    if _number(timeout_s, integer=True) == 0:
+                        raise ValueError("timeout_s must be positive")
+                    if len(state.leases) >= operation.max_attempts or (
+                        state.leases and not state.leases[-1].settled
+                    ):
+                        self._fault("quota_refused", "start")
+                        self._raise()
+                    actual_cause = (
+                        ("retry" if state.leases else operation.cause) if cause is None else cause
+                    )
+                    if cause is not None and (
+                        self._audit_schema_version != 2
+                        or (state.leases and cause not in ("retry", "redirect"))
+                        or (not state.leases and cause != operation.cause)
+                    ):
+                        self._fault("identity_conflict", "start")
+                        self._raise()
+                    deadline = _number(self._monotonic()) + timeout_s
+                    _number(deadline)
+                    if action_deadline is not None:
+                        deadline = min(deadline, _number(action_deadline))
+                    if self._deadline is not None:
+                        deadline = min(deadline, self._deadline)
+                    prior = state.leases[-1].value.attempt_id if state.leases else operation.parent_id
+                    ack = self._call(
+                        self._current.recorder.start,
+                        "start",
+                        context=operation.context,
+                        logical_id=operation.logical_id,
+                        parent_id=prior,
+                        cause=actual_cause,
+                        backend=backend,
+                        request_digest=request_digest,
+                        request_bytes=request_bytes,
+                        action_deadline=deadline,
+                    )
+                    if not ack.admitted:
+                        self._raise()
+                    handoff_started = True
+                    lease = AttemptLease(ack.attempt_id, operation, deadline, self)
+                    record = _Lease(lease, self._current.recorder)
+                    state.leases.append(record)
+                    self._leases[id(lease)] = record
+                    return lease
+                except BaseException as error:
+                    if handoff_started:
+                        self._refused = True
+                        primary = error
+                        chain = (
+                            BaseException.__cause__.__get__(error),
+                            BaseException.__context__.__get__(error),
+                            BaseException.__suppress_context__.__get__(error),
+                            BaseException.__traceback__.__get__(error),
+                        )
+                        handoff_started = False
+                        self._handoff_failed("start")
+                    raise
+        except BaseException as error:
+            if primary is not None and error is not primary:
+                _raise_handoff_primary(primary, chain, error)
+            if handoff_started:
+                self._handoff_failed("start")
+            raise
 
     def _entered(self, lease, dispatch):
         self._check_process("acquired", lease)
@@ -501,44 +583,68 @@ class InvocationOwner:
             record.dispatch = dispatch
 
     def _acquired(self, lease, layer, data, complete, usage):
-        self._check_process("acquired", lease)
-        with self._mutex:
-            record = self._lease(lease)
-            if (
-                record.settlement_started
-                or record.dispatch == "not_dispatched"
-                or type(layer) is not str
-                or layer in record.captures
-                or layer in record.stages
-                or type(data) is not bytes
-                or type(complete) is not bool
-            ):
-                denied = self._fault("identity_conflict", "acquired", lease.attempt_id)
-                return AcquiredAcknowledgement(False, None, None, denied.fault)
-            record.captures[layer] = (len(data), complete)
-            ack = self._call(
-                record.recorder.settle_acquired,
-                "acquired",
-                attempt_id=lease.attempt_id,
-                layer=layer,
-                data=data,
-                complete=complete,
-                usage=usage,
-                dispatch_state=record.dispatch,
-                observation_id=None,
-            )
-            if isinstance(ack, AcquiredAcknowledgement):
-                if ack.ref is not None and ack.observation_id is not None:
-                    record.refs.append(ack.ref)
-                    record.observations.add(ack.observation_id)
-                    record.usage_known |= usage is not None and usage.availability in (
-                        "known",
-                        "partial",
+        handoff_started = False
+        primary = chain = None
+        try:
+            self._check_process("acquired", lease)
+            with self._mutex:
+                try:
+                    record = self._lease(lease)
+                    if (
+                        record.settlement_started
+                        or record.dispatch == "not_dispatched"
+                        or type(layer) is not str
+                        or layer in record.captures
+                        or layer in record.stages
+                        or type(data) is not bytes
+                        or type(complete) is not bool
+                    ):
+                        denied = self._fault("identity_conflict", "acquired", lease.attempt_id)
+                        return AcquiredAcknowledgement(False, None, None, denied.fault)
+                    record.captures[layer] = (len(data), complete)
+                    ack = self._call(
+                        record.recorder.settle_acquired,
+                        "acquired",
+                        attempt_id=lease.attempt_id,
+                        layer=layer,
+                        data=data,
+                        complete=complete,
+                        usage=usage,
+                        dispatch_state=record.dispatch,
+                        observation_id=None,
                     )
-                return ack
-            return AcquiredAcknowledgement(
-                False, None, None, ack.fault, publication_uncertain=ack.publication_uncertain
-            )
+                    if isinstance(ack, AcquiredAcknowledgement):
+                        if ack.ref is not None and ack.observation_id is not None:
+                            handoff_started = True
+                            record.refs.append(ack.ref)
+                            record.observations.add(ack.observation_id)
+                            record.usage_known |= usage is not None and usage.availability in (
+                                "known",
+                                "partial",
+                            )
+                        return ack
+                    return AcquiredAcknowledgement(
+                        False, None, None, ack.fault, publication_uncertain=ack.publication_uncertain
+                    )
+                except BaseException as error:
+                    if handoff_started:
+                        self._refused = True
+                        primary = error
+                        chain = (
+                            BaseException.__cause__.__get__(error),
+                            BaseException.__context__.__get__(error),
+                            BaseException.__suppress_context__.__get__(error),
+                            BaseException.__traceback__.__get__(error),
+                        )
+                        handoff_started = False
+                        self._handoff_failed("acquired")
+                    raise
+        except BaseException as error:
+            if primary is not None and error is not primary:
+                _raise_handoff_primary(primary, chain, error)
+            if handoff_started:
+                self._handoff_failed("acquired")
+            raise
 
     def _observe(self, lease, source_id, offset, length, usage, backend):
         self._check_process("acquired", lease)
