@@ -110,7 +110,9 @@ Publication facts remain separate:
 
 A commit-call exception is not proof of nonpublication. Exact owned-inode/content verification may establish a commit; otherwise it stays unknown. An unexpected publisher exception or malformed return is conservatively unknown. Cleanup is independently not_needed/complete/failed; failed temporary cleanup does not erase a verified commit. Only owned temporary names are removed within the stated domain.
 
-Ordinary diagnostic failures never enter State.infra_errors or replace native results. Process-control exceptions propagate. An existing native primary exception wins over secondary recording/cleanup failures. Worker scope invalidation and completion signaling remain in finally. #445 immediate diagnostics and #447 original worker-exception transport are preserved.
+Ordinary diagnostic failures never enter State.infra_errors or replace native results. Process-control exceptions propagate. An existing native primary exception wins over secondary diagnostic recording and owned diagnostic cleanup failures. Worker scope invalidation and completion signaling remain in finally. #445 immediate diagnostics and #447 original worker-exception transport are preserved.
+
+This does not establish the broader T18f guarantee for the host's existing per_cwd cleanup. At merged main 1bb73ef, a SystemExit from the outer ExitStack's shutil.rmtree callback replaces an already pending primary RuntimeError, although the committed diagnostic remains readable. An ordinary rmtree permission failure is ignored by the existing ignore_errors=True behavior and can leave the worker directory behind. These are independently reproduced host-cleanup boundaries, not successful cleanup or publisher failure. The original T18f requirement remains open pending a separately scoped decision; this document does not waive it or modify global cleanup semantics. See the [acceptance disposition](cross-repo-diagnostics-v1-acceptance.md).
 
 ## Verification boundaries and follow-up
 
