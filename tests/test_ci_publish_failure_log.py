@@ -79,9 +79,10 @@ def test_commands_disabled_with_fresh_noncolliding_marker(tmp_path, capsys, monk
     assert "::error::fake" in output
 
 
+@pytest.mark.parametrize("phase", ["local", "setup-bwrap"])
 @pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo", "directory", "oversized"])
-def test_rejects_nonregular_or_unbounded_input(tmp_path, kind, monkeypatch):
-    path = tmp_path / "local.log"
+def test_rejects_nonregular_or_unbounded_input(tmp_path, kind, monkeypatch, phase):
+    path = tmp_path / replay.LOG_NAMES[phase]
     target = tmp_path / "secret"
     target.write_text("secret canary")
     if kind == "symlink":
@@ -96,7 +97,7 @@ def test_rejects_nonregular_or_unbounded_input(tmp_path, kind, monkeypatch):
         path.write_text("12345")
         monkeypatch.setattr(replay, "MAX_BYTES", 4)
     with pytest.raises((OSError, ValueError)):
-        replay.read_log(tmp_path, "local")
+        replay.read_log(tmp_path, phase)
 
 
 def test_rejects_parent_symlink_and_unknown_phase(tmp_path):
