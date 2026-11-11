@@ -255,6 +255,23 @@ def test_maximum_utf8_string_and_sequence_remain_within_payload_budget(context, 
     assert records.decode_observation(raw, context) == observation
 
 
+@pytest.mark.parametrize("byte_count", [4096, 4097])
+def test_wire_byte_budget_on_otherwise_valid_document(observation, context, byte_count):
+    original = records._payload(observation)
+    assert len(original) < 4096
+    raw = original + b" " * (byte_count - len(original))
+    assert len(raw) == byte_count
+    # Keep the real parser: whitespace changes only the wire byte count, not
+    # the legal schema or independently held expected observation.
+    assert json.loads(raw) == json.loads(original)
+    assert records.decode_observation(original, context) == observation
+    if byte_count == 4096:
+        assert records.decode_observation(raw, context) == observation
+    else:
+        with pytest.raises(records.DiagnosticError, match="^invalid_schema$"):
+            records.decode_observation(raw, context)
+
+
 @pytest.mark.parametrize(
     "field", ["execution_id", "repository_id", "source_hash", "diff_sha256", "observation_sequence"]
 )
