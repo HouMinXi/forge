@@ -182,3 +182,56 @@ An admission decision should name the product revision and this evidence revisio
 ## Bounded T17 publication-contention supplement
 
 The [publication-contention evidence](cross-repo-diagnostics-publication-contention.md) adds six public nodes at production baseline `f4c9214a813cd5604ed63462b3268343ed6f800c`: three overlapping real-publisher cases plus three harness-failure controls. It records distinct-execution isolation, adversarial same-key non-overwrite with an unknown/no-locator loser, foreign staging preservation, and four source-specific RED/restored-GREEN controls. These library calls use controlled commit scheduling, not simultaneous complete hosts. Full T17/A06, G08/G10/G12, G04/G09 and G0/G1 decisions remain open; no production or lifecycle behavior changes.
+
+## Native CLI/MCP consumer-chain supplement
+
+Six docs-only cases in `test_cross_repo_native_consumer_chain.py` bridge the
+previous native dispatch-helper coverage to public immediate/background MCP
+handlers and their real CLI child. The owned launcher invokes the genuine parser
+and observes, rather than replaces, CI, L1, real falsification and advisory axes.
+The backend is a deterministic local executable; PASS/FAIL is computed by native
+CI. Temporary real Git/SQLite inputs, trusted backend configuration, subprocess
+outlet, one clean round and the promotion/release budget are controlled. The
+optional provider-free setup replaces only its pure registry-path locator.
+
+Each execution retains expected identity at host capture construction, before
+publication. Bounded test metadata records exact consumer counts, strict-read
+results, gate-state equality and receipt hashes without serializing errors,
+tracebacks or backend prompts. The parent compares that independently issued
+identity with the reader and stored payload, checks unchanged receipt bytes at
+the copied source-root destination, and requires the attributed diagnostic in
+both structured MCP output and visible text. This metadata is test
+instrumentation, not a production result outlet or post-return retrieval API.
+
+Four cases cover primary native PASS/FAIL through immediate and background
+handlers. Two immediate cases remove the newly published record just before its
+real strict read: rejection retains the immediate diagnostic and adds exactly
+one persistence warning, without changing the native primary decision or receipt
+gates. The sibling executes genuine CI too: this docs-only fixture has no sibling
+L1, so its one native coverage gap produces FAIL and an explicit sibling warning.
+The host's existing primary-authoritative return remains PASS or FAIL as computed
+for the primary. These cases do not claim all repositories pass.
+
+Every case checks worker-directory and source-lock cleanup. Background cases
+retain and await their own wait tasks; both paths observe and settle the actual
+communicate task. Failure cleanup uses the existing native CLI process-group
+termination and reaping operation. Native backend invocations create separate
+sessions, so the owned no-descendant backend independently records PID/start-time
+and normal-exit markers and has a five-second self-watchdog. Tests require those
+exact process identities to disappear, separately from CLI reaping. There is no
+global job/process cleanup or general detached-process lifecycle claim. Same-source
+named-target transitions are deferred
+rather than turning a synthetic README node into purported named-code evidence.
+This supplement does not qualify mutation workloads, HOLD/recovery, SDK-stdio or
+MCP wire transport, provider graph freshness, original-port equivalence, or formal
+G04/G09/G0/G1 acceptance. No production or #68/#400 interface changes are made.
+
+Three isolated single-boundary controls discriminate this oracle:
+replacing strict consumption with the in-memory observation fails all four normal
+cases at the missing-read count; removing the diagnostic only from structured MCP
+output fails both immediate cases at the output assertion; omitting the warning
+from the read-loss fallback fails both loss cases at the warning assertion. Each
+byte-exact source restoration passes all six cases. These intentional semantic
+failures are not baseline regressions or additive coverage. Early development
+failures corrected harness assumptions about the repository-binding object,
+sibling coverage and fallback tuple length; none is presented as a product bug.
