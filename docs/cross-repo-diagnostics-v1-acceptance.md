@@ -53,6 +53,38 @@ The first post-merge review found a test-oracle defect, not a decoder defect: de
 
 The contract's retained configuration/history/observation budgets are separate from the 4096-byte decoder budget. Sixty-four payloads imply at most 256 KiB of logical final payload, not total filesystem allocation, temporary-name retention, a global cross-run retention bound or a time limit. No new numerical ceiling or platform expansion is introduced here.
 
+### W1-11: independent decoder byte-boundary oracle
+
+W1-11 is a proposed replacement clause identifier for
+[“批准字节上限与加一”](https://github.com/HouMinXi/forge/issues/441#issuecomment-6745701302)
+(approved byte limit and one beyond), not a recovered original test node identity.
+
+`tests/test_advisory_diagnostics.py::test_wire_byte_budget_on_otherwise_valid_document[4096]`
+and `[4097]` pad a legal v1 payload with JSON whitespace. The unmodified ordinary
+JSON parser produces the same document at both lengths; the strict decoder must
+return the independently held observation at 4096 bytes and reject 4097 with
+`invalid_schema`. These literal limits describe the current implementation, not
+formal G02 approval. The existing maximum-string test already accepted 4096
+bytes, and the existing pre-parser sentinel already detected omission of the byte
+guard. The new cases add a semantic rejection oracle with the real parser; they
+do not repair a demonstrated product defect.
+
+Local qualification against production revision
+`ceeffa291e85499e81e48886b764d455084f3924` ran the new pair unchanged, then in an
+isolated source copy removed only the decoder's length predicate while retaining
+its bytes-type check. Only `[4097]` failed, with `DID NOT RAISE`. Separately replacing
+that predicate's `>` with `>=` failed only `[4096]` with `invalid_schema` at the
+acceptance assertion. Byte-exact restoration passed the same pair after each
+control. These are deliberately induced failures, not baseline product failures.
+
+This qualification is codec-only. It does not exercise publisher output,
+`read_observation`, its locator limit, `_read_leaf`'s combined identity/size guard,
+or bounded streaming. The compact legal publisher payload is below this boundary;
+a padded reader fixture would require controlled bytes and matching locator
+metadata. No filesystem qualification, post-execution retrieval, full replacement
+catalog, G02/G12 acceptance, or recovered original-port credit follows. The
+original 78-test node identities and test bytes remain **UNKNOWN**.
+
 ## Reachable gate evidence and its limits
 
 The original persistent CLI/MCP fixtures use the real host, runner, SQLite, publisher and reader but replace `StateMachine._run_ci` with a supplied verdict. They prove transport and isolation conditional on that verdict. They do not by themselves prove natural PASS/FAIL reachability or HOLD recovery.

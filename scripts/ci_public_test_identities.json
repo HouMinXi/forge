@@ -917,6 +917,8 @@
     "tests/test_advisory_diagnostics.py::test_unsupported_source_shape_is_refused_before_resolve_or_open[root2]",
     "tests/test_advisory_diagnostics.py::test_unsupported_source_shape_is_refused_before_resolve_or_open[root3]",
     "tests/test_advisory_diagnostics.py::test_unsupported_source_shape_is_refused_before_resolve_or_open[root4]",
+    "tests/test_advisory_diagnostics.py::test_wire_byte_budget_on_otherwise_valid_document[4096]",
+    "tests/test_advisory_diagnostics.py::test_wire_byte_budget_on_otherwise_valid_document[4097]",
     "tests/test_advisory_diagnostics.py::test_wrong_independent_context_never_returns_empty_success[diff_sha256]",
     "tests/test_advisory_diagnostics.py::test_wrong_independent_context_never_returns_empty_success[execution_id]",
     "tests/test_advisory_diagnostics.py::test_wrong_independent_context_never_returns_empty_success[observation_sequence]",
