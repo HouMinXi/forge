@@ -19,6 +19,8 @@ import time
 import pytest
 import yaml
 
+from tests.ci_workflow_contract import without_stock_dispatch
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/linux-tests.yml"
 CANARY = "PRIVATE-LINUX-/home/fixture-user/unit.service-PID-731995"
@@ -97,7 +99,7 @@ BASE_COMMANDS = {
 
 
 def workflow():
-    value = yaml.safe_load(WORKFLOW.read_text())
+    value = without_stock_dispatch(yaml.safe_load(WORKFLOW.read_text()))
     # Authorized failure transcript sidecars are asserted independently by
     # test_ci_publish_failure_log; the original authority snapshot stays intact.
     for job in value["jobs"].values():
@@ -305,6 +307,16 @@ def test_original_commands_change_only_private_transport_and_environment(job_nam
     export = 'export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"\n'
     assert body.count(export) == int(step_name == "Install declared extras and qualified pytest")
     body = body.replace(export, "")
+    # Admit only the additional mandatory runtime supply. All original commands
+    # and their authority remain compared against the unchanged snapshot.
+    supply = (
+        "# Supply the required 3.14 pair while keeping the suite and sandbox on 3.12.\n"
+        "python3.14 -m pip install 'pytest==9.2.0'\n"
+        "python3.14 -c 'import sys, pytest; assert sys.implementation.cache_tag == "
+        '"cpython-314"; assert pytest.__version__ == "9.2.0"\'\n'
+    )
+    assert body.count(supply) == int(step_name == "Install declared extras and qualified pytest")
+    body = body.replace(supply, "")
     if step_name in {"Run ownership", "Run cgroup", "Run local"}:
         phase = step_name.removeprefix("Run ")
         driver_log = f'| tee "$EVIDENCE/driver-{phase}.log"'
@@ -364,6 +376,9 @@ def test_full_workflow_preserves_original_authority_failures_budgets_and_paralle
             }
         for step in job["steps"]:
             step.pop("run", None)
+            if step["name"] == "Set up qualified Python":
+                assert step["with"]["python-version"] == "3.14\n3.12"
+                step["with"]["python-version"] = "3.12"
             if step["name"] in DIAGNOSTIC_PRODUCER_IDS:
                 assert step.pop("id") == DIAGNOSTIC_PRODUCER_IDS[step["name"]]
             if step.get("uses", "").startswith("actions/upload-artifact@"):
@@ -1068,7 +1083,7 @@ def test_private_tee_failure_keeps_original_pipefail_semantics(tmp_path, produce
 
 def test_native_detail_publication_has_no_explicit_credentials_or_broader_trigger():
     """Keep the temporary exception publication tied to a credential-free job."""
-    workflow = yaml.safe_load(WORKFLOW.read_text())
+    workflow = without_stock_dispatch(yaml.safe_load(WORKFLOW.read_text()))
     assert workflow["permissions"] == {"contents": "read"}
     assert set(workflow["on"]) == {"pull_request", "push", "workflow_dispatch"}
     text = WORKFLOW.read_text()

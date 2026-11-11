@@ -6,11 +6,22 @@ name: Linux tests
   push:
     branches:
     - main
-  workflow_dispatch: null
+  workflow_dispatch:
+    inputs:
+      stock_runner_pilot:
+        description: Run only the stock Ubuntu 26.04 / Python 3.14 qualification.
+        required: false
+        default: false
+        type: boolean
+      expected_source_sha:
+        description: Reviewed exact commit SHA, required only for the stock pilot.
+        required: false
+        default: ''
+        type: string
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.event_name == 'workflow_dispatch' && (inputs.stock_runner_pilot || inputs.expected_source_sha != '') && 'stock-pilot-' || '' }}${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 defaults:
   run:
@@ -21,7 +32,24 @@ env:
   SEMGREP_ENABLE_VERSION_CHECK: '0'
   OTEL_SDK_DISABLED: 'true'
 jobs:
+  # The registered entry selects the reusable file from this same commit.
+  # Reject contradictory inputs rather than silently running the legacy lane.
+  reject-stock-inputs:
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.stock_runner_pilot && inputs.expected_source_sha != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+    - name: Reject a source SHA without the stock pilot
+      run: |
+        printf '%s\n' 'expected_source_sha requires stock_runner_pilot=true' >&2
+        exit 1
+  stock-runner-qualification:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.stock_runner_pilot }}
+    uses: ./.github/workflows/linux-stock-qualification.yml
+    with:
+      expected_source_sha: ${{ inputs.expected_source_sha }}
   plan:
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.stock_runner_pilot && inputs.expected_source_sha == '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -32,7 +60,9 @@ jobs:
     - name: Set up qualified Python
       uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
       with:
-        python-version: '3.12'
+        python-version: |-
+          3.14
+          3.12
     - name: Verify Linux process ownership prerequisites
       id: preflight
       timeout-minutes: 2
@@ -231,6 +261,9 @@ jobs:
         done | (umask 077; exec tee "$EVIDENCE/interpreters.log")
         # Keep the previously qualified runtime executable in an isolated venv.
         # Its qualification cases must not turn into skips when the dev pin moves.
+        # Supply the required 3.14 pair while keeping the suite and sandbox on 3.12.
+        python3.14 -m pip install 'pytest==9.2.0'
+        python3.14 -c 'import sys, pytest; assert sys.implementation.cache_tag == "cpython-314"; assert pytest.__version__ == "9.2.0"'
         python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"
         "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" -m pip install 'pytest==9.1.1' \
           2>&1 | (umask 077; exec tee "$EVIDENCE/previous-pytest-install.log")
@@ -383,6 +416,7 @@ jobs:
         retention-days: 14
         overwrite: true
   process-contracts:
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.stock_runner_pilot && inputs.expected_source_sha == '') }}
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 150
@@ -394,7 +428,9 @@ jobs:
     - name: Set up qualified Python
       uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
       with:
-        python-version: '3.12'
+        python-version: |-
+          3.14
+          3.12
     - name: Verify Linux process ownership prerequisites
       id: preflight
       timeout-minutes: 2
@@ -593,6 +629,9 @@ jobs:
         done | (umask 077; exec tee "$EVIDENCE/interpreters.log")
         # Keep the previously qualified runtime executable in an isolated venv.
         # Its qualification cases must not turn into skips when the dev pin moves.
+        # Supply the required 3.14 pair while keeping the suite and sandbox on 3.12.
+        python3.14 -m pip install 'pytest==9.2.0'
+        python3.14 -c 'import sys, pytest; assert sys.implementation.cache_tag == "cpython-314"; assert pytest.__version__ == "9.2.0"'
         python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"
         "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" -m pip install 'pytest==9.1.1' \
           2>&1 | (umask 077; exec tee "$EVIDENCE/previous-pytest-install.log")
@@ -836,6 +875,7 @@ jobs:
         set +x
         python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "local"
   service-free:
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.stock_runner_pilot && inputs.expected_source_sha == '') }}
     # Test-only pre-translation exception metadata; no payloads, locals or environment dump.
     env:
       FORGE_CI_AUDIT_TRACE: '1'
@@ -858,7 +898,9 @@ jobs:
     - name: Set up qualified Python
       uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
       with:
-        python-version: '3.12'
+        python-version: |-
+          3.14
+          3.12
     - name: Verify Linux process ownership prerequisites
       id: preflight
       timeout-minutes: 2
@@ -1057,6 +1099,9 @@ jobs:
         done | (umask 077; exec tee "$EVIDENCE/interpreters.log")
         # Keep the previously qualified runtime executable in an isolated venv.
         # Its qualification cases must not turn into skips when the dev pin moves.
+        # Supply the required 3.14 pair while keeping the suite and sandbox on 3.12.
+        python3.14 -m pip install 'pytest==9.2.0'
+        python3.14 -c 'import sys, pytest; assert sys.implementation.cache_tag == "cpython-314"; assert pytest.__version__ == "9.2.0"'
         python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"
         "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" -m pip install 'pytest==9.1.1' \
           2>&1 | (umask 077; exec tee "$EVIDENCE/previous-pytest-install.log")
@@ -1265,7 +1310,7 @@ jobs:
     - plan
     - process-contracts
     - service-free
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || (!inputs.stock_runner_pilot && inputs.expected_source_sha == '')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

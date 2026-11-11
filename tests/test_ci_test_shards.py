@@ -9,6 +9,8 @@ import sys
 
 import pytest
 
+from tests.ci_workflow_contract import without_stock_dispatch
+
 from scripts import ci_test_shards as ci
 
 SHA = "a" * 40
@@ -320,7 +322,9 @@ def test_workflow_preserves_timeouts_and_required_gate():
     import yaml
 
     root = Path(__file__).resolve().parents[1]
-    workflow = yaml.safe_load((root / ".github/workflows/linux-tests.yml").read_text())
+    workflow = without_stock_dispatch(
+        yaml.safe_load((root / ".github/workflows/linux-tests.yml").read_text())
+    )
     jobs = workflow["jobs"]
     assert jobs["linux-tests"]["name"] == "linux-tests"
     assert jobs["linux-tests"]["if"] == "${{ always() }}"
@@ -392,7 +396,9 @@ def test_setup_steps_match_original_budget_and_do_not_execute_tests():
     import yaml
 
     root = Path(__file__).resolve().parents[1]
-    jobs = yaml.safe_load((root / ".github/workflows/linux-tests.yml").read_text())["jobs"]
+    jobs = without_stock_dispatch(
+        yaml.safe_load((root / ".github/workflows/linux-tests.yml").read_text())
+    )["jobs"]
     expected = {
         "Verify Linux process ownership prerequisites": 2,
         "Remove the image's system git-lfs filters": 2,
@@ -410,7 +416,9 @@ def test_retry_preserves_attempt_archives_before_replacing_current_artifacts():
     import yaml
 
     root = Path(__file__).resolve().parents[1]
-    workflow = yaml.safe_load((root / ".github/workflows/linux-tests.yml").read_text())
+    workflow = without_stock_dispatch(
+        yaml.safe_load((root / ".github/workflows/linux-tests.yml").read_text())
+    )
     for job in workflow["jobs"].values():
         steps = job["steps"]
         for index, step in enumerate(steps):

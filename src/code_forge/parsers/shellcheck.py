@@ -4,6 +4,7 @@
 
 import json
 
+from code_forge._json_depth import check_json_container_depth
 from code_forge.parsers.base import Finding, ToolError
 
 
@@ -23,6 +24,9 @@ def parse_shellcheck(
     indicate an incomplete run, even when its JSON footer contains [] or
     diagnostics from successfully read files. Preserve those diagnostics
     and report the failure independently of their location.
+
+    Container depth is bounded at 512 before decoding. Exceeding that budget
+    preserves the unexpected-parser RecursionError route in the L0 runner.
     """
     errors = (
         [ToolError(tool_name, exit_code, "", f"{tool_name} exited abnormally ({exit_code})")]
@@ -32,6 +36,7 @@ def parse_shellcheck(
     if not output.strip():
         return errors
     try:
+        check_json_container_depth(output)
         raw = json.loads(output)
     except (json.JSONDecodeError, ValueError):
         return [

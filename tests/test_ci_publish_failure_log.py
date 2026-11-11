@@ -10,6 +10,8 @@ import sys
 import pytest
 import yaml
 
+from tests.ci_workflow_contract import without_stock_dispatch
+
 from scripts import ci_publish_failure_log as replay
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -112,7 +114,7 @@ def test_rejects_parent_symlink_and_unknown_phase(tmp_path):
 
 def test_workflow_failure_only_sidecars_and_no_credential_injection():
     raw = (ROOT / ".github/workflows/linux-tests.yml").read_text()
-    workflow = yaml.safe_load(raw)
+    workflow = without_stock_dispatch(yaml.safe_load(raw))
     assert set(workflow["on"]) == {"pull_request", "push", "workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["jobs"]["service-free"]["env"] == {"FORGE_CI_AUDIT_TRACE": "1"}

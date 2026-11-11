@@ -60,6 +60,7 @@ QUALIFIED_RUNTIMES = frozenset(
         ("cpython-314", "9.1.0"),
         ("cpython-312", "9.1.1"),
         ("cpython-312", "9.2.0"),
+        ("cpython-314", "9.2.0"),
     }
 )
 QUALIFIED_VERSIONS = frozenset(version for _, version in QUALIFIED_RUNTIMES)

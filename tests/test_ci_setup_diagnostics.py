@@ -8,6 +8,8 @@ import subprocess
 import pytest
 import yaml
 
+from tests.ci_workflow_contract import without_stock_dispatch
+
 from scripts import ci_publish_failure_log as replay
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +40,9 @@ def without_setup_markers(body):
 
 
 def workflow():
-    return yaml.safe_load((ROOT / ".github/workflows/linux-tests.yml").read_text())
+    return without_stock_dispatch(
+        yaml.safe_load((ROOT / ".github/workflows/linux-tests.yml").read_text())
+    )
 
 
 def test_setup_sidecars_are_failure_only_fixed_paths_and_original_budget():
