@@ -364,6 +364,25 @@ not claimed to be reproduced or fixed by this instrumentation.
 
 ### Failure transcript code map and upstream contract
 
+If replay cannot publish the selected transcript, its Actions step prints a
+fixed `reason` and exits nonzero without printing exception text, private paths
+or rejected file contents:
+
+- `NOT_FOUND`: a required file or directory was absent at read time. This does
+  not establish whether the producer ran or why evidence is absent.
+- `UNREADABLE`: the OS denied the read.
+- `UNSAFE_PATH`: no-follow traversal rejected a symlink or non-directory path
+  component. `UNSAFE_FILE` rejects non-regular files or multiple hard links.
+- `TOO_LARGE`: the existing 32 MiB bound was exceeded before or during the read.
+- `CHANGED`: size or modification/change metadata changed across the read.
+- `READ_ERROR`: another OS read failure. `PUBLICATION_ERROR` is the fixed
+  fallback for an unexpected read, redaction or output error.
+
+These codes explain the replay boundary, not the original CI failure. They do
+not recover missing evidence, publish installation/configuration logs, truncate
+rejected transcripts into apparently complete logs, or relax any safety check.
+Runner loss or an unusable output stream can still prevent even this message.
+
 `linux-tests.yml` failed producer outcome → `ci_publish_failure_log.publish` →
 fixed phase log safe read → credential redaction → command-disabled Actions log.
 `ci_private_transport._run_phase` → filtered pytest environment → unchanged pytest

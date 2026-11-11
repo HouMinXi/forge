@@ -5,6 +5,7 @@ Credential filtering/redaction is defense in depth, not a hostile-code sandbox.
 """
 
 import argparse
+import errno
 import os
 from pathlib import Path
 import re
@@ -26,6 +27,21 @@ URL_AUTH = re.compile(r"(https?://)[^\s/@]+@", re.I)
 URL_QUERY = re.compile(r"(https?://[^\s<>\"'?#]+)[?#][^\s<>\"']*", re.I)
 # Apt/proxy diagnostics may include authentication schemes other than Basic/Bearer.
 AUTH_HEADER = re.compile(r"(?im)(^[ \t]*(?:proxy-)?authorization[\"']?\s*[:=]\s*)[^\r\n]+")
+READ_FAILURES = frozenset(
+    ("NOT_FOUND", "UNREADABLE", "UNSAFE_PATH", "UNSAFE_FILE", "TOO_LARGE", "CHANGED", "READ_ERROR")
+)
+
+
+class _ReadFailure(ValueError):
+    """A fixed reason only, never a path, OS message or transcript content."""
+
+
+def failure_reason(error):
+    if type(error) is _ReadFailure:
+        arguments = BaseException.args.__get__(error)
+        if len(arguments) == 1 and type(arguments[0]) is str and arguments[0] in READ_FAILURES:
+            return arguments[0]
+    return "PUBLICATION_ERROR"
 
 
 def test_environment(environment):
@@ -62,24 +78,43 @@ def read_log(directory, phase):
         fd = os.open(LOG_NAMES[phase], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
     try:
         before = os.fstat(fd)
-        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > MAX_BYTES:
-            raise ValueError("invalid transcript")
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise _ReadFailure("UNSAFE_FILE")
+        if before.st_size > MAX_BYTES:
+            raise _ReadFailure("TOO_LARGE")
         with os.fdopen(fd, "rb", closefd=False) as stream:
             raw = stream.read(MAX_BYTES + 1)
         after = os.fstat(fd)
-        if len(raw) > MAX_BYTES or (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+        if len(raw) > MAX_BYTES:
+            raise _ReadFailure("TOO_LARGE")
+        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
             after.st_size,
             after.st_mtime_ns,
             after.st_ctime_ns,
         ):
-            raise ValueError("transcript changed")
+            raise _ReadFailure("CHANGED")
     finally:
         os.close(fd)
     return raw.decode("utf-8", errors="replace")
 
 
 def publish(directory, phase):
-    text = redact(read_log(directory, phase), os.environ)
+    try:
+        raw = read_log(directory, phase)
+    except OSError as error:
+        # Only the native errno is inspected; never format the error or filename.
+        number = OSError.errno.__get__(error)
+        if type(number) is not int:
+            number = None
+        reason = {
+            errno.ENOENT: "NOT_FOUND",
+            errno.EACCES: "UNREADABLE",
+            errno.EPERM: "UNREADABLE",
+            errno.ELOOP: "UNSAFE_PATH",
+            errno.ENOTDIR: "UNSAFE_PATH",
+        }.get(number, "READ_ERROR")
+        raise _ReadFailure(reason) from None
+    text = redact(raw, os.environ)
     token = secrets.token_hex(32)
     while token in text:
         token = secrets.token_hex(32)
@@ -99,8 +134,11 @@ def main():
     args = parser.parse_args()
     try:
         publish(args.directory, args.phase)
-    except Exception:  # noqa: BLE001 - Never leak error paths or credential-bearing exception text.
-        print("Failure transcript unavailable; original test result is unchanged.")
+    except Exception as error:  # noqa: BLE001 - Only fixed codes cross the failure boundary.
+        print(
+            f"Failure transcript unavailable (reason={failure_reason(error)}); "
+            "original test result is unchanged."
+        )
         return 1
     return 0
 

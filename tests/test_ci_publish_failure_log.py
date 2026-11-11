@@ -1,6 +1,7 @@
 """Real failing pytest replay plus credential and workflow boundary checks."""
 
 import os
+import errno
 import re
 from pathlib import Path
 import subprocess
@@ -148,3 +149,154 @@ def test_workflow_failure_only_sidecars_and_no_credential_injection():
         for s in job["steps"]
         if s["name"].startswith("Publish failed pytest transcript (")
     )
+
+
+@pytest.mark.parametrize(
+    ("kind", "reason"),
+    [
+        ("missing-file", "NOT_FOUND"),
+        ("missing-directory", "NOT_FOUND"),
+        ("parent-symlink", "UNSAFE_PATH"),
+        ("symlink", "UNSAFE_PATH"),
+        ("hardlink", "UNSAFE_FILE"),
+        ("fifo", "UNSAFE_FILE"),
+        ("directory", "UNSAFE_FILE"),
+        ("oversized", "TOO_LARGE"),
+    ],
+)
+def test_real_cli_unavailable_reasons_never_publish_private_data(tmp_path, kind, reason):
+    private = "PRIVATE_PATH_AND_CONTENT_CANARY"
+    directory = tmp_path / private
+    directory.mkdir()
+    target = directory / "private-target"
+    target.write_text(private)
+    for phase in ("local", "setup-bwrap"):
+        path = directory / replay.LOG_NAMES[phase]
+        if kind == "symlink":
+            path.symlink_to(target)
+        elif kind == "hardlink":
+            os.link(target, path)
+        elif kind == "fifo":
+            os.mkfifo(path)
+        elif kind == "directory":
+            path.mkdir()
+        elif kind == "oversized":
+            with path.open("wb") as stream:
+                stream.write(private.encode())
+                stream.truncate(replay.MAX_BYTES + 1)
+        selected = directory
+        if kind == "missing-directory":
+            selected = directory / "absent"
+        elif kind == "parent-symlink":
+            selected = tmp_path / ("linked-" + phase)
+            selected.symlink_to(directory, target_is_directory=True)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/ci_publish_failure_log.py"),
+                "--directory",
+                str(selected),
+                "--phase",
+                phase,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        assert result.returncode == 1
+        assert result.stderr == ""
+        assert result.stdout == (
+            f"Failure transcript unavailable (reason={reason}); original test result is unchanged.\n"
+        )
+        assert private not in result.stdout
+        assert not list(directory.glob("receipt-*.json"))
+
+
+@pytest.mark.parametrize(
+    ("number", "reason"),
+    [(errno.EACCES, "UNREADABLE"), (errno.EPERM, "UNREADABLE"), (errno.EIO, "READ_ERROR")],
+)
+def test_read_errors_use_native_errno_without_private_hooks(
+    tmp_path, monkeypatch, capsys, number, reason
+):
+    class PrivateError(OSError):
+        def __str__(self):
+            raise AssertionError("must not render private text")
+
+        def __getattribute__(self, name):
+            raise AssertionError("must not read private attributes")
+
+    def fail(*_args):
+        raise PrivateError(number, "PRIVATE_MESSAGE", "PRIVATE_FILENAME")
+
+    monkeypatch.setattr(replay, "read_log", fail)
+    monkeypatch.setattr(sys, "argv", ["publish", "--directory", str(tmp_path), "--phase", "local"])
+    assert replay.main() == 1
+    assert capsys.readouterr().out == (
+        f"Failure transcript unavailable (reason={reason}); original test result is unchanged.\n"
+    )
+
+    class PrivateErrno:
+        def __hash__(self):
+            raise AssertionError("must not hash private errno")
+
+        def __eq__(self, _other):
+            raise AssertionError("must not compare private errno")
+
+    number = PrivateErrno()
+    assert replay.main() == 1
+    assert capsys.readouterr().out == (
+        "Failure transcript unavailable (reason=READ_ERROR); original test result is unchanged.\n"
+    )
+
+
+def test_log_growth_beyond_read_limit_has_fixed_reason(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "local.log"
+    path.write_bytes(b"1234")
+    monkeypatch.setattr(replay, "MAX_BYTES", 4)
+    original = replay.os.fdopen
+
+    def grow_before_read(*args, **kwargs):
+        with path.open("ab") as stream:
+            stream.write(b"PRIVATE_CONTENT_CANARY")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(replay.os, "fdopen", grow_before_read)
+    monkeypatch.setattr(sys, "argv", ["publish", "--directory", str(tmp_path), "--phase", "local"])
+    assert replay.main() == 1
+    assert capsys.readouterr().out == (
+        "Failure transcript unavailable (reason=TOO_LARGE); original test result is unchanged.\n"
+    )
+
+
+def test_later_publication_errors_are_not_misreported_as_missing_logs(tmp_path, monkeypatch, capsys):
+    (tmp_path / "local.log").write_text("PRIVATE_CONTENT_CANARY")
+
+    def fail(*_args):
+        raise FileNotFoundError("PRIVATE_MESSAGE_AND_FILENAME")
+
+    monkeypatch.setattr(replay, "redact", fail)
+    monkeypatch.setattr(sys, "argv", ["publish", "--directory", str(tmp_path), "--phase", "local"])
+    assert replay.main() == 1
+    assert capsys.readouterr().out == (
+        "Failure transcript unavailable (reason=PUBLICATION_ERROR); original test result is unchanged.\n"
+    )
+
+
+def test_unknown_reason_and_exception_subclasses_have_fixed_fallback():
+    class PrivateFailure(replay._ReadFailure):
+        def __getattribute__(self, name):
+            raise AssertionError("must not read private attributes")
+
+        def __str__(self):
+            raise AssertionError("must not render private text")
+
+    for error in (
+        replay._ReadFailure("PRIVATE_CODE"),
+        replay._ReadFailure("NOT_FOUND", "PRIVATE_EXTRA"),
+        replay._ReadFailure(object()),
+        PrivateFailure("NOT_FOUND"),
+        RuntimeError("PRIVATE_MESSAGE"),
+    ):
+        assert replay.failure_reason(error) == "PUBLICATION_ERROR"
