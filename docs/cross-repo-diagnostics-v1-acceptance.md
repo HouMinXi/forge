@@ -53,6 +53,38 @@ The first post-merge review found a test-oracle defect, not a decoder defect: de
 
 The contract's retained configuration/history/observation budgets are separate from the 4096-byte decoder budget. Sixty-four payloads imply at most 256 KiB of logical final payload, not total filesystem allocation, temporary-name retention, a global cross-run retention bound or a time limit. No new numerical ceiling or platform expansion is introduced here.
 
+### W1-11: independent decoder byte-boundary oracle
+
+W1-11 is a proposed replacement clause identifier for
+[“批准字节上限与加一”](https://github.com/HouMinXi/forge/issues/441#issuecomment-6745701302)
+(approved byte limit and one beyond), not a recovered original test node identity.
+
+`tests/test_advisory_diagnostics.py::test_wire_byte_budget_on_otherwise_valid_document[4096]`
+and `[4097]` pad a legal v1 payload with JSON whitespace. The unmodified ordinary
+JSON parser produces the same document at both lengths; the strict decoder must
+return the independently held observation at 4096 bytes and reject 4097 with
+`invalid_schema`. These literal limits describe the current implementation, not
+formal G02 approval. The existing maximum-string test already accepted 4096
+bytes, and the existing pre-parser sentinel already detected omission of the byte
+guard. The new cases add a semantic rejection oracle with the real parser; they
+do not repair a demonstrated product defect.
+
+Local qualification against production revision
+`ceeffa291e85499e81e48886b764d455084f3924` ran the new pair unchanged, then in an
+isolated source copy removed only the decoder's length predicate while retaining
+its bytes-type check. Only `[4097]` failed, with `DID NOT RAISE`. Separately replacing
+that predicate's `>` with `>=` failed only `[4096]` with `invalid_schema` at the
+acceptance assertion. Byte-exact restoration passed the same pair after each
+control. These are deliberately induced failures, not baseline product failures.
+
+This qualification is codec-only. It does not exercise publisher output,
+`read_observation`, its locator limit, `_read_leaf`'s combined identity/size guard,
+or bounded streaming. The compact legal publisher payload is below this boundary;
+a padded reader fixture would require controlled bytes and matching locator
+metadata. No filesystem qualification, post-execution retrieval, full replacement
+catalog, G02/G12 acceptance, or recovered original-port credit follows. The
+original 78-test node identities and test bytes remain **UNKNOWN**.
+
 ## Reachable gate evidence and its limits
 
 The original persistent CLI/MCP fixtures use the real host, runner, SQLite, publisher and reader but replace `StateMachine._run_ci` with a supplied verdict. They prove transport and isolation conditional on that verdict. They do not by themselves prove natural PASS/FAIL reachability or HOLD recovery.
@@ -80,7 +112,7 @@ The following names refer to actual collected pytest nodes, not proposed test co
 | T09 state replacement | P `test_uncached_branch_transitions_get_new_records_and_cache_reuses_publication` | Genuine uncached transitions create new sequences; cache retains the original record. |
 | T10 same hash, new host | P `test_new_host_execution_never_reuses_same_source_hash_identity`; A `test_new_execution_with_identical_source_and_diff_cannot_reuse_record` | New host execution is supported; unsupported HOLD recovery is not inferred. |
 | T11 cache same input | C `test_duplicate_occurrences_retain_distinct_first_use_native_fallbacks`; P `test_uncached_branch_transitions_get_new_records_and_cache_reuses_publication` | Strengthened oracle checks actual/cache metadata, original record identity, unchanged SQL and publication attempts. Removing cache-origin marking now fails. |
-| T12 context mismatch | C `test_changed_capture_refuses_before_cached_findings_queries_or_error_clear`; C `test_changed_input_refuses_before_cache_sql_error_clear_or_publication[exact-diff]`, `[lexical-root]`, `[canonical-root]` | Each newly guarded comparison has its own exact omission RED. Same-UID filesystem generation continuity remains excluded. |
+| T12 context mismatch | C `test_installed_capture_admission_precedes_native_work` (four cold/warm closed-installed/foreign-thread controls; supplement below); C `test_changed_capture_refuses_before_cached_findings_queries_or_error_clear`; C `test_changed_input_refuses_before_cache_sql_error_clear_or_publication[exact-diff]`, `[lexical-root]`, `[canonical-root]` | Each newly guarded comparison has its own exact omission RED. Same-UID filesystem generation continuity remains excluded. |
 | T13 gate isolation | G `test_docs_only_native_ci_keeps_gate_state_with_diagnostic[published-PASS]`, `[published-FAIL]`, `[publication-fault-PASS]`, `[publication-fault-FAIL]` | Reachable docs-only native gate, State and receipt evidence. Injecting the diagnostic into State errors yields four direct membership assertion failures. No code-mutation workload or model-quality claim. |
 | T14 recovery | P `test_new_host_execution_never_reuses_same_source_hash_identity` | Only new supported host identity is proved. Cross-repository HOLD is unsupported; single-repository recovery has no axis. Explicit scope disposition is still required. |
 | T15 write failure | A `test_precommit_operation_failure_is_not_published`; `test_incomplete_write_never_publishes_and_removes_owned_temp`; `test_link_error_distinguishes_verified_commit_from_unknown`; G publication-fault cases | Open/write/partial/commit ambiguity are covered. No automatic retry, crash journal or full-State-save behavior is introduced. |
@@ -150,3 +182,112 @@ An admission decision should name the product revision and this evidence revisio
 ## Bounded T17 publication-contention supplement
 
 The [publication-contention evidence](cross-repo-diagnostics-publication-contention.md) adds six public nodes at production baseline `f4c9214a813cd5604ed63462b3268343ed6f800c`: three overlapping real-publisher cases plus three harness-failure controls. It records distinct-execution isolation, adversarial same-key non-overwrite with an unknown/no-locator loser, foreign staging preservation, and four source-specific RED/restored-GREEN controls. These library calls use controlled commit scheduling, not simultaneous complete hosts. Full T17/A06, G08/G10/G12, G04/G09 and G0/G1 decisions remain open; no production or lifecycle behavior changes.
+
+## Native CLI/MCP consumer-chain supplement
+
+Six docs-only cases in `test_cross_repo_native_consumer_chain.py` bridge the
+previous native dispatch-helper coverage to public immediate/background MCP
+handlers and their real CLI child. The owned launcher invokes the genuine parser
+and observes, rather than replaces, CI, L1, real falsification and advisory axes.
+The backend is a deterministic local executable; PASS/FAIL is computed by native
+CI. Temporary real Git/SQLite inputs, trusted backend configuration, subprocess
+outlet, one clean round and the promotion/release budget are controlled. The
+optional provider-free setup replaces only its pure registry-path locator.
+
+Each execution retains expected identity at host capture construction, before
+publication. Bounded test metadata records exact consumer counts, strict-read
+results, gate-state equality and receipt hashes without serializing errors,
+tracebacks or backend prompts. The parent compares that independently issued
+identity with the reader and stored payload, checks unchanged receipt bytes at
+the copied source-root destination, and requires the attributed diagnostic in
+both structured MCP output and visible text. This metadata is test
+instrumentation, not a production result outlet or post-return retrieval API.
+
+Four cases cover primary native PASS/FAIL through immediate and background
+handlers. Two immediate cases remove the newly published record just before its
+real strict read: rejection retains the immediate diagnostic and adds exactly
+one persistence warning, without changing the native primary decision or receipt
+gates. The sibling executes genuine CI too: this docs-only fixture has no sibling
+L1, so its one native coverage gap produces FAIL and an explicit sibling warning.
+The host's existing primary-authoritative return remains PASS or FAIL as computed
+for the primary. These cases do not claim all repositories pass.
+
+Every case checks worker-directory and source-lock cleanup. Background cases
+retain and await their own wait tasks; both paths observe and settle the actual
+communicate task. Failure cleanup uses the existing native CLI process-group
+termination and reaping operation. Native backend invocations create separate
+sessions, so the owned no-descendant backend independently records PID/start-time
+and normal-exit markers and has a five-second self-watchdog. Tests require those
+exact process identities to disappear, separately from CLI reaping. There is no
+global job/process cleanup or general detached-process lifecycle claim. Same-source
+named-target transitions are deferred
+rather than turning a synthetic README node into purported named-code evidence.
+This supplement does not qualify mutation workloads, HOLD/recovery, SDK-stdio or
+MCP wire transport, provider graph freshness, original-port equivalence, or formal
+G04/G09/G0/G1 acceptance. No production or #68/#400 interface changes are made.
+
+Three isolated single-boundary controls discriminate this oracle:
+replacing strict consumption with the in-memory observation fails all four normal
+cases at the missing-read count; removing the diagnostic only from structured MCP
+output fails both immediate cases at the output assertion; omitting the warning
+from the read-loss fallback fails both loss cases at the warning assertion. Each
+byte-exact source restoration passes all six cases. These intentional semantic
+failures are not baseline regressions or additive coverage. Early development
+failures corrected harness assumptions about the repository-binding object,
+sibling coverage and fallback tuple length; none is presented as a product bug.
+
+## Installed-capture admission supplement
+
+Reconstructed on main baseline `4a356189f968b463777a93b317aa4461630fde08`
+after loss of the earlier local workspace, the five public controls below were
+retained and revalidated on `9e5c1c62382308bbebb7f1a1e5743bbfd0fda44c`. They
+strengthen bounded G06/T12 admission evidence in `tests/test_cross_repo_capture.py`.
+Earlier run results are not reused as qualification of the latest composition.
+
+- `test_active_owner_native_cold_and_warm_delivery` checks an independently
+  specified caller finding, real cold SQL, publication and strict reading against
+  context held before publication. Warm reuse retains the original record and
+  bytes, with no new SQL or publication and delivery origin `cache`.
+- `test_installed_capture_admission_precedes_native_work` has exact parameters
+  `[closed-installed-cold]`, `[closed-installed-warm]`, `[foreign-thread-cold]`
+  and `[foreign-thread-warm]`. Closure leaves the same capture installed. Thread
+  refusal uses an actual `threading.Thread`, a bounded join and explicit
+  harness-failure checks, not a patched thread identifier. The creator remains
+  idle during that call. Only completed joins qualify. The daemon and ten-second
+  join bound waiting, not cleanup of a timed-out worker; timeout is a harness
+  failure, never semantic RED. Disposable omission runs also use an outer
+  subprocess watchdog.
+
+Each negative case checks empty return, unchanged sentinel errors, no new SQL,
+publication, strict read or record, unchanged bound cache/error/record identities,
+`context_unavailable`, `not_delivered`, no delivery origin and one persistence
+warning. Cold refusal creates no diagnostic namespace. Warm refusal preserves
+original artifact bytes and a subsequent strict read using the independently
+held context. Real publisher/reader observers delegate unchanged and assert
+counters outside production exception handlers. Targets-resolved observations
+have no persisted message payload: successful persistent delivery is established
+by strict reading and delivery status. The separate immediate query summary is
+expected on legitimate native analysis, not repeated by a warm cache return and
+never emitted on refused admission.
+
+Owner-thread reuse succeeds after foreign-thread refusal. Closure recovery uses
+a fresh capture/execution and repository identity, never reopens the old capture,
+and rejects its foreign record. Historical refusal text need not be cleared by
+successful reuse.
+
+Dedicated disposable-source experiments independently remove the active check,
+thread-identity check, and complete four-line runner admission consumer branch.
+Semantic RED requires the exact returned-finding refusal assertion, including
+JUnit failure message, terminal source assertion and traceback location. Exact
+source restoration must pass. No setup, collection, skip, worker exception or
+timeout counts as semantic RED. Fresh execution results are recorded separately
+from this control map.
+
+These controls qualify sequential misuse refusal, not simultaneous runner
+sharing, host thread migration, process isolation, a natural host concurrency
+bug, all A04/T12/G06 obligations, private consumer acceptance, G0/G1 or issue
+closure. Optional-provider fallback replaces only its pure default-path helper;
+registry files, SQLite, runner admission, publisher and strict reader remain real.
+The admission supplement does not change production admission behavior or make
+claims about separately owned #68/#400 work. No hosted CI rerun is included in
+its local evidence.

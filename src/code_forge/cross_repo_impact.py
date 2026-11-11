@@ -41,6 +41,21 @@ _NO_NAMED_TARGETS = (
     "cross-repo-impact: no named changed symbols resolved; direct-caller impact not evaluated"
 )
 
+_SCOPE_UNAVAILABLE = (
+    "cross-repo-impact: registry scope unavailable; direct-caller impact not evaluated. "
+    "Registered query scope was not established."
+)
+_EMPTY_SCOPE = (
+    "cross-repo-impact: no sibling registry entries; direct-caller impact not evaluated. "
+    "Repositories outside this registered scope were not searched for direct callers."
+)
+_QUERY_SUMMARY = (
+    "cross-repo-impact: direct-caller queries completed for %d of %d registered sibling entries "
+    "(%d attempted; %d unavailable). Entries may repeat repositories. "
+    "Repositories outside this registered scope were not searched for direct callers. "
+    "Graph freshness and full impact coverage are not established."
+)
+
 _TOP_N: int = 10
 """Max findings emitted (depth-1, capped)."""
 
@@ -596,6 +611,7 @@ class CrossRepoImpactRunner:
             )
         except GraphDiscoveryError as exc:
             self.infra_errors.append("cross-repo-impact: registry unavailable: %s" % exc)
+            self._emit(_SCOPE_UNAVAILABLE)
             return []
 
         try:
@@ -611,12 +627,14 @@ class CrossRepoImpactRunner:
                     siblings.append((index, entry))
         except (OSError, RuntimeError, ValueError) as exc:
             self.infra_errors.append("cross-repo-impact: registry path unavailable: %s" % exc)
+            self._emit(_SCOPE_UNAVAILABLE)
             return []
 
         if not siblings:
             self.infra_errors.append(
                 "cross-repo-impact: no sibling repos registered; use code-review-graph register"
             )
+            self._emit(_EMPTY_SCOPE)
             return []
 
         # Query each sibling for callers of changed symbols.
@@ -628,6 +646,8 @@ class CrossRepoImpactRunner:
         # the fallback resolves the file path and retries.
         primary_prefix = str(resolved_root) + os.sep
         hits: list[dict] = []
+        total = len(siblings)
+        attempted = completed = unavailable = 0
         for occurrence, sib in siblings:
             alias = sib.get("alias") or Path(sib["path"]).name
             try:
@@ -641,19 +661,24 @@ class CrossRepoImpactRunner:
                 self.infra_errors.append(
                     "cross-repo-impact: sibling '%s' graph discovery unavailable: %s" % (alias, exc)
                 )
+                unavailable += 1
                 continue
 
             if not sib_db.is_file():
                 self.infra_errors.append("cross-repo-impact: sibling '%s' graph.db missing" % alias)
+                unavailable += 1
                 continue
 
             try:
+                attempted += 1
                 caller_groups = _find_cross_repo_caller_groups(str(sib_db), changed, Path(sib["path"]))
             except (sqlite3.Error, OSError, GraphIdentityError) as exc:
                 self.infra_errors.append(
                     "cross-repo-impact: sibling '%s' graph.db unreadable: %s" % (alias, exc)
                 )
+                unavailable += 1
                 continue
+            completed += 1
 
             sib_prefix = str(Path(sib["path"]).resolve()) + os.sep
             for sym, sym_callers in caller_groups:
@@ -715,5 +740,6 @@ class CrossRepoImpactRunner:
                 )
             )
 
+        self._emit(_QUERY_SUMMARY % (completed, total, attempted, unavailable))
         self._cached = findings
         return findings

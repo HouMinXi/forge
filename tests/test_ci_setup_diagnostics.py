@@ -180,4 +180,6 @@ def test_setup_changed_read_is_refused_without_printing_contents(tmp_path, monke
         __import__("sys"), "argv", ["publish", "--directory", str(tmp_path), "--phase", "setup-bwrap"]
     )
     assert replay.main() == 1
-    assert "SECRET_CANARY" not in capsys.readouterr().out
+    assert capsys.readouterr().out == (
+        "Failure transcript unavailable (reason=CHANGED); original test result is unchanged.\n"
+    )
