@@ -22030,6 +22030,8 @@
     "tests/test_ordinary_audit_integration.py::test_real_unsupported_factory_routes_and_machine_keep_legacy_calls[grouped]",
     "tests/test_ordinary_audit_integration.py::test_real_unsupported_factory_routes_and_machine_keep_legacy_calls[stub]",
     "tests/test_ordinary_audit_native.py::test_native_machine_partial_falsifier_stays_incomplete",
+    "tests/test_ordinary_audit_native.py::test_native_parallel_fanout_preserves_publication_boundary[healthy]",
+    "tests/test_ordinary_audit_native.py::test_native_parallel_fanout_preserves_publication_boundary[post-adopt-contention]",
     "tests/test_ordinary_audit_native.py::test_native_three_pass_rounds_reopen_exact_raw",
     "tests/test_ordinary_audit_privacy.py::test_actual_factory_projects_errors_without_changing_private_objects[runtime-legacy]",
     "tests/test_ordinary_audit_privacy.py::test_actual_factory_projects_errors_without_changing_private_objects[runtime-selected]",
