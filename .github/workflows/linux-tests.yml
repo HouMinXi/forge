@@ -836,6 +836,9 @@ jobs:
         set +x
         python scripts/ci_publish_failure_log.py --directory "$RUNNER_TEMP/forge-evidence" --phase "local"
   service-free:
+    # Test-only pre-translation exception metadata; no payloads, locals or environment dump.
+    env:
+      FORGE_CI_AUDIT_TRACE: '1'
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 150

@@ -12,7 +12,7 @@ CLI `_cross_repo_verdict_or_none` → `run_cross_repo` → primary worker → `S
 
 Only primary cross-repository execution is supported. Single-repository HOLD does not construct this axis, and no cross-repository recovery/HOLD interface was added. PENDING still becomes FAIL. The other six advisory axes, source-root routing, source locks, worker joins/completion and deferred signals, receipts, State schema, diagnose, gate and credit rules remain unchanged. #68 and #400 are not reused or modified.
 
-The existing no-named-target warning is retained. A successful strict read supplies its text. Ordinary recorder/publisher/reader/consumer failures fall back to that genuine warning and attempt one separate fixed persistence warning per execution. Other states never acquire a fabricated no-target warning. Empty successful diagnostics remain silent. Failure of every output channel means delivery is unconfirmed, not successful. Persistent artifacts are not findings or State.infra_errors.
+The existing no-named-target warning is retained. A successful strict read supplies its text. Ordinary recorder/publisher/reader/consumer failures fall back to that genuine warning and attempt one separate fixed persistence warning per execution. Other states never acquire a fabricated no-target warning. Empty successful v1 diagnostics remain silent. A separate [immediate named-target query summary](cross-repo-query-summary.md) can report native registered-scope query counts without entering this protocol. Failure of every output channel means delivery is unconfirmed, not successful. Persistent artifacts are not findings or State.infra_errors.
 
 ## Identity and admission
 

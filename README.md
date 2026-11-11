@@ -446,7 +446,11 @@ differs. The full tables, the corpus construction, and the caveats are in
   consumed relative graph-root bindings leave analysis and the immediate
   warning intact, with a separate persistence-unavailable warning. See the
   [v1 contract and support limits](docs/cross-repo-diagnostics-v1.md). An empty
-  findings list does not establish global absence of impact.
+  findings list does not establish global absence of impact. After named targets
+  resolve, a separate [immediate query summary](docs/cross-repo-query-summary.md)
+  reports completed, attempted and unavailable registered sibling entries, or
+  an empty/unavailable registry scope. Entries may repeat repositories. Cache
+  reuse emits no new summary; these counts are not persisted v1 diagnostics.
   Unregistered repositories are not queried, so their impact is unknown.
   Missing or unreadable registered graphs and an empty sibling registry are
   reported separately in infrastructure diagnostics; an empty findings list
