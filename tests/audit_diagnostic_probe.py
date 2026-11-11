@@ -70,6 +70,10 @@ def _clean_ack(outcome):
     ):
         return False
     value = outcome.value
+    # A summary is not a native ACK: its completeness is checked by finalize
+    # after _request returns. Observe that exact flag, never its private fields.
+    if type(value) is invocation_owner.InvocationSessionSummary:
+        return value.audit_complete is True
     # Native denial can occur after transport ACK, outside the host request wrapper.
     return not _native_ack(value) or (value.admitted is True and value.publication_uncertain is False)
 
@@ -111,6 +115,8 @@ class AuditDiagnosticProbe:
                     ack_admitted=_boolean(value.admitted),
                     ack_uncertain=_boolean(value.publication_uncertain),
                 )
+            elif type(outcome.value) is invocation_owner.InvocationSessionSummary:
+                event["summary_audit_complete"] = _boolean(outcome.value.audit_complete)
         else:
             event["state"] = "other_outcome"
         self._record(event)
