@@ -2,8 +2,9 @@
 
 NOT RUN on unsupported hosts. The existing disk_root fixture chooses the
 checkout filesystem; admission, host, owner, recorder, and reopening are real.
-Only the HTTP opener/response and synthetic credential are controlled. These
-are not installed-CLI, external-network, crash-recovery, or whole-review tests.
+The HTTP opener/response and synthetic credential are controlled; the fanout
+regression also controls post-publication owner-lock timing. These are not
+installed-CLI, external-network, crash-recovery, or whole-review tests.
 """
 
 from dataclasses import dataclass
@@ -23,7 +24,9 @@ from code_forge.disposition import Disposition
 from code_forge.factories import _L1Call, build_l1_provider
 from code_forge.falsify_real import RealFalsifier
 from code_forge.invocation_host import HostAuditSession
+from code_forge.invocation_io import AuditPhase
 from code_forge.invocation_owner import InvocationOwner
+from code_forge.invocation_owner_stage import _Publication, OwnerCaptureStage, OwnerStageUnavailable
 from code_forge.invocation_review import OrdinaryReviewAudit
 from code_forge.llm_invoke import Usage
 from code_forge.machine import StateMachine
@@ -364,3 +367,130 @@ def test_native_machine_partial_falsifier_stays_incomplete(disk_root, monkeypatc
     output = capsys.readouterr()
     assert output.err.count("invocation audit unavailable; recording is incomplete") == 1
     assert PRIVATE not in output.err + output.out
+
+
+@pytest.mark.parametrize("contended", [False, True], ids=["healthy", "post-adopt-contention"])
+def test_native_parallel_fanout_preserves_publication_boundary(
+    disk_root, monkeypatch, capsys, contended
+):
+    """Real three-pass fanout; only HTTP and post-publication lock timing are controlled.
+
+    A durable ADOPT is not owner-visible credit when the bounded owner lock
+    cannot be reacquired. This does not diagnose an unrelated CI empty-raw run.
+    """
+    # Override this module's serial fixture, not the production lock budget.
+    monkeypatch.delenv("FORGE_L1_SERIAL", raising=False)
+    transport = _Transport(monkeypatch)
+    barrier = threading.Barrier(3)
+    real_open = transport.open
+    threads = set()
+
+    def open_response(request, *, timeout):
+        response = real_open(request, timeout=timeout)
+        with transport.lock:
+            threads.add(threading.get_ident())
+        barrier.wait(5)
+        return response
+
+    monkeypatch.setattr(transport, "open", open_response)
+    _, call = _provider(monkeypatch)
+    review = OrdinaryReviewAudit(source=DIFF, environ={"XDG_STATE_HOME": str(disk_root)})
+    release, locked = threading.Event(), threading.Event()
+    holders, released, evidence, refusals = [], [], [], []
+    real_publish, real_adopt = _Publication.audit_io, OwnerCaptureStage.adopt
+
+    def publish(command, phase, payload):
+        ack = real_publish(command, phase, payload)
+        if contended and phase is AuditPhase.ADOPT and not evidence:
+            stage = command.stage
+            assert ack.admitted and ack.ref is not None
+            run = stage._recorder.root / stage._handle.identity.run_id
+            raw = (run / ("raw-" + ack.ref.artifact_id)).read_bytes()
+            _assert_raw(run, ack.ref, raw)
+            evidence.append((stage, ack.ref, raw))
+
+            def hold():
+                if not stage._owner._mutex.acquire(timeout=2):
+                    return
+                try:
+                    locked.set()
+                    # Watchdog only. Failure must reach the test thread, not be
+                    # reduced to a background-thread assertion warning.
+                    released.append(release.wait(5))
+                finally:
+                    stage._owner._mutex.release()
+
+            holder = threading.Thread(target=hold)
+            holders.append(holder)
+            holder.start()
+            assert locked.wait(2)
+        return ack
+
+    def adopt(stage, **kwargs):
+        try:
+            return real_adopt(stage, **kwargs)
+        except OwnerStageUnavailable as error:
+            if evidence and stage is evidence[0][0]:
+                record = stage._owner._leases[id(stage._lease)]
+                refusals.append(
+                    (str(error), list(record.refs), dict(record.captures), stage._owner._refused)
+                )
+            raise
+        finally:
+            if evidence and stage is evidence[0][0]:
+                release.set()
+
+    monkeypatch.setattr(_Publication, "audit_io", publish)
+    monkeypatch.setattr(OwnerCaptureStage, "adopt", adopt)
+    try:
+        findings, excerpts, usage, _ = call.call_with_audit(review.round(1))
+        # Default warning mode preserves the provider consumer and fixed fold.
+        assert [item.description for item in findings] == [
+            f"[{name}] {name} candidate" for name in PASSES
+        ]
+        assert [item["pass_name"] for item in excerpts] == list(PASSES)
+        assert usage == Usage(6, 9)
+        assert call.reviewer_responses == dict.fromkeys(PASSES, 1)
+        recorder = _native_recorder(review, disk_root)
+    finally:
+        release.set()
+        for holder in holders:
+            holder.join(3)
+            assert not holder.is_alive()
+        review.finalize()
+
+    assert len(threads) == 3
+    assert transport.counts == dict.fromkeys(PASSES, 1)
+    assert len(transport.exchanges) == 3
+    live = recorder.scoped_snapshot()
+    replay = invocation_audit.AttemptRecorder.reopen_scoped(recorder.root, live.run_id)
+    run = recorder.root / replay.run_id
+    refs = [ref for attempt in replay.attempts for ref in attempt.raw_refs]
+    expected = {hashlib.sha256(item.raw).hexdigest(): item.raw for item in transport.exchanges}
+    assert len(expected) == 3
+    for ref in refs:
+        _assert_raw(run, ref, expected[ref.sha256])
+    if contended:
+        assert len(evidence) == 1 and released == [True]
+        assert refusals == [("owner stage lock unavailable", [], {}, True)]
+        stage, ref, raw = evidence[0]
+        assert stage._adopted is None
+        assert refs.count(ref) == 1
+        assert (run / ("raw-" + ref.artifact_id)).read_bytes() == raw
+        assert not review._host.safe_summary().audit_complete
+        assert replay.state in {"active", "incomplete"}
+        # An active prefix can have audit_complete=True: it describes the
+        # retained prefix, not a successful host return or finalized run.
+        if replay.state == "active":
+            assert not (run / "final").exists()
+        else:
+            assert not replay.audit_complete
+    else:
+        assert not evidence and not holders and not refusals
+        assert len(refs) == 3 and len({ref.sha256 for ref in refs}) == 3
+        assert replay == live and replay.audit_complete and replay.state == "completed"
+        assert review._host.safe_summary().audit_complete
+        assert (run / "final").is_file()
+    output = capsys.readouterr()
+    assert PRIVATE not in output.err + output.out
+    assert output.err.count("invocation audit unavailable; recording is incomplete") == int(contended)
