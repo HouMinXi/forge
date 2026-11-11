@@ -314,3 +314,418 @@ def test_audit_probe_preserves_worker_result_identity(monkeypatch, host_setup):
     assert calls == [(target, AuditPhase.APPEND, payload, 17)]
     assert probe.events[-1] == dict(event="worker_error", phase="append", error="os_error")
     assert SECRET not in probe.summary() and "PRIVATE raw bytes" not in probe.summary()
+
+
+def diagnostic_document(probe):
+    import json
+
+    prefix = "safe audit trace: "
+    summary = probe.summary()
+    assert summary.startswith(prefix)
+    return json.loads(summary.removeprefix(prefix))
+
+
+def native_ack(kind, admitted=True, uncertain=False):
+    from code_forge import invocation_audit as audit
+
+    factories = {
+        "audit": lambda: audit.AuditAcknowledgement(admitted, None, uncertain),
+        "start": lambda: audit.StartAcknowledgement(admitted, None, None, uncertain),
+        "stage": lambda: audit.StageAcknowledgement(admitted, None, None, 0, False, None, uncertain),
+        "acquired": lambda: audit.AcquiredAcknowledgement(admitted, None, None, None, uncertain),
+    }
+    return factories[kind]()
+
+
+def test_first_abnormal_diagnostic_survives_concurrent_bounded_history():
+    from concurrent.futures import ThreadPoolExecutor
+
+    from code_forge.invocation_io import AuditPhase, IoOutcome
+
+    probe = AuditDiagnosticProbe()
+    probe.observe_outcome(AuditPhase.OPEN, IoOutcome("failed", error=OSError(SECRET)))
+    first = diagnostic_document(probe)["first_failure"]
+    assert first["phase"] == "open" and first["error"] == "os_error"
+
+    def observe(_):
+        probe.observe_outcome(AuditPhase.APPEND, IoOutcome("expired", not_executed=True))
+
+    with ThreadPoolExecutor(max_workers=4) as workers:
+        list(workers.map(observe, range(160)))
+    document = diagnostic_document(probe)
+    assert document["first_failure"] == first
+    assert len(document["events"]) == 64
+    assert all(event["phase"] == "append" for event in document["events"])
+    assert SECRET not in probe.summary()
+
+
+def test_racing_first_diagnostic_remains_pinned_after_history_eviction():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from code_forge.invocation_io import AuditPhase, IoOutcome
+
+    probe = AuditDiagnosticProbe()
+    phases = (AuditPhase.OPEN, AuditPhase.START, AuditPhase.ADOPT, AuditPhase.OBSERVE)
+    barrier = Barrier(len(phases))
+
+    def observe(phase):
+        barrier.wait()
+        probe.observe_outcome(phase, IoOutcome("failed", error=OSError(SECRET)))
+
+    with ThreadPoolExecutor(max_workers=len(phases)) as workers:
+        list(workers.map(observe, phases))
+    document = diagnostic_document(probe)
+    first = document["first_failure"]
+    assert first in document["events"]
+    assert first["phase"] in {phase.value for phase in phases}
+    assert first["state"] == "failed" and first["error"] == "os_error"
+    assert len(document["events"]) == len(phases)
+    for _ in range(100):
+        probe.observe_outcome(AuditPhase.APPEND, IoOutcome("expired", not_executed=True))
+    document = diagnostic_document(probe)
+    assert document["first_failure"] == first
+    assert len(document["events"]) == 64
+    assert all(event["phase"] == "append" for event in document["events"])
+
+
+@pytest.mark.parametrize("kind", ["audit", "start", "stage", "acquired"])
+@pytest.mark.parametrize("admitted,uncertain", [(False, False), (True, True), (False, True)])
+def test_native_ack_flags_remain_separate_from_io_state(kind, admitted, uncertain):
+    from code_forge.invocation_io import AuditPhase, IoOutcome
+
+    probe = AuditDiagnosticProbe()
+    probe.observe_outcome(
+        AuditPhase.ADOPT,
+        IoOutcome("ack", value=native_ack(kind, admitted, uncertain), publication_uncertain=False),
+    )
+    event = diagnostic_document(probe)["first_failure"]
+    assert event["state"] == "ack"
+    assert event["publication_uncertain"] is False
+    assert event["ack_admitted"] is admitted
+    assert event["ack_uncertain"] is uncertain
+
+
+@pytest.mark.parametrize("kind", ["audit", "start", "stage", "acquired"])
+def test_healthy_native_ack_skips_observer_callback(monkeypatch, host_setup, kind):
+    from code_forge.invocation_io import IoOutcome
+
+    _, supervisor = host_setup
+    result = IoOutcome("ack", value=native_ack(kind))
+    monkeypatch.setattr(supervisor, "wait", lambda ticket: result)
+    probe = AuditDiagnosticProbe()
+    seen = []
+    monkeypatch.setattr(probe, "observe_outcome", lambda *args: seen.append(args))
+    probe.install(monkeypatch, supervisor)
+    assert supervisor.wait(None) is result
+    assert seen == []
+    assert diagnostic_document(probe) == {"first_failure": None, "events": []}
+
+
+def test_real_healthy_inline_has_no_diagnostic_events(real_inline, audit_probe, monkeypatch):
+    run, hosts = real_inline
+    integration.scripted(
+        monkeypatch, [integration.wire({"mutations": []}), integration.wire({"findings": []})]
+    )
+    assert run(strict=True) is Verdict.UNRELIABLE
+    assert hosts[0].safe_summary().audit_complete
+    assert diagnostic_document(audit_probe) == {"first_failure": None, "events": []}
+
+
+@pytest.mark.parametrize("kind", ["audit", "start", "stage", "acquired"])
+def test_malformed_native_flags_are_null_not_false(kind):
+    from code_forge.invocation_io import AuditPhase, IoOutcome
+
+    class Unreadable:
+        def __bool__(self):
+            raise AssertionError("must not coerce a flag")
+
+    probe = AuditDiagnosticProbe()
+    probe.observe_outcome(
+        AuditPhase.ADOPT,
+        IoOutcome(
+            "ack",
+            value=native_ack(kind, Unreadable(), 1),
+            not_executed=0,
+            publication_uncertain=Unreadable(),
+        ),
+    )
+    event = diagnostic_document(probe)["first_failure"]
+    for key in ("ack_admitted", "ack_uncertain", "not_executed", "publication_uncertain"):
+        assert event[key] is None
+
+
+@pytest.mark.parametrize("error_type", [MemoryError, KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("operation", ["worker", "wait_result", "wait_error", "request_error"])
+def test_diagnostic_storage_failure_cannot_replace_execution(
+    monkeypatch, host_setup, error_type, operation
+):
+    from code_forge import invocation_host, invocation_io
+    from code_forge.invocation_io import AuditPhase, IoOutcome
+
+    _, supervisor = host_setup
+    original_error = RuntimeError(SECRET)
+    worker_result = (object(), original_error)
+    wait_result = IoOutcome("failed", error=original_error)
+    diagnostic_error = error_type("private diagnostic storage")
+
+    def fail(*args, **kwargs):
+        raise original_error
+
+    class BrokenStorage:
+        def append(self, event):
+            raise diagnostic_error
+
+    monkeypatch.setattr(invocation_io, "_call_target", lambda *a, **kw: worker_result)
+    monkeypatch.setattr(
+        supervisor, "wait", fail if operation == "wait_error" else lambda ticket: wait_result
+    )
+    monkeypatch.setattr(invocation_host.HostAuditSession, "_request", fail)
+    probe = AuditDiagnosticProbe()
+    probe.events = BrokenStorage()
+    probe.install(monkeypatch, supervisor)
+    value, raised = None, None
+    try:
+        if operation == "worker":
+            value = invocation_io._call_target(object(), AuditPhase.APPEND, b"private", 1)
+        elif operation.startswith("wait"):
+            value = supervisor.wait(None)
+        else:
+            invocation_host.HostAuditSession._request(object(), AuditPhase.OPEN)
+    except BaseException as error:  # noqa: BLE001 - assert identity without aborting pytest on an injected interrupt
+        raised = error
+    if operation == "worker":
+        assert raised is None and value is worker_result
+    elif operation == "wait_result":
+        assert raised is None and value is wait_result
+    else:
+        assert raised is original_error
+
+
+@pytest.mark.parametrize("error_type", [MemoryError, KeyboardInterrupt, SystemExit])
+def test_diagnostic_observer_failure_cannot_replace_wait_result(monkeypatch, host_setup, error_type):
+    from code_forge.invocation_io import IoOutcome
+
+    _, supervisor = host_setup
+    result = IoOutcome("failed", error=OSError(SECRET))
+    monkeypatch.setattr(supervisor, "wait", lambda ticket: result)
+    probe = AuditDiagnosticProbe()
+
+    def fail(*args):
+        raise error_type(SECRET)
+
+    monkeypatch.setattr(probe, "observe_outcome", fail)
+    probe.install(monkeypatch, supervisor)
+    actual, raised = None, None
+    try:
+        actual = supervisor.wait(None)
+    except BaseException as error:  # noqa: BLE001 - injected interrupts must not replace the observed result
+        raised = error
+    assert raised is None and actual is result
+
+
+@pytest.mark.parametrize("error_type", [MemoryError, KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("site", ["json", "storage"])
+def test_diagnostic_summary_failure_has_fixed_fallback(monkeypatch, error_type, site):
+    from tests import audit_diagnostic_probe as diagnostic
+
+    probe = AuditDiagnosticProbe()
+
+    def fail(*args, **kwargs):
+        raise error_type(SECRET)
+
+    class BrokenStorage:
+        __iter__ = fail
+
+    summary, raised = None, None
+    with monkeypatch.context() as patch:
+        if site == "json":
+            patch.setattr(diagnostic.json, "dumps", fail)
+        else:
+            probe.events = BrokenStorage()
+        try:
+            summary = probe.summary()
+        except BaseException as error:  # noqa: BLE001 - exercise fallback for BaseException without interrupting pytest
+            raised = error
+    assert raised is None
+    assert summary == "safe audit trace: unavailable"
+
+
+def test_diagnostic_never_reads_untrusted_attributes_or_metaclass_hooks():
+    from code_forge import invocation_audit as audit
+    from code_forge.invocation_io import AuditPhase, IoOutcome
+
+    accesses = []
+
+    class PrivateMeta(type):
+        def __hash__(cls):
+            accesses.append("class hash")
+            raise AssertionError("must not hash an untrusted class")
+
+        def __eq__(cls, other):
+            accesses.append("class equality")
+            raise AssertionError("must not compare an untrusted class")
+
+    class PrivateError(OSError, metaclass=PrivateMeta):
+        pass
+
+    class PrivateValue:
+        def __getattribute__(self, name):
+            accesses.append(name)
+            raise AssertionError("must not inspect an untrusted object")
+
+        def __repr__(self):
+            accesses.append("repr")
+            raise AssertionError("must not format an untrusted object")
+
+    class PrivateAck(audit.AuditAcknowledgement, PrivateValue):
+        __getattribute__ = PrivateValue.__getattribute__
+
+    class PrivateOutcome(IoOutcome, PrivateValue):
+        __getattribute__ = PrivateValue.__getattribute__
+
+    probe = AuditDiagnosticProbe()
+    probe.observe_outcome(PrivateValue(), IoOutcome("failed", error=PrivateError(SECRET)))
+    probe.observe_outcome(AuditPhase.ADOPT, IoOutcome("failed", value=PrivateValue()))
+    probe.observe_outcome(AuditPhase.ADOPT, IoOutcome("failed", value=PrivateAck(False, None)))
+    probe.observe_outcome(AuditPhase.ADOPT, PrivateOutcome("failed"))
+    document = diagnostic_document(probe)
+    assert document["first_failure"]["error"] == "other_error"
+    assert accesses == []
+    assert SECRET not in probe.summary()
+
+
+@pytest.mark.parametrize("phase", ["adopt", "observe"])
+@pytest.mark.parametrize("uncertain", [False, True])
+def test_real_host_native_denial_is_diagnostic_without_payloads(
+    monkeypatch, host_setup, audit_probe, phase, uncertain
+):
+    import io
+
+    from code_forge import invocation_audit as audit
+    from tests import test_invocation_host as host_tests
+
+    make, _ = host_setup
+    host, notices = make()
+    attempt = host_tests.admit(host.scope(), host_tests.request())
+    if phase == "adopt":
+        monkeypatch.setattr(
+            integration.MockRecorder,
+            "adopt_stage",
+            lambda *a, **kw: audit.AcquiredAcknowledgement(False, None, None, None, uncertain),
+        )
+    else:
+        monkeypatch.setattr(
+            integration.MockRecorder,
+            "observe_response",
+            lambda *a, **kw: audit.AuditAcknowledgement(False, None, uncertain),
+        )
+    raw = SECRET.encode()
+    captured = attempt.new_response(status=200, redirect_hop=None, deadline=attempt._deadline)
+    consumed = b"".join(captured.chunks(io.BytesIO(raw))) == raw
+    assert consumed, audit_probe.summary()
+    captured.seal()
+    if phase == "observe":
+        assert attempt.observe_response(frame_offset=0, frame_length=len(raw)) is False
+    else:
+        assert (
+            attempt.finish(outcome="completed", error_class=None, duration_s=0.01, usage=None) is False
+        )
+    assert notices
+    assert not host.safe_summary().audit_complete
+    event = next(event for event in audit_probe.events if event.get("phase") == phase)
+    assert event["state"] == "ack" and event["ack_admitted"] is False
+    assert event["ack_uncertain"] is uncertain
+    assert event["publication_uncertain"] is False
+    assert SECRET not in audit_probe.summary()
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_actual_privacy_failure_transcript_and_replay_keep_only_safe_metadata(
+    tmp_path, monkeypatch, capsys, partial
+):
+    import json
+    import os
+    from pathlib import Path
+    import subprocess
+
+    from scripts import ci_publish_failure_log as replay, ci_test_shards
+
+    root = Path(__file__).resolve().parents[1]
+    target = (
+        "tests/test_inline_canary_diagnostic_privacy.py::"
+        "test_inline_discarded_findings_stay_private[empty-True-False]"
+    )
+    private_error = "PRIVATE_OPEN_ERROR_MESSAGE_SENTINEL"
+    private_partial = "PRIVATE_PARTIAL_RAW_BYTES_SENTINEL"
+    credential = "SYNTHETIC_API_KEY_NOT_FOR_CHILD"
+    plugin = tmp_path / "privacy_failure_injection.py"
+    plugin.write_text(
+        "import os\n"
+        "import pytest\n"
+        "from tests import test_cli_inline_audit_integration as integration\n"
+        "from tests import test_inline_canary_diagnostic_privacy as privacy\n"
+        "@pytest.fixture(autouse=True)\n"
+        "def inject_open_failure(monkeypatch, host_setup):\n"
+        "    assert 'API_KEY' not in os.environ\n"
+        "    monkeypatch.setattr(integration.MockRecorder, 'fail', 'open')\n"
+        f"    monkeypatch.setattr(integration.MockRecorder, 'error', OSError({private_error!r}))\n"
+        + (
+            f"    monkeypatch.setattr(privacy, 'captured_raw', lambda: {private_partial.encode()!r})\n"
+            if partial
+            else ""
+        )
+    )
+    monkeypatch.setenv("API_KEY", credential)
+    environment = replay.test_environment(
+        {
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join((str(tmp_path), str(root), str(root / "src"))),
+        }
+    )
+    assert "API_KEY" not in environment
+    report = tmp_path / "receipt.json"
+    result = subprocess.run(
+        ci_test_shards.command_for_pytest(
+            "shard-0", "0" * 40, report, ["-p", "privacy_failure_injection", target]
+        ),
+        cwd=root,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    transcript = result.stdout
+    assert result.returncode == 1
+    assert "AssertionError: safe audit trace:" in transcript
+    assert "1 failed" in transcript
+    assert "safe audit trace: " in transcript
+    assert '"first_failure":' in transcript
+    assert '"phase": "open"' in transcript
+    assert '"error": "llm_invoke_error"' in transcript
+    assert '"event": "request_error"' in transcript
+    for private in (SECRET, private_error, private_partial, "PRIVATE reasoning", credential):
+        assert private not in transcript
+    receipt_text = report.read_text()
+    receipt = json.loads(receipt_text)
+    assert receipt["exitstatus"] == 1 and receipt["collected"] == [target]
+    failures = [row for row in receipt["reports"] if row["outcome"] == "failed"]
+    assert len(failures) == 1
+    assert failures[0]["failure_kind"] == "assertion" and failures[0]["when"] == "call"
+    assert "native_failure_detail" not in receipt_text
+    for private in (SECRET, private_error, private_partial, credential):
+        assert private not in receipt_text
+    (tmp_path / "shard-0.log").write_text(transcript)
+    replay.publish(tmp_path, "shard-0")
+    published = capsys.readouterr().out
+    assert "Failure transcript: shard-0 (diagnostic only)" in published
+    assert "safe audit trace: " in published
+    assert '"first_failure":' in published
+    assert '"phase": "open"' in published
+    assert '"error": "llm_invoke_error"' in published
+    assert "1 failed" in published
+    assert published.startswith("::stop-commands::")
+    for private in (SECRET, private_error, private_partial, "PRIVATE reasoning", credential):
+        assert private not in published
