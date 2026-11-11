@@ -8,12 +8,23 @@ import pytest
 from code_forge import canary_gen
 from code_forge.state import Verdict
 from tests import test_cli_inline_audit_integration as integration
+from tests.audit_diagnostic_probe import AuditDiagnosticProbe
 
 real_inline = integration.real_inline
 host_setup = integration.host_setup
 api_backend = integration.api_backend
 
 SECRET = "PRIVATE_DISCARDED_FINDING_SENTINEL"
+REASONING = b"PRIVATE reasoning"
+
+
+@pytest.fixture
+def audit_probe(monkeypatch, host_setup):
+    # Install before real_inline issues any controls; no production diagnostic changes.
+    _, supervisor = host_setup
+    probe = AuditDiagnosticProbe()
+    probe.install(monkeypatch, supervisor)
+    return probe
 
 
 def captured_raw():
@@ -27,7 +38,9 @@ def captured_raw():
 @pytest.mark.parametrize("strict", [False, True])
 @pytest.mark.parametrize("quiet", [False, True])
 @pytest.mark.parametrize("kind", ["missing", "empty", "mixed"])
-def test_inline_discarded_findings_stay_private(real_inline, monkeypatch, capsys, strict, quiet, kind):
+def test_inline_discarded_findings_stay_private(
+    real_inline, audit_probe, monkeypatch, capsys, strict, quiet, kind
+):
     run, hosts = real_inline
     finding = dict(file=SECRET, line=1, severity="", description=SECRET)
     if kind == "missing":
@@ -44,9 +57,12 @@ def test_inline_discarded_findings_stay_private(real_inline, monkeypatch, capsys
     expected = Verdict.DELEGATED if kind == "mixed" else Verdict.UNRELIABLE
     assert run(strict=strict, quiet=quiet) is expected
     assert len(transport.requests) == 2
-    assert SECRET.encode() in captured_raw()
-    assert b"PRIVATE reasoning" in captured_raw()
-    assert hosts[0].safe_summary().audit_complete
+    # Boolean locals keep pytest assertion rewriting from printing captured bytes.
+    contains_finding = SECRET.encode() in captured_raw()
+    contains_reasoning = REASONING in captured_raw()
+    assert contains_finding, audit_probe.summary()
+    assert contains_reasoning, audit_probe.summary()
+    assert hosts[0].safe_summary().audit_complete, audit_probe.summary()
     output = capsys.readouterr()
     assert SECRET not in output.out + output.err
     assert "PRIVATE reasoning" not in output.out + output.err
@@ -192,3 +208,109 @@ def test_safe_missed_canary_diagnostic_keeps_host_ids(monkeypatch, capsys):
         safe_diagnostics=True,
     ) == (Verdict.UNRELIABLE, [])
     assert "missed canaries: host-generated-id" in capsys.readouterr().err
+
+
+def test_audit_probe_allowlists_metadata_without_formatting_payloads():
+    from code_forge.invocation_io import AuditPhase, IoOutcome
+
+    class PrivateValue:
+        def __repr__(self):
+            raise AssertionError("must not format raw or storage objects")
+
+        __str__ = __repr__
+
+    private_error = type(SECRET, (OSError,), {})(SECRET)
+    probe = AuditDiagnosticProbe()
+    probe.observe_outcome(
+        AuditPhase.OPEN,
+        IoOutcome("unknown", value=PrivateValue(), error=private_error, publication_uncertain=True),
+    )
+    probe.observe_outcome(PrivateValue(), IoOutcome(SECRET, value=PrivateValue()))
+    probe.observe_outcome(AuditPhase.APPEND, PrivateValue())
+    summary = probe.summary()
+    assert SECRET not in summary
+    assert '"phase": "open"' in summary
+    assert '"state": "unknown"' in summary
+    assert '"error": "other_error"' in summary
+    assert '"publication_uncertain": true' in summary
+    assert '"state": "other_state"' in summary
+    assert '"state": "other_outcome"' in summary
+
+
+def test_audit_probe_is_bounded_and_preserves_negative_ack():
+    from code_forge.invocation_io import AuditPhase, IoOutcome
+
+    probe = AuditDiagnosticProbe()
+    for _ in range(100):
+        probe.observe_outcome(AuditPhase.OPEN, IoOutcome("expired", not_executed=True))
+    assert len(probe.events) == 64
+    assert all(event["state"] == "expired" and event["not_executed"] for event in probe.events)
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, MemoryError, KeyboardInterrupt])
+def test_audit_probe_preserves_wait_exception_identity(monkeypatch, host_setup, error_type):
+    _, supervisor = host_setup
+    error = error_type(SECRET)
+
+    def fail(ticket):
+        raise error
+
+    monkeypatch.setattr(supervisor, "wait", fail)
+    probe = AuditDiagnosticProbe()
+    probe.install(monkeypatch, supervisor)
+    with pytest.raises(error_type) as caught:
+        supervisor.wait(None)
+    assert caught.value is error
+    assert SECRET not in probe.summary()
+    assert probe.events[-1] == dict(
+        event="wait_error",
+        phase="other_phase",
+        error={RuntimeError: "runtime_error", MemoryError: "memory_error"}.get(
+            error_type, "other_error"
+        ),
+    )
+
+
+def test_audit_probe_records_open_failure_without_enabling_capture(
+    real_inline, audit_probe, monkeypatch, capsys
+):
+    run, hosts = real_inline
+    monkeypatch.setattr(integration.MockRecorder, "fail", "open")
+    monkeypatch.setattr(integration.MockRecorder, "error", OSError(SECRET))
+    transport = integration.scripted(
+        monkeypatch, [integration.wire({"mutations": []}), integration.wire({"findings": []})]
+    )
+    assert run(strict=False) is Verdict.UNRELIABLE
+    assert len(transport.requests) == 2
+    assert captured_raw() == b""
+    assert not hosts[0].safe_summary().audit_complete
+    summary = audit_probe.summary()
+    assert SECRET not in summary
+    assert any(
+        e.get("phase") == "open" and e.get("error") == "llm_invoke_error" for e in audit_probe.events
+    ), summary
+    assert any(e["event"] == "request_error" for e in audit_probe.events)
+    assert "safe audit trace" not in capsys.readouterr().err
+
+
+def test_audit_probe_preserves_worker_result_identity(monkeypatch, host_setup):
+    from code_forge import invocation_io
+    from code_forge.invocation_io import AuditPhase
+
+    _, supervisor = host_setup
+    value, error = object(), OSError(SECRET)
+    calls = []
+
+    def original(*args):
+        calls.append(args)
+        return value, error
+
+    monkeypatch.setattr(invocation_io, "_call_target", original)
+    probe = AuditDiagnosticProbe()
+    probe.install(monkeypatch, supervisor)
+    target, payload = object(), b"PRIVATE raw bytes"
+    actual_value, actual_error = invocation_io._call_target(target, AuditPhase.APPEND, payload, 17)
+    assert actual_value is value and actual_error is error
+    assert calls == [(target, AuditPhase.APPEND, payload, 17)]
+    assert probe.events[-1] == dict(event="worker_error", phase="append", error="os_error")
+    assert SECRET not in probe.summary() and "PRIVATE raw bytes" not in probe.summary()
