@@ -727,6 +727,11 @@ def qualified_runtime(request, measured_runtimes):
             "e30aebb8ee741d2cc085012dee508c1a592697d4282acd00d161a01ba8e8c308",
             "8adcd82d1c4af72e99491666428e0f7fd0eea09fb305b2dfa5994b65691285d8",
         ),
+        ("cpython-314", "9.2.0"): (
+            "d297eaeba8f6ecfeb73acaa8eef2092203aa49343eb7c77ffedb8ef95b5717ab",
+            "e30aebb8ee741d2cc085012dee508c1a592697d4282acd00d161a01ba8e8c308",
+            "8adcd82d1c4af72e99491666428e0f7fd0eea09fb305b2dfa5994b65691285d8",
+        ),
     }
     assert row["source_sha256"] == dict(zip(("config", "main", "rewrite"), sources[pair], strict=True))
     return row

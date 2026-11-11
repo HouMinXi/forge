@@ -152,6 +152,16 @@ def test_real_runner_relative_and_absolute_primary_external_data_dir(world, abso
     assert world[2].parent != world[0] and world[3].parent != world[1]
 
 
+def test_source_resolution_preserves_missing_suffix_after_symlink(tmp_path):
+    directory = tmp_path / "real"
+    directory.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(directory, target_is_directory=True)
+    missing = directory / "deleted" / "source.c"
+    assert not missing.exists()
+    assert impact._resolve_source_path(alias / "deleted" / "source.c") == missing
+
+
 @pytest.mark.parametrize("reader", ["primary", "sibling"])
 def test_nonempty_read_requires_explicit_root(world, reader):
     seed(world)

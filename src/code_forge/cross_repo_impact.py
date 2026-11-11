@@ -181,10 +181,23 @@ def _relative_graph_path(file_path: str) -> PurePosixPath:
     return PurePosixPath(file_path)
 
 
+def _resolve_source_path(path: Path) -> Path:
+    """Allow missing source files, but never suppress a symlink resolution loop."""
+    resolved = path.resolve()
+    # Newer Python does not raise for loops in non-strict resolve(). A final
+    # metadata lookup retains ELOOP and other errors without requiring a
+    # deleted source file to exist. No source contents are read here.
+    try:
+        resolved.stat()
+    except FileNotFoundError:
+        pass
+    return resolved
+
+
 def _path_identities(file_path: str, roots: tuple[Path, ...]) -> tuple[str, ...]:
     relative = _relative_graph_path(file_path)
     try:
-        resolved = (roots[0] / relative).resolve()
+        resolved = _resolve_source_path(roots[0] / relative)
         if not resolved.is_relative_to(roots[1]):
             raise GraphIdentityError("graph path leaves the repository root")
     except (OSError, RuntimeError, ValueError) as exc:
@@ -219,7 +232,7 @@ def _caller_source_path(file_path: str | None, roots: tuple[Path, ...], cursor: 
     # Do not let the shared liveness reader interpret a relative path against
     # the process CWD. The graph identity returned to callers stays unchanged.
     try:
-        source_path = (roots[0] / relative).resolve()
+        source_path = _resolve_source_path(roots[0] / relative)
     except (OSError, RuntimeError, ValueError) as exc:
         raise GraphIdentityError("caller source path unavailable") from exc
     if not source_path.is_relative_to(roots[1]):

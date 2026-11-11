@@ -305,6 +305,16 @@ def test_original_commands_change_only_private_transport_and_environment(job_nam
     export = 'export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"\n'
     assert body.count(export) == int(step_name == "Install declared extras and qualified pytest")
     body = body.replace(export, "")
+    # Admit only the additional mandatory runtime supply. All original commands
+    # and their authority remain compared against the unchanged snapshot.
+    supply = (
+        "# Supply the required 3.14 pair while keeping the suite and sandbox on 3.12.\n"
+        "python3.14 -m pip install 'pytest==9.2.0'\n"
+        "python3.14 -c 'import sys, pytest; assert sys.implementation.cache_tag == "
+        '"cpython-314"; assert pytest.__version__ == "9.2.0"\'\n'
+    )
+    assert body.count(supply) == int(step_name == "Install declared extras and qualified pytest")
+    body = body.replace(supply, "")
     if step_name in {"Run ownership", "Run cgroup", "Run local"}:
         phase = step_name.removeprefix("Run ")
         driver_log = f'| tee "$EVIDENCE/driver-{phase}.log"'
@@ -364,6 +374,9 @@ def test_full_workflow_preserves_original_authority_failures_budgets_and_paralle
             }
         for step in job["steps"]:
             step.pop("run", None)
+            if step["name"] == "Set up qualified Python":
+                assert step["with"]["python-version"] == "3.14\n3.12"
+                step["with"]["python-version"] = "3.12"
             if step["name"] in DIAGNOSTIC_PRODUCER_IDS:
                 assert step.pop("id") == DIAGNOSTIC_PRODUCER_IDS[step["name"]]
             if step.get("uses", "").startswith("actions/upload-artifact@"):

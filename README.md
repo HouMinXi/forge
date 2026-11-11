@@ -506,14 +506,15 @@ symptom surfaces much later and points the wrong way: mutmut 2.x under a
 `>=3.4` requirement aborts every mutation run with a module-path error
 that reads like a bug in the review.
 
-The dev extra pins `pytest==9.2.0`. Run the test suite on CPython 3.12: with
-that pin it is the only interpreter whose pair is in `QUALIFIED_RUNTIMES`
-(`src/code_forge/_gate_pytest.py`). Forge itself installs on Python 3.12 or
-newer, so the classifiers keep listing 3.13 and 3.14. The pytest gate, however,
-refuses a runtime that is not qualified, so the gate tests fail on those
-interpreters (#102).
+The dev extra pins `pytest==9.2.0`. The target test contract is CPython 3.14,
+including the interpreter inside mutation sandboxes. CPython 3.12 remains
+qualified for backward compatibility in `QUALIFIED_RUNTIMES`
+(`src/code_forge/_gate_pytest.py`). Forge itself still installs on Python 3.12
+or newer. The separate stock-runner qualification workflow validates the
+3.14 migration before it replaces the current required Linux workflow;
+see [the qualification plan](docs/stock-runner-qualification.md).
 
-Python versions in the classifiers that are not qualified for the pinned pytest: 3.13, 3.14.
+Python versions in the classifiers that are not qualified for the pinned pytest: 3.13.
 
 ## Installation alternatives
 
@@ -587,7 +588,7 @@ direct `python -m pytest` or `python3 -m pytest` invocation (also supported
 with `-B` before `-m`). The gate inserts a unique first `-p` bootstrap and
 preserves the original arguments, selection, `PYTEST_ADDOPTS` and
 `PYTEST_PLUGINS`. Runtime qualification currently covers exact pytest 8.4.2
-on CPython 3.9, 9.1.0 on CPython 3.14 and 9.1.1 / 9.2.0 on CPython 3.12, with optimization disabled and
+on CPython 3.9, 9.1.0 / 9.2.0 on CPython 3.14 and 9.1.1 / 9.2.0 on CPython 3.12, with optimization disabled and
 the default bytecode cache location (or `-B`). The former qualifies only
 the standalone reporter, while Forge itself still requires Python 3.12
 or later. Node identities that cannot be encoded as UTF-8, including POSIX
