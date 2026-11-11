@@ -2,8 +2,9 @@
 
 NOT RUN on unsupported hosts. The existing disk_root fixture chooses the
 checkout filesystem; admission, host, owner, recorder, and reopening are real.
-Only the HTTP opener/response and synthetic credential are controlled. These
-are not installed-CLI, external-network, crash-recovery, or whole-review tests.
+The HTTP opener/response and synthetic credential are controlled; the fanout
+regression also controls post-publication owner-lock timing. These are not
+installed-CLI, external-network, crash-recovery, or whole-review tests.
 """
 
 from dataclasses import dataclass
@@ -409,11 +410,15 @@ def test_native_parallel_fanout_preserves_publication_boundary(
             evidence.append((stage, ack.ref, raw))
 
             def hold():
-                with stage._owner._mutex:
+                if not stage._owner._mutex.acquire(timeout=2):
+                    return
+                try:
                     locked.set()
                     # Watchdog only. Failure must reach the test thread, not be
                     # reduced to a background-thread assertion warning.
                     released.append(release.wait(5))
+                finally:
+                    stage._owner._mutex.release()
 
             holder = threading.Thread(target=hold)
             holders.append(holder)
