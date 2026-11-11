@@ -15,6 +15,20 @@ from code_forge import cross_repo_impact as impact
 
 
 MESSAGE = "cross-repo-impact: no named changed symbols resolved; direct-caller impact not evaluated"
+QUERY_SUMMARY = (
+    "cross-repo-impact: direct-caller queries completed for %d of %d registered sibling entries "
+    "(%d attempted; %d unavailable). Entries may repeat repositories. "
+    "Repositories outside this registered scope were not searched for direct callers. "
+    "Graph freshness and full impact coverage are not established."
+)
+EMPTY_SCOPE = (
+    "cross-repo-impact: no sibling registry entries; direct-caller impact not evaluated. "
+    "Repositories outside this registered scope were not searched for direct callers."
+)
+UNAVAILABLE_SCOPE = (
+    "cross-repo-impact: registry scope unavailable; direct-caller impact not evaluated. "
+    "Registered query scope was not established."
+)
 DIFF = "diff --git a/api.py b/api.py\n--- a/api.py\n+++ b/api.py\n@@ -1 +1 @@\n-old\n+new\n"
 
 
@@ -139,7 +153,7 @@ def test_resolved_targets_keep_findings_and_cache_without_zero_target_output(gra
     assert actual == expected
     assert runner.infra_errors == control.infra_errors == []
     assert runner.run(DIFF, primary) is actual
-    assert messages == []
+    assert messages == [QUERY_SUMMARY % (1, 1, 1, 0)]
 
 
 def test_zero_targets_remain_uncached_and_later_errors_or_targets_are_not_relabelled(graphs):
@@ -160,7 +174,7 @@ def test_zero_targets_remain_uncached_and_later_errors_or_targets_are_not_relabe
     assert runner.run(DIFF, primary) == []
     assert runner.infra_errors == []
     assert runner._cached == []
-    assert messages == [MESSAGE, MESSAGE]
+    assert messages == [MESSAGE, MESSAGE, QUERY_SUMMARY % (1, 1, 1, 0)]
 
 
 def test_default_runner_is_silent(graphs, capsys):
@@ -679,7 +693,7 @@ def test_unusable_enumeration_preserves_primary_branch_priority(graphs, monkeypa
         assert runner.infra_errors == []
         assert messages == [MESSAGE]
     else:
-        assert messages == []
+        assert messages == ([UNAVAILABLE_SCOPE] if primary_state == "named" else [])
         assert len(runner.infra_errors) == 1
         error = runner.infra_errors[0]
         if primary_state == "missing":
