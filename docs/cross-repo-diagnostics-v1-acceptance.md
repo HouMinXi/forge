@@ -53,6 +53,38 @@ The first post-merge review found a test-oracle defect, not a decoder defect: de
 
 The contract's retained configuration/history/observation budgets are separate from the 4096-byte decoder budget. Sixty-four payloads imply at most 256 KiB of logical final payload, not total filesystem allocation, temporary-name retention, a global cross-run retention bound or a time limit. No new numerical ceiling or platform expansion is introduced here.
 
+### W1-11: independent decoder byte-boundary oracle
+
+W1-11 is a proposed replacement clause identifier for
+[“批准字节上限与加一”](https://github.com/HouMinXi/forge/issues/441#issuecomment-6745701302)
+(approved byte limit and one beyond), not a recovered original test node identity.
+
+`tests/test_advisory_diagnostics.py::test_wire_byte_budget_on_otherwise_valid_document[4096]`
+and `[4097]` pad a legal v1 payload with JSON whitespace. The unmodified ordinary
+JSON parser produces the same document at both lengths; the strict decoder must
+return the independently held observation at 4096 bytes and reject 4097 with
+`invalid_schema`. These literal limits describe the current implementation, not
+formal G02 approval. The existing maximum-string test already accepted 4096
+bytes, and the existing pre-parser sentinel already detected omission of the byte
+guard. The new cases add a semantic rejection oracle with the real parser; they
+do not repair a demonstrated product defect.
+
+Local qualification against production revision
+`ceeffa291e85499e81e48886b764d455084f3924` ran the new pair unchanged, then in an
+isolated source copy removed only the decoder's length predicate while retaining
+its bytes-type check. Only `[4097]` failed, with `DID NOT RAISE`. Separately replacing
+that predicate's `>` with `>=` failed only `[4096]` with `invalid_schema` at the
+acceptance assertion. Byte-exact restoration passed the same pair after each
+control. These are deliberately induced failures, not baseline product failures.
+
+This qualification is codec-only. It does not exercise publisher output,
+`read_observation`, its locator limit, `_read_leaf`'s combined identity/size guard,
+or bounded streaming. The compact legal publisher payload is below this boundary;
+a padded reader fixture would require controlled bytes and matching locator
+metadata. No filesystem qualification, post-execution retrieval, full replacement
+catalog, G02/G12 acceptance, or recovered original-port credit follows. The
+original 78-test node identities and test bytes remain **UNKNOWN**.
+
 ## Reachable gate evidence and its limits
 
 The original persistent CLI/MCP fixtures use the real host, runner, SQLite, publisher and reader but replace `StateMachine._run_ci` with a supplied verdict. They prove transport and isolation conditional on that verdict. They do not by themselves prove natural PASS/FAIL reachability or HOLD recovery.
@@ -150,3 +182,56 @@ An admission decision should name the product revision and this evidence revisio
 ## Bounded T17 publication-contention supplement
 
 The [publication-contention evidence](cross-repo-diagnostics-publication-contention.md) adds six public nodes at production baseline `f4c9214a813cd5604ed63462b3268343ed6f800c`: three overlapping real-publisher cases plus three harness-failure controls. It records distinct-execution isolation, adversarial same-key non-overwrite with an unknown/no-locator loser, foreign staging preservation, and four source-specific RED/restored-GREEN controls. These library calls use controlled commit scheduling, not simultaneous complete hosts. Full T17/A06, G08/G10/G12, G04/G09 and G0/G1 decisions remain open; no production or lifecycle behavior changes.
+
+## Native CLI/MCP consumer-chain supplement
+
+Six docs-only cases in `test_cross_repo_native_consumer_chain.py` bridge the
+previous native dispatch-helper coverage to public immediate/background MCP
+handlers and their real CLI child. The owned launcher invokes the genuine parser
+and observes, rather than replaces, CI, L1, real falsification and advisory axes.
+The backend is a deterministic local executable; PASS/FAIL is computed by native
+CI. Temporary real Git/SQLite inputs, trusted backend configuration, subprocess
+outlet, one clean round and the promotion/release budget are controlled. The
+optional provider-free setup replaces only its pure registry-path locator.
+
+Each execution retains expected identity at host capture construction, before
+publication. Bounded test metadata records exact consumer counts, strict-read
+results, gate-state equality and receipt hashes without serializing errors,
+tracebacks or backend prompts. The parent compares that independently issued
+identity with the reader and stored payload, checks unchanged receipt bytes at
+the copied source-root destination, and requires the attributed diagnostic in
+both structured MCP output and visible text. This metadata is test
+instrumentation, not a production result outlet or post-return retrieval API.
+
+Four cases cover primary native PASS/FAIL through immediate and background
+handlers. Two immediate cases remove the newly published record just before its
+real strict read: rejection retains the immediate diagnostic and adds exactly
+one persistence warning, without changing the native primary decision or receipt
+gates. The sibling executes genuine CI too: this docs-only fixture has no sibling
+L1, so its one native coverage gap produces FAIL and an explicit sibling warning.
+The host's existing primary-authoritative return remains PASS or FAIL as computed
+for the primary. These cases do not claim all repositories pass.
+
+Every case checks worker-directory and source-lock cleanup. Background cases
+retain and await their own wait tasks; both paths observe and settle the actual
+communicate task. Failure cleanup uses the existing native CLI process-group
+termination and reaping operation. Native backend invocations create separate
+sessions, so the owned no-descendant backend independently records PID/start-time
+and normal-exit markers and has a five-second self-watchdog. Tests require those
+exact process identities to disappear, separately from CLI reaping. There is no
+global job/process cleanup or general detached-process lifecycle claim. Same-source
+named-target transitions are deferred
+rather than turning a synthetic README node into purported named-code evidence.
+This supplement does not qualify mutation workloads, HOLD/recovery, SDK-stdio or
+MCP wire transport, provider graph freshness, original-port equivalence, or formal
+G04/G09/G0/G1 acceptance. No production or #68/#400 interface changes are made.
+
+Three isolated single-boundary controls discriminate this oracle:
+replacing strict consumption with the in-memory observation fails all four normal
+cases at the missing-read count; removing the diagnostic only from structured MCP
+output fails both immediate cases at the output assertion; omitting the warning
+from the read-loss fallback fails both loss cases at the warning assertion. Each
+byte-exact source restoration passes all six cases. These intentional semantic
+failures are not baseline regressions or additive coverage. Early development
+failures corrected harness assumptions about the repository-binding object,
+sibling coverage and fallback tuple length; none is presented as a product bug.
