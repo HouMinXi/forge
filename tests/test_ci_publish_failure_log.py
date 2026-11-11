@@ -114,6 +114,12 @@ def test_workflow_failure_only_sidecars_and_no_credential_injection():
     workflow = yaml.safe_load(raw)
     assert set(workflow["on"]) == {"pull_request", "push", "workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["jobs"]["service-free"]["env"] == {"FORGE_CI_AUDIT_TRACE": "1"}
+    assert all(
+        "FORGE_CI_AUDIT_TRACE" not in job.get("env", {})
+        for name, job in workflow["jobs"].items()
+        if name != "service-free"
+    )
     assert not re.search(r"\$\{\{[^}]*\b(?:secrets|github\.token)", raw)
     expected = {
         "process-contracts": [(phase, phase + "_receipt") for phase in ("ownership", "cgroup", "local")],

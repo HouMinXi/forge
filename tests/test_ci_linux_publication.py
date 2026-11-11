@@ -326,6 +326,9 @@ def test_full_workflow_preserves_original_authority_failures_budgets_and_paralle
         for step in diagnostics:
             job["steps"].remove(step)
         if job_name == "service-free":
+            # Admit only the explicitly reviewed test-only trace switch. Keep
+            # the original authority/budget/concurrency snapshot unchanged.
+            assert job.pop("env") == {"FORGE_CI_AUDIT_TRACE": "1"}
             assert_failure_diagnostic_steps(job["steps"])
             del job["steps"][-3:]
         summaries = [s for s in job["steps"] if s["name"] == SUMMARY_NAME]

@@ -3,6 +3,8 @@
 Real inline -> llm_invoke -> host capture, with mock transport/storage only.
 """
 
+import os
+
 import pytest
 
 from code_forge import canary_gen
@@ -22,7 +24,7 @@ REASONING = b"PRIVATE reasoning"
 def audit_probe(monkeypatch, host_setup):
     # Install before real_inline issues any controls; no production diagnostic changes.
     _, supervisor = host_setup
-    probe = AuditDiagnosticProbe()
+    probe = AuditDiagnosticProbe(detailed=os.environ.get("FORGE_CI_AUDIT_TRACE") == "1")
     probe.install(monkeypatch, supervisor)
     return probe
 
@@ -640,9 +642,10 @@ def test_real_host_native_denial_is_diagnostic_without_payloads(
     assert SECRET not in audit_probe.summary()
 
 
+@pytest.mark.parametrize("detailed", [False, True])
 @pytest.mark.parametrize("partial", [False, True])
 def test_actual_privacy_failure_transcript_and_replay_keep_only_safe_metadata(
-    tmp_path, monkeypatch, capsys, partial
+    tmp_path, monkeypatch, capsys, partial, detailed
 ):
     import json
     import os
@@ -669,7 +672,7 @@ def test_actual_privacy_failure_transcript_and_replay_keep_only_safe_metadata(
         "def inject_open_failure(monkeypatch, host_setup):\n"
         "    assert 'API_KEY' not in os.environ\n"
         "    monkeypatch.setattr(integration.MockRecorder, 'fail', 'open')\n"
-        f"    monkeypatch.setattr(integration.MockRecorder, 'error', OSError({private_error!r}))\n"
+        f"    monkeypatch.setattr(integration.MockRecorder, 'error', OSError(5, {private_error!r}))\n"
         + (
             f"    monkeypatch.setattr(privacy, 'captured_raw', lambda: {private_partial.encode()!r})\n"
             if partial
@@ -677,6 +680,7 @@ def test_actual_privacy_failure_transcript_and_replay_keep_only_safe_metadata(
         )
     )
     monkeypatch.setenv("API_KEY", credential)
+    monkeypatch.setenv("FORGE_CI_AUDIT_TRACE", "1" if detailed else "0")
     environment = replay.test_environment(
         {
             **os.environ,
@@ -706,6 +710,15 @@ def test_actual_privacy_failure_transcript_and_replay_keep_only_safe_metadata(
     assert '"phase": "open"' in transcript
     assert '"error": "llm_invoke_error"' in transcript
     assert '"event": "request_error"' in transcript
+    if detailed:
+        assert '"event": "recorder_error"' in transcript
+        assert '"errno": 5' in transcript
+        assert '"error": "os_error"' in transcript
+        assert '"path": "tests/test_invocation_host.py"' in transcript
+        assert '"event": "wait_timing"' in transcript
+    else:
+        assert '"exception_chain"' not in transcript
+        assert '"event": "recorder_error"' not in transcript
     for private in (SECRET, private_error, private_partial, "PRIVATE reasoning", credential):
         assert private not in transcript
     receipt_text = report.read_text()
@@ -726,6 +739,131 @@ def test_actual_privacy_failure_transcript_and_replay_keep_only_safe_metadata(
     assert '"phase": "open"' in published
     assert '"error": "llm_invoke_error"' in published
     assert "1 failed" in published
+    if detailed:
+        assert '"event": "recorder_error"' in published
+        assert '"errno": 5' in published
+        assert '"path": "tests/test_invocation_host.py"' in published
     assert published.startswith("::stop-commands::")
     for private in (SECRET, private_error, private_partial, "PRIVATE reasoning", credential):
         assert private not in published
+
+
+@pytest.mark.parametrize("error_type", [OSError, MemoryError, KeyboardInterrupt])
+def test_detailed_recorder_probe_preserves_original_exception_before_translation(
+    monkeypatch, host_setup, error_type
+):
+    from code_forge import invocation_owner
+
+    _, supervisor = host_setup
+    error = error_type(SECRET)
+    seen = []
+
+    def owner_call(owner, function, phase, **kwargs):
+        seen.append((owner, phase, kwargs))
+        return function(**kwargs)
+
+    monkeypatch.setattr(invocation_owner.InvocationOwner, "_call", owner_call)
+    probe = AuditDiagnosticProbe(detailed=True)
+    probe.install(monkeypatch, supervisor)
+    owner, payload = object(), object()
+
+    def fail(**kwargs):
+        assert kwargs == {"payload": payload}
+        raise error
+
+    with pytest.raises(error_type) as caught:
+        invocation_owner.InvocationOwner._call(owner, fail, "open", payload=payload)
+    assert caught.value is error
+    assert seen == [(owner, "open", {"payload": payload})]
+    first = diagnostic_document(probe)["first_failure"]
+    assert first["event"] == "recorder_error" and first["phase"] == "open"
+    assert first["exception_chain"]["exceptions"][0]["relation"] == "observed"
+    assert SECRET not in probe.summary()
+
+
+def test_detailed_probe_retains_clean_ack_and_has_no_healthy_events(monkeypatch, host_setup):
+    from code_forge import invocation_owner
+
+    _, supervisor = host_setup
+    value = object()
+    monkeypatch.setattr(
+        invocation_owner.InvocationOwner, "_call", lambda _owner, function, _phase, **kw: function(**kw)
+    )
+    probe = AuditDiagnosticProbe(detailed=True)
+    probe.install(monkeypatch, supervisor)
+    assert invocation_owner.InvocationOwner._call(None, lambda: value, "open") is value
+    assert diagnostic_document(probe) == {"first_failure": None, "events": []}
+
+
+@pytest.mark.parametrize("fault", ["clock", "snapshot", "record"])
+def test_detailed_probe_failures_do_not_change_original_result(monkeypatch, host_setup, fault):
+    from code_forge import invocation_owner
+    from code_forge.invocation_io import IoOutcome
+    from tests import audit_diagnostic_probe as diagnostic
+
+    _, supervisor = host_setup
+    expected = IoOutcome("expired", not_executed=True)
+    monkeypatch.setattr(supervisor, "wait", lambda _: expected)
+    monkeypatch.setattr(
+        invocation_owner.InvocationOwner, "_call", lambda _owner, function, _phase, **kw: function(**kw)
+    )
+    probe = AuditDiagnosticProbe(detailed=True)
+    probe.install(monkeypatch, supervisor)
+
+    def broken(*_a, **_kw):
+        raise MemoryError(SECRET)
+
+    if fault == "clock":
+        # Replace the probe's module reference, not Python's process-wide clock.
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(diagnostic, "time", SimpleNamespace(monotonic_ns=broken))
+    elif fault == "snapshot":
+        monkeypatch.setattr(diagnostic, "exception_chain", broken)
+    else:
+        monkeypatch.setattr(probe, "_record", broken)
+    assert supervisor.wait(None) is expected
+    primary = RuntimeError("primary")
+
+    def fail():
+        raise primary
+
+    with pytest.raises(RuntimeError) as caught:
+        invocation_owner.InvocationOwner._call(None, fail, "open")
+    assert caught.value is primary
+
+
+def test_exception_snapshot_avoids_private_hooks_and_bounds_cycles():
+    from tests.audit_diagnostic_probe import exception_chain
+
+    class PrivateError(OSError):
+        def __getattribute__(self, name):
+            raise AssertionError("private attribute hook")
+
+        def __str__(self):
+            raise AssertionError("private formatting hook")
+
+        __repr__ = __str__
+
+    error = PrivateError(SECRET)
+    BaseException.__context__.__set__(error, error)
+    result = exception_chain(error)
+    assert result["truncated"] is True
+    assert result["exceptions"] == [
+        dict(relation="observed", error="other_error", frames=[], frames_truncated=False)
+    ]
+    assert SECRET not in str(result)
+
+
+def test_exception_snapshot_keeps_bounded_native_cause_and_errno():
+    from tests.audit_diagnostic_probe import exception_chain
+
+    errors = [OSError(5, SECRET) for _ in range(8)]
+    for current, cause in zip(errors, errors[1:], strict=False):
+        BaseException.__cause__.__set__(current, cause)
+    result = exception_chain(errors[0])
+    assert result["truncated"] is True
+    assert len(result["exceptions"]) == 4
+    assert [entry["relation"] for entry in result["exceptions"]] == ["observed"] + ["cause"] * 3
+    assert all(entry["errno"] == 5 for entry in result["exceptions"])
+    assert SECRET not in str(result)

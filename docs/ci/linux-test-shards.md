@@ -336,6 +336,32 @@ nonblocking and checked through the opened descriptor, so a replaced FIFO does
 not stall failure collection. Optional metadata failures do not replace the
 original test outcome; process interruptions still propagate.
 
+### Inline audit first-failure trace
+
+The service-free Linux job explicitly enables `FORGE_CI_AUDIT_TRACE=1`.
+Only the inline privacy test fixture consumes this switch. Its test-only probe
+records a recorder exception *before* `InvocationOwner._call` can replace it
+with a refused acknowledgement and a later `LLMInvokeError`. Production audit
+behavior, timeouts, pytest exit status and qualification receipts are unchanged.
+
+When an inline privacy assertion fails, find `safe audit trace` in the existing
+`Publish failed pytest transcript` step. `first_failure` pins the first inserted
+abnormal event; `events` keeps the last 64. A `recorder_error` supplies the original
+allowlisted exception category, bounded native `errno`, and up to four linked
+exceptions with allowlisted repository file/line coordinates. Worker/request
+errors retain the same metadata, and abnormal waits include elapsed nanoseconds.
+No exception message, source text, arguments, locals, raw capture, provider data,
+credentials or environment dump is included. Unknown exception types use a fixed
+label; unknown source files are omitted. Failure replay retains its credential
+filtering/redaction and workflow-command isolation.
+
+This is observation, not proof of causality: insertion order is not necessarily
+execution order, instrumentation has overhead, suppressed context may not be the
+cause, and truncated/unavailable traces or runner termination can leave gaps.
+An expired wait alone does not prove why its deadline expired. No diagnostic
+rerun replaces the original failure, and the historical intermittent failure is
+not claimed to be reproduced or fixed by this instrumentation.
+
 ### Failure transcript code map and upstream contract
 
 `linux-tests.yml` failed producer outcome → `ci_publish_failure_log.publish` →
