@@ -469,3 +469,123 @@ def test_actual_qualification_venv_interpreter_composition(tmp_path, symlink):
     assert (target.resolve() == original) is symlink
     assert hashlib.sha256(target.read_bytes()).digest() == hashlib.sha256(original.read_bytes()).digest()
     assert "include-system-site-packages = false" in (environment / "pyvenv.cfg").read_text()
+
+
+@pytest.mark.parametrize("shell_exit", [7, 73])
+@pytest.mark.parametrize("corruption", [None, "schema", "extra", "summary_extra"])
+@pytest.mark.parametrize("delivered", [False, True])
+def test_workflow_inline_producers_projectors_and_publication(
+    tmp_path, shell_exit, corruption, delivered
+):
+    """Execute workflow producers, not hand-built replacements; never launch capture."""
+    import subprocess
+    import sys
+
+    import yaml
+
+    source = tmp_path / "public"
+    source.mkdir(mode=0o700)
+    workflow = yaml.safe_load((ROOT / ".github/workflows/cli-capture-diagnostic.yml").read_text())
+    steps = workflow["jobs"]["stock_cli_capture"]["steps"]
+    for step_id, name, delimiter in (
+        ("prepare", "context.json", "CONTEXT"),
+        ("capability", "capability.json", "PY"),
+    ):
+        shell = next(step["run"] for step in steps if step.get("id") == step_id)
+        inline = shell.split("<<'" + delimiter + "'\n", 1)[1].split("\n" + delimiter, 1)[0]
+        # The producers create mode0600 themselves. Only read-only utility discovery
+        # occurs here; no namespace, tracer, installation, or product is executed.
+        result = subprocess.run(
+            [sys.executable, "-I", "-S", "-B", "-", str(source / name)],
+            input=inline,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        assert not result.stdout and not result.stderr
+        if step_id == "prepare":
+            assert result.returncode == 0
+        else:
+            value = json.loads((source / name).read_text())
+            assert result.returncode == (0 if all(value["facts"].values()) else 78)
+        assert (source / name).stat().st_mode & 0o777 == 0o600
+    receipt_fixture = load(ROOT / "tests/test_cli_capture_public_summary.py")
+    for mode in ("baseline", "diagnostic"):
+        result_path = tmp_path / (mode + "-result.json")
+        if delivered:
+            private_receipt = receipt_fixture.receipt(mode, code=7)
+            private_receipt["shell_exit"] = shell_exit
+            result_path.write_text(json.dumps(private_receipt) + "\n")
+            result_path.chmod(0o600)
+        summary = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                "-B",
+                str(ROOT / "scripts/cli_capture_public_summary.py"),
+                "--result",
+                str(result_path),
+                "--mode",
+                mode,
+                "--shell-exit",
+                str(shell_exit),
+            ],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        assert summary.returncode == (0 if delivered else 2)
+        value = json.loads(summary.stdout)
+        assert value["harness_shell_exit"] == shell_exit
+        assert value["qualification"] == "NOT_ASSESSED"
+        path = source / (mode + ".json")
+        path.write_bytes(summary.stdout)
+        path.chmod(0o600)  # Equivalent to the workflow's umask077 redirection.
+    if corruption is not None:
+        path = source / ("baseline.json" if corruption == "summary_extra" else "capability.json")
+        value = json.loads(path.read_text())
+        if corruption == "schema":
+            value["schema"] = "forge-stock-cli-capture-capability-v1"
+        else:
+            value["unreviewed"] = "PRIVATE_CANARY_NOT_FOR_PUBLICATION"
+        path.write_text(json.dumps(value) + "\n")
+    destination = source / "published"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            str(ROOT / "scripts/cli_capture_stock_publication.py"),
+            str(source),
+            str(destination),
+        ],
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    if corruption is not None:
+        assert result.returncode != 0
+        assert not destination.exists()
+    else:
+        assert result.returncode == 0 and not result.stdout and not result.stderr
+        assert {path.name for path in destination.iterdir()} == {
+            "context.json",
+            "capability.json",
+            "baseline.json",
+            "diagnostic.json",
+        }
+        for mode in ("baseline", "diagnostic"):
+            value = json.loads((destination / (mode + ".json")).read_text())
+            assert value["harness_shell_exit"] == shell_exit
+            assert value["qualification"] == "NOT_ASSESSED"
+            assert value["raw_evidence"] == "NOT_PUBLISHED"
+            assert value["cli_returncode"] == (7 if delivered else None)
+            assert receipt_fixture.CANARY not in (destination / (mode + ".json")).read_text()
+            if delivered:
+                assert value["receipt_status"] == "DELIVERED"
+                assert value["collector_delivery"] == (
+                    "NOT_APPLICABLE" if mode == "baseline" else "HEALTHY"
+                )
