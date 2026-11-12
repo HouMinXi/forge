@@ -412,7 +412,7 @@ jobs:
               'strace': shutil.which('strace', path=os.defpath) is not None,
           }
           value = {
-              'schema': 'forge-stock-cli-capture-capability-v1',
+              'schema': 'forge-stock-cli-capability-v1',
               'status': 'PRESENT_NOT_QUALIFIED' if all(facts.values()) else 'UNSUPPORTED',
               'facts': facts,
               'live_admission': 'NOT_RUN',
