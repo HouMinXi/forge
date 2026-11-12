@@ -275,6 +275,7 @@ def run_cross_repo(
     clean_round_threshold: int,
     output_fn=print,
     focus_spec: str = "",
+    scope_ticket_directory: Path | None = None,
 ):
     """Orchestrate cross-repo parallel review.
 
@@ -479,6 +480,11 @@ def run_cross_repo(
                                 diff_text=diff_text,
                                 repo_root=repo_path,
                                 excluded_roots=(args[3] for args in thread_args),
+                                **(
+                                    {"ticket_directory": scope_ticket_directory}
+                                    if scope_ticket_directory is not None
+                                    else {}
+                                ),
                             )
                         except Exception:  # noqa: BLE001 -- Keep native review/output if diagnostic setup is unavailable.
                             diagnostic_notice(PERSISTENCE_WARNING)
@@ -563,6 +569,15 @@ def run_cross_repo(
                         except Exception:  # noqa: BLE001 -- No new diagnostic failure may become a worker/gate failure.
                             for message in diagnostic_capture.warning():
                                 diagnostic_notice(message)
+                    if (
+                        is_primary
+                        and scope_ticket_directory is not None
+                        and (
+                            diagnostic_capture is None
+                            or diagnostic_capture.scope_ticket_status == "no_receipt"
+                        )
+                    ):
+                        diagnostic_notice("scope-ticket: no receipt was issued")
                     results[label] = verdict
                 except (Exception, KeyboardInterrupt, SystemExit) as exc:  # noqa: BLE001 -- Transport worker failures to the joining caller, including process control.
                     errors[label] = exc
