@@ -29,7 +29,7 @@ MAX_FILE_BYTES = 8 * 1024 * 1024
 CHILD_TIMEOUT = 20
 SYNTHETIC_KEY = "synthetic-only"
 _VERIFIED_SOURCES = {}
-CAPTURE_FILES = ("capture_worker.py", "diagnostic_run.py", "diagnostic_probe.py")
+CAPTURE_FILES = ("capture_worker.py", "diagnostic_run.py", "diagnostic_probe.py", "capture_bootstrap.py")
 
 
 def _error(error):

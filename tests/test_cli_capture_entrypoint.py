@@ -426,9 +426,17 @@ def test_per_file_output_limit_not_aggregate_claim(tmp_path, monkeypatch):
 
 
 def test_namespace_command_has_no_pid_namespace_and_clean_env(tmp_path):
-    binding = {"unshare": {"path": "/usr/bin/unshare"}}
+    binding = {
+        "unshare": {"path": "/usr/bin/unshare"},
+        "capture_hashes": {"capture_worker.py": "a" * 64},
+    }
     command = entry.worker_command(
-        binding, "baseline", tmp_path / "worker", Path("/worker.py"), tmp_path / "binding"
+        binding,
+        "baseline",
+        tmp_path / "worker",
+        Path("/worker.py"),
+        tmp_path / "binding",
+        "# fixed bootstrap",
     )
     assert command[:6] == [
         "/usr/bin/unshare",

@@ -31,6 +31,8 @@ LEGACY_SUMMARY_KEYS = SUMMARY_KEYS.copy()
 SUMMARY_KEYS |= {"controller_stage", "controller_error_category", "failure_observation"}
 V2_SUMMARY_KEYS = SUMMARY_KEYS.copy()
 SUMMARY_KEYS |= {"launch_stderr_observation"}
+V3_SUMMARY_KEYS = SUMMARY_KEYS.copy()
+SUMMARY_KEYS |= {"startup_evidence", "startup_stage", "startup_error_category"}
 LAUNCH_OBSERVATIONS = {
     "NOT_ASSESSED",
     "NOT_RECOGNIZED",
@@ -63,6 +65,37 @@ CATEGORIES = {
     "OS_ERROR",
     "OTHER_ERROR",
 }
+
+
+STARTUP_KEYS = {"startup_evidence", "startup_stage", "startup_error_category"}
+STARTUP_ERRORS = {
+    "NONE",
+    "PERMISSION_DENIED",
+    "NOT_FOUND",
+    "NOT_DIRECTORY",
+    "TIMEOUT",
+    "INTERRUPTED",
+    "INVALID_DATA",
+    "OS_ERROR",
+    "IMPORT_ERROR",
+    "SYNTAX_ERROR",
+    "OTHER_ERROR",
+}
+
+
+def startup_valid(value):
+    status, stage, category = (
+        value[key] for key in ("startup_evidence", "startup_stage", "startup_error_category")
+    )
+    if type(status) is not str or type(stage) is not str or type(category) is not str:
+        return False
+    if status in {"NOT_OBSERVED", "INVALID"}:
+        return stage == category == "NOT_OBSERVED"
+    if status == "OBSERVED":
+        return stage == "WORKER_EXECUTION_ENTERED" and category in STARTUP_ERRORS
+    if status == "PARTIAL":
+        return stage in {"BOOTSTRAP_ENTERED", "WORKER_SOURCE_VERIFIED"} and category in STARTUP_ERRORS
+    return False
 
 
 def require(value):
@@ -112,8 +145,17 @@ def validate(value, name):
             "schema": "forge-public-cli-capture-summary-v3",
             "launch_stderr_observation": "NOT_ASSESSED",
         }
+    if value.get("schema") == "forge-public-cli-capture-summary-v3":
+        require(set(value) == V3_SUMMARY_KEYS)
+        value = value | {
+            "schema": "forge-public-cli-capture-summary-v4",
+            "startup_evidence": "NOT_OBSERVED",
+            "startup_stage": "NOT_OBSERVED",
+            "startup_error_category": "NOT_OBSERVED",
+        }
     require(set(value) == SUMMARY_KEYS)
-    require(value["schema"] == "forge-public-cli-capture-summary-v3")
+    require(value["schema"] == "forge-public-cli-capture-summary-v4")
+    require(startup_valid(value))
     launch = value["launch_stderr_observation"]
     require(type(launch) is str and launch in LAUNCH_OBSERVATIONS)
     if launch != "NOT_ASSESSED":
@@ -151,6 +193,7 @@ def validate(value, name):
     require(value["collector_delivery"] in {"NOT_OBSERVED", "HEALTHY", "FAILED", "NOT_APPLICABLE"})
     require(value["cleanup"] in {"NOT_OBSERVED", "COMPLETE", "INCOMPLETE"})
     if value["receipt_status"] != "DELIVERED":
+        require(all(value[key] == "NOT_OBSERVED" for key in STARTUP_KEYS))
         require(stage == category == "UNKNOWN")
         require(value["failure_observation"] == "NOT_OBSERVED")
         require(

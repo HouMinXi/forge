@@ -28,6 +28,9 @@ KEYS = {
     "controller_error_category",
     "failure_observation",
     "launch_stderr_observation",
+    "startup_evidence",
+    "startup_stage",
+    "startup_error_category",
 }
 
 
@@ -461,7 +464,7 @@ def test_unavailable_projection_accepted_without_invented_receipt(public, tmp_pa
 
 def test_legacy_private_receipt_has_unknown_stage_not_success(public, tmp_path):
     value = public.summarize(str(write_receipt(tmp_path, receipt())), "diagnostic", 7)
-    assert value["schema"] == "forge-public-cli-capture-summary-v3"
+    assert value["schema"] == "forge-public-cli-capture-summary-v4"
     assert value["controller_stage"] == value["controller_error_category"] == "UNKNOWN"
     assert value["failure_observation"] == "NOT_OBSERVED"
     assert value["harness_shell_exit"] == value["cli_returncode"] == 7
@@ -636,4 +639,60 @@ def test_launch_private_contradiction_discards_observation(public, tmp_path, fau
     value = public.summarize(str(write_receipt(tmp_path, source)), "diagnostic", 7)
     assert value["receipt_status"] == "CONTRADICTORY"
     assert value["launch_stderr_observation"] == "NOT_ASSESSED"
+    assert value["harness_shell_exit"] == 7
+
+
+@pytest.mark.parametrize(
+    "status,stage,category",
+    [
+        ("NOT_OBSERVED", "NOT_OBSERVED", "NOT_OBSERVED"),
+        ("INVALID", "NOT_OBSERVED", "NOT_OBSERVED"),
+        ("PARTIAL", "BOOTSTRAP_ENTERED", "INVALID_DATA"),
+        ("PARTIAL", "WORKER_SOURCE_VERIFIED", "SYNTAX_ERROR"),
+        ("OBSERVED", "WORKER_EXECUTION_ENTERED", "IMPORT_ERROR"),
+        ("OBSERVED", "WORKER_EXECUTION_ENTERED", "NONE"),
+    ],
+)
+def test_startup_fixed_observation_projects_without_qualification(
+    public, tmp_path, status, stage, category
+):
+    source = receipt()
+    source.update(startup_evidence=status, startup_stage=stage, startup_error_category=category)
+    value = public.summarize(str(write_receipt(tmp_path, source)), "diagnostic", 7)
+    assert value["receipt_status"] == "DELIVERED"
+    assert value["startup_evidence"] == status and value["startup_stage"] == stage
+    assert value["startup_error_category"] == category
+    assert value["harness_shell_exit"] == value["cli_returncode"] == 7
+    spec = importlib.util.spec_from_file_location(
+        "startup_publisher", SCRIPT.with_name("cli_capture_publication.py")
+    )
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    assert validator.validate(value, "diagnostic.json") == value
+    assert_safe(value)
+
+
+@pytest.mark.parametrize(
+    "fault", ["partial_keys", "bool", "text", "full_prefix", "empty_error", "missing_error"]
+)
+def test_startup_invalid_private_contract_fails_closed(public, tmp_path, fault):
+    source = receipt()
+    source.update(
+        startup_evidence="PARTIAL", startup_stage="BOOTSTRAP_ENTERED", startup_error_category="NONE"
+    )
+    if fault == "partial_keys":
+        del source["startup_stage"]
+    elif fault == "bool":
+        source["startup_evidence"] = True
+    elif fault == "text":
+        source["startup_error_category"] = CANARY
+    elif fault == "full_prefix":
+        source["startup_evidence"] = "OBSERVED"
+    elif fault == "empty_error":
+        source.update(startup_evidence="NOT_OBSERVED", startup_stage="NOT_OBSERVED")
+    else:
+        source["startup_error_category"] = "NOT_OBSERVED"
+    value = public.summarize(str(write_receipt(tmp_path, source)), "diagnostic", 7)
+    assert value["receipt_status"] == "INVALID"
+    assert all(value[key] == "NOT_OBSERVED" for key in public.STARTUP_KEYS)
     assert value["harness_shell_exit"] == 7

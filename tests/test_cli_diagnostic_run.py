@@ -390,6 +390,7 @@ def test_capture_subset_has_no_reader_or_qualification_runner():
     root = Path(__file__).resolve().parents[1]
     runtime = root / "qualification/installed_cli"
     assert {path.name for path in runtime.glob("*.py")} == {
+        "capture_bootstrap.py",
         "capture_worker.py",
         "diagnostic_run.py",
         "diagnostic_probe.py",

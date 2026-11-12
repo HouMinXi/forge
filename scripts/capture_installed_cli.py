@@ -700,7 +700,7 @@ def utility(name):
     return {"path": str(physical), "sha256": sha256(raw)}
 
 
-def worker_command(binding, mode, output, worker, binding_path):
+def worker_command(binding, mode, output, worker, binding_path, bootstrap_source):
     return [
         binding["unshare"]["path"],
         "--user",
@@ -710,7 +710,11 @@ def worker_command(binding, mode, output, worker, binding_path):
         sys.executable,
         "-I",
         "-B",
+        "-c",
+        bootstrap_source,
         str(worker),
+        binding["capture_hashes"]["capture_worker.py"],
+        str(output.parent / "startup"),
         "--binding",
         str(binding_path),
         "--mode",
@@ -895,6 +899,159 @@ def apply_limits():
         resource.setrlimit(kind, (bound, bound))
 
 
+STARTUP_PHASES = ("BOOTSTRAP_ENTERED", "WORKER_SOURCE_VERIFIED", "WORKER_EXECUTION_ENTERED")
+STARTUP_FILES = ("entered.json", "verified.json", "executing.json")
+STARTUP_ERRORS = {
+    "PERMISSION_DENIED",
+    "NOT_FOUND",
+    "NOT_DIRECTORY",
+    "TIMEOUT",
+    "INTERRUPTED",
+    "INVALID_DATA",
+    "OS_ERROR",
+    "IMPORT_ERROR",
+    "SYNTAX_ERROR",
+    "OTHER_ERROR",
+}
+
+
+def startup_empty(status="NOT_OBSERVED"):
+    return {
+        "startup_evidence": status,
+        "startup_stage": "NOT_OBSERVED",
+        "startup_error_category": "NOT_OBSERVED",
+    }
+
+
+def startup_names(directory):
+    names = set()
+    with os.scandir(directory) as entries:
+        for index, item in enumerate(entries):
+            require(index < 4, "startup tree exceeds fixed bound")
+            names.add(item.name)
+    return names
+
+
+def _read_startup_directory(directory, path):
+    before = os.fstat(directory)
+    require(
+        stat.S_ISDIR(before.st_mode)
+        and before.st_uid == os.geteuid()
+        and stat.S_IMODE(before.st_mode) == 0o700,
+        "opened startup directory is not private",
+    )
+    names = startup_names(directory)
+    require(names <= set(STARTUP_FILES) | {"error.json"}, "unexpected startup evidence")
+    observed = [name for name in STARTUP_FILES if name in names]
+    require(observed == list(STARTUP_FILES[: len(observed)]), "noncontiguous startup evidence")
+    require("error.json" not in names or observed, "error without startup phase")
+    error_category = "NONE" if observed else "NOT_OBSERVED"
+    for name in names:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        try:
+            row = os.fstat(fd)
+            require(
+                stat.S_ISREG(row.st_mode)
+                and row.st_uid == os.geteuid()
+                and stat.S_IMODE(row.st_mode) == 0o600
+                and row.st_nlink == 1
+                and 0 < row.st_size <= 512,
+                "invalid startup file",
+            )
+            raw = os.read(fd, 513)
+
+            def signature(item):
+                return (
+                    item.st_dev,
+                    item.st_ino,
+                    item.st_mode,
+                    item.st_uid,
+                    item.st_nlink,
+                    item.st_size,
+                    item.st_mtime_ns,
+                    item.st_ctime_ns,
+                )
+
+            require(
+                len(raw) == row.st_size
+                and raw.endswith(b"\n")
+                and signature(row)
+                == signature(os.fstat(fd))
+                == signature(os.stat(name, dir_fd=directory, follow_symlinks=False)),
+                "changed startup file",
+            )
+            value = json.loads(raw, object_pairs_hook=no_duplicate_keys)
+            require(
+                type(value) is dict
+                and set(value) == {"schema", "stage", "error_category"}
+                and type(value["schema"]) is int
+                and value["schema"] == 1,
+                "invalid startup schema",
+            )
+            expected = (
+                STARTUP_PHASES[len(observed) - 1]
+                if name == "error.json"
+                else STARTUP_PHASES[STARTUP_FILES.index(name)]
+            )
+            require(value["stage"] == expected, "startup phase mismatch")
+            if name == "error.json":
+                require(
+                    type(value["error_category"]) is str and value["error_category"] in STARTUP_ERRORS,
+                    "invalid startup category",
+                )
+                error_category = value["error_category"]
+            else:
+                require(value["error_category"] == "NONE", "phase has failure category")
+        finally:
+            os.close(fd)
+
+    def tree_signature(item):
+        return (
+            item.st_dev,
+            item.st_ino,
+            item.st_mode,
+            item.st_uid,
+            item.st_mtime_ns,
+            item.st_ctime_ns,
+        )
+
+    require(
+        tree_signature(before)
+        == tree_signature(os.fstat(directory))
+        == tree_signature(Path(path).lstat())
+        and names == startup_names(directory),
+        "startup tree changed",
+    )
+    if not observed:
+        return startup_empty()
+    return {
+        "startup_evidence": "OBSERVED" if len(observed) == 3 else "PARTIAL",
+        "startup_stage": STARTUP_PHASES[len(observed) - 1],
+        "startup_error_category": error_category,
+    }
+
+
+def read_startup(path):
+    """Read stable closed private evidence; cleanup cannot replace worker status."""
+    directory = None
+    result = startup_empty()
+    try:
+        checked_directory(path, private=True)
+        directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        result = _read_startup_directory(directory, path)
+    except FileNotFoundError:
+        result = startup_empty("INVALID" if directory is not None else "NOT_OBSERVED")
+    except (OSError, ValueError, TypeError, KeyError, RecursionError):
+        result = startup_empty("INVALID")
+    finally:
+        if directory is not None:
+            try:
+                os.close(directory)
+            except OSError:
+                result = startup_empty("INVALID")
+    return result
+
+
 def controller_failure(record, stage, error):
     """Record the first observed controller failure, never its private message.
 
@@ -948,6 +1105,7 @@ def capture(evidence, mode, output):
     os.umask(0o077)
     output = new_private_directory(output)
     record = {
+        **startup_empty(),
         "schema": 1,
         "controller_stage": "INITIALIZE",
         "launch_stderr_observation": "NOT_ASSESSED",
@@ -999,10 +1157,14 @@ def capture(evidence, mode, output):
         stage = "WORKER_BINDING"
         home = Path(__file__).resolve().parents[1]
         worker = home / "qualification/installed_cli/capture_worker.py"
+        bootstrap_raw = regular_bytes(worker.with_name("capture_bootstrap.py"), 1024 * 1024)
+        bootstrap_source = bootstrap_raw.decode("utf-8")
+        (output / "startup").mkdir(mode=0o700)
         binding["capture_hashes"] = {
             name: sha256(regular_bytes(worker.with_name(name)))
             for name in ("capture_worker.py", "diagnostic_run.py", "diagnostic_probe.py")
         }
+        binding["capture_hashes"]["capture_bootstrap.py"] = sha256(bootstrap_raw)
         require(
             binding["startup_helper_sha256"] == binding["capture_hashes"]["capture_worker.py"],
             "startup admission helper changed during binding",
@@ -1014,7 +1176,9 @@ def capture(evidence, mode, output):
         stage = "WORKER_EXECUTION"
         try:
             completed = owner(
-                worker_command(binding, mode, output / "worker", worker, output / "binding.json"),
+                worker_command(
+                    binding, mode, output / "worker", worker, output / "binding.json", bootstrap_source
+                ),
                 timeout=OUTER_SECONDS,
                 cwd=str(output),
                 env=safe_environment(output),
@@ -1052,6 +1216,7 @@ def capture(evidence, mode, output):
             record["record_errors"].append(exception_record(error))
     if record["controller_error_category"] == "NONE":
         record["controller_stage"] = "FINALIZE"
+    record.update(read_startup(output / "startup"))
     record["launch_stderr_observation"] = launch_stderr_observation(record, completed_stderr)
     code = select_exit(record)
     record["shell_exit"] = code

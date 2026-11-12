@@ -113,7 +113,7 @@ def test_failure_message_never_contains_input(envelope, capsys):
 
 def summary(mode="diagnostic"):
     return dict(
-        schema="forge-public-cli-capture-summary-v3",
+        schema="forge-public-cli-capture-summary-v4",
         mode=mode,
         receipt_status="DELIVERED",
         harness_shell_exit=7,
@@ -129,6 +129,9 @@ def summary(mode="diagnostic"):
         controller_error_category="UNKNOWN",
         failure_observation="NOT_OBSERVED",
         launch_stderr_observation="NOT_ASSESSED",
+        startup_evidence="NOT_OBSERVED",
+        startup_stage="NOT_OBSERVED",
+        startup_error_category="NOT_OBSERVED",
     )
 
 
@@ -199,6 +202,8 @@ def test_summary_rejects_unknown_field():
 
 def test_exact_legacy_v1_upgrade_does_not_invent_stage():
     old = summary()
+    for key in publication.STARTUP_KEYS:
+        del old[key]
     for field in (
         "controller_stage",
         "controller_error_category",
@@ -275,6 +280,8 @@ def test_worker_receipt_observation_requires_closed_supporting_facts():
 
 def test_exact_v2_upgrade_does_not_invent_stderr_observation():
     old = summary()
+    for key in publication.STARTUP_KEYS:
+        del old[key]
     del old["launch_stderr_observation"]
     old["schema"] = "forge-public-cli-capture-summary-v2"
     assert publication.validate(old, "diagnostic.json") == summary()
@@ -320,4 +327,32 @@ def test_launch_public_observation_requires_consistent_facts(field, bad):
     assert publication.validate(value, "diagnostic.json") == value
     value[field] = bad
     with pytest.raises(ValueError):
+        publication.validate(value, "diagnostic.json")
+
+
+def test_exact_v3_upgrade_has_no_startup_evidence():
+    old = summary()
+    for key in publication.STARTUP_KEYS:
+        del old[key]
+    old["schema"] = "forge-public-cli-capture-summary-v3"
+    assert publication.validate(old, "diagnostic.json") == summary()
+    old["private_startup_error"] = "PRIVATE"
+    with pytest.raises(ValueError):
+        publication.validate(old, "diagnostic.json")
+
+
+@pytest.mark.parametrize(
+    "field,bad",
+    [
+        ("startup_evidence", True),
+        ("startup_evidence", "PASS"),
+        ("startup_stage", "PRIVATE"),
+        ("startup_error_category", []),
+        ("startup_error_category", "NONE"),
+    ],
+)
+def test_closed_startup_public_fields(field, bad):
+    value = summary()
+    value[field] = bad
+    with pytest.raises((ValueError, TypeError)):
         publication.validate(value, "diagnostic.json")
