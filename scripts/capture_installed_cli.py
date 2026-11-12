@@ -405,7 +405,7 @@ def startup_policy(prefix, site, target, launcher_source_sha256):
     return policy, helper_hash
 
 
-def verify_installation(evidence):
+def verify_installation(evidence, *, owner_only=False):
     """Read physical archive/wheel/installed bytes; no target sys.path mutation."""
     root = checked_directory(evidence)
     proof_raw = regular_bytes(root / "build-proof.json", FILE_LIMIT)
@@ -561,6 +561,8 @@ def verify_installation(evidence):
         "product_members": len(product),
         "owner_hashes": {name: sha256(value) for name, value in owner_sources.items()},
     }
+    if owner_only:
+        return provenance, owner_sources, site / "code_forge"
     target_identity = interpreter_identity(target, target=True)
     startup, helper_hash = startup_policy(
         prefix, site, target_identity, sha256(product["code_forge_launcher.py"])
