@@ -59,7 +59,15 @@ class ScopeRecord:
 
 class DiagnosticCapture:
     def __init__(
-        self, *, execution_id, source_hash, diff_text, repo_root, excluded_roots, ticket_directory=None
+        self,
+        *,
+        execution_id,
+        source_hash,
+        diff_text,
+        repo_root,
+        excluded_roots,
+        ticket_directory=None,
+        diagnostic_ticket_directory=None,
     ):
         self.execution_id = execution_id
         self.repository_id = str(uuid4())
@@ -104,6 +112,13 @@ class DiagnosticCapture:
         self.ticket_directory = ticket_directory
         self.scope_ticket_status = "not_requested" if ticket_directory is None else "no_receipt"
         self.scope_ticket_path = None
+        self.diagnostic_ticket_directory = diagnostic_ticket_directory
+        self.diagnostic_ticket_status = (
+            "not_requested" if diagnostic_ticket_directory is None else "no_receipt"
+        )
+        self.diagnostic_ticket_path = None
+        self._diagnostic_ticket_attempted = set()
+        self.diagnostic_ticket_outcomes = {}
         self.scope_delivery_status = "not_attempted"
         if len(self._excluded) > _MAX_ENTRIES:
             self._storage_failed = True
@@ -465,6 +480,8 @@ class DiagnosticCapture:
         # Delivery origin never changes the persisted original observation.
         self.last_delivery_origin = origin
         self.delivery_status = "not_delivered"
+        if self.diagnostic_ticket_directory is not None and self.diagnostic_ticket_status != "exported":
+            self.diagnostic_ticket_status = "unavailable"
         if origin not in {"actual", "cache"}:
             return self.warning()
         if type(record) is not Record or record.owner is not self._record_owner:
@@ -483,6 +500,9 @@ class DiagnosticCapture:
             ) != self._identity[:4]:
                 self.refusal = "foreign_observation"
                 return self.warning()
+            if self.diagnostic_ticket_directory is not None:
+                storage._validate_context(context)
+                self.diagnostic_ticket_outcomes.setdefault(context.observation_sequence, None)
             read = storage.read_observation(record.publication, observation.context)
             if type(read) is not storage.Observation or read.context != observation.context:
                 raise ValueError("invalid reader return")
@@ -498,10 +518,47 @@ class DiagnosticCapture:
             ):
                 raise ValueError("invalid presentation")
             self.delivery_status = "read"
+            self._export_diagnostic_ticket(record, context)
             return messages
         except Exception:  # noqa: BLE001 -- Retain the genuine immediate warning when persistence cannot be consumed.
             immediate = (storage.MESSAGE,) if record.analysis_state == "no_named_targets" else ()
             return immediate + self.warning()
+
+    def _export_diagnostic_ticket(self, record, context):
+        if (
+            self.diagnostic_ticket_directory is None
+            or context.observation_sequence in self._diagnostic_ticket_attempted
+        ):
+            return
+        # Export is a new side effect: closed/foreign callers may not create it.
+        if (
+            not self._active
+            or os.getpid() != self._pid
+            or threading.get_ident() != self._thread
+            or (
+                self.execution_id,
+                self.repository_id,
+                self.source_hash,
+                self.diff_sha256,
+                self._root,
+                self._canonical,
+            )
+            != self._identity
+        ):
+            self.diagnostic_ticket_status = "unavailable"
+            return
+        self._diagnostic_ticket_attempted.add(context.observation_sequence)
+        self.diagnostic_ticket_status = "unavailable"
+        self.diagnostic_ticket_path = None
+        try:
+            from ._diagnostic_history import export_ticket
+
+            path = export_ticket(self.diagnostic_ticket_directory, record.publication, context)
+            self.diagnostic_ticket_path = path
+            self.diagnostic_ticket_outcomes[context.observation_sequence] = path
+            self.diagnostic_ticket_status = "exported"
+        except Exception:  # noqa: BLE001 -- Optional history cannot change native diagnostic delivery.
+            self.diagnostic_ticket_status = "unavailable"
 
     def complete_not_run(self):
         return None if self._called else self.finish("not_run")

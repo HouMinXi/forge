@@ -276,6 +276,7 @@ def run_cross_repo(
     output_fn=print,
     focus_spec: str = "",
     scope_ticket_directory: Path | None = None,
+    diagnostic_ticket_directory: Path | None = None,
 ):
     """Orchestrate cross-repo parallel review.
 
@@ -485,6 +486,11 @@ def run_cross_repo(
                                     if scope_ticket_directory is not None
                                     else {}
                                 ),
+                                **(
+                                    {"diagnostic_ticket_directory": diagnostic_ticket_directory}
+                                    if diagnostic_ticket_directory is not None
+                                    else {}
+                                ),
                             )
                         except Exception:  # noqa: BLE001 -- Keep native review/output if diagnostic setup is unavailable.
                             diagnostic_notice(PERSISTENCE_WARNING)
@@ -578,6 +584,25 @@ def run_cross_repo(
                         )
                     ):
                         diagnostic_notice("scope-ticket: no receipt was issued")
+                    if is_primary and diagnostic_ticket_directory is not None:
+                        if diagnostic_capture is None:
+                            diagnostic_notice(
+                                "diagnostic-ticket: unavailable; no saved-ticket guarantee"
+                            )
+                        elif not diagnostic_capture.diagnostic_ticket_outcomes:
+                            diagnostic_notice("diagnostic-ticket: no receipt was issued")
+                        else:
+                            for ticket in diagnostic_capture.diagnostic_ticket_outcomes.values():
+                                if ticket is None:
+                                    diagnostic_notice(
+                                        "diagnostic-ticket: unavailable; no saved-ticket guarantee"
+                                    )
+                                else:
+                                    diagnostic_notice(
+                                        "diagnostic-ticket: exported "
+                                        + ticket.name
+                                        + "; one historical observation, not complete review history"
+                                    )
                     results[label] = verdict
                 except (Exception, KeyboardInterrupt, SystemExit) as exc:  # noqa: BLE001 -- Transport worker failures to the joining caller, including process control.
                     errors[label] = exc

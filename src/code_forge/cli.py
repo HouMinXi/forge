@@ -521,6 +521,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Trusted caller-owned ticket (contains private paths/identities; no same-UID tamper protection)",
     )
     review_parser.add_argument(
+        "--diagnostic-ticket-dir",
+        type=Path,
+        default=None,
+        help="Export historical diagnostic tickets for cross-repo review to an existing private directory; caller owns retention and trust",
+    )
+    history_parser = subparsers.add_parser(
+        "diagnostic-history",
+        help="Inspect historical v1 state using an explicitly trusted caller-saved ticket",
+    )
+    history_parser.add_argument(
+        "--ticket",
+        type=Path,
+        required=True,
+        help="Trusted caller-owned ticket (contains private paths/identities; no same-UID tamper protection)",
+    )
+    review_parser.add_argument(
         "--mode",
         choices=["local", "ci"],
         default=None,
@@ -2842,6 +2858,7 @@ def main() -> int:
     known_subcommands = {
         "review",
         "scope-history",
+        "diagnostic-history",
         "gate-check",
         "mutation-check",
         "e2e-check",
@@ -2893,6 +2910,28 @@ def main() -> int:
                     "kind": "historical-query-scope",
                     "current_run_credit": False,
                     "snapshot": asdict(snapshot),
+                },
+                sort_keys=True,
+            )
+        )
+        return EXIT_PASS
+
+    if args.subcommand == "diagnostic-history":
+        try:
+            from dataclasses import asdict
+            from ._diagnostic_history import read_ticket
+
+            snapshot = read_ticket(args.ticket)
+        except Exception:  # noqa: BLE001 -- Never print ticket paths or arbitrary reader exception text.
+            print("code-forge: historical diagnostic unavailable", file=sys.stderr)
+            return EXIT_CLI_ERROR
+        print(
+            json.dumps(
+                {
+                    "kind": "historical-advisory-diagnostic",
+                    "current_run_credit": False,
+                    "analysis_state": snapshot.analysis_state,
+                    "diagnostics": [asdict(item) for item in snapshot.diagnostics],
                 },
                 sort_keys=True,
             )
@@ -3193,6 +3232,7 @@ def _cross_repo_verdict_or_none(
     warn: Callable,
     focus_spec: str = "",
     scope_ticket_directory: Path | None = None,
+    diagnostic_ticket_directory: Path | None = None,
 ) -> Optional[Verdict]:
     """Decide and execute cross-repo dispatch, or return None to fall through."""
     _gate_raw, _gate_siblings = _load_gate_siblings(gate_yaml_path)
@@ -3237,6 +3277,11 @@ def _cross_repo_verdict_or_none(
             **(
                 {"scope_ticket_directory": scope_ticket_directory}
                 if scope_ticket_directory is not None
+                else {}
+            ),
+            **(
+                {"diagnostic_ticket_directory": diagnostic_ticket_directory}
+                if diagnostic_ticket_directory is not None
                 else {}
             ),
         )
@@ -3602,6 +3647,7 @@ def _dispatch_cross_repo(
     warn,
     focus_spec="",
     scope_ticket_directory=None,
+    diagnostic_ticket_directory=None,
 ) -> "Verdict | None":
     """Cross-repo dispatch. Returns Verdict if siblings exist, None otherwise."""
     _cv = _cross_repo_verdict_or_none(
@@ -3622,9 +3668,16 @@ def _dispatch_cross_repo(
             if scope_ticket_directory is not None
             else {}
         ),
+        **(
+            {"diagnostic_ticket_directory": diagnostic_ticket_directory}
+            if diagnostic_ticket_directory is not None
+            else {}
+        ),
     )
     if scope_ticket_directory is not None and _cv is None:
         raise CliError("--scope-ticket-dir requires cross-repository review")
+    if diagnostic_ticket_directory is not None and _cv is None:
+        raise CliError("--diagnostic-ticket-dir requires cross-repository review")
     return _cv
 
 
@@ -4211,6 +4264,16 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
             raise CliError(
                 "scope ticket directory must be an existing canonical private directory"
             ) from exc
+    diagnostic_ticket_directory = getattr(args, "diagnostic_ticket_dir", None)
+    if diagnostic_ticket_directory is not None:
+        try:
+            from ._diagnostic_history import validate_ticket_directory
+
+            validate_ticket_directory(diagnostic_ticket_directory)
+        except Exception as exc:  # noqa: BLE001 -- Bounded CLI error, never private ticket paths.
+            raise CliError(
+                "diagnostic ticket directory must be an existing canonical private directory"
+            ) from exc
     warn = (
         (lambda msg: None)
         if args.quiet
@@ -4297,6 +4360,8 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
     cfgs, gate_data = _load_gate_backends(gate_yaml_path)
     if scope_ticket_directory is not None and not gate_data.get("siblings"):
         raise CliError("--scope-ticket-dir requires cross-repository review")
+    if diagnostic_ticket_directory is not None and not gate_data.get("siblings"):
+        raise CliError("--diagnostic-ticket-dir requires cross-repository review")
     cfgs = _merge_user_into(cfgs, gate_data)
     # Validate and extract retry config from gate.yaml.
     # _load_gate_backends returns the full YAML dict; load_gate_config
@@ -4385,6 +4450,8 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
     )
     if scope_ticket_directory is not None and (outlet != "subprocess" or kernel_cfg.enabled):
         raise CliError("--scope-ticket-dir supports only subprocess cross-repository review")
+    if diagnostic_ticket_directory is not None and (outlet != "subprocess" or kernel_cfg.enabled):
+        raise CliError("--diagnostic-ticket-dir supports only subprocess cross-repository review")
     if outlet == "inline" or (kernel_cfg.enabled and outlet != "subprocess"):
         assertion_outcome = AssertionOutcome(
             AssertionStatus.SKIPPED,
@@ -4523,6 +4590,8 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
         print("code-forge: no changes to review", file=sys.stderr)
         if scope_ticket_directory is not None:
             print("code-forge: scope-ticket: no receipt was issued", file=sys.stderr)
+        if diagnostic_ticket_directory is not None:
+            print("code-forge: diagnostic-ticket: no receipt was issued", file=sys.stderr)
         return Verdict.PASS
 
     test_config_root = _test_config_root(args, env, cwd)
@@ -4964,6 +5033,8 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
     if kernel_cfg.enabled:
         if scope_ticket_directory is not None:
             raise CliError("--scope-ticket-dir requires cross-repository review")
+        if diagnostic_ticket_directory is not None:
+            raise CliError("--diagnostic-ticket-dir requires cross-repository review")
         if kernel_empty_siblings:
             warn("gate.yaml has empty siblings: [] section; falling through to single-repo review")
     else:
@@ -4985,6 +5056,11 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
             **(
                 {"scope_ticket_directory": scope_ticket_directory}
                 if scope_ticket_directory is not None
+                else {}
+            ),
+            **(
+                {"diagnostic_ticket_directory": diagnostic_ticket_directory}
+                if diagnostic_ticket_directory is not None
                 else {}
             ),
         )
