@@ -935,6 +935,7 @@ def _root_lock(handle, *, deadline=None, monotonic=time.monotonic, create=False)
     import fcntl
 
     fd = -1
+    primary = None
     locked = False
     started = time.monotonic()
     if deadline is not None:
@@ -967,34 +968,151 @@ def _root_lock(handle, *, deadline=None, monotonic=time.monotonic, create=False)
         _require((held.st_dev, held.st_ino) == (path.st_dev, path.st_ino), "integrity_error")
         _revalidate(handle)
         yield
+    except BaseException as error:
+        primary = error
+        raise
     finally:
         if fd >= 0:
+            unlock_error = None
             try:
                 if locked:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    try:
+                        _release_preserving_primary(fcntl.flock, primary, fd, fcntl.LOCK_UN)
+                    except BaseException as error:  # noqa: BLE001 - close still has to run
+                        # The unlock error becomes the close's primary only because this
+                        # frame raised it; the caller's own handler never does.
+                        unlock_error = error
+                        raise
             finally:
-                os.close(fd)
+                _release_preserving_primary(
+                    os.close, primary if primary is not None else unlock_error, fd, close=True
+                )
 
 
-def _close_preserving_primary(fd, primary):
+_ABSENT = object()
+
+
+def _state_accepts_diagnostics(state):
+    """Diagnostics must never run code owned by the exception being cleaned up."""
+    for key in dict.keys(state):
+        if type(key) is not str:
+            return False
+    return True
+
+
+def _state_field(state, field):
+    # Reads need their own key filter: the acceptance gate protects writes, and
+    # a foreign key object would answer this comparison with its own hook.
+    for key, value in dict.items(state):
+        if type(key) is str and key == field:
+            return value
+    return _ABSENT
+
+
+def _cleanup_chain(error):
+    """Record the entering chain so cleanup can put it back after the re-link."""
+    snapshot = []
+    seen = set()
+    pending = [error]
+    while pending:
+        node = pending.pop()
+        if node is None or id(node) in seen:
+            continue
+        seen.add(id(node))
+        cause = BaseException.__dict__["__cause__"].__get__(node)
+        context = BaseException.__dict__["__context__"].__get__(node)
+        snapshot.append(
+            (
+                node,
+                cause,
+                context,
+                BaseException.__dict__["__suppress_context__"].__get__(node),
+            )
+        )
+        pending.append(cause)
+        pending.append(context)
+    return tuple(snapshot)
+
+
+def _restore_chain(snapshot):
+    """Re-link the chain through the base descriptors, deepest first.
+
+    The base ``__set__`` bypasses a subclass property. Deepest first keeps every
+    intermediate state pointing at nodes that are already restored."""
+    for node, cause, context, suppress in reversed(snapshot):
+        # Snapshot values are exceptions or None, so the base setters cannot
+        # refuse them; the caller guards the primary in case they ever do.
+        BaseException.__dict__["__cause__"].__set__(node, cause)
+        BaseException.__dict__["__context__"].__set__(node, context)
+        BaseException.__dict__["__suppress_context__"].__set__(node, suppress)
+
+
+def _release_preserving_primary(release, primary, *args, close=False):
+    """Run a cleanup callable without letting its failure replace the primary.
+
+    The entering exception keeps its identity and its chain; the cleanup error
+    is stored beside it as evidence, unless the exception's own ``__dict__``
+    holds a key the diagnostic refuses to touch. Nothing here runs code owned
+    by the exception's class."""
+    snapshot = ()
+    if primary is not None:
+        try:
+            snapshot = _cleanup_chain(primary)
+        except BaseException as snapshot_error:  # noqa: BLE001 - diagnostics are optional
+            # Diagnostics must never stand between the caller and the release.
+            try:
+                _retain_diagnostic(primary, "_invocation_audit_snapshot_errors", snapshot_error)
+            except BaseException:  # noqa: BLE001, S110 - a failed note is not a failure to close
+                pass
     try:
-        os.close(fd)
-    except OSError as close_error:
+        release(*args)
+    except BaseException as error:
         if primary is None:
             raise
-        # Keep the exact secondary error without replacing the primary's chain or
-        # formatting possibly private error text. Bypass exception subclass hooks:
-        # even BaseException.add_note can invoke overridden attribute accessors.
-        state = BaseException.__dict__["__dict__"].__get__(primary)
-        previous = dict.get(state, "_invocation_audit_close_errors", ())
-        if type(previous) is not tuple:
-            previous = (previous,)
-        dict.__setitem__(state, "_invocation_audit_close_errors", previous + (close_error,))
-        note = "Invocation audit FD close also failed; see _invocation_audit_close_errors."
-        if not dict.__contains__(state, "__notes__"):
-            dict.__setitem__(state, "__notes__", [note])
-        elif type(notes := dict.__getitem__(state, "__notes__")) is list:
-            notes.append(note)
+        try:
+            _retain_cleanup_error(primary, error, close=close)
+        except BaseException:  # noqa: BLE001, S110 - retention cannot replace the primary
+            pass
+        if snapshot:
+            try:
+                _restore_chain(snapshot)
+            except BaseException:  # noqa: BLE001, S110 - the primary outranks its links
+                pass
+
+
+def _retain_diagnostic(primary, field, secondary):
+    """Append one secondary error; return the state, or None when refused."""
+    state = BaseException.__dict__["__dict__"].__get__(primary)
+    if not _state_accepts_diagnostics(state):
+        return None
+    previous = _state_field(state, field)
+    if previous is _ABSENT:
+        entries = ()
+    elif type(previous) is tuple:
+        entries = previous
+    else:
+        entries = (previous,)
+    dict.__setitem__(state, field, entries + (secondary,))
+    return state
+
+
+def _retain_cleanup_error(primary, secondary, close=False):
+    field = "_invocation_audit_close_errors" if close else "_invocation_audit_cleanup_errors"
+    state = _retain_diagnostic(primary, field, secondary)
+    if state is None:
+        return
+    note = (
+        "Invocation audit FD close also failed; see _invocation_audit_close_errors."
+        if close
+        else "Invocation audit cleanup also failed; see _invocation_audit_cleanup_errors."
+    )
+    previous = _state_field(state, "__notes__")
+    if previous is _ABSENT:
+        dict.__setitem__(state, "__notes__", [note])
+    elif type(previous) is list:
+        # list.append on the plain list keeps a resident list's identity; a
+        # subclass would run its own method, so the exact type is required.
+        list.append(previous, note)
 
 
 @contextmanager
@@ -1009,7 +1127,7 @@ def _run_dir(handle, run_id):
         primary = error
         raise
     finally:
-        _close_preserving_primary(fd, primary)
+        _release_preserving_primary(os.close, primary, fd, close=True)
 
 
 def _file_identity(value):
@@ -1057,7 +1175,7 @@ def _read_file(fd, name, bound=RUN_BYTES, *, _stable=False, _checkpoint=None):
         primary = error
         raise
     finally:
-        _close_preserving_primary(opened, primary)
+        _release_preserving_primary(os.close, primary, opened, close=True)
 
 
 def _write_all(fd, data, *, _checkpoint=None):
@@ -1094,6 +1212,7 @@ def _append(fd, event, *, _checkpoint=None):
         0o600,
         dir_fd=fd,
     )
+    primary = None
     try:
         _regular(opened)
         if _checkpoint is None:
@@ -1104,8 +1223,11 @@ def _append(fd, event, *, _checkpoint=None):
         os.fsync(opened)
         if _checkpoint is not None:
             _checkpoint()
+    except BaseException as error:
+        primary = error
+        raise
     finally:
-        os.close(opened)
+        _release_preserving_primary(os.close, primary, opened, close=True)
     if not existed:
         os.fsync(fd)
 
@@ -1125,7 +1247,7 @@ def _publish(fd, name, data, *, replace=False, _slot_events=None):
         primary = error
         raise
     finally:
-        _close_preserving_primary(opened, primary)
+        _release_preserving_primary(os.close, primary, opened, close=True)
     _require(replace or name not in _entries(fd), "identity_conflict")
     os.rename(temp, name, src_dir_fd=fd, dst_dir_fd=fd)
     os.fsync(fd)
