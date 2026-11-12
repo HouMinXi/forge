@@ -11,6 +11,10 @@ name: Installed CLI capture diagnostic (not qualification)
         description: After capture, observe fixed inert direct and namespaced launch controls (not target fallback)
         type: boolean
         default: false
+      run_stock_bwrap_control:
+        description: Independent Ubuntu 26.04 stock fixed-child capability only (not capture qualification)
+        type: boolean
+        default: false
       expected_source_sha:
         description: Reviewed exact source SHA of this dispatched workflow
         type: string
@@ -247,3 +251,92 @@ jobs:
           [[ "$PUBLICATION" == success ]]
           [[ "$BASELINE_EXIT" == 0 && "$DIAGNOSTIC_EXIT" == 0 ]]
           [[ "$BASELINE_SUMMARY" == 0 && "$DIAGNOSTIC_SUMMARY" == 0 ]]
+
+  stock_bwrap_control:
+    if: ${{ inputs.run_stock_bwrap_control }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Bind reviewed source and private directories
+        id: prepare
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          DISPATCH_SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          exec >/dev/null 2>&1
+          set +x
+          set -euo pipefail
+          umask 077
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_SOURCE_SHA" == "$DISPATCH_SOURCE_SHA" ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SOURCE_SHA" ]]
+          private="$RUNNER_TEMP/forge-stock-control"
+          [[ ! -e "$private" && ! -L "$private" ]]
+          mkdir -m 700 "$private" "$private/public"
+          /usr/bin/python3 -I -S -B - "$private/summary.json" <<'PYSEED'
+          import json, os, sys
+          value = dict(schema='forge-stock-capture-control-v1', environment='INDEPENDENT_UBUNTU_26_04',
+              required_runtime='SYSTEM_CPYTHON_314', status='UNSUPPORTED', stage='NO_DELIVERY', error='NOT_OBSERVED',
+              stock_safety='NOT_VERIFIED', loopback='NOT_OBSERVED', strace='NOT_OBSERVED',
+              cleanup='NOT_ASSESSED', control_returncode=None, qualification='NOT_ASSESSED',
+              causal_attribution='NOT_ASSESSED', raw='NOT_PUBLISHED')
+          fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+          with os.fdopen(fd, 'w') as handle:
+              handle.write(json.dumps(value, sort_keys=True) + '\n')
+          PYSEED
+      - name: Observe existing stock capabilities without repairs
+        id: control
+        if: ${{ steps.prepare.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          exec >/dev/null 2>&1
+          set +x
+          set -euo pipefail
+          umask 077
+          private="$RUNNER_TEMP/forge-stock-control"
+          exec >"$private/controller.log" 2>&1
+          code=0
+          /usr/bin/python3 -I -B scripts/ci_stock_capture_control.py \
+            --output "$private/control" --summary "$private/summary.json" || code=$?
+          printf 'control_exit=%s\n' "$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
+      - name: Validate stock control public envelope
+        id: publication
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+        shell: bash
+        run: |
+          exec >/dev/null 2>&1
+          set +x
+          set -euo pipefail
+          umask 077
+          private="$RUNNER_TEMP/forge-stock-control"
+          exec >"$private/publication.log" 2>&1
+          /usr/bin/python3 -I -S -B scripts/ci_stock_capture_publication.py \
+            "$private/summary.json" "$private/public/stock-control.json"
+      - name: Publish only closed stock control summary
+        if: ${{ !cancelled() && steps.publication.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: independent-stock-control-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/forge-stock-control/public/stock-control.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve unsupported control outcome
+        if: ${{ always() }}
+        env:
+          CONTROL: ${{ steps.control.outcome }}
+          CONTROL_EXIT: ${{ steps.control.outputs.control_exit }}
+          PUBLICATION: ${{ steps.publication.outcome }}
+        shell: bash
+        run: |
+          if [[ "$CONTROL_EXIT" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( CONTROL_EXIT <= 255 && CONTROL_EXIT != 0 )); then
+            exit "$CONTROL_EXIT"
+          fi
+          [[ "$CONTROL" == success && "$CONTROL_EXIT" == 0 && "$PUBLICATION" == success ]]
