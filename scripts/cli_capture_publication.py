@@ -27,6 +27,35 @@ SUMMARY_KEYS = {
     "raw_evidence",
 }
 
+LEGACY_SUMMARY_KEYS = SUMMARY_KEYS.copy()
+SUMMARY_KEYS |= {"controller_stage", "controller_error_category", "failure_observation"}
+STAGES = {
+    "INITIALIZE",
+    "SANITIZE",
+    "PREFLIGHT",
+    "LIMITS",
+    "INSTALLATION",
+    "UTILITY_BINDING",
+    "WORKER_BINDING",
+    "OWNER_LOAD",
+    "WORKER_EXECUTION",
+    "WORKER_OUTPUT",
+    "WORKER_RECEIPT",
+    "FINAL_DELIVERY",
+    "FINALIZE",
+}
+CATEGORIES = {
+    "NONE",
+    "PERMISSION_DENIED",
+    "NOT_FOUND",
+    "NOT_DIRECTORY",
+    "TIMEOUT",
+    "INTERRUPTED",
+    "INVALID_DATA",
+    "OS_ERROR",
+    "OTHER_ERROR",
+}
+
 
 def require(value):
     if not value:
@@ -61,8 +90,29 @@ def validate(value, name):
             raw_evidence="NOT_PUBLISHED",
         )
     require(name in ("baseline.json", "diagnostic.json"))
+    if value.get("schema") == "forge-public-cli-capture-summary-v1":
+        require(set(value) == LEGACY_SUMMARY_KEYS)
+        value = value | {
+            "schema": "forge-public-cli-capture-summary-v2",
+            "controller_stage": "UNKNOWN",
+            "controller_error_category": "UNKNOWN",
+            "failure_observation": "NOT_OBSERVED",
+        }
     require(set(value) == SUMMARY_KEYS)
-    require(value["schema"] == "forge-public-cli-capture-summary-v1")
+    require(value["schema"] == "forge-public-cli-capture-summary-v2")
+    stage, category = value["controller_stage"], value["controller_error_category"]
+    require(type(stage) is str and stage in STAGES | {"UNKNOWN"})
+    require(type(category) is str and category in CATEGORIES | {"UNKNOWN"})
+    require((stage == "UNKNOWN") == (category == "UNKNOWN"))
+    if stage != "UNKNOWN":
+        require((stage == "FINALIZE") == (category == "NONE"))
+    require(value["failure_observation"] in {"NOT_OBSERVED", "WORKER_NONZERO_NO_RECEIPT"})
+    if value["failure_observation"] == "WORKER_NONZERO_NO_RECEIPT":
+        require(value["receipt_status"] == "DELIVERED")
+        require(integer(value["worker_returncode"], -127, 255) and value["worker_returncode"] != 0)
+        require(value["cli_returncode"] is None and value["cli_returncode_before_cleanup"] is None)
+        require(value["cleanup_induced_termination"] is None)
+        require(value["collector_delivery"] == "NOT_OBSERVED")
     require(value["mode"] == name.removesuffix(".json"))
     require(
         value["receipt_status"]
@@ -78,6 +128,8 @@ def validate(value, name):
     require(value["collector_delivery"] in {"NOT_OBSERVED", "HEALTHY", "FAILED", "NOT_APPLICABLE"})
     require(value["cleanup"] in {"NOT_OBSERVED", "COMPLETE", "INCOMPLETE"})
     if value["receipt_status"] != "DELIVERED":
+        require(stage == category == "UNKNOWN")
+        require(value["failure_observation"] == "NOT_OBSERVED")
         require(
             all(
                 value[k] is None

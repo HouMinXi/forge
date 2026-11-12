@@ -375,3 +375,27 @@ acceptance. Shell, worker and CLI results are distinct. The current synthetic
 empty-findings fixture can return CLI 7; that original failure remains red even
 when the diagnostic receipt is delivered. A red pilot is not silently converted
 into PASS, and neither mode reruns an earlier failed production operation.
+
+### Closed failure observations
+
+The v2 public envelope adds a fixed controller stage, fixed error category and
+`failure_observation`. The controller records the **first caught** failure's
+stage and category. A later missing receipt cannot overwrite an earlier owner
+timeout or interrupt. With no caught controller exception the pair is
+`FINALIZE` / `NONE`; this does not mean the CLI succeeded, cleanup passed or
+qualification was obtained. Original harness, worker and CLI exits remain
+separate and unchanged.
+
+Categories come from exception classes and a small errno allowlist, never
+exception messages, command output or paths. `WORKER_RECEIPT` / `NOT_FOUND`
+means reading the worker receipt failed because it was absent. It does not
+identify why the worker exited. `WORKER_NONZERO_NO_RECEIPT` only observes a
+nonzero worker status with no validated worker receipt; it is not an AppArmor,
+namespace or CLI diagnosis. The original failed run cannot retroactively gain
+these observations.
+
+Old private receipts without the stage/category pair project `UNKNOWN` for
+both; a partial or invalid pair fails closed. The independent publisher accepts
+only exact v1 or v2 public envelopes and normalizes old v1 to unknown new fields.
+No raw errors, stderr, credential values, private paths or arbitrary identifiers
+are added to artifacts. Missing evidence remains unknown, never success.

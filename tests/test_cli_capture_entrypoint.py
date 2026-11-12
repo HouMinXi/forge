@@ -839,6 +839,14 @@ def test_controller_preserves_original_seven_after_capture_metadata_failure(
     assert commands[0][1]["memory_limit_bytes"] == 1024**3
     assert commands[0][1]["timeout"] == 35
     assert (output / "binding.json").exists()
+    if fault in {"worker_log", "missing_receipt"}:
+        value = entry.read_json(output / "result.json")
+        assert value["controller_stage"] == (
+            "WORKER_OUTPUT" if fault == "worker_log" else "WORKER_RECEIPT"
+        )
+        assert value["controller_error_category"] == (
+            "OS_ERROR" if fault == "worker_log" else "NOT_FOUND"
+        )
 
 
 @pytest.mark.usefixtures("preserve_controller_umask")
@@ -1933,3 +1941,153 @@ def test_utility_search_is_fixed_and_ip_includes_system_sbin(tmp_path, monkeypat
     expected = os.defpath + os.pathsep + "/usr/sbin:/sbin" if name == "ip" else os.defpath
     assert seen == [(name, expected)]
     assert result == {"path": str(binary), "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
+
+
+@pytest.mark.usefixtures("preserve_controller_umask")
+@pytest.mark.parametrize(
+    "target,stage,error,category",
+    [
+        ("sanitize_controller", "SANITIZE", PermissionError(13, "secret/path"), "PERMISSION_DENIED"),
+        ("preflight", "PREFLIGHT", ValueError("secret"), "INVALID_DATA"),
+        ("apply_limits", "LIMITS", OSError(5, "secret"), "OS_ERROR"),
+        ("verify_installation", "INSTALLATION", FileNotFoundError(2, "secret"), "NOT_FOUND"),
+        ("utility", "UTILITY_BINDING", NotADirectoryError(20, "secret"), "NOT_DIRECTORY"),
+        ("load_owner", "OWNER_LOAD", RuntimeError("secret"), "OTHER_ERROR"),
+    ],
+    ids=[
+        "sanitize-denied",
+        "preflight-invalid",
+        "limits-io",
+        "installation-missing",
+        "utility-not-directory",
+        "owner-other",
+    ],
+)
+def test_controller_records_closed_failed_stage(tmp_path, monkeypatch, target, stage, error, category):
+    controller_control(tmp_path, monkeypatch)
+
+    def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(entry, target, fail)
+    output = tmp_path / "output"
+    assert entry.capture(tmp_path / "unused", "baseline", output) == 73
+    value = entry.read_json(output / "result.json")
+    assert value["controller_stage"] == stage
+    assert value["controller_error_category"] == category
+
+
+@pytest.mark.usefixtures("preserve_controller_umask")
+@pytest.mark.parametrize(
+    "kind,category,code", [("timeout", "TIMEOUT", 124), ("interrupt", "INTERRUPTED", 130)]
+)
+def test_first_owner_failure_survives_later_missing_receipt(tmp_path, monkeypatch, kind, category, code):
+    failure = subprocess.TimeoutExpired(["secret"], 35) if kind == "timeout" else KeyboardInterrupt()
+    controller_control(tmp_path, monkeypatch, owner_error=failure)
+    output = tmp_path / "output"
+    assert entry.capture(tmp_path / "unused", "baseline", output) == code
+    value = entry.read_json(output / "result.json")
+    assert value["controller_stage"] == "WORKER_EXECUTION"
+    assert value["controller_error_category"] == category
+    assert value["record_errors"]  # receipt absence must not replace first failure
+
+
+@pytest.mark.usefixtures("preserve_controller_umask")
+def test_worker_one_without_receipt_is_not_attributed_to_cli_or_namespace(tmp_path, monkeypatch):
+    controller_control(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        entry,
+        "load_owner",
+        lambda *a: (
+            lambda *a, **k: SimpleNamespace(
+                returncode=1,
+                ownership={"cleanup_complete": True, "owned": []},
+                stdout=b"",
+                stderr=b"private arbitrary error",
+            )
+        ),
+    )
+    output = tmp_path / "output"
+    assert entry.capture(tmp_path / "unused", "baseline", output) == 73
+    value = entry.read_json(output / "result.json")
+    assert value["controller_stage"] == "WORKER_RECEIPT"
+    assert value["controller_error_category"] == "NOT_FOUND"
+    assert value["worker_returncode"] == 1 and value["worker"] is None
+    assert value["outer_exception"] is None
+
+
+@pytest.mark.usefixtures("preserve_controller_umask")
+def test_controller_no_caught_failure_is_not_cli_success(tmp_path, monkeypatch):
+    controller_control(tmp_path, monkeypatch, code=7)
+    output = tmp_path / "output"
+    assert entry.capture(tmp_path / "unused", "baseline", output) == 7
+    value = entry.read_json(output / "result.json")
+    assert value["controller_stage"] == "FINALIZE"
+    assert value["controller_error_category"] == "NONE"
+    assert value["worker"]["child_returncode"] == 7
+
+
+@pytest.mark.parametrize(
+    "number,expected",
+    [
+        (1, "PERMISSION_DENIED"),
+        (13, "PERMISSION_DENIED"),
+        (2, "NOT_FOUND"),
+        (20, "NOT_DIRECTORY"),
+        (5, "OS_ERROR"),
+        (True, "OS_ERROR"),
+        ("secret", "OS_ERROR"),
+        (["secret"], "OS_ERROR"),
+    ],
+    ids=["eperm", "eacces", "enoent", "enotdir", "eio", "bool", "text", "list"],
+)
+def test_controller_error_category_never_copies_dynamic_errno(number, expected):
+    record = {"controller_stage": "INITIALIZE", "controller_error_category": "NONE"}
+    error = OSError(number, "secret/path")
+    entry.controller_failure(record, "PREFLIGHT", error)
+    assert record == {"controller_stage": "PREFLIGHT", "controller_error_category": expected}
+
+
+@pytest.mark.usefixtures("preserve_controller_umask")
+def test_controller_failure_reaches_public_projection_without_private_error(tmp_path, monkeypatch):
+    controller_control(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        entry,
+        "load_owner",
+        lambda *a: (
+            lambda *a, **k: SimpleNamespace(
+                returncode=1,
+                ownership={"cleanup_complete": True, "owned": []},
+                stdout=b"",
+                stderr=b"PRIVATE-CREDENTIAL-CANARY",
+            )
+        ),
+    )
+    output = tmp_path / "output"
+    code = entry.capture(tmp_path / "unused", "baseline", output)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            str(ROOT / "scripts/cli_capture_public_summary.py"),
+            "--result",
+            str(output / "result.json"),
+            "--mode",
+            "baseline",
+            "--shell-exit",
+            str(code),
+        ],
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0  # receipt projection, not CLI qualification
+    assert b"PRIVATE-CREDENTIAL-CANARY" not in result.stdout + result.stderr
+    assert str(tmp_path).encode() not in result.stdout + result.stderr
+    value = json.loads(result.stdout)
+    assert value["controller_stage"] == "WORKER_RECEIPT"
+    assert value["controller_error_category"] == "NOT_FOUND"
+    assert value["failure_observation"] == "WORKER_NONZERO_NO_RECEIPT"
+    assert value["worker_returncode"] == 1 and value["harness_shell_exit"] == 73
+    assert value["cli_returncode"] is None and value["qualification"] == "NOT_ASSESSED"
