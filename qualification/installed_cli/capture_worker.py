@@ -332,7 +332,14 @@ def check_cache_snapshot(expected):
 def _verify_binding(binding):
     if not isinstance(binding, dict) or binding.get("schema") != 1:
         raise ValueError("invalid binding")
-    for name in ("launcher", "target_python", "ip", "git"):
+    backend = binding.get("backend", "unshare")
+    if backend not in ("unshare", "stock-bwrap"):
+        raise ValueError("invalid capture backend")
+    for name in (
+        ("launcher", "target_python", "git")
+        if backend == "stock-bwrap"
+        else ("launcher", "target_python", "ip", "git")
+    ):
         path = Path(binding[name])
         if not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK):
             raise ValueError("missing absolute executable: " + name)
@@ -340,7 +347,7 @@ def _verify_binding(binding):
         raise TypeError("missing installed provenance")
     hashes = binding["capture_hashes"]
     sources = {}
-    for name in CAPTURE_FILES:
+    for name in (*CAPTURE_FILES, *(("capture_stock.py",) if backend == "stock-bwrap" else ())):
         raw = _read_regular(Path(__file__).with_name(name), 1024 * 1024)
         actual = hashlib.sha256(raw).hexdigest()
         if hashes.get(name) != actual:
@@ -349,6 +356,10 @@ def _verify_binding(binding):
     host = binding["host_netns"]
     if not isinstance(host, str) or not host.startswith("net:[") or not host.endswith("]"):
         raise ValueError("invalid host network namespace")
+    if backend == "stock-bwrap":
+        _VERIFIED_SOURCES.clear()
+        _VERIFIED_SOURCES.update(sources)
+        _module("capture_stock").child(binding)
     if admit_startup(binding["startup_admission"]) != binding["startup_admission"]["observed"]:
         raise ValueError("target startup admission changed")
     _VERIFIED_SOURCES.clear()
@@ -413,6 +424,9 @@ def _run_setup(argv, *, cwd, env):
 
 
 def _isolate(binding, env, output):
+    if binding.get("backend", "unshare") == "stock-bwrap":
+        _module("capture_stock").child(binding)
+        return
     # Check BEFORE invoking ip: never change the caller's network namespace.
     current = os.readlink("/proc/self/ns/net")
     if current == binding["host_netns"]:
@@ -845,6 +859,8 @@ def execute(binding, mode, output):
     try:
         if mode not in ("baseline", "diagnostic"):
             raise ValueError("unknown mode")
+        if binding.get("backend", "unshare") == "stock-bwrap" and binding["stock"]["mode"] != mode:
+            raise ValueError("stock mode differs from binding")
         _verify_binding(binding)
         _limits()
         env = _environment(output, binding)

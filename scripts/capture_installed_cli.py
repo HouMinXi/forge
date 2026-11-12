@@ -405,7 +405,7 @@ def startup_policy(prefix, site, target, launcher_source_sha256):
     return policy, helper_hash
 
 
-def verify_installation(evidence, *, owner_only=False):
+def verify_installation(evidence, *, owner_only=False, expected_target=None):
     """Read physical archive/wheel/installed bytes; no target sys.path mutation."""
     root = checked_directory(evidence)
     proof_raw = regular_bytes(root / "build-proof.json", FILE_LIMIT)
@@ -563,6 +563,12 @@ def verify_installation(evidence, *, owner_only=False):
     }
     if owner_only:
         return provenance, owner_sources, site / "code_forge"
+    if expected_target is not None:
+        require(str(target.resolve()) == expected_target["path"], "stock target path differs")
+        require(
+            sha256(regular_bytes(target.resolve())) == expected_target["sha256"],
+            "stock target bytes differ",
+        )
     target_identity = interpreter_identity(target, target=True)
     startup, helper_hash = startup_policy(
         prefix, site, target_identity, sha256(product["code_forge_launcher.py"])
@@ -702,13 +708,19 @@ def utility(name):
     return {"path": str(physical), "sha256": sha256(raw)}
 
 
+def stock_helper():
+    path = Path(__file__).resolve().parents[1] / "qualification/installed_cli/capture_stock.py"
+    raw = regular_bytes(path, 1024 * 1024)
+    module = types.ModuleType("_capture_stock_bound")
+    module.__file__ = str(path)
+    exec(compile(raw, str(path), "exec"), module.__dict__)  # noqa: S102 - fixed reviewed helper bytes
+    return module, sha256(raw)
+
+
 def worker_command(binding, mode, output, worker, binding_path, bootstrap_source):
-    return [
-        binding["unshare"]["path"],
-        "--user",
-        "--map-root-user",
-        "--net",
-        "--",
+    backend = binding.get("backend", "unshare")
+    require(backend in {"unshare", "stock-bwrap"}, "invalid backend")
+    payload = [
         sys.executable,
         "-I",
         "-B",
@@ -724,6 +736,11 @@ def worker_command(binding, mode, output, worker, binding_path, bootstrap_source
         "--output",
         str(output),
     ]
+    if backend == "stock-bwrap":
+        helper, digest = stock_helper()
+        require(digest == binding["capture_hashes"]["capture_stock.py"], "stock helper changed")
+        return helper.command(binding, payload)
+    return [binding["unshare"]["path"], "--user", "--map-root-user", "--net", "--", *payload]
 
 
 def safe_environment(output):
@@ -1103,7 +1120,8 @@ def launch_stderr_observation(record, raw):
     }.get(raw, "NOT_RECOGNIZED")
 
 
-def capture(evidence, mode, output):
+def capture(evidence, mode, output, *, backend="unshare"):
+    require(backend in {"unshare", "stock-bwrap"}, "invalid backend")
     os.umask(0o077)
     output = new_private_directory(output)
     record = {
@@ -1139,6 +1157,7 @@ def capture(evidence, mode, output):
         },
     }
     completed_stderr = None
+    stock = stock_module = stock_digest = None
     stage = "SANITIZE"
     try:
         sanitize_controller(output)
@@ -1146,11 +1165,30 @@ def capture(evidence, mode, output):
         host_netns = preflight()
         stage = "LIMITS"
         apply_limits()
+        if backend == "stock-bwrap":
+            stock_module, stock_digest = stock_helper()
+            stock = stock_module.prepare(output, mode)
         stage = "INSTALLATION"
-        binding, sources, origin = verify_installation(evidence)
+        binding, sources, origin = (
+            verify_installation(evidence, expected_target=stock["programs"]["python"])
+            if backend == "stock-bwrap"
+            else verify_installation(evidence)
+        )
         binding.update(schema=1, host_netns=host_netns, controller=interpreter_identity(sys.executable))
+        if backend == "stock-bwrap":
+            binding.update(backend=backend, stock=stock)
+            require(binding["target"]["version_info"] == [3, 14], "stock target runtime")
+            require(
+                Path(binding["target_python"]).resolve() == Path("/usr/bin/python3").resolve(),
+                "stock target interpreter",
+            )
+            for path in (Path(evidence), Path(__file__).resolve().parents[1]):
+                require(
+                    not path.is_relative_to(output) and not path.is_relative_to("/tmp"),  # noqa: S108 - reject hidden inputs
+                    "stock mount masks input",
+                )
         stage = "UTILITY_BINDING"
-        for name in ("unshare", "ip", "git"):
+        for name in ("git",) if backend == "stock-bwrap" else ("unshare", "ip", "git"):
             identity = utility(name)
             binding[name] = identity if name == "unshare" else identity["path"]
             binding.setdefault("utility_identities", {})[name] = identity
@@ -1167,6 +1205,8 @@ def capture(evidence, mode, output):
             for name in ("capture_worker.py", "diagnostic_run.py", "diagnostic_probe.py")
         }
         binding["capture_hashes"]["capture_bootstrap.py"] = sha256(bootstrap_raw)
+        if backend == "stock-bwrap":
+            binding["capture_hashes"]["capture_stock.py"] = stock_digest
         require(
             binding["startup_helper_sha256"] == binding["capture_hashes"]["capture_worker.py"],
             "startup admission helper changed during binding",
@@ -1216,6 +1256,12 @@ def capture(evidence, mode, output):
             record["outer_exception"] = exception_record(error)
         else:
             record["record_errors"].append(exception_record(error))
+    if stock_module is not None and stock is not None:
+        try:
+            require(stock_module.host_state() == stock["profile_sha256"], "stock host state changed")
+        except (OSError, ValueError, TypeError) as error:
+            controller_failure(record, "FINAL_DELIVERY", error)
+            record["record_errors"].append(exception_record(error))
     if record["controller_error_category"] == "NONE":
         record["controller_stage"] = "FINALIZE"
     record.update(read_startup(output / "startup"))
@@ -1237,9 +1283,10 @@ def main(argv=None):
     parser.add_argument("--wheel-evidence", required=True, type=Path)
     parser.add_argument("--mode", required=True, choices=("baseline", "diagnostic"))
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--backend", choices=("unshare", "stock-bwrap"), default="unshare")
     args = parser.parse_args(argv)
     try:
-        return capture(args.wheel_evidence, args.mode, args.output)
+        return capture(args.wheel_evidence, args.mode, args.output, backend=args.backend)
     except (OSError, ValueError):
         # Never print private paths or runtime records into the invoking terminal.
         print("capture setup failed; retain the private output if created", file=sys.stderr)
