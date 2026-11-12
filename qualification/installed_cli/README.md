@@ -349,3 +349,29 @@ overhead and may itself cross a deadline; never substitute a diagnostic rerun fo
 the baseline. Full repository CI, independent review/fault controls and installed
 qualification retain their own gates. Safe external reports may describe tool
 and test status, but must not contain runtime capture data.
+
+### Opt-in hosted diagnostic pilot
+
+`Installed CLI capture diagnostic (not qualification)` is a manually dispatched,
+non-required diagnostic job. It does not run on pushes or pull requests. Select
+`run_capture=true` and supply the reviewed full `expected_source_sha`, which must
+match the dispatched checkout. It builds an installed wheel from that exact
+source and attempts baseline and preenabled diagnostic capture independently.
+
+The job only observes existing Linux utilities and pidfd bindings. Missing
+utilities produce `UNSUPPORTED`; presence is `PRESENT_NOT_QUALIFIED`, not proof
+of namespace, ptrace, filesystem or storage admission. Existing capture probes
+remain authoritative. It does not install tracer packages, change security
+settings or fall back to host networking. A runner that cannot execute the
+capture remains failed/unavailable, not a passing qualification.
+
+Private receipts, raw data and provision/controller logs are never uploaded.
+Only bounded fixed-enum/boolean/integer JSON projections are eligible for a
+second independent whitelist validator and summary-only artifact. No paths,
+messages, payloads, arbitrary identifiers or hashes are published. This first
+pilot reports delivery and original process statuses, not detailed syscall or
+ACK timelines; it is not a substitute for retained private evidence or product
+acceptance. Shell, worker and CLI results are distinct. The current synthetic
+empty-findings fixture can return CLI 7; that original failure remains red even
+when the diagnostic receipt is delivered. A red pilot is not silently converted
+into PASS, and neither mode reruns an earlier failed production operation.

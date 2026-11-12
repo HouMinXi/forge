@@ -1,0 +1,193 @@
+"""Synthetic publication controls; no capture or product qualification."""
+
+import importlib.util
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+SPEC = importlib.util.spec_from_file_location(
+    "capture_publication", Path(__file__).resolve().parents[1] / "scripts/cli_capture_publication.py"
+)
+publication = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(publication)
+
+
+def capability():
+    return dict(
+        schema="forge-cli-capture-capability-v1",
+        status="PRESENT_NOT_QUALIFIED",
+        facts=dict.fromkeys(publication.FACTS, True),
+        live_admission="NOT_RUN",
+        qualification="NOT_ASSESSED",
+        raw_evidence="NOT_PUBLISHED",
+    )
+
+
+@pytest.fixture
+def envelope(tmp_path):
+    root = tmp_path / "public"
+    root.mkdir(mode=0o700)
+    source = root / "capability.json"
+    source.write_text(json.dumps(capability()) + "\n")
+    source.chmod(0o600)
+    return root, source, root / "published"
+
+
+def test_closed_projection(envelope):
+    root, source, dest = envelope
+    publication.publish(root, dest)
+    assert json.loads((dest / source.name).read_text()) == capability()
+    assert (dest / source.name).read_bytes() != source.read_bytes()
+    assert (dest / source.name).stat().st_mode & 0o777 == 0o600
+    assert dest.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize("mutation", ["extra", "secret", "bool", "status", "qualification", "raw"])
+def test_reject_untrusted_fields(envelope, mutation):
+    root, source, dest = envelope
+    data = capability()
+    if mutation == "extra":
+        data["secret"] = "CANARY-CREDENTIAL"
+    elif mutation == "secret":
+        data["facts"]["strace"] = "CANARY-CREDENTIAL"
+    elif mutation == "bool":
+        data["facts"]["strace"] = 1
+    elif mutation == "status":
+        data["status"] = "UNSUPPORTED"
+    elif mutation == "qualification":
+        data["qualification"] = "PASS"
+    else:
+        data["raw_evidence"] = "UPLOADED"
+    source.write_text(json.dumps(data) + "\n")
+    assert publication.main([str(root), str(dest)]) == 2
+    assert not dest.exists()
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["symlink", "fifo", "hardlink", "mode", "oversize", "duplicate", "float", "missing", "no_newline"],
+)
+def test_private_input_boundary(envelope, kind):
+    root, source, dest = envelope
+    if kind == "symlink":
+        source.rename(root / "other")
+        source.symlink_to(root / "other")
+    elif kind == "fifo":
+        source.unlink()
+        os.mkfifo(source, 0o600)
+    elif kind == "hardlink":
+        os.link(source, root / "other")
+    elif kind == "mode":
+        source.chmod(0o644)
+    elif kind == "oversize":
+        source.write_text("x" * 4097)
+    elif kind == "duplicate":
+        source.write_text('{"schema":1,"schema":2}\n')
+    elif kind == "float":
+        source.write_text('{"schema":1e999}\n')
+    elif kind == "missing":
+        source.unlink()
+    else:
+        source.write_text(json.dumps(capability()))
+    assert publication.main([str(root), str(dest)]) == 2
+    assert not dest.exists()
+
+
+def test_refuse_existing_destination(envelope):
+    root, _, dest = envelope
+    dest.mkdir(mode=0o700)
+    marker = dest / "keep"
+    marker.write_text("untouched")
+    assert publication.main([str(root), str(dest)]) == 2
+    assert marker.read_text() == "untouched"
+
+
+def test_failure_message_never_contains_input(envelope, capsys):
+    root, source, dest = envelope
+    source.write_text("CANARY-CREDENTIAL\n")
+    assert publication.main([str(root), str(dest)]) == 2
+    assert capsys.readouterr().err == "public diagnostic summary unavailable\n"
+
+
+def summary(mode="diagnostic"):
+    return dict(
+        schema="forge-public-cli-capture-summary-v1",
+        mode=mode,
+        receipt_status="DELIVERED",
+        harness_shell_exit=7,
+        worker_returncode=0,
+        cli_returncode=7,
+        cli_returncode_before_cleanup=7,
+        cleanup_induced_termination=False,
+        collector_delivery="HEALTHY" if mode == "diagnostic" else "NOT_APPLICABLE",
+        cleanup="COMPLETE",
+        qualification="NOT_ASSESSED",
+        raw_evidence="NOT_PUBLISHED",
+    )
+
+
+@pytest.mark.parametrize("mode", ["baseline", "diagnostic"])
+def test_preserves_independent_nonzero_status(envelope, mode):
+    root, _, dest = envelope
+    path = root / (mode + ".json")
+    path.write_text(json.dumps(summary(mode)) + "\n")
+    path.chmod(0o600)
+    publication.publish(root, dest)
+    assert json.loads((dest / path.name).read_text()) == summary(mode)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("mode", "UNKNOWN"),
+        ("schema", "secret"),
+        ("receipt_status", "PASS"),
+        ("harness_shell_exit", True),
+        ("harness_shell_exit", 256),
+        ("worker_returncode", -128),
+        ("cli_returncode", "secret"),
+        ("cli_returncode_before_cleanup", 256),
+        ("cleanup_induced_termination", 0),
+        ("collector_delivery", "NOT_APPLICABLE"),
+        ("cleanup", "secret"),
+        ("qualification", "PASS"),
+        ("raw_evidence", "secret"),
+    ],
+)
+def test_summary_closed_domains(field, value):
+    data = summary()
+    data[field] = value
+    with pytest.raises((ValueError, TypeError)):
+        publication.validate(data, "diagnostic.json")
+
+
+def test_undelivered_cannot_claim_observations():
+    data = summary()
+    data["receipt_status"] = "UNAVAILABLE"
+    with pytest.raises(ValueError):
+        publication.validate(data, "diagnostic.json")
+    for key in (
+        "worker_returncode",
+        "cli_returncode",
+        "cli_returncode_before_cleanup",
+        "cleanup_induced_termination",
+    ):
+        data[key] = None
+    data["collector_delivery"] = data["cleanup"] = "NOT_OBSERVED"
+    assert publication.validate(data, "diagnostic.json") == data
+
+
+def test_baseline_cannot_claim_collector_health():
+    data = summary("baseline")
+    data["collector_delivery"] = "HEALTHY"
+    with pytest.raises(ValueError):
+        publication.validate(data, "baseline.json")
+
+
+def test_summary_rejects_unknown_field():
+    data = summary()
+    data["private_message"] = "CANARY-CREDENTIAL"
+    with pytest.raises(ValueError):
+        publication.validate(data, "diagnostic.json")

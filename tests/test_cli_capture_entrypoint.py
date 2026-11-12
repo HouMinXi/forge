@@ -1918,3 +1918,18 @@ def test_post_owner_no_alias_config_failure_preserves_original_exit(
     observed["record_errors"].append({"type": "ValueError", "message": "pyvenv config changed"})
     observed["final_collector_health"] = None
     assert entry.select_exit(observed) == (73 if code == 0 else 7)
+
+
+@pytest.mark.parametrize("name", ["ip", "git", "strace", "unshare"])
+def test_utility_search_is_fixed_and_ip_includes_system_sbin(tmp_path, monkeypatch, name):
+    binary = tmp_path / name
+    binary.write_bytes(b"synthetic utility")
+    seen = []
+    monkeypatch.setenv("PATH", "/untrusted/credential-path")
+    monkeypatch.setattr(
+        entry.shutil, "which", lambda command, *, path: seen.append((command, path)) or str(binary)
+    )
+    result = entry.utility(name)
+    expected = os.defpath + os.pathsep + "/usr/sbin:/sbin" if name == "ip" else os.defpath
+    assert seen == [(name, expected)]
+    assert result == {"path": str(binary), "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
