@@ -230,9 +230,12 @@ def check_record(row, raw):
     require(row == [expected, str(len(raw))], "installed RECORD digest mismatch")
 
 
-def launcher_template(target, *, modern=False):
+def launcher_template(target, *, modern=False, removesuffix=False):
     body = "import sys\nfrom code_forge_launcher import cli_main\nif __name__ == '__main__':\n"
-    if modern:
+    if removesuffix:
+        # pip 26.2.2 PipScriptMaker overrides the vendored distlib default.
+        body += "    sys.argv[0] = sys.argv[0].removesuffix('.exe')\n"
+    elif modern:
         body += (
             "    if sys.argv[0].endswith('-script.pyw'):\n"
             "        sys.argv[0] = sys.argv[0][:-11]\n"
@@ -251,8 +254,11 @@ def verify_launcher(raw, target):
     require(
         any(
             tree
-            == ast.dump(ast.parse(launcher_template(target, modern=modern)), include_attributes=False)
-            for modern in (False, True)
+            == ast.dump(
+                ast.parse(launcher_template(target, modern=modern, removesuffix=removesuffix)),
+                include_attributes=False,
+            )
+            for modern, removesuffix in ((False, False), (True, False), (False, True))
         ),
         "installed launcher entrypoint mismatch",
     )
@@ -278,7 +284,7 @@ def interpreter_identity(executable, *, target=False):
                     "-c",
                     "import _imp,json,sys;print(json.dumps({'version':sys.version,'executable':sys.executable,"
                     "'implementation':sys.implementation.name,'version_info':list(sys.version_info[:2]),"
-                    "'runtime_version':list(sys.version_info[:3]),'base_prefix':sys.base_prefix,'base_exec_prefix':sys.base_exec_prefix,"
+                    "'runtime_version':list(sys.version_info[:3]),'base_prefix':sys.base_prefix,'base_exec_prefix':sys.base_exec_prefix,'prefix':sys.prefix,"
                     "'platlibdir':sys.platlibdir,'stdlib_paths':sys.path,"
                     "'extension_suffixes':_imp.extension_suffixes(),'cache_prefix_supported':hasattr(sys,'pycache_prefix')}))",
                 ],
@@ -369,8 +375,14 @@ def read_pyvenv_config(prefix):
     return raw, parse_pyvenv(raw)
 
 
-def startup_policy(prefix, site, target, launcher_source_sha256):
+def startup_policy(prefix, site, target, launcher_source_sha256, *, startup_mode="ordinary"):
     """Derive normal console roots from isolated target metadata, not controller paths."""
+    require(startup_mode in {"ordinary", "isolated-no-site"}, "unknown startup mode")
+    if startup_mode == "isolated-no-site":
+        require(
+            target["version_info"] == [3, 14] and target.get("prefix") == str(prefix),
+            "no-site target prefix/runtime",
+        )
     version = "python" + ".".join(map(str, target["version_info"]))
     sites = list(
         dict.fromkeys(
@@ -390,6 +402,9 @@ def startup_policy(prefix, site, target, launcher_source_sha256):
         "site_packages": str(site),
         "launcher_source_sha256": launcher_source_sha256,
     }
+    if startup_mode != "ordinary":
+        policy["startup_mode"] = startup_mode
+        policy["no_site_system_roots"] = target["stdlib_paths"]
     module, helper_hash = capture_worker_module()
     config_path = prefix / "pyvenv.cfg"
     config_raw, config = read_pyvenv_config(prefix)
@@ -405,7 +420,7 @@ def startup_policy(prefix, site, target, launcher_source_sha256):
     return policy, helper_hash
 
 
-def verify_installation(evidence, *, owner_only=False, expected_target=None):
+def verify_installation(evidence, *, owner_only=False, expected_target=None, startup_mode="ordinary"):
     """Read physical archive/wheel/installed bytes; no target sys.path mutation."""
     root = checked_directory(evidence)
     proof_raw = regular_bytes(root / "build-proof.json", FILE_LIMIT)
@@ -571,7 +586,11 @@ def verify_installation(evidence, *, owner_only=False, expected_target=None):
         )
     target_identity = interpreter_identity(target, target=True)
     startup, helper_hash = startup_policy(
-        prefix, site, target_identity, sha256(product["code_forge_launcher.py"])
+        prefix,
+        site,
+        target_identity,
+        sha256(product["code_forge_launcher.py"]),
+        startup_mode=startup_mode,
     )
     return (
         {
@@ -723,6 +742,7 @@ def worker_command(binding, mode, output, worker, binding_path, bootstrap_source
     payload = [
         sys.executable,
         "-I",
+        *(("-S",) if binding.get("startup_mode") == "isolated-no-site" else ()),
         "-B",
         "-c",
         bootstrap_source,
@@ -1120,8 +1140,10 @@ def launch_stderr_observation(record, raw):
     }.get(raw, "NOT_RECOGNIZED")
 
 
-def capture(evidence, mode, output, *, backend="unshare"):
+def capture(evidence, mode, output, *, backend="unshare", startup_mode="ordinary"):
     require(backend in {"unshare", "stock-bwrap"}, "invalid backend")
+    require(startup_mode in {"ordinary", "isolated-no-site"}, "invalid startup mode")
+    require(startup_mode == "ordinary" or backend == "stock-bwrap", "no-site requires stock backend")
     os.umask(0o077)
     output = new_private_directory(output)
     record = {
@@ -1170,11 +1192,17 @@ def capture(evidence, mode, output, *, backend="unshare"):
             stock = stock_module.prepare(output, mode)
         stage = "INSTALLATION"
         binding, sources, origin = (
-            verify_installation(evidence, expected_target=stock["programs"]["python"])
+            verify_installation(
+                evidence,
+                expected_target=stock["programs"]["python"],
+                **({"startup_mode": startup_mode} if startup_mode != "ordinary" else {}),
+            )
             if backend == "stock-bwrap"
             else verify_installation(evidence)
         )
         binding.update(schema=1, host_netns=host_netns, controller=interpreter_identity(sys.executable))
+        if startup_mode != "ordinary":
+            binding.update(startup_mode=startup_mode, mode=mode)
         if backend == "stock-bwrap":
             binding.update(backend=backend, stock=stock)
             require(binding["target"]["version_info"] == [3, 14], "stock target runtime")
@@ -1205,6 +1233,10 @@ def capture(evidence, mode, output, *, backend="unshare"):
             for name in ("capture_worker.py", "diagnostic_run.py", "diagnostic_probe.py")
         }
         binding["capture_hashes"]["capture_bootstrap.py"] = sha256(bootstrap_raw)
+        if startup_mode != "ordinary":
+            binding["capture_hashes"]["no_site_entry.py"] = sha256(
+                regular_bytes(worker.with_name("no_site_entry.py"))
+            )
         if backend == "stock-bwrap":
             binding["capture_hashes"]["capture_stock.py"] = stock_digest
         require(
@@ -1284,9 +1316,16 @@ def main(argv=None):
     parser.add_argument("--mode", required=True, choices=("baseline", "diagnostic"))
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--backend", choices=("unshare", "stock-bwrap"), default="unshare")
+    parser.add_argument("--startup-mode", choices=("ordinary", "isolated-no-site"), default="ordinary")
     args = parser.parse_args(argv)
     try:
-        return capture(args.wheel_evidence, args.mode, args.output, backend=args.backend)
+        return capture(
+            args.wheel_evidence,
+            args.mode,
+            args.output,
+            backend=args.backend,
+            **({"startup_mode": args.startup_mode} if args.startup_mode != "ordinary" else {}),
+        )
     except (OSError, ValueError):
         # Never print private paths or runtime records into the invoking terminal.
         print("capture setup failed; retain the private output if created", file=sys.stderr)

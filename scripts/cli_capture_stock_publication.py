@@ -20,6 +20,8 @@ CONTEXT = dict(
 )
 
 
+NO_SITE_CONTEXT = CONTEXT | {"schema": "forge-stock-cli-context-v2", "startup_mode": "ISOLATED_NO_SITE"}
+
 FACTS = {"linux", "pidfd_bindings", "git", "bwrap", "strace"}
 
 
@@ -82,7 +84,7 @@ def publish(source, destination):
         finally:
             os.close(fd)
         value = json.loads(raw, object_pairs_hook=module.unique, parse_constant=module.reject)
-        module.require(type(value) is dict and value == CONTEXT)
+        module.require(type(value) is dict and (value == CONTEXT or value == NO_SITE_CONTEXT))
         module.require(
             module.fingerprint(before)
             == module.fingerprint(os.fstat(directory))
@@ -99,7 +101,7 @@ def publish(source, destination):
         destination / "context.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
     )
     with os.fdopen(fd, "w") as handle:
-        handle.write(json.dumps(CONTEXT, sort_keys=True) + "\n")
+        handle.write(json.dumps(value, sort_keys=True) + "\n")
 
 
 def main():

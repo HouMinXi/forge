@@ -19,6 +19,13 @@ name: Installed CLI capture diagnostic (not qualification)
         description: Independent default-off stock Ubuntu 26.04 real synthetic CLI capture (not qualification)
         type: boolean
         default: false
+      stock_startup_mode:
+        description: Stock-only explicit startup contract (not normal-console equivalence)
+        type: choice
+        options:
+          - ordinary
+          - isolated-no-site
+        default: ordinary
       expected_source_sha:
         description: Reviewed exact source SHA of this dispatched workflow
         type: string
@@ -357,6 +364,7 @@ jobs:
       - name: Bind source and create private diagnostic directories
         id: prepare
         env:
+          STARTUP_MODE: ${{ inputs.stock_startup_mode }}
           EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
           DISPATCH_SOURCE_SHA: ${{ github.sha }}
         shell: bash
@@ -380,6 +388,10 @@ jobs:
               ack_consistency='NOT_ASSESSED', power_loss_durability='NOT_ASSESSED', raw='NOT_PUBLISHED')
           fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
           with os.fdopen(fd, 'w') as handle:
+              startup = os.environ.get('STARTUP_MODE', 'ordinary')
+              assert startup in {'ordinary', 'isolated-no-site'}
+              if startup == 'isolated-no-site':
+                  value.update(schema='forge-stock-cli-context-v2', startup_mode='ISOLATED_NO_SITE')
               handle.write(json.dumps(value, sort_keys=True) + '\n')
           CONTEXT
       - name: Observe required existing utilities and controller bindings
@@ -457,6 +469,8 @@ jobs:
         if: ${{ steps.wheel.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 3
+        env:
+          STARTUP_MODE: ${{ inputs.stock_startup_mode }}
         shell: bash
         run: |
           exec >/dev/null 2>&1
@@ -466,7 +480,9 @@ jobs:
           private="$RUNNER_TEMP/forge-stock-cli-capture"
           exec >"$private/baseline-controller.log" 2>&1
           code=0
-          /usr/bin/python3 -I -B scripts/capture_installed_cli.py --backend stock-bwrap \
+          startup_flags=(-I -B)
+          if [[ "$STARTUP_MODE" == isolated-no-site ]]; then startup_flags=(-I -S -B); fi
+          /usr/bin/python3 "${startup_flags[@]}" scripts/capture_installed_cli.py --backend stock-bwrap --startup-mode "$STARTUP_MODE" \
             --wheel-evidence "$private/installed" --mode baseline \
             --output "$private/baseline" || code=$?
           printf 'capture_exit=%s\n' "$code" >> "$GITHUB_OUTPUT"
@@ -482,6 +498,8 @@ jobs:
         if: ${{ !cancelled() && steps.wheel.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 3
+        env:
+          STARTUP_MODE: ${{ inputs.stock_startup_mode }}
         shell: bash
         run: |
           exec >/dev/null 2>&1
@@ -491,7 +509,9 @@ jobs:
           private="$RUNNER_TEMP/forge-stock-cli-capture"
           exec >"$private/diagnostic-controller.log" 2>&1
           code=0
-          /usr/bin/python3 -I -B scripts/capture_installed_cli.py --backend stock-bwrap \
+          startup_flags=(-I -B)
+          if [[ "$STARTUP_MODE" == isolated-no-site ]]; then startup_flags=(-I -S -B); fi
+          /usr/bin/python3 "${startup_flags[@]}" scripts/capture_installed_cli.py --backend stock-bwrap --startup-mode "$STARTUP_MODE" \
             --wheel-evidence "$private/installed" --mode diagnostic \
             --output "$private/diagnostic" || code=$?
           printf 'capture_exit=%s\n' "$code" >> "$GITHUB_OUTPUT"

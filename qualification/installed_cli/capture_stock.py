@@ -211,6 +211,11 @@ def child(binding):
         admission["site_packages"],
         admission["venv_config_path"],
         __file__,
+        *(
+            (str(Path(__file__).with_name("no_site_entry.py")),)
+            if binding.get("startup_mode") == "isolated-no-site"
+            else ()
+        ),
         *admission["roots"],
     ):
         path = Path(value)

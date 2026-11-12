@@ -80,6 +80,113 @@ jobs:
             exit "$qualification_code"
           fi
           date -u +%s >"$private/finished"
+      - name: Read-only current-wheel no-site dependency control (3.14 only)
+        id: no_site_control
+        if: ${{ matrix.runtime == 'py314' && steps.qualify.outcome == 'success' }}
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          exec >/dev/null 2>&1
+          set +x
+          set -euo pipefail
+          umask 077
+          matches=("$RUNNER_TEMP"/forge-wheel-qualification.*/qualification)
+          [[ "${#matches[@]}" == 1 && -d "${matches[0]}" ]]
+          private=$(mktemp -d "$RUNNER_TEMP/forge-no-site-status.XXXXXXXX")
+          control_code=0
+          python -I -S -B scripts/check_no_site_installation.py \
+            --wheel-evidence "${matches[0]}" --expected-source-sha "$SOURCE_SHA" \
+            --status-output "$private/status.json" || control_code=$?
+          echo "control_shell_exit=$control_code" >> "$GITHUB_OUTPUT"
+          exit "$control_code"
+      - name: Publish only validated no-site control stage
+        if: ${{ always() && matrix.runtime == 'py314' && steps.no_site_control.outcome != 'skipped' }}
+        env:
+          CONTROL_EXIT: ${{ steps.no_site_control.outputs.control_shell_exit }}
+        shell: bash
+        run: |
+          set +x
+          set -euo pipefail
+          python -I -S -B - 2>/dev/null <<'PY'
+          import json, os, stat, sys
+          try:
+              def unique(pairs):
+                  result = {}
+                  for key, value in pairs:
+                      if key in result:
+                          raise ValueError()
+                      result[key] = value
+                  return result
+              code_text = os.environ['CONTROL_EXIT']
+              if not code_text.isascii() or not code_text.isdecimal() or str(int(code_text)) != code_text:
+                  raise ValueError()
+              code = int(code_text)
+              if not 0 <= code <= 255:
+                  raise ValueError()
+              candidates = []
+              with os.scandir(os.environ['RUNNER_TEMP']) as entries:
+                  for index, entry in enumerate(entries):
+                      if index >= 20000:
+                          raise ValueError()
+                      if entry.name.startswith('forge-no-site-status.'):
+                          candidates.append(entry.path)
+                          if len(candidates) > 1:
+                              raise ValueError()
+              if len(candidates) != 1:
+                  raise ValueError()
+              parent = candidates[0]
+              parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+              info = os.fstat(parent_fd)
+              if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700 or info.st_uid != os.getuid():
+                  raise ValueError()
+              fd = os.open('status.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+              try:
+                  before = os.fstat(fd)
+                  if not stat.S_ISREG(before.st_mode) or stat.S_IMODE(before.st_mode) != 0o600 or before.st_uid != os.getuid() or before.st_nlink != 1 or not 0 < before.st_size <= 2048:
+                      raise ValueError()
+                  raw = os.read(fd, 2049)
+                  after = os.fstat(fd)
+                  named = os.stat('status.json', dir_fd=parent_fd, follow_symlinks=False)
+                  current_parent = os.lstat(parent)
+                  if any(getattr(info, key) != getattr(current_parent, key) for key in ('st_dev','st_ino','st_mode','st_uid')):
+                      raise ValueError()
+                  if any(getattr(before, key) != getattr(after, key) or getattr(before, key) != getattr(named, key) for key in ('st_dev','st_ino','st_size','st_mode','st_mtime_ns','st_ctime_ns')) or len(raw) != before.st_size or not raw.endswith(b'\n'):
+                      raise ValueError()
+              finally:
+                  os.close(fd)
+                  os.close(parent_fd)
+              row = json.loads(raw, object_pairs_hook=unique, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+              stages = {'INITIALIZE','RUNTIME','VERIFY_INSTALLATION','SOURCE_IDENTITY','CONTROL_SETUP','CHILD_SETUP','BASELINE_PREPARE','BASELINE_IMPORT','DIAGNOSTIC_PREPARE','DIAGNOSTIC_IMPORT','DIAGNOSTIC_PROBE_RECEIPT','NEGATIVE_CONSOLE','NEGATIVE_PREFIX','NEGATIVE_ROOTS','NEGATIVE_PROBE','COMPLETE'}
+              categories = {'NONE','NO_DELIVERY','INVALID_DATA','OS_ERROR','TIMEOUT','INTERNAL_ERROR','INVALID_RECEIPT','VERIFY_TARGET_METADATA','VERIFY_CONSOLE_BINDING','VERIFY_SOURCE_BINDING','VERIFY_SITE_PATH_HOOK','VERIFY_STARTUP_ADMISSION','VERIFY_RUNTIME_PREFIX'}
+              if type(row) is not dict or set(row) != {'schema','stage','category','child_exit'} or row['schema'] != 'forge-no-site-control-v1':
+                  raise ValueError()
+              if type(row['stage']) is not str or row['stage'] not in stages or type(row['category']) is not str or row['category'] not in categories:
+                  raise ValueError()
+              if row['category'].startswith('VERIFY_') and row['stage'] != 'VERIFY_INSTALLATION':
+                  raise ValueError()
+              child = row['child_exit']
+              if child is not None and (type(child) is not int or not -255 <= child <= 255):
+                  raise ValueError()
+              if (code == 0) != (row['stage'] == 'COMPLETE') or (code == 0) != (row['category'] == 'NONE'):
+                  raise ValueError()
+              if code == 0 and child != 0:
+                  raise ValueError()
+              if row['stage'] in {'INITIALIZE','RUNTIME','VERIFY_INSTALLATION','SOURCE_IDENTITY','CONTROL_SETUP'} and child is not None:
+                  raise ValueError()
+              if row['stage'] == 'DIAGNOSTIC_PROBE_RECEIPT' and child != 0:
+                  raise ValueError()
+              if row['category'] == 'NO_DELIVERY' and row['stage'] != 'INITIALIZE':
+                  raise ValueError()
+              if row['category'] == 'TIMEOUT' and (child is not None or row['stage'] not in {'CHILD_SETUP','VERIFY_INSTALLATION'}):
+                  raise ValueError()
+              # Only this independent, closed projection can reach the public log.
+              row['control_shell_exit'] = code
+              row['qualification'] = 'NOT_ASSESSED'
+              print(json.dumps(row, sort_keys=True))
+          except Exception:
+              raise SystemExit(74)
+          PY
       - name: Verify original qualified wheel is safe to publish
         id: wheel_release
         env:

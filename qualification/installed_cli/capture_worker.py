@@ -211,6 +211,12 @@ def admit_startup(spec):
     """Inspect ordinary startup routes as data; never import their candidates."""
     if spec.get("policy") != "private_empty_bytecode_cache" or spec.get("distutils_mode") != "stdlib":
         raise ValueError("unsupported startup policy")
+    startup_mode = spec.get("startup_mode", "ordinary")
+    if startup_mode not in {"ordinary", "isolated-no-site"}:
+        raise ValueError("unknown startup mode")
+    no_site_roots = spec.get("no_site_system_roots", []) if startup_mode == "isolated-no-site" else []
+    if type(no_site_roots) is not list or any(type(p) is not str for p in no_site_roots):
+        raise ValueError("invalid no-site roots")
     roots, suffixes = spec["roots"], spec["extension_suffixes"]
     if (
         not isinstance(roots, list)
@@ -253,6 +259,12 @@ def admit_startup(spec):
                 raise ValueError("startup root entry bound exceeded")
             for candidate in entries:
                 module = _startup_candidate(candidate.name, suffixes)
+                if (
+                    module in {"sitecustomize", "usercustomize"}
+                    and name in no_site_roots
+                    and root != site
+                ):
+                    continue
                 if module is not None:
                     if candidate != expected or module != "code_forge_launcher":
                         raise ValueError("competing launcher or startup customization")
@@ -275,7 +287,9 @@ def admit_startup(spec):
                 entries = list(cache.iterdir())
                 if len(entries) > 20000:
                     raise ValueError("startup cache entry bound exceeded")
-                if any(item.name.startswith(("sitecustomize.", "usercustomize.")) for item in entries):
+                if name not in no_site_roots and any(
+                    item.name.startswith(("sitecustomize.", "usercustomize.")) for item in entries
+                ):
                     raise ValueError("startup customization cache rejected")
             observed.append(row)
         elif stat.S_ISREG(info.st_mode) and root.suffix == ".zip":
@@ -345,9 +359,27 @@ def _verify_binding(binding):
             raise ValueError("missing absolute executable: " + name)
     if not isinstance(binding.get("installed_provenance"), dict):
         raise TypeError("missing installed provenance")
+    startup_mode = binding.get("startup_mode", "ordinary")
+    if startup_mode not in {"ordinary", "isolated-no-site"}:
+        raise ValueError("invalid startup mode")
+    if startup_mode == "isolated-no-site":
+        if (
+            backend != "stock-bwrap"
+            or binding["target"]["version_info"] != [3, 14]
+            or binding["startup_admission"].get("startup_mode") != startup_mode
+            or binding["startup_admission"].get("no_site_system_roots")
+            != binding["target"]["stdlib_paths"]
+        ):
+            raise ValueError("no-site binding differs")
+    elif binding["startup_admission"].get("startup_mode", "ordinary") != "ordinary":
+        raise ValueError("startup policy differs")
     hashes = binding["capture_hashes"]
     sources = {}
-    for name in (*CAPTURE_FILES, *(("capture_stock.py",) if backend == "stock-bwrap" else ())):
+    for name in (
+        *CAPTURE_FILES,
+        *(("capture_stock.py",) if backend == "stock-bwrap" else ()),
+        *(("no_site_entry.py",) if startup_mode == "isolated-no-site" else ()),
+    ):
         raw = _read_regular(Path(__file__).with_name(name), 1024 * 1024)
         actual = hashlib.sha256(raw).hexdigest()
         if hashes.get(name) != actual:
@@ -885,6 +917,15 @@ def execute(binding, mode, output):
         if env.get("PYTHONDONTWRITEBYTECODE") != "1" or env.get("SETUPTOOLS_USE_DISTUTILS") != "stdlib":
             raise ValueError("controlled startup environment changed")
         check_stdlib_alias(binding.get("startup_admission", {}))
+        controlled = binding.get("startup_mode") == "isolated-no-site"
+        if controlled:
+            argv = _module("no_site_entry").command(
+                binding,
+                output.parent / "binding.json",
+                output / "pycache",
+                argv,
+                _VERIFIED_SOURCES["no_site_entry.py"],
+            )
         if mode == "diagnostic":
             collector = _module("diagnostic_run").traced_child(
                 argv,
@@ -892,6 +933,7 @@ def execute(binding, mode, output):
                 cwd=project,
                 env=env,
                 output=output / "diagnostic",
+                **({"startup_mode": "isolated-no-site"} if controlled else {}),
                 stdout=stdout,
                 stderr=stderr,
             )

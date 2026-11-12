@@ -79,7 +79,7 @@ def _terminal_observed(path, pid, *, timeout=2.0):
 
 
 @contextmanager
-def traced_child(argv, *, case_id, cwd, env, output, stdout, stderr):
+def traced_child(argv, *, case_id, cwd, env, output, stdout, stderr, startup_mode="ordinary"):
     """Trace before exec, keeping the actual console as the exact Popen child.
 
     Linux strace -D runs the tracer as a grandchild, leaving the tracee in place.
@@ -88,6 +88,14 @@ def traced_child(argv, *, case_id, cwd, env, output, stdout, stderr):
     context does not stop or reap the child on an exception or early return.
     case_id is a fixed public label, not proof of a scenario or roster coverage.
     """
+    if startup_mode not in {"ordinary", "isolated-no-site"}:
+        raise ValueError("unknown diagnostic startup mode")
+    if startup_mode == "isolated-no-site" and (
+        len(argv) < 7
+        or list(argv[1:5]) != ["-I", "-S", "-B", "-X"]
+        or not str(argv[5]).startswith("pycache_prefix=")
+    ):
+        raise ValueError("no-site trace command differs")
     if type(case_id) is not str:
         raise TypeError("diagnostic case identity must be a string")
     if case_id not in CASE_IDS:
@@ -116,9 +124,11 @@ def traced_child(argv, *, case_id, cwd, env, output, stdout, stderr):
         "    spec.loader.exec_module(module)\n"
         "    module.install(int(fd))\n"
     )
-    _write_private(shim / "sitecustomize.py", shim_code)
+    if startup_mode == "ordinary":
+        _write_private(shim / "sitecustomize.py", shim_code)
     child_env = dict(env)
-    child_env["PYTHONPATH"] = str(shim)
+    if startup_mode == "ordinary":
+        child_env["PYTHONPATH"] = str(shim)
     child_env["PYTHONDONTWRITEBYTECODE"] = "1"
     child = None
     events = os.open(output / "events.jsonl", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

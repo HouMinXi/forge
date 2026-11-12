@@ -604,3 +604,56 @@ The builder's default remains copied interpreters for every existing route. This
 opt-in does not relax target path/hash admission or enable system site-packages.
 Stock summaries use a distinct artifact name so both capture jobs can be requested
 in the same dispatch without colliding.
+
+### Explicit controlled no-site capture
+
+`--startup-mode isolated-no-site` is a separate, opt-in startup contract, limited
+to stock-bwrap and CPython 3.14. Ordinary startup remains the default. This route
+executes the verified original console bytes with the bound venv interpreter and
+`-I -S -B -X pycache_prefix=<private-empty-directory>`. It appends exactly the
+verified installed site-packages directory, without `site.main`, `addsitedir`,
+`.pth` processing, cwd/bin imports, or automatic site/usercustomize imports.
+It does not alter `sys.prefix`: 3.14 must naturally establish the venv prefix.
+System startup customization may be present but is not executed by this startup
+route. Competing launcher/source/ZIP identity checks remain active. Controller
+and worker startup also suppress site initialization for this mode.
+
+The fixed invocation remains the inline canary scenario, not arbitrary commands.
+It returns before the StateMachine/detached mutation route. This does not claim
+that every possible Forge command or descendant interpreter inherits `-S`.
+Diagnostic instrumentation is explicitly installed from bound helper bytes and
+an inherited private FD (made non-inheritable before product import); no
+PYTHONPATH/sitecustomize shim is used. Full strace capability, ownership cleanup,
+original exits, private raw storage, and isolation gates remain unchanged.
+A v2 stock context labels the requested ISOLATED_NO_SITE contract, even if launch
+fails; it is not evidence of completed startup or normal-console equivalence,
+ACK consistency, power-loss durability, or a historical root-cause finding.
+
+The mandatory py314 installed-wheel CI control separately checks fresh exact-SHA
+wheel identity, this same startup preparation, and real launcher/dependency
+imports, with hostile cwd/PYTHONPATH hook and launcher canaries. It does not run
+review, namespace setup, or the full trace/capture workload. The full baseline and
+diagnostic path remains unqualified until an authorized isolated run delivers
+real receipts. Local 3.12/3.13 checks explicitly do not qualify the 3.14 runtime.
+Build/provision steps retain their ordinary startup semantics; the no-site claim
+is limited to the controlled capture entry, not every Python call in a workflow.
+
+The read-only control publishes only an independently validated closed stage
+receipt: verification/source identity, baseline preparation/import, diagnostic
+preparation/import/probe receipt, or a named negative control. Categories are
+fixed enums; selected source-defined validator messages map by exact equality
+to narrower categories, while unknown messages remain coarse. No exception
+text, path, stderr, environment, or raw events are published. The independently
+observed child exit and control shell exit remain separate. A failure still
+returns 73; a failed publication independently fails its step. Missing delivery
+or rejected envelopes never mean that no child ran. COMPLETE reports this
+read-only control only, with qualification always NOT_ASSESSED, not historical
+causality or isolated capture acceptance.
+
+Console-source admission includes the exact pip 26.2.2 `PipScriptMaker`
+`removesuffix('.exe')` pattern, alongside the two older canonical patterns.
+The wheel installer uses this subclass rather than distlib's default template.
+Shebang, entry module/function, guard, arguments, complete AST, original source
+bytes, and installed RECORD remain bound; shell trampolines and arbitrary
+wrapper variants remain rejected. This compatibility fix does not establish
+that every historical console-binding failure had the same cause.
