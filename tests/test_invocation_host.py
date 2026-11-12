@@ -37,9 +37,12 @@ class MockRecorder:
     release = None
     calls = []
 
-    def __init__(self, root, *, context, monotonic, utc_now, audit_schema_version):
+    def __init__(
+        self, root, *, context, monotonic, utc_now, audit_schema_version, scoped_fault_domain=False
+    ):
         audit._context(context)
         self.root, self.context, self.version = root, context, audit_schema_version
+        self.scoped_fault_domain = scoped_fault_domain
         self.manifest = None
         self.stages = {}
         self.started = []
