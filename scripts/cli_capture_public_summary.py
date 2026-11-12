@@ -15,8 +15,14 @@ import stat
 import sys
 
 MAX_BYTES = 8 * 1024 * 1024
-SCHEMA = "forge-public-cli-capture-summary-v2"
+SCHEMA = "forge-public-cli-capture-summary-v3"
 MODES = {"baseline", "diagnostic"}
+LAUNCH_OBSERVATIONS = {
+    "NOT_ASSESSED",
+    "NOT_RECOGNIZED",
+    "STDERR_EXACT_UNSHARE_OPERATION_NOT_PERMITTED",
+    "STDERR_EXACT_UNSHARE_PERMISSION_DENIED",
+}
 STAGES = {
     "INITIALIZE",
     "SANITIZE",
@@ -150,6 +156,7 @@ def empty(mode, shell_exit, status):
         "controller_stage": "UNKNOWN",
         "controller_error_category": "UNKNOWN",
         "failure_observation": "NOT_OBSERVED",
+        "launch_stderr_observation": "NOT_ASSESSED",
     }
 
 
@@ -224,6 +231,12 @@ def validate(record, mode, shell_exit):
             raise ContradictoryReceipt
         if health["status"] in {"healthy", "not_applicable"} and health["errors"]:
             raise ContradictoryReceipt
+    launch = record.get("launch_stderr_observation", "NOT_ASSESSED")
+    require(type(launch) is str and launch in LAUNCH_OBSERVATIONS)
+    if launch != "NOT_ASSESSED" and (
+        worker_code != 1 or worker is not None or record["outer_exception"] is not None
+    ):
+        raise ContradictoryReceipt
     return worker, ownership, health
 
 
@@ -232,6 +245,7 @@ def project(record, mode, shell_exit):
     worker, ownership, health = validate(record, mode, shell_exit)
     result = empty(mode, shell_exit, "DELIVERED")
     result["worker_returncode"] = record["worker_returncode"]
+    result["launch_stderr_observation"] = record.get("launch_stderr_observation", "NOT_ASSESSED")
     result["controller_stage"] = record.get("controller_stage", "UNKNOWN")
     result["controller_error_category"] = record.get("controller_error_category", "UNKNOWN")
     if worker is None and record["worker_returncode"] not in (None, 0):

@@ -27,6 +27,7 @@ KEYS = {
     "controller_stage",
     "controller_error_category",
     "failure_observation",
+    "launch_stderr_observation",
 }
 
 
@@ -460,7 +461,7 @@ def test_unavailable_projection_accepted_without_invented_receipt(public, tmp_pa
 
 def test_legacy_private_receipt_has_unknown_stage_not_success(public, tmp_path):
     value = public.summarize(str(write_receipt(tmp_path, receipt())), "diagnostic", 7)
-    assert value["schema"] == "forge-public-cli-capture-summary-v2"
+    assert value["schema"] == "forge-public-cli-capture-summary-v3"
     assert value["controller_stage"] == value["controller_error_category"] == "UNKNOWN"
     assert value["failure_observation"] == "NOT_OBSERVED"
     assert value["harness_shell_exit"] == value["cli_returncode"] == 7
@@ -575,3 +576,64 @@ def test_nonzero_worker_without_receipt_is_observation_not_root_cause(public, tm
     assert value["controller_error_category"] == "NOT_FOUND"
     assert value["cli_returncode"] is None
     assert_safe(value)
+
+
+@pytest.mark.parametrize(
+    "observation",
+    [
+        "NOT_RECOGNIZED",
+        "STDERR_EXACT_UNSHARE_OPERATION_NOT_PERMITTED",
+        "STDERR_EXACT_UNSHARE_PERMISSION_DENIED",
+    ],
+)
+def test_launch_enum_projection_and_independent_publication(public, tmp_path, observation):
+    source = receipt()
+    source.update(
+        worker_returncode=1,
+        worker=None,
+        final_collector_health=None,
+        launch_stderr_observation=observation,
+    )
+    value = public.summarize(str(write_receipt(tmp_path, source)), "diagnostic", 7)
+    assert value["receipt_status"] == "DELIVERED"
+    assert value["launch_stderr_observation"] == observation
+    spec = importlib.util.spec_from_file_location(
+        "launch_publication", SCRIPT.with_name("cli_capture_publication.py")
+    )
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    assert validator.validate(value, "diagnostic.json") == value
+    assert_safe(value)
+
+
+@pytest.mark.parametrize(
+    "bad", [None, True, 1, {}, [], CANARY], ids=["null", "bool", "int", "dict", "list", "canary"]
+)
+def test_launch_unknown_private_value_fails_closed(public, tmp_path, bad):
+    source = receipt()
+    source["launch_stderr_observation"] = bad
+    value = public.summarize(str(write_receipt(tmp_path, source)), "diagnostic", 7)
+    assert value["receipt_status"] == "INVALID"
+    assert value["launch_stderr_observation"] == "NOT_ASSESSED"
+    assert value["harness_shell_exit"] == 7
+
+
+@pytest.mark.parametrize("fault", ["code", "receipt", "outer"])
+def test_launch_private_contradiction_discards_observation(public, tmp_path, fault):
+    source = receipt()
+    source.update(
+        worker_returncode=1,
+        worker=None,
+        final_collector_health=None,
+        launch_stderr_observation="STDERR_EXACT_UNSHARE_OPERATION_NOT_PERMITTED",
+    )
+    if fault == "code":
+        source["worker_returncode"] = 0
+    elif fault == "receipt":
+        source["worker"] = receipt()["worker"]
+    else:
+        source["outer_exception"] = {"type": "TimeoutExpired", "message": CANARY}
+    value = public.summarize(str(write_receipt(tmp_path, source)), "diagnostic", 7)
+    assert value["receipt_status"] == "CONTRADICTORY"
+    assert value["launch_stderr_observation"] == "NOT_ASSESSED"
+    assert value["harness_shell_exit"] == 7

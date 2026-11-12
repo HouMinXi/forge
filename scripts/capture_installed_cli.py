@@ -927,12 +927,30 @@ def controller_failure(record, stage, error):
     record["controller_error_category"] = category
 
 
+def launch_stderr_observation(record, raw):
+    """Match full output bytes only, without authenticating emitter or cause."""
+    if (
+        type(record.get("worker_returncode")) is not int
+        or record["worker_returncode"] != 1
+        or record.get("worker") is not None
+        or record.get("outer_exception") is not None
+        or type(raw) is not bytes
+        or len(raw) > FILE_LIMIT
+    ):
+        return "NOT_ASSESSED"
+    return {
+        b"unshare: unshare failed: Operation not permitted\n": "STDERR_EXACT_UNSHARE_OPERATION_NOT_PERMITTED",
+        b"unshare: unshare failed: Permission denied\n": "STDERR_EXACT_UNSHARE_PERMISSION_DENIED",
+    }.get(raw, "NOT_RECOGNIZED")
+
+
 def capture(evidence, mode, output):
     os.umask(0o077)
     output = new_private_directory(output)
     record = {
         "schema": 1,
         "controller_stage": "INITIALIZE",
+        "launch_stderr_observation": "NOT_ASSESSED",
         "controller_error_category": "NONE",
         "mode": mode,
         "qualification": "NOT_ASSESSED",
@@ -960,6 +978,7 @@ def capture(evidence, mode, output):
             "aggregate_memory_or_disk_quota": False,
         },
     }
+    completed_stderr = None
     stage = "SANITIZE"
     try:
         sanitize_controller(output)
@@ -1002,6 +1021,7 @@ def capture(evidence, mode, output):
                 memory_limit_bytes=MEMORY_LIMIT,
             )
             record.update(worker_returncode=completed.returncode, ownership=completed.ownership)
+            completed_stderr = completed.stderr
         except BaseException as error:  # noqa: BLE001 - original cancellation and owner failure remain primary
             controller_failure(record, stage, error)
             record.update(
@@ -1010,7 +1030,7 @@ def capture(evidence, mode, output):
             )
         else:
             stage = "WORKER_OUTPUT"
-            for leaf, raw in (("worker.stdout", completed.stdout), ("worker.stderr", completed.stderr)):
+            for leaf, raw in (("worker.stdout", completed.stdout), ("worker.stderr", completed_stderr)):
                 try:
                     private_bytes(output / leaf, raw)
                 except (OSError, ValueError) as error:
@@ -1032,6 +1052,7 @@ def capture(evidence, mode, output):
             record["record_errors"].append(exception_record(error))
     if record["controller_error_category"] == "NONE":
         record["controller_stage"] = "FINALIZE"
+    record["launch_stderr_observation"] = launch_stderr_observation(record, completed_stderr)
     code = select_exit(record)
     record["shell_exit"] = code
     record["shell_signal_mapping"] = "negative Popen returncode -> 128 + signal number"
