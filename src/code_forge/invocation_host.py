@@ -259,6 +259,8 @@ class HostAuditSession:
     uses None, never the identity of an empty diff. Caller owns finalization.
     """
 
+    _scoped_fault_domain: bool
+
     def __init__(
         self,
         *,
@@ -271,9 +273,12 @@ class HostAuditSession:
         warn=_warning,
         job_deadline=None,
         legacy_root: Path | None = None,
+        scoped_fault_domain: bool = False,
     ):
         if type(context) is not InvocationContext or type(strict) is not bool or not callable(warn):
             raise TypeError("invalid host audit configuration")
+        if type(scoped_fault_domain) is not bool:
+            raise TypeError("invalid scoped fault domain switch")
         if job_deadline is not None and not _finite(job_deadline):
             raise ValueError("invalid host deadline")
         if (context.source_hash is None) != (context.snapshot_id is None):
@@ -298,6 +303,7 @@ class HostAuditSession:
         if len(str(self._root)) > 4096:
             raise ValueError("audit root exceeds capacity")
         self.strict, self._warn = strict, warn
+        self._scoped_fault_domain = scoped_fault_domain
         self._job_deadline, self._pid = job_deadline, os.getpid()
         self._io, self._captures, self._owner = supervisor, None, None
         self._lock, self._open_gate = threading.Lock(), threading.Lock()
@@ -515,6 +521,7 @@ class HostAuditSession:
                 utc_now=_utc,
                 job_deadline=self._job_deadline,
                 audit_schema_version=2,
+                scoped_fault_domain=self._scoped_fault_domain,
             )
             return True
         if command == "advance":

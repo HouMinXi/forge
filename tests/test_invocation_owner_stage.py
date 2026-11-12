@@ -317,7 +317,9 @@ def test_controller_methods_cannot_recursively_wait_on_worker(stage_setup):
 class OwnerRecorder:
     instances = []
 
-    def __init__(self, root, *, context, monotonic, utc_now, audit_schema_version=1):
+    def __init__(
+        self, root, *, context, monotonic, utc_now, audit_schema_version=1, scoped_fault_domain=False
+    ):
         self.version = audit_schema_version
         self.calls = []
         self.manifest = None

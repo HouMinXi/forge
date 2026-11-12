@@ -340,6 +340,7 @@ class TestContractsYamlGuard:
         args.quiet = True
         # Match the parser default; MagicMock otherwise invents an enabled option.
         args.scope_ticket_dir = None
+        args.diagnostic_ticket_dir = None
         args.backend = None
         args.contract = None
         args.registry = ".code-forge/tools.yaml"
