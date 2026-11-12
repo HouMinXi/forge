@@ -10,6 +10,7 @@ import sys
 import pytest
 import yaml
 
+
 from scripts import ci_publish_failure_log as replay
 
 ROOT = Path(__file__).resolve().parents[1]

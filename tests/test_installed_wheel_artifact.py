@@ -462,20 +462,23 @@ def test_real_git_snapshot_is_read_only_and_matches_repository_public_files(gate
 def release_step():
     value = yaml.safe_load(WORKFLOW.read_text())
     return next(
-        step for step in value["jobs"]["installed-wheel"]["steps"] if step.get("id") == "wheel_release"
+        step for step in value["jobs"]["wheel-runtime"]["steps"] if step.get("id") == "wheel_release"
     )
 
 
 def test_workflow_uploads_only_exact_original_wheel_after_success():
     value = yaml.safe_load(WORKFLOW.read_text())
-    steps = value["jobs"]["installed-wheel"]["steps"]
+    steps = value["jobs"]["wheel-runtime"]["steps"]
     release = release_step()
     assert "if" not in release and "continue-on-error" not in release
     assert release["run"].startswith("exec >/dev/null 2>&1\n")
     assert 'exec >"$private/commands.log" 2>&1' in release["run"]
     assert "/usr/bin/python3 -I -S -B scripts/installed_wheel_publication.py" in release["run"]
     upload = next(
-        step for step in steps if step.get("with", {}).get("name") == "installed-wheel-evidence"
+        step
+        for step in steps
+        if step.get("with", {}).get("name")
+        == "installed-wheel-evidence-${{ matrix.runtime }}-${{ github.run_attempt }}"
     )
     assert upload["if"] == "${{ success() && steps.wheel_release.outcome == 'success' }}"
     assert (
@@ -688,7 +691,8 @@ def test_actual_release_timeout_after_partial_output_still_has_no_success(tmp_pa
     assert (workspace / "forge-installed-wheel-artifact").is_dir()
     upload = next(
         item
-        for item in yaml.safe_load(WORKFLOW.read_text())["jobs"]["installed-wheel"]["steps"]
-        if item.get("with", {}).get("name") == "installed-wheel-evidence"
+        for item in yaml.safe_load(WORKFLOW.read_text())["jobs"]["wheel-runtime"]["steps"]
+        if item.get("with", {}).get("name")
+        == "installed-wheel-evidence-${{ matrix.runtime }}-${{ github.run_attempt }}"
     )
     assert upload["if"] == "${{ success() && steps.wheel_release.outcome == 'success' }}"

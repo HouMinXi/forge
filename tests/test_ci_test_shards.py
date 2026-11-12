@@ -9,6 +9,7 @@ import sys
 
 import pytest
 
+
 from scripts import ci_test_shards as ci
 
 SHA = "a" * 40
@@ -392,7 +393,7 @@ def test_setup_steps_match_original_budget_and_do_not_execute_tests():
     import yaml
 
     root = Path(__file__).resolve().parents[1]
-    jobs = yaml.safe_load((root / ".github/workflows/linux-tests.yml").read_text())["jobs"]
+    jobs = (yaml.safe_load((root / ".github/workflows/linux-tests.yml").read_text()))["jobs"]
     expected = {
         "Verify Linux process ownership prerequisites": 2,
         "Remove the image's system git-lfs filters": 2,
@@ -401,7 +402,7 @@ def test_setup_steps_match_original_budget_and_do_not_execute_tests():
     }
     for name in ("plan", "process-contracts", "service-free"):
         steps = jobs[name]["steps"]
-        setup = _without_setup_diagnostic_sidecar(steps)[1:6]
+        setup = _without_setup_diagnostic_sidecar(steps)[2:7]
         assert {s["name"]: s["timeout-minutes"] for s in setup if "run" in s} == expected
         assert not any("python -m pytest" in s.get("run", "") for s in setup)
 

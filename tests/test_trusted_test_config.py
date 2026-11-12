@@ -21,6 +21,7 @@ from code_forge.fixval import FixvalResult, FixvalStatus
 from code_forge.gate_check import load_trusted_gate_config
 from code_forge.machine import StateMachine
 from code_forge.state import Mode, Verdict
+from tests._bind_mount import require_bwrap, run_bind_mount_script
 
 UNTRACKED_REASON = (
     "CI: mutation not measured -- untracked gate.yaml in checkout is not trusted; "
@@ -778,7 +779,7 @@ def test_git_output_with_a_non_utf8_path_does_not_raise(tmp_path):
 # --- #153: bind-mount aliases of the checkout ---------------------------------
 
 _ALIAS_SCRIPT = r"""
-import os, subprocess, sys
+import sys
 from pathlib import Path
 from code_forge.gate_check import UntrustedGateConfigError, load_trusted_gate_config
 case, repo, base, scratch = sys.argv[1], Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4])
@@ -789,13 +790,9 @@ if case.endswith("-via-symlink"):  # #155: a symlinked source_root (programmatic
     case = case[: -len("-via-symlink")]
 if case == "root-alias":
     alias = scratch / "alias"
-    alias.mkdir()
-    subprocess.run(["mount", "--bind", str(repo), str(alias)], check=True)
     config_root = alias / "cfg"
 elif case == "forge-alias":
     config_root = scratch / "outside"
-    (config_root / ".code-forge").mkdir(parents=True)
-    subprocess.run(["mount", "--bind", str(repo / ".code-forge"), str(config_root / ".code-forge")], check=True)
 else:  # control: a legitimate outside root, same namespace
     config_root = scratch / "legit"
     (config_root / ".code-forge").mkdir(parents=True)
@@ -811,16 +808,6 @@ else:
 """
 
 
-def _unshare_available():
-    import shutil
-
-    if shutil.which("unshare") is None:
-        return False
-    probe = subprocess.run(["unshare", "-rm", "true"], capture_output=True, check=False)
-    return probe.returncode == 0
-
-
-@pytest.mark.skipif(not _unshare_available(), reason="unprivileged user/mount namespaces unavailable")
 @pytest.mark.parametrize(
     "case",
     [
@@ -833,6 +820,7 @@ def _unshare_available():
     ],
 )
 def test_bind_mount_alias_of_the_checkout_is_refused(tmp_path, case):
+    bwrap = require_bwrap()
     repo, base = _repo(tmp_path, gate_at_base=False, tracked=False)  # PR-controlled tree gate
     (repo / "cfg" / ".code-forge").mkdir(parents=True)
     (repo / "cfg" / ".code-forge" / "gate.yaml").write_text(
@@ -841,14 +829,23 @@ def test_bind_mount_alias_of_the_checkout_is_refused(tmp_path, case):
     )
     scratch = tmp_path / "scratch"
     scratch.mkdir()
-    out = subprocess.run(
-        ["unshare", "-rm", sys.executable, "-c", _ALIAS_SCRIPT, case, str(repo), base, str(scratch)],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "PYTHONPATH": str(Path(gate_check.__file__).parents[1])},
+    binds = []
+    if case.startswith("root-alias"):
+        alias = scratch / "alias"
+        alias.mkdir()
+        binds.append((repo, alias))
+    elif case.startswith("forge-alias"):
+        alias = scratch / "outside" / ".code-forge"
+        alias.mkdir(parents=True)
+        binds.append((repo / ".code-forge", alias))
+    out = run_bind_mount_script(
+        bwrap,
+        tmp_path,
+        binds,
+        _ALIAS_SCRIPT,
+        [case, repo, base, scratch],
+        pythonpath=Path(gate_check.__file__).parents[1],
     )
-    assert out.returncode == 0, out.stderr
     if case.startswith("control"):
         assert out.stdout.startswith("LOADED ['legit']"), out.stdout
     else:

@@ -436,12 +436,15 @@ Apple Silicon 请使用原生 arm64 Python。安装 extra 时会自动选择对�
 没有这一步，症状要等到很晚才冒出来而且指错方向：`>=3.4` 的要求下装了 mutmut 2.x，
 每次变异测试都以一个模块路径错误中止，看起来像评审自己有 bug。
 
-dev extra 钉死 `pytest==9.2.0`。请在 CPython 3.12 上运行测试套件：在这个钉死版本下，
-只有它这一组合在 `QUALIFIED_RUNTIMES`（`src/code_forge/_gate_pytest.py`）里。
-Forge 本身可以装在 Python 3.12 或更新的版本上，所以 classifiers 仍然列出 3.13 和 3.14。
-但是 pytest 门禁会拒绝没有认证过的运行时，因此在这些解释器上门禁测试会失败（#102）。
+dev extra 钉死 `pytest==9.2.0`。目标测试合同固定为 CPython 3.14，包括变异沙箱内的解释器。
+CPython 3.12 的既有资格仍保留在 `QUALIFIED_RUNTIMES`
+（`src/code_forge/_gate_pytest.py`）中，以兼容已有运行时。
+Forge 本身仍可安装在 Python 3.12 或更新的版本上。Linux CI 候选使用 stock Ubuntu 26.04，
+不放宽 AppArmor；installed-wheel 控制保留 Python 3.12 并增加 3.14。
+源码绑定、既有 hosted 证据及尚待完成的提升门禁见
+[验证计划](docs/stock-runner-qualification.md)。
 
-classifiers 中没有为钉死的 pytest 认证的 Python 版本：3.13, 3.14。
+classifiers 中没有为钉死的 pytest 认证的 Python 版本：3.13。
 
 ## 其他安装方式
 

@@ -58,6 +58,7 @@ from mcp.types import (
 )
 
 import code_forge
+from code_forge._json_depth import check_json_container_depth
 from code_forge.assertion_outcome import (
     AssertionKind,
     AssertionOutcome,
@@ -1124,6 +1125,9 @@ def _sarif_projection_with_assertion(
     oversize whatever the exit code.
     Each projected list includes at most 64 dictionary/list levels so the
     full MCP response envelope retains ample serialization depth headroom.
+    Separately, this projection reader accepts at most 512 whole-document
+    container levels, checked before decoding. Unknown metadata may exceed
+    the projection depth, but not this explicit parsing budget.
     """
     no_report = (type(stdout) is str and not stdout.strip()) or (
         exit_code is not None and (exit_code < 0 or exit_code in _NO_REPORT_EXIT_CODES)
@@ -1140,6 +1144,7 @@ def _sarif_projection_with_assertion(
     if len(stdout) > _MAX_SARIF_REPORT_CHARS:
         return (None, None, None, _OVERSIZE_COUNT_STATUS, None)
     try:
+        check_json_container_depth(stdout)
         document = json.loads(
             stdout,
             object_pairs_hook=_sarif_object,

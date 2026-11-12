@@ -106,7 +106,7 @@ def workflow():
 
 def step(identifier):
     return next(
-        item for item in workflow()["jobs"]["installed-wheel"]["steps"] if item.get("id") == identifier
+        item for item in workflow()["jobs"]["wheel-runtime"]["steps"] if item.get("id") == identifier
     )
 
 
@@ -115,11 +115,11 @@ def test_workflow_preserves_events_pins_build_and_failure_semantics():
     assert set(value["on"]) == {"pull_request", "push", "workflow_dispatch"}
     assert value["on"]["pull_request"] == value["on"]["push"] == {"branches": ["main"]}
     assert value["permissions"] == {"contents": "read"}
-    assert set(value["jobs"]) == {"installed-wheel"}
-    job = value["jobs"]["installed-wheel"]
-    assert job["runs-on"] == "ubuntu-24.04" and job["timeout-minutes"] == 15
+    assert set(value["jobs"]) == {"wheel-runtime", "installed-wheel"}
+    job = value["jobs"]["wheel-runtime"]
+    assert job["runs-on"] == "${{ matrix.runner }}" and job["timeout-minutes"] == 15
     assert job["steps"][0]["with"]["persist-credentials"] is False
-    assert job["steps"][1]["with"]["python-version"] == "3.12"
+    assert job["steps"][2]["with"]["python-version"] == "${{ matrix.python }}"
     assert "continue-on-error" not in json.dumps(value)
     assert "if" not in step("provision") and "if" not in step("qualify")
     for identifier in ("provision", "qualify", "wheel_release", "public_summary"):
@@ -151,14 +151,101 @@ def test_workflow_preserves_events_pins_build_and_failure_semantics():
     }
     uploads = [item for item in job["steps"] if "actions/upload-artifact@" in item.get("uses", "")]
     assert len(uploads) == 2
-    upload = next(item for item in uploads if item["with"]["name"] == "installed-wheel-summary")
+    upload = next(
+        item
+        for item in uploads
+        if item["with"]["name"]
+        == "installed-wheel-summary-${{ matrix.runtime }}-${{ github.run_attempt }}"
+    )
     assert upload["if"] == "${{ always() && steps.public_summary.outcome == 'success' }}"
     assert upload["with"] == {
-        "name": "installed-wheel-summary",
+        "name": "installed-wheel-summary-${{ matrix.runtime }}-${{ github.run_attempt }}",
         "path": str(PUBLIC_PATH),
         "if-no-files-found": "error",
         "retention-days": 14,
     }
+
+
+def test_workflow_matrix_preserves_both_runtime_contracts_and_unique_artifacts():
+    value = workflow()
+    job = value["jobs"]["wheel-runtime"]
+    assert job["name"] == "installed-wheel-${{ matrix.runtime }}"
+    assert "if" not in job
+    assert job["strategy"] == {
+        "fail-fast": False,
+        "matrix": {
+            "include": [
+                {"runtime": "py312", "runner": "ubuntu-24.04", "python": "3.12"},
+                {"runtime": "py314", "runner": "ubuntu-26.04", "python": "3.14"},
+            ]
+        },
+    }
+    uploads = [item for item in job["steps"] if "actions/upload-artifact@" in item.get("uses", "")]
+    assert {item["with"]["name"] for item in uploads} == {
+        "installed-wheel-summary-${{ matrix.runtime }}-${{ github.run_attempt }}",
+        "installed-wheel-evidence-${{ matrix.runtime }}-${{ github.run_attempt }}",
+    }
+    assert all("overwrite" not in item["with"] for item in uploads)
+    names = [
+        item["with"]["name"]
+        .replace("${{ matrix.runtime }}", runtime)
+        .replace("${{ github.run_attempt }}", attempt)
+        for item in uploads
+        for runtime in ("py312", "py314")
+        for attempt in ("1", "2")
+    ]
+    assert len(names) == len(set(names)) == 8
+
+
+def test_workflow_binds_each_runtime_to_event_source_before_setup():
+    value = workflow()
+    assert value["on"]["workflow_dispatch"] == {
+        "inputs": {
+            "expected_source_sha": {
+                "description": "Exact reviewed commit SHA for this manual qualification.",
+                "required": True,
+                "type": "string",
+            }
+        }
+    }
+    assert value["env"] == {"EXPECTED_SOURCE_SHA": "${{ inputs.expected_source_sha }}"}
+    steps = value["jobs"]["wheel-runtime"]["steps"]
+    assert steps[0]["with"] == {"persist-credentials": False, "ref": "${{ github.sha }}"}
+    request = steps[1]
+    assert request["name"] == "Require the exact event source"
+    assert request["shell"] == "bash" and "if" not in request and "env" not in request
+    assert request["run"] == (
+        "exec >/dev/null 2>&1\nset +x\nset -euo pipefail\n"
+        "/usr/bin/python3 -I -S -B scripts/ci_stock_runner.py request\n"
+    )
+    assert steps[2]["uses"].startswith("actions/setup-python@")
+    assert steps[2]["with"] == {"python-version": "${{ matrix.python }}"}
+    assert "pull_request_target" not in value["on"]
+    assert "sysctl" not in WORKFLOW.read_text()
+
+
+@pytest.mark.parametrize(
+    "result",
+    ["success", "failure", "cancelled", "skipped", "", "unknown", "SUCCESS", "success\nfailure"],
+)
+def test_actual_aggregate_requires_success_of_complete_runtime_matrix(result):
+    job = workflow()["jobs"]["installed-wheel"]
+    assert job["name"] == "installed-wheel"
+    assert job["needs"] == ["wheel-runtime"]
+    assert job["if"] == "${{ always() }}"
+    assert job["runs-on"] == "ubuntu-24.04" and job["timeout-minutes"] == 1
+    assert len(job["steps"]) == 1
+    aggregate = job["steps"][0]
+    assert aggregate["env"] == {"RUNTIME_RESULT": "${{ needs.wheel-runtime.result }}"}
+    assert aggregate["shell"] == "bash" and "if" not in aggregate
+    outcome = subprocess.run(
+        ["bash", "-c", aggregate["run"]],
+        env={"PATH": os.defpath, "RUNTIME_RESULT": result},
+        capture_output=True,
+        timeout=10,
+    )
+    assert (outcome.returncode == 0) is (result == "success")
+    assert outcome.stdout == outcome.stderr == b""
 
 
 def shell_case(tmp_path, *, outcomes=("success", "success", "success"), body="", helper=None):

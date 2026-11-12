@@ -21,6 +21,7 @@ from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
 from code_forge.machine import StateMachine
 from code_forge.state import Mode
+from tests._bind_mount import require_bwrap, run_bind_mount_script
 
 PACK = Path(".code-forge") / "packs" / "mypack"
 GATE = {
@@ -310,13 +311,11 @@ def test_baseline_show_failure_refuses(tmp_path, semgrep, monkeypatch):
 
 
 _ALIAS = r"""
-import subprocess, sys, tempfile
+import sys, tempfile
 from pathlib import Path
 from code_forge.gate_check import UntrustedGateConfigError, materialize_trusted_packs
 repo, base, scratch = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
 alias = scratch / "alias"
-alias.mkdir()
-subprocess.run(["mount", "--bind", str(repo), str(alias)], check=True)
 try:
     materialize_trusted_packs(config_root=alias / "cfg", source_root=repo, base_sha=base,
                               allow_untracked=False, names=["mypack"], dest=Path(tempfile.mkdtemp()))
@@ -327,34 +326,22 @@ else:
 """
 
 
-def _unshare_ok():
-    import shutil
-
-    return (
-        shutil.which("unshare") is not None
-        and subprocess.run(
-            ["unshare", "-rm", "true"],
-            capture_output=True,
-            check=False,
-        ).returncode
-        == 0
-    )
-
-
-@pytest.mark.skipif(not _unshare_ok(), reason="unprivileged user/mount namespaces unavailable")
 def test_outside_packs_root_that_is_a_bind_mount_alias_is_refused(tmp_path):
+    bwrap = require_bwrap()
     repo, base = _repo(tmp_path, pack_at_base=False)
     _write_pack(repo / "cfg", rules=PR_RULES)  # PR-authored packs under the checkout
     scratch = tmp_path / "scratch"
     scratch.mkdir()
-    out = subprocess.run(
-        ["unshare", "-rm", sys.executable, "-c", _ALIAS, str(repo), base, str(scratch)],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "PYTHONPATH": str(Path(gate_check.__file__).parents[1])},
+    alias = scratch / "alias"
+    alias.mkdir()
+    out = run_bind_mount_script(
+        bwrap,
+        tmp_path,
+        [(repo, alias)],
+        _ALIAS,
+        [repo, base, scratch],
+        pythonpath=Path(gate_check.__file__).parents[1],
     )
-    assert out.returncode == 0, out.stderr
     assert out.stdout.startswith("REFUSED") and "bind mount alias" in out.stdout, out.stdout
 
 
