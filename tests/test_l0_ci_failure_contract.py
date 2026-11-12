@@ -596,12 +596,39 @@ def test_execution_errors_fail_ci_even_for_optional_tool(review, error, message)
 
 
 def test_unexpected_parser_exception_fails_ci(review):
-    # json.loads raises RecursionError before the parser can return a ToolError.
+    # The explicit depth budget raises RecursionError before a ToolError.
     # Inject only producer output, never a replacement parser or L0 runner.
     review.payload = "[" * 10000 + "]" * 10000
     disk = review.run(Verdict.FAIL, infra="L0 runner failed:")
     assert "recursion" in disk["infra_errors"][0].lower()
     assert review.machine._l0_failed
+
+
+@pytest.mark.parametrize("depth", [512, 513])
+@pytest.mark.parametrize("kind", ["list", "dict", "mixed"])
+def test_shellcheck_container_depth_preserves_ci_failure_route(review, depth, kind):
+    value = "0"
+    # ShellCheck's root list and diagnostic dictionary are two containers.
+    for level in range(depth - 2):
+        value = (
+            '{"child":' + value + "}"
+            if kind == "dict" or (kind == "mixed" and level % 2)
+            else "[" + value + "]"
+        )
+    diagnostic = json.loads(_output(1))
+    diagnostic[0]["decoy"] = "]}" * 600 + '\\"' * 600
+    review.exit_code = 1
+    review.payload = json.dumps(diagnostic)[:-2] + ',"ignored":' + value + "}]"
+    if depth == 512:
+        disk = review.run(Verdict.PASS)
+        assert not review.machine._l0_failed
+        assert disk["infra_errors"] == []
+        assert len([item for item in review.machine._advisories if item.axis == "pre-existing-l0"]) == 1
+    else:
+        disk = review.run(Verdict.FAIL, infra="L0 runner failed:")
+        assert review.machine._l0_failed
+        assert len(disk["infra_errors"]) == 1
+        assert "JSON container recursion exceeds the 512-level limit" in disk["infra_errors"][0]
 
 
 @pytest.mark.parametrize("required", [False, True], ids=["optional", "required"])

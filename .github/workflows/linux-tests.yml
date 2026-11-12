@@ -32,7 +32,9 @@ jobs:
     - name: Set up qualified Python
       uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
       with:
-        python-version: '3.12'
+        python-version: |-
+          3.14
+          3.12
     - name: Verify Linux process ownership prerequisites
       id: preflight
       timeout-minutes: 2
@@ -231,6 +233,9 @@ jobs:
         done | (umask 077; exec tee "$EVIDENCE/interpreters.log")
         # Keep the previously qualified runtime executable in an isolated venv.
         # Its qualification cases must not turn into skips when the dev pin moves.
+        # Supply the required 3.14 pair while keeping the suite and sandbox on 3.12.
+        python3.14 -m pip install 'pytest==9.2.0'
+        python3.14 -c 'import sys, pytest; assert sys.implementation.cache_tag == "cpython-314"; assert pytest.__version__ == "9.2.0"'
         python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"
         "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" -m pip install 'pytest==9.1.1' \
           2>&1 | (umask 077; exec tee "$EVIDENCE/previous-pytest-install.log")
@@ -394,7 +399,9 @@ jobs:
     - name: Set up qualified Python
       uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
       with:
-        python-version: '3.12'
+        python-version: |-
+          3.14
+          3.12
     - name: Verify Linux process ownership prerequisites
       id: preflight
       timeout-minutes: 2
@@ -593,6 +600,9 @@ jobs:
         done | (umask 077; exec tee "$EVIDENCE/interpreters.log")
         # Keep the previously qualified runtime executable in an isolated venv.
         # Its qualification cases must not turn into skips when the dev pin moves.
+        # Supply the required 3.14 pair while keeping the suite and sandbox on 3.12.
+        python3.14 -m pip install 'pytest==9.2.0'
+        python3.14 -c 'import sys, pytest; assert sys.implementation.cache_tag == "cpython-314"; assert pytest.__version__ == "9.2.0"'
         python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"
         "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" -m pip install 'pytest==9.1.1' \
           2>&1 | (umask 077; exec tee "$EVIDENCE/previous-pytest-install.log")
@@ -858,7 +868,9 @@ jobs:
     - name: Set up qualified Python
       uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
       with:
-        python-version: '3.12'
+        python-version: |-
+          3.14
+          3.12
     - name: Verify Linux process ownership prerequisites
       id: preflight
       timeout-minutes: 2
@@ -1057,6 +1069,9 @@ jobs:
         done | (umask 077; exec tee "$EVIDENCE/interpreters.log")
         # Keep the previously qualified runtime executable in an isolated venv.
         # Its qualification cases must not turn into skips when the dev pin moves.
+        # Supply the required 3.14 pair while keeping the suite and sandbox on 3.12.
+        python3.14 -m pip install 'pytest==9.2.0'
+        python3.14 -c 'import sys, pytest; assert sys.implementation.cache_tag == "cpython-314"; assert pytest.__version__ == "9.2.0"'
         python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"
         "$RUNNER_TEMP/forge-pytest-9.1.1/bin/python" -m pip install 'pytest==9.1.1' \
           2>&1 | (umask 077; exec tee "$EVIDENCE/previous-pytest-install.log")

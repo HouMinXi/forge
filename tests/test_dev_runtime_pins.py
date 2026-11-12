@@ -76,8 +76,9 @@ def test_pytest_is_pinned_once_and_only_in_the_dev_extra():
 
 
 def test_pinned_pytest_is_qualified_on_the_interpreter_the_suite_runs_on():
-    # CI runs the suite on 3.12; the pinned pytest has to be qualified there.
+    # Preserve the previous contract while qualifying the 3.14 migration.
     assert ("cpython-312", _pinned_version()) in evidence.QUALIFIED_RUNTIMES
+    assert ("cpython-314", _pinned_version()) in evidence.QUALIFIED_RUNTIMES
 
 
 def test_ci_installs_the_same_pytest_as_the_dev_extra():
@@ -99,11 +100,10 @@ def test_requires_python_matches_the_oldest_classifier():
     assert match.group(1) == _oldest_classifier()
 
 
-def test_the_pinned_pytest_is_qualified_only_on_the_oldest_interpreter():
-    # Both READMEs say the oldest interpreter is the only one whose pair is qualified.
+def test_the_pinned_pytest_has_exactly_the_reviewed_interpreters():
     qualified = [v for v in _classifier_versions() if v not in _unqualified_versions()]
 
-    assert qualified == [_oldest_classifier()]
+    assert qualified == ["3.12", "3.14"]
 
 
 @pytest.mark.parametrize(("doc", "prefix"), DOCS)
@@ -124,6 +124,7 @@ def test_the_runtime_paragraph_names_the_pin_the_interpreter_and_a_real_path(doc
 
     assert f"`pytest=={_pinned_version()}`" in paragraph
     assert f"CPython{_oldest_classifier()}" in paragraph
+    assert "CPython3.14" in paragraph
     assert f"`{path}`" in paragraph
 
 
@@ -132,6 +133,14 @@ def test_every_linux_job_keeps_current_and_previous_runtimes_separate():
 
     jobs = yaml.safe_load(CI)["jobs"]
     for name in ("plan", "process-contracts", "service-free"):
+        runtimes = next(
+            step["with"]["python-version"]
+            for step in jobs[name]["steps"]
+            if step.get("name") == "Set up qualified Python"
+        )
+        # setup-python leaves the last entry active. The new pair is an
+        # additional real qualification control, not a replacement suite.
+        assert runtimes.splitlines() == ["3.14", "3.12"]
         setup = next(
             step["run"]
             for step in jobs[name]["steps"]
@@ -142,6 +151,10 @@ def test_every_linux_job_keeps_current_and_previous_runtimes_separate():
             in setup
         )
         assert f'assert pytest.__version__ == "{_pinned_version()}"' in setup
+        assert f"python3.14 -m pip install 'pytest=={_pinned_version()}'" in setup
+        assert 'assert sys.implementation.cache_tag == "cpython-314"' in setup
+        assert "for interpreter in python /usr/bin/python3;" in setup
+        assert "assert sys.version_info[:2] == (3, 12)" in setup
         assert 'python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"' in setup
         assert "\"$RUNNER_TEMP/forge-pytest-9.1.1/bin/python\" -m pip install 'pytest==9.1.1'" in setup
         private_export = 'export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"'

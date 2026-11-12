@@ -279,8 +279,8 @@ def damaged_stdout(damage):
     elif damage == "oversize":
         stdout += " " * (server._MAX_SARIF_REPORT_CHARS + 1 - len(stdout))
     elif damage == "parser-recursion":
-        # Python 3.12 accepts 1200 levels; this bounded 20 KiB fixture reaches
-        # the decoder limit without changing global recursion settings.
+        # This bounded 20 KiB fixture exceeds the explicit parsing budget
+        # without depending on the interpreter's recursion settings.
         stdout = stdout[:-1] + ', "nested": ' + "[" * 10000 + "0" + "]" * 10000 + "}"
     return stdout
 
@@ -324,6 +324,57 @@ def test_exact_legacy_projection_tuple_shapes():
     assert count == 1 and status is None
     assert server._sarif_result_projection(None) == (None, None, None)
     assert server._sarif_projection_with_status(None) == (None, None, None, None)
+
+
+def depth_bounded_stdout(depth, kind):
+    value = "0"
+    for level in range(depth - 1):
+        value = (
+            '{"child":' + value + "}"
+            if kind == "dict" or (kind == "mixed" and level % 2)
+            else "[" + value + "]"
+        )
+    report = document(VALID[0])
+    # Quoted closers and escaped quotes must not reduce the real nesting.
+    report["decoy"] = "]}" * 600 + '\\"' * 600
+    return json.dumps(report)[:-1] + ',"nested":' + value + "}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("kind", ["list", "dict", "mixed"])
+@pytest.mark.parametrize("depth", [512, 513])
+async def test_projection_envelope_depth_boundary(monkeypatch, route, kind, depth):
+    stdout = depth_bounded_stdout(depth, kind)
+    result, data = await consume(monkeypatch, route, stdout)
+    if depth == 512:
+        assert data["test_assertion"] == VALID[0]
+        assert data["findings_count"] == 1
+        assert data["findings_count_status"] is None
+        assert data["findings"] == document()["runs"][0]["results"]
+        assert data["receipt_audit"] == document()["runs"][0]["properties"]["receiptAudit"]
+    else:
+        assert data["test_assertion"] is None
+        assert data["findings_count"] is None
+        assert data["findings"] is None and data["receipt_audit"] is None
+        assert data["findings_count_status"] == server._UNPARSEABLE_COUNT_STATUS
+    assert data["output"] == stdout
+    assert data["verdict"] == "FAIL" and data["exit_code"] == 1
+    assert stdout in result.content[0].text
+
+
+def test_projection_depth_rejection_precedes_json_decoding(monkeypatch):
+    stdout = depth_bounded_stdout(513, "mixed")
+    decoder = Mock(side_effect=AssertionError("projection decoder must not see excessive depth"))
+    monkeypatch.setattr(server.json, "loads", decoder)
+    assert server._sarif_projection_with_assertion(stdout, 1) == (
+        None,
+        None,
+        None,
+        server._UNPARSEABLE_COUNT_STATUS,
+        None,
+    )
+    decoder.assert_not_called()
 
 
 def test_model_default_assertion_is_none():
