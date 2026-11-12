@@ -637,3 +637,15 @@ diagnostic path remains unqualified until an authorized isolated run delivers
 real receipts. Local 3.12/3.13 checks explicitly do not qualify the 3.14 runtime.
 Build/provision steps retain their ordinary startup semantics; the no-site claim
 is limited to the controlled capture entry, not every Python call in a workflow.
+
+The read-only control publishes only an independently validated closed stage
+receipt: verification/source identity, baseline preparation/import, diagnostic
+preparation/import/probe receipt, or a named negative control. Categories are
+fixed enums; selected source-defined validator messages map by exact equality
+to narrower categories, while unknown messages remain coarse. No exception
+text, path, stderr, environment, or raw events are published. The independently
+observed child exit and control shell exit remain separate. A failure still
+returns 73; a failed publication independently fails its step. Missing delivery
+or rejected envelopes never mean that no child ran. COMPLETE reports this
+read-only control only, with qualification always NOT_ASSESSED, not historical
+causality or isolated capture acceptance.
