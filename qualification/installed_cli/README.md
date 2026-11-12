@@ -396,7 +396,7 @@ these observations.
 
 Old private receipts without the stage/category pair project `UNKNOWN` for
 both; a partial or invalid pair fails closed. The independent publisher accepts
-only exact v1, v2 or v3 public envelopes and normalizes old v1 to unknown new fields.
+only exact v1, v2, v3 or v4 public envelopes and normalizes old v1 to unknown new fields.
 No raw errors, stderr, credential values, private paths or arbitrary identifiers
 are added to artifacts. Missing evidence remains unknown, never success.
 
@@ -423,3 +423,46 @@ Exact v1/v2 public envelopes upgrade with `NOT_ASSESSED`; old runs do not gain
 new evidence. Commands, isolation, locale, process ownership and original exit
 statuses are unchanged. This observation neither grants qualification nor
 permits a security-setting change or host-network fallback.
+
+### Structured early-startup observations
+
+The same owned `unshare --user --map-root-user --net` route now invokes a small
+hash-bound bootstrap through the existing interpreter's `-I -B -c` mode. The
+controller passes the exact bootstrap bytes it read and hashed, rather than
+reopening that file at launch. The bootstrap verifies bounded worker-source
+bytes and executes those same bytes as `__main__`, with the original worker
+`sys.argv`, `__file__` and isolated `sys.path`. A fresh `__main__` module is
+registered for the rest of the interpreter lifetime, including exit callbacks. No namespace admission check, permission
+change, networking fallback or extra diagnostic process is introduced; the
+worker's existing isolation checks remain authoritative.
+
+A separate precreated private directory receives at most four fixed records:
+`entered.json`, `verified.json`, `executing.json` and an optional typed
+`error.json`. The first observation uses only `os` and `sys`, before heavy worker
+imports. Records are immutable exclusive creates; a partial write is invalid.
+Metadata I/O failure is best effort and does not replace an existing worker
+exit or exception. `SystemExit` and signals retain their process semantics;
+metadata operations do not swallow cancellation. Extra instrumentation changes
+startup timing and is not evidence of historical timing equivalence.
+
+The v4 public envelope adds only these closed fields:
+
+- `startup_evidence`: `NOT_OBSERVED`, `PARTIAL`, `OBSERVED` or `INVALID`.
+- `startup_stage`: `NOT_OBSERVED`, `BOOTSTRAP_ENTERED`,
+  `WORKER_SOURCE_VERIFIED` or `WORKER_EXECUTION_ENTERED`.
+- `startup_error_category`: a fixed typed exception category, `NONE` or
+  `NOT_OBSERVED`, never a message, path, traceback or module identifier.
+
+`OBSERVED` means all three progress records were read, not that the worker
+finished or succeeded. `NONE` means no error record was observed, not that no
+error occurred. A signal or abrupt termination can leave progress without an
+error record. An absent marker cannot distinguish unshare failure, interpreter
+startup failure, metadata write failure or another early exit. Records do not
+authenticate their writer against same-UID interference and provide no
+namespace-policy, AppArmor or storage-durability proof.
+
+After the owner returns, the controller accepts only a bounded, stable private
+tree with exact filenames, regular single-link files, contiguous progress and
+consistent error stage. Malformed or conflicting evidence becomes `INVALID`;
+old v1/v2/v3 envelopes upgrade to `NOT_OBSERVED` for all new fields. Original
+harness/worker/CLI statuses and `NOT_ASSESSED` qualification remain unchanged.

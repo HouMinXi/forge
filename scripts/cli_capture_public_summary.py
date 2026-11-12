@@ -15,7 +15,7 @@ import stat
 import sys
 
 MAX_BYTES = 8 * 1024 * 1024
-SCHEMA = "forge-public-cli-capture-summary-v3"
+SCHEMA = "forge-public-cli-capture-summary-v4"
 MODES = {"baseline", "diagnostic"}
 LAUNCH_OBSERVATIONS = {
     "NOT_ASSESSED",
@@ -49,6 +49,37 @@ CATEGORIES = {
     "OS_ERROR",
     "OTHER_ERROR",
 }
+
+
+STARTUP_KEYS = {"startup_evidence", "startup_stage", "startup_error_category"}
+STARTUP_ERRORS = {
+    "NONE",
+    "PERMISSION_DENIED",
+    "NOT_FOUND",
+    "NOT_DIRECTORY",
+    "TIMEOUT",
+    "INTERRUPTED",
+    "INVALID_DATA",
+    "OS_ERROR",
+    "IMPORT_ERROR",
+    "SYNTAX_ERROR",
+    "OTHER_ERROR",
+}
+
+
+def startup_valid(value):
+    status, stage, category = (
+        value[key] for key in ("startup_evidence", "startup_stage", "startup_error_category")
+    )
+    if type(status) is not str or type(stage) is not str or type(category) is not str:
+        return False
+    if status in {"NOT_OBSERVED", "INVALID"}:
+        return stage == category == "NOT_OBSERVED"
+    if status == "OBSERVED":
+        return stage == "WORKER_EXECUTION_ENTERED" and category in STARTUP_ERRORS
+    if status == "PARTIAL":
+        return stage in {"BOOTSTRAP_ENTERED", "WORKER_SOURCE_VERIFIED"} and category in STARTUP_ERRORS
+    return False
 
 
 class InvalidReceipt(ValueError):
@@ -157,6 +188,9 @@ def empty(mode, shell_exit, status):
         "controller_error_category": "UNKNOWN",
         "failure_observation": "NOT_OBSERVED",
         "launch_stderr_observation": "NOT_ASSESSED",
+        "startup_evidence": "NOT_OBSERVED",
+        "startup_stage": "NOT_OBSERVED",
+        "startup_error_category": "NOT_OBSERVED",
     }
 
 
@@ -237,6 +271,8 @@ def validate(record, mode, shell_exit):
         worker_code != 1 or worker is not None or record["outer_exception"] is not None
     ):
         raise ContradictoryReceipt
+    if STARTUP_KEYS & set(record):
+        require(STARTUP_KEYS <= set(record) and startup_valid(record))
     return worker, ownership, health
 
 
@@ -244,6 +280,7 @@ def project(record, mode, shell_exit):
     require(type(mode) is str and mode in MODES and integer(shell_exit, 0, 255))
     worker, ownership, health = validate(record, mode, shell_exit)
     result = empty(mode, shell_exit, "DELIVERED")
+    result.update({key: record.get(key, "NOT_OBSERVED") for key in STARTUP_KEYS})
     result["worker_returncode"] = record["worker_returncode"]
     result["launch_stderr_observation"] = record.get("launch_stderr_observation", "NOT_ASSESSED")
     result["controller_stage"] = record.get("controller_stage", "UNKNOWN")
