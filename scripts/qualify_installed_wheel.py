@@ -57,10 +57,20 @@ def verify_report(report):
     return len(cases)
 
 
+def create_environment(path, *, symlink_interpreter=False):
+    """Keep copied interpreters by default; stock capture explicitly binds the host binary."""
+    venv.EnvBuilder(with_pip=True, system_site_packages=False, symlinks=symlink_interpreter).create(path)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheelhouse", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--symlink-interpreter",
+        action="store_true",
+        help="Use the invoking interpreter by symlink (stock capture only)",
+    )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     output = args.output.resolve()
@@ -130,7 +140,7 @@ def main():
     )
     shutil.copyfile(Path(__file__), controls / "wheel_harness.py")
     environment = output / "venv"
-    venv.EnvBuilder(with_pip=True, system_site_packages=False).create(environment)
+    create_environment(environment, symlink_interpreter=args.symlink_interpreter)
     python = str(environment / "bin/python")
     run(
         [

@@ -553,3 +553,54 @@ The public `environment` value is the requested job context, and
 `required_runtime` states the required runtime, not an observed version when
 startup or prerequisite checks fail. Only verified child-safety evidence means
 that the runtime/profile/capability/namespace checks actually completed.
+
+### Opt-in stock real-CLI capture path
+
+`--backend stock-bwrap` adds an independent stock Ubuntu 26.04/system CPython
+3.14 path; the default remains `unshare`. The dispatch input
+`run_stock_cli_capture` defaults to false and selects a separate job. It builds
+and qualifies a fresh exact-source wheel with the system interpreter, then runs
+one baseline and one diagnostic capture. No old 24.04/3.12 evidence is reused.
+
+Before isolated target metadata is queried, the controller verifies that its
+physical interpreter and bytes are the admitted stock system interpreter. Host
+admission requires an ordinary user, existing AppArmor restriction/profile,
+trusted non-setid executables without file capabilities, and bound helper bytes.
+No host policy is changed. The worker repeats stock admission before its target
+startup checks, and again at the isolation boundary. It verifies the enforced
+profile, zero effective/permitted/ambient capabilities at that checkpoint,
+NoNewPrivs, six new namespaces and a sole UP loopback using read-only ioctl.
+Stock mode never invokes `ip link set`; missing capability or denial stops the
+capture using existing harness/failure statuses, not a fabricated target exit.
+
+The host root, sources and installed environment are read-only. Only the new,
+verified current capture output is writable, with its binding file separately
+read-only; `/tmp` is private tmpfs. Startup inputs cannot lie in writable output
+or hidden `/tmp` trees. Ownership checks inside the user namespace use effective
+ownership, not an assumption that host root retains numeric UID 0. Host admission
+establishes root ownership; the child checks bound profile/program bytes on the
+read-only filesystem. The controller also checks host policy after owner cleanup
+without overwriting an earlier CLI failure.
+
+The existing complete `-D -f -ttt -T -yy -s 4096` trace capability gate remains
+mandatory before the real diagnostic CLI. The earlier minimal `trace=none`
+control does not satisfy it. A denial stops without retry or network fallback.
+PID values used for trace framing are namespace-local worker observations; host
+owner PID identities remain separate. This path does not yet claim real hosted
+compatibility of the full tracing combination merely because synthetic tests
+pass.
+
+A separately validated `context.json` identifies requested backend/environment
+and required runtime alongside the unchanged closed capture summaries. Stock
+capability readiness uses bwrap, not unrelated ip/unshare availability. Raw data
+is never uploaded. CLI exits, cleanup and final delivery checks retain their
+existing precedence. Qualification, historical cause, ACK consistency and
+power-loss durability remain NOT_ASSESSED; a context label alone does not prove
+that target execution or admission succeeded.
+
+The stock job explicitly passes `--symlink-interpreter` to the wheel qualification
+builder, keeping its venv interpreter bound to the admitted system executable.
+The builder's default remains copied interpreters for every existing route. This
+opt-in does not relax target path/hash admission or enable system site-packages.
+Stock summaries use a distinct artifact name so both capture jobs can be requested
+in the same dispatch without colliding.

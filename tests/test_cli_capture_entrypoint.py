@@ -2277,3 +2277,52 @@ def test_owner_only_verification_does_not_execute_target(evidence, monkeypatch):
     provenance, sources, origin = entry.verify_installation(evidence.root, owner_only=True)
     assert provenance["owner_hashes"] == {name: entry.sha256(raw) for name, raw in sources.items()}
     assert origin.name == "code_forge"
+
+
+def test_stock_target_metadata_cannot_execute_unbound_interpreter(evidence, monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("unbound target metadata executed")
+
+    monkeypatch.setattr(entry, "interpreter_identity", forbidden)
+    with pytest.raises(ValueError, match="stock target path differs"):
+        entry.verify_installation(
+            evidence.root,
+            expected_target={
+                "path": "/usr/bin/not-the-fixture",
+                "sha256": entry.sha256(evidence.target.read_bytes()),
+            },
+        )
+
+
+@pytest.mark.usefixtures("preserve_controller_umask")
+@pytest.mark.parametrize("original", [0, 7])
+def test_stock_post_owner_host_change_preserves_original_failure(tmp_path, monkeypatch, original):
+    commands = controller_control(tmp_path, monkeypatch, code=original)
+    prior = entry.verify_installation
+
+    def installation(path, **kwargs):
+        value, sources, origin = prior(path)
+        value.update(target_python="/usr/bin/python3", target={"version_info": [3, 14]})
+        assert kwargs["expected_target"]["path"] == str(Path("/usr/bin/python3").resolve())
+        return value, sources, origin
+
+    monkeypatch.setattr(entry, "verify_installation", installation)
+    helper = SimpleNamespace(
+        prepare=lambda output, mode: {
+            "profile_sha256": "a" * 64,
+            "programs": {
+                "python": {"path": str(Path("/usr/bin/python3").resolve()), "sha256": "a" * 64}
+            },
+        },
+        command=lambda binding, payload: ["stock", *payload],
+        host_state=lambda: "changed",
+    )
+    monkeypatch.setattr(entry, "stock_helper", lambda: (helper, "a" * 64))
+    result = entry.capture(
+        Path("/synthetic-readonly/evidence"), "baseline", tmp_path / "output", backend="stock-bwrap"
+    )
+    assert result == (7 if original == 7 else 73)
+    assert commands[0][0][0] == "stock"
+    receipt = json.loads((tmp_path / "output/result.json").read_text())
+    assert receipt["worker"]["child_returncode_before_cleanup"] == original
+    assert receipt["record_errors"]
