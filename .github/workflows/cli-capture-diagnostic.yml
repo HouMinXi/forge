@@ -7,6 +7,10 @@ name: Installed CLI capture diagnostic (not qualification)
         description: Run private synthetic capture; original nonzero CLI exits keep this diagnostic red
         type: boolean
         default: false
+      run_launch_contrast:
+        description: After capture, observe fixed inert direct and namespaced launch controls (not target fallback)
+        type: boolean
+        default: false
       expected_source_sha:
         description: Reviewed exact source SHA of this dispatched workflow
         type: string
@@ -48,6 +52,8 @@ jobs:
           mkdir -m 700 "$private" "$public"
       - name: Observe required existing utilities and controller bindings
         id: capability
+        env:
+          REQUEST_LAUNCH_CONTRAST: ${{ inputs.run_launch_contrast }}
         if: ${{ steps.prepare.outcome == 'success' }}
         shell: bash
         run: |
@@ -84,6 +90,13 @@ jobs:
               'qualification': 'NOT_ASSESSED',
               'raw_evidence': 'NOT_PUBLISHED',
           }
+          if os.environ.get('REQUEST_LAUNCH_CONTRAST') == 'true':
+              arm = {'execution': 'NOT_RUN', 'returncode': None,
+                     'stdout': 'NOT_OBSERVED', 'stderr': 'NOT_OBSERVED',
+                     'cleanup': 'NOT_ASSESSED'}
+              value.update(schema='forge-cli-capture-capability-v2', launch_contrast={
+                  'binding': 'NOT_ASSESSED', 'direct': dict(arm), 'namespaced': dict(arm),
+                  'causal_attribution': 'NOT_ASSESSED'})
           fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
           with os.fdopen(fd, 'w') as handle:
               handle.write(json.dumps(value, sort_keys=True) + '\n')
@@ -166,6 +179,24 @@ jobs:
           printf 'summary_exit=%s\n' "$summary_code" >> "$GITHUB_OUTPUT"
           if [[ "$code" != 0 ]]; then exit "$code"; fi
           exit "$summary_code"
+      - name: Observe independent inert launch contrast after captures
+        if: ${{ !cancelled() && inputs.run_launch_contrast && steps.wheel.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          exec >/dev/null 2>&1
+          set +x
+          set -euo pipefail
+          umask 077
+          private="$RUNNER_TEMP/forge-cli-capture"
+          exec >"$private/launch-contrast.log" 2>&1
+          /usr/bin/python3 -I -B scripts/cli_capture_launch_contrast.py \
+            --evidence "$private/installed" \
+            --baseline "$private/baseline/binding.json" \
+            --diagnostic "$private/diagnostic/binding.json" \
+            --output "$private/launch-contrast" \
+            --capability "$RUNNER_TEMP/forge-cli-capture-public/capability.json"
       - name: Validate fixed public envelopes
         id: publication
         if: ${{ always() && steps.prepare.outcome == 'success' }}

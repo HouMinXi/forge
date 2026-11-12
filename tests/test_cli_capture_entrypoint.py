@@ -2266,3 +2266,14 @@ def test_controller_ineligible_launch_never_assesses_stderr(tmp_path, monkeypatc
     assert entry.capture(tmp_path / "unused", "baseline", output) == expected
     value = entry.read_json(output / "result.json")
     assert value["launch_stderr_observation"] == "NOT_ASSESSED"
+
+
+def test_owner_only_verification_does_not_execute_target(evidence, monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("target startup must not run")
+
+    monkeypatch.setattr(entry, "interpreter_identity", forbidden)
+    monkeypatch.setattr(entry, "startup_policy", forbidden)
+    provenance, sources, origin = entry.verify_installation(evidence.root, owner_only=True)
+    assert provenance["owner_hashes"] == {name: entry.sha256(raw) for name, raw in sources.items()}
+    assert origin.name == "code_forge"

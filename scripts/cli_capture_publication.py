@@ -107,23 +107,70 @@ def integer(value, low, high):
     return type(value) is int and low <= value <= high
 
 
+def validate_contrast(value):
+    require(
+        type(value) is dict and set(value) == {"binding", "direct", "namespaced", "causal_attribution"}
+    )
+    require(value["causal_attribution"] == "NOT_ASSESSED")
+    require(
+        type(value["binding"]) is str
+        and value["binding"]
+        in {"NOT_ASSESSED", "MATCHED_CAPTURE_BINDING", "UNAVAILABLE", "INVALID", "CHANGED"}
+    )
+    for name in ("direct", "namespaced"):
+        arm = value[name]
+        require(
+            type(arm) is dict and set(arm) == {"execution", "returncode", "stdout", "stderr", "cleanup"}
+        )
+        domains = {
+            "execution": {"NOT_RUN", "COMPLETED", "TIMED_OUT", "INTERRUPTED", "OWNER_ERROR"},
+            "stdout": {"NOT_OBSERVED", "EXACT_MARKER", "EMPTY", "OTHER"},
+            "stderr": {"NOT_OBSERVED", "EMPTY", "PRESENT"},
+            "cleanup": {"NOT_ASSESSED", "COMPLETE", "INCOMPLETE", "UNKNOWN"},
+        }
+        for key, domain in domains.items():
+            require(type(arm[key]) is str and arm[key] in domain)
+        if arm["execution"] == "COMPLETED":
+            require(integer(arm["returncode"], -127, 255))
+            require(arm["stdout"] != "NOT_OBSERVED" and arm["stderr"] != "NOT_OBSERVED")
+        else:
+            require(arm["returncode"] is None and arm["stdout"] == arm["stderr"] == "NOT_OBSERVED")
+        require((arm["execution"] == "NOT_RUN") == (arm["cleanup"] == "NOT_ASSESSED"))
+        if value["binding"] != "MATCHED_CAPTURE_BINDING":
+            require(arm["execution"] == "NOT_RUN")
+    if value["namespaced"]["execution"] != "NOT_RUN":
+        require(value["direct"]["cleanup"] == "COMPLETE")
+        require(value["direct"]["execution"] not in {"NOT_RUN", "INTERRUPTED"})
+    return {
+        "binding": value["binding"],
+        "direct": dict(value["direct"]),
+        "namespaced": dict(value["namespaced"]),
+        "causal_attribution": "NOT_ASSESSED",
+    }
+
+
 def validate(value, name):
     require(type(value) is dict)
     require(value.get("qualification") == "NOT_ASSESSED")
     require(value.get("raw_evidence") == "NOT_PUBLISHED")
     if name == "capability.json":
-        require(
-            set(value)
-            == {"schema", "status", "facts", "live_admission", "qualification", "raw_evidence"}
+        keys = {"schema", "status", "facts", "live_admission", "qualification", "raw_evidence"}
+        version = value.get("schema")
+        require(version in ("forge-cli-capture-capability-v1", "forge-cli-capture-capability-v2"))
+        require(set(value) == keys | ({"launch_contrast"} if version.endswith("v2") else set()))
+        addition = (
+            {"launch_contrast": validate_contrast(value["launch_contrast"])}
+            if version.endswith("v2")
+            else {}
         )
-        require(value["schema"] == "forge-cli-capture-capability-v1")
         require(value["live_admission"] == "NOT_RUN")
         require(type(value["facts"]) is dict and set(value["facts"]) == FACTS)
         require(all(type(v) is bool for v in value["facts"].values()))
         expected = "PRESENT_NOT_QUALIFIED" if all(value["facts"].values()) else "UNSUPPORTED"
         require(value["status"] == expected)
         return dict(
-            schema="forge-cli-capture-capability-v1",
+            schema=version,
+            **addition,
             status=expected,
             facts={key: value["facts"][key] for key in sorted(FACTS)},
             live_admission="NOT_RUN",

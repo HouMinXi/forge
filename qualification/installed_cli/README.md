@@ -466,3 +466,45 @@ tree with exact filenames, regular single-link files, contiguous progress and
 consistent error stage. Malformed or conflicting evidence becomes `INVALID`;
 old v1/v2/v3 envelopes upgrade to `NOT_OBSERVED` for all new fields. Original
 harness/worker/CLI statuses and `NOT_ASSESSED` qualification remain unchanged.
+
+### Independent inert launch contrast
+
+The diagnostic dispatch additionally offers `run_launch_contrast`, default false.
+When explicitly selected, it runs after both target captures. It is not a retry,
+qualification, or host-network fallback for the CLI. The two commands contain
+only one fixed program writing a constant marker: the same controller Python
+with `-I -B -c`, directly and prefixed by the bound
+`unshare --user --map-root-user --net --`. Neither invokes target code, reads
+credentials, opens network connections, or changes namespace/security settings.
+The command deliberately omits `-S`, retaining the existing worker interpreter
+startup route, including standard interpreter site initialization; it is not a claim
+that interpreter startup is absent.
+
+Both previous capture records must prove completed owned-process cleanup. The
+control revalidates installed owner bytes against archive/wheel/provenance and
+baseline binding without target interpreter metadata or startup-admission runs.
+Current controller/unshare identities must match that binding. The diagnostic
+binding must also exist and agree. Checks bind observed executable paths/hashes, not atomic
+execution attestation: a check-to-exec replacement remains outside this evidence.
+Each fixed arm has a five-second owner timeout and existing owned cleanup, private
+sanitized environment, memory/CPU limits and a 64 KiB per-file output limit in its
+own controller process. An unresolved cleanup or interruption stops the second
+arm. No limits are changed in either original capture process.
+
+The existing three public artifacts remain. A selected contrast seeds
+`capability.json` version 2 before it runs, then updates only closed enum facts:
+binding agreement, per-arm execution outcome, signed observed return code, exact
+marker/empty/other stdout, empty/present stderr, and cleanup status. Raw output,
+paths, messages, hashes and identifiers are never published. Version 1 continues
+to mean the contrast was not requested; version 2 with `NOT_ASSESSED`/`NOT_RUN`
+means no arm observation was delivered, **not proof that no process launched**
+(for example, the helper might have stopped before publishing). The independent
+publisher rejects unknown fields and contradictory combinations. The retained
+`live_admission: NOT_RUN` describes the original static capability observation;
+the separate later controls do not qualify target namespace admission.
+
+Even direct marker/exit-zero contrasted with a namespaced nonzero exit only
+characterizes these two later inert runs. It does not establish the earlier
+capture's cause, identify a failing syscall or policy, or prove namespace
+isolation. These observations never replace original CLI/harness statuses, and
+`causal_attribution` and qualification remain `NOT_ASSESSED`.
