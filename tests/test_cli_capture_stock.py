@@ -475,7 +475,7 @@ def test_actual_qualification_venv_interpreter_composition(tmp_path, symlink):
 @pytest.mark.parametrize("corruption", [None, "schema", "extra", "summary_extra"])
 @pytest.mark.parametrize("delivered", [False, True])
 def test_workflow_inline_producers_projectors_and_publication(
-    tmp_path, shell_exit, corruption, delivered
+    tmp_path, shell_exit, corruption, delivered, startup_mode="ordinary"
 ):
     """Execute workflow producers, not hand-built replacements; never launch capture."""
     import subprocess
@@ -498,6 +498,7 @@ def test_workflow_inline_producers_projectors_and_publication(
         result = subprocess.run(
             [sys.executable, "-I", "-S", "-B", "-", str(source / name)],
             input=inline,
+            env=os.environ | {"STARTUP_MODE": startup_mode},
             text=True,
             capture_output=True,
             timeout=10,
@@ -577,6 +578,10 @@ def test_workflow_inline_producers_projectors_and_publication(
             "baseline.json",
             "diagnostic.json",
         }
+        context = json.loads((destination / "context.json").read_text())
+        assert context == (
+            publication.NO_SITE_CONTEXT if startup_mode == "isolated-no-site" else publication.CONTEXT
+        )
         for mode in ("baseline", "diagnostic"):
             value = json.loads((destination / (mode + ".json")).read_text())
             assert value["harness_shell_exit"] == shell_exit
@@ -589,3 +594,12 @@ def test_workflow_inline_producers_projectors_and_publication(
                 assert value["collector_delivery"] == (
                     "NOT_APPLICABLE" if mode == "baseline" else "HEALTHY"
                 )
+
+
+@pytest.mark.parametrize("shell_exit", [7, 73])
+@pytest.mark.parametrize("corruption", [None, "schema", "extra", "summary_extra"])
+@pytest.mark.parametrize("delivered", [False, True])
+def test_no_site_workflow_inline_publication(tmp_path, shell_exit, corruption, delivered):
+    test_workflow_inline_producers_projectors_and_publication(
+        tmp_path, shell_exit, corruption, delivered, startup_mode="isolated-no-site"
+    )

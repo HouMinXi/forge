@@ -80,6 +80,21 @@ jobs:
             exit "$qualification_code"
           fi
           date -u +%s >"$private/finished"
+      - name: Read-only current-wheel no-site dependency control (3.14 only)
+        id: no_site_control
+        if: ${{ matrix.runtime == 'py314' && steps.qualify.outcome == 'success' }}
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          exec >/dev/null 2>&1
+          set +x
+          set -euo pipefail
+          umask 077
+          matches=("$RUNNER_TEMP"/forge-wheel-qualification.*/qualification)
+          [[ "${#matches[@]}" == 1 && -d "${matches[0]}" ]]
+          python -I -S -B scripts/check_no_site_installation.py \
+            --wheel-evidence "${matches[0]}" --expected-source-sha "$SOURCE_SHA"
       - name: Verify original qualified wheel is safe to publish
         id: wheel_release
         env:

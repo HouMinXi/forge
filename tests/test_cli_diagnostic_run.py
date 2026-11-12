@@ -392,6 +392,7 @@ def test_capture_subset_has_no_reader_or_qualification_runner():
     assert {path.name for path in runtime.glob("*.py")} == {
         "capture_bootstrap.py",
         "capture_stock.py",
+        "no_site_entry.py",
         "capture_worker.py",
         "diagnostic_run.py",
         "diagnostic_probe.py",
