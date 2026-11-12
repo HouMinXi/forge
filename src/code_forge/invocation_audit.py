@@ -1613,6 +1613,7 @@ def _raw_contents(
 
 def _sync_file(fd, name, *, _checkpoint=None):
     opened = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=fd)
+    primary = None
     try:
         held = _regular(opened)
         if _checkpoint is not None:
@@ -1622,8 +1623,11 @@ def _sync_file(fd, name, *, _checkpoint=None):
             _checkpoint()
         current = os.stat(name, dir_fd=fd, follow_symlinks=False)
         _require((held.st_dev, held.st_ino) == (current.st_dev, current.st_ino), "integrity_error")
+    except BaseException as error:
+        primary = error
+        raise
     finally:
-        os.close(opened)
+        _release_preserving_primary(os.close, primary, opened, close=True)
 
 
 def _qualified_run(handle, fd, run_id, disk=None, *, settlement=False, _checkpoint=None):
@@ -1699,12 +1703,16 @@ def _qualified_run(handle, fd, run_id, disk=None, *, settlement=False, _checkpoi
 def _entries(fd):
     # A directory description opened before a lock wait can retain an old listing.
     fresh = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+    primary = None
     try:
         old, new = _directory(fd), _directory(fresh)
         _require((old.st_dev, old.st_ino) == (new.st_dev, new.st_ino), "integrity_error")
         return os.listdir(fresh)
+    except BaseException as error:
+        primary = error
+        raise
     finally:
-        os.close(fresh)
+        _release_preserving_primary(os.close, primary, fresh, close=True)
 
 
 def _inventory(handle, *, _checkpoint=None, _version=None):
@@ -1718,10 +1726,14 @@ def _inventory(handle, *, _checkpoint=None, _version=None):
             fd = os.open(
                 name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=handle.fd
             )
+            primary = None
             try:
                 _regular(fd, True)
+            except BaseException as error:
+                primary = error
+                raise
             finally:
-                os.close(fd)
+                _release_preserving_primary(os.close, primary, fd, close=True)
             continue
         _uuid(name)
         with _run_dir(handle, name) as fd:
@@ -2743,6 +2755,7 @@ def _bounded_stage_entries(fd, checkpoint):
     # unbounded os.listdir result before checking the recovery file budget.
     checkpoint()
     fresh = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+    primary = None
     try:
         held, current = _directory(fd), _directory(fresh)
         _require((held.st_dev, held.st_ino) == (current.st_dev, current.st_ino), "integrity_error")
@@ -2753,8 +2766,11 @@ def _bounded_stage_entries(fd, checkpoint):
                 _require(index <= 4096, "quota_refused")
                 names.add(entry.name)
         return names
+    except BaseException as error:
+        primary = error
+        raise
     finally:
-        os.close(fresh)
+        _release_preserving_primary(os.close, primary, fresh, close=True)
 
 
 def _file_slots(fd, events, *, extra_names=(), _checkpoint=None):
@@ -3799,6 +3815,7 @@ class AttemptRecorder:
             if previous is None:
                 flags |= os.O_CREAT | os.O_EXCL
             opened = os.open(name, flags, 0o600, dir_fd=fd)
+            primary = None
             try:
                 held = _regular(opened, empty=previous is None)
                 _require(
@@ -3821,8 +3838,11 @@ class AttemptRecorder:
                     and _file_identity(after) == _file_identity(path),
                     "integrity_error",
                 )
+            except BaseException as error:
+                primary = error
+                raise
             finally:
-                os.close(opened)
+                _release_preserving_primary(os.close, primary, opened, close=True)
             observed, observed_identity = _read_file(
                 fd, name, limit, _stable=True, _checkpoint=checkpoint
             )
