@@ -691,7 +691,8 @@ def preflight():
 
 
 def utility(name):
-    path = shutil.which(name, path=os.defpath)
+    search = os.defpath + os.pathsep + "/usr/sbin:/sbin" if name == "ip" else os.defpath
+    path = shutil.which(name, path=search)
     require(path is not None, f"required utility unavailable: {name}")
     physical = Path(path).resolve(strict=True)
     raw = regular_bytes(physical)
