@@ -439,8 +439,9 @@ Apple Silicon 请使用原生 arm64 Python。安装 extra 时会自动选择对�
 dev extra 钉死 `pytest==9.2.0`。目标测试合同固定为 CPython 3.14，包括变异沙箱内的解释器。
 CPython 3.12 的既有资格仍保留在 `QUALIFIED_RUNTIMES`
 （`src/code_forge/_gate_pytest.py`）中，以兼容已有运行时。
-Forge 本身仍可安装在 Python 3.12 或更新的版本上。独立的 stock-runner 验证工作流
-先验证 3.14 迁移，再替换当前必需的 Linux 工作流；具体见
+Forge 本身仍可安装在 Python 3.12 或更新的版本上。Linux CI 候选使用 stock Ubuntu 26.04，
+不放宽 AppArmor；installed-wheel 控制保留 Python 3.12 并增加 3.14。
+源码绑定、既有 hosted 证据及尚待完成的提升门禁见
 [验证计划](docs/stock-runner-qualification.md)。
 
 classifiers 中没有为钉死的 pytest 认证的 Python 版本：3.13。

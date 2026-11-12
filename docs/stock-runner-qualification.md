@@ -6,23 +6,27 @@ for installing Forge or discard previously qualified reporter pairs.
 
 ## Status and scope
 
-The `linux-stock-qualification.yml` workflow requires an explicit manual
-dispatch and the full reviewed source commit. It has **not** been run on a hosted
-runner. It does not replace the required `linux-tests` check or authorize a
-claim that the full migration has passed.
+This promotion candidate puts the stock Ubuntu 26.04 / CPython 3.14 jobs in
+`linux-tests.yml` itself. It removes the temporary duplicated workflow and
+pilot routing switch. The historical final check name remains `linux-tests`;
+its seven-runner graph still consists of plan, process contracts, four
+service-free shards and the final exact-node aggregate. No automatic or manual
+route changes AppArmor settings or falls back to the old sysctl lane.
 
-The automatic Linux workflow remains on Ubuntu 24.04 with its suite and system
-sandbox interpreter on Python 3.12. It additionally provisions Python 3.14 with
-pytest 9.2.0 so the new mandatory qualification cases execute there too. Their
-absence must fail the existing strict receipt policy, rather than become an
-accepted skip. Runner counts, security steps and skip policy are unchanged.
+The original collection, ownership, cgroup, local, service-free shard and
+aggregate receipt gates remain. A prerequisite probe alone cannot satisfy
+them. Failed, cancelled, skipped or missing required phases must fail the
+aggregate rather than produce a green final check. The workflow name and job
+names do not themselves establish server-side branch protection.
 
-The candidate retains all original collection, ownership, cgroup, local,
-service-free shard and final exact-node coverage phases. Its temporary copy of
-the current Linux workflow is checked structurally against the original: only
-the declared runner, runtime, source-binding and prerequisite changes may
-differ. It must be retired after an evidenced promotion rather than maintained
-as an indefinite second CI implementation.
+The preceding composed pilot at
+`b3df2cfa0f80efca16c6da669d3df25370257176` passed
+[hosted run 43161468460, attempt 1](https://github.com/HouMinXi/forge/actions/runs/43161468460)
+on seven stock runners. Its downloaded public receipts passed the original
+aggregate verifier, including all seven real bind-mount cases and 161 audit
+cleanup cases. That result covers that exact commit only. It does not qualify
+the later #468 diagnostic additions, this workflow promotion, or installed
+wheels on Python 3.14. Those changes require their own applicable validation.
 
 The existing runtime/collection skip policy is unchanged. In particular, real
 isolation and patch-corpus tests cannot turn into accepted skips. The previous
@@ -30,33 +34,51 @@ CPython 3.12/pytest 9.2.0 and 3.12/9.1.1 reporter cases remain provisioned as
 compatibility controls; they are not the interpreter used by the candidate
 suite or mutation payloads.
 
-## Registered manual entry
+## Source binding for ordinary and manual runs
 
-GitHub requires a manually dispatched workflow to be registered on the default
-branch. Use the already registered `linux-tests.yml` entry on the reviewed
-candidate ref, with `stock_runner_pilot=true` and `expected_source_sha` set to
-that ref's full reviewed commit SHA. The local reusable-workflow call resolves
-`linux-stock-qualification.yml` at the same commit. This avoids merging an
-unqualified candidate just to register a new workflow file.
+Every Linux job explicitly checks out `github.sha` and validates the request
+before package setup. Plan and execution receipts use that same source SHA.
+The event modes are separate, fail-closed contracts:
 
-The pilot input is a boolean and defaults to false. Ordinary PR, push and
-manual runs retain the existing jobs and effective concurrency group. Pilot
-runs exclude every legacy job, including the always-running aggregate. A SHA
-without the pilot enabled fails in a bounded job with no checkout or setup;
-a pilot with an empty, malformed or mismatched SHA fails the existing stock
-request check before setup. Neither case falls back to the legacy security
-steps. The caller and callee use separate concurrency groups, also distinct
-from ordinary CI on the same ref.
+- A pull request targeting main tests the event's synthetic merge commit,
+  not a moving branch or the PR head alone. A new base produces a new tested
+  merge SHA and requires new evidence.
+- A push to main tests that event's full SHA. The checkout must match it.
+- A manual run requires a full `expected_source_sha` input equal to both the
+  event SHA and checked-out HEAD. Missing or mismatched input fails; it never
+  selects an automatic fallback.
 
-Only the expected SHA is passed to the reusable workflow. No secrets are
-inherited, and permissions remain `contents: read`. Reusable workflows retain
-the caller's event, so the request still requires `workflow_dispatch` and
-exact equality between the expected SHA, `github.sha` and checked-out HEAD.
+Unsupported events and wrong automatic refs are rejected. There is no
+`pull_request_target` route, inherited secret or new write permission.
+Manual and ordinary concurrency groups remain distinct so an explicit
+qualification does not cancel unrelated ordinary CI.
 
-Local checks exercise the parsed routing expressions and real request command,
-but do not execute GitHub Actions or prove hosted runner behavior. The complete
-stock coverage run and a separate hosted Python 3.14 installed-wheel
-qualification remain required before promotion.
+The already registered `linux-tests.yml` entry can run a reviewed candidate
+ref without merging it merely to register a workflow. Its only manual input
+is `expected_source_sha`; the retired `stock_runner_pilot` switch is not used.
+Local routing and source-binding tests are not hosted execution evidence.
+
+## Installed-wheel compatibility controls
+
+The installed-wheel workflow retains Ubuntu 24.04 / Python 3.12 and adds
+Ubuntu 26.04 / Python 3.14 as separate matrix entries. Each entry builds and
+installs its own wheel offline, outside the checkout, and executes the same
+frozen 22-control roster with no skips, errors or failures. It preserves the
+source/archive, wheel, imported-module and RECORD checks and publishes only
+the original verified wheel and fixed public summary. Artifacts distinguish
+the fixed runtime label and run attempt; one runtime cannot overwrite the
+other's evidence.
+
+A separate fail-closed aggregate retains the historical `installed-wheel`
+check name and requires the matrix result to be success. This uses three
+packaging runners in addition to the seven Linux runners; lint and CodeQL
+are separate jobs. A one-shot seven-runner pilot authorization does not cover
+these additional executions.
+
+These are partial packaging/runtime controls, not complete installed native
+qualification. The #468 installed-CLI capture tools remain separate diagnostics;
+their original `unshare` route is not qualified by the stock `bwrap` result.
+No diagnostic tool is wired into CI and no native acceptance claim is added.
 
 ## Why this route
 
@@ -123,21 +145,26 @@ This is not a claim that all MCP or all L0 JSON decoding is depth-bounded.
 
 ## Promotion gates
 
-1. Review the exact candidate commit and its complete workflow delta.
-2. Run the manual stock-runner workflow only when separately authorized.
-3. Require all original coverage phases and aggregate receipts to pass for that
-   exact source, with no added skip allowance or `continue-on-error` fallback.
-4. Validate the installed-wheel workflow on the new contract as well; a reporter
-   qualification or source-tree test run does not prove installed-wheel behavior.
-5. Promote the reviewed runner/runtime changes to the required Linux workflow,
-   retaining the qualified compatibility controls and publication checks. Retire
-   the temporary workflow, then verify the new exact-head required checks.
+1. Review the exact composed candidate and complete workflow, source-binding,
+   identity and publication delta. Retain all applicable compatibility controls.
+2. Validate both local runtimes and the actual offline installed-wheel harness,
+   binding every result to its source commit and distinguishing it from hosted
+   evidence. Source-tree contract tests are not installed-wheel execution.
+3. When separately authorized, require all original stock coverage phases and
+   aggregate receipts to pass on the exact new source, with no added skip
+   allowance or `continue-on-error` fallback. Qualify hosted Python 3.14 wheels
+   separately and retain the Python 3.12 compatibility control.
+4. Before opening the promotion PR, verify that its ordinary route is already
+   the stock implementation and cannot run the retired security-setting steps.
+   A draft PR still triggers configured automatic workflows.
+5. Verify the actual PR test-merge SHA, `linux-tests` and `installed-wheel`
+   check identities, all applicable checks and any server-side required
+   contexts. Earlier pilot or local results cannot replace those new checks.
 
-Do not publish this candidate as a routine PR without considering the existing
-workflow: the unchanged required Linux workflow still runs its old AppArmor
-sysctl command. A manual-only candidate does not neutralize other workflows
-triggered by a push or PR. Publication and hosted execution are separate from
-local preparation and require the applicable authorization.
+Publication, hosted execution, branch-rule changes and merging are separate
+from local preparation and require their applicable authorization. Older
+experimental branches may still carry the AppArmor-changing workflow; this
+candidate does not modify their runs or grant permission to rerun them.
 
 ## Sources
 

@@ -19,7 +19,6 @@ import time
 import pytest
 import yaml
 
-from tests.ci_workflow_contract import without_stock_dispatch
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/linux-tests.yml"
@@ -76,30 +75,55 @@ DATA_PRODUCERS = {
     "linux-shard-${{ matrix.shard }}-evidence": ("shard_receipt",),
 }
 
-# Snapshots of 76817fc, independently read before the publication-only change.
-# The structural snapshot excludes command bodies and transfer destinations,
-# which are checked separately. CI does not need this commit in its shallow
-# checkout. All old timeouts, conditions, permissions, pins, matrix settings,
-# step ordering and archive/overwrite semantics remain in this snapshot.
-# Refreshed for #421: only the three download-artifact pins change from
-# 634f93cb (v5.0.0) to 9000827c (v8.0.2); every other structural field is retained.
-BASE_STRUCTURE = "9680042bdcb148c11a2ec4aaea91c387d86c4c0f5af700f7670d9ba723509912"
+# Exact stock snapshots derived from hosted-qualified b3df2cfa, with only the
+# reviewed formal event/concurrency header, request label and aggregate name
+# changes applied. No command or security-relevant field is normalized away.
+BASE_STRUCTURE = "a16a61d7e6c8880944d825856774b14584f09d73255bac164c3532e9ba0e867c"
 BASE_COMMANDS = {
-    "Verify Linux process ownership prerequisites": "ac8ac8c871df8b2affd0b4233b87164eb04603406a99932d0e9be68d5cf46e97",
-    "Remove the image's system git-lfs filters": "53a1561d0f600241f36f74fd2f51a38c341ed8f67577c296202cd26c491f69aa",
-    "Install and verify bubblewrap": "6def43d0323da5532c9473eef6007debd9caad8e23b51ede582be423d47113db",
-    "Install declared extras and qualified pytest": "edbc1b00399ad5589f7da824d106535939338f808c309442b7f771607558ddc4",
-    "Collect original selections and partition every module": "0c47832471a89e5e8361fddd9fad9708fea122919a85b9efda4d958c2a82ecf2",
-    "Run ownership": "2cb2df671bdff48bec58d69c9ad7b85f09136c9af2ec171abeee66e97a671817",
-    "Run cgroup": "fdae76d7dfd46e5b4b4ae9c28f6b7791dc67cc55e1edbbcb0a077e94cbd39b27",
-    "Run local": "af8e249d85e73aec8c06baa97eb154704939dbd105a4a553412bb7bc25cca7ec",
-    "Run serial service-free shard": "60bf47ba3e2cf32e94b80a6fad487bc41a84254269c1e08d6a6edd9fc593f607",
-    "Require all jobs and exact complete node coverage": "e611674f28aeb9ecb1c47eb00ce565be8ec836b6d8a161b3931b1b122be90edf",
+    "linux-tests/Prepare fixed public CI diagnostics": "4355b5e6f501f8c20c678ec823d65696d4013612d1e603555e3b41ae64e3e5a5",
+    "linux-tests/Prepare fixed public CI summary": "4eb92086464c2c33820f246bea640e5150704e23031e253547d6d666da1d6bb3",
+    "linux-tests/Require all jobs and exact complete node coverage": "05faaaea8395e6c8caf244df8e290005ed6f8888aa7e481edadd07c0afe16579",
+    "linux-tests/Require the exact event source": "04eb5c965ceade18b42177621ef354ac2205f3a7a9a479eb12b98cd2d4c912b8",
+    "plan/Collect original selections and partition every module": "b62c48c7b582f03f474b7293405bd974b0cbba62cac4e8530d74078061fe18f9",
+    "plan/Install and verify bubblewrap": "4363c1f0d9a1901e2b0c8345d85a0b4c47972881b21d90a1e5c7817daadffe1d",
+    "plan/Install declared extras and qualified pytest": "c924fcfedca8ee5467e62f9d10ed8476a780ad6d7b983605350ead111b81bf46",
+    "plan/Prepare fixed public CI diagnostics": "4f4beb988a363bb96e5dd710fb98af29d42e2ccd06b4f9cd4b7317447a9423c5",
+    "plan/Prepare fixed public CI summary": "dfb4d418be0ffbfb4701af716105edf3f9f793d9a5e81fc25d2d6acac98aa423",
+    "plan/Publish failed bubblewrap setup transcript": "5ca1dcaaf204975651cca2d8068b98d334140ea652d1edda64bde476273c1e46",
+    "plan/Remove the image's system git-lfs filters": "6967932a21a2706738ac06fc01655b01d5c0d838ac887cc26235541b9893cd14",
+    "plan/Require the exact event source": "04eb5c965ceade18b42177621ef354ac2205f3a7a9a479eb12b98cd2d4c912b8",
+    "plan/Verify Linux process ownership prerequisites": "78eb6365915d3d9edc51e76f397626af1c51ba2e18939af437654b95df3365c8",
+    "process-contracts/Install and verify bubblewrap": "4363c1f0d9a1901e2b0c8345d85a0b4c47972881b21d90a1e5c7817daadffe1d",
+    "process-contracts/Install declared extras and qualified pytest": "c924fcfedca8ee5467e62f9d10ed8476a780ad6d7b983605350ead111b81bf46",
+    "process-contracts/Prepare fixed public CI diagnostics": "4fbd7552b994bcebb23bc692757a738ceb954a6ff32ee7b86d350f94b2d5f052",
+    "process-contracts/Prepare fixed public CI summary": "ee83d5ebfc70fcfaed29a13ae03536a0664c947e8cbe1c0a34d31052a7be10bd",
+    "process-contracts/Publish failed bubblewrap setup transcript": "5ca1dcaaf204975651cca2d8068b98d334140ea652d1edda64bde476273c1e46",
+    "process-contracts/Publish failed pytest transcript (cgroup)": "d896d1f12eb6797e851d1184414b5da64ed31f582249180efb0738d4b181c6a3",
+    "process-contracts/Publish failed pytest transcript (local)": "761f9479dcb2452bd504fae4d1bd5d6f30b24f74873944d26f1462a939d18087",
+    "process-contracts/Publish failed pytest transcript (ownership)": "1376644c62e2b294d59164d603e55ad2b0d1060d1a44f448f17a10412009c7b1",
+    "process-contracts/Qualify the actual system Python build": "9f274d08429265f79faa6919bfd0debdbfd43e877c4b960bcd3d916d8afde2d7",
+    "process-contracts/Remove the image's system git-lfs filters": "6967932a21a2706738ac06fc01655b01d5c0d838ac887cc26235541b9893cd14",
+    "process-contracts/Require the exact event source": "04eb5c965ceade18b42177621ef354ac2205f3a7a9a479eb12b98cd2d4c912b8",
+    "process-contracts/Run cgroup": "e240702936842ca857a29d5ab21b31edcd124ac601b6be291babcf748cfd716b",
+    "process-contracts/Run local": "14375b7315524f3748a3aab4bd76ba70d81cf355f4240aeb7f8694b12453e5cc",
+    "process-contracts/Run ownership": "c4f7b6c2a6a73d47466cad2b327f85db3f11015c263fa23263edcf77edcb6a91",
+    "process-contracts/Verify Linux process ownership prerequisites": "78eb6365915d3d9edc51e76f397626af1c51ba2e18939af437654b95df3365c8",
+    "service-free/Install and verify bubblewrap": "4363c1f0d9a1901e2b0c8345d85a0b4c47972881b21d90a1e5c7817daadffe1d",
+    "service-free/Install declared extras and qualified pytest": "c924fcfedca8ee5467e62f9d10ed8476a780ad6d7b983605350ead111b81bf46",
+    "service-free/Prepare fixed public CI diagnostics": "7158bb471976e32de1ed85df6929cfe0451be9457f96b62408ced0076c04d12b",
+    "service-free/Prepare fixed public CI summary": "f1e1e740eb75b3859dafab736b93147f291d92ef10164bb66d3d18e370112df5",
+    "service-free/Prepare fixed public failure diagnostic": "6019a88c7c596c7f1b15a66dc0d5e3af2bdaa8db757cd449ce01209e2349cfe4",
+    "service-free/Publish failed bubblewrap setup transcript": "5ca1dcaaf204975651cca2d8068b98d334140ea652d1edda64bde476273c1e46",
+    "service-free/Publish failed pytest transcript (shard-${{ matrix.shard }})": "692433340a089335a4af16cc669a944adb7eaa092490a39fc5d4f77ad8853c4f",
+    "service-free/Remove the image's system git-lfs filters": "6967932a21a2706738ac06fc01655b01d5c0d838ac887cc26235541b9893cd14",
+    "service-free/Require the exact event source": "04eb5c965ceade18b42177621ef354ac2205f3a7a9a479eb12b98cd2d4c912b8",
+    "service-free/Run serial service-free shard": "55dfe0d99fa4b0dde8baac29d18e5150692f46dd398be41e1388c2a55ed88cc9",
+    "service-free/Verify Linux process ownership prerequisites": "78eb6365915d3d9edc51e76f397626af1c51ba2e18939af437654b95df3365c8",
 }
 
 
 def workflow():
-    value = without_stock_dispatch(yaml.safe_load(WORKFLOW.read_text()))
+    value = yaml.safe_load(WORKFLOW.read_text())
     # Authorized failure transcript sidecars are asserted independently by
     # test_ci_publish_failure_log; the original authority snapshot stays intact.
     for job in value["jobs"].values():
@@ -117,6 +141,7 @@ RUNS = [
     for job_name, job in workflow()["jobs"].items()
     for step in job["steps"]
     if "run" in step
+    and step["name"] not in {"Require the exact event source", "Qualify the actual system Python build"}
 ]
 ORIGINAL_RUNS = [(job, name) for job, name in RUNS if name != DIAGNOSTICS_NAME]
 INVOCATION_RUNS = [(job, name) for job, name in RUNS if name in DIAGNOSTIC_PRODUCER_IDS]
@@ -232,6 +257,19 @@ def assert_failure_diagnostic_steps(steps):
     assert steps[-5:-3] == fixed_summary_pair("linux-shard-${{ matrix.shard }}-summary")
 
 
+@pytest.mark.parametrize(
+    "job_name,step_name",
+    [(name, "Require the exact event source") for name in JOBS]
+    + [("process-contracts", "Qualify the actual system Python build")],
+)
+def test_auxiliary_source_and_runtime_steps_keep_fixed_silent_commands(job_name, step_name):
+    run = run_step(job_name, step_name)["run"]
+    assert run.startswith("exec >/dev/null 2>&1\nset +x\nset -euo pipefail\n")
+    assert sha256(run) == BASE_COMMANDS[job_name + "/" + step_name]
+    assert "${{" not in run
+    assert "GITHUB_ENV" not in run and "GITHUB_STEP_SUMMARY" not in run
+
+
 @pytest.mark.parametrize("job_name,step_name", RUNS)
 def test_every_shell_step_suppresses_output_before_expanding_private_paths(job_name, step_name):
     step = run_step(job_name, step_name)
@@ -252,140 +290,13 @@ def test_every_shell_step_suppresses_output_before_expanding_private_paths(job_n
 
 @pytest.mark.parametrize("job_name,step_name", ORIGINAL_RUNS)
 def test_original_commands_change_only_private_transport_and_environment(job_name, step_name):
-    _, body = private_prefix(run_step(job_name, step_name)["run"])
-    if step_name == SUMMARY_NAME:
-        assert body.strip() == (
-            f"python scripts/ci_private_transport.py summary --job {job_name} \\\n"
-            '  --status "$CI_JOB_STATUS" --public-directory forge-linux-public'
-        )
-        return
-    if step_name == FAILURE_NAME:
-        assert job_name == "service-free"
-        assert body == FAILURE_COMMAND + "\n"
-        return
-    if step_name == "Install and verify bubblewrap":
-        from tests.test_ci_setup_diagnostics import without_setup_markers
-
-        body = without_setup_markers(body)
-    # The consumer alone gets a private umask; the producer and its argv stay intact.
-    body = re.sub(r'\| \(umask 077; exec tee ("\$EVIDENCE/[a-z0-9.-]+")\)', r"| tee \1", body)
-    assert "umask" not in body
-    # These exact reversals are the approved privacy wiring changes. They do
-    # not discard shell operators, command options or arbitrary exports.
-    transport_count = int(step_name in DIAGNOSTIC_PRODUCER_IDS)
-    assert body.count("scripts/ci_private_transport.py") == transport_count
-    assert body.count(INVOCATION_EXPORT) == transport_count
-    if transport_count:
-        assert body.startswith(INVOCATION_EXPORT)
-        body = body.removeprefix(INVOCATION_EXPORT)
-    for diagnostic_flag in (
-        ' --diagnostic-directory "$EVIDENCE/diagnostics"',
-        ' --diagnostic-invocation "$diagnostic_invocation"',
-    ):
-        assert body.count(diagnostic_flag) == transport_count
-        body = body.replace(diagnostic_flag, "")
-    assert body.count(" --public-directory forge-linux-public") == int(step_name in PRODUCER_IDS)
-    assert body.count("--failure-diagnostic") == int(step_name == "Run serial service-free shard")
-    if step_name == "Run serial service-free shard":
-        assert job_name == "service-free"
-        diagnostic_option = '--directory "$EVIDENCE" --failure-diagnostic --public-directory'
-        assert body.count(diagnostic_option) == 1
-        body = body.replace(diagnostic_option, '--directory "$EVIDENCE" --public-directory')
-    assert "scripts/ci_test_shards.py" not in body
-    body = body.replace("scripts/ci_private_transport.py", "scripts/ci_test_shards.py")
-    body = body.replace(" --public-directory forge-linux-public", "")
-    body = body.replace(
-        "--plan forge-linux-input/plan/plan.json", '--plan "$RUNNER_TEMP/forge-plan/plan.json"'
-    )
-    body = body.replace(
-        "--plan forge-linux-input/all/linux-collection-plan/plan.json",
-        '--plan "$RUNNER_TEMP/forge-all-evidence/linux-collection-plan/plan.json"',
-    )
-    body = body.replace(
-        "--directory forge-linux-input/all", '--directory "$RUNNER_TEMP/forge-all-evidence"'
-    )
-    export = 'export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"\n'
-    assert body.count(export) == int(step_name == "Install declared extras and qualified pytest")
-    body = body.replace(export, "")
-    # Admit only the additional mandatory runtime supply. All original commands
-    # and their authority remain compared against the unchanged snapshot.
-    supply = (
-        "# Supply the required 3.14 pair while keeping the suite and sandbox on 3.12.\n"
-        "python3.14 -m pip install 'pytest==9.2.0'\n"
-        "python3.14 -c 'import sys, pytest; assert sys.implementation.cache_tag == "
-        '"cpython-314"; assert pytest.__version__ == "9.2.0"\'\n'
-    )
-    assert body.count(supply) == int(step_name == "Install declared extras and qualified pytest")
-    body = body.replace(supply, "")
-    if step_name in {"Run ownership", "Run cgroup", "Run local"}:
-        phase = step_name.removeprefix("Run ")
-        driver_log = f'| tee "$EVIDENCE/driver-{phase}.log"'
-        assert body.count(driver_log) == 1
-        body = body.replace(driver_log, f'| tee "$EVIDENCE/{phase}.log"')
-    normalized = "\n".join(line.rstrip() for line in body.strip().splitlines())
-    assert sha256(normalized) == BASE_COMMANDS[step_name], normalized
+    # Direct comparison with the qualified stock commands, including transport,
+    # environment, diagnostics, host probe and runtime supply. No reversal helper.
+    assert sha256(run_step(job_name, step_name)["run"]) == BASE_COMMANDS[job_name + "/" + step_name]
 
 
 def test_full_workflow_preserves_original_authority_failures_budgets_and_parallelism():
-    value = copy.deepcopy(workflow())
-    for job_name, job in value["jobs"].items():
-        # The independent sidecar is asserted exactly below. Do not weaken the
-        # original structural snapshot or omit any original step or field.
-        diagnostics = [
-            s for s in job["steps"] if s["name"] in {DIAGNOSTICS_NAME, DIAGNOSTICS_UPLOAD_NAME}
-        ]
-        assert [s["name"] for s in diagnostics] == [DIAGNOSTICS_NAME, DIAGNOSTICS_UPLOAD_NAME]
-        for step in diagnostics:
-            job["steps"].remove(step)
-        if job_name == "service-free":
-            # Admit only the explicitly reviewed test-only trace switch. Keep
-            # the original authority/budget/concurrency snapshot unchanged.
-            assert job.pop("env") == {"FORGE_CI_AUDIT_TRACE": "1"}
-            assert_failure_diagnostic_steps(job["steps"])
-            del job["steps"][-3:]
-        summaries = [s for s in job["steps"] if s["name"] == SUMMARY_NAME]
-        assert len(summaries) == 1
-        summary = summaries[0]
-        assert {key: val for key, val in summary.items() if key != "run"} == {
-            "name": SUMMARY_NAME,
-            "id": "public_summary",
-            "if": "${{ always() }}",
-            "env": {"CI_JOB_STATUS": "${{ job.status }}"},
-        }
-        job["steps"].remove(summary)
-        if job_name in {"process-contracts", "service-free"}:
-            name = (
-                "linux-process-summary"
-                if job_name == "process-contracts"
-                else "linux-shard-${{ matrix.shard }}-summary"
-            )
-            assert job["steps"][-2:] == fixed_summary_pair(name)
-            del job["steps"][-2:]
-        if job_name == "linux-tests":
-            extra = job["steps"].pop()
-            assert extra == {
-                "name": "Preserve fixed aggregate summary",
-                "if": SUMMARY_GATE,
-                "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
-                "with": {
-                    "name": "linux-aggregate-summary",
-                    "path": PUBLIC + "summary.json",
-                    "if-no-files-found": "error",
-                    "retention-days": 14,
-                },
-            }
-        for step in job["steps"]:
-            step.pop("run", None)
-            if step["name"] == "Set up qualified Python":
-                assert step["with"]["python-version"] == "3.14\n3.12"
-                step["with"]["python-version"] = "3.12"
-            if step["name"] in DIAGNOSTIC_PRODUCER_IDS:
-                assert step.pop("id") == DIAGNOSTIC_PRODUCER_IDS[step["name"]]
-            if step.get("uses", "").startswith("actions/upload-artifact@"):
-                if not step["with"].get("overwrite"):
-                    assert step["if"] == archive_gate(step["with"]["name"])
-                    step["if"] = "${{ always() }}"
-            step.get("with", {}).pop("path", None)
+    value = yaml.safe_load(WORKFLOW.read_text())
     assert sha256(json.dumps(value, sort_keys=True, separators=(",", ":"))) == BASE_STRUCTURE
 
 
@@ -492,6 +403,7 @@ def test_diagnostics_step_is_exact_independent_private_and_fail_closed(job_name)
         re.search(r'^exec >"\$EVIDENCE/(step-[0-9]{2}\.log)" 2>&1$', s["run"], re.M)[1]
         for s in steps
         if "run" in s
+        and s["name"] not in {"Require the exact event source", "Qualify the actual system Python build"}
     ]
     assert len(logs) == len(set(logs))
     assert steps[summary_index]["if"] == "${{ always() }}"
@@ -1083,7 +995,7 @@ def test_private_tee_failure_keeps_original_pipefail_semantics(tmp_path, produce
 
 def test_native_detail_publication_has_no_explicit_credentials_or_broader_trigger():
     """Keep the temporary exception publication tied to a credential-free job."""
-    workflow = without_stock_dispatch(yaml.safe_load(WORKFLOW.read_text()))
+    workflow = yaml.safe_load(WORKFLOW.read_text())
     assert workflow["permissions"] == {"contents": "read"}
     assert set(workflow["on"]) == {"pull_request", "push", "workflow_dispatch"}
     text = WORKFLOW.read_text()

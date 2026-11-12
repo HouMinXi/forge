@@ -8,12 +8,11 @@ import subprocess
 import pytest
 import yaml
 
-from tests.ci_workflow_contract import without_stock_dispatch
 
 from scripts import ci_publish_failure_log as replay
 
 ROOT = Path(__file__).resolve().parents[1]
-PHASES = ("apt-update", "apt-install", "sysctl", "version", "smoke")
+PHASES = ("apt-update", "apt-install", "stock-security", "version", "smoke")
 MARKERS = """# Fixed stage labels only; never dump environment or package configuration.
 setup_start() {
   setup_phase=$1
@@ -40,9 +39,7 @@ def without_setup_markers(body):
 
 
 def workflow():
-    return without_stock_dispatch(
-        yaml.safe_load((ROOT / ".github/workflows/linux-tests.yml").read_text())
-    )
+    return yaml.safe_load((ROOT / ".github/workflows/linux-tests.yml").read_text())
 
 
 def test_setup_sidecars_are_failure_only_fixed_paths_and_original_budget():
@@ -76,9 +73,11 @@ if [[ ${0##*/} == sudo ]]; then
   case "$1 $2" in
     'apt-get update') phase=apt-update ;;
     'apt-get install') phase=apt-install ;;
-    'sysctl -w') phase=sysctl ;;
     *) exit 91 ;;
   esac
+elif [[ ${0##*/} == python ]]; then
+  [[ "$*" == "scripts/ci_stock_runner.py host" ]] || exit 92
+  phase=stock-security
 else
   if [[ $1 == --version ]]; then phase=version; else phase=smoke; fi
 fi
@@ -89,7 +88,7 @@ if [[ $phase == ${MOCK_FAIL:-} ]]; then
   exit "$MOCK_RC"
 fi
 """
-    for name in ("sudo", "bwrap"):
+    for name in ("sudo", "bwrap", "python"):
         file = commands / name
         file.write_text(mock)
         file.chmod(0o700)

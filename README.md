@@ -510,9 +510,10 @@ The dev extra pins `pytest==9.2.0`. The target test contract is CPython 3.14,
 including the interpreter inside mutation sandboxes. CPython 3.12 remains
 qualified for backward compatibility in `QUALIFIED_RUNTIMES`
 (`src/code_forge/_gate_pytest.py`). Forge itself still installs on Python 3.12
-or newer. The separate stock-runner qualification workflow validates the
-3.14 migration before it replaces the current required Linux workflow;
-see [the qualification plan](docs/stock-runner-qualification.md).
+or newer. The Linux CI candidate uses stock Ubuntu 26.04 without relaxing
+AppArmor, while installed-wheel controls retain Python 3.12 and add 3.14.
+Source binding, prior hosted evidence and the remaining promotion gates are
+documented in [the qualification plan](docs/stock-runner-qualification.md).
 
 Python versions in the classifiers that are not qualified for the pinned pytest: 3.13.
 

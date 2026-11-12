@@ -138,9 +138,9 @@ def test_every_linux_job_keeps_current_and_previous_runtimes_separate():
             for step in jobs[name]["steps"]
             if step.get("name") == "Set up qualified Python"
         )
-        # setup-python leaves the last entry active. The new pair is an
-        # additional real qualification control, not a replacement suite.
-        assert runtimes.splitlines() == ["3.14", "3.12"]
+        # setup-python leaves 3.14 active; both 3.12 reporter pairs remain
+        # separately provisioned compatibility controls.
+        assert runtimes.splitlines() == ["3.12", "3.14"]
         setup = next(
             step["run"]
             for step in jobs[name]["steps"]
@@ -151,11 +151,11 @@ def test_every_linux_job_keeps_current_and_previous_runtimes_separate():
             in setup
         )
         assert f'assert pytest.__version__ == "{_pinned_version()}"' in setup
-        assert f"python3.14 -m pip install 'pytest=={_pinned_version()}'" in setup
-        assert 'assert sys.implementation.cache_tag == "cpython-314"' in setup
+        assert f"python3.12 -m pip install 'pytest=={_pinned_version()}'" in setup
+        assert "python scripts/ci_stock_runner.py interpreters" in setup
         assert "for interpreter in python /usr/bin/python3;" in setup
-        assert "assert sys.version_info[:2] == (3, 12)" in setup
-        assert 'python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"' in setup
+        assert "assert sys.version_info[:2] == (3, 14)" in setup
+        assert 'python3.12 -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"' in setup
         assert "\"$RUNNER_TEMP/forge-pytest-9.1.1/bin/python\" -m pip install 'pytest==9.1.1'" in setup
         private_export = 'export FORGE_QUALIFICATION_PYTHON="$RUNNER_TEMP/forge-pytest-9.1.1/bin/python"'
         assert private_export in setup

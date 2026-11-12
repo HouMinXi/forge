@@ -1,6 +1,5 @@
 """Mock-only checks for the stock runner; never run bwrap or alter host settings."""
 
-import copy
 import json
 from pathlib import Path
 import stat
@@ -9,7 +8,6 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from tests.ci_workflow_contract import without_stock_dispatch
 
 from scripts import ci_stock_runner as probe
 from scripts import ci_test_shards as ci
@@ -30,18 +28,24 @@ def parent_namespaces():
     return {name: name + ":[1]" for name in probe.NAMESPACES}
 
 
-def test_request_requires_dispatch_and_the_same_full_reviewed_commit():
+def test_request_requires_event_binding_and_the_same_full_commit():
     sha = "a" * 40
-    probe.verify_request(sha, sha, "workflow_dispatch", sha)
-    for expected, actual, event, checkout in (
-        ("", sha, "workflow_dispatch", sha),
-        ("a" * 7, sha, "workflow_dispatch", sha),
-        (sha, "b" * 40, "workflow_dispatch", sha),
-        (sha, sha, "pull_request", sha),
-        (sha, sha, "workflow_dispatch", "b" * 40),
+    probe.verify_request(sha, sha, "workflow_dispatch", sha, ref="refs/heads/pilot")
+    probe.verify_request("", sha, "push", sha, ref="refs/heads/main")
+    probe.verify_request("", sha, "pull_request", sha, ref="refs/pull/1/merge", base_ref="main")
+    for expected, actual, event, checkout, ref, base in (
+        ("", sha, "workflow_dispatch", sha, "refs/heads/pilot", ""),
+        ("a" * 7, sha, "workflow_dispatch", sha, "refs/heads/pilot", ""),
+        (sha, "b" * 40, "workflow_dispatch", sha, "refs/heads/pilot", ""),
+        (sha, sha, "pull_request", sha, "refs/pull/1/merge", "main"),
+        (sha, sha, "workflow_dispatch", "b" * 40, "refs/heads/pilot", ""),
+        ("", sha, "push", sha, "refs/heads/topic", ""),
+        ("", sha, "pull_request", sha, "refs/pull/1/head", "main"),
+        ("", sha, "pull_request", sha, "refs/pull/1/merge", "topic"),
+        ("", "0" * 40, "push", "0" * 40, "refs/heads/main", ""),
     ):
         with pytest.raises(ValueError):
-            probe.verify_request(expected, actual, event, checkout)
+            probe.verify_request(expected, actual, event, checkout, ref=ref, base_ref=base)
 
 
 def test_runtime_requires_the_exact_new_pair():
@@ -256,92 +260,34 @@ def test_system_qualification_uses_real_interpreter_and_rejects_incomplete_recei
     assert len(calls) == 2
 
 
-def test_candidate_retains_all_original_coverage_and_publication_commands():
-    """Reverse only the explicitly reviewed migration delta, then compare everything."""
-    original = without_stock_dispatch(
-        yaml.safe_load((ROOT / ".github/workflows/linux-tests.yml").read_text())
-    )
-    candidate = yaml.safe_load((ROOT / ".github/workflows/linux-stock-qualification.yml").read_text())
-    restored = copy.deepcopy(candidate)
-    assert restored["name"] == "Stock Ubuntu 26.04 / Python 3.14 qualification"
-    assert set(restored["on"]) == {"workflow_dispatch", "workflow_call"}
-    assert restored["on"]["workflow_call"] == {
-        "inputs": {"expected_source_sha": {"required": True, "type": "string"}}
-    }
-    assert restored["concurrency"] == {
-        "group": "stock-qualification-" + original["concurrency"]["group"],
-        "cancel-in-progress": True,
-    }
-    restored["concurrency"] = copy.deepcopy(original["concurrency"])
-    assert restored["on"]["workflow_dispatch"]["inputs"]["expected_source_sha"]["required"] is True
-    assert restored["env"].pop("EXPECTED_SOURCE_SHA") == "${{ inputs.expected_source_sha }}"
-    restored["name"] = original["name"]
-    restored["on"] = original["on"]
-    for name, job in restored["jobs"].items():
+def test_formal_workflow_keeps_stock_runtime_host_and_complete_coverage():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/linux-tests.yml").read_text())
+    jobs = workflow["jobs"]
+    assert set(jobs) == {"plan", "process-contracts", "service-free", "linux-tests"}
+    assert jobs["linux-tests"]["name"] == "linux-tests"
+    assert jobs["linux-tests"]["if"] == "${{ always() }}"
+    assert jobs["service-free"]["strategy"] == {"fail-fast": False, "matrix": {"shard": [0, 1, 2, 3]}}
+    for name, job in jobs.items():
         assert job["runs-on"] == "ubuntu-26.04"
-        job["runs-on"] = "ubuntu-24.04"
-        assert job["steps"][0]["with"].pop("ref") == "${{ github.sha }}"
-        assert job["steps"].pop(1) == {
-            "name": "Require the explicitly reviewed source",
-            "run": "exec >/dev/null 2>&1\nset +x\nset -euo pipefail\n/usr/bin/python3 -I -S -B scripts/ci_stock_runner.py request\n",
-        }
         if name == "linux-tests":
-            assert job["name"] == "stock-runner-qualification"
-            job["name"] = "linux-tests"
-        if name == "process-contracts":
-            index = next(i for i, step in enumerate(job["steps"]) if step.get("id") == "install")
-            assert job["steps"].pop(index + 1) == {
-                "name": "Qualify the actual system Python build",
-                "timeout-minutes": 12,
-                "run": "exec >/dev/null 2>&1\nset +x\nset -euo pipefail\numask 077\npython scripts/ci_stock_runner.py system-runtime\n",
-            }
-        for step in job["steps"]:
-            if step.get("name") == "Set up qualified Python":
-                assert step["with"]["python-version"] == "3.12\n3.14"
-                step["with"]["python-version"] = "3.14\n3.12"
-            if "run" not in step:
-                continue
-            run = step["run"]
-            if step.get("id") == "preflight":
-                assert run.count("(3, 14)") == 1
-                run = run.replace("(3, 14)", "(3, 12)")
-            if step.get("id") == "bwrap":
-                assert "setup_start stock-security\npython scripts/ci_stock_runner.py host" in run
-                run = run.replace(
-                    "# Ubuntu 26.04 supplies the restrictive bwrap profile.\n# Verify existing enforcement; never repair or relax host security.",
-                    "# Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor.\n# This only changes the ephemeral runner.",
-                ).replace(
-                    "setup_start stock-security\npython scripts/ci_stock_runner.py host",
-                    "setup_start sysctl\nsudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
-                )
-            if step.get("id") == "install":
-                assert "(3, 14)" in run
-                assert run.endswith("\npython scripts/ci_stock_runner.py interpreters\n")
-                run = run.removesuffix("\npython scripts/ci_stock_runner.py interpreters\n")
-                preserved = "# Preserve both previously exercised 3.12 pairs; no new skip allowance.\npython3.12 -m pip install 'pytest==9.2.0'\n"
-                assert preserved in run
-                supplied = (
-                    "# Supply the required 3.14 pair while keeping the suite and sandbox on 3.12.\n"
-                    "python3.14 -m pip install 'pytest==9.2.0'\n"
-                    "python3.14 -c 'import sys, pytest; assert sys.implementation.cache_tag == "
-                    '"cpython-314"; assert pytest.__version__ == "9.2.0"\'\n'
-                )
-                run = run.replace(preserved, supplied).replace("(3, 14)", "(3, 12)")
-                run = run.replace(
-                    'python3.12 -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"',
-                    'python -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"',
-                )
-                package = 'python -m pip install --target "$(/usr/bin/python3 -m site --user-site)" .'
-                assert package in run
-                run = run.replace(
-                    package, package.replace("install --target", "install --no-deps --target")
-                )
-            step["run"] = run
-    assert restored == original
+            continue
+        steps = {s.get("id", s["name"]): s for s in job["steps"]}
+        assert steps["Set up qualified Python"]["with"]["python-version"] == "3.12\n3.14"
+        assert "sys.version_info[:2] == (3, 14)" in steps["preflight"]["run"]
+        assert (
+            "setup_start stock-security\npython scripts/ci_stock_runner.py host" in steps["bwrap"]["run"]
+        )
+        assert "python3.12 -m pip install 'pytest==9.2.0'" in steps["install"]["run"]
+        assert 'python3.12 -m venv "$RUNNER_TEMP/forge-pytest-9.1.1"' in steps["install"]["run"]
+        assert steps["install"]["run"].endswith("\npython scripts/ci_stock_runner.py interpreters\n")
+    assert "Qualify the actual system Python build" in {
+        s["name"] for s in jobs["process-contracts"]["steps"]
+    }
+    assert jobs["linux-tests"]["needs"] == ["plan", "process-contracts", "service-free"]
 
 
 def test_candidate_has_no_security_relaxation_or_skip_substitution():
-    text = (ROOT / ".github/workflows/linux-stock-qualification.yml").read_text()
+    text = (ROOT / ".github/workflows/linux-tests.yml").read_text()
     for forbidden in (
         "sysctl",
         "apparmor_parser",

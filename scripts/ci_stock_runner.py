@@ -68,10 +68,37 @@ def security_state():
     }
 
 
-def verify_request(expected_sha, actual_sha, event_name, checked_out_sha):
-    require(event_name == "workflow_dispatch", "qualification requires an explicit dispatch")
-    require(SHA.fullmatch(expected_sha) is not None, "expected source SHA must be a full commit")
-    require(expected_sha == actual_sha == checked_out_sha, "qualification source SHA mismatch")
+def verify_request(expected_sha, actual_sha, event_name, checked_out_sha, *, ref="", base_ref=""):
+    """Bind each supported Actions event to its immutable tested commit.
+
+    PR checks qualify the event's synthetic merge commit, not its moving head.
+    Manual runs additionally require the explicitly reviewed input. Inputs can
+    never turn a malformed automatic event into a manual or legacy fallback.
+    """
+    require(
+        SHA.fullmatch(actual_sha) is not None and actual_sha != "0" * 40,
+        "event source SHA must be a full nonzero commit",
+    )
+    require(actual_sha == checked_out_sha, "event source differs from checked-out HEAD")
+    if event_name == "workflow_dispatch":
+        require(SHA.fullmatch(expected_sha) is not None, "expected source SHA must be a full commit")
+        require(expected_sha == actual_sha, "qualification source SHA mismatch")
+        require(
+            re.fullmatch(r"refs/(?:heads|tags)/[^\x00-\x20~^:?*\\\[\]]+", ref) is not None
+            and base_ref == "",
+            "manual qualification requires a branch or tag ref",
+        )
+    elif event_name == "pull_request":
+        require(expected_sha == "", "automatic qualification cannot take a manual source input")
+        require(
+            re.fullmatch(r"refs/pull/[1-9][0-9]*/merge", ref) is not None and base_ref == "main",
+            "PR qualification requires the main-target merge ref",
+        )
+    elif event_name == "push":
+        require(expected_sha == "", "automatic qualification cannot take a manual source input")
+        require(ref == "refs/heads/main" and base_ref == "", "push qualification requires main")
+    else:
+        raise ValueError("unsupported qualification event")
 
 
 def verify_runtime(info):
@@ -199,6 +226,8 @@ def main():
             os.environ.get("GITHUB_SHA", ""),
             os.environ.get("GITHUB_EVENT_NAME", ""),
             head,
+            ref=os.environ.get("GITHUB_REF", ""),
+            base_ref=os.environ.get("GITHUB_BASE_REF", ""),
         )
     elif args.operation == "host":
         verify_host()
