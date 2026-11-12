@@ -508,3 +508,48 @@ characterizes these two later inert runs. It does not establish the earlier
 capture's cause, identify a failing syscall or policy, or prove namespace
 isolation. These observations never replace original CLI/harness statuses, and
 `causal_attribution` and qualification remain `NOT_ASSESSED`.
+
+### Independent Ubuntu 26.04 stock capability control
+
+`run_stock_bwrap_control` defaults to false and selects a separate Ubuntu 26.04
+job, independent of the Ubuntu 24.04 capture job. It neither changes that capture
+backend nor reuses its qualification. Its runtime is the system CPython 3.14,
+not the earlier capture's CPython 3.12. No package installation, profile loading,
+sysctl change, privilege grant, or fallback is attempted.
+
+The controller first requires matching nonzero real/effective user IDs; root or
+set-ID invocations cannot establish ordinary-user availability. It reuses stock
+host-security and child predicates: enabled
+AppArmor, restricted unprivileged user namespaces, root-owned non-setid stock
+bwrap/profile, the enforced profile stack, six distinct namespaces, zero
+effective/permitted/ambient capabilities and NoNewPrivs. Fixed strace and Python
+executables must also be root-owned and non-setid; security.capability xattrs
+must be absent. Missing or denied prerequisites are UNSUPPORTED, not repaired.
+
+One owned bwrap invocation has a ten-second deadline and existing descendant
+cleanup. Host root is read-only; `/tmp` is fresh namespace-local tmpfs. Environment
+is cleared and fixed, outputs are private and bounded, and no credentials are
+passed. The fixed child checks the same safety predicates before attempting its
+tracer subprobe. It requires exactly the loopback interface, reads its flags with
+an ioctl, and never sets flags or brings it up. DOWN is UNSUPPORTED. No network
+connection or listener is created.
+
+Only then does a fixed, five-second strace invocation run a constant-marker
+Python child with `trace=none` and trace output to `/dev/null`. Private temporary
+stdout/stderr files inherit a 64 KiB limit and reads are bounded. This observes
+minimal tracer launch only, not the production `-D`/`-f` configuration, syscall
+collection, or ACK timing. Failure at any stage remains UNSUPPORTED.
+
+A separate independent validator permits only closed enum observations and a
+bounded signed control return code into `stock-control.json`. Raw probe output,
+profiles, namespace identities, paths and exception text never enter this
+artifact. A seeded `NO_DELIVERY` outcome means no controller observation arrived,
+not proof that nothing launched. Original control shell failures are retained.
+`OBSERVED` means this independent fixed-child capability control completed its
+checks; causal attribution and target qualification remain NOT_ASSESSED. It
+cannot establish why a prior run failed or establish target CLI compatibility.
+
+The public `environment` value is the requested job context, and
+`required_runtime` states the required runtime, not an observed version when
+startup or prerequisite checks fail. Only verified child-safety evidence means
+that the runtime/profile/capability/namespace checks actually completed.
