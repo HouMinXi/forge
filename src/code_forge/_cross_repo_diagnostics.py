@@ -50,6 +50,13 @@ class Record:
     capture_supported: bool = True
 
 
+@dataclass(frozen=True, slots=True)
+class ScopeRecord:
+    expected: storage.ExpectedContext
+    publication: storage.PublicationResult
+    snapshot: object
+
+
 class DiagnosticCapture:
     def __init__(self, *, execution_id, source_hash, diff_text, repo_root, excluded_roots):
         self.execution_id = execution_id
@@ -86,10 +93,143 @@ class DiagnosticCapture:
         self.refusal: str | None = None
         self.delivery_status = "not_attempted"
         self.last_delivery_origin = None
+        # Independent scope channel; never consumes v1 sequence or
+        # changes its publication/delivery outcome.
+        self._scope_attempts = 0
+        self._scope_binding = None
+        self._scope_failed = False
+        self.scope_records: list[ScopeRecord] = []
+        self.scope_delivery_status = "not_attempted"
         if len(self._excluded) > _MAX_ENTRIES:
             self._storage_failed = True
             self._disable("storage_scope_limit")
             self._excluded = ()
+
+    def present_scope(self, snapshot, diff_text, repo_root):
+        """Strict in-execution read with owner-held expected, never a lookup API.
+
+        This records query facts at the existing summary point, before overall
+        analysis/output completion. It does not assert processing_completed.
+        Failure leaves the caller's genuine immediate summary available.
+        """
+        self.scope_delivery_status = "not_delivered"
+        try:
+            from . import _query_scope_receipt as scope
+
+            if (
+                not self._active
+                or not self._supported
+                or self._scope_failed
+                or os.getpid() != self._pid
+                or threading.get_ident() != self._thread
+                or self._stages is not self._stage_store
+                or tuple(self._stages.items()) != self._stage_seal
+                or (
+                    self.execution_id,
+                    self.repository_id,
+                    self.source_hash,
+                    self.diff_sha256,
+                    self._root,
+                    self._canonical,
+                )
+                != self._identity
+                or Path(repo_root) != self._root
+                or Path(repo_root).resolve() != self._canonical
+                or hashlib.sha256(diff_text.encode("utf-8")).hexdigest() != self.diff_sha256
+                or self._scope_attempts >= storage.MAX_OBSERVATIONS
+            ):
+                return None
+            # Reserve before allocation/publication. v1 attempts are independent.
+            self._scope_attempts += 1
+            expected = storage.ExpectedContext(
+                self.execution_id,
+                self.repository_id,
+                self.source_hash,
+                self.diff_sha256,
+                self._scope_attempts,
+            )
+            facts = {
+                name: getattr(snapshot, name)
+                for name in (
+                    "scope",
+                    "registered",
+                    "attempted",
+                    "completed",
+                    "unavailable",
+                    "with_callers",
+                    "query_occurrences_accounted",
+                )
+            }
+            wanted = scope.freeze(facts)
+            if self._scope_binding is None:
+                self._scope_binding = storage.bind_storage(self._canonical, self._excluded)
+            binding = self._scope_binding
+            if type(binding) is not storage.StorageBinding or binding.source_root != self._identity[5]:
+                raise ValueError("foreign scope storage binding")
+            storage._validate_binding(binding)
+            # pathlib may retain oversized noncanonical constructor strings even
+            # when parts/str/equality are bounded. Retain only our frozen root.
+            binding = storage.StorageBinding(self._identity[5], binding.identity)
+            self._scope_binding = binding
+            publication = scope.publish(binding, expected, facts)
+            # Reject oversized/malformed results before any owner history retains
+            # them. This does not replace the later strict filesystem read.
+            scope.validate_publication(publication, expected)
+            if type(publication) is not storage.PublicationResult or (
+                publication.status == "published"
+                and (
+                    type(publication.locator) is not storage.Locator
+                    or publication.locator.binding != binding
+                    or self._scope_binding != binding
+                )
+            ):
+                raise ValueError("foreign scope storage result")
+            if publication.status == "published":
+                locator = publication.locator
+                publication = storage.PublicationResult(
+                    "published",
+                    storage.Locator(
+                        binding,
+                        locator.directories,
+                        locator.filename,
+                        locator.identity,
+                        locator.byte_count,
+                        locator.digest,
+                    ),
+                    cleanup=publication.cleanup,
+                )
+            self._scope_binding = binding
+            self.scope_records.append(ScopeRecord(expected, publication, wanted))
+            actual = scope.read(publication, expected)
+            if (
+                type(actual) is not type(wanted)
+                or actual != wanted
+                or not self._active
+                or self._stages is not self._stage_store
+                or tuple(self._stages.items()) != self._stage_seal
+                or os.getpid() != self._pid
+                or threading.get_ident() != self._thread
+                or (
+                    self.execution_id,
+                    self.repository_id,
+                    self.source_hash,
+                    self.diff_sha256,
+                    self._root,
+                    self._canonical,
+                )
+                != self._identity
+            ):
+                raise ValueError("unexpected scope reader result")
+            self.scope_delivery_status = "read"
+            return actual
+        except Exception:  # noqa: BLE001 -- Scope failure must not alter native analysis or v1.
+            self._scope_failed = True
+            self._scope_binding = None
+            return None
+        except BaseException:
+            self._scope_failed = True
+            self._scope_binding = None
+            raise
 
     def close(self):
         self._active = False
@@ -121,6 +261,7 @@ class DiagnosticCapture:
         except Exception:  # noqa: BLE001 -- Failed diagnostic admission is not a gate failure.
             accepted = False
         self.delivery_status = "not_attempted" if accepted else "not_delivered"
+        self.scope_delivery_status = "not_attempted" if accepted else "not_delivered"
         self.last_delivery_origin = None
         if not accepted:
             self.refusal = "context_unavailable"

@@ -19,6 +19,7 @@ import logging
 import os
 import sqlite3
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from ._sqlite_uri import readonly_uri
@@ -401,6 +402,27 @@ def _subsystem_proximity(caller_file: str, changed_file: str) -> float:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class _QueryScopeSnapshot:
+    """Private in-memory facts only; not a receipt, identity or freshness claim.
+
+    Counts are registry occurrences, not distinct repositories or findings.
+    Unknown scope has no counts. processing_completed describes normal return
+    from native analysis, independently of fully accounted query occurrences.
+    """
+
+    scope: str = "not_reached"
+    registered: int | None = None
+    attempted: int | None = None
+    completed: int | None = None
+    unavailable: int | None = None
+    with_callers: int | None = None
+    # All registered occurrences have a returned helper result or handled
+    # unavailability; this does not assert normal loop/analysis return.
+    query_occurrences_accounted: bool = False
+    processing_completed: bool = False
+
+
 class CrossRepoImpactRunner:
     """Advisory axis: cross-repo direct-caller impact (R0).
 
@@ -421,6 +443,7 @@ class CrossRepoImpactRunner:
         self._bound_record = None
         self._bound_errors = None
         self._provider_locator = None
+        self._scope_snapshot = _QueryScopeSnapshot()
 
     @property
     def is_advisory(self) -> bool:
@@ -434,6 +457,37 @@ class CrossRepoImpactRunner:
             except Exception:  # noqa: BLE001 -- Best-effort output is non-gating; process control propagates.
                 return False
         return True
+
+    def _emit_scope_summary(self, immediate, diff_text, repo_root):
+        """Private scope channel; never substitutes missing evidence for facts."""
+        owner = self._diagnostics
+        if owner is None:
+            return self._emit(immediate)
+        message = immediate
+        try:
+            scope = owner.present_scope(self._scope_snapshot, diff_text, repo_root)
+            if scope is not None:
+                if scope.scope == "unavailable":
+                    message = _SCOPE_UNAVAILABLE
+                elif scope.registered == 0:
+                    message = _EMPTY_SCOPE
+                else:
+                    message = _QUERY_SUMMARY % (
+                        scope.completed,
+                        scope.registered,
+                        scope.attempted,
+                        scope.unavailable,
+                    )
+        except Exception:  # noqa: BLE001 -- Optional scope transport never erases genuine facts.
+            owner.scope_delivery_status = "not_delivered"
+        read = owner.scope_delivery_status == "read"
+        has_sink = self._output_fn is not None
+        if read and has_sink:
+            owner.scope_delivery_status = "unconfirmed"
+        succeeded = self._emit(message)
+        if read and has_sink and succeeded:
+            owner.scope_delivery_status = "delivered"
+        return succeeded
 
     def _stage(self, key, operation, **kwargs):
         if self._diagnostics is None:
@@ -491,6 +545,7 @@ class CrossRepoImpactRunner:
             if installed is not None:
                 installed.refusal = "context_replaced"
                 installed.delivery_status = "not_delivered"
+                installed.scope_delivery_status = "not_delivered"
                 installed.last_delivery_origin = None
                 for message in installed.warning():
                     self._emit(message)
@@ -529,7 +584,28 @@ class CrossRepoImpactRunner:
             self._diagnostics._disable("history_unavailable")
         return list(findings)
 
-    def _run_analysis(
+    def _scope_progress(self, total, attempted, completed, unavailable, with_callers):
+        self._scope_snapshot = _QueryScopeSnapshot(
+            "established",
+            total,
+            attempted,
+            completed,
+            unavailable,
+            with_callers,
+            completed + unavailable == total,
+        )
+
+    def _run_analysis(self, diff_text: str, repo_root: Path) -> list[AdvisoryFinding]:
+        # Cache retains the original facts and their completion state. This
+        # private object must not be treated as a newly admitted run result.
+        if self._cached is not None:
+            return self._cached
+        self._scope_snapshot = _QueryScopeSnapshot()
+        result = self._run_analysis_impl(diff_text, repo_root)
+        self._scope_snapshot = replace(self._scope_snapshot, processing_completed=True)
+        return result
+
+    def _run_analysis_impl(
         self,
         diff_text: str,
         repo_root: Path,
@@ -624,7 +700,8 @@ class CrossRepoImpactRunner:
             )
         except GraphDiscoveryError as exc:
             self.infra_errors.append("cross-repo-impact: registry unavailable: %s" % exc)
-            self._emit(_SCOPE_UNAVAILABLE)
+            self._scope_snapshot = _QueryScopeSnapshot(scope="unavailable")
+            self._emit_scope_summary(_SCOPE_UNAVAILABLE, diff_text, repo_root)
             return []
 
         try:
@@ -640,14 +717,16 @@ class CrossRepoImpactRunner:
                     siblings.append((index, entry))
         except (OSError, RuntimeError, ValueError) as exc:
             self.infra_errors.append("cross-repo-impact: registry path unavailable: %s" % exc)
-            self._emit(_SCOPE_UNAVAILABLE)
+            self._scope_snapshot = _QueryScopeSnapshot(scope="unavailable")
+            self._emit_scope_summary(_SCOPE_UNAVAILABLE, diff_text, repo_root)
             return []
 
+        self._scope_progress(len(siblings), 0, 0, 0, 0)
         if not siblings:
             self.infra_errors.append(
                 "cross-repo-impact: no sibling repos registered; use code-review-graph register"
             )
-            self._emit(_EMPTY_SCOPE)
+            self._emit_scope_summary(_EMPTY_SCOPE, diff_text, repo_root)
             return []
 
         # Query each sibling for callers of changed symbols.
@@ -660,7 +739,7 @@ class CrossRepoImpactRunner:
         primary_prefix = str(resolved_root) + os.sep
         hits: list[dict] = []
         total = len(siblings)
-        attempted = completed = unavailable = 0
+        attempted = completed = unavailable = with_callers = 0
         for occurrence, sib in siblings:
             alias = sib.get("alias") or Path(sib["path"]).name
             try:
@@ -675,23 +754,29 @@ class CrossRepoImpactRunner:
                     "cross-repo-impact: sibling '%s' graph discovery unavailable: %s" % (alias, exc)
                 )
                 unavailable += 1
+                self._scope_progress(total, attempted, completed, unavailable, with_callers)
                 continue
 
             if not sib_db.is_file():
                 self.infra_errors.append("cross-repo-impact: sibling '%s' graph.db missing" % alias)
                 unavailable += 1
+                self._scope_progress(total, attempted, completed, unavailable, with_callers)
                 continue
 
             try:
                 attempted += 1
+                self._scope_progress(total, attempted, completed, unavailable, with_callers)
                 caller_groups = _find_cross_repo_caller_groups(str(sib_db), changed, Path(sib["path"]))
             except (sqlite3.Error, OSError, GraphIdentityError) as exc:
                 self.infra_errors.append(
                     "cross-repo-impact: sibling '%s' graph.db unreadable: %s" % (alias, exc)
                 )
                 unavailable += 1
+                self._scope_progress(total, attempted, completed, unavailable, with_callers)
                 continue
             completed += 1
+            with_callers += int(any(callers for _, callers in caller_groups))
+            self._scope_progress(total, attempted, completed, unavailable, with_callers)
 
             sib_prefix = str(Path(sib["path"]).resolve()) + os.sep
             for sym, sym_callers in caller_groups:
@@ -753,6 +838,8 @@ class CrossRepoImpactRunner:
                 )
             )
 
-        self._emit(_QUERY_SUMMARY % (completed, total, attempted, unavailable))
+        self._emit_scope_summary(
+            _QUERY_SUMMARY % (completed, total, attempted, unavailable), diff_text, repo_root
+        )
         self._cached = findings
         return findings

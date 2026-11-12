@@ -515,6 +515,13 @@ def _cleanup_temp(parent: int, name: str, identity: _Identity) -> str:
 
 def publish_observation(binding: StorageBinding, observation: Observation) -> PublicationResult:
     """Complete-file, exclusive publication; never adopt or replace a record."""
+    return _publish_record(
+        binding, lambda: observation.context, lambda: _payload(observation), "advisory-diagnostics"
+    )
+
+
+def _publish_record(binding, context_factory, payload_factory, namespace):
+    """Private shared transport; codecs retain independent closed contracts."""
     status, failure, cleanup = "not_published", None, "not_needed"
     locator = None
     parent = None
@@ -525,14 +532,19 @@ def publish_observation(binding: StorageBinding, observation: Observation) -> Pu
     try:
         with _Descriptors() as descriptors:
             try:
-                raw = _payload(observation)
-                context = observation.context
+                if namespace not in {"advisory-diagnostics", "query-scope-receipts"}:
+                    raise DiagnosticError("invalid_schema")
+                raw = payload_factory()
+                context = context_factory()
+                _validate_context(context)
+                if type(raw) is not bytes or not 0 < len(raw) <= MAX_BYTES:
+                    raise DiagnosticError("invalid_schema")
                 digest = hashlib.sha256(raw).hexdigest()
                 parent = _open_binding(binding, descriptors)
                 directories = []
                 for name in (
                     ".code-forge",
-                    "advisory-diagnostics",
+                    namespace,
                     context.execution_id,
                     context.repository_id,
                     _AXIS,
@@ -661,6 +673,12 @@ def validate_publication(publication: PublicationResult, expected: ExpectedConte
     proof of publication, filesystem qualification, or ownership; strict reading
     must still reopen and verify the retained identities and bytes.
     """
+    return _validate_publication_namespace(publication, expected, "advisory-diagnostics")
+
+
+def _validate_publication_namespace(publication, expected, namespace):
+    if namespace not in {"advisory-diagnostics", "query-scope-receipts"}:
+        raise DiagnosticError("invalid_publication")
     _validate_context(expected)
     if (
         type(publication) is not PublicationResult
@@ -686,7 +704,7 @@ def validate_publication(publication: PublicationResult, expected: ExpectedConte
     locator = publication.locator
     wanted = (
         ".code-forge",
-        "advisory-diagnostics",
+        namespace,
         expected.execution_id,
         expected.repository_id,
         _AXIS,
@@ -715,23 +733,29 @@ def read_observation(publication: PublicationResult, expected: ExpectedContext) 
     """Reopen every retained identity after publisher descriptors have closed."""
     try:
         validate_publication(publication, expected)
-        if publication.status != "published":
-            raise DiagnosticError("not_published")
-        locator = publication.locator
-        with _Descriptors() as descriptors:
-            parent = _open_binding(locator.binding, descriptors)
-            for name, identity in locator.directories:
-                parent = _directory(parent, name, descriptors, create=False)
-                if _identity(os.fstat(parent)) != identity:
-                    raise DiagnosticError("identity_mismatch")
-            raw = _read_leaf(
-                parent,
-                locator.filename,
-                locator.identity,
-                locator.byte_count,
-                locator.digest,
-                descriptors,
-            )
+        raw = _read_publication_bytes(publication)
         return decode_observation(raw, expected)
     except Exception as exc:  # noqa: BLE001 -- Strict reader failures expose only bounded classes to the host.
         raise DiagnosticError(_reason(exc, "read_failed")) from None
+
+
+def _read_publication_bytes(publication):
+    """Read only after the caller validates its exact namespace and context."""
+    if publication.status != "published":
+        raise DiagnosticError("not_published")
+    locator = publication.locator
+    with _Descriptors() as descriptors:
+        parent = _open_binding(locator.binding, descriptors)
+        for name, identity in locator.directories:
+            parent = _directory(parent, name, descriptors, create=False)
+            if _identity(os.fstat(parent)) != identity:
+                raise DiagnosticError("identity_mismatch")
+        raw = _read_leaf(
+            parent,
+            locator.filename,
+            locator.identity,
+            locator.byte_count,
+            locator.digest,
+            descriptors,
+        )
+    return raw
