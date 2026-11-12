@@ -1154,6 +1154,10 @@ class RepairRefused(json.JSONDecodeError):
     """
 
 
+class ReplyDepthRejected(RepairRefused):
+    """An overdepth reply must not be salvaged as a shallower embedded object."""
+
+
 class ReplyKeyRejected(RepairRefused):
     """The reply parsed, but with a key it cannot have (#264).
 
@@ -1223,12 +1227,12 @@ def _loads_model_json(text: str, reply_keys: ReplyKeys | None = None):
     duplicate keys only, not for unknown keys.
 
     A text longer than _MAX_REPAIR_CHARS that needs a repair, a text that
-    needs more than _MAX_REPAIRS repairs, and a text nested too deeply for
-    the decoder raise RepairRefused, as does every other failure after a
+    needs more than _MAX_REPAIRS repairs, and a reply exceeding 256 nested containers
+    raise RepairRefused, as does every other failure after a
     repair was tried (with the same message and position as before). A
     failure with no repair tried stays a plain JSONDecodeError.
     """
-    return _parse_model_json(text, reply_keys)[0]
+    return _parse_model_json(text, reply_keys, ordinary_reply=True)[0]
 
 
 def _decode_reply(text: str, reply_keys: ReplyKeys | None, strict_response: bool):
@@ -1268,7 +1272,132 @@ _MAX_REPAIR_CHARS = 256 * 1024
 _MAX_REPAIRS = 256
 
 
-def _parse_model_json(text: str, reply_keys: ReplyKeys | None = None) -> tuple[Any, bool]:
+# Ordinary replies have a portable limit, independent of the JSON decoder.
+# Transport envelopes and strict_response runtime metadata keep their contracts.
+_MAX_REPLY_CONTAINER_DEPTH = 256
+
+
+_REPLY_JSON_SCALAR = re.compile(
+    r"(?:-Infinity|Infinity|NaN|true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)"
+)
+
+
+def _reply_string_end(text: str, start: int) -> int | None:
+    """Locate a string token without decoding it; raw controls stay repairable."""
+    index = start + 1
+    while index < len(text):
+        char = text[index]
+        index += 1
+        if char == '"':
+            return index
+        if char == "\\":
+            if index == len(text):
+                return None
+            escape = text[index]
+            index += 1
+            if escape == "u":
+                digits = text[index : index + 4]
+                if len(digits) != 4 or any(c not in "0123456789abcdefABCDEF" for c in digits):
+                    return None
+                index += 4
+            elif escape not in '\\"/bfnrt':
+                return None
+    return None
+
+
+def _check_reply_json_depth(text: str, start: int = 0) -> None:
+    """Bound containers in a syntactically reachable prefix before decoding.
+
+    Stop at an invalid token so quote repair can handle that earlier error.
+    Otherwise source brackets after an unescaped quote could falsely look like
+    deep JSON. Each repaired candidate is checked again. Stop at the root end
+    so trailing prose is not counted. No values are decoded or materialized.
+    """
+    index = json.decoder.WHITESPACE.match(text, start).end()
+    if index == len(text) or text[index] not in "[{":
+        return
+    # States distinguish initial empty containers from values/keys after commas.
+    stack: list[str] = []
+    state = "value"
+    while index < len(text):
+        index = json.decoder.WHITESPACE.match(text, index).end()
+        if index == len(text):
+            return
+        char = text[index]
+        state = stack[-1] if stack else state
+        if state in ("object-first", "object-key"):
+            if char == "}" and state == "object-first":
+                stack.pop()
+                index += 1
+            elif char == '"':
+                end = _reply_string_end(text, index)
+                if end is None:
+                    return
+                index = end
+                stack[-1] = "colon"
+                continue
+            else:
+                return
+        elif state == "colon":
+            if char != ":":
+                return
+            stack[-1] = "object-value"
+            index += 1
+            continue
+        elif state in ("object-comma", "array-comma"):
+            closer = "}" if state == "object-comma" else "]"
+            if char == closer:
+                stack.pop()
+                index += 1
+            elif char == ",":
+                stack[-1] = "object-key" if closer == "}" else "array-value"
+                index += 1
+                continue
+            else:
+                return
+        elif state == "array-first" and char == "]":
+            stack.pop()
+            index += 1
+        else:  # A root, object member, or array element value.
+            if stack:
+                stack[-1] = "object-comma" if state == "object-value" else "array-comma"
+            if char in "[{":
+                if len(stack) == _MAX_REPLY_CONTAINER_DEPTH:
+                    raise RecursionError("Reply exceeds the 256-container depth limit")
+                stack.append("object-first" if char == "{" else "array-first")
+                index += 1
+                continue
+            if char == '"':
+                end = _reply_string_end(text, index)
+                if end is None:
+                    return
+                index = end
+            else:
+                token = _REPLY_JSON_SCALAR.match(text, index)
+                if token is None:
+                    return
+                index = token.end()
+        if not stack:
+            return
+
+
+def _check_reply_value_depth(value) -> None:
+    """Check an ordinary object already decoded inside a transport envelope."""
+    stack = [iter((value,))]
+    while stack:
+        for child in stack[-1]:
+            if isinstance(child, (dict, list)):
+                if len(stack) > _MAX_REPLY_CONTAINER_DEPTH:
+                    raise RecursionError("Reply exceeds the 256-container depth limit")
+                stack.append(iter(child.values() if isinstance(child, dict) else child))
+                break
+        else:
+            stack.pop()
+
+
+def _parse_model_json(
+    text: str, reply_keys: ReplyKeys | None = None, *, ordinary_reply: bool = False
+) -> tuple[Any, bool]:
     """_loads_model_json, also returning whether a quote repair was needed."""
     candidate = text
     first_error: json.JSONDecodeError | None = None
@@ -1279,6 +1408,8 @@ def _parse_model_json(text: str, reply_keys: ReplyKeys | None = None) -> tuple[A
     # count - 1 attempts (the last one parsing) always suffice.
     for _ in range(max(1, text.count('"') - 1)):
         try:
+            if ordinary_reply:
+                _check_reply_json_depth(candidate)
             parsed = json.loads(candidate, strict=False, object_pairs_hook=_refuse_duplicate_keys)
         except _DuplicateKey as exc:
             # After a repair, point at the original error, as the other
@@ -1286,7 +1417,8 @@ def _parse_model_json(text: str, reply_keys: ReplyKeys | None = None) -> tuple[A
             pos = first_error.pos if first_error is not None else 0
             raise DuplicateReplyKey(_duplicate_key_message(exc), text, pos) from exc
         except RecursionError:
-            raise RepairRefused("Reply nests too deeply to decode", text, 0) from None
+            refusal = ReplyDepthRejected if ordinary_reply else RepairRefused
+            raise refusal("Reply nests too deeply to decode", text, 0) from None
         except json.JSONDecodeError as exc:
             first_error = first_error or exc
             quote_at = _error_is_at_quote(candidate, exc, repaired)
@@ -1645,13 +1777,19 @@ def _model_json_decoder() -> json.JSONDecoder:
     return json.JSONDecoder(strict=False)
 
 
+class _ReplyScanDecoder(json.JSONDecoder):
+    def raw_decode(self, text, idx=0):
+        _check_reply_json_depth(text, idx)
+        return super().raw_decode(text, idx)
+
+
 def _scan_decoder() -> json.JSONDecoder:
     """The decoder for objects found by scanning text (#264).
 
     It refuses a duplicate key: json keeps the last one, so an object whose
     quoted content repeats `"findings": []` would read as an empty review.
     """
-    return json.JSONDecoder(strict=False, object_pairs_hook=_refuse_duplicate_keys)
+    return _ReplyScanDecoder(strict=False, object_pairs_hook=_refuse_duplicate_keys)
 
 
 def _strip_fences(text: str) -> str:
@@ -2021,7 +2159,7 @@ def _fallback_reply(
     probe and canary mutation calls) the text is scanned for an embedded
     object.
     """
-    if isinstance(error, ReplyKeyRejected):
+    if isinstance(error, (ReplyKeyRejected, ReplyDepthRejected)):
         return None
     return _extract_json_from_text(
         text,
@@ -2113,10 +2251,11 @@ def loads_reply_json(text: str):
     json.loads keeps the last of two equal keys, so a reply holding a
     quoted `"findings": []` after the real findings would read as clean.
     Every later parse of reply text uses this instead: a duplicate key,
-    and nesting too deep for the decoder, raise ValueError, as any other
+    and nesting beyond 256 containers, raise ValueError, as any other
     invalid JSON does (json.JSONDecodeError is a ValueError).
     """
     try:
+        _check_reply_json_depth(text)
         return json.loads(text, object_pairs_hook=_refuse_duplicate_keys)
     except _DuplicateKey as exc:
         raise ValueError(_duplicate_key_message(exc)) from None
@@ -2623,6 +2762,12 @@ def _invoke_cli(
         # reply (parsed is not reply). A repair that invents a key fails
         # closed here as on the other paths (#264).
         raise refused(ReplyKeyRejected("Repaired reply has an unknown key", stdout, 0), stdout)
+
+    if not strict_response:
+        try:
+            _check_reply_value_depth(content)
+        except RecursionError as exc:
+            raise refused(RepairRefused("Reply nests too deeply to decode", stdout, 0), stdout) from exc
 
     return LLMResult(
         content=content,
