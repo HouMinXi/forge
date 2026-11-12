@@ -113,7 +113,7 @@ def test_failure_message_never_contains_input(envelope, capsys):
 
 def summary(mode="diagnostic"):
     return dict(
-        schema="forge-public-cli-capture-summary-v1",
+        schema="forge-public-cli-capture-summary-v2",
         mode=mode,
         receipt_status="DELIVERED",
         harness_shell_exit=7,
@@ -125,6 +125,9 @@ def summary(mode="diagnostic"):
         cleanup="COMPLETE",
         qualification="NOT_ASSESSED",
         raw_evidence="NOT_PUBLISHED",
+        controller_stage="UNKNOWN",
+        controller_error_category="UNKNOWN",
+        failure_observation="NOT_OBSERVED",
     )
 
 
@@ -189,5 +192,76 @@ def test_baseline_cannot_claim_collector_health():
 def test_summary_rejects_unknown_field():
     data = summary()
     data["private_message"] = "CANARY-CREDENTIAL"
+    with pytest.raises(ValueError):
+        publication.validate(data, "diagnostic.json")
+
+
+def test_exact_legacy_v1_upgrade_does_not_invent_stage():
+    old = summary()
+    for field in ("controller_stage", "controller_error_category", "failure_observation"):
+        del old[field]
+    old["schema"] = "forge-public-cli-capture-summary-v1"
+    upgraded = publication.validate(old, "diagnostic.json")
+    assert upgraded == summary()
+    assert old["schema"] == "forge-public-cli-capture-summary-v1"
+    old["private_message"] = "CANARY"
+    with pytest.raises(ValueError):
+        publication.validate(old, "diagnostic.json")
+
+
+@pytest.mark.parametrize(
+    "field", ["controller_stage", "controller_error_category", "failure_observation"]
+)
+@pytest.mark.parametrize(
+    "bad", [None, True, 1, [], {}, "CANARY"], ids=["null", "bool", "int", "list", "dict", "canary"]
+)
+def test_new_public_fields_are_closed(field, bad):
+    data = summary()
+    data[field] = bad
+    with pytest.raises((ValueError, TypeError)):
+        publication.validate(data, "diagnostic.json")
+
+
+@pytest.mark.parametrize(
+    "stage,category",
+    [("FINALIZE", "NONE"), ("WORKER_RECEIPT", "NOT_FOUND"), ("WORKER_EXECUTION", "PERMISSION_DENIED")],
+)
+def test_public_stage_pair_preserves_original_status(stage, category):
+    data = summary()
+    data.update(controller_stage=stage, controller_error_category=category)
+    assert publication.validate(data, "diagnostic.json") == data
+    assert data["cli_returncode"] == data["harness_shell_exit"] == 7
+
+
+@pytest.mark.parametrize(
+    "stage,category",
+    [
+        ("UNKNOWN", "NONE"),
+        ("FINALIZE", "UNKNOWN"),
+        ("FINALIZE", "NOT_FOUND"),
+        ("WORKER_RECEIPT", "NONE"),
+    ],
+)
+def test_public_contradictory_pair_rejected(stage, category):
+    data = summary()
+    data.update(controller_stage=stage, controller_error_category=category)
+    with pytest.raises(ValueError):
+        publication.validate(data, "diagnostic.json")
+
+
+def test_worker_receipt_observation_requires_closed_supporting_facts():
+    data = summary()
+    data["failure_observation"] = "WORKER_NONZERO_NO_RECEIPT"
+    with pytest.raises(ValueError):
+        publication.validate(data, "diagnostic.json")
+    data.update(
+        worker_returncode=1,
+        cli_returncode=None,
+        cli_returncode_before_cleanup=None,
+        cleanup_induced_termination=None,
+        collector_delivery="NOT_OBSERVED",
+    )
+    assert publication.validate(data, "diagnostic.json") == data
+    data["receipt_status"] = "UNAVAILABLE"
     with pytest.raises(ValueError):
         publication.validate(data, "diagnostic.json")

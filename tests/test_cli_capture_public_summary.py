@@ -24,6 +24,9 @@ KEYS = {
     "cleanup",
     "qualification",
     "raw_evidence",
+    "controller_stage",
+    "controller_error_category",
+    "failure_observation",
 }
 
 
@@ -453,3 +456,122 @@ def test_unavailable_projection_accepted_without_invented_receipt(public, tmp_pa
     assert validator.validate(projected, "diagnostic.json") == projected
     assert projected["harness_shell_exit"] == 73
     assert_safe(projected)
+
+
+def test_legacy_private_receipt_has_unknown_stage_not_success(public, tmp_path):
+    value = public.summarize(str(write_receipt(tmp_path, receipt())), "diagnostic", 7)
+    assert value["schema"] == "forge-public-cli-capture-summary-v2"
+    assert value["controller_stage"] == value["controller_error_category"] == "UNKNOWN"
+    assert value["failure_observation"] == "NOT_OBSERVED"
+    assert value["harness_shell_exit"] == value["cli_returncode"] == 7
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "INITIALIZE",
+        "SANITIZE",
+        "PREFLIGHT",
+        "LIMITS",
+        "INSTALLATION",
+        "UTILITY_BINDING",
+        "WORKER_BINDING",
+        "OWNER_LOAD",
+        "WORKER_EXECUTION",
+        "WORKER_OUTPUT",
+        "WORKER_RECEIPT",
+        "FINAL_DELIVERY",
+    ],
+)
+@pytest.mark.parametrize(
+    "category",
+    [
+        "PERMISSION_DENIED",
+        "NOT_FOUND",
+        "NOT_DIRECTORY",
+        "TIMEOUT",
+        "INTERRUPTED",
+        "INVALID_DATA",
+        "OS_ERROR",
+        "OTHER_ERROR",
+    ],
+)
+def test_explicit_stage_category_only_fixed_enums(public, tmp_path, stage, category):
+    source = receipt()
+    source.update(controller_stage=stage, controller_error_category=category)
+    value = public.summarize(str(write_receipt(tmp_path, source)), "diagnostic", 7)
+    assert value["receipt_status"] == "DELIVERED"
+    assert value["controller_stage"] == stage
+    assert value["controller_error_category"] == category
+    spec = importlib.util.spec_from_file_location(
+        "stage_publication", SCRIPT.with_name("cli_capture_publication.py")
+    )
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    assert validator.validate(value, "diagnostic.json") == value
+    assert_safe(value)
+
+
+def test_finalize_means_no_controller_exception_not_cli_pass(public, tmp_path):
+    source = receipt()
+    source.update(controller_stage="FINALIZE", controller_error_category="NONE")
+    value = public.summarize(str(write_receipt(tmp_path, source)), "diagnostic", 7)
+    assert value["controller_stage"] == "FINALIZE"
+    assert value["cli_returncode"] == 7
+    assert value["qualification"] == "NOT_ASSESSED"
+
+
+@pytest.mark.parametrize("field", ["controller_stage", "controller_error_category"])
+@pytest.mark.parametrize(
+    "bad",
+    [None, True, 0, [], {}, "UNKNOWN", CANARY],
+    ids=["null", "bool", "int", "list", "dict", "unknown", "canary"],
+)
+def test_invalid_private_stage_pair_fails_closed(public, tmp_path, field, bad):
+    source = receipt()
+    source.update(controller_stage="WORKER_RECEIPT", controller_error_category="NOT_FOUND")
+    source[field] = bad
+    value = public.summarize(str(write_receipt(tmp_path, source)), "diagnostic", 7)
+    assert value["receipt_status"] == "INVALID"
+    assert value["controller_stage"] == value["controller_error_category"] == "UNKNOWN"
+    assert value["harness_shell_exit"] == 7
+    assert_safe(value)
+
+
+@pytest.mark.parametrize("field", ["controller_stage", "controller_error_category"])
+def test_partial_stage_pair_fails_closed(public, tmp_path, field):
+    source = receipt()
+    source.update(controller_stage="WORKER_RECEIPT", controller_error_category="NOT_FOUND")
+    del source[field]
+    assert (
+        public.summarize(str(write_receipt(tmp_path, source)), "diagnostic", 7)["receipt_status"]
+        == "INVALID"
+    )
+
+
+@pytest.mark.parametrize("stage,category", [("FINALIZE", "NOT_FOUND"), ("WORKER_RECEIPT", "NONE")])
+def test_contradictory_stage_pair_is_not_success(public, tmp_path, stage, category):
+    source = receipt()
+    source.update(controller_stage=stage, controller_error_category=category)
+    value = public.summarize(str(write_receipt(tmp_path, source)), "diagnostic", 7)
+    assert value["receipt_status"] == "CONTRADICTORY"
+    assert value["controller_stage"] == "UNKNOWN"
+    assert value["harness_shell_exit"] == 7
+
+
+@pytest.mark.parametrize("code", [None, 0, 1, -9, 73])
+def test_nonzero_worker_without_receipt_is_observation_not_root_cause(public, tmp_path, code):
+    source = receipt()
+    source.update(
+        worker=None,
+        worker_returncode=code,
+        final_collector_health=None,
+        controller_stage="WORKER_RECEIPT",
+        controller_error_category="NOT_FOUND",
+    )
+    value = public.summarize(str(write_receipt(tmp_path, source)), "diagnostic", 7)
+    expected = "NOT_OBSERVED" if code in (None, 0) else "WORKER_NONZERO_NO_RECEIPT"
+    assert value["failure_observation"] == expected
+    assert value["controller_error_category"] == "NOT_FOUND"
+    assert value["cli_returncode"] is None
+    assert_safe(value)

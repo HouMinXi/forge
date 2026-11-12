@@ -14,6 +14,7 @@ import base64
 import configparser
 import csv
 import email
+import errno
 import hashlib
 import importlib.util
 import io
@@ -894,11 +895,45 @@ def apply_limits():
         resource.setrlimit(kind, (bound, bound))
 
 
+def controller_failure(record, stage, error):
+    """Record the first observed controller failure, never its private message.
+
+    This locates a failed controller operation, not the cause of worker failure.
+    Later receipt/cleanup errors must not overwrite an earlier owner failure.
+    """
+    if record["controller_error_category"] != "NONE":
+        return
+    if isinstance(error, (TimeoutError, subprocess.TimeoutExpired)):
+        category = "TIMEOUT"
+    elif isinstance(error, KeyboardInterrupt):
+        category = "INTERRUPTED"
+    elif isinstance(error, OSError):
+        number = error.errno
+        category = (
+            {
+                errno.EACCES: "PERMISSION_DENIED",
+                errno.EPERM: "PERMISSION_DENIED",
+                errno.ENOENT: "NOT_FOUND",
+                errno.ENOTDIR: "NOT_DIRECTORY",
+            }.get(number, "OS_ERROR")
+            if type(number) is int
+            else "OS_ERROR"
+        )
+    elif isinstance(error, (ValueError, TypeError, KeyError)):
+        category = "INVALID_DATA"
+    else:
+        category = "OTHER_ERROR"
+    record["controller_stage"] = stage
+    record["controller_error_category"] = category
+
+
 def capture(evidence, mode, output):
     os.umask(0o077)
     output = new_private_directory(output)
     record = {
         "schema": 1,
+        "controller_stage": "INITIALIZE",
+        "controller_error_category": "NONE",
         "mode": mode,
         "qualification": "NOT_ASSESSED",
         "historical_run08": "UNKNOWN",
@@ -925,18 +960,24 @@ def capture(evidence, mode, output):
             "aggregate_memory_or_disk_quota": False,
         },
     }
+    stage = "SANITIZE"
     try:
         sanitize_controller(output)
+        stage = "PREFLIGHT"
         host_netns = preflight()
+        stage = "LIMITS"
         apply_limits()
+        stage = "INSTALLATION"
         binding, sources, origin = verify_installation(evidence)
         binding.update(schema=1, host_netns=host_netns, controller=interpreter_identity(sys.executable))
+        stage = "UTILITY_BINDING"
         for name in ("unshare", "ip", "git"):
             identity = utility(name)
             binding[name] = identity if name == "unshare" else identity["path"]
             binding.setdefault("utility_identities", {})[name] = identity
         if mode == "diagnostic":
             binding["utility_identities"]["strace"] = utility("strace")
+        stage = "WORKER_BINDING"
         home = Path(__file__).resolve().parents[1]
         worker = home / "qualification/installed_cli/capture_worker.py"
         binding["capture_hashes"] = {
@@ -949,7 +990,9 @@ def capture(evidence, mode, output):
         )
         binding["entrypoint_sha256"] = sha256(regular_bytes(Path(__file__).resolve()))
         save_json(output / "binding.json", binding)
+        stage = "OWNER_LOAD"
         owner = load_owner(sources, origin)
+        stage = "WORKER_EXECUTION"
         try:
             completed = owner(
                 worker_command(binding, mode, output / "worker", worker, output / "binding.json"),
@@ -960,26 +1003,35 @@ def capture(evidence, mode, output):
             )
             record.update(worker_returncode=completed.returncode, ownership=completed.ownership)
         except BaseException as error:  # noqa: BLE001 - original cancellation and owner failure remain primary
+            controller_failure(record, stage, error)
             record.update(
                 outer_exception=exception_record(error),
                 ownership=getattr(error, "ownership", getattr(error, "report", record["ownership"])),
             )
         else:
+            stage = "WORKER_OUTPUT"
             for leaf, raw in (("worker.stdout", completed.stdout), ("worker.stderr", completed.stderr)):
                 try:
                     private_bytes(output / leaf, raw)
                 except (OSError, ValueError) as error:
+                    controller_failure(record, stage, error)
                     record["record_errors"].append(exception_record(error))
+        stage = "WORKER_RECEIPT"
         try:
             record["worker"] = valid_worker(read_json(output / "worker/outcome.json"), mode)
+            stage = "FINAL_DELIVERY"
             record["final_collector_health"] = final_delivery(binding, worker, output, record)
         except (OSError, ValueError, TypeError, KeyError) as error:
+            controller_failure(record, stage, error)
             record["record_errors"].append(exception_record(error))
     except BaseException as error:  # noqa: BLE001 - retain partial private evidence on setup/cancellation failure
+        controller_failure(record, stage, error)
         if record["outer_exception"] is None:
             record["outer_exception"] = exception_record(error)
         else:
             record["record_errors"].append(exception_record(error))
+    if record["controller_error_category"] == "NONE":
+        record["controller_stage"] = "FINALIZE"
     code = select_exit(record)
     record["shell_exit"] = code
     record["shell_signal_mapping"] = "negative Popen returncode -> 128 + signal number"

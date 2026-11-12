@@ -15,8 +15,34 @@ import stat
 import sys
 
 MAX_BYTES = 8 * 1024 * 1024
-SCHEMA = "forge-public-cli-capture-summary-v1"
+SCHEMA = "forge-public-cli-capture-summary-v2"
 MODES = {"baseline", "diagnostic"}
+STAGES = {
+    "INITIALIZE",
+    "SANITIZE",
+    "PREFLIGHT",
+    "LIMITS",
+    "INSTALLATION",
+    "UTILITY_BINDING",
+    "WORKER_BINDING",
+    "OWNER_LOAD",
+    "WORKER_EXECUTION",
+    "WORKER_OUTPUT",
+    "WORKER_RECEIPT",
+    "FINAL_DELIVERY",
+    "FINALIZE",
+}
+CATEGORIES = {
+    "NONE",
+    "PERMISSION_DENIED",
+    "NOT_FOUND",
+    "NOT_DIRECTORY",
+    "TIMEOUT",
+    "INTERRUPTED",
+    "INVALID_DATA",
+    "OS_ERROR",
+    "OTHER_ERROR",
+}
 
 
 class InvalidReceipt(ValueError):
@@ -121,6 +147,9 @@ def empty(mode, shell_exit, status):
         "cleanup": "NOT_OBSERVED",
         "qualification": "NOT_ASSESSED",
         "raw_evidence": "NOT_PUBLISHED",
+        "controller_stage": "UNKNOWN",
+        "controller_error_category": "UNKNOWN",
+        "failure_observation": "NOT_OBSERVED",
     }
 
 
@@ -147,6 +176,12 @@ def validate(record, mode, shell_exit):
             for key in ("worker_returncode", "worker", "ownership", "final_collector_health")
         )
     )
+    if "controller_stage" in record or "controller_error_category" in record:
+        stage, category = record.get("controller_stage"), record.get("controller_error_category")
+        require(type(stage) is str and stage in STAGES)
+        require(type(category) is str and category in CATEGORIES)
+        if (stage == "FINALIZE") != (category == "NONE"):
+            raise ContradictoryReceipt
     worker_code = record.get("worker_returncode")
     require(worker_code is None or integer(worker_code, -127, 255))
     ownership = record.get("ownership")
@@ -197,6 +232,10 @@ def project(record, mode, shell_exit):
     worker, ownership, health = validate(record, mode, shell_exit)
     result = empty(mode, shell_exit, "DELIVERED")
     result["worker_returncode"] = record["worker_returncode"]
+    result["controller_stage"] = record.get("controller_stage", "UNKNOWN")
+    result["controller_error_category"] = record.get("controller_error_category", "UNKNOWN")
+    if worker is None and record["worker_returncode"] not in (None, 0):
+        result["failure_observation"] = "WORKER_NONZERO_NO_RECEIPT"
     if worker is not None:
         result.update(
             cli_returncode=worker["child_returncode"],
