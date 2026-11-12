@@ -1191,3 +1191,39 @@ def test_simulated_reused_leaf_identity_preserves_content_and_execution_checks(
         reason = "content_mismatch" if case == "changed-bytes" else "context_mismatch"
         with pytest.raises(records.DiagnosticError, match=reason):
             records.read_observation(publication, context)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("execution_id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        ("repository_id", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        ("source_hash", "independent-other-source"),
+        ("diff_sha256", "f" * 64),
+        ("observation_sequence", 2),
+    ],
+)
+def test_decoder_rejects_each_valid_foreign_expected_context(context, field, value):
+    # Decode directly: publication namespace checks must not hide an omitted
+    # decoder comparison. Both contexts are valid, but differ in exactly one
+    # independently supplied field. The payload is not changed with expected.
+    payload = {
+        "schema_version": 1,
+        "execution_id": context.execution_id,
+        "repository_binding": {"kind": "invocation-repository", "id": context.repository_id},
+        "axis": "CROSS-REPO-IMPACT",
+        "observation_sequence": context.observation_sequence,
+        "source_hash": context.source_hash,
+        "diff_sha256": context.diff_sha256,
+        "analysis_state": "targets_resolved",
+        "diagnostics": [],
+    }
+    raw = json.dumps(payload).encode("utf-8")
+    expected = records.Observation(context, "targets_resolved", ())
+    assert records.decode_observation(raw, context) == expected
+    assert getattr(context, field) != value
+    foreign = replace(context, **{field: value})
+    # The alternate context is itself valid, not a schema rejection oracle.
+    records.make_observation(foreign, "targets_resolved")
+    with pytest.raises(records.DiagnosticError, match="^context_mismatch$"):
+        records.decode_observation(raw, foreign)
