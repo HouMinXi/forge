@@ -487,6 +487,11 @@ class CrossRepoImpactRunner:
         succeeded = self._emit(message)
         if read and has_sink and succeeded:
             owner.scope_delivery_status = "delivered"
+        if owner.ticket_directory is not None:
+            if owner.scope_ticket_status == "exported":
+                self._emit("scope-ticket: exported " + owner.scope_ticket_path.name)
+            else:
+                self._emit("scope-ticket: unavailable; no saved-ticket guarantee")
         return succeeded
 
     def _stage(self, key, operation, **kwargs):

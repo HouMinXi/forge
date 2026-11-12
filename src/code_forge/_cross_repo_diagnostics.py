@@ -58,7 +58,9 @@ class ScopeRecord:
 
 
 class DiagnosticCapture:
-    def __init__(self, *, execution_id, source_hash, diff_text, repo_root, excluded_roots):
+    def __init__(
+        self, *, execution_id, source_hash, diff_text, repo_root, excluded_roots, ticket_directory=None
+    ):
         self.execution_id = execution_id
         self.repository_id = str(uuid4())
         self.source_hash = source_hash
@@ -99,6 +101,9 @@ class DiagnosticCapture:
         self._scope_binding = None
         self._scope_failed = False
         self.scope_records: list[ScopeRecord] = []
+        self.ticket_directory = ticket_directory
+        self.scope_ticket_status = "not_requested" if ticket_directory is None else "no_receipt"
+        self.scope_ticket_path = None
         self.scope_delivery_status = "not_attempted"
         if len(self._excluded) > _MAX_ENTRIES:
             self._storage_failed = True
@@ -113,6 +118,9 @@ class DiagnosticCapture:
         Failure leaves the caller's genuine immediate summary available.
         """
         self.scope_delivery_status = "not_delivered"
+        if self.ticket_directory is not None:
+            self.scope_ticket_status = "unavailable"
+            self.scope_ticket_path = None
         try:
             from . import _query_scope_receipt as scope
 
@@ -221,6 +229,16 @@ class DiagnosticCapture:
             ):
                 raise ValueError("unexpected scope reader result")
             self.scope_delivery_status = "read"
+            if self.ticket_directory is not None:
+                self.scope_ticket_status = "unavailable"
+                self.scope_ticket_path = None
+                try:
+                    from ._scope_history import export_ticket
+
+                    self.scope_ticket_path = export_ticket(self.ticket_directory, publication, expected)
+                    self.scope_ticket_status = "exported"
+                except Exception:  # noqa: BLE001 -- Optional ticket failure is not an analysis failure or proof of no file.
+                    self.scope_ticket_status = "unavailable"
             return actual
         except Exception:  # noqa: BLE001 -- Scope failure must not alter native analysis or v1.
             self._scope_failed = True
