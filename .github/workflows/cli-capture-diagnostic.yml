@@ -1,555 +1,116 @@
-name: Installed CLI capture diagnostic (not qualification)
-
-'on':
+name: Temporary read-only startup probe
+on:
   workflow_dispatch:
     inputs:
-      run_capture:
-        description: Run private synthetic capture; original nonzero CLI exits keep this diagnostic red
-        type: boolean
-        default: false
-      run_launch_contrast:
-        description: After capture, observe fixed inert direct and namespaced launch controls (not target fallback)
-        type: boolean
-        default: false
-      run_stock_bwrap_control:
-        description: Independent Ubuntu 26.04 stock fixed-child capability only (not capture qualification)
-        type: boolean
-        default: false
-      run_stock_cli_capture:
-        description: Independent default-off stock Ubuntu 26.04 real synthetic CLI capture (not qualification)
+      run_startup_probe:
+        description: Run the independent read-only startup observation once
         type: boolean
         default: false
       expected_source_sha:
-        description: Reviewed exact source SHA of this dispatched workflow
+        description: Exact reviewed source commit
+        required: true
         type: string
-        default: ''
-
 permissions:
   contents: read
-
 jobs:
-  capture:
-    if: ${{ inputs.run_capture }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
-        with:
-          python-version: '3.12'
-      - name: Bind source and create private diagnostic directories
-        id: prepare
-        env:
-          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
-          DISPATCH_SOURCE_SHA: ${{ github.sha }}
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$EXPECTED_SOURCE_SHA" == "$DISPATCH_SOURCE_SHA" ]]
-          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SOURCE_SHA" ]]
-          private="$RUNNER_TEMP/forge-cli-capture"
-          public="$RUNNER_TEMP/forge-cli-capture-public"
-          [[ ! -e "$private" && ! -L "$private" && ! -e "$public" && ! -L "$public" ]]
-          mkdir -m 700 "$private" "$public"
-      - name: Observe required existing utilities and controller bindings
-        id: capability
-        env:
-          REQUEST_LAUNCH_CONTRAST: ${{ inputs.run_launch_contrast }}
-        if: ${{ steps.prepare.outcome == 'success' }}
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-cli-capture"
-          exec >"$private/capability.log" 2>&1
-          # Observation only: no package installation, sysctl, namespace bypass,
-          # ptrace permission change, or alternate host-network execution.
-          /usr/bin/python3 -I -S -B - "$RUNNER_TEMP/forge-cli-capture-public/capability.json" <<'PY'
-          import json
-          import os
-          import shutil
-          import signal
-          import sys
-
-          path = os.defpath + os.pathsep + '/usr/sbin:/sbin'
-          facts = {
-              'linux': sys.platform.startswith('linux'),
-              'pidfd_bindings': all((hasattr(os, 'pidfd_open'), hasattr(os, 'P_PIDFD'),
-                                     hasattr(signal, 'pidfd_send_signal'))),
-              'git': shutil.which('git', path=os.defpath) is not None,
-              'ip': shutil.which('ip', path=path) is not None,
-              'unshare': shutil.which('unshare', path=os.defpath) is not None,
-              'strace': shutil.which('strace', path=os.defpath) is not None,
-          }
-          value = {
-              'schema': 'forge-cli-capture-capability-v1',
-              'status': 'PRESENT_NOT_QUALIFIED' if all(facts.values()) else 'UNSUPPORTED',
-              'facts': facts,
-              'live_admission': 'NOT_RUN',
-              'qualification': 'NOT_ASSESSED',
-              'raw_evidence': 'NOT_PUBLISHED',
-          }
-          if os.environ.get('REQUEST_LAUNCH_CONTRAST') == 'true':
-              arm = {'execution': 'NOT_RUN', 'returncode': None,
-                     'stdout': 'NOT_OBSERVED', 'stderr': 'NOT_OBSERVED',
-                     'cleanup': 'NOT_ASSESSED'}
-              value.update(schema='forge-cli-capture-capability-v2', launch_contrast={
-                  'binding': 'NOT_ASSESSED', 'direct': dict(arm), 'namespaced': dict(arm),
-                  'causal_attribution': 'NOT_ASSESSED'})
-          fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-          with os.fdopen(fd, 'w') as handle:
-              handle.write(json.dumps(value, sort_keys=True) + '\n')
-          raise SystemExit(0 if all(facts.values()) else 78)
-          PY
-      - name: Provision declared dependency wheels
-        id: provision
-        if: ${{ steps.capability.outcome == 'success' }}
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-cli-capture"
-          exec >"$private/provision.log" 2>&1
-          PIP_CONFIG_FILE=/dev/null python -m pip wheel --index-url https://pypi.org/simple \
-            --wheel-dir "$private/wheelhouse" \
-            'setuptools>=77' wheel 'pytest==9.2.0' 'pyyaml>=6.0' 'unidiff>=0.7.5,<0.8.0'
-      - name: Build and qualify exact source wheel offline
-        id: wheel
-        if: ${{ steps.provision.outcome == 'success' }}
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-cli-capture"
-          exec >"$private/build.log" 2>&1
-          python scripts/qualify_installed_wheel.py \
-            --wheelhouse "$private/wheelhouse" --output "$private/installed"
-      - name: Capture uninstrumented baseline once
-        id: baseline
-        if: ${{ steps.wheel.outcome == 'success' }}
-        continue-on-error: true
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-cli-capture"
-          exec >"$private/baseline-controller.log" 2>&1
-          code=0
-          /usr/bin/python3 -I -B scripts/capture_installed_cli.py \
-            --wheel-evidence "$private/installed" --mode baseline \
-            --output "$private/baseline" || code=$?
-          printf 'capture_exit=%s\n' "$code" >> "$GITHUB_OUTPUT"
-          summary_code=0
-          /usr/bin/python3 -I -S -B scripts/cli_capture_public_summary.py \
-            --result "$private/baseline/result.json" --mode baseline --shell-exit "$code" \
-            >"$RUNNER_TEMP/forge-cli-capture-public/baseline.json" || summary_code=$?
-          printf 'summary_exit=%s\n' "$summary_code" >> "$GITHUB_OUTPUT"
-          if [[ "$code" != 0 ]]; then exit "$code"; fi
-          exit "$summary_code"
-      - name: Capture preenabled diagnostic once
-        id: diagnostic
-        if: ${{ !cancelled() && steps.wheel.outcome == 'success' }}
-        continue-on-error: true
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-cli-capture"
-          exec >"$private/diagnostic-controller.log" 2>&1
-          code=0
-          /usr/bin/python3 -I -B scripts/capture_installed_cli.py \
-            --wheel-evidence "$private/installed" --mode diagnostic \
-            --output "$private/diagnostic" || code=$?
-          printf 'capture_exit=%s\n' "$code" >> "$GITHUB_OUTPUT"
-          summary_code=0
-          /usr/bin/python3 -I -S -B scripts/cli_capture_public_summary.py \
-            --result "$private/diagnostic/result.json" --mode diagnostic --shell-exit "$code" \
-            >"$RUNNER_TEMP/forge-cli-capture-public/diagnostic.json" || summary_code=$?
-          printf 'summary_exit=%s\n' "$summary_code" >> "$GITHUB_OUTPUT"
-          if [[ "$code" != 0 ]]; then exit "$code"; fi
-          exit "$summary_code"
-      - name: Observe independent inert launch contrast after captures
-        if: ${{ !cancelled() && inputs.run_launch_contrast && steps.wheel.outcome == 'success' }}
-        continue-on-error: true
-        timeout-minutes: 2
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-cli-capture"
-          exec >"$private/launch-contrast.log" 2>&1
-          /usr/bin/python3 -I -B scripts/cli_capture_launch_contrast.py \
-            --evidence "$private/installed" \
-            --baseline "$private/baseline/binding.json" \
-            --diagnostic "$private/diagnostic/binding.json" \
-            --output "$private/launch-contrast" \
-            --capability "$RUNNER_TEMP/forge-cli-capture-public/capability.json"
-      - name: Validate fixed public envelopes
-        id: publication
-        if: ${{ always() && steps.prepare.outcome == 'success' }}
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          exec >"$RUNNER_TEMP/forge-cli-capture/publication.log" 2>&1
-          /usr/bin/python3 -I -S -B scripts/cli_capture_publication.py \
-            "$RUNNER_TEMP/forge-cli-capture-public" \
-            "$RUNNER_TEMP/forge-cli-capture-public/published"
-      - name: Publish only validated fixed summaries
-        if: ${{ always() && steps.publication.outcome == 'success' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: cli-capture-diagnostic-summary-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/forge-cli-capture-public/published/capability.json
-            ${{ runner.temp }}/forge-cli-capture-public/published/baseline.json
-            ${{ runner.temp }}/forge-cli-capture-public/published/diagnostic.json
-          if-no-files-found: error
-          retention-days: 14
-      - name: Preserve original execution failures
-        if: ${{ always() }}
-        env:
-          PREPARE: ${{ steps.prepare.outcome }}
-          CAPABILITY: ${{ steps.capability.outcome }}
-          WHEEL: ${{ steps.wheel.outcome }}
-          PUBLICATION: ${{ steps.publication.outcome }}
-          BASELINE_EXIT: ${{ steps.baseline.outputs.capture_exit }}
-          DIAGNOSTIC_EXIT: ${{ steps.diagnostic.outputs.capture_exit }}
-          BASELINE_SUMMARY: ${{ steps.baseline.outputs.summary_exit }}
-          DIAGNOSTIC_SUMMARY: ${{ steps.diagnostic.outputs.summary_exit }}
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          # continue-on-error permits the second mode, never a green final gate.
-          for code in "$BASELINE_EXIT" "$DIAGNOSTIC_EXIT"; do
-            if [[ "$code" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( code <= 255 && code != 0 )); then
-              exit "$code"
-            fi
-          done
-          [[ "$PREPARE" == success && "$CAPABILITY" == success && "$WHEEL" == success ]]
-          [[ "$PUBLICATION" == success ]]
-          [[ "$BASELINE_EXIT" == 0 && "$DIAGNOSTIC_EXIT" == 0 ]]
-          [[ "$BASELINE_SUMMARY" == 0 && "$DIAGNOSTIC_SUMMARY" == 0 ]]
-
-  stock_bwrap_control:
-    if: ${{ inputs.run_stock_bwrap_control }}
+  startup_probe:
+    if: ${{ inputs.run_startup_probe }}
     runs-on: ubuntu-26.04
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Bind reviewed source and private directories
-        id: prepare
+          ref: ${{ github.sha }}
+      - name: Observe with system Python without site initialization
+        id: probe
+        continue-on-error: true
         env:
-          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
-          DISPATCH_SOURCE_SHA: ${{ github.sha }}
+          EXPECTED: ${{ inputs.expected_source_sha }}
+          DISPATCH: ${{ github.sha }}
         shell: bash
         run: |
           exec >/dev/null 2>&1
           set +x
           set -euo pipefail
           umask 077
-          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$EXPECTED_SOURCE_SHA" == "$DISPATCH_SOURCE_SHA" ]]
-          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SOURCE_SHA" ]]
-          private="$RUNNER_TEMP/forge-stock-control"
+          [[ "$EXPECTED" =~ ^[0-9a-f]{40}$ && "$EXPECTED" == "$DISPATCH" ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED" ]]
+          private="$RUNNER_TEMP/forge-startup-probe"
           [[ ! -e "$private" && ! -L "$private" ]]
-          mkdir -m 700 "$private" "$private/public"
-          /usr/bin/python3 -I -S -B - "$private/summary.json" <<'PYSEED'
-          import json, os, sys
-          value = dict(schema='forge-stock-capture-control-v1', environment='INDEPENDENT_UBUNTU_26_04',
-              required_runtime='SYSTEM_CPYTHON_314', status='UNSUPPORTED', stage='NO_DELIVERY', error='NOT_OBSERVED',
-              stock_safety='NOT_VERIFIED', loopback='NOT_OBSERVED', strace='NOT_OBSERVED',
-              cleanup='NOT_ASSESSED', control_returncode=None, qualification='NOT_ASSESSED',
-              causal_attribution='NOT_ASSESSED', raw='NOT_PUBLISHED')
-          fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-          with os.fdopen(fd, 'w') as handle:
-              handle.write(json.dumps(value, sort_keys=True) + '\n')
-          PYSEED
-      - name: Observe existing stock capabilities without repairs
-        id: control
-        if: ${{ steps.prepare.outcome == 'success' }}
-        continue-on-error: true
-        timeout-minutes: 1
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-stock-control"
-          exec >"$private/controller.log" 2>&1
+          mkdir -m 700 "$private"
           code=0
-          /usr/bin/python3 -I -B scripts/ci_stock_capture_control.py \
-            --output "$private/control" --summary "$private/summary.json" || code=$?
-          printf 'control_exit=%s\n' "$code" >> "$GITHUB_OUTPUT"
+          timeout --signal=TERM --kill-after=2 30 \
+            /usr/bin/python3 -I -S -B scripts/temporary_startup_probe.py \
+            >"$private/observation.json" 2>"$private/private-error.log" || code=$?
+          printf 'probe_exit=%s\n' "$code" >> "$GITHUB_OUTPUT"
           exit "$code"
-      - name: Validate stock control public envelope
+      - name: Independently validate closed observation
         id: publication
-        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-stock-control"
-          exec >"$private/publication.log" 2>&1
-          /usr/bin/python3 -I -S -B scripts/ci_stock_capture_publication.py \
-            "$private/summary.json" "$private/public/stock-control.json"
-      - name: Publish only closed stock control summary
-        if: ${{ !cancelled() && steps.publication.outcome == 'success' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: independent-stock-control-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/forge-stock-control/public/stock-control.json
-          if-no-files-found: error
-          retention-days: 14
-      - name: Preserve unsupported control outcome
         if: ${{ always() }}
-        env:
-          CONTROL: ${{ steps.control.outcome }}
-          CONTROL_EXIT: ${{ steps.control.outputs.control_exit }}
-          PUBLICATION: ${{ steps.publication.outcome }}
-        shell: bash
-        run: |
-          if [[ "$CONTROL_EXIT" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( CONTROL_EXIT <= 255 && CONTROL_EXIT != 0 )); then
-            exit "$CONTROL_EXIT"
-          fi
-          [[ "$CONTROL" == success && "$CONTROL_EXIT" == 0 && "$PUBLICATION" == success ]]
-
-  stock_cli_capture:
-    if: ${{ inputs.run_stock_cli_capture }}
-    runs-on: ubuntu-26.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Bind source and create private diagnostic directories
-        id: prepare
-        env:
-          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
-          DISPATCH_SOURCE_SHA: ${{ github.sha }}
         shell: bash
         run: |
           exec >/dev/null 2>&1
           set +x
           set -euo pipefail
           umask 077
-          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$EXPECTED_SOURCE_SHA" == "$DISPATCH_SOURCE_SHA" ]]
-          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SOURCE_SHA" ]]
-          private="$RUNNER_TEMP/forge-stock-cli-capture"
-          public="$RUNNER_TEMP/forge-stock-cli-capture-public"
-          [[ ! -e "$private" && ! -L "$private" && ! -e "$public" && ! -L "$public" ]]
-          mkdir -m 700 "$private" "$public"
-          /usr/bin/python3 -I -S -B - "$public/context.json" <<'CONTEXT'
-          import json, os, sys
-          value = dict(schema='forge-stock-cli-context-v1', backend='STOCK_BWRAP',
-              requested_environment='UBUNTU_26_04', required_runtime='SYSTEM_CPYTHON_314',
-              qualification='NOT_ASSESSED', historical_cause='NOT_ASSESSED',
-              ack_consistency='NOT_ASSESSED', power_loss_durability='NOT_ASSESSED', raw='NOT_PUBLISHED')
-          fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+          /usr/bin/python3 -I -S -B - "$RUNNER_TEMP/forge-startup-probe" <<'PY'
+          import json, os, pathlib, stat, sys
+          root = pathlib.Path(sys.argv[1])
+          st = root.lstat()
+          assert stat.S_ISDIR(st.st_mode) and stat.S_IMODE(st.st_mode) == 0o700 and st.st_uid == os.getuid()
+          fd = os.open(root / 'observation.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+          try:
+              st = os.fstat(fd)
+              assert stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and st.st_uid == os.getuid()
+              assert stat.S_IMODE(st.st_mode) == 0o600 and 0 < st.st_size <= 4096
+              raw = os.read(fd, 4097)
+              assert len(raw) == st.st_size and raw.endswith(b'\n')
+          finally:
+              os.close(fd)
+          def unique(pairs):
+              value = {}
+              for k,v in pairs:
+                  assert k not in value
+                  value[k] = v
+              return value
+          value = json.loads(raw, object_pairs_hook=unique)
+          fixed = dict(schema='forge-startup-probe-v1', required_runtime='CPYTHON_314',
+                       historical_cause='NOT_ASSESSED', raw='NOT_PUBLISHED')
+          enums = dict(runtime={'MATCHED','UNSUPPORTED'}, probe_status={'COMPLETE','UNSUPPORTED','UNAVAILABLE'},
+                       system_candidates={'NONE','SOURCE','CACHE','SOURCE_AND_CACHE','UNAVAILABLE'},
+                       system_admission={'NOT_RUN','ACCEPTED','REJECTED','UNAVAILABLE'},
+                       synthetic_empty={'NOT_RUN','ACCEPTED','REJECTED','UNAVAILABLE'},
+                       synthetic_hook={'NOT_RUN','ACCEPTED','REJECTED','UNAVAILABLE'})
+          assert type(value) is dict and set(value) == set(fixed) | set(enums)
+          assert all(value[k] == v for k,v in fixed.items())
+          assert all(type(value[k]) is str and value[k] in allowed for k,allowed in enums.items())
+          if value['probe_status'] == 'COMPLETE':
+              assert value['runtime'] == 'MATCHED' and value['system_candidates'] != 'UNAVAILABLE'
+              assert value['system_admission'] in {'ACCEPTED','REJECTED'}
+              assert value['synthetic_empty'] == 'ACCEPTED' and value['synthetic_hook'] == 'REJECTED'
+          if value['runtime'] == 'UNSUPPORTED':
+              assert all(value[k] == 'NOT_RUN' for k in ('system_admission','synthetic_empty','synthetic_hook'))
+          destination = root / 'published.json'
+          fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
           with os.fdopen(fd, 'w') as handle:
-              handle.write(json.dumps(value, sort_keys=True) + '\n')
-          CONTEXT
-      - name: Observe required existing utilities and controller bindings
-        id: capability
-        if: ${{ steps.prepare.outcome == 'success' }}
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-stock-cli-capture"
-          exec >"$private/capability.log" 2>&1
-          # Observation only: no package installation, sysctl, namespace bypass,
-          # ptrace permission change, or alternate host-network execution.
-          /usr/bin/python3 -I -S -B - "$RUNNER_TEMP/forge-stock-cli-capture-public/capability.json" <<'PY'
-          import json
-          import os
-          import shutil
-          import signal
-          import sys
-
-          path = os.defpath + os.pathsep + '/usr/sbin:/sbin'
-          facts = {
-              'linux': sys.platform.startswith('linux'),
-              'pidfd_bindings': all((hasattr(os, 'pidfd_open'), hasattr(os, 'P_PIDFD'),
-                                     hasattr(signal, 'pidfd_send_signal'))),
-              'git': shutil.which('git', path=os.defpath) is not None,
-              'bwrap': shutil.which('bwrap', path=os.defpath) is not None,
-              'strace': shutil.which('strace', path=os.defpath) is not None,
-          }
-          value = {
-              'schema': 'forge-stock-cli-capability-v1',
-              'status': 'PRESENT_NOT_QUALIFIED' if all(facts.values()) else 'UNSUPPORTED',
-              'facts': facts,
-              'live_admission': 'NOT_RUN',
-              'qualification': 'NOT_ASSESSED',
-              'raw_evidence': 'NOT_PUBLISHED',
-          }
-          fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-          with os.fdopen(fd, 'w') as handle:
-              handle.write(json.dumps(value, sort_keys=True) + '\n')
-          raise SystemExit(0 if all(facts.values()) else 78)
+              handle.write(json.dumps(value, sort_keys=True, separators=(',',':')) + '\n')
           PY
-      - name: Provision declared dependency wheels
-        id: provision
-        if: ${{ steps.capability.outcome == 'success' }}
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-stock-cli-capture"
-          exec >"$private/provision.log" 2>&1
-          /usr/bin/python3 -m venv "$private/provision-venv"
-          PIP_CONFIG_FILE=/dev/null "$private/provision-venv/bin/python" -m pip wheel --index-url https://pypi.org/simple \
-            --wheel-dir "$private/wheelhouse" \
-            'setuptools>=77' wheel 'pytest==9.2.0' 'pyyaml>=6.0' 'unidiff>=0.7.5,<0.8.0'
-      - name: Build and qualify exact source wheel offline
-        id: wheel
-        if: ${{ steps.provision.outcome == 'success' }}
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-stock-cli-capture"
-          exec >"$private/build.log" 2>&1
-          /usr/bin/python3 scripts/qualify_installed_wheel.py --symlink-interpreter \
-            --wheelhouse "$private/wheelhouse" --output "$private/installed"
-      - name: Capture uninstrumented baseline once
-        id: baseline
-        if: ${{ steps.wheel.outcome == 'success' }}
-        continue-on-error: true
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-stock-cli-capture"
-          exec >"$private/baseline-controller.log" 2>&1
-          code=0
-          /usr/bin/python3 -I -B scripts/capture_installed_cli.py --backend stock-bwrap \
-            --wheel-evidence "$private/installed" --mode baseline \
-            --output "$private/baseline" || code=$?
-          printf 'capture_exit=%s\n' "$code" >> "$GITHUB_OUTPUT"
-          summary_code=0
-          /usr/bin/python3 -I -S -B scripts/cli_capture_public_summary.py \
-            --result "$private/baseline/result.json" --mode baseline --shell-exit "$code" \
-            >"$RUNNER_TEMP/forge-stock-cli-capture-public/baseline.json" || summary_code=$?
-          printf 'summary_exit=%s\n' "$summary_code" >> "$GITHUB_OUTPUT"
-          if [[ "$code" != 0 ]]; then exit "$code"; fi
-          exit "$summary_code"
-      - name: Capture preenabled diagnostic once
-        id: diagnostic
-        if: ${{ !cancelled() && steps.wheel.outcome == 'success' }}
-        continue-on-error: true
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          private="$RUNNER_TEMP/forge-stock-cli-capture"
-          exec >"$private/diagnostic-controller.log" 2>&1
-          code=0
-          /usr/bin/python3 -I -B scripts/capture_installed_cli.py --backend stock-bwrap \
-            --wheel-evidence "$private/installed" --mode diagnostic \
-            --output "$private/diagnostic" || code=$?
-          printf 'capture_exit=%s\n' "$code" >> "$GITHUB_OUTPUT"
-          summary_code=0
-          /usr/bin/python3 -I -S -B scripts/cli_capture_public_summary.py \
-            --result "$private/diagnostic/result.json" --mode diagnostic --shell-exit "$code" \
-            >"$RUNNER_TEMP/forge-stock-cli-capture-public/diagnostic.json" || summary_code=$?
-          printf 'summary_exit=%s\n' "$summary_code" >> "$GITHUB_OUTPUT"
-          if [[ "$code" != 0 ]]; then exit "$code"; fi
-          exit "$summary_code"
-      - name: Validate fixed public envelopes
-        id: publication
-        if: ${{ always() && steps.prepare.outcome == 'success' }}
-        shell: bash
-        run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          umask 077
-          exec >"$RUNNER_TEMP/forge-stock-cli-capture/publication.log" 2>&1
-          /usr/bin/python3 -I -S -B scripts/cli_capture_stock_publication.py \
-            "$RUNNER_TEMP/forge-stock-cli-capture-public" \
-            "$RUNNER_TEMP/forge-stock-cli-capture-public/published"
-      - name: Publish only validated fixed summaries
+      - name: Upload only closed observation
         if: ${{ always() && steps.publication.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: stock-cli-capture-diagnostic-summary-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/forge-stock-cli-capture-public/published/context.json
-            ${{ runner.temp }}/forge-stock-cli-capture-public/published/capability.json
-            ${{ runner.temp }}/forge-stock-cli-capture-public/published/baseline.json
-            ${{ runner.temp }}/forge-stock-cli-capture-public/published/diagnostic.json
+          name: temporary-startup-observation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/forge-startup-probe/published.json
           if-no-files-found: error
-          retention-days: 14
-      - name: Preserve original execution failures
+          retention-days: 7
+      - name: Preserve probe status
         if: ${{ always() }}
         env:
-          PREPARE: ${{ steps.prepare.outcome }}
-          CAPABILITY: ${{ steps.capability.outcome }}
-          WHEEL: ${{ steps.wheel.outcome }}
+          CODE: ${{ steps.probe.outputs.probe_exit }}
           PUBLICATION: ${{ steps.publication.outcome }}
-          BASELINE_EXIT: ${{ steps.baseline.outputs.capture_exit }}
-          DIAGNOSTIC_EXIT: ${{ steps.diagnostic.outputs.capture_exit }}
-          BASELINE_SUMMARY: ${{ steps.baseline.outputs.summary_exit }}
-          DIAGNOSTIC_SUMMARY: ${{ steps.diagnostic.outputs.summary_exit }}
         shell: bash
         run: |
-          exec >/dev/null 2>&1
-          set +x
-          set -euo pipefail
-          # continue-on-error permits the second mode, never a green final gate.
-          for code in "$BASELINE_EXIT" "$DIAGNOSTIC_EXIT"; do
-            if [[ "$code" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( code <= 255 && code != 0 )); then
-              exit "$code"
-            fi
-          done
-          [[ "$PREPARE" == success && "$CAPABILITY" == success && "$WHEEL" == success ]]
-          [[ "$PUBLICATION" == success ]]
-          [[ "$BASELINE_EXIT" == 0 && "$DIAGNOSTIC_EXIT" == 0 ]]
-          [[ "$BASELINE_SUMMARY" == 0 && "$DIAGNOSTIC_SUMMARY" == 0 ]]
+          [[ "$CODE" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( CODE <= 255 )) || exit 73
+          [[ "$PUBLICATION" == success ]] || exit 73
+          exit "$CODE"
