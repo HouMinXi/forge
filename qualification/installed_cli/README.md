@@ -649,3 +649,11 @@ returns 73; a failed publication independently fails its step. Missing delivery
 or rejected envelopes never mean that no child ran. COMPLETE reports this
 read-only control only, with qualification always NOT_ASSESSED, not historical
 causality or isolated capture acceptance.
+
+Console-source admission includes the exact pip 26.2.2 `PipScriptMaker`
+`removesuffix('.exe')` pattern, alongside the two older canonical patterns.
+The wheel installer uses this subclass rather than distlib's default template.
+Shebang, entry module/function, guard, arguments, complete AST, original source
+bytes, and installed RECORD remain bound; shell trampolines and arbitrary
+wrapper variants remain rejected. This compatibility fix does not establish
+that every historical console-binding failure had the same cause.

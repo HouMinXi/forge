@@ -3027,6 +3027,8 @@ def _replay(root, run_id):
 class AttemptRecorder:
     """One process owns a run; typed durable acknowledgements gate its caller."""
 
+    _scoped_fault_domain: bool
+
     def __init__(
         self,
         root: Path,
@@ -3036,7 +3038,10 @@ class AttemptRecorder:
         utc_now: Callable[[], str],
         preview_enabled: bool = False,
         audit_schema_version: int = 1,
+        scoped_fault_domain: bool = False,
     ):
+        if type(scoped_fault_domain) is not bool:
+            raise TypeError("invalid scoped fault domain switch")
         self.root = root
         self._monotonic = monotonic
         self._utc_now = utc_now
@@ -3058,6 +3063,7 @@ class AttemptRecorder:
         self._preview = False
         self._input_manifest = None
         self._audit_schema_version = audit_schema_version
+        self._scoped_fault_domain = scoped_fault_domain
         # State files (run directory, input manifest, freeze marker, raw body) made
         # visible ahead of the journal event that commits them.
         self._staged = 0

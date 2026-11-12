@@ -230,9 +230,12 @@ def check_record(row, raw):
     require(row == [expected, str(len(raw))], "installed RECORD digest mismatch")
 
 
-def launcher_template(target, *, modern=False):
+def launcher_template(target, *, modern=False, removesuffix=False):
     body = "import sys\nfrom code_forge_launcher import cli_main\nif __name__ == '__main__':\n"
-    if modern:
+    if removesuffix:
+        # pip 26.2.2 PipScriptMaker overrides the vendored distlib default.
+        body += "    sys.argv[0] = sys.argv[0].removesuffix('.exe')\n"
+    elif modern:
         body += (
             "    if sys.argv[0].endswith('-script.pyw'):\n"
             "        sys.argv[0] = sys.argv[0][:-11]\n"
@@ -251,8 +254,11 @@ def verify_launcher(raw, target):
     require(
         any(
             tree
-            == ast.dump(ast.parse(launcher_template(target, modern=modern)), include_attributes=False)
-            for modern in (False, True)
+            == ast.dump(
+                ast.parse(launcher_template(target, modern=modern, removesuffix=removesuffix)),
+                include_attributes=False,
+            )
+            for modern, removesuffix in ((False, False), (True, False), (False, True))
         ),
         "installed launcher entrypoint mismatch",
     )

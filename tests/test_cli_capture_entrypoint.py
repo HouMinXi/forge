@@ -2326,3 +2326,80 @@ def test_stock_post_owner_host_change_preserves_original_failure(tmp_path, monke
     receipt = json.loads((tmp_path / "output/result.json").read_text())
     assert receipt["worker"]["child_returncode_before_cleanup"] == original
     assert receipt["record_errors"]
+
+
+# Canonical producer: pip 26.2.2 _internal/operations/install/wheel.py,
+# PipScriptMaker.script_template; _install_wheel instantiates that subclass.
+# This is NOT the different vendored distlib SCRIPT_TEMPLATE.
+PIP_26_2_2_CONSOLE = """import sys
+from code_forge_launcher import cli_main
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(cli_main())
+"""
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "module",
+        "function",
+        "guard",
+        "arguments",
+        "extra",
+        "suffix",
+        "shebang",
+        "shell",
+        "distlib-default",
+    ],
+)
+def test_pip_26_2_2_actual_override_is_exact(fault):
+    target = Path("/tmp/short-venv/bin/python")
+    body = PIP_26_2_2_CONSOLE
+    shebang = f"#!{target}\n"
+    if fault == "module":
+        body = body.replace("from code_forge_launcher", "from attacker")
+    elif fault == "function":
+        body = body.replace("cli_main", "other")
+    elif fault == "guard":
+        body = body.replace("__name__ == '__main__'", "__name__ != '__main__'")
+    elif fault == "arguments":
+        body = body.replace("cli_main()", "cli_main('--override')")
+    elif fault == "extra":
+        body += "raise RuntimeError('EXTRA')\n"
+    elif fault == "suffix":
+        body = body.replace("'.exe'", "'.pyw'")
+    elif fault == "shebang":
+        shebang = "#!/tmp/other-python\n"
+    elif fault == "shell":
+        shebang = "#!/bin/sh\n"
+    elif fault == "distlib-default":
+        body = "import re\nimport sys\nif __name__ == '__main__':\n    from code_forge_launcher import cli_main\n    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n    sys.exit(cli_main())\n"
+    raw = (shebang + body).encode()
+    if fault is None:
+        entry.verify_launcher(raw, target)
+    else:
+        with pytest.raises(ValueError):
+            entry.verify_launcher(raw, target)
+
+
+@pytest.mark.parametrize("record_matches", [True, False])
+def test_pip_26_2_2_console_installed_record_pipeline(evidence, record_matches):
+    raw = (f"#!{evidence.target}\n" + PIP_26_2_2_CONSOLE).encode()
+    evidence.launcher.write_bytes(raw)
+    if record_matches:
+        path = evidence.site / DIST / "RECORD"
+        rows = list(csv.reader(io.StringIO(path.read_text())))
+        name = os.path.relpath(evidence.launcher, evidence.site)
+        replacement = next(csv.reader(io.StringIO(record({name: raw}).decode())))
+        rows = [replacement if row[0] == name else row for row in rows]
+        stream = io.StringIO()
+        csv.writer(stream, lineterminator="\n").writerows(rows)
+        path.write_text(stream.getvalue())
+        binding, _, _ = entry.verify_installation(evidence.root)
+        assert binding["installed_provenance"]["launcher_sha256"] == hashlib.sha256(raw).hexdigest()
+        assert binding["launcher"] == str(evidence.launcher)
+    else:
+        with pytest.raises(ValueError, match="installed RECORD digest mismatch"):
+            entry.verify_installation(evidence.root)
