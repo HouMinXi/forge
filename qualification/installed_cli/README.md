@@ -396,6 +396,30 @@ these observations.
 
 Old private receipts without the stage/category pair project `UNKNOWN` for
 both; a partial or invalid pair fails closed. The independent publisher accepts
-only exact v1 or v2 public envelopes and normalizes old v1 to unknown new fields.
+only exact v1, v2 or v3 public envelopes and normalizes old v1 to unknown new fields.
 No raw errors, stderr, credential values, private paths or arbitrary identifiers
 are added to artifacts. Missing evidence remains unknown, never success.
+
+### Exact launch stderr observation
+
+The v3 public envelope adds `launch_stderr_observation`. Only when the completed
+owner reports worker exit 1, no validated worker receipt exists, and no outer
+exception was recorded does the controller compare the complete bounded stderr
+bytes with two fixed C-locale lines:
+
+- `unshare: unshare failed: Operation not permitted\n`
+- `unshare: unshare failed: Permission denied\n`
+
+Their labels are `STDERR_EXACT_UNSHARE_OPERATION_NOT_PERMITTED` and
+`STDERR_EXACT_UNSHARE_PERMISSION_DENIED`. These are literal-output observations,
+not authenticated emitter, syscall, namespace-policy or AppArmor diagnoses:
+another descendant could emit identical bytes. Extra bytes, paths, whitespace
+changes and other locales do not match and produce `NOT_RECOGNIZED`. Ineligible
+or unavailable input remains `NOT_ASSESSED`. No trimming, substring search,
+message-derived errno or raw stderr is exposed. The summary helper still reads
+only the private JSON receipt, never raw streams.
+
+Exact v1/v2 public envelopes upgrade with `NOT_ASSESSED`; old runs do not gain
+new evidence. Commands, isolation, locale, process ownership and original exit
+statuses are unchanged. This observation neither grants qualification nor
+permits a security-setting change or host-network fallback.

@@ -29,6 +29,14 @@ SUMMARY_KEYS = {
 
 LEGACY_SUMMARY_KEYS = SUMMARY_KEYS.copy()
 SUMMARY_KEYS |= {"controller_stage", "controller_error_category", "failure_observation"}
+V2_SUMMARY_KEYS = SUMMARY_KEYS.copy()
+SUMMARY_KEYS |= {"launch_stderr_observation"}
+LAUNCH_OBSERVATIONS = {
+    "NOT_ASSESSED",
+    "NOT_RECOGNIZED",
+    "STDERR_EXACT_UNSHARE_OPERATION_NOT_PERMITTED",
+    "STDERR_EXACT_UNSHARE_PERMISSION_DENIED",
+}
 STAGES = {
     "INITIALIZE",
     "SANITIZE",
@@ -98,8 +106,23 @@ def validate(value, name):
             "controller_error_category": "UNKNOWN",
             "failure_observation": "NOT_OBSERVED",
         }
+    if value.get("schema") == "forge-public-cli-capture-summary-v2":
+        require(set(value) == V2_SUMMARY_KEYS)
+        value = value | {
+            "schema": "forge-public-cli-capture-summary-v3",
+            "launch_stderr_observation": "NOT_ASSESSED",
+        }
     require(set(value) == SUMMARY_KEYS)
-    require(value["schema"] == "forge-public-cli-capture-summary-v2")
+    require(value["schema"] == "forge-public-cli-capture-summary-v3")
+    launch = value["launch_stderr_observation"]
+    require(type(launch) is str and launch in LAUNCH_OBSERVATIONS)
+    if launch != "NOT_ASSESSED":
+        require(value["receipt_status"] == "DELIVERED")
+        require(type(value["worker_returncode"]) is int and value["worker_returncode"] == 1)
+        require(value["failure_observation"] == "WORKER_NONZERO_NO_RECEIPT")
+        require(value["cli_returncode"] is None and value["cli_returncode_before_cleanup"] is None)
+        require(value["cleanup_induced_termination"] is None)
+        require(value["collector_delivery"] == "NOT_OBSERVED")
     stage, category = value["controller_stage"], value["controller_error_category"]
     require(type(stage) is str and stage in STAGES | {"UNKNOWN"})
     require(type(category) is str and category in CATEGORIES | {"UNKNOWN"})

@@ -2091,3 +2091,170 @@ def test_controller_failure_reaches_public_projection_without_private_error(tmp_
     assert value["failure_observation"] == "WORKER_NONZERO_NO_RECEIPT"
     assert value["worker_returncode"] == 1 and value["harness_shell_exit"] == 73
     assert value["cli_returncode"] is None and value["qualification"] == "NOT_ASSESSED"
+
+
+@pytest.mark.parametrize(
+    "raw,label",
+    [
+        (
+            b"unshare: unshare failed: Operation not permitted\n",
+            "STDERR_EXACT_UNSHARE_OPERATION_NOT_PERMITTED",
+        ),
+        (b"unshare: unshare failed: Permission denied\n", "STDERR_EXACT_UNSHARE_PERMISSION_DENIED"),
+    ],
+)
+def test_launch_observation_matches_only_entire_literal(raw, label):
+    record = {"worker_returncode": 1, "worker": None, "outer_exception": None}
+    assert entry.launch_stderr_observation(record, raw) == label
+    for changed in (
+        raw[:-1],
+        raw + b"\n",
+        b" " + raw,
+        raw + b"SECRET=/private/path",
+        raw.upper(),
+        raw.replace(b"\n", b"\r\n"),
+        b"/usr/bin/" + raw,
+    ):
+        assert entry.launch_stderr_observation(record, changed) == "NOT_RECOGNIZED"
+    for invalid in (None, raw.decode(), bytearray(raw), {}, True):
+        assert entry.launch_stderr_observation(record, invalid) == "NOT_ASSESSED"
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"worker_returncode": 0},
+        {"worker_returncode": 73},
+        {"worker_returncode": -9},
+        {"worker_returncode": True},
+        {"worker_returncode": "1"},
+        {"worker": {}},
+        {"outer_exception": {}},
+    ],
+)
+def test_launch_observation_requires_actual_failed_worker_without_receipt(patch):
+    record = {"worker_returncode": 1, "worker": None, "outer_exception": None} | patch
+    raw = b"unshare: unshare failed: Operation not permitted\n"
+    assert entry.launch_stderr_observation(record, raw) == "NOT_ASSESSED"
+
+
+def test_launch_observation_does_not_match_truncated_prefix(monkeypatch):
+    raw = b"unshare: unshare failed: Operation not permitted\n"
+    record = {"worker_returncode": 1, "worker": None, "outer_exception": None}
+    monkeypatch.setattr(entry, "FILE_LIMIT", len(raw) - 1)
+    assert entry.launch_stderr_observation(record, raw) == "NOT_ASSESSED"
+
+
+@pytest.mark.usefixtures("preserve_controller_umask")
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (
+            b"unshare: unshare failed: Operation not permitted\n",
+            "STDERR_EXACT_UNSHARE_OPERATION_NOT_PERMITTED",
+        ),
+        (b"unshare: unshare failed: Permission denied\n", "STDERR_EXACT_UNSHARE_PERMISSION_DENIED"),
+        (b"unshare: unshare failed: Operation not permitted\nPRIVATE-CANARY", "NOT_RECOGNIZED"),
+    ],
+    ids=["operation", "permission", "private-suffix"],
+)
+def test_controller_launch_literal_reaches_public_without_cause_claim(
+    tmp_path, monkeypatch, raw, expected
+):
+    controller_control(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        entry,
+        "load_owner",
+        lambda *a: (
+            lambda *a, **k: SimpleNamespace(
+                returncode=1,
+                ownership={"cleanup_complete": True, "owned": []},
+                stdout=b"",
+                stderr=raw,
+            )
+        ),
+    )
+    output = tmp_path / "output"
+    code = entry.capture(tmp_path / "unused", "baseline", output)
+    assert code == 73
+    private = entry.read_json(output / "result.json")
+    assert private["launch_stderr_observation"] == expected
+    assert private["controller_stage"] == "WORKER_RECEIPT"
+    assert private["controller_error_category"] == "NOT_FOUND"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            str(ROOT / "scripts/cli_capture_public_summary.py"),
+            "--result",
+            str(output / "result.json"),
+            "--mode",
+            "baseline",
+            "--shell-exit",
+            str(code),
+        ],
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert result.returncode == 0 and result.stderr == b""
+    public = json.loads(result.stdout)
+    assert public["launch_stderr_observation"] == expected
+    assert public["worker_returncode"] == 1 and public["harness_shell_exit"] == 73
+    assert public["cli_returncode"] is None and public["qualification"] == "NOT_ASSESSED"
+    assert b"PRIVATE-CANARY" not in result.stdout
+    assert raw not in result.stdout
+    spec = importlib.util.spec_from_file_location(
+        "launch_publication", ROOT / "scripts/cli_capture_publication.py"
+    )
+    publication = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(publication)
+    public_root = tmp_path / "public"
+    public_root.mkdir(mode=0o700)
+    capability = {
+        "schema": "forge-cli-capture-capability-v1",
+        "status": "PRESENT_NOT_QUALIFIED",
+        "facts": dict.fromkeys(publication.FACTS, True),
+        "live_admission": "NOT_RUN",
+        "qualification": "NOT_ASSESSED",
+        "raw_evidence": "NOT_PUBLISHED",
+    }
+    write(public_root / "capability.json", (json.dumps(capability) + "\n").encode())
+    write(public_root / "baseline.json", result.stdout)
+    publication.publish(public_root, public_root / "published")
+    artifact = (public_root / "published/baseline.json").read_bytes()
+    assert json.loads(artifact) == public
+    assert raw not in artifact and b"PRIVATE-CANARY" not in artifact
+
+
+@pytest.mark.usefixtures("preserve_controller_umask")
+@pytest.mark.parametrize("kind", ["owner-error", "worker-zero", "worker-seven"])
+def test_controller_ineligible_launch_never_assesses_stderr(tmp_path, monkeypatch, kind):
+    raw = b"unshare: unshare failed: Operation not permitted\n"
+    if kind == "owner-error":
+        controller_control(
+            tmp_path, monkeypatch, owner_error=subprocess.TimeoutExpired(["private"], 35, stderr=raw)
+        )
+        expected = 124
+    else:
+        controller_control(tmp_path, monkeypatch)
+        code = 0 if kind == "worker-zero" else 7
+        monkeypatch.setattr(
+            entry,
+            "load_owner",
+            lambda *a: (
+                lambda *a, **k: SimpleNamespace(
+                    returncode=code,
+                    ownership={"cleanup_complete": True, "owned": []},
+                    stdout=b"",
+                    stderr=raw,
+                )
+            ),
+        )
+        expected = 73
+    output = tmp_path / "output"
+    assert entry.capture(tmp_path / "unused", "baseline", output) == expected
+    value = entry.read_json(output / "result.json")
+    assert value["launch_stderr_observation"] == "NOT_ASSESSED"

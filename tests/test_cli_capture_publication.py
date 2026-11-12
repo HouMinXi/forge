@@ -113,7 +113,7 @@ def test_failure_message_never_contains_input(envelope, capsys):
 
 def summary(mode="diagnostic"):
     return dict(
-        schema="forge-public-cli-capture-summary-v2",
+        schema="forge-public-cli-capture-summary-v3",
         mode=mode,
         receipt_status="DELIVERED",
         harness_shell_exit=7,
@@ -128,6 +128,7 @@ def summary(mode="diagnostic"):
         controller_stage="UNKNOWN",
         controller_error_category="UNKNOWN",
         failure_observation="NOT_OBSERVED",
+        launch_stderr_observation="NOT_ASSESSED",
     )
 
 
@@ -198,7 +199,12 @@ def test_summary_rejects_unknown_field():
 
 def test_exact_legacy_v1_upgrade_does_not_invent_stage():
     old = summary()
-    for field in ("controller_stage", "controller_error_category", "failure_observation"):
+    for field in (
+        "controller_stage",
+        "controller_error_category",
+        "failure_observation",
+        "launch_stderr_observation",
+    ):
         del old[field]
     old["schema"] = "forge-public-cli-capture-summary-v1"
     upgraded = publication.validate(old, "diagnostic.json")
@@ -265,3 +271,53 @@ def test_worker_receipt_observation_requires_closed_supporting_facts():
     data["receipt_status"] = "UNAVAILABLE"
     with pytest.raises(ValueError):
         publication.validate(data, "diagnostic.json")
+
+
+def test_exact_v2_upgrade_does_not_invent_stderr_observation():
+    old = summary()
+    del old["launch_stderr_observation"]
+    old["schema"] = "forge-public-cli-capture-summary-v2"
+    assert publication.validate(old, "diagnostic.json") == summary()
+    old["private_stderr"] = "CANARY"
+    with pytest.raises(ValueError):
+        publication.validate(old, "diagnostic.json")
+
+
+@pytest.mark.parametrize(
+    "bad", [None, True, 1, [], {}, "CANARY"], ids=["null", "bool", "int", "list", "dict", "canary"]
+)
+def test_launch_public_enum_is_closed(bad):
+    value = summary()
+    value["launch_stderr_observation"] = bad
+    with pytest.raises((ValueError, TypeError)):
+        publication.validate(value, "diagnostic.json")
+
+
+@pytest.mark.parametrize(
+    "field,bad",
+    [
+        ("worker_returncode", 0),
+        ("worker_returncode", True),
+        ("cli_returncode", 7),
+        ("cli_returncode_before_cleanup", 7),
+        ("cleanup_induced_termination", False),
+        ("collector_delivery", "HEALTHY"),
+        ("receipt_status", "UNAVAILABLE"),
+        ("failure_observation", "NOT_OBSERVED"),
+    ],
+)
+def test_launch_public_observation_requires_consistent_facts(field, bad):
+    value = summary()
+    value.update(
+        worker_returncode=1,
+        cli_returncode=None,
+        cli_returncode_before_cleanup=None,
+        cleanup_induced_termination=None,
+        collector_delivery="NOT_OBSERVED",
+        failure_observation="WORKER_NONZERO_NO_RECEIPT",
+        launch_stderr_observation="STDERR_EXACT_UNSHARE_PERMISSION_DENIED",
+    )
+    assert publication.validate(value, "diagnostic.json") == value
+    value[field] = bad
+    with pytest.raises(ValueError):
+        publication.validate(value, "diagnostic.json")
