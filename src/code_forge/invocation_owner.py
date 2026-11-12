@@ -216,6 +216,8 @@ def _raise_handoff_primary(primary, chain, secondary):
 
 
 class InvocationOwner:
+    _scoped_fault_domain: bool
+
     @classmethod
     def create(
         cls,
@@ -226,9 +228,12 @@ class InvocationOwner:
         utc_now: Callable[[], str],
         job_deadline: float | None = None,
         audit_schema_version: int = 1,
+        scoped_fault_domain: bool = False,
     ) -> InvocationOwner:
         if type(audit_schema_version) is not int or audit_schema_version not in (1, 2):
             raise ValueError("invalid audit schema version")
+        if type(scoped_fault_domain) is not bool:
+            raise TypeError("invalid scoped fault domain switch")
         if job_deadline is not None:
             _number(job_deadline)
         self = cls()
@@ -239,6 +244,7 @@ class InvocationOwner:
         self._utc_now = utc_now
         self._deadline = job_deadline
         self._audit_schema_version = audit_schema_version
+        self._scoped_fault_domain = scoped_fault_domain
         self._start = _number(monotonic())
         self._end = None
         self._session_id = str(uuid.uuid4())
@@ -255,6 +261,7 @@ class InvocationOwner:
             monotonic=monotonic,
             utc_now=utc_now,
             audit_schema_version=audit_schema_version,
+            scoped_fault_domain=scoped_fault_domain,
         )
         self._epochs = [_Epoch(recorder, context)]
         self._current = self._epochs[0]
@@ -736,6 +743,7 @@ class InvocationOwner:
                 monotonic=self._monotonic,
                 utc_now=self._utc_now,
                 audit_schema_version=self._audit_schema_version,
+                scoped_fault_domain=self._scoped_fault_domain,
             )
             candidate = _Epoch(recorder, context)
             self._epochs.append(candidate)
