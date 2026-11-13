@@ -277,6 +277,7 @@ def run_cross_repo(
     focus_spec: str = "",
     scope_ticket_directory: Path | None = None,
     diagnostic_ticket_directory: Path | None = None,
+    _diagnostic_completion=None,
 ):
     """Orchestrate cross-repo parallel review.
 
@@ -301,6 +302,12 @@ def run_cross_repo(
     from uuid import uuid4
 
     execution_id = str(uuid4())
+    if _diagnostic_completion is not None:
+        from ._diagnostic_completion import DiagnosticCompletion
+
+        if type(_diagnostic_completion) is not DiagnosticCompletion:
+            raise ValueError("invalid private diagnostic completion")
+        _diagnostic_completion.claim(execution_id)
 
     # -- Step 1: validate siblings (before any git access) --
     from .detect import detect_toolchain
@@ -584,7 +591,11 @@ def run_cross_repo(
                         )
                     ):
                         diagnostic_notice("scope-ticket: no receipt was issued")
-                    if is_primary and diagnostic_ticket_directory is not None:
+                    if (
+                        is_primary
+                        and diagnostic_ticket_directory is not None
+                        and _diagnostic_completion is None
+                    ):
                         if diagnostic_capture is None:
                             diagnostic_notice(
                                 "diagnostic-ticket: unavailable; no saved-ticket guarantee"
@@ -607,17 +618,32 @@ def run_cross_repo(
                 except (Exception, KeyboardInterrupt, SystemExit) as exc:  # noqa: BLE001 -- Transport worker failures to the joining caller, including process control.
                     errors[label] = exc
                 finally:
+                    capture_cleanup_failed = False
                     try:
                         if diagnostic_capture is not None:
                             diagnostic_capture.close()
-                    except Exception:  # noqa: BLE001, S110 -- Context cleanup is diagnostic-only.
-                        pass
+                    except Exception:  # noqa: BLE001 -- Context cleanup is diagnostic-only.
+                        capture_cleanup_failed = True
                     except (KeyboardInterrupt, SystemExit) as cleanup:
+                        capture_cleanup_failed = True
                         errors.setdefault(label, cleanup)
                     finally:
                         if diagnostic_capture is not None:
                             diagnostic_capture._active = False
-                        completed[label].set()
+                        try:
+                            if is_primary and _diagnostic_completion is not None:
+                                _diagnostic_completion.seal(
+                                    diagnostic_capture,
+                                    worker_completed=label not in errors,
+                                    cleanup_failed=capture_cleanup_failed,
+                                    completion_event=completed[label],
+                                )
+                        except Exception:  # noqa: BLE001, S110 -- Handoff failure cannot change the gate.
+                            pass
+                        except (KeyboardInterrupt, SystemExit) as handoff_error:
+                            errors.setdefault(label, handoff_error)
+                        finally:
+                            completed[label].set()
 
             threads = [
                 threading.Thread(

@@ -3261,30 +3261,49 @@ def _cross_repo_verdict_or_none(
         # form ("git:HEAD") unusable as a ref range.
         _head_ref = head_spec.ref if head_spec is not None else "HEAD"
         _primary_ref = "%s..%s" % (baseline_spec.ref, _head_ref)
-        _cross_verdict = run_cross_repo(
-            primary_path=cwd,
-            primary_ref=_primary_ref,
-            primary_label="primary",
-            siblings=_gate_siblings,
-            gate_config=_gate_raw if isinstance(_gate_raw, dict) else {},
-            mode=mode,
-            engine_choice=engine_choice,
-            backend=backend,
-            max_rounds=max_rounds,
-            max_fix_attempts=max_fix,
-            clean_round_threshold=_clean_threshold,
-            focus_spec=focus_spec,
-            **(
-                {"scope_ticket_directory": scope_ticket_directory}
-                if scope_ticket_directory is not None
-                else {}
-            ),
-            **(
-                {"diagnostic_ticket_directory": diagnostic_ticket_directory}
-                if diagnostic_ticket_directory is not None
-                else {}
-            ),
-        )
+        # Private live-owner handoff; historical files never supply this context.
+        completion = None
+        if diagnostic_ticket_directory is not None:
+            from ._diagnostic_completion import DiagnosticCompletion
+
+            completion = DiagnosticCompletion()
+        try:
+            _cross_verdict = run_cross_repo(
+                primary_path=cwd,
+                primary_ref=_primary_ref,
+                primary_label="primary",
+                siblings=_gate_siblings,
+                gate_config=_gate_raw if isinstance(_gate_raw, dict) else {},
+                mode=mode,
+                engine_choice=engine_choice,
+                backend=backend,
+                max_rounds=max_rounds,
+                max_fix_attempts=max_fix,
+                clean_round_threshold=_clean_threshold,
+                focus_spec=focus_spec,
+                **({"_diagnostic_completion": completion} if completion is not None else {}),
+                **(
+                    {"scope_ticket_directory": scope_ticket_directory}
+                    if scope_ticket_directory is not None
+                    else {}
+                ),
+                **(
+                    {"diagnostic_ticket_directory": diagnostic_ticket_directory}
+                    if diagnostic_ticket_directory is not None
+                    else {}
+                ),
+            )
+        finally:
+            if completion is not None:
+                primary = sys.exception()
+                try:
+                    for notice in completion.notices():
+                        print("[cross-repo] primary: ADVISORY: " + notice)
+                except Exception:  # noqa: BLE001, S110 -- Diagnostic delivery is non-gating.
+                    pass
+                except BaseException:
+                    if primary is None:
+                        raise
         return _cross_verdict
     return None
 
