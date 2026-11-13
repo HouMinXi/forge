@@ -269,7 +269,8 @@ remaining reviewability gap, not silently satisfied by this index.
 
 The complete local document (not a connector preview) was used to check the six
 finite T03/T06/T12/T14/T19/T20 tasks, stable evidence anchors and parameter lists.
-Only T19's static assertion audit is finished; other tasks and all new contract
+T19's static assertion audit and T03/T06/T20 selected-node/source audits are finished;
+their identified runtime/oracle gaps, remaining tasks and all new contract
 decisions remain explicitly pending. The executor can finish indexing and safe
 transcription, but cannot turn these proposed support/port dispositions into
 maintainer decisions. Original 78-port status remains UNKNOWN.
@@ -389,7 +390,7 @@ tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_befor
 ##### T03
 
 - Obligation: No parseable path/deleted added side: primary path prerequisite remains, no primary connection, no_named_targets; no invented target.
-- Actual source: CrossRepoImpactRunner._run_analysis_impl early path branch.
+- Actual source: `CrossRepoImpactRunner._run_analysis_impl` first resolves/checks the primary database path, then calls `resolve_changed_symbols`; the latter returns on empty parsed added-side paths before its `sqlite3.connect` (fixed source lines 262–268). The early no-connect branch is in the resolver, not the runner itself.
 - Independent oracle / input: Actual malformed/deletion diff, exact warning/empty findings; forbid sentinels guard sibling discovery/helper access.
 - Remaining gap / supported disposition: The selected controls do not explicitly count primary sqlite connection opens. That exact original T03 subclause is an evidence gap, not inferred from empty output.
 - R3 status: Force-primary-connect dedicated semantic control: NOT_RUN / target node not yet assigned. Do not manufacture a passed connection-spy assertion.
@@ -465,6 +466,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_actual_analysis_states_do_n
 - Actual source: CrossRepoImpactRunner._run_analysis_impl; caller helper and finding selection.
 - Independent oracle / input: Real SQLite caller rows and explicit expected findings/count/cap; cache no-warning assertions for empty and nonempty result.
 - Remaining gap / supported disposition: Exact equal-rank sort tie cases and a dedicated extra-hop prohibition oracle are not identified by these selectors: retain as mapping gaps, not new multi-hop feature requests.
+- Static follow-up: `TestTopNCap::test_cap_at_top_n` builds `_TOP_N + 5` callers but asserts only result length. The production ranking uses stable Python sort by proximity, without an explicit tie-break key; the shared `_CALLERS_SQL` has no `ORDER BY`. This does not establish deterministic equal-rank identity selection across SQLite plans. `_CALLERS_SQL` selects direct CALLS edges for the requested target, with an IMPORTS_FROM predicate; `_live_callers` resolves source locations/liveness, not recursive caller expansion. These source facts are not an executed extra-hop rejection oracle. Decide the equal-rank ordering promise before proposing a test or production change; dedicated tie-order and extra-hop node identities remain UNKNOWN.
 - R3 status: Blanket empty-result warning, cap removal, extra-hop insertion: dedicated current controls NOT_RUN; historical finding regressions are not per-mutation proof.
 
 <details>
@@ -1133,6 +1135,7 @@ tests/test_diagnostic_completion.py::test_interrupted_publication_is_unknown_and
 - Actual source: runner output fallback; DiagnosticCapture.present; CLI/MCP output and private completion.
 - Independent oracle / input: Controlled omitted dispatch yields real empty record; separate native nonempty PASS/FAIL with sink fault; exact messages/structured output, delivery status and untouched gate/receipts.
 - Remaining gap / supported disposition: Natural not_run reachability remains unresolved. Empty delivered proves consumption not sink health. Historical SDK tests cannot stand for full live review SDK qualification.
+- Static follow-up: `cross_repo.py` calls `complete_not_run()` after `sm.run()` returns; `_cross_repo_diagnostics.py::complete_not_run` emits only when `_called` is false. `test_normal_machine_return_without_axis_call_records_not_run` explicitly replaces `_run_advisory_axes` with a no-op; the selected `test_host_not_run_empty_success_and_unavailable_statuses` fixture likewise supplies dispatch behavior. Thus these nodes test the consumer contract for an injected state, not a supported natural path. Source-condition identification is complete; natural path/test identity remains UNKNOWN, not an assertion that no such path exists.
 - R3 status: #454 delivery-guard/disposition omissions and native output omissions reported; current revision reproduction NOT_RUN; default vs opted-in output should be judged by their separate contracts.
 
 <details>
@@ -1277,12 +1280,12 @@ not a reason to invent a test or keep an unlimited investigation open.
 
 | Existing record | First reuse/map step | Finite deliverable and exit; current status |
 | --- | --- | --- |
-| [T03](#evidence-t03): primary connection count | Inspect the listed immediate zero-target controls and SQL trace fixtures. Their sibling `forbid` sentinel does not prove no primary connection, and a zero query trace is not a zero connection count. | Name an existing primary-connect spy node with exact assertion, or explicitly record UNKNOWN and propose one bounded connection-count oracle for later approval. No new connection probe in this documentation round. PENDING. |
-| [T06](#evidence-t06): equal-rank order/single-hop | Reuse listed `TestTopNCap::test_cap_at_top_n` and caller-query controls; check ties and actual SQL edge traversal separately. A top-N count is not tie-order or no-second-hop proof. | Record existing exact tie-order and single-hop node IDs/assertions, or UNKNOWN per missing obligation; decide whether each is required in the accepted support domain. No inferred product defect. PENDING. |
+| [T03](#evidence-t03): primary connection count | Inspect the listed immediate zero-target controls and SQL trace fixtures. Their sibling `forbid` sentinel does not prove no primary connection, and a zero query trace is not a zero connection count. | Static audit completed for the selected `no-path`/`deleted` nodes: only sibling registry/helper forbid sentinels are installed; neither counts primary connections. Resolver source returns before connect, but dedicated connection-count node remains UNKNOWN. Proposed later oracle: after fixture database setup, observe primary connection entry for each selected no-path input and require zero while preserving the exact diagnostic and empty result. No new test or experiment; runtime/support disposition PENDING. |
+| [T06](#evidence-t06): equal-rank order/single-hop | Reuse listed `TestTopNCap::test_cap_at_top_n` and caller-query controls; check ties and actual SQL edge traversal separately. A top-N count is not tie-order or no-second-hop proof. | Selected-node/source static audit completed in T06: top-N test asserts length only; query is direct-edge and has no ORDER BY, ranking has no explicit tie key. Dedicated tie-order/extra-hop nodes remain UNKNOWN. Maintainer decides tie-order promise and required rejection oracle; no product defect or runtime pass inferred. PENDING decision. |
 | [T12](#evidence-t12): process/fork/shared-use | Keep executed three warm-input cases separate. Reuse installed-capture closed/foreign-thread cases already indexed; serial foreign-thread refusal/reuse does not qualify fork or simultaneous shared use. | Explicitly accept unsupported process/fork/shared-use scope, or identify one supported scenario and exact existing node/oracle. Fork/shared-use runtime evidence UNKNOWN; no new concurrency experiment pending domain decision. PENDING. |
 | [T14](#evidence-t14): recovery | Reuse controlled PENDING compatibility and new-host identity controls; neither is HOLD resume. Preserve existing no-cross-repository-HOLD limited contract. | Maintainer records the original recovery obligation's not-applicable/unsupported disposition and rationale at the fixed document commit. Do not add fake recovery tests or silently delete the obligation. PENDING. |
 | [T19](#evidence-t19): identity/read/FD assertions | Reuse listed process-control, close, identity and post-cleanup-reader controls; annotate each actual assertion (type/message, object identity, payload/file presence, formal reread or descriptor count). | Static assertion matrix completed in T19 at the fixed source; runtime remains NOT_RUN and support acceptance PENDING. Descriptor-count assertions are absent in the selected nodes. Close-after-success faults cannot prove failed-close cleanup. Reuse the mapped identity/read controls; decide whether one bounded FD oracle is required before any additional test. |
-| [T20](#evidence-t20): natural not_run | Reuse explicitly controlled omitted-dispatch nodes and current source reachability. Separate empty formal consumption from absence of publication and sink health. | Name a supported natural entry/path and exact test, or UNKNOWN plus a maintainer decision on whether synthetic-state coverage is sufficient. Do not make a new product path merely to satisfy a test. PENDING. |
+| [T20](#evidence-t20): natural not_run | Reuse explicitly controlled omitted-dispatch nodes and current source reachability. Separate empty formal consumption from absence of publication and sink health. | Selected fixture/source audit completed in T20: after normal machine return with no axis call, the completion hook can emit not_run; listed controls deliberately suppress dispatch. Natural entry/path/test remains UNKNOWN. Decide whether injected-state consumer evidence suffices or natural reachability is required; do not create a new product path merely for a test. PENDING decision. |
 
 For all six tasks, final decision author and decision link are still UNKNOWN/NONE.
 The [COMMENT review](https://github.com/HouMinXi/forge/pull/493#pullrequestreview-5892176064)
