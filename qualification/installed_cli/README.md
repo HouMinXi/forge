@@ -693,7 +693,23 @@ A source SHA in a build proof is not an
 independently verified Git object. Synthetic binding tests exercise the classifier
 and rejection controls, not real installed-CLI qualification.
 
-There is no runtime or CI integration in this component. A future authorized
-integration would have to run before private runner files are removed and retain
-the original capture status separately. It cannot reconstruct observations for
-previous runs whose private files were destroyed.
+The component does not modify capture runtime. Its narrow stock CI integration
+below runs before private runner files are removed and retains the original
+capture status separately. It cannot reconstruct observations for previous runs
+whose private files were destroyed.
+
+The default-off stock CI capture job now invokes the offline analyzer after the
+controller returns, while private evidence still exists. The analyzer's own
+receipt/cleanup gate remains authoritative before stream reads. An independent
+file publisher validates stable bounded private candidates, the helper exit and
+the separately saved diagnostic shell exit, then emits only `observations.json`
+in a separate artifact. Missing or rejected delivery fails that step; original
+capture failures retain priority in the final gate. Existing capture summaries
+remain independently publishable. Raw streams and candidate bytes are never
+uploaded. This wiring adds no automatic dispatch and changes no capture command,
+startup default, security gate or deadline.
+
+Real probe families outside the supported request subset still yield
+`UNSUPPORTED_EVENT_SHAPE`; this must not be read as COMPLETE or silently relaxed.
+The integration does not establish execution identity, syscall/ACK ordering or
+power-loss durability. All corresponding unassessed fields remain unchanged.
