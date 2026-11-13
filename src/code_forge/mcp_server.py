@@ -2,8 +2,8 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """MCP stdio server exposing forge review tools to IDE clients.
 
-Eight tools: forge_review, forge_gate_check, forge_init, forge_trust,
-forge_resolve_outlet, forge_job_status, forge_server_status, forge_diagnostic_history. Runs as a local subprocess
+Nine tools: forge_review, forge_gate_check, forge_init, forge_trust,
+forge_resolve_outlet, forge_job_status, forge_server_status, forge_diagnostic_history, forge_scope_history. Runs as a local subprocess
 of the IDE via stdio transport.
 
 Workspace resolution (ADR-0006, ADR-0009): the server locates the
@@ -59,6 +59,7 @@ from mcp.types import (
 
 import code_forge
 from code_forge import _mcp_diagnostic_history as diagnostic_history
+from code_forge import _mcp_scope_history as scope_history
 from code_forge._json_depth import check_json_container_depth
 from code_forge.assertion_outcome import (
     AssertionKind,
@@ -173,6 +174,7 @@ _simple_calls_closing = False
 _active_simple_calls: set[asyncio.Task[Any]] = set()
 _mcp_cleanup_task: asyncio.Task[None] | None = None
 _diagnostic_history_access: diagnostic_history.HistoryAccess | None = None
+_scope_history_access: scope_history.HistoryAccess | None = None
 
 
 async def _wait_for_shielded_task(task: asyncio.Future[Any]) -> Any:
@@ -596,6 +598,9 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     global _diagnostic_history_access  # noqa: PLW0603
     _diagnostic_history_access = None
     _diagnostic_history_access = diagnostic_history.configure(os.environ)
+    global _scope_history_access  # noqa: PLW0603
+    _scope_history_access = None
+    _scope_history_access = scope_history.configure(os.environ)
     _install_pdeathsig()
 
     startup_ws = _resolve_workspace()
@@ -1816,6 +1821,35 @@ async def forge_diagnostic_history(ticket: str) -> CallToolResult:
         except diagnostic_history.history.TicketError:
             await anyio.lowlevel.checkpoint_if_cancelled()
             raise ToolError("historical diagnostic unavailable") from None
+        await anyio.lowlevel.checkpoint()
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(result, sort_keys=True))],
+            structuredContent=result,
+        )
+    finally:
+        if current is not None:
+            _active_simple_calls.discard(current)
+
+
+@mcp.tool(
+    name="forge_scope_history",
+    description="Read one explicitly named historical query-scope ticket from server-authorized private storage. Not current review or clean credit; independent of job history.",
+    annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True),
+)
+async def forge_scope_history(ticket: str) -> CallToolResult:
+    """Own and drain the read even when the request is cancelled or server shuts down."""
+    if _shutting_down or _simple_calls_closing:
+        raise asyncio.CancelledError
+    current = asyncio.current_task()
+    if current is not None:
+        _active_simple_calls.add(current)
+    try:
+        task = asyncio.create_task(asyncio.to_thread(scope_history.read, _scope_history_access, ticket))
+        try:
+            result = await _wait_for_shielded_task(task)
+        except scope_history.history.TicketError:
+            await anyio.lowlevel.checkpoint_if_cancelled()
+            raise ToolError("historical query scope unavailable") from None
         await anyio.lowlevel.checkpoint()
         return CallToolResult(
             content=[TextContent(type="text", text=json.dumps(result, sort_keys=True))],

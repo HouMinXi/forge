@@ -71,7 +71,7 @@ def _no_gate_yaml_outlet():
 
 def test_tool_list_contains_seven_tools():
     tools = mcp._tool_manager._tools
-    assert len(tools) == 8
+    assert len(tools) == 9
     assert set(tools.keys()) == {
         "forge_review",
         "forge_gate_check",
@@ -81,6 +81,7 @@ def test_tool_list_contains_seven_tools():
         "forge_job_status",
         "forge_server_status",
         "forge_diagnostic_history",
+        "forge_scope_history",
     }
 
 
