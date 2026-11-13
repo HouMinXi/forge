@@ -280,6 +280,8 @@ def resolve_changed_symbols(
             if len({node[2] for node in nodes}) > 1:
                 raise GraphIdentityError("ambiguous graph file identity; rebuild the graph")
             for name, qualified_name, node_file in nodes:
+                if not isinstance(name, str) or not isinstance(qualified_name, str):
+                    raise GraphIdentityError("invalid changed-symbol text fields")
                 if _is_unnamed(name):
                     continue
                 results.append(
@@ -331,6 +333,28 @@ def find_cross_repo_callers(
     ]
 
 
+def _checked_caller_row(cursor: sqlite3.Cursor, row: tuple) -> tuple:
+    """Validate only rows consumed by the shared liveness helper.
+
+    SQLite affinity does not guarantee Python value types. Keep this adapter
+    local: malformed cross-repo graph data is unavailable, while other users
+    of the shared helper retain their existing behavior.
+    """
+    columns = tuple(column[0] for column in cursor.description)
+    if columns == ("source_qualified",):
+        if not isinstance(row[0], str) or not row[0]:
+            raise GraphIdentityError("invalid caller qualified name")
+    elif columns == ("file_path", "line_start"):
+        path, line = row
+        if not isinstance(path, str) or not path:
+            raise GraphIdentityError("invalid caller file path")
+        if line is not None and (type(line) is not int or line < 0):
+            raise GraphIdentityError("invalid caller source line")
+    else:
+        raise GraphIdentityError("unsupported caller query projection")
+    return row
+
+
 def _find_cross_repo_caller_groups(
     sibling_db: str,
     changed: list[dict],
@@ -347,6 +371,7 @@ def _find_cross_repo_caller_groups(
     try:
         cursor = conn.cursor()
         roots = _graph_roots(cursor, repo_root) if changed else ()
+        cursor.row_factory = _checked_caller_row
         for sym in changed:
             name = sym["name"]
             module_name = sym["module"]
