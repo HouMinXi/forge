@@ -168,6 +168,112 @@ hashes without rerunning. All other node expansions below remain **NOT_RUN** in
 this local evidence pass. Passing automatic checks on PR #493 is separate CI
 information, not a substitute for these clause-specific oracles or G12/G13.
 
+### Safe review index for the already reported executions
+
+This narrowly responds to the [14:56 UTC discussion](https://github.com/HouMinXi/forge/issues/441#issuecomment-6856599660).
+It is a transcription and digest check of retained receipts/logs, **not a new
+execution** or an external reviewer's independent runtime verification. Product
+and tests remain `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`; the report started
+at document `5fc7c78bef68658f37c5aa93295dad963aa3c10c`, was incorporated at
+`91c8af79cc098a11276ec1636c693fae6acccf27`, and T19's static audit is at
+`e79cf400696f47452973d0089836b2dfbef9d96e`. None is a final acceptance revision. Before publishing this index, main advanced
+to `fa4d549be6628a30bbf7fd7a5210d23a4522f1da` via #494: the compared delta adds
+`qualification/invocation/T34-PROCESS-RECOVERY.md` and
+`tests/test_invocation_t34_process_recovery.py`, and updates the public test identity
+manifest. It does not change the fixed diagnostic source/test files above. The
+reported evidence is **not rebased or relabelled** to that newer main, and #494's
+invocation-lifecycle evidence is not imported into this slice.
+
+The commands below preserve the recorded arguments/environment but substitute
+`PY314`, `SOURCE`, `PROBE` and `MODULE` for private absolute paths. The first
+command uses the standalone CPython 3.14.0 build; pytest uses the repaired 3.14.0
+venv described above. The probe/module remain local artifacts, so the probe
+command alone is **not a publicly self-contained reproducer**. No raw log,
+receipt, private path, generated ticket identifier or invented download link is
+published. Only the selected assertion text and verified original-log digests
+are included; these digests do not make the local files independently retrievable.
+
+```sh
+"$PY314" -I -B "$PROBE" "$MODULE"
+cd "$SOURCE"
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+  "$PY314" -B -m pytest -p pytest_asyncio.plugin -p no:cacheprovider -q \
+  tests/test_cross_repo_capture.py::test_changed_input_refuses_before_cache_sql_error_clear_or_publication
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+  "$PY314" -B -m pytest -p pytest_asyncio.plugin -p no:cacheprovider -q \
+  tests/test_diagnostic_completion.py::test_ticket_replacement_does_not_rebind_cli_expected
+```
+
+- Probe fixture: a real first record and a second-sequence link followed by a
+  verification-read OSError. The false-success replacement fails at
+  `AssertionError: ('unexpected_success_status', 'published')`; baseline/restored
+  exit 0. This is a library probe, not a committed test or product defect.
+- Admission fixture: real SQLite finding seeds a warm cache; exact diff, lexical
+  path or canonical target then changes. All three listed parameters fail at
+  `tests/test_cross_repo_capture.py:168`, `assert runner.run(diff, root) == []`,
+  because the omitted guard returns the previous nonempty finding. Log summaries
+  are 3 passed / 3 failed / 3 passed. Later assertions get no separate RED credit.
+- Caller fixture: controlled-CI host, valid foreign historical ticket substitution,
+  retained original publication/expected tuple. The omitted read fails at
+  `tests/test_diagnostic_completion.py:319`, the recorded-read tuple assertion
+  with actual `reads == []`. Summaries are 1 passed / 1 failed / 1 passed. This
+  does not qualify native gate, general authentication or SDK/stdio behavior.
+
+| Retained execution phase | Recorded exit code | Original log SHA256 (verified in this transcription) |
+| --- | --- | --- |
+| UNKNOWN probe: `py314-baseline` | 0 | `0b6d67ce77f42485cc86d7be9af07a0a79086050ee6b1ae60dd872b4fa285600` |
+| UNKNOWN probe: `py314-false-success` | 1 | `1a6765112aea0ad801886bb2cb8cf47ca5003ca3fba74795821f8ed8ce0032d7` |
+| UNKNOWN probe: `py314-restored` | 0 | `0b6d67ce77f42485cc86d7be9af07a0a79086050ee6b1ae60dd872b4fa285600` |
+| Warm admission: `controlled-baseline` | 0 | `8bbc4d00d6a321a31d4bf47956a4d6cc557f5dc6fab20a80411dc519ba2e1419` |
+| Warm admission: `admission-omitted` | 1 | `beb8f2dab30fe0faf954f605c94fc62a7e8b4a375af41dadd1949989e00abc0b` |
+| Warm admission: `restored` | 0 | `71072fac3893e064493feb00efcde52bab79febd5bdf8d1ad5008deaffa54c9c` |
+| Caller reread: `controlled-baseline` | 0 | `ac0988b070cfb8585ee6cce3a7e8654f43da14bf7e316bc0b9277c6ad43db855` |
+| Caller reread: `caller-read-omitted` | 1 | `6ad8fcc24b7329425aac0dd64f8f705c37fbb1702155c02b1cc94f8aff6524ee` |
+| Caller reread: `restored` | 0 | `c952b5c568a02b83362e5cf5a0f46f1c733434977b415fd71a83aa63e7031707` |
+
+The original/restored source hashes are equal in each retained receipt and are
+listed in the preceding supplement; mutation hashes are distinct. Both pytest
+source guards report 1543 checked regular tracked files and zero mismatches.
+These are recorded restoration checks, not a rerun of the tests. The earlier
+missing-`_ctypes` collection failure remains environment BLOCKED_NOT_RUN; its
+repair does not retroactively convert it to a product RED. Raw artifacts and the
+standalone probe are still local: independent retrieval/reproduction is a
+remaining reviewability gap, not silently satisfied by this index.
+
+#### G03–G07 response and next decision
+
+- **G03:** retain only existing limited acceptance. Warm-input refusal does not
+  replace T09/T11's original record/sequence/bytes and independent SQL/publisher
+  oracles. Reuse those mapped controls after final revision/domain adjudication.
+- **G04:** recommend the existing per-entry text/opt-in/history/scope proposals,
+  including separate direct-host no-slot behavior. Each actual acceptance,
+  amendment or deferral must still identify the reviewed document commit and
+  decision source; this response records none. The caller control is only the
+  explicitly reported fixture and node. Fixed source for the applicability claim:
+  [direct-host signature](https://github.com/HouMinXi/forge/blob/7ca557a2d6d56d9c84a810b6c6f1da08861aa7db/src/code_forge/cross_repo.py#L279-L310),
+  [worker no-slot notice](https://github.com/HouMinXi/forge/blob/7ca557a2d6d56d9c84a810b6c6f1da08861aa7db/src/code_forge/cross_repo.py#L592-L616),
+  [MCP review signature/CLI dispatch](https://github.com/HouMinXi/forge/blob/7ca557a2d6d56d9c84a810b6c6f1da08861aa7db/src/code_forge/mcp_server.py#L1520-L1584)
+  and [existing-job status](https://github.com/HouMinXi/forge/blob/7ca557a2d6d56d9c84a810b6c6f1da08861aa7db/src/code_forge/mcp_server.py#L1727-L1800).
+  These are static source locations, not proof of executed transport qualification.
+- **G05:** propose an explicit unsupported/not-applicable disposition for original
+  cross-repository HOLD recovery under the accepted no-HOLD contract. Keep the
+  original obligation visible; do not manufacture a recovery test or mark that
+  disposition accepted without the maintainer's decision.
+- **G06:** preserve existing limited stage-effective/admission acceptance. Only
+  the three warm-input return-value assertions have the reported targeted RED;
+  cold paths, process/fork/shared use and stage discovery remain separate mapped
+  obligations, not additional credit from this sequence.
+- **G07:** retain support-type/budget-limited isolation. Nested values, error-view,
+  returned-container and budget oracles remain in T11/T12/T16; G06 refusal is not
+  evidence of G07 isolation. No new implementation defect is inferred.
+
+The complete local document (not a connector preview) was used to check the six
+finite T03/T06/T12/T14/T19/T20 tasks, stable evidence anchors and parameter lists.
+Only T19's static assertion audit is finished; other tasks and all new contract
+decisions remain explicitly pending. The executor can finish indexing and safe
+transcription, but cannot turn these proposed support/port dispositions into
+maintainer decisions. Original 78-port status remains UNKNOWN.
+
 ### A01/A04/A07, R2: complete obligation inventory and static node expansion
 
 This inventory enumerates every G01–G13, T01–T20 and T18a–f obligation from the
