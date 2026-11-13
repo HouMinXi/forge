@@ -522,6 +522,39 @@ jobs:
           printf 'summary_exit=%s\n' "$summary_code" >> "$GITHUB_OUTPUT"
           if [[ "$code" != 0 ]]; then exit "$code"; fi
           exit "$summary_code"
+      - name: Analyze private diagnostic observations after owned cleanup
+        id: observations
+        if: ${{ !cancelled() && steps.diagnostic.outputs.capture_exit != '' }}
+        timeout-minutes: 2
+        env:
+          CAPTURE_EXIT: ${{ steps.diagnostic.outputs.capture_exit }}
+          SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          exec >/dev/null 2>&1
+          set +x
+          set -euo pipefail
+          umask 077
+          private="$RUNNER_TEMP/forge-stock-cli-capture"
+          exec >"$private/observations.log" 2>&1
+          [[ "$CAPTURE_EXIT" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( CAPTURE_EXIT <= 255 ))
+          helper_code=0
+          /usr/bin/python3 -I -S -B scripts/cli_capture_observations.py \
+            --capture-root "$private/diagnostic" --mode diagnostic --shell-exit "$CAPTURE_EXIT" \
+            --wheel-evidence "$private/installed" --expected-source-sha "$SOURCE_SHA" \
+            >"$private/observations-candidate.json" || helper_code=$?
+          /usr/bin/python3 -I -S -B scripts/cli_capture_observations_publication.py \
+            --candidate "$private/observations-candidate.json" --helper-exit "$helper_code" \
+            --shell-exit "$CAPTURE_EXIT" \
+            --destination "$RUNNER_TEMP/forge-stock-cli-capture-public/observations"
+      - name: Publish only independently validated offline observations
+        if: ${{ !cancelled() && steps.observations.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: stock-cli-offline-observations-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/forge-stock-cli-capture-public/observations/observations.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Validate fixed public envelopes
         id: publication
         if: ${{ always() && steps.prepare.outcome == 'success' }}
@@ -554,6 +587,7 @@ jobs:
           CAPABILITY: ${{ steps.capability.outcome }}
           WHEEL: ${{ steps.wheel.outcome }}
           PUBLICATION: ${{ steps.publication.outcome }}
+          OBSERVATIONS: ${{ steps.observations.outcome }}
           BASELINE_EXIT: ${{ steps.baseline.outputs.capture_exit }}
           DIAGNOSTIC_EXIT: ${{ steps.diagnostic.outputs.capture_exit }}
           BASELINE_SUMMARY: ${{ steps.baseline.outputs.summary_exit }}
@@ -570,6 +604,6 @@ jobs:
             fi
           done
           [[ "$PREPARE" == success && "$CAPABILITY" == success && "$WHEEL" == success ]]
-          [[ "$PUBLICATION" == success ]]
+          [[ "$PUBLICATION" == success && "$OBSERVATIONS" == success ]]
           [[ "$BASELINE_EXIT" == 0 && "$DIAGNOSTIC_EXIT" == 0 ]]
           [[ "$BASELINE_SUMMARY" == 0 && "$DIAGNOSTIC_SUMMARY" == 0 ]]
