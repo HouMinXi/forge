@@ -622,7 +622,11 @@ Safe-copy SHA256: `c952b5c568a02b83362e5cf5a0f46f1c733434977b415fd71a83aa63e7031
 <details>
 <summary>Unchanged standalone probe source (reported library evidence only)</summary>
 
-```python
+This is an archival source transcript, displayed as text to preserve the recorded
+bytes rather than reformatting historical evidence. Its SHA256 is the probe hash
+listed above; it is not a maintained executable example.
+
+```text
 import dataclasses, hashlib, importlib.util, json, os, pathlib, platform, sys, tempfile
 source = pathlib.Path(sys.argv[1]).resolve()
 spec = importlib.util.spec_from_file_location('probe_records', source)
