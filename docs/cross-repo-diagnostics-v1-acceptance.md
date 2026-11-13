@@ -33,17 +33,18 @@ workflow, test or issue checkbox changes in this revision.
   versioned clause mapping and independent review/maintainer approval. Missing
   originals must neither indefinitely block that explicit replacement decision
   nor silently remove the original acceptance obligations.
-- This pass did not run tests, negative controls, provider operations, installed
+- The initial static inventory pass did not run tests, negative controls, provider operations, installed
   wheels or CI. Current-revision command, runtime/dependency lock, filesystem,
   provider availability, exit code, raw log and log digest are **NOT_RUN / not
-  collected** for every runtime row below. Prior reports do not fill those cells.
+  collected** for inventory rows unless explicitly superseded by the bounded
+  fixed-head supplement below. Prior reports do not fill those cells.
   Python 3.14 is the intended test contract; pin its actual patch version and
   dependencies when R0 is executed. Source-tree and installed-wheel evidence must
   remain separate.
 - Status vocabulary: **contract accepted** applies only to the existing limited
   G03/G05/G06/G07 registrations; **merged implementation** describes source;
   **reported test** describes a cited author's result; **current reverified** needs
-  new fixed-revision execution and is not assigned here; **decision pending** and
+  new fixed-revision execution and is assigned only to the bounded cases below; **decision pending** and
   **unsupported** are not passes. Counts, collection, overlapping selections and
   CI checks are not accumulated into coverage or a completion percentage.
 
@@ -58,6 +59,34 @@ workflow, test or issue checkbox changes in this revision.
 | Scope live: runner `_emit_scope_summary` → `DiagnosticCapture.present_scope` → query-scope publisher/reader | Capture issues context before writing and freezes actual native counts independently of file contents; decoded facts are compared before formatting. | Publication, read and text delivery are separate. Storage failure falls back to this invocation's real summary, not empty success. Before enumeration, failed enumeration, known empty scope and completed zero-caller queries differ; no receipt means unknown, not zero. | **Independent counts contract**, not diagnostic-v1 expansion or proof of full coverage/impact. Duplicate registrations count occurrences; warm cache neither queries nor re-exports. [Scope contract](cross-repo-query-scope-v1.md). |
 | Scope historical CLI/MCP: `cli.main` scope-history branch → `_scope_history.read_ticket`; `forge_scope_history` → `_mcp_scope_history.configure/read` | CLI selects caller-owned ticket; MCP additionally binds independently configured server roots. Basename is selector, not independent identity/authentication. | Historical counts projection only, `current_run_credit: false`; ordinary errors bounded, cancellation propagated/drained. Scope and diagnostic configurations and formats cannot authorize each other. | **Separate #480/#489 history contract**, not current query or gate credit. [Scope tickets](scope-history-tickets-v1.md), [MCP scope](mcp-scope-history.md). |
 
+#### Entry decision register (G04/G09; no implied approval)
+
+This register responds to the [formal COMMENT review](https://github.com/HouMinXi/forge/pull/493#pullrequestreview-5892176064)
+and [#441 execution direction](https://github.com/HouMinXi/forge/issues/441#issuecomment-6854967873).
+COMMENT is not APPROVE, contract acceptance, merge authorization or independent
+G0 qualification. Every entry below is **PENDING**. “Continue” does not accept all
+contracts. Applicable product/test revision is `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`;
+the reviewed starting document is `5fc7c78bef68658f37c5aa93295dad963aa3c10c`, with this
+follow-up proposed in [#493](https://github.com/HouMinXi/forge/pull/493). A real
+decision must bind its exact reviewed document commit, decision author, rationale
+and actual decision permalink; none is invented here.
+
+| Existing entry/subentry | Proposed decision and reason | Decision / applicable revisions / decision-maker / decision link |
+| --- | --- | --- |
+| Default live CLI | Accept attributed text consumption, not a mandatory locator/result return; production publication/read/delivery remain distinct. | PENDING; product as above, final document revision PENDING; actual decision-maker UNKNOWN; decision link NONE. Review request: formal COMMENT above. |
+| Immediate/background live MCP | Same default CLI-child text contract; `forge_review` builds its own CLI arguments and has no `diagnostic_ticket_directory` or `--diagnostic-ticket-dir` parameter. Background `forge_job_status` reports the same job output, not a new invocation or slot. Do not infer CLI opt-in handoff from MCP historical tools. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
+| Direct `run_cross_repo` without completion slot | `_diagnostic_completion=None` is supported by source. With no ticket directory there is no slot/notice guarantee. With a ticket directory but no slot, the primary worker reports ticket export outcomes directly; this is not the owning CLI thread's post-completion original-tuple reread. Preserve this distinct proposal, rather than adding a uniform result API. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. Source: `cross_repo.py` primary-worker no-slot notice branch; tests/qualification beyond static source are UNKNOWN unless explicitly mapped. |
+| CLI diagnostic-ticket opt-in | Accept #491's original tuple handoff only when CLI creates the slot for the explicitly supplied directory; do not promote worker completion to whole-CLI completion. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
+| CLI diagnostic history | Accept explicitly caller-trusted historical selection, never current-run authority. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
+| MCP diagnostic history | Accept default-off server-root-bound historical reader with its bounded cancellation behavior; not live CLI opt-in. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
+| Scope live | Accept independently captured counts/text only, not impact coverage or diagnostic-v1 extension. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
+| Scope historical CLI/MCP | Accept separate historical count projections with no current-run credit. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
+
+The subentries refine the existing six-family table, not a new workflow or new
+public API. The real review links above establish requested adjudication, **not**
+a positive decision. G03/G05/G06/G07 retain only their previously registered
+limited contract acceptance.
+
 For G04/T14 retain the existing no-cross-repository-HOLD contract and
 single-repository axis exclusion. A new host identity does not prove resumed
 review. For G08/G10/G11 keep the bounded Linux/qualified-filesystem domain:
@@ -65,6 +94,79 @@ ext4 eligibility is not evidence it ran on this cloud host. Same-UID attacks,
 file-generation/ABA continuity, global atomic capture, graph freshness, power-loss
 durability, hard I/O deadlines, automatic global cleanup and universal cleanup are not silently added
 closing conditions. Expanding them requires a separate design.
+
+### Subsequent bounded source-tree verification (local evidence; no gate approval)
+
+The following experiments occurred after the initial documentation-only draft.
+They do not change contract acceptance, recover the original 78-port, or execute
+other inventory rows. Product/test source remains `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`;
+the initial document proposal is PR #493 at `5fc7c78bef68658f37c5aa93295dad963aa3c10c`.
+This supplement still needs a final reviewed documentation revision. Raw local
+receipts/logs are retained but not publicly attached; hashes identify retained
+artifacts, not a claim that a reader can retrieve them from this PR.
+
+| Evidence and type | Fixed environment and result | Independent oracle and precise limit |
+| --- | --- | --- |
+| G10/T15/T18e: `unknown_no_fallback.py`, **new standalone probe, not a committed pytest node** | Official-source CPython 3.14.0, standard library, Linux tmpfs. Original GREEN / one false-success replacement TARGET RED / byte-restored GREEN; exits 0/1/0. | Real link followed by injected verification-read OSError: UNKNOWN/no locator, one link, only current-sequence verification, prior bytes/inode unchanged, prior formal read still valid, no owned staging residue. Replacement sets the unverifiable-commit branch to published/candidate/None; RED is `unexpected_success_status=published`. This is a replacement, not guard omission or an unmodified product defect. Library branch only. |
+| G06/T12: existing `tests/test_cross_repo_capture.py::test_changed_input_refuses_before_cache_sql_error_clear_or_publication[exact-diff]` | CPython 3.14.0, SQLite 3.50.4, provider 2.4.0, pytest 9.2.0. Collected; GREEN / TARGET RED / restored GREEN. | After real initial SQLite finding populates cache, exact diff changes. Omitting admission returns the old nonempty finding; second-call refusal assertion detects it. |
+| Same existing function `[lexical-root]` | Same fixed environment, collected; GREEN / TARGET RED / restored GREEN. | Same canonical root but different literal path is rejected before cached return. |
+| Same existing function `[canonical-root]` | Same fixed environment, collected; GREEN / TARGET RED / restored GREEN. | Same literal alias resolves to another root; old nonempty cache must not be returned. |
+| G04/G09/T08: existing `tests/test_diagnostic_completion.py::test_ticket_replacement_does_not_rebind_cli_expected` | Same Python 3.14.0 environment; collected; GREEN / target caller-read omission RED / byte-restored GREEN, exits 0/1/0. | A valid foreign historical ticket replaces the exported bytes, but the actual calling thread must still read the original retained publication/context after the completion event. Omitting that read produces `reads == []` at the exact tuple assertion. Controlled-CI host fixture, not native gate or SDK/stdio qualification. |
+
+The three pytest cases ran together with exits **0/1/0**, respectively 3 passed,
+3 failed at the intended second-call return assertion, and 3 passed. The isolated
+source archive changed only the unique runner `admit` condition to `if False:`;
+all 1543 regular tracked source files matched the fixed Git blob identities after
+restoration. The test/oracle was unchanged. These are **warm-cache** controls, not
+cold-path, whole-host or installed-wheel qualification. Mutants stop at the first
+return-value assertion: later SQL/error/publication assertions do not independently
+receive RED credit. SQL traces are not a zero-connection oracle; record/attempt
+counts are not an independent publisher-call count.
+
+The caller-read case is a separate one-test sequence. Its oracle records actual
+calling-thread reads and delegates the real formal reader; replacement-ticket
+verification occurs on the worker. Omitting the single `notices()` read is not
+a test of hostile ticket authentication or all identity validation. The production
+file and unchanged test were byte-verified after restoration.
+
+Environment preparation initially failed collection with exit 4 because `_ctypes`
+was absent. That log is retained as **environment BLOCKED_NOT_RUN**, not product
+RED. Official libffi 3.4.6 was built into the private runtime prefix; collection
+then found all three exact nodes, with no skipped cases. SQLite and ctypes imports
+and real SQLite execution succeed. The resolved environment has 92 compatible
+packages, including project core/dev/MCP/vertex requirements; this does not claim
+all optional platform modules, tools, external services or full-suite prerequisites.
+An earlier Python 3.12 probe remains exploration only and is not part of the 3.14
+sequence. No system security setting, production branch or remote implementation
+was changed.
+
+Reproduction uses the recorded private CPython executable (`PY314`) and the exact
+isolated fixed source (`SOURCE`), not arbitrary current main:
+
+```sh
+cd "$SOURCE"
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+  "$PY314" -B -m pytest -p pytest_asyncio.plugin -p no:cacheprovider -q \
+  tests/test_cross_repo_capture.py::test_changed_input_refuses_before_cache_sql_error_clear_or_publication
+```
+
+The local receipts record the absolute command and environment; the retained
+pytest control harnesses enforce a 90-second cap per phase. The standalone probe used `PY314 -I -B unknown_no_fallback.py <isolated-module>`
+with a 30-second cap. Retained SHA256 bindings:
+
+- Standalone probe: `1be6821c0eddbd2719d2b572635ba1fff16941189eea2aa910871029c3213248`;
+  receipt: `4acde965086c4c4d414b04c401d652d0e33bb527609a38d3f9774fda8f7b7163`.
+- Caller-read receipt: `78e5993b3c8da5b95a6d635f1cf7d1c56e6a17cf9c195e6eb34d5f17e8678d31`;
+  source before/after: `43fb554ffe61876bbb50e6e9e631c35acd98a1e488b42d40db464128fce9a308`.
+- Three-node receipt: `fb679dc42d8e10bdae57b6e09d3404665abd098411d8eb0ac7c18005bf9c54df`;
+  environment freeze: `1390eb3162f3ace80137e08fc5cf46ee2d1968a058679db640a79d8df841258e`.
+- Admission source before/after: `556a329c909a4f14cc7e5b79ae7d1f5c479b8d6e78f48935ece209faa0de3a0f`;
+  unchanged test file: `1239484e7d98d4c2a10f15ed88fcde01786b531fd29da9a51e8f05fdf532afc1`.
+
+Independent review checked phase logs, target failure locations and restoration
+hashes without rerunning. All other node expansions below remain **NOT_RUN** in
+this local evidence pass. Passing automatic checks on PR #493 is separate CI
+information, not a substitute for these clause-specific oracles or G12/G13.
 
 ### A01/A04/A07, R2: complete obligation inventory and static node expansion
 
@@ -78,37 +180,49 @@ T map below remains historical evidence, not the authority for current runtime
 status.
 
 For **every row and every expanded node** in this section:
-- Product/test source is the fixed head in R0; runtime status is **NOT_RUN**.
+- Product/test source is the fixed head in R0; runtime status is **NOT_RUN**, except
+  the exact cases explicitly executed in the bounded supplement above.
 - Static node existence was checked in that head's manifest and Python AST only;
-  fresh collection, runtime/dependency/provider/filesystem admission remain open.
+  fresh collection, runtime/dependency/provider/filesystem admission remain open
+  except for the exact environments and cases in the bounded supplement above.
 - Proposed future selector command: the pinned Python 3.14 interpreter with
   `PYTHONPATH=src PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -p pytest_asyncio.plugin -p no:cacheprovider -q '<exact nodeid>'`.
   This is a reproduction template, not a command executed here or permission to
   run it. Resolve project dependency pins and platform support before use.
-- Current command exit code, stdout/stderr, log path/digest and negative-control
-  restoration digest are **not produced**. Historical reports cited below cannot
+- Except for the exact cases in the bounded supplement above, current command exit
+  code, stdout/stderr, log path/digest and negative-control restoration digest are **not produced**. Historical reports cited below cannot
   fill these cells. Source-tree and installed-wheel slots remain separate.
 - Each negative-control entry names known report scope or missing work. A test
   containing fault injection is not evidence that removal of its guard has been
   run; all new fault scripts require a row-specific independent semantic oracle.
 
+Each existing T label below is a stable evidence-record anchor. Its obligation,
+source, independent oracle, supported gap, R3 status and exact parameter list form
+that record; future updates bind individual parameter nodes, not the entire group.
+Fixed product/test revision and initial environment disposition are inherited from
+R0, while the bounded supplement explicitly overrides only four named pytest nodes
+and one separately labelled probe. Per-node command, exit, log/digest and restored
+hash are UNKNOWN/NOT_RUN where no executed record is cited. A proposed command is
+not a recorded execution. The G-to-record links below map executable subclauses;
+contract-only decisions retain the entry decision register or explicit PENDING.
+
 #### G01–G13: clause decisions, source and unresolved evidence
 
-| Gate | All required subclauses and present source | Exact test references / oracle / remaining status |
-| --- | --- | --- |
-| G01 | One current self-contained contract; replace conflicting v4 origin/State-save/eager-snapshot/HOLD/root proposals; explicit four-P1 and support dispositions. `cross-repo-diagnostics-v1.md`, entry table and original comments. | **Decision pending**. T08–T12/T14/T18/T19 implement parts, but source existence/merge is not approval. Record accepted replacements and preserve original obligations or named unsupported dispositions; no runtime G0 toggle. |
-| G02 | Freeze nine exact fields, types/version, five legal state/diagnostic combinations, exact UTF-8/diff, unknown/missing/duplicate/nonfinite rejection, byte/depth/string/sequence/attempt limits and opaque repository alias/privacy. `_advisory_diagnostics` codec plus capture budgets. | T16 expanded families cover baseline syntax/context; T15/T18 cover storage separately. **Merged source; formal freeze pending.** Decoder field omissions and valid-limit boundaries need current logs; neither UUID nor digest proves authorization. |
-| G03 | Original observation separated from delivery; actual/cache metadata; same-input hit reuses sequence/artifact/publication/error view, no SQL/republication/credit; uncached early repeat is actual. Capture Record and runner final cache. | **Limited contract accepted**, T09/T11/T12 runtime NOT_RUN here. Original object/context, SQL/publish counters and bytes are oracles; do not infer state from empty findings. |
-| G04 | Per-entry issuance before runner/cache, repository/axis/sequence binding, forwarding to publisher/formal reader, explicit caller success/failure/locator and independent expected; same MCP child retains identity; supported new host versus recovery. Host UUID, capture, CLI completion and MCP child. | Entry table plus T08/T10/T14/T20 and history catalogue. **Per-entry decision pending**; #491 is real opt-in handoff, default text-only proposal remains a decision. Do not force a uniform public return or invent authenticated cross-restart state. |
-| G05 | Preserve cross-repo PENDING→FAIL/no HOLD; single-repo HOLD has no axis, actual recovery not fabricated. `run_cross_repo`; CLI dispatch/HOLD routing. | **Limited contract accepted**; T14 includes controlled compatibility node and new-host evidence, not live recovery. Explicit original T14 not-applicable disposition still required. |
-| G06 | Admission before cache/error clear/SQL/publication; original installed capture/identity/stage-store/process/thread, lexical/canonical root/exact diff; stage-effective actual first use, untouched stages lazy, same-instance retain/new-host rediscover; no repeated fallback native work on budget error. `DiagnosticCapture.admit`/stage methods, runner. | **Limited contract accepted**; T07/T11/T12 exact nodes/counters. Current whole set NOT_RUN; fork/process and simultaneous-use qualification not inferred from foreign-thread tests; no atomic/freshness guarantee. |
-| G07 | Retain original observation/findings/errors; isolate returned containers and stage dictionaries; old uncached errors do not overwrite cached view; supported-type/budget/encoding failure unavailable, never successful empty history. Capture snapshot/cache. | **Limited contract accepted**; T11/T12 plus bounded/history nodes in their expansions. Arbitrary nested objects are unsupported; current mutation/log coverage not established by frozen types. |
-| G08 | Primary persistent root outside every temporary root/alias, namespace ownership, canonical/no-follow/regular file, qualified FS/ACL/path budgets; same-key conflict and concurrent distinct executions; inode-reuse limitations. Storage binder/publisher/reader. | T15–T18d/e and storage-support catalogue. **Decision pending** on exact support/alias/budget/overlap claims. Source/metadata checks are not generation continuity or same-UID authentication; library overlap is not whole-host concurrency. |
-| G09 | Actual publisher→formal reader→consumer, independent expected and success/failure result; no logger-as-durability proof, no latest scan; publication/read/empty/nonempty delivery separated. Capture.present, default output, opt-in completion, historical readers. | Entry table; T08/T15/T20; **Decision pending**. A02 empty not_run reachability and A03 per-entry acceptance stay explicit. All channels failing is unconfirmed/not delivered, never caller success. |
-| G10 | Confirmed published/not_published/unknown; verify commit identity/content, no locator for unknown, no overwrite/automatic retry/old fallback; staging, commit, cleanup and return distinct. PublicationResult and capture attempt ledger. | T15/T17/T18e/T19 exact fault/unknown nodes. **Decision pending**; current negative-control run not done. No journal/exactly-once/power-loss promise. |
-| G11 | Pre/post commit and primary/sibling/receipt/replay/setup/read/output/callback exits; preserve primary/control exception identity; bounded owned cleanup; event/join/cwd/capture/artifact/caller facts separate. Owned cwd scope, capture close, completion, deferred signal flow. | T18a–f/T19/T20. #452 fixes callback masking only; **Decision pending** on remaining asynchronous/permission/source-lock/unregistered-allocation limits, not a demand to change shared lifecycle. |
-| G12 | Original-port disposition, real file/node identity including params, independent oracle, exact fault location/class, baseline GREEN/semantic RED/byte-restored GREEN, public identity and safe raw logs; no overlap-count credit. | This static inventory and original-port **UNKNOWN** are inputs only. Collection and all current execution fields NOT_RUN. No claim to recovered or equivalent 78-port; decide versioned replacement rather than infinite wait or silent deletion. |
-| G13 | One final product/test/document revision, independent G0 plus explicit maintainer acceptance then G1; retained unresolved domains and draft PR disposition; no retrospective grant from CI/merge. | **Decision pending**, no executable substitute. A08/R4 and #443/#444 unique-net-diff disposition still required; parent #33 remains open. |
+| Gate | All required subclauses and present source | Exact test references / oracle / remaining status | Stable evidence records for executable subclauses |
+| --- | --- | --- | --- |
+| G01 | One current self-contained contract; replace conflicting v4 origin/State-save/eager-snapshot/HOLD/root proposals; explicit four-P1 and support dispositions. `cross-repo-diagnostics-v1.md`, entry table and original comments. | **Decision pending**. T08–T12/T14/T18/T19 implement parts, but source existence/merge is not approval. Record accepted replacements and preserve original obligations or named unsupported dispositions; no runtime G0 toggle. | Contract decisions: entry decision register; [T14](#evidence-t14), [T18](#evidence-t18), [T19](#evidence-t19) for support dispositions. |
+| G02 | Freeze nine exact fields, types/version, five legal state/diagnostic combinations, exact UTF-8/diff, unknown/missing/duplicate/nonfinite rejection, byte/depth/string/sequence/attempt limits and opaque repository alias/privacy. `_advisory_diagnostics` codec plus capture budgets. | T16 expanded families cover baseline syntax/context; T15/T18 cover storage separately. **Merged source; formal freeze pending.** Decoder field omissions and valid-limit boundaries need current logs; neither UUID nor digest proves authorization. | Schema/context/limits: [T16](#evidence-t16); storage budget: [T15](#evidence-t15), [T18d](#evidence-t18d). |
+| G03 | Original observation separated from delivery; actual/cache metadata; same-input hit reuses sequence/artifact/publication/error view, no SQL/republication/credit; uncached early repeat is actual. Capture Record and runner final cache. | **Limited contract accepted**, T09/T11 remain NOT_RUN; T12 has only the three bounded executions above. Original object/context, SQL/publish counters and bytes are oracles; do not infer state from empty findings. | Observation/delivery and cache: [T09](#evidence-t09), [T11](#evidence-t11), [T12](#evidence-t12). |
+| G04 | Per-entry issuance before runner/cache, repository/axis/sequence binding, forwarding to publisher/formal reader, explicit caller success/failure/locator and independent expected; same MCP child retains identity; supported new host versus recovery. Host UUID, capture, CLI completion and MCP child. | Entry table plus T08/T10/T14/T20 and history catalogue. **Per-entry decision pending**; #491 is real opt-in handoff, default text-only proposal remains a decision. Do not force a uniform public return or invent authenticated cross-restart state. | Issuance/forwarding/caller: [T08](#evidence-t08), [T10](#evidence-t10); recovery: [T14](#evidence-t14); entry decisions above. |
+| G05 | Preserve cross-repo PENDING→FAIL/no HOLD; single-repo HOLD has no axis, actual recovery not fabricated. `run_cross_repo`; CLI dispatch/HOLD routing. | **Limited contract accepted**; T14 includes controlled compatibility node and new-host evidence, not live recovery. Explicit original T14 not-applicable disposition still required. | Pending/HOLD/axis support: [T14](#evidence-t14). |
+| G06 | Admission before cache/error clear/SQL/publication; original installed capture/identity/stage-store/process/thread, lexical/canonical root/exact diff; stage-effective actual first use, untouched stages lazy, same-instance retain/new-host rediscover; no repeated fallback native work on budget error. `DiagnosticCapture.admit`/stage methods, runner. | **Limited contract accepted**; T07/T11/T12 exact nodes/counters. Only the three T12 changed-input cases are executed above; the remaining set is NOT_RUN. Fork/process and simultaneous-use qualification not inferred from foreign-thread tests; no atomic/freshness guarantee. | Discovery stage: [T07](#evidence-t07); admission/cache/error view: [T11](#evidence-t11), [T12](#evidence-t12). |
+| G07 | Retain original observation/findings/errors; isolate returned containers and stage dictionaries; old uncached errors do not overwrite cached view; supported-type/budget/encoding failure unavailable, never successful empty history. Capture snapshot/cache. | **Limited contract accepted**; T11/T12 plus bounded/history nodes in their expansions. Arbitrary nested objects are unsupported; current mutation/log coverage not established by frozen types. | Snapshot/cache isolation and unavailable: [T11](#evidence-t11), [T12](#evidence-t12), [T16](#evidence-t16). |
+| G08 | Primary persistent root outside every temporary root/alias, namespace ownership, canonical/no-follow/regular file, qualified FS/ACL/path budgets; same-key conflict and concurrent distinct executions; inode-reuse limitations. Storage binder/publisher/reader. | T15–T18d/e and storage-support catalogue. **Decision pending** on exact support/alias/budget/overlap claims. Source/metadata checks are not generation continuity or same-UID authentication; library overlap is not whole-host concurrency. | Storage/identity/concurrency: [T15](#evidence-t15), [T16](#evidence-t16), [T17](#evidence-t17), [T18d](#evidence-t18d), [T18e](#evidence-t18e). |
+| G09 | Actual publisher→formal reader→consumer, independent expected and success/failure result; no logger-as-durability proof, no latest scan; publication/read/empty/nonempty delivery separated. Capture.present, default output, opt-in completion, historical readers. | Entry table; T08/T15/T20; **Decision pending**. A02 empty not_run reachability and A03 per-entry acceptance stay explicit. All channels failing is unconfirmed/not delivered, never caller success. | Actual formal consumer: [T08](#evidence-t08); delivery/failure: [T20](#evidence-t20); per-entry decision above. |
+| G10 | Confirmed published/not_published/unknown; verify commit identity/content, no locator for unknown, no overwrite/automatic retry/old fallback; staging, commit, cleanup and return distinct. PublicationResult and capture attempt ledger. | T15/T17/T18e/T19 exact fault/unknown nodes. **Decision pending**; Only the bounded standalone false-success replacement was executed; other current controls remain NOT_RUN. No journal/exactly-once/power-loss promise. | Three states/commit: [T15](#evidence-t15), [T18e](#evidence-t18e); conflict: [T17](#evidence-t17); controls: [T19](#evidence-t19). |
+| G11 | Pre/post commit and primary/sibling/receipt/replay/setup/read/output/callback exits; preserve primary/control exception identity; bounded owned cleanup; event/join/cwd/capture/artifact/caller facts separate. Owned cwd scope, capture close, completion, deferred signal flow. | T18a–f/T19/T20. #452 fixes callback masking only; **Decision pending** on remaining asynchronous/permission/source-lock/unregistered-allocation limits, not a demand to change shared lifecycle. | Normal/error/cancel/root/staging/cleanup: [T18a](#evidence-t18a), [T18b](#evidence-t18b), [T18c](#evidence-t18c), [T18d](#evidence-t18d), [T18e](#evidence-t18e), [T18f](#evidence-t18f); control identity [T19](#evidence-t19), delivery [T20](#evidence-t20). |
+| G12 | Original-port disposition, real file/node identity including params, independent oracle, exact fault location/class, baseline GREEN/semantic RED/byte-restored GREEN, public identity and safe raw logs; no overlap-count credit. | This static inventory and original-port **UNKNOWN** are inputs only. Except for the four exact pytest nodes and separate standalone probe above, collection/execution fields remain NOT_RUN. No claim to recovered or equivalent 78-port; decide versioned replacement rather than infinite wait or silent deletion. | All T01–T20 stable records below; their node-specific evidence slots remain separate; original-port replacement decision PENDING. |
+| G13 | One final product/test/document revision, independent G0 plus explicit maintainer acceptance then G1; retained unresolved domains and draft PR disposition; no retrospective grant from CI/merge. | **Decision pending**, no executable substitute. A08/R4 and #443/#444 unique-net-diff disposition still required; parent #33 remains open. | Final same-revision R4 and maintainer decision PENDING; no executable test substitutes for approval. |
 
 #### T01–T20 and T18a–f: every clause, oracle, gap and expanded identity
 
@@ -118,6 +232,8 @@ A function selected by an exact parameter includes only that parameter; any
 remaining missing subclause is written explicitly, never inferred covered by
 more node names. The source assertion/fixture descriptions do not assert that
 all these nodes execute in this environment.
+
+<a id="evidence-t01"></a>
 
 ##### T01
 
@@ -138,6 +254,8 @@ tests/test_cross_repo_persistent_diagnostic.py::test_real_cli_publishes_before_o
 ```
 
 </details>
+
+<a id="evidence-t02"></a>
 
 ##### T02
 
@@ -160,6 +278,8 @@ tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_befor
 
 </details>
 
+<a id="evidence-t03"></a>
+
 ##### T03
 
 - Obligation: No parseable path/deleted added side: primary path prerequisite remains, no primary connection, no_named_targets; no invented target.
@@ -177,6 +297,8 @@ tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_befor
 ```
 
 </details>
+
+<a id="evidence-t04"></a>
 
 ##### T04
 
@@ -206,6 +328,8 @@ tests/test_cross_repo_persistent_diagnostic.py::test_actual_analysis_states_do_n
 
 </details>
 
+<a id="evidence-t05"></a>
+
 ##### T05
 
 - Obligation: Blank diff is not_requested; no graph/discovery/import and no specific warning.
@@ -226,6 +350,8 @@ tests/test_cross_repo_persistent_diagnostic.py::test_actual_analysis_states_do_n
 ```
 
 </details>
+
+<a id="evidence-t06"></a>
 
 ##### T06
 
@@ -248,6 +374,8 @@ tests/test_cross_repo_impact.py::TestTopNCap::test_cap_at_top_n
 ```
 
 </details>
+
+<a id="evidence-t07"></a>
 
 ##### T07
 
@@ -274,16 +402,18 @@ tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_befor
 
 </details>
 
+<a id="evidence-t08"></a>
+
 ##### T08
 
 - Obligation: Real runner to production publisher, persistent file and formal reader; independent host expectation; no hand-built substitute.
 - Actual source: run_cross_repo primary worker; DiagnosticCapture.finish/present; publish_observation/read_observation.
 - Independent oracle / input: Hold context before writing; delegate real publication/read; exact tuples/counts/artifact bytes, marker from strict reader return, real CLI owner thread; native chain checks output/receipts.
 - Remaining gap / supported disposition: Controlled-CI persistent/CLI-handoff fixtures and native docs-only MCP-handler cases are separate domains; native live chain is not SDK/stdio qualification.
-- R3 status: Historical publisher/read-consumer omissions described below and #491; current-revision execution, raw-log recovery and byte-restored replay NOT_RUN.
+- R3 status: The caller ticket-replacement node below now has GREEN/target caller-read omission RED/restored GREEN in the bounded supplement. Other publisher/read-consumer nodes remain NOT_RUN in this pass; historical #491 evidence remains separate.
 
 <details>
-<summary>T08: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T08: exact identities (caller ticket-replacement case executed above; others NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_native_consumer_chain.py::test_native_mcp_cli_diagnostic[FAIL-background]
@@ -293,9 +423,12 @@ tests/test_cross_repo_native_consumer_chain.py::test_native_mcp_cli_diagnostic[P
 tests/test_cross_repo_persistent_diagnostic.py::test_actual_strict_reader_return_controls_cli_text
 tests/test_cross_repo_persistent_diagnostic.py::test_host_publication_strictly_reads_after_temporary_cwds_are_removed
 tests/test_diagnostic_completion.py::test_actual_cli_strict_reader_uses_owner_tuple_on_calling_thread
+tests/test_diagnostic_completion.py::test_ticket_replacement_does_not_rebind_cli_expected
 ```
 
 </details>
+
+<a id="evidence-t09"></a>
 
 ##### T09
 
@@ -315,6 +448,8 @@ tests/test_cross_repo_persistent_diagnostic.py::test_uncached_branch_transitions
 
 </details>
 
+<a id="evidence-t10"></a>
+
 ##### T10
 
 - Obligation: Same source hash/diff in two hosts: fresh execution/repository IDs and namespace; reject old publication under new expectation.
@@ -333,6 +468,8 @@ tests/test_cross_repo_persistent_diagnostic.py::test_new_host_execution_never_re
 ```
 
 </details>
+
+<a id="evidence-t11"></a>
 
 ##### T11
 
@@ -355,16 +492,18 @@ tests/test_cross_repo_persistent_diagnostic.py::test_uncached_branch_transitions
 
 </details>
 
+<a id="evidence-t12"></a>
+
 ##### T12
 
 - Obligation: Refuse changed capture/execution/diff/lexical or canonical root before SQL/error clearing/publication; stage-effective consumed config reused, unconsumed inputs lazy, new capture rediscovery, bounded failure never repeats native operation.
 - Actual source: DiagnosticCapture.admit/stage retention; CrossRepoImpactRunner.run.
 - Independent oracle / input: Held cache/errors/records plus SQL/publication/read counters; real foreign thread with bounded join; stage native-call counters; original context retained before fault.
 - Remaining gap / supported disposition: Limited G06 accepted stage-effective rule replaces eager reread; graph freshness, simultaneous shared-runner use and timed-out thread cleanup excluded. Exact process/fork coverage remains separate if not matched by selectors.
-- R3 status: #482 three guards and installed-capture omissions documented; current reproduction NOT_RUN. Thread timeout/harness failure never semantic RED.
+- R3 status: Three changed-input warm-cache parameters now have current GREEN/target admission-omission RED/restored GREEN in the bounded supplement above. Other #482 guards/installed-capture cases remain NOT_RUN here. Thread timeout/harness failure never semantic RED.
 
 <details>
-<summary>T12: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T12: exact identities (three changed-input cases executed above; others NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_capture.py::test_capture_limit_never_repeats_the_native_operation[bytes]
@@ -396,6 +535,8 @@ tests/test_scope_admission_inputs.py::test_input_refusal_preserves_scope_and_tic
 ```
 
 </details>
+
+<a id="evidence-t13"></a>
 
 ##### T13
 
@@ -429,6 +570,8 @@ tests/test_cross_repo_native_consumer_chain.py::test_native_mcp_cli_read_loss_is
 
 </details>
 
+<a id="evidence-t14"></a>
+
 ##### T14
 
 - Obligation: New host identity and no prior-record reuse; explicitly dispose original HOLD-reentry expectation by supported lifecycle.
@@ -446,6 +589,8 @@ tests/test_cross_repo_persistent_diagnostic.py::test_new_host_execution_never_re
 ```
 
 </details>
+
+<a id="evidence-t15"></a>
 
 ##### T15
 
@@ -478,6 +623,8 @@ tests/test_cross_repo_diagnostic_gate.py::test_docs_only_native_ci_keeps_gate_st
 ```
 
 </details>
+
+<a id="evidence-t16"></a>
 
 ##### T16
 
@@ -575,6 +722,8 @@ tests/test_advisory_diagnostics.py::test_wrong_independent_context_never_returns
 
 </details>
 
+<a id="evidence-t17"></a>
+
 ##### T17
 
 - Obligation: Different executions isolated; same observation duplicate rejected without overwrite; foreign staging preserved; no latest authority.
@@ -600,9 +749,13 @@ tests/test_publication_contention.py::test_contention_harness_reports_failures_i
 
 </details>
 
+<a id="evidence-t18"></a>
+
 ##### T18 (umbrella)
 
 T18 is expanded into T18a–f below using the [original P1 supplement](https://github.com/HouMinXi/forge/issues/33#issuecomment-6742850246). Publication, cleanup attempts, actual deletion and post-cleanup readability are separate assertions, not interchangeable evidence. In the repeated pending-body family, primary-* directly maps to T18b; replay/primary-interrupt/primary-exit maps to T18c. Second-start is an adjacent startup boundary; receipt and other listed parameters are companion regressions, not independent coverage of each subclause.
+
+<a id="evidence-t18a"></a>
 
 ##### T18a
 
@@ -623,6 +776,8 @@ tests/test_diagnostic_completion.py::test_cli_consumes_original_publication_afte
 ```
 
 </details>
+
+<a id="evidence-t18b"></a>
 
 ##### T18b
 
@@ -657,6 +812,8 @@ tests/test_diagnostic_completion.py::test_prior_publication_survives_worker_erro
 ```
 
 </details>
+
+<a id="evidence-t18c"></a>
 
 ##### T18c
 
@@ -697,6 +854,8 @@ tests/test_diagnostic_completion.py::test_interrupted_publication_is_unknown_and
 
 </details>
 
+<a id="evidence-t18d"></a>
+
 ##### T18d
 
 - Obligation: Reject durable root overlapping any temporary tree or alias before publication; no string-prefix-only claim.
@@ -718,6 +877,8 @@ tests/test_advisory_diagnostics.py::test_source_symlink_and_shared_permissions_a
 ```
 
 </details>
+
+<a id="evidence-t18e"></a>
 
 ##### T18e
 
@@ -745,6 +906,8 @@ tests/test_diagnostic_completion.py::test_normal_review_retains_publication_fail
 ```
 
 </details>
+
+<a id="evidence-t18f"></a>
 
 ##### T18f
 
@@ -797,6 +960,8 @@ tests/test_diagnostic_completion.py::test_capture_close_failure_is_separate_from
 
 </details>
 
+<a id="evidence-t19"></a>
+
 ##### T19
 
 - Obligation: Partial or unverified publication never grants successful delivery/locator; verified complete records can survive interruption. Preserve original control/primary exception and bounded owned cleanup across write/link/cleanup/read.
@@ -829,6 +994,8 @@ tests/test_diagnostic_completion.py::test_interrupted_publication_is_unknown_and
 ```
 
 </details>
+
+<a id="evidence-t20"></a>
 
 ##### T20
 
@@ -970,6 +1137,30 @@ tests/test_scope_history_host.py::test_real_host_exports_after_independent_read_
 | A06 / R3 | Storage T15–T17 and explicit T18a–f/T19 fault/lifecycle rows expose gaps. No library-to-host concurrency or cleanup-status inference. |
 | A07 | Entry/support proposals preserve no HOLD, bounded Linux, actual historical SDK evidence and remaining live-wire qualification limits. README/v1/support consistency and formal G01/G02/G08 decisions remain pending. |
 | A08 / R4 | One final revision regression, public identity, pinned lint/format/whitespace, reviewed evidence archive, independent G0 and maintainer acceptance remain pending. #443/#444 unique difference/disposition not freshly reviewed in this pass. No issue closed. |
+
+### Finite follow-up dispositions requested by the COMMENT review
+
+The next round is documentation adjudication, not another experiment or a
+pre-authorized production repair. These use the existing T records, not new gates.
+Each task ends at the stated deliverable; missing exact identities are UNKNOWN,
+not a reason to invent a test or keep an unlimited investigation open.
+
+| Existing record | First reuse/map step | Finite deliverable and exit; current status |
+| --- | --- | --- |
+| [T03](#evidence-t03): primary connection count | Inspect the listed immediate zero-target controls and SQL trace fixtures. Their sibling `forbid` sentinel does not prove no primary connection, and a zero query trace is not a zero connection count. | Name an existing primary-connect spy node with exact assertion, or explicitly record UNKNOWN and propose one bounded connection-count oracle for later approval. No new connection probe in this documentation round. PENDING. |
+| [T06](#evidence-t06): equal-rank order/single-hop | Reuse listed `TestTopNCap::test_cap_at_top_n` and caller-query controls; check ties and actual SQL edge traversal separately. A top-N count is not tie-order or no-second-hop proof. | Record existing exact tie-order and single-hop node IDs/assertions, or UNKNOWN per missing obligation; decide whether each is required in the accepted support domain. No inferred product defect. PENDING. |
+| [T12](#evidence-t12): process/fork/shared-use | Keep executed three warm-input cases separate. Reuse installed-capture closed/foreign-thread cases already indexed; serial foreign-thread refusal/reuse does not qualify fork or simultaneous shared use. | Explicitly accept unsupported process/fork/shared-use scope, or identify one supported scenario and exact existing node/oracle. Fork/shared-use runtime evidence UNKNOWN; no new concurrency experiment pending domain decision. PENDING. |
+| [T14](#evidence-t14): recovery | Reuse controlled PENDING compatibility and new-host identity controls; neither is HOLD resume. Preserve existing no-cross-repository-HOLD limited contract. | Maintainer records the original recovery obligation's not-applicable/unsupported disposition and rationale at the fixed document commit. Do not add fake recovery tests or silently delete the obligation. PENDING. |
+| [T19](#evidence-t19): identity/read/FD assertions | Reuse listed process-control, close, identity and post-cleanup-reader controls; annotate each actual assertion (type/message, object identity, payload/file presence, formal reread or descriptor count). | One bounded assertion matrix, with exact node per claim and UNKNOWN for gaps. Close-after-success faults cannot prove failed-close cleanup. Propose at most the next separately approved missing oracle; no broad “all FD safe” conclusion. PENDING. |
+| [T20](#evidence-t20): natural not_run | Reuse explicitly controlled omitted-dispatch nodes and current source reachability. Separate empty formal consumption from absence of publication and sink health. | Name a supported natural entry/path and exact test, or UNKNOWN plus a maintainer decision on whether synthetic-state coverage is sufficient. Do not make a new product path merely to satisfy a test. PENDING. |
+
+For all six tasks, final decision author and decision link are still UNKNOWN/NONE.
+The [COMMENT review](https://github.com/HouMinXi/forge/pull/493#pullrequestreview-5892176064)
+and [follow-up direction](https://github.com/HouMinXi/forge/issues/441#issuecomment-6854967873)
+are request sources, not affirmative contract decisions. The documentation PR can
+finish once inventory, decision locations and finite follow-ups are reviewable;
+it does not require every runtime row to become PASS. Any later execution returns
+to fixed-revision R0–R4 and the existing stop conditions.
 
 ### Reported results are not this pass's results
 
