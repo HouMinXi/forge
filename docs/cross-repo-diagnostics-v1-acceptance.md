@@ -102,8 +102,8 @@ They do not change contract acceptance, recover the original 78-port, or execute
 other inventory rows. Product/test source remains `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`;
 the initial document proposal is PR #493 at `5fc7c78bef68658f37c5aa93295dad963aa3c10c`.
 This supplement still needs a final reviewed documentation revision. Raw local
-receipts/logs are retained but not publicly attached; hashes identify retained
-artifacts, not a claim that a reader can retrieve them from this PR.
+receipts/logs remain private; safe log copies and the probe source are now folded
+below. Original hashes identify private originals, not downloadable raw artifacts.
 
 | Evidence and type | Fixed environment and result | Independent oracle and precise limit |
 | --- | --- | --- |
@@ -187,11 +187,12 @@ invocation-lifecycle evidence is not imported into this slice.
 The commands below preserve the recorded arguments/environment but substitute
 `PY314`, `SOURCE`, `PROBE` and `MODULE` for private absolute paths. The first
 command uses the standalone CPython 3.14.0 build; pytest uses the repaired 3.14.0
-venv described above. The probe/module remain local artifacts, so the probe
-command alone is **not a publicly self-contained reproducer**. No raw log,
+venv described above. The probe source is now included below; the fixed product module must still be
+obtained at its recorded SHA. This is not a standalone environment bundle. No raw log,
 receipt, private path, generated ticket identifier or invented download link is
-published. Only the selected assertion text and verified original-log digests
-are included; these digests do not make the local files independently retrievable.
+published. The index contains selected assertion text and verified original-log digests;
+the folded safe copies and probe source below now make the report text inspectable.
+Original-log digests still do not make private raw files independently retrievable.
 
 ```sh
 "$PY314" -I -B "$PROBE" "$MODULE"
@@ -236,9 +237,9 @@ listed in the preceding supplement; mutation hashes are distinct. Both pytest
 source guards report 1543 checked regular tracked files and zero mismatches.
 These are recorded restoration checks, not a rerun of the tests. The earlier
 missing-`_ctypes` collection failure remains environment BLOCKED_NOT_RUN; its
-repair does not retroactively convert it to a product RED. Raw artifacts and the
-standalone probe are still local: independent retrieval/reproduction is a
-remaining reviewability gap, not silently satisfied by this index.
+repair does not retroactively convert it to a product RED. Raw artifacts remain local. The safe copies and unchanged probe source below
+permit text review; independent execution and full raw-receipt/environment
+reconstruction remain separate, unfinished qualification.
 
 #### G03–G07 response and next decision
 
@@ -274,6 +275,407 @@ their identified runtime/oracle gaps, remaining tasks and all new contract
 decisions remain explicitly pending. The executor can finish indexing and safe
 transcription, but cannot turn these proposed support/port dispositions into
 maintainer decisions. Original 78-port status remains UNKNOWN.
+
+A separate internal static reviewer read the complete pre-copy document through
+its historical supplements and checked 26 unique evidence anchors, 27 paired
+folds and 330 unique manifest node references. This is full-text static checking,
+not external G0 qualification or test execution. Historical T06/T19 and proposed
+contract wording were tightened to match the current bounded claims; the newly
+added evidence-copy folds are additional, not a retroactive change to that count.
+
+### Reviewable copies of retained evidence (not new executions)
+
+Responding to the [16:44 UTC review](https://github.com/HouMinXi/forge/issues/441#issuecomment-6859169876),
+the folded blocks below publish safe copies of the **existing** nine phase logs
+and the standalone probe source. Original-log hashes remain in the index above;
+each copy has its own SHA256 after the disclosed redactions. Private originals
+remain local. These copies close the missing-readable-log/source portion, not
+independent execution, acceptance, original-port equivalence or environment qualification.
+
+Copy normalization strips line-end whitespace. Redactions: entire pytest fixture-value lines (`invocation`, `monkeypatch`,
+`tmp_path`, `native_graphs`, `counted_queries`) and the long rendered PublicationResult
+value are replaced with labelled markers; private workspace paths, pytest temp
+roots, generated UUIDs and process memory addresses are replaced with markers.
+No assertion, target test node, traceback test line, summary, exit code or timing
+is removed. The fixed synthetic UUID constants in probe source are fixture data,
+not credentials. Probe source is unchanged; invocation needs the fixed
+`_advisory_diagnostics.py` source and the source-library environment already
+recorded above. The mutation protocol remains the single replacement described
+above, not a new experiment executed here.
+
+
+<details>
+<summary>UNKNOWN probe: py314-baseline, recorded exit 0</summary>
+
+Safe-copy SHA256: `0b6d67ce77f42485cc86d7be9af07a0a79086050ee6b1ae60dd872b4fa285600`.
+
+```text
+{"commit_calls": 1, "current_sequence_exists": true, "old_bytes_preserved": true, "old_identity_preserved": true, "owned_staging_remaining": false, "platform": "linux", "python": "3.14.0", "result": "PASS", "scope": "isolated source-library probe; not whole-host, G12/G0/G1 or original-port acceptance", "source_sha256": "21fe87ed7da727db1f11bab2d283f3dad0efb2d07b9c23d5444620aea7bc899f", "unknown_locator": null, "verification_reads": ["2.json", "2.json"]}
+```
+
+</details>
+
+
+<details>
+<summary>UNKNOWN probe: py314-false-success, recorded exit 1</summary>
+
+Safe-copy SHA256: `3a9ad8ebcad534de997365a81f2874c00731325ad36fb14645e9731147f775b1`.
+
+```text
+Traceback (most recent call last):
+  File "<WORKSPACE>/forge441-evidence-20261113/unknown_no_fallback.py", line 31, in <module>
+    assert result.status == 'unknown', ('unexpected_success_status',result.status)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ('unexpected_success_status', 'published')
+```
+
+</details>
+
+
+<details>
+<summary>UNKNOWN probe: py314-restored, recorded exit 0</summary>
+
+Safe-copy SHA256: `0b6d67ce77f42485cc86d7be9af07a0a79086050ee6b1ae60dd872b4fa285600`.
+
+```text
+{"commit_calls": 1, "current_sequence_exists": true, "old_bytes_preserved": true, "old_identity_preserved": true, "owned_staging_remaining": false, "platform": "linux", "python": "3.14.0", "result": "PASS", "scope": "isolated source-library probe; not whole-host, G12/G0/G1 or original-port acceptance", "source_sha256": "21fe87ed7da727db1f11bab2d283f3dad0efb2d07b9c23d5444620aea7bc899f", "unknown_locator": null, "verification_reads": ["2.json", "2.json"]}
+```
+
+</details>
+
+
+<details>
+<summary>Warm admission: controlled-baseline, recorded exit 0</summary>
+
+Safe-copy SHA256: `8bbc4d00d6a321a31d4bf47956a4d6cc557f5dc6fab20a80411dc519ba2e1419`.
+
+```text
+...                                                                      [100%]
+3 passed in 0.34s
+```
+
+</details>
+
+
+<details>
+<summary>Warm admission: admission-omitted, recorded exit 1</summary>
+
+Safe-copy SHA256: `552fbd3ff3c03cb0551991b446dfb85345d95ac9f87eab30a18544704051c778`.
+
+```text
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_changed_input_refuses_before_cache_sql_error_clear_or_publication[exact-diff] _
+
+native_graphs = <FIXTURE_VALUE_REDACTED>
+counted_queries = <FIXTURE_VALUE_REDACTED>
+change = 'exact-diff'
+
+    @pytest.mark.parametrize("change", ["exact-diff", "lexical-root", "canonical-root"])
+    def test_changed_input_refuses_before_cache_sql_error_clear_or_publication(
+        native_graphs, counted_queries, change
+    ):
+        primary, sibling, _, _ = native_graphs
+        add_named_target_and_caller(primary, sibling)
+        alias = primary.parent / "primary-alias"
+        alias.symlink_to(primary, target_is_directory=True)
+        original_root = alias if change == "canonical-root" else primary
+        owner = capture(original_root)
+        messages = []
+        runner = impact.CrossRepoImpactRunner(_diagnostics=owner, output_fn=messages.append)
+        findings = runner.run(DIFF, original_root)
+        assert len(findings) == 1 and counted_queries
+        assert owner.records[0].publication.status == "published"
+        query_count = len(counted_queries)
+        original_record = owner.records[0]
+        original_errors = ["untouched native error view"]
+        runner.infra_errors[:] = original_errors
+        diff, root = DIFF, original_root
+        if change == "exact-diff":
+            diff += "\n"
+        elif change == "lexical-root":
+            root = alias
+            assert root != original_root and root.resolve() == original_root.resolve()
+        else:
+            alias.unlink()
+            alias.symlink_to(sibling, target_is_directory=True)
+            assert root == original_root and root.resolve() != owner._canonical
+
+>       assert runner.run(diff, root) == []
+E       AssertionError: assert [AdvisoryFind...po graph.db')] == []
+E
+E         Left contains one more item: AdvisoryFinding(id='cross-repo-impact-1', axis='CROSS-REPO-IMPACT', file='consumer:api.py', line_range=(1, 1), description='api used by consumer at api.py:1', attribution='cross-repo graph.db')
+E         Use -v to get more diff
+
+tests/test_cross_repo_capture.py:168: AssertionError
+_ test_changed_input_refuses_before_cache_sql_error_clear_or_publication[lexical-root] _
+
+native_graphs = <FIXTURE_VALUE_REDACTED>
+counted_queries = <FIXTURE_VALUE_REDACTED>
+change = 'lexical-root'
+
+    @pytest.mark.parametrize("change", ["exact-diff", "lexical-root", "canonical-root"])
+    def test_changed_input_refuses_before_cache_sql_error_clear_or_publication(
+        native_graphs, counted_queries, change
+    ):
+        primary, sibling, _, _ = native_graphs
+        add_named_target_and_caller(primary, sibling)
+        alias = primary.parent / "primary-alias"
+        alias.symlink_to(primary, target_is_directory=True)
+        original_root = alias if change == "canonical-root" else primary
+        owner = capture(original_root)
+        messages = []
+        runner = impact.CrossRepoImpactRunner(_diagnostics=owner, output_fn=messages.append)
+        findings = runner.run(DIFF, original_root)
+        assert len(findings) == 1 and counted_queries
+        assert owner.records[0].publication.status == "published"
+        query_count = len(counted_queries)
+        original_record = owner.records[0]
+        original_errors = ["untouched native error view"]
+        runner.infra_errors[:] = original_errors
+        diff, root = DIFF, original_root
+        if change == "exact-diff":
+            diff += "\n"
+        elif change == "lexical-root":
+            root = alias
+            assert root != original_root and root.resolve() == original_root.resolve()
+        else:
+            alias.unlink()
+            alias.symlink_to(sibling, target_is_directory=True)
+            assert root == original_root and root.resolve() != owner._canonical
+
+>       assert runner.run(diff, root) == []
+E       AssertionError: assert [AdvisoryFind...po graph.db')] == []
+E
+E         Left contains one more item: AdvisoryFinding(id='cross-repo-impact-1', axis='CROSS-REPO-IMPACT', file='consumer:api.py', line_range=(1, 1), description='api used by consumer at api.py:1', attribution='cross-repo graph.db')
+E         Use -v to get more diff
+
+tests/test_cross_repo_capture.py:168: AssertionError
+_ test_changed_input_refuses_before_cache_sql_error_clear_or_publication[canonical-root] _
+
+native_graphs = <FIXTURE_VALUE_REDACTED>
+counted_queries = <FIXTURE_VALUE_REDACTED>
+change = 'canonical-root'
+
+    @pytest.mark.parametrize("change", ["exact-diff", "lexical-root", "canonical-root"])
+    def test_changed_input_refuses_before_cache_sql_error_clear_or_publication(
+        native_graphs, counted_queries, change
+    ):
+        primary, sibling, _, _ = native_graphs
+        add_named_target_and_caller(primary, sibling)
+        alias = primary.parent / "primary-alias"
+        alias.symlink_to(primary, target_is_directory=True)
+        original_root = alias if change == "canonical-root" else primary
+        owner = capture(original_root)
+        messages = []
+        runner = impact.CrossRepoImpactRunner(_diagnostics=owner, output_fn=messages.append)
+        findings = runner.run(DIFF, original_root)
+        assert len(findings) == 1 and counted_queries
+        assert owner.records[0].publication.status == "published"
+        query_count = len(counted_queries)
+        original_record = owner.records[0]
+        original_errors = ["untouched native error view"]
+        runner.infra_errors[:] = original_errors
+        diff, root = DIFF, original_root
+        if change == "exact-diff":
+            diff += "\n"
+        elif change == "lexical-root":
+            root = alias
+            assert root != original_root and root.resolve() == original_root.resolve()
+        else:
+            alias.unlink()
+            alias.symlink_to(sibling, target_is_directory=True)
+            assert root == original_root and root.resolve() != owner._canonical
+
+>       assert runner.run(diff, root) == []
+E       AssertionError: assert [AdvisoryFind...po graph.db')] == []
+E
+E         Left contains one more item: AdvisoryFinding(id='cross-repo-impact-1', axis='CROSS-REPO-IMPACT', file='consumer:api.py', line_range=(1, 1), description='api used by consumer at api.py:1', attribution='cross-repo graph.db')
+E         Use -v to get more diff
+
+tests/test_cross_repo_capture.py:168: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_cross_repo_capture.py::test_changed_input_refuses_before_cache_sql_error_clear_or_publication[exact-diff]
+FAILED tests/test_cross_repo_capture.py::test_changed_input_refuses_before_cache_sql_error_clear_or_publication[lexical-root]
+FAILED tests/test_cross_repo_capture.py::test_changed_input_refuses_before_cache_sql_error_clear_or_publication[canonical-root]
+3 failed in 0.39s
+```
+
+</details>
+
+
+<details>
+<summary>Warm admission: restored, recorded exit 0</summary>
+
+Safe-copy SHA256: `71072fac3893e064493feb00efcde52bab79febd5bdf8d1ad5008deaffa54c9c`.
+
+```text
+...                                                                      [100%]
+3 passed in 0.37s
+```
+
+</details>
+
+
+<details>
+<summary>Caller reread: controlled-baseline, recorded exit 0</summary>
+
+Safe-copy SHA256: `ac0988b070cfb8585ee6cce3a7e8654f43da14bf7e316bc0b9277c6ad43db855`.
+
+```text
+.                                                                        [100%]
+1 passed in 0.79s
+```
+
+</details>
+
+
+<details>
+<summary>Caller reread: caller-read-omitted, recorded exit 1</summary>
+
+Safe-copy SHA256: `e6519c757db31d1637c3d3f0ca4901518c2fdd5f0c2ef09e061677b1b3c12987`.
+
+```text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____________ test_ticket_replacement_does_not_rebind_cli_expected _____________
+
+invocation = <FIXTURE_VALUE_REDACTED>
+monkeypatch = <FIXTURE_VALUE_REDACTED>
+tmp_path = <FIXTURE_VALUE_REDACTED>
+
+    def test_ticket_replacement_does_not_rebind_cli_expected(invocation, monkeypatch, tmp_path):
+        from dataclasses import replace
+        from code_forge import _diagnostic_history as history
+
+        host, slots, tickets = invocation
+        seal = handoff.DiagnosticCompletion.seal
+        read = storage.read_observation
+        caller = threading.get_ident()
+        reads = []
+        foreign_contexts = []
+
+        def seal_and_replace_ticket(self, capture, **kwargs):
+            seal(self, capture, **kwargs)
+            attempt = self._result.attempts[0]
+            foreign = replace(attempt.expected, execution_id=str(uuid4()))
+            root = tmp_path / "other"
+            root.mkdir(mode=0o700)
+            publication = storage.publish_observation(
+                storage.bind_storage(root), storage.make_observation(foreign, "targets_resolved")
+            )
+            other_ticket = history.export_ticket(tickets, publication, foreign)
+            original = tickets / self._result.tickets[0][1]
+            original.write_bytes(other_ticket.read_bytes())
+            other_ticket.unlink()
+            assert history.read_ticket(original).context == foreign
+            foreign_contexts.append(foreign)
+
+        def track(publication, expected):
+            if threading.get_ident() == caller:
+                assert slots[0]._completion_event.is_set()
+                reads.append((publication, expected))
+            return read(publication, expected)
+
+        monkeypatch.setattr(handoff.DiagnosticCompletion, "seal", seal_and_replace_ticket)
+        monkeypatch.setattr(storage, "read_observation", track)
+        assert host.run(output=lambda message: None) is Verdict.PASS
+        attempt = slots[0].read().attempts[0]
+>       assert reads == [(attempt.publication, attempt.expected)]
+E       AssertionError: assert [] == [(Publication..._sequence=1))]
+E
+E         Right contains one more item: <PUBLICATION_VALUE_REDACTED>
+E         Use -v to get more diff
+
+tests/test_diagnostic_completion.py:319: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[cross-repo] primary: ADVISORY: diagnostic-ticket: exported <GENERATED_UUID>.diagnostic-ticket.json; one historical observation, not complete review history
+----------------------------- Captured stderr call -----------------------------
+[forge] t+0.0s run start: mode=CI
+[forge] t+0.0s run start: mode=CI
+[forge] t+0.0s review phase done: verdict=PASS findings=0 confirmed=0
+
+--- Smoke Status ---
+smoke: no runtime surfaces detected
+[forge] t+0.0s review phase done: verdict=PASS findings=0 confirmed=0
+=========================== short test summary info ============================
+FAILED tests/test_diagnostic_completion.py::test_ticket_replacement_does_not_rebind_cli_expected
+1 failed in 0.86s
+```
+
+</details>
+
+
+<details>
+<summary>Caller reread: restored, recorded exit 0</summary>
+
+Safe-copy SHA256: `c952b5c568a02b83362e5cf5a0f46f1c733434977b415fd71a83aa63e7031707`.
+
+```text
+.                                                                        [100%]
+1 passed in 0.76s
+```
+
+</details>
+
+
+<details>
+<summary>Unchanged standalone probe source (reported library evidence only)</summary>
+
+```python
+import dataclasses, hashlib, importlib.util, json, os, pathlib, platform, sys, tempfile
+source = pathlib.Path(sys.argv[1]).resolve()
+spec = importlib.util.spec_from_file_location('probe_records', source)
+r = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = r
+spec.loader.exec_module(r)
+with tempfile.TemporaryDirectory(prefix='forge441-owned-') as directory:
+    root = pathlib.Path(directory)
+    os.chmod(root, 0o700)
+    binding = r.bind_storage(root)
+    c1 = r.ExpectedContext('11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222','fixed-source','a'*64,1)
+    c2 = dataclasses.replace(c1,observation_sequence=2)
+    old = r.make_observation(c1,'no_named_targets')
+    new = r.make_observation(c2,'targets_resolved')
+    p1 = r.publish_observation(binding,old)
+    assert p1.status == 'published'
+    assert r.read_observation(p1,c1) == old
+    oldpath=root.joinpath(*(name for name,_ in p1.locator.directories),p1.locator.filename)
+    before=oldpath.read_bytes(); identity=(oldpath.stat().st_dev,oldpath.stat().st_ino)
+    original_link=r.os.link; original_read=r._read_leaf
+    calls=[];reads=[]
+    def counted_link(*a,**kw):
+        calls.append((a[0],a[1]));return original_link(*a,**kw)
+    def unreadable(*a,**kw):
+        reads.append(a[1]);raise OSError('synthetic bounded verification-read failure')
+    try:
+        r.os.link=counted_link;r._read_leaf=unreadable
+        result=r.publish_observation(binding,new)
+    finally:
+        r.os.link=original_link;r._read_leaf=original_read
+    assert result.status == 'unknown', ('unexpected_success_status',result.status)
+    assert result.locator is None, 'unknown_success_locator'
+    assert result.failure == 'commit_uncertain'
+    assert len(calls)==1, ('commit_retry',calls)
+    assert calls[0][1]=='2.json'
+    assert all(name=='2.json' for name in reads),('old_record_fallback',reads)
+    assert len(reads)==2,('verification_path_changed',reads)
+    assert oldpath.read_bytes()==before, 'old_bytes_overwritten'
+    assert (oldpath.stat().st_dev,oldpath.stat().st_ino)==identity,'old_identity_replaced'
+    assert r.read_observation(p1,c1)==old
+    newpath=oldpath.with_name('2.json')
+    payload=json.loads(newpath.read_bytes())
+    assert payload['observation_sequence']==2
+    assert payload['analysis_state']=='targets_resolved'
+    assert len(list(root.rglob('*.json')))==2
+    assert not list(root.rglob('.pending-*'))
+    try:r.read_observation(result,c2)
+    except r.DiagnosticError:pass
+    else:raise AssertionError('unknown_read_success')
+    print(json.dumps({'result':'PASS','python':platform.python_version(),'platform':sys.platform,'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'commit_calls':len(calls),'verification_reads':reads,'old_bytes_preserved':True,'old_identity_preserved':True,'unknown_locator':None,'current_sequence_exists':True,'owned_staging_remaining':False,'scope':'isolated source-library probe; not whole-host, G12/G0/G1 or original-port acceptance'},sort_keys=True))
+```
+
+</details>
 
 ### A01/A04/A07, R2: complete obligation inventory and static node expansion
 
@@ -1388,8 +1790,8 @@ The issue now registers limited acceptance of G03, G05, G06 and G07. This is fou
 | Put `origin` in the serialized observation | Keep the nine-field observation immutable and record actual/cache only in host delivery metadata. | Limited G03 contract accepted. A cache delivery is not a new graph query or publication; complete runtime acceptance remains separate. |
 | Unbounded or arbitrary nested snapshot isolation | Retain supported historical findings/errors and defensive containers within the stated budgets; unavailable history is not an empty successful snapshot. | Limited G07 contract accepted. Frozen/tuple types alone do not prove arbitrary deep immutability; partial-error, nested-isolation and resource controls still require their exact evidence. |
 | General recovery/HOLD identity requirement | New supported host calls get new identities. Cross-repository PENDING remains FAIL. Single-repository HOLD does not construct this diagnostic axis. | Limited G05 boundary accepted. G04's entry/consumer decision and the original T14 disposition remain open; an assigned verdict is not a recovery run. |
-| Durable root or return interface unspecified | Use the primary canonical source root and a private host consumer; public runner/CLI/MCP/Verdict APIs remain unchanged. | Accept this concrete consumer and root rather than require an unused public session interface. |
-| General filesystem identity or freshness | Independently bound observation identity and content digest; device/inode is not a generation identifier. Local Linux overlay/tmpfs exercised; ext4 eligible but not locally qualified. | Accept this bounded storage domain. Same-UID hostile replacement, inode continuity, network filesystems, power loss and reboot persistence are not proved. |
+| Durable root or return interface unspecified | Use the primary canonical source root and a private host consumer; public runner/CLI/MCP/Verdict APIs remain unchanged. | Proposed/PENDING: accept this concrete consumer and root rather than require an unused public session interface. |
+| General filesystem identity or freshness | Independently bound observation identity and content digest; device/inode is not a generation identifier. Local Linux overlay/tmpfs exercised; ext4 eligible but not locally qualified. | Proposed/PENDING: accept this bounded storage domain. Same-UID hostile replacement, inode continuity, network filesystems, power loss and reboot persistence are not proved. |
 | Main exception always wins through all cleanup | Diagnostic cleanup and the owned per_cwd scope preserve their incoming exception. Later source-lock cleanup and failures already replaced inside another scope are outside this repair. | The demonstrated cwd-boundary defect has a bounded fix and public controls below. Complete G11/T18 disposition still requires the remaining boundaries; no global guarantee is granted. |
 | Original 78-test port or all T controls already available | The public production tests are real and separately identified. The complete original port has not been recovered and cannot transfer its count or credit. | Recover the original source or approve an explicit, versioned replacement with an exact T/node/omission map. |
 
@@ -1454,7 +1856,7 @@ The following names refer to actual collected pytest nodes, not proposed test co
 | T03 no path/deletion | I `test_zero_targets_emit_once_before_sibling_access[no-path]` and `[deleted]` | These immediate-warning controls do not alone prove every connection-count and persistent-state subclause. |
 | T04 corrupt graph | I `test_prior_unavailability_does_not_claim_zero_targets[corrupt]`; P `test_actual_analysis_states_do_not_invent_no_target_warning` | Existing error priority is tested; no migration of old infra errors into the artifact. |
 | T05 blank diff | I `test_empty_diff_has_no_diagnostic_or_discovery`; P `test_actual_analysis_states_do_not_invent_no_target_warning[blank]` | Blank is not_requested, not a successful graph query. |
-| T06 zero/real callers | I `test_resolved_targets_keep_findings_and_cache_without_zero_target_output[False]` and `[True]`; `tests/test_cross_repo_impact.py::TestTopNCap::test_cap_at_top_n` | The retained top-10/ordering regressions are not a new multi-hop or coverage guarantee. |
+| T06 zero/real callers | I `test_resolved_targets_keep_findings_and_cache_without_zero_target_output[False]` and `[True]`; `tests/test_cross_repo_impact.py::TestTopNCap::test_cap_at_top_n` | The retained top-10 length regression; tie-order/extra-hop UNKNOWN per current T06 are not a new multi-hop or coverage guarantee. |
 | T07 sibling isolation | I `test_zero_targets_emit_once_before_sibling_access`; C `test_duplicate_occurrences_retain_distinct_first_use_native_fallbacks` | Native stages and duplicate occurrences are measured, not an atomic environment snapshot. |
 | T08 production publication | P `test_host_publication_strictly_reads_after_temporary_cwds_are_removed`; G `test_docs_only_native_ci_keeps_gate_state_with_diagnostic` | Removing the actual publication call yields semantic RED; no hand-built artifact substitutes for this path. |
 | T09 state replacement | P `test_uncached_branch_transitions_get_new_records_and_cache_reuses_publication` | Genuine uncached transitions create new sequences; cache retains the original record. |
@@ -1467,7 +1869,7 @@ The following names refer to actual collected pytest nodes, not proposed test co
 | T16 strict format/context | A `test_duplicate_keys_in_otherwise_valid_document_rejected`; `test_wrong_independent_context_never_returns_empty_success`; `test_large_or_deep_document_rejected_before_json_load`; P `test_real_strict_read_rejects_lost_corrupt_or_wrong_execution_before_output` | Exact duplicate, context, pre-parser byte/depth and content-digest omissions fail. Exhaustive per-validator omission coverage and the original port remain unqualified. |
 | T17 concurrency/duplicate | A `test_same_key_always_refused_without_replacing_original`; P `test_new_host_execution_never_reuses_same_source_hash_identity`; Q `test_concurrent_distinct_execution_publications_remain_independent`, `test_concurrent_same_key_refuses_contender_without_replacing_winner`, `test_concurrent_publishers_preserve_foreign_pending_replacement` | Registered public library controls now overlap production publisher calls with deterministic commit scheduling. Same-key input is adversarial, not a natural host collision. Complete-host concurrency and full T17 admission remain unqualified; see the bounded supplement below. |
 | T18 cleanup | P `test_host_publication_strictly_reads_after_temporary_cwds_are_removed`; A `test_durable_root_cannot_overlap_temporary_cwd`; W `test_pending_body_failure_survives_cleanup`, `test_partial_setup_cleans_only_registered_cwd`, `test_multiple_cleanup_failures_keep_priority`, `test_ignored_permission_error_keeps_residue_and_result` | Public native controls now distinguish joined workers, registered cwd removal, exception identity and actual residue from diagnostic staging cleanup. The bounded repair and remaining outer boundaries are described below; this is not an unconditional T18 pass. |
-| T19 interruption | A `test_process_control_propagates_and_preserves_committed_record`; `test_cleanup_signal_does_not_replace_primary_signal`; P `test_output_process_control_preserves_committed_file_and_exception_identity` | Diagnostic controls preserve exact exceptions/records. No forced process-death, SIGKILL, power-loss or global-cleanup equivalence is claimed. |
+| T19 interruption | A `test_process_control_propagates_and_preserves_committed_record`; `test_cleanup_signal_does_not_replace_primary_signal`; P `test_output_process_control_preserves_committed_file_and_exception_identity` | Selected controls distinguish type/message, object identity, file presence and strict reread as mapped in current T19; not every node asserts all four. No forced process-death, SIGKILL, power-loss or global-cleanup equivalence is claimed. |
 | T20 output/not_run | P `test_normal_machine_return_without_axis_call_records_not_run`; `test_host_not_run_empty_success_and_unavailable_statuses`; `test_actual_strict_reader_return_controls_cli_text`; `test_persistence_failure_never_fabricates_no_target_state`; G `test_docs_only_native_ci_tracks_nonempty_delivery`; real-child MCP cases in P | The A02 supplement below distinguishes empty consumption, unavailable persistence and nonempty sink failure. Controlled not_run/MCP fixtures do not establish natural not_run reachability or SDK-stdio coverage. |
 
 This map identifies bounded evidence and gaps. It does not convert partially covered T rows into acceptance passes. Supplemental controls must be integrated and assigned public identities before being described as repository regressions.
