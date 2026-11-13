@@ -2,8 +2,8 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """MCP stdio server exposing forge review tools to IDE clients.
 
-Seven tools: forge_review, forge_gate_check, forge_init, forge_trust,
-forge_resolve_outlet, forge_job_status, forge_server_status. Runs as a local subprocess
+Eight tools: forge_review, forge_gate_check, forge_init, forge_trust,
+forge_resolve_outlet, forge_job_status, forge_server_status, forge_diagnostic_history. Runs as a local subprocess
 of the IDE via stdio transport.
 
 Workspace resolution (ADR-0006, ADR-0009): the server locates the
@@ -58,6 +58,7 @@ from mcp.types import (
 )
 
 import code_forge
+from code_forge import _mcp_diagnostic_history as diagnostic_history
 from code_forge._json_depth import check_json_container_depth
 from code_forge.assertion_outcome import (
     AssertionKind,
@@ -171,6 +172,7 @@ _shutting_down = False
 _simple_calls_closing = False
 _active_simple_calls: set[asyncio.Task[Any]] = set()
 _mcp_cleanup_task: asyncio.Task[None] | None = None
+_diagnostic_history_access: diagnostic_history.HistoryAccess | None = None
 
 
 async def _wait_for_shielded_task(task: asyncio.Future[Any]) -> Any:
@@ -591,6 +593,9 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     if not _shutting_down:
         _mcp_cleanup_task = None
         _simple_calls_closing = False
+    global _diagnostic_history_access  # noqa: PLW0603
+    _diagnostic_history_access = None
+    _diagnostic_history_access = diagnostic_history.configure(os.environ)
     _install_pdeathsig()
 
     startup_ws = _resolve_workspace()
@@ -1788,6 +1793,37 @@ async def forge_job_status(job_id: str) -> CallToolResult:
         content=[TextContent(type="text", text=text)],
         structuredContent=ref.model_dump(),
     )
+
+
+@mcp.tool(
+    name="forge_diagnostic_history",
+    description="Read one explicitly named historical v1 diagnostic ticket from server-authorized private storage. Not current review or clean credit; independent of job history.",
+    annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True),
+)
+async def forge_diagnostic_history(ticket: str) -> CallToolResult:
+    """Own and drain the read even when the request is cancelled or server shuts down."""
+    if _shutting_down or _simple_calls_closing:
+        raise asyncio.CancelledError
+    current = asyncio.current_task()
+    if current is not None:
+        _active_simple_calls.add(current)
+    try:
+        task = asyncio.create_task(
+            asyncio.to_thread(diagnostic_history.read, _diagnostic_history_access, ticket)
+        )
+        try:
+            result = await _wait_for_shielded_task(task)
+        except diagnostic_history.history.TicketError:
+            await anyio.lowlevel.checkpoint_if_cancelled()
+            raise ToolError("historical diagnostic unavailable") from None
+        await anyio.lowlevel.checkpoint()
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(result, sort_keys=True))],
+            structuredContent=result,
+        )
+    finally:
+        if current is not None:
+            _active_simple_calls.discard(current)
 
 
 # -- entry point --
