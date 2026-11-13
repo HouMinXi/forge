@@ -657,3 +657,43 @@ Shebang, entry module/function, guard, arguments, complete AST, original source
 bytes, and installed RECORD remain bound; shell trampolines and arbitrary
 wrapper variants remain rejected. This compatibility fix does not establish
 that every historical console-binding failure had the same cause.
+
+### Offline private observations (not capture or qualification)
+
+`scripts/cli_capture_observations.py` reads already-quiescent owner-private capture
+files. It does not run the installed interpreter, change capture runtime, dispatch
+CI, or upload evidence. Its output passes an independent closed-field validator in
+`cli_capture_observations_publication.py`. Only bounded counts, fixed categories,
+and original recorded exits are projected; paths, PIDs, payloads and raw traces
+remain private.
+
+The caller supplies the actual capture mode and saved harness shell exit. The tool
+requires a consistent receipt, completed owner cleanup and healthy collection
+before reading streams. Its own exit 0 means only that a summary was emitted; it
+must **never replace the captured CLI/harness exit**.
+
+Event `COMPLETE` covers only the declared request-only lifecycle subset. Other
+known probe families produce `UNSUPPORTED_EVENT_SHAPE`, not full event credit.
+Trace `COMPLETE` covers the existing parser's supported syntax and per-task
+framing, not association with the event stream or the recorded CLI. Counts include
+terminal records; `sync_count` counts parsed fsync/fdatasync calls regardless of
+success. Missing, unsupported or malformed streams do not receive counts.
+Execution identity, cross-stream order, ACK consistency, durability and
+qualification remain unassessed, even when both independent streams are complete.
+
+Optional fixed-fixture classification additionally requires a caller-expected
+source SHA, physical source/wheel/installed provenance, matching reviewed product
+and capture-worker bytes, exactly two recorded successful exchanges and the two
+exact fixed responses, together with CLI/harness 7 and successful worker cleanup.
+This classifies the known synthetic canary outcome, not arbitrary exit 7. Its
+trust boundary is caller-trusted local collector records, **not cryptographically
+authenticated capture provenance**. It does not independently prove that files
+belong to the same execution, or validate the business meaning of request bodies.
+A source SHA in a build proof is not an
+independently verified Git object. Synthetic binding tests exercise the classifier
+and rejection controls, not real installed-CLI qualification.
+
+There is no runtime or CI integration in this component. A future authorized
+integration would have to run before private runner files are removed and retain
+the original capture status separately. It cannot reconstruct observations for
+previous runs whose private files were destroyed.
