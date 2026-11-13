@@ -5,6 +5,9 @@ Default mode warns rather than requiring the product operation to fail.
 This covers only R03-08, not T35 start/raw/finish-return boundaries.
 """
 
+from contextlib import contextmanager
+import time
+
 import hashlib
 import json
 import os
@@ -36,6 +39,143 @@ def _no_external_operations():
     return calls
 
 
+_DIAGNOSTIC_PREFIX = "R03-08-preparation "
+_COMMANDS = frozenset(
+    {
+        "open",
+        "input",
+        "context",
+        "operation",
+        "start",
+        "entered",
+        "finish",
+        "advance",
+        "finalize",
+        "prepare_managed",
+        "maintain",
+    }
+)
+
+
+def _safe_label(value, allowed):
+    return value if type(value) is str and value in allowed else "other"
+
+
+def _error_kind(error):
+    from code_forge.invocation_host import _Unavailable
+    from code_forge.llm_invoke import AuditPersistenceError
+
+    # Exact types only: even a custom class name may contain private material.
+    if error is None:
+        return "none"
+    if type(error) is _Unavailable:
+        return "host_unavailable"
+    if type(error) is AuditPersistenceError:
+        return "audit_persistence"
+    for kind in (OSError, TimeoutError, RuntimeError, AssertionError):
+        if type(error) is kind:
+            return kind.__name__
+    return "other"
+
+
+@contextmanager
+def _preparation_diagnostics(host, process):
+    """Failure-only, bounded metadata; never serialize exception values or payloads."""
+    from code_forge.invocation_io import AuditPhase
+
+    events = []
+    patch = pytest.MonkeyPatch()
+    original_request = host._request
+    original_wait = process.wait
+
+    def remember(event):
+        events.append(event)
+        del events[:-64]
+
+    def wait(ticket):
+        outcome = original_wait(ticket)
+        try:
+            remember(
+                {
+                    "event": "io",
+                    "state": _safe_label(
+                        outcome.state,
+                        {
+                            "ack",
+                            "unknown",
+                            "cancelled",
+                            "closed",
+                            "empty",
+                            "expired",
+                            "failed",
+                            "unavailable",
+                        },
+                    ),
+                    "phase": ticket._phase.value
+                    if type(getattr(ticket, "_phase", None)) is AuditPhase
+                    else "other",
+                    "value_is_true": outcome.value is True,
+                    "value_is_false": outcome.value is False,
+                    "not_executed": outcome.not_executed is True,
+                    "publication_uncertain": outcome.publication_uncertain is True,
+                    "error": _error_kind(outcome.error),
+                }
+            )
+        except BaseException:  # noqa: BLE001, S110 - diagnostics cannot change the result
+            pass
+        return outcome
+
+    def request(phase, command, arguments, deadline, **kwargs):
+        start = None
+        event = {}
+        try:
+            start = time.monotonic()
+            event = {"event": "request", "command": _safe_label(command, _COMMANDS)}
+        except BaseException:  # noqa: BLE001, S110 - diagnostics cannot prevent execution
+            pass
+        try:
+            return original_request(phase, command, arguments, deadline, **kwargs)
+        except BaseException as error:
+            try:
+                event["error"] = _error_kind(error)
+            except BaseException:  # noqa: BLE001, S110 - preserve primary identity
+                pass
+            raise
+        finally:
+            try:
+                now = time.monotonic()
+                event.update(elapsed_s=round(now - start, 6), remaining_s=round(deadline - now, 6))
+                remember(event)
+            except BaseException:  # noqa: BLE001, S110 - preserve primary identity
+                pass
+
+    patch.setattr(host, "_request", request)
+    patch.setattr(process, "wait", wait)
+    try:
+        yield
+    except BaseException as error:
+        try:
+            print(
+                _DIAGNOSTIC_PREFIX
+                + json.dumps(
+                    {
+                        "phase": "preparation",
+                        "error": _error_kind(error),
+                        "disabled": host._disabled is True,
+                        "uncertain": host._uncertain is True,
+                        "events": events,
+                    }
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+        except BaseException:  # noqa: BLE001, S110 - diagnostic failure cannot mask primary
+            pass
+        raise
+    finally:
+        patch.undo()
+
+
 def _writer(root, strict, lose_return, suppress_loss=False):
     from code_forge import invocation_audit as audit
     from code_forge.invocation_host import HostAuditSession, HostAuditLimits
@@ -61,8 +201,9 @@ def _writer(root, strict, lose_return, suppress_loss=False):
     )
     patch = pytest.MonkeyPatch()
     try:
-        attempt = admit(host.scope(pass_name="fixture"), request())
-        assert attempt is not None and complete(attempt, RAW)
+        with _preparation_diagnostics(host, process):
+            attempt = admit(host.scope(pass_name="fixture"), request())
+            assert attempt is not None and complete(attempt, RAW)
         owner = host._owner
         run = root / context.run_id
         calls, syncs, summary_calls = [], [], []
@@ -198,6 +339,97 @@ def test_lost_return_oracle_rejects_omitted_fault(disk_root):
     )
     assert result.returncode == 1 and not result.stdout
     assert "AssertionError: host-state-oracle" in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_preparation_diagnostics_are_failure_only_and_redacted(capsys, fail):
+    from types import SimpleNamespace
+    from code_forge.invocation_io import IoOutcome
+
+    secret = "PRIVATE-RAW-/tmp/credential-token"
+
+    class PoisonError(Exception):
+        def __str__(self):
+            raise AssertionError("must not stringify")
+
+        def __repr__(self):
+            raise AssertionError("must not repr")
+
+    fault = PoisonError(secret)
+    process = SimpleNamespace(wait=lambda ticket: IoOutcome(secret, value=secret, error=fault))
+
+    def request(*args, **kwargs):
+        return process.wait(secret)
+
+    host = SimpleNamespace(_request=request, _disabled=False, _uncertain=False)
+    original_request, original_wait = host._request, process.wait
+    try:
+        with _preparation_diagnostics(host, process):
+            outcome = host._request(secret, secret, secret, time.monotonic() + 2)
+            assert outcome.error is fault and outcome.value == secret
+            if fail:
+                raise fault
+    except PoisonError as caught:
+        assert fail and caught is fault
+    assert host._request is original_request and process.wait is original_wait
+    output = capsys.readouterr()
+    assert not output.out
+    if not fail:
+        assert not output.err
+    else:
+        assert secret not in output.err and "PoisonError" not in output.err
+        assert output.err.count("\n") == 1
+        detail = json.loads(output.err.removeprefix(_DIAGNOSTIC_PREFIX))
+        assert detail["phase"] == "preparation" and detail["error"] == "other"
+        assert detail["events"][0] == {
+            "event": "io",
+            "state": "other",
+            "not_executed": False,
+            "publication_uncertain": False,
+            "error": "other",
+            "phase": "other",
+            "value_is_true": False,
+            "value_is_false": False,
+        }
+        assert detail["events"][1]["command"] == "other"
+
+
+def test_preparation_diagnostic_write_failure_preserves_primary(monkeypatch):
+    from types import SimpleNamespace
+
+    host = SimpleNamespace(_request=lambda *a: None, _disabled=False, _uncertain=False)
+    process = SimpleNamespace(wait=lambda *a: None)
+    primary = RuntimeError("synthetic primary")
+
+    def broken_print(*args, **kwargs):
+        raise OSError("synthetic diagnostic sink failure")
+
+    monkeypatch.setattr("builtins.print", broken_print)
+    with pytest.raises(RuntimeError) as caught:
+        with _preparation_diagnostics(host, process):
+            raise primary
+    assert caught.value is primary
+
+
+def test_preparation_diagnostic_metadata_failure_preserves_primary(monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    primary = KeyboardInterrupt()
+
+    def request(*args, **kwargs):
+        raise primary
+
+    def broken_clock():
+        raise OSError("synthetic diagnostic clock failure")
+
+    host = SimpleNamespace(_request=request, _disabled=False, _uncertain=False)
+    process = SimpleNamespace(wait=lambda *a: None)
+    monkeypatch.setattr(time, "monotonic", broken_clock)
+    with pytest.raises(KeyboardInterrupt) as caught:
+        with _preparation_diagnostics(host, process):
+            host._request(None, "start", None, 0)
+    assert caught.value is primary
+    assert json.loads(capsys.readouterr().err.removeprefix(_DIAGNOSTIC_PREFIX))["events"] == []
 
 
 if __name__ == "__main__":
