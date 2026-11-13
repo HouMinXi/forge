@@ -30,7 +30,9 @@ false` and the counts-only snapshot. It contains no ticket path, UUID, source to
 or diff digest. Exit 0 means this historical lookup succeeded, **not** that a review
 passed. Invalid, inaccessible or untrusted-permissions input returns exit 2 with a
 bounded message. Cancellation propagates, rather than becoming a successful empty
-result. No `latest`, directory scan, automatic fallback or MCP tool is added.
+result. No `latest`, directory scan or automatic fallback is added. The separately
+configured [MCP scope-history reader](mcp-scope-history.md) exposes the same
+historical projection without changing this ticket format.
 
 ## Trust, disclosure and retention
 

@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from . import _advisory_diagnostics as storage
 from .advisory import AdvisoryFinding
+from ._diagnostic_completion import Attempt
 
 PERSISTENCE_WARNING = "cross-repo-impact: persistent diagnostic unavailable"
 _MAX_CAPTURE_BYTES = 65536
@@ -100,6 +101,7 @@ class DiagnosticCapture:
         self._binding = None
         self._storage_failed = False
         self.records: list[Record] = []
+        self._publication_attempts: list[Attempt] = []
         self.refusal: str | None = None
         self.delivery_status = "not_attempted"
         self.last_delivery_origin = None
@@ -434,11 +436,14 @@ class DiagnosticCapture:
         frozen_findings = frozen_errors = None
         publication = storage.PublicationResult("not_published", failure="capture_unavailable")
         publishing = False
+        attempt_index = None
         try:
             context = storage.ExpectedContext(
                 self.execution_id, self.repository_id, self.source_hash, self.diff_sha256, self._attempts
             )
             observation = storage.make_observation(context, state)
+            attempt_index = len(self._publication_attempts)
+            self._publication_attempts.append(Attempt(context, publication))
             try:
                 frozen_findings, frozen_errors = self._snapshot(findings, errors)
             except Exception:
@@ -457,6 +462,17 @@ class DiagnosticCapture:
             publication = storage.PublicationResult(
                 "unknown" if publishing else "not_published", failure="diagnostic_unavailable"
             )
+        except BaseException:
+            self._storage_failed = True
+            # Publication may have committed before process control interrupted
+            # its return. Never invent a successful locator or retry the write.
+            publication = storage.PublicationResult(
+                "unknown" if publishing else "not_published", failure="diagnostic_unavailable"
+            )
+            raise
+        finally:
+            if attempt_index is not None:
+                self._publication_attempts[attempt_index] = Attempt(context, publication)
         record = Record(
             observation,
             publication,
