@@ -393,6 +393,7 @@ class HostAuditSession:
                 batch_bytes=self.limits.batch_bytes,
                 max_delay=self.limits.max_delay_s,
                 flush_timeout_s=self.limits.flush_timeout_s,
+                scoped_fault_domain=self._scoped_fault_domain,
             )
 
     def _abandon_control(self, ticket, target):
