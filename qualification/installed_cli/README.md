@@ -674,6 +674,17 @@ must **never replace the captured CLI/harness exit**.
 
 Event `COMPLETE` covers only the declared request-only lifecycle subset. Other
 known probe families produce `UNSUPPORTED_EVENT_SHAPE`, not full event credit.
+Common framing is checked across the entire bounded stream before an unsupported
+family is classified: schema, sequence, recorded process, per-thread clocks,
+start/footer placement and complete zero-pending footer. A malformed suffix or
+footer takes precedence as `MALFORMED_OR_INCOMPLETE`; an unsupported event cannot
+hide it. Event-specific fields and ticket/worker lifecycle remain unassessed for
+unsupported families. No counts or COMPLETE credit are granted to those streams.
+The source flow is `analyze → events → common framing → request-only lifecycle`,
+then the independent closed-field publisher. The extra pass is bounded by the
+same 32 MiB / 200,000-record limits; it never executes recorded content.
+The producer uses Python [trace events](https://docs.python.org/3/library/sys.html#sys.settrace);
+these describe Python call/return observations, not native storage acknowledgements.
 Trace `COMPLETE` covers the existing parser's supported syntax and per-task
 framing, not association with the event stream or the recorded CLI. Counts include
 terminal records; `sync_count` counts parsed fsync/fdatasync calls regardless of

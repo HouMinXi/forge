@@ -117,8 +117,76 @@ def decode(raw):
         raise ValueError("offline JSON bounds rejected") from exc
 
 
+UNSUPPORTED_EVENTS = frozenset(
+    {
+        "ticket_create",
+        "ticket_submit_begin",
+        "ticket_submit",
+        "ticket_submit_error",
+        "ticket_unknown",
+        "ticket_complete",
+        "worker_begin",
+        "worker_end",
+        "target_end",
+        "wait_begin",
+        "wait_end",
+        "wait_error",
+        "publish_begin",
+        "publish_end",
+        "publish_error",
+    }
+)
+
+
 class UnsupportedEvent(ValueError):
     """Known probe family whose lifecycle is deliberately not certified here."""
+
+
+def _validate_event_framing(lines, pid):
+    """Check the whole common envelope before classifying unsupported families.
+
+    This does not validate their event-specific fields or ticket/worker lifecycle.
+    A known unsupported name cannot hide a broken suffix or missing footer.
+    """
+    clocks = {}
+    known = UNSUPPORTED_EVENTS | {
+        "diagnostic_start",
+        "diagnostic_footer",
+        "host_request_begin",
+        "host_request_end",
+        "host_request_error",
+    }
+    for index, line in enumerate(lines, 1):
+        require(len(line) <= 4096)
+        row = decode(line)
+        require(type(row) is dict and BASE <= set(row))
+        name = row["event"]
+        require(type(name) is str and name in known)
+        require(
+            type(row["schema"]) is int
+            and row["schema"] == 1
+            and integer(row["seq"], 1)
+            and row["seq"] == index
+            and integer(row["pid"], 1, 2**31 - 1)
+            and row["pid"] == pid
+            and integer(row["tid"], 1, 2**31 - 1)
+            and integer(row["monotonic_ns"], 1)
+            and integer(row["time_ns"], 1)
+        )
+        tid = row["tid"]
+        require(row["monotonic_ns"] >= clocks.get(tid, 0))
+        clocks[tid] = row["monotonic_ns"]
+        if index == 1:
+            require(name == "diagnostic_start" and set(row) == BASE)
+        elif index == len(lines):
+            require(
+                name == "diagnostic_footer"
+                and set(row) == BASE | PENDING | {"complete"}
+                and row["complete"] is True
+                and all(type(row[key]) is int and row[key] == 0 for key in PENDING)
+            )
+        else:
+            require(name not in {"diagnostic_start", "diagnostic_footer"})
 
 
 def events(raw, pid):
@@ -130,7 +198,8 @@ def events(raw, pid):
     require(raw.endswith(b"\n") and b"\r" not in raw and len(raw) <= LIMIT)
     lines = raw[:-1].split(b"\n")
     require(4 <= len(lines) <= 200000)
-    active, seen, clocks = {}, set(), {}
+    _validate_event_framing(lines, pid)
+    active, seen = {}, set()
     requests = 0
     for index, line in enumerate(lines, 1):
         require(len(line) <= 4096)
@@ -146,45 +215,14 @@ def events(raw, pid):
             if name in {"host_request_begin", "host_request_end", "host_request_error"}
             else None
         )
-        if extra is None and name in {
-            "ticket_create",
-            "ticket_submit_begin",
-            "ticket_submit",
-            "ticket_submit_error",
-            "ticket_unknown",
-            "ticket_complete",
-            "worker_begin",
-            "worker_end",
-            "target_end",
-            "wait_begin",
-            "wait_end",
-            "wait_error",
-            "publish_begin",
-            "publish_end",
-            "publish_error",
-        }:
+        if extra is None and name in UNSUPPORTED_EVENTS:
             raise UnsupportedEvent()
         require(extra is not None and set(row) == BASE | extra)
-        require(
-            type(row["schema"]) is int
-            and row["schema"] == 1
-            and integer(row["seq"], 1)
-            and row["seq"] == index
-            and integer(row["pid"], 1, 2**31 - 1)
-            and row["pid"] == pid
-            and integer(row["tid"], 1, 2**31 - 1)
-        )
-        require(integer(row["monotonic_ns"], 1) and integer(row["time_ns"], 1))
         tid = row["tid"]
-        require(row["monotonic_ns"] >= clocks.get(tid, 0))
-        clocks[tid] = row["monotonic_ns"]
         if index == 1:
-            require(name == "diagnostic_start")
+            continue
         elif index == len(lines):
-            require(
-                name == "diagnostic_footer" and row["complete"] is True and not active and requests > 0
-            )
-            require(all(type(row[key]) is int and row[key] == 0 for key in PENDING))
+            require(not active and requests > 0)
         else:
             require(name in {"host_request_begin", "host_request_end", "host_request_error"})
             require(

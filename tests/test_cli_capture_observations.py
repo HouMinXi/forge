@@ -719,3 +719,62 @@ def test_publication_delivery_failure_never_succeeds(tmp_path, monkeypatch, faul
         if s.get("name") == "Publish only independently validated offline observations"
     )
     assert "steps.observations.outcome == 'success'" in upload["if"]
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "schema",
+        "sequence",
+        "pid",
+        "tid",
+        "clock",
+        "missing-base",
+        "start",
+        "footer",
+        "pending",
+        "missing-footer",
+        "later-json",
+        "later-unknown",
+        "later-sequence",
+    ],
+)
+def test_unsupported_event_cannot_hide_broken_common_framing(captured, fault):
+    root, _ = captured
+    rows = event_rows()
+    rows[1]["event"] = "ticket_create"
+    if fault == "schema":
+        rows[1]["schema"] = True
+    elif fault == "sequence":
+        rows[1]["seq"] = 999
+    elif fault == "pid":
+        rows[1]["pid"] = 4321
+    elif fault == "tid":
+        rows[1]["tid"] = False
+    elif fault == "clock":
+        rows[1]["monotonic_ns"] = 1
+    elif fault == "missing-base":
+        del rows[1]["time_ns"]
+    elif fault == "start":
+        rows[0]["event"] = "ticket_create"
+    elif fault == "footer":
+        rows[-1]["complete"] = False
+    elif fault == "pending":
+        rows[-1]["open_tickets"] = 1
+    elif fault == "missing-footer":
+        rows[-1] = dict(rows[1], seq=4, monotonic_ns=1004)
+    elif fault == "later-unknown":
+        rows[2]["event"] = "PRIVATE_CANARY"
+    elif fault == "later-sequence":
+        rows[2]["seq"] = 999
+    raw = encode_rows(rows)
+    if fault == "later-json":
+        lines = raw.splitlines(keepends=True)
+        lines[2] = b"{PRIVATE_CANARY\n"
+        raw = b"".join(lines)
+    write(root / "worker/diagnostic/events.jsonl", raw)
+    row = obs.analyze(root, "diagnostic", 7)
+    assert row["event_reason"] == "MALFORMED_OR_INCOMPLETE"
+    assert row["event_integrity"] == "INCOMPLETE" and row["event_count"] is None
+    assert row["ack_consistency"] == row["power_loss_durability"] == "NOT_ASSESSED"
+    assert "PRIVATE" not in pub.encode(row)

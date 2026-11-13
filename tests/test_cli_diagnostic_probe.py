@@ -1647,3 +1647,24 @@ def test_never_started_cleanup_preserves_rejection_with_preexisting_threads(
             seen[0].uninstall()
         if caller is not None:
             os.close(caller)
+
+
+def test_real_probe_unsupported_family_does_not_hide_corrupt_suffix(probe, native):
+    observer, path = probe
+    host, _ = native()
+    assert entered(host) is True
+    rows = records(observer, path)
+    assert rows[-1]["complete"] is True
+    assert any(row["event"] == "ticket_create" for row in rows)
+    spec = importlib.util.spec_from_file_location(
+        "probe_offline_observations", _PROBE_PATH.parents[2] / "scripts/cli_capture_observations.py"
+    )
+    offline = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(offline)
+    with pytest.raises(offline.UnsupportedEvent):
+        offline.events(path.read_bytes(), os.getpid())
+    rows[-1]["seq"] += 1
+    corrupt = b"".join((json.dumps(row) + "\n").encode() for row in rows)
+    with pytest.raises(ValueError) as caught:
+        offline.events(corrupt, os.getpid())
+    assert not isinstance(caught.value, offline.UnsupportedEvent)
