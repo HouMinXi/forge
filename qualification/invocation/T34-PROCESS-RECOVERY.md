@@ -22,3 +22,48 @@ The healthy branch explicitly completes the second lease and finalizes. Both bra
 - The rest of T01–T38, R03, or complete #68 acceptance.
 
 The initial cloud attempt was blocked at real admission because its filesystem was overlay, not a supported ext4/btrfs profile. It did not reach the crash stimulus and is not a product RED. No profile override was used; execution moved to an isolated clone on the user's approved btrfs computer without modifying the original checkout.
+
+## Controlled ordinary LOCAL round gate extension
+
+A separate `test_invocation_t34_round_gate.py` now exercises actual
+`StateMachine.run`, the ordinary warning-mode audit host, native v2 storage,
+receipt writing, state persistence and the public `verify.run_verify` consumer.
+L0/L2/E2E are explicit empty-result seams; HTTP is a bounded synthetic response
+at the existing opener. A network/process audit tripwire forbids unexpected
+external operations after the writer starts. This is not an installed command,
+real provider, CI-mode, strict-mode or physical-power-loss qualification.
+
+The previous-PASS control earns three clean cycles through the real machine
+and receipts, then checks the real verifier succeeds. The next round uses the
+real `_invoke_api` stack with three ordinary L1 siblings. A barrier ensures all
+three have entered the controlled transport. Qodo obtains a complete response,
+returns measured usage (7 input / 9 output) and has a completed native audit
+attempt before readiness; the other two remain blocked in the controlled
+transport. Only then does the test kill and reap the writer.
+
+A fresh process loads the actual persisted state, which is PENDING and not
+converged, with latest host action `unavailable`. The real verifier rejects the
+old earned window even though its three historical clean cycles remain.
+The terminal SARIF helper explicitly refuses a pending LOCAL run rather than
+producing PASS; it is not a recovery interface. Independently reopened audit
+records retain Qodo's exact raw and null error class, while the other siblings
+remain unknown. This round uses successful Qodo; the earlier storage-only
+matrix separately exercises a non-null failed-sibling error class. Ordinary
+wire usage projection rules are unchanged; no journal-to-accounting credit is
+invented.
+
+Five combinations cover absent/present prior PASS with termination/healthy
+completion, plus a state-persistence omission control. The latter disables
+only the current machine instance's `_persist_state`; it must expose the old
+PASS to the independent verifier after termination. This is a deliberate
+negative control of the state-publication boundary, not a production defect
+and not an exhaustive per-site omission matrix. Restored-source fixtures use
+fresh directories. Healthy completion returns PASS with a prior earned window
+and ESCALATED after only one new clean cycle without one, preserving the
+unchanged three-cycle threshold.
+
+All data is synthetic, and test processes own no descendant processes. The
+fixture directory is on the checkout filesystem but outside Git working trees;
+the original user checkout and credentials are not modified. The gate result
+is bound to this LOCAL host-receipt route, not generalized to every review mode
+or to all remaining #68 acceptance groups.
