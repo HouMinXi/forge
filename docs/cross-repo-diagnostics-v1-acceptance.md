@@ -971,6 +971,30 @@ tests/test_diagnostic_completion.py::test_capture_close_failure_is_separate_from
 - Remaining gap / supported disposition: Catchable exceptions only; real process death, SIGKILL/power loss, universal I/O timeout not claimed. read/capture/worker/CLI facts remain independent.
 - R3 status: Current swallow-control/replace-primary omissions NOT_RUN; #491 terminal-update omission reports only its specific unknown-state oracle.
 
+
+###### T19 finite assertion audit (static; runtime remains NOT_RUN)
+
+At product/test `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`, the
+following matrix resolves the requested assertion inventory without a new test or
+experiment. Full parameter node IDs remain in the adjacent expansion; family
+rows below apply only to those listed parameter instances, not other tests.
+
+| Exact test family (file/function; parameters below) | Assertion actually present | Not established by that assertion |
+| --- | --- | --- |
+| `tests/test_advisory_diagnostics.py::test_process_control_propagates_and_preserves_committed_record` | `pytest.raises(signal, match="cancel")`; JSON presence iff boundary is not write; absence of pending files only when boundary is not cleanup. | No exception-object identity, decoded payload, strict reread or FD-count assertion. Cleanup parameters deliberately do not assert pending-file absence. |
+| `tests/test_advisory_diagnostics.py::test_cleanup_signal_does_not_replace_primary_signal` | `caught.value is primary` for write KeyboardInterrupt plus unlink SystemExit. | No artifact-read, pending-file or FD-count assertion; this narrow pair is not every cleanup boundary. |
+| `tests/test_advisory_diagnostics.py::test_close_process_control_does_not_replace_contained_primary_error` | Publication status `not_published`, cleanup `complete`, with write ENOSPC and close wrapper raising SystemExit **after real close**. | No same-exception-object oracle, strict reread or descriptor count. It does not simulate a descriptor that failed to close. |
+| `tests/test_advisory_diagnostics.py::test_close_process_control_is_not_hidden_by_an_earlier_ordinary_close_failure` | KeyboardInterrupt type/message, at least two close calls, one JSON file; each wrapper closes its FD before raising. | Close-call count is not live-FD count; file presence is not valid payload or strict-read proof. |
+| `tests/test_diagnostic_completion.py::test_interrupted_publication_is_unknown_and_original_control_propagates` | Original exception identity; capture available but worker incomplete; one UNKNOWN attempt with no locator; no tickets and unavailable notice. **Committed=True only:** formal reader on the retained successful publication and original expected returns `no_named_targets`. | Strict reread applies only to the already committed record, not to the UNKNOWN result. No FD-count, complete-worker or whole-CLI-success guarantee. |
+| `tests/test_diagnostic_completion.py::test_cli_reader_control_propagates_or_preserves_primary` | If caller read is entered, its wrapper checks the completion event; raised object is pre-existing primary or reader control; retained publication remains `published`. | A confirmed publication is not successful caller delivery. No successful reader payload, ticket integrity or FD-count assertion in this control. |
+
+This finishes the **static T19 assertion-map deliverable**, not T19 execution or
+contract acceptance. Descriptor-count evidence in these selected nodes is
+**UNKNOWN / absent**; whether a further FD oracle is required belongs to the
+bounded support-domain decision. No universal FD cleanup or interrupted-write
+readability conclusion is proposed. The exact identity/read controls already
+present should be reused before proposing any additional test.
+
 <details>
 <summary>T19: exact static node identities (runtime NOT_RUN)</summary>
 
@@ -1151,7 +1175,7 @@ not a reason to invent a test or keep an unlimited investigation open.
 | [T06](#evidence-t06): equal-rank order/single-hop | Reuse listed `TestTopNCap::test_cap_at_top_n` and caller-query controls; check ties and actual SQL edge traversal separately. A top-N count is not tie-order or no-second-hop proof. | Record existing exact tie-order and single-hop node IDs/assertions, or UNKNOWN per missing obligation; decide whether each is required in the accepted support domain. No inferred product defect. PENDING. |
 | [T12](#evidence-t12): process/fork/shared-use | Keep executed three warm-input cases separate. Reuse installed-capture closed/foreign-thread cases already indexed; serial foreign-thread refusal/reuse does not qualify fork or simultaneous shared use. | Explicitly accept unsupported process/fork/shared-use scope, or identify one supported scenario and exact existing node/oracle. Fork/shared-use runtime evidence UNKNOWN; no new concurrency experiment pending domain decision. PENDING. |
 | [T14](#evidence-t14): recovery | Reuse controlled PENDING compatibility and new-host identity controls; neither is HOLD resume. Preserve existing no-cross-repository-HOLD limited contract. | Maintainer records the original recovery obligation's not-applicable/unsupported disposition and rationale at the fixed document commit. Do not add fake recovery tests or silently delete the obligation. PENDING. |
-| [T19](#evidence-t19): identity/read/FD assertions | Reuse listed process-control, close, identity and post-cleanup-reader controls; annotate each actual assertion (type/message, object identity, payload/file presence, formal reread or descriptor count). | One bounded assertion matrix, with exact node per claim and UNKNOWN for gaps. Close-after-success faults cannot prove failed-close cleanup. Propose at most the next separately approved missing oracle; no broad “all FD safe” conclusion. PENDING. |
+| [T19](#evidence-t19): identity/read/FD assertions | Reuse listed process-control, close, identity and post-cleanup-reader controls; annotate each actual assertion (type/message, object identity, payload/file presence, formal reread or descriptor count). | Static assertion matrix completed in T19 at the fixed source; runtime remains NOT_RUN and support acceptance PENDING. Descriptor-count assertions are absent in the selected nodes. Close-after-success faults cannot prove failed-close cleanup. Reuse the mapped identity/read controls; decide whether one bounded FD oracle is required before any additional test. |
 | [T20](#evidence-t20): natural not_run | Reuse explicitly controlled omitted-dispatch nodes and current source reachability. Separate empty formal consumption from absence of publication and sink health. | Name a supported natural entry/path and exact test, or UNKNOWN plus a maintainer decision on whether synthetic-state coverage is sufficient. Do not make a new product path merely to satisfy a test. PENDING. |
 
 For all six tasks, final decision author and decision link are still UNKNOWN/NONE.
