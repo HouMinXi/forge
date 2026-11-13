@@ -74,8 +74,8 @@ and actual decision permalink; none is invented here.
 | Existing entry/subentry | Proposed decision and reason | Decision / applicable revisions / decision-maker / decision link |
 | --- | --- | --- |
 | Default live CLI | Accept attributed text consumption, not a mandatory locator/result return; production publication/read/delivery remain distinct. | PENDING; product as above, final document revision PENDING; actual decision-maker UNKNOWN; decision link NONE. Review request: formal COMMENT above. |
-| Immediate/background live MCP | Same default CLI-child text contract; `forge_review` builds its own CLI arguments and has no `diagnostic_ticket_directory` or `--diagnostic-ticket-dir` parameter. Background `forge_job_status` reports the same job output, not a new invocation or slot. Do not infer CLI opt-in handoff from MCP historical tools. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
-| Direct `run_cross_repo` without completion slot | `_diagnostic_completion=None` is supported by source. With no ticket directory there is no slot/notice guarantee. With a ticket directory but no slot, the primary worker reports ticket export outcomes directly; this is not the owning CLI thread's post-completion original-tuple reread. Preserve this distinct proposal, rather than adding a uniform result API. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. Source: `cross_repo.py` primary-worker no-slot notice branch; tests/qualification beyond static source are UNKNOWN unless explicitly mapped. |
+| Immediate/background live MCP | **Accept the bounded text contract; defer whole-SDK/live recovery qualification.** Same default CLI-child text contract; `forge_review` builds its own CLI arguments and has no `diagnostic_ticket_directory` or `--diagnostic-ticket-dir` parameter. Background `forge_job_status` reports the same job output, not a new invocation or slot. Do not infer CLI opt-in handoff from MCP historical tools. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
+| Direct `run_cross_repo` without completion slot | **Amend the consumer requirement to distinguish these two supported cases.** `_diagnostic_completion=None` is supported by source. With no ticket directory there is no slot/notice guarantee. With a ticket directory but no slot, the primary worker reports ticket export outcomes directly; this is not the owning CLI thread's post-completion original-tuple reread. Preserve this distinct proposal, rather than adding a uniform result API. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. Source: `cross_repo.py` primary-worker no-slot notice branch; tests/qualification beyond static source are UNKNOWN unless explicitly mapped. |
 | CLI diagnostic-ticket opt-in | Accept #491's original tuple handoff only when CLI creates the slot for the explicitly supplied directory; do not promote worker completion to whole-CLI completion. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
 | CLI diagnostic history | Accept explicitly caller-trusted historical selection, never current-run authority. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
 | MCP diagnostic history | Accept default-off server-root-bound historical reader with its bounded cancellation behavior; not live CLI opt-in. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
@@ -94,6 +94,81 @@ ext4 eligibility is not evidence it ran on this cloud host. Same-UID attacks,
 file-generation/ABA continuity, global atomic capture, graph freshness, power-loss
 durability, hard I/O deadlines, automatic global cleanup and universal cleanup are not silently added
 closing conditions. Expanding them requires a separate design.
+
+#### Decision rationale, evidence consumption and finite exit
+
+These are executor recommendations, not maintainer decisions. The eight existing
+entry rows are the decision units; scope live and scope history must not receive
+one implicit blanket approval. Accept the bounded default CLI text, explicit CLI
+opt-in, caller-trusted CLI history, server-root-bound MCP history, live counts and
+historical counts contracts as stated, because each names its actual independent
+expected-context holder and consumer rather than promising a uniform return API.
+Amend direct-host wording to separate no directory/no notice from a directory's
+worker notice; neither promises CLI post-completion rereading. Accept immediate
+and background MCP only as the existing CLI-child text contract, with the same job
+output retained; defer broader SDK/recovery claims. The fixed source links in the
+G03–G07 response and existing T08/T10/T14/T20 node mappings supply the current
+basis. Add a mapping only for a specifically demonstrated omission, not because a
+connector preview omitted file tail text.
+
+**Review coverage is not execution status.** Nine readable safe log copies and
+the unchanged probe source are already delivered below. Full-tail/anchor/node
+identity inspection is completed internally; external full-document and evidence
+review remains incomplete. A truncated connector response limits that reader's
+review coverage, not whether the implementation, log publication or internal
+inspection happened. Review the existing safe copies first: compare each phase's
+exit, target assertion and restoration statement with the index, while preserving
+the distinction between safe-copy text review, private-original comparison and
+independent execution. Do not ask for duplicate assets or replay completed probes
+merely to compensate for a preview limit. G04 starts with this existing entry
+register, fixed source and mappings; specific missing links, not a fresh blanket
+map, determine any further static work.
+
+**Original T14 recommendation:** retain the original obligation visibly, mark
+cross-repository HOLD resumption **UNSUPPORTED** under the already accepted no-HOLD
+contract, and mark single-repository HOLD diagnostic-axis qualification **NOT
+APPLICABLE** because that path has no cross-repository axis. Neither is a PASS or
+a reason to create a recovery feature. The supported new-host identity obligation
+remains T10, with its own evidence; it is not a replacement recovery run. Recording
+this scope disposition is pending maintainer decision, not pending execution of
+an unsupported test.
+
+**Original 78 version-replacement recommendation:** accept a new, explicitly
+versioned *clause-based* acceptance catalogue after independent review, rather
+than requiring inaccessible original node bytes or complete equivalence. Reuse
+this document's G/T subclause records as that catalogue, not a second count-based
+table. Known coverage includes publication/strict consumption (T08/T15/T16),
+identity/cache/admission (T09–T12), gate isolation (T13), overlap/cleanup/control
+signals (T17–T19) and delivery (T20), each only to its recorded scope and revision.
+The bounded supplement supplies three warm-input cases, one caller-read case and
+one separate library probe; it does not execute all those categories. T03's
+primary-connect oracle, T06's tie/single-hop qualification, T12's fork/shared-use
+scope, T19's FD scope and T20's natural not_run disposition remain the specific
+limitations indexed below. T14 is the explicit unsupported/not-applicable
+proposal above. Unrecoverable original cases cannot be named, matched one-to-one,
+or counted as covered: original identities, bytes and equivalence stay UNKNOWN.
+No replacement approval, original-port recovery or full coverage is claimed;
+#443/#444 unique differences also require their own disposition. Missing originals
+are a declared limitation of the replacement, not an endless blocking prerequisite.
+
+**One next runtime candidate, not an execution claim:** after consuming the
+existing evidence and fixing the supported revision/domain, reuse
+`tests/test_cross_repo_persistent_diagnostic.py::test_uncached_branch_transitions_get_new_records_and_cache_reuses_publication`
+for T09/T11. Its fixed-source wrappers delegate to the real publisher/reader and
+record successful returns: 3 publications and 4 reads, sequential payload states,
+and identical retained publication/context objects for the last cached read. This
+is not merely a file-count oracle, but wrappers append after return: it does not
+count attempted calls that raise. The controlled-CI fixture and resolver-call
+count (3) are not a natural gate or native SQL-connection oracle. The fixture
+stubs the CI verdict/other axes and injects repeated advisory dispatch; SQLite
+branch transitions and storage reads/writes are real, not natural scheduling. This addresses stale
+observation/empty-success risk not discharged by the three warm-admission refusals
+or the UNKNOWN probe. First run this existing node unchanged in the pinned 3.14
+source-tree domain; only after GREEN define one isolated omission and its exact
+semantic assertion. Do not claim a fresh SQL-connection count, byte-preservation
+oracle or whole-host concurrency from it. Status remains NOT_RUN in this pass;
+baseline/setup/non-target/timeout/escape/restore failures stop the row. No new test,
+production modification or experiment is performed by this documentation change.
 
 ### Subsequent bounded source-tree verification (local evidence; no gate approval)
 
@@ -1726,9 +1801,10 @@ URL or combine local source-tree and installed-wheel claims.
 
 ### A05/A06 then A08: bounded next work and stop rules
 
-1. First obtain entry/support-domain decisions above and finish R0–R2's full
-   subclause/expanded-node inventory, including a proposed original-port
-   disposition. Do not implement another result/history interface to avoid a
+1. Consume the existing reviewable evidence and completed internal R0–R2
+   inventory; record external review separately. Resolve the concrete entry/support
+   proposals and clause-based original-port replacement limits above, adding only
+   specifically missing mappings. Do not implement another result/history interface to avoid a
    decision. The table is the first document delivery, not final acceptance.
 2. Choose one risk-driven missing oracle at a time: wrong identity/caller reread,
    unknown without locator, no overwrite or historical fallback, admission before
