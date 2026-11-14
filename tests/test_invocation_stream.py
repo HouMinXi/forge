@@ -1,9 +1,12 @@
 """Actual SSE decoder with controlled byte readers; no durability claim."""
 
 from dataclasses import replace
+from pathlib import Path
 from http.client import HTTPResponse, IncompleteRead
+import ast
 import io
 import json
+import tokenize
 import threading
 import time
 import urllib.error
@@ -514,3 +517,38 @@ def test_http_response_overridden_read1_keeps_entity_partial(override):
         assert caught.value is primary and sink.getvalue() == b"\r\n"
     finally:
         response.close()
+
+
+def test_the_refinement_vocabulary_is_declared_in_one_place():
+    from code_forge import invocation_buffered_capture as buffered
+    from code_forge import invocation_io as io_module
+    from code_forge import invocation_stream as stream
+
+    declared = frozenset(
+        (
+            stream._CAPTURE_NOT_EXECUTED,
+            stream._CAPTURE_WRITE_UNCERTAIN,
+            stream._TERMINAL_CAPTURE_NOTICE,
+        )
+    )
+    assert stream._SCOPED_CAPTURE_NOTICES == declared
+    assert stream._CAPTURE_WRITE_FAILED not in stream._SCOPED_CAPTURE_NOTICES
+    assert buffered._TERMINAL_CAPTURE_NOTICE is stream._TERMINAL_CAPTURE_NOTICE
+    assert buffered._CAPTURE_WRITE_FAILED is stream._CAPTURE_WRITE_FAILED
+    assert buffered._CAPTURE_NOT_EXECUTED is stream._CAPTURE_NOT_EXECUTED
+    assert buffered._CAPTURE_WRITE_UNCERTAIN is stream._CAPTURE_WRITE_UNCERTAIN
+    assert io_module._TERMINAL_CAPTURE_NOTICE is stream._TERMINAL_CAPTURE_NOTICE
+
+    # A producer that keeps the import and writes the literal again would pass
+    # the identity checks above, so read the source tokens: no capture code may
+    # be spelled out outside the module that declares it. String tokens only,
+    # so prose in comments and docstrings stays free.
+    vocabulary = declared | {stream._CAPTURE_WRITE_FAILED}
+    for module in (buffered, io_module):
+        tokens = tokenize.generate_tokens(io.StringIO(Path(module.__file__).read_text()).readline)
+        spelled = {
+            literal
+            for kind, literal, *_ in tokens
+            if kind == tokenize.STRING and ast.literal_eval(literal) in vocabulary
+        }
+        assert spelled == set(), module.__name__

@@ -11,7 +11,14 @@ import math
 import threading
 import time
 
-from code_forge.invocation_stream import WireCapture
+from code_forge.invocation_stream import (
+    WireCapture,
+    _CAPTURE_NOT_EXECUTED,
+    _CAPTURE_WRITE_FAILED,
+    _CAPTURE_WRITE_UNCERTAIN,
+    _CaptureNoticeDelivery,
+    _TERMINAL_CAPTURE_NOTICE,
+)
 
 
 class BufferedCaptureSession:
@@ -241,22 +248,18 @@ def _snapshot_from(acquired, *, accepted_bytes, failed, write_uncertain, not_exe
 
 
 def _failure_notice(scoped, snapshot):
-    """Choose the capture failure notice.
+    """Preserve legacy warnings when disabled; distinguish scoped write outcomes.
 
-    Off, this is the single notice the base tree emits, so switch-off behaviour does
-    not change. On, a capture whose tickets never executed and which stored nothing is
-    reported as such rather than as a write failure; committed bytes keep it a write
-    failure, because calling that "never executed" invites a resend of stored data.
+    A capture can contain several tickets. An unexecuted ticket cannot prove that
+    another ticket wrote nothing, so uncertainty always wins over non-execution.
     """
     if not scoped:
-        return "capture_write_failed"
-    if snapshot.not_executed and snapshot.accepted_bytes == 0:
-        # Committed bytes mean this capture did execute; reporting "never executed"
-        # would invite a resend of data that is already on disk.
-        return "capture_not_executed"
+        return _CAPTURE_WRITE_FAILED
     if snapshot.write_uncertain:
-        return "capture_write_uncertain"
-    return "capture_write_failed"
+        return _CAPTURE_WRITE_UNCERTAIN
+    if snapshot.not_executed and snapshot.accepted_bytes == 0:
+        return _CAPTURE_NOT_EXECUTED
+    return _CAPTURE_WRITE_FAILED
 
 
 class _BoundedWireCapture(WireCapture):
@@ -270,8 +273,8 @@ class _BoundedWireCapture(WireCapture):
 
     def _notice(self, code):
         # Only the single acquisition reader calls this hook. The facade owns
-        # the one-shot warning flag; no external callback may run under the
-        # session condition used to serialize payload-copy allocation.
+        # warning deduplication and scoped refinements; no external callback may run
+        # under the condition used to serialize payload-copy allocation.
         if self._deferring_notice:
             self._deferred_notice = code
         else:
@@ -305,7 +308,7 @@ class _BoundedWireCapture(WireCapture):
         session = self._owner._session
         with session._condition:
             session._disable()
-        self._notice("capture_write_failed")
+        self._notice(_CAPTURE_WRITE_FAILED)
 
 
 class BufferedWireCapture:
@@ -329,7 +332,8 @@ class BufferedWireCapture:
         self._deadline = deadline
         self._buffered = self._committed = self._pending = 0
         self._not_executed = False
-        self._inflight = self._uncertain = self._warned = False
+        self._inflight = self._uncertain = False
+        self._notices = _CaptureNoticeDelivery(scoped=self._scoped)
         self._failed = session._disabled
         self._fatal = self._snapshot = None
         self._fatal_bytes = 0
@@ -349,10 +353,9 @@ class BufferedWireCapture:
             return self._buffered
 
     def _notice(self, code):
-        with self._session._condition:
-            if self._warned:
-                return
-            self._warned = True
+        self._notices.emit(code, warn=self._deliver_notice)
+
+    def _deliver_notice(self, code):
         try:
             self._warn(code)
         except MemoryError:
@@ -494,9 +497,7 @@ class SharedBufferedCaptureSession:
             elif token is not None:
                 self._captures.add(capture)
         if lane._disabled:
-            capture._notice(
-                "audit_io_unresolved_process" if self._io._blocked else "capture_write_failed"
-            )
+            capture._notice(_TERMINAL_CAPTURE_NOTICE if self._io._blocked else _CAPTURE_WRITE_FAILED)
         return capture
 
     def close(self):
@@ -664,7 +665,7 @@ class _SharedWireCapture(BufferedWireCapture):
 
         self._session._io.emit_warning()
         if self._session._io._blocked:
-            code = "audit_io_unresolved_process"
+            code = _TERMINAL_CAPTURE_NOTICE
         super()._notice(code)
         if self._strict:
             raise CaptureUnavailable(code)

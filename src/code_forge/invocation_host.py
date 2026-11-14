@@ -29,6 +29,7 @@ from .invocation_buffered_capture import SharedBufferedCaptureSession
 from .invocation_io import AuditPhase, IoLimits, process_audit_io
 from .invocation_owner import InvocationOwner
 from .invocation_send_audit import SendLifecycleClosed, SendRequest
+from .invocation_stream import _CaptureNoticeDelivery, _fixed_capture_notice
 
 
 _DEFAULT_IO = IoLimits(operations=32, payload_bytes=8 * 1024 * 1024, batch_bytes=65536, captures=16)
@@ -48,10 +49,21 @@ def _process_warning(_code):
     return None
 
 
-def _warning(_code):
+def _warning(code):
+    """Default renderer: generic text, plus the code only for a closed refinement.
+
+    Membership alone is the right test here because the caller decides scope
+    before forwarding: ``HostAuditSession.warn`` sends the generic constant when
+    the fault domain is not scoped. A second caller passing a raw capture code
+    has to apply that same gate first, or the default text becomes scoped text.
+    """
     import sys
 
-    print("code-forge: invocation audit unavailable; recording is incomplete", file=sys.stderr)
+    suffix = f" [{code}]" if _fixed_capture_notice(code) else ""
+    print(
+        "code-forge: invocation audit unavailable; recording is incomplete" + suffix,
+        file=sys.stderr,
+    )
 
 
 def _finite(value):
@@ -309,7 +321,8 @@ class HostAuditSession:
         self._lock, self._open_gate = threading.Lock(), threading.Lock()
         self._commands, self._attempts = set(), set()
         self._control_bytes = 0
-        self._opened = self._disabled = self._closed = self._warned = False
+        self._opened = self._disabled = self._closed = False
+        self._notices = _CaptureNoticeDelivery(scoped=scoped_fault_domain)
         self._control_deadline = float("-inf")
         self._uncertain = self._complete = self._finalized = False
         self._reserved = self._started = self._settled = self._adopted = self._accepted = 0
@@ -355,19 +368,22 @@ class HostAuditSession:
         result = min(deadline, time.monotonic() + self.limits.control_timeout_s)
         return min(result, self._job_deadline) if self._job_deadline is not None else result
 
-    def warn(self, _code):
+    def warn(self, code):
         self._check_process()
         with self._lock:
             self._disabled = True
-            first = not self._warned
-            self._warned = True
-        if first:
-            try:
-                self._warn(_WARNING)
-            except MemoryError:
-                raise
-            except Exception:  # noqa: BLE001, S110 - diagnostics never replace review outcome
-                pass
+        public_code = _WARNING
+        if self._scoped_fault_domain:
+            public_code = _fixed_capture_notice(code) or _WARNING
+        self._notices.emit(public_code, warn=self._deliver_notice)
+
+    def _deliver_notice(self, code):
+        try:
+            self._warn(code)
+        except MemoryError:
+            raise
+        except Exception:  # noqa: BLE001, S110 - diagnostics never replace review outcome
+            pass
 
     def _failure(self, *, uncertain=False, primary=None):
         with self._lock:

@@ -48,9 +48,9 @@ def test_switch_on_separates_the_three_outcomes():
     assert _failure_notice(True, snapshot(failed=True)) == "capture_write_failed"
 
 
-def test_never_executed_outranks_uncertain_when_both_are_set():
+def test_uncertain_write_outranks_a_different_unexecuted_ticket():
     both = snapshot(failed=True, not_executed=True, write_uncertain=True)
-    assert _failure_notice(True, both) == "capture_not_executed"
+    assert _failure_notice(True, both) == "capture_write_uncertain"
 
 
 def test_snapshot_defaults_to_not_executed_false():
@@ -298,9 +298,7 @@ def test_pending_ticket_at_seal_is_uncertain_not_merely_failed(supervisor):
         assert snapshot_state.write_uncertain is True, (
             "an outstanding write must not read as a clean failure"
         )
-        # This path emits the chain diagnostic first, so the notice text is pinned
-        # elsewhere; what belongs here is the snapshot state it would have been built from.
-        assert notices and "capture_write_failed" not in notices
+        assert notices == ["audit_io_unresolved_process"]
     finally:
         release.set()
         writer.join(2)
@@ -371,36 +369,115 @@ def test_an_interrupt_keeps_the_run_from_claiming_completeness(tmp_path):
     assert rec.snapshot().audit_complete is False
 
 
-def test_the_switch_changes_the_notice_a_session_emits(supervisor, monkeypatch):
-    """Stub only the io outcome: the session, the reconcile and the notice are real."""
-    from code_forge import invocation_io
-    from tests.test_invocation_io import capture, shared
+def test_the_switch_changes_the_notice_a_session_emits(supervisor):
+    """A real expired submit warns early, then refines its outcome at seal."""
+    import time
+
+    from tests.test_invocation_io import shared
 
     process, _warnings = supervisor
-    real = invocation_io.ProcessAuditIo._result_locked
-
-    def expired(self, ticket, handoff=False):
-        if getattr(ticket, "_target", None) is not None:
-            return invocation_io.IoOutcome("expired", not_executed=True)
-        return real(self, ticket, handoff=handoff)
-
-    monkeypatch.setattr(invocation_io.ProcessAuditIo, "_result_locked", expired)
-
-    seen = {}
     for scoped in (True, False):
-        notices: list[str] = []
-        session = shared(process, flush_timeout_s=0.02, scoped_fault_domain=scoped)
+        notices, writes = [], []
+        session = shared(process, scoped_fault_domain=scoped)
         try:
-            cap = capture(session, len, warn=notices.append)
+            cap = session.new_capture(
+                write=lambda data, writes=writes: writes.append(data) or len(data),
+                warn=notices.append,
+                limit_bytes=100,
+                action_deadline=time.monotonic() - 1,
+                chunk_bytes=128,
+            )
             cap.append(b"data: {}\n\n")
+            assert notices == ["capture_write_failed"]
             state = cap.seal()
-            assert state.not_executed is True
-            assert process._blocked is False
-            seen[scoped] = notices[-1]
+            assert state.not_executed is True and not state.write_uncertain
+            assert process._blocked is False and writes == []
+            expected = ["capture_write_failed"] + (["capture_not_executed"] if scoped else [])
+            assert notices == expected
+            assert cap.seal() is state and notices == expected
         finally:
             session.close()
-    assert seen[True] == "capture_not_executed"
-    assert seen[False] == "capture_write_failed"
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_uncertain_write_refines_an_earlier_capture_warning(supervisor, strict):
+    import threading
+
+    from code_forge.invocation_stream import CaptureUnavailable
+    from tests.test_invocation_io import capture, shared
+
+    process, _ = supervisor
+    entered, release = threading.Event(), threading.Event()
+    writes, notices = [], []
+
+    def write(data):
+        writes.append(data)
+        entered.set()
+        assert release.wait(2)
+        raise OSError("private sink failure")
+
+    session = shared(process, scoped_fault_domain=True)
+    cap = capture(session, write, warn=notices.append, strict=strict)
+    try:
+        if strict:
+            release.set()
+            with pytest.raises(CaptureUnavailable):
+                cap.append(b"abcd")
+        else:
+            cap.append(b"abcd")
+            assert entered.wait(2)
+            release.set()
+        assert entered.wait(2)
+        with process._condition:
+            assert process._condition.wait_for(lambda: process._running is None, timeout=2)
+        cap.append(b"efgh")
+        assert notices == ["capture_write_failed"]
+        if strict:
+            with pytest.raises(CaptureUnavailable) as caught:
+                cap.seal()
+            assert caught.value.args == ("capture_write_uncertain",)
+        else:
+            state = cap.seal()
+            assert state.write_uncertain and state.accepted_bytes == 0
+        assert writes == [b"abcd"] and process._blocked is False
+        assert notices == ["capture_write_failed", "capture_write_uncertain"]
+    finally:
+        release.set()
+        session.close()
+
+
+def test_an_unexecuted_ticket_cannot_hide_a_real_unacknowledged_write(supervisor):
+    import threading
+
+    from tests.test_invocation_io import capture, shared
+
+    process, _ = supervisor
+    entered, release = threading.Event(), threading.Event()
+    stored, notices = io.BytesIO(), []
+
+    def write(data):
+        stored.write(data)
+        entered.set()
+        assert release.wait(2)
+        raise OSError("the write happened but its acknowledgement was lost")
+
+    session = shared(process, scoped_fault_domain=True)
+    cap = capture(session, write, warn=notices.append)
+    try:
+        cap.append(b"abcd")
+        assert entered.wait(2)
+        cap.append(b"efgh")
+        release.set()
+        with process._condition:
+            assert process._condition.wait_for(lambda: process._running is None, timeout=2)
+        state = cap.seal()
+        assert state.not_executed and state.write_uncertain
+        assert state.accepted_bytes == 0 and stored.getvalue() == b"abcd"
+        assert process._blocked is False
+        assert notices == ["capture_write_uncertain"]
+    finally:
+        release.set()
+        session.close()
 
 
 def test_settlement_writes_the_terminal_record(tmp_path):
