@@ -118,7 +118,7 @@ complete coverage, catalogue-wide PASS or automatic acceptance of future
 revisions. Subsequent catalogue edits must identify their version and net
 difference. Existing evidence keeps its own fixed revision. All unfinished
 obligations remain, including top-N/single-hop/extra-hop, fork/shared-use,
-real-close-failure FD evidence, natural not_run, G01/G02 and final same-revision
+real-close-failure FD evidence, natural not_run, remaining G01/G02 qualification and final same-revision
 Python 3.14 regressions and independent review. Stable tie ordering is not
 promised; T14 remains UNSUPPORTED/NOT APPLICABLE, not PASS or a substitute for T10.
 
@@ -131,9 +131,54 @@ production implementation and are not to be merged wholesale. Both PR states
 remain unchanged; suggested superseded/historical dispositions are not closure
 authorization. Any later necessary unique assertion needs its own narrow task.
 
-All other decisions retain their prior status, including G01/G02 protocol freeze,
+All other decisions retain their prior status except the later limited G01/G02 decision below, including
 other support domains, qualification of the retained catalogue obligations, and final G12/G13.
 Original78 remains UNKNOWN. Related to #33 and #441; both remain open.
+
+### Subsequent limited G01/G02 freeze (2026-11-14)
+
+The owner replied “可以” in the Forge project chat to the specific G01/G02
+package recorded here, as relayed to the executor. No public decision permalink
+exists. Applicable inspected product/test revision:
+`6740c44f44211e55d72ac947185d7f8434ea2e67`; prior decision-document head:
+`a5440ac3782c998b94d42843f2f7a6f02eb05844`. The prior bounded contract blob is
+`602763e37bd831ba17241983878ec58461193a39`; codec and capture source blobs are
+`5c140f1d1266c3d7b50d649f392dc06cfb9017d2` and
+`ca1aa1be4f3a49299ad73b1cacf715b5d73882b2`. This is a documentation decision,
+not new execution or reassignment of earlier evidence to this revision.
+
+**G01 accepted semantics:** current stage-effective capture at actual first use,
+reuse of already consumed values and rediscovery by a new host. It promises no
+atomic environment/graph snapshot or freshness guarantee. Verdict, gate/credit
+rules and the runner's narrow `(diff_text, repo_root)` signature remain unchanged;
+the existing CLI private completion handoff is retained. No full State-save or
+new HOLD/recovery mechanism is approved.
+
+**G02 accepted package:** the existing nine-field v1 strict decoder, its existing
+five state/diagnostic combinations, and no_named_targets as the sole nonempty
+fixed diagnostic. Failure/refusal/missing evidence cannot masquerade as not_run.
+The explicitly accepted limits are 4096 artifact bytes, container depth 3 including
+arrays, decoded strings of at most 256 UTF-8 bytes; 64 finish attempts per host,
+including failures; at most 256 entries per registry snapshot and 512 retained
+stage slots; aggregate captured configuration/failure text 64 KiB; aggregate
+finding/error history text 64 KiB, with at most 10 findings and 258 errors per
+observation. These are not global disk or total-memory limits.
+
+The current nine fields and exact types are described in the
+[bounded wire contract](cross-repo-diagnostics-v1.md#closed-v1-wire-contract).
+This limited approval does not automatically approve every other numerical or
+support detail in that older document: the separate active-cache allowance,
+individual captured/history string limits, excluded-root/path traversal budgets,
+metadata-read budgets and other unlisted limits retain their prior decision
+status. No additional implementation guarantee is inferred from their existence.
+
+G01/G02 semantic freeze is not full runtime qualification, G12/G13 acceptance or
+approval of other unlisted contract details. Historical codec controls at
+`07a194830db454165aec271b209be4b21646bd0c` / Python 3.14.10 retain their own
+scope (duplicate keys, 4096/4097 boundary and independent expected context);
+they are not a new run or complete reader/storage qualification. Existing
+NOT_RUN, natural-not_run, remaining boundary/control and final same-revision
+regression obligations remain explicit. No new experiment accompanies this edit.
 
 ## 2026-11-13 entry adjudication and unified evidence gaps (proposal)
 
@@ -1718,8 +1763,8 @@ contract-only decisions retain the entry decision register or explicit PENDING.
 
 | Gate | All required subclauses and present source | Exact test references / oracle / remaining status | Stable evidence records for executable subclauses |
 | --- | --- | --- | --- |
-| G01 | One current self-contained contract; replace conflicting v4 origin/State-save/eager-snapshot/HOLD/root proposals; explicit four-P1 and support dispositions. `cross-repo-diagnostics-v1.md`, entry table and original comments. | **Decision pending**. T08–T12/T14/T18/T19 implement parts, but source existence/merge is not approval. Record accepted replacements and preserve original obligations or named unsupported dispositions; no runtime G0 toggle. | Contract decisions: entry decision register; [T14](#evidence-t14), [T18](#evidence-t18), [T19](#evidence-t19) for support dispositions. |
-| G02 | Freeze nine exact fields, types/version, five legal state/diagnostic combinations, exact UTF-8/diff, unknown/missing/duplicate/nonfinite rejection, byte/depth/string/sequence/attempt limits and opaque repository alias/privacy. `_advisory_diagnostics` codec plus capture budgets. | T16 expanded families cover baseline syntax/context; T15/T18 cover storage separately. **Merged source; formal freeze pending.** Decoder field omissions and valid-limit boundaries need current logs; neither UUID nor digest proves authorization. | Schema/context/limits: [T16](#evidence-t16); storage budget: [T15](#evidence-t15), [T18d](#evidence-t18d). |
+| G01 | One current self-contained contract; replace conflicting v4 origin/State-save/eager-snapshot/HOLD/root proposals; explicit four-P1 and support dispositions. `cross-repo-diagnostics-v1.md`, entry table and original comments. | **Limited G01 semantics ACCEPTED on 2026-11-14**, as recorded above. T08–T12/T14/T18/T19 implement parts; remaining unlisted support/details and runtime qualification are not approved by implication. Preserve original obligations or named unsupported dispositions; no runtime G0 toggle. | Contract decisions: entry decision register; [T14](#evidence-t14), [T18](#evidence-t18), [T19](#evidence-t19) for support dispositions. |
+| G02 | Freeze nine exact fields, types/version, five legal state/diagnostic combinations, exact UTF-8/diff, unknown/missing/duplicate/nonfinite rejection, byte/depth/string/sequence/attempt limits and opaque repository alias/privacy. `_advisory_diagnostics` codec plus capture budgets. | T16 expanded families cover baseline syntax/context; T15/T18 cover storage separately. **Limited G02 field/state and expressly listed resource freeze ACCEPTED on 2026-11-14**, as recorded above; other unlisted limits retain prior status. Decoder field omissions and valid-limit boundaries retain their evidence gaps; neither UUID nor digest proves authorization. | Schema/context/limits: [T16](#evidence-t16); storage budget: [T15](#evidence-t15), [T18d](#evidence-t18d). |
 | G03 | Original observation separated from delivery; actual/cache metadata; same-input hit reuses sequence/artifact/publication/error view, no SQL/republication/credit; uncached early repeat is actual. Capture Record and runner final cache. | **Limited contract accepted**; bounded cache-republication and cached formal-reader invocation controls are recorded in the dated supplements; other nodes retain their individual status under the dated supplements. The existing cold/warm record/bytes/SQL and G07 controls are not omitted from that record. Original object/context, SQL/publish counters and bytes are oracles; do not infer state from empty findings. | Observation/delivery and cache: [T09](#evidence-t09), [T11](#evidence-t11), [T12](#evidence-t12). |
 | G04 | Per-entry issuance before runner/cache, repository/axis/sequence binding, forwarding to publisher/formal reader, explicit caller success/failure/locator and independent expected; same MCP child retains identity; supported new host versus recovery. Host UUID, capture, CLI completion and MCP child. | Entry table plus T08/T10/T14/T20 and history catalogue. **Limited entry semantics accepted on 2026-11-14** as recorded above; remaining per-entry details and whole G04 remain pending. #491 is real opt-in handoff. Do not force a uniform public return or invent authenticated cross-restart state. | Issuance/forwarding/caller: [T08](#evidence-t08), [T10](#evidence-t10); recovery: [T14](#evidence-t14); entry decisions above. |
 | G05 | Preserve cross-repo PENDING→FAIL/no HOLD; single-repo HOLD has no axis, actual recovery not fabricated. `run_cross_repo`; CLI dispatch/HOLD routing. | **Limited contract accepted**; T14 includes controlled compatibility node and new-host evidence, not live recovery. Original T14 UNSUPPORTED/NOT APPLICABLE disposition accepted on 2026-11-14; neither is PASS. | Pending/HOLD/axis support: [T14](#evidence-t14). |
@@ -2669,7 +2714,7 @@ tests/test_scope_history_host.py::test_real_host_exports_after_independent_read_
 | A04 | Stage-effective lazy first-use/duplicate/native-error/budget controls mapped in T07/T11/T12. Existing limited G06/G07 acceptance does not replace current runtime evidence. |
 | A05 / R3 | Native docs-only PASS/FAIL with State/credit/receipt oracles mapped in T13. Fresh selected semantic omission/restoration not performed; non-target/harness failures stop a row. |
 | A06 / R3 | Storage T15–T17 and explicit T18a–f/T19 fault/lifecycle rows expose gaps. No library-to-host concurrency or cleanup-status inference. |
-| A07 | Entry/support proposals preserve no HOLD, bounded Linux, actual historical SDK evidence and remaining live-wire qualification limits. README/v1/support consistency and formal G01/G02/G08 decisions remain pending. |
+| A07 | Entry/support proposals preserve no HOLD, bounded Linux, actual historical SDK evidence and remaining live-wire qualification limits. Limited G01/G02 semantics and listed budgets, and bounded G08 support, have the later owner decisions above; remaining unlisted details and runtime qualification remain pending. |
 | A08 / R4 | One final revision regression, public identity, pinned lint/format/whitespace, reviewed evidence archive, independent G0 and maintainer acceptance remain pending. #443/#444 unique difference/disposition not freshly reviewed in this pass. No issue closed. |
 
 ### Finite follow-up dispositions requested by the COMMENT review
@@ -2745,7 +2790,7 @@ URL or combine local source-tree and installed-wheel claims.
 5. R4 uses one final product/test/document revision, applicable regressions,
    identity audit, pinned Ruff check/format and whitespace validation, safe
    evidence artifacts, independent review and explicit maintainer acceptance.
-   Resolve the remaining G01/G02/G04/G09/G08/G10/G11 decisions and evidence before G12/G13 completion; the limited G10 three-state semantics are already accepted, not full G10 qualification. Compare the
+   Resolve the remaining G01/G02/G04/G09/G08/G10/G11 decisions and evidence before G12/G13 completion; the limited G01/G02 semantics/listed budgets and G10 three-state semantics are already accepted, not complete qualification of those gates. Compare the
    unique necessary differences of #443/#444 before retain/extract/supersede;
    neither empty merging nor automatic closing is a disposition.
 
@@ -2783,7 +2828,7 @@ The one authorized post-merge CI round completed successfully: three workflows, 
 
 ## Contract dispositions and remaining decisions
 
-The issue now registers limited acceptance of G03, G05, G06 and G07. This is four contract dispositions, not a completion percentage, full runtime qualification or formal G0/G1 admission. G01, G02, G04 and G08–G13 remain open. The accepted clauses retain their T11–T12/G12 evidence obligations and supported-type/resource limits.
+The earlier issue registration accepts limited G03, G05, G06 and G07 dispositions. The dated owner decisions above additionally record limited G01/G02 semantics and listed budgets, entry semantics, storage support and other explicitly bounded decisions. These are not a completion percentage, full runtime qualification or formal G0/G1 admission; unlisted details and G12/G13 remain open. The accepted clauses retain their T11–T12/G12 evidence obligations and supported-type/resource limits.
 
 | Earlier candidate or ambiguous claim | Implemented choice | Disposition and remaining work |
 | --- | --- | --- |
@@ -2923,7 +2968,7 @@ The host constructs the independent expected identity before publication. `Diagn
 | Gate | Current record | What this follow-up does not grant |
 | --- | --- | --- |
 | G01 | Fixed contract, four-P1 disposition and conflicting-clause/support-domain decisions are now explicit. | A maintainer's disposition of remaining conflicts or an unconditional P1-3/T18f pass. |
-| G02 | Concrete closed v1 codec, bounds, actual consumers and stronger strict-decoder controls are identifiable. | Formal schema freeze, recovery of the old port or exhaustive per-check mutation coverage. |
+| G02 | Concrete closed v1 codec, bounds, actual consumers and stronger strict-decoder controls are identifiable. | This historical follow-up alone granted no formal schema freeze; the subsequent limited G01/G02 owner decision above is separate. No recovery of the old port or exhaustive per-check mutation coverage. |
 | G13 | Independent reviews and reproducible tests are evidence for the exact changed files and fixed product source. | Formal G0/G1, retrospective approval of every older proposal, or completion of #441/#33. |
 
 An admission decision should name the product revision and this evidence revision, accepted consistency/storage/recovery domain, treatment of the original port, exact remaining controls and T18f disposition. Record the reviewer conclusion separately from the maintainer's explicit acceptance. A merged PR or successful CI check is not that record.
