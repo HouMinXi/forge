@@ -1565,8 +1565,9 @@ Each existing T label below is a stable evidence-record anchor. Its obligation,
 source, independent oracle, supported gap, R3 status and exact parameter list form
 that record; future updates bind individual parameter nodes, not the entire group.
 Fixed product/test revision and initial environment disposition are inherited from
-R0, while the bounded supplement explicitly overrides only four named pytest nodes
-and one separately labelled probe. Per-node command, exit, log/digest and restored
+R0; the dated execution supplements override only their explicitly named
+parameter nodes and separately labelled probe, within each stated environment
+and oracle. Existing-control PASS and omission-control RED are separate facts. Per-node command, exit, log/digest and restored
 hash are UNKNOWN/NOT_RUN where no executed record is cited. A proposed command is
 not a recorded execution. The G-to-record links below map executable subclauses;
 contract-only decisions retain the entry decision register or explicit PENDING.
@@ -1577,16 +1578,16 @@ contract-only decisions retain the entry decision register or explicit PENDING.
 | --- | --- | --- | --- |
 | G01 | One current self-contained contract; replace conflicting v4 origin/State-save/eager-snapshot/HOLD/root proposals; explicit four-P1 and support dispositions. `cross-repo-diagnostics-v1.md`, entry table and original comments. | **Decision pending**. T08–T12/T14/T18/T19 implement parts, but source existence/merge is not approval. Record accepted replacements and preserve original obligations or named unsupported dispositions; no runtime G0 toggle. | Contract decisions: entry decision register; [T14](#evidence-t14), [T18](#evidence-t18), [T19](#evidence-t19) for support dispositions. |
 | G02 | Freeze nine exact fields, types/version, five legal state/diagnostic combinations, exact UTF-8/diff, unknown/missing/duplicate/nonfinite rejection, byte/depth/string/sequence/attempt limits and opaque repository alias/privacy. `_advisory_diagnostics` codec plus capture budgets. | T16 expanded families cover baseline syntax/context; T15/T18 cover storage separately. **Merged source; formal freeze pending.** Decoder field omissions and valid-limit boundaries need current logs; neither UUID nor digest proves authorization. | Schema/context/limits: [T16](#evidence-t16); storage budget: [T15](#evidence-t15), [T18d](#evidence-t18d). |
-| G03 | Original observation separated from delivery; actual/cache metadata; same-input hit reuses sequence/artifact/publication/error view, no SQL/republication/credit; uncached early repeat is actual. Capture Record and runner final cache. | **Limited contract accepted**; bounded cache-republication and cached formal-reader invocation controls are recorded in the dated supplements; other subclauses remain NOT_RUN; T12 has only the three bounded executions above. Original object/context, SQL/publish counters and bytes are oracles; do not infer state from empty findings. | Observation/delivery and cache: [T09](#evidence-t09), [T11](#evidence-t11), [T12](#evidence-t12). |
+| G03 | Original observation separated from delivery; actual/cache metadata; same-input hit reuses sequence/artifact/publication/error view, no SQL/republication/credit; uncached early repeat is actual. Capture Record and runner final cache. | **Limited contract accepted**; bounded cache-republication and cached formal-reader invocation controls are recorded in the dated supplements; other nodes retain their individual status under the dated supplements. The existing cold/warm record/bytes/SQL and G07 controls are not omitted from that record. Original object/context, SQL/publish counters and bytes are oracles; do not infer state from empty findings. | Observation/delivery and cache: [T09](#evidence-t09), [T11](#evidence-t11), [T12](#evidence-t12). |
 | G04 | Per-entry issuance before runner/cache, repository/axis/sequence binding, forwarding to publisher/formal reader, explicit caller success/failure/locator and independent expected; same MCP child retains identity; supported new host versus recovery. Host UUID, capture, CLI completion and MCP child. | Entry table plus T08/T10/T14/T20 and history catalogue. **Per-entry decision pending**; #491 is real opt-in handoff, default text-only proposal remains a decision. Do not force a uniform public return or invent authenticated cross-restart state. | Issuance/forwarding/caller: [T08](#evidence-t08), [T10](#evidence-t10); recovery: [T14](#evidence-t14); entry decisions above. |
 | G05 | Preserve cross-repo PENDING→FAIL/no HOLD; single-repo HOLD has no axis, actual recovery not fabricated. `run_cross_repo`; CLI dispatch/HOLD routing. | **Limited contract accepted**; T14 includes controlled compatibility node and new-host evidence, not live recovery. Explicit original T14 not-applicable disposition still required. | Pending/HOLD/axis support: [T14](#evidence-t14). |
-| G06 | Admission before cache/error clear/SQL/publication; original installed capture/identity/stage-store/process/thread, lexical/canonical root/exact diff; stage-effective actual first use, untouched stages lazy, same-instance retain/new-host rediscover; no repeated fallback native work on budget error. `DiagnosticCapture.admit`/stage methods, runner. | **Limited contract accepted**; T07/T11/T12 exact nodes/counters. Only the three T12 changed-input cases are executed above; the remaining set is NOT_RUN. Fork/process and simultaneous-use qualification not inferred from foreign-thread tests; no atomic/freshness guarantee. | Discovery stage: [T07](#evidence-t07); admission/cache/error view: [T11](#evidence-t11), [T12](#evidence-t12). |
+| G06 | Admission before cache/error clear/SQL/publication; original installed capture/identity/stage-store/process/thread, lexical/canonical root/exact diff; stage-effective actual first use, untouched stages lazy, same-instance retain/new-host rediscover; no repeated fallback native work on budget error. `DiagnosticCapture.admit`/stage methods, runner. | **Limited contract accepted**; T07/T11/T12 exact nodes/counters. The dated supplements record three changed-input omission controls plus the separately scoped existing stage/cache/budget controls; uncited nodes remain NOT_RUN. Fork/process and simultaneous-use qualification not inferred from foreign-thread tests; no atomic/freshness guarantee. | Discovery stage: [T07](#evidence-t07); admission/cache/error view: [T11](#evidence-t11), [T12](#evidence-t12). |
 | G07 | Retain original observation/findings/errors; isolate returned containers and stage dictionaries; old uncached errors do not overwrite cached view; supported-type/budget/encoding failure unavailable, never successful empty history. Capture snapshot/cache. | **Limited contract accepted**; T11/T12 plus bounded/history nodes in their expansions. Arbitrary nested objects are unsupported; current mutation/log coverage not established by frozen types. | Snapshot/cache isolation and unavailable: [T11](#evidence-t11), [T12](#evidence-t12), [T16](#evidence-t16). |
 | G08 | Primary persistent root outside every temporary root/alias, namespace ownership, canonical/no-follow/regular file, qualified FS/ACL/path budgets; same-key conflict and concurrent distinct executions; inode-reuse limitations. Storage binder/publisher/reader. | T15–T18d/e and storage-support catalogue. **Decision pending** on exact support/alias/budget/overlap claims. Source/metadata checks are not generation continuity or same-UID authentication; library overlap is not whole-host concurrency. | Storage/identity/concurrency: [T15](#evidence-t15), [T16](#evidence-t16), [T17](#evidence-t17), [T18d](#evidence-t18d), [T18e](#evidence-t18e). |
 | G09 | Actual publisher→formal reader→consumer, independent expected and success/failure result; no logger-as-durability proof, no latest scan; publication/read/empty/nonempty delivery separated. Capture.present, default output, opt-in completion, historical readers. | Entry table; T08/T15/T20; **Decision pending**. A02 empty not_run reachability and A03 per-entry acceptance stay explicit. All channels failing is unconfirmed/not delivered, never caller success. | Actual formal consumer: [T08](#evidence-t08); delivery/failure: [T20](#evidence-t20); per-entry decision above. |
-| G10 | Confirmed published/not_published/unknown; verify commit identity/content, no locator for unknown, no overwrite/automatic retry/old fallback; staging, commit, cleanup and return distinct. PublicationResult and capture attempt ledger. | T15/T17/T18e/T19 exact fault/unknown nodes. **Decision pending**; Only the bounded standalone false-success replacement was executed; other current controls remain NOT_RUN. No journal/exactly-once/power-loss promise. | Three states/commit: [T15](#evidence-t15), [T18e](#evidence-t18e); conflict: [T17](#evidence-t17); controls: [T19](#evidence-t19). |
+| G10 | Confirmed published/not_published/unknown; verify commit identity/content, no locator for unknown, no overwrite/automatic retry/old fallback; staging, commit, cleanup and return distinct. PublicationResult and capture attempt ledger. | T15/T17/T18e/T19 exact fault/unknown nodes. **Decision pending**; The dated supplements distinguish the standalone false-success replacement from the existing foreign-final UNKNOWN control; uncited nodes/omission controls remain NOT_RUN. No journal/exactly-once/power-loss promise. | Three states/commit: [T15](#evidence-t15), [T18e](#evidence-t18e); conflict: [T17](#evidence-t17); controls: [T19](#evidence-t19). |
 | G11 | Pre/post commit and primary/sibling/receipt/replay/setup/read/output/callback exits; preserve primary/control exception identity; bounded owned cleanup; event/join/cwd/capture/artifact/caller facts separate. Owned cwd scope, capture close, completion, deferred signal flow. | T18a–f/T19/T20. #452 fixes callback masking only; **Decision pending** on remaining asynchronous/permission/source-lock/unregistered-allocation limits, not a demand to change shared lifecycle. | Normal/error/cancel/root/staging/cleanup: [T18a](#evidence-t18a), [T18b](#evidence-t18b), [T18c](#evidence-t18c), [T18d](#evidence-t18d), [T18e](#evidence-t18e), [T18f](#evidence-t18f); control identity [T19](#evidence-t19), delivery [T20](#evidence-t20). |
-| G12 | Original-port disposition, real file/node identity including params, independent oracle, exact fault location/class, baseline GREEN/semantic RED/byte-restored GREEN, public identity and safe raw logs; no overlap-count credit. | This static inventory and original-port **UNKNOWN** are inputs only. Except for the four exact pytest nodes and separate standalone probe above, collection/execution fields remain NOT_RUN. No claim to recovered or equivalent 78-port; decide versioned replacement rather than infinite wait or silent deletion. | All T01–T20 stable records below; their node-specific evidence slots remain separate; original-port replacement decision PENDING. |
+| G12 | Original-port disposition, real file/node identity including params, independent oracle, exact fault location/class, baseline GREEN/semantic RED/byte-restored GREEN, public identity and safe raw logs; no overlap-count credit. | This static inventory and original-port **UNKNOWN** are inputs only. Only the precise cases and probe cited in dated supplements have their recorded collection/execution results; uncited cases remain NOT_RUN, and PASS without a dedicated omission run supplies no new RED credit. No claim to recovered or equivalent 78-port; decide versioned replacement rather than infinite wait or silent deletion. | All T01–T20 stable records below; their node-specific evidence slots remain separate; original-port replacement decision PENDING. |
 | G13 | One final product/test/document revision, independent G0 plus explicit maintainer acceptance then G1; retained unresolved domains and draft PR disposition; no retrospective grant from CI/merge. | **Decision pending**, no executable substitute. A08/R4 and #443/#444 unique-net-diff disposition still required; parent #33 remains open. | Final same-revision R4 and maintainer decision PENDING; no executable test substitutes for approval. |
 
 #### T01–T20 and T18a–f: every clause, oracle, gap and expanded identity
@@ -1609,7 +1610,7 @@ all these nodes execute in this environment.
 - R3 status: Dedicated omission of this branch diagnostic at current revision: NOT_RUN. Historical publication omission is described below, not a fresh T01 run.
 
 <details>
-<summary>T01: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T01: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_before_sibling_access[no-matching-node]
@@ -1631,7 +1632,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_real_cli_publishes_before_o
 - R3 status: Treat-unnamed-as-target omission/replacement at current revision: NOT_RUN; semantic diagnostic/state oracle must fail, not an earlier malformed graph check.
 
 <details>
-<summary>T02: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T02: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_diagnostic_gate.py::test_docs_only_native_ci_keeps_gate_state_with_diagnostic[publication-fault-FAIL]
@@ -1674,7 +1675,7 @@ tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_befor
 - R3 status: Relabel all empty findings as no-target: dedicated current mutation NOT_RUN; use otherwise valid failing-prerequisite inputs.
 
 <details>
-<summary>T04: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T04: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_immediate_diagnostic.py::test_prior_unavailability_does_not_claim_zero_targets[corrupt]
@@ -1704,7 +1705,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_actual_analysis_states_do_n
 - R3 status: Blank-warning or eager-discovery omission/replacement at current revision NOT_RUN; require sentinel/message failure.
 
 <details>
-<summary>T05: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T05: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_immediate_diagnostic.py::test_blank_diff_never_imports_optional_provider[ \t\n]
@@ -1728,7 +1729,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_actual_analysis_states_do_n
 - R3 status: Blanket empty-result warning, cap removal, extra-hop insertion: dedicated current controls NOT_RUN; historical finding regressions are not per-mutation proof.
 
 <details>
-<summary>T06: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T06: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_immediate_diagnostic.py::test_resolved_targets_keep_findings_and_cache_without_zero_target_output[False]
@@ -1752,7 +1753,7 @@ tests/test_cross_repo_impact.py::TestTopNCap::test_cap_at_top_n
 - R3 status: Eager override/sibling access at current revision NOT_RUN; expected refusal must arise at intended sentinel, not setup.
 
 <details>
-<summary>T07: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T07: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_immediate_diagnostic.py::test_registered_primary_data_dir_does_not_interpret_unused_override
@@ -1776,10 +1777,10 @@ tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_befor
 - Actual source: run_cross_repo primary worker; DiagnosticCapture.finish/present; publish_observation/read_observation.
 - Independent oracle / input: Hold context before writing; delegate real publication/read; exact tuples/counts/artifact bytes, marker from strict reader return, real CLI owner thread; native chain checks output/receipts.
 - Remaining gap / supported disposition: Controlled-CI persistent/CLI-handoff fixtures and native docs-only MCP-handler cases are separate domains; native live chain is not SDK/stdio qualification.
-- R3 status: The caller ticket-replacement node below now has GREEN/target caller-read omission RED/restored GREEN in the bounded supplement. Other publisher/read-consumer nodes remain NOT_RUN in this pass; historical #491 evidence remains separate.
+- R3 status: The caller ticket-replacement node below now has GREEN/target caller-read omission RED/restored GREEN in the bounded supplement. Other publisher/read-consumer runtime evidence is limited to exact nodes in dated supplements; uncited nodes remain NOT_RUN and historical #491 evidence remains separate.
 
 <details>
-<summary>T08: exact identities (caller ticket-replacement case executed above; others NOT_RUN)</summary>
+<summary>T08: exact identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_native_consumer_chain.py::test_native_mcp_cli_diagnostic[FAIL-background]
@@ -1805,7 +1806,7 @@ tests/test_diagnostic_completion.py::test_ticket_replacement_does_not_rebind_cli
 - R3 status: Skip empty-result publication or adopt old record at current revision NOT_RUN; dedicated targeted semantic assertion/log still required.
 
 <details>
-<summary>T09: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T09: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_remain_uncached_and_later_errors_or_targets_are_not_relabelled
@@ -1825,7 +1826,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_uncached_branch_transitions
 - R3 status: Source-hash-only acceptance omission at current revision NOT_RUN; codec field controls are narrower and cannot replace host issuance mutation proof.
 
 <details>
-<summary>T10: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T10: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_advisory_diagnostics.py::test_new_execution_with_identical_source_and_diff_cannot_reuse_record
@@ -1869,7 +1870,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_uncached_branch_transitions
 - R3 status: Three changed-input warm-cache parameters now have current GREEN/target admission-omission RED/restored GREEN in the bounded supplement above. Other #482 guards/installed-capture cases remain NOT_RUN here. Thread timeout/harness failure never semantic RED.
 
 <details>
-<summary>T12: exact identities (three changed-input cases executed above; others NOT_RUN)</summary>
+<summary>T12: exact identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_capture.py::test_capture_limit_never_repeats_the_native_operation[bytes]
@@ -1913,7 +1914,7 @@ tests/test_scope_admission_inputs.py::test_input_refusal_preserves_scope_and_tic
 - R3 status: #451 diagnostic-to-State omission reports semantic membership failures; current exact revision/log and restored replay NOT_RUN.
 
 <details>
-<summary>T13: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T13: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_diagnostic_gate.py::test_docs_only_native_ci_keeps_gate_state_with_diagnostic[publication-fault-FAIL]
@@ -1947,7 +1948,7 @@ tests/test_cross_repo_native_consumer_chain.py::test_native_mcp_cli_read_loss_is
 - R3 status: No HOLD mutation scheduled for unsupported path. Identity omission belongs T10; pending current verification NOT_RUN.
 
 <details>
-<summary>T14: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T14: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo.py::test_pending_escalates_to_fail
@@ -1967,7 +1968,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_new_host_execution_never_re
 - R3 status: Current per-boundary fake-published/fallback/State-save omissions NOT_RUN; identify missing dedicated selector before claiming each prohibited behavior discriminated.
 
 <details>
-<summary>T15: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T15: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_advisory_diagnostics.py::test_ambiguous_foreign_final_after_link_error_is_never_adopted
@@ -2001,7 +2002,7 @@ tests/test_cross_repo_diagnostic_gate.py::test_docs_only_native_ci_keeps_gate_st
 - R3 status: #476 codec duplicate/byte/context reports exist; exhaustive per-validator current omission set UNKNOWN/NOT_RUN. Need selector-specific fault/oracle/log before R3 credit.
 
 <details>
-<summary>T16: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T16: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_advisory_diagnostics.py::test_decoder_rejects_each_valid_foreign_expected_context[diff_sha256-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]
@@ -2099,7 +2100,7 @@ tests/test_advisory_diagnostics.py::test_wrong_independent_context_never_returns
 - R3 status: #456 four source-specific omissions reported in contention doc; current replay NOT_RUN. Full host concurrency remains decision/mapping gap, not automatically required by all future domains.
 
 <details>
-<summary>T17: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T17: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_advisory_diagnostics.py::test_new_execution_with_identical_source_and_diff_cannot_reuse_record
@@ -2132,7 +2133,7 @@ T18 is expanded into T18a–f below using the [original P1 supplement](https://g
 - R3 status: Only-per_cwd publication/omitted transfer or delete-boundary controls at current revision NOT_RUN; no claim that checking one cleanup status proves all resources.
 
 <details>
-<summary>T18a: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T18a: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_cleanup_priority.py::test_normal_return_deletes_both_cwds[FAIL]
@@ -2154,7 +2155,7 @@ tests/test_diagnostic_completion.py::test_cli_consumes_original_publication_afte
 - R3 status: #452 callback-priority baseline RED reported; current per-exit replay NOT_RUN. Unregistered allocations/source-lock cleanup separate gaps.
 
 <details>
-<summary>T18b: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T18b: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_cleanup_priority.py::test_pending_body_failure_survives_cleanup[primary-error-FAIL]
@@ -2190,7 +2191,7 @@ tests/test_diagnostic_completion.py::test_prior_publication_survives_worker_erro
 - R3 status: Current per-stage cancel suppression/primary replacement controls NOT_RUN; old trace-timed owner SIGINT is not complete-host proof.
 
 <details>
-<summary>T18c: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T18c: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_cleanup_priority.py::test_pending_body_failure_survives_cleanup[primary-error-FAIL]
@@ -2231,7 +2232,7 @@ tests/test_diagnostic_completion.py::test_interrupted_publication_is_unknown_and
 - R3 status: Current root-exclusion omission with exact surviving-artifact oracle NOT_RUN; no proof of untested filesystem/mount combinations.
 
 <details>
-<summary>T18d: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T18d: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_advisory_diagnostics.py::test_durable_root_cannot_overlap_temporary_cwd[alias]
@@ -2255,7 +2256,7 @@ tests/test_advisory_diagnostics.py::test_source_symlink_and_shared_permissions_a
 - R3 status: Current premature-locator/foreign-delete omission controls NOT_RUN; historical contention controls limited to named library boundaries.
 
 <details>
-<summary>T18e: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T18e: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_advisory_diagnostics.py::test_cleanup_does_not_remove_foreign_temp_replacement
@@ -2284,7 +2285,7 @@ tests/test_diagnostic_completion.py::test_normal_review_retains_publication_fail
 - R3 status: Historical unchanged baseline masked-primary RED exists; current byte-restored replay NOT_RUN; cannot relabel old source/setup failures as current product RED.
 
 <details>
-<summary>T18f: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T18f: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_cleanup_priority.py::test_cleanup_only_error_keeps_identity[KeyboardInterrupt-FAIL]
@@ -2338,7 +2339,7 @@ tests/test_diagnostic_completion.py::test_capture_close_failure_is_separate_from
 - R3 status: Current swallow-control/replace-primary omissions NOT_RUN; #491 terminal-update omission reports only its specific unknown-state oracle.
 
 
-###### T19 finite assertion audit (static; runtime remains NOT_RUN)
+###### T19 finite assertion audit (static; runtime status follows exact dated supplements)
 
 At product/test `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`, the
 following matrix resolves the requested assertion inventory without a new test or
@@ -2362,7 +2363,7 @@ readability conclusion is proposed. The exact identity/read controls already
 present should be reused before proposing any additional test.
 
 <details>
-<summary>T19: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T19: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_advisory_diagnostics.py::test_cleanup_signal_does_not_replace_primary_signal
@@ -2397,7 +2398,7 @@ tests/test_diagnostic_completion.py::test_interrupted_publication_is_unknown_and
 - R3 status: #454 delivery-guard/disposition omissions and native output omissions reported; current revision reproduction NOT_RUN; default vs opted-in output should be judged by their separate contracts.
 
 <details>
-<summary>T20: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T20: exact static node identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_cross_repo_diagnostic_gate.py::test_docs_only_native_ci_tracks_nonempty_delivery[all-fail-FAIL]
@@ -2435,10 +2436,10 @@ tests/test_diagnostic_completion.py::test_setup_failure_is_not_successful_empty_
 
 ##### G02/G07/G08 support-budget and history-isolation subclauses
 
-Oracle: independent literal budget/permission/path expectations, real file identity and retained historical error views; fake ACL/mount and inode reuse are injected boundary controls, not proof of all real filesystems or generation continuity. Excess/invalid history disables only persistence, not native warnings. Limits: full supported-type/aggregate-budget and filesystem qualification need row-specific logs; ext4 eligibility is not an ext4 test on this cloud host. Current runtime and individual guard-omission evidence NOT_RUN.
+Oracle: independent literal budget/permission/path expectations, real file identity and retained historical error views; fake ACL/mount and inode reuse are injected boundary controls, not proof of all real filesystems or generation continuity. Excess/invalid history disables only persistence, not native warnings. Limits: full supported-type/aggregate-budget and filesystem qualification need row-specific logs; ext4 eligibility is not an ext4 test on this cloud host. Runtime status follows exact dated supplements; uncited runtime and individual guard-omission evidence remain NOT_RUN.
 
 <details>
-<summary>Exact static parameter identities (runtime NOT_RUN)</summary>
+<summary>Exact static parameter identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_advisory_diagnostics.py::test_absent_or_unsupported_acl_namespace_on_qualified_mount[61]
@@ -2488,7 +2489,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_surrogate_registry_alias_pr
 Oracle: explicitly selected caller-trusted saved context, fixed historical projection/current_run_credit=false, actual SDK/stdio child restarts, independently configured roots and exact cancellation/drain ownership. Limits: these additional history entries are not original live T20 or current-review credentials; a ticket basename is not independent origin authentication. Current runtime NOT_RUN; scope live count semantic acceptance remains later #33 work, not expansion of v1.
 
 <details>
-<summary>Exact static parameter identities (runtime NOT_RUN)</summary>
+<summary>Exact static parameter identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
 
 ```text
 tests/test_diagnostic_history.py::test_all_v1_states_remain_distinct_in_fresh_cli[no_named_targets]
@@ -2542,7 +2543,7 @@ not a reason to invent a test or keep an unlimited investigation open.
 | [T06](#evidence-t06): equal-rank order/single-hop | Reuse listed `TestTopNCap::test_cap_at_top_n` and caller-query controls; check ties and actual SQL edge traversal separately. A top-N count is not tie-order or no-second-hop proof. | Selected-node/source static audit completed in T06: top-N test asserts length only; query is direct-edge and has no ORDER BY, ranking has no explicit tie key. Dedicated tie-order/extra-hop nodes remain UNKNOWN. Maintainer decides tie-order promise and required rejection oracle; no product defect or runtime pass inferred. PENDING decision. |
 | [T12](#evidence-t12): process/fork/shared-use | Keep executed three warm-input cases separate. Reuse installed-capture closed/foreign-thread cases already indexed; serial foreign-thread refusal/reuse does not qualify fork or simultaneous shared use. | Explicitly accept unsupported process/fork/shared-use scope, or identify one supported scenario and exact existing node/oracle. Fork/shared-use runtime evidence UNKNOWN; no new concurrency experiment pending domain decision. PENDING. |
 | [T14](#evidence-t14): recovery | Reuse controlled PENDING compatibility and new-host identity controls; neither is HOLD resume. Preserve existing no-cross-repository-HOLD limited contract. | Maintainer records the original recovery obligation's not-applicable/unsupported disposition and rationale at the fixed document commit. Do not add fake recovery tests or silently delete the obligation. PENDING. |
-| [T19](#evidence-t19): identity/read/FD assertions | Reuse listed process-control, close, identity and post-cleanup-reader controls; annotate each actual assertion (type/message, object identity, payload/file presence, formal reread or descriptor count). | Static assertion matrix completed in T19 at the fixed source; runtime remains NOT_RUN and support acceptance PENDING. Descriptor-count assertions are absent in the selected nodes. Close-after-success faults cannot prove failed-close cleanup. Reuse the mapped identity/read controls; decide whether one bounded FD oracle is required before any additional test. |
+| [T19](#evidence-t19): identity/read/FD assertions | Reuse listed process-control, close, identity and post-cleanup-reader controls; annotate each actual assertion (type/message, object identity, payload/file presence, formal reread or descriptor count). | Static assertion matrix completed in T19 at the fixed source; runtime status follows exact dated supplements and support acceptance remains PENDING. Descriptor-count assertions are absent in the selected nodes. Close-after-success faults cannot prove failed-close cleanup. Reuse the mapped identity/read controls; decide whether one bounded FD oracle is required before any additional test. |
 | [T20](#evidence-t20): natural not_run | Reuse explicitly controlled omitted-dispatch nodes and current source reachability. Separate empty formal consumption from absence of publication and sink health. | Selected fixture/source audit completed in T20: after normal machine return with no axis call, the completion hook can emit not_run; listed controls deliberately suppress dispatch. Natural entry/path/test remains UNKNOWN. Decide whether injected-state consumer evidence suffices or natural reachability is required; do not create a new product path merely for a test. PENDING decision. |
 
 For all six tasks, final decision author and decision link are still UNKNOWN/NONE.
