@@ -39,6 +39,24 @@ and [query-scope v1](cross-repo-query-scope-v1.md). This decision does not accep
 storage/cancellation domains, original78 replacement or final acceptance, and
 supplies no new runtime PASS or scope protocol-freeze approval.
 
+A further explicit owner reply “可以” in the same project chat accepted only
+the **G10 publication-result three-state semantics**: a verified commit grants
+a locator (`published`); known no commit grants none (`not_published`); uncertain
+commit remains `unknown`, grants no success locator, and must not trigger an
+automatic retry or fallback to an older record. Decision date: 2026-11-14;
+applicable product/test revision remains `2b2ac9fc18285f78acf5503ded830d256b3a99ff`,
+with prior decision-document head `942b3575222506b96cf9548e0ef12a8ccfd628d5`.
+The decision source is the owner's specific project-chat approval, not a
+GitHub comment; no public decision permalink exists.
+
+This accepts the bounded meaning described in
+[publication facts](cross-repo-diagnostics-v1.md#storage-support-and-publication-facts),
+not the whole storage/concurrency/cleanup domain or complete G10 acceptance.
+The existing dated UNKNOWN probe and foreign-final control retain their original
+fixed-version evidence and limits; neither is a fresh execution or qualification
+of the applicable decision revision. Unexecuted G10 controls remain NOT_RUN.
+G08/G11 support decisions, original78 replacement and G12/G13 remain separate.
+
 T14: cross-repository HOLD resumption is **UNSUPPORTED**; single-repository HOLD
 has no diagnostic axis and that qualification is **NOT APPLICABLE**. Neither is
 PASS. New-host identity remains a distinct T10 obligation.
@@ -1589,8 +1607,9 @@ with tempfile.TemporaryDirectory(prefix='forge441-owned-') as directory:
 
 This inventory enumerates every G01–G13, T01–T20 and T18a–f obligation from the
 linked original requirements, including later narrowed contracts. Those original
-requirements are not all approved: only G03/G05/G06/G07 have the limited acceptance
-record. Each obligation below has identified source/tests or an explicit gap.
+requirements are not all approved: limited acceptance covers G03/G05/G06/G07
+and the explicitly recorded owner decisions at the top of this document, not
+whole-gate qualification. Each obligation below has identified source/tests or an explicit gap.
 An inventory complete at the clause-label level is **not completed R2 evidence,
 G12 acceptance, original-port recovery or executed coverage**. The old detailed
 T map below remains historical evidence, not the authority for current runtime
@@ -1637,7 +1656,7 @@ contract-only decisions retain the entry decision register or explicit PENDING.
 | G07 | Retain original observation/findings/errors; isolate returned containers and stage dictionaries; old uncached errors do not overwrite cached view; supported-type/budget/encoding failure unavailable, never successful empty history. Capture snapshot/cache. | **Limited contract accepted**; T11/T12 plus bounded/history nodes in their expansions. Arbitrary nested objects are unsupported; current mutation/log coverage not established by frozen types. | Snapshot/cache isolation and unavailable: [T11](#evidence-t11), [T12](#evidence-t12), [T16](#evidence-t16). |
 | G08 | Primary persistent root outside every temporary root/alias, namespace ownership, canonical/no-follow/regular file, qualified FS/ACL/path budgets; same-key conflict and concurrent distinct executions; inode-reuse limitations. Storage binder/publisher/reader. | T15–T18d/e and storage-support catalogue. **Decision pending** on exact support/alias/budget/overlap claims. Source/metadata checks are not generation continuity or same-UID authentication; library overlap is not whole-host concurrency. | Storage/identity/concurrency: [T15](#evidence-t15), [T16](#evidence-t16), [T17](#evidence-t17), [T18d](#evidence-t18d), [T18e](#evidence-t18e). |
 | G09 | Actual publisher→formal reader→consumer, independent expected and success/failure result; no logger-as-durability proof, no latest scan; publication/read/empty/nonempty delivery separated. Capture.present, default output, opt-in completion, historical readers. | Entry table; T08/T15/T20; **limited entry semantics accepted on 2026-11-14; remaining decisions pending**. A02 empty not_run reachability and unapproved A03 details stay explicit. All channels failing is unconfirmed/not delivered, never caller success. | Actual formal consumer: [T08](#evidence-t08); delivery/failure: [T20](#evidence-t20); per-entry decision above. |
-| G10 | Confirmed published/not_published/unknown; verify commit identity/content, no locator for unknown, no overwrite/automatic retry/old fallback; staging, commit, cleanup and return distinct. PublicationResult and capture attempt ledger. | T15/T17/T18e/T19 exact fault/unknown nodes. **Decision pending**; The dated supplements distinguish the standalone false-success replacement from the existing foreign-final UNKNOWN control; uncited nodes/omission controls remain NOT_RUN. No journal/exactly-once/power-loss promise. | Three states/commit: [T15](#evidence-t15), [T18e](#evidence-t18e); conflict: [T17](#evidence-t17); controls: [T19](#evidence-t19). |
+| G10 | Confirmed published/not_published/unknown; verify commit identity/content, no locator for unknown, no overwrite/automatic retry/old fallback; staging, commit, cleanup and return distinct. PublicationResult and capture attempt ledger. | T15/T17/T18e/T19 exact fault/unknown nodes. **Three-state semantics ACCEPTED only**, by the 2026-11-14 owner chat decision above. Full G10 qualification and storage/concurrency/cleanup support remain pending. The dated supplements distinguish the standalone false-success replacement from the existing foreign-final UNKNOWN control; uncited nodes/omission controls remain NOT_RUN. No journal/exactly-once/power-loss promise. | Three states/commit: [T15](#evidence-t15), [T18e](#evidence-t18e); conflict: [T17](#evidence-t17); controls: [T19](#evidence-t19). |
 | G11 | Pre/post commit and primary/sibling/receipt/replay/setup/read/output/callback exits; preserve primary/control exception identity; bounded owned cleanup; event/join/cwd/capture/artifact/caller facts separate. Owned cwd scope, capture close, completion, deferred signal flow. | T18a–f/T19/T20. #452 fixes callback masking only; **Decision pending** on remaining asynchronous/permission/source-lock/unregistered-allocation limits, not a demand to change shared lifecycle. | Normal/error/cancel/root/staging/cleanup: [T18a](#evidence-t18a), [T18b](#evidence-t18b), [T18c](#evidence-t18c), [T18d](#evidence-t18d), [T18e](#evidence-t18e), [T18f](#evidence-t18f); control identity [T19](#evidence-t19), delivery [T20](#evidence-t20). |
 | G12 | Original-port disposition, real file/node identity including params, independent oracle, exact fault location/class, baseline GREEN/semantic RED/byte-restored GREEN, public identity and safe raw logs; no overlap-count credit. | This static inventory and original-port **UNKNOWN** are inputs only. Only the precise cases and probe cited in dated supplements have their recorded collection/execution results; uncited cases remain NOT_RUN, and PASS without a dedicated omission run supplies no new RED credit. No claim to recovered or equivalent 78-port; decide versioned replacement rather than infinite wait or silent deletion. | All T01–T20 stable records below; their node-specific evidence slots remain separate; original-port replacement decision PENDING. |
 | G13 | One final product/test/document revision, independent G0 plus explicit maintainer acceptance then G1; retained unresolved domains and draft PR disposition; no retrospective grant from CI/merge. | **Decision pending**, no executable substitute. A08/R4 and #443/#444 unique-net-diff disposition still required; parent #33 remains open. | Final same-revision R4 and maintainer decision PENDING; no executable test substitutes for approval. |
@@ -2655,7 +2674,7 @@ URL or combine local source-tree and installed-wheel claims.
 5. R4 uses one final product/test/document revision, applicable regressions,
    identity audit, pinned Ruff check/format and whitespace validation, safe
    evidence artifacts, independent review and explicit maintainer acceptance.
-   Adjudicate G01/G02/G04/G09/G08/G10/G11 before G12/G13 completion. Compare the
+   Resolve the remaining G01/G02/G04/G09/G08/G10/G11 decisions and evidence before G12/G13 completion; the limited G10 three-state semantics are already accepted, not full G10 qualification. Compare the
    unique necessary differences of #443/#444 before retain/extract/supersede;
    neither empty merging nor automatic closing is a disposition.
 
@@ -2842,7 +2861,7 @@ An admission decision should name the product revision and this evidence revisio
 
 ## Bounded T17 publication-contention supplement
 
-The [publication-contention evidence](cross-repo-diagnostics-publication-contention.md) adds six public nodes at production baseline `f4c9214a813cd5604ed63462b3268343ed6f800c`: three overlapping real-publisher cases plus three harness-failure controls. It records distinct-execution isolation, adversarial same-key non-overwrite with an unknown/no-locator loser, foreign staging preservation, and four source-specific RED/restored-GREEN controls. These library calls use controlled commit scheduling, not simultaneous complete hosts. Full T17/A06, G08/G10/G12, G04/G09 and G0/G1 decisions remain open; no production or lifecycle behavior changes.
+The [publication-contention evidence](cross-repo-diagnostics-publication-contention.md) adds six public nodes at production baseline `f4c9214a813cd5604ed63462b3268343ed6f800c`: three overlapping real-publisher cases plus three harness-failure controls. It records distinct-execution isolation, adversarial same-key non-overwrite with an unknown/no-locator loser, foreign staging preservation, and four source-specific RED/restored-GREEN controls. These library calls use controlled commit scheduling, not simultaneous complete hosts. Full T17/A06, G08/G10/G12, G04/G09 and G0/G1 decisions remain open (the limited G10 three-state semantics are separately accepted above); no production or lifecycle behavior changes.
 
 ## Native CLI/MCP consumer-chain supplement
 
