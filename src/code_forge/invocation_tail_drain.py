@@ -65,8 +65,9 @@ def _tail_reason(error):
 
 
 class _Lines:
-    def __init__(self, response, capture, deadline):
+    def __init__(self, response, capture, deadline, line_limit=None):
         self.deadline = deadline
+        self.line_limit = line_limit
         self.response = response
         self.pending = bytearray()
         self.remaining = None
@@ -101,6 +102,11 @@ class _Lines:
 
     def __next__(self):
         while (end := self.pending.find(b"\n")) < 0:
+            if self.line_limit is not None and len(self.pending) >= self.line_limit:
+                # An unterminated line is not a line yet. Refusing here keeps
+                # the buffer from growing past the caller's byte budget while
+                # the loop above is still looking for a newline.
+                raise _TailLimit
             try:
                 self.pending.extend(next(self.blocks))
             except StopIteration:
@@ -128,13 +134,15 @@ class _Lines:
             pass
 
 
-def read_captured_sse(response, capture, assemble, deadline, backend_name, error_type, idle_seconds):
+def read_captured_sse(
+    response, capture, assemble, deadline, backend_name, error_type, idle_seconds, policy=None
+):
     """Return parsed content after raw drain, or freeze an incomplete prefix.
 
     The controller never waits for a timed-out reader to finish. A late read or
     sink write cannot upgrade the sealed acquisition snapshot.
     """
-    lines = _Lines(response, capture, deadline)
+    lines = _Lines(response, capture, deadline, line_limit=None if policy is None else policy.limit)
     ready, finished = threading.Event(), threading.Event()
     parsed, errors = [], []
     sock = None

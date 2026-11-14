@@ -349,6 +349,12 @@ class _L1Call:
         self._audited_body = audited_body
         self.attempted_excerpts: list[dict] = []
         self.raw_observations: list[dict] = []
+        # Correction diagnostics live on their own lane. `raw_observations` is
+        # read by machine's purity gates as "this round is not a pure
+        # evidence-rejection round", so mixing the two would silently downgrade
+        # an `evidence_rejected` round and can raise CorruptedStateError once the
+        # same source hash already holds an earned clean cycle.
+        self.correction_observations: list[dict] = []
         self.pending_raw_responses: list[dict] = []
         self.pass_usage: list[dict] | None = None
         self.unavailable_rejected_passes: set[str] = set()
@@ -437,6 +443,7 @@ class _L1Call:
         self.attempted_excerpts = []
         self.pass_usage = None
         self.raw_observations = []
+        self.correction_observations = []
         self.pending_raw_responses = []
         self.acquisition_failures = []
         self.unavailable_rejected_passes = set()
@@ -476,6 +483,30 @@ def _serial_passes_requested() -> bool:
     )
 
 
+def _evidence_only_diff(resolved, reviewed_repositories, backend) -> str | None:
+    """The one frozen evidence string a correction may be judged against.
+
+    Ordinary and grouped review already carry a real git diff. Joint review
+    passes a display context with repository headings, so its evidence is the
+    canonical scoped diff rebuilt from the trusted mapping. Anything else —
+    a CLI backend, an unsupported format, a missing diff — returns None, which
+    keeps the whole correction path inert.
+    """
+    if backend is None or getattr(backend, "type", None) != "api":
+        return None
+    if getattr(backend, "format", None) not in {"openai", "anthropic", "vertex"}:
+        return None
+    if reviewed_repositories:
+        from .receipt_scope import repository_scope
+
+        try:
+            scoped, _manifest = repository_scope(reviewed_repositories)
+        except (ValueError, TypeError):
+            return None
+        return scoped or None
+    return getattr(resolved, "git_diff", None) or None
+
+
 def build_l1_provider(
     engine: str,
     resolved: "ResolvedReview",
@@ -496,6 +527,7 @@ def build_l1_provider(
     retry_timeout: bool = False,
     pass_stagger_s: float = 0.0,
     review_lenses: bool = False,
+    excerpt_allowance=None,
 ) -> "_L1Call":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
 
@@ -544,6 +576,13 @@ def build_l1_provider(
     def _provider(call, audit_round=None) -> tuple:
         call.pass_usage = []
         diff_text = resolved.git_diff or ""
+        # One frozen evidence string for this provider, and one allowance shared
+        # by every pass in it. A grouped parent passes its own allowance down so
+        # the whole review cannot exceed eight added requests.
+        from .llm_invoke import _ExcerptCorrectionAllowance
+
+        review_diff = _evidence_only_diff(resolved, reviewed_repositories, backend)
+        allowance = excerpt_allowance if excerpt_allowance is not None else _ExcerptCorrectionAllowance()
         # Attempted evidence for THIS invocation: raw reviewer responses
         # whose excerpts failed validation, tagged with the loop-owned
         # pass name. Kept as an attribute so the 4-tuple contract is
@@ -648,8 +687,12 @@ def build_l1_provider(
                     diff_text, reviewed_repositories=reviewed_repositories
                 ),
                 reply_keys=REVIEW_REPLY_KEYS,
+                review_diff=review_diff,
+                _excerpt_allowance=allowance,
                 **({"host_audit": pass_scopes[idx]} if pass_scopes is not None else {}),
             )
+            for record in getattr(r, "excerpt_diagnostics", ()) or ():
+                call.correction_observations.append(dict(record, pass_name=pn))
             if r.usage.input_tokens > 0 or r.usage.output_tokens > 0 or r.usage.cached_input_tokens > 0:
                 bname = backend.name if backend else "unknown"
                 sys.stderr.write(_pass_token_line(bname, pn, r.usage))
@@ -1044,6 +1087,9 @@ def build_grouped_l1_provider(
     and deduplicated by fingerprint: a defect sitting on a group boundary
     gets reported once, not twice.
     """
+    from .llm_invoke import _ExcerptCorrectionAllowance
+
+    root_allowance = shared_kwargs.pop("excerpt_allowance", None) or _ExcerptCorrectionAllowance()
     providers = [
         (
             ReviewGroupScope(
@@ -1057,6 +1103,7 @@ def build_grouped_l1_provider(
                 post_image=spec.get("post_image", ""),
                 conventions_digest=spec.get("conventions_digest", ""),
                 split_context=spec.get("split_context", ""),
+                excerpt_allowance=root_allowance,
                 **shared_kwargs,
             ),
         )
@@ -1071,6 +1118,7 @@ def build_grouped_l1_provider(
         all_findings = []
         all_excerpts = []
         call.attempted_excerpts = []
+        call.correction_observations = []
         seen = set()
         total_input = 0
         total_output = 0
@@ -1087,6 +1135,10 @@ def build_grouped_l1_provider(
             )
             call.raw_observations.extend(
                 GroupedReviewAttempt(observation, scope) for observation in provider.raw_observations
+            )
+            call.correction_observations.extend(
+                GroupedReviewAttempt(observation, scope)
+                for observation in provider.correction_observations
             )
             call.pending_raw_responses.extend(
                 GroupedReviewAttempt(response, scope) for response in provider.pending_raw_responses

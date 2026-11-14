@@ -99,6 +99,10 @@ def _load_advisories(path: Path) -> list:
 
 _INFRA_LINES_MAX = 5
 _INFRA_LINE_CHARS = 300
+# Files above this are read only up to the cap before windowing; the windows
+# themselves stay small. Raised from 50 KiB so a hunk deep inside a long file
+# (machine.py is ~280 KiB) still reaches the reviewer as plain source text.
+_POST_IMAGE_READ_CAP = 2 * 1024 * 1024
 
 
 def _infra_state_identity(state_path: Path) -> tuple[int, int, int, int, int]:
@@ -1332,7 +1336,13 @@ def _make_subagent_spawn(
         if manifest_spec:
             prompt += "\n" + manifest_spec.strip() + "\n"
         if post_image:
-            prompt += "\n## Post-Image (current file content)\n" + post_image + "\n"
+            prompt += (
+                "\n## Post-Image (current file content)\n"
+                "Lines in these blocks may be prefixed with `N: ` (windowed "
+                "files). That prefix is an annotation, not source: strip it and "
+                "copy the remaining text exactly, preserving every leading "
+                "space and tab.\n" + post_image + "\n"
+            )
         if conv_digest:
             prompt += "\n## Conventions Digest\n" + conv_digest + "\n"
         if contract_spec:
@@ -1517,7 +1527,7 @@ def _assemble_post_image(
     changed_files = get_changed_files(diff_text or "")
     removed_files = set(get_removed_files(diff_text or ""))
     hunk_map, _exempt = parse_diff_hunks(diff_text or "")
-    cap = 50 * 1024
+    cap = _POST_IMAGE_READ_CAP
     parts: list[str] = []
     for cf in changed_files:
         if cf in removed_files:
@@ -1542,9 +1552,10 @@ def _assemble_post_image(
                 text = raw.decode("utf-8", errors="replace")
                 truncated = True
             else:
-                text = fp.read_text(encoding="utf-8", errors="replace")
-                if b"\x00" in text.encode("utf-8", errors="replace")[:1024]:
+                raw = fp.read_bytes()
+                if b"\x00" in raw[:1024]:
                     continue
+                text = raw.decode("utf-8", errors="replace")
                 truncated = False
             text, windowed = _window_file_text(
                 text,
@@ -1554,7 +1565,7 @@ def _assemble_post_image(
             # Appended after windowing, not before: a marker inside the
             # text would get a line number of its own and read as code.
             if truncated:
-                text += "\n... [truncated at 50KB]"
+                text += "\n... [truncated at %dKB]" % (cap // 1024)
             label = "%s (around the changes)" % cf if windowed else cf
             parts.append("## File: %s\n```\n%s\n```" % (label, text))
         except (OSError, IOError):

@@ -914,6 +914,7 @@ class StateMachine:
         # reviewer response count for this round (never persisted).
         self._responses_last_round: dict[str, int] | None = None
         self._raw_observations_last_round: list[dict] = []
+        self._correction_observations_last_round: list[dict] = []
         self._pending_raw_responses_last_round: list[dict] = []
         self._unavailable_rejected_passes_last_round: set[str] = set()
         self._unavailable_rejected_causes_last_round: dict[str, str] = {}
@@ -3582,7 +3583,25 @@ class StateMachine:
                                 + ", ".join(linked)
                             )
                         else:
-                            self._state.infra_errors.append("L2: invalid bound mutation measurement")
+                            skips = ",".join(
+                                sorted(
+                                    {
+                                        str(f.fingerprint)
+                                        for f in l2_findings
+                                        if f.fingerprint and f.id == "MUTATION_SKIPPED"
+                                    }
+                                )
+                            )
+                            causes = [str(line)[:120] for line in l2_infra[:2]] or [
+                                str(f.description)[:120]
+                                for f in l2_findings[:1]
+                                if getattr(f, "description", "")
+                            ]
+                            self._state.infra_errors.append(
+                                "L2: invalid bound mutation measurement "
+                                f"(skips={skips or 'none'}; "
+                                f"detail={'; '.join(causes) or 'none'})"
+                            )
                     elif kind == "not-applicable":
                         self._apply_not_applicable_policy(l2_findings, diff_files)
                     elif self.mode == Mode.CI:
@@ -4417,6 +4436,7 @@ class StateMachine:
                 exec_evidence=exec_evidence,
                 attempted_excerpts=self._attempted_last_round,
                 raw_observations=self._raw_observations_last_round,
+                correction_observations=self._correction_observations_last_round,
                 pending_raw_responses=self._pending_raw_responses_last_round,
                 reviewed_repositories=self.reviewed_repositories,
                 unavailable_rejected_passes=self._unavailable_rejected_passes_last_round,
@@ -4483,6 +4503,7 @@ class StateMachine:
         # genuine StateFindings so they block and reset cycle counters.
         rulepack_findings = self._observe_phase("rulepack", self._run_rulepack_blocking_phase)
         self._raw_observations_last_round = []
+        self._correction_observations_last_round = []
         self._pending_raw_responses_last_round = []
         self._unavailable_rejected_passes_last_round = set()
         self._unavailable_rejected_causes_last_round = {}
@@ -4490,6 +4511,9 @@ class StateMachine:
         l1_findings, l1_excerpts = self._run_l1_phase()
         self._raw_observations_last_round = list(
             getattr(self.l1_provider, "raw_observations", None) or []
+        )
+        self._correction_observations_last_round = list(
+            getattr(self.l1_provider, "correction_observations", None) or []
         )
         self._pending_raw_responses_last_round = list(
             getattr(self.l1_provider, "pending_raw_responses", None) or []

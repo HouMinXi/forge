@@ -221,7 +221,13 @@ def _payload(name: str) -> dict:
 
 
 def _run(
-    mode: Mode, payload_name: str, tmp_path: Path, writer_oserror: bool = False, diff: str | None = None
+    mode: Mode,
+    payload_name: str,
+    tmp_path: Path,
+    writer_oserror: bool = False,
+    diff: str | None = None,
+    stamp_raw: bool = False,
+    split_passes: bool = False,
 ):
     if diff is None:
         diff = DIFF_10B if payload_name == "missing_hunk_witness" else DIFF
@@ -247,12 +253,53 @@ def _run(
 
     def fake_transport(prompt, **kwargs):
         calls.append(prompt.rsplit("You are a ", 1)[-1])
-        return LLMResult(copy.deepcopy(payload), Usage(), 0.0)
+        # stamp_raw reproduces what a real transport hands back: the exact
+        # acquired text. Without it the correction lane is never reachable.
+        return LLMResult(
+            copy.deepcopy(payload),
+            Usage(),
+            0.0,
+            raw_response=json.dumps(payload, indent=2) if stamp_raw else None,
+        )
 
     from unittest.mock import patch
 
-    with patch("code_forge.llm_invoke.llm_invoke", side_effect=fake_transport):
-        provider = build_l1_provider("auto", resolved, backend=None, max_attempts=1)
+    if stamp_raw:
+        # Exercise the real llm_invoke so the correction lane is reachable, and
+        # stub only the HTTP call underneath it. A CLI stub at the entry point
+        # replaces the whole function, which makes that lane unreachable.
+        import os
+
+        from code_forge.backend import BackendConfig
+
+        os.environ.setdefault("RECEIPT_GATE_KEY", "fixture")
+        backend = BackendConfig(
+            name="receipt-gate",
+            type="api",
+            model="fixture",
+            format="openai",
+            base_url="https://example.invalid",
+            api_key_env="RECEIPT_GATE_KEY",
+            timeout_s=10,
+        )
+
+        def api_transport(prompt, backend, api_key, timeout_s, **kwargs):
+            calls.append(prompt.rsplit("You are a ", 1)[-1])
+            # split_passes models what real backends do: different passes can
+            # disagree. One pass gets a literal typo (correctable), the others
+            # get short evidence (a real rejection).
+            body = payload
+            if split_passes and "adversarial" not in prompt:
+                body = _payload("short_content")
+            return json.dumps(body, indent=2), {"prompt_tokens": 1, "completion_tokens": 1}
+
+        patcher = patch("code_forge.llm_invoke._invoke_openai", side_effect=api_transport)
+    else:
+        backend = None
+        patcher = patch("code_forge.llm_invoke.llm_invoke", side_effect=fake_transport)
+
+    with patcher:
+        provider = build_l1_provider("auto", resolved, backend=backend, max_attempts=1)
     machine = StateMachine(
         mode=mode,
         falsifier=StubFalsifier(),
@@ -270,7 +317,7 @@ def _run(
         max_total_rounds=3,
         clean_round_threshold=3,
     )
-    with patch("code_forge.llm_invoke.llm_invoke", side_effect=fake_transport):
+    with patcher:
         try:
             returned = machine.run().value
         except Exception:  # noqa: BLE001 -- current bug escapes; gate must not
@@ -292,6 +339,11 @@ def _run(
             {"source": f.source, "description": f.description, "disposition": f.disposition.value}
             for f in machine._state.findings
         ],
+        # Exposed for the correction-lane cases: they assert on the two lanes
+        # and on the machine's own rejection authority, not on a rebuilt stub.
+        "machine": machine,
+        "correction_lane": list(getattr(machine.l1_provider, "correction_observations", None) or []),
+        "raw_lane": list(getattr(machine.l1_provider, "raw_observations", None) or []),
     }
 
 
@@ -300,6 +352,75 @@ def _assert_non_pass(res: dict) -> None:
     assert res["memory_verdict"] != Verdict.PASS.value
     assert res["memory_converged"] is False
     assert res["disk_verdict"] != Verdict.PASS.value
+
+
+def test_wrong_literal_correction_lane_is_recorded(tmp_path):
+    """A22: a rejected round records its correction attempt on the side lane.
+
+    This runs the real StateMachine against a payload whose quote is a genuine
+    literal mismatch, with the transport stamping the acquired text the way a
+    real backend does — the only shape in which the correction lane is reachable.
+    """
+    res = _run(Mode.LOCAL, "wrong_literal", tmp_path, stamp_raw=True)
+    _assert_non_pass(res)
+    assert res["transport_calls"] == 6, "each pass must get exactly one retry"
+    assert res["correction_lane"], "the correction attempt must be recorded"
+    assert res["raw_lane"] == [], "diagnostics must never reach the raw lane"
+    assert all(d.get("selected") is False for d in res["correction_lane"])
+    assert all(d.get("reason") for d in res["correction_lane"])
+    # The refusal is still booked as a refusal, not as an infrastructure error.
+    assert any("excerpt" in d for d in res["disk_infra_errors"] or []) or res["receipt_count"] > 0
+
+
+def test_correction_and_rejection_coexist_in_one_round(tmp_path):
+    """A22 joint: one pass corrects, the others are rejected, in the same round.
+
+    The correction lane must not make the rejection authority unusable: the two
+    defects are different, and a round that has both must still be bookable as
+    an evidence rejection rather than silently becoming a clean pass.
+    """
+    res = _run(Mode.CI, "wrong_literal", tmp_path, stamp_raw=True, split_passes=True)
+    machine = res["machine"]
+    producer = machine.l1_provider
+
+    assert res["correction_lane"], "the correctable pass must leave diagnostics"
+    assert all(d.get("selected") is False for d in res["correction_lane"])
+    assert len(producer.excerpt_rejections) == 2, "the two non-adversarial passes"
+    assert res["raw_lane"] == []
+
+    snapshot = machine._rejection_authority
+    assert snapshot is not None, "a mixed round must still freeze its authority"
+    assert len(snapshot.observations) == 2
+    machine._state.round = snapshot.cycle - 1
+    assert machine._current_evidence_rejections() is not None, (
+        "correction diagnostics must not disqualify an otherwise valid rejection"
+    )
+
+    producer.raw_observations.append({"pass_name": "qodo", "reason": "correction_failed"})
+    assert machine._current_evidence_rejections() is None
+
+
+def test_raw_lane_poison_disables_the_rejection_authority(tmp_path):
+    """A22 counter-arm: putting the record back into `raw_observations` must fail.
+
+    The authority is what lets a zero-finding round be booked as an evidence
+    rejection rather than a clean pass. One stray entry on the raw lane kills it,
+    which is exactly why the diagnostics got their own lane.
+    """
+    res = _run(Mode.CI, "short_content", tmp_path)
+    machine = res["machine"]
+    snapshot = machine._rejection_authority
+    assert snapshot is not None, "the rejected round must leave an authority behind"
+    assert len(snapshot.observations) == 3, "one rejection per pass"
+
+    producer = machine.l1_provider
+    machine._state.round = snapshot.cycle - 1
+    assert machine._current_evidence_rejections() is not None
+
+    producer.raw_observations.append({"pass_name": "adversarial", "reason": "correction_failed"})
+    assert machine._current_evidence_rejections() is None, (
+        "a diagnostic on the raw lane must invalidate the rejection authority"
+    )
 
 
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])

@@ -271,6 +271,7 @@ def write_receipts(
     raw_observations: list[dict] | None = None,
     pending_raw_responses: list[dict] | None = None,
     *,
+    correction_observations: list[dict] | None = None,
     unavailable_rejected_causes: dict[str, str] | None = None,
 ) -> list[Path]:
     """Write 3 receipt files (one per pass) for a round."""
@@ -491,6 +492,39 @@ def write_receipts(
         and response["pass_name"] in excerpt_validation_errors
         and type(response.get("raw_response")) is str
     )
+    # Correction diagnostics are host audit records, not rejected evidence.
+    # They get their own directory and their own flag: writing them into
+    # `attempted/` would mark a diagnostic as a rejected reviewer payload and
+    # would also shift that lane's ordinals.
+    correction_payloads = list(correction_observations or [])
+    if correction_payloads:
+        correction_dir = receipts_dir / "correction"
+        correction_dir.mkdir(parents=True, exist_ok=True)
+        for idx, record in enumerate(correction_payloads):
+            if not isinstance(record, dict):
+                continue
+            pname = record.get("pass_name", "unknown")
+            art = {
+                "correction": True,
+                "cycle": cycle,
+                "pass_name": pname,
+                "payload": record,
+            }
+            if isinstance(record, GroupedReviewAttempt):
+                scope = record.group_scope
+                art["group_scope"] = {
+                    "name": scope.name,
+                    "diff_sha256": scope.diff_sha256,
+                    "source_files": list(scope.source_files),
+                }
+            correction_num = _PASS_NAMES.index(pname) + 1 if pname in _PASS_NAMES else 0
+            path = correction_dir / ("correction-c%dp%d-%d.json" % (cycle, correction_num, idx))
+            path.write_text(json.dumps(art, indent=2), encoding="utf-8")
+            # Deliberately not appended to `written`: that list is the writer's
+            # "exactly the three pass receipts" contract, and the state machine
+            # keys its completion snapshot on it. A sidecar in there would make
+            # the snapshot silently empty whenever a correction was recorded.
+
     if artifact_payloads:
         attempted_dir = receipts_dir / "attempted"
         attempted_dir.mkdir(parents=True, exist_ok=True)

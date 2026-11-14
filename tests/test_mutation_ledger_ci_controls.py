@@ -3188,7 +3188,14 @@ def test_local_results_timeout_with_measured_inventory_is_not_clean(ci_project, 
     machine = _local_machine(p, runner=mutation.run_mutation)
     machine._run_l2_phase()
     assert machine._mutation_bound_failure is True
-    assert "L2: invalid bound mutation measurement" in machine._state.infra_errors
+    bound = next(
+        err
+        for err in machine._state.infra_errors
+        if err.startswith("L2: invalid bound mutation measurement")
+    )
+    assert "skips=mutation-results-timeout" in bound
+    assert "detail=" in bound
+    assert "detail=none" not in bound
 
 
 def test_orphan_marker_text_inside_other_infra_line_does_not_stop(ci_project, monkeypatch):
@@ -3208,7 +3215,9 @@ def test_orphan_marker_text_inside_other_infra_line_does_not_stop(ci_project, mo
     machine = _local_machine(p, runner=mutation.run_mutation)
     machine._run_l2_phase()
     assert machine._mutation_workspace_blocker is None
-    assert "L2: invalid bound mutation measurement" in machine._state.infra_errors
+    assert any(
+        err.startswith("L2: invalid bound mutation measurement") for err in machine._state.infra_errors
+    )
 
 
 def test_orphan_error_records_structured_marker(ci_project):
@@ -3237,7 +3246,9 @@ def test_orphan_marker_message_must_be_an_exact_infra_line(ci_project, monkeypat
     machine = _local_machine(p, runner=mutation.run_mutation)
     machine._run_l2_phase()
     assert machine._mutation_workspace_blocker is None
-    assert "L2: invalid bound mutation measurement" in machine._state.infra_errors
+    assert any(
+        err.startswith("L2: invalid bound mutation measurement") for err in machine._state.infra_errors
+    )
 
 
 def test_orphan_marker_with_exact_infra_line_stops(ci_project, monkeypatch):

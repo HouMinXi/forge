@@ -191,6 +191,27 @@ class TestAssemblePostImage:
         out, _ = _assemble_post_image(tmp_path, self._diff(), context_lines=20)
         assert "row5\n" not in out and "row399" not in out
 
+    def test_a_hunk_past_the_old_cap_still_reaches_the_reviewer(self, tmp_path):
+        """machine.py is ~280 KiB; a 50 KiB read cut hid every hunk below it,
+        so the reviewer had only the annotated diff to quote from."""
+        f = tmp_path / "deep.py"
+        rows = ["r%05d" % i + "y" * 60 for i in range(1, 1600)]
+        f.write_text("\n".join(rows) + "\n")
+        assert f.stat().st_size > 50 * 1024
+        changed = 1200
+        diff = (
+            "diff --git a/deep.py b/deep.py\n"
+            "--- a/deep.py\n"
+            "+++ b/deep.py\n"
+            "@@ -%d,2 +%d,2 @@\n"
+            " row%05d%s\n"
+            "-old\n"
+            "+row%05d_changed\n"
+        ) % (changed, changed, changed, "y" * 60, changed + 1)
+        assert len("\n".join(rows[: changed - 1])) > 50 * 1024
+        out, _ = _assemble_post_image(tmp_path, diff, context_lines=5)
+        assert "r01200" in out, out[:200]
+
     def test_narrowing_is_announced_in_the_header(self, tmp_path):
         """The reviewer must not read a gap as the end of the file."""
         self._repo(tmp_path)
@@ -213,11 +234,12 @@ class TestAssemblePostImage:
         assert "## File: big.py\n" in out, out[:120]
         assert "around the changes" not in out
 
-    def test_truncated_read_is_never_mistaken_for_a_whole_file(self, tmp_path):
-        """The 50KB cap can land mid-line. The cut must back up to the last
+    def test_truncated_read_is_never_mistaken_for_a_whole_file(self, tmp_path, monkeypatch):
+        """A capped read can land mid-line. The cut must back up to the last
         newline, and the truncated marker must survive, or splitlines()
         reports one giant first line, every hunk falls past it, and the
         reviewer gets a fragment under a plain header."""
+        monkeypatch.setattr("code_forge.cli._POST_IMAGE_READ_CAP", 50 * 1024)
         f = tmp_path / "huge.py"
         f.write_text("x" * 60000 + "\n" + "\n".join("row%d" % i for i in range(2, 300)))
         diff = (
@@ -231,11 +253,12 @@ class TestAssemblePostImage:
         out, _ = _assemble_post_image(tmp_path, diff)
         assert "truncated at 50KB" in out
 
-    def test_truncated_read_drops_the_partial_line(self, tmp_path):
+    def test_truncated_read_drops_the_partial_line(self, tmp_path, monkeypatch):
         """The cap cut backs up to the last newline. Lines here are 100
         bytes, so 50KB lands mid-line near line 512; a hunk near the cut
         (line 500) windows over the boundary, and without the backup the
         partial tail line shifts the numbering and leaves fragments."""
+        monkeypatch.setattr("code_forge.cli._POST_IMAGE_READ_CAP", 50 * 1024)
         f = tmp_path / "t.py"
 
         def line(i):
@@ -254,11 +277,12 @@ class TestAssemblePostImage:
         partial = [ln for ln in numbered if not (ln.endswith("x" * 93) or ln.endswith("y" * 93))]
         assert not partial, "partial line(s) survived the 50KB cut: %r" % partial[:1]
 
-    def test_single_giant_line_reports_truncation_without_numbering(self, tmp_path):
+    def test_single_giant_line_reports_truncation_without_numbering(self, tmp_path, monkeypatch):
         """A file whose first line exceeds the cap has no newline to cut
         back to. The fragment goes out whole -- plain header, no numbered
         lines, marker outside the numbering -- so the reviewer sees a
         truncated file, never a disguised one."""
+        monkeypatch.setattr("code_forge.cli._POST_IMAGE_READ_CAP", 50 * 1024)
         f = tmp_path / "g.py"
         f.write_text("H" * 60000 + "\nalpha\nbeta\n")
         diff = (

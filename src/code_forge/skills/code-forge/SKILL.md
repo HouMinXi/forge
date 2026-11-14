@@ -953,7 +953,7 @@ Given this diff, identify:
 3. What smoke test would need to exercise each surface to verify it actually works after the change?
 4. Does this change depend on, or run concurrently with, any OTHER stateful subsystem (another nftables table, routing rule, lock, daemon, file) NOT in this diff? If so: can that subsystem block, drop, or interfere with this change's network/file/process operations? Enumerate the flags that gate this function and ALL their possible values at call time.
 
-Return your answer as JSON with exactly these keys:
+Return your answer as JSON with exactly these keys. JSON only, no fences, no prose before or after:
 {"surfaces": ["surface1", "surface2"], "findings": [{"file": "path/to/file", "line": 1, "surface": "surface_name", "description": "what could break and why"}]}
 
 If no runtime surfaces are affected, return: {"surfaces": [], "findings": []}
