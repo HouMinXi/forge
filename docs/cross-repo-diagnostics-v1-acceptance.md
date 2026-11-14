@@ -141,8 +141,8 @@ table. Known coverage includes publication/strict consumption (T08/T15/T16),
 identity/cache/admission (T09–T12), gate isolation (T13), overlap/cleanup/control
 signals (T17–T19) and delivery (T20), each only to its recorded scope and revision.
 The bounded supplement supplies three warm-input cases, one caller-read case and
-one separate library probe; it does not execute all those categories. T03's
-primary-connect oracle, T06's tie/single-hop qualification, T12's fork/shared-use
+one separate library probe; it does not execute all those categories. T03's bounded primary-connect oracle is now recorded in the dated supplement;
+remaining limitations include T06's tie/single-hop qualification, T12's fork/shared-use
 scope, T19's FD scope and T20's natural not_run disposition remain the specific
 limitations indexed below. T14 is the explicit unsupported/not-applicable
 proposal above. Unrecoverable original cases cannot be named, matched one-to-one,
@@ -169,6 +169,220 @@ semantic assertion. Do not claim a fresh SQL-connection count, byte-preservation
 oracle or whole-host concurrency from it. Status remains NOT_RUN in this pass;
 baseline/setup/non-target/timeout/escape/restore failures stop the row. No new test,
 production modification or experiment is performed by this documentation change.
+
+### 2026-11-14 T03 primary-connection observation (bounded execution)
+
+Following explicit user approval of the two zero-connection observations and one
+positive control, the existing immediate-diagnostic test gained an observer after
+fixture creation and edits, before the runner call. It delegates the real SQLite
+connect and records attempts for the exact primary read-only URI before delegate
+return. Existing message, empty result, infra-error, cache and sibling sentinels
+are unchanged. No production change is proposed. Existing node identities remain
+unchanged, so no manifest addition is needed.
+
+Product source is `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`; document plan was
+`27165d8ab1f0c6f491bc3718bd0cf26f72cce144`. The new test file SHA256 is
+`a1cdc0b2d0211fbe03f4a82f00b408a22e34dba56bcb331a6dad4166a6e41f5f`.
+Cloud CPython 3.14.0, SQLite 3.50.4 and pytest 9.2.0 were reused, with auto plugin
+loading disabled and pytest_asyncio explicitly enabled. Only these three nodes
+were in the bounded 90-second-per-phase sequence:
+
+```text
+tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_before_sibling_access[no-path]
+tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_before_sibling_access[deleted]
+tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_before_sibling_access[unnamed]
+```
+
+Command: `$PY314 -B -m pytest -p pytest_asyncio.plugin -p no:cacheprovider -q`
+followed by the three exact nodes above, from the isolated source tree with
+`PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`.
+Collection adds `--collect-only` to that command. Collection exit 0: three nodes;
+baseline exit 0: three pass. In the owned isolated copy, only the no-path return
+was moved from before connect to the start of its existing try/finally, retaining
+close. The unchanged new assertion at line 114 failed twice with `1 == 0`;
+unnamed remained passing. Mutant exit 1: two target failures, one positive-control
+pass. Restored exit 0: three pass. No prior assertion/setup error masked the
+connection oracle. This is a deliberate ordering mutant, not a baseline defect.
+
+Original/restored production SHA256:
+`556a329c909a4f14cc7e5b79ae7d1f5c479b8d6e78f48935ece209faa0de3a0f`;
+mutant SHA256:
+`372a9af68b95079ce319078a92c7efd445341f79cc37881dbaeda096eab577fa`.
+The harness writes only that production file during the sequence and restores it
+in finally. Its end guard found zero changed files relative to the pre-run
+isolated tree (which already contained the new test). The test digest is recorded
+at sequence start and checked by that end guard, not independently logged for
+every phase. Full immediate-diagnostic module regression then passed 44 tests,
+exit 0; its relative interpreter spelling emitted sys.prefix/sys.exec_prefix
+RuntimeWarnings, retained in the log, not silently represented as warning-free.
+
+Credit is limited to these inputs' primary URI connection attempts, with a real
+connection positive control. It is not all SQLite/system I/O, persistent host
+publication, provider qualification or complete T03/G12/G13 acceptance. Other
+T03 subclauses and other inventory rows keep their separate status. No production
+file, support contract, gate checkbox or issue state is changed.
+
+The following safe copies preserve test assertions and summaries. Fixture-value
+renderings are replaced, temporary paths and memory addresses de-identified;
+trailing whitespace is normalized. Original log hashes identify private originals;
+safe-copy hashes identify the displayed UTF-8 bytes including their final newline.
+These are reviewable execution logs, not independent reruns.
+
+<details>
+<summary>T03 collection: safe log</summary>
+
+Original SHA256: `c690f602e7802b64226a00da356f5b9fafa2ee404c63e576bbf922fb241e83ff`.
+Safe-copy SHA256: `c690f602e7802b64226a00da356f5b9fafa2ee404c63e576bbf922fb241e83ff`.
+
+```text
+tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_before_sibling_access[no-path]
+tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_before_sibling_access[deleted]
+tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_before_sibling_access[unnamed]
+
+3 tests collected in 0.18s
+```
+
+</details>
+
+<details>
+<summary>T03 baseline: safe log</summary>
+
+Original SHA256: `c67e541fd068f1dc781192f208ee5378278d4121a29b58ff089a2b0504263f5c`.
+Safe-copy SHA256: `c67e541fd068f1dc781192f208ee5378278d4121a29b58ff089a2b0504263f5c`.
+
+```text
+...                                                                      [100%]
+3 passed in 0.22s
+```
+
+</details>
+
+<details>
+<summary>T03 connect-before-return: safe log</summary>
+
+Original SHA256: `bef5254545fdaed1e2b9afacc292a06f9b279977a21810639ff2551e5713f88a`.
+Safe-copy SHA256: `20def00fd3665ddfbd498f3541c18658dff4930fc4b7ecc9539825e3bcf4ea9b`.
+
+```text
+FF.                                                                      [100%]
+=================================== FAILURES ===================================
+__________ test_zero_targets_emit_once_before_sibling_access[no-path] __________
+
+graphs = <FIXTURE>
+monkeypatch = <FIXTURE>
+case = 'no-path'
+
+    @pytest.mark.parametrize("case", ["unnamed", "no-matching-node", "no-path", "deleted"])
+    def test_zero_targets_emit_once_before_sibling_access(graphs, monkeypatch, case):
+        primary, _, _, _ = graphs
+        diff = DIFF
+        if case == "no-matching-node":
+            edit_graph(primary, "DELETE FROM nodes")
+        elif case == "no-path":
+            diff = "a nonempty diff without an added-side path\n"
+        elif case == "deleted":
+            diff = DIFF.replace("+++ b/api.py", "+++ /dev/null")
+        # Observe after fixture creation/edits, before the target runner invocation.
+        primary_uri = impact.readonly_uri((primary / ".code-review-graph/graph.db").absolute())
+        primary_connections = []
+        real_connect = sqlite3.connect
+
+        def observe_connect(database, *args, **kwargs):
+            if database == primary_uri:
+                primary_connections.append(database)
+            return real_connect(database, *args, **kwargs)
+
+        monkeypatch.setattr(sqlite3, "connect", observe_connect)
+        monkeypatch.setattr(impact, "_registry_path", forbid)
+        monkeypatch.setattr(impact, "_find_cross_repo_caller_groups", forbid)
+        messages = []
+        runner = impact.CrossRepoImpactRunner(output_fn=messages.append)
+        assert runner.run(diff, primary) == []
+        assert messages == [MESSAGE]
+        assert runner.infra_errors == []
+        assert runner._cached is None
+        if case in ("no-path", "deleted"):
+>           assert len(primary_connections) == 0
+E           AssertionError: assert 1 == 0
+E            +  where 1 = len(['file://<PYTEST_TMP_PATH>'])
+
+tests/test_cross_repo_immediate_diagnostic.py:114: AssertionError
+__________ test_zero_targets_emit_once_before_sibling_access[deleted] __________
+
+graphs = <FIXTURE>
+monkeypatch = <FIXTURE>
+case = 'deleted'
+
+    @pytest.mark.parametrize("case", ["unnamed", "no-matching-node", "no-path", "deleted"])
+    def test_zero_targets_emit_once_before_sibling_access(graphs, monkeypatch, case):
+        primary, _, _, _ = graphs
+        diff = DIFF
+        if case == "no-matching-node":
+            edit_graph(primary, "DELETE FROM nodes")
+        elif case == "no-path":
+            diff = "a nonempty diff without an added-side path\n"
+        elif case == "deleted":
+            diff = DIFF.replace("+++ b/api.py", "+++ /dev/null")
+        # Observe after fixture creation/edits, before the target runner invocation.
+        primary_uri = impact.readonly_uri((primary / ".code-review-graph/graph.db").absolute())
+        primary_connections = []
+        real_connect = sqlite3.connect
+
+        def observe_connect(database, *args, **kwargs):
+            if database == primary_uri:
+                primary_connections.append(database)
+            return real_connect(database, *args, **kwargs)
+
+        monkeypatch.setattr(sqlite3, "connect", observe_connect)
+        monkeypatch.setattr(impact, "_registry_path", forbid)
+        monkeypatch.setattr(impact, "_find_cross_repo_caller_groups", forbid)
+        messages = []
+        runner = impact.CrossRepoImpactRunner(output_fn=messages.append)
+        assert runner.run(diff, primary) == []
+        assert messages == [MESSAGE]
+        assert runner.infra_errors == []
+        assert runner._cached is None
+        if case in ("no-path", "deleted"):
+>           assert len(primary_connections) == 0
+E           AssertionError: assert 1 == 0
+E            +  where 1 = len(['file://<PYTEST_TMP_PATH>'])
+
+tests/test_cross_repo_immediate_diagnostic.py:114: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_before_sibling_access[no-path]
+FAILED tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_before_sibling_access[deleted]
+2 failed, 1 passed in 0.21s
+```
+
+</details>
+
+<details>
+<summary>T03 restored: safe log</summary>
+
+Original SHA256: `05f7f7d7e74af6e23fe4984046332ed347e22cf50f99a33856b9d2f589167249`.
+Safe-copy SHA256: `05f7f7d7e74af6e23fe4984046332ed347e22cf50f99a33856b9d2f589167249`.
+
+```text
+...                                                                      [100%]
+3 passed in 0.20s
+```
+
+</details>
+
+<details>
+<summary>T03 module-regression: safe log</summary>
+
+Original SHA256: `1276edcd36078aa11d18c26bdf7f1eaa70f2eb10b581e3408c91cd95726e47e1`.
+Safe-copy SHA256: `7d68635d40f7036756d1901f67ee0653761fe97b6a089dcf7f0c1c321410f27b`.
+
+```text
+<frozen site>:101: RuntimeWarning: Unexpected value in sys.prefix, expected <WORKSPACE>/python314-build/venv, got <WORKSPACE>/forge441-t03-20261114/source/../../python314-build/venv
+<frozen site>:101: RuntimeWarning: Unexpected value in sys.exec_prefix, expected <WORKSPACE>/python314-build/venv, got <WORKSPACE>/forge441-t03-20261114/source/../../python314-build/venv
+............................................                             [100%]
+44 passed in 2.24s
+```
+
+</details>
 
 ### Subsequent bounded source-tree verification (local evidence; no gate approval)
 
@@ -873,11 +1087,11 @@ tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_befor
 - Obligation: No parseable path/deleted added side: primary path prerequisite remains, no primary connection, no_named_targets; no invented target.
 - Actual source: `CrossRepoImpactRunner._run_analysis_impl` first resolves/checks the primary database path, then calls `resolve_changed_symbols`; the latter returns on empty parsed added-side paths before its `sqlite3.connect` (fixed source lines 262–268). The early no-connect branch is in the resolver, not the runner itself.
 - Independent oracle / input: Actual malformed/deletion diff, exact warning/empty findings; forbid sentinels guard sibling discovery/helper access.
-- Remaining gap / supported disposition: The selected controls do not explicitly count primary sqlite connection opens. That exact original T03 subclause is an evidence gap, not inferred from empty output.
-- R3 status: Force-primary-connect dedicated semantic control: NOT_RUN / target node not yet assigned. Do not manufacture a passed connection-spy assertion.
+- Remaining gap / supported disposition: The selected no-path/deleted controls now explicitly count primary URI connection attempts, with unnamed as positive control. Other primary path/persistent-chain obligations are not inferred from this observation.
+- R3 status: The 2026-11-14 supplement records unchanged-product GREEN, two target connection-count REDs with positive control GREEN, and restored GREEN on the existing nodes. Only this bounded subclause has current execution credit.
 
 <details>
-<summary>T03: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T03: exact identities (no-path/deleted executed; unnamed positive control in supplement)</summary>
 
 ```text
 tests/test_cross_repo_immediate_diagnostic.py::test_zero_targets_emit_once_before_sibling_access[deleted]
@@ -1761,7 +1975,7 @@ not a reason to invent a test or keep an unlimited investigation open.
 
 | Existing record | First reuse/map step | Finite deliverable and exit; current status |
 | --- | --- | --- |
-| [T03](#evidence-t03): primary connection count | Inspect the listed immediate zero-target controls and SQL trace fixtures. Their sibling `forbid` sentinel does not prove no primary connection, and a zero query trace is not a zero connection count. | Static audit completed for the selected `no-path`/`deleted` nodes: only sibling registry/helper forbid sentinels are installed; neither counts primary connections. Resolver source returns before connect, but dedicated connection-count node remains UNKNOWN. Proposed later oracle: after fixture database setup, observe primary connection entry for each selected no-path input and require zero while preserving the exact diagnostic and empty result. No new test or experiment; runtime/support disposition PENDING. |
+| [T03](#evidence-t03): primary connection count | Inspect the listed immediate zero-target controls and SQL trace fixtures. Their sibling `forbid` sentinel does not prove no primary connection, and a zero query trace is not a zero connection count. | The original fixed-baseline `no-path`/`deleted` nodes had only sibling registry/helper forbid sentinels, with no primary connection count. The existing nodes now carry the implemented post-setup primary-connection observer, plus unnamed positive control, documented in the 2026-11-14 T03 supplement; original diagnostic and empty-result assertions are preserved. The bounded three-node observation/ordering-control sequence is recorded above; other runtime/support dispositions remain PENDING. |
 | [T06](#evidence-t06): equal-rank order/single-hop | Reuse listed `TestTopNCap::test_cap_at_top_n` and caller-query controls; check ties and actual SQL edge traversal separately. A top-N count is not tie-order or no-second-hop proof. | Selected-node/source static audit completed in T06: top-N test asserts length only; query is direct-edge and has no ORDER BY, ranking has no explicit tie key. Dedicated tie-order/extra-hop nodes remain UNKNOWN. Maintainer decides tie-order promise and required rejection oracle; no product defect or runtime pass inferred. PENDING decision. |
 | [T12](#evidence-t12): process/fork/shared-use | Keep executed three warm-input cases separate. Reuse installed-capture closed/foreign-thread cases already indexed; serial foreign-thread refusal/reuse does not qualify fork or simultaneous shared use. | Explicitly accept unsupported process/fork/shared-use scope, or identify one supported scenario and exact existing node/oracle. Fork/shared-use runtime evidence UNKNOWN; no new concurrency experiment pending domain decision. PENDING. |
 | [T14](#evidence-t14): recovery | Reuse controlled PENDING compatibility and new-host identity controls; neither is HOLD resume. Preserve existing no-cross-repository-HOLD limited contract. | Maintainer records the original recovery obligation's not-applicable/unsupported disposition and rationale at the fixed document commit. Do not add fake recovery tests or silently delete the obligation. PENDING. |
