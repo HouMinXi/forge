@@ -705,3 +705,61 @@ def test_real_tail_incomplete_flags_survive_buffered_flush(code, flag):
         assert first.seal() is state and warnings == [code]
     finally:
         session.close()
+
+
+def test_an_oversized_append_reports_a_write_failure_not_a_missing_ticket():
+    warnings = []
+    session = BufferedCaptureSession(buffer_bytes=8, batch_bytes=4, max_delay=0)
+    try:
+        first = capture(session, len, warn=warnings.append)
+        first.append(b"x" * 100)
+        # A write failure is not evidence that no ticket ran; reporting it as an
+        # unexecuted capture would spend that refinement and suppress the real one.
+        assert warnings == ["capture_write_failed"]
+        assert first.seal().failed
+    finally:
+        session.close()
+
+
+def test_a_deferred_notice_never_leaks_to_another_thread():
+    delivered = []
+    session = BufferedCaptureSession(buffer_bytes=8, batch_bytes=4, max_delay=0)
+    try:
+        first = capture(session, len, warn=delivered.append)
+        wire = first._wire
+        wire._deferral.active = True
+        try:
+            other = threading.Thread(target=lambda: wire._notice("capture_write_uncertain"))
+            other.start()
+            other.join(2)
+        finally:
+            wire._deferral.active = False
+        assert delivered == ["capture_write_uncertain"]
+    finally:
+        session.close()
+
+
+def test_the_oversized_branch_sets_its_failure_flag_before_the_session_lock():
+    """Ordering, not text: the flag must be visible to a seal that runs between
+    the two locks, which a single-threaded test cannot interleave."""
+    from pathlib import Path
+
+    from code_forge import invocation_buffered_capture as module
+
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    branch_start = source.index("# Never enter WireCapture's raw-limit slicing")
+    branch = source[branch_start : source.index("self._notice(_CAPTURE_WRITE_FAILED)", branch_start)]
+    assert branch.index("self._failed = True") < branch.index("session = self._owner._session")
+
+
+def test_the_deferral_flag_is_armed_inside_the_block_that_clears_it():
+    """A signal on the arming line must leave nothing armed: only an arming
+    inside the try has a finally that will disarm it."""
+    from pathlib import Path
+
+    from code_forge import invocation_buffered_capture as module
+
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    start = source.index("self._deferral.code = None")
+    region = source[start : source.index("notice = self._deferral.code", start)]
+    assert region.index("try:") < region.index("self._deferral.active = True")

@@ -22,6 +22,7 @@ from code_forge import invocation_io, invocation_owner
 from code_forge.invocation_host import HostAuditSession, HostAuditLimits
 from code_forge.invocation_io import IoLimits, process_audit_io
 from code_forge.invocation_send_audit import SendLifecycleClosed, SendRequest
+from code_forge.invocation_stream import CaptureUnavailable, _CaptureNoticeDelivery
 from code_forge.llm_invoke import AuditPersistenceError, Usage
 
 
@@ -183,7 +184,7 @@ def setup(monkeypatch):
     supervisor = process_audit_io(limits=IoLimits(32, 8192, 512, 8), warn=lambda _: None)
     hosts = []
 
-    def make(*, strict=False, known=True, warn=None, **changes):
+    def make(*, strict=False, known=True, warn=None, scoped_fault_domain=False, **changes):
         context = audit.InvocationContext(
             str(uuid.uuid4()),
             "a" * 64 if known else None,
@@ -227,6 +228,7 @@ def setup(monkeypatch):
             limits=HostAuditLimits(**settings),
             supervisor=supervisor,
             warn=warn or notices.append,
+            scoped_fault_domain=scoped_fault_domain,
         )
         hosts.append(host)
         return host, notices
@@ -313,6 +315,330 @@ def test_control_failure_latches_once_default_continues_strict_typed(setup, stri
     else:
         assert admit(scope, request()) is None
     assert MockRecorder.calls == calls and notices == [module._WARNING]
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+@pytest.mark.parametrize("strict", [False, True])
+def test_capture_notice_refinement_reaches_host_consumer(setup, scoped, strict):
+    make, supervisor = setup
+    host, notices = make(scoped_fault_domain=scoped, strict=strict)
+    host._ensure_io()
+    writes = []
+    captured = host._captures.new_capture(
+        write=lambda data: writes.append(data) or len(data),
+        warn=host.warn,
+        limit_bytes=100,
+        action_deadline=time.monotonic() - 1,
+        chunk_bytes=128,
+        strict=strict,
+    )
+    if strict:
+        with pytest.raises(CaptureUnavailable):
+            captured.append(b"private")
+    else:
+        captured.append(b"private")
+    if strict:
+        with pytest.raises(CaptureUnavailable):
+            captured.seal()
+    else:
+        captured.seal()
+    expected = [module._WARNING, "capture_not_executed"] if scoped else [module._WARNING]
+    assert notices == expected and writes == [] and supervisor._blocked is False
+    assert host.failed and not host.safe_summary().audit_complete
+
+
+def test_queued_refinements_deliver_in_order_and_keep_the_first_error():
+    delivered = []
+    fatal = ValueError("first callback failure")
+    delivery = None
+
+    def warn(code):
+        delivered.append(code)
+        if code == "capture_write_failed":
+            delivery.emit("capture_not_executed")
+            delivery.emit("capture_write_uncertain")
+            raise fatal
+        if code == "capture_write_uncertain":
+            raise KeyError("later callback failure")
+
+    delivery = _CaptureNoticeDelivery(scoped=True, warn=warn)
+    caught = None
+    try:
+        delivery.emit("capture_write_failed")
+    except BaseException as error:  # noqa: BLE001 - assert identity outside exception handling
+        caught = error
+    assert delivered == [
+        "capture_write_failed",
+        "capture_not_executed",
+        "capture_write_uncertain",
+    ]
+    assert caught is fatal
+    assert not delivery._draining and not delivery._pending
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+def test_host_notice_codes_are_bounded_and_process_uncertainty_is_terminal(setup, scoped):
+    host, notices = setup[0](scoped_fault_domain=scoped)
+    codes = (
+        "unrecognized private warning",
+        "capture_not_executed",
+        "capture_write_uncertain",
+        "audit_io_unresolved_process",
+    )
+    for code in codes:
+        host.warn(code)
+        host.warn(code)
+    expected = [module._WARNING] + list(codes[1:]) if scoped else [module._WARNING]
+    assert notices == expected
+    other, seen = setup[0](scoped_fault_domain=scoped)
+    other.warn("audit_io_unresolved_process")
+    other.warn("capture_not_executed")
+    other.warn("capture_write_uncertain")
+    assert seen == (["audit_io_unresolved_process"] if scoped else [module._WARNING])
+
+
+class _HostileStr(str):
+    """A string that raises if anything treats it as a member of a set."""
+
+    def __hash__(self):
+        raise RuntimeError("hostile __hash__")
+
+    def __eq__(self, other):
+        raise RuntimeError("hostile __eq__")
+
+
+def test_only_exact_strings_can_reach_the_closed_set(setup):
+    hostile = _HostileStr("capture_not_executed")
+    host, notices = setup[0](scoped_fault_domain=True)
+    host.warn(hostile)
+    host.warn(0)
+    assert notices == [module._WARNING]
+
+
+def test_a_refinement_delivered_first_suppresses_a_later_unrecognized_code(setup):
+    host, notices = setup[0](scoped_fault_domain=True)
+    host.warn("capture_not_executed")
+    host.warn("private unrecognized diagnostic")
+    assert notices == ["capture_not_executed"]
+
+
+def test_default_warning_renders_only_fixed_capture_codes(capsys):
+    for code in (
+        "capture_not_executed",
+        "capture_write_uncertain",
+        "audit_io_unresolved_process",
+    ):
+        module._warning(code)
+        assert capsys.readouterr().err == (
+            f"code-forge: invocation audit unavailable; recording is incomplete [{code}]\n"
+        )
+    module._warning("private diagnostic payload")
+    assert capsys.readouterr().err == (
+        "code-forge: invocation audit unavailable; recording is incomplete\n"
+    )
+
+
+@pytest.mark.parametrize("boundary", ["host", "capture"])
+def test_terminal_notice_waits_for_inflight_delivery_without_blocking_producer(setup, boundary):
+    entered, release, returned = threading.Event(), threading.Event(), threading.Event()
+    notices, errors = [], []
+
+    def warn(code):
+        if code == "capture_not_executed":
+            entered.set()
+            assert release.wait(3)
+        notices.append(code)
+
+    host, _ = setup[0](scoped_fault_domain=True, warn=warn)
+    if boundary == "host":
+        emit = host.warn
+    else:
+        host._ensure_io()
+        captured = host._captures.new_capture(
+            write=len,
+            warn=warn,
+            limit_bytes=100,
+            action_deadline=time.monotonic() + 5,
+            chunk_bytes=128,
+        )
+        emit = captured._notice
+
+    def send(code, done=None):
+        try:
+            emit(code)
+        except BaseException as error:  # noqa: BLE001 - assert thread failures below
+            errors.append(error)
+        finally:
+            if done is not None:
+                done.set()
+
+    lower = threading.Thread(target=send, args=("capture_not_executed",))
+    terminal = threading.Thread(target=send, args=("audit_io_unresolved_process", returned))
+    try:
+        lower.start()
+        assert entered.wait(3)
+        terminal.start()
+        assert returned.wait(3), "terminal producer waited for the user callback"
+        assert notices == [], "terminal callback overtook an active lower callback"
+    finally:
+        release.set()
+        lower.join(3)
+        if terminal.ident is not None:
+            terminal.join(3)
+    assert not lower.is_alive() and not terminal.is_alive() and not errors
+    assert notices == ["capture_not_executed", "audit_io_unresolved_process"]
+    emit("capture_write_uncertain")
+    assert notices == ["capture_not_executed", "audit_io_unresolved_process"]
+
+
+def test_real_process_block_cannot_overtake_capture_notice_delivery(setup):
+    entered, release = threading.Event(), threading.Event()
+    notices, errors = [], []
+
+    def warn(code):
+        if code == "capture_not_executed":
+            entered.set()
+            assert release.wait(3)
+        notices.append(code)
+
+    host, _ = setup[0](scoped_fault_domain=True, warn=warn)
+    process = setup[1]
+    host._ensure_io()
+    cap = host._captures.new_capture(
+        write=len,
+        warn=host.warn,
+        limit_bytes=100,
+        action_deadline=time.monotonic() - 1,
+        chunk_bytes=128,
+    )
+    cap.append(b"private")
+    assert notices == [module._WARNING]
+    io_entered, io_release = threading.Event(), threading.Event()
+
+    class Blocker:
+        def audit_io(self, phase, payload):
+            io_entered.set()
+            assert io_release.wait(3)
+            return True
+
+    def seal():
+        try:
+            cap.seal()
+        except BaseException as error:  # noqa: BLE001 - assert thread failures below
+            errors.append(error)
+
+    reader = threading.Thread(target=seal)
+    try:
+        reader.start()
+        assert entered.wait(3)
+        ticket = process.submit(
+            Blocker(), invocation_io.AuditPhase.MAINTAIN, deadline=time.monotonic() + 0.1
+        )
+        assert io_entered.wait(3)
+        assert process.wait(ticket).publication_uncertain and process._blocked
+        host._captures.new_capture(
+            write=len,
+            warn=host.warn,
+            limit_bytes=100,
+            action_deadline=time.monotonic() + 1,
+            chunk_bytes=128,
+        )
+        assert notices == [module._WARNING], "process diagnostic overtook active delivery"
+    finally:
+        release.set()
+        io_release.set()
+        reader.join(3)
+    assert not reader.is_alive() and not errors
+    assert notices == [module._WARNING, "capture_not_executed", "audit_io_unresolved_process"]
+
+
+@pytest.mark.parametrize("boundary", ["host", "capture"])
+@pytest.mark.parametrize(
+    "fatal_type,metadata_field",
+    [
+        (None, None),
+        (MemoryError, None),
+        (KeyboardInterrupt, None),
+        (MemoryError, "__cause__"),
+        (MemoryError, "__context__"),
+        (MemoryError, "__suppress_context__"),
+    ],
+)
+def test_reentrant_terminal_delivery_drains_before_original_callback_error(
+    setup, boundary, fatal_type, metadata_field
+):
+    notices, unlocked = [], []
+    if metadata_field is not None:
+
+        class CallbackFatal(MemoryError):
+            def __getattribute__(self, name):
+                if name == metadata_field:
+                    raise RuntimeError("metadata accessor must not replace fatal")
+                return super().__getattribute__(name)
+
+        fatal = CallbackFatal("private warning failure")
+    else:
+        fatal = fatal_type("private warning failure") if fatal_type else None
+    cause, context = ValueError("original cause"), LookupError("original context")
+    if fatal is not None:
+        BaseException.__dict__["__cause__"].__set__(fatal, cause)
+        BaseException.__dict__["__context__"].__set__(fatal, context)
+        BaseException.__dict__["__suppress_context__"].__set__(fatal, False)
+    host, _ = setup[0](scoped_fault_domain=True)
+
+    def warn(code):
+        def check_lock():
+            lock = host._lock if boundary == "host" else captured._session._condition
+            available = lock.acquire(blocking=False)
+            unlocked.append(available)
+            if available:
+                lock.release()
+
+        checker = threading.Thread(target=check_lock)
+        checker.start()
+        checker.join(2)
+        assert not checker.is_alive() and unlocked[-1]
+        notices.append(code)
+        if code == "capture_not_executed":
+            emit("capture_write_uncertain")
+            emit("audit_io_unresolved_process")
+            emit("capture_not_executed")
+            if fatal is not None:
+                raise fatal
+
+    if boundary == "host":
+        host._warn = warn
+        emit = host.warn
+        delivery = host._notices
+    else:
+        host._ensure_io()
+        captured = host._captures.new_capture(
+            write=len,
+            warn=warn,
+            limit_bytes=100,
+            action_deadline=time.monotonic() + 5,
+            chunk_bytes=128,
+        )
+        emit = captured._notice
+        delivery = captured._notices
+    if fatal is None:
+        emit("capture_not_executed")
+    else:
+        caught = None
+        try:
+            emit("capture_not_executed")
+        except BaseException as error:  # noqa: BLE001 - assert exact identity outside exception handling
+            caught = error
+        assert caught is fatal, "callback fatal identity was replaced"
+        assert (
+            BaseException.__dict__["__cause__"].__get__(fatal),
+            BaseException.__dict__["__context__"].__get__(fatal),
+            BaseException.__dict__["__suppress_context__"].__get__(fatal),
+        ) == (cause, context, False)
+    assert notices == ["capture_not_executed", "audit_io_unresolved_process"]
+    assert not delivery._draining and not delivery._pending
+    emit("capture_write_uncertain")
+    assert notices == ["capture_not_executed", "audit_io_unresolved_process"]
 
 
 def test_hung_open_remains_single_worker_and_control_owned_after_timeout(setup):
@@ -1503,3 +1829,147 @@ def test_adoption_failure_never_starts_finish_control(setup, monkeypatch, fatal)
     assert "finish" not in [name for name, _ in MockRecorder.calls]
     assert host.failed and host.safe_summary().settled_sends == 0
     assert not host._commands and host._control_bytes == 0
+
+
+def test_a_warning_marks_the_host_failed(setup):
+    host, notices = setup[0](scoped_fault_domain=False)
+    assert host.failed is False
+    host.warn("capture_write_failed")
+    assert host.failed is True
+    assert notices == [module._WARNING]
+
+
+def test_a_signal_during_drain_does_not_wedge_the_outlet():
+    delivered = []
+
+    class InterruptingLock:
+        def __init__(self, lock):
+            self._lock = lock
+            self._entries = 0
+
+        def __enter__(self):
+            self._entries += 1
+            self._lock.acquire()
+            if self._entries == 2:
+                self._lock.release()
+                raise KeyboardInterrupt("signal between callbacks")
+            return self
+
+        def __exit__(self, *exc):
+            self._lock.release()
+            return False
+
+    delivery = module._CaptureNoticeDelivery(scoped=True, warn=delivered.append)
+    delivery._lock = InterruptingLock(delivery._lock)
+    with pytest.raises(KeyboardInterrupt):
+        delivery.emit("capture_not_executed")
+    assert delivery._draining is False
+    delivery._lock = delivery._lock._lock
+    # The interrupt landed before the callback, so the claim it spent must be
+    # released too: the same code still has to arrive, and only once.
+    delivery.emit("capture_not_executed")
+    delivery.emit("capture_not_executed")
+    assert delivered == ["capture_not_executed"]
+
+
+def test_a_hostile_equality_cannot_spend_the_terminal_slot():
+    class Hostile(str):
+        def __eq__(self, other):
+            raise RuntimeError("hostile __eq__")
+
+        __hash__ = str.__hash__
+
+    delivered = []
+    delivery = module._CaptureNoticeDelivery(scoped=True, warn=delivered.append)
+    delivery.emit(Hostile("capture_not_executed"))
+    delivery.emit("audit_io_unresolved_process")
+    assert delivered[-1] == "audit_io_unresolved_process"
+    assert len(delivered) == 2
+
+
+def test_an_interrupt_after_delivery_keeps_that_claim_spent():
+    delivered = []
+
+    class InterruptingLock:
+        def __init__(self, lock, raise_at):
+            self._lock = lock
+            self._raise_at = raise_at
+            self._entries = 0
+
+        def __enter__(self):
+            self._entries += 1
+            self._lock.acquire()
+            if self._entries == self._raise_at:
+                self._lock.release()
+                raise KeyboardInterrupt("signal after delivery")
+            return self
+
+        def __exit__(self, *exc):
+            self._lock.release()
+            return False
+
+    delivery = module._CaptureNoticeDelivery(scoped=True, warn=delivered.append)
+    delivery._lock = InterruptingLock(delivery._lock, raise_at=3)
+    with pytest.raises(KeyboardInterrupt):
+        delivery.emit("audit_io_unresolved_process")
+    assert delivered == ["audit_io_unresolved_process"]
+    delivery._lock = delivery._lock._lock
+    delivery.emit("audit_io_unresolved_process")
+    assert delivered == ["audit_io_unresolved_process"]
+
+
+def test_a_claim_is_spent_before_its_callback_runs():
+    """A signal between the callback returning and the bookkeeping would otherwise
+    hand a delivered claim back, and the retry would deliver it twice."""
+    from pathlib import Path
+
+    from code_forge import invocation_stream
+
+    source = Path(invocation_stream.__file__).read_text(encoding="utf-8")
+    marker = "                honoured = True\n"
+    assert source.count(marker) == 1
+    region = source[source.index(marker) : source.index("                except BaseException as error")]
+    assert "warn(current)" in region
+
+
+def test_a_signal_right_after_arming_the_drain_does_not_wedge_the_outlet():
+    """The arming store and the release must not be separated by a window in which
+    nothing owns the drain: ownership is a token the finally can compare."""
+    delivered = []
+
+    class InterruptingLock:
+        def __init__(self, lock):
+            self._lock = lock
+            self._exits = 0
+
+        def __enter__(self):
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, *exc):
+            self._exits += 1
+            self._lock.release()
+            if self._exits == 1:
+                # The claim and the arming both happened inside this critical
+                # section; raising on the way out is the arming-path signal.
+                raise KeyboardInterrupt("signal on the arming path")
+            return False
+
+    delivery = module._CaptureNoticeDelivery(scoped=True, warn=delivered.append)
+    delivery._lock = InterruptingLock(delivery._lock)
+    with pytest.raises(KeyboardInterrupt):
+        delivery.emit("capture_not_executed")
+    assert delivery._drain_owner is None
+    delivery._lock = delivery._lock._lock
+    delivery.emit("capture_write_uncertain")
+    assert delivered == ["capture_write_uncertain"]
+
+    # And structurally: the claim and the arming sit inside the try, or a signal on
+    # the way out of that critical section has no finally to release it.
+    from pathlib import Path
+
+    from code_forge import invocation_stream
+
+    source = Path(invocation_stream.__file__).read_text(encoding="utf-8")
+    emit = source[source.index("    def emit(self, code):") : source.index("class WireCapture:")]
+    assert emit.index("        try:\n") < emit.index("            with self._lock:")

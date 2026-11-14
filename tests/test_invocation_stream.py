@@ -1,7 +1,9 @@
 """Actual SSE decoder with controlled byte readers; no durability claim."""
 
 from dataclasses import replace
+from pathlib import Path
 from http.client import HTTPResponse, IncompleteRead
+import ast
 import io
 import json
 import threading
@@ -514,3 +516,125 @@ def test_http_response_overridden_read1_keeps_entity_partial(override):
         assert caught.value is primary and sink.getvalue() == b"\r\n"
     finally:
         response.close()
+
+
+def test_the_refinement_vocabulary_is_declared_in_one_place():
+    from code_forge import invocation_buffered_capture as buffered
+    from code_forge import invocation_io as io_module
+    from code_forge import invocation_stream as stream
+
+    declared = frozenset(
+        (
+            stream._CAPTURE_NOT_EXECUTED,
+            stream._CAPTURE_WRITE_UNCERTAIN,
+            stream._TERMINAL_CAPTURE_NOTICE,
+        )
+    )
+    assert stream._SCOPED_CAPTURE_NOTICES == declared
+    assert stream._CAPTURE_WRITE_FAILED not in stream._SCOPED_CAPTURE_NOTICES
+    for module in (buffered, io_module):
+        assert module._TERMINAL_CAPTURE_NOTICE is stream._TERMINAL_CAPTURE_NOTICE
+    assert buffered._CAPTURE_WRITE_FAILED is stream._CAPTURE_WRITE_FAILED
+    assert buffered._CAPTURE_NOT_EXECUTED is stream._CAPTURE_NOT_EXECUTED
+    assert buffered._CAPTURE_WRITE_UNCERTAIN is stream._CAPTURE_WRITE_UNCERTAIN
+
+    # The identity checks above cannot see a module that re-spells a code, and
+    # interning would even make a re-declaration compare equal. Read every module
+    # in the package instead and require that none but the declaring module holds
+    # one of these strings as a literal. Parsing rather than tokenizing compares
+    # a literal by its folded value: implicit concatenation, a ``+`` of pieces,
+    # an f-string, a ``%`` template with constant arguments, ``.format`` on a
+    # constant template and a bytes literal all fold to the code they spell. A
+    # code assembled from named variables is still invisible, because nothing
+    # folds without running the module.
+    vocabulary = declared | {
+        stream._CAPTURE_WRITE_FAILED,
+        stream._CAPTURE_LIMIT_REACHED,
+        *stream._CAPTURE_TAIL_CODES,
+    }
+    package = Path(stream.__file__).resolve().parent
+    declaring = Path(stream.__file__).resolve()
+
+    def folded(node):
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, str):
+                return node.value
+            if isinstance(node.value, bytes):
+                return node.value.decode("ascii", "replace")
+            return None
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = folded(node.left), folded(node.right)
+            if left is not None and right is not None:
+                return left + right
+        if isinstance(node, ast.FormattedValue):
+            inner = folded(node.value)
+            spec = None if node.format_spec is None else folded(node.format_spec)
+            if inner is not None and (node.format_spec is None or spec is not None):
+                try:
+                    return format(inner, spec or "")
+                except (TypeError, ValueError):
+                    return None
+        if isinstance(node, ast.JoinedStr):
+            parts = [folded(value) for value in node.values]
+            if parts and all(part is not None for part in parts):
+                return "".join(parts)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+            template = folded(node.left)
+            operand = node.right
+            if template is not None and isinstance(operand, ast.Tuple):
+                if all(isinstance(item, ast.Constant) for item in operand.elts):
+                    try:
+                        return template % tuple(item.value for item in operand.elts)
+                    except (TypeError, ValueError):
+                        return None
+            if template is not None and isinstance(operand, ast.Dict):
+                if all(
+                    isinstance(k, ast.Constant) and isinstance(v, ast.Constant)
+                    for k, v in zip(operand.keys, operand.values, strict=True)
+                ):
+                    mapping = {
+                        k.value: v.value for k, v in zip(operand.keys, operand.values, strict=True)
+                    }
+                    try:
+                        return template % mapping
+                    except (TypeError, ValueError, KeyError):
+                        return None
+            if template is not None and isinstance(operand, ast.Constant):
+                try:
+                    return template % operand.value
+                except (TypeError, ValueError):
+                    return None
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "format"
+            and all(isinstance(arg, ast.Constant) for arg in node.args)
+            and all(
+                keyword.arg is not None and isinstance(keyword.value, ast.Constant)
+                for keyword in node.keywords
+            )
+        ):
+            template = folded(node.func.value)
+            if template is not None:
+                try:
+                    return template.format(
+                        *(arg.value for arg in node.args),
+                        **{keyword.arg: keyword.value.value for keyword in node.keywords},
+                    )
+                except (IndexError, KeyError, ValueError):
+                    return None
+        return None
+
+    offenders = {}
+    for path in sorted(package.rglob("*.py")):
+        if path.resolve() == declaring:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        found = {
+            value
+            for node in ast.walk(tree)
+            if (value := folded(node)) is not None and value in vocabulary
+        }
+        if found:
+            offenders[str(path.relative_to(package))] = sorted(found)
+    assert offenders == {}

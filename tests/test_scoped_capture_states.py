@@ -48,9 +48,9 @@ def test_switch_on_separates_the_three_outcomes():
     assert _failure_notice(True, snapshot(failed=True)) == "capture_write_failed"
 
 
-def test_never_executed_outranks_uncertain_when_both_are_set():
+def test_uncertain_write_outranks_a_different_unexecuted_ticket():
     both = snapshot(failed=True, not_executed=True, write_uncertain=True)
-    assert _failure_notice(True, both) == "capture_not_executed"
+    assert _failure_notice(True, both) == "capture_write_uncertain"
 
 
 def test_snapshot_defaults_to_not_executed_false():
@@ -112,16 +112,24 @@ def test_reconcile_records_the_never_executed_outcome():
     assert capture._uncertain is False
 
 
-def test_host_threads_the_switch_into_its_captures(tmp_path):
+def test_host_threads_the_switch_into_its_captures(tmp_path, monkeypatch):
     import uuid
 
+    from code_forge import invocation_io
     from code_forge.invocation_audit import InvocationContext
     from code_forge.invocation_host import HostAuditSession
 
+    # The audit I/O supervisor is process-wide; take it over for this test and
+    # put the module back the way the rest of the suite expects to find it.
+    monkeypatch.setattr(invocation_io, "_PROCESS", None)
     context = InvocationContext(str(uuid.uuid4()), None, None, None, None, None, None, "review", None)
     session = HostAuditSession(artifact_root=tmp_path, context=context, scoped_fault_domain=True)
-    session._ensure_io()
-    assert session._captures._scoped_fault_domain is True
+    try:
+        session._ensure_io()
+        assert session._captures._scoped_fault_domain is True
+    finally:
+        if session._io is not None:
+            session._io.close()
 
 
 def _opened_recorder(root, *, scoped):
@@ -298,9 +306,7 @@ def test_pending_ticket_at_seal_is_uncertain_not_merely_failed(supervisor):
         assert snapshot_state.write_uncertain is True, (
             "an outstanding write must not read as a clean failure"
         )
-        # This path emits the chain diagnostic first, so the notice text is pinned
-        # elsewhere; what belongs here is the snapshot state it would have been built from.
-        assert notices and "capture_write_failed" not in notices
+        assert notices == ["audit_io_unresolved_process"]
     finally:
         release.set()
         writer.join(2)
@@ -371,36 +377,115 @@ def test_an_interrupt_keeps_the_run_from_claiming_completeness(tmp_path):
     assert rec.snapshot().audit_complete is False
 
 
-def test_the_switch_changes_the_notice_a_session_emits(supervisor, monkeypatch):
-    """Stub only the io outcome: the session, the reconcile and the notice are real."""
-    from code_forge import invocation_io
-    from tests.test_invocation_io import capture, shared
+def test_the_switch_changes_the_notice_a_session_emits(supervisor):
+    """A real expired submit warns early, then refines its outcome at seal."""
+    import time
+
+    from tests.test_invocation_io import shared
 
     process, _warnings = supervisor
-    real = invocation_io.ProcessAuditIo._result_locked
-
-    def expired(self, ticket, handoff=False):
-        if getattr(ticket, "_target", None) is not None:
-            return invocation_io.IoOutcome("expired", not_executed=True)
-        return real(self, ticket, handoff=handoff)
-
-    monkeypatch.setattr(invocation_io.ProcessAuditIo, "_result_locked", expired)
-
-    seen = {}
     for scoped in (True, False):
-        notices: list[str] = []
-        session = shared(process, flush_timeout_s=0.02, scoped_fault_domain=scoped)
+        notices, writes = [], []
+        session = shared(process, scoped_fault_domain=scoped)
         try:
-            cap = capture(session, len, warn=notices.append)
+            cap = session.new_capture(
+                write=lambda data, writes=writes: writes.append(data) or len(data),
+                warn=notices.append,
+                limit_bytes=100,
+                action_deadline=time.monotonic() - 1,
+                chunk_bytes=128,
+            )
             cap.append(b"data: {}\n\n")
+            assert notices == ["capture_write_failed"]
             state = cap.seal()
-            assert state.not_executed is True
-            assert process._blocked is False
-            seen[scoped] = notices[-1]
+            assert state.not_executed is True and not state.write_uncertain
+            assert process._blocked is False and writes == []
+            expected = ["capture_write_failed"] + (["capture_not_executed"] if scoped else [])
+            assert notices == expected
+            assert cap.seal() is state and notices == expected
         finally:
             session.close()
-    assert seen[True] == "capture_not_executed"
-    assert seen[False] == "capture_write_failed"
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_uncertain_write_refines_an_earlier_capture_warning(supervisor, strict):
+    import threading
+
+    from code_forge.invocation_stream import CaptureUnavailable
+    from tests.test_invocation_io import capture, shared
+
+    process, _ = supervisor
+    entered, release = threading.Event(), threading.Event()
+    writes, notices = [], []
+
+    def write(data):
+        writes.append(data)
+        entered.set()
+        assert release.wait(2)
+        raise OSError("private sink failure")
+
+    session = shared(process, scoped_fault_domain=True)
+    cap = capture(session, write, warn=notices.append, strict=strict)
+    try:
+        if strict:
+            release.set()
+            with pytest.raises(CaptureUnavailable):
+                cap.append(b"abcd")
+        else:
+            cap.append(b"abcd")
+            assert entered.wait(2)
+            release.set()
+        assert entered.wait(2)
+        with process._condition:
+            assert process._condition.wait_for(lambda: process._running is None, timeout=2)
+        cap.append(b"efgh")
+        assert notices == ["capture_write_failed"]
+        if strict:
+            with pytest.raises(CaptureUnavailable) as caught:
+                cap.seal()
+            assert caught.value.args == ("capture_write_uncertain",)
+        else:
+            state = cap.seal()
+            assert state.write_uncertain and state.accepted_bytes == 0
+        assert writes == [b"abcd"] and process._blocked is False
+        assert notices == ["capture_write_failed", "capture_write_uncertain"]
+    finally:
+        release.set()
+        session.close()
+
+
+def test_an_unexecuted_ticket_cannot_hide_a_real_unacknowledged_write(supervisor):
+    import threading
+
+    from tests.test_invocation_io import capture, shared
+
+    process, _ = supervisor
+    entered, release = threading.Event(), threading.Event()
+    stored, notices = io.BytesIO(), []
+
+    def write(data):
+        stored.write(data)
+        entered.set()
+        assert release.wait(2)
+        raise OSError("the write happened but its acknowledgement was lost")
+
+    session = shared(process, scoped_fault_domain=True)
+    cap = capture(session, write, warn=notices.append)
+    try:
+        cap.append(b"abcd")
+        assert entered.wait(2)
+        cap.append(b"efgh")
+        release.set()
+        with process._condition:
+            assert process._condition.wait_for(lambda: process._running is None, timeout=2)
+        state = cap.seal()
+        assert state.not_executed and state.write_uncertain
+        assert state.accepted_bytes == 0 and stored.getvalue() == b"abcd"
+        assert process._blocked is False
+        assert notices == ["capture_write_uncertain"]
+    finally:
+        release.set()
+        session.close()
 
 
 def test_settlement_writes_the_terminal_record(tmp_path):
@@ -436,3 +521,217 @@ def test_committed_bytes_are_not_reported_as_never_executed():
         _failure_notice(True, snapshot(failed=True, not_executed=True, accepted_bytes=4))
         == "capture_write_failed"
     )
+
+
+def test_a_blocked_process_with_the_switch_off_still_delivers_one_notice(supervisor):
+    import time
+
+    from code_forge.invocation_buffered_capture import SharedBufferedCaptureSession
+
+    process, _ = supervisor
+    delivered = []
+    session = SharedBufferedCaptureSession(process, buffer_bytes=4096, batch_bytes=512, max_delay=0)
+    try:
+        capture = session.new_capture(
+            write=len,
+            warn=delivered.append,
+            limit_bytes=100,
+            action_deadline=time.monotonic() + 1,
+            chunk_bytes=4,
+        )
+        capture._notice("capture_write_failed")
+        process._blocked = True
+        # The shared capture rewrites this to the terminal code before claiming;
+        # with the switch off the earlier generic notice must still suppress it.
+        capture._notice("capture_tail_limit")
+        assert delivered == ["capture_write_failed"]
+    finally:
+        process._blocked = False
+        session.close()
+
+
+def test_a_raising_warning_consumer_marks_the_capture_failed():
+    import time
+
+    from code_forge.invocation_buffered_capture import BufferedCaptureSession
+
+    def warn(code):
+        raise RuntimeError("warning consumer failed")
+
+    session = BufferedCaptureSession(buffer_bytes=8, batch_bytes=4, max_delay=0)
+    try:
+        capture = session.new_capture(
+            write=len,
+            warn=warn,
+            limit_bytes=100,
+            action_deadline=time.monotonic() + 1,
+            chunk_bytes=4,
+        )
+        capture._notice("capture_write_failed")
+        assert capture.seal().failed is True
+    finally:
+        session.close()
+
+
+def test_a_clean_serial_capture_seals_without_a_notice():
+    import time
+
+    from code_forge.invocation_buffered_capture import BufferedCaptureSession
+
+    delivered = []
+    session = BufferedCaptureSession(buffer_bytes=8, batch_bytes=4, max_delay=0)
+    try:
+        capture = session.new_capture(
+            write=len,
+            warn=delivered.append,
+            limit_bytes=100,
+            action_deadline=time.monotonic() + 1,
+            chunk_bytes=4,
+        )
+        capture.append(b"abcd")
+        sealed = capture.seal()
+        assert sealed.failed is False
+        assert delivered == []
+    finally:
+        session.close()
+
+
+def test_a_capture_opened_on_a_closed_lane_reports_a_write_failure(supervisor):
+    import time
+
+    from code_forge.invocation_buffered_capture import SharedBufferedCaptureSession
+
+    process, _ = supervisor
+    delivered = []
+    session = SharedBufferedCaptureSession(process, buffer_bytes=4096, batch_bytes=512, max_delay=0)
+    session.close()
+    session.new_capture(
+        write=len,
+        warn=delivered.append,
+        limit_bytes=100,
+        action_deadline=time.monotonic() + 1,
+        chunk_bytes=4,
+    )
+    assert delivered == ["capture_write_failed"]
+
+
+def test_a_post_done_drain_reason_outside_the_closed_set_is_refused():
+    from code_forge.invocation_buffered_capture import BufferedCaptureSession
+    from code_forge.invocation_stream import _CAPTURE_TAIL_CODES
+
+    assert _CAPTURE_TAIL_CODES == frozenset(
+        {"capture_tail_limit", "capture_tail_deadline", "capture_tail_interrupted"}
+    )
+    session = BufferedCaptureSession(buffer_bytes=8, batch_bytes=4, max_delay=0)
+    try:
+        capture = session.new_capture(
+            write=len,
+            warn=len,
+            limit_bytes=100,
+            action_deadline=__import__("time").monotonic() + 1,
+            chunk_bytes=4,
+        )
+        with pytest.raises(ValueError):
+            capture.report_incomplete("capture_tail_bogus")
+    finally:
+        session.close()
+
+
+def test_a_sealed_capture_with_only_an_uncertain_write_still_warns():
+    import time
+
+    from code_forge.invocation_buffered_capture import BufferedCaptureSession
+
+    delivered = []
+    session = BufferedCaptureSession(buffer_bytes=64, batch_bytes=4, max_delay=0)
+    try:
+        capture = session.new_capture(
+            write=len,
+            warn=delivered.append,
+            limit_bytes=100,
+            action_deadline=time.monotonic() + 5,
+            chunk_bytes=4,
+        )
+        capture.append(b"abcd")
+        # The sink accepted the bytes without confirming publication: the seal
+        # reports uncertainty with no failure, and the notice must still fire.
+        capture._uncertain = True
+        sealed = capture.seal()
+        assert sealed.failed is False
+        assert sealed.write_uncertain is True
+        assert delivered == ["capture_write_failed"]
+    finally:
+        session.close()
+
+
+def test_a_shared_sealed_capture_with_only_an_uncertain_write_still_warns(supervisor):
+    import time
+
+    from code_forge.invocation_buffered_capture import SharedBufferedCaptureSession
+
+    process, _ = supervisor
+    delivered = []
+    session = SharedBufferedCaptureSession(process, buffer_bytes=4096, batch_bytes=512, max_delay=0)
+    try:
+        capture = session.new_capture(
+            write=len,
+            warn=delivered.append,
+            limit_bytes=100,
+            action_deadline=time.monotonic() + 5,
+            chunk_bytes=4,
+        )
+        capture.append(b"abcd")
+        capture._uncertain = True
+        sealed = capture.seal()
+        assert sealed.failed is False
+        assert sealed.write_uncertain is True
+        assert delivered == ["capture_write_failed"]
+    finally:
+        session.close()
+
+
+def test_a_post_done_reason_of_the_wrong_type_is_refused_by_type():
+    class Hostile(str):
+        def __hash__(self):
+            raise RuntimeError("hostile __hash__")
+
+    from code_forge.invocation_buffered_capture import BufferedCaptureSession
+
+    session = BufferedCaptureSession(buffer_bytes=8, batch_bytes=4, max_delay=0)
+    try:
+        capture = session.new_capture(
+            write=len,
+            warn=len,
+            limit_bytes=100,
+            action_deadline=__import__("time").monotonic() + 1,
+            chunk_bytes=4,
+        )
+        with pytest.raises(ValueError):
+            capture.report_incomplete(Hostile("capture_tail_limit"))
+    finally:
+        session.close()
+
+
+def test_an_unconfirmed_ticket_alone_makes_the_capture_uncertain():
+    from code_forge.invocation_buffered_capture import _settled_uncertain
+
+    class Acquired:
+        def __init__(self, write_uncertain):
+            self.write_uncertain = write_uncertain
+
+    assert _settled_uncertain(Acquired(True), False) is True
+    assert _settled_uncertain(Acquired(False), True) is True
+    assert _settled_uncertain(Acquired(False), False, True) is True
+    assert _settled_uncertain(Acquired(False), False) is False
+
+
+def test_the_shared_seal_reads_the_ticket_verdict_not_only_the_capture_flag():
+    """The shared outlet is the production seam: a ticket whose publication was never
+    acknowledged must still reach the notice, even when the capture flag is clear."""
+    from pathlib import Path
+
+    from code_forge import invocation_buffered_capture as module
+
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    shared = source[source.rindex("write_uncertain=_settled_uncertain") :]
+    assert shared.startswith("write_uncertain=_settled_uncertain(acquired, self._uncertain)")

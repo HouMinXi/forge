@@ -13,6 +13,8 @@ import os
 import threading
 import time
 
+from code_forge.invocation_stream import _TERMINAL_CAPTURE_NOTICE
+
 
 class AuditPhase(Enum):
     OPEN = "open"
@@ -156,7 +158,7 @@ class ProcessAuditIo:
             self._warning_pending = False
         if pending:
             try:
-                self._warn("audit_io_unresolved_process")
+                self._warn(_TERMINAL_CAPTURE_NOTICE)
             except MemoryError:
                 raise
             except Exception:  # noqa: BLE001 - warning text cannot replace review outcome

@@ -383,3 +383,29 @@ def test_error_envelope_survives_tail_deadline_and_strict_seal(monkeypatch, stri
         assert WireCapture.seal(wire).interrupted
     finally:
         release.set()
+
+
+def test_each_tail_failure_reports_the_reason_it_names():
+    from http.client import IncompleteRead
+
+    from code_forge.invocation_tail_drain import (
+        _TailDeadline,
+        _TailLimit,
+        _TAIL_REASON_BY_ERROR,
+    )
+    from code_forge.invocation_stream import _CAPTURE_TAIL_CODES
+
+    assert _TAIL_REASON_BY_ERROR[_TailLimit] == "capture_tail_limit"
+    assert _TAIL_REASON_BY_ERROR[_TailDeadline] == "capture_tail_deadline"
+    assert _TAIL_REASON_BY_ERROR[OSError] == "capture_tail_interrupted"
+    assert _TAIL_REASON_BY_ERROR[EOFError] == "capture_tail_interrupted"
+    assert _TAIL_REASON_BY_ERROR[IncompleteRead] == "capture_tail_interrupted"
+    assert set(_TAIL_REASON_BY_ERROR.values()) == set(_CAPTURE_TAIL_CODES)
+
+
+def test_a_transport_error_subclass_reports_an_interruption():
+    from code_forge.invocation_tail_drain import _tail_reason
+
+    assert _tail_reason(ConnectionResetError("reset")) == "capture_tail_interrupted"
+    assert _tail_reason(BrokenPipeError("pipe")) == "capture_tail_interrupted"
+    assert _tail_reason(EOFError()) == "capture_tail_interrupted"
