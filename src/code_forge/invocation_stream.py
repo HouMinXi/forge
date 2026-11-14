@@ -38,6 +38,79 @@ class CaptureSnapshot:
         )
 
 
+_CAPTURE_WRITE_FAILED = "capture_write_failed"
+_CAPTURE_NOT_EXECUTED = "capture_not_executed"
+_CAPTURE_WRITE_UNCERTAIN = "capture_write_uncertain"
+_TERMINAL_CAPTURE_NOTICE = "audit_io_unresolved_process"
+
+_SCOPED_CAPTURE_NOTICES = frozenset(
+    (_CAPTURE_NOT_EXECUTED, _CAPTURE_WRITE_UNCERTAIN, _TERMINAL_CAPTURE_NOTICE)
+)
+
+
+def _fixed_capture_notice(code):
+    """Return ``code`` when it is one of the closed refinements, otherwise ``None``.
+
+    Exact string type keeps hostile objects and subclass overrides out of the
+    membership test; callers apply their own scope decision on top.
+    """
+    return code if type(code) is str and code in _SCOPED_CAPTURE_NOTICES else None
+
+
+def _claim_capture_notice(seen, code, *, scoped):
+    """Under the caller's lock, claim one generic notice and each fixed refinement."""
+    key = _fixed_capture_notice(code) if scoped else None
+    if _TERMINAL_CAPTURE_NOTICE in seen or key in seen or (key is None and seen):
+        return False
+    seen.add(key)
+    return True
+
+
+class _CaptureNoticeDelivery:
+    """Serialize bounded callbacks without holding a caller lock or waiting on one.
+
+    The scope belongs to the owner, not to the call: it decides whether a fixed
+    refinement is claimed under its own key or collapses into the single generic
+    claim, and it is fixed for the lifetime of the outlet.
+    """
+
+    def __init__(self, *, scoped):
+        self._lock = threading.Lock()
+        self._scoped = scoped
+        self._seen = set()
+        self._pending = []
+        self._draining = False
+
+    def emit(self, code, *, warn):
+        with self._lock:
+            if not _claim_capture_notice(self._seen, code, scoped=self._scoped):
+                return
+            if self._scoped and _fixed_capture_notice(code) == _TERMINAL_CAPTURE_NOTICE:
+                self._pending.clear()
+            self._pending.append(code)
+            if self._draining:
+                return
+            self._draining = True
+        primary = None
+        while True:
+            with self._lock:
+                if not self._pending:
+                    self._draining = False
+                    break
+                current = self._pending.pop(0)
+            try:
+                warn(current)
+            except BaseException as error:  # noqa: BLE001 - drain queued terminal evidence before raising
+                if primary is None:
+                    primary = error
+        if primary is not None:
+            # Raised on the draining thread. A notice another thread queued while
+            # this drain was active runs here, so its fatal surfaces here rather
+            # than in its producer; only fatal-tier callback errors escape the
+            # delivery wrappers, and the producer has already returned.
+            raise primary
+
+
 class WireCapture:
     """One reader writes; the controller may seal without waiting on sink I/O.
 
