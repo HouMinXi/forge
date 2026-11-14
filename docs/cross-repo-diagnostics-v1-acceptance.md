@@ -170,6 +170,163 @@ oracle or whole-host concurrency from it. The later dated supplement records one
 subclauses remain separate. Baseline/setup/non-target/timeout/escape/restoration
 failures stop the row. No production or test change is proposed for this control.
 
+### 2026-11-14 existing identity controls: consume before adding experiments
+
+Response to [#33's concrete remaining clauses](https://github.com/HouMinXi/forge/issues/33#issuecomment-6874994624)
+and [#441's current review](https://github.com/HouMinXi/forge/issues/441#issuecomment-6875035851).
+This increment reuses four existing test functions (seven identity cases plus one cache case), without
+changing production or tests and without a new omission mutation. It is not a
+repeat of the T03, publisher-count or cached-reader-count experiments.
+
+Product/test remains `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`; prior document
+head is `af930499c018a5ed38562744c207937d25198344`. The same cloud source-tree
+Python 3.14.0 / SQLite 3.50.4 environment collected seven identity cases, then
+passed all seven (both exit 0); a separate one-case cache collection/run also
+passed (both exit 0). This is fixed-baseline revalidation, **not** current-main,
+installed-wheel, independent external execution, or a new GREEN/RED/GREEN run.
+The before/after source-tree digest guard found no changed files.
+
+- `tests/test_cross_repo_persistent_diagnostic.py::test_host_publication_strictly_reads_after_temporary_cwds_are_removed`:
+  after registered temporary directories are removed, reads the first genuine
+  publication using its retained expected context. A second genuine host creates
+  a different execution/repository identity with the same source/diff; its own
+  publication reads successfully, while reading the first publication with the
+  second host's retained expected raises `DiagnosticError`. This is actual
+  strict-reader old-publication rejection, not automatic discovery or adoption
+  of a latest record, and it does not establish cached-call object identity.
+  The CI verdict is fixture-controlled; it is not a complete native CLI gate.
+- `tests/test_advisory_diagnostics.py::test_decoder_rejects_each_valid_foreign_expected_context`:
+  five collected parameter cases vary only execution ID, repository ID, source
+  hash, diff hash, or observation sequence. An unchanged legal payload succeeds
+  against its original expected; each separately validated foreign expected is
+  rejected specifically as `context_mismatch`. Direct decode avoids publication
+  namespace rejection hiding this comparison. This is codec parameter rejection,
+  not proof that every host forwards the right object to the reader.
+- `tests/test_advisory_diagnostics.py::test_ambiguous_foreign_final_after_link_error_is_never_adopted`:
+  the existing isolated filesystem fault creates a different final file with
+  identical payload bytes before raising a link error. Publication is `unknown`,
+  has no locator, and those final bytes remain. This rejects foreign-final
+  adoption at the publisher; it does not model an older host record or prove
+  no fallback in every consumer. No permission or system setting is changed.
+
+Consequently, "old-record adoption NOT_RUN" in the earlier control supplement
+means that particular proposed omission experiment was not executed; it is not
+absence of all old-identity rejection evidence. Preserve that historical status,
+while linking these narrowly applicable existing controls to T08/T10/T15/T16.
+Neither the seven passes nor prior reader-count RED provides independent RED
+credit for the two cached publication/expected `is` assertions or all T09/T11.
+Empty `targets_resolved` publication already has positive file/state/sequence
+assertions in the previous transition test; skip-empty omission discrimination
+remains distinct and unrun. Do not invent a global missing-coverage finding.
+
+Execution command, from the unchanged source root (`PY314` names the same
+recorded official-source virtual environment, not arbitrary system Python):
+
+```text
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 "$PY314" -B -m pytest -p pytest_asyncio.plugin -p no:cacheprovider -q tests/test_cross_repo_persistent_diagnostic.py::test_host_publication_strictly_reads_after_temporary_cwds_are_removed tests/test_advisory_diagnostics.py::test_decoder_rejects_each_valid_foreign_expected_context tests/test_advisory_diagnostics.py::test_ambiguous_foreign_final_after_link_error_is_never_adopted
+```
+
+Collection adds `--collect-only`; complete collected parameter node IDs are in
+the first log below. Test SHA256: persistent diagnostic
+`f500bcd14e6ebd0d738ff6ba91a9439122cace66eac3f1191bc17df0dd7bb34b`;
+advisory diagnostics
+`b07a92db819ea8aa1302a58491a9f4c48254a5c3b13697abbab91cb86c7b1e38`.
+These are start/end checks, not independently sampled per-phase test digests.
+
+Current-main composition check: GitHub's complete compare from the product
+baseline to `45e48cc723142449a301451e4c9d3783b03fc0ce` lists invocation/audit,
+associated qualification/tests, baseline diagnostics and the public identity
+manifest. It does not change the three selected test files or diagnostic/capture/
+completion production files. This is a path-level comparison, not qualification
+of the new invocation implementation or permission to relabel these runs as
+main. Open parallel drafts #443/#444 and stock-runner #465 remain untouched.
+
+One additional existing control was consumed before proposing a new mutation:
+`tests/test_cross_repo_capture.py::test_active_owner_native_cold_and_warm_delivery`.
+It produces a real named target/caller finding, holds expected context before
+publication, strictly reads the empty `targets_resolved` record, repeats the
+same runner and asserts the same record object, one publication attempt, three
+read attempts (including its explicit verification read), and exactly unchanged
+artifact-path/byte mapping. Its SQLite observer attaches a trace callback to
+successful connections opened with `uri=True`; SQL trace count is nonzero on
+cold execution and unchanged on warm cache. This is an actual traced-statement
+oracle, not merely resolver count. It does not count rejected connection
+attempts, non-URI connections, statements before callback installation, or prove
+all SQL/provider behavior. The existing storage observers count calls before
+delegation, unlike the earlier persistent fixture's normal-return counters.
+This one selected test passed; no omission mutation was added, so no new
+independent RED credit is claimed. Source/test bytes stayed unchanged.
+Test SHA256 `1239484e7d98d4c2a10f15ed88fcde01786b531fd29da9a51e8f05fdf532afc1`.
+The command uses the same environment/options above with only this complete
+node ID in place of the three identity functions.
+
+Remaining actions are bounded: retain proposed entry/support-domain dispositions
+as PENDING for explicit maintainer decisions. Existing narrow evidence now covers
+old-publication rejection, valid foreign expected rejection, same-content foreign
+final refusal, and this cold/warm record/bytes/SQL case. These are not a general
+identity/SQL/gate qualification and not all omission controls. Do not mechanically
+add another count or identity experiment just because a later assertion lacks
+its own RED. First assess the remaining G07 returned-container/error-view and
+budget clauses against their already mapped controls; propose a new control
+only for a concrete unsupported inference. No new protocol, production feature,
+G12/G13 approval, original78 equivalence, merge or issue closure follows.
+
+<details>
+<summary>Existing identity controls: collection (exit 0)</summary>
+
+Original and readable-copy SHA256 `b86bc8c0953bb3f235e4f9a73c147e1f88195c0b479129d597fa0ac394c762ff`. No redaction or byte transformation was needed; reviewed output contains only public test identities and pytest summary.
+
+```text
+tests/test_cross_repo_persistent_diagnostic.py::test_host_publication_strictly_reads_after_temporary_cwds_are_removed
+tests/test_advisory_diagnostics.py::test_decoder_rejects_each_valid_foreign_expected_context[execution_id-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa]
+tests/test_advisory_diagnostics.py::test_decoder_rejects_each_valid_foreign_expected_context[repository_id-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb]
+tests/test_advisory_diagnostics.py::test_decoder_rejects_each_valid_foreign_expected_context[source_hash-independent-other-source]
+tests/test_advisory_diagnostics.py::test_decoder_rejects_each_valid_foreign_expected_context[diff_sha256-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]
+tests/test_advisory_diagnostics.py::test_decoder_rejects_each_valid_foreign_expected_context[observation_sequence-2]
+tests/test_advisory_diagnostics.py::test_ambiguous_foreign_final_after_link_error_is_never_adopted
+
+7 tests collected in 0.40s
+```
+
+</details>
+
+<details>
+<summary>Existing identity controls: existing-controls (exit 0)</summary>
+
+Original and readable-copy SHA256 `a3f3508bc9164111f39999bba941874f272407a0210feb4f3762e2cf7fb9f5b4`. No redaction or byte transformation was needed; reviewed output contains only public test identities and pytest summary.
+
+```text
+.......                                                                  [100%]
+7 passed in 0.88s
+```
+
+</details>
+
+<details>
+<summary>Existing cache control: cache-collection (exit 0)</summary>
+
+Original/readable-copy SHA256 `baf1baa97fd7fab5c072ef66d50d5b60eaacf99f9bbc865e347e78b54ec6f911`. No redaction or transformation needed.
+
+```text
+tests/test_cross_repo_capture.py::test_active_owner_native_cold_and_warm_delivery
+
+1 test collected in 0.27s
+```
+
+</details>
+
+<details>
+<summary>Existing cache control: cache-existing-control (exit 0)</summary>
+
+Original/readable-copy SHA256 `3a6504404ab639ac8fe2940ac1654603c072a999c0ae65ca7ef9701ab97a0954`. No redaction or transformation needed.
+
+```text
+.                                                                        [100%]
+1 passed in 0.32s
+```
+
+</details>
+
 ### 2026-11-14 T11 cached formal-reader invocation control
 
 After explicit approval of this single boundary, the unchanged existing node
