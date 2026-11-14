@@ -1,6 +1,6 @@
 # Persistent diagnostic v1: acceptance disposition
 
-This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a replacement for the unpublished original 78-test port, or a claim that every T01–T20 negative control has run.
+This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
 ## 2026-11-14 owner decisions (limited scope)
 
@@ -55,8 +55,8 @@ not the whole storage/concurrency/cleanup domain or complete G10 acceptance.
 The existing dated UNKNOWN probe and foreign-final control retain their original
 fixed-version evidence and limits; neither is a fresh execution or qualification
 of the applicable decision revision. Unexecuted G10 controls remain NOT_RUN.
-The subsequent bounded G08/G11 support decision below is separate; original78
-replacement and G12/G13 remain pending.
+The subsequent bounded G08/G11 support and catalogue-organization decisions
+below are separate; G12/G13 remain pending.
 
 The owner subsequently replied “可以” to the **bounded storage-support package**
 in project chat on 2026-11-14. Applicable product/test revision is
@@ -100,8 +100,39 @@ T06: stable ordering among equal-ranked results is **NOT PROMISED**. This remove
 that proposed ordering obligation, not the existing top-N or direct-caller
 requirements; single-hop/extra-hop evidence remains separately unresolved.
 
+The owner then replied “我觉得可以，整体进度你需要把握” to using the existing
+versioned **G/T clause catalogue to organize subsequent acceptance**, retaining
+unfinished obligations and the accepted T14 disposition while original78 bytes,
+node identities and one-to-one equivalence remain UNKNOWN. Decision date:
+2026-11-14; applicable product/test revision remains
+`2b2ac9fc18285f78acf5503ded830d256b3a99ff`, with prior catalogue/document head
+`f96667b9ef7043fd432cc29fdbee7cbdfffddeac`. Source is the specific project-chat
+decision; its limited scope also has a
+[public record](https://github.com/HouMinXi/forge/pull/507#issuecomment-6882175331).
+That record does not retroactively supply public approval for every earlier
+private decision.
+
+Unavailable original78 bytes are no longer a prerequisite to progress. This is
+an organizational replacement, not recovered originals, one-to-one equivalence,
+complete coverage, catalogue-wide PASS or automatic acceptance of future
+revisions. Subsequent catalogue edits must identify their version and net
+difference. Existing evidence keeps its own fixed revision. All unfinished
+obligations remain, including top-N/single-hop/extra-hop, fork/shared-use,
+real-close-failure FD evidence, natural not_run, G01/G02 and final same-revision
+Python 3.14 regressions and independent review. Stable tie ordering is not
+promised; T14 remains UNSUPPORTED/NOT APPLICABLE, not PASS or a substitute for T10.
+
+The read-only candidate comparison found the worker test at #443 head
+`9b3c7dae4598a2c225e1e568da45964599e1d119` and #444 head
+`e184e7fea5187aa45daa55bffa63bbd413ac0b75` has identical blob
+`ec3cb5306a671cc9897f0c197ce8fffb635c8297`. #444 has no unique test-file delta
+relative to #443. #443's review-support candidates are not an equivalent
+production implementation and are not to be merged wholesale. Both PR states
+remain unchanged; suggested superseded/historical dispositions are not closure
+authorization. Any later necessary unique assertion needs its own narrow task.
+
 All other decisions retain their prior status, including G01/G02 protocol freeze,
-other support domains, original78 version-replacement approval, and final G12/G13.
+other support domains, qualification of the retained catalogue obligations, and final G12/G13.
 Original78 remains UNKNOWN. Related to #33 and #441; both remain open.
 
 ## 2026-11-13 entry adjudication and unified evidence gaps (proposal)
@@ -132,10 +163,10 @@ workflow, test or issue checkbox changes in this revision.
 - Node IDs below are checked against the fixed source's public identity manifest
   and their test definitions/assertions. This is static identity inspection, **not
   fresh pytest collection or execution**. The original 78-port bytes, identities,
-  adapter and equivalence remain **UNKNOWN**. Public replacements require a
-  versioned clause mapping and independent review/maintainer approval. Missing
-  originals must neither indefinitely block that explicit replacement decision
-  nor silently remove the original acceptance obligations.
+  adapter and equivalence remain **UNKNOWN**. The 2026-11-14 decision above accepts
+  the versioned G/T catalogue as the organization of subsequent acceptance, not
+  completed evidence or full qualification. Missing originals are no longer a
+  prerequisite; retained obligations still require evidence or approved disposition.
 - The initial static inventory pass did not run tests, negative controls, provider operations, installed
   wheels or CI. Current-revision command, runtime/dependency lock, filesystem,
   provider availability, exit code, raw log and log digest are **NOT_RUN / not
@@ -242,9 +273,9 @@ a reason to create a recovery feature. The supported new-host identity obligatio
 remains T10, with its own evidence; it is not a replacement recovery run. This exact T14 disposition was accepted by the 2026-11-14 owner chat decision
 above; it is not execution or recovery PASS.
 
-**Original 78 version-replacement recommendation:** accept a new, explicitly
-versioned *clause-based* acceptance catalogue after independent review, rather
-than requiring inaccessible original node bytes or complete equivalence. Reuse
+**Original 78 catalogue decision:** the 2026-11-14 owner decision accepts the
+existing versioned *clause-based* catalogue to organize subsequent acceptance,
+without requiring inaccessible original node bytes or claiming equivalence. Reuse
 this document's G/T subclause records as that catalogue, not a second count-based
 table. Known coverage includes publication/strict consumption (T08/T15/T16),
 identity/cache/admission (T09–T12), gate isolation (T13), overlap/cleanup/control
@@ -256,7 +287,8 @@ scope, T19's FD scope and T20's natural not_run disposition, as indexed below.
 Stable equal-rank ordering is NOT PROMISED under the recorded owner decision;
 T14's UNSUPPORTED/NOT APPLICABLE disposition is also accepted, not a runtime PASS. Unrecoverable original cases cannot be named, matched one-to-one,
 or counted as covered: original identities, bytes and equivalence stay UNKNOWN.
-No replacement approval, original-port recovery or full coverage is claimed;
+Catalogue organization is approved; original-port recovery, full coverage and
+final qualification are not claimed;
 #443/#444 unique differences also require their own disposition. Missing originals
 are a declared limitation of the replacement, not an endless blocking prerequisite.
 
@@ -1697,7 +1729,7 @@ contract-only decisions retain the entry decision register or explicit PENDING.
 | G09 | Actual publisher→formal reader→consumer, independent expected and success/failure result; no logger-as-durability proof, no latest scan; publication/read/empty/nonempty delivery separated. Capture.present, default output, opt-in completion, historical readers. | Entry table; T08/T15/T20; **limited entry semantics accepted on 2026-11-14; remaining decisions pending**. A02 empty not_run reachability and unapproved A03 details stay explicit. All channels failing is unconfirmed/not delivered, never caller success. | Actual formal consumer: [T08](#evidence-t08); delivery/failure: [T20](#evidence-t20); per-entry decision above. |
 | G10 | Confirmed published/not_published/unknown; verify commit identity/content, no locator for unknown, no overwrite/automatic retry/old fallback; staging, commit, cleanup and return distinct. PublicationResult and capture attempt ledger. | T15/T17/T18e/T19 exact fault/unknown nodes. **Three-state semantics ACCEPTED only**, by the 2026-11-14 owner chat decision above. Full G10 qualification remains pending; storage/concurrency/cleanup has only the separately recorded bounded support approval. The dated supplements distinguish the standalone false-success replacement from the existing foreign-final UNKNOWN control; uncited nodes/omission controls remain NOT_RUN. No journal/exactly-once/power-loss promise. | Three states/commit: [T15](#evidence-t15), [T18e](#evidence-t18e); conflict: [T17](#evidence-t17); controls: [T19](#evidence-t19). |
 | G11 | Pre/post commit and primary/sibling/receipt/replay/setup/read/output/callback exits; preserve primary/control exception identity; bounded owned cleanup; event/join/cwd/capture/artifact/caller facts separate. Owned cwd scope, capture close, completion, deferred signal flow. | T18a–f/T19/T20. #452 fixes callback masking only; **Bounded owned-staging/registered-cwd support accepted on 2026-11-14**, including possible permission residue. Remaining asynchronous/source-lock/unregistered-allocation and FD evidence/dispositions are not approved by implication; this is not full G11 qualification or a demand to change shared lifecycle. | Normal/error/cancel/root/staging/cleanup: [T18a](#evidence-t18a), [T18b](#evidence-t18b), [T18c](#evidence-t18c), [T18d](#evidence-t18d), [T18e](#evidence-t18e), [T18f](#evidence-t18f); control identity [T19](#evidence-t19), delivery [T20](#evidence-t20). |
-| G12 | Original-port disposition, real file/node identity including params, independent oracle, exact fault location/class, baseline GREEN/semantic RED/byte-restored GREEN, public identity and safe raw logs; no overlap-count credit. | This static inventory and original-port **UNKNOWN** are inputs only. Only the precise cases and probe cited in dated supplements have their recorded collection/execution results; uncited cases remain NOT_RUN, and PASS without a dedicated omission run supplies no new RED credit. No claim to recovered or equivalent 78-port; decide versioned replacement rather than infinite wait or silent deletion. | All T01–T20 stable records below; their node-specific evidence slots remain separate; original-port replacement decision PENDING. |
+| G12 | Original-port disposition, real file/node identity including params, independent oracle, exact fault location/class, baseline GREEN/semantic RED/byte-restored GREEN, public identity and safe raw logs; no overlap-count credit. | This static inventory and original-port **UNKNOWN** are inputs only. Only the precise cases and probe cited in dated supplements have their recorded collection/execution results; uncited cases remain NOT_RUN, and PASS without a dedicated omission run supplies no new RED credit. No claim to recovered or equivalent 78-port; versioned G/T organization is accepted on 2026-11-14, while retained obligations and full G12 qualification remain unresolved. | All T01–T20 stable records below; their node-specific evidence slots remain separate; catalogue-organization decision ACCEPTED; evidence completion and full G12 qualification PENDING. |
 | G13 | One final product/test/document revision, independent G0 plus explicit maintainer acceptance then G1; retained unresolved domains and draft PR disposition; no retrospective grant from CI/merge. | **Decision pending**, no executable substitute. A08/R4 and #443/#444 unique-net-diff disposition still required; parent #33 remains open. | Final same-revision R4 and maintainer decision PENDING; no executable test substitutes for approval. |
 
 #### T01–T20 and T18a–f: every clause, oracle, gap and expanded identity
@@ -2762,7 +2794,7 @@ The issue now registers limited acceptance of G03, G05, G06 and G07. This is fou
 | Durable root or return interface unspecified | Use the primary canonical source root and a private host consumer; public runner/CLI/MCP/Verdict APIs remain unchanged. | Proposed/PENDING: accept this concrete consumer and root rather than require an unused public session interface. |
 | General filesystem identity or freshness | Independently bound observation identity and content digest; device/inode is not a generation identifier. Local Linux overlay/tmpfs exercised; ext4 eligible but not locally qualified. | Bounded storage domain accepted by the 2026-11-14 owner decision above, not whole-domain runtime qualification. Same-UID hostile replacement, inode continuity, network filesystems, power loss and reboot persistence are not proved. |
 | Main exception always wins through all cleanup | Diagnostic cleanup and the owned per_cwd scope preserve their incoming exception. Later source-lock cleanup and failures already replaced inside another scope are outside this repair. | The demonstrated cwd-boundary defect has a bounded fix and public controls below. Complete G11/T18 disposition still requires the remaining boundaries; no global guarantee is granted. |
-| Original 78-test port or all T controls already available | The public production tests are real and separately identified. The complete original port has not been recovered and cannot transfer its count or credit. | Recover the original source or approve an explicit, versioned replacement with an exact T/node/omission map. |
+| Original 78-test port or all T controls already available | The public production tests are real and separately identified. The complete original port has not been recovered and cannot transfer its count or credit. | Versioned G/T organization accepted on 2026-11-14; original recovery/equivalence stays UNKNOWN. Complete the retained T/node/oracle obligations without importing the original count or historical credit. |
 
 ## G02 schema and resource evidence
 
