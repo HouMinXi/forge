@@ -38,6 +38,139 @@ class CaptureSnapshot:
         )
 
 
+_CAPTURE_WRITE_FAILED = "capture_write_failed"
+_CAPTURE_NOT_EXECUTED = "capture_not_executed"
+_CAPTURE_WRITE_UNCERTAIN = "capture_write_uncertain"
+_TERMINAL_CAPTURE_NOTICE = "audit_io_unresolved_process"
+_CAPTURE_LIMIT_REACHED = "capture_limit_reached"
+_CAPTURE_TAIL_LIMIT = "capture_tail_limit"
+_CAPTURE_TAIL_DEADLINE = "capture_tail_deadline"
+_CAPTURE_TAIL_INTERRUPTED = "capture_tail_interrupted"
+
+# Returned by the claim when the code was already spent; distinct from the generic
+# slot's own ``None`` key.
+_CLAIM_LOST = object()
+# The three post-DONE drain reasons, accepted as a closed set.
+_CAPTURE_TAIL_CODES = frozenset((_CAPTURE_TAIL_LIMIT, _CAPTURE_TAIL_DEADLINE, _CAPTURE_TAIL_INTERRUPTED))
+
+_SCOPED_CAPTURE_NOTICES = frozenset(
+    (_CAPTURE_NOT_EXECUTED, _CAPTURE_WRITE_UNCERTAIN, _TERMINAL_CAPTURE_NOTICE)
+)
+
+
+def _fixed_capture_notice(code):
+    """Return ``code`` when it is one of the closed refinements, otherwise ``None``.
+
+    Exact string type keeps hostile objects and subclass overrides out of the
+    membership test; callers apply their own scope decision on top.
+    """
+    return code if type(code) is str and code in _SCOPED_CAPTURE_NOTICES else None
+
+
+class _CaptureNoticeDelivery:
+    """Serialize bounded callbacks without holding a caller lock or waiting on one.
+
+    The scope belongs to the owner, not to the call: it decides whether a fixed
+    refinement is claimed under its own key or collapses into the single generic
+    claim, and it is fixed for the lifetime of the outlet.
+    """
+
+    def __init__(self, *, scoped, warn):
+        # The callback belongs to the outlet, not to a caller: a code queued by
+        # one thread is delivered by whichever thread is draining, and it must
+        # land in the same place either way.
+        self._warn = warn
+        self._lock = threading.Lock()
+        self._scoped = scoped
+        self._seen = set()
+        self._pending = []  # (code, claimed key) pairs, in delivery order
+        self._drain_owner = None
+
+    @property
+    def _draining(self):
+        return self._drain_owner is not None
+
+    def _claim_locked(self, fixed):
+        """Under ``self._lock``: one generic notice, then each fixed refinement once.
+
+        Returns the key this call now holds, or ``_CLAIM_LOST`` when the code was
+        already spent. The key is what an interrupted drain has to hand back.
+        """
+        key = fixed if self._scoped else None
+        if _TERMINAL_CAPTURE_NOTICE in self._seen or key in self._seen:
+            return _CLAIM_LOST
+        if key is None and self._seen:
+            return _CLAIM_LOST
+        self._seen.add(key)
+        return key
+
+    def emit(self, code):
+        warn = self._warn
+        token = threading.get_ident()
+        # One derivation, through the exact-type gate: a caller-supplied str subclass
+        # with a raising __eq__ must not reach a comparison, or it spends the slot
+        # and kills the terminal with no callback.
+        fixed = _fixed_capture_notice(code)
+        terminal = fixed == _TERMINAL_CAPTURE_NOTICE
+        primary = None
+        released = False
+        honoured = False
+        current_key = _CLAIM_LOST
+        queued_only = False
+        try:
+            with self._lock:
+                key = self._claim_locked(fixed)
+                if key is _CLAIM_LOST:
+                    return
+                if terminal:
+                    for _, pending_key in self._pending:
+                        self._seen.discard(pending_key)
+                    self._pending.clear()
+                self._pending.append((code, key))
+                if self._drain_owner is None:
+                    self._drain_owner = token
+                else:
+                    queued_only = True
+            if queued_only:
+                return
+            while True:
+                with self._lock:
+                    if not self._pending:
+                        self._drain_owner = None
+                        released = True
+                        break
+                    current, current_key = self._pending.pop(0)
+                # Spent before the callback runs, not after it returns: a signal
+                # that lands between the two would otherwise hand the claim back
+                # after the notice had already been delivered, and the retry would
+                # deliver it twice. At most once beats at least once here.
+                honoured = True
+                try:
+                    warn(current)
+                except BaseException as error:  # noqa: BLE001 - drain queued terminal evidence before raising
+                    if primary is None:
+                        primary = error
+        finally:
+            # The claim, the arming and the drain all sit inside the try, so a signal
+            # anywhere on that path finds its owner here. Release exactly the claims
+            # this drain did not honour, and leave delivered ones spent.
+            if not released and self._drain_owner is token:
+                with self._lock:
+                    if self._drain_owner is token:
+                        self._drain_owner = None
+                        if current_key is not _CLAIM_LOST and not honoured:
+                            self._seen.discard(current_key)
+                        for _, pending_key in self._pending:
+                            self._seen.discard(pending_key)
+                        self._pending.clear()
+        if primary is not None:
+            # Raised on the draining thread. A notice another thread queued while
+            # this drain was active runs here, so its fatal surfaces here rather
+            # than in its producer; only fatal-tier callback errors escape the
+            # delivery wrappers, and the producer has already returned.
+            raise primary
+
+
 class WireCapture:
     """One reader writes; the controller may seal without waiting on sink I/O.
 
@@ -142,16 +275,16 @@ class WireCapture:
             self._uncertain |= uncertain
             self._truncated |= overflow
         if failed or overflow:
-            self._notice("capture_write_failed" if failed else "capture_limit_reached")
+            self._notice(_CAPTURE_WRITE_FAILED if failed else _CAPTURE_LIMIT_REACHED)
 
     def report_incomplete(self, code):
         """Report a bounded post-DONE drain without exposing payload data."""
-        if code not in {"capture_tail_limit", "capture_tail_deadline", "capture_tail_interrupted"}:
+        if type(code) is not str or code not in _CAPTURE_TAIL_CODES:
             raise ValueError("invalid incomplete capture reason")
         with self._lock:
             if self._sealed:
                 return
-            if code == "capture_tail_limit":
+            if code == _CAPTURE_TAIL_LIMIT:
                 self._truncated = True
             else:
                 self._interrupted = True

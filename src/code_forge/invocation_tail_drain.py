@@ -10,7 +10,12 @@ import socket
 import threading
 import time
 
-from .invocation_stream import CaptureUnavailable
+from .invocation_stream import (
+    CaptureUnavailable,
+    _CAPTURE_TAIL_DEADLINE,
+    _CAPTURE_TAIL_INTERRUPTED,
+    _CAPTURE_TAIL_LIMIT,
+)
 
 
 TAIL_SECONDS = 0.250
@@ -37,6 +42,26 @@ class _TailLimit(Exception):
 
 class _TailDeadline(Exception):
     pass
+
+
+# One table, so a drain failure and the reason it reports cannot drift apart.
+# Every class the drain arm catches is keyed, not just the first one.
+_TAIL_REASON_BY_ERROR = {
+    _TailLimit: _CAPTURE_TAIL_LIMIT,
+    _TailDeadline: _CAPTURE_TAIL_DEADLINE,
+    OSError: _CAPTURE_TAIL_INTERRUPTED,
+    EOFError: _CAPTURE_TAIL_INTERRUPTED,
+    IncompleteRead: _CAPTURE_TAIL_INTERRUPTED,
+}
+
+
+def _tail_reason(error):
+    """The reason a drain failure reports: its class if named, else an interruption.
+
+    A subclass of a named class also lands on the fallback, which is the same
+    reason the named transport classes report.
+    """
+    return _TAIL_REASON_BY_ERROR.get(type(error), _CAPTURE_TAIL_INTERRUPTED)
 
 
 class _Lines:
@@ -145,12 +170,12 @@ def read_captured_sse(response, capture, assemble, deadline, backend_name, error
             if lines.done_at is not None:
                 try:
                     lines.drain()
-                except _TailLimit:
-                    capture.report_incomplete("capture_tail_limit")
-                except _TailDeadline:
-                    capture.report_incomplete("capture_tail_deadline")
-                except (OSError, EOFError, IncompleteRead):
-                    capture.report_incomplete("capture_tail_interrupted")
+                except _TailLimit as error:
+                    capture.report_incomplete(_tail_reason(error))
+                except _TailDeadline as error:
+                    capture.report_incomplete(_tail_reason(error))
+                except (OSError, EOFError, IncompleteRead) as error:
+                    capture.report_incomplete(_tail_reason(error))
         except TimeoutError:
             errors.append(timeout_error())
         except BaseException as error:  # noqa: BLE001 - propagate fatal/parser/transport errors
@@ -200,7 +225,7 @@ def read_captured_sse(response, capture, assemble, deadline, backend_name, error
         until = tail_deadline if deadline is None else min(deadline, tail_deadline)
         if not wait(finished, until):
             try:
-                interrupt("capture_tail_deadline")
+                interrupt(_CAPTURE_TAIL_DEADLINE)
             except CaptureUnavailable:
                 if not is_provider_error_envelope(parsed[0]):
                     raise

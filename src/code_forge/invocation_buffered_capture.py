@@ -11,7 +11,14 @@ import math
 import threading
 import time
 
-from code_forge.invocation_stream import WireCapture
+from code_forge.invocation_stream import (
+    WireCapture,
+    _CAPTURE_NOT_EXECUTED,
+    _CAPTURE_WRITE_FAILED,
+    _CAPTURE_WRITE_UNCERTAIN,
+    _CaptureNoticeDelivery,
+    _TERMINAL_CAPTURE_NOTICE,
+)
 
 
 class BufferedCaptureSession:
@@ -229,6 +236,16 @@ class BufferedCaptureSession:
                 self._condition.notify_all()
 
 
+def _settled_uncertain(acquired, capture_uncertain, inflight=False):
+    """Whether the settled capture has to report an unconfirmed write.
+
+    Three independent sources, and the ticket's own verdict is the one a capture
+    cannot reconstruct for itself: the outcome may have been published without an
+    acknowledgement the capture ever saw.
+    """
+    return bool(acquired.write_uncertain or capture_uncertain or inflight)
+
+
 def _snapshot_from(acquired, *, accepted_bytes, failed, write_uncertain, not_executed):
     """Build the sealed snapshot from the acquisition plus this capture's own outcome."""
     return replace(
@@ -241,22 +258,21 @@ def _snapshot_from(acquired, *, accepted_bytes, failed, write_uncertain, not_exe
 
 
 def _failure_notice(scoped, snapshot):
-    """Choose the capture failure notice.
+    """Preserve legacy warnings when disabled; distinguish scoped write outcomes.
 
-    Off, this is the single notice the base tree emits, so switch-off behaviour does
-    not change. On, a capture whose tickets never executed and which stored nothing is
-    reported as such rather than as a write failure; committed bytes keep it a write
-    failure, because calling that "never executed" invites a resend of stored data.
+    A capture can contain several tickets. An unexecuted ticket cannot prove that
+    another ticket wrote nothing, so uncertainty always wins over non-execution.
     """
     if not scoped:
-        return "capture_write_failed"
-    if snapshot.not_executed and snapshot.accepted_bytes == 0:
-        # Committed bytes mean this capture did execute; reporting "never executed"
-        # would invite a resend of data that is already on disk.
-        return "capture_not_executed"
+        return _CAPTURE_WRITE_FAILED
     if snapshot.write_uncertain:
-        return "capture_write_uncertain"
-    return "capture_write_failed"
+        return _CAPTURE_WRITE_UNCERTAIN
+    # Only a capture that committed nothing may claim it never executed: a
+    # committed byte means the work started, and "never executed" would invite a
+    # resend that duplicates it.
+    if snapshot.not_executed and snapshot.accepted_bytes == 0:
+        return _CAPTURE_NOT_EXECUTED
+    return _CAPTURE_WRITE_FAILED
 
 
 class _BoundedWireCapture(WireCapture):
@@ -264,16 +280,16 @@ class _BoundedWireCapture(WireCapture):
 
     def __init__(self, owner, **kwargs):
         self._owner = owner
-        self._deferring_notice = False
-        self._deferred_notice = None
+        self._deferral = threading.local()
         super().__init__(**kwargs)
 
     def _notice(self, code):
-        # Only the single acquisition reader calls this hook. The facade owns
-        # the one-shot warning flag; no external callback may run under the
-        # session condition used to serialize payload-copy allocation.
-        if self._deferring_notice:
-            self._deferred_notice = code
+        # The acquisition reader defers its own notice while it holds the
+        # condition used to serialize payload-copy allocation; a notice from any
+        # other thread (the post-DONE tail drain, for instance) is delivered
+        # directly, so two threads can never overwrite one deferral slot.
+        if getattr(self._deferral, "active", False):
+            self._deferral.code = code
         else:
             self._owner._notice(code)
 
@@ -285,13 +301,18 @@ class _BoundedWireCapture(WireCapture):
             # with batch assembly so both copies cannot coexist unaccounted.
             # The inherited write only enqueues; no sink I/O occurs here.
             with self._owner._session._condition:
-                self._deferring_notice = True
+                # Initialise the slot this call reads in ``finally``; without it
+                # the first append of a thread has nothing to clear.
+                self._deferral.code = None
                 try:
+                    # Armed inside the try: a signal landing on the arming line
+                    # would otherwise leave the slot armed with nothing to clear
+                    # it, and silently drop later notices on this thread.
+                    self._deferral.active = True
                     result = super().append(data)
                 finally:
-                    self._deferring_notice = False
-                    notice = self._deferred_notice
-                    self._deferred_notice = None
+                    self._deferral.active = False
+                    notice = self._deferral.code
             if notice is not None:
                 self._owner._notice(notice)
             return result
@@ -301,11 +322,15 @@ class _BoundedWireCapture(WireCapture):
             if self._sealed:
                 return
             self._observed += len(data)
+            # Set under this lock, not only inside ``_disable``: a seal that runs
+            # between the two locks caches its snapshot from the capture's own
+            # flags, and would otherwise report a clean capture that dropped the
+            # whole oversized input.
             self._failed = True
         session = self._owner._session
         with session._condition:
             session._disable()
-        self._notice("capture_write_failed")
+        self._notice(_CAPTURE_WRITE_FAILED)
 
 
 class BufferedWireCapture:
@@ -316,8 +341,7 @@ class BufferedWireCapture:
     """
 
     # Serial captures belong to no scoped domain; the shared subclass overrides this with
-    # the lane's flag, so a lane that forgets to carry it fails loudly instead of silently
-    # reporting the switch as off.
+    # a read-through to its lane, so there is one switch rather than a copy per level.
     _scoped = False
 
     def __init__(self, session, write, warn, limit_bytes, deadline, chunk_bytes):
@@ -329,7 +353,8 @@ class BufferedWireCapture:
         self._deadline = deadline
         self._buffered = self._committed = self._pending = 0
         self._not_executed = False
-        self._inflight = self._uncertain = self._warned = False
+        self._inflight = self._uncertain = False
+        self._notices = _CaptureNoticeDelivery(scoped=self._scoped, warn=self._deliver_notice)
         self._failed = session._disabled
         self._fatal = self._snapshot = None
         self._fatal_bytes = 0
@@ -349,10 +374,9 @@ class BufferedWireCapture:
             return self._buffered
 
     def _notice(self, code):
-        with self._session._condition:
-            if self._warned:
-                return
-            self._warned = True
+        self._notices.emit(code)
+
+    def _deliver_notice(self, code):
         try:
             self._warn(code)
         except MemoryError:
@@ -402,7 +426,7 @@ class BufferedWireCapture:
                 acquired,
                 accepted_bytes=self._committed,
                 failed=acquired.failed or self._failed or unresolved,
-                write_uncertain=acquired.write_uncertain or self._uncertain or self._inflight,
+                write_uncertain=_settled_uncertain(acquired, self._uncertain, self._inflight),
                 not_executed=self._not_executed,
             )
             snapshot, fatal = self._snapshot, self._fatal
@@ -494,9 +518,9 @@ class SharedBufferedCaptureSession:
             elif token is not None:
                 self._captures.add(capture)
         if lane._disabled:
-            capture._notice(
-                "audit_io_unresolved_process" if self._io._blocked else "capture_write_failed"
-            )
+            # A shared capture rewrites a blocked process to the terminal code
+            # before claiming, so the write-failure code is the correct input.
+            capture._notice(_CAPTURE_WRITE_FAILED)
         return capture
 
     def close(self):
@@ -519,11 +543,13 @@ class _SharedCaptureLane:
         self._condition = self._io._condition
         self._batch_bytes = parent._batch_bytes
         self._flush_timeout = parent._flush_timeout
-        # The captures created on this lane read the flag from here, so it has to travel
-        # with the lane rather than stay on the session one level above it.
-        self._scoped_fault_domain = parent._scoped_fault_domain
         self._disabled = token is None
         self._capture = None
+
+    @property
+    def _scoped_fault_domain(self):
+        # Read through to the session: a copy would be a second source of truth.
+        return self._parent._scoped_fault_domain
 
     def _disable(self):
         self._disabled = True
@@ -664,7 +690,7 @@ class _SharedWireCapture(BufferedWireCapture):
 
         self._session._io.emit_warning()
         if self._session._io._blocked:
-            code = "audit_io_unresolved_process"
+            code = _TERMINAL_CAPTURE_NOTICE
         super()._notice(code)
         if self._strict:
             raise CaptureUnavailable(code)
@@ -704,7 +730,7 @@ class _SharedWireCapture(BufferedWireCapture):
                 acquired,
                 accepted_bytes=self._committed,
                 failed=acquired.failed or self._failed or bool(self._tickets),
-                write_uncertain=acquired.write_uncertain or self._uncertain,
+                write_uncertain=_settled_uncertain(acquired, self._uncertain),
                 not_executed=self._not_executed,
             )
             snapshot = self._snapshot
