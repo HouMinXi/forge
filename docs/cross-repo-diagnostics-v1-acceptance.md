@@ -180,6 +180,78 @@ they are not a new run or complete reader/storage qualification. Existing
 NOT_RUN, natural-not_run, remaining boundary/control and final same-revision
 regression obligations remain explicit. No new experiment accompanies this edit.
 
+### Subsequent T12/T19/T20 bounded dispositions (2026-11-14)
+
+The owner replied “可以继续推进” in project chat to the specific four-part
+proposal: obtain direct-caller/distance-ranked top-N evidence, and apply the
+following three narrow dispositions. This is the decision source relayed to the
+executor; there is no public decision permalink. Applicable inspected source is
+`6740c44f44211e55d72ac947185d7f8434ea2e67`; prior document head is
+`fb9f1aadc2a86d2cd1dce00f7292cda6d0987662`.
+
+- **T12:** inheriting/migrating an existing capture and simultaneously sharing a
+  runner are outside the supported scope. Existing owner-thread serial reuse and
+  foreign-thread refusal remain bounded evidence; a PID guard is not a fork
+  runtime-safety proof. A fresh host retains the separate T10 identity obligation.
+- **T19:** normal descriptor closing and exception-priority obligations remain.
+  No unconditional no-leak guarantee after a real close failure is established;
+  that behavior stays UNVERIFIED, not a demonstrated leak or defect. Existing
+  controls that really close before raising do not qualify the failed-close case.
+- **T20:** retain not_run as a defensive legal wire state and its controlled
+  consumer evidence. No natural entry has been identified at this source;
+  natural reachability is not required by creating a new product path. This is
+  not a formal proof of unreachability and does not turn controlled fixtures into
+  natural execution evidence. Publication/read/empty delivery remain separate.
+
+Static reachability basis: the primary host installs CrossRepoImpactRunner and
+constructs ResolvedReview without target_kind (default None); StateMachine.run's
+normal path calls the advisory dispatch. Its preceding admission-error return
+requires INDEX/COMMIT in mutation_review_admission_error and therefore does not
+supply that natural path for this host. Ordinary axis exceptions continue the
+loop; control exceptions do not become normal host completion. Relevant source
+blobs were matched to the applicable revision, including cross_repo.py
+`6d03d54e0e390ba4afbe2fda2db698bd1bc218ca`, machine.py
+`72a3654ef2e6527f0e79a7ff0ce62085351a6db8`, baseline.py
+`49620ece27d82695ecc416a60dfa41c2f03c1d5f` and mutation.py
+`d10425e80f58ed6df6fdb1d2595b843f58d41394`.
+
+These dispositions do not approve full G12/G13, waive ordinary cleanup/direct
+caller obligations or grant runtime PASS to excluded/unverified cases.
+
+### T06 bounded direct-caller and distance-selection regression
+
+Two added nodes in the existing tests/test_cross_repo_impact.py use real SQLite,
+real live source files and the native runner without production modification:
+
+- `test_direct_caller_chain_excludes_second_hop`: A <- B <- C, with eligible
+  imports for both callers, returns exactly B's file/line and no C; no infra error.
+- `test_top_n_selects_nearer_identities_without_tie_order`: 5 farther rows are
+  inserted before 4 intermediate and 6 nearest rows. Independent expected file
+  sets require the 6 nearest first and 4 intermediate next, excluding farther
+  callers. No ordering is asserted within either equal-rank group.
+
+Local commands: `python -m pytest -q tests/test_cross_repo_impact.py -k
+'direct_caller_chain or top_n_selects'` and `python -m pytest -q
+tests/test_cross_repo_impact.py`, using the official-build Python 3.14.0 cloud
+venv with SQLite 3.50.4 / pytest 9.2.0. Results were respectively `2 passed,
+46 deselected` and `48 passed`, exit 0. The first focused run emitted two relative-venv-prefix RuntimeWarnings; subsequent runs used the absolute interpreter path. Ruff formatting and lint passed.
+
+Environment precision: the first exploratory runs used the historical
+7ca557a2 source copy plus the test additions. A subsequent clean archive of exact
+PR parent `fb9f1aadc2a86d2cd1dce00f7292cda6d0987662`, with only these two tests
+added, was run using `PYTHONPATH=src python -m pytest -q
+tests/test_cross_repo_impact.py`: `48 passed`, exit 0. The archived baseline is
+not represented as latest main or its synthetic merge. The original test blob
+`ad34f689746b77b9b2625dccccfa1897e520774a` and relevant production
+cross_repo_impact.py `2f80c2f3c62c8dd07ccdc4165e4face85277f15d` / dead_code.py
+`b5499d6567bd00233f71a0b33019d4bdda7f70c6` match current main 6740c44 and the
+PR parent. Final exact-head CI remains a separate result. Public test identities
+are extended by exactly the two added node IDs so failure diagnostics can name
+them; no workflow or runner permission changes are involved.
+This is positive fixture-specific regression evidence, not extra-hop insertion,
+cap-removal or other mutation RED credit, arbitrary-graph proof, whole-host
+acceptance or final same-revision qualification. No new mutation was executed.
+
 ## 2026-11-13 entry adjudication and unified evidence gaps (proposal)
 
 This is the first documentation-only response to the [current #441
@@ -1911,8 +1983,8 @@ tests/test_cross_repo_persistent_diagnostic.py::test_actual_analysis_states_do_n
 - Obligation: Resolved zero/real callers: targets_resolved; no no-target warning; preserve golden finding identity, sorting/top-10 and single-hop SQL.
 - Actual source: CrossRepoImpactRunner._run_analysis_impl; caller helper and finding selection.
 - Independent oracle / input: Real SQLite caller rows and explicit expected findings/count/cap; cache no-warning assertions for empty and nonempty result.
-- Remaining gap / supported disposition: Stable equal-rank ordering is NOT PROMISED by the recorded owner decision and is not a remaining acceptance obligation. Existing top-N and single-hop requirements remain; a dedicated extra-hop prohibition oracle is not identified by these selectors. This is an evidence gap, not a new multi-hop feature request.
-- Static follow-up: `TestTopNCap::test_cap_at_top_n` builds `_TOP_N + 5` callers but asserts only result length. The production ranking uses stable Python sort by proximity, without an explicit tie-break key; the shared `_CALLERS_SQL` has no `ORDER BY`. This does not establish deterministic equal-rank identity selection across SQLite plans. `_CALLERS_SQL` selects direct CALLS edges for the requested target, with an IMPORTS_FROM predicate; `_live_callers` resolves source locations/liveness, not recursive caller expansion. These source facts are not an executed extra-hop rejection oracle. The 2026-11-14 owner decision does not promise stable equal-rank ordering; no new tie-order test or implementation is required by that scope. Dedicated extra-hop node identity remains UNKNOWN and its evidence obligation is not waived.
+- Remaining gap / supported disposition: Stable equal-rank ordering is NOT PROMISED by the recorded owner decision and is not a remaining acceptance obligation. Existing top-N and single-hop requirements remain; the two added T06 nodes and bounded run above now provide a chain-exclusion and distance-selection oracle. Mutation-control coverage remains a separate gap, not a new multi-hop feature request.
+- Static follow-up: `TestTopNCap::test_cap_at_top_n` builds `_TOP_N + 5` callers but asserts only result length. The production ranking uses stable Python sort by proximity, without an explicit tie-break key; the shared `_CALLERS_SQL` has no `ORDER BY`. This does not establish deterministic equal-rank identity selection across SQLite plans. `_CALLERS_SQL` selects direct CALLS edges for the requested target, with an IMPORTS_FROM predicate; `_live_callers` resolves source locations/liveness, not recursive caller expansion. These source facts are not an executed extra-hop rejection oracle. The 2026-11-14 owner decision does not promise stable equal-rank ordering; no new tie-order test or implementation is required by that scope. The later T06 supplement above names the added exact node and its limited positive evidence; no omission/extra-hop mutation credit is inferred.
 - R3 status: Blanket empty-result warning, cap removal, extra-hop insertion: dedicated current controls NOT_RUN; historical finding regressions are not per-mutation proof.
 
 <details>
@@ -2727,14 +2799,14 @@ not a reason to invent a test or keep an unlimited investigation open.
 | Existing record | First reuse/map step | Finite deliverable and exit; current status |
 | --- | --- | --- |
 | [T03](#evidence-t03): primary connection count | Inspect the listed immediate zero-target controls and SQL trace fixtures. Their sibling `forbid` sentinel does not prove no primary connection, and a zero query trace is not a zero connection count. | The original fixed-baseline `no-path`/`deleted` nodes had only sibling registry/helper forbid sentinels, with no primary connection count. The existing nodes now carry the implemented post-setup primary-connection observer, plus unnamed positive control, documented in the 2026-11-14 T03 supplement; original diagnostic and empty-result assertions are preserved. The bounded three-node observation/ordering-control sequence is recorded above; other runtime/support dispositions remain PENDING. |
-| [T06](#evidence-t06): equal-rank order/single-hop | Reuse listed `TestTopNCap::test_cap_at_top_n` and caller-query controls for retained top-N and actual SQL edge traversal obligations. A top-N count is not no-second-hop proof; stable tie-order qualification is not required by the recorded owner decision. | Selected-node/source static audit completed in T06: top-N test asserts length only; query is direct-edge and has no ORDER BY, ranking has no explicit tie key. Dedicated tie-order/extra-hop nodes remain UNKNOWN. Owner decision on 2026-11-14: stable tie order NOT PROMISED. Single-hop/extra-hop oracle remains unresolved; no product defect or runtime pass inferred. |
-| [T12](#evidence-t12): process/fork/shared-use | Keep executed three warm-input cases separate. Reuse installed-capture closed/foreign-thread cases already indexed; serial foreign-thread refusal/reuse does not qualify fork or simultaneous shared use. | Explicitly accept unsupported process/fork/shared-use scope, or identify one supported scenario and exact existing node/oracle. Fork/shared-use runtime evidence UNKNOWN; no new concurrency experiment pending domain decision. PENDING. |
+| [T06](#evidence-t06): equal-rank order/single-hop | Reuse listed `TestTopNCap::test_cap_at_top_n` and caller-query controls for retained top-N and actual SQL edge traversal obligations. A top-N count is not no-second-hop proof; stable tie-order qualification is not required by the recorded owner decision. | Selected-node/source static audit completed in T06: top-N test asserts length only; query is direct-edge and has no ORDER BY, ranking has no explicit tie key. No stable tie-order qualification is required; the later T06 supplement identifies the chain-exclusion node. Owner decision on 2026-11-14: stable tie order NOT PROMISED. The later T06 supplement adds the bounded real-SQLite chain and distance-selection oracles; no product defect or mutation RED is inferred. |
+| [T12](#evidence-t12): process/fork/shared-use | Keep executed three warm-input cases separate. Reuse installed-capture closed/foreign-thread cases already indexed; serial foreign-thread refusal/reuse does not qualify fork or simultaneous shared use. | The earlier task requested an explicit unsupported process/fork/shared-use scope or one supported scenario and node; the subsequent bounded disposition above now resolves that choice. Fork/shared-use runtime evidence UNKNOWN; the subsequent owner disposition above excludes inherited/migrated captures and simultaneous sharing, without claiming fork safety. No new concurrency experiment is required by that exclusion. |
 | [T14](#evidence-t14): recovery | Reuse controlled PENDING compatibility and new-host identity controls; neither is HOLD resume. Preserve existing no-cross-repository-HOLD limited contract. | Owner accepted the original recovery obligation's UNSUPPORTED/NOT APPLICABLE disposition on 2026-11-14; see the fixed-version chat-source record above. This disposition task is complete, not a recovery PASS. Do not add fake recovery tests or delete the original obligation. |
-| [T19](#evidence-t19): identity/read/FD assertions | Reuse listed process-control, close, identity and post-cleanup-reader controls; annotate each actual assertion (type/message, object identity, payload/file presence, formal reread or descriptor count). | Static assertion matrix completed in T19 at the fixed source; runtime status follows exact dated supplements and support acceptance remains PENDING. Descriptor-count assertions are absent in the selected nodes. Close-after-success faults cannot prove failed-close cleanup. Reuse the mapped identity/read controls; decide whether one bounded FD oracle is required before any additional test. |
-| [T20](#evidence-t20): natural not_run | Reuse explicitly controlled omitted-dispatch nodes and current source reachability. Separate empty formal consumption from absence of publication and sink health. | Selected fixture/source audit completed in T20: after normal machine return with no axis call, the completion hook can emit not_run; listed controls deliberately suppress dispatch. Natural entry/path/test remains UNKNOWN. Decide whether injected-state consumer evidence suffices or natural reachability is required; do not create a new product path merely for a test. PENDING decision. |
+| [T19](#evidence-t19): identity/read/FD assertions | Reuse listed process-control, close, identity and post-cleanup-reader controls; annotate each actual assertion (type/message, object identity, payload/file presence, formal reread or descriptor count). | Static assertion matrix completed in T19 at the fixed source; runtime status follows exact dated supplements; remaining unapproved support details retain their prior status. Descriptor-count assertions are absent in the selected nodes. Close-after-success faults cannot prove failed-close cleanup. Reuse the mapped identity/read controls; the subsequent owner disposition above keeps real-close-failure no-leak behavior UNVERIFIED, without discarding normal-close or exception-priority obligations. |
+| [T20](#evidence-t20): natural not_run | Reuse explicitly controlled omitted-dispatch nodes and current source reachability. Separate empty formal consumption from absence of publication and sink health. | Selected fixture/source audit completed in T20: after normal machine return with no axis call, the completion hook can emit not_run; listed controls deliberately suppress dispatch. Natural entry/path/test remains UNKNOWN. The subsequent owner disposition above retains this as a defensive legal state with controlled consumer evidence; no product path is created and no natural-path PASS or formal unreachability proof is claimed. |
 
 For T14 and the T06 tie-order promise, the owner decision/source is recorded
-above; no public decision permalink exists. Other decisions remain pending.
+above; no public decision permalink exists. The later T12/T19/T20 dispositions above are also accepted; other unapproved decisions remain pending.
 The [COMMENT review](https://github.com/HouMinXi/forge/pull/493#pullrequestreview-5892176064)
 and [follow-up direction](https://github.com/HouMinXi/forge/issues/441#issuecomment-6854967873)
 are request sources, not affirmative contract decisions. The documentation PR can
@@ -2902,7 +2974,7 @@ The following names refer to actual collected pytest nodes, not proposed test co
 | T03 no path/deletion | I `test_zero_targets_emit_once_before_sibling_access[no-path]` and `[deleted]` | These immediate-warning controls do not alone prove every connection-count and persistent-state subclause. |
 | T04 corrupt graph | I `test_prior_unavailability_does_not_claim_zero_targets[corrupt]`; P `test_actual_analysis_states_do_not_invent_no_target_warning` | Existing error priority is tested; no migration of old infra errors into the artifact. |
 | T05 blank diff | I `test_empty_diff_has_no_diagnostic_or_discovery`; P `test_actual_analysis_states_do_not_invent_no_target_warning[blank]` | Blank is not_requested, not a successful graph query. |
-| T06 zero/real callers | I `test_resolved_targets_keep_findings_and_cache_without_zero_target_output[False]` and `[True]`; `tests/test_cross_repo_impact.py::TestTopNCap::test_cap_at_top_n` | The retained top-10 length regression; tie-order/extra-hop UNKNOWN per current T06 are not a new multi-hop or coverage guarantee. |
+| T06 zero/real callers | I `test_resolved_targets_keep_findings_and_cache_without_zero_target_output[False]` and `[True]`; `tests/test_cross_repo_impact.py::TestTopNCap::test_cap_at_top_n` | The retained top-10 length regression; stable tie-order is not promised; the later T06 chain/selection regression is bounded evidence, not a new multi-hop or coverage guarantee. |
 | T07 sibling isolation | I `test_zero_targets_emit_once_before_sibling_access`; C `test_duplicate_occurrences_retain_distinct_first_use_native_fallbacks` | Native stages and duplicate occurrences are measured, not an atomic environment snapshot. |
 | T08 production publication | P `test_host_publication_strictly_reads_after_temporary_cwds_are_removed`; G `test_docs_only_native_ci_keeps_gate_state_with_diagnostic` | Removing the actual publication call yields semantic RED; no hand-built artifact substitutes for this path. |
 | T09 state replacement | P `test_uncached_branch_transitions_get_new_records_and_cache_reuses_publication` | Genuine uncached transitions create new sequences; cache retains the original record. |
