@@ -211,7 +211,10 @@ def test_real_pytest_diagnostic(tmp_path, monkeypatch, kind, placement):
 def test_physical_failure_wiring(tmp_path, monkeypatch, kind):
     marker = f"diagnostic-{kind}-322"
     if kind == "startup":
-        detail, raw = _failure(tmp_path, monkeypatch, ["forge-" + marker])
+        # An absolute missing path keeps this about a runner that does not exist. A bare
+        # name resolved through PATH depends on the host: an untraversable PATH entry
+        # turns the same lookup into EACCES, which is a different failure to report.
+        detail, raw = _failure(tmp_path, monkeypatch, [str(tmp_path / ("forge-" + marker))])
         assert raw["exception"] == "FileNotFoundError" and not raw["identities"]
         assert "runner could not start" in detail
         assert marker in detail, "runner-start detail lost"

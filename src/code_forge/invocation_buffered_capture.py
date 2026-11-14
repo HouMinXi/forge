@@ -229,6 +229,36 @@ class BufferedCaptureSession:
                 self._condition.notify_all()
 
 
+def _snapshot_from(acquired, *, accepted_bytes, failed, write_uncertain, not_executed):
+    """Build the sealed snapshot from the acquisition plus this capture's own outcome."""
+    return replace(
+        acquired,
+        accepted_bytes=accepted_bytes,
+        failed=failed,
+        write_uncertain=write_uncertain,
+        not_executed=not_executed,
+    )
+
+
+def _failure_notice(scoped, snapshot):
+    """Choose the capture failure notice.
+
+    Off, this is the single notice the base tree emits, so switch-off behaviour does
+    not change. On, a capture whose tickets never executed and which stored nothing is
+    reported as such rather than as a write failure; committed bytes keep it a write
+    failure, because calling that "never executed" invites a resend of stored data.
+    """
+    if not scoped:
+        return "capture_write_failed"
+    if snapshot.not_executed and snapshot.accepted_bytes == 0:
+        # Committed bytes mean this capture did execute; reporting "never executed"
+        # would invite a resend of data that is already on disk.
+        return "capture_not_executed"
+    if snapshot.write_uncertain:
+        return "capture_write_uncertain"
+    return "capture_write_failed"
+
+
 class _BoundedWireCapture(WireCapture):
     """Guard both direct appends and chunks' IncompleteRead partial dispatch."""
 
@@ -285,6 +315,11 @@ class BufferedWireCapture:
     Only the immutable returned snapshot's accepted_bytes counts real sink ACKs.
     """
 
+    # Serial captures belong to no scoped domain; the shared subclass overrides this with
+    # the lane's flag, so a lane that forgets to carry it fails loudly instead of silently
+    # reporting the switch as off.
+    _scoped = False
+
     def __init__(self, session, write, warn, limit_bytes, deadline, chunk_bytes):
         if type(chunk_bytes) is not int or chunk_bytes <= 0 or not callable(warn):
             raise ValueError("invalid buffered capture configuration")
@@ -293,6 +328,7 @@ class BufferedWireCapture:
         self._warn = warn
         self._deadline = deadline
         self._buffered = self._committed = self._pending = 0
+        self._not_executed = False
         self._inflight = self._uncertain = self._warned = False
         self._failed = session._disabled
         self._fatal = self._snapshot = None
@@ -362,11 +398,12 @@ class BufferedWireCapture:
             unresolved = self._pending > 0
             if unresolved or self._failed or interrupted:
                 session._disable()
-            self._snapshot = replace(
+            self._snapshot = _snapshot_from(
                 acquired,
                 accepted_bytes=self._committed,
                 failed=acquired.failed or self._failed or unresolved,
                 write_uncertain=acquired.write_uncertain or self._uncertain or self._inflight,
+                not_executed=self._not_executed,
             )
             snapshot, fatal = self._snapshot, self._fatal
             self._fatal = None
@@ -375,7 +412,7 @@ class BufferedWireCapture:
         if fatal is not None:
             raise fatal
         if snapshot.failed or snapshot.write_uncertain:
-            self._notice("capture_write_failed")
+            self._notice(_failure_notice(self._scoped, snapshot))
         return snapshot
 
 
@@ -389,11 +426,23 @@ class SharedBufferedCaptureSession:
     This optional consumer does not wire CLI/owner lifecycle automatically.
     """
 
-    def __init__(self, supervisor, *, buffer_bytes, batch_bytes, max_delay, flush_timeout_s=2.0):
+    def __init__(
+        self,
+        supervisor,
+        *,
+        buffer_bytes,
+        batch_bytes,
+        max_delay,
+        flush_timeout_s=2.0,
+        scoped_fault_domain=False,
+    ):
         from .invocation_io import ProcessAuditIo
 
         if not isinstance(supervisor, ProcessAuditIo):
             raise TypeError("expected process audit I/O supervisor")
+        if type(scoped_fault_domain) is not bool:
+            raise TypeError("invalid scoped fault domain switch")
+        self._scoped_fault_domain = scoped_fault_domain
         # Reuse the reviewed configuration validation, not its serial writer.
         settings = BufferedCaptureSession(
             buffer_bytes=buffer_bytes,
@@ -470,6 +519,9 @@ class _SharedCaptureLane:
         self._condition = self._io._condition
         self._batch_bytes = parent._batch_bytes
         self._flush_timeout = parent._flush_timeout
+        # The captures created on this lane read the flag from here, so it has to travel
+        # with the lane rather than stay on the session one level above it.
+        self._scoped_fault_domain = parent._scoped_fault_domain
         self._disabled = token is None
         self._capture = None
 
@@ -534,6 +586,10 @@ class _SharedWireCapture(BufferedWireCapture):
         self._strict = strict
         super().__init__(*args)
 
+    @property
+    def _scoped(self):
+        return self._session._scoped_fault_domain
+
     def append(self, data):
         self._session._io._check_process()
         return super().append(data)
@@ -573,6 +629,7 @@ class _SharedWireCapture(BufferedWireCapture):
                     self._failed = True
             else:
                 self._failed = True
+                self._not_executed |= outcome.not_executed
                 self._uncertain |= outcome.publication_uncertain
                 if outcome.error is not None:
                     # The supervisor remains the sole owner of the exception
@@ -643,11 +700,12 @@ class _SharedWireCapture(BufferedWireCapture):
             if self._tickets or self._failed or interrupted:
                 lane._disable()
                 self._reconcile_locked()
-            self._snapshot = replace(
+            self._snapshot = _snapshot_from(
                 acquired,
                 accepted_bytes=self._committed,
                 failed=acquired.failed or self._failed or bool(self._tickets),
                 write_uncertain=acquired.write_uncertain or self._uncertain,
+                not_executed=self._not_executed,
             )
             snapshot = self._snapshot
             io._release_capture_locked(lane._token)
@@ -656,5 +714,5 @@ class _SharedWireCapture(BufferedWireCapture):
                 self._raise_fatal_locked()
         io.emit_warning()
         if snapshot.failed or snapshot.write_uncertain:
-            self._notice("capture_write_failed")
+            self._notice(_failure_notice(self._scoped, snapshot))
         return snapshot

@@ -20,6 +20,7 @@ class CaptureSnapshot:
     write_uncertain: bool
     eof_seen: bool
     sealed: bool
+    not_executed: bool = False
 
     @property
     def complete(self) -> bool:
