@@ -19,6 +19,7 @@ def retry_audit_probe(monkeypatch, host_setup):
     _, supervisor = host_setup
     probe = AuditDiagnosticProbe(detailed=os.environ.get("FORGE_CI_AUDIT_TRACE") == "1")
     probe.install(monkeypatch, supervisor)
+    probe.install_timing(monkeypatch, supervisor, inline.MockRecorder)
     return probe
 
 
@@ -54,21 +55,23 @@ def test_inline_retry_diagnostics_are_private(
     transport = sends.scripted(monkeypatch, responses)
     try:
         run(strict=strict, quiet=quiet)
+        output = capsys.readouterr()
+        assert SECRET not in output.err + output.out + caplog.text
+        assert "retrying" in output.err
+        if exhausted:
+            assert "retry failed" in output.err
+        assert len(transport.requests) == (6 if exhausted else 3)
+        raw = b"".join(bytes(v) for r in inline.MockRecorder.instances for v in r.stages.values())
+        contains_secret = SECRET.encode() in raw
+        assert contains_secret, retry_audit_probe.summary(include_timing=True)
     except BaseException:
         try:
-            request.node.add_report_section("call", "safe audit diagnostic", retry_audit_probe.summary())
+            request.node.add_report_section(
+                "call", "safe audit diagnostic", retry_audit_probe.summary(include_timing=True)
+            )
         except BaseException:  # noqa: BLE001, S110 - Diagnostics cannot replace the original failure.
             pass
         raise
-    output = capsys.readouterr()
-    assert SECRET not in output.err + output.out + caplog.text
-    assert "retrying" in output.err
-    if exhausted:
-        assert "retry failed" in output.err
-    assert len(transport.requests) == (6 if exhausted else 3)
-    raw = b"".join(bytes(v) for r in inline.MockRecorder.instances for v in r.stages.values())
-    contains_secret = SECRET.encode() in raw
-    assert contains_secret, retry_audit_probe.summary()
 
 
 @pytest.mark.parametrize("audited", [False, True])
@@ -264,7 +267,7 @@ def test_retry_exception_report_preserves_original_failure(
         calls.append(kwargs)
         raise original
 
-    def summary():
+    def summary(**kwargs):
         if failure_site == "summary" and diagnostic_failure is not None:
             raise diagnostic_failure("private diagnostic error")
         return "safe audit trace: unavailable"
@@ -426,7 +429,14 @@ def test_actual_retry_failure_transcript_receipt_and_replay_are_private(
         elif detailed:
             assert '"event": "recorder_error"' in transcript
             assert '"errno": 5' in transcript
+    if detailed:
+        assert '"timing":' in transcript
+        assert '"dropped_events_lower_bound":' in transcript
+        assert '"observation_failed": false' in transcript
+        assert '"snapshot_failed": false' in transcript
+        assert '"boundary": "worker_selected"' in transcript
     if not detailed:
+        assert '"timing":' not in transcript
         assert '"exception_chain"' not in transcript
         assert '"event": "recorder_error"' not in transcript
     private_markers = (SECRET, private_error, private_partial, "PRIVATE reasoning", credential)

@@ -90,6 +90,7 @@ class AuditDiagnosticProbe:
         self.detailed = detailed
         self.events = deque(maxlen=64)
         self._first_failure = {}
+        self.timing = None
 
     def _record(self, event):
         # One fixed-key built-in insertion on CPython avoids check-then-set races.
@@ -208,12 +209,21 @@ class AuditDiagnosticProbe:
         monkeypatch.setattr(supervisor, "wait", wait)
         monkeypatch.setattr(invocation_host.HostAuditSession, "_request", request)
 
-    def summary(self):
+    def install_timing(self, monkeypatch, supervisor, recorder):
+        """Opt in only where a failure reporter consumes the timing envelope."""
+        if self.detailed:
+            from tests.audit_timing_probe import AuditTimingProbe
+
+            self.timing = AuditTimingProbe()
+            self.timing.install(monkeypatch, supervisor)
+            self.timing.install_recorder(monkeypatch, supervisor, recorder)
+
+    def summary(self, *, include_timing=False):
         try:
-            return "safe audit trace: " + json.dumps(
-                dict(first_failure=self._first_failure.get("event"), events=list(self.events)),
-                sort_keys=True,
-            )
+            report = dict(first_failure=self._first_failure.get("event"), events=list(self.events))
+            if include_timing and self.timing is not None:
+                report["timing"] = self.timing.report()
+            return "safe audit trace: " + json.dumps(report, sort_keys=True)
         except BaseException:  # noqa: BLE001 - Rendering must not replace the failed assertion.
             return "safe audit trace: unavailable"
 
