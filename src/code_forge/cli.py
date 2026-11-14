@@ -150,6 +150,30 @@ def _format_infra_lines(final_state: Any, state_path: Path | None = None) -> str
     return "\n".join(lines) + "\n" if lines else ""
 
 
+def _report_v2_downgrade_notice(stderr: str, reason: str, limit: int) -> str:
+    """Append bounded public metadata without changing the completed v1 prefix."""
+    reasons = {
+        "baseline-unusable",
+        "snapshot-rejected",
+        "baseline-mismatch",
+        "projection-failed",
+        "v2-global-fallback",
+        "v2-preparation-failed",
+        "v2-content-mismatch",
+        "v2-budget-refused",
+        "v2-substrate-mismatch",
+        "v2-unavailable",
+    }
+    label = reason if type(reason) is str and reason in reasons else "v2-unavailable"
+    notice = "code-forge: report-v2 unavailable; using unchanged v1 report [%s]\n" % label
+    try:
+        if len(stderr.encode("utf-8")) + len(notice.encode("utf-8")) <= limit:
+            return stderr + notice
+    except UnicodeEncodeError:
+        pass
+    return stderr
+
+
 def _emit_ci_output(
     state_path: Path,
     registry: dict[str, "ToolConfig"],
@@ -159,6 +183,7 @@ def _emit_ci_output(
     manifest: Optional[Any] = None,
     *,
     assertion_outcome: AssertionOutcome | None = None,
+    report_version: str = "v1",
 ) -> None:
     """Emit SARIF to stdout and summary to stderr in CI mode.
 
@@ -179,6 +204,8 @@ def _emit_ci_output(
     SARIF is best-effort output, NOT canonical artifact; state.json is
     canonical. Silent return matches "skip SARIF when state absent" semantics.
     """
+    if report_version not in ("v1", "v2"):
+        raise ValueError("unsupported report version")
     from .report_presentation import prepare_legacy_report, prepare_report_views
     from .report_projection import classify_report_records
 
@@ -223,18 +250,19 @@ def _emit_ci_output(
         prepared = prepare_report_views(substrate, projection)
     else:
         prepared = prepare_report_views(substrate, None)
-    print(prepared.stdout, file=sys.stdout)
-    # Order: legacy summary (+ optional budget qualifier in prepared.stderr)
-    # then §5 classification line. print() adds the trailing newline.
-    if prepared.stderr:
-        if prepared.stderr.endswith("\n"):
-            sys.stderr.write(prepared.stderr)
-        else:
-            print(prepared.stderr, file=sys.stderr)
-    print(
-        format_classification_line(prepared.report_classification),
-        file=sys.stderr,
-    )
+    if report_version == "v1":
+        print(prepared.stdout, file=sys.stdout)
+        # Order: legacy summary (+ optional budget qualifier in prepared.stderr)
+        # then §5 classification line. print() adds the trailing newline.
+        if prepared.stderr:
+            if prepared.stderr.endswith("\n"):
+                sys.stderr.write(prepared.stderr)
+            else:
+                print(prepared.stderr, file=sys.stderr)
+        print(
+            format_classification_line(prepared.report_classification),
+            file=sys.stderr,
+        )
     if loaded_path is not None:
         try:
             if (
@@ -245,8 +273,39 @@ def _emit_ci_output(
         except (OSError, ValueError, RuntimeError):
             loaded_path = None
     infra_lines = _format_infra_lines(final_state, state_path=loaded_path)
-    if infra_lines:
-        sys.stderr.write(infra_lines)
+    if report_version == "v1":
+        if infra_lines:
+            sys.stderr.write(infra_lines)
+    else:
+        from .report_baseline_v2 import RenderingInputs
+        from .report_preparation_v2 import FinalText
+        from .report_runtime_v2 import prepare_production_report, PREPARATION_LIMITS
+
+        summary = prepared.stderr
+        if summary and not summary.endswith("\n"):
+            summary += "\n"
+        baseline = FinalText(
+            prepared.stdout + "\n",
+            summary + format_classification_line(prepared.report_classification) + "\n" + infra_lines,
+        )
+        context = RenderingInputs(
+            forge_version=__version__,
+            tool_versions=tool_versions,
+            advisories=tuple(advisories),
+            backend_name=backend_name,
+            backend_model=backend_model,
+            manifest=manifest,
+            assertion_outcome=assertion_outcome,
+            resolved_locator=str(loaded_path) if loaded_path is not None else None,
+        )
+        selected = prepare_production_report(final_state, context, baseline)
+        final_stderr = selected.text.stderr
+        if selected.writer_reason != "v2-prepared":
+            final_stderr = _report_v2_downgrade_notice(
+                final_stderr, selected.writer_reason, PREPARATION_LIMITS.candidate_stderr_bytes
+            )
+        sys.stdout.write(selected.text.stdout)
+        sys.stderr.write(final_stderr)
     if post_emit_hook is not None:
         post_emit_hook()
 
@@ -541,6 +600,12 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["local", "ci"],
         default=None,
         help="execution mode (default: local if TTY, ci otherwise)",
+    )
+    review_parser.add_argument(
+        "--report-version",
+        choices=["v1", "v2"],
+        default="v1",
+        help="report presentation version (v2: ordinary single-repository CI subprocess only)",
     )
     review_parser.add_argument(
         "--falsification-engine",
@@ -4269,6 +4334,19 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
     """Main pipeline body. Returns Verdict."""
     from .invocation_review import ReviewAuditDiagnostics
 
+    report_version = getattr(args, "report_version", "v1")
+    if report_version not in ("v1", "v2"):
+        raise CliError("unsupported report version")
+    if report_version == "v2" and (
+        resolve_mode(args.mode, env, sys.stdout.isatty()) != Mode.CI
+        or getattr(args, "whole_file", None)
+        or getattr(args, "canary", False)
+        or getattr(args, "outlet", None) not in (None, "subprocess", "cli")
+        or getattr(args, "scope_ticket_dir", None) is not None
+        or getattr(args, "diagnostic_ticket_dir", None) is not None
+    ):
+        raise CliError("--report-version v2 requires ordinary single-repository CI subprocess review")
+
     if audit_diagnostics is None:
         audit_diagnostics = ReviewAuditDiagnostics()
     audit_diagnostics.clear()
@@ -4377,6 +4455,20 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
     # gate.yaml raw for BACKEND consumption; the review_focus read below is
     # gated separately by is_trusted_focus, independent of backend trust.
     cfgs, gate_data = _load_gate_backends(gate_yaml_path)
+    if report_version == "v2":
+        # Cross-repository dispatch reads siblings independently of backend trust.
+        _, report_siblings = _load_gate_siblings(gate_yaml_path)
+        if (
+            report_siblings
+            or _load_canary_config(args, gate_data) is not None
+            or (
+                isinstance(gate_data.get("kernel_context"), dict)
+                and gate_data["kernel_context"].get("enabled")
+            )
+        ):
+            raise CliError(
+                "--report-version v2 does not support cross-repository, canary or kernel review"
+            )
     if scope_ticket_directory is not None and not gate_data.get("siblings"):
         raise CliError("--scope-ticket-dir requires cross-repository review")
     if diagnostic_ticket_directory is not None and not gate_data.get("siblings"):
@@ -4467,6 +4559,8 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
         has_explicit_backend=has_explicit_backend,
         reachability_fn=_reachability,
     )
+    if report_version == "v2" and outlet != "subprocess":
+        raise CliError("--report-version v2 requires subprocess review")
     if scope_ticket_directory is not None and (outlet != "subprocess" or kernel_cfg.enabled):
         raise CliError("--scope-ticket-dir supports only subprocess cross-repository review")
     if diagnostic_ticket_directory is not None and (outlet != "subprocess" or kernel_cfg.enabled):
@@ -5202,6 +5296,7 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
                     backend_model=(backend.model if backend.type == "api" else None),
                     manifest=_manifest_a,
                     assertion_outcome=assertion_outcome,
+                    **({"report_version": "v2"} if report_version == "v2" else {}),
                 )
             elif mode == Mode.LOCAL:
                 emit_local_assertion_report(state_path, assertion_outcome)

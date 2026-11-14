@@ -924,7 +924,8 @@ async def _run_cli_budgeted(
     budget: float = 20.0,
     env: dict[str, str] | None = None,
     deadline: float | None = None,
-) -> tuple[str, int, float, str] | tuple[asyncio.Task[Any], asyncio.subprocess.Process, str]:
+    preserve_stdout_bytes: bool = False,
+) -> tuple[str | bytes, int, float, str] | tuple[asyncio.Task[Any], asyncio.subprocess.Process, str]:
     """Run CLI with a time budget.
 
     Args:
@@ -988,7 +989,7 @@ async def _run_cli_budgeted(
         elapsed = time.monotonic() - start
         stderr_text = await asyncio.to_thread(_read_and_unlink_stderr, stderr_log_path)
         return (
-            stdout_bytes.decode(errors="replace"),
+            stdout_bytes if preserve_stdout_bytes else stdout_bytes.decode(errors="replace"),
             proc.returncode or 0,
             elapsed,
             stderr_text,
@@ -1229,10 +1230,11 @@ def _report_classification_from_stdout(stdout: str) -> dict[str, object]:
 
 
 def _make_result(
-    stdout: str,
+    stdout: str | bytes,
     exit_code: int,
     elapsed: float,
     stderr: str = "",
+    report_version: str = "v1",
 ) -> CallToolResult:
     """Build dual-layer CallToolResult for completed review/gate-check.
 
@@ -1240,6 +1242,16 @@ def _make_result(
     diagnose the failure.  Previously stderr was discarded, leaving
     ``{output: ""}`` on CLI_ERROR.
     """
+    selection = None
+    metadata = None
+    if report_version == "v2":
+        from code_forge.report_runtime_v2 import select_report_bytes, selection_metadata
+
+        # Text is not evidence of the original bytes; do not re-encode it.
+        selection = select_report_bytes(stdout if type(stdout) is bytes else b"")
+        metadata = {**selection_metadata(selection), "block": selection.block}
+    if type(stdout) is bytes:
+        stdout = stdout.decode(errors="replace")
     output = stdout
     if exit_code != 0 and stderr.strip():
         output = stdout + "\n--- stderr ---\n" + stderr
@@ -1260,6 +1272,7 @@ def _make_result(
         duration_s=round(elapsed, 2),
         output=output,
         report_classification=_report_classification_from_stdout(stdout),
+        report_reader=metadata,
     )
     return CallToolResult(
         content=[TextContent(type="text", text=output)],
@@ -1321,6 +1334,7 @@ async def _dispatch_cli(
     env: dict[str, str] | None = None,
     timeout_s: float | None = None,
     idle_s: float | None = None,
+    report_version: str = "v1",
 ) -> CallToolResult:
     """Shared CLI-subprocess dispatch with contract+focus tmpfile lifecycle.
 
@@ -1353,21 +1367,30 @@ async def _dispatch_cli(
         _unlink(focus_tmp)
         raise
 
+    raw_option = {"preserve_stdout_bytes": True} if report_version == "v2" else {}
     try:
         if deadline is None:
-            result = await _run_cli_budgeted(*cli_args, workspace=workspace, env=env)
+            result = await _run_cli_budgeted(*cli_args, workspace=workspace, env=env, **raw_option)
         else:
-            result = await _run_cli_budgeted(*cli_args, workspace=workspace, env=env, deadline=deadline)
+            result = await _run_cli_budgeted(
+                *cli_args, workspace=workspace, env=env, deadline=deadline, **raw_option
+            )
     except BaseException:
         _unlink(contract_tmp)
         _unlink(focus_tmp)
         raise
 
-    if isinstance(result[0], str):
+    if isinstance(result[0], (str, bytes)):
         stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
         _unlink(contract_tmp)
         _unlink(focus_tmp)
-        return _make_result(stdout, exit_code, elapsed, stderr)
+        return _make_result(
+            stdout,
+            exit_code,
+            elapsed,
+            stderr,
+            **({"report_version": "v2"} if report_version == "v2" else {}),
+        )
 
     # Timeout -- transfer ownership to background job
     inner_task, proc, stderr_path = result  # type: ignore[misc]
@@ -1379,6 +1402,7 @@ async def _dispatch_cli(
             focus_tempfile_path=focus_tmp,
             stderr_log_path=stderr_path,
             max_lifetime_s=cap if deadline is None else max(0.0, deadline - time.monotonic()),
+            **({"report_version": "v2"} if report_version == "v2" else {}),
             **({"deadline": deadline} if deadline is not None else {}),
             **({"idle_timeout_s": idle_s} if deadline is None and idle_s is not None else {}),
         )
@@ -1530,8 +1554,13 @@ async def forge_review(
     project_dir: str = "",
     ctx: Context = None,
     timeout_s: _TimeoutSeconds | None = None,
+    report_version: str = "v1",
 ) -> CallToolResult:
     """Run forge review pipeline."""
+    if type(report_version) is not str or report_version not in {"v1", "v2"}:
+        raise ToolError("report_version must be v1 or v2")
+    if report_version == "v2" and (canary or whole_file):
+        raise ToolError("report_version=v2 does not support canary or whole_file review")
     timeout_s = _validate_timeout(timeout_s)
     workspace = await _workspace_for(ctx, project_dir=project_dir)
     whole_files = _normalize_whole_file(whole_file, workspace=workspace)
@@ -1553,6 +1582,8 @@ async def forge_review(
     _validate_backend(backend, workspace)
 
     cli_args: list[str] = ["review", "--no-color"]
+    if report_version == "v2":
+        cli_args.extend(["--report-version", "v2", "--mode", "ci"])
     if baseline:
         cli_args.extend(["--baseline", baseline])
     if head:
@@ -1577,6 +1608,7 @@ async def forge_review(
         cli_args,
         workspace,
         cap,
+        **({"report_version": "v2"} if report_version == "v2" else {}),
         contract=contract or None,
         focus=focus or None,
         env=child_env,
@@ -1595,8 +1627,11 @@ async def forge_gate_check(
     project_dir: str = "",
     ctx: Context = None,
     timeout_s: _TimeoutSeconds | None = None,
+    report_version: str = "v1",
 ) -> CallToolResult:
     """Run forge gate-check pipeline."""
+    if type(report_version) is not str or report_version != "v1":
+        raise ToolError("forge_gate_check supports only report_version=v1")
     timeout_s = _validate_timeout(timeout_s)
     workspace = await _workspace_for(ctx, project_dir=project_dir)
     from code_forge.outlet_resolver import load_outlet_from_gate
@@ -1751,6 +1786,15 @@ async def forge_job_status(job_id: str) -> CallToolResult:
         findings_count, findings, receipt_audit, count_status, test_assertion = (
             _sarif_projection_with_assertion(job_stdout, r.get("exit_code"))
         )
+        selection = None
+        metadata = None
+        if entry.get("report_version") == "v2":
+            from code_forge.report_runtime_v2 import select_report_bytes, selection_metadata
+
+            selection = r.get("report_selection")
+            if selection is None:
+                selection = select_report_bytes(b"")
+            metadata = {**selection_metadata(selection), "block": selection.block}
         forge_result = ForgeResult(
             verdict=r.get("verdict", UNKNOWN_VERDICT),
             exit_code=r.get("exit_code", UNKNOWN_EXIT_CODE),
@@ -1762,6 +1806,7 @@ async def forge_job_status(job_id: str) -> CallToolResult:
             duration_s=r.get("duration_s", 0.0),
             output=output,
             report_classification=_report_classification_from_stdout(job_stdout),
+            report_reader=metadata,
         )
 
     elapsed_text = ""

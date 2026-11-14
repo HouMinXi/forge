@@ -294,8 +294,28 @@ class TestDeferredNoClassificationLine:
         # Advisory loader used by emit is fine; progress printers must not.
         cli_path = Path(__file__).resolve().parents[1] / "src" / "code_forge" / "cli.py"
         source = cli_path.read_text(encoding="utf-8")
-        # Only format_classification_line (in sarif) + _emit_ci_output print the line.
-        assert source.count("format_classification_line") == 2  # import + call in _emit_ci_output
+        # Both legacy printing and opt-in baseline preparation belong only to
+        # the ordinary CI emitter; counting text occurrences confuses these
+        # legitimate calls with a newly wired deferred progress route.
+        tree = ast.parse(source)
+        callers = [
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "format_classification_line"
+        ]
+        all_calls = [
+            call
+            for call in ast.walk(tree)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "format_classification_line"
+        ]
+        assert len(all_calls) == 2  # Includes class methods and module-level calls.
+        assert callers == ["_emit_ci_output", "_emit_ci_output"]
         # Progress-style prints use [forge] or cost lines, never classification.
         assert "code-forge: classification" not in source
 
@@ -368,3 +388,25 @@ class TestWiredF1AndSharedReader:
         rc = data["report_classification"]
         # Entry 17 / RA-O S1: Include-available presentation while count stays 0.
         assert rc["availability"] == "available"
+
+
+@pytest.mark.parametrize(
+    "addition",
+    [
+        "\nformat_classification_line(None)\n",
+        "\nclass Deferred:\n    def progress(self):\n        format_classification_line(None)\n",
+        "\ndef deferred_progress():\n    format_classification_line(None)\n",
+    ],
+    ids=["module-level", "class-method", "function"],
+)
+def test_progress_printer_route_guard_rejects_added_calls(monkeypatch, addition):
+    """The real route oracle must retain whole-file coverage, not just functions."""
+    original = Path.read_text
+
+    def injected(path, *args, **kwargs):
+        source = original(path, *args, **kwargs)
+        return source + addition if path.name == "cli.py" else source
+
+    monkeypatch.setattr(Path, "read_text", injected)
+    with pytest.raises(AssertionError):
+        TestDeferredNoClassificationLine().test_machine_progress_advisory_has_no_classification_line_printer()
