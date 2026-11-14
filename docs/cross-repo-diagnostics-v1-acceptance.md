@@ -151,7 +151,7 @@ No replacement approval, original-port recovery or full coverage is claimed;
 #443/#444 unique differences also require their own disposition. Missing originals
 are a declared limitation of the replacement, not an endless blocking prerequisite.
 
-**One next runtime candidate, not an execution claim:** after consuming the
+**Previously selected runtime candidate (bounded result in dated T09/T11 supplement):** after consuming the
 existing evidence and fixing the supported revision/domain, reuse
 `tests/test_cross_repo_persistent_diagnostic.py::test_uncached_branch_transitions_get_new_records_and_cache_reuses_publication`
 for T09/T11. Its fixed-source wrappers delegate to the real publisher/reader and
@@ -166,9 +166,165 @@ observation/empty-success risk not discharged by the three warm-admission refusa
 or the UNKNOWN probe. First run this existing node unchanged in the pinned 3.14
 source-tree domain; only after GREEN define one isolated omission and its exact
 semantic assertion. Do not claim a fresh SQL-connection count, byte-preservation
-oracle or whole-host concurrency from it. Status remains NOT_RUN in this pass;
-baseline/setup/non-target/timeout/escape/restore failures stop the row. No new test,
-production modification or experiment is performed by this documentation change.
+oracle or whole-host concurrency from it. The later dated supplement records one cache-republication control; other
+subclauses remain separate. Baseline/setup/non-target/timeout/escape/restoration
+failures stop the row. No production or test change is proposed for this control.
+
+### 2026-11-14 T09/T11 existing cache-publication control
+
+The next bounded run reused the unchanged existing node
+`tests/test_cross_repo_persistent_diagnostic.py::test_uncached_branch_transitions_get_new_records_and_cache_reuses_publication`.
+Product/test source: `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`; preceding document
+head: `de1c86bd1dec29cd6ac9f507ef6ab418ea3fda1e`. Environment: cloud CPython 3.14.0,
+SQLite 3.50.4, pytest 9.2.0, same source-tree environment as the bounded runs above.
+No new test, production repair, public identity or support-contract change.
+
+Command from the isolated source: `$PY314 -B -m pytest -p pytest_asyncio.plugin
+-p no:cacheprovider -q` followed by that node, with `PYTHONPATH=src`,
+`PYTHONDONTWRITEBYTECODE=1`, `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`; collection additionally
+uses `--collect-only`. Each recorded phase has a 90-second cap. One initial unchanged
+exploratory baseline also passed; the full controlled sequence is separately
+recorded below and does not count it twice.
+
+Collection: one node, exit 0. Controlled baseline: 1 PASS, exit 0. Only in the owned
+isolated source, a call to existing `DiagnosticCapture.finish` was inserted before
+cached delivery, deliberately republishing the cached observation. This is one
+cache-publication boundary injection, not an unmodified-product defect. The
+unchanged test failed at line 462, `len(storage_calls.publications) == 3`, with
+actual 4; earlier verdict, message and resolver-count assertions passed. Exit 1.
+Byte-exact restoration yielded 1 PASS, exit 0. The wrapper delegates the real
+publisher then records its normal return; it counts neither calls that raise nor
+necessarily successful durable commits. Later payload/read-identity assertions
+were not reached in RED and receive no independent negative-control credit.
+
+The fixture controls CI verdict/other axes and repeated advisory dispatch while
+using real SQLite transitions and publisher/reader operations. Resolver call
+count is not SQL statement/connection count; this is not native whole-host timing,
+all cache clauses, G03 completion, full T09/T11 or G12/G13 qualification. Skip-empty
+publication and old-record adoption controls remain NOT_RUN in this pass.
+
+Source original/restored SHA256:
+`556a329c909a4f14cc7e5b79ae7d1f5c479b8d6e78f48935ece209faa0de3a0f`;
+mutant: `abaa2fb4a45200af83b00c7afdfe5ac65d43195be3416c16e0d5a44125e81cd1`.
+Unchanged test SHA256 at every phase:
+`f500bcd14e6ebd0d738ff6ba91a9439122cace66eac3f1191bc17df0dd7bb34b`.
+Harness checked test bytes before/after each phase, restored production in finally,
+and found zero changed source-tree files at the end. No source/test change from
+this experiment is proposed for the repository.
+
+Safe logs below retain target assertion, phase summary and exit classification.
+Fixture/object rendering lines are replaced; UUIDs, memory addresses and private
+workspace/temporary paths are de-identified, and trailing whitespace normalized.
+Original/private and safe-copy SHA256 are distinct. Safe copies support review,
+not an independent execution claim.
+
+<details>
+<summary>T09/T11 collection: safe log</summary>
+
+Original SHA256: `eb7800d497c00aaec3fda9ebad485611f329dd1a7dc6e2d064b3415d8e84a1dc`.
+Safe-copy SHA256: `eb7800d497c00aaec3fda9ebad485611f329dd1a7dc6e2d064b3415d8e84a1dc`.
+
+```text
+tests/test_cross_repo_persistent_diagnostic.py::test_uncached_branch_transitions_get_new_records_and_cache_reuses_publication
+
+1 test collected in 0.25s
+```
+
+</details>
+
+<details>
+<summary>T09/T11 controlled-baseline: safe log</summary>
+
+Original SHA256: `ac0988b070cfb8585ee6cce3a7e8654f43da14bf7e316bc0b9277c6ad43db855`.
+Safe-copy SHA256: `ac0988b070cfb8585ee6cce3a7e8654f43da14bf7e316bc0b9277c6ad43db855`.
+
+```text
+.                                                                        [100%]
+1 passed in 0.79s
+```
+
+</details>
+
+<details>
+<summary>T09/T11 cache-republish: safe log</summary>
+
+Original SHA256: `38afcaceb75ed8af382b8530c699425886f79bf0d878d040fcda61c7dbc9f3de`.
+Safe-copy SHA256: `b06479b460c1e7f0bcaaa7fa208226b2808c8377b33d82c6aa895cee9e3a0938`.
+
+```text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_uncached_branch_transitions_get_new_records_and_cache_reuses_publication _
+
+persistent_cli = <FIXTURE>
+storage_calls = <FIXTURE>
+monkeypatch = <FIXTURE>
+
+    def test_uncached_branch_transitions_get_new_records_and_cache_reuses_publication(
+        persistent_cli, storage_calls, monkeypatch
+    ):
+        from code_forge import cross_repo_impact as impact
+        from code_forge.machine import StateMachine
+
+        observed = persistent_cli
+        native_dispatch = StateMachine._run_advisory_axes
+        native_resolve = impact.resolve_changed_symbols
+        queries = []
+
+        def resolve(*args, **kwargs):
+            queries.append(args)
+            return native_resolve(*args, **kwargs)
+
+        def repeated_dispatch(machine):
+            native_dispatch(machine)
+            if machine.baseline_spec_repr == "primary":
+                native_dispatch(machine)  # Another genuine uncached zero-target call.
+                edit_graph(
+                    observed.primary,
+                    "UPDATE nodes SET kind='function', name='api', qualified_name='api::api'",
+                )
+                native_dispatch(machine)  # Genuine resolved-target call with no callers.
+                native_dispatch(machine)  # Same runner's cache, no query/publication.
+
+        monkeypatch.setattr(impact, "resolve_changed_symbols", resolve)
+        monkeypatch.setattr(StateMachine, "_run_advisory_axes", repeated_dispatch)
+        messages = []
+        assert observed.run(output=messages.append) is Verdict.PASS
+        assert messages.count(ATTRIBUTED_MESSAGE) == 2
+        assert len(queries) == 3
+>       assert len(storage_calls.publications) == 3
+E       AssertionError: assert 4 == 3
+E            + <GENERATED_OBJECT_RENDERING>
+E            + <GENERATED_OBJECT_RENDERING>
+
+tests/test_cross_repo_persistent_diagnostic.py:462: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[forge] t+0.0s run start: mode=CI
+[forge] t+0.0s run start: mode=CI
+[forge] t+0.0s review phase done: verdict=PASS findings=0 confirmed=0
+
+--- Smoke Status ---
+smoke: no runtime surfaces detected
+[forge] t+0.0s review phase done: verdict=PASS findings=0 confirmed=0
+=========================== short test summary info ============================
+FAILED tests/test_cross_repo_persistent_diagnostic.py::test_uncached_branch_transitions_get_new_records_and_cache_reuses_publication
+1 failed in 0.77s
+```
+
+</details>
+
+<details>
+<summary>T09/T11 restored: safe log</summary>
+
+Original SHA256: `fedceb118a93f8e9bed4f5b262246c28f6bfdace0d13713f5045fa2fb6554486`.
+Safe-copy SHA256: `fedceb118a93f8e9bed4f5b262246c28f6bfdace0d13713f5045fa2fb6554486`.
+
+```text
+.                                                                        [100%]
+1 passed in 0.78s
+```
+
+</details>
 
 ### 2026-11-14 T03 primary-connection observation (bounded execution)
 
@@ -453,8 +609,8 @@ with a 30-second cap. Retained SHA256 bindings:
   unchanged test file: `1239484e7d98d4c2a10f15ed88fcde01786b531fd29da9a51e8f05fdf532afc1`.
 
 Independent review checked phase logs, target failure locations and restoration
-hashes without rerunning. All other node expansions below remain **NOT_RUN** in
-this local evidence pass. Passing automatic checks on PR #493 is separate CI
+hashes without rerunning. Node expansions not explicitly covered by a dated execution supplement remain
+**NOT_RUN** in this local evidence pass. Passing automatic checks on PR #493 is separate CI
 information, not a substitute for these clause-specific oracles or G12/G13.
 
 ### Safe review index for the already reported executions
@@ -1014,7 +1170,7 @@ contract-only decisions retain the entry decision register or explicit PENDING.
 | --- | --- | --- | --- |
 | G01 | One current self-contained contract; replace conflicting v4 origin/State-save/eager-snapshot/HOLD/root proposals; explicit four-P1 and support dispositions. `cross-repo-diagnostics-v1.md`, entry table and original comments. | **Decision pending**. T08–T12/T14/T18/T19 implement parts, but source existence/merge is not approval. Record accepted replacements and preserve original obligations or named unsupported dispositions; no runtime G0 toggle. | Contract decisions: entry decision register; [T14](#evidence-t14), [T18](#evidence-t18), [T19](#evidence-t19) for support dispositions. |
 | G02 | Freeze nine exact fields, types/version, five legal state/diagnostic combinations, exact UTF-8/diff, unknown/missing/duplicate/nonfinite rejection, byte/depth/string/sequence/attempt limits and opaque repository alias/privacy. `_advisory_diagnostics` codec plus capture budgets. | T16 expanded families cover baseline syntax/context; T15/T18 cover storage separately. **Merged source; formal freeze pending.** Decoder field omissions and valid-limit boundaries need current logs; neither UUID nor digest proves authorization. | Schema/context/limits: [T16](#evidence-t16); storage budget: [T15](#evidence-t15), [T18d](#evidence-t18d). |
-| G03 | Original observation separated from delivery; actual/cache metadata; same-input hit reuses sequence/artifact/publication/error view, no SQL/republication/credit; uncached early repeat is actual. Capture Record and runner final cache. | **Limited contract accepted**, T09/T11 remain NOT_RUN; T12 has only the three bounded executions above. Original object/context, SQL/publish counters and bytes are oracles; do not infer state from empty findings. | Observation/delivery and cache: [T09](#evidence-t09), [T11](#evidence-t11), [T12](#evidence-t12). |
+| G03 | Original observation separated from delivery; actual/cache metadata; same-input hit reuses sequence/artifact/publication/error view, no SQL/republication/credit; uncached early repeat is actual. Capture Record and runner final cache. | **Limited contract accepted**; one T09/T11 cache-republication control is recorded in the dated supplement; other subclauses remain NOT_RUN; T12 has only the three bounded executions above. Original object/context, SQL/publish counters and bytes are oracles; do not infer state from empty findings. | Observation/delivery and cache: [T09](#evidence-t09), [T11](#evidence-t11), [T12](#evidence-t12). |
 | G04 | Per-entry issuance before runner/cache, repository/axis/sequence binding, forwarding to publisher/formal reader, explicit caller success/failure/locator and independent expected; same MCP child retains identity; supported new host versus recovery. Host UUID, capture, CLI completion and MCP child. | Entry table plus T08/T10/T14/T20 and history catalogue. **Per-entry decision pending**; #491 is real opt-in handoff, default text-only proposal remains a decision. Do not force a uniform public return or invent authenticated cross-restart state. | Issuance/forwarding/caller: [T08](#evidence-t08), [T10](#evidence-t10); recovery: [T14](#evidence-t14); entry decisions above. |
 | G05 | Preserve cross-repo PENDING→FAIL/no HOLD; single-repo HOLD has no axis, actual recovery not fabricated. `run_cross_repo`; CLI dispatch/HOLD routing. | **Limited contract accepted**; T14 includes controlled compatibility node and new-host evidence, not live recovery. Explicit original T14 not-applicable disposition still required. | Pending/HOLD/axis support: [T14](#evidence-t14). |
 | G06 | Admission before cache/error clear/SQL/publication; original installed capture/identity/stage-store/process/thread, lexical/canonical root/exact diff; stage-effective actual first use, untouched stages lazy, same-instance retain/new-host rediscover; no repeated fallback native work on budget error. `DiagnosticCapture.admit`/stage methods, runner. | **Limited contract accepted**; T07/T11/T12 exact nodes/counters. Only the three T12 changed-input cases are executed above; the remaining set is NOT_RUN. Fork/process and simultaneous-use qualification not inferred from foreign-thread tests; no atomic/freshness guarantee. | Discovery stage: [T07](#evidence-t07); admission/cache/error view: [T11](#evidence-t11), [T12](#evidence-t12). |
@@ -1280,10 +1436,10 @@ tests/test_cross_repo_persistent_diagnostic.py::test_new_host_execution_never_re
 - Actual source: runner cache and DiagnosticCapture records/delivery.
 - Independent oracle / input: Real SQL counters, original object/byte identity, explicit old/new errors, cleared outward list followed by intact replay, stage dictionaries defensively copied.
 - Remaining gap / supported disposition: Supported finding/error/configuration types and budgets only; not arbitrary nested-object immutability or all ambient changes.
-- R3 status: Historical cache-origin/admission omissions are separate fixed sources; current full T11 omission/restoration set NOT_RUN and not assumed exhaustive.
+- R3 status: Historical cache-origin/admission omissions are separate fixed sources; the dated cache-republication control is now executed; the rest of the T11 omission/restoration set remains NOT_RUN and is not assumed exhaustive.
 
 <details>
-<summary>T11: exact static node identities (runtime NOT_RUN)</summary>
+<summary>T11: exact static node identities (only dated cache-republication node executed)</summary>
 
 ```text
 tests/test_cross_repo_capture.py::test_active_owner_native_cold_and_warm_delivery
