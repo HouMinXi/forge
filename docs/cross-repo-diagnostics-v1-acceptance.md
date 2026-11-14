@@ -170,6 +170,104 @@ oracle or whole-host concurrency from it. The later dated supplement records one
 subclauses remain separate. Baseline/setup/non-target/timeout/escape/restoration
 failures stop the row. No production or test change is proposed for this control.
 
+### 2026-11-14 G07 existing isolation and bounded-failure controls
+
+This consumes six already mapped functions (eight cases) at unchanged
+product/test `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`, document reference
+`b0d357982f15921966f2f5d29843ea4f55b1218a`, same cloud Python 3.14.0 / SQLite
+3.50.4 environment. Collection eight and execution eight PASS, both exit 0;
+no new mutation, production/test edit, schema change or support extension.
+Source-tree start/end guard found no changed files. The test file SHA256 is
+`1239484e7d98d4c2a10f15ed88fcde01786b531fd29da9a51e8f05fdf532afc1`.
+The receipt's document field was corrected from a copied preceding-run template
+to the actual b0d35798 reference; command/log/test/source identities did not change.
+
+Within `tests/test_cross_repo_capture.py`, the independent oracles are:
+
+- `test_duplicate_occurrences_retain_distinct_first_use_native_fallbacks`:
+  after real native findings and a distinct missing-sibling error, clear the
+  outward findings/error lists and change an unused later environment value.
+  Cached replay restores the expected finding and original error, retains the
+  same Record/Observation and per-occurrence stages, performs no additional
+  observed URI SQL or selections, and keeps one publication attempt. This
+  checks outward container clearing, not mutation inside arbitrary nested objects.
+- `test_large_final_cache_errors_do_not_restore_previous_uncached_error`:
+  first obtain a missing-primary error without SQL, then restore the graph and
+  obtain a final sibling error longer than 4096 characters. Warm empty-finding
+  cache preserves the final errors and SQL count, rather than restoring the
+  earlier error. This node does not assert persistence status or all budgets.
+- `test_registry_stage_returns_defensive_copies`: change the original registry
+  dictionary and returned dictionary/list; replay matches the original literal
+  registry and forbids another native operation. Only the supported flat
+  registry structure is covered, not arbitrary deep object graphs.
+- `test_capture_limit_never_repeats_the_native_operation[bytes|entries|stages]`:
+  each existing fixture lowers one limit to zero. An operation returns its exact
+  object once per explicit stage request, disables capture support, and a second
+  distinct request runs exactly once again. This proves no hidden native retry
+  for these forced limits, not that native work stops after unsupported capture
+  or that the shipped numeric limit and boundary are qualified.
+- `test_failure_capture_limit_preserves_original_error_without_retry`: under a
+  zero byte limit, the native failure is the same exception object, invoked once;
+  support is disabled and no stage retained. This is not a universal cleanup or
+  process-control guarantee.
+- `test_non_utf8_native_error_disables_only_persistence`: a surrogate-bearing
+  registry alias produces the same native empty findings/errors with or without
+  capture; the captured record is `not_published` with query summary and warning.
+  This does not make empty findings successful analysis or qualify arbitrary
+  encodings/history shapes.
+
+No prior admission-rejection control is used to claim G07 isolation. The eight
+passes supply these existing oracles only; no new independent omission RED,
+current-main/installed-wheel qualification, full G07/G12/G13 acceptance or
+original78 equivalence follows. Aggregate/default-limit boundaries and arbitrary
+unsupported objects are not silently upgraded. Other mapped rows retain their
+own status. Prefer explicit evidence/unsupported disposition over manufacturing
+a new failure solely to make every assertion have a separate mutation.
+
+Command uses the same source root, environment and pytest options in the prior
+identity supplement, followed by the six function selectors
+identified above and fully expanded in the collection log. Parametrized `test_capture_limit_never_repeats_the_native_operation`
+is supplied without brackets, collecting exactly its three cases. No manual CI
+rerun is part of this local source-tree verification.
+
+Exit condition: this section completes the bounded evidence-delivery item in
+#493, not #441 acceptance. #441 separately adjudicates the supported container,
+error-view and forced-zero-budget scopes; whether shipped default-budget
+boundaries need further evidence is a decision first, not an automatic new
+experiment. #33 remains the independent, open capability roadmap.
+
+<details>
+<summary>G07 existing controls: g07-collection (exit 0)</summary>
+
+Original/readable-copy SHA256 `68c9fc30e14570ca0b7b9d01154c4342b0466a8c8e88d342520f2923bbeea527`. No redaction or byte transformation needed; output contains public test identities and summary only.
+
+```text
+tests/test_cross_repo_capture.py::test_duplicate_occurrences_retain_distinct_first_use_native_fallbacks
+tests/test_cross_repo_capture.py::test_large_final_cache_errors_do_not_restore_previous_uncached_error
+tests/test_cross_repo_capture.py::test_registry_stage_returns_defensive_copies
+tests/test_cross_repo_capture.py::test_capture_limit_never_repeats_the_native_operation[bytes]
+tests/test_cross_repo_capture.py::test_capture_limit_never_repeats_the_native_operation[entries]
+tests/test_cross_repo_capture.py::test_capture_limit_never_repeats_the_native_operation[stages]
+tests/test_cross_repo_capture.py::test_failure_capture_limit_preserves_original_error_without_retry
+tests/test_cross_repo_capture.py::test_non_utf8_native_error_disables_only_persistence
+
+8 tests collected in 0.26s
+```
+
+</details>
+
+<details>
+<summary>G07 existing controls: g07-existing-controls (exit 0)</summary>
+
+Original/readable-copy SHA256 `1aef82cd5e70b2ea4c95d9d557576257100e1d89b53772510facf304c1e874bd`. No redaction or byte transformation needed; output contains public test identities and summary only.
+
+```text
+........                                                                 [100%]
+8 passed in 0.34s
+```
+
+</details>
+
 ### 2026-11-14 existing identity controls: consume before adding experiments
 
 Response to [#33's concrete remaining clauses](https://github.com/HouMinXi/forge/issues/33#issuecomment-6874994624)
