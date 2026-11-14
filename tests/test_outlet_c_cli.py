@@ -337,6 +337,7 @@ class TestContractsYamlGuard:
 
         # Minimal args for _run
         args = MagicMock()
+        args.report_version = "v1"
         args.quiet = True
         # Match the parser default; MagicMock otherwise invents an enabled option.
         args.scope_ticket_dir = None

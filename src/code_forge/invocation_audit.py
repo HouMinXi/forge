@@ -252,11 +252,17 @@ _FAULTS = frozenset(
         "quota_refused",
         "persistence_error",
         "integrity_error",
+        "cleanup_unresolved",
     )
 )
 _PHASES = frozenset(
     ("open", "start", "acquired", "finish", "finalize", "freeze", "replay", "maintenance")
 )
+# Phases that close work rather than start it. An unresolved cleanup must not block them:
+# finish ends an attempt, finalize requires every attempt to be finished, and freeze writes
+# the terminal evidence, so refusing any of them would leave a run that cannot record its
+# own end.
+_SETTLEMENT_PHASES = frozenset(("finish", "finalize", "freeze"))
 
 
 class _Rejected(Exception):
@@ -805,6 +811,9 @@ class _RootHandle:
     capability: AuditCapability
 
     def close(self):
+        # The number is spent before the call, so a failure cannot be retried; the
+        # caller learns about it from the exception, and the scoped latch records that
+        # the release was not confirmed.
         fd, self.fd = self.fd, -1
         if fd >= 0:
             os.close(fd)
@@ -3064,6 +3073,7 @@ class AttemptRecorder:
         self._input_manifest = None
         self._audit_schema_version = audit_schema_version
         self._scoped_fault_domain = scoped_fault_domain
+        self._cleanup_unresolved = False
         # State files (run directory, input manifest, freeze marker, raw body) made
         # visible ahead of the journal event that commits them.
         self._staged = 0
@@ -3210,6 +3220,14 @@ class AttemptRecorder:
         if os.getpid() != self._pid:
             # A forked mutex may be locked by a thread that no longer exists.
             return AuditAcknowledgement(False, AuditFault("identity_conflict", phase, safe_attempt))
+        if self._cleanup_unresolved and phase not in _SETTLEMENT_PHASES:
+            # A descriptor this recorder could not confirm released may still hold the
+            # root, so allocation stops until the process starts a new recorder. Only the
+            # scoped path arms this latch, which is why the unscoped path keeps allocating:
+            # it publishes no such promise. Termination still has to reach the journal,
+            # because refusing finalize would leave a run that reads as active for a
+            # recorder that already knows it is not clean.
+            return AuditAcknowledgement(False, AuditFault("cleanup_unresolved", phase, safe_attempt))
         with nullcontext() if _mutex_held else self._mutex:
             if self._construction_fault:
                 return self._denied(self._construction_fault, phase, safe_attempt)
@@ -3240,7 +3258,13 @@ class AttemptRecorder:
 
             try:
                 if self._capability is not None:
-                    _require(handle.capability == self._capability, "integrity_error")
+                    # A replaced root is an identity refusal, not a post-verification
+                    # tamper, but only when the scoped domain owns this operation: the
+                    # unscoped path keeps the code it has always raised.
+                    _require(
+                        handle.capability == self._capability,
+                        "identity_conflict" if self._scoped_fault_domain else "integrity_error",
+                    )
                 with _root_lock(handle, deadline=deadline, monotonic=self._monotonic, create=create):
                     try:
                         result = measured(handle)
@@ -3259,8 +3283,23 @@ class AttemptRecorder:
             finally:
                 try:
                     handle.close()
-                except OSError:
-                    result = deny("persistence_error")
+                except BaseException as close_error:
+                    # Any exception leaves the release unconfirmed, so the scoped latch arms
+                    # for every kind. Only an OSError becomes this call's verdict: an
+                    # interrupt must still reach its caller with the latch already set.
+                    if self._scoped_fault_domain:
+                        self._cleanup_unresolved = True
+                        # Nothing is journaled on this path, so the only way the run can
+                        # avoid claiming completeness is this flag.
+                        self._complete = False
+                    if not isinstance(close_error, OSError):
+                        raise
+                    # An unconfirmed release outranks the operation's own outcome: without
+                    # it the scoped domain cannot promise that a later allocation is clean.
+                    if self._scoped_fault_domain:
+                        result = deny("cleanup_unresolved")
+                    else:
+                        result = deny("persistence_error")
             return result
 
     def _journal_mark(self):
@@ -3436,7 +3475,10 @@ class AttemptRecorder:
             ack
             if isinstance(ack, StartAcknowledgement)
             else StartAcknowledgement(
-                False, None, ack.fault, publication_uncertain=ack.publication_uncertain
+                False,
+                None,
+                ack.fault,
+                publication_uncertain=ack.publication_uncertain,
             )
         )
 
@@ -3603,7 +3645,11 @@ class AttemptRecorder:
             ack
             if isinstance(ack, AcquiredAcknowledgement)
             else AcquiredAcknowledgement(
-                False, None, None, ack.fault, publication_uncertain=ack.publication_uncertain
+                False,
+                None,
+                None,
+                ack.fault,
+                publication_uncertain=ack.publication_uncertain,
             )
         )
 
@@ -3700,7 +3746,13 @@ class AttemptRecorder:
             if state is not None and result.publication_uncertain:
                 state["uncertain"] = True
             return StageAcknowledgement(
-                False, handle, None, 0, True, result.fault, result.publication_uncertain
+                False,
+                handle,
+                None,
+                0,
+                True,
+                result.fault,
+                result.publication_uncertain,
             )
         except _Rejected as error:
             changed = acquired and self._journal_mark() != before
@@ -4006,7 +4058,13 @@ class AttemptRecorder:
         )
         if isinstance(result, AcquiredAcknowledgement):
             return result
-        return AcquiredAcknowledgement(False, None, None, result.fault, result.publication_uncertain)
+        return AcquiredAcknowledgement(
+            False,
+            None,
+            None,
+            result.fault,
+            result.publication_uncertain,
+        )
 
     def publish_input_manifest(self, manifest: dict) -> AuditAcknowledgement:
         def action(handle):
@@ -4475,6 +4533,8 @@ def maintain_audit_root(
             try:
                 handle.close()
             except OSError:
+                # Module-level maintenance owns no recorder state, so there is no latch to
+                # arm here; it reports the release failure through its own result.
                 if result.admitted:
                     result = AuditAcknowledgement(
                         False,

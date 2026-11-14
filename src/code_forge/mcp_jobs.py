@@ -22,7 +22,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_serializer
 
 from code_forge.proc import (
     group_of,
@@ -108,6 +108,16 @@ class ForgeResult(BaseModel):
     # Parsed from the same CLI SARIF stdout via the shared reader.
     report_classification: dict[str, Any] | None = None
 
+    # Opt-in reader evidence; absent (not null) on the legacy wire contract.
+    report_reader: dict[str, Any] | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):
+        result = handler(self)
+        if self.report_reader is None:
+            result.pop("report_reader", None)
+        return result
+
 
 class ForgeJobRef(BaseModel):
     """Job reference returned to MCP clients for polling."""
@@ -136,6 +146,7 @@ def start_job(
     max_lifetime_s: float | None = None,
     deadline: float | None = None,
     idle_timeout_s: float | None = None,
+    report_version: str = "v1",
 ) -> str:
     """Register a background job. Returns job_id (UUID4).
 
@@ -150,8 +161,11 @@ def start_job(
     long. A multi-round review can run for hours while making progress, so
     a total cap is applied only when explicitly configured.
     """
+    if type(report_version) is not str or report_version not in {"v1", "v2"}:
+        raise ValueError("unsupported report version")
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {
+        "report_version": report_version,
         "comm_task": comm_task,
         "proc": proc,
         "wait_task": None,
@@ -376,6 +390,11 @@ async def _wait_for_job(job_id: str) -> None:
                 stderr_text = ""
         else:
             stderr_text = stderr_bytes.decode(errors="replace")
+        selection = None
+        if entry.get("report_version") == "v2":
+            from code_forge.report_runtime_v2 import select_report_bytes
+
+            selection = select_report_bytes(stdout_bytes)
         entry["status"] = "completed"
         entry["result"] = {
             "stdout": stdout_bytes.decode(errors="replace"),
@@ -384,6 +403,8 @@ async def _wait_for_job(job_id: str) -> None:
             "verdict": verdict,
             "duration_s": elapsed,
         }
+        if entry.get("report_version") == "v2":
+            entry["result"]["report_selection"] = selection
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - entry["created_at"]
         proc = entry["proc"]

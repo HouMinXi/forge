@@ -129,6 +129,7 @@ def test_cross_repo_never_passes_review_lenses():
 
 def _args() -> MagicMock:
     args = MagicMock()
+    args.report_version = "v1"
     args.quiet = True
     # Match the parser default; MagicMock otherwise invents an enabled option.
     args.scope_ticket_dir = None
