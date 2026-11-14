@@ -1032,10 +1032,17 @@ class TestParallelL1:
 
         from code_forge.factories import build_l1_provider
 
-        slept = []
+        import threading
+
+        events = {}
+        event_lock = threading.Lock()
+
+        def record(event):
+            with event_lock:
+                events.setdefault(threading.get_ident(), []).append(event)
 
         def mock_sleep(seconds):
-            slept.append(seconds)
+            record(("sleep", seconds))
 
         def mock_invoke(prompt, **kw):
             if "structural code reviewer" in prompt:
@@ -1044,6 +1051,7 @@ class TestParallelL1:
                 line = 2
             else:
                 line = 3
+            record(("invoke", line))
             return _stub_llm_response(
                 [{"file": "src/a.py", "line": line, "severity": "P2", "description": "staggered"}],
                 self._EXCERPTS,
@@ -1060,7 +1068,20 @@ class TestParallelL1:
             findings, _, _, _ = provider()
 
         assert len(findings) == 3
-        assert slept == [0.0, 10.0, 20.0] or slept == [10.0, 20.0]
+        # Worker arrival order is not a scheduling contract. Each pass must
+        # receive its own delay before invocation, even if a worker is reused.
+        delays_by_pass = {}
+        for thread_events in events.values():
+            pending = []
+            for kind, value in thread_events:
+                if kind == "sleep":
+                    pending.append(value)
+                else:
+                    assert value not in delays_by_pass, "pass invoked more than once"
+                    delays_by_pass[value] = tuple(pending)
+                    pending.clear()
+            assert pending == [], "delay happened after the final invocation"
+        assert delays_by_pass == {1: (), 2: (10.0,), 3: (20.0,)}
 
     def test_failure_isolation_api(self):
         """Direction 3: one pass fails, other two still produce findings."""
