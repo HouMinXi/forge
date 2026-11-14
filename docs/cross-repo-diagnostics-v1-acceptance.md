@@ -2,6 +2,41 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a replacement for the unpublished original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-14 owner decisions (limited scope)
+
+Decision-maker: the owner/user in the Forge project chat. The owner replied
+“可以” to three explicit recommendations: the bounded existing entry contracts,
+the T14 unsupported/not-applicable disposition, and no promise of stable ordering
+among equal-ranked results. Source is that project-chat approval, relayed to the
+executor; there is no GitHub decision permalink. This document records the
+approval without inventing a public source URL or publishing private chat metadata.
+
+Applicability: product/test and prior acceptance document at
+`2b2ac9fc18285f78acf5503ded830d256b3a99ff`; prior document blob
+`e3d8660b450f75d9b5a056c4d0379db84398faba`. The resulting documentation commit
+records these decisions; it does not reassign historical test evidence to this
+product revision. No new execution or negative control accompanied this record.
+
+Accepted entry semantics: default CLI/MCP provide the existing text contract;
+CLI diagnostic-ticket opt-in retains its existing caller handoff and original-tuple
+reread; historical readers provide historical information without current-run
+credit; direct-host without a completion slot promises no caller reread.
+This is not blanket acceptance of every detail in the proposed entry table:
+whole live SDK/recovery qualification, detailed storage/cancellation/support
+limits, and scope-live counts acceptance remain separately pending.
+
+T14: cross-repository HOLD resumption is **UNSUPPORTED**; single-repository HOLD
+has no diagnostic axis and that qualification is **NOT APPLICABLE**. Neither is
+PASS. New-host identity remains a distinct T10 obligation.
+
+T06: stable ordering among equal-ranked results is **NOT PROMISED**. This removes
+that proposed ordering obligation, not the existing top-N or direct-caller
+requirements; single-hop/extra-hop evidence remains separately unresolved.
+
+All other decisions retain their prior status, including G01/G02 protocol freeze,
+other support domains, original78 version-replacement approval, and final G12/G13.
+Original78 remains UNKNOWN. Related to #33 and #441; both remain open.
+
 ## 2026-11-13 entry adjudication and unified evidence gaps (proposal)
 
 This is the first documentation-only response to the [current #441
@@ -10,7 +45,8 @@ handoff](https://github.com/HouMinXi/forge/issues/441#issuecomment-6853641063) a
 the [#33 coordination comment](https://github.com/HouMinXi/forge/issues/33#issuecomment-6853622908).
 It uses the existing A01–A08, G01–G13, T01–T20/T18a–f and R0–R4 identifiers;
 it adds no gate or parallel acceptance process. The proposed dispositions below
-require maintainer acceptance. No production behavior, schema, permission,
+require maintainer acceptance unless specifically superseded by the limited
+2026-11-14 owner decisions above. No production behavior, schema, permission,
 workflow, test or issue checkbox changes in this revision.
 
 ### R0/R1: fixed inputs and evidence status
@@ -41,8 +77,9 @@ workflow, test or issue checkbox changes in this revision.
   Python 3.14 is the intended test contract; pin its actual patch version and
   dependencies when R0 is executed. Source-tree and installed-wheel evidence must
   remain separate.
-- Status vocabulary: **contract accepted** applies only to the existing limited
-  G03/G05/G06/G07 registrations; **merged implementation** describes source;
+- Status vocabulary: **contract accepted** applies to the existing limited
+  G03/G05/G06/G07 registrations and the specifically recorded 2026-11-14
+  owner decisions, not whole-gate qualification; **merged implementation** describes source;
   **reported test** describes a cited author's result; **current reverified** needs
   new fixed-revision execution and is assigned only to the bounded cases below; **decision pending** and
   **unsupported** are not passes. Counts, collection, overlapping selections and
@@ -64,8 +101,9 @@ workflow, test or issue checkbox changes in this revision.
 This register responds to the [formal COMMENT review](https://github.com/HouMinXi/forge/pull/493#pullrequestreview-5892176064)
 and [#441 execution direction](https://github.com/HouMinXi/forge/issues/441#issuecomment-6854967873).
 COMMENT is not APPROVE, contract acceptance, merge authorization or independent
-G0 qualification. Every entry below is **PENDING**. “Continue” does not accept all
-contracts. Applicable product/test revision is `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`;
+G0 qualification. The specific 2026-11-14 owner approval updates only the
+semantics named in its decision record above. Other entry details remain PENDING;
+a generic “Continue” is not blanket contract acceptance. Applicable product/test revision is `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`;
 the reviewed starting document is `5fc7c78bef68658f37c5aa93295dad963aa3c10c`, with this
 follow-up proposed in [#493](https://github.com/HouMinXi/forge/pull/493). A real
 decision must bind its exact reviewed document commit, decision author, rationale
@@ -73,14 +111,14 @@ and actual decision permalink; none is invented here.
 
 | Existing entry/subentry | Proposed decision and reason | Decision / applicable revisions / decision-maker / decision link |
 | --- | --- | --- |
-| Default live CLI | Accept attributed text consumption, not a mandatory locator/result return; production publication/read/delivery remain distinct. | PENDING; product as above, final document revision PENDING; actual decision-maker UNKNOWN; decision link NONE. Review request: formal COMMENT above. |
-| Immediate/background live MCP | **Accept the bounded text contract; defer whole-SDK/live recovery qualification.** Same default CLI-child text contract; `forge_review` builds its own CLI arguments and has no `diagnostic_ticket_directory` or `--diagnostic-ticket-dir` parameter. Background `forge_job_status` reports the same job output, not a new invocation or slot. Do not infer CLI opt-in handoff from MCP historical tools. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
-| Direct `run_cross_repo` without completion slot | **Amend the consumer requirement to distinguish these two supported cases.** `_diagnostic_completion=None` is supported by source. With no ticket directory there is no slot/notice guarantee. With a ticket directory but no slot, the primary worker reports ticket export outcomes directly; this is not the owning CLI thread's post-completion original-tuple reread. Preserve this distinct proposal, rather than adding a uniform result API. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. Source: `cross_repo.py` primary-worker no-slot notice branch; tests/qualification beyond static source are UNKNOWN unless explicitly mapped. |
-| CLI diagnostic-ticket opt-in | Accept #491's original tuple handoff only when CLI creates the slot for the explicitly supplied directory; do not promote worker completion to whole-CLI completion. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
-| CLI diagnostic history | Accept explicitly caller-trusted historical selection, never current-run authority. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
-| MCP diagnostic history | Accept default-off server-root-bound historical reader with its bounded cancellation behavior; not live CLI opt-in. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
+| Default live CLI | Accept attributed text consumption, not a mandatory locator/result return; production publication/read/delivery remain distinct. | ACCEPTED: existing attributed text contract only; 2026-11-14 owner chat decision above. No new runtime qualification. |
+| Immediate/background live MCP | **Accept the bounded text contract; defer whole-SDK/live recovery qualification.** Same default CLI-child text contract; `forge_review` builds its own CLI arguments and has no `diagnostic_ticket_directory` or `--diagnostic-ticket-dir` parameter. Background `forge_job_status` reports the same job output, not a new invocation or slot. Do not infer CLI opt-in handoff from MCP historical tools. | ACCEPTED: existing CLI-child text contract only; 2026-11-14 owner chat decision above. Whole-SDK/recovery and other proposed details remain pending. |
+| Direct `run_cross_repo` without completion slot | **Amend the consumer requirement to distinguish these two supported cases.** `_diagnostic_completion=None` is supported by source. With no ticket directory there is no slot/notice guarantee. With a ticket directory but no slot, the primary worker reports ticket export outcomes directly; this is not the owning CLI thread's post-completion original-tuple reread. Preserve this distinct proposal, rather than adding a uniform result API. | ACCEPTED: no caller reread promise without a slot; 2026-11-14 owner chat decision above. Detailed directory/worker-notice proposal is not blanket-approved. |
+| CLI diagnostic-ticket opt-in | Accept #491's original tuple handoff only when CLI creates the slot for the explicitly supplied directory; do not promote worker completion to whole-CLI completion. | ACCEPTED: existing caller handoff and original-tuple reread; 2026-11-14 owner chat decision above. No whole-CLI/SDK qualification implied. |
+| CLI diagnostic history | Accept explicitly caller-trusted historical selection, never current-run authority. | ACCEPTED: historical information only, no current-run credit; 2026-11-14 owner chat decision above. Other support details remain pending. |
+| MCP diagnostic history | Accept default-off server-root-bound historical reader with its bounded cancellation behavior; not live CLI opt-in. | ACCEPTED: historical information only, no current-run credit; 2026-11-14 owner chat decision above. Root/cancellation/support details are not blanket-approved. |
 | Scope live | Accept independently captured counts/text only, not impact coverage or diagnostic-v1 extension. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
-| Scope historical CLI/MCP | Accept separate historical count projections with no current-run credit. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
+| Scope historical CLI/MCP | Accept separate historical count projections with no current-run credit. | ACCEPTED only as historical information without current-run credit; 2026-11-14 owner chat decision above. Scope-live and detailed support decisions remain pending. |
 
 The subentries refine the existing six-family table, not a new workflow or new
 public API. The real review links above establish requested adjudication, **not**
@@ -97,7 +135,8 @@ closing conditions. Expanding them requires a separate design.
 
 #### Decision rationale, evidence consumption and finite exit
 
-These are executor recommendations, not maintainer decisions. The eight existing
+These are the original executor recommendations, superseded only by the
+limited 2026-11-14 owner decisions above. The eight existing
 entry rows are the decision units; scope live and scope history must not receive
 one implicit blanket approval. Accept the bounded default CLI text, explicit CLI
 opt-in, caller-trusted CLI history, server-root-bound MCP history, live counts and
@@ -129,9 +168,8 @@ cross-repository HOLD resumption **UNSUPPORTED** under the already accepted no-H
 contract, and mark single-repository HOLD diagnostic-axis qualification **NOT
 APPLICABLE** because that path has no cross-repository axis. Neither is a PASS or
 a reason to create a recovery feature. The supported new-host identity obligation
-remains T10, with its own evidence; it is not a replacement recovery run. Recording
-this scope disposition is pending maintainer decision, not pending execution of
-an unsupported test.
+remains T10, with its own evidence; it is not a replacement recovery run. This exact T14 disposition was accepted by the 2026-11-14 owner chat decision
+above; it is not execution or recovery PASS.
 
 **Original 78 version-replacement recommendation:** accept a new, explicitly
 versioned *clause-based* acceptance catalogue after independent review, rather
@@ -1123,8 +1161,8 @@ reconstruction remain separate, unfinished qualification.
 The complete local document (not a connector preview) was used to check the six
 finite T03/T06/T12/T14/T19/T20 tasks, stable evidence anchors and parameter lists.
 T19's static assertion audit and T03/T06/T20 selected-node/source audits are finished;
-their identified runtime/oracle gaps, remaining tasks and all new contract
-decisions remain explicitly pending. The executor can finish indexing and safe
+their identified runtime/oracle gaps and unapproved contract decisions remain
+explicitly pending, except the limited 2026-11-14 dispositions recorded above. The executor can finish indexing and safe
 transcription, but cannot turn these proposed support/port dispositions into
 maintainer decisions. Original 78-port status remains UNKNOWN.
 
@@ -1579,12 +1617,12 @@ contract-only decisions retain the entry decision register or explicit PENDING.
 | G01 | One current self-contained contract; replace conflicting v4 origin/State-save/eager-snapshot/HOLD/root proposals; explicit four-P1 and support dispositions. `cross-repo-diagnostics-v1.md`, entry table and original comments. | **Decision pending**. T08–T12/T14/T18/T19 implement parts, but source existence/merge is not approval. Record accepted replacements and preserve original obligations or named unsupported dispositions; no runtime G0 toggle. | Contract decisions: entry decision register; [T14](#evidence-t14), [T18](#evidence-t18), [T19](#evidence-t19) for support dispositions. |
 | G02 | Freeze nine exact fields, types/version, five legal state/diagnostic combinations, exact UTF-8/diff, unknown/missing/duplicate/nonfinite rejection, byte/depth/string/sequence/attempt limits and opaque repository alias/privacy. `_advisory_diagnostics` codec plus capture budgets. | T16 expanded families cover baseline syntax/context; T15/T18 cover storage separately. **Merged source; formal freeze pending.** Decoder field omissions and valid-limit boundaries need current logs; neither UUID nor digest proves authorization. | Schema/context/limits: [T16](#evidence-t16); storage budget: [T15](#evidence-t15), [T18d](#evidence-t18d). |
 | G03 | Original observation separated from delivery; actual/cache metadata; same-input hit reuses sequence/artifact/publication/error view, no SQL/republication/credit; uncached early repeat is actual. Capture Record and runner final cache. | **Limited contract accepted**; bounded cache-republication and cached formal-reader invocation controls are recorded in the dated supplements; other nodes retain their individual status under the dated supplements. The existing cold/warm record/bytes/SQL and G07 controls are not omitted from that record. Original object/context, SQL/publish counters and bytes are oracles; do not infer state from empty findings. | Observation/delivery and cache: [T09](#evidence-t09), [T11](#evidence-t11), [T12](#evidence-t12). |
-| G04 | Per-entry issuance before runner/cache, repository/axis/sequence binding, forwarding to publisher/formal reader, explicit caller success/failure/locator and independent expected; same MCP child retains identity; supported new host versus recovery. Host UUID, capture, CLI completion and MCP child. | Entry table plus T08/T10/T14/T20 and history catalogue. **Per-entry decision pending**; #491 is real opt-in handoff, default text-only proposal remains a decision. Do not force a uniform public return or invent authenticated cross-restart state. | Issuance/forwarding/caller: [T08](#evidence-t08), [T10](#evidence-t10); recovery: [T14](#evidence-t14); entry decisions above. |
-| G05 | Preserve cross-repo PENDING→FAIL/no HOLD; single-repo HOLD has no axis, actual recovery not fabricated. `run_cross_repo`; CLI dispatch/HOLD routing. | **Limited contract accepted**; T14 includes controlled compatibility node and new-host evidence, not live recovery. Explicit original T14 not-applicable disposition still required. | Pending/HOLD/axis support: [T14](#evidence-t14). |
+| G04 | Per-entry issuance before runner/cache, repository/axis/sequence binding, forwarding to publisher/formal reader, explicit caller success/failure/locator and independent expected; same MCP child retains identity; supported new host versus recovery. Host UUID, capture, CLI completion and MCP child. | Entry table plus T08/T10/T14/T20 and history catalogue. **Limited entry semantics accepted on 2026-11-14** as recorded above; remaining per-entry details and whole G04 remain pending. #491 is real opt-in handoff. Do not force a uniform public return or invent authenticated cross-restart state. | Issuance/forwarding/caller: [T08](#evidence-t08), [T10](#evidence-t10); recovery: [T14](#evidence-t14); entry decisions above. |
+| G05 | Preserve cross-repo PENDING→FAIL/no HOLD; single-repo HOLD has no axis, actual recovery not fabricated. `run_cross_repo`; CLI dispatch/HOLD routing. | **Limited contract accepted**; T14 includes controlled compatibility node and new-host evidence, not live recovery. Original T14 UNSUPPORTED/NOT APPLICABLE disposition accepted on 2026-11-14; neither is PASS. | Pending/HOLD/axis support: [T14](#evidence-t14). |
 | G06 | Admission before cache/error clear/SQL/publication; original installed capture/identity/stage-store/process/thread, lexical/canonical root/exact diff; stage-effective actual first use, untouched stages lazy, same-instance retain/new-host rediscover; no repeated fallback native work on budget error. `DiagnosticCapture.admit`/stage methods, runner. | **Limited contract accepted**; T07/T11/T12 exact nodes/counters. The dated supplements record three changed-input omission controls plus the separately scoped existing stage/cache/budget controls; uncited nodes remain NOT_RUN. Fork/process and simultaneous-use qualification not inferred from foreign-thread tests; no atomic/freshness guarantee. | Discovery stage: [T07](#evidence-t07); admission/cache/error view: [T11](#evidence-t11), [T12](#evidence-t12). |
 | G07 | Retain original observation/findings/errors; isolate returned containers and stage dictionaries; old uncached errors do not overwrite cached view; supported-type/budget/encoding failure unavailable, never successful empty history. Capture snapshot/cache. | **Limited contract accepted**; T11/T12 plus bounded/history nodes in their expansions. Arbitrary nested objects are unsupported; current mutation/log coverage not established by frozen types. | Snapshot/cache isolation and unavailable: [T11](#evidence-t11), [T12](#evidence-t12), [T16](#evidence-t16). |
 | G08 | Primary persistent root outside every temporary root/alias, namespace ownership, canonical/no-follow/regular file, qualified FS/ACL/path budgets; same-key conflict and concurrent distinct executions; inode-reuse limitations. Storage binder/publisher/reader. | T15–T18d/e and storage-support catalogue. **Decision pending** on exact support/alias/budget/overlap claims. Source/metadata checks are not generation continuity or same-UID authentication; library overlap is not whole-host concurrency. | Storage/identity/concurrency: [T15](#evidence-t15), [T16](#evidence-t16), [T17](#evidence-t17), [T18d](#evidence-t18d), [T18e](#evidence-t18e). |
-| G09 | Actual publisher→formal reader→consumer, independent expected and success/failure result; no logger-as-durability proof, no latest scan; publication/read/empty/nonempty delivery separated. Capture.present, default output, opt-in completion, historical readers. | Entry table; T08/T15/T20; **Decision pending**. A02 empty not_run reachability and A03 per-entry acceptance stay explicit. All channels failing is unconfirmed/not delivered, never caller success. | Actual formal consumer: [T08](#evidence-t08); delivery/failure: [T20](#evidence-t20); per-entry decision above. |
+| G09 | Actual publisher→formal reader→consumer, independent expected and success/failure result; no logger-as-durability proof, no latest scan; publication/read/empty/nonempty delivery separated. Capture.present, default output, opt-in completion, historical readers. | Entry table; T08/T15/T20; **limited entry semantics accepted on 2026-11-14; remaining decisions pending**. A02 empty not_run reachability and unapproved A03 details stay explicit. All channels failing is unconfirmed/not delivered, never caller success. | Actual formal consumer: [T08](#evidence-t08); delivery/failure: [T20](#evidence-t20); per-entry decision above. |
 | G10 | Confirmed published/not_published/unknown; verify commit identity/content, no locator for unknown, no overwrite/automatic retry/old fallback; staging, commit, cleanup and return distinct. PublicationResult and capture attempt ledger. | T15/T17/T18e/T19 exact fault/unknown nodes. **Decision pending**; The dated supplements distinguish the standalone false-success replacement from the existing foreign-final UNKNOWN control; uncited nodes/omission controls remain NOT_RUN. No journal/exactly-once/power-loss promise. | Three states/commit: [T15](#evidence-t15), [T18e](#evidence-t18e); conflict: [T17](#evidence-t17); controls: [T19](#evidence-t19). |
 | G11 | Pre/post commit and primary/sibling/receipt/replay/setup/read/output/callback exits; preserve primary/control exception identity; bounded owned cleanup; event/join/cwd/capture/artifact/caller facts separate. Owned cwd scope, capture close, completion, deferred signal flow. | T18a–f/T19/T20. #452 fixes callback masking only; **Decision pending** on remaining asynchronous/permission/source-lock/unregistered-allocation limits, not a demand to change shared lifecycle. | Normal/error/cancel/root/staging/cleanup: [T18a](#evidence-t18a), [T18b](#evidence-t18b), [T18c](#evidence-t18c), [T18d](#evidence-t18d), [T18e](#evidence-t18e), [T18f](#evidence-t18f); control identity [T19](#evidence-t19), delivery [T20](#evidence-t20). |
 | G12 | Original-port disposition, real file/node identity including params, independent oracle, exact fault location/class, baseline GREEN/semantic RED/byte-restored GREEN, public identity and safe raw logs; no overlap-count credit. | This static inventory and original-port **UNKNOWN** are inputs only. Only the precise cases and probe cited in dated supplements have their recorded collection/execution results; uncited cases remain NOT_RUN, and PASS without a dedicated omission run supplies no new RED credit. No claim to recovered or equivalent 78-port; decide versioned replacement rather than infinite wait or silent deletion. | All T01–T20 stable records below; their node-specific evidence slots remain separate; original-port replacement decision PENDING. |
@@ -1725,7 +1763,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_actual_analysis_states_do_n
 - Actual source: CrossRepoImpactRunner._run_analysis_impl; caller helper and finding selection.
 - Independent oracle / input: Real SQLite caller rows and explicit expected findings/count/cap; cache no-warning assertions for empty and nonempty result.
 - Remaining gap / supported disposition: Exact equal-rank sort tie cases and a dedicated extra-hop prohibition oracle are not identified by these selectors: retain as mapping gaps, not new multi-hop feature requests.
-- Static follow-up: `TestTopNCap::test_cap_at_top_n` builds `_TOP_N + 5` callers but asserts only result length. The production ranking uses stable Python sort by proximity, without an explicit tie-break key; the shared `_CALLERS_SQL` has no `ORDER BY`. This does not establish deterministic equal-rank identity selection across SQLite plans. `_CALLERS_SQL` selects direct CALLS edges for the requested target, with an IMPORTS_FROM predicate; `_live_callers` resolves source locations/liveness, not recursive caller expansion. These source facts are not an executed extra-hop rejection oracle. Decide the equal-rank ordering promise before proposing a test or production change; dedicated tie-order and extra-hop node identities remain UNKNOWN.
+- Static follow-up: `TestTopNCap::test_cap_at_top_n` builds `_TOP_N + 5` callers but asserts only result length. The production ranking uses stable Python sort by proximity, without an explicit tie-break key; the shared `_CALLERS_SQL` has no `ORDER BY`. This does not establish deterministic equal-rank identity selection across SQLite plans. `_CALLERS_SQL` selects direct CALLS edges for the requested target, with an IMPORTS_FROM predicate; `_live_callers` resolves source locations/liveness, not recursive caller expansion. These source facts are not an executed extra-hop rejection oracle. The 2026-11-14 owner decision does not promise stable equal-rank ordering; no new tie-order test or implementation is required by that scope. Dedicated extra-hop node identity remains UNKNOWN and its evidence obligation is not waived.
 - R3 status: Blanket empty-result warning, cap removal, extra-hop insertion: dedicated current controls NOT_RUN; historical finding regressions are not per-mutation proof.
 
 <details>
@@ -1944,7 +1982,7 @@ tests/test_cross_repo_native_consumer_chain.py::test_native_mcp_cli_read_loss_is
 - Obligation: New host identity and no prior-record reuse; explicitly dispose original HOLD-reentry expectation by supported lifecycle.
 - Actual source: run_cross_repo PENDING-to-FAIL; single-repo HOLD path excludes this axis.
 - Independent oracle / input: Independent new-host context; compatibility test returns PENDING via controlled machine and checks FAIL/warning.
-- Remaining gap / supported disposition: Cross-repository HOLD/recovery UNSUPPORTED by accepted G05. Controlled PENDING is branch compatibility, not natural HOLD execution. Maintainer must record this T14 disposition, not fabricate recovery credit.
+- Remaining gap / supported disposition: Cross-repository HOLD/recovery UNSUPPORTED by accepted G05. Controlled PENDING is branch compatibility, not natural HOLD execution. The 2026-11-14 owner decision above records this T14 disposition, without recovery credit.
 - R3 status: No HOLD mutation scheduled for unsupported path. Identity omission belongs T10; pending current verification NOT_RUN.
 
 <details>
@@ -2540,13 +2578,14 @@ not a reason to invent a test or keep an unlimited investigation open.
 | Existing record | First reuse/map step | Finite deliverable and exit; current status |
 | --- | --- | --- |
 | [T03](#evidence-t03): primary connection count | Inspect the listed immediate zero-target controls and SQL trace fixtures. Their sibling `forbid` sentinel does not prove no primary connection, and a zero query trace is not a zero connection count. | The original fixed-baseline `no-path`/`deleted` nodes had only sibling registry/helper forbid sentinels, with no primary connection count. The existing nodes now carry the implemented post-setup primary-connection observer, plus unnamed positive control, documented in the 2026-11-14 T03 supplement; original diagnostic and empty-result assertions are preserved. The bounded three-node observation/ordering-control sequence is recorded above; other runtime/support dispositions remain PENDING. |
-| [T06](#evidence-t06): equal-rank order/single-hop | Reuse listed `TestTopNCap::test_cap_at_top_n` and caller-query controls; check ties and actual SQL edge traversal separately. A top-N count is not tie-order or no-second-hop proof. | Selected-node/source static audit completed in T06: top-N test asserts length only; query is direct-edge and has no ORDER BY, ranking has no explicit tie key. Dedicated tie-order/extra-hop nodes remain UNKNOWN. Maintainer decides tie-order promise and required rejection oracle; no product defect or runtime pass inferred. PENDING decision. |
+| [T06](#evidence-t06): equal-rank order/single-hop | Reuse listed `TestTopNCap::test_cap_at_top_n` and caller-query controls; check ties and actual SQL edge traversal separately. A top-N count is not tie-order or no-second-hop proof. | Selected-node/source static audit completed in T06: top-N test asserts length only; query is direct-edge and has no ORDER BY, ranking has no explicit tie key. Dedicated tie-order/extra-hop nodes remain UNKNOWN. Owner decision on 2026-11-14: stable tie order NOT PROMISED. Single-hop/extra-hop oracle remains unresolved; no product defect or runtime pass inferred. |
 | [T12](#evidence-t12): process/fork/shared-use | Keep executed three warm-input cases separate. Reuse installed-capture closed/foreign-thread cases already indexed; serial foreign-thread refusal/reuse does not qualify fork or simultaneous shared use. | Explicitly accept unsupported process/fork/shared-use scope, or identify one supported scenario and exact existing node/oracle. Fork/shared-use runtime evidence UNKNOWN; no new concurrency experiment pending domain decision. PENDING. |
-| [T14](#evidence-t14): recovery | Reuse controlled PENDING compatibility and new-host identity controls; neither is HOLD resume. Preserve existing no-cross-repository-HOLD limited contract. | Maintainer records the original recovery obligation's not-applicable/unsupported disposition and rationale at the fixed document commit. Do not add fake recovery tests or silently delete the obligation. PENDING. |
+| [T14](#evidence-t14): recovery | Reuse controlled PENDING compatibility and new-host identity controls; neither is HOLD resume. Preserve existing no-cross-repository-HOLD limited contract. | Owner accepted the original recovery obligation's UNSUPPORTED/NOT APPLICABLE disposition on 2026-11-14; see the fixed-version chat-source record above. This disposition task is complete, not a recovery PASS. Do not add fake recovery tests or delete the original obligation. |
 | [T19](#evidence-t19): identity/read/FD assertions | Reuse listed process-control, close, identity and post-cleanup-reader controls; annotate each actual assertion (type/message, object identity, payload/file presence, formal reread or descriptor count). | Static assertion matrix completed in T19 at the fixed source; runtime status follows exact dated supplements and support acceptance remains PENDING. Descriptor-count assertions are absent in the selected nodes. Close-after-success faults cannot prove failed-close cleanup. Reuse the mapped identity/read controls; decide whether one bounded FD oracle is required before any additional test. |
 | [T20](#evidence-t20): natural not_run | Reuse explicitly controlled omitted-dispatch nodes and current source reachability. Separate empty formal consumption from absence of publication and sink health. | Selected fixture/source audit completed in T20: after normal machine return with no axis call, the completion hook can emit not_run; listed controls deliberately suppress dispatch. Natural entry/path/test remains UNKNOWN. Decide whether injected-state consumer evidence suffices or natural reachability is required; do not create a new product path merely for a test. PENDING decision. |
 
-For all six tasks, final decision author and decision link are still UNKNOWN/NONE.
+For T14 and the T06 tie-order promise, the owner decision/source is recorded
+above; no public decision permalink exists. Other decisions remain pending.
 The [COMMENT review](https://github.com/HouMinXi/forge/pull/493#pullrequestreview-5892176064)
 and [follow-up direction](https://github.com/HouMinXi/forge/issues/441#issuecomment-6854967873)
 are request sources, not affirmative contract decisions. The documentation PR can
@@ -2647,7 +2686,7 @@ The issue now registers limited acceptance of G03, G05, G06 and G07. This is fou
 | Capture all discovery inputs as one snapshot | Record only real first-use stage results, preserving lazy errors, lexical equality and duplicate occurrences. | Limited G06 contract accepted. No atomic snapshot, repeated ambient reread or general freshness promise. Complete real-SQL, invalidation and omission evidence still belongs to T11–T12/G12. |
 | Put `origin` in the serialized observation | Keep the nine-field observation immutable and record actual/cache only in host delivery metadata. | Limited G03 contract accepted. A cache delivery is not a new graph query or publication; complete runtime acceptance remains separate. |
 | Unbounded or arbitrary nested snapshot isolation | Retain supported historical findings/errors and defensive containers within the stated budgets; unavailable history is not an empty successful snapshot. | Limited G07 contract accepted. Frozen/tuple types alone do not prove arbitrary deep immutability; partial-error, nested-isolation and resource controls still require their exact evidence. |
-| General recovery/HOLD identity requirement | New supported host calls get new identities. Cross-repository PENDING remains FAIL. Single-repository HOLD does not construct this diagnostic axis. | Limited G05 boundary accepted. G04's entry/consumer decision and the original T14 disposition remain open; an assigned verdict is not a recovery run. |
+| General recovery/HOLD identity requirement | New supported host calls get new identities. Cross-repository PENDING remains FAIL. Single-repository HOLD does not construct this diagnostic axis. | Limited G05 boundary accepted. G04's unapproved entry details remain open; T14's limited UNSUPPORTED/NOT APPLICABLE disposition was accepted on 2026-11-14. An assigned verdict is not a recovery run. |
 | Durable root or return interface unspecified | Use the primary canonical source root and a private host consumer; public runner/CLI/MCP/Verdict APIs remain unchanged. | Proposed/PENDING: accept this concrete consumer and root rather than require an unused public session interface. |
 | General filesystem identity or freshness | Independently bound observation identity and content digest; device/inode is not a generation identifier. Local Linux overlay/tmpfs exercised; ext4 eligible but not locally qualified. | Proposed/PENDING: accept this bounded storage domain. Same-UID hostile replacement, inode continuity, network filesystems, power loss and reboot persistence are not proved. |
 | Main exception always wins through all cleanup | Diagnostic cleanup and the owned per_cwd scope preserve their incoming exception. Later source-lock cleanup and failures already replaced inside another scope are outside this repair. | The demonstrated cwd-boundary defect has a bounded fix and public controls below. Complete G11/T18 disposition still requires the remaining boundaries; no global guarantee is granted. |
@@ -2722,7 +2761,7 @@ The following names refer to actual collected pytest nodes, not proposed test co
 | T11 cache same input | C `test_duplicate_occurrences_retain_distinct_first_use_native_fallbacks`; P `test_uncached_branch_transitions_get_new_records_and_cache_reuses_publication` | Strengthened oracle checks actual/cache metadata, original record identity, unchanged SQL and publication attempts. Removing cache-origin marking now fails. |
 | T12 context mismatch | C `test_installed_capture_admission_precedes_native_work` (four cold/warm closed-installed/foreign-thread controls; supplement below); C `test_changed_capture_refuses_before_cached_findings_queries_or_error_clear`; C `test_changed_input_refuses_before_cache_sql_error_clear_or_publication[exact-diff]`, `[lexical-root]`, `[canonical-root]` | Each newly guarded comparison has its own exact omission RED. Same-UID filesystem generation continuity remains excluded. |
 | T13 gate isolation | G `test_docs_only_native_ci_keeps_gate_state_with_diagnostic[published-PASS]`, `[published-FAIL]`, `[publication-fault-PASS]`, `[publication-fault-FAIL]` | Reachable docs-only native gate, State and receipt evidence. Injecting the diagnostic into State errors yields four direct membership assertion failures. No code-mutation workload or model-quality claim. |
-| T14 recovery | P `test_new_host_execution_never_reuses_same_source_hash_identity` | Only new supported host identity is proved. Cross-repository HOLD is unsupported; single-repository recovery has no axis. Explicit scope disposition is still required. |
+| T14 recovery | P `test_new_host_execution_never_reuses_same_source_hash_identity` | Only new supported host identity is proved. Cross-repository HOLD is unsupported; single-repository recovery has no axis. T14 scope disposition accepted on 2026-11-14; this is not recovery PASS. |
 | T15 write failure | A `test_precommit_operation_failure_is_not_published`; `test_incomplete_write_never_publishes_and_removes_owned_temp`; `test_link_error_distinguishes_verified_commit_from_unknown`; G publication-fault cases | Open/write/partial/commit ambiguity are covered. No automatic retry, crash journal or full-State-save behavior is introduced. |
 | T16 strict format/context | A `test_duplicate_keys_in_otherwise_valid_document_rejected`; `test_wrong_independent_context_never_returns_empty_success`; `test_large_or_deep_document_rejected_before_json_load`; P `test_real_strict_read_rejects_lost_corrupt_or_wrong_execution_before_output` | Exact duplicate, context, pre-parser byte/depth and content-digest omissions fail. Exhaustive per-validator omission coverage and the original port remain unqualified. |
 | T17 concurrency/duplicate | A `test_same_key_always_refused_without_replacing_original`; P `test_new_host_execution_never_reuses_same_source_hash_identity`; Q `test_concurrent_distinct_execution_publications_remain_independent`, `test_concurrent_same_key_refuses_contender_without_replacing_winner`, `test_concurrent_publishers_preserve_foreign_pending_replacement` | Registered public library controls now overlap production publisher calls with deterministic commit scheduling. Same-key input is adversarial, not a natural host collision. Complete-host concurrency and full T17 admission remain unqualified; see the bounded supplement below. |
