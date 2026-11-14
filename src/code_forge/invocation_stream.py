@@ -1,7 +1,8 @@
 """Bounded raw acquisition adapter; sink acceptance is not a durable audit ACK."""
 
 from dataclasses import dataclass
-from http.client import IncompleteRead
+from http.client import HTTPResponse, IncompleteRead
+from types import MethodType
 import threading
 from typing import Callable
 
@@ -182,14 +183,26 @@ class WireCapture:
         read = getattr(response, "read1", None)
         if not callable(read):
             read = response.read
+        native_chunk_read1 = (
+            type(response) is HTTPResponse
+            and isinstance(read, MethodType)
+            and read.__self__ is response
+            and read.__func__ is HTTPResponse.read1
+        )
         while True:
             with self._lock:
                 if self._sealed:
                     return
+            # CPython read1 returns entity bytes before consuming the trailing
+            # chunk CRLF on the next call. At that boundary IncompleteRead.partial
+            # belongs to framing, not to the decoded body being captured.
+            chunk_delimiter = (
+                native_chunk_read1 and response.chunked is True and response.chunk_left == 0
+            )
             try:
                 block = read(self._chunk)
             except IncompleteRead as error:
-                if type(error.partial) is bytes:
+                if type(error.partial) is bytes and not chunk_delimiter:
                     try:
                         self.append(error.partial)
                     except CaptureUnavailable:

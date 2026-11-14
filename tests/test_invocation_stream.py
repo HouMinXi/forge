@@ -439,3 +439,78 @@ def test_acquisition_complete_requires_eof_and_every_byte_accepted(change):
     state = capture.seal()
     assert sink.getvalue() == b"{}" and state.complete
     assert not replace(state, **change).complete
+
+
+@pytest.mark.parametrize("body", [b"abc", b"abc\r"])
+@pytest.mark.parametrize("fallback", [False, True], ids=["native-read1", "native-read"])
+def test_chunk_delimiter_partial_is_not_entity_data(fallback, body):
+    class Socket:
+        def makefile(self, mode):
+            return io.BytesIO(
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                + f"{len(body):x}\r\n".encode()
+                + body
+                + b"\r"
+            )
+
+    response = HTTPResponse(Socket())
+    response.begin()
+    if fallback:
+        response.read1 = None
+    capture, sink, _ = _capture()
+    try:
+        with pytest.raises(IncompleteRead) as caught:
+            _read_captured_body(response, time.monotonic() + 5, "fixture", capture)
+        assert sink.getvalue() == body
+        assert caught.value.partial == (body if fallback else b"\r")
+        assert capture.seal().interrupted and not capture.seal().eof_seen
+    finally:
+        response.close()
+
+
+@pytest.mark.parametrize("partial", [b"\r", b"\r\n"])
+@pytest.mark.parametrize("read1", [False, True])
+def test_custom_reader_chunk_attributes_do_not_discard_partial(read1, partial):
+    primary = IncompleteRead(partial, 1)
+
+    class Reader:
+        chunked = True
+        chunk_left = 0
+
+        def read(self, size):
+            raise primary
+
+    reader = Reader()
+    if read1:
+        reader.read1 = reader.read
+    capture, sink, _ = _capture()
+    with pytest.raises(IncompleteRead) as caught:
+        _read_captured_body(reader, time.monotonic() + 5, "fixture", capture)
+    assert caught.value is primary
+    assert sink.getvalue() == partial
+    assert capture.seal().interrupted
+
+
+@pytest.mark.parametrize("override", ["read1", "_read1_chunked"])
+def test_http_response_overridden_read1_keeps_entity_partial(override):
+    primary = IncompleteRead(b"\r\n", 1)
+
+    def fail(self, size=-1):
+        raise primary
+
+    Response = type("Response", (HTTPResponse,), {override: fail})
+
+    class Socket:
+        def makefile(self, mode):
+            return io.BytesIO(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+
+    response = Response(Socket())
+    response.begin()
+    response.chunk_left = 0
+    capture, sink, _ = _capture()
+    try:
+        with pytest.raises(IncompleteRead) as caught:
+            _read_captured_body(response, time.monotonic() + 5, "fixture", capture)
+        assert caught.value is primary and sink.getvalue() == b"\r\n"
+    finally:
+        response.close()
