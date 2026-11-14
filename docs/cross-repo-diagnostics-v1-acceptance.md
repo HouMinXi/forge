@@ -23,7 +23,21 @@ reread; historical readers provide historical information without current-run
 credit; direct-host without a completion slot promises no caller reread.
 This is not blanket acceptance of every detail in the proposed entry table:
 whole live SDK/recovery qualification, detailed storage/cancellation/support
-limits, and scope-live counts acceptance remain separately pending.
+limits remain separately pending. Scope-live counts received the separate
+limited decision recorded next.
+
+A subsequent explicit owner reply “可以” in the same project chat accepted
+**scope-live counts as registered and queried range counts, not complete coverage
+or proof of actual execution impact**. This is a separate limited approval, at
+the same applicable product/test revision above and prior decision-document head
+`92bdf96e2917e59813ebe6946622135da4caee2e`. No public decision URL exists.
+The existing counter meanings remain registration occurrences (including duplicate
+registrations), not unique repositories or SQL statements. Missing observation is
+unknown, not zero; a completed query is not successful overall analysis. The
+source/contract basis is `_emit_scope_summary` → `DiagnosticCapture.present_scope`
+and [query-scope v1](cross-repo-query-scope-v1.md). This decision does not accept
+storage/cancellation domains, original78 replacement or final acceptance, and
+supplies no new runtime PASS or scope protocol-freeze approval.
 
 T14: cross-repository HOLD resumption is **UNSUPPORTED**; single-repository HOLD
 has no diagnostic axis and that qualification is **NOT APPLICABLE**. Neither is
@@ -117,8 +131,8 @@ and actual decision permalink; none is invented here.
 | CLI diagnostic-ticket opt-in | Accept #491's original tuple handoff only when CLI creates the slot for the explicitly supplied directory; do not promote worker completion to whole-CLI completion. | ACCEPTED: existing caller handoff and original-tuple reread; 2026-11-14 owner chat decision above. No whole-CLI/SDK qualification implied. |
 | CLI diagnostic history | Accept explicitly caller-trusted historical selection, never current-run authority. | ACCEPTED: historical information only, no current-run credit; 2026-11-14 owner chat decision above. Other support details remain pending. |
 | MCP diagnostic history | Accept default-off server-root-bound historical reader with its bounded cancellation behavior; not live CLI opt-in. | ACCEPTED: historical information only, no current-run credit; 2026-11-14 owner chat decision above. Root/cancellation/support details are not blanket-approved. |
-| Scope live | Accept independently captured counts/text only, not impact coverage or diagnostic-v1 extension. | PENDING; same revisions; actual decision-maker UNKNOWN; decision link NONE. |
-| Scope historical CLI/MCP | Accept separate historical count projections with no current-run credit. | ACCEPTED only as historical information without current-run credit; 2026-11-14 owner chat decision above. Scope-live and detailed support decisions remain pending. |
+| Scope live | Accept independently captured counts/text only, not impact coverage or diagnostic-v1 extension. | ACCEPTED: registered/queried scope counts, not complete coverage or actual execution impact; separate 2026-11-14 owner chat approval above. Storage/cancellation and other support decisions remain pending. |
+| Scope historical CLI/MCP | Accept separate historical count projections with no current-run credit. | ACCEPTED only as historical information without current-run credit; 2026-11-14 owner chat decision above. Detailed support decisions remain pending; scope-live has its separate limited approval above. |
 
 The subentries refine the existing six-family table, not a new workflow or new
 public API. The real review links above establish requested adjudication, **not**
@@ -2524,7 +2538,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_surrogate_registry_alias_pr
 
 ##### G04/G09 separate historical entries
 
-Oracle: explicitly selected caller-trusted saved context, fixed historical projection/current_run_credit=false, actual SDK/stdio child restarts, independently configured roots and exact cancellation/drain ownership. Limits: these additional history entries are not original live T20 or current-review credentials; a ticket basename is not independent origin authentication. Current runtime NOT_RUN; scope live count semantic acceptance remains later #33 work, not expansion of v1.
+Oracle: explicitly selected caller-trusted saved context, fixed historical projection/current_run_credit=false, actual SDK/stdio child restarts, independently configured roots and exact cancellation/drain ownership. Limits: these additional history entries are not original live T20 or current-review credentials; a ticket basename is not independent origin authentication. Current runtime NOT_RUN; scope-live count semantics received separate limited owner approval on 2026-11-14 above, without expanding v1 or granting execution credit.
 
 <details>
 <summary>Exact static parameter identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
