@@ -135,11 +135,15 @@ and [#441 execution direction](https://github.com/HouMinXi/forge/issues/441#issu
 COMMENT is not APPROVE, contract acceptance, merge authorization or independent
 G0 qualification. The specific 2026-11-14 owner approval updates only the
 semantics named in its decision record above. Other entry details remain PENDING;
-a generic “Continue” is not blanket contract acceptance. Applicable product/test revision is `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`;
-the reviewed starting document is `5fc7c78bef68658f37c5aa93295dad963aa3c10c`, with this
-follow-up proposed in [#493](https://github.com/HouMinXi/forge/pull/493). A real
-decision must bind its exact reviewed document commit, decision author, rationale
-and actual decision permalink; none is invented here.
+a generic “Continue” is not blanket contract acceptance. The original proposal and
+historical evidence use product/test revision `7ca557a2d6d56d9c84a810b6c6f1da08861aa7db`
+and starting document `5fc7c78bef68658f37c5aa93295dad963aa3c10c`, subsequently
+delivered through [#493](https://github.com/HouMinXi/forge/pull/493).
+The recorded 2026-11-14 owner decisions instead apply to product/test revision
+`2b2ac9fc18285f78acf5503ded830d256b3a99ff` and the exact prior document identities
+listed above. Bind each decision to its author, rationale, revision and actual
+source; these decisions came from project chat with no public permalink.
+Historical execution is not reassigned to the decision revision.
 
 | Existing entry/subentry | Proposed decision and reason | Decision / applicable revisions / decision-maker / decision link |
 | --- | --- | --- |
@@ -212,10 +216,10 @@ identity/cache/admission (T09–T12), gate isolation (T13), overlap/cleanup/cont
 signals (T17–T19) and delivery (T20), each only to its recorded scope and revision.
 The bounded supplement supplies three warm-input cases, one caller-read case and
 one separate library probe; it does not execute all those categories. T03's bounded primary-connect oracle is now recorded in the dated supplement;
-remaining limitations include T06's tie/single-hop qualification, T12's fork/shared-use
-scope, T19's FD scope and T20's natural not_run disposition remain the specific
-limitations indexed below. T14 is the explicit unsupported/not-applicable
-proposal above. Unrecoverable original cases cannot be named, matched one-to-one,
+remaining limitations include T06's top-N/single-hop qualification, T12's fork/shared-use
+scope, T19's FD scope and T20's natural not_run disposition, as indexed below.
+Stable equal-rank ordering is NOT PROMISED under the recorded owner decision;
+T14's UNSUPPORTED/NOT APPLICABLE disposition is also accepted, not a runtime PASS. Unrecoverable original cases cannot be named, matched one-to-one,
 or counted as covered: original identities, bytes and equivalence stay UNKNOWN.
 No replacement approval, original-port recovery or full coverage is claimed;
 #443/#444 unique differences also require their own disposition. Missing originals
@@ -1795,7 +1799,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_actual_analysis_states_do_n
 - Obligation: Resolved zero/real callers: targets_resolved; no no-target warning; preserve golden finding identity, sorting/top-10 and single-hop SQL.
 - Actual source: CrossRepoImpactRunner._run_analysis_impl; caller helper and finding selection.
 - Independent oracle / input: Real SQLite caller rows and explicit expected findings/count/cap; cache no-warning assertions for empty and nonempty result.
-- Remaining gap / supported disposition: Exact equal-rank sort tie cases and a dedicated extra-hop prohibition oracle are not identified by these selectors: retain as mapping gaps, not new multi-hop feature requests.
+- Remaining gap / supported disposition: Stable equal-rank ordering is NOT PROMISED by the recorded owner decision and is not a remaining acceptance obligation. Existing top-N and single-hop requirements remain; a dedicated extra-hop prohibition oracle is not identified by these selectors. This is an evidence gap, not a new multi-hop feature request.
 - Static follow-up: `TestTopNCap::test_cap_at_top_n` builds `_TOP_N + 5` callers but asserts only result length. The production ranking uses stable Python sort by proximity, without an explicit tie-break key; the shared `_CALLERS_SQL` has no `ORDER BY`. This does not establish deterministic equal-rank identity selection across SQLite plans. `_CALLERS_SQL` selects direct CALLS edges for the requested target, with an IMPORTS_FROM predicate; `_live_callers` resolves source locations/liveness, not recursive caller expansion. These source facts are not an executed extra-hop rejection oracle. The 2026-11-14 owner decision does not promise stable equal-rank ordering; no new tie-order test or implementation is required by that scope. Dedicated extra-hop node identity remains UNKNOWN and its evidence obligation is not waived.
 - R3 status: Blanket empty-result warning, cap removal, extra-hop insertion: dedicated current controls NOT_RUN; historical finding regressions are not per-mutation proof.
 
@@ -2611,7 +2615,7 @@ not a reason to invent a test or keep an unlimited investigation open.
 | Existing record | First reuse/map step | Finite deliverable and exit; current status |
 | --- | --- | --- |
 | [T03](#evidence-t03): primary connection count | Inspect the listed immediate zero-target controls and SQL trace fixtures. Their sibling `forbid` sentinel does not prove no primary connection, and a zero query trace is not a zero connection count. | The original fixed-baseline `no-path`/`deleted` nodes had only sibling registry/helper forbid sentinels, with no primary connection count. The existing nodes now carry the implemented post-setup primary-connection observer, plus unnamed positive control, documented in the 2026-11-14 T03 supplement; original diagnostic and empty-result assertions are preserved. The bounded three-node observation/ordering-control sequence is recorded above; other runtime/support dispositions remain PENDING. |
-| [T06](#evidence-t06): equal-rank order/single-hop | Reuse listed `TestTopNCap::test_cap_at_top_n` and caller-query controls; check ties and actual SQL edge traversal separately. A top-N count is not tie-order or no-second-hop proof. | Selected-node/source static audit completed in T06: top-N test asserts length only; query is direct-edge and has no ORDER BY, ranking has no explicit tie key. Dedicated tie-order/extra-hop nodes remain UNKNOWN. Owner decision on 2026-11-14: stable tie order NOT PROMISED. Single-hop/extra-hop oracle remains unresolved; no product defect or runtime pass inferred. |
+| [T06](#evidence-t06): equal-rank order/single-hop | Reuse listed `TestTopNCap::test_cap_at_top_n` and caller-query controls for retained top-N and actual SQL edge traversal obligations. A top-N count is not no-second-hop proof; stable tie-order qualification is not required by the recorded owner decision. | Selected-node/source static audit completed in T06: top-N test asserts length only; query is direct-edge and has no ORDER BY, ranking has no explicit tie key. Dedicated tie-order/extra-hop nodes remain UNKNOWN. Owner decision on 2026-11-14: stable tie order NOT PROMISED. Single-hop/extra-hop oracle remains unresolved; no product defect or runtime pass inferred. |
 | [T12](#evidence-t12): process/fork/shared-use | Keep executed three warm-input cases separate. Reuse installed-capture closed/foreign-thread cases already indexed; serial foreign-thread refusal/reuse does not qualify fork or simultaneous shared use. | Explicitly accept unsupported process/fork/shared-use scope, or identify one supported scenario and exact existing node/oracle. Fork/shared-use runtime evidence UNKNOWN; no new concurrency experiment pending domain decision. PENDING. |
 | [T14](#evidence-t14): recovery | Reuse controlled PENDING compatibility and new-host identity controls; neither is HOLD resume. Preserve existing no-cross-repository-HOLD limited contract. | Owner accepted the original recovery obligation's UNSUPPORTED/NOT APPLICABLE disposition on 2026-11-14; see the fixed-version chat-source record above. This disposition task is complete, not a recovery PASS. Do not add fake recovery tests or delete the original obligation. |
 | [T19](#evidence-t19): identity/read/FD assertions | Reuse listed process-control, close, identity and post-cleanup-reader controls; annotate each actual assertion (type/message, object identity, payload/file presence, formal reread or descriptor count). | Static assertion matrix completed in T19 at the fixed source; runtime status follows exact dated supplements and support acceptance remains PENDING. Descriptor-count assertions are absent in the selected nodes. Close-after-success faults cannot prove failed-close cleanup. Reuse the mapped identity/read controls; decide whether one bounded FD oracle is required before any additional test. |
