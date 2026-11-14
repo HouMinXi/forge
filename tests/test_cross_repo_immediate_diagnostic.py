@@ -91,6 +91,17 @@ def test_zero_targets_emit_once_before_sibling_access(graphs, monkeypatch, case)
         diff = "a nonempty diff without an added-side path\n"
     elif case == "deleted":
         diff = DIFF.replace("+++ b/api.py", "+++ /dev/null")
+    # Observe after fixture creation/edits, before the target runner invocation.
+    primary_uri = impact.readonly_uri((primary / ".code-review-graph/graph.db").absolute())
+    primary_connections = []
+    real_connect = sqlite3.connect
+
+    def observe_connect(database, *args, **kwargs):
+        if database == primary_uri:
+            primary_connections.append(database)
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", observe_connect)
     monkeypatch.setattr(impact, "_registry_path", forbid)
     monkeypatch.setattr(impact, "_find_cross_repo_caller_groups", forbid)
     messages = []
@@ -99,6 +110,10 @@ def test_zero_targets_emit_once_before_sibling_access(graphs, monkeypatch, case)
     assert messages == [MESSAGE]
     assert runner.infra_errors == []
     assert runner._cached is None
+    if case in ("no-path", "deleted"):
+        assert len(primary_connections) == 0
+    elif case == "unnamed":
+        assert len(primary_connections) > 0
 
 
 @pytest.mark.parametrize("diff", ["", " \t\n"])
